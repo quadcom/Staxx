@@ -2,6 +2,9 @@
 
 **Status: pre-alpha. Nothing here is installable yet.**
 
+**New here? Start with [docs/README.md](docs/README.md)** — a plain-English explanation of what this
+is and why. The [glossary](docs/glossary.md) defines every term used across the project.
+
 ## What this is
 
 Unraid manages Docker through a proprietary XML template format. If no template exists for a
@@ -57,8 +60,11 @@ in an upstream contribution.
 ## Repository layout
 
 ```
-docs/x-unraid-schema.md     The x-unraid metadata schema — the project's public API
-schema/x-unraid.schema.json JSON Schema for validating it
+docs/README.md              Plain-English overview — start here
+docs/glossary.md            Every term used in this project, defined
+docs/feasibility.md         Whether this is possible, and the evidence
+docs/x-unraid-schema.md     Format of the extra info that makes the form friendly
+schema/x-unraid.schema.json Machine-readable definition of that format
 examples/                   Worked compose files carrying x-unraid metadata
 tests/validate_schema.py    Schema self-test — checks what it rejects, not just what it accepts
 src/stack.manager/          Slackware-style tree, mirrors install paths on the server
@@ -72,7 +78,6 @@ src/stack.manager/          Slackware-style tree, mirrors install paths on the s
     langs/                  Translations
 stack.manager.plg           Plugin installer manifest
 pkg_build.sh                Builds the .txz package from src/
-docs/feasibility.md         Research findings the design rests on
 ```
 
 ## Compatibility

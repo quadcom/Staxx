@@ -2,8 +2,39 @@
 
 **Status: draft, version 1. Not yet implemented.**
 
-This is Stack Manager's public API. Users will encode it in their compose files and third parties
-may emit it, so it is versioned and changes are additive wherever possible.
+New to the terminology? See the [glossary](glossary.md).
+
+---
+
+## In plain terms
+
+A compose file tells Docker everything it needs. It tells a *person* almost nothing.
+
+It will say a container uses port 8096. It will not say "this is the web interface, and it's the one
+you'll want to change if something else is already using that number". It will say there's a setting
+called `ADMIN_PASSWORD`. It won't say "hide this as you type it".
+
+That missing information — friendly names, descriptions, which boxes matter, which are secret — is
+exactly what makes Unraid's template form pleasant to fill in. This document defines where we keep
+it.
+
+We keep it in a section named `x-unraid`, inside the compose file itself. The compose standard sets
+aside any section whose name starts with `x-` for extra information that Docker must ignore, so
+adding it does not stop the file working anywhere else. It is the one officially sanctioned place to
+put something like this.
+
+Three things worth knowing before the detail:
+
+- **All of it is optional.** A compose file with none of this still produces a working form. The
+  labels are just worked out from the file instead of written by a human, so it's plainer.
+- **It describes the app, not your server.** Names and descriptions go here, because they mean the
+  same thing on anyone's machine. Settings like "start this automatically on boot" do not — those
+  are facts about *your* server and live in the plugin's own settings.
+- **It is a published format.** Once people have it in their files, changing it breaks their files.
+  So it carries a version number and new versions only add things.
+
+The rest of this document is the exact format, and is aimed at someone writing this by hand or
+building something that produces it.
 
 ---
 
@@ -54,16 +85,39 @@ services:
       fields: []
 ```
 
-> **Do not read `x-unraid` from `docker compose config`.** Its JSON output has a documented history
-> of stripping extension fields ([docker/compose#11528](https://github.com/docker/compose/issues/11528),
-> [#9682](https://github.com/docker/compose/issues/9682)), and the behaviour differs between YAML and
-> JSON output and between versions.
+> **Read `x-unraid` from the file, not from `docker compose config`.**
 >
-> Metadata is read from the **source file**, which is where the editor's CST parser already works and
-> which is authoritative for editing anyway. `docker compose config` is used only for the **resolved
-> runtime model** — the actual values after interpolation, overrides, and `extends`. The two are
-> joined by the field bindings below, which is the main reason bindings key on something stable
-> rather than on position.
+> `docker compose config` is a command that prints a tidied-up copy of your compose file — every
+> shorthand expanded, every setting resolved. Useful, but that printout leaves the `x-` sections out
+> ([docker/compose#11528](https://github.com/docker/compose/issues/11528),
+> [#9682](https://github.com/docker/compose/issues/9682)), and exactly what it drops varies between
+> versions.
+>
+> This is a limitation of that one command's *output*. It does not touch your file — nothing removes
+> `x-unraid` from the file itself, ever.
+>
+> So the two are used for different jobs. Metadata comes from **your actual file**, which is where
+> the editor is reading and writing anyway. `docker compose config` supplies only the **resolved
+> settings** — what the containers will really run with, after every shorthand and override is worked
+> out. The two are matched up using the bindings below, which is the main reason bindings key on
+> something that never changes.
+
+---
+
+## Decisions already made
+
+Settled, and recorded here so they are not reopened without new information.
+
+**Metadata lives inside the compose file** (2026-08-09). Two alternatives were considered:
+
+- **A comment block at the bottom of the file.** Rejected. Comments are the *first* thing lost when
+  any program reads a YAML file and writes it back out — which is precisely why this project needs a
+  special kind of parser in the first place. Putting the metadata in comments would place it in the
+  most fragile part of the file, not the safest.
+- **A separate companion file next to the compose file.** Rejected, though it was the stronger of
+  the two: it would leave the compose file completely untouched. But metadata kept inside the file
+  travels with it. Copy, back up, or share the compose file and the friendly form comes too. With a
+  companion file, the copy arrives bare.
 
 ---
 
@@ -141,10 +195,34 @@ Every binder is named after the compose key it binds to. That consistency is why
 name attribute below is `title` and not `label` — `label` is taken, and a key that means one thing
 in one position and something else in another is a trap.
 
-**Bindings key on the container side, never the host side.** The container port, container path and
-variable name are properties of the image and stay put. The host port and host path are exactly what
-the user edits. Binding to the host side would mean a field loses its label the first time someone
-changes it.
+### Why bindings use the container side
+
+This is the most important idea in the document, so here it is concretely.
+
+A port line in a compose file has two halves:
+
+```yaml
+ports:
+  - "8096:8096"
+#    ^^^^ ^^^^
+#    |    └── container side: the port the app listens on inside its container.
+#    |        Fixed by whoever built the app. Never changes.
+#    └── host side: the port you type into your browser.
+#        This is the number the user changes, when 8096 is already taken.
+```
+
+Volumes work the same way — `/mnt/user/appdata/jellyfin:/config` is your folder on the left, the
+app's expected folder on the right.
+
+Now suppose we attached the label "Web interface" to the whole line, `"8096:8096"`. A user hits a
+clash, changes the host side to `8097:8096`, saves — and the line no longer matches what we recorded.
+The label is lost. The next time they open the form, the field they just carefully set is unlabelled.
+
+So metadata attaches to the **container side only**: `port: 8096`, `volume: /config`, `env: PUID`.
+Those are properties of the app itself and never change. The parts the user edits are never used to
+find anything.
+
+**Bindings key on the container side, never the host side.**
 
 `setting` is limited in v1 to keys where a form control is meaningful: `image`, `restart`,
 `network_mode`, `command`, `entrypoint`, `user`, `hostname`, `privileged`, `shm_size`. Anything else
@@ -260,31 +338,33 @@ author never marked as advanced would conceal what someone needs.
 other compose key, so it can be run against a whole compose file converted to JSON without needing a
 full compose-spec schema.
 
-Because it validates the *source* file rather than the resolved model, run it against the YAML
-converted directly to JSON — not against `docker compose config` output, for the stripping reason
-above.
+Check the user's real file, not `docker compose config` output — that command drops `x-` sections, as
+explained above.
 
 ---
 
 ## A note on the name
 
-`x-unraid` is the right name if this becomes Unraid's Docker management, which is the project's
-stated direction. It is presumptuous until then, and it carries a real risk: if Lime Technology
-defines its own `x-unraid` with different semantics, files in the wild would mean two things.
+`x-unraid` is the right name if this becomes the way Unraid manages Docker, which is where the
+project is heading. Until then it is presumptuous, and it carries a real risk: if Lime Technology
+one day defines its own `x-unraid` meaning something different, files out in the world would mean
+two things at once.
 
-Accepted knowingly. The `version` key exists partly for this — a namespace collision is resolvable
-by aligning with whatever upstream defines and migrating on version. Worth raising with Lime Tech
-before the schema has meaningful adoption, rather than after.
+Accepted knowingly. The `version` key exists partly for this — if that day comes, we adopt whatever
+they define and use the version number to tell old files from new. Worth raising with them before
+many people are relying on this format, rather than after.
 
 ---
 
-## Open questions for v2
+## Open questions for later versions
 
-- **Networks and volumes at top level.** Named volumes and networks can carry their own `x-` blocks.
-  Reserved, unused in v1 — no clear form-level need yet.
-- **Field dependency.** "Show this field only when that one is set" is a real want in template land.
-  Deferred until there is evidence of demand; conditional forms are easy to design badly.
-- **Localisation.** `label` and `description` are single-language today. A `translations` map is the
-  obvious extension and does not break existing files.
-- **Secrets.** `mask` hides a value in the UI; it does nothing about the value sitting in plaintext
-  in the file. Proper handling means compose secrets, which is a larger design.
+- **Named volumes and networks.** These can carry their own `x-` sections too. Left unused for now,
+  as there is no form-level need yet.
+- **Fields that depend on other fields.** "Only show this box when that one is ticked" is a genuine
+  want. Deferred — conditional forms are easy to design badly, and there is no evidence of demand
+  yet.
+- **Other languages.** `title` and `description` are English-only today. Adding a translations block
+  later would not break any existing file.
+- **Secrets.** `mask` hides a password on screen. It does nothing about that password sitting in
+  plain text in the file. Handling that properly means using Docker's own secrets mechanism, which
+  is a bigger design job.

@@ -1,5 +1,45 @@
 # Feasibility Report — Compose-Native Docker Management for Unraid
 
+New to the terminology? See the [glossary](glossary.md). For what the project is trying to do at
+all, start with [the docs overview](README.md).
+
+---
+
+## In plain terms
+
+**The question:** can an Unraid add-on replace how Unraid handles Docker — using standard compose
+files instead of Unraid's own template format, showing a friendly form for people who don't want to
+edit files, and optionally taking over the Docker button in the top menu?
+
+**The answer: yes, all of it.** Nothing on the list needs permission from Unraid's makers, a special
+version of Unraid, or anything hidden. Most of it is already done by other add-ons, which is the
+strongest evidence there is — it isn't theory, it's running on people's servers today.
+
+**Two parts are genuinely hard**, and they are worth knowing about early:
+
+1. **Saving your changes back into the file without wrecking it.** Reading a compose file to build a
+   form is straightforward. Writing the form's changes back out is not — most tools that do this
+   quietly throw away comments and reformat everything. If someone hand-wrote their file with notes
+   in it, that would destroy their work. Doable, but it needs a specific and less common approach,
+   and underestimating it is the most likely way this project stalls.
+
+2. **The 2000 existing apps in Community Applications.** Converting them is mechanical and mostly
+   straightforward. The hard part isn't technical — it's that Community Applications is the main
+   reason people choose Unraid, it's built by volunteers, and it's built entirely on templates.
+   Anything that looks like replacing it wholesale will meet resistance. The plan sidesteps this:
+   convert one app on demand, when a user asks, which needs nobody's agreement and is useful
+   immediately.
+
+**One risk worth naming.** Unraid's Docker screens are being actively worked on by their developers.
+Anything built tightly around how those screens work today will need ongoing upkeep. The design
+reduces this exposure by drawing its own screen rather than reaching into theirs.
+
+Everything below is the detailed evidence, aimed at a technical reader. The findings were read
+directly from Unraid's source code, because there is very little written documentation for add-on
+authors.
+
+---
+
 ## Context
 
 The goal is to replace how Unraid manages Docker. Today Unraid uses a proprietary XML template format; if no template exists for a container, the user must build one by hand inside the Unraid UI. The proposal inverts this: **industry-standard compose files become the underlying representation for every container**, so any compose file found anywhere can be dropped in and run.
@@ -48,16 +88,18 @@ Stacks are ordinary directories of ordinary compose files. Nothing forces non-st
 
 The clean answer: the **compose spec permits `x-` extension fields at any level** and ignores them. An optional `x-unraid:` block carries the missing metadata without making the file non-standard — it still runs under plain `docker compose up` anywhere. Files lacking it degrade to an inferred form (types guessed from key shape, everything "basic"), which is still usable for the beginner case.
 
-> **Correction (2026-08-09).** This section originally also claimed extension fields are *preserved
-> through `docker compose config`*. They are not, reliably. The JSON output has a documented history
-> of stripping them ([docker/compose#11528](https://github.com/docker/compose/issues/11528),
-> [#9682](https://github.com/docker/compose/issues/9682)), with behaviour differing between YAML and
-> JSON output and across versions.
+> **Correction (2026-08-09).** This section originally claimed that `x-` sections survive the
+> `docker compose config` command. They do not, reliably.
 >
-> This does not change the verdict, but it does fix the architecture: metadata is read from the
-> **source file**, and `docker compose config` supplies only the **resolved runtime model**. The two
-> are joined by bindings keyed on stable container-side targets. See
-> [x-unraid-schema.md](x-unraid-schema.md).
+> To be clear about what that means, because it is narrower than it sounds: `docker compose config`
+> prints a tidied-up copy of a compose file to the screen. That printout leaves the `x-` sections
+> out ([docker/compose#11528](https://github.com/docker/compose/issues/11528),
+> [#9682](https://github.com/docker/compose/issues/9682)). **Your file is untouched** — Docker never
+> writes to it. Only the printout is affected.
+>
+> The verdict is unchanged. What changes is where each piece of information comes from: the friendly
+> labels are read from the real file, and `docker compose config` is used only to work out the
+> settings the containers will actually run with. See [x-unraid-schema.md](x-unraid-schema.md).
 
 ### 3. Container lifecycle control — **Feasible, routine**
 

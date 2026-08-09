@@ -1,0 +1,143 @@
+# Glossary
+
+Plain definitions of the terms that keep coming up in this project. Each one says why it matters
+here, not just what it means in general.
+
+---
+
+## The Docker side
+
+**Image** — a packaged, ready-to-run copy of an application, downloaded from the internet. Think of
+it as the installer. `jellyfin/jellyfin:10.10.3` is an image.
+
+**Container** — a running copy of an image, with your settings applied. The image is the installer;
+the container is the installed, running program. One image can run as many containers.
+
+**Compose file** — a text file listing the containers you want and how they should be set up. Its
+filename is usually `compose.yaml`. It is the standard way to describe containers, understood by
+Docker on any machine — Windows, Mac, Linux, a server, a laptop.
+
+*Why it matters here:* this is the whole premise of the project. Instead of Unraid's own private
+format, we use the one everybody else already uses.
+
+**Service** — one entry inside a compose file, describing one container. A compose file for a photo
+app might have two services: the app itself and the database it needs.
+
+**Stack** — all the services in one compose file, treated as a group. Starting a stack starts every
+container in it. "Stack" is Docker's word for it, not ours.
+
+*Why it matters here:* stacks are how the interface will group containers, so related containers
+stay together instead of scattered through one long list.
+
+**Label** — a small note attached to a container, in the form `name = value`. Docker itself uses
+labels to keep track of things.
+
+*Why it matters here:* Docker automatically stamps every container it creates from a compose file
+with a label saying which stack it belongs to. That is what lets stacks group themselves, with no
+folders for you to set up.
+
+**Docker socket** — the connection a program uses to talk to Docker and ask it to do things. Not
+something users see.
+
+---
+
+## The file format
+
+**YAML** — the style of text formatting compose files are written in. It uses indentation to show
+what belongs inside what, a bit like a nested bullet list. Pronounced "yamel".
+
+**Parser** — a program that reads a file and turns it into something a program can work with. When
+you read a shopping list and picture the items, you are parsing it.
+
+**Round-trip** — reading a file in and then writing it back out again. It sounds harmless, but most
+parsers quietly lose things on the way — comments especially.
+
+*Why it matters here:* the form has to save your changes back into your compose file **without
+wrecking it**. If someone hand-wrote that file with comments and careful spacing, a careless
+round-trip destroys their work. This is the single hardest part of the project.
+
+**CST** — short for *concrete syntax tree*. A parser that remembers the file exactly as written,
+including comments, blank lines and spacing, rather than just the information in it.
+
+*Why it matters here:* it is the kind of parser that survives a round-trip, so it is the kind we
+have to use.
+
+**Extension field / `x-`** — a section in a compose file whose name starts with `x-`. The compose
+standard promises that Docker will ignore anything named this way. It exists so tools can add their
+own information without breaking the file.
+
+*Why it matters here:* `x-unraid` is where we keep the friendly labels and descriptions that turn a
+compose file into a form. Docker ignores it, so the file still runs anywhere.
+
+**Schema** — a written-down definition of what a file is allowed to contain. A form's "required
+fields" rules are a schema.
+
+**Validation** — checking a file against a schema and reporting anything wrong.
+
+*Why it matters here:* `schema/x-unraid.schema.json` defines our extra section, and
+`tests/validate_schema.py` checks it. That means a bad file gets a clear error instead of a
+half-broken form.
+
+**Binding** — connecting a friendly label to the specific thing in the compose file it describes:
+this description belongs to *that* port, this "it's a password" marker belongs to *that* setting.
+
+---
+
+## The Unraid side
+
+**WebGUI** — Unraid's web interface, the thing you see in your browser.
+
+**Plugin** — an add-on that extends Unraid. It can add pages, buttons and background tasks. This
+project is a plugin.
+
+**`.plg` file** — a plugin's installer. A small file listing where to download the plugin and what
+to do after. Unraid reads it when you install or update.
+
+**Page file** (`.page`) — one screen in the Unraid interface. Unraid finds these automatically by
+scanning its plugin folders, so adding a page is a matter of putting a file in the right place.
+
+*Why it matters here:* this is how we add our screen to the Docker tab, and how a full takeover of
+that tab would work later.
+
+**Template** — Unraid's own format for describing a container, written in XML (a different, older
+text format). Every container installed through Unraid's interface has one.
+
+*Why it matters here:* templates are what we are replacing. They only work on Unraid, and if none
+exists for the app you want, you fill in every field by hand.
+
+**Community Applications (CA)** — Unraid's app store. Around 2000 apps, each with a template,
+maintained by volunteers.
+
+*Why it matters here:* it is the main reason people choose Unraid, and it is built entirely on
+templates. Any replacement has to answer what happens to those 2000 apps — planned as a converter
+that turns a template into a compose file on demand.
+
+**Array** — the Unraid disks that hold your data, which are unavailable until you start the array.
+Relevant because anything stored there cannot be read at boot time.
+
+---
+
+## Terms used about this project
+
+**Prior art** — existing projects that already solve part of the same problem. Studied so we do not
+repeat their mistakes or reinvent their solutions. Compose Manager Plus and FolderView3 are the two
+that matter here.
+
+**Shadowing** — quietly replacing one of Unraid's own screens with ours, by giving our file the same
+name. Unraid loads plugin folders in alphabetical order and the last one wins, so a plugin whose
+folder sorts later can take over a screen without modifying any Unraid file.
+
+*Why it matters here:* it is how the optional Docker tab takeover works, and it is why the plugin
+folder is named `stack.manager` — the name has to sort after `dynamix.docker.manager`.
+
+**DOM injection** — reaching into a page that another program built and inserting your own bits into
+it. It works, but it breaks every time the other program changes its page.
+
+*Why it matters here:* it is how the existing FolderView plugin groups containers, and the reason it
+needs frequent fixes. We avoid it by drawing our own screen instead.
+
+**Upstream** — the original project, as opposed to our copy or add-on. Here it means Unraid itself,
+maintained by Lime Technology.
+
+**Pull request (PR)** — a formal proposal to add your changes to someone else's project. The
+long-term goal is a pull request offering this to Lime Technology.
