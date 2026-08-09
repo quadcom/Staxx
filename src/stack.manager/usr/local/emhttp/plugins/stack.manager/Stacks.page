@@ -1,0 +1,23 @@
+Menu="Tasks:59"
+Type="xmenu"
+Title="Stacks"
+Tag="fa-cubes"
+Code="f1b3"
+Lock="true"
+Markdown="false"
+Cond="$var['fsState'] == 'Started' && is_file('/var/run/dockerd.pid') && file_exists('/boot/config/plugins/stack.manager/header_menu')"
+---
+<?PHP
+/* Stack Manager — Stacks button in the top navigation bar.
+ * Copyright 2026, Stack Manager contributors.
+ *
+ * Rank 59 seats this immediately left of the stock Docker button (Tasks:60).
+ * Enabled only when the user has opted into header placement; otherwise the
+ * same view is served by stack.manager.page as a tab under Docker.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version 2,
+ * as published by the Free Software Foundation.
+ */
+?>
+<? include '/usr/local/emhttp/plugins/stack.manager/include/StacksPage.php'; ?>

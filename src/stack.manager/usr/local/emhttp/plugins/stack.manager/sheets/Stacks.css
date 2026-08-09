@@ -1,0 +1,9 @@
+/* Stack Manager — styles for the top-navigation variant of the Stacks view.
+ *
+ * PageBuilder auto-loads sheets/<page name>.css, so the same styles need to be
+ * reachable under both page names. Single source of truth lives next door.
+ *
+ * Copyright 2026, Stack Manager contributors. GPL-2.0.
+ */
+
+@import url("stack.manager.css");

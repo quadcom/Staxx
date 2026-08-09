@@ -1,0 +1,45 @@
+Menu="Utilities"
+Type="xmenu"
+Title="Stack Manager"
+Tag="cubes"
+Icon="cubes"
+---
+<?PHP
+/* Stack Manager — settings.
+ * Copyright 2026, Stack Manager contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version 2,
+ * as published by the Free Software Foundation.
+ */
+$plugin = 'stack.manager';
+$cfg    = parse_plugin_cfg($plugin);
+?>
+
+<form markdown="1" method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#file" value="<?=$plugin?>/<?=$plugin?>.cfg">
+<input type="hidden" name="#command" value="/usr/local/emhttp/plugins/<?=$plugin?>/scripts/apply_settings">
+
+_(Show Stacks in)_:
+: <select name="HEADER_MENU" size="1">
+    <?=mk_option($cfg['HEADER_MENU'], 'false', _('A tab under the Docker menu'))?>
+    <?=mk_option($cfg['HEADER_MENU'], 'true',  _('Its own button in the top navigation bar'))?>
+  </select>
+
+> Where the Stacks view appears. As a Docker tab it sits ahead of Docker Containers and becomes the
+> default landing tab; nothing is replaced either way.
+
+_(Stack directory)_:
+: <input type="text" name="STACK_ROOT" value="<?=htmlspecialchars($cfg['STACK_ROOT'])?>" spellcheck="false">
+
+> Root directory holding stack definitions, one subdirectory per stack. Keeping this on the flash
+> device means stacks are readable before the array starts, which matters for autostart. Placing it
+> on an array share gives more room but is unavailable until the array is up.
+
+&nbsp;
+: <span class="buttons-spaced">
+    <input type="submit" name="#apply" value="_(Apply)_" disabled>
+    <input type="button" value="_(Done)_" onclick="done()">
+  </span>
+
+</form>

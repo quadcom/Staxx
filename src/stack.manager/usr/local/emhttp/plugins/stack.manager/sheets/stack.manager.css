@@ -1,0 +1,64 @@
+/* Stack Manager — page styles.
+ * Copyright 2026, Stack Manager contributors. GPL-2.0.
+ *
+ * Colours go through CSS custom properties with literal fallbacks so the page
+ * follows the active Unraid theme, and still renders sanely on themes that
+ * predate a given token. Widths stay relative — the 7.2+ WebGUI is responsive
+ * and hardcoded pixel widths break the mobile layout.
+ */
+
+.stackman-scaffold {
+  max-width: 60rem;
+}
+
+.stackman-scaffold table {
+  width: 100%;
+  margin-bottom: 1.5rem;
+}
+
+.stackman-scaffold td,
+.stackman-scaffold th {
+  padding: 0.4rem 0.6rem;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.stackman-status td:first-child {
+  width: 40%;
+  white-space: nowrap;
+}
+
+.stackman-projects .stackman-project {
+  width: 30%;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.stackman-hint {
+  color: var(--text-secondary, #808080);
+  font-size: 1.1rem;
+  margin: -0.5rem 0 1.5rem;
+}
+
+.stackman-scaffold .fa.green-text {
+  color: var(--green-500, #43a047);
+}
+
+.stackman-scaffold .fa.red-text {
+  color: var(--red-500, #e53935);
+}
+
+/* Tables get cramped below tablet width; let the long container list wrap
+   under its stack name rather than forcing the page to scroll sideways. */
+@media (max-width: 45rem) {
+  .stackman-projects,
+  .stackman-projects tr,
+  .stackman-projects td {
+    display: block;
+    width: 100%;
+  }
+
+  .stackman-projects .stackman-project {
+    padding-bottom: 0;
+  }
+}

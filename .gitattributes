@@ -1,0 +1,31 @@
+# Everything in this repository is deployed to a Linux host and must use LF.
+#
+# This is not a style preference. Unraid's PageBuilder splits .page files on the
+# literal string "\n---\n" to separate the ini header from the body. A CRLF
+# checkout yields "\r\n---\r\n", the split fails, and the page is silently
+# discarded with only an "Invalid .page format" line in the syslog. Shell
+# scripts fail just as quietly, with `\r: command not found`.
+#
+# Development happens on Windows, so the default must be forced rather than
+# left to core.autocrlf.
+
+* text=auto eol=lf
+
+*.page   text eol=lf
+*.php    text eol=lf
+*.plg    text eol=lf
+*.sh     text eol=lf
+*.cfg    text eol=lf
+*.css    text eol=lf
+*.js     text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+
+# Unraid event hooks and helper scripts are extensionless.
+src/**/scripts/*  text eol=lf
+src/**/event/*    text eol=lf
+
+# Built packages are opaque.
+*.txz    binary
+*.png    binary
+*.jpg    binary

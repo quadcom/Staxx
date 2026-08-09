@@ -1,0 +1,30 @@
+# Build output
+/build/
+/archive/
+*.txz
+*.txz.md5
+*.tgz
+
+# PHP tooling
+/vendor/
+composer.lock
+.phpunit.result.cache
+
+# Node tooling (for the client-side YAML / form bundle)
+/node_modules/
+/dist/
+*.tsbuildinfo
+
+# Editors / OS
+.vscode/*
+!.vscode/settings.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local scratch — never commit server dumps or captured configs
+/scratch/
+/local/
+*.local
