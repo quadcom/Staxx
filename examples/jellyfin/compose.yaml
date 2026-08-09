@@ -1,0 +1,109 @@
+# Worked example of the x-unraid schema — see docs/x-unraid-schema.md.
+#
+# This is an ordinary compose file. Everything under x-unraid is ignored by
+# Compose, so `docker compose up` runs it unchanged on any machine, with or
+# without Stack Manager. Delete every x-unraid block and it still works — you
+# just get an inferred form instead of an authored one.
+
+x-unraid:
+  version: 1
+  name: Jellyfin
+  icon: https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/SVG/icon-transparent.svg
+  category: MediaApp:Video
+  project: https://jellyfin.org
+  support: https://forum.jellyfin.org
+  overview: |
+    The Free Software Media System. Streams your own media library to any
+    device, with no tracking and no subscription.
+
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:10.10.3
+    container_name: jellyfin
+    restart: unless-stopped
+    ports:
+      - "8096:8096"
+      - "7359:7359/udp"     # client auto-discovery
+    volumes:
+      - /mnt/user/appdata/jellyfin/config:/config
+      - /mnt/user/appdata/jellyfin/cache:/cache
+      - /mnt/user/media:/media:ro
+    devices:
+      - /dev/dri:/dev/dri    # Intel QuickSync
+    environment:
+      PUID: "99"
+      PGID: "100"
+      TZ: "America/Toronto"
+      JELLYFIN_PublishedServerUrl: ""
+
+    x-unraid:
+      name: Jellyfin
+      webui: "http://[IP]:[PORT:8096]/"
+      overview: |
+        On first run, open the web interface to complete setup. Point the
+        library at `/media`.
+
+      fields:
+        - port: 8096
+          title: Web interface
+          description: Port the Jellyfin web UI listens on.
+          required: true
+
+        - port: 7359/udp
+          title: Client auto-discovery
+          description: >
+            Lets Jellyfin apps on your network find this server without being
+            told its address. Safe to leave alone.
+          display: advanced
+
+        - volume: /config
+          title: Configuration storage
+          description: Database, settings and metadata. **Back this up.**
+          required: true
+          group: Storage
+
+        - volume: /cache
+          title: Transcode cache
+          description: Scratch space. Fast storage helps; losing it costs nothing.
+          group: Storage
+
+        - volume: /media
+          title: Media library
+          description: Your films and shows. Mounted read-only so Jellyfin cannot alter them.
+          mode: ro
+          required: true
+          group: Storage
+
+        - device: /dev/dri
+          title: Hardware transcoding
+          description: >
+            Intel QuickSync or AMD VAAPI. Remove this field if your server has
+            no integrated GPU.
+          display: advanced
+
+        - env: PUID
+          title: User ID
+          type: number
+          display: advanced
+
+        - env: PGID
+          title: Group ID
+          type: number
+          display: advanced
+
+        - env: TZ
+          title: Timezone
+          description: Affects scheduled tasks and on-screen times.
+
+        - env: JELLYFIN_PublishedServerUrl
+          title: Published server URL
+          description: External address, if you reach this through a reverse proxy.
+          display: advanced
+
+        - setting: image
+          title: Version
+          type: select
+          options:
+            - { value: "jellyfin/jellyfin:10.10.3", label: "10.10.3 (pinned)" }
+            - { value: "jellyfin/jellyfin:stable",  label: "Stable" }
+            - { value: "jellyfin/jellyfin:latest",  label: "Latest" }

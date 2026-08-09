@@ -57,6 +57,10 @@ in an upstream contribution.
 ## Repository layout
 
 ```
+docs/x-unraid-schema.md     The x-unraid metadata schema — the project's public API
+schema/x-unraid.schema.json JSON Schema for validating it
+examples/                   Worked compose files carrying x-unraid metadata
+tests/validate_schema.py    Schema self-test — checks what it rejects, not just what it accepts
 src/stack.manager/          Slackware-style tree, mirrors install paths on the server
   usr/local/emhttp/plugins/stack.manager/
     *.page                  WebGUI pages (Docker sub-tab, header button, settings)

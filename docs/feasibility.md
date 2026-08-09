@@ -46,7 +46,18 @@ Stacks are ordinary directories of ordinary compose files. Nothing forces non-st
 
 **The metadata gap.** Unraid's template form is pleasant because the XML carries UI metadata compose has no equivalent for. Stock templates live at `/boot/config/plugins/dockerMan/templates-user/my-*.xml` (`$dockerManPaths`, `DockerClient.php:25-35`), and each `<Config>` carries `Name`, `Target`, `Default`, `Mode`, `Description`, `Type` (Path/Port/Variable/Label/Device), `Display` (basic/advanced), `Required`, `Mask`. Raw compose gives you target and value and nothing else — no human label, no description, no "mask this password", no basic/advanced split.
 
-The clean answer: the **compose spec permits `x-` extension fields at any level**, ignores them, and preserves them through `docker compose config`. An optional `x-unraid:` block carries the missing metadata without making the file non-standard — it still runs under plain `docker compose up` anywhere. Files lacking it degrade to an inferred form (types guessed from key shape, everything "basic"), which is still usable for the beginner case.
+The clean answer: the **compose spec permits `x-` extension fields at any level** and ignores them. An optional `x-unraid:` block carries the missing metadata without making the file non-standard — it still runs under plain `docker compose up` anywhere. Files lacking it degrade to an inferred form (types guessed from key shape, everything "basic"), which is still usable for the beginner case.
+
+> **Correction (2026-08-09).** This section originally also claimed extension fields are *preserved
+> through `docker compose config`*. They are not, reliably. The JSON output has a documented history
+> of stripping them ([docker/compose#11528](https://github.com/docker/compose/issues/11528),
+> [#9682](https://github.com/docker/compose/issues/9682)), with behaviour differing between YAML and
+> JSON output and across versions.
+>
+> This does not change the verdict, but it does fix the architecture: metadata is read from the
+> **source file**, and `docker compose config` supplies only the **resolved runtime model**. The two
+> are joined by bindings keyed on stable container-side targets. See
+> [x-unraid-schema.md](x-unraid-schema.md).
 
 ### 3. Container lifecycle control — **Feasible, routine**
 
