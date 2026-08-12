@@ -1460,6 +1460,16 @@
      dialog scrolls, which loses the header the moment a file is long. */
   display: grid;
   grid-template-rows: auto 1fr auto;
+
+  /* One column, and minmax(0, ...) rather than 1fr on its own. A grid track
+     will not shrink below the widest thing in it, and the header is a row of
+     nowrap controls about 82rem wide — so with a plain 1fr every row of this
+     dialog sized itself to the header and hung out past the right-hand edge,
+     where overflow: hidden cut it off. Measured: 817px of children inside a
+     762px box, with the Close button 42px beyond the edge. A zero minimum
+     lets the track match the dialog instead, and the title then ellipsises,
+     which is what it was given text-overflow for. */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 /* One pane on show gets one pane's worth of dialog. Split keeps the full width
@@ -1629,7 +1639,18 @@
   border-right: 0;
 }
 
+/* position: relative only to be a containing block, not to move anything.
+   The .stackman-sr labels inside the Remove and picker buttons are
+   position: absolute, and a modal <dialog> is position: fixed — so with
+   nothing positioned in between, they anchored to the dialog and escaped this
+   pane's overflow clipping. They are one pixel and invisible either way, but
+   they sat at their static position hundreds of pixels below the dialog's
+   bottom edge, which made the dialog itself scrollable: 2264px of scrollHeight
+   in a 767px box. A scrollable dialog can have its own header scrolled out of
+   sight by any scrollIntoView aimed at a row, and then the title and the Close
+   button are simply gone. Confining them here puts it back to 767. */
 .stackman-form {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   padding: 1.4rem;
