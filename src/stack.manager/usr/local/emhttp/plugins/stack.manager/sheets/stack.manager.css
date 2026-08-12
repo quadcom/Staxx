@@ -1576,14 +1576,14 @@
 
 /* ---- modal: body and the two panes ---- */
 
-/* One column, because exactly one pane is ever shown. Still a grid rather than
-   a plain block: min-height: 0 on a grid row is what lets a pane scroll its own
-   contents instead of growing and pushing the footer off the bottom. */
 .stackman-modal-body {
   display: grid;
-  grid-template-columns: 1fr;
-  min-height: 0;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;          /* lets the panes scroll instead of stretching the grid */
 }
+
+.stackman-modal-body[data-view="form"] { grid-template-columns: 1fr; }
+.stackman-modal-body[data-view="yaml"] { grid-template-columns: 1fr; }
 
 .stackman-modal-body[data-view="form"] .stackman-pane--yaml { display: none; }
 .stackman-modal-body[data-view="yaml"] .stackman-pane--form { display: none; }
@@ -1593,6 +1593,16 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+/* The line between the two panes. Only there when there are two. */
+.stackman-pane--form {
+  border-right: 0.1rem solid var(--sm-line);
+}
+
+.stackman-modal-body[data-view="form"] .stackman-pane--form,
+.stackman-modal-body[data-view="yaml"] .stackman-pane--form {
+  border-right: 0;
 }
 
 .stackman-form {
@@ -3389,6 +3399,31 @@
     margin-left: 0;
     width: 100%;
     justify-content: space-between;
+  }
+
+  /* Split is not offered at this width. The JavaScript opens on Form here and
+     moves an already-open Split to it, so nothing should arrive in that state
+     — but if it does, show one pane rather than two useless ones. Hiding the
+     button alone would not be enough: the grid still has to be told, or both
+     panes stack vertically and each gets half the height. */
+  .stackman-viewbtn--split {
+    display: none;
+  }
+
+  /* No divider to fix up: Form keeps its right-hand border and that becomes the
+     line between the two buttons that are left, while Compose is still
+     :last-child and still has none. */
+
+  .stackman-modal-body[data-view="split"] {
+    grid-template-columns: 1fr;
+  }
+
+  .stackman-modal-body[data-view="split"] .stackman-pane--yaml {
+    display: none;
+  }
+
+  .stackman-pane--form {
+    border-right: 0;
   }
 
   /* The note is long and the buttons are what someone came here for, so on a

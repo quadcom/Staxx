@@ -282,7 +282,22 @@
     yamlTimer = setTimeout(function () { yamlTimer = null; reparse(); }, 400);
   });
 
+  /* Split is the desktop default and is not offered on a phone, where two panes
+   * of twenty characters would be worse than either alone. The same 45rem the
+   * stylesheet uses, and deliberately the same string: inside a media query a
+   * rem is the browser's own default font size, not the 62.5% Unraid sets on
+   * the root, so writing it any other way would put the two thresholds in
+   * different places. */
+  var NARROW = window.matchMedia('(max-width: 45rem)');
+
+  function defaultView() {
+    return NARROW.matches ? 'form' : 'split';
+  }
+
   function setView(view) {
+    // Nothing can ask for Split at this width — the button is not there to
+    // click — but a window dragged narrower can arrive here already in it.
+    if (view === 'split' && NARROW.matches) view = 'form';
     modalBody.dataset.view = view;
     var btns = modal.querySelectorAll('.stackman-viewbtn');
     for (var i = 0; i < btns.length; i++) {
@@ -291,6 +306,13 @@
     // A band measured while its pane was hidden is a band in the wrong place.
     if (view !== 'form') { paintGutter(); syncGutter(); repaintMark(); }
   }
+
+  // Crossing the threshold with the editor open. Only Split has to move, and
+  // only inwards: going back to a wide window leaves you where you were rather
+  // than overriding a choice you made on purpose.
+  NARROW.addEventListener('change', function () {
+    if (modal.open && modalBody.dataset.view === 'split') setView('form');
+  });
 
   /* ---- the form, drawn from the parsed file ---- */
 
@@ -549,7 +571,9 @@
   gapNote.addEventListener('click', function () {
     var row = formHost.querySelector('.stackman-fieldrow[data-row="' + (gapNote.dataset.row | 0) + '"]');
     if (!row) return;
-    setView('form');
+    // Only when the form is not on screen at all. Someone already looking at
+    // it has not asked to be moved.
+    if (modalBody.dataset.view === 'yaml') setView(defaultView());
     row.scrollIntoView({ block: 'center' });
     var box = row.querySelector('input:not([disabled])');
     if (box) box.focus();
@@ -694,9 +718,8 @@
     var row = id && formHost.querySelector('[data-field-row="' + id.replace(/"/g, '\\"') + '"]');
     if (!row) return;
 
-    // The new row is in the form, so that is where to be. Nothing to restore
-    // afterwards: the view is a choice, and this one was made by adding a row.
-    setView('form');
+    // The new row is in the form, so the form has to be on screen to show it.
+    if (modalBody.dataset.view === 'yaml') setView(defaultView());
     row.scrollIntoView({ block: 'center' });
 
     // Selected, not just focused: the new entry arrives with a placeholder in
@@ -1396,7 +1419,7 @@
     // level up.
     textAtOpen = body || (isNew ? NEW_STACK : '');
     yamlPane.value = textAtOpen;
-    setView('form');
+    setView(defaultView());
 
     undoStack.length = 0;
     updateUndo();
@@ -1440,9 +1463,9 @@
     // This doubles as the escape hatch from the Tab key being captured below.
     if (document.activeElement === yamlPane) {
       event.preventDefault();
-      // The Compose button, because that is the one that is pressed while the
-      // caret is in this textarea — so focus lands somewhere that makes sense.
-      modal.querySelector('.stackman-viewbtn[data-view="yaml"]').focus();
+      // Whichever button is pressed right now. Naming one outright would pick a
+      // button that is not there — Split is hidden on a narrow screen.
+      modal.querySelector('.stackman-viewbtn[aria-pressed="true"]').focus();
       return;
     }
     if (!confirmDiscard()) event.preventDefault();

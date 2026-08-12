@@ -207,12 +207,14 @@ endif;
           <input type="checkbox" id="stackman-sanitise">
           <span><?= _('Sanitise') ?></span>
         </label>
-        <!-- Two views, not three. A side-by-side view was here and never
-             earned its place: at any width worth having it, one pane or the
-             other was the one being read. Clicking a form row still marks its
-             lines in the compose pane, which is what it was really for. -->
+        <!-- Split is the one anyone wants on a desktop, and meaningless on a
+             phone: two panes of twenty characters each are worse than either
+             one alone. So its button is hidden below 45rem and the editor
+             opens on Form there instead. Hidden rather than removed, because
+             which it is depends on the window and can change under you. -->
         <div class="stackman-views" role="group" aria-label="<?= _('View') ?>">
-          <button type="button" class="stackman-viewbtn" data-view="form"  aria-pressed="true"><?= _('Form') ?></button>
+          <button type="button" class="stackman-viewbtn" data-view="form"  aria-pressed="false"><?= _('Form') ?></button>
+          <button type="button" class="stackman-viewbtn stackman-viewbtn--split" data-view="split" aria-pressed="true"><?= _('Split') ?></button>
           <button type="button" class="stackman-viewbtn" data-view="yaml"  aria-pressed="false"><?= _('Compose') ?></button>
         </div>
         <button type="button" class="stackman-btn" id="stackman-modal-close">
@@ -229,13 +231,13 @@ endif;
       </div>
     </div>
 
-    <div class="stackman-modal-body" data-view="form">
+    <div class="stackman-modal-body" data-view="split">
 
       <div class="stackman-pane stackman-pane--form">
         <div class="stackman-form" id="stackman-form">
-          <!-- Replaced by the real form as soon as the file is parsed. It is
-               only ever seen for an instant, but Form is the view the editor
-               opens on, so that instant is the first thing anyone sees. -->
+          <!-- Replaced by the real form as soon as the file is parsed, so it is
+               only ever seen for an instant — but this pane is on screen from
+               the moment the editor opens, so that instant is visible. -->
           <p class="stackman-form-empty">
             <?= _('Reading the compose file…') ?>
           </p>
