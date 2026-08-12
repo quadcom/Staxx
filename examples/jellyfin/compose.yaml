@@ -3,7 +3,16 @@
 # This is an ordinary compose file. Everything under x-unraid is ignored by
 # Compose, so `docker compose up` runs it unchanged on any machine, with or
 # without Stack Manager. Delete every x-unraid block and it still works — you
-# just get an inferred form instead of an authored one.
+# just get a plainer form, with the names worked out from the file.
+#
+# Note where the two kinds of information sit. x-unraid describes the stack and
+# the container: what it is called, its logo, what it is for. What each
+# individual setting is for is written in the comment beside that setting, which
+# is where a person would have written it anyway. Two markers ride at the END of
+# a comment, after the prose:
+#
+#   -!S   this value is a secret — hidden when Sanitise is on
+#   -!R   this value must not be left empty
 
 x-unraid:
   version: 1
@@ -22,19 +31,19 @@ services:
     container_name: jellyfin
     restart: unless-stopped
     ports:
-      - "8096:8096"
-      - "7359:7359/udp"     # client auto-discovery
+      - "8096:8096"                             # the web interface -!R
+      - "7359:7359/udp"                         # lets Jellyfin apps find this server on their own
     volumes:
-      - /mnt/user/appdata/jellyfin/config:/config
-      - /mnt/user/appdata/jellyfin/cache:/cache
-      - /mnt/user/media:/media:ro
+      - /mnt/user/appdata/jellyfin/config:/config   # database, settings and metadata. Back this up -!R
+      - /mnt/user/appdata/jellyfin/cache:/cache     # transcode scratch space. Losing it costs nothing
+      - /mnt/user/media:/media:ro                   # your films and shows, mounted read-only -!R
     devices:
-      - /dev/dri:/dev/dri    # Intel QuickSync
+      - /dev/dri:/dev/dri                       # Intel QuickSync or AMD VAAPI. Remove if there is no GPU
     environment:
-      PUID: "99"
-      PGID: "100"
-      TZ: "America/Toronto"
-      JELLYFIN_PublishedServerUrl: ""
+      PUID: "99"                                # -!R
+      PGID: "100"                               # -!R
+      TZ: "America/Toronto"                     # affects scheduled tasks and on-screen times
+      JELLYFIN_PublishedServerUrl: ""           # external address, if you reach this through a reverse proxy
 
     x-unraid:
       name: Jellyfin
@@ -42,68 +51,3 @@ services:
       overview: |
         On first run, open the web interface to complete setup. Point the
         library at `/media`.
-
-      fields:
-        - port: 8096
-          title: Web interface
-          description: Port the Jellyfin web UI listens on.
-          required: true
-
-        - port: 7359/udp
-          title: Client auto-discovery
-          description: >
-            Lets Jellyfin apps on your network find this server without being
-            told its address. Safe to leave alone.
-          display: advanced
-
-        - volume: /config
-          title: Configuration storage
-          description: Database, settings and metadata. **Back this up.**
-          required: true
-          group: Storage
-
-        - volume: /cache
-          title: Transcode cache
-          description: Scratch space. Fast storage helps; losing it costs nothing.
-          group: Storage
-
-        - volume: /media
-          title: Media library
-          description: Your films and shows. Mounted read-only so Jellyfin cannot alter them.
-          mode: ro
-          required: true
-          group: Storage
-
-        - device: /dev/dri
-          title: Hardware transcoding
-          description: >
-            Intel QuickSync or AMD VAAPI. Remove this field if your server has
-            no integrated GPU.
-          display: advanced
-
-        - env: PUID
-          title: User ID
-          type: number
-          display: advanced
-
-        - env: PGID
-          title: Group ID
-          type: number
-          display: advanced
-
-        - env: TZ
-          title: Timezone
-          description: Affects scheduled tasks and on-screen times.
-
-        - env: JELLYFIN_PublishedServerUrl
-          title: Published server URL
-          description: External address, if you reach this through a reverse proxy.
-          display: advanced
-
-        - setting: image
-          title: Version
-          type: select
-          options:
-            - { value: "jellyfin/jellyfin:10.10.3", label: "10.10.3 (pinned)" }
-            - { value: "jellyfin/jellyfin:stable",  label: "Stable" }
-            - { value: "jellyfin/jellyfin:latest",  label: "Latest" }

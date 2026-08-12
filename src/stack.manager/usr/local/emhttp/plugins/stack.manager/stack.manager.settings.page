@@ -36,6 +36,23 @@ _(Stack directory)_:
 > device means stacks are readable before the array starts, which matters for autostart. Placing it
 > on an array share gives more room but is unavailable until the array is up.
 
+_(Container icons)_:
+: <select name="ICON_FETCH" size="1">
+    <?=mk_option($cfg['ICON_FETCH'] ?? 'true', 'true',  _('Download them automatically'))?>
+    <?=mk_option($cfg['ICON_FETCH'] ?? 'true', 'false', _('Do not download anything'))?>
+  </select>
+
+> Each container shows the logo of the software it runs, taken from the
+> [selfh.st icon collection](https://selfh.st/icons/). Your server fetches an icon the first time it
+> sees a container and then keeps it, so this happens once per icon and never again; the only thing
+> sent out is the name of the icon being asked for. Turning it off stops all downloading — icons
+> already saved keep working, and containers with no icon show a coloured tile with their initials
+> instead. You can always name an icon yourself with `icon:` in a stack's `x-unraid` section, which
+> works whichever way this is set.
+>
+> Icons are by [selfh.st](https://selfh.st/icons/) and used under the
+> [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) licence.
+
 &nbsp;
 : <span class="buttons-spaced">
     <input type="submit" name="#apply" value="_(Apply)_" disabled>

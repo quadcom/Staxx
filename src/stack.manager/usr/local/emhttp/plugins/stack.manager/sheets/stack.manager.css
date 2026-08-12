@@ -1,64 +1,3406 @@
 /* Stack Manager — page styles.
  * Copyright 2026, Stack Manager contributors. GPL-2.0.
  *
- * Colours go through CSS custom properties with literal fallbacks so the page
- * follows the active Unraid theme, and still renders sanely on themes that
- * predate a given token. Widths stay relative — the 7.2+ WebGUI is responsive
- * and hardcoded pixel widths break the mobile layout.
+ * Every rule below is scoped under .stackman-scaffold, and every class we apply
+ * is our own. We do not reuse stock Unraid classes for layout: their rules are
+ * invisible to us, they change between releases, and inheriting one by accident
+ * is exactly how a page ends up with its own text underneath somebody else's
+ * table. Own the render.
+ *
+ * ---------------------------------------------------------------------------
+ * TWO TRAPS IN THE UNRAID 7 STYLESHEET, BOTH LEARNED THE HARD WAY
+ * ---------------------------------------------------------------------------
+ *
+ * 1. POISONED CUSTOM PROPERTIES. Unraid 7 ships a Vue component bundle
+ *    (plugins/dynamix.my.servers/unraid-components/uui/ui.*.css) that defines
+ *    Tailwind-style tokens on :root as bare HSL triplets:
+ *
+ *        --background: 0 0% 100%;
+ *        --border:     0 0% 89.8%;
+ *        --muted:      0 0% 96.1%;
+ *
+ *    These are NOT colours. `background: var(--background, #1c1c1c)` resolves
+ *    to `background: 0 0% 100%`, which is invalid at computed-value time, so
+ *    the whole declaration is thrown away and the element ends up transparent.
+ *    The #1c1c1c fallback never runs: a var() fallback applies only when the
+ *    variable is UNDEFINED, never when it is defined with a junk value. This is
+ *    what made the context menu see-through.
+ *
+ *    So: only use tokens verified to hold real colours. The safe ones, defined
+ *    per theme in webGui/styles/themes/*.css and in default-base.css :root, are
+ *
+ *        --background-color   --text-color   --border-color
+ *        --orange-500   --red-500   --green-500   --gray-NNN
+ *
+ *    Everything else gets a literal. Never reach for --background,
+ *    --background-secondary, --text-secondary or --border again.
+ *
+ * 2. UNRAID STYLES EVERY <button> ON THE SYSTEM. default-base.css carries
+ *
+ *        button:where(:not(.unapi *)) { text-transform: uppercase;
+ *          min-width: 86px; margin: 10px 12px 10px 0; padding: 8px;
+ *          text-align: center; border: var(--button-border);
+ *          background: var(--button-background); ... }
+ *
+ *    plus matching :hover, :active and [disabled] rules. Those leak into every
+ *    property we do not explicitly set — which is why our menu labels came out
+ *    in capitals, our menu items overlapped (10px vertical margins), and the
+ *    row icons rendered as 86px-wide orange gradient slabs.
+ *
+ *    Specificity cannot win this cleanly. `button:hover:where(...)` scores
+ *    (0,1,1) — the :hover counts, the :where() does not — so a plain class
+ *    reset of ours at (0,1,0) loses on hover no matter what we write.
+ *
+ *    The fix is the escape hatch Unraid built for exactly this: the `unapi`
+ *    class on an ancestor makes all 88 of those guarded rules stop matching.
+ *    It is applied to the scaffold in StacksPage.php. It carries no styling of
+ *    its own — it appears in the stylesheet only inside :not() — and no Unraid
+ *    JavaScript or PHP refers to it, so it is a marker and nothing more.
+ *
+ *    The reset below is kept as well, so the page still renders sanely if that
+ *    marker ever goes away.
+ * ---------------------------------------------------------------------------
  */
 
+/* ---- Theme tokens ------------------------------------------------------- */
+
 .stackman-scaffold {
-  max-width: 60rem;
+  /* Mapped from tokens verified to hold colours — see trap 1 above. */
+  --sm-bg:     var(--background-color, #1c1c1c);
+  --sm-fg:     var(--text-color, #e0e0e0);
+  --sm-line:   var(--border-color, rgba(128, 128, 128, 0.45));
+  --sm-accent: var(--orange-500, #ff8c2f);
+  --sm-danger: var(--red-500, #e53935);
+  --sm-good:   var(--green-500, #43a047);
+
+  /* No dependable Unraid token exists for these, so they are literals chosen
+     to sit correctly on both light and dark themes. */
+  --sm-muted:   rgba(128, 128, 128, 1);
+  --sm-fill-0:  rgba(128, 128, 128, 0.06);   /* a group wash, not a surface */
+  --sm-fill:    rgba(128, 128, 128, 0.12);
+  --sm-fill-2:  rgba(128, 128, 128, 0.2);
+  --sm-hairline: rgba(128, 128, 128, 0.22);
+
+  --sm-radius: 0.4rem;
+
+  /* Full width. The page previously capped itself at 60rem and left most of a
+     wide screen empty; prose is capped individually below instead, so long
+     service lists get the room and paragraphs stay readable. */
+  line-height: 1.5;
 }
 
-.stackman-scaffold table {
-  width: 100%;
-  margin-bottom: 1.5rem;
+/* ---- Button reset ------------------------------------------------------- */
+
+/* :where() keeps this at the specificity of .stackman-scaffold alone, so it
+   outranks Unraid's bare `button` rule but loses to every styling rule below
+   it — including our own :hover states, which would otherwise be overridden by
+   the reset rather than by intent. */
+.stackman-scaffold :where(button) {
+  all: unset;
+  box-sizing: border-box;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 
-.stackman-scaffold td,
-.stackman-scaffold th {
-  padding: 0.4rem 0.6rem;
-  vertical-align: top;
-  word-break: break-word;
+/* ---- Prose -------------------------------------------------------------- */
+
+/* Text is capped for readability; tables and panels are not. */
+.stackman-notice,
+.stackman-hint {
+  max-width: 90rem;
 }
 
-.stackman-status td:first-child {
-  width: 40%;
+/* ---- Notice banner ------------------------------------------------------ */
+
+.stackman-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  margin: 0 0 2rem;
+  padding: 1rem 1.2rem;
+  border-left: 0.4rem solid var(--sm-accent);
+  border-radius: 0.3rem;
+  background: var(--sm-fill);
+}
+
+.stackman-notice > .fa {
+  flex: 0 0 auto;
+  margin-top: 0.1rem;
+  font-size: 1.8rem;
+  color: var(--sm-accent);
+}
+
+.stackman-notice strong {
+  font-weight: 700;
+}
+
+.stackman-notice--bad {
+  border-left-color: var(--sm-danger);
+}
+
+.stackman-notice--bad > .fa {
+  color: var(--sm-danger);
+}
+
+/* ---- Section bar -------------------------------------------------------- */
+
+.stackman-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0 0 0.6rem;
+}
+
+.stackman-bar h3 {
+  margin: 0;
+}
+
+/* ---- Buttons ------------------------------------------------------------ */
+
+.stackman-scaffold .stackman-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: var(--sm-fill);
+  color: inherit;
+  font-size: 1.2rem;
+  line-height: 1.3;
   white-space: nowrap;
 }
 
+.stackman-scaffold .stackman-btn:hover:not(:disabled) {
+  border-color: var(--sm-accent);
+  color: var(--sm-accent);
+}
+
+.stackman-scaffold .stackman-btn:focus-visible {
+  outline: 0.2rem solid var(--sm-accent);
+  outline-offset: 0.2rem;
+}
+
+.stackman-scaffold .stackman-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.stackman-scaffold .stackman-btn--primary {
+  border-color: var(--sm-accent);
+  font-weight: 700;
+}
+
+.stackman-scaffold .stackman-btn--danger:hover:not(:disabled) {
+  border-color: var(--sm-danger);
+  color: var(--sm-danger);
+}
+
+.stackman-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.2rem;
+}
+
+.stackman-buttons--inline {
+  margin-top: 0;
+}
+
+/* ---- App icons (square tiles — these open the menu) --------------------- */
+
+/* Square, the shape Unraid uses for container icons on its own Docker page.
+   A fixed width AND height, because content-sized chrome is what produced the
+   86px-wide orange slab this replaces. */
+.stackman-scaffold .stackman-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 4.4rem;
+  height: 4.4rem;
+  border: 0.1rem solid var(--sm-hairline);
+  border-radius: 0.8rem;
+  background: var(--sm-fill);
+  color: var(--sm-accent);
+  font-size: 2rem;
+  line-height: 1;
+  overflow: hidden;
+}
+
+.stackman-scaffold .stackman-icon:hover,
+.stackman-scaffold .stackman-icon:focus-visible {
+  border-color: var(--sm-accent);
+  background: var(--sm-fill-2);
+  outline: none;
+}
+
+/* A stack that compose cannot read is not actionable in the usual way; say so
+   in the tile rather than only in the far column. */
+.stackman-scaffold .stackman-icon--bad {
+  color: var(--sm-danger);
+}
+
+.stackman-scaffold .stackman-icon--bad:hover,
+.stackman-scaffold .stackman-icon--bad:focus-visible {
+  border-color: var(--sm-danger);
+}
+
+/* A real logo. Inset a little so it does not touch the tile's border, and
+   box-sizing named explicitly rather than inherited: with width:100% and
+   padding together, the wrong box model overflows the tile by the padding. */
+.stackman-icon img {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 0.4rem;
+  object-fit: contain;
+}
+
+/* ---- The fallback tile -------------------------------------------------- */
+
+/* Shown when a container matches nothing in the icon collection. Initials and a
+   colour, both worked out from the name, so the same container is the same
+   colour on every reload — a random colour would reshuffle the whole table on
+   every refresh, which is worse than the single grey cube this replaces. */
+.stackman-scaffold .stackman-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: #fff;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  text-transform: uppercase;
+  /* The initials are decoration: the row spells the name out in full right
+     beside them, so putting them on the clipboard as well only corrupts what
+     was copied. */
+  user-select: none;
+}
+
+.stackman-icon--child .stackman-tile { font-size: 1.1rem; }
+
+/* Ten colours, matched by STACKMAN_ICON_COLOURS in include/Icons.php. Fixed
+   values rather than theme tokens: the tile carries its own background and
+   white text, so it has to look the same in Unraid's light and dark themes
+   rather than follow either one. */
+.stackman-scaffold .stackman-tile--0 { background: #3f6fb0; }
+.stackman-scaffold .stackman-tile--1 { background: #2f8f7a; }
+.stackman-scaffold .stackman-tile--2 { background: #8a5fb0; }
+.stackman-scaffold .stackman-tile--3 { background: #b06a3f; }
+.stackman-scaffold .stackman-tile--4 { background: #a04a5e; }
+.stackman-scaffold .stackman-tile--5 { background: #4a7f3f; }
+.stackman-scaffold .stackman-tile--6 { background: #7a6a3f; }
+.stackman-scaffold .stackman-tile--7 { background: #3f7f9f; }
+.stackman-scaffold .stackman-tile--8 { background: #8f4f8f; }
+.stackman-scaffold .stackman-tile--9 { background: #5a5f8f; }
+
+/* "and N more" — deliberately not one of the ten, so it never reads as a
+   container that happens to be named with a plus sign. */
+.stackman-scaffold .stackman-tile--more {
+  background: var(--sm-fill-2);
+  color: var(--sm-muted);
+  font-size: 1rem;
+}
+
+/* ---- The stack tile ----------------------------------------------------- */
+
+/* A stack is not one thing, so one logo cannot honestly stand for it: the tile
+   is the icons of the containers inside, shrunk and tiled together, the way a
+   photo album shows its cover. Four is the most that stays legible at this
+   size; the fourth cell counts whatever did not fit. */
+.stackman-scaffold .stackman-mosaic {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 0.1rem;
+  width: 100%;
+  height: 100%;
+}
+
+/* Each cell is a quarter of a 4.4rem square, so the padding and letters that
+   suit a whole tile swamp one of these. */
+.stackman-mosaic img { padding: 0.1rem; }
+
+.stackman-scaffold .stackman-mosaic .stackman-tile {
+  border-radius: 0.2rem;
+  font-size: 0.85rem;
+  letter-spacing: 0;
+}
+
+/* ---- Busy ---------------------------------------------------------------- */
+
+/* While a command runs, a spinner sits OVER the icon rather than replacing it.
+   Unraid's own Docker page does the same, and it keeps the icon visible — which
+   is the thing that says WHICH row is working. It is in the markup from the
+   start rather than created on demand: an icon can now be a picture, and there
+   would be nothing to put back afterwards. */
+.stackman-spinner {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.8rem;
+  /* Dimming rather than hiding: the icon reads through it, the spinner reads
+     on top of it. */
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 1.6rem;
+  pointer-events: none;
+}
+
+.stackman-busy .stackman-spinner { display: flex; }
+
+.stackman-container-row .stackman-spinner {
+  border-radius: 0.5rem;
+  font-size: 1.1rem;
+}
+
+/* A small dot on the tile carries running state, so the eye picks it up from
+   the icon column without crossing the table. */
+.stackman-iconwrap {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.stackman-dot {
+  position: absolute;
+  right: -0.2rem;
+  bottom: -0.2rem;
+  width: 1.2rem;
+  height: 1.2rem;
+  border: 0.2rem solid var(--sm-bg);
+  border-radius: 50%;
+  background: var(--sm-muted);
+  pointer-events: none;
+}
+
+.stackman-dot--up {
+  background: var(--sm-good);
+}
+
+/* ---- Stack table -------------------------------------------------------- */
+
+/* The flex layout lives on .stackman-namebox, a <div> inside the cell, rather
+   than on the cell itself. That used to be a hard rule — flexing a <td>
+   directly broke the table layout algorithm and let content spill down
+   through every row below. There is no table any more, so a grid item could
+   carry flex directly without that particular disaster, but there was no
+   reason to go looking for a new way to lay this out when the old one keeps
+   working unchanged.
+
+   The indent that places a row under its parent also lives here, on the
+   flex box, never on the cell itself (a .stackman-cell is a subgridded
+   column and must not carry its own inline-axis padding). It reads two
+   custom properties rather than a fixed value: --sm-indent-base comes from
+   whichever ancestor .stackman-group--folder wraps this row (zero if there
+   is none), and --sm-indent-step comes from whichever ancestor
+   .stackman-group--children wraps it (zero for a stack row, which is never
+   inside one). Nearest ancestor wins per property, so the two never contend
+   on specificity the way a descendant-selector version of this once did —
+   see the Folders and Container rows sections below for where each variable
+   is actually set, and the 0rem fallbacks are deliberate: calc(0 + 3.4rem)
+   is invalid, since a unitless zero is not a length. */
+.stackman-namebox {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+  padding-left: calc(var(--sm-indent-base, 0rem) + var(--sm-indent-step, 0rem));
+}
+
+.stackman-namebox .stackman-name-text {
+  font-weight: 600;
+}
+
+.stackman-nameinfo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.stackman-sub {
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  font-weight: 400;
+}
+
+.stackman-parse-error {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--sm-muted);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.1rem;
+  white-space: pre-wrap;
+}
+
+/* ---- The grid ------------------------------------------------------------
+ *
+ * This replaces a <table>, and the tracks below are declared exactly once —
+ * every row, at every depth, lines up against them via subgrid rather than
+ * against column widths that a table would have had to recompute from every
+ * cell's content. auto on name and address lets THEM give way under pressure;
+ * services gets a floor of 14rem so it is never the only column doing the
+ * shrinking, which was the actual bug (see the plan) that this rewrite fixes.
+ * There is no width: 1% anywhere any more — see the note on .stackman-num
+ * below for why that number cannot simply move to a grid track.
+ */
+.stackman-stacks {
+  display: grid;
+  grid-template-columns:
+    auto                    /* name */
+    minmax(14rem, 1fr)      /* services */
+    max-content             /* state */
+    auto                    /* address */
+    repeat(4, max-content); /* cpu, mem, net, gpu */
+  width: 100%;
+  margin: 0 0 2rem;
+  background: none;
+}
+
+/* Every level between the tracks above and an actual row has to be a subgrid
+   too, or the columns stop lining up. A subgrid only inherits the tracks of
+   its DIRECT parent, so a plain block anywhere in the chain — folder to
+   stack, stack to container — would hand its children nothing to align to.
+   .stackman-body and .stackman-group hold no cells of their own and exist
+   for exactly this: keeping the chain unbroken however deep a row is nested. */
+.stackman-body,
+.stackman-group,
+.stackman-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+}
+
+/* Collapsing a row or a whole group is done with the `hidden` attribute, and
+   the browser supplies `[hidden] { display: none }` in its own stylesheet.
+   `.stackman-row` above sets `display: grid` on the very same element, and an
+   author rule beats a user-agent one on the same property regardless of which
+   has the higher specificity — so without this undo, `hidden` would lose and
+   every collapsed folder and every unexpanded stack would render in full.
+   Same trap the 45rem block below already documents for the narrow layout;
+   this rule must stay after the ones it is undoing. */
+.stackman-row[hidden],
+.stackman-group[hidden] {
+  display: none;
+}
+
+/* vertical-align does nothing to a grid item — it is a table-cell property —
+   so centring a row's cells against each other is the row's job now. Status
+   and Containers-by-stack, below, keep the plainer top alignment a table's
+   default vertical-align: top gave them; only the stacks tree asked for
+   middle. */
+.stackman-row {
+  align-items: start;
+}
+
+.stackman-stacks .stackman-row {
+  align-items: center;
+}
+
+/* ---- Keyboard focus (treegrid roving tabindex) ---------------------------
+ *
+ * A row is a focus stop now (see the keyboard-navigation section of
+ * stacks.js), and it needs its own visible marker the way a link or button
+ * gets one for free — a plain div does not.
+ *
+ * :focus-visible, not :focus: a mouse click already gets its own feedback —
+ * the row highlights via other rules, and every chevron and icon button
+ * already draws its own ring on :focus-visible below — so a ring appearing
+ * on every click as well would be one more thing lighting up for a mouse
+ * user who never asked for it.
+ *
+ * outline + outline-offset, never border or box-shadow. A border is a real
+ * box property, and .stackman-row is a subgrid (see the notes on
+ * .stackman-group--stack further down) — any inline-axis border on it would
+ * nudge every column in the tree sideways the moment a row gets focus.
+ * outline never participates in layout at all, subgrid or otherwise, so it
+ * cannot do that no matter which row it lands on. box-shadow was ruled out
+ * too: it is not guaranteed to paint in forced-colours mode, where outline
+ * is the one focus indicator that mode is built to respect.
+ *
+ * The offset is NEGATIVE, pulling the ring inward rather than the usual
+ * outward gap: .stackman-table-wrap scrolls this grid horizontally
+ * (overflow-x: auto), and a row flush against either edge would have an
+ * outward ring sliced off by that clipping. Inward, the ring always has
+ * the whole row to sit inside.
+ *
+ * var(--sm-accent) rather than a literal: it already has to read against
+ * both the plain row background AND the tinted bands two other rules paint
+ * behind some rows — .stackman-folder-row's wash and the expanded-stack
+ * band on .stackman-group--stack — and every other focus ring on this page
+ * already trusts the same token to do that (see .stackman-btn:focus-visible
+ * and .stackman-icon:focus-visible above). */
+.stackman-stacks .stackman-row:focus-visible {
+  outline: 0.2rem solid var(--sm-accent);
+  outline-offset: -0.2rem;
+}
+
+/* ---- Restoring what <table> gave for free --------------------------------
+ *
+ * padding, left alignment and word-break used to come from one blanket
+ * `td, th` rule shared by every table on the page. That rule is gone now
+ * that three different grids replace those tables, and it is deliberately
+ * NOT brought back as a blanket .stackman-cell rule — .stackman-status and
+ * .stackman-projects further down already carry their own copy, scoped to
+ * themselves, and an unscoped rule here would stack a second padding on top
+ * of theirs. This copy is scoped to .stackman-stacks for the same reason, in
+ * the other direction: see the IMPORTANT note near .stackman-status below.
+ *
+ * vertical-align: top is not part of this — it is a table-cell property that
+ * does nothing on a grid item, and alignment here is already align-items'
+ * job, immediately above. */
+.stackman-stacks .stackman-cell {
+  padding: 0.7rem 0.8rem;
+  text-align: left;
+  word-break: break-word;
+}
+
+/* The header row's bold weight and rule-off, same idea as the two grids
+   below and scoped the same way. */
+.stackman-stacks [role="columnheader"] {
+  font-weight: 700;
+  border-bottom: 0.1rem solid var(--sm-line);
+}
+
+/* The hairline between rows. A table drew this with `tbody tr + tr td`, and
+ * the obvious translation is `.stackman-row + .stackman-row` — the same
+ * adjacent-sibling selector .stackman-status and .stackman-projects use
+ * below. DO NOT reach for it here: in those two, a row's previous sibling is
+ * always another row. In this grid it usually is not. A stack's own row and
+ * its container rows share a .stackman-group--stack wrapper; a folder's row
+ * shares a .stackman-group--folder wrapper with every stack filed under it.
+ * `+` only matches when the previous element IS the other row — the moment
+ * it is a group instead (the first stack after a folder heading, the first
+ * container under an expandable stack), the selector quietly fails to match.
+ * That would not read as "no separators" but as separators on some row
+ * boundaries and not others, which looks like a rendering bug rather than a
+ * missing rule — see StacksTable.php for the nesting this has to survive.
+ *
+ * border-bottom on every row sidesteps the question of what a row's
+ * neighbour is, or whether it has one, entirely. The one cost is a hairline
+ * under the very last row on the page, which nothing sits under anyway, and
+ * that is far cheaper than working out which row is genuinely first at every
+ * depth. The header row is excluded because [role="columnheader"] above
+ * already draws its own, stronger line — without the exclusion the two
+ * would sit on the same edge and read as one line, doubled. */
+.stackman-stacks .stackman-row:not(.stackman-head-row) {
+  border-bottom: 0.1rem solid var(--sm-hairline);
+}
+
+/* The folder heading has none of the name/services/state/address columns of
+   its own — only the four figures on the right — so its one cell spans where
+   all four would have sat. colspan="4" did the same job on a <table>. */
+.stackman-cell--span4 {
+  grid-column: 1 / 5;
+}
+
+/* "No stacks yet" is a row inside the table rather than a paragraph beside it,
+   so that the table body is always present for the browser to replace when the
+   first stack is added without a page load. It also has no columns to sit in
+   at all: every track collapses into one line of text, centred, where a
+   colspan spanning every column used to. */
+.stackman-empty-row .stackman-cell {
+  grid-column: 1 / -1;
+  padding: 3rem 2rem;
+  color: var(--sm-muted);
+  text-align: center;
+}
+
+/* stackman-cell--name, --services, --state and --address are on every cell of
+   the matching column already, alongside the classes above, but nothing here
+   reads them yet — they exist for the container-query reflow that folds the
+   statistics into a 2×2 block, which is a later step. Left in now so that step
+   is a CSS-only change with no markup to revisit. */
+
+/* ---- Address column ----------------------------------------------------- */
+
+.stackman-addrcell {
+  font-size: 1.2rem;
+}
+
+/* Several addresses stack rather than running on: a container on one of
+   Unraid's br0.x networks has its own, and it should not be lost in a line. */
+.stackman-addr {
+  display: block;
+  white-space: nowrap;
+}
+
+.stackman-addr + .stackman-addr {
+  margin-top: 0.2rem;
+}
+
+/* What leads the entry: the network's name on a bridge, the address itself
+   anywhere else. Either way it is the part that identifies WHERE, so it takes
+   the foreground colour and the ports follow in the accent.
+
+   The colon between them is real text in the markup, not generated here — see
+   the note in StacksTable.php. */
+.stackman-addr-label {
+  color: var(--sm-fg);
+}
+
+.stackman-addr-ports {
+  color: var(--sm-accent);
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+/* ---- Live statistics ---------------------------------------------------- */
+
+/* Figures and their graph sit side by side inside the cell, so a row stays one
+   line tall. The alternative — an expanding panel per row — is what this was
+   asked not to be.
+
+   width: 1% is gone along with the state and address column rules above — the
+   grid track definition (max-content, for every stat column) does that job
+   now. justify-self takes over from text-align: right for the same reason
+   vertical-align stopped working elsewhere on this page: text-align only
+   moves inline content around inside its box, and on a grid item it is the
+   BOX itself that needs pushing against the far edge of its track. */
+.stackman-num {
+  white-space: nowrap;
+  justify-self: end;
+}
+
+.stackman-stacks .stackman-cell.stackman-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.stackman-statv {
+  display: inline-block;
+  min-width: 5.5rem;
+  font-size: 1.25rem;
+  text-align: right;
+  vertical-align: middle;
+}
+
+.stackman-statv small {
+  color: var(--sm-muted);
+  font-size: 0.85em;
+}
+
+/* 2.4rem read as a little thin for how much the eye actually has to pick out
+   of it — raised to 3.2rem. The SVG underneath is authored at a fixed
+   viewBox="0 0 88 24" with preserveAspectRatio="none" (see sparkline() in
+   stacks.js), so this height change simply stretches it taller; nothing in
+   the SVG itself has to know its own rendered size, and the stroke stays a
+   crisp 1px-equivalent line because it is drawn with
+   vector-effect: non-scaling-stroke rather than scaled with the box. */
+.stackman-spark {
+  display: inline-block;
+  width: 8.8rem;
+  height: 3.2rem;
+  margin-left: 0.8rem;
+  vertical-align: middle;
+}
+
+.stackman-spark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.stackman-spark-line {
+  fill: none;
+  stroke: var(--sm-accent);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.stackman-spark-fill {
+  fill: var(--sm-accent);
+  opacity: 0.16;
+  stroke: none;
+}
+
+/* Down and up on their own lines: a transfer rate is two numbers, and putting
+   them side by side makes the column jump about as the digits change. */
+.stackman-net {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+  line-height: 1.2;
+}
+
+.stackman-rx {
+  color: var(--sm-good);
+}
+
+.stackman-tx {
+  color: var(--sm-accent);
+}
+
+.stackman-rx,
+.stackman-tx {
+  font-size: 1.15rem;
+}
+
+/* The GPU column disappears when nothing on the page has a GPU. Targeted by
+   attribute rather than position, because the folder row's name cell spans
+   four tracks in one cell, so GPU is not the same child number there as it is
+   on a stack or container row. `.stackman-no-gpu` itself is toggled by
+   stacks.js onto .stackman-stacks (see the `table.classList.toggle(...)` call
+   at the end of applyStats()), so every data-stat="gpu" cell on the page —
+   header, stack row, container row alike — sits inside it.
+
+   TWO SELECTORS ON PURPOSE, AND NOT FOR REACH — every cell the second one
+   matches, the first already matches too, since every data-stat="gpu" cell
+   in the markup also carries .stackman-cell (StacksPage.php and
+   StacksTable.php both write it that way). The second selector exists purely
+   to WIN A SPECIFICITY FIGHT: on its own, `.stackman-no-gpu [data-stat="gpu"]`
+   is one class plus one attribute, (0,2,0) — and so is the narrow-screen
+   block's `.stackman-cell.stackman-num { display: flex; ... }` near the
+   bottom of this file, two plain classes. A media query adds no specificity
+   to either side, so that is an exact tie, and an exact tie is settled by
+   source order — which the narrow block wins, being later in the file. Left
+   at one selector, this rule would lose below 45rem: `.stackman-no-gpu` would
+   still be set (correctly — nothing on the page has a GPU), but the cell
+   would render anyway, as an empty `display: flex` row showing only the
+   "gpu" label from that block's `::before`. Adding
+   `.stackman-no-gpu .stackman-cell[data-stat="gpu"]` — two classes plus an
+   attribute, (0,3,0) — outranks (0,2,0) outright, so this wins regardless of
+   which rule loads later. If this ever gets "simplified" back to the single
+   selector because it looks redundant, that fight is lost again, silently,
+   and only on a phone. */
+.stackman-no-gpu [data-stat="gpu"],
+.stackman-no-gpu .stackman-cell[data-stat="gpu"] {
+  display: none;
+}
+
+/* .stackman-no-gpu above only fires when NOTHING on the whole page has a
+ * GPU — it hides the column outright, header included. Most of the time
+ * something somewhere does, so the column stays, and every OTHER row's GPU
+ * cell renders anyway: a container with nothing mapped shows an empty
+ * .stackman-statv (paintFigures in stacks.js deliberately leaves it blank,
+ * never a dash — see the comment there), and on a phone that is an empty
+ * "GPU" label with nothing after it, from the narrow block's
+ * .stackman-cell.stackman-num::before { content: attr(data-stat) }.
+ *
+ * This is the per-ROW version of the same idea: `.stackman-row--no-gpu` is
+ * toggled by paintFigures/blankFigures in stacks.js onto the stack or
+ * container row itself, whichever of the two just had its figures painted —
+ * never onto a folder row, which has no such class to read and keeps
+ * showing its own aggregate regardless (folder totals are written by
+ * updateFolderTotals, a separate code path that this selector cannot reach).
+ *
+ * A CLASS, not the data-stat-gpu-mapped ATTRIBUTE stacks.js also writes to
+ * the same row: before the very first stats poll completes, that attribute
+ * is simply absent from every row, including ones that will turn out to
+ * have a GPU once the poll lands — and it is ALSO absent from folder rows
+ * forever, since nothing ever writes it there. Selecting on "attribute
+ * absent" would hide folder rows' legitimate GPU aggregate along with
+ * everything else. A class defaults to "not present" in exactly the same
+ * way, but nothing here reads absence as a signal — the class is only ever
+ * added by code that actually knows the answer, so a folder row (which that
+ * code never touches) simply never has an opinion on it either way.
+ *
+ * ONE SELECTOR, DELIBERATELY, not two like .stackman-no-gpu above: that
+ * rule's low-specificity half exists only to match the header cell too
+ * (which carries no .stackman-cell — see StacksPage.php). Nothing here ever
+ * needs to reach a header, since this class only ever lands on a stack or
+ * container row, so the plain `[data-stat="gpu"]` half has no extra ground
+ * to cover and would be redundant reach, not defence.
+ *
+ * Still (0,3,0), mirroring `.stackman-no-gpu .stackman-cell[data-stat="gpu"]`
+ * above for the same reason that rule needed it: two classes plus an
+ * attribute outranks the narrow block's `.stackman-cell.stackman-num
+ * { display: flex; ... }`, itself two plain classes, (0,2,0) — and a media
+ * query adds no specificity to either side, so without the extra class this
+ * would lose to that rule below 45rem regardless of which loads later,
+ * leaving the label showing with nothing beside it. */
+.stackman-row--no-gpu .stackman-cell[data-stat="gpu"] {
+  display: none;
+}
+
+/* ---- GPU vendor badge ---------------------------------------------------- */
+
+/* Small chip icon identifying whose GPU a container has. The colour carries
+   the meaning; the name is on hover and in the accessible label, so it does
+   not depend on colour alone. */
+.stackman-gpu-badge {
+  display: inline-block;
+  margin-right: 0.4rem;
+  line-height: 0;
+  vertical-align: middle;
+  cursor: help;
+}
+
+.stackman-gpu-badge svg {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.stackman-chip {
+  fill: currentColor;
+}
+
+.stackman-pins {
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  fill: none;
+}
+
+/* Brand colours, so the card is recognisable at a glance without reading. */
+.stackman-gpu-intel  { color: #2b8fd6; }   /* Intel blue, lightened for dark themes */
+.stackman-gpu-amd    { color: #e8413c; }   /* AMD red */
+.stackman-gpu-nvidia { color: #76b900; }   /* Nvidia green */
+
+/* Visible to screen readers, not on screen. */
+.stackman-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A GPU that exists but cannot be measured per container. Muted, because it
+   is the absence of a figure rather than a figure. */
+.stackman-na {
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  font-style: italic;
+  cursor: help;
+}
+
+/* ---- Machine-wide strip ------------------------------------------------- */
+
+.stackman-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1.6rem;
+  margin: 0 0 1.2rem;
+  padding: 0.6rem 1rem;
+  border: 0.1rem solid var(--sm-hairline);
+  border-radius: var(--sm-radius);
+  background: var(--sm-fill);
+  color: var(--sm-muted);
+  font-size: 1.15rem;
+}
+
+.stackman-strip[hidden] {
+  display: none;
+}
+
+.stackman-strip-item b {
+  color: var(--sm-fg);
+  font-weight: 700;
+}
+
+.stackman-strip-item i {
+  font-style: normal;
+  opacity: 0.75;
+}
+
+#stackman-strip-age {
+  margin-left: auto;
+}
+
+/* ---- Folders ------------------------------------------------------------ */
+
+/* The tint paints the ROW, not the cell. A cell shrinks to its content under
+   .stackman-num's justify-self: end and .stackman-row's align-items: center
+   (see the notes by each above), so a per-cell background left an unpainted
+   sliver beside every stat and an unpainted band above and below it. The row
+   is a grid-column: 1 / -1 item with the default align-self: stretch, so it
+   fills its track completely and paints as one unbroken bar behind the four
+   right-hand figures as well as the name. */
+.stackman-folder-row {
+  background: var(--sm-fill);
+  --sm-indent-base: 0rem;   /* the heading is not indented under itself */
+}
+
+.stackman-folder-row > .stackman-cell {
+  /* Longhand, deliberately overriding only the top of the shorthand padding
+     on .stackman-stacks .stackman-cell above — the background that used to
+     sit here moved to the row above. */
+  padding-top: 1.1rem;
+}
+
+.stackman-scaffold .stackman-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 0.3rem;
+  color: var(--sm-muted);
+  font-size: 1.3rem;
+}
+
+.stackman-scaffold .stackman-chevron:hover {
+  color: var(--sm-accent);
+  background: var(--sm-fill-2);
+}
+
+.stackman-folder-name {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+/* A stack with nothing to expand still needs the space a chevron would take,
+   or its icon sits one notch left of every other one and the column ripples. */
+.stackman-scaffold .stackman-chevron--empty {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Indentation for everything filed under a folder heading, set once here on
+   the wrapper that is the folder's real ancestor and read by
+   .stackman-namebox above. This replaces .stackman-nested .stackman-namebox,
+   which never matched anything: .stackman-nested is a class on the STACK ROW
+   itself (see StacksTable.php), and a folder's stacks are children of its
+   .stackman-group--folder wrapper, never descendants of .stackman-nested —
+   they are siblings of it at best. .stackman-group--folder, by contrast, is
+   a genuine ancestor of every stack filed under it, so the descendant
+   relationship this needs finally exists. .stackman-nested stays in the
+   markup as a state marker with no CSS consumer outside the dead mobile
+   block near the bottom of this file — that is deliberate, not an omission;
+   do not go looking for a rule that reads it up here. */
+.stackman-group--folder {
+  --sm-indent-base: 3.4rem;
+}
+
+/* ---- Container rows ----------------------------------------------------- */
+
+/* One row per container inside a stack, shown when the stack is expanded.
+   Deliberately quieter than the stack row above it: smaller tile, no bold.
+   The tint that used to live here, painted per cell, is gone — see the band
+   on .stackman-group--stack below, which paints the stack row and every
+   container row as one continuous bar instead of a second tint compounding
+   behind just these rows.
+
+   The wrapper around a stack's container rows (class stackman-group--children
+   in the markup) also supplies the other half of the indent ladder: 5rem
+   of step on top of whatever base a folder ancestor already contributed to
+   .stackman-namebox's calc(). Same reasoning as .stackman-group--folder
+   above applies here too — a real ancestor, where the old .stackman-nested
+   attempt had none.
+
+   5rem, not 3.4rem: a container needs to read as clearly INSIDE its stack,
+   and 3.4rem — the same distance a filed stack sits from its folder — made
+   the two kinds of nesting look identical at a glance. Only the step grows
+   here, never --sm-indent-base above: the base is folder-to-stack and stays
+   put, so a stack filed in a folder keeps exactly the indent it already
+   had. */
+.stackman-group--children {
+  --sm-indent-step: 5rem;
+}
+
+/* The band behind an EXPANDED stack: the stack row and its container rows
+   painted as one continuous bar, rather than as separately tinted cells. And
+   the gap that follows the band, so the next stack (or folder heading)
+   visibly starts fresh rather than blurring into where the band left off —
+   this used to be a padding-bottom on the children wrapper instead, but that
+   padding sat INSIDE this element, underneath the very background this rule
+   paints, so it was filled in with the band's own tint and read as more
+   band, never as a break from it. The margin below lives on the band's own
+   element rather than inside it, which is what actually leaves the band.
+   Keyed off the children wrapper's own `hidden` attribute, not a mirrored
+   data-expanded flag — both track the same toggle (el.hidden = x reflects to
+   the attribute), but the wrapper's visibility is the single source of truth
+   for whether there is a group on screen to paint at all; a second copy of
+   that state could drift out of sync with it. :has() is supported everywhere
+   subgrid is, so this adds no new browser requirement.
+
+   background / border-radius only, plus this one margin-bottom. Never
+   padding-left/right, border-left/right or margin-left/right on a
+   .stackman-group: grid-template-columns: subgrid subgrids the INLINE axis
+   only, so an inline-axis box property on any group would shift every column
+   in the tree relative to rows outside it. margin-bottom is block-axis, so
+   that hazard does not apply to it.
+
+   The same reason .stackman-group--stack itself carries no VERTICAL padding
+   or border either: when a FOLDER collapses, --stack survives (only the
+   stack row and this children wrapper are hidden inside it), and any
+   vertical padding would turn every collapsed folder into a row of stray
+   tinted stripes. A margin does not have that problem twice over: margin is
+   never painted in the first place, and this whole rule only matches while
+   the children wrapper is visible — collapse it (or collapse the folder
+   around it) and :has() stops matching, so the margin disappears along with
+   the band. Nothing is left over to show as a stray gap.
+
+   This is a bottom margin on the GROUP, not a top margin on whatever group
+   follows it (`+ .stackman-group` or similar) — that reads as the obvious
+   way to write it, but there is often no next sibling to put it on: a
+   non-expandable stack renders with no --stack wrapper at all to match, and
+   an expanded stack that happens to be the LAST stack in its folder has no
+   sibling after it inside .stackman-group--folder either. A margin aimed at
+   "the next one" would silently vanish in exactly the case — the last stack
+   in a folder — where the gap before the folder ends matters most. Putting
+   the margin on this element instead covers every case with one rule,
+   because it never depends on what (if anything) comes after it.
+
+   Margins never collapse in grid layout, so this is exactly 1.4rem, not
+   something smaller shared with a neighbour's margin. */
+.stackman-group--stack:has(> .stackman-group--children:not([hidden])) {
+  background: var(--sm-fill-0);
+  border-radius: var(--sm-radius);
+  margin-bottom: 1.4rem;
+}
+
+/* Closes the band cleanly: without this, the hairline every row draws via
+   .stackman-stacks .stackman-row:not(.stackman-head-row) — see "The hairline
+   between rows" above — would leave a stray line across the bottom edge of
+   the band, under the last container row. :not() contributes its argument's
+   specificity, so that selector scores (0,3,0) — exactly what this one scores
+   too — and an exact tie is decided by source order, so this rule MUST sit
+   later in the file than that one or it silently loses and does nothing.
+   (It does: that rule is above, this one is below.) */
+.stackman-group--children > .stackman-row:last-child {
+  border-bottom: none;
+}
+
+/* A stack row shows its own graph only while COLLAPSED. Expanded, the
+ * containers underneath draw their own — a graph on the stack row too would
+ * repeat the same shape (its figures are already the sum of theirs) while
+ * doubling the visual noise, so only the desktop and narrow height changes
+ * above earn their keep on a row that also has real per-container graphs
+ * right below it. The FIGURES stay in both states — expanded, the stack
+ * total is still worth seeing at a glance without collapsing back — only the
+ * .stackman-spark graphs are removed here.
+ *
+ * Same :has() this file already uses to paint the expanded-stack band (see
+ * .stackman-group--stack:has(...) above): the children wrapper's own
+ * `hidden` is the single source of truth for expanded/collapsed, so reading
+ * it here rather than a second, independently-toggled flag cannot drift out
+ * of sync with it.
+ *
+ * `> .stackman-stack-row` (child, not descendant) is what keeps this scoped
+ * to the stack row's OWN graphs. The stack row and the children wrapper are
+ * SIBLINGS inside .stackman-group--stack (see StacksTable.php) — a container
+ * row's sparks live inside that sibling wrapper, never inside
+ * .stackman-stack-row itself, so this selector cannot reach them no matter
+ * how the container rows are nested further down. Writing this as
+ * `.stackman-group--stack:has(...) .stackman-spark` instead (descendant, no
+ * child combinator on the row) would match every spark under the whole
+ * group, containers included — exactly the mistake this comment exists to
+ * head off.
+ *
+ * The sparkline JS (see sparkline() in stacks.js) does not know or care that
+ * its host is hidden — it keeps writing a fresh <svg> into it every poll
+ * regardless. That is harmless (a hidden element still accepts innerHTML)
+ * and is actually the point: history keeps accumulating while the stack sits
+ * expanded, so the moment it is collapsed again the graph is already
+ * complete rather than starting over from a single point. */
+.stackman-group--stack:has(> .stackman-group--children:not([hidden]))
+  > .stackman-stack-row .stackman-spark {
+  display: none;
+}
+
+/* The guide line that connects a container row to its parent stack's icon.
+   It lives on the name cell's flex box as border-left. A border-left paints
+   at the box's own left edge, not wherever the content starts — so the
+   indent MUST be carried by margin-left here, not padding-left. That is the
+   trap: padding only pushes the content inward and leaves the border sitting
+   at the box edge, which for this element is the far left of the row (the
+   namebox has no margin of its own), not alongside the parent stack's icon
+   where the line is supposed to read. margin-left duplicates the base + step
+   formula .stackman-namebox uses for its padding-left, and padding-left here
+   is reduced to a fixed 1rem of clearance between the line and the icon,
+   overriding the base rule's padding-left by source order (see below). It
+   does NOT sit on the .stackman-group--children wrapper as a border-left:
+   that would be an inline-axis property on a subgridded group and would
+   shift every column in the tree (a box-shadow: inset rail on the wrapper
+   would be layout-safe instead, but a border on the cell reads the same on
+   screen and needs no extra caution here, since this is a plain div, not a
+   .stackman-group). */
+.stackman-namebox--child {
+  margin-left: calc(var(--sm-indent-base, 0rem) + var(--sm-indent-step, 0rem));
+  padding-left: 1rem;
+  border-left: 0.1rem solid var(--sm-hairline);
+}
+
+.stackman-scaffold .stackman-icon--child {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.5rem;
+  color: var(--sm-muted);
+  font-size: 1.3rem;
+  /* No `cursor: default` here any more. That existed because this tile used
+     to be a dead <span>; it is a real <button> now (the container context
+     menu), and that declaration would override the button reset's
+     `cursor: pointer` and make a working control look unclickable. */
+}
+
+/* The dot is sized for the 4.4rem tile; on the smaller one it would swamp the
+   corner. */
+.stackman-container-row .stackman-dot {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-width: 0.15rem;
+}
+
+.stackman-container-row .stackman-name-text {
+  font-weight: 400;
+}
+
+/* Image names run long — ghcr.io/some-org/some-app:version-1.2.3 — and must
+   not be allowed to stretch the column. */
+.stackman-image {
+  max-width: 28rem;
+  overflow: hidden;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* On a container row, .stackman-image IS the grid cell — a grid item, which
+   the browser blockifies automatically, which is the only reason max-width,
+   overflow and text-overflow above have any effect there at all. The image
+   line under a single-service stack's name is not a cell, though; it is an
+   ordinary inline <span> sitting inside one, and an inline box ignores
+   max-width and overflow outright — so without forcing it to display: block
+   here, the truncation above would silently do nothing on this element and a
+   long registry path would stretch the row's whole column instead. */
+.stackman-image--sub {
+  display: block;
+}
+
+/* ---- Context menu ------------------------------------------------------- */
+
+/* Fixed, so it is measured against the viewport, and a child of the page
+   rather than of a table cell — inside the table's scroll container it would
+   be clipped the moment it opened.
+
+   background-color uses --background-color, which is a real colour in every
+   shipped theme. It must never be --background: see trap 1 at the top. */
+.stackman-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 24rem;
+  max-width: 34rem;
+  padding: 0.4rem 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.6rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  box-shadow: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.5);
+}
+
+.stackman-menu[hidden] {
+  display: none;
+}
+
+.stackman-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.8rem 1.2rem;
+  border-bottom: 0.1rem solid var(--sm-hairline);
+  font-size: 1.25rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.stackman-scaffold .stackman-menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+  width: 100%;
+  padding: 0.7rem 1.4rem;
+  font-size: 1.3rem;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.stackman-scaffold .stackman-menu-item > .fa {
+  flex: 0 0 1.6rem;
+  color: var(--sm-muted);
+  text-align: center;
+}
+
+.stackman-scaffold .stackman-menu-item:hover:not(:disabled),
+.stackman-scaffold .stackman-menu-item:focus-visible:not(:disabled) {
+  background: var(--sm-fill-2);
+  outline: none;
+}
+
+.stackman-scaffold .stackman-menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.stackman-scaffold .stackman-menu-item--danger:hover:not(:disabled),
+.stackman-scaffold .stackman-menu-item--danger:hover:not(:disabled) > .fa {
+  color: var(--sm-danger);
+}
+
+.stackman-menu-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.stackman-menu-hint {
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+.stackman-menu-sep {
+  margin: 0.4rem 0 0;
+  padding: 0.6rem 1.4rem 0.2rem;
+  border-top: 0.1rem solid var(--sm-hairline);
+  color: var(--sm-muted);
+  font-size: 1.05rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.stackman-menu-sep:empty {
+  padding: 0;
+}
+
+/* A table wider than the page scrolls inside its own box, so the page itself
+   never grows a second horizontal scrollbar.
+
+   container-type: inline-size makes this wrapper a query container for the
+   reflow rules near "---- Container-query reflow ----" further down this
+   file, so the table folds itself based on ITS OWN width rather than the
+   viewport's — correct regardless of Unraid's sidebar, page zoom, or a
+   theme's own padding, none of which a viewport media query could see.
+   inline-size containment is safe on this particular element: it is a
+   block-level box whose width already comes from its parent rather than
+   from its own content, and it already clips overflow on that same axis via
+   overflow-x: auto below, so containing it changes nothing about how it was
+   already behaving. */
+.stackman-table-wrap {
+  container-type: inline-size;
+  container-name: stackman-table;
+  max-width: 100%;
+  overflow-x: auto;
+  margin-bottom: 2rem;
+}
+
+.stackman-table-wrap > .stackman-stacks {
+  margin-bottom: 0;
+}
+
+.stackman-pill {
+  display: inline-block;
+  padding: 0.25rem 0.8rem;
+  border-radius: 1rem;
+  background: var(--sm-fill-2);
+  font-size: 1.1rem;
+  white-space: nowrap;
+}
+
+.stackman-pill--up {
+  background: var(--sm-good);
+  color: #fff;
+}
+
+.stackman-pill--down {
+  color: var(--sm-muted);
+}
+
+/* Paused, restarting, removing — in motion, or in a state you did not ask for. */
+.stackman-pill--warn {
+  background: var(--sm-accent);
+  color: #000;
+}
+
+.stackman-pill--bad {
+  background: var(--sm-danger);
+  color: #fff;
+}
+
+/* While a command is running. The spinning icon says something is happening;
+   this says what. */
+.stackman-pill--busy {
+  border: 0.1rem dashed var(--sm-accent);
+  background: transparent;
+  color: var(--sm-accent);
+}
+
+/* ---- Panels: editor and output ------------------------------------------ */
+
+.stackman-panel {
+  margin: 2rem 0;
+  padding: 1.4rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+}
+
+.stackman-panel[hidden] {
+  display: none;
+}
+
+.stackman-field {
+  display: block;
+  margin-bottom: 1.4rem;
+}
+
+.stackman-field > span:first-child {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-weight: 700;
+}
+
+.stackman-field .stackman-hint {
+  display: block;
+  margin: 0.4rem 0 0;
+}
+
+/* The scaffold is marked `unapi`, so Unraid's input and textarea styling does
+   not reach these. They are styled here in full, on purpose. */
+.stackman-field input[type="text"],
+.stackman-field textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.3rem;
+}
+
+.stackman-field input[type="text"]:focus,
+.stackman-field textarea:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}
+
+.stackman-field input[type="text"]:read-only {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.stackman-field textarea {
+  min-height: 34rem;
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  line-height: 1.45;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  resize: vertical;
+}
+
+.stackman-error {
+  margin-top: 1rem;
+  padding: 1rem 1.2rem;
+  border-left: 0.4rem solid var(--sm-danger);
+  border-radius: 0.3rem;
+  background: rgba(229, 57, 53, 0.12);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.2rem;
+  white-space: pre-wrap;
+}
+
+.stackman-error[hidden] {
+  display: none;
+}
+
+.stackman-log {
+  max-height: 46rem;
+  margin: 0;
+  padding: 1rem 1.2rem;
+  overflow: auto;
+  border-radius: 0.3rem;
+  background: rgba(0, 0, 0, 0.28);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.2rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- Compose editor modal ------------------------------------------------ */
+
+/* A <dialog>. showModal() puts it in the top layer, which outranks every
+   z-index on the page including the context menu's 9999 — so nothing here
+   needs a z-index at all.
+
+   Every one of these first six declarations is undoing a user-agent default.
+   A <dialog> ships with margin: auto, a solid border, 1em of padding,
+   width/height: fit-content and its own background, and inheriting any of
+   that produces a box that is nearly right and wrong in ways that are hard
+   to see. Set all of them. */
+.stackman-modal {
+  width: min(168rem, 96vw);
+  height: min(94vh, 108rem);
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+
+  /* The three rows: head and foot size to their content, the body takes the
+     rest. Without this the panes grow to fit their content and the whole
+     dialog scrolls, which loses the header the moment a file is long. */
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+.stackman-modal:not([open]) {
+  display: none;
+}
+
+.stackman-modal::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+/* ---- modal: header ---- */
+
+.stackman-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  padding: 1.2rem 1.4rem;
+  border-bottom: 0.1rem solid var(--sm-line);
+}
+
+.stackman-modal-title {
+  margin: 0;
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stackman-modal-name {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.stackman-modal-name > span {
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+/* The folder the stack sits in. Shown, never typed in — it is changed with
+   "Move to folder", which moves the directory. */
+.stackman-name-folder {
+  color: var(--sm-muted);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.2rem;
+  white-space: nowrap;
+}
+
+.stackman-name-folder[hidden] {
+  display: none;
+}
+
+.stackman-modal-name input[type="text"] {
+  width: 20rem;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.5rem 0.8rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.3rem;
+}
+
+.stackman-modal-name input[type="text"]:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}
+
+.stackman-modal-name input[type="text"]:read-only {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.stackman-modal-tools {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-left: auto;
+}
+
+/* ---- modal: the Form / Split / Compose control ---- */
+
+.stackman-views {
+  display: inline-flex;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  overflow: hidden;
+}
+
+.stackman-scaffold .stackman-viewbtn {
+  padding: 0.6rem 1.1rem;
+  border-right: 0.1rem solid var(--sm-line);
+  background: transparent;
+  color: inherit;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-viewbtn:last-child {
+  border-right: 0;
+}
+
+.stackman-scaffold .stackman-viewbtn:hover {
+  background: var(--sm-fill);
+}
+
+.stackman-scaffold .stackman-viewbtn[aria-pressed="true"] {
+  background: var(--sm-fill-2);
+  font-weight: 700;
+}
+
+/* ---- modal: body and the two panes ---- */
+
+.stackman-modal-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;          /* lets the panes scroll instead of stretching the grid */
+}
+
+.stackman-modal-body[data-view="form"] { grid-template-columns: 1fr; }
+.stackman-modal-body[data-view="yaml"] { grid-template-columns: 1fr; }
+
+.stackman-modal-body[data-view="form"] .stackman-pane--yaml { display: none; }
+.stackman-modal-body[data-view="yaml"] .stackman-pane--form { display: none; }
+
+.stackman-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.stackman-pane--form {
+  border-right: 0.1rem solid var(--sm-line);
+}
+
+.stackman-modal-body[data-view="form"] .stackman-pane--form,
+.stackman-modal-body[data-view="yaml"] .stackman-pane--form {
+  border-right: 0;
+}
+
+.stackman-form {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 1.4rem;
+  overflow: auto;
+}
+
+.stackman-form-empty {
+  margin: 0;
+  color: var(--sm-muted);
+  font-size: 1.3rem;
+}
+
+/* ---- modal: one service's block of fields ---- */
+
+.stackman-svc {
+  margin: 0 0 2.4rem;
+  padding-left: 0.9rem;
+  border-left: 0.3rem solid transparent;
+}
+
+/* Shown when the caret is somewhere in this service but on a line no single
+   field owns — a heading, a blank line, a key we do not surface. Settling on
+   the service beats blinking the highlight off and on as the caret moves. */
+.stackman-svc--active {
+  border-left-color: var(--sm-hairline);
+}
+
+.stackman-svchead {
+  margin: 0 0 0.8rem;
+  font-size: 1.5rem;
+}
+
+.stackman-svckey {
+  color: var(--sm-muted);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.2rem;
+  font-weight: 400;
+}
+
+.stackman-fieldgroup {
+  margin: 2rem 0 0.8rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 0.1rem solid var(--sm-hairline);
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stackman-fieldrow {
+  margin: 0 0 1.4rem;
+  padding: 0.8rem 1rem;
+  border-radius: var(--sm-radius);
+  outline: none;
+}
+
+.stackman-fieldrow--active {
+  background: var(--sm-fill);
+}
+
+.stackman-fieldrow--locked {
+  opacity: 0.75;
+}
+
+.stackman-fieldhead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+/* ---- modal: the boxes on a field row ---- */
+
+/* Host, container and note. A plain setting has one value box instead of two,
+   so only the mapped rows get the middle column. */
+.stackman-boxes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 0.8rem;
+}
+
+.stackman-boxes--mapped {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr);
+}
+
+.stackman-box {
+  display: block;
+  min-width: 0;
+}
+
+/* The input and, on a volume's host path, the Browse button beside it. */
+.stackman-boxline {
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+/* Explicit, because the input carries width: 100% from the shared skin and
+   would otherwise claim the whole row before the button gets a say. */
+.stackman-boxline .stackman-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.stackman-scaffold .stackman-browse {
+  flex: 0 0 auto;
+  padding: 0 0.9rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background: var(--sm-fill);
+  color: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-browse:hover:not(:disabled) {
+  border-color: var(--sm-accent);
+}
+
+.stackman-scaffold .stackman-browse:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.stackman-boxhint {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+.stackman-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+/* The first of the pair pushes both to the right-hand end of the row head. */
+.stackman-flag:first-of-type {
+  margin-left: auto;
+}
+
+.stackman-flag input {
+  margin: 0;
+}
+
+/* ---- modal: adding and removing entries ---- */
+
+/* One row per service, always shown. These belong to the service and not to
+   any one list, because removing the last port takes the "ports:" key with it
+   and a control living on that list would go with it. */
+.stackman-adds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.2rem;
+  padding-top: 1.2rem;
+  border-top: 0.1rem solid var(--sm-hairline);
+}
+
+.stackman-scaffold .stackman-add {
+  padding: 0.5rem 1rem;
+  border: 0.1rem dashed var(--sm-line);
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--sm-muted);
+  font-family: inherit;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-add:hover:not(:disabled),
+.stackman-scaffold .stackman-add:focus-visible {
+  border-style: solid;
+  border-color: var(--sm-accent);
+  color: inherit;
+  outline: none;
+}
+
+/* Quiet until the row is hovered or focused, so a wall of Remove buttons is
+   not the first thing the eye lands on. */
+.stackman-scaffold .stackman-kill {
+  padding: 0.1rem 0.5rem;
+  border: 0.1rem solid transparent;
+  border-radius: 0.2rem;
+  background: transparent;
+  color: var(--sm-muted);
+  font-family: inherit;
+  font-size: 1.1rem;
+  opacity: 0.45;
+  cursor: pointer;
+}
+
+.stackman-fieldrow:hover .stackman-kill,
+.stackman-fieldrow--active .stackman-kill,
+.stackman-scaffold .stackman-kill:focus-visible {
+  opacity: 1;
+}
+
+.stackman-scaffold .stackman-kill:hover:not(:disabled),
+.stackman-scaffold .stackman-kill:focus-visible {
+  border-color: var(--sm-danger);
+  color: var(--sm-danger);
+  outline: none;
+}
+
+.stackman-scaffold .stackman-add:disabled,
+.stackman-scaffold .stackman-kill:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* A required field left empty. Colour alone would not be enough on its own,
+   which is why the footer also names the field in words. */
+.stackman-fieldrow--gap {
+  box-shadow: inset 0.3rem 0 0 var(--sm-danger);
+}
+
+.stackman-fieldrow--gap .stackman-input:not(:disabled) {
+  border-color: var(--sm-danger);
+}
+
+.stackman-scaffold .stackman-required {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 1.2rem;
+  padding: 0.8rem 1.2rem;
+  border-left: 0.4rem solid var(--sm-danger);
+  border-radius: 0.3rem;
+  background: rgba(229, 57, 53, 0.12);
+  color: inherit;
+  font-size: 1.2rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-required::after {
+  content: '  \2192  go to it';
+  color: var(--sm-muted);
+  white-space: pre;
+}
+
+.stackman-scaffold .stackman-required:hover {
+  background: rgba(229, 57, 53, 0.2);
+}
+
+.stackman-scaffold .stackman-required[hidden] {
+  display: none;
+}
+
+.stackman-fieldtitle {
+  font-weight: 700;
+}
+
+.stackman-fieldtag {
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.2rem;
+  background: var(--sm-fill-2);
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+.stackman-scaffold .stackman-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.3rem;
+}
+
+.stackman-scaffold .stackman-input:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}
+
+.stackman-scaffold .stackman-input:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.stackman-scaffold .stackman-input--check {
+  width: auto;
+  padding: 0;
+}
+
+.stackman-fieldraw {
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  border: 0.1rem dashed var(--sm-line);
+  border-radius: 0.3rem;
+  background: var(--sm-fill-0);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.2rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.stackman-fieldhint,
+.stackman-fieldmap,
+.stackman-fieldnote {
+  margin: 0.5rem 0 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+  white-space: pre-wrap;
+}
+
+.stackman-fieldmap code {
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.2rem;
+  background: var(--sm-fill-2);
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.stackman-fieldnote {
+  color: var(--sm-accent);
+}
+
+/* ---- modal: Sanitise ---- */
+
+.stackman-sanitise {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.stackman-sanitise input {
+  margin: 0;
+}
+
+.stackman-modal-banner {
+  margin: 0;
+  border-radius: 0;
+  border-left: 0;
+  border-bottom: 0.1rem solid var(--sm-line);
+}
+
+.stackman-modal-banner[hidden] {
+  display: none;
+}
+
+/* The blur keeps the box's real width, so the shape of the page in a
+   screenshot stays honest. It is a screenshot aid and not a security measure:
+   the real text is still in the page and still selectable — which is why
+   turning this on locks the whole editor rather than letting anything be
+   saved while placeholders are on screen. */
+.stackman-modal[data-sanitised="1"] .stackman-fieldrow--secret .stackman-input {
+  filter: blur(0.5rem);
+  user-select: none;
+}
+
+.stackman-modal[data-sanitised="1"] .stackman-fieldrow--secret .stackman-input[data-note],
+.stackman-modal[data-sanitised="1"] .stackman-fieldrow--secret .stackman-input[data-part="container"] {
+  filter: none;   /* the note and the container side are not the secret */
+}
+
+/* ---- modal: the highlight band ---- */
+
+.stackman-mark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-left: 0.3rem solid var(--sm-accent);
+  background: rgba(255, 140, 47, 0.16);
+}
+
+/* ---- modal: the compose pane ---- */
+
+/* The wrapper carries the background so the highlight bands, which sit behind
+   the textarea, are visible through it. */
+.stackman-yamlwrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--background-color, #1c1c1c);
+}
+
+/* The line-number gutter. Painted on top of the textarea and opaque, so a line
+   too long for the box scrolls underneath it rather than out past it — see the
+   note in the markup. Its width is set from script, because it has to grow when
+   a file passes 99 lines and again at 999. */
+.stackman-yamlnums {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  box-sizing: border-box;
+  width: 5rem;
+  padding: 1.2rem 0.9rem 0 0.9rem;
+  overflow: hidden;
+  border-right: 0.1rem solid var(--sm-hairline);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--sm-muted);
+
+  /* Must match the textarea exactly, or the numbers drift from the lines. */
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.3rem;
+  line-height: 1.45;
+
+  text-align: right;
+  white-space: pre;
+  user-select: none;
+  pointer-events: none;
+}
+
+.stackman-yamlmarks {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;   /* clicks and drags pass straight to the textarea */
+}
+
+.stackman-scaffold .stackman-yaml {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  /* Left padding clears the gutter. Script keeps it in step with the gutter's
+     real width; this value is the two-digit case, which is what a new stack
+     opens on. */
+  padding: 1.2rem 1.4rem 1.2rem 5.9rem;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;   /* the bands show through from behind */
+  color: inherit;
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.3rem;
+
+  /* line-height must stay an explicit number. The band overlay positions line
+     N at (N-1) x lineHeight, read back with getComputedStyle — and a theme
+     that leaves this at `normal` returns a keyword, not pixels, which puts
+     every band at the top of the box. */
+  line-height: 1.45;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow: auto;
+}
+
+.stackman-yamlstatus {
+  padding: 0 1.4rem;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+  line-height: 1.45;
+}
+
+.stackman-yamlstatus:empty {
+  display: none;
+}
+
+/* ---- modal: footer ---- */
+
+.stackman-modal-foot {
+  padding: 1.2rem 1.4rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.stackman-modal-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.4rem;
+}
+
+.stackman-modal-note {
+  flex: 1 1 auto;
+  margin: 0;
+  max-width: 78rem;
+}
+
+.stackman-modal-note .stackman-hint--warn {
+  display: block;
+  margin-top: 0.4rem;
+}
+
+.stackman-modal-foot .stackman-error {
+  margin: 0 0 1.2rem;
+  max-height: 18rem;
+  overflow: auto;
+}
+
+/* ---- The folder picker --------------------------------------------------- */
+
+/* A second dialog, opened on top of the editor. Same six user-agent defaults
+   to undo as the editor above — see the note there. Its own backdrop sits over
+   the editor's, so the two darken together rather than the editor showing
+   through at full brightness. */
+.stackman-picker {
+  width: min(62rem, 92vw);
+  height: min(80vh, 76rem);
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+
+  display: grid;
+  grid-template-rows: auto auto 1fr auto auto;
+}
+
+.stackman-picker:not([open]) {
+  display: none;
+}
+
+.stackman-picker::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.stackman-picker-head {
+  padding: 1.2rem 1.4rem 0.8rem;
+}
+
+.stackman-picker-title {
+  margin: 0 0 0.4rem;
+  font-size: 1.6rem;
+}
+
+.stackman-picker-hint {
+  margin: 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+/* Where you are now — the thing "Use this folder" will hand back, so it is
+   shown as the path it is rather than as a breadcrumb trail that hides it. */
+.stackman-picker-where {
+  padding: 0 1.4rem 0.9rem;
+}
+
+.stackman-picker-where code {
+  display: block;
+  padding: 0.6rem 0.9rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background: var(--sm-fill);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.3rem;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.stackman-picker-list {
+  padding: 0 1.4rem;
+  overflow-y: auto;
+}
+
+.stackman-scaffold .stackman-pickrow {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 0.2rem;
+  padding: 0.7rem 0.9rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.3rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-pickrow:hover,
+.stackman-scaffold .stackman-pickrow:focus-visible {
+  background: var(--sm-fill);
+  outline: none;
+}
+
+.stackman-scaffold .stackman-pickrow .fa {
+  width: 1.6rem;
+  color: var(--sm-muted);
+}
+
+/* Up one level, kept apart from the folders below it so it is not mistaken
+   for one of them. */
+.stackman-scaffold .stackman-pickrow--up {
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 0.1rem solid var(--sm-hairline);
+  border-radius: 0;
+  color: var(--sm-muted);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.2rem;
+}
+
+.stackman-picker-new {
+  display: flex;
+  align-items: stretch;
+  gap: 0.6rem;
+  padding: 1rem 1.4rem 0;
+}
+
+.stackman-picker-new input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.3rem;
+}
+
+.stackman-picker-new input[type="text"]:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}
+
+.stackman-picker-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  padding: 1.2rem 1.4rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.stackman-picker-msg {
+  margin: 0;
+  min-width: 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+/* ---- The timezone picker ------------------------------------------------- */
+
+/* The third dialog. Same six user-agent defaults to undo as the two above. */
+.stackman-tz {
+  width: min(84rem, 94vw);
+  height: min(88vh, 84rem);
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+
+  display: grid;
+  grid-template-rows: auto auto auto auto 1fr auto;
+}
+
+.stackman-tz:not([open]) {
+  display: none;
+}
+
+.stackman-tz::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.stackman-tz-head {
+  padding: 1.2rem 1.4rem 0.8rem;
+}
+
+.stackman-tz-title {
+  margin: 0 0 0.4rem;
+  font-size: 1.6rem;
+}
+
+.stackman-tz-hint {
+  margin: 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+.stackman-tz-map {
+  padding: 0 1.4rem;
+}
+
+.stackman-tz-map svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 26vh;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background: var(--sm-fill);
+}
+
+/* Grey rather than a colour, so the same map reads on a light and a dark
+   theme without a second palette. */
+.stackman-tz-land path {
+  fill: var(--sm-muted);
+  fill-opacity: 0.45;
+  stroke: none;
+}
+
+.stackman-tz-band {
+  fill: transparent;
+  stroke: var(--sm-hairline);
+  stroke-width: 0.3;
+  cursor: pointer;
+}
+
+.stackman-tz-band:hover {
+  fill: var(--sm-accent);
+  fill-opacity: 0.18;
+}
+
+.stackman-tz-band--on {
+  fill: var(--sm-accent);
+  fill-opacity: 0.34;
+  stroke: var(--sm-accent);
+  stroke-width: 0.6;
+}
+
+.stackman-tz-banglabel {
+  fill: var(--sm-muted);
+  font-size: 6px;
+  font-family: ui-monospace, Consolas, monospace;
+  pointer-events: none;
+  user-select: none;
+}
+
+.stackman-tz-caption {
+  margin: 0.5rem 0 0;
+  min-height: 1.6rem;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+.stackman-tz-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.8rem 1.4rem 0;
+}
+
+.stackman-tzchips-lead {
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+.stackman-scaffold .stackman-tzchip {
+  padding: 0.3rem 0.8rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 1rem;
+  background: transparent;
+  color: inherit;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-tzchip--on,
+.stackman-scaffold .stackman-tzchip:hover {
+  border-color: var(--sm-accent);
+  background: var(--sm-fill);
+}
+
+.stackman-tz-find {
+  padding: 1rem 1.4rem 0.8rem;
+}
+
+.stackman-tz-find input[type="text"] {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.3rem;
+}
+
+.stackman-tz-find input[type="text"]:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}
+
+.stackman-tz-list {
+  padding: 0 1.4rem;
+  overflow-y: auto;
+}
+
+.stackman-scaffold .stackman-tzrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  align-items: baseline;
+  gap: 0.9rem;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 0.2rem;
+  padding: 0.6rem 0.9rem;
+  border: 0.1rem solid transparent;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.3rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-tzrow:hover,
+.stackman-scaffold .stackman-tzrow:focus-visible {
+  background: var(--sm-fill);
+  outline: none;
+}
+
+/* What the variable says now. */
+.stackman-scaffold .stackman-tzrow--on {
+  border-color: var(--sm-accent);
+}
+
+.stackman-tzname {
+  color: var(--sm-muted);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.15rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stackman-tzoff {
+  color: var(--sm-muted);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.15rem;
+  white-space: nowrap;
+}
+
+.stackman-tz-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  padding: 1.2rem 1.4rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.stackman-tz-msg {
+  margin: 0;
+  min-width: 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+/* ---- Collapsible environment section ------------------------------------ */
+
+.stackman-details {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 0.1rem solid var(--sm-hairline);
+}
+
+.stackman-details > summary {
+  cursor: pointer;
+  font-size: 1.4rem;
+  font-weight: 700;
+  list-style: revert;
+}
+
+.stackman-details[open] > summary {
+  margin-bottom: 1.5rem;
+}
+
+/* ---- Status and containers-by-stack tables ------------------------------
+ *
+ * Two small two-column tables — Environment's check/result list and the
+ * containers-by-stack list — built the same way as the stacks tree above but
+ * one link shorter: a row's own cells align to the table's tracks via
+ * subgrid directly, with no group wrapper in between because neither of
+ * these ever nests.
+ *
+ * IMPORTANT: .stackman-cell and .stackman-row are shared with .stackman-stacks
+ * above. Every rule here is scoped under .stackman-status or .stackman-projects
+ * so it cannot leak into the stacks tree — a blanket .stackman-cell rule would
+ * silently repaint that grid too. */
+
+.stackman-status,
+.stackman-projects {
+  display: grid;
+  width: 100%;
+  margin: 0 0 2rem;
+  background: none;
+}
+
+/* Was td:first-child/th:first-child { width: 30% }. */
+.stackman-status {
+  grid-template-columns: 30% 1fr;
+}
+
+/* Was .stackman-project { width: 25% }. */
+.stackman-projects {
+  grid-template-columns: 25% 1fr;
+}
+
+.stackman-status .stackman-row,
+.stackman-projects .stackman-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  /* vertical-align: top did nothing to a grid item even before these became
+     divs — see the note on .stackman-row above. These two tables keep the
+     plainer top alignment a table gave them for free; only the stacks tree
+     asked for centred rows, and that rule already lives above and is not
+     repeated here. */
+  align-items: start;
+}
+
+.stackman-status .stackman-cell,
+.stackman-projects .stackman-cell {
+  padding: 0.7rem 0.8rem;
+  text-align: left;
+  word-break: break-word;
+}
+
+.stackman-status [role="columnheader"],
+.stackman-projects [role="columnheader"] {
+  font-weight: 700;
+  border-bottom: 0.1rem solid var(--sm-line);
+}
+
+/* The separator moves from the cell to the row — not because of any `gap`
+   (neither grid here sets one, so adjacent cells already touch), but because
+   nothing merges borders between separate grid items the way a table's
+   border-collapse merged them across a <tr>. A per-cell rule would have to
+   repeat itself once per column and stay in sync every time a column is
+   added or removed; the row is already a grid-column: 1 / -1 item spanning
+   every column on its own, so it draws the line once, correctly, regardless
+   of how many columns there are. */
+.stackman-status .stackman-row + .stackman-row,
+.stackman-projects .stackman-row + .stackman-row {
+  border-top: 0.1rem solid var(--sm-hairline);
+}
+
+/* The header row already draws its own border-bottom above; without this the
+   first data row's border-top sits right underneath it and doubles the
+   line. .stackman-projects has no header row, so it needs no equivalent. */
+.stackman-status .stackman-head-row + .stackman-row {
+  border-top: none;
+}
+
+/* First column is a label, not prose — keep it on one line and let the
+   explanation column take the remaining width. */
+.stackman-status .stackman-cell:first-child {
+  white-space: nowrap;
+}
+
+.stackman-status .stackman-cell:first-child .fa {
+  width: 1.4rem;
+  margin-right: 0.4rem;
+  text-align: center;
+}
+
 .stackman-projects .stackman-project {
-  width: 30%;
   font-weight: 600;
   white-space: nowrap;
 }
 
-.stackman-hint {
-  color: var(--text-secondary, #808080);
-  font-size: 1.1rem;
-  margin: -0.5rem 0 1.5rem;
+.stackman-projects .stackman-project .fa {
+  margin-right: 0.5rem;
 }
 
+/* ---- Headings and hints ------------------------------------------------- */
+
+.stackman-scaffold h3 {
+  margin: 0 0 0.6rem;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.stackman-hint {
+  margin: 0 0 1.2rem;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+.stackman-hint--warn {
+  color: var(--sm-accent);
+}
+
+.stackman-hint code {
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.2rem;
+  background: var(--sm-fill-2);
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+/* ---- Status icons ------------------------------------------------------- */
+
 .stackman-scaffold .fa.green-text {
-  color: var(--green-500, #43a047);
+  color: var(--sm-good);
 }
 
 .stackman-scaffold .fa.red-text {
-  color: var(--red-500, #e53935);
+  color: var(--sm-danger);
 }
 
-/* Tables get cramped below tablet width; let the long container list wrap
-   under its stack name rather than forcing the page to scroll sideways. */
+/* ---- Container-query reflow (stats fold, then ports wrap) ---------------
+ *
+ * The eight-track desktop grid has four fixed max-content stat columns (see
+ * "The grid" above) that will not shrink. Between the phone breakpoint below
+ * and full width there is a band where those four columns — a good deal of
+ * fixed width, all told — leave too little room for name/services/state/
+ * address: the service list gets crushed to two or three wrapped lines while
+ * the stat columns sit frozen, and eventually the whole table scrolls
+ * sideways. These two @container blocks close that band in two steps, keyed
+ * to .stackman-table-wrap's own inline size (see container-type: inline-size
+ * on it, above "---- Context menu ----") rather than the viewport, so the
+ * fold happens at the same table width no matter what else is sharing the
+ * screen with it.
+ *
+ * ORDER IS LOAD-BEARING — READ BEFORE MOVING EITHER BLOCK. Both @container
+ * blocks below MUST stay before the @media (max-width: 45rem) block further
+ * down this file. Below 45rem viewport width the table is also always
+ * narrower than 130rem, so the first block here and that phone block match
+ * AT THE SAME TIME, and several of them set the very same property on the
+ * very same selector: a container query contributes no specificity of its
+ * own, exactly like a media query, so those ties are settled purely by
+ * source order. The phone block has to load after this one to win those ties
+ * and get its own six-track layout instead of whatever this two-column fold
+ * would otherwise leave in place. Reordering the blocks — or "tidying" one of
+ * them to somewhere else in the file — flips those ties the other way and
+ * quietly breaks the phone layout; it will not error, it will just start
+ * losing fights it used to win. See the note besides each rule the phone
+ * block had to neutralise for this reason, further down in that block.
+ *
+ * Both max-width figures below are STARTING ESTIMATES worked out from the
+ * widths of the fixed columns (state, address, and the four stat columns),
+ * not measured against a real render on a real monitor. Treat the numbers as
+ * a first guess to refine, not as settled fact.
+ */
+
+/* ---- Step 1: fold the four stat columns into a 2×2 block, ~130rem --------
+ *
+ * Below this width the eight-track row becomes six: CPU and Memory keep row
+ * 1 of a two-row cell, Network and GPU move to row 2 directly beneath them —
+ * never beside a different figure's graph, which is the one thing this fold
+ * must not get wrong. */
+@container stackman-table (max-width: 130rem) {
+  .stackman-stacks {
+    grid-template-columns:
+      auto                    /* name */
+      minmax(14rem, 1fr)      /* services */
+      max-content             /* state */
+      auto                    /* address */
+      repeat(2, max-content); /* cpu+mem, net+gpu */
+  }
+
+  /* Two row tracks per row from here down. Safe under subgrid: a subgrid
+     only ever subgrids the axis it names, and grid-template-columns: subgrid
+     — the rule .stackman-body/.stackman-group/.stackman-row all carry, see
+     "The grid" above — subgrids the INLINE axis only. A row's block axis,
+     which is what grid-template-rows controls, is always its own regardless
+     of what the shared columns are doing, so giving a row two row tracks
+     here cannot disturb the columns every other row lines up against. */
+  .stackman-row {
+    grid-template-rows: auto auto;
+  }
+
+  /* Name, services, state and address each span both new row tracks, so they
+     read as one cell centred against two rows of figures rather than pinned
+     to the top of the first one. .stackman-stacks .stackman-row's own
+     align-items: center (see "The grid" above) does the actual centring —
+     this just hands it the full two-row area to centre within, which is what
+     keeps a row's icon and name looking anchored rather than floating above
+     a second row of numbers that has nothing to do with them.
+
+     The head row's own Stack/Services/State/Address cells carry none of
+     these four modifier classes — only the four data-stat cells do; see the
+     head row's markup in StacksPage.php. That is not a gap to fill: with no
+     second row of figures under them to span against, ordinary auto-
+     placement already seats them correctly, in row 1 beside the CPU and
+     Memory labels. */
+  .stackman-cell--name,
+  .stackman-cell--services,
+  .stackman-cell--state,
+  .stackman-cell--address {
+    grid-row: 1 / span 2;
+  }
+
+  /* The folder heading's one cell still spans columns 1 through 4 of the new
+     five column-lines — colspan="4" on the table this replaced — which is
+     still correct with six tracks: it is short exactly the two stat columns
+     (net, gpu) that folded into row 2 of the existing name/services/state/
+     address neighbours, not two whole new columns of its own. It now also
+     needs the row span its neighbours just got, so the folder name sits
+     centred against its two rows of totals rather than riding the top edge
+     of them. */
+  .stackman-cell--span4 {
+    grid-row: 1 / span 2;
+  }
+
+  /* Each figure stays beside its own graph: cpu and mem keep row 1, net and
+     gpu take row 2, directly under the figure each belongs to rather than
+     sliding into whichever column happens to have room. A grid-column/
+     grid-row placement here is inert on a cell the two GPU-hiding rules near
+     "The GPU column" above have set to display: none — a position on a
+     hidden element does nothing — so this cannot resurrect a GPU column that
+     genuinely has nothing to show. */
+  .stackman-cell[data-stat="cpu"] { grid-column: 5; grid-row: 1; }
+  .stackman-cell[data-stat="mem"] { grid-column: 6; grid-row: 1; }
+  .stackman-cell[data-stat="net"] { grid-column: 5; grid-row: 2; }
+  .stackman-cell[data-stat="gpu"] { grid-column: 6; grid-row: 2; }
+
+  /* .stackman-empty-row's cell needs no rule here. It carries none of the
+     classes or attributes above, so it keeps the unconditional
+     grid-column: 1 / -1 near "The grid" above completely unchanged — which,
+     with six tracks now instead of eight, still means "every column there
+     is". Its grid-row stays the default auto, which places it alone in row
+     1; nothing else asks for row 2 in that same row, so the explicit auto
+     track above sizes to zero there and no stray second row appears. */
+}
+
+/* ---- Step 2: let published ports wrap, ~110rem ---------------------------
+ *
+ * Narrower still than the fold above — a container this width also always
+ * matches Step 1's own query, since 110rem sits inside the ≤130rem that one
+ * already covers. The address column stops holding every entry on one line
+ * and lets a long port list wrap instead of pushing its row wider than the
+ * column meant to hold it.
+ *
+ * The colon between an address's label and its ports is real text in the
+ * markup — see the note by stackman_address_html() in include/StacksTable.php
+ * — not generated content, so releasing white-space here never touches it;
+ * it sits inside .stackman-addr-label, addressed separately below. The ports
+ * themselves are already joined with ", " in that same function, so once
+ * white-space stops forcing the whole entry onto one line, the port list
+ * wraps at those existing spaces on its own — no markup or script change
+ * needed for this step either. */
+@container stackman-table (max-width: 110rem) {
+  .stackman-addr {
+    white-space: normal;
+  }
+
+  /* Never break a network name or a bare address mid-word — only the ports
+     that follow it are free to wrap. */
+  .stackman-addr-label {
+    white-space: nowrap;
+  }
+
+  .stackman-addr-ports {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* ---- Narrow screens ----------------------------------------------------- */
+
+/* Tables get cramped below tablet width, so each row becomes a small layout of
+   its own rather than a column of full-width strips.
+
+   ONE FIGURE PER LINE WASTES THE SCREEN. Stacked that way, "CPU: 0.0%" leaves
+   two thirds of a phone's width empty and pushes the next stack off the bottom;
+   four of them turn one row into five. Two columns puts the figures side by
+   side and lets each graph stretch into the space that was going spare, which
+   roughly halves the height of every row. */
 @media (max-width: 45rem) {
-  .stackman-projects,
-  .stackman-projects tr,
-  .stackman-projects td {
-    display: block;
-    width: 100%;
+  /* ---- The tracks: eight columns become six ---------------------------------
+   *
+   * Everything below the tree of tracks — .stackman-body, every
+   * .stackman-group, every .stackman-row — reads its columns through
+   * subgrid, which has none of its own to change. So this one declaration is
+   * the whole relayout: every row at every depth, folder heading down to
+   * container, follows it with no other rule needed at any of those levels.
+   *
+   * Six, not two: a two-track grid cannot seat a narrow state chip beside the
+   * address on one line — the chip would be handed half the row whether it
+   * needed it or not. Six tracks give the state cell one of them
+   * (grid-column: span 1, below) and the address the other five (span 5), and
+   * the four stat cells (cpu/mem/net/gpu) each take three (span 3, further
+   * down by .stackman-cell.stackman-num), which auto-places two of them per
+   * line — CPU beside Memory, Network beside GPU — the same 2×2 the old
+   * two-track grid gave them, arrived at a different way. Name and services
+   * each span all six tracks, so they still read as one full-width line per
+   * row.
+   *
+   * minmax(0, 1fr), not a bare 1fr: a bare 1fr's minimum width is auto, so an
+   * unbroken port list or a long image name would refuse to shrink below its
+   * own content width and push the track — and with it the page — sideways.
+   * minmax(0, 1fr) lets the track shrink past that floor and wrap instead. */
+  .stackman-stacks {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  /* The folder heading's one cell used to span 4 of 8 tracks — colspan="4" on
+     the table this replaced. 1 / 5 would mean something on this six-track
+     grid (unlike the old two-track version of this block, where there was no
+     fifth track for it to reach), but it would only be four of the six
+     tracks, not the full width the heading actually needs now that there is
+     no separate state/address/stat column of its own to stop short of. 1 / -1
+     says what is actually meant — all the way across, however many tracks
+     that is — and keeps meaning that if the desktop template ever grows
+     another track. */
+  /* grid-row: auto undoes the ~130rem container query's grid-row: 1 / span 2
+     on this same selector (see "---- Container-query reflow ----" above this
+     block). A container this narrow always matches that query too, and
+     without this reset the heading would still try to span two row tracks
+     meant for a stat block that does not exist here — this six-track phone
+     layout gives the four stat cells their own auto-placed rows below the
+     heading instead, via ordinary flow, not via a fixed span on the heading
+     that would otherwise fight it. */
+  .stackman-cell--span4 {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+
+  /* Name and services still run the full width, one under the other. The
+     four stat cells are deliberately NOT listed here: leaving them out is
+     what lets ordinary auto-placement drop them two to a line (span 3
+     apiece, see .stackman-cell.stackman-num below) into the tracks these
+     spanning cells skip past, with no column number named for either group. */
+  /* grid-row: auto undoes the ~130rem container query's grid-row: 1 / span 2
+     on this same selector (see "---- Container-query reflow ----" above this
+     block) — a container this narrow always matches that query too. Without
+     the reset, name and services would BOTH still claim the full two-row
+     area, on top of each other, instead of each taking the one full-width
+     line grid-column: 1 / -1 already gives them here. */
+  .stackman-cell--name,
+  .stackman-cell--services {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+
+  /* State and address now share one line instead of each taking a full one:
+     six tracks are enough to give the chip a narrow lane of its own (span 1)
+     and hand the address everything left over (span 5), which the old
+     two-track grid could not do — the chip would have been stretched to half
+     the row. The markup already puts state before address (see
+     StacksTable.php), so naming only the spans, not a column start, is
+     enough: ordinary grid flow seats them side by side without either rule
+     needing to know about the other. */
+  /* grid-row: auto on both of these undoes the ~130rem container query's
+     grid-row: 1 / span 2 on the same two selectors (see "---- Container-
+     query reflow ----" above this block) — a container this narrow always
+     matches that query too. Left in place, state and address would be
+     pinned across both of this row's tracks instead of sharing the one line
+     the spans below already put them on beside each other. */
+  .stackman-cell--state {
+    grid-column: span 1;
+    grid-row: auto;
+  }
+
+  .stackman-cell--address {
+    grid-column: span 5;
+    grid-row: auto;
+  }
+
+  /* ---- Container rows: image joins the name line -------------------------
+   *
+   * A container row's services cell holds only its image tag —
+   * "alpine:3.20" — never the full sentence a stack row's does ("demo-cache,
+   * demo-database, demo-frontend"). Pairing it with the name saves a whole
+   * line per container, which matters most exactly where it is cheapest:
+   * a stack that is expanded can have several of these rows in a row.
+   *
+   * Scoped to .stackman-container-row specifically, and deliberately NOT
+   * applied to .stackman-cell--name / --services in general — those two
+   * classes are shared with the stack row, whose services cell genuinely
+   * needs the full-width line the rule above already gives it. Two classes
+   * here (.stackman-container-row plus .stackman-cell--name/--services)
+   * outrank that rule's one, so this wins on specificity alone; it does not
+   * depend on sitting later in the file.
+   *
+   * 4 tracks for the name, 2 for the image, out of six: enough width for the
+   * image to read as a short tag without the name giving up so much of the
+   * line that a longer container name starts wrapping. .stackman-image
+   * keeps its overflow-wrap: anywhere from the rule further down, so a long
+   * registry path breaks across lines inside its own 2-track column instead
+   * of forcing the row wider than the screen. No column start is named for
+   * either: the markup already puts the name cell before the services cell
+   * (see StacksTable.php), so plain auto-placement seats span-4-then-span-2
+   * side by side with no extra rule needing to agree with this one about
+   * which is which. */
+  .stackman-container-row .stackman-cell--name {
+    grid-column: span 4;
+  }
+
+  .stackman-container-row .stackman-cell--services {
+    grid-column: span 2;
+  }
+
+  /* Eight column names stacked in a column read as noise above a layout that
+     no longer has eight columns to name. Hiding the row also removes its
+     border-bottom, drawn by .stackman-stacks [role="columnheader"] above —
+     there is nothing left for that selector to match once the row is gone.
+
+     UNSCOPED ON PURPOSE — this also hides the head row of .stackman-status
+     (the Environment section's Check/Result list). That is a second grid
+     entirely, sharing .stackman-head-row only because both are built the same
+     way (see "Status and containers-by-stack tables" above). Leaving it
+     unscoped is a deliberate decision for both grids, not an oversight caught
+     late:
+
+       - .stackman-stacks: nothing survives to read a header FOR. Name and
+         services become full width at this size (grid-column: 1 / -1
+         above); state and address share one line via a narrow chip and a
+         wide address instead (span 1 and span 5, also above); and the stat
+         cells fall in below by ordinary auto-placement, each labelling
+         itself directly via
+         `.stackman-cell.stackman-num::before { content: attr(data-stat) }`
+         further down. A row of "Stack / Services / State / Address / cpu /
+         mem / net / gpu" above that would describe a layout that no longer
+         exists.
+
+       - .stackman-status: its own two columns collapse to one at this width
+         (see "Status and containers-by-stack" near the bottom of this block),
+         so the header would read as the words "Check" and "Result" sitting
+         above a column of stacked label/value pairs that no longer line up
+         under either word. That is not a saving of space, it is actively
+         misleading, so losing it here is correct — not a side effect to
+         later "fix" by scoping this selector to .stackman-stacks alone.
+
+     One consequence worth knowing about, not fixing: `.stackman-status
+     .stackman-head-row + .stackman-row { border-top: none }` above stays
+     matching even now. `display: none` removes an element from the render
+     tree, not from the DOM, and `+` matches sibling structure, not
+     rendering — so the head row hidden here is still the first data row's
+     previous sibling as far as that selector is concerned, and the override
+     still fires. Harmless either way: that first data row wants no top
+     border regardless of whether the head row above it is drawn, so nothing
+     depends on whether this override is still "needed" at this width — it
+     simply keeps working, for a reason that has nothing to do with visibility.
+
+     This targets .stackman-head-row, a class more specific than .stackman-row
+     itself, and that distinction matters — see the next comment. */
+  .stackman-head-row {
+    display: none;
+  }
+
+  /* Deliberately absent from this block: any rule that sets `display` on
+     .stackman-row or .stackman-group themselves. Collapsing a folder or
+     hiding a stack's containers is done with the `hidden` attribute, and the
+     browser supplies its own `[hidden] { display: none }` for that — but an
+     AUTHOR rule beats a user-agent one on the same property regardless of
+     specificity. The base rule earlier in this file, right after the one
+     that puts `display: grid` on every row and group, exists purely to win
+     that fight back for `hidden`. Add another `display: grid` (or `block`,
+     or anything else) on .stackman-row or .stackman-group inside a media
+     query that loads AFTER that base rule, and a tie in specificity goes to
+     the rule that loads later — this one — not to the fix. Every collapsed
+     folder and every unexpanded stack would spring back open, but only on a
+     phone, which is exactly the sort of regression nobody notices until a
+     user reports it from one.
+
+     .stackman-head-row above is not this trap: it is a class more specific
+     than .stackman-row, and a head row is never given `hidden` — nothing
+     ever collapses the column headings — so there is no [hidden] rule for it
+     to out-rank in the first place. */
+
+  /* ---- Row and cell spacing -------------------------------------------------
+   *
+   * Five lines can now stack inside one row (name, services, a state chip
+   * beside the address, then two lines of paired stats), so the desktop's
+   * 0.7rem top-and-bottom per cell — meant for a single-line row — would add
+   * 1.4rem between every pair of stacked lines and turn a "roughly half the
+   * height" fold into one barely shorter than the original. Cut here, on
+   * the cell.
+   *
+   * The gap this leaves between separate ROWS comes back as padding on the
+   * row instead of widening the cells back out, and top/bottom only: exactly
+   * like the background band on .stackman-group--stack above, this is safe
+   * because grid-template-columns: subgrid only ever subgrids the INLINE
+   * axis, so a BLOCK-axis property here can never shift a column. */
+  .stackman-stacks .stackman-cell {
+    padding: 0.35rem 0.6rem;
+  }
+
+  .stackman-stacks .stackman-row:not(.stackman-head-row) {
+    padding: 0.6rem 0;
+  }
+
+  /* ---- State chip (icon-only) --------------------------------------------
+   *
+   * The previous rule here made the full-text pill wrap inside a state
+   * column that had grown to the row's whole width. That column is narrow
+   * again now that state shares a line with address (span 1 of 6, above) —
+   * and Docker's longer wordings, "Up About an hour (healthy)", would not
+   * fit a one-column chip even wrapped. So instead of text that wraps, the
+   * chip stops showing text at all and becomes a small coloured circle with
+   * one glyph; that is what frees the width the address needs beside it.
+   * Desktop is untouched by any of this and keeps the full text pill.
+   *
+   * font-size: 0 silences the pill's OWN text without touching the glyph,
+   * which gets its own font-size back on ::before below — text and glyph
+   * size independently even though one is the other's pseudo-element. That
+   * text is not display: none or visibility: hidden — the .stackman-sr
+   * technique used elsewhere in this file for the same job — and those,
+   * not font-size, are what actually pull text out of the accessibility
+   * tree. So a screen reader still announces "Up 9 hours" from the real
+   * text; only sighted phone users see the circle instead.
+   *
+   * width, height and padding are all in rem rather than em so that
+   * font-size: 0 above cannot shrink the box along with the text — an em
+   * value here would resolve against that zero and collapse the circle. */
+  .stackman-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.8rem;
+    height: 1.8rem;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 0;
+    line-height: 1;
+  }
+
+  /* Plain Unicode punctuation, not Font Awesome character codes: an icon
+     font's codes depend on that font having loaded and sit in the private-
+     use area, so a missing font gives an empty box with no clue why — plain
+     characters render from the system font regardless. This bare rule is
+     the fallback for the one pill variant with no modifier class at all
+     (see stackman_state_pill in StacksTable.php: a stopped stack that still
+     reports its own free-text status is neither "up" nor "down" cleanly
+     enough for either), so every pill still shows a glyph even if a future
+     status string matches none of the modifiers below. */
+  .stackman-pill::before {
+    content: "•";
+    font-size: 1rem;
+    color: var(--sm-muted);
+  }
+
+  /* No colour override needed: --up already sets white text on the green
+     background above, and ::before inherits it. */
+  .stackman-pill--up::before {
+    content: "✓";
+  }
+
+  /* Red, not the muted grey --down uses for its text on desktop: with the
+     word "stopped" gone, a grey glyph on this pill's grey fill would read as
+     blank at a glance. Deliberate departure from the desktop colour for
+     this one modifier, not an inconsistency to "fix" later. */
+  .stackman-pill--down::before {
+    content: "✕";
+    color: var(--sm-danger);
+  }
+
+  /* No colour override: --warn already sets black text on the accent
+     background above, and ::before inherits it. */
+  .stackman-pill--warn::before {
+    content: "!";
+  }
+
+  /* No colour override: --bad already sets white text on the danger-red
+     background above, and ::before inherits it. A doubled mark rather than
+     --down's single one, so the two red-leaning states still read as
+     different states at a glance even though both now render red. */
+  .stackman-pill--bad::before {
+    content: "‼";
+  }
+
+  /* No colour override: --busy already sets the accent colour as its text
+     colour above, and ::before inherits it; the dashed border it also sets
+     stays, so the chip keeps reading as in-progress rather than a settled
+     state. */
+  .stackman-pill--busy::before {
+    content: "↻";
+  }
+
+  /* ---- Address column -------------------------------------------------------
+   *
+   * Full width and allowed to wrap — a row of published ports can be the
+   * longest thing here, and there is no column width left to force it onto
+   * one line. */
+  .stackman-addr {
+    display: inline;
+    white-space: normal;
+  }
+
+  /* Breaks a long network name or an unbroken run of ports rather than
+     letting either decide how wide the page is. */
+  .stackman-addr-label,
+  .stackman-addr-ports {
+    overflow-wrap: anywhere;
+  }
+
+  .stackman-addr + .stackman-addr::before {
+    content: " · ";
+    color: var(--sm-muted);
+  }
+
+  /* Nothing above the row says what either of these are any more, now that
+     there is no header row and no column position to read it from. */
+  .stackman-cell--address::before,
+  .stackman-cell.stackman-num::before {
+    color: var(--sm-muted);
+    text-transform: uppercase;
+    font-size: 1.05rem;
+  }
+
+  .stackman-cell--address::before {
+    content: "address: ";
+  }
+
+  /* ---- The 2×2 stat block ----------------------------------------------------
+   *
+   * label · figure · graph, side by side inside the cell. This is
+   * display: flex on a .stackman-cell, which the trap this file used to warn
+   * about — flexing a <td> broke the table layout algorithm and spilled
+   * content down through every row below it — no longer applies to: a
+   * .stackman-cell is a <span>, a subgridded grid item, and there is no table
+   * algorithm left anywhere on this page for it to break.
+   *
+   * grid-column: span 3 is what actually keeps these four cells a 2×2 block
+   * on a six-track grid: three tracks apiece leaves exactly room for two per
+   * line, and ordinary auto-placement does the rest — nothing here names
+   * which of the two a given cell lands in.
+   *
+   * justify-self: stretch undoes the desktop rule's justify-self: end, which
+   * is the entire cause of the staircase this replaces. `end` pushed every
+   * stat cell against the right edge of its OWN one-track column — fine when
+   * every stat had a column to itself, but with four of them now sharing six
+   * tracks three apiece, "the right edge of my own column" is a different x
+   * position for each cell depending on which three-track span it landed in.
+   * What looked like four rows out of alignment was four different right
+   * edges. `stretch` fills the track instead, so every cell's left edge is
+   * the track's own left edge no matter which of the two spans it is in. */
+  /* grid-row: auto undoes the ~130rem container query's explicit
+     grid-row: 1 or 2 on .stackman-cell[data-stat="…"] (see "---- Container-
+     query reflow ----" above this block) — a container this narrow always
+     matches that query too. Left in place, cpu/mem/net/gpu would each be
+     pinned to a fixed row instead of being free to auto-place two to a line
+     the way grid-column: span 3 below intends; depending on what else is
+     explicitly placed in those same rows (the heading's span-4 cell, notably)
+     they could just as easily end up overlapping it instead of falling in
+     line after it. */
+  .stackman-cell.stackman-num {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    grid-column: span 3;
+    grid-row: auto;
+    justify-self: stretch;
+  }
+
+  /* When a row has no GPU, `.stackman-row--no-gpu .stackman-cell[data-stat="gpu"]
+     { display: none }` (above, outside this media query) takes the GPU cell
+     out of grid flow entirely, leaving NET alone on the last line in tracks
+     1-3 with 4-6 empty — a half-width graph where a full-width one would fit.
+     Widening NET to all six tracks here fills that line.
+
+     NARROW ONLY, deliberately: on desktop the four stat cells are four real
+     columns shared by every row through subgrid, so stretching one row's NET
+     cell into the GPU column would misalign that column against every other
+     row's. There, a GPU-less row is meant to just leave its GPU track blank.
+
+     Two classes plus an attribute, (0,3,0), beats this same block's
+     `.stackman-cell.stackman-num { grid-column: span 3 }` two classes,
+     (0,2,0) — same margin by which `.stackman-row--no-gpu
+     .stackman-cell[data-stat="gpu"]` above already beats it, so this needs no
+     extra weight to win. */
+  .stackman-row--no-gpu .stackman-cell[data-stat="net"] {
+    grid-column: span 6;
+  }
+
+  /* The label. data-stat is decoration on the desktop layout — the wide
+     header row already names each column, and the attribute there exists
+     only so .stackman-no-gpu can hide the GPU column by it. Here it is the
+     ONLY thing that says which figure this is, with no header row left to
+     say it instead. Do not rename it. */
+  .stackman-cell.stackman-num::before {
+    content: attr(data-stat);
+    flex: 0 0 auto;
+  }
+
+  .stackman-statv {
+    white-space: nowrap;
+    flex: 0 0 auto;
+    min-width: 0;
+    text-align: left;
+  }
+
+  /* Takes whatever width the label and figure did not use. min-width: 0 is
+     not decoration: a flex item's default minimum size is its CONTENT size,
+     so without this the graph's own intrinsic width refuses to shrink below
+     that and pushes the cell past the edge of its track — a phone-width
+     version of the same overflow `width: 1%` used to prevent on a table, by
+     a different mechanism entirely. */
+  /* Same stretch as the desktop rule above, scaled down for the narrower row:
+     1.8rem to 2.4rem. Still just a height change against the fixed
+     viewBox="0 0 88 24", preserveAspectRatio="none" SVG — see the comment by
+     the desktop .stackman-spark rule. */
+  .stackman-spark {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+    height: 2.4rem;
+    margin-left: 0;
+  }
+
+  /* Side by side rather than stacked: the column is no longer narrow enough
+     for the changing digits to make it jump, and two short lines here would
+     cost a whole extra line of a row that can already run to five. */
+  .stackman-net {
+    flex-direction: row;
+    gap: 0.6rem;
+  }
+
+  /* ---- Indentation -----------------------------------------------------------
+   *
+   * The whole narrow-width indent question is these two custom properties —
+   * see the long comment by .stackman-namebox above for why .stackman-group
+   * --folder and .stackman-group--children, and not a fixed padding value
+   * anywhere, are what carries the indent. Indentation is a luxury at this
+   * width; this keeps just enough of it to still read which row is filed
+   * under which.
+   *
+   * No fixed-padding rule follows this. The old .stackman-nested
+   * .stackman-namebox rule this replaces never matched anything, even on
+   * desktop: .stackman-nested is a class on the STACK row, and a folder's
+   * stacks are children of its .stackman-group--folder wrapper, never
+   * .stackman-nested's descendants. And a rule resetting only
+   * .stackman-namebox--child's padding-left would leave its margin-left —
+   * which carries the real indent for a container row, see the comment by
+   * that class above — sitting at whatever these two properties compute to,
+   * unchanged. Overriding the properties themselves is the only version of
+   * this that cannot go stale that way. */
+  .stackman-group--folder {
+    --sm-indent-base: 1.6rem;
+  }
+
+  /* 2.4rem, up from 1.6rem, for the same reason the desktop step grew — a
+     container needs to read as clearly inside its stack, and matching the
+     folder's own 1.6rem base made the two kinds of nesting look the same at
+     a glance. --sm-indent-base above is untouched: it is folder-to-stack,
+     and stays exactly where it was. */
+  .stackman-group--children {
+    --sm-indent-step: 2.4rem;
+  }
+
+  /* ---- Space beneath a stack's containers --------------------------------
+   *
+   * Indentation has already spent this width's horizontal room (see above),
+   * so separation between one stack's last container row and the next
+   * stack's own row has to be vertical instead. 2.2rem, up from the 1.4rem
+   * desktop uses for the same margin — a phone screen is where a stack's end
+   * blurring into the next stack's start is easiest to miss, since there is
+   * no room left to tell them apart by indent alone, so this width gets the
+   * bigger gap of the two rather than the smaller one desktop settled for.
+   *
+   * This overrides the same margin-bottom, on the same selector, that the
+   * desktop rule above sets on .stackman-group--stack — see that rule's
+   * comment for why it is a margin on the band's own element (not a
+   * padding on the children wrapper, and not a top margin on whatever
+   * follows) in the first place; nothing about that reasoning changes at
+   * this width, only the number does. */
+  .stackman-group--stack:has(> .stackman-group--children:not([hidden])) {
+    margin-bottom: 2.2rem;
+  }
+
+  /* ---- Tints ----------------------------------------------------------------
+   *
+   * No rules follow this comment either. The folder heading's wash
+   * (.stackman-folder-row) and the expanded-stack band
+   * (.stackman-group--stack:has(...)) both paint the ROW or GROUP itself,
+   * not a cell, and neither of those selectors reads viewport width — the
+   * same background rule already covers a phone. The old per-cell reset
+   * that used to live here, and the old rule that repainted
+   * .stackman-folder-row and .stackman-container-row a SECOND time, both
+   * existed to fight a paint order this width no longer produces; keeping
+   * either would now double the folder tint and put back the container-row
+   * tint that .stackman-group--stack's band deliberately replaced. The claim
+   * that motivated the per-cell reset — that cell backgrounds show `gap` as
+   * stripes — is moot besides: nothing paints a cell any more, and this grid
+   * has no `gap` at any width. */
+
+  .stackman-menu {
+    min-width: 20rem;
+    max-width: calc(100vw - 2rem);
+  }
+
+  .stackman-bar {
+    flex-wrap: wrap;
+  }
+
+  /* No truncation here — there is nowhere to truncate to once the cell is the
+     full width of the screen — but a registry path with no spaces in it must
+     still be allowed to break rather than set the row's width. */
+  .stackman-image {
+    max-width: none;
+    overflow: visible;
+    overflow-wrap: anywhere;
+  }
+
+  /* ---- Status and containers-by-stack ---------------------------------------
+   *
+   * Neither of these two grids lives inside .stackman-table-wrap, and neither
+   * is what a container query on that wrapper would ever measure, so they
+   * stay governed by this viewport media query regardless of what a later
+   * step does to the stacks tree above. Both had the exact de-gridding
+   * mistake the worst rule in this block used to make on .stackman-stacks —
+   * `display: block` on the grid root and its rows, which drops
+   * `grid-template-columns: subgrid` to `none` on every row the same way —
+   * and the fix is the same too: leave `display` alone, narrow the track
+   * list instead, and let a single track put every cell at full width with
+   * no grid-column override needed to say so. */
+  .stackman-status {
+    grid-template-columns: 1fr;
+  }
+
+  .stackman-projects {
+    grid-template-columns: 1fr;
+  }
+
+  .stackman-status .stackman-cell,
+  .stackman-projects .stackman-cell {
+    grid-column: 1 / -1;
+  }
+
+  /* The label column no longer needs to stay on one line now that it has the
+     whole row's width to wrap in instead. */
+  .stackman-status .stackman-cell:first-child {
+    white-space: normal;
   }
 
   .stackman-projects .stackman-project {
-    padding-bottom: 0;
+    white-space: normal;
+  }
+
+  /* ---- The compose modal on a phone -------------------------------------
+   *
+   * Side by side is meaningless at this width — two panes of about 20
+   * characters each would be worse than either one alone. So the split view
+   * stops splitting: whichever pane the Form/Split/Compose control last
+   * chose is the one shown, and Split falls back to the compose pane, which
+   * is the one that can actually be worked in. The control keeps working, so
+   * this is a layout change and not a loss of function.
+   *
+   * Setting grid-template-columns on the [data-view="split"] case is not
+   * enough on its own — the pane still has to be hidden, or both would stack
+   * vertically and each get half the height. */
+  .stackman-modal {
+    width: 100vw;
+    height: 100vh;
+    max-width: none;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .stackman-modal-head {
+    flex-wrap: wrap;
+    gap: 0.8rem;
+  }
+
+  .stackman-modal-name input[type="text"] {
+    width: 14rem;
+  }
+
+  .stackman-modal-tools {
+    margin-left: 0;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .stackman-modal-body[data-view="split"] {
+    grid-template-columns: 1fr;
+  }
+
+  .stackman-modal-body[data-view="split"] .stackman-pane--form {
+    display: none;
+  }
+
+  .stackman-modal-body[data-view="split"] .stackman-pane--yaml {
+    display: flex;
+  }
+
+  .stackman-pane--form {
+    border-right: 0;
+  }
+
+  /* The note is long and the buttons are what someone came here for, so on a
+     phone the buttons go first and the explanation follows underneath. */
+  .stackman-modal-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
   }
 }

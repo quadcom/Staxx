@@ -66,8 +66,9 @@ have to use.
 standard promises that Docker will ignore anything named this way. It exists so tools can add their
 own information without breaking the file.
 
-*Why it matters here:* `x-unraid` is where we keep the friendly labels and descriptions that turn a
-compose file into a form. Docker ignores it, so the file still runs anywhere.
+*Why it matters here:* `x-unraid` is where we keep what a stack and its containers *are* — the name,
+the logo, the paragraph describing it. Docker ignores it, so the file still runs anywhere. What each
+individual setting is for is not kept there; see **Note** and **Marker** below.
 
 **Schema** — a written-down definition of what a file is allowed to contain. A form's "required
 fields" rules are a schema.
@@ -78,8 +79,16 @@ fields" rules are a schema.
 `tests/validate_schema.py` checks it. That means a bad file gets a clear error instead of a
 half-broken form.
 
-**Binding** — connecting a friendly label to the specific thing in the compose file it describes:
-this description belongs to *that* port, this "it's a password" marker belongs to *that* setting.
+**Note** — the ordinary `#` comment beside a setting, which is also the help text the form shows for
+it. There is only ever one copy of that sentence, and it is on the line it describes.
+
+**Marker** — a short mark at the end of a note saying something a sentence cannot: `-!S` for "this is
+a secret, hide it when Sanitise is on", `-!R` for "this must not be left empty". Those are the only
+two, and nothing is ever guessed — an unmarked value is not treated as a secret however it is spelled.
+
+**Binding** — connecting a box on the form to the specific thing in the compose file it edits. It is
+always done by the half of a setting that does not change: the container port `8096` rather than the
+whole line `"8096:8096"`, so changing the host port does not lose track of the box.
 
 ---
 

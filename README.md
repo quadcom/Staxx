@@ -26,14 +26,15 @@ portable compose file that runs under plain `docker compose up` anywhere.
 These are the constraints the project is built around, in priority order.
 
 1. **Never require non-standard syntax.** A file authored by Stack Manager must run unmodified on
-   any machine with Docker Compose. UI metadata (labels, descriptions, masked fields, basic vs.
-   advanced) lives in optional `x-unraid:` extension fields, which the compose spec permits and
-   ignores.
+   any machine with Docker Compose. What a stack and its containers *are* — name, icon, overview,
+   web interface — lives in optional `x-unraid:` extension fields, which the compose spec permits and
+   ignores. What an individual setting is *for* lives in the ordinary comment beside it, with two
+   marks (`-!S` secret, `-!R` required) for the only two things a comment cannot say.
 2. **Never destroy a hand-authored file.** Editing through the form preserves comments, ordering,
    anchors, and formatting. Saving a normalised round-trip over someone's file is a bug, not a
    trade-off.
-3. **Degrade gracefully.** A compose file with no `x-unraid:` metadata still produces a usable form,
-   with types inferred from the file itself.
+3. **Degrade gracefully.** A compose file with no metadata of either kind still produces a usable
+   form, with names and control types worked out from the file itself.
 4. **Own the render, don't inject into someone else's.** Grouping, lifecycle controls, and layout
    are rendered by this plugin rather than surgically inserted into the stock Docker tab's DOM.
 
@@ -78,7 +79,28 @@ src/stack.manager/          Slackware-style tree, mirrors install paths on the s
     langs/                  Translations
 stack.manager.plg           Plugin installer manifest
 pkg_build.sh                Builds the .txz package from src/
+dev-install.sh              Copies src/ straight onto a server for testing
 ```
+
+## Testing on a server
+
+`dev-install.sh` skips the package entirely and copies the plugin files into place, so a change is
+visible on a browser refresh. Copy it and the plugin folder to the flash drive, then run it there:
+
+```
+/boot/stack.manager-dev/
+    dev-install.sh
+    stack.manager/          <- src/stack.manager/usr/local/emhttp/plugins/stack.manager/
+```
+
+```sh
+bash /boot/stack.manager-dev/dev-install.sh            # install or update
+bash /boot/stack.manager-dev/dev-install.sh --remove   # remove, keep settings
+bash /boot/stack.manager-dev/dev-install.sh --purge    # remove settings too
+```
+
+Nothing installed this way survives a reboot — `/usr/local/emhttp` is rebuilt at boot. Settings do
+survive, since they live on the flash drive.
 
 ## Compatibility
 

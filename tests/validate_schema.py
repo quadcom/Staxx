@@ -4,6 +4,12 @@
 A schema that accepts everything passes every positive test and is worthless,
 so the negative cases below matter more than the positive ones.
 
+The schema covers the two x-unraid blocks and nothing else. What an individual
+setting is for is written in the comment beside it, and a comment never reaches
+a validator — yaml.safe_load throws it away before this file sees the document.
+So there is deliberately nothing here about notes or the -!S / -!R markers. The
+round-trip harness (tests/yaml_roundtrip.js) is what covers those.
+
     python tests/validate_schema.py
 
 Requires: pyyaml, jsonschema.
@@ -21,70 +27,57 @@ SCHEMA_PATH = ROOT / "schema" / "x-unraid.schema.json"
 EXAMPLES = sorted((ROOT / "examples").rglob("compose.y*ml"))
 
 
-def service_doc(*fields, **service_meta):
-    """Wrap field entries in the minimum valid compose structure."""
-    meta = {"fields": list(fields)}
-    meta.update(service_meta)
-    return {"services": {"app": {"image": "nginx", "x-unraid": meta}}}
+def service_doc(**service_meta):
+    """Wrap a service-level x-unraid block in the minimum compose structure."""
+    return {"services": {"app": {"image": "nginx", "x-unraid": service_meta}}}
 
 
 # (description, document) — each must FAIL validation.
+#
+# The surface left to get wrong is small: a handful of typed keys and two
+# enums. That is the point of the rewrite, not a gap in the tests — every case
+# the deleted `fields:` block needed a rule for now cannot arise, because there
+# is no second copy of a port or a variable to disagree with the first.
 NEGATIVE = [
-    (
-        "field with two binders",
-        service_doc({"env": "PUID", "port": 8096}),
-    ),
-    (
-        "field with no binder",
-        service_doc({"title": "Orphan", "description": "binds to nothing"}),
-    ),
-    (
-        "options alongside a contradictory type",
-        service_doc({"env": "MODE", "type": "text", "options": ["a", "b"]}),
-    ),
-    (
-        "type: select without options",
-        service_doc({"env": "MODE", "type": "select"}),
-    ),
-    (
-        "mode on a non-volume binding",
-        service_doc({"env": "PUID", "mode": "ro"}),
-    ),
-    (
-        "setting outside the v1 allowlist",
-        service_doc({"setting": "deploy"}),
-    ),
-    (
-        "unknown display value",
-        service_doc({"env": "PUID", "display": "hidden"}),
-    ),
-    (
-        "port above the valid range",
-        service_doc({"port": 99999}),
-    ),
-    (
-        "port with a bogus protocol",
-        service_doc({"port": "8096/quic"}),
-    ),
-    (
-        "volume bound to a relative path",
-        service_doc({"volume": "config"}),
-    ),
-    (
-        "device bound to a relative path",
-        service_doc({"device": "dri"}),
-    ),
     (
         "stack version below 1",
         {"x-unraid": {"version": 0}},
     ),
     (
-        "fields as a mapping rather than a sequence",
-        service_doc(**{"fields": {"env": "PUID"}}),
+        "stack version that is not a whole number",
+        {"x-unraid": {"version": 1.5}},
     ),
     (
-        "select option object missing its value",
-        service_doc({"setting": "image", "type": "select", "options": [{"label": "Latest"}]}),
+        "x-unraid written as a string rather than a block",
+        {"x-unraid": "Jellyfin"},
+    ),
+    (
+        "stack name given as a list",
+        {"x-unraid": {"name": ["Jellyfin"]}},
+    ),
+    (
+        "stack icon given as a block rather than a string",
+        {"x-unraid": {"icon": {"url": "https://example.org/icon.png"}}},
+    ),
+    (
+        "services written as a list rather than a mapping",
+        {"services": [{"image": "nginx"}]},
+    ),
+    (
+        "unknown service display value",
+        service_doc(display="hidden"),
+    ),
+    (
+        "service display given as a boolean",
+        service_doc(display=True),
+    ),
+    (
+        "service webui given as a list of links",
+        service_doc(webui=["http://[IP]:[PORT:8096]/"]),
+    ),
+    (
+        "service overview given as a number",
+        service_doc(overview=3),
     ),
 ]
 
@@ -93,22 +86,33 @@ POSITIVE = [
     ("empty document", {}),
     ("no metadata at all", {"services": {"app": {"image": "nginx"}}}),
     ("stack metadata only", {"x-unraid": {"version": 1, "name": "Thing"}}),
-    ("every binder kind", service_doc(
-        {"env": "PUID"},
-        {"port": 8096},
-        {"port": "1900/udp"},
-        {"volume": "/config", "mode": "ro"},
-        {"device": "/dev/dri"},
-        {"label": "traefik.enable"},
-        {"setting": "image"},
+    ("every stack key at once", {"x-unraid": {
+        "version": 1,
+        "name": "Jellyfin",
+        "icon": "jellyfin",
+        "overview": "Free software media system.",
+        "category": "MediaApp:Video",
+        "project": "https://jellyfin.org",
+        "support": "https://forum.jellyfin.org",
+        "readme": "https://github.com/jellyfin/jellyfin#readme",
+        "author": "jellyfin",
+    }}),
+    ("every service key at once", service_doc(
+        name="Jellyfin",
+        icon="./icon.png",
+        overview="Open the web interface to finish setup.",
+        webui="http://[IP]:[PORT:8096]/",
+        display="advanced",
     )),
-    ("unknown attribute is tolerated", service_doc(
-        {"env": "PUID", "someFutureKey": "value"},
+    ("each icon form", {"x-unraid": {"icon": "fa-database"}}),
+    ("unknown stack key is tolerated", {"x-unraid": {"someFutureKey": "value"}}),
+    ("unknown service key is tolerated", service_doc(someFutureKey="value")),
+    # A file written against the old draft is not an error. Unknown keys are
+    # ignored at runtime, so the schema ignores this one too rather than
+    # failing a file that still works — it simply has no effect.
+    ("a leftover fields: block is just an unknown key", service_doc(
+        fields=[{"port": 8096, "title": "Web interface"}],
     )),
-    ("options imply select without stating it", service_doc(
-        {"env": "MODE", "options": ["a", "b"]},
-    )),
-    ("service hidden behind the advanced toggle", service_doc(display="advanced")),
 ]
 
 

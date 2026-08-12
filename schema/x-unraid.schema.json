@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/TODO-OWNER/TODO-REPO/schema/x-unraid.schema.json",
   "title": "x-unraid",
-  "description": "Presentation metadata carried inside an ordinary compose file. Validates the x-unraid blocks and permits every other compose key, so it can be run against a whole compose file converted to JSON. Validate the SOURCE file converted to JSON, not `docker compose config` output, which has a history of stripping extension fields.",
+  "description": "Presentation metadata carried inside an ordinary compose file. Validates the x-unraid blocks and permits every other compose key, so it can be run against a whole compose file converted to JSON. Validate the SOURCE file converted to JSON, not `docker compose config` output, which has a history of stripping extension fields. There is nothing here for individual form fields: what a value is for is written in the comment beside it, which YAML already has and this schema cannot see.",
 
   "type": "object",
   "properties": {
@@ -29,8 +29,8 @@
           "default": 1,
           "description": "Schema version. A reader seeing a higher major version falls back to inference rather than misreading the metadata."
         },
-        "name":     { "type": "string", "description": "Display name. Defaults to the stack directory name." },
-        "icon":     { "type": "string", "description": "URL, or a path relative to the stack directory." },
+        "name":     { "type": "string", "description": "Display name, and the last word on what the stack is called. Left out, a stack of one service is named after that service's container_name, or after the service key if it has none; a stack of several services is named after its directory." },
+        "icon":     { "$ref": "#/$defs/icon" },
         "overview": { "type": "string", "description": "Markdown." },
         "category": { "type": "string", "description": "Unraid's existing category taxonomy, e.g. MediaApp:Video." },
         "project":  { "type": "string", "format": "uri" },
@@ -40,12 +40,23 @@
       }
     },
 
+    "icon": {
+      "type": "string",
+      "description": "Four accepted forms, told apart by their shape: a full http(s) URL; a path relative to the stack directory, e.g. ./icon.png; a name from the selfh.st icon collection, e.g. jellyfin; or a Font Awesome glyph, e.g. fa-database, which is what Unraid's own XML templates accept. Omit it and the icon is matched automatically from the container's image name.",
+      "examples": [
+        "jellyfin",
+        "./icon.png",
+        "https://example.org/icon.png",
+        "fa-database"
+      ]
+    },
+
     "service": {
       "type": "object",
       "description": "Service-level metadata. Every key optional.",
       "properties": {
-        "name":     { "type": "string", "description": "Display name. Defaults to the service key." },
-        "icon":     { "type": "string" },
+        "name":     { "type": "string", "description": "Display name for this service within the form. Defaults to the service key. It does not name the stack's own row in the list; only the stack-level name does that." },
+        "icon":     { "$ref": "#/$defs/icon" },
         "overview": { "type": "string", "description": "Markdown." },
         "webui": {
           "type": "string",
@@ -54,125 +65,8 @@
         "display": {
           "$ref": "#/$defs/display",
           "description": "'advanced' hides the entire service behind the form's advanced toggle — for sidecars such as databases."
-        },
-        "fields": {
-          "type": "array",
-          "description": "Form fields, in display order. Anything in the service not claimed by an entry here is still inferred and appended.",
-          "items": { "$ref": "#/$defs/field" }
         }
       }
-    },
-
-    "field": {
-      "type": "object",
-      "description": "Binds presentation metadata to one thing in the service. Exactly one binder key. Unknown keys are permitted and ignored, matching runtime behaviour, so this schema does not catch typos in attribute names.",
-
-      "oneOf": [
-        { "required": ["env"] },
-        { "required": ["port"] },
-        { "required": ["volume"] },
-        { "required": ["device"] },
-        { "required": ["label"] },
-        { "required": ["setting"] }
-      ],
-
-      "properties": {
-        "env": {
-          "type": "string",
-          "description": "Environment variable name.",
-          "minLength": 1
-        },
-        "port": {
-          "description": "CONTAINER port, optionally with protocol: 8096 or '1900/udp'. Never the host port — that is what the user edits.",
-          "oneOf": [
-            { "type": "integer", "minimum": 1, "maximum": 65535 },
-            { "type": "string", "pattern": "^[1-9][0-9]{0,4}(/(tcp|udp|sctp))?$" }
-          ]
-        },
-        "volume": {
-          "type": "string",
-          "description": "CONTAINER path of the mount.",
-          "pattern": "^/"
-        },
-        "device": {
-          "type": "string",
-          "description": "CONTAINER path of the device. Where the compose entry names only one path, host and container are the same.",
-          "pattern": "^/"
-        },
-        "label": {
-          "type": "string",
-          "description": "Label key.",
-          "minLength": 1
-        },
-        "setting": {
-          "type": "string",
-          "description": "A scalar service key. Restricted in v1 to keys where a form control is meaningful; anything else is edited as YAML.",
-          "enum": [
-            "image",
-            "restart",
-            "network_mode",
-            "command",
-            "entrypoint",
-            "user",
-            "hostname",
-            "privileged",
-            "shm_size"
-          ]
-        },
-
-        "title":       { "type": "string", "description": "Human name for the field. Called 'title' rather than 'label' because 'label' is a binder here, mirroring the compose key it binds to. Inferred from the target when omitted." },
-        "description": { "type": "string", "description": "Help text. Markdown." },
-        "display":     { "$ref": "#/$defs/display" },
-        "required":    { "type": "boolean", "default": false, "description": "Blocks save when empty. Never inferred — a wrongly guessed requirement blocks a save the user cannot resolve." },
-        "mask":        { "type": "boolean", "description": "Password input; redacted in logs and exports. Inferred from the variable name when omitted." },
-        "type": {
-          "type": "string",
-          "enum": ["text", "password", "number", "boolean", "path", "port", "select"],
-          "description": "Input control. Inferred from the binder when omitted."
-        },
-        "options": {
-          "type": "array",
-          "description": "Choices for type: select.",
-          "minItems": 1,
-          "items": {
-            "oneOf": [
-              { "type": ["string", "number", "boolean"] },
-              {
-                "type": "object",
-                "required": ["value"],
-                "properties": {
-                  "value": { "type": ["string", "number", "boolean"] },
-                  "label": { "type": "string" }
-                }
-              }
-            ]
-          }
-        },
-        "mode": {
-          "type": "string",
-          "enum": ["rw", "ro"],
-          "description": "Mount mode. Applies to 'volume' bindings only."
-        },
-        "group": {
-          "type": "string",
-          "description": "Section heading. Consecutive fields sharing a group render together."
-        }
-      },
-
-      "allOf": [
-        {
-          "if":   { "required": ["options"] },
-          "then": { "properties": { "type": { "const": "select" } } }
-        },
-        {
-          "if":   { "required": ["type"], "properties": { "type": { "const": "select" } } },
-          "then": { "required": ["options"] }
-        },
-        {
-          "if":   { "required": ["mode"] },
-          "then": { "required": ["volume"] }
-        }
-      ]
     },
 
     "display": {

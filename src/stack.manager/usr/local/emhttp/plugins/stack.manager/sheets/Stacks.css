@@ -1,9 +1,16 @@
 /* Stack Manager — styles for the top-navigation variant of the Stacks view.
  *
- * PageBuilder auto-loads sheets/<page name>.css, so the same styles need to be
- * reachable under both page names. Single source of truth lives next door.
+ * Deliberately empty.
+ *
+ * PageBuilder auto-loads sheets/<page name>.css, and this file exists only so
+ * that auto-load finds something under the "Stacks" page name. The real styles
+ * are pulled in by StacksPage.php with a ?v=<file mtime> on the URL, so an
+ * edited stylesheet reaches the browser without a hard refresh.
+ *
+ * This used to `@import url("stack.manager.css")`. An @import inherits the
+ * cache behaviour of the file that contains it, so an unversioned import of an
+ * unversioned stylesheet meant edits were invisible until the user knew to
+ * press Ctrl-F5 — which is not something a plugin should require.
  *
  * Copyright 2026, Stack Manager contributors. GPL-2.0.
  */
-
-@import url("stack.manager.css");

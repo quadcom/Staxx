@@ -47,12 +47,20 @@ would run on anyone else's machine.
 A compose file says a container uses port 8096. It does not say "this is the web interface" or "this
 one is a password, hide it as you type" or "you must set this one".
 
-So we add that information in a section named `x-unraid`. The compose standard sets aside sections
-whose name starts with `x-` for exactly this: extra information that Docker will ignore. Your file
-keeps working everywhere; ours knows how to draw a decent form from it.
+That missing information goes in two places, and both are already part of an ordinary compose file.
 
-If a compose file has no `x-unraid` section, you still get a form — just a plainer one, with labels
-worked out from the file itself.
+**What each setting is for** goes in the comment beside it — the `#` note a person would write there
+anyway. The form shows it as the help text under the box, and typing help text into the form writes
+it back as that comment. Two short marks at the end of a comment say the only two things a comment
+cannot: `-!S` for "this is a secret, hide it", `-!R` for "this must not be left empty".
+
+**What the app is** — its name, its logo, a paragraph about it, the address of its web page — goes in
+a section named `x-unraid`. The compose standard sets aside sections whose name starts with `x-` for
+exactly this: extra information that Docker will ignore. Your file keeps working everywhere; ours
+knows how to draw a decent form from it.
+
+None of it is required. With no notes and no `x-unraid` section you still get a form — just a plainer
+one, with the names worked out from the file itself.
 
 ## Where it is going
 
