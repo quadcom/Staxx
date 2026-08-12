@@ -1462,6 +1462,30 @@
   grid-template-rows: auto 1fr auto;
 }
 
+/* One pane on show gets one pane's worth of dialog. Split keeps the full width
+   above, which is what the two-column layout was sized for.
+ *
+ * Written as the complement of the phone breakpoint rather than a min-width of
+ * its own, so there is one threshold in this file and not two that can drift
+ * apart. Below it the dialog fills the screen and none of this applies.
+ *
+ * :has() so the width can follow the view without a second copy of it on the
+ * dialog — it lives on the body, which is where every other rule reads it. A
+ * browser too old for :has() drops these two rules and the dialog stays full
+ * width, which is roomy rather than broken.
+ *
+ * 48vw is exactly half of the 96vw the split dialog uses, so the pane on show
+ * is the same width it was a moment ago: switching view moves the dialog's
+ * edges and reflows nothing inside them. 84rem is half of the 168rem cap, and
+ * the 52rem floor is there because a narrow desktop window would otherwise
+ * take that half literally and leave a column too thin to fill in. */
+@media not all and (max-width: 45rem) {
+  .stackman-modal:has(> .stackman-modal-body[data-view="form"]),
+  .stackman-modal:has(> .stackman-modal-body[data-view="yaml"]) {
+    width: clamp(52rem, 48vw, 84rem);
+  }
+}
+
 .stackman-modal:not([open]) {
   display: none;
 }
