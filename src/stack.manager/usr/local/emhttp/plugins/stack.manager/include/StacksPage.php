@@ -207,9 +207,12 @@ endif;
           <input type="checkbox" id="stackman-sanitise">
           <span><?= _('Sanitise') ?></span>
         </label>
+        <!-- Two views, not three. A side-by-side view was here and never
+             earned its place: at any width worth having it, one pane or the
+             other was the one being read. Clicking a form row still marks its
+             lines in the compose pane, which is what it was really for. -->
         <div class="stackman-views" role="group" aria-label="<?= _('View') ?>">
-          <button type="button" class="stackman-viewbtn" data-view="form"  aria-pressed="false"><?= _('Form') ?></button>
-          <button type="button" class="stackman-viewbtn" data-view="split" aria-pressed="true"><?= _('Split') ?></button>
+          <button type="button" class="stackman-viewbtn" data-view="form"  aria-pressed="true"><?= _('Form') ?></button>
           <button type="button" class="stackman-viewbtn" data-view="yaml"  aria-pressed="false"><?= _('Compose') ?></button>
         </div>
         <button type="button" class="stackman-btn" id="stackman-modal-close">
@@ -226,12 +229,15 @@ endif;
       </div>
     </div>
 
-    <div class="stackman-modal-body" data-view="split">
+    <div class="stackman-modal-body" data-view="form">
 
       <div class="stackman-pane stackman-pane--form">
         <div class="stackman-form" id="stackman-form">
+          <!-- Replaced by the real form as soon as the file is parsed. It is
+               only ever seen for an instant, but Form is the view the editor
+               opens on, so that instant is the first thing anyone sees. -->
           <p class="stackman-form-empty">
-            <?= _('The form view is still being built. Edit the compose file on the right for now.') ?>
+            <?= _('Reading the compose file…') ?>
           </p>
         </div>
       </div>

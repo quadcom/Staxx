@@ -453,18 +453,11 @@
       if (svc.overview) out.push('<p class="stackman-fieldhint">' + esc(svc.overview) + '</p>');
       if (svc.note)     out.push('<p class="stackman-fieldnote">' + esc(svc.note) + '</p>');
 
-      // The index is the row's identity in the DOM, not the field id. Editing
-      // a container port changes that id — "8096" becomes "809" the moment the
-      // last digit is deleted — and a row that renamed itself mid-keystroke
-      // could not be found again to update.
-      for (var i = 0; i < form.fields.length; i++) {
-        if (form.fields[i].service !== svc.name) continue;
-        out.push(fieldHtml(form.fields[i], i));
-      }
-
       // Always shown, whether or not the file has that key yet — that is the
       // whole point of hanging them off the service. A service the parser
       // could not read gets none, because adding to it would only ever fail.
+      // At the top, above the image row: a service with twenty variables put
+      // them a scroll away from the name of the thing they belong to.
       if (svc.readable) {
         out.push('<div class="stackman-adds">');
         for (var a = 0; a < ADDABLE.length; a++) {
@@ -475,6 +468,15 @@
                    '</button>');
         }
         out.push('</div>');
+      }
+
+      // The index is the row's identity in the DOM, not the field id. Editing
+      // a container port changes that id — "8096" becomes "809" the moment the
+      // last digit is deleted — and a row that renamed itself mid-keystroke
+      // could not be found again to update.
+      for (var i = 0; i < form.fields.length; i++) {
+        if (form.fields[i].service !== svc.name) continue;
+        out.push(fieldHtml(form.fields[i], i));
       }
 
       out.push('</section>');
@@ -547,7 +549,7 @@
   gapNote.addEventListener('click', function () {
     var row = formHost.querySelector('.stackman-fieldrow[data-row="' + (gapNote.dataset.row | 0) + '"]');
     if (!row) return;
-    setView(modalBody.dataset.view === 'yaml' ? 'split' : modalBody.dataset.view);
+    setView('form');
     row.scrollIntoView({ block: 'center' });
     var box = row.querySelector('input:not([disabled])');
     if (box) box.focus();
@@ -692,7 +694,9 @@
     var row = id && formHost.querySelector('[data-field-row="' + id.replace(/"/g, '\\"') + '"]');
     if (!row) return;
 
-    if (modalBody.dataset.view === 'yaml') setView('split');
+    // The new row is in the form, so that is where to be. Nothing to restore
+    // afterwards: the view is a choice, and this one was made by adding a row.
+    setView('form');
     row.scrollIntoView({ block: 'center' });
 
     // Selected, not just focused: the new entry arrives with a placeholder in
@@ -1392,7 +1396,7 @@
     // level up.
     textAtOpen = body || (isNew ? NEW_STACK : '');
     yamlPane.value = textAtOpen;
-    setView('split');
+    setView('form');
 
     undoStack.length = 0;
     updateUndo();
@@ -1436,7 +1440,9 @@
     // This doubles as the escape hatch from the Tab key being captured below.
     if (document.activeElement === yamlPane) {
       event.preventDefault();
-      modal.querySelector('.stackman-viewbtn[data-view="split"]').focus();
+      // The Compose button, because that is the one that is pressed while the
+      // caret is in this textarea — so focus lands somewhere that makes sense.
+      modal.querySelector('.stackman-viewbtn[data-view="yaml"]').focus();
       return;
     }
     if (!confirmDiscard()) event.preventDefault();

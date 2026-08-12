@@ -1576,14 +1576,14 @@
 
 /* ---- modal: body and the two panes ---- */
 
+/* One column, because exactly one pane is ever shown. Still a grid rather than
+   a plain block: min-height: 0 on a grid row is what lets a pane scroll its own
+   contents instead of growing and pushing the footer off the bottom. */
 .stackman-modal-body {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  min-height: 0;          /* lets the panes scroll instead of stretching the grid */
+  grid-template-columns: 1fr;
+  min-height: 0;
 }
-
-.stackman-modal-body[data-view="form"] { grid-template-columns: 1fr; }
-.stackman-modal-body[data-view="yaml"] { grid-template-columns: 1fr; }
 
 .stackman-modal-body[data-view="form"] .stackman-pane--yaml { display: none; }
 .stackman-modal-body[data-view="yaml"] .stackman-pane--form { display: none; }
@@ -1593,15 +1593,6 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-}
-
-.stackman-pane--form {
-  border-right: 0.1rem solid var(--sm-line);
-}
-
-.stackman-modal-body[data-view="form"] .stackman-pane--form,
-.stackman-modal-body[data-view="yaml"] .stackman-pane--form {
-  border-right: 0;
 }
 
 .stackman-form {
@@ -1623,6 +1614,19 @@
   margin: 0 0 2.4rem;
   padding-left: 0.9rem;
   border-left: 0.3rem solid transparent;
+}
+
+/* The break between one service and the next. On the second and later ones
+   rather than after every one, which needs no "except the last" special case
+   and leaves no rule hanging under the final service.
+
+   Drawn with an outset shadow, not a border-top. A border would meet the
+   transparent border-left above at a mitred corner, so the grey would appear
+   to start a few pixels in from the left — and would jump sideways when the
+   left edge lights up to mark the active service. */
+.stackman-svc + .stackman-svc {
+  padding-top: 2.4rem;
+  box-shadow: 0 -0.3rem 0 var(--sm-line);
 }
 
 /* Shown when the caret is somewhere in this service but on a line no single
@@ -1762,14 +1766,17 @@
 
 /* One row per service, always shown. These belong to the service and not to
    any one list, because removing the last port takes the "ports:" key with it
-   and a control living on that list would go with it. */
+   and a control living on that list would go with it.
+
+   The hairline is below rather than above: this row sits at the top of the
+   service, so what it has to be separated from is the fields under it. */
 .stackman-adds {
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem;
-  margin-top: 1.2rem;
-  padding-top: 1.2rem;
-  border-top: 0.1rem solid var(--sm-hairline);
+  margin-bottom: 1.2rem;
+  padding-bottom: 1.2rem;
+  border-bottom: 0.1rem solid var(--sm-hairline);
 }
 
 .stackman-scaffold .stackman-add {
@@ -3348,20 +3355,23 @@
 
   /* ---- The compose modal on a phone -------------------------------------
    *
-   * Side by side is meaningless at this width — two panes of about 20
-   * characters each would be worse than either one alone. So the split view
-   * stops splitting: whichever pane the Form/Split/Compose control last
-   * chose is the one shown, and Split falls back to the compose pane, which
-   * is the one that can actually be worked in. The control keeps working, so
-   * this is a layout change and not a loss of function.
+   * Pinned to the four edges, not sized and centred. A modal <dialog> is
+   * position: fixed with margin: auto, so any height greater than the space
+   * available is clipped at BOTH ends — and the top of a dialog is where its
+   * title and its Close button live. inset: 0 with no margin cannot do that,
+   * whatever the height turns out to be.
    *
-   * Setting grid-template-columns on the [data-view="split"] case is not
-   * enough on its own — the pane still has to be hidden, or both would stack
-   * vertically and each get half the height. */
+   * And dvh, not vh. On a phone, vh is the viewport height with the browser's
+   * toolbar hidden, so while the toolbar is showing 100vh is taller than what
+   * you can see. dvh tracks the toolbar sliding in and out, which is the
+   * measurement this actually wanted. */
   .stackman-modal {
-    width: 100vw;
-    height: 100vh;
+    inset: 0;
+    margin: 0;
+    width: 100%;
+    height: 100dvh;
     max-width: none;
+    max-height: none;
     border: 0;
     border-radius: 0;
   }
@@ -3379,22 +3389,6 @@
     margin-left: 0;
     width: 100%;
     justify-content: space-between;
-  }
-
-  .stackman-modal-body[data-view="split"] {
-    grid-template-columns: 1fr;
-  }
-
-  .stackman-modal-body[data-view="split"] .stackman-pane--form {
-    display: none;
-  }
-
-  .stackman-modal-body[data-view="split"] .stackman-pane--yaml {
-    display: flex;
-  }
-
-  .stackman-pane--form {
-    border-right: 0;
   }
 
   /* The note is long and the buttons are what someone came here for, so on a
