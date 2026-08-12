@@ -94,6 +94,19 @@ function stackman_path_leaf(string $rel): string {
   return $at === false ? $rel : substr($rel, $at + 1);
 }
 
+/**
+ * Compose's own normalisation of a project name, not a plain strtolower().
+ *
+ * Compose lowercases a directory name AND strips anything outside
+ * [a-z0-9_-] when it invents a project name from one. A directory called
+ * "my.stack" — which stackman_valid_name() happily permits — becomes project
+ * "mystack", so every fallback that guesses a project name from a stack's
+ * leaf has to run this or the guess misses while the stack is down.
+ */
+function stackman_project_name(string $leaf): string {
+  return preg_replace('/[^a-z0-9_-]/', '', strtolower($leaf));
+}
+
 function stackman_stack_dir(string $rel): string {
   return stackman_stack_root().'/'.$rel;
 }
@@ -451,14 +464,14 @@ function stackman_file_tail(string $file): string {
  */
 function stackman_state_for(string $file, string $leaf): ?array {
   $state = stackman_compose_state();
-  if ($file === '') return $state['byName'][strtolower($leaf)] ?? null;
+  if ($file === '') return $state['byName'][stackman_project_name($leaf)] ?? null;
 
   if (isset($state['byFile'][$file])) return $state['byFile'][$file];
 
   $tail = stackman_file_tail($file);
   if (isset($state['byTail'][$tail])) return $state['byTail'][$tail];
 
-  return $state['byName'][strtolower($leaf)] ?? null;
+  return $state['byName'][stackman_project_name($leaf)] ?? null;
 }
 
 /**
@@ -626,57 +639,17 @@ function stackman_service_names(string $file, ?string &$error = null): array {
   return array_keys(stackman_compose_meta($file, $error)['services']);
 }
 
-/**
- * What to call a stack on screen.
- *
- * A folder holding several containers needs a title, and its own name is that
- * title. A folder holding ONE container does not: the folder is an artefact of
- * how stacks are stored, and naming the row after it says the same word twice.
- * Such a row is named after the container instead.
- *
- *   x-unraid: name:   whoever wrote the file said what to call it. Obeyed
- *                     whatever the service count, because it is the only
- *                     statement of intent available.
- *   container_name:   one service only. Compose's own name for the container.
- *   the service key   one service with no container_name:.
- *   the folder name   everything else.
- *
- * Two things deliberately do NOT feed this. A service's own x-unraid `name` is
- * for the form renderer and titles a field group, not the row. And docker's
- * live container name is never used: compose invents `folder-service-1` when
- * the file does not set container_name:, which is worse than the service key,
- * and a name that only exists while the stack is up would change every time it
- * started and stopped. This answer comes from the file alone, so it is the same
- * running or not.
- *
- * @param string $dirName the stack's folder name
- * @param array  $meta    from stackman_compose_meta()
- */
-function stackman_stack_title(string $dirName, array $meta): string {
-  $own = trim((string)($meta['x']['name'] ?? ''));
-  if ($own !== '') return $own;
-
-  if (count($meta['services']) === 1) {
-    $service = array_key_first($meta['services']);
-    $cname   = trim((string)($meta['services'][$service]['container_name'] ?? ''));
-    // Cast because a service called `1234` is an int key by the time PHP has
-    // built the array, and this function promises a string.
-    return $cname !== '' ? $cname : (string)$service;
-  }
-
-  return $dirName;
-}
-
 /* ----------------------------------------------------------------- stacks -- */
 
 /**
  * Every stack on disk, with whatever compose knows about its state.
  *
  * `name` is the folder on disk and is the stack's identity — every command, the
- * folders file and every selector on the page are keyed on it. `title` is what
- * the row is labelled with and is for display only; the two are often the same.
+ * folders file and every selector on the page are keyed on it. `leaf` is what
+ * the row is labelled with: the stack's name IS its directory, full stop —
+ * there is no separate display-name override any more.
  *
- * @return array<int, array{name:string, title:string, dir:string, file:string,
+ * @return array<int, array{name:string, leaf:string, dir:string, file:string,
  *                          filename:string, services:string[], x:array<string,string>,
  *                          project:string, status:string, running:bool, hasFile:bool,
  *                          parses:bool, error:?string}>
@@ -703,7 +676,6 @@ function stackman_list_stacks(): array {
       'name'     => $found['rel'],
       'folder'   => $found['folder'],
       'leaf'     => $found['leaf'],
-      'title'    => stackman_stack_title($found['leaf'], $meta),
       'dir'      => $dir,
       'file'     => $file,
       'filename' => $file !== '' ? basename($file) : '',
@@ -724,10 +696,11 @@ function stackman_list_stacks(): array {
   }
 
   // Sorted by what the page shows, not by what is on disk, or the list reads as
-  // though it were in no order at all. The folder name breaks a tie so two
-  // stacks sharing a title keep a stable order between refreshes.
+  // though it were in no order at all. The full path breaks a tie so two
+  // stacks sharing a leaf name (one in a folder, one without) keep a stable
+  // order between refreshes.
   usort($stacks, function ($a, $b) {
-    $by = strnatcasecmp($a['title'], $b['title']);
+    $by = strnatcasecmp($a['leaf'], $b['leaf']);
     return $by !== 0 ? $by : strnatcasecmp($a['name'], $b['name']);
   });
   return $stacks;
@@ -1063,7 +1036,7 @@ function stackman_stack_containers(array $s): array {
   // "media/jellyfin" — matching on the path would find nothing the moment a
   // stack was filed.
   $leaf    = $s['leaf'] ?? stackman_path_leaf($s['name']);
-  $project = $s['project'] !== '' ? $s['project'] : strtolower($leaf);
+  $project = $s['project'] !== '' ? $s['project'] : stackman_project_name($leaf);
   return $index['byProject'][$project] ?? [];
 }
 
@@ -1409,6 +1382,77 @@ function stackman_delete_stack(string $name, string &$error): bool {
     return false;
   }
   return true;
+}
+
+/**
+ * Rename a stack — move its own directory to a new leaf name, without
+ * changing which folder (if any) it sits in.
+ *
+ * The same shape as stackman_folder_assign(): validate, check the target is
+ * not already taken, rename() on disk, return the new rel so the caller can
+ * re-key itself. The collision check is stackman_folder_taken()'s logic
+ * inlined rather than called — Stacks.php sits below Folders.php in the
+ * include order and must not depend on it.
+ */
+function stackman_rename_stack(string $rel, string $newLeaf, string &$error = null): string {
+  $error   = '';
+  $newLeaf = trim($newLeaf);
+
+  if (!stackman_valid_path($rel)) { $error = 'Invalid stack name.'; return ''; }
+  if (!stackman_valid_name($newLeaf)) {
+    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
+           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    return '';
+  }
+
+  $from = stackman_stack_dir($rel);
+  if (!is_dir($from)) {
+    $error = 'That stack is no longer there. Refresh the page and try again.';
+    return '';
+  }
+
+  $folder = stackman_path_folder($rel);
+  $newRel = $folder === '' ? $newLeaf : $folder.'/'.$newLeaf;
+  if ($newRel === $rel) return $rel;
+
+  $scan = stackman_scan_stacks();
+
+  // A stack at the top level shares its namespace with folders — "jellyfin"
+  // could be either — so only a top-level rename needs to check both. A
+  // stack filed in a folder only has to avoid its siblings inside that same
+  // folder; it cannot collide with a folder name at all, since its new path
+  // sits one level below one.
+  if ($folder === '') {
+    foreach ($scan['folders'] as $f) {
+      if (strcasecmp($f, $newLeaf) === 0) {
+        $error = 'There is already a folder called "'.$newLeaf.'".';
+        return '';
+      }
+    }
+  }
+  foreach ($scan['stacks'] as $s) {
+    if ($s['rel'] === $rel) continue;                    // itself
+    if ($s['folder'] !== $folder) continue;
+    if (strcasecmp($s['leaf'], $newLeaf) === 0) {
+      $error = 'There is already a stack called "'.$newLeaf.'"'
+             . ($folder === '' ? '.' : ' in "'.$folder.'".');
+      return '';
+    }
+  }
+
+  // The scan above only knows about stacks and folders. A stray empty directory
+  // is neither, and rename() onto an empty directory *succeeds* on Linux — so
+  // without this the stray would be silently swallowed.
+  $to = stackman_stack_root().'/'.$newRel;
+  if (file_exists($to)) {
+    $error = 'Something called "'.$newLeaf.'" is already there. Pick another name.';
+    return '';
+  }
+  if (!@rename($from, $to)) {
+    $error = 'Could not rename the stack on disk. Check the permissions on '.$from.'.';
+    return '';
+  }
+  return $newRel;
 }
 
 /* -------------------------------------------------------------- run jobs -- */

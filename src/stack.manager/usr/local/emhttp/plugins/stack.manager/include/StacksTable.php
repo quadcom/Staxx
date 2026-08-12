@@ -333,7 +333,7 @@ function stackman_stack_tile(array $s, array $kids): string {
   if ($own !== '') {
     // Initials come from the title, so the letters in the tile are the letters
     // written beside it. The folder name is not what anyone is reading here.
-    return stackman_icon_tile(stackman_icon_resolve($own, $s['dir']), $s['title']);
+    return stackman_icon_tile(stackman_icon_resolve($own, $s['dir']), $s['leaf']);
   }
 
   if (!$kids) {
@@ -438,6 +438,8 @@ function stackman_render_rows(array $rows, bool $canRun): string {
     if ($row['type'] === 'folder'):
       if ($inFolderGroup):
 ?>
+          </div>
+        </div>
       </div>
 <?
       endif;
@@ -487,17 +489,27 @@ function stackman_render_rows(array $rows, bool $canRun): string {
           <span class="stackman-cell stackman-num" role="gridcell" data-stat="net"><span class="stackman-statv">—</span></span>
           <span class="stackman-cell stackman-num" role="gridcell" data-stat="gpu"><span class="stackman-statv">—</span></span>
         </div>
+
+        <!-- Holds no chevron of its own: the folder heading's chevron, one
+             level up and outside this wrapper, is what reopens it, so
+             collapsing this whole element can never hide the control that
+             would undo the collapse. -->
+        <div class="stackman-group stackman-group--folder-children" role="presentation"
+             data-folder-children="<?= htmlspecialchars($row['id']) ?>"
+             <?= $row['collapsed'] ? 'hidden' : '' ?>>
+          <div class="stackman-group stackman-folder-inner" role="presentation">
 <?
     else:
       $s = $row['stack'];
 
       // The compose project name is what containers are labelled with, and it
       // is only known from `compose ls` while the stack is up. For a stopped
-      // stack, fall back to compose's own default — the folder name,
-      // lower-cased — so the row can still be matched the moment it starts.
-      // The browser corrects this from the server's answer once it is running,
-      // which matters for any stack whose compose file sets its own `name:`.
-      $project = $s['project'] !== '' ? $s['project'] : strtolower($s['name']);
+      // stack, fall back to compose's own default — the LEAF name, normalised
+      // the way compose itself does — so the row can still be matched the
+      // moment it starts. The browser corrects this from the server's answer
+      // once it is running, which matters for any stack whose compose file
+      // sets its own `name:`.
+      $project = $s['project'] !== '' ? $s['project'] : stackman_project_name($s['leaf']);
 
       $kids = $s['parses'] ? stackman_stack_children($s) : [];
 
@@ -531,6 +543,8 @@ function stackman_render_rows(array $rows, bool $canRun): string {
       if ($row['folder'] === '' && $inFolderGroup):
         $inFolderGroup = false;
 ?>
+          </div>
+        </div>
       </div>
 <?
       endif;
@@ -568,7 +582,7 @@ function stackman_render_rows(array $rows, bool $canRun): string {
                         class="stackman-icon<?= $s['parses'] ? '' : ' stackman-icon--bad' ?>"
                         data-menu="stack"
                         data-stack="<?= htmlspecialchars($s['name']) ?>"
-                        data-label="<?= htmlspecialchars($s['title']) ?>"
+                        data-label="<?= htmlspecialchars($s['leaf']) ?>"
                         data-parses="<?= $s['parses'] ? '1' : '0' ?>"
                         data-hasfile="<?= $s['hasFile'] ? '1' : '0' ?>"
                         data-running="<?= $s['running'] ? '1' : '0' ?>"
@@ -590,22 +604,15 @@ function stackman_render_rows(array $rows, bool $canRun): string {
               </span>
 
               <span class="stackman-nameinfo">
-                <!-- The title, not the folder name: a stack of one container is
-                     named after that container. See stackman_stack_title(). The
-                     folder name is still the row's identity and is carried by
-                     the data attributes above. -->
-                <span class="stackman-name-text"><?= htmlspecialchars($s['title']) ?></span>
-                <!-- The filename and the container count are separate elements
-                     because only the second one is refreshed as containers come
-                     and go, and picking one half out of a single text node is
-                     the sort of thing that quietly eats the other half. -->
+                <!-- The stack's name IS its directory, full stop — there is no
+                     separate display-name override any more. The folder name
+                     (if it sits in one) is a different thing, carried by the
+                     data attributes above rather than printed here. -->
+                <span class="stackman-name-text"><?= htmlspecialchars($s['leaf']) ?></span>
                 <!-- The count is only worth printing for a stack that has more
                      than one container; for a single one the State column
                      already says everything this would. -->
                 <span class="stackman-sub">
-                  <? if ($s['filename'] !== '' && $s['filename'] !== 'compose.yaml'): ?>
-                    <?= htmlspecialchars($s['filename']) ?><?= $expandable ? ' ·' : '' ?>
-                  <? endif; ?>
                   <span data-cell="stack-sub"><?= $expandable ? stackman_stack_sub(count($kids), $kidsUp) : '' ?></span>
                 </span>
               </span>
@@ -620,30 +627,22 @@ function stackman_render_rows(array $rows, bool $canRun): string {
               <span class="stackman-parse-error"><?= htmlspecialchars((string)$s['error']) ?></span>
             <? elseif (!$s['services']): ?>
               <span class="stackman-sub"><?= _('none declared') ?></span>
-            <? elseif (count($s['services']) === 1): ?>
-              <!-- A one-service stack shows its image and nothing else. Its
-                   service name is already the row's title (or has been replaced
-                   by container_name:, which is the same thing said better), so
-                   printing it again spends a whole column on a repeat. The
-                   image is the one fact the row does not carry anywhere else,
-                   because a one-service stack has no child row to show it on. -->
-              <? $image   = (string)($kids[0]['image'] ?? ''); ?>
-              <? $service = (string)$s['services'][0]; ?>
-              <? if ($image !== ''): ?>
-                <span class="stackman-image stackman-image--sub"
-                  title="<?= htmlspecialchars($image) ?>"><?= htmlspecialchars($image) ?></span>
-              <? elseif ($service !== $s['title']): ?>
-                <!-- No image at all — a service built from a Dockerfile rather
-                     than pulled. The service name is the only identifier left,
-                     and it is worth printing only when it is not already the
-                     name at the front of the row. -->
-                <?= htmlspecialchars($service) ?>
-              <? endif; ?>
             <? else: ?>
-              <!-- Several services: the names belong here. Each one's image is
-                   on its own child row, and printing one of several here would
-                   imply it spoke for the rest. -->
+              <!-- The service keys, always — the row's name no longer stands in
+                   for one of them, so there is nothing left to save a line by
+                   omitting. -->
               <?= htmlspecialchars(implode(', ', $s['services'])) ?>
+              <? if (count($s['services']) === 1): ?>
+                <!-- The image goes on a sub-line, but only for a single-service
+                     stack: printing every image under a five-service stack
+                     would swamp the column, and they are all visible on the
+                     expanded child rows anyway. -->
+                <? $image = (string)($kids[0]['image'] ?? ''); ?>
+                <? if ($image !== ''): ?>
+                  <span class="stackman-image stackman-image--sub"
+                    title="<?= htmlspecialchars($image) ?>"><?= htmlspecialchars($image) ?></span>
+                <? endif; ?>
+              <? endif; ?>
             <? endif; ?>
           </span>
 
@@ -688,6 +687,7 @@ function stackman_render_rows(array $rows, bool $canRun): string {
       <div class="stackman-group stackman-group--children" role="presentation"
            data-stack-children="<?= htmlspecialchars($s['name']) ?>"
            <?= $hideKids ? 'hidden' : '' ?>>
+        <div class="stackman-group stackman-children-inner" role="presentation">
 <?
       endif;
 
@@ -811,7 +811,7 @@ function stackman_render_rows(array $rows, bool $canRun): string {
       // than two separately-guarded blocks that must stay in the right order.
       if ($expandable):
 ?>
-      </div></div>
+      </div></div></div>
 <?
       endif;
 
@@ -824,6 +824,8 @@ function stackman_render_rows(array $rows, bool $canRun): string {
   // NEXT thing that needs it.
   if ($inFolderGroup):
 ?>
+          </div>
+        </div>
       </div>
 <?
   endif;
@@ -880,7 +882,7 @@ function stackman_state_snapshot(): array {
       'running'    => $s['running'],
       // Same fallback the table uses, so the row's project is corrected the
       // moment compose reveals the real one.
-      'project'    => $s['project'] !== '' ? $s['project'] : strtolower($s['leaf']),
+      'project'    => $s['project'] !== '' ? $s['project'] : stackman_project_name($s['leaf']),
       'html'       => stackman_state_pill($s, $canRun),
       'address'    => stackman_address_html(stackman_merged_addresses($mine)),
       'containers' => $containers,

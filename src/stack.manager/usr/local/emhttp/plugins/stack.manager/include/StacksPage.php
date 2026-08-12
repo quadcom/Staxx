@@ -191,15 +191,19 @@ endif;
     <div class="stackman-modal-head">
       <h3 class="stackman-modal-title" id="stackman-modal-title"><?= _('New stack') ?></h3>
 
-      <!-- "Name", not "Folder". It is the directory holding the compose file,
-           and calling it a folder made it read as the folder in the list —
-           which is a different thing sitting one level above it. That one is
-           shown beside it, as context, and is changed with "Move to folder". -->
+      <!-- "Stack name", not "Folder". It is the directory holding the compose
+           file, and calling it a folder made it read as the folder in the
+           list — which is a different thing sitting one level above it. That
+           one is shown beside it, as context, and is changed with "Move to
+           folder". The hint is a visible line rather than a title attribute,
+           because a tooltip cannot be reached on a phone and this sentence is
+           the one that tells the two apart. -->
       <label class="stackman-modal-name" id="stackman-name-field">
-        <span><?= _('Name') ?></span>
+        <span><?= _('Stack name') ?></span>
         <span class="stackman-name-folder" id="stackman-name-folder" hidden></span>
         <input type="text" id="stackman-name" spellcheck="false" autocomplete="off"
                placeholder="<?= _('jellyfin') ?>">
+        <span class="stackman-name-hint"><?= _("The folder that holds this stack's compose file. Renaming it moves the folder.") ?></span>
       </label>
 
       <div class="stackman-modal-tools">

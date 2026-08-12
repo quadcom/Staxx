@@ -29,7 +29,6 @@
           "default": 1,
           "description": "Schema version. A reader seeing a higher major version falls back to inference rather than misreading the metadata."
         },
-        "name":     { "type": "string", "description": "Display name, and the last word on what the stack is called. Left out, a stack of one service is named after that service's container_name, or after the service key if it has none; a stack of several services is named after its directory." },
         "icon":     { "$ref": "#/$defs/icon" },
         "overview": { "type": "string", "description": "Markdown." },
         "category": { "type": "string", "description": "Unraid's existing category taxonomy, e.g. MediaApp:Video." },
@@ -55,7 +54,6 @@
       "type": "object",
       "description": "Service-level metadata. Every key optional.",
       "properties": {
-        "name":     { "type": "string", "description": "Display name for this service within the form. Defaults to the service key. It does not name the stack's own row in the list; only the stack-level name does that." },
         "icon":     { "$ref": "#/$defs/icon" },
         "overview": { "type": "string", "description": "Markdown." },
         "webui": {
@@ -64,7 +62,7 @@
         },
         "display": {
           "$ref": "#/$defs/display",
-          "description": "'advanced' hides the entire service behind the form's advanced toggle — for sidecars such as databases."
+          "description": "Stored, but nothing acts on it yet. The intent is that 'advanced' will fold a sidecar such as a database behind the form's advanced toggle."
         }
       }
     },

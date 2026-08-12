@@ -83,7 +83,7 @@ Two levels, both permitted by the compose spec:
 ```yaml
 x-unraid:              # stack-level: describes the whole stack
   version: 1
-  name: Jellyfin
+  icon: jellyfin
 
 services:
   jellyfin:
@@ -91,7 +91,8 @@ services:
     ports:
       - "8096:8096"    # the page you open -!R   ← per-setting notes live here
     x-unraid:          # service-level: describes one container
-      name: Jellyfin
+      overview: |
+        Free software media system…
 ```
 
 Both blocks describe *things* — a stack, a container. Neither describes a single setting; that is
@@ -160,7 +161,6 @@ It never touches it in the first place.
 ```yaml
 x-unraid:
   version: 1                      # schema version. Optional, defaults to 1.
-  name: Jellyfin                  # display name for the stack
   icon: jellyfin                  # see "Icons" below; leave it out and one is found for you
   overview: |                     # markdown; shown in the stack's detail view
     Free software media system…
@@ -173,18 +173,8 @@ x-unraid:
 
 All keys optional.
 
-`name` is what the stack is called in the list, and setting it settles the matter. Leave it out and
-the name is worked out from the file:
-
-| The compose file has | The list shows |
-|---|---|
-| one service, with `container_name:` | that container name |
-| one service, with no `container_name:` | the service's own key, e.g. `jellyfin` |
-| several services | the stack's directory name |
-
-The reasoning is that a folder holding one container is a filing detail, not a name — calling the
-row after the folder says the same word twice. A folder holding several containers is a real
-grouping, so it keeps a title of its own.
+A stack is named after its directory — `Media/jellyfin` is called "jellyfin" in the list, full
+stop. There is no display-name override.
 
 Service display order is the order services appear in the compose file — the editor preserves
 document order, so no explicit ordering key is needed.
@@ -197,19 +187,17 @@ document order, so no explicit ordering key is needed.
 services:
   jellyfin:
     x-unraid:
-      name: Jellyfin              # heading for this service in the form; defaults to the
-                                  # service key. This does NOT name the stack's row in the
-                                  # list — only the stack-level `name` above does that.
-      icon: jellyfin              # see "Icons" below
-      overview: |                 # markdown
+      icon: jellyfin               # see "Icons" below
+      overview: |                  # markdown
         …
       webui: "http://[IP]:[PORT:8096]/"
-      display: basic              # basic | advanced — reserved; see below
+      display: basic               # basic | advanced — reserved; see below
 ```
 
-All keys optional. `display: advanced` is accepted and stored, and is intended to fold a sidecar
-such as a database away behind a toggle — but nothing acts on it yet, so setting it today changes
-nothing you can see.
+All keys optional. A service's heading in the form is its key in the compose file — full stop;
+there is no display-name override. `display: advanced` is accepted and stored, and is intended to
+fold a sidecar such as a database away behind a toggle — but nothing acts on it yet, so setting it
+today changes nothing you can see.
 
 `webui` uses Unraid's existing substitution convention, so it behaves the way users already expect:
 
@@ -377,9 +365,17 @@ fewer is left exactly as it is, because it is almost certainly meant that way.
 | container path `/config` | **Config** |
 | container port `8096` | **Port 8096** |
 
-**Control types** — a port gets a port box; a mount or device gets a path box with the folder picker
-beside it; `privileged` gets a tick box. A variable is judged by the value it currently holds: `true`
-or `false` gets a tick box, a whole number gets a number box, anything else a plain text box.
+**Control types** — a port gets a port box; a mount gets a path box with the folder picker beside it;
+`privileged` gets a tick box. A variable is judged by the value it currently holds: `true` or `false`
+gets a tick box, a whole number gets a number box, anything else a plain text box.
+
+A device gets its own picker, which is a different thing from the folder one. The folder picker walks
+directories under `/mnt`; the device picker asks the server what hardware is attached and offers it by
+name — "Intel graphics", or a USB stick by its make and model. It writes one row rather than two
+boxes, because for nearly every device both halves of the mapping are the same path, and where they
+differ the picker has already set both. A device row also says **not found on this server** when the
+path is not on the machine, which is the usual reason a compose file written elsewhere starts a
+container that cannot see its hardware.
 
 **Secret and required** — never inferred. See [the two markers](#the-two-markers): guessing which
 variable is a password is wrong in both directions, and guessing that a box is required blocks a save

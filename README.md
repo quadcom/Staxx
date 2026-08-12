@@ -26,10 +26,11 @@ portable compose file that runs under plain `docker compose up` anywhere.
 These are the constraints the project is built around, in priority order.
 
 1. **Never require non-standard syntax.** A file authored by Stack Manager must run unmodified on
-   any machine with Docker Compose. What a stack and its containers *are* — name, icon, overview,
-   web interface — lives in optional `x-unraid:` extension fields, which the compose spec permits and
-   ignores. What an individual setting is *for* lives in the ordinary comment beside it, with two
-   marks (`-!S` secret, `-!R` required) for the only two things a comment cannot say.
+   any machine with Docker Compose. What a stack and its containers *are* — icon, overview, and (per
+   container) its web interface address — lives in optional `x-unraid:` extension fields, which the
+   compose spec permits and ignores. What an individual setting is *for* lives in the ordinary
+   comment beside it, with two marks (`-!S` secret, `-!R` required) for the only two things a comment
+   cannot say.
 2. **Never destroy a hand-authored file.** Editing through the form preserves comments, ordering,
    anchors, and formatting. Saving a normalised round-trip over someone's file is a bug, not a
    trade-off.
@@ -43,8 +44,8 @@ These are the constraints the project is built around, in priority order.
 - Compose engine — install the compose CLI, manage stacks as ordinary directories of ordinary files
 - Compose → form UI, with comment-preserving write-back
 - Container and stack lifecycle control (start / stop / restart / logs / console)
-- Collapsible stack grouping, keyed on `com.docker.compose.project` — stacks self-group, with no
-  folders for the user to configure
+- Collapsible stack grouping — stacks can be placed one level deep into user-created folders, and a
+  running stack is matched back to its directory via `com.docker.compose.project`
 - Community Applications template → compose conversion, on demand
 
 ## Direction

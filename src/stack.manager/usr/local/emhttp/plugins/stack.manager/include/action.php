@@ -46,6 +46,7 @@ require_once '/usr/local/emhttp/plugins/stack.manager/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/stack.manager/include/Folders.php';
 require_once '/usr/local/emhttp/plugins/stack.manager/include/Stats.php';
 require_once '/usr/local/emhttp/plugins/stack.manager/include/StacksTable.php';
+require_once '/usr/local/emhttp/plugins/stack.manager/include/Devices.php';
 
 function stackman_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -187,8 +188,10 @@ switch ($action) {
       'html'    => stackman_render_rows(stackman_folder_layout($stacks), stackman_can_run()),
       // The "Move to folder" list in the context menu is built from this, so it
       // has to travel with the rows or it goes stale after a folder is added.
+      // A folder's id IS its name — stackman_folder_names() returns plain
+      // strings, so {id, name} is built here rather than indexed off one.
       'folders' => array_map(
-        fn($f) => ['id' => $f['id'], 'name' => $f['name']],
+        fn($f) => ['id' => $f, 'name' => $f],
         stackman_folder_names()
       ),
     ]);
@@ -252,6 +255,20 @@ switch ($action) {
   case 'timezones':
     stackman_reply(['ok' => true] + stackman_timezones());
 
+  /* ---- the hardware this server can hand to a container ----
+   *
+   * Asked for when the editor opens, so existing device rows can be named, and
+   * again each time the picker opens, because plugging a stick in is exactly the
+   * moment someone reaches for it. Runs no command: /sys and /dev hold every
+   * answer, so this is a handful of glob() calls and nothing more.
+   *
+   * Takes no parameters. Whole disks and the USB bus come back like everything
+   * else, marked `risky`, and the picker is what decides to keep those behind a
+   * "show everything" link.
+   */
+  case 'devices':
+    stackman_reply(['ok' => true] + stackman_devices());
+
   // ---- run one external command and report how it went ----
   case 'probe':
     stackman_reply(['ok' => true, 'result' => stackman_run_probe((string)($_POST['probe'] ?? ''))]);
@@ -259,7 +276,12 @@ switch ($action) {
   /* ------------------------------------------------------------ folders -- */
 
   case 'folder-list':
-    stackman_reply(['ok' => true, 'folders' => stackman_folder_names()]);
+    // Same {id, name} shape as the "rows" reply's folder list — a folder's id
+    // IS its name now, so both are built off stackman_folder_names()'s plain
+    // strings the same way.
+    stackman_reply(['ok' => true, 'folders' => array_map(
+      fn($f) => ['id' => $f, 'name' => $f], stackman_folder_names()
+    )]);
 
   // A folder's id IS its name now — there is a directory behind it and nothing
   // else it could be called.
@@ -291,6 +313,18 @@ switch ($action) {
     $moved = stackman_folder_assign($name, (string)($_POST['folder'] ?? ''), $error);
     if ($moved === '') stackman_reply(['ok' => false, 'error' => $error]);
     stackman_reply(['ok' => true, 'name' => $moved]);
+
+  // Renaming a stack moves its directory, so its identity changes with it —
+  // same reasoning as folder-assign above, and the new rel goes back the
+  // same way. The page sequences down/rename/up itself for a running stack;
+  // this action is only ever the instant directory move.
+  case 'stack-rename':
+    if (!stackman_valid_path($name)) {
+      stackman_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $renamed = stackman_rename_stack($name, (string)($_POST['stackName'] ?? ''), $error);
+    if ($renamed === '') stackman_reply(['ok' => false, 'error' => $error]);
+    stackman_reply(['ok' => true, 'name' => $renamed]);
 
   // Collapsing is saved on the server rather than in the browser, so the
   // layout is the same on every device you open the page from.

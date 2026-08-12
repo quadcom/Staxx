@@ -11,7 +11,9 @@ here, not just what it means in general.
 it as the installer. `jellyfin/jellyfin:10.10.3` is an image.
 
 **Container** — a running copy of an image, with your settings applied. The image is the installer;
-the container is the installed, running program. One image can run as many containers.
+the container is the installed, running program. One image can run as many containers. A
+container's name is whatever `container_name:` says in the compose file, or one Docker makes up if
+that key is absent — an ordinary compose field, not something Stack Manager renames.
 
 **Compose file** — a text file listing the containers you want and how they should be set up. Its
 filename is usually `compose.yaml`. It is the standard way to describe containers, understood by
@@ -21,20 +23,30 @@ Docker on any machine — Windows, Mac, Linux, a server, a laptop.
 format, we use the one everybody else already uses.
 
 **Service** — one entry inside a compose file, describing one container. A compose file for a photo
-app might have two services: the app itself and the database it needs.
+app might have two services: the app itself and the database it needs. Its name is the key you
+write above it in the file, e.g. `jellyfin`; there is no separate display name.
 
-**Stack** — all the services in one compose file, treated as a group. Starting a stack starts every
-container in it. "Stack" is Docker's word for it, not ours.
+**Stack** — a directory holding a compose file, and nothing else. Starting a stack starts every
+container the file describes. A stack's name is its directory name, full stop — there is no
+override.
 
-*Why it matters here:* stacks are how the interface will group containers, so related containers
-stay together instead of scattered through one long list.
+*Why it matters here:* stacks are how the interface groups containers, so related containers stay
+together instead of scattered through one long list.
+
+**Folder** — an optional directory one level above a stack, grouping several stacks together, e.g.
+`Media/` holding `Media/jellyfin/`. Created and renamed from the UI; a stack not placed in one sits
+at the top level.
+
+**Project name** — the label Docker stamps on every container it creates from a compose file
+(`com.docker.compose.project`), used to prefix container names and to match containers back to
+their stack. Worked out from the stack's directory name, lowercased with anything outside
+`a-z0-9_-` stripped out — not something you set directly.
 
 **Label** — a small note attached to a container, in the form `name = value`. Docker itself uses
 labels to keep track of things.
 
 *Why it matters here:* Docker automatically stamps every container it creates from a compose file
-with a label saying which stack it belongs to. That is what lets stacks group themselves, with no
-folders for you to set up.
+with a project-name label, which is how a running stack is matched back to its directory.
 
 **Docker socket** — the connection a program uses to talk to Docker and ask it to do things. Not
 something users see.

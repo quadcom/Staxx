@@ -24,11 +24,15 @@ Anything beyond a syntax check has to happen on the server.
 
 **CRITICAL:** Never rewrite entire files. Provide targeted patch diffs or isolated code blocks only.
 **Execution:** Before executing any multi-file changes, write your proposed architecture to `PLAN.md` and wait for user approval.
+**COMMENTS AND DOCUMENTATION** Comments and documentation should reflect what something does not what it used to do along with what it now does.
+**WRITING CODE** When writing code, Opus always makes the plan and Multiple SOnnet agents will write the code. Opus will then verify the code that was written. Just before writing starts tell me "Sonnet agents are writing".
+**TOKEN USAGE** At all times be conservative on token usage.
 
 
 ```sh
 python tests/validate_schema.py     # x-unraid schema self-test (needs pyyaml, jsonschema)
 node tests/yaml_roundtrip.js        # the compose model — parse, edit, write back
+node tests/js_undeclared.js         # names assigned but declared nowhere
 node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
 node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
 ```
@@ -36,6 +40,11 @@ node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript
 `stacks.js` is one big IIFE, so a single typo kills the whole page's behaviour silently —
 `node --check` is the cheapest guard there is. There is no PHP linter locally; run `php -l` on the
 server after every deploy, over `include/*.php`.
+
+Run **both** JavaScript checks, because they catch different things. Both browser files are strict
+mode, where assigning to a name nothing declared throws instead of quietly making a global — and
+`node --check` cannot see that, since the file parses perfectly and the error only exists at run
+time. One such line inside a function every render calls kills the whole page.
 
 `validate_schema.py` has no runner or framework. It prints one line per case and exits non-zero on
 failure; its negative cases (what the schema must *reject*) matter more than the positive ones.
@@ -131,6 +140,9 @@ Moving a stack is a directory move, which does not change its compose project na
 recorded the old config path, so `stackman_compose_state()` indexes what compose reports three ways:
 by full path, by the tail (`jellyfin/compose.yaml`, which a move does not change), and by project
 name. Without the tail index a moved stack reads as stopped until it is recreated.
+
+A stack's name is its directory name — `jellyfin`, the leaf of `Media/jellyfin` — and there is no
+display-name override.
 
 ### PHP layer
 

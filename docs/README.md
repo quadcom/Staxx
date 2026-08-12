@@ -54,10 +54,10 @@ anyway. The form shows it as the help text under the box, and typing help text i
 it back as that comment. Two short marks at the end of a comment say the only two things a comment
 cannot: `-!S` for "this is a secret, hide it", `-!R` for "this must not be left empty".
 
-**What the app is** — its name, its logo, a paragraph about it, the address of its web page — goes in
-a section named `x-unraid`. The compose standard sets aside sections whose name starts with `x-` for
-exactly this: extra information that Docker will ignore. Your file keeps working everywhere; ours
-knows how to draw a decent form from it.
+**What the app is** — its logo, a paragraph about it, and the address of each container's web page —
+goes in a section named `x-unraid`. The compose standard sets aside sections whose name starts with
+`x-` for exactly this: extra information that Docker will ignore. Your file keeps working
+everywhere; ours knows how to draw a decent form from it.
 
 None of it is required. With no notes and no `x-unraid` section you still get a form — just a plainer
 one, with the names worked out from the file itself.

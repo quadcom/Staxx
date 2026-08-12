@@ -52,10 +52,6 @@ NEGATIVE = [
         {"x-unraid": "Jellyfin"},
     ),
     (
-        "stack name given as a list",
-        {"x-unraid": {"name": ["Jellyfin"]}},
-    ),
-    (
         "stack icon given as a block rather than a string",
         {"x-unraid": {"icon": {"url": "https://example.org/icon.png"}}},
     ),
@@ -85,10 +81,9 @@ NEGATIVE = [
 POSITIVE = [
     ("empty document", {}),
     ("no metadata at all", {"services": {"app": {"image": "nginx"}}}),
-    ("stack metadata only", {"x-unraid": {"version": 1, "name": "Thing"}}),
+    ("stack metadata only", {"x-unraid": {"version": 1, "icon": "jellyfin"}}),
     ("every stack key at once", {"x-unraid": {
         "version": 1,
-        "name": "Jellyfin",
         "icon": "jellyfin",
         "overview": "Free software media system.",
         "category": "MediaApp:Video",
@@ -98,12 +93,17 @@ POSITIVE = [
         "author": "jellyfin",
     }}),
     ("every service key at once", service_doc(
-        name="Jellyfin",
         icon="./icon.png",
         overview="Open the web interface to finish setup.",
         webui="http://[IP]:[PORT:8096]/",
         display="advanced",
     )),
+    # `name` was a display-name override at both levels; a stack is now named after its
+    # directory and a service after its key, full stop, so the key has nothing left to do.
+    # Neither def sets additionalProperties: false, so a leftover `name:` from an older file
+    # is tolerated exactly like any other unknown key — ignored, not rejected.
+    ("a leftover stack name: is tolerated but ignored", {"x-unraid": {"name": "Jellyfin"}}),
+    ("a leftover service name: is tolerated but ignored", service_doc(name="Jellyfin")),
     ("each icon form", {"x-unraid": {"icon": "fa-database"}}),
     ("unknown stack key is tolerated", {"x-unraid": {"someFutureKey": "value"}}),
     ("unknown service key is tolerated", service_doc(someFutureKey="value")),

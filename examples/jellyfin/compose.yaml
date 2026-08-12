@@ -16,7 +16,6 @@
 
 x-unraid:
   version: 1
-  name: Jellyfin
   icon: https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/SVG/icon-transparent.svg
   category: MediaApp:Video
   project: https://jellyfin.org
@@ -46,7 +45,6 @@ services:
       JELLYFIN_PublishedServerUrl: ""           # external address, if you reach this through a reverse proxy
 
     x-unraid:
-      name: Jellyfin
       webui: "http://[IP]:[PORT:8096]/"
       overview: |
         On first run, open the web interface to complete setup. Point the

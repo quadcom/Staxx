@@ -92,7 +92,13 @@
       while (after < line.length && line.charAt(after) !== ':') after++;
       after++;                                                  // past the colon
       while (after < line.length && (line.charAt(after) === ' ' || line.charAt(after) === '\t')) after++;
-      out.valueCol = (m[4] !== undefined && m[4] !== '') ? after : -1;
+      // A '#' where the value would start is a comment, so the key has no
+      // value and opens a nested block instead. Reading "db:  # the database"
+      // as a key *with* a value silently swallowed every line indented under
+      // it — the service parsed away to nothing and a rename could not see
+      // the references inside it.
+      var hasValue = m[4] !== undefined && m[4] !== '' && m[4].charAt(0) !== '#';
+      out.valueCol = hasValue ? after : -1;
       return out;
     }
 
@@ -1027,7 +1033,7 @@
       var p = svc.value.pairs[name];
       if (!p.value || p.value.kind !== 'map') {
         out.services.push({
-          name: name, title: name, display: 'basic',
+          name: name, display: 'basic',
           range: { start: p.leadStart, end: p.end },
           shared: false, count: 0, readable: false,
           note: 'This service is written in a way the form cannot read (' +
@@ -1052,7 +1058,6 @@
       out.fields = out.fields.concat(fields);
       out.services.push({
         name: name,
-        title: mx.name || name,
         overview: mx.overview || '',
         icon: mx.icon || '',
         webui: mx.webui || '',
@@ -1200,7 +1205,15 @@
     return base + (joiner || '') + '-new';
   }
 
-  function newEntry(binder, taken, service, shape) {
+  // `value` is an entry the caller already knows it wants — the device picker
+  // supplying a real device rather than accepting the placeholder below. It is
+  // used verbatim, because inventing a unique variant of a chosen device would
+  // produce a path to hardware that does not exist. Whether it duplicates
+  // something already in the file is the caller's question, since only the
+  // caller knows what to say about it.
+  function newEntry(binder, taken, service, shape, value) {
+    if (typeof value === 'string' && value !== '') return value;
+
     if (binder === 'port') {
       var n = 8080;
       while (taken.indexOf(n + '/tcp') >= 0) n++;
@@ -1226,8 +1239,10 @@
   /**
    * Add one entry to a service's list, creating the list if it is not there.
    * Returns the line the new entry landed on, or -1 if it was refused.
+   *
+   * `value` is optional and, when given, is written instead of a placeholder.
    */
-  function addItem(doc, form, service, binder) {
+  function addItem(doc, form, service, binder, value) {
     var key = LIST_KEY[binder];
     if (!key) return -1;
 
@@ -1255,18 +1270,20 @@
         var last = v.items[v.items.length - 1];
         gap = pad(Math.max(1, last.contentCol - last.indent - 1));
       }
-      splice(doc, v.end, 0, [pad(v.indent) + '-' + gap + newEntry(binder, taken, service, 'seq')]);
+      splice(doc, v.end, 0,
+             [pad(v.indent) + '-' + gap + newEntry(binder, taken, service, 'seq', value)]);
       return v.end;
     }
 
     if (v && v.kind === 'map') {
-      splice(doc, v.end, 0, [pad(v.indent) + newEntry(binder, taken, service, 'map')]);
+      splice(doc, v.end, 0, [pad(v.indent) + newEntry(binder, taken, service, 'map', value)]);
       return v.end;
     }
 
     if (pair) {                       // "ports:" with nothing under it
       var at = pair.end;
-      splice(doc, at, 0, [pad(pair.indent + 2) + '- ' + newEntry(binder, taken, service, 'seq')]);
+      splice(doc, at, 0,
+             [pad(pair.indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value)]);
       return at;
     }
 
@@ -1295,8 +1312,8 @@
 
     lines.push(pad(indent) + key + ':');
     lines.push(binder === 'env' || binder === 'label'
-      ? pad(indent + 2) + newEntry(binder, taken, service, 'map')
-      : pad(indent + 2) + '- ' + newEntry(binder, taken, service, 'seq'));
+      ? pad(indent + 2) + newEntry(binder, taken, service, 'map', value)
+      : pad(indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value));
 
     splice(doc, to, 0, lines);
     return to + lines.length - 1;
@@ -1351,6 +1368,159 @@
   }
 
   /* =====================================================================
+   * Renaming a service
+   * =====================================================================
+   *
+   * A service's name is the key under `services:`, so the rename itself is
+   * one writeScalar on that key. The rest of this is finding every other
+   * place compose lets one service name another — depends_on, links,
+   * volumes_from, network_mode and an in-file extends — and rewriting only
+   * the part of each that is the name, leaving any alias, mode or condition
+   * beside it untouched. Anything sealed (an anchor, alias or flow list) is
+   * left alone, same as everywhere else in this file: guessing inside an
+   * opaque region is how a working file gets corrupted.
+   */
+
+  var SERVICE_NAME_RE = /^[a-zA-Z0-9._-]+$/;
+  var LINK_LIKE_KEYS = ['links', 'volumes_from'];
+
+  // Appends a {spot, decoded} edit for every reference to oldName found
+  // among the five keys a rename must follow, inside one service's map.
+  function collectServiceRefs(edits, svcMap, oldName, newName) {
+    var dep = svcMap.pairs['depends_on'];
+    if (dep && dep.value) {
+      if (dep.value.kind === 'seq') {
+        for (var i = 0; i < dep.value.items.length; i++) {
+          var v = dep.value.items[i].value;
+          if (v && v.kind === 'scalar' && v.value === oldName) {
+            edits.push({ spot: scalarSpot(v), decoded: newName });
+          }
+        }
+      } else if (dep.value.kind === 'map' && dep.value.pairs[oldName]) {
+        // The map form means the service name is a KEY ("db:" with
+        // "condition:" under it), not a value.
+        edits.push({ spot: keySpot(dep.value.pairs[oldName]), decoded: newName });
+      }
+    }
+
+    // links and volumes_from share a shape: a bare name, or "name:alias" /
+    // "name:mode" — only the part before the colon is the service name.
+    for (var lk = 0; lk < LINK_LIKE_KEYS.length; lk++) {
+      var p = svcMap.pairs[LINK_LIKE_KEYS[lk]];
+      if (!p || !p.value || p.value.kind !== 'seq') continue;
+      for (var j = 0; j < p.value.items.length; j++) {
+        var iv = p.value.items[j].value;
+        if (!iv || iv.kind !== 'scalar') continue;
+        var colon = iv.value.indexOf(':');
+        var name = colon < 0 ? iv.value : iv.value.slice(0, colon);
+        if (name === oldName) {
+          edits.push({ spot: scalarSpot(iv), decoded: newName + (colon < 0 ? '' : iv.value.slice(colon)) });
+        }
+      }
+    }
+
+    var nm = svcMap.pairs['network_mode'];
+    if (nm && nm.value && nm.value.kind === 'scalar' &&
+        nm.value.value.indexOf('service:') === 0 && nm.value.value.slice(8) === oldName) {
+      edits.push({ spot: scalarSpot(nm.value), decoded: 'service:' + newName });
+    }
+
+    // An in-file extends: a "service:" reference with no "file:" beside it.
+    // One naming "file:" is reaching into another compose file, which this
+    // rename cannot follow and must not guess at.
+    var ext = svcMap.pairs['extends'];
+    if (ext && ext.value && ext.value.kind === 'map' && !ext.value.pairs['file']) {
+      var es = ext.value.pairs['service'];
+      if (es && es.value && es.value.kind === 'scalar' && es.value.value === oldName) {
+        edits.push({ spot: scalarSpot(es.value), decoded: newName });
+      }
+    }
+  }
+
+  // Rewrites every collected spot in one pass. Every construct a rename
+  // touches is one per line in practice, but grouping by line and working
+  // right-to-left within it is what keeps that true even if it ever is not —
+  // rewriting a scalar changes the line's length, which would shift every
+  // column after it if applied left-to-right against stale positions.
+  function applyRenameWrites(doc, writes) {
+    var byLine = {}, i;
+    for (i = 0; i < writes.length; i++) {
+      var w = writes[i];
+      (byLine[w.spot.line] = byLine[w.spot.line] || []).push(w);
+    }
+    for (var line in byLine) {
+      var list = byLine[line];
+      list.sort(function (a, b) { return b.spot.col - a.spot.col; });
+      var text = doc.lines[line];
+      for (i = 0; i < list.length; i++) {
+        var s = list[i].spot;
+        text = text.slice(0, s.col) + list[i].raw + text.slice(s.col + s.len);
+      }
+      doc.lines[line] = text;
+    }
+    splice(doc, 0, 0, []);          // one re-parse for the whole batch
+  }
+
+  /**
+   * Renames a service and every depends_on / links / volumes_from /
+   * network_mode / in-file-extends reference to it.
+   *
+   * -> { ok: true,  refs: <references rewritten, not counting the key> }
+   * -> { ok: false, error: '<what to do next>' }
+   *
+   * Mutates doc in place on success. On refusal doc is untouched, because
+   * every check below runs — and every replacement is computed — before the
+   * first byte is written.
+   */
+  function renameService(doc, oldName, newName) {
+    if (!newName || !SERVICE_NAME_RE.test(newName)) {
+      return { ok: false, error: 'Service names may only contain letters, numbers, dots, underscores and hyphens — choose a different name.' };
+    }
+    if (!doc.root || doc.root.kind !== 'map') {
+      return { ok: false, error: 'This file cannot be read as compose, so nothing can be renamed.' };
+    }
+    var svc = doc.root.pairs['services'];
+    if (!svc || !svc.value || svc.value.kind !== 'map') {
+      return { ok: false, error: 'This file lists no services, so there is nothing to rename.' };
+    }
+    var topPair = svc.value.pairs[oldName];
+    if (!topPair) {
+      return { ok: false, error: 'There is no service called "' + oldName + '" in this file, so it cannot be renamed.' };
+    }
+    // A rename to its own name is a no-op success — checked before the
+    // collision test below, which would otherwise refuse it for colliding
+    // with itself.
+    if (newName === oldName) return { ok: true, refs: 0 };
+    if (svc.value.pairs[newName]) {
+      return { ok: false, error: 'A service called "' + newName + '" already exists — choose another name.' };
+    }
+
+    var topSpot = keySpot(topPair);
+    var topRaw = emitScalar(newName, topSpot.style, true);
+    if (topRaw === null) {
+      return { ok: false, error: 'That name cannot be written into this file, so nothing has been changed.' };
+    }
+
+    var edits = [], i;
+    for (i = 0; i < svc.value.keys.length; i++) {
+      var p = svc.value.pairs[svc.value.keys[i]];
+      if (p.value && p.value.kind === 'map') collectServiceRefs(edits, p.value, oldName, newName);
+    }
+
+    var writes = [{ spot: topSpot, raw: topRaw }];
+    for (i = 0; i < edits.length; i++) {
+      var raw = emitScalar(edits[i].decoded, edits[i].spot.style, false);
+      if (raw === null) {
+        return { ok: false, error: 'One of the references to "' + oldName + '" cannot be rewritten safely, so nothing has been changed.' };
+      }
+      writes.push({ spot: edits[i].spot, raw: raw });
+    }
+
+    applyRenameWrites(doc, writes);
+    return { ok: true, refs: edits.length };
+  }
+
+  /* =====================================================================
    * Exports
    * ===================================================================== */
 
@@ -1359,6 +1529,7 @@
     serialise: serialise,
     buildForm: buildForm,
     setPart: setPart,
+    renameService: renameService,
     setValue: setValue,
     setComment: setComment,
     addItem: addItem,

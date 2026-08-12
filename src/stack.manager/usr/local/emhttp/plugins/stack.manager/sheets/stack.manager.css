@@ -105,6 +105,34 @@
   cursor: pointer;
 }
 
+/* ---- Motion --------------------------------------------------------------
+ *
+ * Kept out of the theme-token block above (~line 67) so that group stays a
+ * single, undisturbed set of colours; every transition and animation in this
+ * file reads one of the three names below, so there is one place to retune
+ * the feel of the whole page.
+ */
+.stackman-scaffold {
+  --sm-motion: 140ms;
+  --sm-motion-slow: 180ms;   /* the editor's width, which travels further */
+  --sm-ease: ease-out;
+
+  /* A folder or stack opening travels the full height of its contents —
+     hundreds of pixels, against the tens the values above cover — and a
+     distance that large crossed in 180ms does not read as movement at all,
+     it reads as the rows blinking in. Its own token rather than a bigger
+     --sm-motion-slow, because the editor's width is a separate motion that
+     is correctly quick and must not be dragged along with this.
+
+     ease-out is wrong at this distance too: it spends most of the duration
+     decelerating, so the eye misses the part that says "this is sliding".
+     This curve starts fast and settles, which is what an accordion should
+     do, and it is deliberately not shared with --sm-ease for the same
+     reason the duration is not. */
+  --sm-motion-height: 260ms;
+  --sm-ease-height: cubic-bezier(0.2, 0, 0, 1);
+}
+
 /* ---- Prose -------------------------------------------------------------- */
 
 /* Text is capped for readability; tables and panels are not. */
@@ -355,9 +383,21 @@
   color: #fff;
   font-size: 1.6rem;
   pointer-events: none;
+  /* Fades in rather than snapping on — commands fire often enough that a
+     hard cut here would flicker. */
+  opacity: 0;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete;
 }
 
-.stackman-busy .stackman-spinner { display: flex; }
+.stackman-busy .stackman-spinner {
+  display: flex;
+  opacity: 1;
+}
+
+@starting-style {
+  .stackman-busy .stackman-spinner { opacity: 0; }
+}
 
 .stackman-container-row .stackman-spinner {
   border-radius: 0.5rem;
@@ -596,6 +636,38 @@
  * would sit on the same edge and read as one line, doubled. */
 .stackman-stacks .stackman-row:not(.stackman-head-row) {
   border-bottom: 0.1rem solid var(--sm-hairline);
+}
+
+/* ---- Row appear/disappear -------------------------------------------------
+ *
+ * A keyframe, not a transition: a genuinely new row has no previous value to
+ * transition FROM, so there is nothing a transition could animate. Applied
+ * only to rows refreshRows() finds were not already on screen (stacks.js), so
+ * the routine stats-only refresh — which never swaps rows — leaves the list
+ * perfectly still.
+ */
+@keyframes stackman-enter {
+  from { opacity: 0; translate: 0 0.4rem; }
+  to   { opacity: 1; translate: 0 0; }
+}
+
+.stackman-row--enter {
+  animation: stackman-enter var(--sm-motion) var(--sm-ease);
+}
+
+/* Added to the specific row a delete targets, before refreshRows() runs, so
+   that row fades rather than vanishing the instant the table reloads. A row
+   gone for any other reason (deleted elsewhere, moved) has no class added and
+   simply disappears as before. */
+.stackman-row--leave {
+  /* The transition is declared here rather than on the row, because a row
+     only ever travels in this one direction — a transition is read from the
+     style the element is moving INTO, so this is enough to make it run, and
+     no row carries a transition it will never use. */
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              translate var(--sm-motion) var(--sm-ease);
+  opacity: 0;
+  translate: 0 -0.4rem;
 }
 
 /* The folder heading has none of the name/services/state/address columns of
@@ -898,6 +970,12 @@
 
 .stackman-strip[hidden] {
   display: none;
+  opacity: 0;
+  translate: 0 -0.4rem;
+}
+
+@starting-style {
+  .stackman-strip { opacity: 0; translate: 0 -0.4rem; }
 }
 
 .stackman-strip-item b {
@@ -980,6 +1058,71 @@
   --sm-indent-base: 3.4rem;
 }
 
+/* The wrapper around a folder's stacks (class stackman-group--folder-children
+   in the markup — see StacksTable.php), so a collapse has one element whose
+   HEIGHT can animate instead of hiding every stack row inside it separately.
+   0fr -> 1fr is the only height animation that works without knowing the
+   pixel height in advance. */
+.stackman-group--folder-children {
+  grid-template-rows: 1fr;
+  visibility: visible;
+  transition: grid-template-rows var(--sm-motion-height) var(--sm-ease-height),
+              visibility var(--sm-motion-height);
+}
+
+/* This rule has to beat TWO others to keep the element in the layout, and
+   display: none from either one would skip the transition outright and make
+   the collapse snap instead of slide.
+
+   The first is ours: the blanket `.stackman-row[hidden], .stackman-group[hidden]`
+   near the top of the file (see "Collapsing a row or a whole group"). This
+   element carries .stackman-group too, so that selector and this one are both
+   one class plus [hidden] — (0,2,0), an exact tie, settled by source order,
+   and this rule sits later.
+
+   The second is Unraid's, and it is why .stackman-scaffold is on the front of
+   the selector and why !important is here at all. `standalone-apps-*.css`
+   ships this, and it applies to our page because the whole webGUI body is
+   inside .unapi:
+
+     .unapi [hidden]:where(:not([hidden="until-found"])) { display: none !important }
+
+   An important declaration in another author sheet beats any normal one of
+   ours however specific, so the wrapper was being pulled out of the layout
+   the instant it was collapsed — measured on the server, where the computed
+   display read `none` while our 0fr and visibility: hidden from this same
+   rule were both applying. Countering an important declaration needs an
+   important declaration; the leading .stackman-scaffold then takes us to
+   (0,3,0) against their (0,2,0), so this wins on specificity outright rather
+   than on which sheet the browser happened to load second.
+
+   Note this is only a problem for the two sliding wrappers, because their
+   transitions deliberately do not list `display` — grid to grid never changes
+   under our own rules. Everything else that fades on [hidden] does list it
+   with allow-discrete, and a running transition sits above important author
+   declarations in the cascade, so those are unaffected. */
+.stackman-scaffold .stackman-group--folder-children[hidden] {
+  display: grid !important;
+  grid-template-rows: 0fr;
+
+  /* Because display is no longer none, the rows inside are still rendered —
+     zero pixels tall and clipped, but rendered — which would leave every
+     button in a collapsed folder in the tab order and readable aloud.
+     visibility does what display: none was doing for those two, and it
+     transitions the right way round on its own: it holds visible for the
+     whole collapse, then flips at the end. */
+  visibility: hidden;
+}
+
+/* The inner wrapper is what actually clips: min-height: 0 is what lets a
+   0fr row shrink at all, and that has to sit on an element separate from the
+   one being animated, or the row track and the thing measuring it fight each
+   other. */
+.stackman-folder-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
 /* ---- Container rows ----------------------------------------------------- */
 
 /* One row per container inside a stack, shown when the stack is expanded.
@@ -1004,6 +1147,32 @@
    had. */
 .stackman-group--children {
   --sm-indent-step: 5rem;
+
+  /* Same slide as .stackman-group--folder-children above (Folders section) —
+     it is the identical visual event one level down, and leaving it snapping
+     while a folder's contents slide would look like a bug. */
+  grid-template-rows: 1fr;
+  visibility: visible;
+  transition: grid-template-rows var(--sm-motion-height) var(--sm-ease-height),
+              visibility var(--sm-motion-height);
+}
+
+/* Same two rules to beat as .stackman-group--folder-children[hidden] above —
+   our own blanket `.stackman-group[hidden]`, and Unraid's important one in
+   `standalone-apps-*.css` — settled exactly the same way, and that comment
+   is where the reasoning for both the scaffold prefix and the !important
+   lives. The children wrapper's own `hidden` attribute stays the single
+   source of truth the :has() rules below already key off, so nothing about
+   how expanded/collapsed state is tracked changes. */
+.stackman-scaffold .stackman-group--children[hidden] {
+  display: grid !important;
+  grid-template-rows: 0fr;
+  visibility: hidden;   /* same reason as the folder wrapper above */
+}
+
+.stackman-children-inner {
+  overflow: hidden;
+  min-height: 0;
 }
 
 /* The band behind an EXPANDED stack: the stack row and its container rows
@@ -1052,6 +1221,21 @@
 
    Margins never collapse in grid layout, so this is exactly 1.4rem, not
    something smaller shared with a neighbour's margin. */
+/* Both properties are transitioned on the plain .stackman-group--stack, not
+   here, because a transition is read from the AFTER-change style: on collapse
+   the :has() above stops matching, so any transition declared inside it is
+   already gone by the time the values need to move. Declared outside, it
+   covers the change in both directions.
+
+   Without it the tint and the gap snap the instant `hidden` lands while the
+   rows below are still sliding — two motions of different lengths in the
+   same corner of the screen, which reads as a glitch rather than as one
+   block opening. Same duration as the slide, so they finish together. */
+.stackman-group--stack {
+  transition: background-color var(--sm-motion-height) var(--sm-ease-height),
+              margin-bottom var(--sm-motion-height) var(--sm-ease-height);
+}
+
 .stackman-group--stack:has(> .stackman-group--children:not([hidden])) {
   background: var(--sm-fill-0);
   border-radius: var(--sm-radius);
@@ -1065,8 +1249,12 @@
    specificity, so that selector scores (0,3,0) — exactly what this one scores
    too — and an exact tie is decided by source order, so this rule MUST sit
    later in the file than that one or it silently loses and does nothing.
-   (It does: that rule is above, this one is below.) */
-.stackman-group--children > .stackman-row:last-child {
+   (It does: that rule is above, this one is below.)
+
+   Keyed on .stackman-children-inner, not on the wrapper outside it: the rows
+   are one level further down than the element carrying `hidden`, because the
+   collapse needs a separate element to do the clipping. */
+.stackman-children-inner > .stackman-row:last-child {
   border-bottom: none;
 }
 
@@ -1196,10 +1384,25 @@
   background-color: var(--background-color, #1c1c1c);
   color: var(--text-color, #e0e0e0);
   box-shadow: 0 0.8rem 2.4rem rgba(0, 0, 0, 0.5);
+  /* The inline left/top are set right after `hidden = false`, for
+     measurement, and only settle a moment later — opacity and translate do
+     not collide with position, so the fade also covers up that brief
+     mis-placed instant at 0,0. */
+  opacity: 1;
+  translate: 0 0;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              translate var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete;
 }
 
 .stackman-menu[hidden] {
   display: none;
+  opacity: 0;
+  translate: 0 -0.4rem;
+}
+
+@starting-style {
+  .stackman-menu { opacity: 0; translate: 0 -0.4rem; }
 }
 
 .stackman-menu-head {
@@ -1345,6 +1548,12 @@
 
 .stackman-panel[hidden] {
   display: none;
+  opacity: 0;
+  translate: 0 -0.4rem;
+}
+
+@starting-style {
+  .stackman-panel { opacity: 0; translate: 0 -0.4rem; }
 }
 
 .stackman-field {
@@ -1402,6 +1611,24 @@
   resize: vertical;
 }
 
+/* One shared fade-and-lift for every status message the page shows and
+   hides with `hidden`, rather than four copies of the same three lines.
+   .stackman-panel, not .stackman-log: .stackman-log is the text pane INSIDE
+   the log panel, and the element that actually carries `hidden` is its
+   wrapper, #stackman-log-panel, which is a .stackman-panel (see
+   StacksPage.php). translate, not transform, so nothing a component wants
+   transform for later has to fight this. */
+.stackman-error,
+.stackman-panel,
+.stackman-modal-banner,
+.stackman-strip {
+  opacity: 1;
+  translate: 0 0;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              translate var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete;
+}
+
 .stackman-error {
   margin-top: 1rem;
   padding: 1rem 1.2rem;
@@ -1415,6 +1642,12 @@
 
 .stackman-error[hidden] {
   display: none;
+  opacity: 0;
+  translate: 0 -0.4rem;
+}
+
+@starting-style {
+  .stackman-error { opacity: 0; translate: 0 -0.4rem; }
 }
 
 .stackman-log {
@@ -1470,6 +1703,18 @@
      lets the track match the dialog instead, and the title then ellipsises,
      which is what it was given text-overflow for. */
   grid-template-columns: minmax(0, 1fr);
+
+  /* opacity fades the dialog itself; width is the Form/Split/Compose glide
+     (see the @media block below, which is the only thing that ever changes
+     it). display and overlay get allow-discrete so the close transition runs
+     before the dialog actually leaves the top layer — without it, [open]'s
+     removal would jump straight to display: none mid-fade. */
+  opacity: 1;
+  transition:
+    opacity var(--sm-motion) var(--sm-ease),
+    width var(--sm-motion-slow) var(--sm-ease),
+    display var(--sm-motion) allow-discrete,
+    overlay var(--sm-motion) allow-discrete;
 }
 
 /* One pane on show gets one pane's worth of dialog. Split keeps the full width
@@ -1498,10 +1743,29 @@
 
 .stackman-modal:not([open]) {
   display: none;
+  opacity: 0;
 }
 
+@starting-style {
+  .stackman-modal[open] { opacity: 0; }
+}
+
+/* A separate pseudo-element with its own box, so it needs its own copy of
+   the fade rather than inheriting the dialog's. */
 .stackman-modal::backdrop {
   background: rgba(0, 0, 0, 0.55);
+  opacity: 1;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete,
+              overlay var(--sm-motion) allow-discrete;
+}
+
+.stackman-modal:not([open])::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-modal[open]::backdrop { opacity: 0; }
 }
 
 /* ---- modal: header ---- */
@@ -1525,8 +1789,18 @@
 .stackman-modal-name {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.6rem;
   min-width: 0;
+}
+
+/* Forced onto its own line by a full-width basis, so the label, the folder
+   chip and the input keep sharing the row above it. */
+.stackman-name-hint {
+  flex-basis: 100%;
+  margin-top: -0.2rem;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
 }
 
 .stackman-modal-name > span {
@@ -1696,11 +1970,30 @@
   font-size: 1.5rem;
 }
 
-.stackman-svckey {
+/* Quiet until the heading is hovered or focused, so a pencil beside every
+   service name is not the first thing the eye lands on. */
+.stackman-svcrename {
+  margin-left: 0.4rem;
+  padding: 0.1rem 0.5rem;
+  border: 0.1rem solid transparent;
+  border-radius: 0.2rem;
+  background: transparent;
   color: var(--sm-muted);
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 1.2rem;
-  font-weight: 400;
+  font-size: 1.1rem;
+  opacity: 0.45;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.stackman-svchead:hover .stackman-svcrename,
+.stackman-svcrename:focus-visible {
+  opacity: 1;
+}
+
+.stackman-svcrename:hover,
+.stackman-svcrename:focus-visible {
+  border-color: var(--sm-line);
+  outline: none;
 }
 
 .stackman-fieldgroup {
@@ -1909,6 +2202,11 @@
   font-size: 1.2rem;
   text-align: left;
   cursor: pointer;
+  opacity: 1;
+  translate: 0 0;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              translate var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete;
 }
 
 .stackman-scaffold .stackman-required::after {
@@ -1923,6 +2221,12 @@
 
 .stackman-scaffold .stackman-required[hidden] {
   display: none;
+  opacity: 0;
+  translate: 0 -0.4rem;
+}
+
+@starting-style {
+  .stackman-scaffold .stackman-required { opacity: 0; translate: 0 -0.4rem; }
 }
 
 .stackman-fieldtitle {
@@ -1935,6 +2239,15 @@
   background: var(--sm-fill-2);
   color: var(--sm-muted);
   font-size: 1.1rem;
+}
+
+/* A device this server does not have. Usually a compose file written on another
+   machine, and usually the reason the container will not start, so it is worth
+   more than the muted grey the other tags wear. */
+.stackman-fieldtag--lost {
+  background: transparent;
+  box-shadow: inset 0 0 0 0.1rem var(--sm-danger);
+  color: var(--sm-danger);
 }
 
 .stackman-scaffold .stackman-input {
@@ -1964,6 +2277,14 @@
 .stackman-scaffold .stackman-input--check {
   width: auto;
   padding: 0;
+}
+
+/* A dropdown wears the same skin as a text box, minus the right-hand padding —
+   the browser needs that space for the arrow it draws itself, and that arrow is
+   the only thing telling you this box holds a list. */
+.stackman-scaffold .stackman-choose {
+  padding-right: 0.3rem;
+  cursor: pointer;
 }
 
 .stackman-fieldraw {
@@ -1998,6 +2319,187 @@
   color: var(--sm-accent);
 }
 
+/* ---- the device picker ---- */
+
+/* A panel in the flow of the form, not a floating menu.
+ *
+ * The editor is a <dialog> with overflow: hidden, so an absolutely positioned
+ * box inside it is either clipped at the pane edge or stretches the dialog —
+ * which is what the visually-hidden labels did before they were pinned down
+ * (see the note above .stackman-sr). A block that pushes the rows below it out
+ * of the way can do neither, at any width. */
+
+.stackman-devpick {
+  margin: 0 0 1.2rem;
+  border: 0.1rem solid var(--sm-line);
+  border-left: 0.3rem solid var(--sm-accent);
+  border-radius: var(--sm-radius);
+  background: var(--sm-fill-0);
+}
+
+.stackman-devhead {
+  display: flex;
+  align-items: stretch;
+  gap: 0.6rem;
+  padding: 0.9rem;
+  border-bottom: 0.1rem solid var(--sm-hairline);
+}
+
+/* The filter box already wears .stackman-input, which is display: block and
+   full width. Only its behaviour in the row needs saying. */
+.stackman-devhead .stackman-devfilter {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Capped and scrolled internally. Without the cap, "show everything in /dev" on
+   a server with twenty disks pushes the rest of the form off the screen. */
+.stackman-devbody {
+  max-height: 32rem;
+  padding: 0.6rem 0.9rem;
+  overflow-y: auto;
+}
+
+.stackman-devgroup {
+  margin: 0.9rem 0 0.4rem;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.stackman-devgroup:first-child {
+  margin-top: 0;
+}
+
+.stackman-devnote {
+  margin: 0 0 0.6rem;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+.stackman-scaffold .stackman-devrow {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 0.2rem;
+  padding: 0.6rem 0.9rem;
+  border: 0.1rem solid transparent;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-devrow:hover,
+.stackman-scaffold .stackman-devrow:focus-visible {
+  border-color: var(--sm-line);
+  background: var(--sm-fill);
+  outline: none;
+}
+
+.stackman-devname {
+  display: block;
+  font-size: 1.3rem;
+}
+
+/* The raw path, which is the one part of a device that has to be readable
+   character by character. */
+.stackman-devpath {
+  display: block;
+  margin-top: 0.2rem;
+  overflow-wrap: anywhere;
+  color: var(--sm-muted);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.15rem;
+}
+
+.stackman-devhint {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+.stackman-devhint--also {
+  color: var(--sm-accent);
+}
+
+/* Already mapped somewhere else. Two containers holding one Zigbee stick is a
+   setup that looks fine and never works. */
+.stackman-devclaim {
+  margin-left: 0.6rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.2rem;
+  background: var(--sm-fill-2);
+  color: var(--sm-accent);
+  font-size: 1.1rem;
+  white-space: nowrap;
+}
+
+/* A whole disk, or the whole USB bus. Marked down the edge rather than shouted,
+   because it is only reachable behind "show everything" in the first place. */
+.stackman-scaffold .stackman-devrow--risky {
+  border-left: 0.3rem solid var(--sm-danger);
+  border-radius: 0 0.3rem 0.3rem 0;
+}
+
+.stackman-devfoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.9rem;
+  padding: 0.7rem 0.9rem;
+  border-top: 0.1rem solid var(--sm-hairline);
+}
+
+.stackman-scaffold .stackman-devall {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sm-accent);
+  font-family: inherit;
+  font-size: 1.2rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-devall:hover {
+  text-decoration: underline;
+}
+
+.stackman-devmsg {
+  color: var(--sm-danger);
+  font-size: 1.2rem;
+}
+
+/* ---- a device row's second path ---- */
+
+/* Folded away, because for nearly every device the two halves of the mapping
+   are the same path. The summary carries the value when they differ, so the
+   collapsed row still says everything — it is shorter, not quieter. */
+
+.stackman-devmore {
+  margin-top: 0.5rem;
+}
+
+.stackman-devmore > summary {
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.stackman-devmore > summary:hover {
+  color: var(--sm-fg);
+}
+
+.stackman-devmore[open] > summary {
+  margin-bottom: 0.5rem;
+}
+
 /* ---- modal: Sanitise ---- */
 
 .stackman-sanitise {
@@ -2021,6 +2523,12 @@
 
 .stackman-modal-banner[hidden] {
   display: none;
+  opacity: 0;
+  translate: 0 -0.4rem;
+}
+
+@starting-style {
+  .stackman-modal-banner { opacity: 0; translate: 0 -0.4rem; }
 }
 
 /* The blur keeps the box's real width, so the shape of the page in a
@@ -2189,14 +2697,39 @@
 
   display: grid;
   grid-template-rows: auto auto 1fr auto auto;
+
+  /* Same treatment as .stackman-modal above — no width entry, since this
+     dialog never resizes itself. */
+  opacity: 1;
+  transition:
+    opacity var(--sm-motion) var(--sm-ease),
+    display var(--sm-motion) allow-discrete,
+    overlay var(--sm-motion) allow-discrete;
 }
 
 .stackman-picker:not([open]) {
   display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-picker[open] { opacity: 0; }
 }
 
 .stackman-picker::backdrop {
   background: rgba(0, 0, 0, 0.55);
+  opacity: 1;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete,
+              overlay var(--sm-motion) allow-discrete;
+}
+
+.stackman-picker:not([open])::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-picker[open]::backdrop { opacity: 0; }
 }
 
 .stackman-picker-head {
@@ -2336,14 +2869,39 @@
 
   display: grid;
   grid-template-rows: auto auto auto auto 1fr auto;
+
+  /* Same treatment as .stackman-modal above — no width entry, since this
+     dialog never resizes itself. */
+  opacity: 1;
+  transition:
+    opacity var(--sm-motion) var(--sm-ease),
+    display var(--sm-motion) allow-discrete,
+    overlay var(--sm-motion) allow-discrete;
 }
 
 .stackman-tz:not([open]) {
   display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-tz[open] { opacity: 0; }
 }
 
 .stackman-tz::backdrop {
   background: rgba(0, 0, 0, 0.55);
+  opacity: 1;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete,
+              overlay var(--sm-motion) allow-discrete;
+}
+
+.stackman-tz:not([open])::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-tz[open]::backdrop { opacity: 0; }
 }
 
 .stackman-tz-head {
@@ -3476,5 +4034,24 @@
   .stackman-modal-actions {
     flex-direction: column-reverse;
     align-items: stretch;
+  }
+}
+
+/* ---- Reduced motion ------------------------------------------------------
+ *
+ * The backdrops are named one by one because ::backdrop is a pseudo-element
+ * with its own box and its own transition, and no wildcard reaches it.
+ *
+ * 1ms rather than 0 or `none`: a zero-length transition still fires
+ * `transitionend`, so nothing that waits on that event (see the gutter
+ * repaint in stacks.js) can hang waiting for an event that a `none` duration
+ * would never send. */
+@media (prefers-reduced-motion: reduce) {
+  .stackman-scaffold *,
+  .stackman-modal::backdrop,
+  .stackman-picker::backdrop,
+  .stackman-tz::backdrop {
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
   }
 }

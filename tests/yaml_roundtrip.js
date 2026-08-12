@@ -707,6 +707,94 @@ FILES.forEach(function (file) {
   });
 })();
 
+/* ---- a chosen value instead of a placeholder ---------------------------- */
+
+(function () {
+  var ZIG = '/dev/serial/by-id/usb-Silicon_Labs_cc2652rb_stick-if00-port0';
+  var VAL = ZIG + ':/dev/ttyACM0';
+
+  // Into a list that already has an entry. The file carries comments and an
+  // unusual dash gap, both of which have to come through untouched.
+  var src = 'services:\n' +
+            '  a:\n' +
+            '    image: alpine            # the image, commented\n' +
+            '    devices:\n' +
+            '      -   /dev/dri:/dev/dri  # the GPU\n' +
+            '    environment:\n' +
+            '      TZ: UTC\n';
+
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  var line = Y.addItem(doc, form, 'a', 'device', VAL);
+  ok('a device can be added by value', line >= 0, 'addItem returned ' + line);
+
+  var out  = Y.serialise(doc);
+  var got  = out.split('\n');
+  ok('the value is written exactly as given, with the list\'s own dash gap',
+     got[line] === '      -   ' + VAL, JSON.stringify(got[line]));
+
+  got.splice(line, 1);
+  ok('every other line is byte-identical', got.join('\n') === src,
+     firstDiff(src, got.join('\n')));
+
+  var added = Y.buildForm(Y.parse(out));
+  var devs  = added.fields.filter(function (f) { return f.binder === 'device'; });
+  ok('the file now has two devices', devs.length === 2,
+     devs.map(function (f) { return f.id; }).join(', '));
+  ok('the new row keys on the container path, not the long host one',
+     devs.some(function (f) { return f.target === '/dev/ttyACM0'; }),
+     devs.map(function (f) { return f.target; }).join(', '));
+
+  // Adding then removing has to leave the file exactly as it was found.
+  var id = Y.fieldAtLine(added, line);
+  var d2 = Y.parse(out), f2 = Y.buildForm(d2);
+  ok('the added entry can be removed again', Y.removeItem(d2, f2, id) === true, id);
+  ok('and the file is back to the original', Y.serialise(d2) === src,
+     firstDiff(src, Y.serialise(d2)));
+})();
+
+(function () {
+  var VAL = '/dev/dri:/dev/dri';
+
+  // A key with nothing under it yet.
+  var bare = 'services:\n  a:\n    image: alpine\n    devices:\n';
+  var d1   = Y.parse(bare);
+  ok('a value can be added under a key with nothing under it',
+     Y.addItem(d1, Y.buildForm(d1), 'a', 'device', VAL) >= 0);
+  ok('and it lands indented under that key',
+     /\n    devices:\n      - \/dev\/dri:\/dev\/dri\n$/.test(Y.serialise(d1)),
+     JSON.stringify(Y.serialise(d1)));
+
+  // No devices: key at all — it is written along with its first entry, above
+  // the metadata block, same as any other new list.
+  var none = 'services:\n  a:\n    image: alpine\n    x-unraid:\n      name: Thing\n';
+  var d2   = Y.parse(none);
+  ok('a value can be added to a service with no devices: key',
+     Y.addItem(d2, Y.buildForm(d2), 'a', 'device', VAL) >= 0);
+
+  var lines = Y.serialise(d2).split('\n');
+  var dev   = lines.findIndex(function (l) { return /^\s+devices:/.test(l); });
+  var xun   = lines.findIndex(function (l) { return /^\s+x-unraid:/.test(l); });
+  ok('the new key lands above the x-unraid block', dev >= 0 && xun >= 0 && dev < xun,
+     Y.serialise(d2));
+  ok('the metadata block is untouched', /x-unraid:\n      name: Thing/.test(Y.serialise(d2)));
+
+  // The model writes what it is told and does not deduplicate. Only the caller
+  // knows the device was already there and what to say about it, so refusing
+  // here would be a silent no-op with nowhere to report it.
+  var d3 = Y.parse('services:\n  a:\n    image: alpine\n    devices:\n      - ' + VAL + '\n');
+  ok('a duplicate value is written, not silently dropped',
+     Y.addItem(d3, Y.buildForm(d3), 'a', 'device', VAL) >= 0);
+  ok('so the caller is what has to refuse it',
+     Y.serialise(d3).split(VAL).length - 1 === 2, Y.serialise(d3));
+
+  // An empty value falls back to the placeholder, so no caller can accidentally
+  // write a blank entry by passing one through.
+  var d4 = Y.parse('services:\n  a:\n    image: alpine\n');
+  Y.addItem(d4, Y.buildForm(d4), 'a', 'device', '');
+  ok('an empty value falls back to the placeholder',
+     /- \/dev\/dri:\/dev\/dri/.test(Y.serialise(d4)), Y.serialise(d4));
+})();
+
 /* ---- sealed lists and entries refuse ------------------------------------ */
 
 (function () {
@@ -790,6 +878,167 @@ console.log('\nH2. Naming a variable');
 
   ok('both forms round-trip untouched',
      Y.serialise(Y.parse(mapForm)) === mapForm && Y.serialise(Y.parse(listForm)) === listForm);
+})();
+
+/* =========================================================================
+ * I. renameService — the key, and every reference that follows it
+ * ========================================================================= */
+
+console.log('\nI. Renaming a service');
+
+(function () {
+  var CASES = [
+    ['depends_on list',
+     'services:\n  db:\n    image: postgres\n  web:\n    image: nginx\n    depends_on:\n      - db\n',
+     'services:\n  database:\n    image: postgres\n  web:\n    image: nginx\n    depends_on:\n      - database\n'],
+    ['depends_on map (a key, not a value)',
+     'services:\n  db:\n    image: postgres\n  web:\n    image: nginx\n    depends_on:\n      db:\n        condition: service_healthy\n',
+     'services:\n  database:\n    image: postgres\n  web:\n    image: nginx\n    depends_on:\n      database:\n        condition: service_healthy\n'],
+    ['links with an alias',
+     'services:\n  db:\n    image: postgres\n  web:\n    image: nginx\n    links:\n      - db:dbalias\n',
+     'services:\n  database:\n    image: postgres\n  web:\n    image: nginx\n    links:\n      - database:dbalias\n'],
+    ['volumes_from',
+     'services:\n  db:\n    image: postgres\n  web:\n    image: nginx\n    volumes_from:\n      - db:ro\n',
+     'services:\n  database:\n    image: postgres\n  web:\n    image: nginx\n    volumes_from:\n      - database:ro\n'],
+    ['network_mode: service:<name>',
+     'services:\n  db:\n    image: postgres\n  web:\n    image: nginx\n    network_mode: service:db\n',
+     'services:\n  database:\n    image: postgres\n  web:\n    image: nginx\n    network_mode: service:database\n']
+  ];
+
+  CASES.forEach(function (c) {
+    var doc = Y.parse(c[1]);
+    var res = Y.renameService(doc, 'db', 'database');
+    ok(c[0] + ' (renamed, one reference)', res.ok === true && res.refs === 1, JSON.stringify(res));
+    ok(c[0] + ' (file matches expected)', Y.serialise(doc) === c[2], firstDiff(c[2], Y.serialise(doc)));
+  });
+
+  // Two references, on two different lines — depends_on and links both name
+  // the service being renamed, and each is fixed up independently.
+  var multi = 'services:\n  db:\n    image: postgres\n  web:\n    image: nginx\n' +
+              '    depends_on:\n      - db\n      - cache\n    links:\n      - db:alias\n';
+  var multiWant = 'services:\n  database:\n    image: postgres\n  web:\n    image: nginx\n' +
+                  '    depends_on:\n      - database\n      - cache\n    links:\n      - database:alias\n';
+  var md = Y.parse(multi);
+  var mres = Y.renameService(md, 'db', 'database');
+  ok('two references in one call (adjacent lines)', mres.ok === true && mres.refs === 2, JSON.stringify(mres));
+  ok('both are rewritten, "cache" is untouched', Y.serialise(md) === multiWant, firstDiff(multiWant, Y.serialise(md)));
+
+  // Flow-style ("[db, cache]") is sealed like everywhere else in this file —
+  // renaming the key still succeeds, but a reference sitting inside a flow
+  // list is left exactly as written rather than guessed at.
+  var flow = 'services:\n  db:\n    image: postgres\n  web:\n    image: nginx\n    depends_on: [db, cache]\n';
+  var fd = Y.parse(flow);
+  var fres = Y.renameService(fd, 'db', 'database');
+  ok('a flow-style depends_on is sealed, so it is not rewritten',
+     fres.ok === true && fres.refs === 0 && Y.serialise(fd).indexOf('depends_on: [db, cache]') >= 0,
+     JSON.stringify(fres) + '\n' + Y.serialise(fd));
+
+  // A name that is a substring of another must not match it.
+  var sib = 'services:\n  db:\n    image: postgres\n  dbbackup:\n    image: backup\n  web:\n' +
+            '    image: nginx\n    depends_on:\n      - db\n      - dbbackup\n';
+  var sibWant = 'services:\n  database:\n    image: postgres\n  dbbackup:\n    image: backup\n  web:\n' +
+                '    image: nginx\n    depends_on:\n      - database\n      - dbbackup\n';
+  var sd = Y.parse(sib);
+  var sres = Y.renameService(sd, 'db', 'database');
+  ok('"dbbackup" is not touched by renaming "db"',
+     sres.ok === true && sres.refs === 1 && Y.serialise(sd) === sibWant,
+     JSON.stringify(sres) + '\n' + firstDiff(sibWant, Y.serialise(sd)));
+
+  // A comment-heavy file with an anchor and a merge key. The whole string
+  // must come back identical apart from the two names — not line by line,
+  // since a bug that shifted an unrelated line would still pass a per-line
+  // check that only looks at the lines it expected to change.
+  var anchored =
+    '# top of file comment\n' +
+    'x-shared: &defaults\n' +
+    '  restart: unless-stopped\n' +
+    '\n' +
+    'services:\n' +
+    '  db:\n' +
+    '    <<: *defaults\n' +
+    '    image: postgres   # the database image\n' +
+    '\n' +
+    '  # web depends on db\n' +
+    '  web:\n' +
+    '    image: nginx\n' +
+    '    depends_on:\n' +
+    '      - db   # must start first\n';
+  var anchoredWant =
+    '# top of file comment\n' +
+    'x-shared: &defaults\n' +
+    '  restart: unless-stopped\n' +
+    '\n' +
+    'services:\n' +
+    '  database:\n' +
+    '    <<: *defaults\n' +
+    '    image: postgres   # the database image\n' +
+    '\n' +
+    '  # web depends on db\n' +
+    '  web:\n' +
+    '    image: nginx\n' +
+    '    depends_on:\n' +
+    '      - database   # must start first\n';
+  var ad = Y.parse(anchored);
+  var ares = Y.renameService(ad, 'db', 'database');
+  ok('comments, the anchor and the merge key all survive, only the names change',
+     ares.ok === true && ares.refs === 1 && Y.serialise(ad) === anchoredWant,
+     JSON.stringify(ares) + '\n' + firstDiff(anchoredWant, Y.serialise(ad)));
+
+  // Renaming to the same name is a no-op success, not a refusal — decided
+  // because it would otherwise have to be rejected for "colliding" with
+  // itself, which is a confusing thing to tell someone who typed nothing.
+  var nd = Y.parse(sib);
+  var nres = Y.renameService(nd, 'db', 'db');
+  ok('renaming to the same name is a no-op success',
+     nres.ok === true && nres.refs === 0 && Y.serialise(nd) === sib, JSON.stringify(nres));
+
+  // Every refusal must leave the document exactly as it was found.
+  var REFUSALS = [
+    ['an empty name',            'db', ''],
+    ['a name with illegal characters', 'db', 'bad name!'],
+    ['a service that does not exist',  'ghost', 'anything'],
+    ['a name already taken',     'db', 'web']
+  ];
+  REFUSALS.forEach(function (r) {
+    var rd = Y.parse(sib);
+    var before = Y.serialise(rd);
+    var rres = Y.renameService(rd, r[1], r[2]);
+    ok('refused: ' + r[0], rres.ok === false && typeof rres.error === 'string' && rres.error.length > 0,
+       JSON.stringify(rres));
+    ok('refused: ' + r[0] + ' — file untouched', Y.serialise(rd) === before, firstDiff(before, Y.serialise(rd)));
+  });
+})();
+
+/* ---- a key whose only value is a comment -------------------------------- */
+
+// "db:  # the database" opens a nested block; the '#' is a comment, not a
+// value. Read the other way, every line indented under it was swallowed —
+// the service vanished from the form and a rename could not see the
+// references inside it, so it reported success having broken the file.
+(function () {
+  var src = [
+    'services:',
+    '  db:  # the database',
+    '    image: postgres:16',
+    '  web:',
+    '    image: nginx',
+    '    depends_on:',
+    '      - db',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src);
+  ok('comment-only value: round-trip is byte-identical', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+
+  var names = Y.buildForm(doc).services.map(function (s) { return s.name; }).join(',');
+  ok('comment-only value: the block under it still parses', names === 'db,web', names);
+
+  var res = Y.renameService(doc, 'db', 'database');
+  ok('comment-only value: a reference inside the file is still found',
+     res.ok === true && res.refs === 1, JSON.stringify(res));
+  ok('comment-only value: the rename lands and the comment survives',
+     Y.serialise(doc) === src.replace('  db:', '  database:').replace('      - db', '      - database'),
+     Y.serialise(doc));
 })();
 
 /* ---- result ------------------------------------------------------------- */

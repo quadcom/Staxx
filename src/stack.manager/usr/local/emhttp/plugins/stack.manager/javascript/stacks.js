@@ -185,10 +185,13 @@
    * hand-written alternative would be a second document keydown listener
    * racing the one the context menu already owns. */
 
-  var textAtOpen = '';     // what the file said when it opened — the dirty check
+  var textAtOpen  = '';    // what the file said when it opened — the dirty check
+  var openedName  = '';    // the rel this editor opened at — what save() renames FROM
+  var serviceRenamed = false;  // a pencil rename happened this session — offer a recreate after save
 
-  // What a new stack starts as. Service names are not editable in the form —
-  // they are the section headings — so the comment says where to change it.
+  // What a new stack starts as. A placeholder key rather than the pencil
+  // straight away — a brand new service has nothing else in it yet either,
+  // so the comment points at the one thing worth changing first.
   var NEW_STACK = [
     'services:',
     '',
@@ -307,6 +310,16 @@
     if (view !== 'form') { paintGutter(); syncGutter(); repaintMark(); }
   }
 
+  // The dialog's own width now glides between Form and Split (CSS transition),
+  // so the gutter's highlight bands — positioned with inline pixel values —
+  // can be left mid-flight where the pane used to be. Registered once here,
+  // not inside setView(), because it has to catch the width settling AFTER
+  // the switch, not the switch itself.
+  modal.addEventListener('transitionend', function (e) {
+    if (e.target === modal && e.propertyName === 'width' &&
+        modalBody.dataset.view !== 'form') { syncGutter(); repaintMark(); }
+  });
+
   // Crossing the threshold with the editor open. Only Split has to move, and
   // only inwards: going back to a wide window leaves you where you were rather
   // than overriding a choice you made on purpose.
@@ -337,14 +350,82 @@
   // it opens, rather than a separate flag per tool.
   var TOOLS = {
     browse: { icon: 'folder-open-o', title: 'Choose a folder on this server', label: 'Choose a folder' },
-    tz:     { icon: 'globe',         title: 'Choose a timezone from a map',   label: 'Choose a timezone' }
+    tz:     { icon: 'globe',         title: 'Choose a timezone from a map',   label: 'Choose a timezone' },
+    device: { icon: 'plug',          title: 'Choose a device on this server', label: 'Choose a device' }
   };
+
+  // Settings whose value is one of a fixed few, so the box is a list to pick
+  // from rather than something to spell correctly. Keyed by binder and target,
+  // which is what identifies a field.
+  var CHOICES = {
+    'setting/restart': {
+      hint: 'when to start it again',
+      options: [
+        ['no',             'no — leave it stopped'],
+        ['always',         'always — start it again whenever it stops'],
+        ['unless-stopped', 'unless-stopped — always, unless you stopped it'],
+        ['on-failure',     'on-failure — only when it crashes']
+      ]
+    }
+  };
+
+  // What hardware this server says it has. Filled in by the device picker far
+  // below and read up here, because a device row is titled after the thing it
+  // points at: humanising "/dev/dri" gives "Dev Dri", which tells nobody
+  // anything, while the catalogue can say "Intel graphics".
+  //
+  // Empty until the first reply lands, which is why devLoaded gates the "not
+  // found on this server" tag — before that, every row would wrongly wear it.
+  //
+  // devPresent, not devIndex, is what answers that tag. The catalogue is a
+  // curated list of hardware worth offering, so a path nobody would ever suggest
+  // — one specific USB node, a disk by its id — is absent from it while being
+  // perfectly present on the machine.
+  var devIndex   = {};      // host path -> catalogue entry, for naming a row
+  var devPresent = {};      // host path -> true, for "is this actually here"
+  var devClaims  = {};      // host path -> stacks already mapping it
+  var devGroups  = [];      // as the server grouped them
+  var devLoaded  = false;
+
+  // Compose also accepts forms this list does not carry — "on-failure:3" — so
+  // a value already in the file that is not on the list joins it as it stands.
+  // A dropdown that could not show the current value would change the file
+  // just by being opened.
+  function optionsHtml(choice, value) {
+    var out = [], known = false;
+    for (var i = 0; i < choice.options.length; i++) {
+      var o = choice.options[i];
+      if (o[0] === value) known = true;
+      out.push('<option value="' + esc(o[0]) + '"' + (o[0] === value ? ' selected' : '') +
+               '>' + esc(o[1]) + '</option>');
+    }
+    if (!known) out.unshift('<option value="' + esc(value) + '" selected>' + esc(value) + '</option>');
+    return out.join('');
+  }
 
   function boxHtml(f, index, which, hint, tool) {
     var p = f.parts[which];
     if (!p) return '';
     var dead = !p.spot || f.locked;
     var t = TOOLS[tool];
+    // The options say what the setting means, so the hint below the box says
+    // what the setting is for instead of repeating "value".
+    var choice = which === 'value' ? CHOICES[f.binder + '/' + f.target] : null;
+    if (choice) hint = choice.hint;
+
+    var control = choice
+      ? '<select class="stackman-input stackman-choose"' +
+              ' data-row="' + index + '" data-part="' + which + '"' +
+              ' aria-label="' + esc(f.title + ' — ' + hint) + '"' +
+              (dead ? ' disabled' : '') + '>' +
+          optionsHtml(choice, p.value) +
+        '</select>'
+      : '<input type="text" class="stackman-input"' +
+              ' data-row="' + index + '" data-part="' + which + '"' +
+              ' value="' + esc(p.value) + '"' +
+              ' aria-label="' + esc(f.title + ' — ' + hint) + '"' +
+              ' spellcheck="false" autocomplete="off"' +
+              (dead ? ' disabled' : '') + '>';
 
     // A <div>, not a <label>, because the Browse button sits beside the input.
     // A label may not hold interactive content other than its own control, and
@@ -352,12 +433,7 @@
     // input carries its name in aria-label instead of by being wrapped.
     return '<div class="stackman-box">' +
              '<div class="stackman-boxline">' +
-               '<input type="text" class="stackman-input"' +
-                     ' data-row="' + index + '" data-part="' + which + '"' +
-                     ' value="' + esc(p.value) + '"' +
-                     ' aria-label="' + esc(f.title + ' — ' + hint) + '"' +
-                     ' spellcheck="false" autocomplete="off"' +
-                     (dead ? ' disabled' : '') + '>' +
+               control +
                (t && !dead
                  ? '<button type="button" class="stackman-browse"' +
                         ' data-tool="' + tool + '" data-row="' + index + '"' +
@@ -377,6 +453,23 @@
     var listy  = mapped || f.binder === 'env' || f.binder === 'label';
     var bits = [];
 
+    // A device is named after the hardware it points at, when this server has
+    // that hardware. When the path is not on the machine at all, the row says so
+    // — a compose file written on another server is the usual reason a container
+    // will not start, and that is worth saying out loud rather than showing a
+    // path that looks perfectly fine.
+    //
+    // A device can also be written as a single path, meaning the same path both
+    // sides. The model puts that one in the container half and leaves the host
+    // half with nowhere to write to, so that is the half to read and to show.
+    var dev  = f.binder === 'device';
+    var solo = dev && (!f.parts.host || !f.parts.host.spot);
+    var host = !dev ? ''
+             : solo ? (f.parts.container ? f.parts.container.value : '')
+                    : f.parts.host.value;
+    var kit  = host ? devIndex[host] : null;
+    var lost = dev && host && devLoaded && !devPresent[host];
+
     bits.push('<div class="stackman-fieldrow' + (f.locked ? ' stackman-fieldrow--locked' : '') +
               (f.sensitive ? ' stackman-fieldrow--secret' : '') +
               '" data-row="' + index + '" data-field-row="' + esc(f.id) + '"' +
@@ -385,8 +478,12 @@
               ' tabindex="0">');
 
     bits.push('<div class="stackman-fieldhead">');
-    bits.push('<span class="stackman-fieldtitle">' + esc(f.title) + '</span>');
+    bits.push('<span class="stackman-fieldtitle">' + esc(kit ? kit.label : f.title) + '</span>');
     if (f.mode === 'ro') bits.push('<span class="stackman-fieldtag">read-only mount</span>');
+    if (lost) {
+      bits.push('<span class="stackman-fieldtag stackman-fieldtag--lost">' +
+                'not found on this server</span>');
+    }
     bits.push('<label class="stackman-flag" title="Do not let this be left empty">' +
                 '<input type="checkbox" data-row="' + index + '" data-required="1"' +
                 (f.required ? ' checked' : '') + (f.commentSpot ? '' : ' disabled') + '>' +
@@ -415,12 +512,43 @@
                 esc(f.lockReason) + '. Use the Compose view.</p>');
     } else {
       // Host on the left, container on the right, note last. Editing the host
-      // half without seeing what it connects to is half a sentence.
-      bits.push('<div class="stackman-boxes' + (mapped || named ? ' stackman-boxes--mapped' : '') + '">');
-      if (mapped) {
-        // Only a volume gets the folder picker. A device is a node under /dev
-        // and a port is a number, so browsing for either would be a button that
-        // never finds what you came for.
+      // half without seeing what it connects to is half a sentence. A device is
+      // the exception and stacks instead — see below.
+      var twoUp = (mapped && !dev) || named;
+      bits.push('<div class="stackman-boxes' + (twoUp ? ' stackman-boxes--mapped' : '') + '">');
+      if (dev) {
+        // One box, not two. For nearly every device the two halves are the same
+        // path, and where they differ the picker has already set both — a USB
+        // stick is mapped from its stable /dev/serial/by-id name to the short
+        // name the app inside expects. So the container half is folded away, with
+        // its value in the summary, which makes the row shorter and not quieter.
+        //
+        // The picker is not the folder browser wearing a different hat: that one
+        // walks directories under /mnt, while this one lists what the kernel says
+        // is attached. Browsing /dev by hand is what never finds what you came
+        // for, which is why there was no button here before.
+        var hint = kit ? kit.hint : 'path to the device on this server';
+
+        if (solo) {
+          // Written as one path, so there is no second one to fold away.
+          bits.push(boxHtml(f, index, 'container', hint, 'device'));
+        } else {
+          bits.push(boxHtml(f, index, 'host', hint, 'device'));
+
+          var into = f.parts.container;
+          if (into) {
+            var differs = into.value && host && into.value !== host;
+            bits.push('<details class="stackman-devmore">' +
+                        '<summary>' + (differs
+                          ? 'appears inside the container as ' + esc(into.value)
+                          : 'change the path inside the container') + '</summary>' +
+                        boxHtml(f, index, 'container', 'path in the container') +
+                      '</details>');
+          }
+        }
+      } else if (mapped) {
+        // Only a volume gets the folder picker. A port is a number, so browsing
+        // for one would be a button that never finds what you came for.
         bits.push(boxHtml(f, index, 'host',
                   f.binder === 'port' ? 'on the server' : 'path on the server',
                   f.binder === 'volume' ? 'browse' : ''));
@@ -469,8 +597,11 @@
       var svc = form.services[s];
       out.push('<section class="stackman-svc" data-service="' + esc(svc.name) + '"' +
                ' data-from="' + svc.range.start + '" data-to="' + svc.range.end + '">');
-      out.push('<h4 class="stackman-svchead">' + esc(svc.title) +
-               (svc.title !== svc.name ? ' <span class="stackman-svckey">' + esc(svc.name) + '</span>' : '') +
+      out.push('<h4 class="stackman-svchead">' + esc(svc.name) +
+               ' <button type="button" class="stackman-svcrename" data-svc-rename="1"' +
+               ' data-service="' + esc(svc.name) + '"' +
+               ' aria-label="Rename this service" title="Rename this service">' +
+               '<i class="fa fa-pencil" aria-hidden="true"></i></button>' +
                '</h4>');
       if (svc.overview) out.push('<p class="stackman-fieldhint">' + esc(svc.overview) + '</p>');
       if (svc.note)     out.push('<p class="stackman-fieldnote">' + esc(svc.note) + '</p>');
@@ -588,6 +719,7 @@
     MODEL = form;
 
     var scrollWas = formHost.scrollTop;
+    devPanel = null;            // the device panel lives in here and just went
     formHost.innerHTML = renderForm(form);
     formHost.scrollTop = scrollWas;
 
@@ -675,9 +807,12 @@
   });
 
   formHost.addEventListener('change', function (event) {
-    // A tick is a decision, not a keystroke — commit it at once.
+    // A tick or a pick from a list is a decision, not a keystroke — commit it
+    // at once. A dropdown fires input as well, so the pending timer that set
+    // off has to be dropped or the same edit is written twice.
     if (event.target.dataset.secret === undefined &&
-        event.target.dataset.required === undefined) return;
+        event.target.dataset.required === undefined &&
+        event.target.tagName !== 'SELECT') return;
     if (commitTimer) { clearTimeout(commitTimer); commitTimer = null; pendingEl = null; }
     commit(event.target);
   });
@@ -733,6 +868,14 @@
 
     var add = event.target.closest('[data-add]');
     if (add) {
+      // A device is chosen from what this server actually has, never typed. The
+      // placeholder route wrote /dev/dri whether or not the machine had a
+      // graphics card, and a second one wrote /dev/dri2, which is not a path to
+      // anything at all.
+      if (add.dataset.add === 'device') {
+        devOpen(add.closest('.stackman-adds'), null, add.dataset.service);
+        return;
+      }
       flushPending();
       pushUndo('adding that ' + addWord(add.dataset.add));
       var line = YAML.addItem(MODEL.doc, MODEL, add.dataset.service, add.dataset.add);
@@ -744,6 +887,30 @@
         return;
       }
       structuralEdit(line, '');
+      return;
+    }
+
+    var rename = event.target.closest('[data-svc-rename]');
+    if (rename) {
+      var was = rename.dataset.service;
+      var next = window.prompt('Rename the service "' + was + '"', was);
+      if (next === null || next === was) return;
+
+      flushPending();
+      pushUndo('renaming the service "' + was + '" to "' + next + '"');
+      var renamed = YAML.renameService(MODEL.doc, was, next);
+      if (!renamed.ok) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus(renamed.error);
+        return;
+      }
+
+      serviceRenamed = true;
+      structuralEdit(-1, 'Renamed "' + was + '" to "' + next + '"' +
+                    (renamed.refs > 0
+                      ? '. ' + renamed.refs + (renamed.refs === 1 ? ' reference' : ' references') + ' updated.'
+                      : '.'));
       return;
     }
 
@@ -1368,13 +1535,300 @@
 
   tzModal.addEventListener('close', function () { tzFor = null; });
 
+  /* ---- the device picker ---- */
+
+  /* What hardware this server has, offered by name.
+   *
+   * A panel in the flow of the form, not a floating menu. The editor is a
+   * <dialog> with overflow: hidden, so an absolutely positioned box inside it is
+   * either clipped or stretches the dialog — which is exactly what the
+   * visually-hidden labels did before they were pinned down. A block that pushes
+   * the rows below it out of the way can do neither.
+   *
+   * The catalogue itself is held in devIndex up beside the renderer, because the
+   * form needs it to name rows whether or not this panel has ever been opened. */
+
+  var devPanel   = null;    // the open panel, or null — cleared by reparse() above
+  var devFor     = null;    // the host box being re-picked, or null when adding
+  var devSvc     = '';      // the service a new device is being added to
+  var devShowAll = false;   // are the risky entries showing
+  var devFilter  = '';
+
+  function devLoad() {
+    return call('devices', {}, 15000).then(function (res) {
+      if (!res.ok) return res;
+
+      devGroups = res.groups || [];
+      devClaims = res.claims || {};
+
+      devIndex = {};
+      for (var g = 0; g < devGroups.length; g++) {
+        var list = devGroups[g].devices || [];
+        for (var i = 0; i < list.length; i++) devIndex[list[i].host] = list[i];
+      }
+
+      devPresent = {};
+      var here = res.present || [];
+      for (var p = 0; p < here.length; p++) devPresent[here[p]] = true;
+
+      // The form was drawn before this arrived, so its device rows are still
+      // showing bare paths. Redraw once to put the hardware names in. Only on
+      // the first reply, and only with nothing in flight — a redraw takes the
+      // caret with it, and it would also destroy the panel it was opened from.
+      var first = !devLoaded;
+      devLoaded = true;
+      if (first && modal.open && MODEL && !commitTimer && !devPanel) reparse();
+
+      return res;
+    });
+  }
+
+  function devShellHtml() {
+    return '<div class="stackman-devhead">' +
+             '<input type="text" class="stackman-input stackman-devfilter"' +
+                   ' placeholder="Filter devices" spellcheck="false" autocomplete="off"' +
+                   ' aria-label="Filter the device list">' +
+             '<button type="button" class="stackman-browse stackman-devrefresh"' +
+                   ' title="Look again — for something just plugged in">' +
+               '<i class="fa fa-refresh" aria-hidden="true"></i>' +
+               '<span class="stackman-sr">Look again</span>' +
+             '</button>' +
+             '<button type="button" class="stackman-browse stackman-devcancel" title="Close">' +
+               '<i class="fa fa-times" aria-hidden="true"></i>' +
+               '<span class="stackman-sr">Close the device list</span>' +
+             '</button>' +
+           '</div>' +
+           '<div class="stackman-devbody"></div>' +
+           '<div class="stackman-devfoot">' +
+             '<button type="button" class="stackman-devall"></button>' +
+             '<span class="stackman-devmsg" role="status"></span>' +
+           '</div>';
+  }
+
+  function devRowHtml(d) {
+    var claim = devClaims[d.host] || [];
+    var also  = (d.companions || []).map(function (c) { return c.key + ': ' + c.value; });
+
+    return '<button type="button" class="stackman-devrow' +
+             (d.risky ? ' stackman-devrow--risky' : '') + '"' +
+             ' data-dev="' + esc(d.host) + '">' +
+             '<span class="stackman-devname">' + esc(d.label) +
+               // Two containers holding one Zigbee stick is a setup that looks
+               // fine and never works. Said, not blocked: sharing /dev/dri
+               // between two transcoders is perfectly reasonable.
+               (claim.length
+                 ? '<span class="stackman-devclaim">in use by ' + esc(claim.join(', ')) + '</span>'
+                 : '') +
+             '</span>' +
+             '<span class="stackman-devpath">' + esc(d.host) +
+               (d.container !== d.host ? ' → ' + esc(d.container) : '') + '</span>' +
+             (d.hint ? '<span class="stackman-devhint">' + esc(d.hint) + '</span>' : '') +
+             (also.length
+               ? '<span class="stackman-devhint stackman-devhint--also">Also needs ' +
+                 esc(also.join(' and ')) + ', which you can add in the Compose view.</span>'
+               : '') +
+           '</button>';
+  }
+
+  function devPaint() {
+    if (!devPanel) return;
+
+    var q = devFilter.toLowerCase();
+    var bits = [], shown = 0, held = 0;
+
+    for (var g = 0; g < devGroups.length; g++) {
+      var grp  = devGroups[g];
+      var list = grp.devices || [];
+      var rows = [];
+
+      for (var i = 0; i < list.length; i++) {
+        var d = list[i];
+        if (d.risky && !devShowAll) { held++; continue; }
+        if (q && (d.label + ' ' + d.host + ' ' + d.container).toLowerCase().indexOf(q) < 0) continue;
+        rows.push(devRowHtml(d));
+      }
+      shown += rows.length;
+
+      // A group whose every entry was filtered out has nothing worth a heading.
+      // One with no entries at all but something to say — the Nvidia note — is
+      // why this is not simply "if (rows.length)".
+      if (!rows.length && list.length) continue;
+
+      bits.push('<h5 class="stackman-devgroup">' + esc(grp.title) + '</h5>');
+      if (grp.note) bits.push('<p class="stackman-devnote">' + esc(grp.note) + '</p>');
+      bits.push(rows.join(''));
+    }
+
+    if (!shown) {
+      bits.push('<p class="stackman-devnote">' + esc(
+        !devLoaded  ? 'Asking the server what it has…'
+        : devFilter ? 'Nothing matches "' + devFilter + '".'
+        : 'This server reports no devices that can be handed to a container.'
+      ) + '</p>');
+    }
+
+    // Only the body is rewritten, never the whole panel — the filter box is in
+    // the header, and replacing it while it is being typed in would take the
+    // caret with it on every keystroke.
+    devPanel.querySelector('.stackman-devbody').innerHTML = bits.join('');
+
+    var all = devPanel.querySelector('.stackman-devall');
+    all.hidden = !held && !devShowAll;
+    all.textContent = devShowAll
+      ? 'Hide disks and the USB bus'
+      : 'Show everything in /dev (' + held + ' more)';
+  }
+
+  function devMsg(text) {
+    if (devPanel) devPanel.querySelector('.stackman-devmsg').textContent = text || '';
+  }
+
+  function devClose() {
+    if (devPanel && devPanel.parentNode) devPanel.parentNode.removeChild(devPanel);
+    devPanel  = null;
+    devFor    = null;
+    devSvc    = '';
+    devFilter = '';
+  }
+
+  function devOpen(anchor, box, service) {
+    if (!anchor || sanitised || !MODEL) return;
+
+    // An edit still on its debounce timer would be lost the moment a pick
+    // redraws the form. The same reason the other two pickers do this first.
+    flushPending();
+    devClose();
+
+    devFor = box || null;
+    devSvc = service || '';
+
+    devPanel = document.createElement('div');
+    devPanel.className = 'stackman-devpick';
+    devPanel.innerHTML = devShellHtml();
+    anchor.after(devPanel);
+
+    devPaint();
+    devPanel.scrollIntoView({ block: 'nearest' });
+    devPanel.querySelector('.stackman-devfilter').focus();
+
+    // Asked again on every open. Someone opening this has often just plugged
+    // something in, which is the one moment a list from earlier is wrong.
+    devRefresh();
+  }
+
+  function devRefresh() {
+    return devLoad().then(function (res) {
+      devMsg(res.ok ? '' : (res.error || 'The server did not say what hardware it has.'));
+      devPaint();
+    }, function () {
+      devMsg('Could not reach the server to ask what hardware it has.');
+    });
+  }
+
+  /* The hardware's name, written as the comment beside the entry.
+   *
+   * A /dev/serial/by-id path is specific to this machine — still valid compose
+   * that runs anywhere, but meaningless to anyone reading the file on another
+   * server. The comment is what carries the answer across, and a comment beside
+   * a setting is already where this project keeps what that setting is for.
+   *
+   * Only ever written into an empty note, never over the user's own words. */
+  function devNameLine(line, label) {
+    var fresh = YAML.buildForm(MODEL.doc);
+    var id    = YAML.fieldAtLine(fresh, line);
+    if (!id) return;
+
+    for (var i = 0; i < fresh.fields.length; i++) {
+      if (fresh.fields[i].id !== id) continue;
+      if (!fresh.fields[i].note) YAML.setComment(MODEL.doc, fresh, id, label, false, false);
+      return;
+    }
+  }
+
+  function devPick(host) {
+    var d = devIndex[host];
+    if (!d || !MODEL) return;
+
+    if (devFor) {
+      // The host half only. The container path is the row's identity, and it may
+      // have been set deliberately — rewriting it would move the row.
+      var box = devFor;
+      box.value = d.host;
+      devClose();
+      commit(box);                 // assigning .value fires no input event
+      box.focus();
+      return;
+    }
+
+    // The duplicate check belongs here, not in the model: this is the only place
+    // that knows the device was already mapped and can say so. Two rows keyed on
+    // one container path would also share a single id.
+    for (var i = 0; i < MODEL.fields.length; i++) {
+      var f = MODEL.fields[i];
+      if (f.binder === 'device' && f.service === devSvc && f.target === d.container) {
+        devMsg('This service already has a device at ' + d.container + '.');
+        return;
+      }
+    }
+
+    pushUndo('adding that device');
+    var line = YAML.addItem(MODEL.doc, MODEL, devSvc, 'device', d.host + ':' + d.container);
+    if (line < 0) {
+      undoStack.pop();
+      updateUndo();
+      devMsg('That list is written in a way the form cannot add to — ' +
+             'add it in the Compose view instead.');
+      return;
+    }
+
+    devNameLine(line, d.label);
+    devClose();
+    structuralEdit(line, '');
+  }
+
   formHost.addEventListener('click', function (event) {
+    if (devPanel && devPanel.contains(event.target)) {
+      var row = event.target.closest('[data-dev]');
+      if (row)                                          { devPick(row.dataset.dev); return; }
+      if (event.target.closest('.stackman-devcancel'))  { devClose(); return; }
+      if (event.target.closest('.stackman-devrefresh')) { devMsg('Looking again…');
+                                                          devRefresh(); return; }
+      if (event.target.closest('.stackman-devall'))     { devShowAll = !devShowAll; devPaint(); }
+      return;
+    }
+
     var btn = event.target.closest('[data-tool]');
     if (!btn || sanitised) return;
     var box = btn.closest('.stackman-boxline').querySelector('.stackman-input');
     if (!box) return;
-    if (btn.dataset.tool === 'tz') tzOpen(box);
-    else pickerOpen(box);
+
+    if (btn.dataset.tool === 'tz')          tzOpen(box);
+    else if (btn.dataset.tool === 'device') devOpen(btn.closest('.stackman-fieldrow'), box, '');
+    else                                    pickerOpen(box);
+  });
+
+  formHost.addEventListener('input', function (event) {
+    if (!devPanel || !event.target.classList.contains('stackman-devfilter')) return;
+    devFilter = event.target.value.trim();
+    devPaint();
+  });
+
+  formHost.addEventListener('keydown', function (event) {
+    if (!devPanel || !devPanel.contains(event.target)) return;
+
+    // Escape closes the panel, not the editor behind it.
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      devClose();
+      return;
+    }
+    // There is no <form> in here, so Enter would otherwise do nothing. Take the
+    // first device on the list, which is what filtering down to one is for.
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    var first = devPanel.querySelector('[data-dev]');
+    if (first) devPick(first.dataset.dev);
   });
 
   function openEditor(name, body, isNew) {
@@ -1382,7 +1836,9 @@
     clearError();
 
     modal.dataset.new = isNew ? '1' : '0';
-    modalTitle.textContent = isNew ? 'New stack' : 'Editing ' + name;
+    modalTitle.textContent = isNew ? 'New stack' : 'Edit stack';
+    openedName = name || '';
+    serviceRenamed = false;
 
     // A stack's identity is its path under the stack root — "jellyfin" at the
     // top level, "Media/jellyfin" inside a folder. The box shows only the last
@@ -1390,18 +1846,19 @@
     // different things and putting them in one box is what made "Folder" in
     // this header mean something different from "folder" in the list.
     //
-    // The name is fixed once the stack exists: it is the directory holding the
-    // compose file, so changing it renames the compose project and the
-    // containers would have to be recreated under the new one. Use "Move to
-    // folder" to file it — that moves the directory above this name, which
-    // compose does not care about.
+    // Editable even for an existing stack: renaming it is a directory move, so
+    // save() writes the compose file to the OLD path first and only then asks
+    // the server to rename it — stopping and starting the containers around
+    // that move if the stack is running. Use "Move to folder" to file it
+    // instead — that moves the directory above this name, which compose does
+    // not care about.
     var at = (name || '').lastIndexOf('/');
     modal.dataset.folder = at < 0 ? '' : name.slice(0, at);
     nameFolder.textContent = at < 0 ? '' : name.slice(0, at) + ' /';
     nameFolder.hidden = at < 0;
 
     nameInput.value = at < 0 ? (name || '') : name.slice(at + 1);
-    nameInput.readOnly = !isNew;
+    nameInput.readOnly = false;
     nameField.hidden = false;
 
     // Always off on open. Coming back to blurred fields a week later and
@@ -1437,6 +1894,11 @@
     paintGutter();
     syncGutter();
     reparse();
+
+    // Ask what hardware this server has, so device rows can be named after it
+    // rather than showing a bare path. Not waited for — the form is usable at
+    // once and devLoad() redraws it when the names arrive.
+    devLoad().catch(function () {});
 
     // Explicit, and after showModal(). The dialog's own "first focusable
     // descendant" rule would land on the view selector, which is nobody's
@@ -1479,6 +1941,7 @@
     // editor would be pointing at an input that no longer exists.
     if (picker.open) picker.close();
     if (tzModal.open) tzModal.close();
+    devClose();
   });
 
   // <dialog> fires no event for the backdrop, because the backdrop is a
@@ -1511,12 +1974,101 @@
     }
   });
 
+  // Renaming a service leaves its old container orphaned once the stack is
+  // next up — so if this session renamed one, and the stack is (or was)
+  // running, offer the same whole-stack recreate the row menu's own Start
+  // uses. A stopped stack has no containers to orphan, so nothing to offer.
+  function offerRecreate(name) {
+    if (!CAN_RUN) return;
+    if (!window.confirm(
+          'Renaming a service leaves its old container behind until the stack ' +
+          'is recreated.\n\nRecreate "' + stackLabel(name) + '" now?')) {
+      return;
+    }
+    run(name, 'up', afterRun('up'));
+  }
+
+  // The common ending once the compose file is on disk and no directory move
+  // is needed — a brand new stack, or an existing one whose leaf did not
+  // change.
+  function finishSave(name, thenStart) {
+    saveBtn.disabled = false;
+    startBtn.disabled = startBtnWasDisabled;
+
+    var offer = serviceRenamed && stackIsRunning(name);
+    serviceRenamed = false;
+
+    // The row has to exist before the start can report back into it, so
+    // the table is refreshed first and the command issued from there.
+    closeEditor();
+    refreshRows(function () {
+      if (thenStart) run(name, 'up', afterRun('up'));
+      else if (offer) offerRecreate(name);
+    });
+  }
+
+  // The leaf changed: a rename is a directory move, sequenced by the page
+  // rather than any new shell command. A running stack is stopped first and
+  // started again under the new name — the down and the up are the very
+  // same job machinery Start/Stop already use, just issued back to back.
+  function renameThenFinish(oldName, newLeaf, thenStart) {
+    var label   = stackLabel(oldName);
+    var running = stackIsRunning(oldName);
+
+    function reenable() {
+      saveBtn.disabled = false;
+      startBtn.disabled = startBtnWasDisabled;
+    }
+
+    function applyRename() {
+      call('stack-rename', { name: oldName, stackName: newLeaf }).then(function (r) {
+        if (!r.ok) {
+          reenable();
+          showError((r.error || 'Could not rename the stack.') +
+                    ' The compose file was already saved, so nothing is lost.');
+          return;
+        }
+
+        // Either the fresh 'up' below recreates every container from
+        // scratch, or the stack is stopped and has none to orphan — either
+        // way there is nothing left for offerRecreate() to offer.
+        serviceRenamed = false;
+
+        closeEditor();
+        refreshRows(function () {
+          if (thenStart || running) run(r.name, 'up', afterRun('up'));
+        });
+      });
+    }
+
+    if (!running) { applyRename(); return; }
+
+    if (!window.confirm(
+          label + ' is running. Renaming it will stop the containers and ' +
+          'start them again under the new name.')) {
+      reenable();
+      return;
+    }
+
+    run(oldName, 'down', function (job) {
+      // run() has already shown a failure box for a non-zero exit, so this
+      // just stops the sequence rather than saying the same thing twice.
+      if (job.exit !== 0 && job.exit !== null) { reenable(); return; }
+      applyRename();
+    });
+  }
+
   function save(thenStart) {
-    // The box holds only the last part; the folder it sits in is carried on
-    // the dialog and put back here, so the server is told the same path it
-    // handed over.
-    var leaf = nameInput.value.trim();
-    var name = modal.dataset.folder ? modal.dataset.folder + '/' + leaf : leaf;
+    var leaf  = nameInput.value.trim();
+    var isNew = modal.dataset.new === '1';
+
+    // An existing stack's compose file is written to the path the editor
+    // opened at; if the leaf changed too, the rename happens as its own step
+    // afterwards, once the content is safe on disk. A new stack has no old
+    // path — the leaf just typed is where it is created.
+    var name = isNew
+      ? (modal.dataset.folder ? modal.dataset.folder + '/' + leaf : leaf)
+      : openedName;
     var body = currentText();
 
     if (!leaf) { showError('Give the stack a name.'); nameInput.focus(); return; }
@@ -1527,10 +2079,9 @@
 
     call('save', { name: name, body: body, 'new': modal.dataset.new })
       .then(function (res) {
-        saveBtn.disabled = false;
-        startBtn.disabled = startBtnWasDisabled;
-
         if (!res.ok) {
+          saveBtn.disabled = false;
+          startBtn.disabled = startBtnWasDisabled;
           showError((res.error || 'Save failed.') + strayWarning(res));
           return;
         }
@@ -1538,6 +2089,8 @@
         // Trust nothing: the server reports the path and size it actually
         // wrote, and an empty file means the save silently did nothing.
         if (!res.file || !res.bytes) {
+          saveBtn.disabled = false;
+          startBtn.disabled = startBtnWasDisabled;
           showError('The server reported success but no file was written.\n\n' +
                     'file: ' + (res.file || '(none)') + '\n' +
                     'bytes: ' + (res.bytes || 0) + strayWarning(res));
@@ -1548,10 +2101,10 @@
         // about discarding it.
         textAtOpen = body;
 
-        // The row has to exist before the start can report back into it, so
-        // the table is refreshed first and the command issued from there.
-        closeEditor();
-        refreshRows(thenStart ? function () { run(name, 'up', afterRun('up')); } : null);
+        var oldLeaf = openedName.slice(openedName.lastIndexOf('/') + 1);
+        if (isNew || leaf === oldLeaf) { finishSave(name, thenStart); return; }
+
+        renameThenFinish(name, leaf, thenStart);
       });
   }
 
@@ -1907,7 +2460,26 @@
       var hadFocus  = document.activeElement === rovingRow;
       var rovingWas = describeRow(rovingRow);
 
-      if (rowsHost) rowsHost.innerHTML = res.html;
+      // The whole table is replaced below, so without this snapshot every
+      // row would look "new" on every refresh and the list would shimmer on
+      // the timer instead of staying still for rows that were already there.
+      var seenRows = {};
+      if (rowsHost) {
+        Array.prototype.forEach.call(
+          rowsHost.querySelectorAll('[data-stack-row]'),
+          function (r) { seenRows[r.dataset.stackRow] = true; });
+
+        rowsHost.innerHTML = res.html;
+
+        Array.prototype.forEach.call(
+          rowsHost.querySelectorAll('[data-stack-row]'), function (r) {
+            if (seenRows[r.dataset.stackRow]) return;
+            r.classList.add('stackman-row--enter');
+            r.addEventListener('animationend', function () {
+              r.classList.remove('stackman-row--enter');
+            }, { once: true });
+          });
+      }
 
       // The server just rendered every stack collapsed — put back whatever
       // this session had open before the swap. See expandedStacks above.
@@ -2110,6 +2682,14 @@
     return (btn && btn.dataset.label) || name;
   }
 
+  // Whether a stack has any containers up right now, read off the row's own
+  // menu button — the same attribute applyState() keeps current on every poll.
+  function stackIsRunning(name) {
+    var row = rowFor(name);
+    var btn = row && row.querySelector('[data-menu="stack"]');
+    return !!(btn && btn.dataset.running === '1');
+  }
+
   function editStack(name, label) {
     call('read', { name: name }).then(function (res) {
       if (!res.ok) { failed('Could not open ' + label, res.error); return; }
@@ -2128,7 +2708,11 @@
     }
     call('delete', { name: name }).then(function (res) {
       if (!res.ok) { failed('Could not delete ' + label, res.error); return; }
-      refreshRows();
+      // Fade the row before the table re-renders wholesale, rather than
+      // having it just vanish when the replacement HTML arrives without it.
+      var row = rowFor(name);
+      if (row) row.classList.add('stackman-row--leave');
+      setTimeout(refreshRows, 140);
     });
   }
 
@@ -2461,15 +3045,16 @@
    * rows it controls: a folder gone until the page reloads, or a stack row
    * missing where the user just clicked to bring its containers back.
    *
-   * .stackman-group--children is different, and deliberately so — it is
-   * hidden here as a WHOLE, not row by row. The rule above reads as "never
-   * hide a group", but the reason underneath it was always narrower than
-   * that: "never hide the element that contains your own escape hatch". The
-   * children wrapper holds no chevron at all — the control that re-expands
-   * it is the stack row's chevron, one level up, outside the wrapper — so
+   * .stackman-group--folder-children and .stackman-group--children are both
+   * different, and deliberately so — each is hidden here as a WHOLE, not row
+   * by row. The rule above reads as "never hide a group", but the reason
+   * underneath it was always narrower than that: "never hide the element
+   * that contains your own escape hatch". Neither wrapper holds a chevron —
+   * the control that re-expands it is one level up, outside the wrapper — so
    * hiding it can never hide the thing that would undo the hiding. That is
-   * also what lets stack.manager.css paint it as a single band: one element
-   * that is either the whole group of container rows, or nothing.
+   * also what lets stack.manager.css slide each one open as a single band,
+   * and it is why a stack row's own `hidden` no longer needs to ask whether
+   * its folder is open: an ancestor wrapper does that hiding now.
    */
   function applyVisibility() {
     var folderOpen = {};
@@ -2480,13 +3065,21 @@
           !chevron || chevron.getAttribute('aria-expanded') === 'true';
       });
 
+    Array.prototype.forEach.call(
+      document.querySelectorAll('[data-folder-children]'), function (g) {
+        g.hidden = folderOpen[g.dataset.folderChildren] === false;
+      });
+
+    // A stack row's own `hidden` is never set here any more — a collapsed
+    // folder now hides its contents via the wrapper above, and a stack with
+    // no folder (data-in-folder="") sits outside every wrapper and is always
+    // visible. Clear any stale `hidden` a previous version of this function
+    // could have left behind.
     var stackOpen = {};
     Array.prototype.forEach.call(
       document.querySelectorAll('.stackman-stack-row'), function (tr) {
-        var folder  = tr.dataset.inFolder || '';
-        var visible = folder === '' || folderOpen[folder] !== false;
-        tr.hidden = !visible;
-        stackOpen[tr.dataset.stackRow] = visible && tr.dataset.expanded === '1';
+        tr.hidden = false;
+        stackOpen[tr.dataset.stackRow] = tr.dataset.expanded === '1';
       });
 
     // Keyed by the same stack name as stackOpen — data-stack-children carries
@@ -2655,18 +3248,16 @@
   var stacksGrid   = document.querySelector('.stackman-stacks');
   var rovingRow    = null;   // the element currently carrying tabindex="0"
 
-  /* "Visible" is not simply `!row.hidden`. A container row is never given
-   * `hidden` itself — only the `.stackman-group--children` wrapper around a
-   * whole stack's containers is (see applyVisibility() above) — and a stack
-   * row filed in a collapsed folder is hidden directly, but a CONTAINER row
-   * two levels under that same folder has no hidden attribute of its own
-   * either way; only the children wrapper's does the work, and it already
-   * accounts for the folder being shut (applyVisibility computes stackOpen
-   * from the folder's own state before deciding the wrapper's). Either way,
-   * `row.closest('[hidden]')` is the one test that is right for every row
-   * kind: closest() checks the element itself before any ancestor, so it
-   * catches a row hidden directly AND a row hidden by something above it,
-   * with nothing extra needed for the row's own `hidden` case. */
+  /* "Visible" is never `!row.hidden`: no row carries `hidden` itself. Only
+   * the two wrappers do — `.stackman-group--folder-children` for a collapsed
+   * folder and `.stackman-group--children` for an unexpanded stack (see
+   * applyVisibility() above) — so every hidden row is hidden by an ancestor,
+   * one or two levels up. closest() walks up until it finds one, which is
+   * also why this stays right if the nesting gains another level.
+   *
+   * The attribute, not the computed style: a collapsed wrapper is deliberately
+   * still `display: grid` so its height can animate (stack.manager.css), so
+   * anything measuring pixels here would call a collapsed row visible. */
   function rowVisible(row) {
     return !!row && !row.closest('[hidden]');
   }
