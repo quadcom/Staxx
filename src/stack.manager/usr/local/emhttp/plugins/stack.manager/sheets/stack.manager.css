@@ -1966,8 +1966,8 @@
 }
 
 .stackman-svchead {
-  margin: 0 0 0.8rem;
-  font-size: 1.5rem;
+  margin: 0 0 1.2rem;
+  font-size: 2.2rem;
 }
 
 /* Quiet until the heading is hovered or focused, so a pencil beside every
@@ -1986,8 +1986,25 @@
 }
 
 .stackman-svchead:hover .stackman-svcrename,
+.stackman-declname:hover .stackman-svcrename,
 .stackman-svcrename:focus-visible {
   opacity: 1;
+}
+
+/* A declaration's name cell in the Stack section: text plus the same pencil
+   a service's own heading uses, occupying the row's first grid column as one
+   cell rather than a label and a button competing for it. */
+.stackman-declname {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.stackman-declname-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stackman-svcrename:hover,
@@ -2027,19 +2044,140 @@
    [hidden] rule — so this has to be said again where the specificity is ours. */
 .stackman-scaffold .stackman-btn[hidden] { display: none; }
 
-.stackman-fieldgroup {
-  margin: 2rem 0 0.8rem;
-  padding-bottom: 0.4rem;
+/* ---- modal: field groups --------------------------------------------------
+ *
+ * "formgroup", not "group": .stackman-group is the stacks table's subgrid
+ * wrapper (folder/stack/children — see "The grid" near the top of this file),
+ * and that rule sets display, grid-column and grid-template-columns on the
+ * bare class. Reusing the name here would have handed every field group a
+ * subgrid it has no parent grid to align to, and scoping this end of it under
+ * .stackman-form would only have stopped the leak in one direction. Two
+ * meanings for one class in one stylesheet is a trap either way. */
+
+.stackman-formgroup {
+  margin: 2rem 0;
+  padding: 1.2rem 0;
+  border-top: 0.1rem solid var(--sm-hairline);
+}
+
+/* Each group's own top rule is the line between it and the group above, so a
+   bottom rule on every group would draw the gap between two of them twice.
+   Only the last group in a service needs one, there being nothing below it to
+   draw its own. */
+.stackman-formgroup:last-child {
   border-bottom: 0.1rem solid var(--sm-hairline);
-  color: var(--sm-muted);
+}
+
+.stackman-grouphead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.8rem;
+  margin-bottom: 0.8rem;
+}
+
+/* Reused as the group heading. Its own hairline is gone — the band on
+   .stackman-formgroup draws that now — and its margin drops to zero, since
+   the band and .stackman-grouphead already own the space around it. What is
+   left is pure type. */
+.stackman-fieldgroup {
+  margin: 0;
+  color: var(--sm-fg);
   font-size: 1.2rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
+/* The "(required)" after Container. Sits inside the same heading, so it has
+   to undo the uppercase, letter-spacing and (browser-default) bold the
+   heading wears, not just set its own colour. */
+.stackman-groupnote {
+  margin-left: 0.5rem;
+  color: var(--sm-muted);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* ---- modal: the column captions above a group's rows ----------------------
+ *
+ * There is no subgrid to reach for (see --sm-fieldcols below), so a caption
+ * lines up with the rows beneath it only because both read the same custom
+ * property from their shared .stackman-formgroup ancestor — a custom property
+ * inherits down the DOM on its own, which grid-template-columns itself never
+ * does. */
+.stackman-caption {
+  display: grid;
+  grid-template-columns: var(--sm-fieldcols, minmax(0, 1fr));
+  gap: 0.6rem 0.8rem;
+  /* Matches .stackman-fieldrow's horizontal padding below — the caption's
+     tracks only line up with the rows it names if both start at the same
+     distance from the group's edge. */
+  padding: 0 1rem;
+  margin-bottom: 0.4rem;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+.stackman-capflag {
+  text-align: center;
+}
+
+/* ---- modal: the four group shapes ------------------------------------------
+ *
+ * Fixed widths on every column except the boxes, not auto or fr: a track
+ * sized by content or by a share of leftover space would not come out the
+ * same on the caption row as on a field row, and the two would drift apart
+ * the moment their content differed even slightly.
+ *
+ * The tick and × widths are sized to a checkbox and a small button
+ * respectively; the label width to "Container name" and "Network mode"
+ * without wrapping. None of this is measured against a real render — there
+ * is no browser on this machine — so treat the figures as a first guess.
+ *
+ * The note column carries a heavier share (1.2fr) than a lone box wherever
+ * two boxes already split most of the row's width (--pair) — it needs the
+ * extra weight to stay legible next to them. Where there is only one box
+ * (--container, --advanced, --device), note and box split what is left
+ * evenly, same as the old single-box layout this replaces. */
+.stackman-formgroup--container {
+  --sm-fieldcols: 12rem minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.stackman-formgroup--advanced {
+  --sm-fieldcols: 2.2rem 2.2rem 12rem minmax(0, 1fr) minmax(0, 1fr) 2.4rem;
+}
+
+.stackman-formgroup--pair {
+  --sm-fieldcols: 2.2rem 2.2rem minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) 2.4rem;
+}
+
+/* --single is a dynamic list group (networks, secrets, depends_on...) — one
+   box is the same shape as a device row, so it shares that template rather
+   than getting a rule of its own. */
+.stackman-formgroup--device,
+.stackman-formgroup--single {
+  --sm-fieldcols: 2.2rem 2.2rem minmax(0, 1fr) minmax(0, 1fr) 2.4rem;
+}
+
+/* A declaration in the Stack section: name, its one primary setting, note,
+   ×. No R/S columns — required and sensitive describe a form control, and a
+   name/driver pair has neither — so this is --pair's tail with the two tick
+   columns dropped rather than a template of its own. */
+.stackman-formgroup--declared {
+  --sm-fieldcols: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) 2.4rem;
+}
+
 .stackman-fieldrow {
-  margin: 0 0 1.4rem;
-  padding: 0.8rem 1rem;
+  display: grid;
+  grid-template-columns: var(--sm-fieldcols, minmax(0, 1fr));
+  /* Not baseline: a checkbox has no usable text baseline to align against.
+     Centring against the row's tallest cell lines a label up with the input
+     beside it without measuring either one — see .stackman-fieldlabel. */
+  align-items: center;
+  gap: 0.6rem 0.8rem;
+  margin: 0 0 0.2rem;
+  padding: 0.45rem 1rem;
   border-radius: var(--sm-radius);
   outline: none;
 }
@@ -2052,6 +2190,27 @@
   opacity: 0.75;
 }
 
+/* Elements that describe the whole row rather than naming one column in it —
+   a device's own heading, a locked row's raw text, a validation note, the
+   folded-away second path — take every track there is instead of landing in
+   whichever one auto-placement would hand them next. */
+.stackman-fieldrow > .stackman-fieldhead,
+.stackman-fieldrow > .stackman-fieldtitle,
+.stackman-fieldrow > .stackman-fieldraw,
+.stackman-fieldrow > .stackman-fieldnote,
+.stackman-fieldrow > .stackman-fieldhint,
+.stackman-fieldrow > .stackman-devmore,
+.stackman-fieldrow > .stackman-advice {
+  grid-column: 1 / -1;
+}
+
+/* The label cell on a Container or Advanced row — the fixed key itself
+   ("Image", "Restart"...) ahead of its one value box. */
+.stackman-fieldlabel {
+  color: var(--sm-fg);
+  font-weight: 600;
+}
+
 .stackman-fieldhead {
   display: flex;
   align-items: baseline;
@@ -2062,22 +2221,24 @@
 
 /* ---- modal: the boxes on a field row ---- */
 
-/* Host, container and note. A plain setting has one value box instead of two,
-   so only the mapped rows get the middle column. */
-.stackman-boxes {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: start;
-  gap: 0.8rem;
-}
-
-.stackman-boxes--mapped {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr);
-}
-
+/* The row itself owns the columns now (see the four --sm-fieldcols templates
+   above) — a plain setting's one value box and a mapped row's host/container
+   pair are just however many of these cells the row's own template makes
+   room for. There is no wrapper left to carry a grid of its own. */
 .stackman-box {
   display: block;
   min-width: 0;
+}
+
+/* The "use a named volume instead" button that swaps a volume's host box back
+   to the dropdown — rendered in the `head` slot, above the boxline, which
+   otherwise has no gap under it the way .stackman-fieldhead's own margin
+   gives a device row's heading one. */
+.stackman-box > .stackman-browse {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
 }
 
 /* The input and, on a volume's host path, the Browse button beside it. */
@@ -2123,18 +2284,33 @@
   font-size: 1.1rem;
 }
 
+/* A caption already names the column everywhere except a device row, whose
+   hint is advice about that one device rather than a label for a column —
+   "not found on this server" is not something a column heading could say —
+   and the box folded away inside .stackman-devmore, which has no caption at
+   all above it. Both of those stay visible; every other box's hint is
+   redundant under its caption and hides until the narrow layout below brings
+   captions-as-hints back. */
+.stackman-formgroup .stackman-boxhint {
+  display: none;
+}
+
+.stackman-formgroup--device .stackman-boxhint,
+.stackman-devmore .stackman-boxhint {
+  display: block;
+}
+
 .stackman-flag {
   display: inline-flex;
+  /* A grid item's inline-flex still stretches to fill its column, so
+     centring the tickbox inside it is the only change needed to move it off
+     the old right-floated layout below the caption's R/S. */
+  justify-content: center;
   align-items: center;
   gap: 0.4rem;
   color: var(--sm-muted);
   font-size: 1.1rem;
   cursor: pointer;
-}
-
-/* The first of the pair pushes both to the right-hand end of the row head. */
-.stackman-flag:first-of-type {
-  margin-left: auto;
 }
 
 .stackman-flag input {
@@ -2143,21 +2319,8 @@
 
 /* ---- modal: adding and removing entries ---- */
 
-/* One row per service, always shown. These belong to the service and not to
-   any one list, because removing the last port takes the "ports:" key with it
-   and a control living on that list would go with it.
-
-   The hairline is below rather than above: this row sits at the top of the
-   service, so what it has to be separated from is the fields under it. */
-.stackman-adds {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-  margin-bottom: 1.2rem;
-  padding-bottom: 1.2rem;
-  border-bottom: 0.1rem solid var(--sm-hairline);
-}
-
+/* One per group, sitting at the right-hand end of that group's header line —
+   see .stackman-grouphead above, which does the placing. */
 .stackman-scaffold .stackman-add {
   padding: 0.5rem 1rem;
   border: 0.1rem dashed var(--sm-line);
@@ -2177,29 +2340,43 @@
   outline: none;
 }
 
-/* Quiet until the row is hovered or focused, so a wall of Remove buttons is
-   not the first thing the eye lands on. */
+/* Invisible at rest, not just dim — the last grid column reads as empty
+   until the row is hovered or focused, which is what keeps a wall of ×
+   buttons from being the first thing the eye lands on. Opacity, never
+   display or visibility, so it stays in the accessibility tree throughout; a
+   screen reader is never the audience this is being quiet for. */
 .stackman-scaffold .stackman-kill {
-  padding: 0.1rem 0.5rem;
-  border: 0.1rem solid transparent;
+  padding: 0.2rem 0.5rem;
+  border: 0;
   border-radius: 0.2rem;
   background: transparent;
   color: var(--sm-muted);
   font-family: inherit;
-  font-size: 1.1rem;
-  opacity: 0.45;
+  font-size: 1.3rem;
+  line-height: 1;
+  opacity: 0;
   cursor: pointer;
+  justify-self: center;
+}
+
+/* Every child of a locked row is full width (grid-column: 1 / -1, above), and
+   grid auto-placement resumes at column 1 after each of those — so without
+   this, the × would land in the 2.2rem tick gutter instead of at the row's
+   right-hand end. Placed explicitly in the last track is what keeps it there
+   whatever else the row holds. */
+.stackman-fieldrow--locked > .stackman-kill {
+  grid-column: -2 / -1;
 }
 
 .stackman-fieldrow:hover .stackman-kill,
 .stackman-fieldrow--active .stackman-kill,
+.stackman-fieldrow:focus-within .stackman-kill,
 .stackman-scaffold .stackman-kill:focus-visible {
   opacity: 1;
 }
 
 .stackman-scaffold .stackman-kill:hover:not(:disabled),
 .stackman-scaffold .stackman-kill:focus-visible {
-  border-color: var(--sm-danger);
   color: var(--sm-danger);
   outline: none;
 }
@@ -2339,7 +2516,8 @@
   white-space: pre-wrap;
 }
 
-.stackman-fieldmap code {
+.stackman-fieldmap code,
+.stackman-fieldhint code {
   padding: 0.1rem 0.4rem;
   border-radius: 0.2rem;
   background: var(--sm-fill-2);
@@ -2529,6 +2707,24 @@
 
 .stackman-devmore[open] > summary {
   margin-bottom: 0.5rem;
+}
+
+/* One leaf inside a declaration's fold — internal:, driver_opts: and the
+   rest. Stacked, not gridded: a fold holds however many of these a
+   declaration happens to have, so there are no shared columns to line them
+   up against the way a group's own rows do. */
+.stackman-foldrow {
+  margin-top: 0.6rem;
+}
+
+.stackman-foldrow:first-child {
+  margin-top: 0;
+}
+
+.stackman-foldrow > .stackman-fieldlabel {
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 1.1rem;
 }
 
 /* ---- modal: Sanitise ---- */
@@ -4065,6 +4261,55 @@
   .stackman-modal-actions {
     flex-direction: column-reverse;
     align-items: stretch;
+  }
+
+  /* ---- Field groups on a phone -------------------------------------------
+   *
+   * A caption's whole job is naming columns that are about to stop
+   * existing, so it goes rather than reflowing to a shape it no longer
+   * describes. .stackman-boxhint comes back to do that job instead, one box
+   * at a time (see the rule above that hides it under a caption).
+   *
+   * Every group's --sm-fieldcols collapses to the same three-track shape
+   * regardless of which of the four it was: R, S and the × share row 1, and
+   * everything else — label, box, box, note, a device's own heading — takes
+   * the full width on its own line below. Giving the flags and the kill
+   * button an explicit grid-row: 1 is what puts them there: without it, a
+   * box's own grid-column: 1 / -1 span (set above, unconditionally) would
+   * be placed before either — grid auto-placement resolves items with a
+   * fully-set position before items with only a row or only a column set —
+   * and claim row 1 for itself first, pushing the ticks down instead of the
+   * other way round. */
+  .stackman-caption {
+    display: none;
+  }
+
+  .stackman-formgroup--container,
+  .stackman-formgroup--advanced,
+  .stackman-formgroup--pair,
+  .stackman-formgroup--device,
+  .stackman-formgroup--single,
+  .stackman-formgroup--declared {
+    --sm-fieldcols: auto auto 1fr;
+  }
+
+  .stackman-fieldrow > .stackman-flag {
+    grid-row: 1;
+  }
+
+  .stackman-fieldrow > .stackman-kill {
+    grid-row: 1;
+    grid-column: 3;
+    justify-self: end;
+  }
+
+  .stackman-fieldrow > .stackman-fieldlabel,
+  .stackman-fieldrow > .stackman-box {
+    grid-column: 1 / -1;
+  }
+
+  .stackman-formgroup .stackman-boxhint {
+    display: block;
   }
 }
 

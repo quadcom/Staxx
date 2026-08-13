@@ -60,7 +60,24 @@
     { binder: 'volume', word: 'volume' },
     { binder: 'device', word: 'device' },
     { binder: 'env',    word: 'variable' },
-    { binder: 'label',  word: 'label' }
+    { binder: 'label',  word: 'label' },
+    // One per dynamic list group — data-add carries "list:<key>" so the click
+    // handler knows which list, and addWord() keys on that whole string.
+    { binder: 'list:networks',   word: 'network' },
+    { binder: 'list:secrets',    word: 'secret' },
+    { binder: 'list:configs',    word: 'config' },
+    { binder: 'list:depends_on', word: 'service' },
+    { binder: 'list:profiles',   word: 'profile' },
+    { binder: 'list:dns',        word: 'DNS server' },
+    { binder: 'list:cap_add',    word: 'permission' },
+    { binder: 'list:expose',     word: 'port' },
+    { binder: 'list:env_file',   word: 'file' },
+    // The Stack section's four Add buttons — capitalised, matching the noun
+    // they add rather than the lower-case word a service's own lists use.
+    { binder: 'declared:networks', word: 'Network' },
+    { binder: 'declared:volumes',  word: 'Volume' },
+    { binder: 'declared:secrets',  word: 'Secret' },
+    { binder: 'declared:configs',  word: 'Config' }
   ];
 
   function addWord(binder) {
@@ -68,6 +85,106 @@
       if (ADDABLE[i].binder === binder) return ADDABLE[i].word;
     }
     return binder;
+  }
+
+  // Lower-case singular word for a declaration kind, used in the sentences
+  // that say renaming, adding and removing a declaration from the form is
+  // not built yet (phase 5) — one table rather than three copies of the map.
+  var DECL_WORD = { networks: 'network', volumes: 'volume', secrets: 'secret', configs: 'config' };
+
+  // What the primary-setting box is called per kind, for its tooltip. The
+  // caption above the column always says "setting" — this is just the hint
+  // shown on hover, same as every other box's title.
+  var DECL_HINT = { networks: 'driver', volumes: 'driver',
+                     secrets: 'file on the server', configs: 'file on the server' };
+
+  // The groups a service's fields are sorted into, in the order they render.
+  // `cls` picks the group's column template in the stylesheet, and `add`
+  // (when set) is the binder passed through to the Add button on that group's
+  // header line — the same ADDABLE binder the click handler already knows how
+  // to act on.
+  //
+  // "formgroup", not "group": stackman-group is the stacks table's subgrid
+  // wrapper, and its rule sets display and grid-template-columns on the bare
+  // class.
+  var GROUPS = [
+    { key: 'container', heading: 'Container', cls: 'stackman-formgroup--container', note: '(required)' },
+    { key: 'port',      heading: 'Ports',     cls: 'stackman-formgroup--pair',   add: 'port' },
+    { key: 'volume',    heading: 'Volumes',   cls: 'stackman-formgroup--pair',   add: 'volume' },
+    { key: 'device',    heading: 'Devices',   cls: 'stackman-formgroup--device', add: 'device' },
+    { key: 'env',       heading: 'Variables', cls: 'stackman-formgroup--pair',   add: 'env' },
+    { key: 'label',     heading: 'Labels',    cls: 'stackman-formgroup--pair',   add: 'label' },
+    // No `add`: nothing here can create a healthcheck: or deploy: key, so an
+    // Add button would offer an action that always fails. Same column shape
+    // as Advanced (label · value · note, with ticks) — reused as-is rather
+    // than given a template of their own.
+    { key: 'health',     heading: 'Health check',     cls: 'stackman-formgroup--advanced' },
+    { key: 'resources',  heading: 'Resource limits',  cls: 'stackman-formgroup--advanced' },
+    { key: 'advanced',  heading: 'Advanced',  cls: 'stackman-formgroup--advanced' }
+  ];
+
+  // The caption text named per group; container has no R/S columns to caption,
+  // and no trailing blank for a × column it never grows either.
+  var CAPTIONS = {
+    container: ['setting', 'value', 'note, kept in the file'],
+    port:      ['on the server', 'in the container', 'note, kept in the file'],
+    volume:    ['path on the server', 'path in the container', 'note, kept in the file'],
+    device:    ['device', 'note, kept in the file'],
+    env:       ['variable name', 'value', 'note, kept in the file'],
+    label:     ['label name', 'value', 'note, kept in the file'],
+    health:    ['setting', 'value', 'note, kept in the file'],
+    resources: ['setting', 'value', 'note, kept in the file'],
+    advanced:  ['setting', 'value', 'note, kept in the file']
+  };
+
+  // Where a field lands. `fixed` wins outright, even over `locked` — that is
+  // what keeps Container at exactly four rows whether or not the file has all
+  // four lines. A lock on anything else promotes it to Advanced rather than
+  // leaving it stranded in a group whose columns no longer fit it. What is
+  // left after that is either a listy entry, sorted by its own binder, or a
+  // plain setting, which is what Advanced otherwise holds.
+  function groupFor(f) {
+    if (f.fixed) return 'container';
+    // A declaration belongs to no service, so it gets its own bucket per
+    // kind rather than falling in with Advanced. A fold field carries this
+    // same binder — it is bucketed here too if a caller does not filter it
+    // out first, which is why stackSectionHtml() excludes f.fold before ever
+    // calling this.
+    if (f.binder === 'declared') return 'declared:' + f.declKind;
+    // Checked before the locked test below, deliberately against the usual
+    // rule that a lock always exiles a row to Advanced: healthcheck.test is
+    // itself locked (it is a flow sequence), but it IS the check that
+    // healthcheck.interval and friends time — showing it in a different
+    // group from its own timings would read as belonging to something else.
+    if (/^healthcheck\./.test(f.target)) return 'health';
+    if (/^deploy\./.test(f.target)) return 'resources';
+    if (f.locked) return 'advanced';
+    if (f.binder === 'setting') return 'advanced';
+    if (f.binder === 'list') return 'list:' + f.listKey;
+    return f.binder;
+  }
+
+  // A service's own group list: the static table, plus one dynamic group per
+  // distinct list key the service actually has, inserted after Labels and
+  // before Advanced — which falls out of building the list this way, since
+  // Advanced is the only static entry pulled out to a separate tail. A
+  // service without a given key never sees that key's group at all.
+  function groupsForService(fields, serviceName) {
+    var head = [], tail = [], seen = {}, i;
+    for (i = 0; i < GROUPS.length; i++) (GROUPS[i].key === 'advanced' ? tail : head).push(GROUPS[i]);
+
+    for (i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      if (f.service !== serviceName || f.binder !== 'list' || seen[f.listKey]) continue;
+      seen[f.listKey] = true;
+      head.push({
+        key: 'list:' + f.listKey,
+        heading: f.groupTitle,
+        cls: 'stackman-formgroup--single',
+        add: 'list:' + f.listKey
+      });
+    }
+    return head.concat(tail);
   }
 
   var logPanel = document.getElementById('stackman-log-panel');
@@ -458,6 +575,14 @@
         ['unless-stopped', 'unless-stopped — always, unless you stopped it'],
         ['on-failure',     'on-failure — only when it crashes']
       ]
+    },
+    'setting/network_mode': {
+      hint: 'which network the container joins',
+      options: [
+        ['bridge', 'bridge — Docker’s own private network'],
+        ['host',   'host — share the server’s network directly'],
+        ['none',   'none — no network at all']
+      ]
     }
   };
 
@@ -479,10 +604,62 @@
   var devGroups  = [];      // as the server grouped them
   var devLoaded  = false;
 
+  // This server's own docker networks, appended to the network_mode dropdown
+  // once they arrive — see netLoad() far below, beside devLoad().
+  var netLoaded  = false;
+
   // Compose also accepts forms this list does not carry — "on-failure:3" — so
   // a value already in the file that is not on the list joins it as it stands.
   // A dropdown that could not show the current value would change the file
   // just by being opened.
+  // A `from` field points at a namespace the file declares once at the top —
+  // networks:, secrets:, configs:, services: — and offers those real names
+  // instead of a box to spell one in. `default` is added for networks even
+  // when the file never declares it, because compose creates that network
+  // itself regardless.
+  function fromChoice(f) {
+    var names = ((MODEL && MODEL.declared && MODEL.declared[f.from]) || []).slice();
+    if (f.from === 'networks' && names.indexOf('default') < 0) names.push('default');
+    var options = [];
+    for (var i = 0; i < names.length; i++) options.push([names[i], names[i]]);
+    return { hint: 'a name already declared in this file', options: options };
+  }
+
+  // A leading space is never a legal Docker volume name, so this can never
+  // collide with a real declaration — picking it writes nothing (see the
+  // change handler) and instead hands the row over to the path box.
+  var VOL_FOLDER_SENTINEL = ' folder-on-server';
+
+  // A volume's host half is either a name Docker manages the storage for, or
+  // a path on the server — never both, and only the file itself says which.
+  // Offered as a dropdown only while the value looks like a name; see the
+  // host-part branch in boxHtml() below for the other half of that call.
+  function volumeSourceChoice() {
+    var names = (MODEL && MODEL.declared && MODEL.declared.volumes) || [];
+    var options = [];
+    for (var i = 0; i < names.length; i++) options.push([names[i], names[i]]);
+    options.push([VOL_FOLDER_SENTINEL, 'a folder on the server…']);
+    return { hint: 'a named volume Docker manages, or a folder on the server', options: options };
+  }
+
+  // network_mode also accepts "service:<name>" — join another service's
+  // network stack instead of getting one of its own — one option per OTHER
+  // service in the file (a service cannot share its own network). Built
+  // fresh on every call rather than folded into CHOICES the way netLoad()
+  // appends the server's own docker networks: that table is shared by every
+  // service's row, and mutating it here would leak one service's option
+  // list into every other service's dropdown.
+  function serviceModeOptions(serviceName) {
+    var names = (MODEL && MODEL.declared && MODEL.declared.services) || [];
+    var options = [];
+    for (var i = 0; i < names.length; i++) {
+      if (names[i] === serviceName) continue;
+      options.push(['service:' + names[i],
+                    'service:' + names[i] + ' — share ' + names[i] + '’s network']);
+    }
+    return options;
+  }
+
   function optionsHtml(choice, value) {
     var out = [], known = false;
     for (var i = 0; i < choice.options.length; i++) {
@@ -495,27 +672,62 @@
     return out.join('');
   }
 
-  function boxHtml(f, index, which, hint, tool) {
+  // `head` is raw HTML — already built and already escaped by the caller —
+  // rendered inside the box, just above the input line. It exists so a device
+  // row's heading (and its tags) can ride inside the box rather than as a
+  // sibling: a grouped row's children ARE its grid columns, so a full-width
+  // sibling would end the row and push everything after it back to column 1.
+  // `noChoice` forces the plain path box for a volume's host part even when
+  // its value would otherwise read as a bare name — see swapVolumeToPath(),
+  // which renders that box by hand right after the sentinel option is chosen,
+  // while the value itself (still blank) has not changed at all.
+  function boxHtml(f, index, which, hint, tool, head, noChoice) {
     var p = f.parts[which];
     if (!p) return '';
-    var dead = !p.spot || f.locked;
+    // Absent counts as writable — typing into an empty Container slot is what
+    // gives it a line in the file. Only a part with truly nowhere to write, or
+    // a locked row, renders disabled.
+    var dead = (!p.spot && !f.absent) || f.locked || f.blocked;
     var t = TOOLS[tool];
     // The options say what the setting means, so the hint below the box says
     // what the setting is for instead of repeating "value".
     var choice = which === 'value' ? CHOICES[f.binder + '/' + f.target] : null;
+
+    // See serviceModeOptions() above for why this is joined per call rather
+    // than stored on CHOICES itself.
+    if (choice && f.target === 'network_mode') {
+      choice = { hint: choice.hint, options: choice.options.concat(serviceModeOptions(f.service)) };
+    }
+    if (!choice && which === 'value' && f.from) choice = fromChoice(f);
+
+    // A volume's host half: a name is Docker-managed storage, so offer the
+    // file's own declared names once there is no path already sitting in the
+    // box. A value with a slash, or one that interpolates a variable, is a
+    // path already and stays the honest path box instead of being guessed
+    // into a dropdown it does not belong in. `p.spot` excludes an anonymous
+    // volume, which has nothing here to write to at all.
+    if (!noChoice && !choice && which === 'host' && f.binder === 'volume' && p.spot &&
+        p.value.indexOf('/') < 0 && p.value.indexOf('${') < 0) {
+      choice = volumeSourceChoice();
+    }
+
     if (choice) hint = choice.hint;
+
+    var boxTitle = hint;
 
     var control = choice
       ? '<select class="stackman-input stackman-choose"' +
               ' data-row="' + index + '" data-part="' + which + '"' +
-              ' aria-label="' + esc(f.title + ' — ' + hint) + '"' +
+              ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
+              ' title="' + esc(boxTitle) + '"' +
               (dead ? ' disabled' : '') + '>' +
           optionsHtml(choice, p.value) +
         '</select>'
       : '<input type="text" class="stackman-input"' +
               ' data-row="' + index + '" data-part="' + which + '"' +
               ' value="' + esc(p.value) + '"' +
-              ' aria-label="' + esc(f.title + ' — ' + hint) + '"' +
+              ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
+              ' title="' + esc(boxTitle) + '"' +
               ' spellcheck="false" autocomplete="off"' +
               (dead ? ' disabled' : '') + '>';
 
@@ -524,9 +736,13 @@
     // a click on a button inside one is not reliably kept away from it — so the
     // input carries its name in aria-label instead of by being wrapped.
     return '<div class="stackman-box">' +
+             (head || '') +
              '<div class="stackman-boxline">' +
                control +
-               (t && !dead
+               // Never beside a dropdown: the tool mechanism reads and writes
+               // a text box directly (pickerOpen sets .value on it), and a
+               // <select>'s value has to be one of its own options.
+               (t && !dead && !choice
                  ? '<button type="button" class="stackman-browse"' +
                         ' data-tool="' + tool + '" data-row="' + index + '"' +
                         ' title="' + esc(t.title) + '">' +
@@ -539,11 +755,402 @@
            '</div>';
   }
 
+  // The heading on the two kinds of row that still have one — a device, named
+  // after its hardware, and a locked row, whose boxes are gone. Title and tags
+  // share one wrapper because a row's children ARE its grid cells: left loose,
+  // each tag would claim a column of its own and push the boxes out of line
+  // with the group's captions.
+  function headHtml(title, tags) {
+    var bits = ['<div class="stackman-fieldhead">',
+                '<span class="stackman-fieldtitle">' + esc(title) + '</span>'];
+    for (var i = 0; i < tags.length; i++) {
+      if (tags[i]) bits.push(tags[i]);
+    }
+    bits.push('</div>');
+    return bits.join('');
+  }
+
+  // The note box is identical wherever it appears, so it is built once rather
+  // than four times over.
+  function noteBoxHtml(f, index) {
+    return '<label class="stackman-box stackman-box--note">' +
+             '<input type="text" class="stackman-input" data-row="' + index + '"' +
+                   ' data-note="1" value="' + esc(f.note) + '"' +
+                   ' spellcheck="false" autocomplete="off"' +
+                   (f.commentSpot ? '' : ' disabled') + '>' +
+             '<span class="stackman-boxhint">note, kept in the file</span>' +
+           '</label>';
+  }
+
+  // A plain-English gloss of a command/entrypoint, describing STRUCTURE
+  // only — what runs, whether a shell is involved, how many steps — never
+  // MEANING. The plugin cannot know what "/app/run" does, so a guess would
+  // be worse than nothing: anything not confidently parsed returns '' and
+  // no paragraph is shown at all.
+
+  var SHELLS = { sh: 1, bash: 1, ash: 1, dash: 1, zsh: 1 };
+
+  // one..ten spelled out, since a sentence starting "5 steps" reads like a
+  // typo where "Five steps" does not. Above ten the word gets unwieldy, so
+  // digits take over.
+  var NUMWORDS = ['', 'one', 'two', 'three', 'four', 'five',
+                  'six', 'seven', 'eight', 'nine', 'ten'];
+
+  function cmdBasename(p) {
+    var i = p.lastIndexOf('/');
+    return i < 0 ? p : p.slice(i + 1);
+  }
+
+  function numWord(n) {
+    var w = n <= 10 ? NUMWORDS[n] : String(n);
+    return n <= 10 ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+  }
+
+  // What separates one piece from the next, per shape. Anchored, because the
+  // splitter below asks each one "does a separator start right here".
+  var SEP_WS    = /^\s/;          // argv on one line
+  var SEP_COMMA = /^,/;           // a ["a", "b"] flow list
+  var SEP_STEP  = /^(&&|;)/;      // one shell line into its steps
+
+  // The one quoted-token splitter every command shape below is built from.
+  // It walks the string, treats ' and " as opening and closing a quoted
+  // run, and only looks for a separator outside one — so `-c "a && b"` is
+  // not chopped on its own spaces. Quote characters are consumed, never
+  // kept, so tokens come back already unwrapped. An unclosed quote means the
+  // text was never meant to be split this way at all, so the whole thing is
+  // abandoned (null) rather than guessed at. A null separator splits
+  // nowhere, which is how a single token gets its quotes stripped.
+  function splitQuoted(str, sep) {
+    var tokens = [], buf = '', quote = '', i = 0, m;
+    while (i < str.length) {
+      var ch = str.charAt(i);
+      if (quote) {
+        if (ch === quote) quote = ''; else buf += ch;
+        i++;
+        continue;
+      }
+      if (ch === '"' || ch === "'") { quote = ch; i++; continue; }
+      m = sep ? sep.exec(str.slice(i)) : null;
+      if (m) {
+        if (buf) { tokens.push(buf); buf = ''; }
+        i += m[0].length;
+        continue;
+      }
+      buf += ch;
+      i++;
+    }
+    if (quote) return null;
+    if (buf) tokens.push(buf);
+    return tokens;
+  }
+
+  function dequote(s) {
+    var t = splitQuoted(s, null);
+    return t === null ? null : (t.length ? t[0] : '');
+  }
+
+  // A token starting with "-" absorbs the next token when that token is
+  // not itself a flag and the first has no "=" of its own already
+  // supplying a value. This is a shape rule, not a knowledge of any
+  // particular flag, so it pairs "--config /etc/app.conf" correctly and
+  // just as happily pairs a boolean flag with the positional word that
+  // happens to follow it — the model has no way to know "--verbose" does
+  // not take a value.
+  function groupTokens(tokens) {
+    var groups = [], i;
+    for (i = 0; i < tokens.length; i++) {
+      var t = tokens[i];
+      if (t.charAt(0) === '-' && t.indexOf('=') < 0 &&
+          i + 1 < tokens.length && tokens[i + 1].charAt(0) !== '-') {
+        groups.push(t + ' ' + tokens[i + 1]);
+        i++;
+      } else {
+        groups.push(t);
+      }
+    }
+    return groups;
+  }
+
+  // Groups rendered as <code> and capped at six, so a fifteen-flag command
+  // does not produce an unreadable wall of text. No count is offered: a
+  // reader who is told "four arguments" and shown two things has been given
+  // a puzzle rather than a summary.
+  function groupsHtml(groups) {
+    var codes = [], i;
+    for (i = 0; i < groups.length && i < 6; i++) {
+      codes.push('<code>' + esc(groups[i]) + '</code>');
+    }
+    if (groups.length > 6) return codes.join(', ') + ', and ' + (groups.length - 6) + ' more';
+    if (codes.length < 2) return codes.join('');
+    return codes.slice(0, -1).join(', ') + ' and ' + codes[codes.length - 1];
+  }
+
+  function plainSay(argv) {
+    var prog = argv[0], rest = argv.slice(1);
+    if (prog.charAt(0) === '-') {
+      // No program to name — argv[0] is itself one of its own arguments.
+      return 'Started with its own arguments: ' + groupsHtml(groupTokens(argv)) + '.';
+    }
+    var out = 'Runs <code>' + esc(prog) + '</code>.';
+    if (rest.length) out += ' It is given ' + groupsHtml(groupTokens(rest)) + '.';
+    return out;
+  }
+
+  function shellSay(line) {
+    var out = 'Runs a shell, which is handed one line to run: “' + esc(line) + '”.';
+    var steps = splitQuoted(line, SEP_STEP);
+    // A stray apostrophe in ordinary text can look like an unclosed quote —
+    // losing the whole sentence over that would be worse than just not
+    // splitting it into steps.
+    if (steps === null) steps = [line];
+    var clean = [], i;
+    for (i = 0; i < steps.length; i++) {
+      var s = steps[i].replace(/^\s+|\s+$/g, '');
+      if (s) clean.push(s);
+    }
+    if (clean.length > 1) {
+      out += ' ' + numWord(clean.length) + ' steps, run in order.';
+      // Only the "exec" case is said aloud — anything else about which
+      // step matters is a guess at meaning, which this summary does not
+      // make.
+      if (/^exec\s/.test(clean[clean.length - 1])) {
+        out += ' The last replaces the shell, so it becomes the container’s main process.';
+      }
+    }
+    return out;
+  }
+
+  function argvSay(argv) {
+    var cIdx = argv.indexOf('-c');
+    if (SHELLS[cmdBasename(argv[0])] && cIdx >= 0 && argv[cIdx + 1] !== undefined) {
+      return shellSay(argv[cIdx + 1]);
+    }
+    return plainSay(argv);
+  }
+
+  function scriptSay(lines) {
+    var out = 'A script of ' + lines.length + ' line' + (lines.length === 1 ? '' : 's') +
+              '. The container runs each line in turn.';
+    var first = '', i;
+    for (i = 0; i < lines.length; i++) {
+      var t = lines[i].replace(/^\s+|\s+$/g, '');
+      if (t) { first = t; break; }
+    }
+    var word = first ? first.split(/\s+/)[0] : '';
+    if (word) out += ' It begins with <code>' + esc(word) + '</code>.';
+    return out;
+  }
+
+  function foldedSay(lines) {
+    return 'One long line, wrapped across ' + lines.length +
+           ' lines in the file so it stays readable. It runs as a single command.';
+  }
+
+  // f.raw is the file's own text for a locked command/entrypoint, key line
+  // included — "command:", "command: |" or "command: [\"a\",\"b\"]" as
+  // line one, so parsing it here can never disagree with the <pre> shown
+  // above it.
+  function commandFromRaw(raw) {
+    var idx = raw.indexOf(':');
+    if (idx < 0) return null;
+    var nl = raw.indexOf('\n');
+    var lineOneTail = (nl < 0 ? raw.slice(idx + 1) : raw.slice(idx + 1, nl))
+                        .replace(/^\s+|\s+$/g, '');
+    var fullTail = raw.slice(idx + 1);
+    var i, lines, t;
+
+    if (/^[|>][-+]?$/.test(lineOneTail)) {
+      lines = raw.split('\n').slice(1);
+      while (lines.length && lines[lines.length - 1].replace(/\s+/g, '') === '') lines.pop();
+      if (!lines.length) return null;
+      var indent = -1;
+      for (i = 0; i < lines.length; i++) {
+        if (lines[i].replace(/\s+/g, '') === '') continue;
+        var lead = lines[i].length - lines[i].replace(/^ */, '').length;
+        if (indent < 0 || lead < indent) indent = lead;
+      }
+      if (indent < 0) indent = 0;
+      var body = [];
+      for (i = 0; i < lines.length; i++) body.push(lines[i].slice(indent));
+      return { kind: lineOneTail.charAt(0) === '|' ? 'script' : 'folded', lines: body };
+    }
+
+    // The bracket has to open the value itself, not merely appear somewhere in
+    // it — "- echo [ok]" is a list item that happens to contain one, and
+    // reading the whole block as a flow list would report the wrong command
+    // entirely. Once it does open the value, the rest of the text is fair
+    // game, since a flow list may run over several lines.
+    if (lineOneTail.charAt(0) === '[') {
+      var open = fullTail.indexOf('['), close = fullTail.lastIndexOf(']');
+      if (close < open) return null;
+      var toks = splitQuoted(fullTail.slice(open + 1, close), SEP_COMMA);
+      if (toks === null) return null;
+      var argv = [];
+      for (i = 0; i < toks.length; i++) {
+        t = toks[i].replace(/^\s+|\s+$/g, '');
+        if (t) argv.push(t);
+      }
+      if (!argv.length) return null;
+      return { kind: 'argv', argv: argv };
+    }
+
+    if (lineOneTail === '') {
+      lines = raw.split('\n').slice(1);
+      var items = [];
+      for (i = 0; i < lines.length; i++) {
+        t = lines[i].replace(/^\s+|\s+$/g, '');
+        if (t === '') continue;
+        if (t.slice(0, 2) !== '- ') return null;   // not a clean list — give up
+        var tok = dequote(t.slice(2));
+        if (tok === null) return null;
+        items.push(tok);
+      }
+      if (!items.length) return null;
+      return { kind: 'argv', argv: items };
+    }
+
+    return null;
+  }
+
+  // The gloss's own text, with no wrapper — split out so refreshRanges()
+  // can drop fresh text straight into an existing [data-say] element rather
+  // than rebuilding it. Only for command/entrypoint, and only ever '' unless
+  // the shape can be read with confidence — see the file-level comment
+  // above for why a guess is worse than silence here.
+  function commandSayText(f) {
+    if (f.target !== 'command' && f.target !== 'entrypoint') return '';
+
+    var parsed;
+    if (f.locked) {
+      parsed = commandFromRaw(f.raw || '');
+    } else {
+      var v = f.parts.value ? f.parts.value.value : '';
+      var argv = v ? splitQuoted(v, SEP_WS) : null;
+      parsed = (argv && argv.length) ? { kind: 'argv', argv: argv } : null;
+    }
+    if (!parsed) return '';
+
+    return parsed.kind === 'script' ? scriptSay(parsed.lines)
+         : parsed.kind === 'folded' ? foldedSay(parsed.lines)
+         : argvSay(parsed.argv);
+  }
+
+  // Emitted for every command and entrypoint, even when there is nothing to
+  // say. A row is not redrawn while its box is being typed in, so the element
+  // has to already be there for refreshRanges() to fill — otherwise a command
+  // that starts out unreadable could never grow a sentence. Hidden while
+  // empty, because an empty paragraph still takes its own margin.
+  function commandSay(f) {
+    if (f.target !== 'command' && f.target !== 'entrypoint') return '';
+    var text = commandSayText(f);
+    return '<p class="stackman-fieldhint" data-say="1"' + (text ? '' : ' hidden') + '>' +
+             text +
+           '</p>';
+  }
+
+  // f.advice's own text, with no wrapper — split out so refreshRanges() can
+  // drop fresh notes straight into an existing [data-advice] element rather
+  // than rebuilding the row. Each entry is independent (a dangling reference,
+  // a value using an outside variable...) so every one gets its own line.
+  function adviceText(f) {
+    var advice = f.advice || [];
+    var out = '';
+    for (var i = 0; i < advice.length; i++) {
+      out += '<p class="stackman-fieldnote">' + esc(advice[i]) + '</p>';
+    }
+    return out;
+  }
+
+  // Emitted for every field, even with nothing to say — same reason as
+  // commandSay() above: the element has to already exist for refreshRanges()
+  // to fill it as a value is typed, without redrawing the row under the caret.
+  function adviceBlock(f) {
+    var text = adviceText(f);
+    return '<div class="stackman-advice" data-advice="1"' + (text ? '' : ' hidden') + '>' +
+             text +
+           '</div>';
+  }
+
+  // Everything else on a declaration — internal:, driver_opts: and the rest —
+  // lives in a fold, not on the row (see declaredFields() in the model). They
+  // are found by scanning MODEL.fields for the ones marked f.fold under this
+  // declaration's own target, rather than carried on the row itself, so
+  // refreshRanges() (which re-maps rows by index and never redraws) needs no
+  // new bookkeeping to keep them in step.
+  function foldFieldsFor(f) {
+    var out = [], prefix = f.target + '.';
+    for (var i = 0; i < MODEL.fields.length; i++) {
+      var t = MODEL.fields[i];
+      if (t.fold && t.declKind === f.declKind && t.target.indexOf(prefix) === 0) out.push(i);
+    }
+    return out;
+  }
+
+  // One leaf inside that fold. `index` is the leaf's OWN index into
+  // MODEL.fields — never the row's — so typing in its box, or refreshRanges()
+  // matching it back up afterwards, addresses that leaf and nothing else. A
+  // locked leaf (driver_opts:, ipam: — a map, not a scalar) has no editable
+  // part at all, so it falls back to the raw text a fully-locked row shows,
+  // just without repeating that row's own heading and note.
+  function declaredFoldHtml(t, index) {
+    var body = t.locked
+      ? '<pre class="stackman-fieldraw">' + esc(t.raw || '') + '</pre>'
+      : boxHtml(t, index, 'value', 'value');
+    return '<div class="stackman-foldrow">' +
+             '<span class="stackman-fieldlabel">' + esc(t.title) + '</span>' +
+             body +
+           '</div>';
+  }
+
+  // A declaration's name: text plus a pencil, never a live box — a box
+  // commits through the debounce, so it would rename to every half-typed
+  // spelling as it goes, rewriting every reference each time. `data-decl-kind`
+  // and `data-decl-name` carry what the click handler needs to act on and,
+  // after the rename redraws the form, to find this row's pencil again.
+  function declNameHtml(f, index) {
+    var word = DECL_WORD[f.declKind] || 'declaration';
+    return '<div class="stackman-declname">' +
+             '<span class="stackman-declname-text">' + esc(f.parts.name.value) + '</span>' +
+             '<button type="button" class="stackman-svcrename" data-decl-rename="1"' +
+                    ' data-row="' + index + '" data-decl-kind="' + esc(f.declKind) + '"' +
+                    ' data-decl-name="' + esc(f.parts.name.value) + '"' +
+                    ' aria-label="Rename this ' + esc(word) + '" title="Rename this ' + esc(word) + '">' +
+               '<i class="fa fa-pencil" aria-hidden="true"></i>' +
+             '</button>' +
+           '</div>';
+  }
+
+  // How many of the file's fields still point at this declared name — read
+  // the same way buildForm's own 1e dangling-reference check does (a volume's
+  // host half, or a plain list entry's value), so removing a declaration
+  // still in use can say how many places would be left dangling.
+  function declaredRefCount(kind, name) {
+    var n = 0;
+    for (var i = 0; i < MODEL.fields.length; i++) {
+      var f = MODEL.fields[i];
+      if (f.from !== kind) continue;
+      var val = f.parts.host ? f.parts.host.value : (f.parts.value ? f.parts.value.value : '');
+      if (val === name) n++;
+    }
+    return n;
+  }
+
   function fieldHtml(f, index) {
+    var grp    = groupFor(f);
+    var isContainer = grp === 'container';
+    var declared = f.binder === 'declared';
     var mapped = f.binder === 'port' || f.binder === 'volume' || f.binder === 'device';
     var named  = !!f.parts.name;                  // a variable or a label
-    var listy  = mapped || f.binder === 'env' || f.binder === 'label';
+    var listy  = mapped || f.binder === 'env' || f.binder === 'label' || f.binder === 'list';
+    // Never on a Container row — its four settings are not a list. Not for an
+    // entry written in a way the model sealed either, since that refuses
+    // anyway and a button that always says no is worse than no button. A
+    // declaration is removable too, so it gets the × the same as any list entry.
+    var showKill  = !isContainer && (listy || declared) && f.target.charAt(0) !== '@';
     var bits = [];
+    // A device's folded-away container path. Built inside the branch below but
+    // emitted at the very end of the row — see the tail.
+    var devMore = '';
 
     // A device is named after the hardware it points at, when this server has
     // that hardware. When the path is not on the machine at all, the row says so
@@ -562,6 +1169,12 @@
     var kit  = host ? devIndex[host] : null;
     var lost = dev && host && devLoaded && !devPresent[host];
 
+    var roTag   = f.mode === 'ro'
+                ? '<span class="stackman-fieldtag">read-only mount</span>' : '';
+    var lostTag = lost
+                ? '<span class="stackman-fieldtag stackman-fieldtag--lost">' +
+                  'not found on this server</span>' : '';
+
     bits.push('<div class="stackman-fieldrow' + (f.locked ? ' stackman-fieldrow--locked' : '') +
               (f.sensitive ? ' stackman-fieldrow--secret' : '') +
               '" data-row="' + index + '" data-field-row="' + esc(f.id) + '"' +
@@ -569,112 +1182,238 @@
               ' data-to="'   + (f.range ? f.range.end   : -1) + '"' +
               ' tabindex="0">');
 
-    bits.push('<div class="stackman-fieldhead">');
-    bits.push('<span class="stackman-fieldtitle">' + esc(kit ? kit.label : f.title) + '</span>');
-    if (f.mode === 'ro') bits.push('<span class="stackman-fieldtag">read-only mount</span>');
-    if (lost) {
-      bits.push('<span class="stackman-fieldtag stackman-fieldtag--lost">' +
-                'not found on this server</span>');
+    // A Container row has no ticks — there is nothing to mark required about a
+    // setting that already always has to be there. Neither does a
+    // declaration: required and sensitive describe a form control, and a
+    // name-and-driver pair has none.
+    if (!isContainer && !declared) {
+      // The words are hidden, not deleted — the group caption above already
+      // names these two columns "R" and "S", so spelling them out again beside
+      // every tick would just be noise. Still in the accessibility tree, since
+      // a bare checkbox with no name is not acceptable there.
+      bits.push('<label class="stackman-flag" title="Do not let this be left empty">' +
+                  '<input type="checkbox" data-row="' + index + '" data-required="1"' +
+                  (f.required ? ' checked' : '') + (f.commentSpot ? '' : ' disabled') + '>' +
+                  '<span class="stackman-sr">required</span>' +
+                '</label>');
+      bits.push('<label class="stackman-flag" title="Hide this value when Sanitise is on">' +
+                  '<input type="checkbox" data-row="' + index + '" data-secret="1"' +
+                  (f.sensitive ? ' checked' : '') + (f.commentSpot ? '' : ' disabled') + '>' +
+                  '<span class="stackman-sr">sensitive</span>' +
+                '</label>');
     }
-    bits.push('<label class="stackman-flag" title="Do not let this be left empty">' +
-                '<input type="checkbox" data-row="' + index + '" data-required="1"' +
-                (f.required ? ' checked' : '') + (f.commentSpot ? '' : ' disabled') + '>' +
-                '<span>required</span>' +
-              '</label>');
-    bits.push('<label class="stackman-flag" title="Hide this value when Sanitise is on">' +
-                '<input type="checkbox" data-row="' + index + '" data-secret="1"' +
-                (f.sensitive ? ' checked' : '') + (f.commentSpot ? '' : ' disabled') + '>' +
-                '<span>sensitive</span>' +
-              '</label>');
-    // Not offered for a plain setting, which is not a list, nor for an entry
-    // written in a way the model sealed — those refuse anyway, and a button
-    // that always says no is worse than no button.
-    if (listy && f.target.charAt(0) !== '@') {
+
+    if (f.locked) {
+      // The boxes are gone, so the name has nowhere else to live — the title
+      // that every other row dropped reappears here instead.
+      bits.push(headHtml(f.title, [roTag, lostTag]));
+      bits.push('<pre class="stackman-fieldraw">' + esc(f.raw || '') + '</pre>');
+      bits.push(commandSay(f));
+      bits.push('<p class="stackman-fieldnote">Not editable here because ' +
+                esc(f.lockReason) + '. Use the Compose view.</p>');
+      bits.push(adviceBlock(f));
+    } else if (f.binder === 'setting') {
+      // Every group this can land in — Container, Health check, Resource
+      // limits, Advanced — holds nothing but plain settings (Container's
+      // four are always fixed settings; a lock on anything else already went
+      // to the branch above), so binder is what actually decides this shape,
+      // not which group the row happens to be filed under. One value box,
+      // named by a label column because a single box on its own could not
+      // say what it holds.
+      bits.push('<span class="stackman-fieldlabel">' + esc(f.title) + '</span>');
+      bits.push(boxHtml(f, index, 'value', 'value'));
+      bits.push(noteBoxHtml(f, index));
+    } else if (dev) {
+      // One box, not two. For nearly every device the two halves are the same
+      // path, and where they differ the picker has already set both — a USB
+      // stick is mapped from its stable /dev/serial/by-id name to the short
+      // name the app inside expects. So the container half is folded away, with
+      // its value in the summary, which makes the row shorter and not quieter.
+      //
+      // The picker is not the folder browser wearing a different hat: that one
+      // walks directories under /mnt, while this one lists what the kernel says
+      // is attached. Browsing /dev by hand is what never finds what you came
+      // for, which is why there was no button here before.
+      var hint = kit ? kit.hint : 'path to the device on this server';
+      var head = headHtml(kit ? kit.label : f.title, [roTag, lostTag]);
+
+      if (solo) {
+        // Written as one path, so there is no second one to fold away.
+        bits.push(boxHtml(f, index, 'container', hint, 'device', head));
+      } else {
+        bits.push(boxHtml(f, index, 'host', hint, 'device', head));
+
+        var into = f.parts.container;
+        if (into) {
+          var differs = into.value && host && into.value !== host;
+          devMore = '<details class="stackman-devmore">' +
+                      '<summary>' + (differs
+                        ? 'appears inside the container as ' + esc(into.value)
+                        : 'change the path inside the container') + '</summary>' +
+                      boxHtml(f, index, 'container', 'path in the container') +
+                    '</details>';
+        }
+      }
+      bits.push(noteBoxHtml(f, index));
+    } else if (mapped) {
+      // Only a volume gets the folder picker. A port is a number, so browsing
+      // for one would be a button that never finds what you came for.
+      bits.push(boxHtml(f, index, 'host',
+                f.binder === 'port' ? 'on the server' : 'path on the server',
+                f.binder === 'volume' ? 'browse' : ''));
+      // A mount someone deliberately made read-only has to keep saying so.
+      // The row lost its title, so the badge moves in beside the path it
+      // qualifies rather than disappearing with it.
+      bits.push(boxHtml(f, index, 'container',
+                f.binder === 'port' ? 'in the container' : 'path in the container',
+                '', roTag));
+      bits.push(noteBoxHtml(f, index));
+    } else if (named) {
+      // The name is a field like any other. Without it, adding a variable
+      // would produce a row that could never be called anything.
+      bits.push(boxHtml(f, index, 'name',
+                f.binder === 'label' ? 'label name' : 'variable name'));
+      // Nearly every image takes one of these, and it has to be an IANA
+      // name — getting it wrong is quiet, and every log line is hours out.
+      bits.push(boxHtml(f, index, 'value', 'value',
+                f.binder === 'env' && /^(tz|timezone)$/i.test(f.target) ? 'tz' : ''));
+      bits.push(noteBoxHtml(f, index));
+    } else if (f.binder === 'list') {
+      // A plain list entry is one whole value with no second half to pair it
+      // with — networks, secrets, configs, depends_on and the rest, all of
+      // which share this one shape. boxHtml() turns it into a dropdown on
+      // its own whenever f.from names a namespace the file declares.
+      bits.push(boxHtml(f, index, 'value', 'value', f.tool));
+      bits.push(noteBoxHtml(f, index));
+    } else if (declared) {
+      bits.push(declNameHtml(f, index));
+      bits.push(boxHtml(f, index, 'value', DECL_HINT[f.declKind] || 'setting'));
+      bits.push(noteBoxHtml(f, index));
+
+      var foldIdx = foldFieldsFor(f);
+      if (foldIdx.length) {
+        var foldBits = [];
+        for (var fi = 0; fi < foldIdx.length; fi++) {
+          foldBits.push(declaredFoldHtml(MODEL.fields[foldIdx[fi]], foldIdx[fi]));
+        }
+        devMore = '<details class="stackman-devmore"><summary>more settings</summary>' +
+                  foldBits.join('') + '</details>';
+      }
+    }
+
+    if (showKill) {
       bits.push('<button type="button" class="stackman-kill" data-row="' + index + '"' +
                 ' data-remove="1">' +
                   '<i class="fa fa-times" aria-hidden="true"></i> Remove' +
                   '<span class="stackman-sr"> ' + esc(f.title) + '</span>' +
                 '</button>');
     }
-    bits.push('</div>');
 
-    if (f.locked) {
-      bits.push('<pre class="stackman-fieldraw">' + esc(f.raw || '') + '</pre>');
-      bits.push('<p class="stackman-fieldnote">Not editable here because ' +
-                esc(f.lockReason) + '. Use the Compose view.</p>');
-    } else {
-      // Host on the left, container on the right, note last. Editing the host
-      // half without seeing what it connects to is half a sentence. A device is
-      // the exception and stacks instead — see below.
-      var twoUp = (mapped && !dev) || named;
-      bits.push('<div class="stackman-boxes' + (twoUp ? ' stackman-boxes--mapped' : '') + '">');
-      if (dev) {
-        // One box, not two. For nearly every device the two halves are the same
-        // path, and where they differ the picker has already set both — a USB
-        // stick is mapped from its stable /dev/serial/by-id name to the short
-        // name the app inside expects. So the container half is folded away, with
-        // its value in the summary, which makes the row shorter and not quieter.
-        //
-        // The picker is not the folder browser wearing a different hat: that one
-        // walks directories under /mnt, while this one lists what the kernel says
-        // is attached. Browsing /dev by hand is what never finds what you came
-        // for, which is why there was no button here before.
-        var hint = kit ? kit.hint : 'path to the device on this server';
-
-        if (solo) {
-          // Written as one path, so there is no second one to fold away.
-          bits.push(boxHtml(f, index, 'container', hint, 'device'));
-        } else {
-          bits.push(boxHtml(f, index, 'host', hint, 'device'));
-
-          var into = f.parts.container;
-          if (into) {
-            var differs = into.value && host && into.value !== host;
-            bits.push('<details class="stackman-devmore">' +
-                        '<summary>' + (differs
-                          ? 'appears inside the container as ' + esc(into.value)
-                          : 'change the path inside the container') + '</summary>' +
-                        boxHtml(f, index, 'container', 'path in the container') +
-                      '</details>');
-          }
-        }
-      } else if (mapped) {
-        // Only a volume gets the folder picker. A port is a number, so browsing
-        // for one would be a button that never finds what you came for.
-        bits.push(boxHtml(f, index, 'host',
-                  f.binder === 'port' ? 'on the server' : 'path on the server',
-                  f.binder === 'volume' ? 'browse' : ''));
-        bits.push(boxHtml(f, index, 'container',
-                  f.binder === 'port' ? 'in the container' : 'path in the container'));
-      } else if (named) {
-        // The name is a field like any other. Without it, adding a variable
-        // would produce a row that could never be called anything.
-        bits.push(boxHtml(f, index, 'name',
-                  f.binder === 'label' ? 'label name' : 'variable name'));
-        // Nearly every image takes one of these, and it has to be an IANA
-        // name — getting it wrong is quiet, and every log line is hours out.
-        bits.push(boxHtml(f, index, 'value', 'value',
-                  f.binder === 'env' && /^(tz|timezone)$/i.test(f.target) ? 'tz' : ''));
-      } else {
-        bits.push(boxHtml(f, index, 'value',
-                  f.binder === 'setting' ? 'value' : f.target));
-      }
-      bits.push('<label class="stackman-box stackman-box--note">' +
-                  '<input type="text" class="stackman-input" data-row="' + index + '"' +
-                        ' data-note="1" value="' + esc(f.note) + '"' +
-                        ' spellcheck="false" autocomplete="off"' +
-                        (f.commentSpot ? '' : ' disabled') + '>' +
-                  '<span class="stackman-boxhint">note, kept in the file</span>' +
-                '</label>');
-      bits.push('</div>');
-
-      if (f.lockReason) {
-        bits.push('<p class="stackman-fieldnote">' + esc(f.lockReason) + '.</p>');
-      }
+    // Everything full-width comes last, after every cell the row's column
+    // template names. A full-width child ends the grid row it lands on and
+    // resets auto-placement to column 1 below it, so anything emitted after
+    // one is stranded in the tick gutter rather than in its own column.
+    //
+    // A row that is not fully locked can still be partly restricted — an
+    // anonymous volume with no host half, a "- FOO" passthrough with no value.
+    // Say so beneath the boxes, same as a locked row's fuller version above.
+    // The command/entrypoint gloss lands here too, for the same reason.
+    if (devMore) bits.push(devMore);
+    if (!f.locked && f.lockReason) {
+      bits.push('<p class="stackman-fieldnote">' + esc(f.lockReason) + '.</p>');
     }
+    if (!f.locked) bits.push(commandSay(f));
+    if (!f.locked) bits.push(adviceBlock(f));
 
     bits.push('</div>');
     return bits.join('');
+  }
+
+  // A group's header line: its heading, the grey note beside Container's, and
+  // its own Add button where it has one.
+  function groupHeadHtml(g, serviceName) {
+    var bits = ['<div class="stackman-grouphead"><h5 class="stackman-fieldgroup">' + esc(g.heading)];
+    if (g.note) bits.push(' <span class="stackman-groupnote">' + esc(g.note) + '</span>');
+    bits.push('</h5>');
+    if (g.add) {
+      bits.push('<button type="button" class="stackman-add"' +
+               ' data-add="' + g.add + '" data-service="' + esc(serviceName) + '">' +
+               '<i class="fa fa-plus" aria-hidden="true"></i> ' + esc(addWord(g.add)) +
+               '</button>');
+    }
+    bits.push('</div>');
+    return bits.join('');
+  }
+
+  // One row naming what sits in each column below it. Skipped entirely when
+  // the group holds nothing — a caption over no rows has nothing to caption.
+  // A dynamic list group has no entry in CAPTIONS — there is one per compose
+  // key and growing that table by hand defeats the point — so it falls back
+  // to the same one-box shape as Devices, which is the template it shares.
+  function captionRow(grp) {
+    var declared = grp.key.slice(0, 9) === 'declared:';
+    var cols = CAPTIONS[grp.key] ||
+               (grp.cls === 'stackman-formgroup--single' ? ['value', 'note, kept in the file'] : null) ||
+               (declared ? ['name', 'setting', 'note, kept in the file'] : null);
+    if (!cols) return '';
+    var bits = ['<div class="stackman-caption" aria-hidden="true">'];
+    // Container has nothing to require or hide, and neither does a
+    // declaration — required and sensitive are about a form control, and a
+    // name/driver pair is not one.
+    if (grp.key !== 'container' && !declared) {
+      bits.push('<span class="stackman-capflag" title="required">R</span>');
+      bits.push('<span class="stackman-capflag" title="sensitive">S</span>');
+    }
+    for (var i = 0; i < cols.length; i++) bits.push('<span>' + esc(cols[i]) + '</span>');
+    // Container is the only group with no × column to leave a blank for.
+    if (grp.key !== 'container') bits.push('<span></span>');
+    bits.push('</div>');
+    return bits.join('');
+  }
+
+  // The Stack section's four groups, in the fixed order the file's own
+  // declarations render — networks, then volumes, secrets, configs. Every
+  // one carries `add` and so renders even with no rows: an Add button is the
+  // only way to create a first declaration, so an empty group cannot be
+  // dropped the way an empty Health check group is (see the loop in
+  // renderForm below).
+  var DECL_GROUPS = [
+    { key: 'declared:networks', heading: 'Networks', cls: 'stackman-formgroup--declared', add: 'declared:networks' },
+    { key: 'declared:volumes',  heading: 'Volumes',  cls: 'stackman-formgroup--declared', add: 'declared:volumes' },
+    { key: 'declared:secrets',  heading: 'Secrets',  cls: 'stackman-formgroup--declared', add: 'declared:secrets' },
+    { key: 'declared:configs',  heading: 'Configs',  cls: 'stackman-formgroup--declared', add: 'declared:configs' }
+  ];
+
+  // A pseudo-service above the real ones for the file's own networks:,
+  // volumes:, secrets: and configs: blocks — they belong to no service,
+  // which is exactly what f.service === '' means. Reuses .stackman-svc so
+  // the heading matches a service's rather than inventing a second scale.
+  //
+  // f.fold is excluded here, not in groupFor() — a fold field carries the
+  // same 'declared:<kind>' bucket its parent row does, but it renders inside
+  // that row's own <details>, never as a row of its own (see fieldHtml).
+  function stackSectionHtml(form) {
+    var buckets = {};
+    for (var i = 0; i < form.fields.length; i++) {
+      var f = form.fields[i];
+      if (f.service !== '' || f.fold) continue;
+      var gk = groupFor(f);
+      if (!buckets[gk]) buckets[gk] = [];
+      buckets[gk].push(i);
+    }
+
+    var out = ['<section class="stackman-svc stackman-svc--stack">',
+               '<h4 class="stackman-svchead">Stack</h4>'];
+    for (var g = 0; g < DECL_GROUPS.length; g++) {
+      var grp = DECL_GROUPS[g], rows = buckets[grp.key] || [];
+      out.push('<div class="stackman-formgroup ' + grp.cls + '" data-group="' + grp.key + '">');
+      out.push(groupHeadHtml(grp, ''));
+      if (rows.length) out.push(captionRow(grp));
+      for (var r = 0; r < rows.length; r++) out.push(fieldHtml(form.fields[rows[r]], rows[r]));
+      out.push('</div>');
+    }
+    out.push('</section>');
+    return out.join('');
   }
 
   function renderForm(form) {
@@ -684,7 +1423,7 @@
       return '<p class="stackman-form-empty">' + esc(why) + '</p>';
     }
 
-    var out = [];
+    var out = [stackSectionHtml(form)];
     for (var s = 0; s < form.services.length; s++) {
       var svc = form.services[s];
       out.push('<section class="stackman-svc" data-service="' + esc(svc.name) + '"' +
@@ -699,30 +1438,39 @@
       if (svc.overview) out.push('<p class="stackman-fieldhint">' + esc(svc.overview) + '</p>');
       if (svc.note)     out.push('<p class="stackman-fieldnote">' + esc(svc.note) + '</p>');
 
-      // Always shown, whether or not the file has that key yet — that is the
-      // whole point of hanging them off the service. A service the parser
-      // could not read gets none, because adding to it would only ever fail.
-      // At the top, above the image row: a service with twenty variables put
-      // them a scroll away from the name of the thing they belong to.
+      // Each group's own header now carries its Add button, so there is no
+      // longer one strip listing every list a service could grow. A service
+      // the parser could not read gets no groups at all, since adding to one
+      // would only ever fail.
       if (svc.readable) {
-        out.push('<div class="stackman-adds">');
-        for (var a = 0; a < ADDABLE.length; a++) {
-          out.push('<button type="button" class="stackman-add"' +
-                   ' data-add="' + ADDABLE[a].binder + '"' +
-                   ' data-service="' + esc(svc.name) + '">' +
-                   '<i class="fa fa-plus" aria-hidden="true"></i> ' + ADDABLE[a].word +
-                   '</button>');
+        // Bucketed by ORIGINAL index into form.fields, not by a fresh count —
+        // that index is the row's identity in the DOM, and refreshRanges()
+        // re-maps it against a rebuilt model without ever redrawing.
+        var groups  = groupsForService(form.fields, svc.name);
+        var buckets = {};
+        for (var g = 0; g < groups.length; g++) buckets[groups[g].key] = [];
+        for (var i = 0; i < form.fields.length; i++) {
+          if (form.fields[i].service !== svc.name) continue;
+          var gk = groupFor(form.fields[i]);
+          // A binder groupsForService did not build a bucket for would
+          // otherwise throw on .push — reparse() has no other net under it.
+          if (!buckets[gk]) buckets[gk] = [];
+          buckets[gk].push(i);
         }
-        out.push('</div>');
-      }
 
-      // The index is the row's identity in the DOM, not the field id. Editing
-      // a container port changes that id — "8096" becomes "809" the moment the
-      // last digit is deleted — and a row that renamed itself mid-keystroke
-      // could not be found again to update.
-      for (var i = 0; i < form.fields.length; i++) {
-        if (form.fields[i].service !== svc.name) continue;
-        out.push(fieldHtml(form.fields[i], i));
+        for (var gi = 0; gi < groups.length; gi++) {
+          var grp = groups[gi], rows = buckets[grp.key];
+          // A group with an Add button is kept even at zero rows, so the
+          // button survives its list emptying out. One with none — Health
+          // check and Resource limits, so far — has nothing left to show for
+          // an empty bucket but a bare heading, which is noise, not a row.
+          if (!rows.length && !grp.add) continue;
+          out.push('<div class="stackman-formgroup ' + grp.cls + '" data-group="' + grp.key + '">');
+          out.push(groupHeadHtml(grp, svc.name));
+          if (rows.length) out.push(captionRow(grp));
+          for (var r = 0; r < rows.length; r++) out.push(fieldHtml(form.fields[rows[r]], rows[r]));
+          out.push('</div>');
+        }
       }
 
       out.push('</section>');
@@ -754,7 +1502,7 @@
     if (!MODEL) return out;
     for (var i = 0; i < MODEL.fields.length; i++) {
       var f = MODEL.fields[i];
-      if (f.required && !f.locked && emptyValue(f)) out.push({ index: i, field: f });
+      if ((f.required || f.fixedRequired) && !f.locked && emptyValue(f)) out.push({ index: i, field: f });
     }
     return out;
   }
@@ -844,6 +1592,36 @@
       rows[i].dataset.from = f.range ? f.range.start : -1;
       rows[i].dataset.to   = f.range ? f.range.end   : -1;
       rows[i].classList.toggle('stackman-fieldrow--secret', !!f.sensitive);
+
+      // A slot that just gained its line in the file goes from having no
+      // comment to write to, to having one — flip the note and tick inputs
+      // back on to match, without redrawing the row they live in.
+      var canComment = !!f.commentSpot;
+      var note = rows[i].querySelector('[data-note]');
+      if (note) note.disabled = !canComment;
+      var req = rows[i].querySelector('[data-required]');
+      if (req) req.disabled = !canComment;
+      var sec = rows[i].querySelector('[data-secret]');
+      if (sec) sec.disabled = !canComment;
+
+      // The command/entrypoint gloss is prose derived from the value, so it
+      // goes stale exactly like the note and ticks above — refreshed in
+      // place rather than by redrawing the row, which would take the caret
+      // with it mid-edit.
+      var say = rows[i].querySelector('[data-say]');
+      if (say) {
+        say.innerHTML = commandSayText(f);
+        say.hidden = !say.innerHTML;
+      }
+
+      // A dangling reference or a ${VAR} note can appear or clear as the
+      // value is typed, so it is refreshed the same way as the command
+      // gloss above — in place, not by redrawing the row under the caret.
+      var advice = rows[i].querySelector('[data-advice]');
+      if (advice) {
+        advice.innerHTML = adviceText(f);
+        advice.hidden = !advice.innerHTML;
+      }
     }
     activeField = null;
     repaintMark();
@@ -883,6 +1661,53 @@
     refreshRanges();                              // loop back round
   }
 
+  // The small button that hands a swapped-to-path volume row back to the
+  // dropdown — see swapVolumeToPath()/swapVolumeToChoice() below. Rendered
+  // above the boxline via boxHtml()'s `head` slot, same trick a device row's
+  // heading already uses to avoid ending the grid row early.
+  function volSwitchBackHtml(index) {
+    return '<button type="button" class="stackman-browse" data-vol-switch="1"' +
+                ' data-row="' + index + '" title="Use a named volume instead">' +
+             '<i class="fa fa-database" aria-hidden="true"></i> Use a named volume instead' +
+           '</button>';
+  }
+
+  // Picking the sentinel writes nothing, so a redraw would just see the same
+  // unwritten value and offer the dropdown straight back — the swap has to be
+  // done by hand instead. `noChoice` on boxHtml() is what stops it re-guessing.
+  function swapVolumeToPath(select) {
+    var index = select.dataset.row | 0;
+    var f = MODEL && MODEL.fields[index];
+    var box = select.closest('.stackman-box');
+    var row = select.closest('.stackman-fieldrow');
+    if (!f || !box || !row) return;
+
+    row.dataset.source = 'path';
+    box.outerHTML = boxHtml(f, index, 'host', 'path on the server', 'browse',
+                            volSwitchBackHtml(index), true);
+
+    var input = row.querySelector('[data-part="host"]');
+    if (input) { input.focus(); input.select(); }
+  }
+
+  // The mis-click's way back — free while nothing has been written yet, since
+  // the value itself never changed while the path box was showing. Runs the
+  // same detection boxHtml() does on a fresh render, only by hand.
+  function swapVolumeToChoice(button) {
+    var index = button.dataset.row | 0;
+    var f = MODEL && MODEL.fields[index];
+    var box = button.closest('.stackman-box');
+    var row = button.closest('.stackman-fieldrow');
+    if (!f || !box || !row) return;
+
+    delete row.dataset.source;
+    box.outerHTML = boxHtml(f, index, 'host',
+                            'a named volume Docker manages, or a folder on the server', '');
+
+    var sel = row.querySelector('[data-part="host"]');
+    if (sel) sel.focus();
+  }
+
   var commitTimer = null;
   var pendingEl   = null;
 
@@ -900,14 +1725,23 @@
   });
 
   formHost.addEventListener('change', function (event) {
+    var el = event.target;
+
+    // Choosing "a folder on the server…" from a volume's host dropdown must
+    // never reach the file — swap the control instead of committing it.
+    if (el.tagName === 'SELECT' && el.dataset.part === 'host' && el.value === VOL_FOLDER_SENTINEL) {
+      var f = MODEL && MODEL.fields[el.dataset.row | 0];
+      if (f && f.binder === 'volume') { swapVolumeToPath(el); return; }
+    }
+
     // A tick or a pick from a list is a decision, not a keystroke — commit it
     // at once. A dropdown fires input as well, so the pending timer that set
     // off has to be dropped or the same edit is written twice.
-    if (event.target.dataset.secret === undefined &&
-        event.target.dataset.required === undefined &&
-        event.target.tagName !== 'SELECT') return;
+    if (el.dataset.secret === undefined &&
+        el.dataset.required === undefined &&
+        el.tagName !== 'SELECT') return;
     if (commitTimer) { clearTimeout(commitTimer); commitTimer = null; pendingEl = null; }
-    commit(event.target);
+    commit(el);
   });
 
   /* ---- adding and removing entries ---- */
@@ -966,12 +1800,39 @@
       // graphics card, and a second one wrote /dev/dri2, which is not a path to
       // anything at all.
       if (add.dataset.add === 'device') {
-        devOpen(add.closest('.stackman-adds'), null, add.dataset.service);
+        devOpen(add.closest('.stackman-grouphead'), null, add.dataset.service);
+        return;
+      }
+      // A declaration has no service to hand YAML.addItem below, so it goes
+      // through the model's own nested insert instead — same shape, one
+      // level up (see YAML.addDeclared).
+      if (add.dataset.add.slice(0, 9) === 'declared:') {
+        var declKind = add.dataset.add.slice(9);
+        flushPending();
+        pushUndo('adding that ' + addWord(add.dataset.add));
+        var declLine = YAML.addDeclared(MODEL.doc, declKind, DECL_WORD[declKind] || 'item');
+        if (declLine < 0) {
+          undoStack.pop();
+          updateUndo();
+          setYamlStatus('That block is written in a way the form cannot add to — ' +
+                        'add it in the Compose view instead.');
+          return;
+        }
+        structuralEdit(declLine, '');
         return;
       }
       flushPending();
       pushUndo('adding that ' + addWord(add.dataset.add));
-      var line = YAML.addItem(MODEL.doc, MODEL, add.dataset.service, add.dataset.add);
+
+      // A dynamic list group's button carries which list as "list:<key>" —
+      // one binder covers all of them in the model, so the key rides as its
+      // own argument rather than being folded into the binder string there.
+      var addBinder = add.dataset.add, listKey = '';
+      if (addBinder.slice(0, 5) === 'list:') {
+        listKey   = addBinder.slice(5);
+        addBinder = 'list';
+      }
+      var line = YAML.addItem(MODEL.doc, MODEL, add.dataset.service, addBinder, '', listKey);
       if (line < 0) {
         undoStack.pop();
         updateUndo();
@@ -1019,13 +1880,75 @@
       return;
     }
 
+    var declRename = event.target.closest('[data-decl-rename]');
+    if (declRename) {
+      var declKind = declRename.dataset.declKind;
+      var was = declRename.dataset.declName;
+      var declWord = DECL_WORD[declKind] || 'declaration';
+      var nameHost = declRename.closest('.stackman-declname').querySelector('.stackman-declname-text');
+      if (!nameHost) return;
+
+      inlineName(nameHost, was, {
+        say: showError,
+        save: function (next) {
+          clearError();
+          flushPending();
+          pushUndo('renaming the ' + declWord + ' "' + was + '" to "' + next + '"');
+          var renamed = YAML.renameDeclared(MODEL.doc, declKind, was, next);
+          if (!renamed.ok) {
+            undoStack.pop();
+            updateUndo();
+            return renamed.error;
+          }
+
+          structuralEdit(-1, 'Renamed "' + was + '" to "' + next + '"' +
+                        (renamed.refs > 0
+                          ? '. ' + renamed.refs + (renamed.refs === 1 ? ' reference' : ' references') + ' updated.'
+                          : '.'));
+
+          // structuralEdit() just redrew the whole form, which took focus with
+          // it — land it back on the pencil for the row that now exists.
+          var pencil = formHost.querySelector('[data-decl-rename][data-decl-kind="' + declKind +
+                      '"][data-decl-name="' + next + '"]');
+          if (pencil) pencil.focus();
+        }
+      });
+      return;
+    }
+
     var kill = event.target.closest('[data-remove]');
     if (!kill) return;
 
-    flushPending();
     var f = MODEL.fields[kill.dataset.row | 0];
     if (!f) return;
 
+    // A declaration splices out its whole block (and networks:/volumes:/…
+    // with it, when it was the last one) via YAML.removeDeclared rather than
+    // removeItem, which knows nothing of this binder. It does not refuse when
+    // a service still references the name — see PLAN_4.md's dangling-reference
+    // advice on the referencing row — so say how many do, instead.
+    if (f.binder === 'declared') {
+      var declKind = f.declKind, declName = f.parts.name.value;
+      var declWord = DECL_WORD[declKind] || 'declaration';
+      var refs = declaredRefCount(declKind, declName);
+
+      flushPending();
+      pushUndo('removing the ' + declWord + ' "' + declName + '"');
+      if (!YAML.removeDeclared(MODEL.doc, declKind, declName)) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus('That block is written in a way the form cannot remove — ' +
+                      'remove it in the Compose view instead.');
+        return;
+      }
+      structuralEdit(-1, 'Removed the ' + declWord + ' "' + declName + '"' +
+                    (refs > 0
+                      ? '. ' + refs + (refs === 1 ? ' service still refers' : ' services still refer') + ' to it.'
+                      : '. Undo is at the bottom if that was wrong.'));
+      return;
+    }
+
+    flushPending();
     pushUndo('removing ' + f.title);
     if (!YAML.removeItem(MODEL.doc, MODEL, f.id)) {
       undoStack.pop();
@@ -1688,6 +2611,35 @@
     });
   }
 
+  // This server's own docker networks — bridge/host/none are offered already,
+  // so only names beyond those (a macvlan, a user-defined bridge) are worth
+  // adding. Modelled on devLoad() just above: same first-reply-only redraw,
+  // guarded the same way, because opening the editor is exactly what this
+  // list is stale for otherwise.
+  function netLoad() {
+    return call('networks', {}, 15000).then(function (res) {
+      if (!res.ok) return res;
+
+      var options = CHOICES['setting/network_mode'].options;
+      var known = {};
+      for (var i = 0; i < options.length; i++) known[options[i][0]] = true;
+
+      var nets = res.networks || [];
+      for (var n = 0; n < nets.length; n++) {
+        var name = nets[n].name, driver = nets[n].driver;
+        if (!name || known[name]) continue;
+        options.push([name, driver ? name + ' — ' + driver + ' network on this server' : name]);
+        known[name] = true;
+      }
+
+      var first = !netLoaded;
+      netLoaded = true;
+      if (first && modal.open && MODEL && !commitTimer && !devPanel) reparse();
+
+      return res;
+    });
+  }
+
   function devShellHtml() {
     return '<div class="stackman-devhead">' +
              '<input type="text" class="stackman-input stackman-devfilter"' +
@@ -1902,6 +2854,9 @@
       return;
     }
 
+    var back = event.target.closest('[data-vol-switch]');
+    if (back) { if (!sanitised) swapVolumeToChoice(back); return; }
+
     var btn = event.target.closest('[data-tool]');
     if (!btn || sanitised) return;
     var box = btn.closest('.stackman-boxline').querySelector('.stackman-input');
@@ -2002,8 +2957,11 @@
 
     // Ask what hardware this server has, so device rows can be named after it
     // rather than showing a bare path. Not waited for — the form is usable at
-    // once and devLoad() redraws it when the names arrive.
+    // once and devLoad() redraws it when the names arrive. netLoad() does the
+    // same for this server's own docker networks, feeding the network_mode
+    // dropdown.
     devLoad().catch(function () {});
+    netLoad().catch(function () {});
 
     // Explicit, and after showModal(). The dialog's own "first focusable
     // descendant" rule would land on the view selector, which is nobody's

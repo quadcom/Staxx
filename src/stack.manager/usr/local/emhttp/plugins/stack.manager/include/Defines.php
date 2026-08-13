@@ -174,6 +174,39 @@ function stackman_docker_running(): bool {
 }
 
 /**
+ * Every network this server's docker knows about. The Form view's Network
+ * mode dropdown offers these alongside the three built-ins (bridge/host/none),
+ * which still work with an empty list — so a Docker that is down is not an
+ * error here, just nothing extra to offer.
+ *
+ * A network compose made for a stack of its own is left out. Those come and
+ * go with the stack that owns them, so offering "multi-tier_default" as
+ * somewhere to attach a container is offering a name that may not exist
+ * tomorrow. They are told apart by the label compose stamps on them, not by
+ * their "_default" name, which anyone is free to use by hand.
+ *
+ * @return array<int, array{name:string, driver:string}>
+ */
+function stackman_docker_networks(): array {
+  if (!stackman_docker_running()) return [];
+
+  $fmt = '{{.Name}}|{{.Driver}}|{{.Labels}}';
+  $out = stackman_sh(
+    escapeshellarg(stackman_docker_bin()).' network ls --format '.escapeshellarg($fmt), 10
+  );
+
+  $networks = [];
+  foreach (explode("\n", trim($out)) as $line) {
+    if ($line === '') continue;
+    [$name, $driver, $labels] = array_pad(explode('|', $line, 3), 3, '');
+    $name = trim($name);
+    if ($name === '' || strpos($labels, 'com.docker.compose.project') !== false) continue;
+    $networks[] = ['name' => $name, 'driver' => trim($driver)];
+  }
+  return $networks;
+}
+
+/**
  * Containers on the system grouped by their compose project.
  *
  * This is the grouping key the whole stack presentation rests on: compose

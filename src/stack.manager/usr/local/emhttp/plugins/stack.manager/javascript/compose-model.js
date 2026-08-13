@@ -523,8 +523,103 @@
    * Binding the file to form fields
    * ===================================================================== */
 
-  var SETTINGS = ['image', 'restart', 'network_mode', 'command', 'entrypoint',
-                  'user', 'hostname', 'privileged', 'shm_size'];
+  // The whole vocabulary the form knows, one entry per compose key: what
+  // shape its value takes, what to call it, which declared-name namespace
+  // (see buildForm's `declared`) a list entry's value is a reference into.
+  // Everything harvest(), inferTitle() and inferType() need is read from
+  // here, so adding a key is one line instead of edits in four places.
+  var KEYS = {
+    image:          { shape: 'scalar', always: 1 },
+    container_name: { shape: 'scalar', always: 1 },
+    restart:        { shape: 'scalar', always: 1, choices: 'restart' },
+    network_mode:   { shape: 'scalar', always: 1, choices: 'netmode', excludes: 'networks' },
+
+    ports:          { shape: 'list',  entry: 'port'   },
+    volumes:        { shape: 'list',  entry: 'volume', from: 'volumes' },
+    devices:        { shape: 'list',  entry: 'device' },
+    environment:    { shape: 'pairs' },
+    labels:         { shape: 'pairs' },
+
+    networks:       { shape: 'list',  entry: 'plain', from: 'networks' },
+    secrets:        { shape: 'list',  entry: 'plain', from: 'secrets'  },
+    configs:        { shape: 'list',  entry: 'plain', from: 'configs'  },
+    depends_on:     { shape: 'list',  entry: 'plain', from: 'services', title: 'Starts after' },
+    profiles:       { shape: 'list',  entry: 'plain' },
+    dns:            { shape: 'list',  entry: 'plain', title: 'DNS servers' },
+    cap_add:        { shape: 'list',  entry: 'plain', title: 'Extra permissions' },
+    expose:         { shape: 'list',  entry: 'plain', title: 'Internal ports', type: 'port' },
+    env_file:       { shape: 'list',  entry: 'plain', title: 'Variable files', tool: 'browse' },
+
+    healthcheck:    { shape: 'block', title: 'Health check' },
+    deploy:         { shape: 'block', title: 'Resource limits' },
+
+    command:        { shape: 'scalar' },
+    entrypoint:     { shape: 'scalar' },
+    user:           { shape: 'scalar' },
+    hostname:       { shape: 'scalar' },
+    privileged:     { shape: 'scalar', type: 'boolean' },
+    shm_size:       { shape: 'scalar' },
+    working_dir:    { shape: 'scalar', title: 'Working folder' },
+    mem_limit:      { shape: 'scalar', title: 'Memory limit' }
+  };
+
+  // Nested values the form can edit. The parser reaches these already and
+  // writeScalar needs only a spot — the only thing missing was a field pointing
+  // at one. An ABSENT leaf is never offered: creating a healthcheck block means
+  // inserting nested keys, which nothing here can do (see PLAN_7.md).
+  var LEAVES = {
+    healthcheck: {
+      test:           'The check itself',
+      interval:       'Check every',
+      timeout:        'Give up after',
+      retries:        'Failures allowed',
+      start_period:   'Grace period at start',
+      start_interval: 'Checking every, while starting',
+      disable:        'Disabled'
+    },
+    deploy: {
+      'resources.limits.cpus':         'CPU limit',
+      'resources.limits.memory':       'Memory limit',
+      'resources.reservations.cpus':   'CPU reserved',
+      'resources.reservations.memory': 'Memory reserved'
+    }
+  };
+
+  // A declaration's settings the form knows what to do with — the same shape
+  // as LEAVES above, pointed at harvestBlock via a table argument rather than
+  // a second copy of the walk. DECL_PRIMARY is the one setting per kind that
+  // stands for the whole declaration and gets its own box on the row, so it
+  // is excluded from the fold rather than shown twice.
+  var DECL_LEAVES = {
+    networks: { driver: 'Driver', internal: 'Internal only, no outside access',
+                external: 'Created outside this file', name: 'Real name in Docker',
+                attachable: 'Attachable' },
+    volumes:  { driver: 'Driver', external: 'Created outside this file',
+                name: 'Real name in Docker' },
+    secrets:  { file: 'File on the server', environment: 'From a variable',
+                external: 'Created outside this file' },
+    configs:  { file: 'File on the server', external: 'Created outside this file' }
+  };
+  var DECL_PRIMARY = { networks: 'driver', volumes: 'driver', secrets: 'file', configs: 'file' };
+
+  function keySpec(k) { return KEYS[k] || null; }
+
+  // Derived once at load rather than per service. ALWAYS_KEYS must stay in
+  // table order — image, container_name, restart, network_mode — because the
+  // Container group's field count depends on it (see harvest()). LIST_KEY
+  // maps a binder (what a harvested field calls itself) back to the compose
+  // key it lives under, for addItem()/removeItem(); env/label are pairs
+  // shapes so the table carries no `entry` for them and they are added by
+  // hand. FROM_WORD is only for phrasing the 1e dangling-reference note.
+  var ALWAYS_KEYS = [];
+  var LIST_KEY = { env: 'environment', label: 'labels' };
+  var FROM_WORD = { networks: 'network', volumes: 'volume', secrets: 'secret',
+                     configs: 'config', services: 'service' };
+  for (var _k in KEYS) {
+    if (!KEYS.hasOwnProperty(_k)) continue;
+    if (KEYS[_k].always) ALWAYS_KEYS.push(_k);
+    if (KEYS[_k].shape === 'list' && KEYS[_k].entry !== 'plain') LIST_KEY[KEYS[_k].entry] = _k;
+  }
 
   var LOCK_WORDS = {
     'merge':            'this comes from a shared block higher up the file',
@@ -578,6 +673,20 @@
     return { value: value, spot: spot || null, pre: pre || '', post: post || '' };
   }
 
+  // Split on ':' only outside a ${...}, because a variable's default value can
+  // contain one — "${PORT:-8080}:80" is two fields, not three, and splitting it
+  // naively hands the host box "-8081}" and destroys the expression on write.
+  function splitOutsideVars(s) {
+    var out = [], start = 0, depth = 0;
+    for (var i = 0; i < s.length; i++) {
+      if (s.charAt(i) === '$' && s.charAt(i + 1) === '{') { depth++; i++; continue; }
+      if (s.charAt(i) === '}' && depth > 0) { depth--; continue; }
+      if (s.charAt(i) === ':' && depth === 0) { out.push(s.slice(start, i)); start = i + 1; }
+    }
+    out.push(s.slice(start));
+    return out;
+  }
+
   // A short-form port: [ip:]host:container[/proto], or a bare container port.
   // Both halves live in one scalar, so each part rebuilds the whole string
   // around the half it owns.
@@ -589,7 +698,7 @@
       body  = body.slice(0, slash);
     }
 
-    var bits = body.split(':');
+    var bits = splitOutsideVars(body);
     if (bits.length === 1) {
       // Only a container port, so compose picks the host port itself.
       return {
@@ -614,7 +723,7 @@
 
   // A short-form volume or device: host:container[:mode], or a single path.
   function splitPathShort(text, spot) {
-    var bits = text.split(':');
+    var bits = splitOutsideVars(text);
     if (bits.length === 1) {
       // An anonymous volume — docker manages the storage, so there is no host
       // path to show or change.
@@ -642,6 +751,14 @@
     };
   }
 
+  // A plain list entry is one whole value, so it keys on itself. Unlike a port
+  // or a mount there is no container half to bind to, which means renaming an
+  // entry IS replacing it.
+  function splitPlain(text, spot) {
+    var s = String(text).trim();
+    return s ? { key: s, parts: { value: part(s, spot) } } : null;
+  }
+
   // One editable thing found in a service.
   function target(binder, key, opts) {
     var c = opts.comment || { secret: false, required: false, note: '' };
@@ -657,20 +774,28 @@
       commentSpot: opts.commentSpot || null,
       raw: opts.raw || '',
       locked: !!opts.locked,
-      lockReason: opts.lockReason || ''
+      lockReason: opts.lockReason || '',
+      absent: !!opts.absent,
+      blocked: !!opts.blocked,
+      advice: opts.advice || [],
+      listKey: opts.listKey || '',
+      // A plain list entry's position in the seq — undefined for anything
+      // that isn't one. Only used to tell two identical-looking entries
+      // apart when building a 'list' field's id (see fieldsFor).
+      index: opts.index
     };
   }
 
-  function lockedTarget(binder, key, range, reason, raw) {
-    return target(binder, key, { range: range, locked: true, lockReason: reason, raw: raw || '' });
+  function lockedTarget(binder, key, range, reason, raw, listKey) {
+    return target(binder, key, { range: range, locked: true, lockReason: reason, raw: raw || '', listKey: listKey });
   }
 
-  function harvestList(out, binder, pair, splitter, lines) {
+  function harvestList(out, binder, pair, splitter, lines, listKey) {
     var v = pair.value;
     if (!v) return;
     if (v.kind === 'opaque') {
       out.push(lockedTarget(binder, '@' + pair.key,
-        { start: pair.leadStart, end: pair.end }, lockReason(v.reason), v.raw));
+        { start: pair.leadStart, end: pair.end }, lockReason(v.reason), v.raw, listKey));
       return;
     }
     if (v.kind !== 'seq') return;
@@ -682,21 +807,38 @@
       if (!it.value || it.value.kind === 'opaque') {
         out.push(lockedTarget(binder, '@' + pair.key + '#' + i, range,
           lockReason(it.value ? it.value.reason : 'unparsable'),
-          it.value ? it.value.raw : ''));
+          it.value ? it.value.raw : '', listKey));
         continue;
       }
 
-      if (it.value.kind === 'map') { harvestLongForm(out, binder, it, range, lines); continue; }
+      if (it.value.kind === 'map') {
+        // A 'list' binder has no long form — {target:, ...} is a ports/volumes
+        // thing — so a map item here is not something harvestLongForm can read
+        // either; it would bail on the missing target: and drop the entry
+        // silently. Lock it instead, so it stays visible.
+        if (binder === 'list') {
+          var span = lines.slice(it.start, it.end);
+          var raw = span.map(function (l) { return l.slice(it.indent); }).join('\n');
+          out.push(lockedTarget(binder, '@' + pair.key + '#' + i, range,
+            'this entry is written as a block of its own', raw, listKey));
+          continue;
+        }
+        harvestLongForm(out, binder, it, range, lines, listKey);
+        continue;
+      }
       if (it.value.kind !== 'scalar') continue;
 
       var s = splitter(it.value.value, scalarSpot(it.value));
+      if (!s) continue;
       out.push(target(binder, s.key, {
-        parts: { host: s.host, container: s.container },
+        parts: s.parts || { host: s.host, container: s.container },
         mode: s.mode,
         range: range,
         comment: readComment(it.value.comment),
         commentSpot: commentSpot(it.value, lines),
-        lockReason: s.hostNote || ''
+        lockReason: s.hostNote || '',
+        listKey: listKey,
+        index: i
       }));
     }
   }
@@ -704,7 +846,7 @@
   // The spelled-out forms: {target, published, protocol} for a port,
   // {type, source, target} for a volume. Here the two halves are separate
   // scalars on separate lines, so each part addresses its own.
-  function harvestLongForm(out, binder, item, range, lines) {
+  function harvestLongForm(out, binder, item, range, lines, listKey) {
     var map = item.value;
     var pick = function (k) {
       var p = map.pairs[k];
@@ -725,7 +867,8 @@
           container: part(tgt.value, scalarSpot(tgt))
         },
         range: range, comment: note.comment, commentSpot: note.spot,
-        lockReason: pub ? '' : 'no host port is set here'
+        lockReason: pub ? '' : 'no host port is set here',
+        listKey: listKey
       }));
       return;
     }
@@ -738,7 +881,8 @@
       },
       mode: ro && /^(true|yes)$/i.test(ro.value) ? 'ro' : '',
       range: range, comment: note.comment, commentSpot: note.spot,
-      lockReason: src ? '' : 'this mount has no source path to edit'
+      lockReason: src ? '' : 'this mount has no source path to edit',
+      listKey: listKey
     }));
   }
 
@@ -809,43 +953,135 @@
     }
   }
 
+  // One SETTINGS key that IS present in the file, as either an editable
+  // target or a locked one. Shared by the ALWAYS loop and the file-order
+  // loop below so the two can never drift apart.
+  function settingTarget(p, key, lines) {
+    var range = { start: p.leadStart, end: p.end };
+    if (p.value && p.value.kind === 'scalar') {
+      return target('setting', key, {
+        parts: { value: part(p.value.value, scalarSpot(p.value)) },
+        range: range,
+        comment: readComment(p.value.comment),
+        commentSpot: commentSpot(p.value, lines)
+      });
+    }
+    // A command spelled out as a list of arguments is a perfectly ordinary
+    // thing to find, so say that rather than falling back on "the form
+    // cannot read this", which sounds like the file is wrong.
+    var why = !p.value ? 'this setting has no value'
+            : p.value.kind === 'seq' ? 'this is written as a list of separate items'
+            : p.value.kind === 'map' ? 'this is written as a block of its own'
+            : lockReason(p.value.reason);
+    // Only a sealed node carries `raw`. A seq or map was parsed properly and
+    // has none, so a command written as a list would otherwise reach the form
+    // as an empty code block. Either way the text shown is the file's own
+    // lines less the key's own indent, so a command reads as a command rather
+    // than as a fragment of a file — and so the two ways of writing one over
+    // several lines, a list and a block scalar, look the same on screen.
+    var span = p.value && p.value.raw ? p.value.raw.split('\n')
+                                      : lines.slice(p.start, p.end);
+    var raw = span.map(function (l) { return l.slice(p.indent); }).join('\n');
+    return lockedTarget('setting', key, range, why, raw);
+  }
+
+  // healthcheck: and deploy: are 'block' shape — a map that has editable
+  // leaves inside it. Harvest the LEAVES paths first, then cover every direct
+  // child that produced no leaf field, so the block is either broken into
+  // editable leaves or shown whole, never partly both. The parent key itself
+  // emits nothing here, which is what stops it also reaching the catch-all
+  // and rendering twice.
+  // `table`/`lookupKey` let declaredFields() point this at DECL_LEAVES under
+  // a lookup key ('networks') that differs from the target prefix it writes
+  // ('networks.frontend_net') — every existing caller omits both and gets
+  // the original healthcheck/deploy behaviour unchanged.
+  function harvestBlock(out, key, p, lines, table, lookupKey) {
+    if (!p.value || p.value.kind !== 'map') { out.push(settingTarget(p, key, lines)); return; }
+
+    var leaves = (table || LEAVES)[lookupKey || key] || {};
+    var covered = [];
+
+    for (var subPath in leaves) {
+      if (!leaves.hasOwnProperty(subPath)) continue;
+      var segs = subPath.split('.'), node = p.value, leafPair = null, ok = true;
+      for (var i = 0; i < segs.length; i++) {
+        if (!node || node.kind !== 'map') { ok = false; break; }
+        leafPair = node.pairs[segs[i]];
+        if (!leafPair) { ok = false; break; }
+        node = leafPair.value;
+      }
+      if (!ok || !leafPair.value || leafPair.value.kind !== 'scalar') continue;
+      out.push(settingTarget(leafPair, key + '.' + subPath, lines));
+      covered.push(key + '.' + subPath);
+    }
+
+    for (var c = 0; c < p.value.keys.length; c++) {
+      var childName = p.value.keys[c];
+      var childTarget = key + '.' + childName;
+      var already = false;
+      for (var j = 0; j < covered.length; j++) {
+        if (covered[j] === childTarget || covered[j].indexOf(childTarget + '.') === 0) { already = true; break; }
+      }
+      if (!already) out.push(settingTarget(p.value.pairs[childName], childTarget, lines));
+    }
+  }
+
   function harvest(serviceMap, lines) {
     var out = [], i, p;
 
-    var listKeys = { ports: 'port', volumes: 'volume', devices: 'device' };
-    var pairKeys = { environment: 'env', labels: 'label' };
+    // The Container group's four rows come first, in a fixed order, whether
+    // or not the file has them — so the field count for a service never
+    // changes when one of them materialises (see fieldsFor()).
+    for (i = 0; i < ALWAYS_KEYS.length; i++) {
+      var akey = ALWAYS_KEYS[i];
+      var spec = KEYS[akey];
+      p = serviceMap.pairs[akey];
+
+      // Compose refuses a service with both of these, so an empty slot here is
+      // a trap: filling it in would make a working file invalid.
+      if (spec.excludes && serviceMap.pairs[spec.excludes]) {
+        out.push(target('setting', akey, {
+          parts: { value: part('', null) }, range: null, blocked: true,
+          advice: ['this service joins the networks listed below instead']
+        }));
+        continue;
+      }
+
+      out.push(p ? settingTarget(p, akey, lines)
+                  : target('setting', akey, { parts: { value: part('', null) }, range: null, absent: true }));
+    }
 
     for (i = 0; i < serviceMap.keys.length; i++) {
       var key = serviceMap.keys[i];
+      if (KEYS[key] && KEYS[key].always) continue;      // already emitted above
       p = serviceMap.pairs[key];
+      var s = keySpec(key);
 
-      if (listKeys[key]) {
-        harvestList(out, listKeys[key], p, key === 'ports' ? splitPortShort : splitPathShort, lines);
-        continue;
-      }
-      if (pairKeys[key]) { harvestPairs(out, pairKeys[key], p, lines); continue; }
-
-      if (SETTINGS.indexOf(key) >= 0) {
-        var range = { start: p.leadStart, end: p.end };
-        if (p.value && p.value.kind === 'scalar') {
-          out.push(target('setting', key, {
-            parts: { value: part(p.value.value, scalarSpot(p.value)) },
-            range: range,
-            comment: readComment(p.value.comment),
-            commentSpot: commentSpot(p.value, lines)
-          }));
-        } else {
-          // A command spelled out as a list of arguments is a perfectly
-          // ordinary thing to find, so say that rather than falling back on
-          // "the form cannot read this", which sounds like the file is wrong.
-          var why = !p.value ? 'this setting has no value'
-                  : p.value.kind === 'seq' ? 'this is written as a list of separate items'
-                  : p.value.kind === 'map' ? 'this is written as a block of its own'
-                  : lockReason(p.value.reason);
-          out.push(lockedTarget('setting', key, range, why,
-            p.value ? (p.value.raw || '') : ''));
+      if (s) {
+        if (s.shape === 'list' && s.entry !== 'plain') {
+          harvestList(out, s.entry, p, s.entry === 'port' ? splitPortShort : splitPathShort, lines, key);
+          continue;
         }
+        if (s.shape === 'list' && s.entry === 'plain') {
+          if (p.value && p.value.kind === 'seq') { harvestList(out, 'list', p, splitPlain, lines, key); continue; }
+          out.push(settingTarget(p, key, lines));   // depends_on's long form, etc.
+          continue;
+        }
+        if (s.shape === 'pairs') {
+          harvestPairs(out, key === 'environment' ? 'env' : 'label', p, lines);
+          continue;
+        }
+        if (s.shape === 'scalar') { out.push(settingTarget(p, key, lines)); continue; }
+        if (s.shape === 'block') { harvestBlock(out, key, p, lines); continue; }
       }
+
+      // Compose has far more keys than the form has controls, and a key the
+      // form says nothing about reads as a key the file does not have. Hand
+      // every one left to settingTarget: a scalar becomes an editable
+      // Advanced row, a block becomes a read-only one that shows itself and
+      // says why.
+      if (key === '<<' || key.slice(0, 2) === 'x-') continue;
+      out.push(settingTarget(p, key, lines));
     }
     return out;
   }
@@ -948,19 +1184,41 @@
   }
 
   function inferTitle(t) {
+    if (t.binder === 'setting' && KEYS[t.target] && KEYS[t.target].title) return KEYS[t.target].title;
     if (t.binder === 'port') return 'Port ' + t.target.split('/')[0];
     if (t.target.charAt(0) === '@') return humanise(t.target.slice(1).split('#')[0]);
+    // A nested leaf's target is dotted — 'healthcheck.interval' — so its
+    // title lives in LEAVES rather than KEYS. A dotted target LEAVES does not
+    // name (an uncovered child, e.g. deploy.replicas) falls back to the last
+    // segment, so it reads "Replicas" rather than the whole path.
+    var dot = t.target.indexOf('.');
+    if (t.binder === 'setting' && dot > 0) {
+      var block = LEAVES[t.target.slice(0, dot)];
+      var title = block && block[t.target.slice(dot + 1)];
+      if (title) return title;
+      var segs = t.target.split('.');
+      return humanise(segs[segs.length - 1]);
+    }
     return humanise(t.target);
   }
 
   function inferType(t) {
     if (t.binder === 'port') return 'port';
     if (t.binder === 'volume' || t.binder === 'device') return 'path';
-    if (t.binder === 'setting' && t.target === 'privileged') return 'boolean';
+    if (t.binder === 'setting' && KEYS[t.target] && KEYS[t.target].type) return KEYS[t.target].type;
+    if (t.binder === 'list') return (KEYS[t.listKey] && KEYS[t.listKey].type) || 'text';
     var v = t.parts.value ? t.parts.value.value : '';
     if (/^(true|false)$/i.test(v)) return 'boolean';
     if (/^-?\d+$/.test(v)) return 'number';
     return 'text';
+  }
+
+  // $$ is an escaped literal dollar, never a variable — strip pairs of it
+  // before looking for a real ${...} or bare $VAR reference, so "$$LITERAL"
+  // reads as plain text but "$$FOO ${BAR}" still carries the 1f advice.
+  function interpolates(s) {
+    var stripped = String(s).replace(/\$\$/g, '');
+    return /\$\{|\$[A-Za-z_]/.test(stripped);
   }
 
   /* ---- putting a service's fields together ------------------------------- */
@@ -980,10 +1238,39 @@
       // only editable box IS its name, would render locked.
       var single  = !!(t.parts.value && t.parts.value.spot) ||
                     !!(t.parts.name  && t.parts.name.spot);
-      var usable  = hasHost || single || !!(t.parts.container && t.parts.container.spot);
+      // An absent Container slot has no spot yet, and a blocked one (see
+      // network_mode's excludes check in harvest()) has none either — both
+      // count as usable on their own rather than falling into `locked`.
+      var usable  = hasHost || single || !!(t.parts.container && t.parts.container.spot) ||
+                    t.absent || t.blocked;
+      var fixed   = t.binder === 'setting' && ALWAYS_KEYS.indexOf(t.target) >= 0;
+
+      // 1f: a value that reaches into a variable defined outside the file
+      // (a .env entry, a shell export) stops being a plain string the moment
+      // someone types over it — flag every part that carries one.
+      var advice = t.advice.slice();
+      for (var pk in t.parts) {
+        if (t.parts.hasOwnProperty(pk) && t.parts[pk] && interpolates(t.parts[pk].value)) {
+          advice.push('this value uses a variable defined outside the compose file — ' +
+                       'typing over it replaces the variable with a fixed value');
+          break;
+        }
+      }
+
+      // A 'list' binder covers eight different compose keys, so its own value
+      // is not enough to make an id unique — "networks: [web]" and
+      // "depends_on: [web]" would otherwise both become "a/list/web". The index
+      // is always appended, not just on a genuine duplicate value — editing one
+      // entry to match another would otherwise change an untouched sibling's id
+      // too (the edit-stability docs/x-unraid-schema.md:317 asks for), and
+      // stacks.js looks a row up by this exact id string in several places, so
+      // the shape must never come in two forms.
+      var listSpec = t.listKey && KEYS[t.listKey];
+      var listSuffix = (t.binder === 'list' && typeof t.index === 'number') ? '#' + t.index : '';
 
       fields.push({
-        id: serviceName + '/' + t.binder + '/' + t.target,
+        id: serviceName + '/' + t.binder +
+            (t.binder === 'list' ? '.' + t.listKey + listSuffix : '') + '/' + t.target,
         service: serviceName,
         binder: t.binder,
         target: t.target,
@@ -999,14 +1286,117 @@
         range: t.range,
         locked: t.locked || !usable,
         lockReason: t.lockReason ||
-                    (!usable ? 'this has no value the form can edit' : '')
+                    (!usable ? 'this has no value the form can edit' : ''),
+        absent: t.absent,
+        blocked: t.blocked,
+        advice: advice,
+        fixed: fixed,
+        fixedRequired: fixed && (t.target === 'image' || t.target === 'container_name'),
+        listKey: t.listKey || '',
+        // Carried here rather than in stacks.js, so the KEYS table stays the
+        // one place that knows a key's namespace and tool — the whole point
+        // of consolidating it in Phase 1.
+        groupTitle: listSpec ? (listSpec.title || humanise(t.listKey)) : '',
+        from: listSpec ? (listSpec.from || '') : '',
+        tool: listSpec ? (listSpec.tool || '') : ''
       });
     }
     return fields;
   }
 
+  /* ---- the file's own declarations: networks, volumes, secrets, configs -- */
+
+  // A top-level declaration is a name with a map of settings under it — the
+  // same shape fieldsFor() builds for a service, but there is no service to
+  // hang it off, so this is a small parallel path rather than a detour
+  // through fieldsFor (which is tied to one service's field ids, fixed
+  // Container keys and list-key suffixes that a declaration has none of).
+  //
+  // Range choice: the row's range is deliberately only the declaration's OWN
+  // name line ({leadStart, start+1}), not the whole pair down to `p.end` —
+  // the fold's children live on the lines below and need their own ranges,
+  // and buildIndex()/fieldAtLine() map one line to exactly one field, so the
+  // row and its fold must never both claim the same span.
+  function declaredFields(doc, lines) {
+    var fields = [];
+    var kinds = ['networks', 'volumes', 'secrets', 'configs'];
+
+    for (var ki = 0; ki < kinds.length; ki++) {
+      var kind = kinds[ki];
+      var block = doc.root.pairs[kind];
+      if (!block || !block.value || block.value.kind !== 'map') continue;
+
+      for (var ni = 0; ni < block.value.keys.length; ni++) {
+        var name = block.value.keys[ni];
+        var pair = block.value.pairs[name];
+        var primaryKey  = DECL_PRIMARY[kind];
+        var primaryPair = pair.value && pair.value.kind === 'map' ? pair.value.pairs[primaryKey] : null;
+        var primaryNode = primaryPair && primaryPair.value && primaryPair.value.kind === 'scalar'
+                           ? primaryPair.value : null;
+
+        // The row itself.
+        var rowTarget = target('declared', kind + '.' + name, {
+          parts: {
+            name:  part(name, keySpot(pair)),
+            value: primaryNode ? part(primaryNode.value, scalarSpot(primaryNode)) : part('', null)
+          },
+          range: { start: pair.leadStart, end: pair.start + 1 },
+          comment: primaryNode ? readComment(primaryNode.comment) : undefined,
+          commentSpot: primaryNode ? commentSpot(primaryNode, lines) : null
+        });
+
+        fields.push({
+          id: '/declared/' + rowTarget.target,
+          service: '', binder: rowTarget.binder, target: rowTarget.target,
+          title: humanise(name), type: 'text', mode: rowTarget.mode,
+          parts: rowTarget.parts, note: rowTarget.note,
+          sensitive: rowTarget.secret, required: rowTarget.required,
+          commentSpot: rowTarget.commentSpot, raw: rowTarget.raw, range: rowTarget.range,
+          locked: rowTarget.locked, lockReason: rowTarget.lockReason,
+          absent: rowTarget.absent, blocked: rowTarget.blocked, advice: rowTarget.advice,
+          fixed: false, fixedRequired: false, listKey: '',
+          groupTitle: '', from: '', tool: '',
+          declKind: kind, fold: false
+        });
+
+        // Everything else on the declaration, in the fold. Same shape as
+        // healthcheck:, so harvestBlock does the walk — just pointed at
+        // DECL_LEAVES under the kind, rather than LEAVES under the target.
+        if (!pair.value || pair.value.kind !== 'map') continue;
+
+        var titleTable = DECL_LEAVES[kind] || {};
+        var raw = [];
+        harvestBlock(raw, kind + '.' + name, pair, lines, DECL_LEAVES, kind);
+
+        for (var ri = 0; ri < raw.length; ri++) {
+          var t = raw[ri];
+          var childKey = t.target.slice((kind + '.' + name + '.').length);
+          if (childKey === primaryKey) continue;   // already the row's own value box
+
+          fields.push({
+            id: '/declared/' + t.target,
+            service: '', binder: 'declared', target: t.target,
+            title: titleTable[childKey] || humanise(childKey),
+            type: inferType(t), mode: t.mode, parts: t.parts, note: t.note,
+            sensitive: t.secret, required: t.required, commentSpot: t.commentSpot,
+            raw: t.raw, range: t.range, locked: t.locked, lockReason: t.lockReason,
+            absent: t.absent, blocked: t.blocked, advice: t.advice,
+            fixed: false, fixedRequired: false, listKey: '',
+            groupTitle: '', from: '', tool: '',
+            declKind: kind, fold: true
+          });
+        }
+      }
+    }
+    return fields;
+  }
+
   function buildForm(doc) {
-    var out = { stack: {}, services: [], fields: [], warnings: [], sealed: doc.sealed, ok: true };
+    // `declared` is seeded here rather than where it is filled in, because both
+    // early returns below happen first — a caller reading declared.networks on
+    // an unreadable file must find an empty list, not undefined.
+    var out = { stack: {}, services: [], fields: [], warnings: [], sealed: doc.sealed, ok: true,
+                declared: { networks: [], volumes: [], secrets: [], configs: [], services: [] } };
 
     if (!doc.root || doc.root.kind !== 'map') {
       out.ok = false;
@@ -1026,6 +1416,17 @@
     if (!svc || !svc.value || svc.value.kind !== 'map') {
       out.warnings.push({ line: 0, message: 'This file lists no services.' });
       return out;
+    }
+
+    // The top-level blocks are a namespace of names declared once and
+    // referenced by services — read one level deep, no recursion. A name
+    // with a null value (declared, nothing under it) still counts, because
+    // .keys lists it regardless of what its value turned out to be.
+    out.declared.services = svc.value.keys.slice();
+    var declKinds = ['networks', 'volumes', 'secrets', 'configs'];
+    for (var dk = 0; dk < declKinds.length; dk++) {
+      var dp = doc.root.pairs[declKinds[dk]];
+      if (dp && dp.value && dp.value.kind === 'map') out.declared[declKinds[dk]] = dp.value.keys.slice();
     }
 
     for (var i = 0; i < svc.value.keys.length; i++) {
@@ -1071,6 +1472,33 @@
             'the file and can’t be edited here.'
           : ''
       });
+    }
+
+    // The Stack section: the file's own networks/volumes/secrets/configs,
+    // appended after every service's fields. Order in the array does not
+    // matter — data-row is an index into it — so appending leaves every
+    // existing field's index untouched.
+    out.fields = out.fields.concat(declaredFields(doc, doc.lines));
+
+    // 1e: a field that names a network, volume, secret or service the file
+    // never declares is an error compose only reports at start — flag it
+    // here instead. Read off f.from, which fieldsFor already worked out from
+    // KEYS[...].from, so a volume's own reference and a Phase 2 plain-entry
+    // reference (networks, secrets, configs, depends_on) are found the same
+    // way rather than needing a second lookup through LIST_KEY, which cannot
+    // resolve a 'list' binder back to the one key a given field lives under.
+    for (var fi = 0; fi < out.fields.length; fi++) {
+      var f = out.fields[fi];
+      if (!f.from) continue;
+
+      var val = f.parts.host ? f.parts.host.value : (f.parts.value ? f.parts.value.value : '');
+      if (!val || val.indexOf('${') >= 0) continue;
+      if (f.parts.host && val.indexOf('/') >= 0) continue;      // a path, not a named reference
+      if (f.from === 'networks' && val === 'default') continue;
+
+      if (out.declared[f.from].indexOf(val) < 0) {
+        f.advice.push('no ' + FROM_WORD[f.from] + ' called ' + val + ' is defined in this file');
+      }
     }
 
     out.index = buildIndex(out);
@@ -1141,7 +1569,36 @@
     var f = fieldById(form, id);
     if (!f || f.locked) return false;
     var p = f.parts[which];
-    if (!p || !p.spot) return false;
+    if (!p) return false;
+    if (!p.spot) {
+      // A declaration with nothing under it yet — "frontend_net:" and no
+      // driver line — needs a nested insert rather than addSetting's
+      // service-level one. A blank value leaves it exactly as it was: a
+      // bare declaration is already a complete, valid one (an ordinary
+      // bridge network), so there is nothing to write.
+      if (f.binder === 'declared' && which === 'value') {
+        if (!String(value).trim()) return true;
+        var block = doc.root.pairs[f.declKind];
+        var declPair = block && block.value && block.value.kind === 'map'
+                        ? block.value.pairs[f.target.slice(f.declKind.length + 1)] : null;
+        var primaryKey = DECL_PRIMARY[f.declKind];
+        if (!declPair || !primaryKey) return false;
+        return insertChild(doc, declPair, primaryKey, value) >= 0;
+      }
+      // An absent Container slot has no line yet. A blank must write nothing
+      // — typing into an empty box and moving on must not plant a bare
+      // "restart:" in the file just because the box was focused. Anything
+      // else creates the line, key and value together, via addSetting.
+      if (!f.absent || which !== 'value') return false;
+      if (!String(value).trim()) return true;
+      return addSetting(doc, form, f.service, f.target, value) >= 0;
+    }
+    // Writing a value back unchanged must never touch the file. Beyond being
+    // wasteful it is a correctness rule: emitScalar quotes a bare true or false to
+    // stop a string being misread as a boolean, so re-emitting an unquoted `true`
+    // would rewrite the line it came from. Nothing here needs to decide what the
+    // value means when the answer is "leave it exactly as it was".
+    if (String(value) === String(p.value)) return true;
     return writeScalar(doc, p.spot, p.pre + value + p.post, p.spot.style);
   }
 
@@ -1177,11 +1634,6 @@
    * key is not there.
    */
 
-  var LIST_KEY = {
-    port: 'ports', volume: 'volumes', device: 'devices',
-    env: 'environment', label: 'labels'
-  };
-
   function pad(n) {
     return n > 0 ? new Array(n + 1).join(' ') : '';
   }
@@ -1211,7 +1663,7 @@
   // produce a path to hardware that does not exist. Whether it duplicates
   // something already in the file is the caller's question, since only the
   // caller knows what to say about it.
-  function newEntry(binder, taken, service, shape, value) {
+  function newEntry(binder, taken, service, shape, value, listKey, declared) {
     if (typeof value === 'string' && value !== '') return value;
 
     if (binder === 'port') {
@@ -1229,6 +1681,47 @@
       var d = freeName(taken, '/dev/dri');
       return d + ':' + d;
     }
+    if (binder === 'list') {
+      // A key with a declared-name namespace (networks, secrets, configs,
+      // depends_on) offers the first name not already on this service, so
+      // the add button hands over something that is already valid rather
+      // than a word the user must remember to replace. Everything else is a
+      // fixed, obviously-a-placeholder literal.
+      var spec = KEYS[listKey] || {};
+      if (spec.from && declared) {
+        for (var d2 = 0; d2 < declared.length; d2++) {
+          if (taken.indexOf(declared[d2]) < 0) return declared[d2];
+        }
+      }
+      var LIST_PLACEHOLDER = {
+        networks: 'default', profiles: 'extras', dns: '1.1.1.1',
+        cap_add: 'NET_ADMIN', expose: '8080', env_file: './app.env',
+        depends_on: 'other-service', secrets: 'my_secret', configs: 'my_config'
+      };
+      var base = LIST_PLACEHOLDER[listKey] || 'value';
+
+      // expose is a bare port number and dns an IP address, so a text suffix
+      // ("8080-2", "1.1.1.1-2") would look like a valid value while not being
+      // one — increment the number/last octet instead, same as the port
+      // binder above.
+      if (listKey === 'expose') {
+        var pn = parseInt(base, 10);
+        while (taken.indexOf(String(pn)) >= 0) pn++;
+        return String(pn);
+      }
+      if (listKey === 'dns') {
+        var octets = base.split('.'), last = parseInt(octets[3], 10), candidate;
+        do {
+          candidate = octets.slice(0, 3).join('.') + '.' + last;
+          last++;
+        } while (taken.indexOf(candidate) >= 0);
+        return candidate;
+      }
+      // Everything else here is an obvious placeholder already, and the new
+      // box's text is selected for overtyping immediately (structuralEdit in
+      // stacks.js), so a suffix is enough.
+      return freeName(taken, base, '-');
+    }
     // A plain word rather than "". Quoting is never removed once it is there,
     // so an empty double-quoted placeholder would leave every variable added
     // through the form quoted for the rest of the file's life.
@@ -1241,18 +1734,28 @@
    * Returns the line the new entry landed on, or -1 if it was refused.
    *
    * `value` is optional and, when given, is written instead of a placeholder.
+   * `listKey` is the compose key to append to — needed for a 'list' binder,
+   * which covers eight keys and so cannot be looked up from the binder alone.
    */
-  function addItem(doc, form, service, binder, value) {
-    var key = LIST_KEY[binder];
+  function addItem(doc, form, service, binder, value, listKey) {
+    var key = listKey || LIST_KEY[binder];
     if (!key) return -1;
 
     var svc = serviceMapOf(doc, service);
     if (!svc) return -1;
 
+    var spec = KEYS[key] || {};
+    var declared = spec.from ? form.declared[spec.from] : null;
+
     var taken = [], i;
     for (i = 0; i < form.fields.length; i++) {
-      if (form.fields[i].service === service && form.fields[i].binder === binder) {
-        taken.push(form.fields[i].target);
+      var ff = form.fields[i];
+      // A 'list' binder covers several keys at once, so "taken" must be
+      // scoped to this key too — otherwise a name already used under
+      // depends_on would wrongly block the same name being offered under
+      // networks.
+      if (ff.service === service && ff.binder === binder && (binder !== 'list' || ff.listKey === key)) {
+        taken.push(ff.target);
       }
     }
 
@@ -1271,19 +1774,19 @@
         gap = pad(Math.max(1, last.contentCol - last.indent - 1));
       }
       splice(doc, v.end, 0,
-             [pad(v.indent) + '-' + gap + newEntry(binder, taken, service, 'seq', value)]);
+             [pad(v.indent) + '-' + gap + newEntry(binder, taken, service, 'seq', value, key, declared)]);
       return v.end;
     }
 
     if (v && v.kind === 'map') {
-      splice(doc, v.end, 0, [pad(v.indent) + newEntry(binder, taken, service, 'map', value)]);
+      splice(doc, v.end, 0, [pad(v.indent) + newEntry(binder, taken, service, 'map', value, key, declared)]);
       return v.end;
     }
 
     if (pair) {                       // "ports:" with nothing under it
       var at = pair.end;
       splice(doc, at, 0,
-             [pad(pair.indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value)]);
+             [pad(pair.indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared)]);
       return at;
     }
 
@@ -1312,11 +1815,72 @@
 
     lines.push(pad(indent) + key + ':');
     lines.push(binder === 'env' || binder === 'label'
-      ? pad(indent + 2) + newEntry(binder, taken, service, 'map', value)
-      : pad(indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value));
+      ? pad(indent + 2) + newEntry(binder, taken, service, 'map', value, key, declared)
+      : pad(indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared));
 
     splice(doc, to, 0, lines);
     return to + lines.length - 1;
+  }
+
+  // Writes one `key: value` line as a child of `pair`, at pair.indent + 2.
+  // Shared rather than copied because a declaration's driver, a service's
+  // setting and (later) a healthcheck's timings are the same write at three
+  // different depths — see PLAN_7.md.
+  //
+  // `value` of null/undefined writes a bare "key:" — a complete declaration
+  // on its own (an ordinary bridge network) — rather than refusing for want
+  // of something to emit. `before` names a sibling key the new line must
+  // land ahead of; addSetting uses it to keep a settings block's x-unraid
+  // tail last. Works whether `pair` already has a map under it or nothing at
+  // all, which is what lets addDeclared reuse this for a brand-new block.
+  //
+  // Returns the inserted line number, or -1 when emitScalar refuses the value.
+  function insertChild(doc, pair, key, value, before) {
+    var raw = null;
+    if (value !== undefined && value !== null) {
+      raw = emitScalar(value, 'plain', false);
+      if (raw === null) return -1;
+    }
+
+    var indent = pair.indent + 2;
+    var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
+
+    var after = null, i;
+    if (map) {
+      for (i = 0; i < map.keys.length; i++) {
+        if (map.keys[i] === before) continue;
+        after = map.pairs[map.keys[i]];
+      }
+    }
+
+    var to    = after ? after.end : (map ? map.start : pair.end);
+    var lines = [];
+
+    // Match the file's own habit: if the key above this one is separated from
+    // its neighbour by a blank line, the new line gets one too.
+    if (after && after.leadStart > 0 && doc.lines[after.leadStart - 1] !== undefined &&
+        doc.lines[after.leadStart - 1].trim() === '') {
+      lines.push('');
+    }
+
+    lines.push(pad(indent) + key + (raw === null ? ':' : ': ' + raw));
+
+    splice(doc, to, 0, lines);
+    return to + lines.length - 1;
+  }
+
+  /**
+   * Add a plain setting (one of ALWAYS) that has no line in the file yet.
+   * There is no "taken" name check here, unlike addItem — a setting key is
+   * unique by definition, so no placeholder needs to dodge a collision.
+   *
+   * Returns the inserted line number, or -1 when the value cannot be written
+   * or the service cannot be read.
+   */
+  function addSetting(doc, form, service, key, value) {
+    var svc = serviceMapOf(doc, service);
+    if (!svc) return -1;
+    return insertChild(doc, svc, key, value, 'x-unraid');
   }
 
   /**
@@ -1327,7 +1891,7 @@
     var f = fieldById(form, id);
     if (!f || !f.range) return false;
 
-    var key = LIST_KEY[f.binder];
+    var key = f.listKey || LIST_KEY[f.binder];
     if (!key) return false;                     // a plain setting is not a list
 
     var svc = serviceMapOf(doc, f.service);
@@ -1364,6 +1928,71 @@
     // range.start is the entry's leadStart, so it takes its own description
     // comment along rather than orphaning it above the next entry.
     splice(doc, f.range.start, f.range.end - f.range.start, []);
+    return true;
+  }
+
+  /**
+   * Declares a name under the top-level <kind>: block — networks, volumes,
+   * secrets or configs — creating the block (plus this, its first child) at
+   * the end of the document when it is not there yet, since that is where
+   * compose files conventionally put these: after services:.
+   *
+   * Returns the inserted line, or -1 when the block is written in a way this
+   * parser cannot add to (an alias, a flow map).
+   */
+  function addDeclared(doc, kind, name) {
+    if (!doc.root || doc.root.kind !== 'map') return -1;
+
+    var block = doc.root.pairs[kind];
+    if (block) {
+      if (block.value && block.value.kind !== 'map') return -1;
+      var existing = block.value ? block.value.keys : [];
+      return insertChild(doc, block, freeName(existing, name), null);
+    }
+
+    // No block yet: insert it via the same primitive, treating the document
+    // root as a pair's value with an imaginary indent of -2 so the new
+    // top-level key lands at indent 0 — then insert its first child the same
+    // way, one level deeper. The re-parse inside the first call means
+    // doc.root.pairs[kind] must be re-read afterwards rather than reused.
+    var rootPair = { indent: -2, value: doc.root, end: doc.root.end };
+    if (insertChild(doc, rootPair, kind, null, 'x-unraid') < 0) return -1;
+    return insertChild(doc, doc.root.pairs[kind], name, null);
+  }
+
+  /**
+   * Removes one declared name, and the whole <kind>: block with it when it
+   * was the last one — a bare "networks:" is null and compose rejects it,
+   * the same rule removeItem follows for a service's list key.
+   *
+   * Does not refuse when a service still references the name: PLAN_4.md's
+   * dangling-reference advice already covers that, and compose reports it
+   * too, so refusing here would block a legitimate two-step edit.
+   */
+  function removeDeclared(doc, kind, name) {
+    if (!doc.root || doc.root.kind !== 'map') return false;
+    var block = doc.root.pairs[kind];
+    if (!block || !block.value || block.value.kind !== 'map') return false;
+    var pair = block.value.pairs[name];
+    if (!pair) return false;
+
+    if (block.value.keys.length === 1) {
+      var from = block.leadStart, to = block.end;
+
+      // Collapse a doubled blank line, but only when there is genuinely one
+      // on each side, so a blank the user put there on purpose survives.
+      if (from > 0 &&
+          (doc.lines[from - 1] || '').trim() === '' &&
+          (doc.lines[to] || '').trim() === '') {
+        from--;
+      }
+
+      splice(doc, from, to - from, []);
+      return true;
+    }
+
+    // leadStart takes the name's description comment, if any, along with it.
+    splice(doc, pair.leadStart, pair.end - pair.leadStart, []);
     return true;
   }
 
@@ -1521,6 +2150,122 @@
   }
 
   /* =====================================================================
+   * Renaming a declaration
+   * ===================================================================== */
+
+  // Every spot a rename or removal of a declared name must account for, as
+  // {spot, pre, post} — decoded := pre + newName + post, so the caller can
+  // reuse the same list for any newName without re-scanning the file.
+  // Modelled on collectServiceRefs, one level up: a top-level namespace
+  // instead of the services: one, so what counts as "a reference" differs
+  // per kind rather than being one shared shape.
+  function collectDeclaredRefs(doc, kind, name) {
+    var edits = [];
+    var block = doc.root.pairs[kind];
+    var pair = block && block.value && block.value.kind === 'map' ? block.value.pairs[name] : null;
+    if (pair) edits.push({ spot: keySpot(pair) });
+
+    var svc = doc.root.pairs['services'];
+    if (!svc || !svc.value || svc.value.kind !== 'map') return edits;
+
+    for (var si = 0; si < svc.value.keys.length; si++) {
+      var sp = svc.value.pairs[svc.value.keys[si]];
+      if (!sp.value || sp.value.kind !== 'map') continue;
+
+      var lp = sp.value.pairs[kind];
+      if (!lp || !lp.value || lp.value.kind !== 'seq') continue;
+
+      for (var i = 0; i < lp.value.items.length; i++) {
+        var iv = lp.value.items[i].value;
+        if (!iv) continue;
+
+        if (iv.kind === 'scalar') {
+          // A volume's short form is host:container[:mode] — only the host
+          // half, half of the scalar, is the reference; the container path
+          // beside it must survive untouched.
+          if (kind === 'volumes') {
+            var s = splitPathShort(iv.value, scalarSpot(iv));
+            if (s.host.spot && s.host.value === name) {
+              edits.push({ spot: s.host.spot, pre: s.host.pre, post: s.host.post });
+            }
+          } else if (iv.value === name) {
+            edits.push({ spot: scalarSpot(iv) });
+          }
+          continue;
+        }
+
+        // Networks has no long form to check here — a service's networks:
+        // is either this sequence of names or a map keyed by name, never a
+        // sequence of maps — so only secrets/configs/volumes reach this.
+        if (iv.kind === 'map' && kind !== 'networks') {
+          // A long-form volume only names a declared volume when its type
+          // says so; a bind mount's source is a path, never this bare name.
+          var typeOk = kind !== 'volumes' ||
+                       (iv.pairs['type'] && iv.pairs['type'].value &&
+                        iv.pairs['type'].value.kind === 'scalar' &&
+                        iv.pairs['type'].value.value === 'volume');
+          var src = iv.pairs['source'];
+          if (typeOk && src && src.value && src.value.kind === 'scalar' && src.value.value === name) {
+            edits.push({ spot: scalarSpot(src.value) });
+          }
+        }
+      }
+    }
+
+    return edits;
+  }
+
+  /**
+   * Renames a declared network, volume, secret or config, and every service
+   * reference to it, in one batch — the same shape as renameService, one
+   * level up. Renaming db_data without also rewriting db's volume line gives
+   * a file that no longer starts.
+   *
+   * -> { ok: true,  refs: <references rewritten, not counting the key> }
+   * -> { ok: false, error: '<what to do next>' }
+   */
+  function renameDeclared(doc, kind, name, newName) {
+    if (!newName || !SERVICE_NAME_RE.test(newName)) {
+      return { ok: false, error: 'Names may only contain letters, numbers, dots, underscores and hyphens — choose a different name.' };
+    }
+    if (!doc.root || doc.root.kind !== 'map') {
+      return { ok: false, error: 'This file cannot be read as compose, so nothing can be renamed.' };
+    }
+    var block = doc.root.pairs[kind];
+    if (!block || !block.value || block.value.kind !== 'map') {
+      return { ok: false, error: 'This file declares no ' + FROM_WORD[kind] + 's, so there is nothing to rename.' };
+    }
+    var pair = block.value.pairs[name];
+    if (!pair) {
+      return { ok: false, error: 'There is no ' + FROM_WORD[kind] + ' called "' + name + '" in this file, so it cannot be renamed.' };
+    }
+    // A rename to its own name is a no-op success, checked before the
+    // collision test below, which would otherwise refuse it for colliding
+    // with itself.
+    if (newName === name) return { ok: true, refs: 0 };
+    if (block.value.pairs[newName]) {
+      return { ok: false, error: 'A ' + FROM_WORD[kind] + ' called "' + newName + '" already exists — choose another name.' };
+    }
+
+    var refs = collectDeclaredRefs(doc, kind, name);
+    var writes = [], i;
+    for (i = 0; i < refs.length; i++) {
+      var e = refs[i];
+      var decoded = (e.pre || '') + newName + (e.post || '');
+      var raw = emitScalar(decoded, e.spot.style, e.spot.isKey);
+      if (raw === null) {
+        return { ok: false, error: 'One of the references to "' + name + '" cannot be rewritten safely, so nothing has been changed.' };
+      }
+      writes.push({ spot: e.spot, raw: raw });
+    }
+
+    applyRenameWrites(doc, writes);
+    // refs always carries the declaration's own key as its first entry, so
+    // the count reported here excludes it, matching renameService.
+    return { ok: true, refs: refs.length - 1 };
+  }
+
+  /* =====================================================================
    * Exports
    * ===================================================================== */
 
@@ -1534,6 +2279,9 @@
     setComment: setComment,
     addItem: addItem,
     removeItem: removeItem,
+    addDeclared: addDeclared,
+    removeDeclared: removeDeclared,
+    renameDeclared: renameDeclared,
     fieldById: fieldById,
     fieldAtLine: fieldAtLine,
     serviceAtLine: serviceAtLine,

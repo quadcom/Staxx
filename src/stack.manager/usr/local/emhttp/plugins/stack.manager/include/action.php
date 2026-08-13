@@ -269,6 +269,14 @@ switch ($action) {
   case 'devices':
     stackman_reply(['ok' => true] + stackman_devices());
 
+  /* ---- this server's own docker networks ----
+   *
+   * Asked for when the editor opens, so the Form view's Network mode
+   * dropdown can offer them alongside bridge/host/none. Takes no parameters.
+   */
+  case 'networks':
+    stackman_reply(['ok' => true, 'networks' => stackman_docker_networks()]);
+
   // ---- run one external command and report how it went ----
   case 'probe':
     stackman_reply(['ok' => true, 'result' => stackman_run_probe((string)($_POST['probe'] ?? ''))]);

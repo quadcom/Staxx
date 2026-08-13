@@ -23,7 +23,7 @@ plugin can be executed locally — there is no PHP, no Docker, and no browser on
 Anything beyond a syntax check has to happen on the server.
 
 **CRITICAL:** Never rewrite entire files. Provide targeted patch diffs or isolated code blocks only.
-**Execution:** Before executing any multi-file changes, write your proposed architecture to `PLAN.md` and wait for user approval.
+**Execution:** Before executing any multi-file changes, write your proposed architecture to `PLAN.md` and wait for user approval. If during the process there are new sub-plans built. Create PLAN_X.md incrementing 'X' to keep track of all the steps that are outstanding. Once the plan(s) are complete then the plan files can be marked as complete. Keep the plans for future quick reference but move them into a complerted plans folder.
 **COMMENTS AND DOCUMENTATION** Comments and documentation should reflect what something does not what it used to do along with what it now does.
 **WRITING CODE** When writing code, Opus always makes the plan and Multiple SOnnet agents will write the code. Opus will then verify the code that was written. Just before writing starts tell me "Sonnet agents are writing".
 **TOKEN USAGE** At all times be conservative on token usage.

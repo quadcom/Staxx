@@ -1041,6 +1041,1337 @@ console.log('\nI. Renaming a service');
      Y.serialise(doc));
 })();
 
+/* =========================================================================
+ * J. The always-present Container settings
+ *
+ * image, container_name, restart and network_mode are always in the model,
+ * whether or not the file has them, so refreshRanges() can index fields by
+ * array position without a redraw. See harvest() and setPart() for the
+ * absent-slot handling this exercises.
+ * ========================================================================= */
+
+console.log('\nJ. The always-present Container settings');
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine   # pinned\n    environment:\n      TZ: UTC   # timezone\n';
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var restart = Y.fieldById(form, 'a/setting/restart');
+  ok('an absent restart field is found and not locked',
+     !!restart && !restart.locked && restart.absent === true,
+     restart && JSON.stringify({ locked: restart.locked, absent: restart.absent }));
+
+  ok('typing into it succeeds', Y.setPart(doc, form, 'a/setting/restart', 'value', 'unless-stopped'));
+
+  var lines = Y.serialise(doc).split('\n');
+  var idx = lines.indexOf('    restart: unless-stopped');
+  ok('the new line lands under the service at its own indent', idx >= 0, lines.join('\\n'));
+
+  lines.splice(idx, 1);
+  ok('every other line, including both comments, survives byte for byte',
+     lines.join('\n') === src, firstDiff(src, lines.join('\n')));
+})();
+
+(function () {
+  // A blank into an absent slot must change nothing — a box that was merely
+  // focused and left empty must not plant a bare "restart:" in the file.
+  var src = 'services:\n  a:\n    image: alpine\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+
+  ok('a blank into an absent slot reports success',
+     Y.setPart(doc, form, 'a/setting/restart', 'value', '   '));
+  ok('and writes nothing', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // The field count is what refreshRanges() indexes by, so it must never
+  // move when an absent slot gains a line.
+  var src = 'services:\n  a:\n    image: alpine\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var svcFields = form.fields.filter(function (f) { return f.service === 'a'; });
+
+  ok('a service with no other settings yields exactly four fixed fields',
+     svcFields.length === 4 && svcFields.every(function (f) { return f.fixed; }),
+     svcFields.map(function (f) { return f.target; }).join(', '));
+
+  var before = form.fields.length;
+  Y.setPart(doc, form, 'a/setting/restart', 'value', 'always');
+  var after = Y.buildForm(doc).fields.length;
+  ok('form.fields.length is unchanged once one is filled in', after === before, before + ' -> ' + after);
+})();
+
+(function () {
+  // Nothing in the UI edits the -!R / -!S markers on a Container line any
+  // more, but readComment() still reads them and a save must not disturb one.
+  var src = 'services:\n  a:\n    image: alpine\n    restart: always  # -!R\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var restart = Y.fieldById(form, 'a/setting/restart');
+
+  ok('a marked restart line is read, not treated as absent',
+     !!restart && restart.absent === false && restart.required === true,
+     restart && JSON.stringify({ absent: restart.absent, required: restart.required }));
+
+  ok('the null edit leaves the marker untouched',
+     !!restart && Y.setPart(doc, form, restart.id, 'value', restart.parts.value.value) &&
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * K. A command written as a list
+ *
+ * Only a sealed node carries `raw` — a list is parsed properly and has none —
+ * so a command spelled out as several "- " items must still reach the form
+ * as readable text, not an empty locked box. See settingTarget().
+ * ========================================================================= */
+
+console.log('\nK. A command written as a list');
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    command:\n      - "-c"\n      - echo hello\n      - "-v"\n    environment:\n      TZ: UTC\n';
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var cmd = Y.fieldById(form, 'a/setting/command');
+
+  ok('a list command is found and locked', !!cmd && cmd.locked,
+     cmd && JSON.stringify({ locked: cmd.locked }));
+  ok('its raw text carries a line from the middle of the list, not just the first',
+     !!cmd && cmd.raw.indexOf('echo hello') >= 0,
+     cmd && JSON.stringify(cmd.raw));
+
+  ok('the file round-trips untouched with no edit applied',
+     Y.serialise(Y.parse(src)) === src, firstDiff(src, Y.serialise(Y.parse(src))));
+})();
+
+/* =========================================================================
+ * L. 10-advanced-compose-test — PLAN_4 phase 1: one KEYS table, nothing
+ * hidden, and the top-level blocks read as a namespace of declared names.
+ * ========================================================================= */
+
+console.log('\nL. 10-advanced-compose-test (PLAN_4 phase 1)');
+
+// Copied verbatim from scratch/test-stacks/10-advanced-compose-test/compose.yaml —
+// scratch/ is gitignored, so the fixture has to live here instead. No trailing
+// blank line, because the file on disk does not have one either.
+var FIXTURE_10_ADVANCED = [
+  'version: "3.9"',
+  '',
+  'services:',
+  '  web:',
+  '    image: nginx:alpine',
+  '    container_name: advanced_web',
+  '    restart: unless-stopped',
+  '    ports:',
+  '      - "8080:80"',
+  '    environment:',
+  '      - NGINX_PORT=80',
+  '    networks:',
+  '      - frontend_net',
+  '      - backend_net',
+  '    depends_on:',
+  '      db:',
+  '        condition: service_healthy',
+  '    deploy:',
+  '      resources:',
+  '        limits:',
+  '          cpus: \'0.50\'',
+  '          memory: 512M',
+  '        reservations:',
+  '          cpus: \'0.25\'',
+  '          memory: 256M',
+  '    healthcheck:',
+  '      test: ["CMD", "curl", "-f", "http://localhost/"]',
+  '      interval: 30s',
+  '      timeout: 10s',
+  '      retries: 3',
+  '      start_period: 10s',
+  '',
+  '  db:',
+  '    image: postgres:15-alpine',
+  '    container_name: advanced_db',
+  '    restart: always',
+  '    environment:',
+  '      POSTGRES_DB: appdb',
+  '      POSTGRES_USER: appuser',
+  '      POSTGRES_PASSWORD_FILE: /run/secrets/db_password',
+  '    secrets:',
+  '      - db_password',
+  '    volumes:',
+  '      - db_data:/var/lib/postgresql/data',
+  '    networks:',
+  '      - backend_net',
+  '    healthcheck:',
+  '      test: ["CMD-SHELL", "pg_isready -U appuser -d appdb"]',
+  '      interval: 10s',
+  '      timeout: 5s',
+  '      retries: 5',
+  '',
+  'networks:',
+  '  frontend_net:',
+  '    driver: bridge',
+  '  backend_net:',
+  '    driver: bridge',
+  '    internal: true',
+  '',
+  'volumes:',
+  '  db_data:',
+  '    driver: local',
+  '',
+  'secrets:',
+  '  db_password:',
+  '    file: ./db_password.txt'
+].join('\n');
+
+/* ---- the strongest case: identity, then a null edit on every box -------- */
+
+(function () {
+  var text = FIXTURE_10_ADVANCED;
+  var doc  = Y.parse(text);
+  var form = Y.buildForm(doc);
+
+  ok('the fixture round-trips byte for byte with no edit applied',
+     Y.serialise(doc) === text, firstDiff(text, Y.serialise(doc)));
+
+  var all = boxes(form), bad = null;
+  for (var i = 0; i < all.length && !bad; i++) {
+    var d = Y.parse(text), m = Y.buildForm(d);
+    if (!Y.setPart(d, m, all[i].id, all[i].part, all[i].value)) continue;
+    var got = Y.serialise(d);
+    if (got !== text) bad = all[i].id + ' [' + all[i].part + ']\n' + firstDiff(text, got);
+  }
+  ok('and still identical after setting every writable box to what it already says (' + all.length + ' boxes)',
+     !bad, bad);
+})();
+
+/* ---- 1. declared reads all four namespaces plus services --------------- */
+
+(function () {
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var want = { networks: ['frontend_net', 'backend_net'], volumes: ['db_data'],
+               secrets: ['db_password'], configs: [], services: ['web', 'db'] };
+  ok('declared holds the four top-level namespaces plus the service list',
+     JSON.stringify(form.declared) === JSON.stringify(want), JSON.stringify(form.declared));
+})();
+
+/* ---- 2. declared always exists, even on buildForm's two early returns -- */
+
+(function () {
+  var EMPTY = { networks: [], volumes: [], secrets: [], configs: [], services: [] };
+
+  // Tab indentation seals the whole file, so doc.root is never a map and
+  // buildForm returns before services are even looked for.
+  var tabbed = Y.buildForm(Y.parse('services:\n\ta:\n\t\timage: alpine\n'));
+  ok('declared is five empty arrays when the whole file is unreadable',
+     JSON.stringify(tabbed.declared) === JSON.stringify(EMPTY), JSON.stringify(tabbed.declared));
+
+  // Parses fine as a map, but never mentions services: at all.
+  var noServices = Y.buildForm(Y.parse('image: alpine\n'));
+  ok('declared is five empty arrays when the file has no services: key',
+     JSON.stringify(noServices.declared) === JSON.stringify(EMPTY), JSON.stringify(noServices.declared));
+})();
+
+/* ---- 3. web accounts for all nine of its keys, plus network_mode ------- */
+
+(function () {
+  // networks: is two editable list fields rather than one locked block, and
+  // Phase 3 breaks healthcheck: and deploy: into one field per nested value
+  // rather than one field for the whole block — so the count is eighteen,
+  // not the ten keys the original file has at the top of web:. Pinning f.id
+  // rather than binder/target is deliberate — a list field's id carries its
+  // list key and index (web/list.networks#0/frontend_net), which is what
+  // stops the same name colliding across two different list keys (see the
+  // ids-cannot-collide case below).
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var web  = form.fields.filter(function (f) { return f.service === 'web'; });
+  var got  = web.map(function (f) { return f.id; });
+  var want = [
+    'web/setting/image',
+    'web/setting/container_name',
+    'web/setting/restart',
+    'web/setting/network_mode',
+    'web/port/80/tcp',
+    'web/env/NGINX_PORT',
+    'web/list.networks#0/frontend_net',
+    'web/list.networks#1/backend_net',
+    'web/setting/depends_on',
+    'web/setting/deploy.resources.limits.cpus',
+    'web/setting/deploy.resources.limits.memory',
+    'web/setting/deploy.resources.reservations.cpus',
+    'web/setting/deploy.resources.reservations.memory',
+    'web/setting/healthcheck.interval',
+    'web/setting/healthcheck.timeout',
+    'web/setting/healthcheck.retries',
+    'web/setting/healthcheck.start_period',
+    'web/setting/healthcheck.test'
+  ];
+  ok('web yields exactly these eighteen fields, in file order',
+     JSON.stringify(got) === JSON.stringify(want), got.join(', '));
+})();
+
+/* ---- 4. healthcheck and deploy split into per-value fields; depends_on
+ *        still locks whole ------------------------------------------------ */
+
+(function () {
+  // Phase 3: healthcheck: and deploy: no longer yield one field for the
+  // whole block — harvestBlock breaks each into one field per nested value,
+  // so there is no field whose target is exactly "healthcheck" or "deploy"
+  // any more.
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var hcBlock  = Y.fieldById(form, 'web/setting/healthcheck');
+  var depBlock = Y.fieldById(form, 'web/setting/deploy');
+  var hcLeaves  = form.fields.filter(function (f) { return f.service === 'web' && f.target.indexOf('healthcheck.') === 0; });
+  var depLeaves = form.fields.filter(function (f) { return f.service === 'web' && f.target.indexOf('deploy.') === 0; });
+  var hcTest = Y.fieldById(form, 'web/setting/healthcheck.test');
+  var don = Y.fieldById(form, 'web/setting/depends_on');
+
+  ok('healthcheck no longer yields a field for the whole block, only one per nested value',
+     !hcBlock && hcLeaves.length === 5, JSON.stringify({ hasBlock: !!hcBlock, leaves: hcLeaves.length }));
+  ok('deploy no longer yields a field for the whole block, only one per nested value',
+     !depBlock && depLeaves.length === 4, JSON.stringify({ hasBlock: !!depBlock, leaves: depLeaves.length }));
+  ok('healthcheck.test is still one locked field, carrying the flow list, since a sealed value cannot resolve as a leaf',
+     !!hcTest && hcTest.locked && hcTest.lockReason === 'this is written as a list on one line' &&
+     hcTest.raw.indexOf('curl') >= 0, hcTest && JSON.stringify(hcTest.raw));
+  ok('depends_on written in long form is one locked field carrying its condition line',
+     !!don && don.locked && don.raw.indexOf('condition: service_healthy') >= 0 &&
+     don.lockReason === 'this is written as a block of its own', don && JSON.stringify(don.raw));
+
+  // Phase 2: a plain networks: or secrets: list is now one editable field per
+  // entry, not a locked block — the list-form reason only ever described the
+  // shape, and the shape is no longer opaque.
+  var nets = form.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'networks'; });
+  var secs = form.fields.filter(function (f) { return f.service === 'db'  && f.listKey === 'secrets'; });
+  ok('a networks: list yields one editable field per entry, not a locked block',
+     nets.length === 2 && nets.every(function (f) { return !f.locked; }),
+     JSON.stringify(nets.map(function (f) { return { target: f.target, locked: f.locked }; })));
+  ok('a secrets: list yields one editable field per entry, not a locked block',
+     secs.length === 1 && secs.every(function (f) { return !f.locked; }),
+     JSON.stringify(secs.map(function (f) { return { target: f.target, locked: f.locked }; })));
+
+  // A form that genuinely still cannot be read stays locked, and stays
+  // visible — sealing is a property of a value, never of a list's shape.
+  var aliasedNet = Y.buildForm(Y.parse(
+    'x-net: &shared\n  - frontend_net\n\nservices:\n  a:\n    image: alpine\n    networks: *shared\n'));
+  var an = Y.fieldById(aliasedNet, 'a/setting/networks');
+  ok('a networks: sealed as a whole alias still locks, and is still shown',
+     !!an && an.locked && an.lockReason === 'this points at a shared block higher up the file',
+     an && JSON.stringify({ locked: an.locked, lockReason: an.lockReason }));
+
+  var aliasedSec = Y.buildForm(Y.parse(
+    'x-sec: &shared\n  - db_password\n\nservices:\n  a:\n    image: alpine\n    secrets: *shared\n'));
+  var as = Y.fieldById(aliasedSec, 'a/setting/secrets');
+  ok('a secrets: sealed as a whole alias still locks, and is still shown',
+     !!as && as.locked && as.lockReason === 'this points at a shared block higher up the file',
+     as && JSON.stringify({ locked: as.locked, lockReason: as.lockReason }));
+})();
+
+/* ---- 5. network_mode is blocked, not locked, once networks: is present - */
+
+(function () {
+  var text = FIXTURE_10_ADVANCED;
+  var doc  = Y.parse(text), form = Y.buildForm(doc);
+  var nm   = Y.fieldById(form, 'web/setting/network_mode');
+
+  ok('web\u2019s network_mode is blocked rather than locked',
+     !!nm && nm.blocked === true && nm.locked === false,
+     nm && JSON.stringify({ blocked: nm.blocked, locked: nm.locked }));
+  ok('and carries the advice that networks: is how this is done instead',
+     !!nm && nm.advice.indexOf('this service joins the networks listed below instead') >= 0,
+     nm && JSON.stringify(nm.advice));
+  ok('setPart on a blocked field is refused',
+     Y.setPart(doc, form, 'web/setting/network_mode', 'value', 'bridge') === false);
+  ok('and the refusal writes nothing', Y.serialise(doc) === text);
+})();
+
+/* ---- 6. no networks: key still gives a normal absent network_mode slot - */
+
+(function () {
+  var src  = 'services:\n  c:\n    image: alpine\n';
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  var nm   = Y.fieldById(form, 'c/setting/network_mode');
+
+  ok('a service with no networks: key has an absent, unblocked network_mode slot',
+     !!nm && nm.absent === true && !nm.blocked,
+     nm && JSON.stringify({ absent: nm.absent, blocked: nm.blocked }));
+  ok('setPart on it succeeds', Y.setPart(doc, form, 'c/setting/network_mode', 'value', 'bridge'));
+  ok('and writes network_mode: bridge at the service\u2019s own indent',
+     Y.serialise(doc) === 'services:\n  c:\n    image: alpine\n    network_mode: bridge\n',
+     JSON.stringify(Y.serialise(doc)));
+})();
+
+/* ---- 7. titles: the KEYS table overrides only where it needs to -------- */
+
+(function () {
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var titleOf = function (id) { var f = Y.fieldById(form, id); return f && f.title; };
+
+  ok('depends_on is titled "Starts after"',
+     titleOf('web/setting/depends_on') === 'Starts after', titleOf('web/setting/depends_on'));
+  // "Health check" and "Resource limits" now belong to the groups those
+  // leaves sit under (stacks.js), not to a single field — each leaf carries
+  // its own title from LEAVES instead.
+  var hcTitles = ['test', 'interval', 'timeout', 'retries', 'start_period']
+    .map(function (k) { return titleOf('web/setting/healthcheck.' + k); });
+  ok('healthcheck leaves are titled "The check itself", "Check every", "Give up after", ' +
+     '"Failures allowed" and "Grace period at start"',
+     JSON.stringify(hcTitles) === JSON.stringify(
+       ['The check itself', 'Check every', 'Give up after', 'Failures allowed', 'Grace period at start']),
+     JSON.stringify(hcTitles));
+  var depTitles = ['resources.limits.cpus', 'resources.limits.memory',
+                    'resources.reservations.cpus', 'resources.reservations.memory']
+    .map(function (k) { return titleOf('web/setting/deploy.' + k); });
+  ok('deploy leaves are titled "CPU limit", "Memory limit", "CPU reserved" and "Memory reserved"',
+     JSON.stringify(depTitles) === JSON.stringify(['CPU limit', 'Memory limit', 'CPU reserved', 'Memory reserved']),
+     JSON.stringify(depTitles));
+  // Phase 2: networks: is list fields now, so its heading is f.groupTitle on
+  // each entry rather than f.title on one block field — the table still only
+  // overrides where it needs to, and networks still falls through to
+  // humanise().
+  var nets = form.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'networks'; });
+  ok('networks has no table entry, so its heading falls through to humanise() and reads "Networks"',
+     nets.length === 2 && nets.every(function (f) { return f.groupTitle === 'Networks'; }),
+     JSON.stringify(nets.map(function (f) { return f.groupTitle; })));
+
+  var wd = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    working_dir: /app\n'));
+  ok('working_dir is titled "Working folder"',
+     Y.fieldById(wd, 'a/setting/working_dir').title === 'Working folder');
+})();
+
+/* ---- 8. the catch-all floor, and the two exclusions that sit above it -- */
+
+(function () {
+  var src = 'x-shared: &defaults\n' +
+            '  restart: unless-stopped\n' +
+            '\n' +
+            'services:\n' +
+            '  a:\n' +
+            '    <<: *defaults\n' +
+            '    working_dir: /app\n' +
+            '    logging:\n' +
+            '      driver: json-file\n' +
+            '    x-unraid:\n' +
+            '      name: Thing\n';
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wd  = Y.fieldById(form, 'a/setting/working_dir');
+  var log = Y.fieldById(form, 'a/setting/logging');
+
+  ok('working_dir falls to the catch-all as an editable field, not a locked one',
+     !!wd && !wd.locked, wd && JSON.stringify(wd));
+  Y.setPart(doc, form, 'a/setting/working_dir', 'value', '/srv');
+  ok('and setting it rewrites only that one line',
+     diffLines(src, Y.serialise(doc)).length === 1, diffLines(src, Y.serialise(doc)).join(', '));
+
+  ok('a logging: block falls to the catch-all as a locked field',
+     !!log && log.locked && log.lockReason === 'this is written as a block of its own',
+     log && JSON.stringify(log));
+
+  ok('an x-unraid block yields no field at all, because it is already the service overview',
+     !form.fields.some(function (f) { return f.service === 'a' && f.target === 'x-unraid'; }));
+  ok('a <<: merge key yields no field at all, because it would only ever be locked noise',
+     !form.fields.some(function (f) { return f.service === 'a' && f.target === '<<'; }));
+  ok('but the service note still says its settings come from a shared block',
+     /shared block/i.test(form.services.filter(function (s) { return s.name === 'a'; })[0].note));
+})();
+
+/* ---- 9. interpolation: which values carry the 1f advice, and which don't */
+
+(function () {
+  var src = 'services:\n' +
+            '  a:\n' +
+            '    image: alpine\n' +
+            '    ports:\n' +
+            '      - "${HTTP_PORT}:80"\n' +
+            '      - "${ALT:-8081}:81"\n' +
+            '      - "$RAWPORT:82"\n' +
+            '      - "9000:83"\n' +
+            '    environment:\n' +
+            '      LITERAL: "$$NOT_A_VAR"\n' +
+            '      MIXED: "$$esc ${REAL}"\n';
+
+  var form = Y.buildForm(Y.parse(src));
+  var advised = function (f) {
+    return f.advice.some(function (a) { return a.indexOf('typing over it replaces the variable') >= 0; });
+  };
+  var port = function (t) { return form.fields.filter(function (f) { return f.binder === 'port' && f.target === t; })[0]; };
+  var env  = function (n) { return Y.fieldById(form, 'a/env/' + n); };
+
+  ok('a bare ${VAR} port carries the interpolation advice', advised(port('80/tcp')));
+  ok('a ${VAR:-default} port carries the advice', advised(port('81/tcp')));
+  ok('and its host part is the whole expression, not mangled by the default\u2019s own colon',
+     port('81/tcp').parts.host.value === '${ALT:-8081}', port('81/tcp').parts.host.value);
+  ok('a bare $VAR port carries the advice', advised(port('82/tcp')));
+  ok('a literal port number carries no advice', !advised(port('83/tcp')));
+  ok('an escaped $$ with nothing real behind it carries no advice', !advised(env('LITERAL')));
+  ok('a value mixing an escaped $$ and a real ${VAR} still carries the advice', advised(env('MIXED')));
+})();
+
+/* ---- 10. dangling references: a name the file never declares ----------- */
+
+(function () {
+  var src = 'services:\n' +
+            '  a:\n' +
+            '    image: alpine\n' +
+            '    volumes:\n' +
+            '      - db_dat:/b\n' +
+            '      - /mnt/user/x:/c\n' +
+            '      - ./rel:/d\n' +
+            '      - ${VOL}:/e\n' +
+            '      - /anon\n' +
+            'volumes:\n' +
+            '  db_data:\n' +
+            '    driver: local\n';
+
+  var form = Y.buildForm(Y.parse(src));
+  var dangling = function (f) {
+    return f.advice.some(function (a) { return a.indexOf('is defined in this file') >= 0; });
+  };
+  var vol = function (t) { return form.fields.filter(function (f) { return f.binder === 'volume' && f.target === t; })[0]; };
+
+  ok('a volume naming an undeclared name is flagged',
+     dangling(vol('/b')) && vol('/b').advice.indexOf('no volume called db_dat is defined in this file') >= 0,
+     vol('/b').advice);
+  ok('an absolute host path is not mistaken for a named reference', !dangling(vol('/c')));
+  ok('a relative host path is not mistaken for a named reference', !dangling(vol('/d')));
+  ok('a variable host value is never flagged, since we cannot know what it expands to', !dangling(vol('/e')));
+  ok('an anonymous volume has no host value to check and is not flagged', !dangling(vol('/anon')));
+
+  var noBlock = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    volumes:\n      - some_vol:/a\n'));
+  var v2 = noBlock.fields.filter(function (f) { return f.binder === 'volume'; })[0];
+  ok('a named volume is flagged even when the file has no top-level volumes: block at all',
+     dangling(v2) && v2.advice.indexOf('no volume called some_vol is defined in this file') >= 0, v2.advice);
+})();
+
+/* ---- 11. brace-aware splitting (1g), checked on the values themselves -- */
+
+(function () {
+  var src = 'services:\n' +
+            '  a:\n' +
+            '    image: alpine\n' +
+            '    ports:\n' +
+            '      - "${A:-1}:${B:-2}"\n' +
+            '      - "127.0.0.1:8080:80"\n' +
+            '      - "${BROKEN:-8080:81"\n';
+
+  var doc   = Y.parse(src), form = Y.buildForm(doc);
+  var ports = form.fields.filter(function (f) { return f.binder === 'port'; });
+
+  ok('two variable defaults either side of a colon split into exactly two halves',
+     ports[0].parts.host.value === '${A:-1}' && ports[0].parts.container.value === '${B:-2}',
+     JSON.stringify({ host: ports[0].parts.host.value, container: ports[0].parts.container.value }));
+  ok('an ip-qualified port still yields the middle field as host and the last as container',
+     ports[1].parts.host.value === '8080' && ports[1].parts.container.value === '80',
+     JSON.stringify({ host: ports[1].parts.host.value, container: ports[1].parts.container.value }));
+  ok('an unclosed ${ does not throw, and yields one container-only part rather than a mangled split',
+     !ports[2].parts.host.spot && ports[2].parts.container.value === '${BROKEN:-8080:81',
+     JSON.stringify({ hostSpot: !!ports[2].parts.host.spot, container: ports[2].parts.container.value }));
+
+  var all = boxes(form), bad = null;
+  for (var i = 0; i < all.length && !bad; i++) {
+    var d = Y.parse(src), m = Y.buildForm(d);
+    if (!Y.setPart(d, m, all[i].id, all[i].part, all[i].value)) continue;
+    var got = Y.serialise(d);
+    if (got !== src) bad = all[i].id + ' [' + all[i].part + ']\n' + firstDiff(src, got);
+  }
+  ok('and all three round-trip byte for byte after a null edit', !bad, bad);
+})();
+
+/* =========================================================================
+ * M. 10-advanced-compose-test — PLAN_4 phase 2: reference lists editable,
+ * one binder shared by eight compose keys.
+ * ========================================================================= */
+
+console.log('\nM. 10-advanced-compose-test (PLAN_4 phase 2)');
+
+/* ---- 1. networks: round trip -------------------------------------------- */
+
+(function () {
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var nets = form.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'networks'; });
+
+  ok('web\u2019s networks: yields exactly two list fields',
+     nets.length === 2 &&
+     nets.every(function (f) { return f.from === 'networks' && f.groupTitle === 'Networks'; }),
+     JSON.stringify(nets.map(function (f) { return { target: f.target, from: f.from, groupTitle: f.groupTitle }; })));
+  ok('each has one part named value, and no host or container',
+     nets.every(function (f) {
+       return Object.keys(f.parts).length === 1 && !!f.parts.value && !f.parts.host && !f.parts.container;
+     }),
+     JSON.stringify(nets.map(function (f) { return Object.keys(f.parts); })));
+
+  var text = FIXTURE_10_ADVANCED;
+  var doc  = Y.parse(text), m = Y.buildForm(doc);
+  var frontend = m.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'networks' && f.target === 'frontend_net'; })[0];
+  Y.setPart(doc, m, frontend.id, 'value', 'backend_net');
+  ok('setting one to a different declared name rewrites only that line',
+     diffLines(text, Y.serialise(doc)).length === 1, diffLines(text, Y.serialise(doc)).join(', '));
+})();
+
+/* ---- 2. addItem appends, removeItem on the last takes the key with it --- */
+
+(function () {
+  var text = FIXTURE_10_ADVANCED;
+  var doc  = Y.parse(text), form = Y.buildForm(doc);
+
+  var line = Y.addItem(doc, form, 'web', 'list', '', 'networks');
+  ok('addItem appends a third networks: entry', line >= 0, 'addItem returned ' + line);
+  ok('it lands at the list\u2019s own indent and dash gap',
+     line >= 0 && Y.serialise(doc).split('\n')[line] === '      - default',
+     line >= 0 && Y.serialise(doc).split('\n')[line]);
+
+  var added = Y.buildForm(doc);
+  var id    = Y.fieldAtLine(added, line);
+  ok('and it can be removed again, leaving the file exactly as it was',
+     !!id && Y.removeItem(doc, added, id) === true && Y.serialise(doc) === text,
+     firstDiff(text, Y.serialise(doc)));
+
+  // Down to one entry, then remove the last — the key must go with it, since
+  // a bare "networks:" is null and compose rejects the file.
+  var d2 = Y.parse(text), f2 = Y.buildForm(d2);
+  var was = f2.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'networks'; });
+  Y.removeItem(d2, f2, was[0].id);
+  var f3   = Y.buildForm(d2);
+  var last = f3.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'networks'; })[0];
+  Y.removeItem(d2, f3, last.id);
+
+  var f4 = Y.buildForm(d2);
+  var nm = Y.fieldById(f4, 'web/setting/network_mode');
+  ok('removing the last entry leaves the service with no networks: fields at all',
+     f4.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'networks'; }).length === 0);
+  ok('and network_mode reverts to an ordinary absent, unblocked slot',
+     !!nm && nm.absent === true && nm.blocked === false,
+     nm && JSON.stringify({ absent: nm.absent, blocked: nm.blocked }));
+})();
+
+/* ---- 3. depends_on written as a block of conditions still locks whole --- */
+
+(function () {
+  var form   = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var don    = Y.fieldById(form, 'web/setting/depends_on');
+  var asList = form.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'depends_on'; });
+
+  ok('depends_on as a map of conditions yields one locked field, not list entries',
+     !!don && don.locked && don.lockReason === 'this is written as a block of its own' && asList.length === 0,
+     don && JSON.stringify({ locked: don.locked, lockReason: don.lockReason, listEntries: asList.length }));
+  ok('and its raw text holds the whole block, condition line included',
+     !!don && don.raw.indexOf('db:') >= 0 && don.raw.indexOf('condition: service_healthy') >= 0,
+     don && JSON.stringify(don.raw));
+})();
+
+/* ---- 4. the same name under two different list keys cannot collide ----- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    networks:\n      - shared\n' +
+            '    depends_on:\n      - shared\n  shared:\n    image: alpine\n';
+  var form = Y.buildForm(Y.parse(src));
+
+  var net = Y.fieldById(form, 'a/list.networks#0/shared');
+  var dep = Y.fieldById(form, 'a/list.depends_on#0/shared');
+  ok('the same name under networks and depends_on gets two distinct ids',
+     !!net && !!dep && net.id === 'a/list.networks#0/shared' && dep.id === 'a/list.depends_on#0/shared',
+     JSON.stringify({ net: net && net.id, dep: dep && dep.id }));
+
+  var ids  = form.fields.map(function (f) { return f.id; });
+  var uniq = ids.filter(function (v, i, arr) { return arr.indexOf(v) === i; });
+  ok('every id in the form is unique', ids.length === uniq.length, ids.join(', '));
+  ok('fieldById finds the exact field for every id',
+     form.fields.every(function (f) { return Y.fieldById(form, f.id) === f; }));
+})();
+
+/* ---- 5. dangling references reach the new list keys (Phase 2 half of 1e) */
+
+(function () {
+  var src = 'services:\n' +
+            '  a:\n' +
+            '    image: alpine\n' +
+            '    networks:\n' +
+            '      - frontend_nett\n' +
+            '      - default\n' +
+            '      - ${NET}\n' +
+            '    secrets:\n' +
+            '      - missing_secret\n' +
+            '    depends_on:\n' +
+            '      - ghost\n' +
+            'networks:\n' +
+            '  frontend_net:\n';
+
+  var form     = Y.buildForm(Y.parse(src));
+  var by       = function (lk, t) { return form.fields.filter(function (f) { return f.listKey === lk && f.target === t; })[0]; };
+  var dangling = function (f) { return f.advice.some(function (a) { return a.indexOf('is defined in this file') >= 0; }); };
+
+  ok('an undeclared network is flagged',
+     dangling(by('networks', 'frontend_nett')) &&
+     by('networks', 'frontend_nett').advice.indexOf('no network called frontend_nett is defined in this file') >= 0,
+     by('networks', 'frontend_nett').advice);
+  ok('"default" is always accepted under networks, even though it is not declared',
+     !dangling(by('networks', 'default')));
+  ok('a value containing ${ is never flagged',
+     !dangling(by('networks', '${NET}')));
+  ok('an undeclared secret is flagged, with "secret" in the message',
+     dangling(by('secrets', 'missing_secret')) &&
+     by('secrets', 'missing_secret').advice.indexOf('no secret called missing_secret is defined in this file') >= 0,
+     by('secrets', 'missing_secret').advice);
+  ok('depends_on naming a service that does not exist is flagged, with "service" in the message',
+     dangling(by('depends_on', 'ghost')) &&
+     by('depends_on', 'ghost').advice.indexOf('no service called ghost is defined in this file') >= 0,
+     by('depends_on', 'ghost').advice);
+})();
+
+/* ---- 6. the values the KEYS table hands down to every list field -------- */
+
+(function () {
+  var src = 'services:\n' +
+            '  a:\n' +
+            '    image: alpine\n' +
+            '    env_file:\n' +
+            '      - ./app.env\n' +
+            '    expose:\n' +
+            '      - "8080"\n' +
+            '    cap_add:\n' +
+            '      - NET_ADMIN\n' +
+            '    profiles:\n' +
+            '      - extras\n' +
+            '    networks:\n' +
+            '      - default\n';
+
+  var form = Y.buildForm(Y.parse(src));
+  var by   = function (lk) { return form.fields.filter(function (f) { return f.listKey === lk; })[0]; };
+
+  ok('env_file carries the browse tool', by('env_file').tool === 'browse', by('env_file').tool);
+  ok('every other list key carries no tool',
+     ['expose', 'cap_add', 'profiles', 'networks'].every(function (lk) { return by(lk).tool === ''; }),
+     JSON.stringify(['expose', 'cap_add', 'profiles', 'networks'].map(function (lk) { return by(lk).tool; })));
+  ok('expose reads as a port', by('expose').type === 'port', by('expose').type);
+  ok('cap_add reads as plain text', by('cap_add').type === 'text', by('cap_add').type);
+  ok('profiles references nothing', by('profiles').from === '', by('profiles').from);
+})();
+
+/* ---- 7. newEntry placeholders, each distinct from what is already there - */
+
+(function () {
+  // Declared names exhausted: falls back to the fixed placeholder.
+  var src1 = 'services:\n  a:\n    image: alpine\n    networks:\n      - frontend_net\n      - backend_net\n' +
+             'networks:\n  frontend_net:\n  backend_net:\n';
+  var d1 = Y.parse(src1), f1 = Y.buildForm(d1);
+  var line1 = Y.addItem(d1, f1, 'a', 'list', '', 'networks');
+  ok('a networks: list with every declared name already used falls back to "default"',
+     line1 >= 0 && Y.serialise(d1).split('\n')[line1] === '      - default',
+     line1 >= 0 && Y.serialise(d1).split('\n')[line1]);
+
+  var CASES = [['dns', '1.1.1.1'], ['cap_add', 'NET_ADMIN'], ['env_file', './app.env']];
+  CASES.forEach(function (c) {
+    var d = Y.parse('services:\n  a:\n    image: alpine\n'), f = Y.buildForm(d);
+    var line = Y.addItem(d, f, 'a', 'list', '', c[0]);
+    ok('adding ' + c[0] + ' to an empty list gives ' + c[1],
+       line >= 0 && Y.serialise(d).split('\n')[line] === '      - ' + c[1],
+       line >= 0 && Y.serialise(d).split('\n')[line]);
+  });
+
+  // The same placeholders again, but the list already holds one — a second
+  // click of "+" must not write a line identical to the one above it.
+  CASES.concat([['networks', 'default']]).forEach(function (c) {
+    var src = 'services:\n  a:\n    image: alpine\n    ' + c[0] + ':\n      - ' + c[1] + '\n';
+    var d = Y.parse(src), f = Y.buildForm(d);
+    var line = Y.addItem(d, f, 'a', 'list', '', c[0]);
+    var got  = line >= 0 ? Y.serialise(d).split('\n')[line] : null;
+    ok('adding another ' + c[0] + ' when "' + c[1] + '" is already there gives something else',
+       got !== null && got !== '      - ' + c[1],
+       'wanted anything but: ' + JSON.stringify('      - ' + c[1]) + '\ngot:  ' + JSON.stringify(got));
+  });
+})();
+
+/* ---- 8. a sealed list entry stays visible, its siblings do not ---------- */
+
+(function () {
+  var src = 'x-net: &shared\n  - frontend_net\n\nservices:\n  a:\n    image: alpine\n    networks:\n' +
+            '      - frontend_net\n      - *shared\n      - backend_net\n';
+  var form = Y.buildForm(Y.parse(src));
+  var nets = form.fields.filter(function (f) { return f.listKey === 'networks'; });
+
+  ok('the aliased entry locks and carries an @-prefixed target',
+     nets.length === 3 && nets[1].locked && nets[1].target.charAt(0) === '@',
+     JSON.stringify(nets.map(function (f) { return { target: f.target, locked: f.locked }; })));
+  ok('its neighbours stay editable — sealing is not inherited',
+     nets.length === 3 && !nets[0].locked && !nets[2].locked,
+     JSON.stringify(nets.map(function (f) { return f.locked; })));
+})();
+
+/* ---- 9. a list id carries its index unconditionally --------------------- */
+
+(function () {
+  // Suffixing only a genuine duplicate value (the old form) meant editing one
+  // entry to match another made row 1's id change too, even though nobody
+  // touched row 1. The index is now always part of the id, so two entries
+  // that happen to share a value get distinct ids from the start, and no
+  // untouched entry's id ever moves.
+  var src = 'services:\n  a:\n    image: alpine\n    dns:\n      - 1.1.1.1\n      - 1.1.1.1\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var dns = form.fields.filter(function (f) { return f.listKey === 'dns'; });
+
+  ok('two identical dns entries get two distinct, indexed ids',
+     dns.length === 2 && dns[0].id === 'a/list.dns#0/1.1.1.1' && dns[1].id === 'a/list.dns#1/1.1.1.1',
+     JSON.stringify(dns.map(function (f) { return f.id; })));
+
+  Y.setPart(doc, form, dns[1].id, 'value', '2.2.2.2');
+  ok('setting the second one by id rewrites only the second line',
+     Y.serialise(doc) === 'services:\n  a:\n    image: alpine\n    dns:\n      - 1.1.1.1\n      - 2.2.2.2\n',
+     Y.serialise(doc));
+
+  // The case the conditional form broke: two distinct values, edit the
+  // second to match the first.
+  var src2 = 'services:\n  b:\n    image: alpine\n    dns:\n      - 1.1.1.1\n      - 8.8.8.8\n';
+  var d2 = Y.parse(src2), f2 = Y.buildForm(d2);
+  var rows = f2.fields.filter(function (f) { return f.listKey === 'dns'; });
+  var firstId = rows[0].id;
+
+  Y.setPart(d2, f2, rows[1].id, 'value', '1.1.1.1');
+  var f3 = Y.buildForm(d2);
+  var afterEdit = f3.fields.filter(function (f) { return f.listKey === 'dns'; })[0];
+  ok('editing the second entry to match the first leaves the first entry\u2019s id unchanged',
+     afterEdit.id === firstId, JSON.stringify({ before: firstId, after: afterEdit.id }));
+})();
+
+/* ---- 10. the strongest case, again -------------------------------------- */
+
+// Already covered above: the identity-then-null-edit case at the top of
+// section L uses boxes(), which walks every unlocked field regardless of
+// binder — so it already exercises the new list boxes (web's two networks:
+// entries, db's secrets: entry) alongside everything else. No second copy
+// needed here.
+
+/* =========================================================================
+ * N. 10-advanced-compose-test — PLAN_5 phase 3: healthcheck: and deploy:
+ * broken into one field per nested value.
+ * ========================================================================= */
+
+console.log('\nN. 10-advanced-compose-test (PLAN_5 phase 3)');
+
+/* ---- 1. the editable leaves an absent key never invents ----------------- */
+
+(function () {
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var leavesOf = function (svc) {
+    return form.fields
+      .filter(function (f) { return f.service === svc && f.target.indexOf('healthcheck.') === 0 && !f.locked; })
+      .map(function (f) { return f.target.slice('healthcheck.'.length); });
+  };
+  ok('web yields exactly these four editable healthcheck leaves',
+     JSON.stringify(leavesOf('web')) === JSON.stringify(['interval', 'timeout', 'retries', 'start_period']),
+     leavesOf('web').join(', '));
+  ok('db yields exactly three — the file has no start_period, and an absent leaf is never offered',
+     JSON.stringify(leavesOf('db')) === JSON.stringify(['interval', 'timeout', 'retries']),
+     leavesOf('db').join(', '));
+})();
+
+/* ---- 2. absent leaves are not invented ----------------------------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      interval: 30s\n';
+  var form = Y.buildForm(Y.parse(src));
+  var hc = form.fields.filter(function (f) { return f.service === 'a' && f.target.indexOf('healthcheck') === 0; });
+  ok('a healthcheck: with only interval: yields one editable leaf and no slot for the other five',
+     hc.length === 1 && hc[0].target === 'healthcheck.interval' && !hc[0].locked,
+     JSON.stringify(hc.map(function (f) { return { target: f.target, locked: f.locked }; })));
+})();
+
+/* ---- 3. type inference on a leaf has no special case ---------------------
+ *
+ * retries and disable get no entry in KEYS, so their type comes from the same
+ * value sniff every other scalar goes through — the point being that a leaf
+ * needs nothing beyond a title to behave like any other field.
+ */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      retries: 5\n      disable: true\n';
+  var form = Y.buildForm(Y.parse(src));
+  var retries = Y.fieldById(form, 'a/setting/healthcheck.retries');
+  var disable = Y.fieldById(form, 'a/setting/healthcheck.disable');
+  ok('retries reads as a number, inferred from its value with no special case',
+     !!retries && retries.type === 'number', retries && retries.type);
+  ok('disable reads as a boolean, inferred from its value with no special case',
+     !!disable && disable.type === 'boolean', disable && disable.type);
+})();
+
+/* ---- 4. nothing shows twice, and nothing is lost ------------------------- */
+
+(function () {
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  ok('no field anywhere has target exactly "healthcheck" or "deploy"',
+     !form.fields.some(function (f) { return f.target === 'healthcheck' || f.target === 'deploy'; }));
+
+  var src = 'services:\n  a:\n    image: alpine\n    deploy:\n      replicas: 3\n' +
+            '      resources:\n        limits:\n          cpus: \'0.50\'\n' +
+            '      placement:\n        constraints:\n          - node.role == manager\n';
+  var doc2 = Y.parse(src), f2 = Y.buildForm(doc2);
+  var a  = f2.fields.filter(function (f) { return f.service === 'a'; });
+  ok('deploy\u2019s child resources yields no row of its own, because its descendants cover it',
+     !a.some(function (f) { return f.target === 'deploy.resources'; }));
+
+  // An uncovered block child goes through the same settingTarget() as the
+  // catch-all, so shape decides editability, not position in the block: a
+  // plain scalar (replicas) is an ordinary editable number, while a nested
+  // map (placement) cannot be written as a single value and stays locked.
+  var repl = Y.fieldById(f2, 'a/setting/deploy.replicas');
+  ok('an uncovered deploy.replicas: 3 is a plain scalar, so it comes out as an ordinary editable number field',
+     !!repl && repl.locked === false && repl.title === 'Replicas' && repl.type === 'number',
+     repl && JSON.stringify({ locked: repl.locked, title: repl.title, type: repl.type }));
+
+  Y.setPart(doc2, f2, 'a/setting/deploy.replicas', 'value', '5');
+  ok('setting it rewrites only that one line',
+     diffLines(src, Y.serialise(doc2)).length === 1, diffLines(src, Y.serialise(doc2)).join(', '));
+
+  var place = Y.fieldById(f2, 'a/setting/deploy.placement');
+  ok('an uncovered deploy.placement: {constraints: [...]} is a map, so it stays locked as a block of its own',
+     !!place && place.locked === true && place.lockReason === 'this is written as a block of its own',
+     place && JSON.stringify({ locked: place.locked, lockReason: place.lockReason }));
+})();
+
+/* ---- 5. no two field ranges overlap -------------------------------------- */
+
+(function () {
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var ranged = form.fields
+    .filter(function (f) { return f.range; })
+    .map(function (f) { return { id: f.id, start: f.range.start, end: f.range.end }; })
+    .sort(function (a, b) { return a.start - b.start; });
+
+  var overlap = null;
+  for (var i = 1; i < ranged.length && !overlap; i++) {
+    if (ranged[i].start < ranged[i - 1].end) overlap = ranged[i - 1].id + ' / ' + ranged[i].id;
+  }
+  ok('no two field ranges overlap, which would make the Compose-view cursor sync ambiguous',
+     !overlap, overlap);
+})();
+
+/* ---- 6. quoting survives a leaf edit ------------------------------------- */
+
+(function () {
+  var text = FIXTURE_10_ADVANCED;
+  var doc  = Y.parse(text), form = Y.buildForm(doc);
+
+  Y.setPart(doc, form, 'web/setting/deploy.resources.limits.cpus', 'value', '0.75');
+  ok('cpus: \'0.50\' set to 0.75 stays single-quoted',
+     Y.serialise(doc).indexOf('cpus: \'0.75\'') >= 0, Y.serialise(doc));
+  ok('and changes exactly one line',
+     diffLines(text, Y.serialise(doc)).length === 1, diffLines(text, Y.serialise(doc)).join(', '));
+})();
+
+/* ---- 7. both spellings of test: -------------------------------------------
+ *
+ * A flow sequence is sealed, so it never resolves as a plain-scalar leaf and
+ * stays read-only. A plain string (which compose reads as CMD-SHELL) is an
+ * ordinary scalar, so it takes the same leaf path as interval or retries.
+ */
+
+(function () {
+  var flowForm = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var flow = Y.fieldById(flowForm, 'web/setting/healthcheck.test');
+  ok('the flow-sequence test: stays locked, with its raw list intact',
+     !!flow && flow.locked && flow.raw.indexOf('curl') >= 0, flow && flow.raw);
+  ok('and is titled "The check itself", same as the editable form',
+     !!flow && flow.title === 'The check itself', flow && flow.title);
+
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n' +
+            '      test: curl -f http://localhost/ || exit 1\n      interval: 30s\n';
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  var plain = Y.fieldById(form, 'a/setting/healthcheck.test');
+
+  ok('a plain-string test: is editable',
+     !!plain && !plain.locked, plain && JSON.stringify(plain));
+  ok('and titled "The check itself" too',
+     !!plain && plain.title === 'The check itself', plain && plain.title);
+
+  Y.setPart(doc, form, 'a/setting/healthcheck.test', 'value', 'curl -f http://localhost/health || exit 1');
+  ok('setting it rewrites only that one line',
+     diffLines(src, Y.serialise(doc)).length === 1, diffLines(src, Y.serialise(doc)).join(', '));
+})();
+
+/* ---- 8. interpolation reaches a leaf ------------------------------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    deploy:\n' +
+            '      resources:\n        limits:\n          memory: ${MEM_LIMIT}\n';
+  var form = Y.buildForm(Y.parse(src));
+  var mem  = Y.fieldById(form, 'a/setting/deploy.resources.limits.memory');
+  ok('a memory: ${MEM_LIMIT} leaf carries the interpolation advice',
+     !!mem && mem.advice.some(function (a) { return a.indexOf('typing over it replaces the variable') >= 0; }),
+     mem && JSON.stringify(mem.advice));
+})();
+
+/* ---- 9. the strongest case, again ---------------------------------------- */
+
+// Already covered above: the identity-then-null-edit case at the top of
+// section L uses boxes(), which walks every unlocked field regardless of
+// binder — so it already exercises the new healthcheck and deploy leaf boxes
+// alongside everything else. No second copy needed here.
+
+/* =========================================================================
+ * O. The Stack section — declarations as fields (PLAN_6 phase 4)
+ * ========================================================================= */
+
+console.log('\nO. The Stack section — declarations as fields');
+
+/* ---- 1. the exact set of declared fields, and declKind on each --------- */
+
+(function () {
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var decl = form.fields.filter(function (f) { return f.service === '' && f.binder === 'declared'; });
+
+  var got = decl.map(function (f) { return { target: f.target, declKind: f.declKind, fold: f.fold }; })
+                .sort(function (a, b) { return a.target < b.target ? -1 : 1; });
+  var want = [
+    { target: 'networks.backend_net',          declKind: 'networks', fold: false },
+    { target: 'networks.backend_net.internal', declKind: 'networks', fold: true  },
+    { target: 'networks.frontend_net',         declKind: 'networks', fold: false },
+    { target: 'secrets.db_password',           declKind: 'secrets',  fold: false },
+    { target: 'volumes.db_data',               declKind: 'volumes',  fold: false }
+  ];
+  ok('the fixture yields exactly these five declared fields, with the right declKind',
+     JSON.stringify(got) === JSON.stringify(want), JSON.stringify(got));
+})();
+
+/* ---- 2. a row is name + value, nothing else; value is the primary setting */
+
+(function () {
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var rows = form.fields.filter(function (f) { return f.binder === 'declared' && !f.fold; });
+
+  ok('every declaration row has exactly a name and a value part, no host or container',
+     rows.every(function (f) { return Object.keys(f.parts).sort().join(',') === 'name,value'; }),
+     JSON.stringify(rows.map(function (f) { return Object.keys(f.parts); })));
+
+  ok('a row\u2019s name box is read off the declaration\u2019s own key',
+     Y.fieldById(form, '/declared/networks.frontend_net').parts.name.spot.isKey === true);
+
+  ok('networks and volumes show driver as their value, secrets shows file',
+     Y.fieldById(form, '/declared/networks.frontend_net').parts.value.value === 'bridge' &&
+     Y.fieldById(form, '/declared/volumes.db_data').parts.value.value === 'local' &&
+     Y.fieldById(form, '/declared/secrets.db_password').parts.value.value === './db_password.txt');
+})();
+
+/* ---- 3. the note rides on the primary setting's line, not the name's ---- */
+
+(function () {
+  var src = 'networks:\n  n1:  # a note\n    driver: bridge  # the real note\nservices:\n  a:\n    image: alpine\n';
+  var f = Y.fieldById(Y.buildForm(Y.parse(src)), '/declared/networks.n1');
+
+  ok('the note comes from the driver: line, not the name line',
+     !!f && f.note === 'the real note', f && JSON.stringify(f.note));
+  ok('commentSpot points at the driver line, not the name line',
+     !!f && f.commentSpot && f.commentSpot.line === 2, f && JSON.stringify(f.commentSpot));
+})();
+
+/* ---- 4. a declaration with no settings at all has no note box ---------- */
+
+(function () {
+  var src = 'networks:\n  frontend_net:\nservices:\n  a:\n    image: alpine\n';
+  var f = Y.fieldById(Y.buildForm(Y.parse(src)), '/declared/networks.frontend_net');
+
+  ok('a bare declaration has an empty value part with no spot',
+     !!f && f.parts.value.value === '' && f.parts.value.spot === null,
+     f && JSON.stringify(f.parts.value));
+  ok('and no comment spot at all, so there is no note box to show',
+     !!f && f.commentSpot === null, f && JSON.stringify(f.commentSpot));
+})();
+
+/* ---- 5. a row's range is its own name line only, and nothing overlaps -- */
+
+(function () {
+  var src = 'networks:\n  frontend_net:  # a note\n    driver: bridge  # the real note\n' +
+            'services:\n  a:\n    image: alpine\n';
+  var f = Y.fieldById(Y.buildForm(Y.parse(src)), '/declared/networks.frontend_net');
+
+  ok('a declaration row\u2019s range is only its own name line, not the settings below it',
+     !!f && f.range.start === 1 && f.range.end === 2, f && JSON.stringify(f.range));
+
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var ranged = form.fields.filter(function (g) { return g.range; })
+    .map(function (g) { return { id: g.id, start: g.range.start, end: g.range.end }; })
+    .sort(function (a, b) { return a.start - b.start; });
+  var overlap = null;
+  for (var i = 1; i < ranged.length && !overlap; i++) {
+    if (ranged[i].start < ranged[i - 1].end) overlap = ranged[i - 1].id + ' / ' + ranged[i].id;
+  }
+  ok('no two ranges overlap anywhere in the form, services and declarations together',
+     !overlap, overlap);
+})();
+
+/* ---- 6. every id in the form is unique, declarations included ---------- */
+
+(function () {
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  var ids  = form.fields.map(function (f) { return f.id; });
+  var uniq = ids.filter(function (v, i, a) { return a.indexOf(v) === i; });
+
+  ok('every field id in the form is unique, declarations included',
+     ids.length === uniq.length, ids.join(', '));
+  ok('fieldById finds the exact field for every id',
+     form.fields.every(function (f) { return Y.fieldById(form, f.id) === f; }));
+})();
+
+/* ---- 7. declared is still five empty arrays on both early returns ------ */
+
+(function () {
+  var EMPTY = { networks: [], volumes: [], secrets: [], configs: [], services: [] };
+
+  var unreadable = Y.buildForm(Y.parse('services:\n\ta:\n\t\timage: alpine\n'));
+  ok('declared is still five empty arrays when the whole file is unreadable',
+     JSON.stringify(unreadable.declared) === JSON.stringify(EMPTY), JSON.stringify(unreadable.declared));
+  ok('and declaredFields yields no field either, since it never ran',
+     !unreadable.fields.some(function (f) { return f.binder === 'declared'; }));
+
+  // A networks: block with no services: key at all — declaredFields must not
+  // run ahead of the "no services:" early return just because there is
+  // something to read.
+  var noServices = Y.buildForm(Y.parse('networks:\n  frontend_net:\n'));
+  ok('declared is still five empty arrays when the file has no services: key',
+     JSON.stringify(noServices.declared) === JSON.stringify(EMPTY), JSON.stringify(noServices.declared));
+  ok('and declaredFields yields no field either, even though a networks: block exists',
+     !noServices.fields.some(function (f) { return f.binder === 'declared'; }));
+})();
+
+/* =========================================================================
+ * P. The Stack section, editable (PLAN_6 phase 5)
+ * ========================================================================= */
+
+console.log('\nP. The Stack section, editable');
+
+/* ---- 8. addDeclared: absent, present, empty, opaque --------------------- */
+
+(function () {
+  var d1 = Y.parse('services:\n  a:\n    image: alpine\n');
+  var line1 = Y.addDeclared(d1, 'networks', 'frontend_net');
+  ok('addDeclared creates the block at the end of the document when absent',
+     line1 >= 0 && Y.serialise(d1) === 'services:\n  a:\n    image: alpine\nnetworks:\n  frontend_net:\n',
+     JSON.stringify(Y.serialise(d1)));
+
+  var d2 = Y.parse('services:\n  a:\n    image: alpine\nnetworks:\n  frontend_net:\n    driver: bridge\n');
+  var line2 = Y.addDeclared(d2, 'networks', 'frontend_net');
+  ok('addDeclared appends to an existing block, de-duplicated via freeName',
+     line2 >= 0 && Y.serialise(d2) ===
+       'services:\n  a:\n    image: alpine\nnetworks:\n  frontend_net:\n    driver: bridge\n  frontend_net2:\n',
+     JSON.stringify(Y.serialise(d2)));
+
+  var d3 = Y.parse('services:\n  a:\n    image: alpine\nnetworks:\n');
+  var line3 = Y.addDeclared(d3, 'networks', 'frontend_net');
+  ok('addDeclared adds under a block that is present but empty',
+     line3 >= 0 && Y.serialise(d3) === 'services:\n  a:\n    image: alpine\nnetworks:\n  frontend_net:\n',
+     JSON.stringify(Y.serialise(d3)));
+
+  var opaque = 'x-net: &shared\n  frontend_net:\n\nservices:\n  a:\n    image: alpine\nnetworks: *shared\n';
+  var d4 = Y.parse(opaque);
+  var line4 = Y.addDeclared(d4, 'networks', 'frontend_net');
+  ok('addDeclared refuses a block written as an alias, and writes nothing',
+     line4 === -1 && Y.serialise(d4) === opaque, JSON.stringify(Y.serialise(d4)));
+})();
+
+/* ---- 9. removeDeclared: named, last-takes-the-key, does not refuse ------ */
+
+(function () {
+  var d1 = Y.parse('networks:\n  frontend_net:\n  backend_net:\n    driver: bridge\nservices:\n  a:\n    image: alpine\n');
+  ok('removeDeclared removes the named declaration',
+     Y.removeDeclared(d1, 'networks', 'frontend_net') === true &&
+     Y.serialise(d1) === 'networks:\n  backend_net:\n    driver: bridge\nservices:\n  a:\n    image: alpine\n',
+     JSON.stringify(Y.serialise(d1)));
+
+  var d2 = Y.parse('networks:\n  frontend_net:\nservices:\n  a:\n    image: alpine\n');
+  ok('removing the last declaration takes the whole <kind>: key with it',
+     Y.removeDeclared(d2, 'networks', 'frontend_net') === true &&
+     Y.serialise(d2) === 'services:\n  a:\n    image: alpine\n', JSON.stringify(Y.serialise(d2)));
+
+  var stillRef = 'networks:\n  frontend_net:\nservices:\n  a:\n    image: alpine\n    networks:\n      - frontend_net\n';
+  var d3 = Y.parse(stillRef);
+  ok('removing a declaration a service still references does not refuse',
+     Y.removeDeclared(d3, 'networks', 'frontend_net') === true &&
+     Y.serialise(d3) === 'services:\n  a:\n    image: alpine\n    networks:\n      - frontend_net\n',
+     JSON.stringify(Y.serialise(d3)));
+
+  // Symmetry: what addDeclared creates, removeDeclared can take straight back
+  // out, leaving the file exactly as it was found.
+  var src = 'services:\n  a:\n    image: alpine\n';
+  var d4 = Y.parse(src);
+  Y.addDeclared(d4, 'networks', 'frontend_net');
+  ok('add then remove leaves the file exactly as it was',
+     Y.removeDeclared(d4, 'networks', 'frontend_net') === true && Y.serialise(d4) === src,
+     firstDiff(src, Y.serialise(d4)));
+})();
+
+/* ---- 10. renameDeclared — the reference matrix, and the refusals -------- */
+
+(function () {
+  // Every shape a volume reference can take, in one file: a short-form
+  // reference, two things that only look like one (a relative and an
+  // absolute bind mount), a different name entirely, and both long forms —
+  // only the one whose type: is "volume" (or absent, which defaults to it)
+  // names a declared volume; a bind mount's source: is a path.
+  var src = 'services:\n' +
+    '  a:\n' +
+    '    image: alpine\n' +
+    '    volumes:\n' +
+    '      - data:/a\n' +
+    '      - ./data:/b\n' +
+    '      - /mnt/data:/c\n' +
+    '      - mydata:/d\n' +
+    '      - type: bind\n' +
+    '        source: data\n' +
+    '        target: /e\n' +
+    '      - type: volume\n' +
+    '        source: data\n' +
+    '        target: /f\n' +
+    '    environment:\n' +
+    '      NOTE: this mentions data but is not a ref\n' +
+    'volumes:\n' +
+    '  data:\n' +
+    '    driver: local\n';
+
+  var doc = Y.parse(src);
+  var res = Y.renameDeclared(doc, 'volumes', 'data', 'renamed');
+  var out = Y.serialise(doc);
+
+  ok('renaming a volume changes exactly the reference, the long-form volume source, and the declaration itself',
+     res.ok === true && res.refs === 2 && diffLines(src, out).join(',') === [4, 12, 17].join(','),
+     JSON.stringify(res) + '\n' + diffLines(src, out).join(', '));
+  ok('the short-form reference is renamed, its container path untouched',
+     out.indexOf('      - renamed:/a\n') >= 0, out);
+  ok('a relative and an absolute bind mount that merely contain the name are untouched',
+     out.indexOf('      - ./data:/b\n') >= 0 && out.indexOf('      - /mnt/data:/c\n') >= 0, out);
+  ok('a different name entirely is untouched', out.indexOf('      - mydata:/d\n') >= 0, out);
+  ok('a long-form bind mount\u2019s source is untouched, since it is a path, not a reference',
+     out.indexOf('        source: data\n        target: /e\n') >= 0, out);
+  ok('a long-form volume\u2019s source is renamed, its target path untouched',
+     out.indexOf('        source: renamed\n        target: /f\n') >= 0, out);
+  ok('a value that merely spells the name inside a sentence is untouched',
+     out.indexOf('NOTE: this mentions data but is not a ref') >= 0, out);
+
+  // Renaming a network touches the declaration and every service's list.
+  var netSrc = 'services:\n' +
+    '  a:\n    image: alpine\n    networks:\n      - frontend_net\n' +
+    '  b:\n    image: nginx\n    networks:\n      - frontend_net\n      - other\n' +
+    'networks:\n  frontend_net:\n  other:\n';
+  var nd = Y.parse(netSrc);
+  var nres = Y.renameDeclared(nd, 'networks', 'frontend_net', 'front');
+  ok('renaming a network rewrites the declaration and every service\u2019s networks: entry',
+     nres.ok === true && nres.refs === 2 &&
+     Y.serialise(nd) === netSrc.replace(/frontend_net/g, 'front'),
+     JSON.stringify(nres) + '\n' + Y.serialise(nd));
+
+  // Refusals leave the file untouched, same contract as renameService.
+  var d1 = Y.parse(netSrc), before1 = Y.serialise(d1);
+  var r1 = Y.renameDeclared(d1, 'networks', 'frontend_net', 'other');
+  ok('renaming to an existing name is refused, with a message',
+     r1.ok === false && typeof r1.error === 'string' && r1.error.length > 0 && Y.serialise(d1) === before1,
+     JSON.stringify(r1));
+
+  var d2 = Y.parse(netSrc), before2 = Y.serialise(d2);
+  var r2 = Y.renameDeclared(d2, 'networks', 'frontend_net', 'bad name!');
+  ok('renaming to an invalid name is refused, with a message',
+     r2.ok === false && typeof r2.error === 'string' && r2.error.length > 0 && Y.serialise(d2) === before2,
+     JSON.stringify(r2));
+
+  var d3 = Y.parse(netSrc), before3 = Y.serialise(d3);
+  var r3 = Y.renameDeclared(d3, 'networks', 'frontend_net', 'frontend_net');
+  ok('renaming to the same name is a no-op success, and writes nothing',
+     r3.ok === true && r3.refs === 0 && Y.serialise(d3) === before3, JSON.stringify(r3));
+})();
+
+/* ---- 11. filling an empty declaration's primary setting ----------------- */
+
+(function () {
+  var src = 'networks:\n  frontend_net:\nservices:\n  a:\n    image: alpine\n';
+
+  var d1 = Y.parse(src), f1 = Y.buildForm(d1);
+  ok('setPart on a bare declaration\u2019s value inserts driver: at the right indent',
+     Y.setPart(d1, f1, '/declared/networks.frontend_net', 'value', 'bridge') &&
+     Y.serialise(d1) === 'networks:\n  frontend_net:\n    driver: bridge\nservices:\n  a:\n    image: alpine\n',
+     JSON.stringify(Y.serialise(d1)));
+
+  var d2 = Y.parse(src), f2 = Y.buildForm(d2);
+  ok('a blank value reports success but writes nothing, same as an absent Container slot',
+     Y.setPart(d2, f2, '/declared/networks.frontend_net', 'value', '   ') && Y.serialise(d2) === src,
+     firstDiff(src, Y.serialise(d2)));
+})();
+
+/* ---- 12. round-trip after every operation -------------------------------- */
+
+(function () {
+  // The A/B corpus round trip already covers the untouched fixture's own
+  // declaration boxes on a null edit — 10-advanced-compose-test/compose.yaml
+  // is part of the scratch corpus those sections walk, and boxes() picks up
+  // every unlocked part regardless of binder. What is new here is that a
+  // structural edit (add/remove/rename/fill) leaves buildForm in a state
+  // just as sound as it started: unique ids, and no two fields laying claim
+  // to the same line.
+  function sane(form, label) {
+    var ids = form.fields.map(function (f) { return f.id; });
+    var uniq = ids.filter(function (v, i, a) { return a.indexOf(v) === i; });
+    ok(label + ': every id stays unique after the edit', ids.length === uniq.length, ids.join(', '));
+
+    var ranged = form.fields.filter(function (f) { return f.range; })
+      .map(function (f) { return { id: f.id, start: f.range.start, end: f.range.end }; })
+      .sort(function (a, b) { return a.start - b.start; });
+    var overlap = null;
+    for (var i = 1; i < ranged.length && !overlap; i++) {
+      if (ranged[i].start < ranged[i - 1].end) overlap = ranged[i - 1].id + ' / ' + ranged[i].id;
+    }
+    ok(label + ': no two ranges overlap after the edit', !overlap, overlap);
+  }
+
+  var base = 'services:\n  a:\n    image: alpine\n    networks:\n      - frontend_net\n' +
+             'networks:\n  frontend_net:\n    driver: bridge\n  backend_net:\n    driver: bridge\n' +
+             'volumes:\n  db_data:\n    driver: local\n';
+
+  var d1 = Y.parse(base);
+  Y.addDeclared(d1, 'volumes', 'cache');
+  sane(Y.buildForm(d1), 'after addDeclared');
+
+  var d2 = Y.parse(base);
+  Y.removeDeclared(d2, 'networks', 'backend_net');
+  sane(Y.buildForm(d2), 'after removeDeclared');
+
+  var d3 = Y.parse(base);
+  Y.renameDeclared(d3, 'networks', 'frontend_net', 'front');
+  sane(Y.buildForm(d3), 'after renameDeclared');
+
+  var d4 = Y.parse('services:\n  a:\n    image: alpine\nnetworks:\n  frontend_net:\n');
+  Y.setPart(d4, Y.buildForm(d4), '/declared/networks.frontend_net', 'value', 'bridge');
+  sane(Y.buildForm(d4), 'after filling an empty declaration');
+})();
+
+/* =========================================================================
+ * Q. The long-form gap — a long-form volume's source: joins the namespace
+ * (PLAN_6 phase 5b)
+ * ========================================================================= */
+
+console.log('\nQ. Long-form volumes and ports join the namespace');
+
+(function () {
+  var src = 'services:\n' +
+    '  a:\n' +
+    '    image: alpine\n' +
+    '    volumes:\n' +
+    '      - type: volume\n' +
+    '        source: missing_vol\n' +
+    '        target: /data\n' +
+    '      - type: bind\n' +
+    '        source: /host/path\n' +
+    '        target: /data2\n' +
+    '    ports:\n' +
+    '      - target: 80\n' +
+    '        published: 8080\n';
+
+  var form = Y.buildForm(Y.parse(src));
+  var vols = form.fields.filter(function (f) { return f.binder === 'volume'; });
+  var named  = vols.filter(function (f) { return f.target === '/data';  })[0];
+  var bound  = vols.filter(function (f) { return f.target === '/data2'; })[0];
+  var port   = form.fields.filter(function (f) { return f.binder === 'port'; })[0];
+
+  ok('a long-form volume naming an undeclared volume carries the same dangling-reference string as the short form',
+     !!named && named.advice.indexOf('no volume called missing_vol is defined in this file') >= 0,
+     named && JSON.stringify(named.advice));
+  ok('a long-form volume whose source is a path carries no such advice',
+     !!bound && !bound.advice.some(function (a) { return a.indexOf('is defined in this file') >= 0; }),
+     bound && JSON.stringify(bound.advice));
+  ok('a long-form port carries listKey: "ports"', !!port && port.listKey === 'ports', port && port.listKey);
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
