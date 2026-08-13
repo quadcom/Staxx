@@ -2372,6 +2372,66 @@ console.log('\nQ. Long-form volumes and ports join the namespace');
   ok('a long-form port carries listKey: "ports"', !!port && port.listKey === 'ports', port && port.listKey);
 })();
 
+/* =========================================================================
+ * R. A list emptied to nothing can be filled again
+ * ========================================================================= */
+
+console.log('\nR. A list emptied to nothing can be filled again');
+
+(function () {
+  // removeItem takes networks: with it once the last entry is gone (a null
+  // value under networks: is invalid compose), which used to make the
+  // renderer drop the group and its Add button with it — so refilling the
+  // key was impossible from the form. PREFIX/TAIL are what must never move;
+  // only the networks: block inside web is allowed to change shape.
+  var PREFIX = 'services:\n  web:\n    image: nginx\n';
+  var TAIL   = '\nnetworks:\n  front:\n  back:\n';
+  var src    = PREFIX + '    networks:\n      - front\n      - back\n' + TAIL;
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  // Reads the current `form`, which is rebuilt after every write below.
+  function nets() {
+    return form.fields.filter(function (x) { return x.binder === 'list' && x.listKey === 'networks'; });
+  }
+
+  ok('the fixture declares both network names',
+     form.declared.networks.length === 2 && form.declared.networks.indexOf('front') >= 0 && form.declared.networks.indexOf('back') >= 0,
+     JSON.stringify(form.declared.networks));
+
+  var first = nets();
+  ok('the service starts with two network entries', first.length === 2, first.map(function (f) { return f.target; }).join(', '));
+
+  Y.removeItem(doc, form, first[0].id);
+  var afterOne = Y.serialise(doc);
+  ok('removing one of two entries leaves the other',
+     afterOne === PREFIX + '    networks:\n      - back\n' + TAIL, firstDiff(src, afterOne));
+
+  form = Y.buildForm(doc);
+  var second = nets();
+  ok('one entry remains in the form too', second.length === 1, second.map(function (f) { return f.target; }).join(', '));
+
+  Y.removeItem(doc, form, second[0].id);
+  var afterTwo = Y.serialise(doc);
+  ok('removing the last entry drops the networks: key from the service entirely',
+     afterTwo.indexOf('\n    networks:') < 0, JSON.stringify(afterTwo));
+  ok('the service\'s other keys and the top-level networks: block are untouched',
+     afterTwo === PREFIX + TAIL, firstDiff(PREFIX + TAIL, afterTwo));
+
+  form = Y.buildForm(doc);
+  var line = Y.addItem(doc, form, 'web', 'list', '', 'networks');
+  ok('the key can be filled again after being removed entirely', line >= 0, 'addItem returned ' + line);
+
+  var final = Y.serialise(doc);
+  var refilled = Y.buildForm(Y.parse(final)).fields.filter(function (f) { return f.binder === 'list' && f.listKey === 'networks'; });
+  ok('exactly one entry is written back', refilled.length === 1, refilled.map(function (f) { return f.target; }).join(', '));
+  ok('its value is a declared network name, not an invented placeholder',
+     refilled.length === 1 && form.declared.networks.indexOf(refilled[0].target) >= 0,
+     refilled.length === 1 && refilled[0].target);
+
+  ok('the rest of the file is unchanged apart from the networks: block inside web',
+     final.indexOf(PREFIX) === 0 && final.slice(-TAIL.length) === TAIL, firstDiff(src, final));
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

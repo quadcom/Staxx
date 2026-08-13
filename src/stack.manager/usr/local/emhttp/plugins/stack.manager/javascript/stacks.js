@@ -165,23 +165,45 @@
   }
 
   // A service's own group list: the static table, plus one dynamic group per
-  // distinct list key the service actually has, inserted after Labels and
-  // before Advanced — which falls out of building the list this way, since
-  // Advanced is the only static entry pulled out to a separate tail. A
-  // service without a given key never sees that key's group at all.
+  // distinct list key the service has, inserted after Labels and before
+  // Advanced — which falls out of building the list this way, since Advanced is
+  // the only static entry pulled out to a separate tail.
+  //
+  // A list emptied by the × button is kept too. Its key really has gone from the
+  // file, so there is no field left to name it or place it, and both come from
+  // the last render instead — otherwise the group would either vanish, taking
+  // the Add button that refills it, or come back at the bottom of the service
+  // below lists it used to sit above.
   function groupsForService(fields, serviceName) {
-    var head = [], tail = [], seen = {}, i;
+    var head = [], tail = [], has = {}, order = [], i;
     for (i = 0; i < GROUPS.length; i++) (GROUPS[i].key === 'advanced' ? tail : head).push(GROUPS[i]);
 
     for (i = 0; i < fields.length; i++) {
       var f = fields[i];
-      if (f.service !== serviceName || f.binder !== 'list' || seen[f.listKey]) continue;
-      seen[f.listKey] = true;
+      if (f.service !== serviceName || f.binder !== 'list' || has[f.listKey]) continue;
+      has[f.listKey] = f.groupTitle;
+      order.push(f.listKey);
+    }
+
+    var was = listGroups[serviceName] || [], gone = emptiedLists[serviceName] || {};
+    var keep = [], kept = {};
+    for (i = 0; i < was.length; i++) {
+      var k = was[i].key;
+      if (has[k])      { keep.push({ key: k, heading: has[k] }); kept[k] = true; }
+      else if (gone[k]) { keep.push(was[i]); kept[k] = true; }
+    }
+    for (i = 0; i < order.length; i++) {
+      if (kept[order[i]]) continue;
+      keep.push({ key: order[i], heading: has[order[i]] });
+    }
+
+    listGroups[serviceName] = keep;
+    for (i = 0; i < keep.length; i++) {
       head.push({
-        key: 'list:' + f.listKey,
-        heading: f.groupTitle,
+        key: 'list:' + keep[i].key,
+        heading: keep[i].heading,
         cls: 'stackman-formgroup--single',
-        add: 'list:' + f.listKey
+        add: 'list:' + keep[i].key
       });
     }
     return head.concat(tail);
@@ -545,6 +567,14 @@
 
   var MODEL = null;      // the last form that parsed
   var activeField = null;
+
+  // A service's list groups follow its fields, so removing a list's last entry
+  // takes the group and its Add button with it — the key genuinely is gone,
+  // since "networks:" with nothing under it is null and compose refuses the
+  // file. These two remember what a service showed, so an emptied group keeps
+  // its place and its name: the field it took both from has just been removed.
+  var listGroups   = {};   // service -> [{ key, heading }, …] as last rendered
+  var emptiedLists = {};   // service -> { listKey: 1 } emptied by × this session
 
   function esc(s) {
     return String(s === undefined || s === null ? '' : s)
@@ -1957,6 +1987,15 @@
                     'remove it in the Compose view instead.');
       return;
     }
+
+    // After the guard, never before it: a removal the model refused leaves the
+    // list exactly as it was and has nothing to remember. Recorded for every
+    // list entry rather than only the last, since a list that still has entries
+    // is shown by its own fields anyway.
+    if (f.binder === 'list' && f.listKey) {
+      if (!emptiedLists[f.service]) emptiedLists[f.service] = {};
+      emptiedLists[f.service][f.listKey] = 1;
+    }
     structuralEdit(-1, 'Removed ' + f.title + '. Undo is at the bottom if that was wrong.');
   });
 
@@ -2936,6 +2975,12 @@
     // level up.
     textAtOpen = body || (isNew ? NEW_STACK : '');
     yamlPane.value = textAtOpen;
+
+    // Before setView, which draws the form: a freshly loaded file that says a
+    // service has no networks is telling the truth about it, so nothing from
+    // the last stack's editing session may survive into this one.
+    emptiedLists = {};
+    listGroups   = {};
     setView(defaultView());
 
     undoStack.length = 0;
