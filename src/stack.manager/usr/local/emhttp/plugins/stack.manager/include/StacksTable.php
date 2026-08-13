@@ -293,7 +293,11 @@ function stackman_stack_children(array $s): array {
 function stackman_icon_tile(array $icon, string $name): string {
   if ($icon['fa'] !== '') {
     $fa = htmlspecialchars($icon['fa']);
-    return '<i class="fa '.$fa.'" data-icon="'.$fa.'"></i>';
+    // Class only. Unraid's default-fonts.css carries `[data-icon]:before {
+    // font-family: docker-icon !important }`, and that font holds a single glyph
+    // — the Docker whale — so a data-icon attribute on a Font Awesome <i> paints
+    // an empty box instead of the icon.
+    return '<i class="fa '.$fa.'"></i>';
   }
 
   $ref  = $icon['ref'] !== '' ? ' data-icon-ref="'.htmlspecialchars($icon['ref']).'"' : '';
@@ -337,7 +341,7 @@ function stackman_stack_tile(array $s, array $kids): string {
   }
 
   if (!$kids) {
-    return '<i class="fa fa-cubes" data-icon="fa-cubes"></i>';
+    return '<i class="fa fa-cubes"></i>';
   }
 
   $tiles = [];

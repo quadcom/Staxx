@@ -175,6 +175,98 @@
     return res && res.stray ? '\n\nPHP also printed:\n' + res.stray : '';
   }
 
+  /* ------------------------------------------------------------ renaming -- */
+
+  // Only one inline rename box may be open at a time. Holds the live box's
+  // commit function, so opening a second one finishes the first rather than
+  // dropping it — the same rule flushPending() applies to the form's fields.
+  var inlineOpen = null;
+
+  // Swaps `host` (whatever is currently showing the name) for a text box:
+  // Enter commits, Escape restores `host` untouched, and blurring — clicking
+  // away — commits too. Nothing destructive happens on blur because an empty
+  // or unchanged value cancels silently before opts.save() is ever called.
+  //
+  // opts.save(value) does the real work. A string return is a refusal — it is
+  // handed to opts.say() and the box stays open for another try. Anything
+  // else means the caller has taken over (it redraws the form, or refreshes
+  // the table), so the box is simply tidied away.
+  function inlineName(host, current, opts) {
+    if (inlineOpen) inlineOpen();
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'stackman-inline-name';
+    input.spellcheck = false;
+    input.autocomplete = 'off';
+    input.value = current;
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+
+    host.hidden = true;
+    host.insertAdjacentElement('afterend', input);
+    input.focus();
+    input.select();
+
+    var done = false;
+
+    function restore() {
+      input.remove();
+      host.hidden = false;
+    }
+
+    function cancel() {
+      if (done) return;
+      done = true;
+      inlineOpen = null;
+      restore();
+    }
+
+    function commit() {
+      if (done) return;
+
+      // The input can be destroyed by something other than commit/cancel — the
+      // editor dialog closing, or refreshRows() swapping the table body out
+      // from under an open folder-name box. A stale inlineOpen must not fire
+      // against text nobody is looking at any more.
+      if (!input.isConnected) { done = true; inlineOpen = null; return; }
+
+      var value = input.value.trim();
+      if (!value || value === current) { cancel(); return; }
+
+      // Set before calling save() — a save that redraws its host synchronously
+      // can blur this input as a side effect, and that must not re-enter here.
+      done = true;
+      var refusal = opts.save(value);
+      if (typeof refusal === 'string') {
+        done = false;
+        opts.say(refusal);
+        if (input.isConnected) { input.focus(); input.select(); }
+        return;
+      }
+      inlineOpen = null;
+      restore();
+    }
+
+    input.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') { event.preventDefault(); commit(); }
+      else if (event.key === 'Escape') { event.preventDefault(); cancel(); }
+    });
+    input.addEventListener('blur', commit);
+
+    inlineOpen = commit;
+  }
+
+  // Mirrors stackman_valid_name() in include/Stacks.php — a folder is a real
+  // directory, so the same gate against a crafted or traversing name applies.
+  function badFolderName(name) {
+    if (!name) return 'Give the folder a name.';
+    if (name.length > 63) return 'Folder names are 63 characters or fewer.';
+    if (name.indexOf('..') !== -1 || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+      return 'Folder names start with a letter or number, and may otherwise use letters, numbers, dots, underscores and hyphens.';
+    }
+    return '';
+  }
+
   /* ------------------------------------------------------------- editor -- */
 
   /* The editor is a <dialog> opened with showModal(), which is doing more work
@@ -597,7 +689,8 @@
       var svc = form.services[s];
       out.push('<section class="stackman-svc" data-service="' + esc(svc.name) + '"' +
                ' data-from="' + svc.range.start + '" data-to="' + svc.range.end + '">');
-      out.push('<h4 class="stackman-svchead">' + esc(svc.name) +
+      out.push('<h4 class="stackman-svchead">' +
+               '<span class="stackman-svcname">' + esc(svc.name) + '</span>' +
                ' <button type="button" class="stackman-svcrename" data-svc-rename="1"' +
                ' data-service="' + esc(svc.name) + '"' +
                ' aria-label="Rename this service" title="Rename this service">' +
@@ -893,24 +986,36 @@
     var rename = event.target.closest('[data-svc-rename]');
     if (rename) {
       var was = rename.dataset.service;
-      var next = window.prompt('Rename the service "' + was + '"', was);
-      if (next === null || next === was) return;
+      var nameHost = rename.closest('.stackman-svchead').querySelector('.stackman-svcname');
+      if (!nameHost) return;
 
-      flushPending();
-      pushUndo('renaming the service "' + was + '" to "' + next + '"');
-      var renamed = YAML.renameService(MODEL.doc, was, next);
-      if (!renamed.ok) {
-        undoStack.pop();
-        updateUndo();
-        setYamlStatus(renamed.error);
-        return;
-      }
+      inlineName(nameHost, was, {
+        // The compose pane (and its status line) is hidden in Form view, which
+        // is where this pencil lives — a refusal has to go to the footer instead.
+        say: showError,
+        save: function (next) {
+          clearError();
+          flushPending();
+          pushUndo('renaming the service "' + was + '" to "' + next + '"');
+          var renamed = YAML.renameService(MODEL.doc, was, next);
+          if (!renamed.ok) {
+            undoStack.pop();
+            updateUndo();
+            return renamed.error;
+          }
 
-      serviceRenamed = true;
-      structuralEdit(-1, 'Renamed "' + was + '" to "' + next + '"' +
-                    (renamed.refs > 0
-                      ? '. ' + renamed.refs + (renamed.refs === 1 ? ' reference' : ' references') + ' updated.'
-                      : '.'));
+          serviceRenamed = true;
+          structuralEdit(-1, 'Renamed "' + was + '" to "' + next + '"' +
+                        (renamed.refs > 0
+                          ? '. ' + renamed.refs + (renamed.refs === 1 ? ' reference' : ' references') + ' updated.'
+                          : '.'));
+
+          // structuralEdit() just redrew the whole form, which took focus with
+          // it — land it back on the pencil for the section that now exists.
+          var pencil = formHost.querySelector('[data-svc-rename][data-service="' + next + '"]');
+          if (pencil) pencil.focus();
+        }
+      });
       return;
     }
 
@@ -2929,11 +3034,23 @@
              { disabled: !CAN_RUN });
     menuSeparator();
     menuItem('Rename folder', 'pencil', function () {
-      var next = window.prompt('Rename the folder', name);
-      if (next === null) return;
-      call('folder-rename', { folder: id, folderName: next }).then(function (r) {
-        if (!r.ok) { failed('Could not rename the folder', r.error); return; }
-        refreshRows();
+      var row  = document.querySelector('[data-folder-row="' + id + '"]');
+      var host = row && row.querySelector('.stackman-folder-name');
+      if (!host) return;
+
+      inlineName(host, name, {
+        say: function (message) { failed('Could not rename the folder', message); },
+        save: function (value) {
+          var why = badFolderName(value);
+          if (why) return why;
+
+          // The server answers after this returns, so a refusal from it goes
+          // to the failed() dialog rather than reopening the box.
+          call('folder-rename', { folder: id, folderName: value }).then(function (r) {
+            if (!r.ok) { failed('Could not rename the folder', r.error); return; }
+            refreshRows();
+          });
+        }
       });
     });
     menuSeparator();
@@ -3148,11 +3265,13 @@
     var row = document.querySelector('[data-folder-row="' + id + '"]');
     if (row) row.setAttribute('aria-expanded', open ? 'true' : 'false');
 
+    // The class is the only thing that may change here. Unraid's
+    // default-fonts.css carries `[data-icon]:before { font-family: docker-icon
+    // !important }`, and that font holds a single glyph — the Docker whale — so
+    // a data-icon attribute alongside a Font Awesome class renders an empty box
+    // that no rule of ours can win back.
     var folderIcon = document.querySelector('[data-menu="folder"][data-folder="' + id + '"] i');
-    if (folderIcon) {
-      folderIcon.className = 'fa fa-folder' + (open ? '-open' : '');
-      folderIcon.dataset.icon = 'fa-folder' + (open ? '-open' : '');
-    }
+    if (folderIcon) folderIcon.className = 'fa fa-folder' + (open ? '-open' : '');
 
     applyVisibility();
 
@@ -3175,12 +3294,20 @@
     applyVisibility();
   }
 
-  document.getElementById('stackman-add-folder').addEventListener('click', function () {
-    var name = window.prompt('Name for the new folder');
-    if (name === null || name.trim() === '') return;
-    call('folder-create', { folderName: name }).then(function (r) {
-      if (!r.ok) { failed('Could not create the folder', r.error); return; }
-      refreshRows();
+  var addFolderBtn = document.getElementById('stackman-add-folder');
+  addFolderBtn.addEventListener('click', function () {
+    inlineName(addFolderBtn, '', {
+      placeholder: 'Media',
+      say: function (message) { failed('Could not create the folder', message); },
+      save: function (value) {
+        var why = badFolderName(value);
+        if (why) return why;
+
+        call('folder-create', { folderName: value }).then(function (r) {
+          if (!r.ok) { failed('Could not create the folder', r.error); return; }
+          refreshRows();
+        });
+      }
     });
   });
 

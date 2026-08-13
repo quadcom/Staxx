@@ -1996,6 +1996,37 @@
   outline: none;
 }
 
+/* Stands in for a heading, a table cell and a toolbar button in turn, so it
+   takes its size from whatever surrounds it rather than imposing one, which is
+   what stops a folder row growing taller than its neighbours.
+
+   `input.` and the scaffold are both here for specificity: stock Unraid styles
+   inputs by `input[type="text"]`, which would beat a bare class of ours and
+   bring its own padding and font size with it. */
+.stackman-scaffold input.stackman-inline-name {
+  width: 16ch;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.1rem 0.4rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background: var(--sm-bg);
+  color: var(--sm-fg);
+  font: inherit;
+  vertical-align: middle;
+}
+
+.stackman-scaffold input.stackman-inline-name:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}
+
+/* inlineName() hides its host with [hidden], but the toolbar button already
+   has an author display: inline-flex above, which beats the user-agent
+   [hidden] rule — so this has to be said again where the specificity is ours. */
+.stackman-scaffold .stackman-btn[hidden] { display: none; }
+
 .stackman-fieldgroup {
   margin: 2rem 0 0.8rem;
   padding-bottom: 0.4rem;
