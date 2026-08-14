@@ -1085,13 +1085,19 @@ console.log('\nJ. The always-present Container settings');
 
 (function () {
   // The field count is what refreshRanges() indexes by, so it must never
-  // move when an absent slot gains a line.
+  // move when an absent slot gains a line. Sixteen, not four: the four fixed
+  // Container fields, plus twelve blank health-check/resource-limit leaves —
+  // harvestLeaves() (PLAN_8 phase 2) offers those whether or not the file has
+  // healthcheck:/deploy: at all, and healthcheck.test counts as two of them
+  // (PLAN_8 phase 4 — the mode and the command, see harvestHealthTest()).
   var src = 'services:\n  a:\n    image: alpine\n';
   var doc = Y.parse(src), form = Y.buildForm(doc);
   var svcFields = form.fields.filter(function (f) { return f.service === 'a'; });
 
-  ok('a service with no other settings yields exactly four fixed fields',
-     svcFields.length === 4 && svcFields.every(function (f) { return f.fixed; }),
+  ok('a service with no other settings yields four fixed fields plus twelve blank leaves',
+     svcFields.length === 16 &&
+     svcFields.slice(0, 4).every(function (f) { return f.fixed; }) &&
+     svcFields.slice(4).every(function (f) { return f.absent && f.path; }),
      svcFields.map(function (f) { return f.target; }).join(', '));
 
   var before = form.fields.length;
@@ -1273,9 +1279,18 @@ var FIXTURE_10_ADVANCED = [
 
 (function () {
   // networks: is two editable list fields rather than one locked block, and
-  // Phase 3 breaks healthcheck: and deploy: into one field per nested value
-  // rather than one field for the whole block — so the count is eighteen,
-  // not the ten keys the original file has at the top of web:. Pinning f.id
+  // harvestLeaves() (PLAN_8 phase 2) now offers every healthcheck/deploy leaf
+  // whether the file has it or not — seven healthcheck leaves (test counts as
+  // two — the mode and the command, PLAN_8 phase 4) plus all four deploy
+  // ones, as a fixed pass right after the four Container fields, same as
+  // those. The two healthcheck leaves this file does not set (start_interval,
+  // disable) still appear, blank. web's own test: is a flow list
+  // (["CMD", "curl", ...]) which readTest() reads with confidence, so it
+  // surfaces right there with its siblings rather than later as a locked
+  // catch-all field. web's depends_on is long form (PLAN_8 phase 5) — one
+  // field for "db" plus its restart/required fold, in place of the single
+  // locked block earlier phases left it as. So the count is twenty-three, not
+  // the ten keys the original file has at the top of web:. Pinning f.id
   // rather than binder/target is deliberate — a list field's id carries its
   // list key and index (web/list.networks#0/frontend_net), which is what
   // stops the same name colliding across two different list keys (see the
@@ -1288,51 +1303,67 @@ var FIXTURE_10_ADVANCED = [
     'web/setting/container_name',
     'web/setting/restart',
     'web/setting/network_mode',
-    'web/port/80/tcp',
-    'web/env/NGINX_PORT',
-    'web/list.networks#0/frontend_net',
-    'web/list.networks#1/backend_net',
-    'web/setting/depends_on',
-    'web/setting/deploy.resources.limits.cpus',
-    'web/setting/deploy.resources.limits.memory',
-    'web/setting/deploy.resources.reservations.cpus',
-    'web/setting/deploy.resources.reservations.memory',
+    'web/setting/healthcheck.test.mode',
+    'web/setting/healthcheck.test.command',
     'web/setting/healthcheck.interval',
     'web/setting/healthcheck.timeout',
     'web/setting/healthcheck.retries',
     'web/setting/healthcheck.start_period',
-    'web/setting/healthcheck.test'
+    'web/setting/healthcheck.start_interval',
+    'web/setting/healthcheck.disable',
+    'web/setting/deploy.resources.limits.cpus',
+    'web/setting/deploy.resources.limits.memory',
+    'web/setting/deploy.resources.reservations.cpus',
+    'web/setting/deploy.resources.reservations.memory',
+    'web/port/80/tcp',
+    'web/env/NGINX_PORT',
+    'web/list.networks#0/frontend_net',
+    'web/list.networks#1/backend_net',
+    'web/depends/depends_on.db',
+    'web/depends/depends_on.db.restart',
+    'web/depends/depends_on.db.required'
   ];
-  ok('web yields exactly these eighteen fields, in file order',
+  ok('web yields exactly these twenty-three fields, in file order',
      JSON.stringify(got) === JSON.stringify(want), got.join(', '));
 })();
 
-/* ---- 4. healthcheck and deploy split into per-value fields; depends_on
- *        still locks whole ------------------------------------------------ */
+/* ---- 4. healthcheck and deploy split into per-value fields; depends_on's
+ *        long form does too (PLAN_8 phase 5) ------------------------------ */
 
 (function () {
-  // Phase 3: healthcheck: and deploy: no longer yield one field for the
-  // whole block — harvestBlock breaks each into one field per nested value,
+  // healthcheck: and deploy: no longer yield one field for the whole block —
+  // harvestLeaves()/harvestBlock break each into one field per nested value,
   // so there is no field whose target is exactly "healthcheck" or "deploy"
-  // any more.
+  // any more. web's healthcheck now carries all eight LEAVES targets — test
+  // counts as two (mode, command), five of the rest present in the file, two
+  // (start_interval, disable) offered blank — since harvestLeaves offers
+  // every leaf whether or not the file has it.
   var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
   var hcBlock  = Y.fieldById(form, 'web/setting/healthcheck');
   var depBlock = Y.fieldById(form, 'web/setting/deploy');
   var hcLeaves  = form.fields.filter(function (f) { return f.service === 'web' && f.target.indexOf('healthcheck.') === 0; });
   var depLeaves = form.fields.filter(function (f) { return f.service === 'web' && f.target.indexOf('deploy.') === 0; });
-  var hcTest = Y.fieldById(form, 'web/setting/healthcheck.test');
-  var don = Y.fieldById(form, 'web/setting/depends_on');
+  var hcMode = Y.fieldById(form, 'web/setting/healthcheck.test.mode');
+  var hcCmd  = Y.fieldById(form, 'web/setting/healthcheck.test.command');
+  var don = Y.fieldById(form, 'web/depends/depends_on.db');
+  var donRestart  = Y.fieldById(form, 'web/depends/depends_on.db.restart');
+  var donRequired = Y.fieldById(form, 'web/depends/depends_on.db.required');
 
   ok('healthcheck no longer yields a field for the whole block, only one per nested value',
-     !hcBlock && hcLeaves.length === 5, JSON.stringify({ hasBlock: !!hcBlock, leaves: hcLeaves.length }));
+     !hcBlock && hcLeaves.length === 8, JSON.stringify({ hasBlock: !!hcBlock, leaves: hcLeaves.length }));
   ok('deploy no longer yields a field for the whole block, only one per nested value',
      !depBlock && depLeaves.length === 4, JSON.stringify({ hasBlock: !!depBlock, leaves: depLeaves.length }));
-  ok('healthcheck.test is still one locked field, carrying the flow list, since a sealed value cannot resolve as a leaf',
-     !!hcTest && hcTest.locked && hcTest.lockReason === 'this is written as a list on one line' &&
-     hcTest.raw.indexOf('curl') >= 0, hcTest && JSON.stringify(hcTest.raw));
-  ok('depends_on written in long form is one locked field carrying its condition line',
-     !!don && don.locked && don.raw.indexOf('condition: service_healthy') >= 0 &&
-     don.lockReason === 'this is written as a block of its own', don && JSON.stringify(don.raw));
+  ok('web’s test: is a flow list readTest() can read with confidence, so it comes out editable as CMD plus its command',
+     !!hcMode && !hcMode.locked && hcMode.parts.value.value === 'cmd' &&
+     !!hcCmd && !hcCmd.locked && hcCmd.parts.value.value === 'curl -f http://localhost/',
+     JSON.stringify({ mode: hcMode && hcMode.parts.value.value, command: hcCmd && hcCmd.parts.value.value }));
+  ok('a long-form depends_on now reads as one editable field per dependency, name and condition both',
+     !!don && !don.locked && don.parts.name.value === 'db' && don.parts.value.value === 'service_healthy',
+     don && JSON.stringify({ locked: don.locked, name: don.parts.name.value, condition: don.parts.value.value }));
+  ok('restart and required are offered blank and folded away, since this file sets neither',
+     !!donRestart && donRestart.absent && donRestart.fold &&
+     !!donRequired && donRequired.absent && donRequired.fold,
+     JSON.stringify({ restart: donRestart && donRestart.absent, required: donRequired && donRequired.absent }));
 
   // Phase 2: a plain networks: or secrets: list is now one editable field per
   // entry, not a locked block — the list-form reason only ever described the
@@ -1403,17 +1434,23 @@ var FIXTURE_10_ADVANCED = [
   var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
   var titleOf = function (id) { var f = Y.fieldById(form, id); return f && f.title; };
 
-  ok('depends_on is titled "Starts after"',
-     titleOf('web/setting/depends_on') === 'Starts after', titleOf('web/setting/depends_on'));
+  ok('a long-form dependency is titled after the service it depends on',
+     titleOf('web/depends/depends_on.db') === 'Db', titleOf('web/depends/depends_on.db'));
+  ok('its folded restart/required take their titles from DEPENDS_LEAVES',
+     titleOf('web/depends/depends_on.db.restart') === 'Restart this service too when the dependency restarts' &&
+     titleOf('web/depends/depends_on.db.required') === 'This dependency must start successfully for this service to start',
+     JSON.stringify({ restart: titleOf('web/depends/depends_on.db.restart'),
+                       required: titleOf('web/depends/depends_on.db.required') }));
   // "Health check" and "Resource limits" now belong to the groups those
   // leaves sit under (stacks.js), not to a single field — each leaf carries
   // its own title from LEAVES instead.
-  var hcTitles = ['test', 'interval', 'timeout', 'retries', 'start_period']
+  var hcTitles = ['test.mode', 'test.command', 'interval', 'timeout', 'retries', 'start_period']
     .map(function (k) { return titleOf('web/setting/healthcheck.' + k); });
-  ok('healthcheck leaves are titled "The check itself", "Check every", "Give up after", ' +
-     '"Failures allowed" and "Grace period at start"',
+  ok('healthcheck leaves are titled "How the check runs", "The check itself", "Check every", ' +
+     '"Give up after", "Failures allowed" and "Grace period at start"',
      JSON.stringify(hcTitles) === JSON.stringify(
-       ['The check itself', 'Check every', 'Give up after', 'Failures allowed', 'Grace period at start']),
+       ['How the check runs', 'The check itself', 'Check every', 'Give up after',
+        'Failures allowed', 'Grace period at start']),
      JSON.stringify(hcTitles));
   var depTitles = ['resources.limits.cpus', 'resources.limits.memory',
                     'resources.reservations.cpus', 'resources.reservations.memory']
@@ -1641,19 +1678,20 @@ console.log('\nM. 10-advanced-compose-test (PLAN_4 phase 2)');
      nm && JSON.stringify({ absent: nm.absent, blocked: nm.blocked }));
 })();
 
-/* ---- 3. depends_on written as a block of conditions still locks whole --- */
+/* ---- 3. depends_on written as a block of conditions reads as one field
+ *        per dependency (PLAN_8 phase 5), not a short-form list entry ----- */
 
 (function () {
   var form   = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
-  var don    = Y.fieldById(form, 'web/setting/depends_on');
+  var don    = Y.fieldById(form, 'web/depends/depends_on.db');
   var asList = form.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'depends_on'; });
 
-  ok('depends_on as a map of conditions yields one locked field, not list entries',
-     !!don && don.locked && don.lockReason === 'this is written as a block of its own' && asList.length === 0,
-     don && JSON.stringify({ locked: don.locked, lockReason: don.lockReason, listEntries: asList.length }));
-  ok('and its raw text holds the whole block, condition line included',
-     !!don && don.raw.indexOf('db:') >= 0 && don.raw.indexOf('condition: service_healthy') >= 0,
-     don && JSON.stringify(don.raw));
+  ok('long-form depends_on yields one editable field per dependency, not locked, and not a short-form list entry',
+     !!don && !don.locked && asList.length === 0,
+     don && JSON.stringify({ locked: don.locked, listEntries: asList.length }));
+  ok('its name and condition come straight from the file',
+     !!don && don.parts.name.value === 'db' && don.parts.value.value === 'service_healthy',
+     don && JSON.stringify({ name: don.parts.name.value, condition: don.parts.value.value }));
 })();
 
 /* ---- 4. the same name under two different list keys cannot collide ----- */
@@ -1844,7 +1882,8 @@ console.log('\nM. 10-advanced-compose-test (PLAN_4 phase 2)');
 
 console.log('\nN. 10-advanced-compose-test (PLAN_5 phase 3)');
 
-/* ---- 1. the editable leaves an absent key never invents ----------------- */
+/* ---- 1. PLAN_8 phase 2: every leaf is offered whether or not the file
+ *        has it, so the tick box (phase 3) always has something to show --- */
 
 (function () {
   var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
@@ -1853,23 +1892,42 @@ console.log('\nN. 10-advanced-compose-test (PLAN_5 phase 3)');
       .filter(function (f) { return f.service === svc && f.target.indexOf('healthcheck.') === 0 && !f.locked; })
       .map(function (f) { return f.target.slice('healthcheck.'.length); });
   };
-  ok('web yields exactly these four editable healthcheck leaves',
-     JSON.stringify(leavesOf('web')) === JSON.stringify(['interval', 'timeout', 'retries', 'start_period']),
-     leavesOf('web').join(', '));
-  ok('db yields exactly three — the file has no start_period, and an absent leaf is never offered',
-     JSON.stringify(leavesOf('db')) === JSON.stringify(['interval', 'timeout', 'retries']),
-     leavesOf('db').join(', '));
+  // test.mode/test.command are editable for both services too — web's test:
+  // is a CMD flow list, db's is CMD-SHELL, and readTest() (PLAN_8 phase 4)
+  // reads either with confidence.
+  var want = ['test.mode', 'test.command', 'interval', 'timeout', 'retries',
+              'start_period', 'start_interval', 'disable'];
+  ok('web and db both yield the same eight editable healthcheck leaves, whether the file sets them or not',
+     JSON.stringify(leavesOf('web')) === JSON.stringify(want) &&
+     JSON.stringify(leavesOf('db')) === JSON.stringify(want),
+     leavesOf('web').join(', ') + ' | ' + leavesOf('db').join(', '));
+
+  var webStartPeriod = Y.fieldById(form, 'web/setting/healthcheck.start_period');
+  var dbStartPeriod  = Y.fieldById(form, 'db/setting/healthcheck.start_period');
+  ok('web has a real start_period line; db does not, but its blank field still carries the path to create one',
+     !!webStartPeriod && !webStartPeriod.absent &&
+     !!dbStartPeriod && dbStartPeriod.absent &&
+     JSON.stringify(dbStartPeriod.path) === JSON.stringify(['healthcheck', 'start_period']),
+     JSON.stringify({ web: webStartPeriod && webStartPeriod.absent, db: dbStartPeriod && dbStartPeriod }));
 })();
 
-/* ---- 2. absent leaves are not invented ----------------------------------- */
+/* ---- 2. a leaf the file lacks shows up blank, carrying the path to create it */
 
 (function () {
   var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      interval: 30s\n';
   var form = Y.buildForm(Y.parse(src));
   var hc = form.fields.filter(function (f) { return f.service === 'a' && f.target.indexOf('healthcheck') === 0; });
-  ok('a healthcheck: with only interval: yields one editable leaf and no slot for the other five',
-     hc.length === 1 && hc[0].target === 'healthcheck.interval' && !hc[0].locked,
-     JSON.stringify(hc.map(function (f) { return { target: f.target, locked: f.locked }; })));
+  var interval = Y.fieldById(form, 'a/setting/healthcheck.interval');
+  var timeout  = Y.fieldById(form, 'a/setting/healthcheck.timeout');
+
+  ok('a healthcheck: with only interval: still yields all eight leaves — one real, seven blank',
+     hc.length === 8, JSON.stringify(hc.map(function (f) { return f.target; })));
+  ok('the one the file sets reads its value and is not absent',
+     !!interval && !interval.absent && interval.parts.value.value === '30s',
+     interval && JSON.stringify({ absent: interval.absent, value: interval.parts.value.value }));
+  ok('one the file does not set is absent, but carries the path to create it',
+     !!timeout && timeout.absent && JSON.stringify(timeout.path) === JSON.stringify(['healthcheck', 'timeout']),
+     timeout && JSON.stringify({ absent: timeout.absent, path: timeout.path }));
 })();
 
 /* ---- 3. type inference on a leaf has no special case ---------------------
@@ -1954,34 +2012,159 @@ console.log('\nN. 10-advanced-compose-test (PLAN_5 phase 3)');
      diffLines(text, Y.serialise(doc)).length === 1, diffLines(text, Y.serialise(doc)).join(', '));
 })();
 
-/* ---- 7. both spellings of test: -------------------------------------------
+/* ---- 7. healthcheck.test: readTest()/writeTest() (PLAN_8 phase 4) --------
  *
- * A flow sequence is sealed, so it never resolves as a plain-scalar leaf and
- * stays read-only. A plain string (which compose reads as CMD-SHELL) is an
- * ordinary scalar, so it takes the same leaf path as interval or retries.
+ * A flow sequence is sealed by the parser, so it never resolves as a plain
+ * scalar leaf — readTest() reads its argv straight off the sealed node's own
+ * .raw text instead. A plain string (which compose reads as CMD-SHELL), a
+ * block seq and NONE (either spelling) are the other three real shapes.
  */
 
 (function () {
-  var flowForm = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
-  var flow = Y.fieldById(flowForm, 'web/setting/healthcheck.test');
-  ok('the flow-sequence test: stays locked, with its raw list intact',
-     !!flow && flow.locked && flow.raw.indexOf('curl') >= 0, flow && flow.raw);
-  ok('and is titled "The check itself", same as the editable form',
-     !!flow && flow.title === 'The check itself', flow && flow.title);
+  // readTest() over all five shapes.
+  var cases = [
+    { src: 'test: ["CMD", "curl", "-f", "http://localhost/"]',
+      want: { mode: 'cmd', command: 'curl -f http://localhost/' } },
+    { src: 'test: ["CMD-SHELL", "pg_isready -U appuser"]',
+      want: { mode: 'shell', command: 'pg_isready -U appuser' } },
+    { src: 'test: curl -f http://localhost/ || exit 1',
+      want: { mode: 'shell', command: 'curl -f http://localhost/ || exit 1' } },
+    { src: 'test:\n      - CMD-SHELL\n      - pg_isready',
+      want: { mode: 'shell', command: 'pg_isready' } },
+    { src: 'test: ["NONE"]', want: { mode: 'none', command: '' } },
+    { src: 'test: NONE', want: { mode: 'none', command: '' } }
+  ];
+  cases.forEach(function (c) {
+    var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      ' + c.src + '\n';
+    var form = Y.buildForm(Y.parse(src));
+    var mode = Y.fieldById(form, 'a/setting/healthcheck.test.mode');
+    var cmd  = Y.fieldById(form, 'a/setting/healthcheck.test.command');
+    ok('readTest reads "' + c.src.split('\n')[0] + '" as ' + JSON.stringify(c.want),
+       !!mode && !mode.locked && mode.parts.value.value === c.want.mode &&
+       !!cmd  && !cmd.locked  && cmd.parts.value.value  === c.want.command,
+       JSON.stringify({ mode: mode && mode.parts.value.value, command: cmd && cmd.parts.value.value }));
+  });
+})();
 
+(function () {
+  // Round-tripping each mode through writeTest() and back through readTest():
+  // start from a file already carrying a command, then edit only the mode —
+  // a blank command would trip the blank-writes-nothing rule tested
+  // separately below, so this isolates the mode-only edit it does not apply
+  // to (mode 'none' aside, which always writes regardless of the command).
+  var command = 'curl -f http://localhost/';
+  [['shell', command], ['cmd', command], ['none', '']].forEach(function (pair) {
+    var mode = pair[0], want = pair[1];
+    var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n' +
+              '      test: ["CMD-SHELL", "' + command + '"]\n';
+    var doc = Y.parse(src), form = Y.buildForm(doc);
+    Y.setPart(doc, form, 'a/setting/healthcheck.test.mode', 'value', mode);
+    form = Y.buildForm(doc);
+    var gotMode = Y.fieldById(form, 'a/setting/healthcheck.test.mode').parts.value.value;
+    var gotCmd  = Y.fieldById(form, 'a/setting/healthcheck.test.command').parts.value.value;
+    ok('mode ' + mode + ' round-trips through writeTest/readTest',
+       gotMode === mode && gotCmd === want,
+       JSON.stringify({ mode: gotMode, command: gotCmd }));
+  });
+})();
+
+(function () {
+  // A command with a double quote, a backslash and a '#' — JSON.stringify
+  // encodes all three by construction, so the line reads back unchanged.
+  // Starts from an existing shell command so only the command field changes,
+  // isolating this from the blank-writes-nothing rule tested separately.
   var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n' +
-            '      test: curl -f http://localhost/ || exit 1\n      interval: 30s\n';
-  var doc  = Y.parse(src), form = Y.buildForm(doc);
-  var plain = Y.fieldById(form, 'a/setting/healthcheck.test');
+            '      test: ["CMD-SHELL", "placeholder"]\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var nasty = 'echo "hi" \\ done # not a comment';
+  Y.setPart(doc, form, 'a/setting/healthcheck.test.command', 'value', nasty);
+  form = Y.buildForm(doc);
+  var got = Y.fieldById(form, 'a/setting/healthcheck.test.command').parts.value.value;
+  ok('a command with a quote, a backslash and a # survives writeTest/readTest intact',
+     got === nasty, JSON.stringify(got));
+})();
 
-  ok('a plain-string test: is editable',
-     !!plain && !plain.locked, plain && JSON.stringify(plain));
-  ok('and titled "The check itself" too',
-     !!plain && plain.title === 'The check itself', plain && plain.title);
+(function () {
+  // A trailing comment on the test: line survives a rewrite.
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n' +
+            '      test: curl -f http://localhost/  # keep this\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.setPart(doc, form, 'a/setting/healthcheck.test.command', 'value', 'curl -f http://localhost/health');
+  ok('a test: line\u2019s trailing comment survives setting the command',
+     Y.serialise(doc).indexOf('# keep this') >= 0, Y.serialise(doc));
+})();
 
-  Y.setPart(doc, form, 'a/setting/healthcheck.test', 'value', 'curl -f http://localhost/health || exit 1');
-  ok('setting it rewrites only that one line',
-     diffLines(src, Y.serialise(doc)).length === 1, diffLines(src, Y.serialise(doc)).join(', '));
+(function () {
+  // Creating a health check from nothing at all — no healthcheck: block —
+  // through the mode and command fields, and it parses back to what was typed.
+  var src = 'services:\n  a:\n    image: alpine\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var mode = Y.fieldById(form, 'a/setting/healthcheck.test.mode');
+  var cmd  = Y.fieldById(form, 'a/setting/healthcheck.test.command');
+  ok('with no healthcheck: at all, both test fields start absent',
+     !!mode && mode.absent && !!cmd && cmd.absent);
+  ok('typing only the command, with no mode chosen yet, writes nothing (blank-writes-nothing)',
+     Y.setPart(doc, form, 'a/setting/healthcheck.test.command', 'value', '') &&
+     Y.serialise(doc) === src);
+
+  Y.setPart(doc, form, 'a/setting/healthcheck.test.command', 'value', 'curl -f http://localhost/');
+  ok('typing a command with no mode chosen defaults to a shell line and creates healthcheck:',
+     Y.serialise(doc).indexOf('healthcheck:') >= 0 &&
+     Y.serialise(doc).indexOf('test: ["CMD-SHELL", "curl -f http://localhost/"]') >= 0,
+     Y.serialise(doc));
+
+  form = Y.buildForm(doc);
+  var reread = Y.fieldById(form, 'a/setting/healthcheck.test.command');
+  ok('and reads back exactly what was typed',
+     !!reread && reread.parts.value.value === 'curl -f http://localhost/', reread && reread.parts.value.value);
+})();
+
+(function () {
+  // A block seq is replaced by the single-line form, and every other line of
+  // the file is byte-identical.
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n' +
+            '      test:\n        - CMD-SHELL\n        - pg_isready\n      interval: 30s\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.setPart(doc, form, 'a/setting/healthcheck.test.command', 'value', 'pg_isready -U appuser');
+  var want = 'services:\n  a:\n    image: alpine\n    healthcheck:\n' +
+             '      test: ["CMD-SHELL", "pg_isready -U appuser"]\n      interval: 30s\n';
+  ok('a block-seq test: collapses to the single-line form, every other line untouched',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // A hand-authored file with comments, an anchor/alias elsewhere and blank
+  // lines: change only test: on service 'a', diff the whole file, nothing
+  // else moves. The anchor sits on a key 'a' never touches, so 'a' itself
+  // stays fully readable — anchoring the SERVICE being edited would seal the
+  // whole thing, which is a different (and separately covered) case.
+  var src = 'x-notes: &notes\n  hello: world\n\n' +
+            'services:\n' +
+            '  a:\n    image: alpine\n\n' +
+            '    # the health check\n    healthcheck:\n' +
+            '      test: ["CMD-SHELL", "curl -f http://localhost/"]\n      interval: 30s\n\n' +
+            '  b:\n    image: alpine\n    labels: *notes\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.setPart(doc, form, 'a/setting/healthcheck.test.command', 'value', 'curl -f http://localhost/health');
+  var out = Y.serialise(doc);
+  var diff = diffLines(src, out);
+  ok('only the test: line moves in a file with an anchor/alias, a comment and blank lines',
+     diff.length === 1 && out.split('\n')[diff[0]].indexOf('test:') >= 0,
+     firstDiff(src, out));
+})();
+
+(function () {
+  // Refusal when healthcheck: is an anchor or alias — writeTest() must not
+  // guess inside a block the parser sealed.
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck: &hc\n      interval: 30s\n' +
+            '  b:\n    image: alpine\n    healthcheck: *hc\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('writeTest refuses an anchored healthcheck: and writes nothing',
+     Y.writeTest(doc, form, 'a', 'shell', 'curl -f http://localhost/') === false &&
+     Y.serialise(doc) === src);
+  ok('writeTest refuses on the alias side too',
+     Y.writeTest(doc, form, 'b', 'shell', 'curl -f http://localhost/') === false &&
+     Y.serialise(doc) === src);
 })();
 
 /* ---- 8. interpolation reaches a leaf ------------------------------------- */
@@ -2430,6 +2613,318 @@ console.log('\nR. A list emptied to nothing can be filled again');
 
   ok('the rest of the file is unchanged apart from the networks: block inside web',
      final.indexOf(PREFIX) === 0 && final.slice(-TAIL.length) === TAIL, firstDiff(src, final));
+})();
+
+/* =========================================================================
+ * S. addNested and removeKey (PLAN_8 phase 2) — creating and removing a
+ *    healthcheck/deploy leaf the file does not have yet.
+ * ========================================================================= */
+
+console.log('\nS. addNested and removeKey (PLAN_8 phase 2)');
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n';
+  var want = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      interval: 30s\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, 'a/setting/healthcheck.interval', 'value', '30s');
+  ok('typing into the blank healthcheck.interval box creates healthcheck: and interval: together',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n';
+  var want = 'services:\n  a:\n    image: alpine\n    deploy:\n      resources:\n        limits:\n          cpus: 2\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, 'a/setting/deploy.resources.limits.cpus', 'value', '2');
+  ok('typing into deploy.resources.limits.cpus creates all three missing levels plus the leaf',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      interval: 30s\n';
+  var want = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      interval: 30s\n      timeout: 5s\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, 'a/setting/healthcheck.timeout', 'value', '5s');
+  ok('adding a second leaf under a healthcheck: that already exists does not create a second block',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, 'a/setting/healthcheck.interval', 'value', '   ');
+  ok('a blank value into an absent leaf reports success', wrote);
+  ok('and writes nothing at all', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      interval: 30s\n      timeout: 5s\n';
+  var want = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      interval: 30s\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, 'a/setting/healthcheck.timeout', 'value', '');
+  ok('blanking one of two existing leaves removes only its own line',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      interval: 30s\n    restart: always\n';
+  var want = 'services:\n  a:\n    image: alpine\n    restart: always\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, 'a/setting/healthcheck.interval', 'value', '');
+  ok('blanking the only leaf under healthcheck: takes the whole block, not just the line',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n    deploy:\n      replicas: 3\n      resources:\n' +
+             '        limits:\n          cpus: \'0.50\'\n';
+  var want = 'services:\n  a:\n    image: alpine\n    deploy:\n      replicas: 3\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var removed = Y.removeKey(doc, form, 'a', ['deploy', 'resources']);
+  ok('removeKey drops deploy.resources whole, leaving the sibling deploy.replicas untouched',
+     removed && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // The anchor itself is sealed (an anchored value is opaque, not just its
+  // alias), so harvestLeaves offers no interval leaf for either service —
+  // there is nothing here fieldById can even find to write into.
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck: &hc\n      interval: 30s\n' +
+            '  b:\n    image: alpine\n    healthcheck: *hc\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('an anchored healthcheck: offers no interval leaf for either service',
+     !Y.fieldById(form, 'a/setting/healthcheck.interval') && !Y.fieldById(form, 'b/setting/healthcheck.interval'));
+  ok('so setPart refuses and writes nothing',
+     Y.setPart(doc, form, 'b/setting/healthcheck.interval', 'value', '10s') === false &&
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // A flow map is sealed the same way — offers no leaf, same refusal.
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck: {interval: 30s}\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('a flow-map healthcheck: offers no interval leaf either',
+     !Y.fieldById(form, 'a/setting/healthcheck.interval'));
+})();
+
+(function () {
+  // harvestLeaves only checks the LEAVES block key itself (deploy), not
+  // every level below it — so a sealed node further down the path (here,
+  // deploy.resources aliased from elsewhere) still gets offered as if it
+  // were simply absent. addNested is the backstop: it walks the path itself
+  // and refuses the moment it meets anything that is not a plain map.
+  var src = 'services:\n  a:\n    image: alpine\n    x-limits: &lim\n      cpus: \'0.5\'\n' +
+            '    deploy:\n      replicas: 3\n      resources: *lim\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var field = Y.fieldById(form, 'a/setting/deploy.resources.limits.cpus');
+  ok('deploy.resources.limits.cpus reads as if absent, since the walk cannot see past the alias',
+     !!field && field.absent, field && JSON.stringify({ absent: field.absent }));
+  var wrote = Y.setPart(doc, form, 'a/setting/deploy.resources.limits.cpus', 'value', '2');
+  ok('but addNested finds the sealed alias mid-path and refuses, writing nothing',
+     wrote === false && Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // A hand-authored file: a blank line and a description comment separate
+  // two settings. Creating a healthcheck matches that habit (the same rule
+  // insertChild already uses for addSetting), and undoing it — blanking the
+  // one leaf that makes it up — must restore the file exactly, blank line
+  // included, not leave a doubled or missing one behind.
+  var src = 'services:\n  a:\n    image: alpine\n\n    # custom notes about restart\n    restart: always\n';
+  var want = 'services:\n  a:\n    image: alpine\n\n    # custom notes about restart\n    restart: always\n' +
+             '\n    healthcheck:\n      interval: 30s\n';
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var created = Y.setPart(doc, form, 'a/setting/healthcheck.interval', 'value', '30s');
+  ok('creating healthcheck: after a comment-and-blank-separated setting copies the file\u2019s own habit',
+     created && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+
+  form = Y.buildForm(doc);
+  var removed = Y.setPart(doc, form, 'a/setting/healthcheck.interval', 'value', '');
+  ok('removing it again is byte-identical to the file before it existed — no doubled or missing blank line',
+     removed && Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+console.log('\nT. depends_on long form (PLAN_8 phase 5)');
+
+(function () {
+  // Long form read: names, conditions, restart/required — one dependency
+  // with everything set, one with only a condition.
+  var src = 'services:\n  web:\n    image: nginx\n    depends_on:\n' +
+            '      db:\n        condition: service_healthy\n        restart: true\n        required: false\n' +
+            '      cache:\n        condition: service_started\n';
+  var form = Y.buildForm(Y.parse(src));
+  var db    = Y.fieldById(form, 'web/depends/depends_on.db');
+  var cache = Y.fieldById(form, 'web/depends/depends_on.cache');
+  var dbRestart  = Y.fieldById(form, 'web/depends/depends_on.db.restart');
+  var dbRequired = Y.fieldById(form, 'web/depends/depends_on.db.required');
+
+  ok('each dependency reads its own name and condition',
+     !!db && db.parts.name.value === 'db' && db.parts.value.value === 'service_healthy' &&
+     !!cache && cache.parts.name.value === 'cache' && cache.parts.value.value === 'service_started',
+     JSON.stringify({ db: db && db.parts.value.value, cache: cache && cache.parts.value.value }));
+  ok('restart and required read as ordinary present values, not folded-away absent ones',
+     !!dbRestart && !dbRestart.absent && dbRestart.parts.value.value === 'true' && dbRestart.fold &&
+     !!dbRequired && !dbRequired.absent && dbRequired.parts.value.value === 'false' && dbRequired.fold,
+     JSON.stringify({ restart: dbRestart && dbRestart.parts.value.value, required: dbRequired && dbRequired.parts.value.value }));
+})();
+
+(function () {
+  // Changing a condition writes only that line.
+  var src = 'services:\n  web:\n    image: nginx\n    depends_on:\n' +
+            '      db:\n        condition: service_started\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, 'web/depends/depends_on.db', 'value', 'service_healthy');
+  ok('changing a condition rewrites only that line',
+     wrote && Y.serialise(doc) === src.replace('service_started', 'service_healthy'),
+     firstDiff(src.replace('service_started', 'service_healthy'), Y.serialise(doc)));
+})();
+
+(function () {
+  // Changing a name rewrites the key and nothing else.
+  var src = 'services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n' +
+            '  database:\n    image: postgres\n';
+  var full = 'services:\n  web:\n    image: nginx\n    depends_on:\n' +
+             '      db:\n        condition: service_healthy\n  db:\n    image: postgres\n' +
+             '  database:\n    image: postgres\n';
+  var doc = Y.parse(full), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, 'web/depends/depends_on.db', 'name', 'database');
+  var want = full.replace('      db:\n        condition: service_healthy',
+                           '      database:\n        condition: service_healthy');
+  ok('changing a dependency’s name rewrites the key and nothing else',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // Adding a dependency to an existing long-form block.
+  var src  = 'services:\n  web:\n    image: nginx\n    depends_on:\n      db:\n        condition: service_started\n' +
+             '  cache:\n    image: redis\n';
+  var want = 'services:\n  web:\n    image: nginx\n    depends_on:\n      db:\n        condition: service_started\n' +
+             '      cache:\n        condition: service_started\n  cache:\n    image: redis\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var line = Y.addNested(doc, form, 'web', ['depends_on', 'cache', 'condition'], 'service_started');
+  ok('adding a dependency to an existing long-form block writes condition: service_started beside it',
+     line >= 0 && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // Creating depends_on: from nothing in long form.
+  var src  = 'services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n';
+  var want = 'services:\n  web:\n    image: nginx\n    depends_on:\n      db:\n        condition: service_started\n' +
+             '  db:\n    image: postgres\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var line = Y.addNested(doc, form, 'web', ['depends_on', 'db', 'condition'], 'service_started');
+  ok('addNested creates depends_on:, the name and condition: service_started together, from nothing',
+     line >= 0 && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // Removing one dependency; removing the last one takes depends_on: with it.
+  var src = 'services:\n  web:\n    image: nginx\n    depends_on:\n' +
+            '      db:\n        condition: service_healthy\n      cache:\n        condition: service_started\n' +
+            '    restart: always\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var removedOne = Y.removeItem(doc, form, 'web/depends/depends_on.cache');
+  var want1 = 'services:\n  web:\n    image: nginx\n    depends_on:\n' +
+              '      db:\n        condition: service_healthy\n    restart: always\n';
+  ok('removing one dependency leaves depends_on: and its sibling untouched',
+     removedOne && Y.serialise(doc) === want1, firstDiff(want1, Y.serialise(doc)));
+
+  var form2 = Y.buildForm(doc);
+  var removedLast = Y.removeItem(doc, form2, 'web/depends/depends_on.db');
+  var want2 = 'services:\n  web:\n    image: nginx\n    restart: always\n';
+  ok('removing the last dependency takes depends_on: itself with it',
+     removedLast && Y.serialise(doc) === want2, firstDiff(want2, Y.serialise(doc)));
+})();
+
+(function () {
+  // Short form is untouched by any of this — read, added to and removed from
+  // exactly as before, and never converted to long form.
+  var src = 'services:\n  web:\n    image: nginx\n    depends_on:\n      - db\n  db:\n    image: postgres\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var short = form.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'depends_on'; });
+  ok('short form still yields one plain list field, not the long-form binder',
+     short.length === 1 && short[0].binder === 'list' && short[0].target === 'db',
+     JSON.stringify(short.map(function (f) { return { binder: f.binder, target: f.target }; })));
+
+  var line = Y.addItem(doc, form, 'web', 'list', 'cache', 'depends_on');
+  var want = src.replace('      - db\n', '      - db\n      - cache\n');
+  ok('adding to a short-form depends_on appends a second plain list entry, never a map',
+     line >= 0 && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+
+  var doc2 = Y.parse(src), form2 = Y.buildForm(doc2);
+  var only = form2.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'depends_on'; })[0];
+  var removed = Y.removeItem(doc2, form2, only.id);
+  ok('removing the short form’s last entry takes depends_on: with it, same rule as long form',
+     removed && Y.serialise(doc2) === 'services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n',
+     Y.serialise(doc2));
+})();
+
+(function () {
+  // A service rename still follows a long-form key.
+  var src = 'services:\n  web:\n    image: nginx\n    depends_on:\n      db:\n        condition: service_healthy\n' +
+            '  db:\n    image: postgres\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var renamed = Y.renameService(doc, 'db', 'database');
+  var want = 'services:\n  web:\n    image: nginx\n    depends_on:\n      database:\n        condition: service_healthy\n' +
+             '  database:\n    image: postgres\n';
+  ok('renaming a service still rewrites a long-form depends_on key',
+     renamed.ok && renamed.refs === 1 && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // The inline flow form stays locked and read-only.
+  var src = 'services:\n  web:\n    image: nginx\n    depends_on:\n      db: {condition: service_healthy}\n';
+  var form = Y.buildForm(Y.parse(src));
+  var don = Y.fieldById(form, 'web/depends/depends_on.db');
+  ok('the inline flow form locks rather than reading as an editable dependency',
+     !!don && don.locked, don && JSON.stringify({ locked: don.locked, lockReason: don.lockReason }));
+})();
+
+(function () {
+  // service_healthy against a service with no healthcheck: carries advice;
+  // against one that has one, it does not.
+  var src = 'services:\n  web:\n    image: nginx\n    depends_on:\n      db:\n        condition: service_healthy\n' +
+            '  db:\n    image: postgres\n' +
+            '  cache:\n    image: redis\n    depends_on:\n      db2:\n        condition: service_healthy\n' +
+            '  db2:\n    image: postgres\n    healthcheck:\n      test: pg_isready\n';
+  var form = Y.buildForm(Y.parse(src));
+  var noCheck = Y.fieldById(form, 'web/depends/depends_on.db');
+  var hasCheck = Y.fieldById(form, 'cache/depends/depends_on.db2');
+  ok('service_healthy against a service with no health check carries advice naming it',
+     !!noCheck && noCheck.advice.some(function (a) { return a.indexOf('"db" has no health check') >= 0; }),
+     noCheck && JSON.stringify(noCheck.advice));
+  ok('service_healthy against a service that has one carries no such advice',
+     !!hasCheck && !hasCheck.advice.some(function (a) { return a.indexOf('health check') >= 0; }),
+     hasCheck && JSON.stringify(hasCheck.advice));
+})();
+
+(function () {
+  // A hand-authored file with comments and blank lines: after an add and a
+  // remove, every untouched line is byte-identical.
+  var src = 'services:\n' +
+            '  web:\n' +
+            '    image: nginx\n' +
+            '\n' +
+            '    # web waits on the database\n' +
+            '    depends_on:\n' +
+            '      db:\n' +
+            '        condition: service_healthy\n' +
+            '\n' +
+            '    restart: always\n' +
+            '\n' +
+            '  db:\n' +
+            '    image: postgres\n' +
+            '  cache:\n' +
+            '    image: redis\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var addedLine = Y.addNested(doc, form, 'web', ['depends_on', 'cache', 'condition'], 'service_started');
+  ok('adding a dependency to a hand-authored file only inserts the new lines', addedLine >= 0);
+
+  var form2 = Y.buildForm(doc);
+  var removed = Y.removeItem(doc, form2, 'web/depends/depends_on.cache');
+  ok('removing it again restores the file exactly, comments and blank lines included',
+     removed && Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
 })();
 
 /* ---- result ------------------------------------------------------------- */

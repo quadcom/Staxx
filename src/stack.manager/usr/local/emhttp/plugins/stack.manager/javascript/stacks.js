@@ -72,6 +72,11 @@
     { binder: 'list:cap_add',    word: 'permission' },
     { binder: 'list:expose',     word: 'port' },
     { binder: 'list:env_file',   word: 'file' },
+    // The long form of depends_on — groupsForService swaps the group's own
+    // `add` binder to this one instead of 'list:depends_on' when the file
+    // already uses long form, or has no depends_on at all (see the comment
+    // there for why the default leans long).
+    { binder: 'depends', word: 'service' },
     // The Stack section's four Add buttons — capitalised, matching the noun
     // they add rather than the lower-case word a service's own lists use.
     { binder: 'declared:networks', word: 'Network' },
@@ -111,20 +116,26 @@
     { key: 'container', heading: 'Container', cls: 'stackman-formgroup--container', note: '(required)' },
     { key: 'port',      heading: 'Ports',     cls: 'stackman-formgroup--pair',   add: 'port' },
     { key: 'volume',    heading: 'Volumes',   cls: 'stackman-formgroup--pair',   add: 'volume' },
-    { key: 'device',    heading: 'Devices',   cls: 'stackman-formgroup--device', add: 'device' },
     { key: 'env',       heading: 'Variables', cls: 'stackman-formgroup--pair',   add: 'env' },
+    { key: 'device',    heading: 'Devices',   cls: 'stackman-formgroup--device', add: 'device' },
+    // health and resources have no `add`: every one of their leaves is
+    // always present as a field (harvestLeaves), so typing into a blank box
+    // is what creates the line — an Add button would offer an action that
+    // always fails. Same column shape as Advanced (label · value · note) —
+    // reused as-is rather than given a template of their own. `flag` gates
+    // whether the group shows at all (serviceFlags/the render loop below);
+    // depends still needs its own `add`, since a dependency is a list entry
+    // rather than a fixed leaf, and its own group rather than Advanced's.
+    { key: 'health',     heading: 'Health check',     cls: 'stackman-formgroup--advanced', flag: 'health' },
+    { key: 'resources',  heading: 'Resource limits',  cls: 'stackman-formgroup--advanced', flag: 'resources' },
+    { key: 'depends',    heading: 'Depends on', cls: 'stackman-formgroup--single',
+      add: 'list:depends_on', flag: 'depends' },
     { key: 'label',     heading: 'Labels',    cls: 'stackman-formgroup--pair',   add: 'label' },
-    // No `add`: nothing here can create a healthcheck: or deploy: key, so an
-    // Add button would offer an action that always fails. Same column shape
-    // as Advanced (label · value · note, with ticks) — reused as-is rather
-    // than given a template of their own.
-    { key: 'health',     heading: 'Health check',     cls: 'stackman-formgroup--advanced' },
-    { key: 'resources',  heading: 'Resource limits',  cls: 'stackman-formgroup--advanced' },
     { key: 'advanced',  heading: 'Advanced',  cls: 'stackman-formgroup--advanced' }
   ];
 
-  // The caption text named per group; container has no R/S columns to caption,
-  // and no trailing blank for a × column it never grows either.
+  // The caption text named per group; container has no trailing blank for a ×
+  // column, since it never grows one.
   var CAPTIONS = {
     container: ['setting', 'value', 'note, kept in the file'],
     port:      ['on the server', 'in the container', 'note, kept in the file'],
@@ -134,6 +145,10 @@
     label:     ['label name', 'value', 'note, kept in the file'],
     health:    ['setting', 'value', 'note, kept in the file'],
     resources: ['setting', 'value', 'note, kept in the file'],
+    // Short form only this phase — one box per dependency, the same shape as
+    // any other dynamic list. The three-column shape phase 1 wrote here was
+    // for the long form's name/condition pair, which does not exist yet.
+    depends:   ['service', 'note, kept in the file'],
     advanced:  ['setting', 'value', 'note, kept in the file']
   };
 
@@ -153,11 +168,28 @@
     if (f.binder === 'declared') return 'declared:' + f.declKind;
     // Checked before the locked test below, deliberately against the usual
     // rule that a lock always exiles a row to Advanced: healthcheck.test is
-    // itself locked (it is a flow sequence), but it IS the check that
-    // healthcheck.interval and friends time — showing it in a different
-    // group from its own timings would read as belonging to something else.
+    // usually editable now (readTest()/writeTest(), PLAN_8 phase 4), but a
+    // shape it cannot confidently read still locks the same as any other
+    // leaf — and it IS the check that healthcheck.interval and friends time,
+    // so it belongs in Health check regardless, not off in Advanced.
     if (/^healthcheck\./.test(f.target)) return 'health';
-    if (/^deploy\./.test(f.target)) return 'resources';
+    // Narrowed to deploy.resources.* only. deploy.replicas, deploy.placement
+    // and the rest of deploy: are ordinary settings, not resource limits —
+    // the Resource limits tick is derived from deploy.resources.* alone
+    // (serviceFlags), so catching all of deploy: here would hide a sibling
+    // key like replicas behind an off tick. The form must never hide
+    // something the file has.
+    if (/^deploy\.resources\./.test(f.target)) return 'resources';
+    // Short-form depends_on shares the Depends on group with the long form —
+    // which stays a locked field in Advanced until phase 5 (see f.locked
+    // below), so only the short form's own list entries are routed here.
+    if (f.binder === 'list' && f.listKey === 'depends_on') return 'depends';
+    // Checked ahead of the locked test below, for the same reason
+    // healthcheck.test is: a long-form dependency this cannot confidently
+    // read (the inline flow form, or anything stranger) still locks, but
+    // belongs beside its editable siblings in Depends on, not exiled to
+    // Advanced.
+    if (f.binder === 'depends') return 'depends';
     if (f.locked) return 'advanced';
     if (f.binder === 'setting') return 'advanced';
     if (f.binder === 'list') return 'list:' + f.listKey;
@@ -178,9 +210,40 @@
     var head = [], tail = [], has = {}, order = [], i;
     for (i = 0; i < GROUPS.length; i++) (GROUPS[i].key === 'advanced' ? tail : head).push(GROUPS[i]);
 
+    // Depends on has two row shapes, one per form the file's depends_on can
+    // take — short (one box per name) or long (name and condition, restart/
+    // required folded below). GROUPS' own 'depends' entry is shared by every
+    // service's render, so the shape actually used here is a clone, never a
+    // mutation of it. Long form wins when the file has any; with neither
+    // form present at all, long form is still the default — it is what the
+    // Add button on an empty group has to write (PLAN_7.md's condition:
+    // service_started rule leaves no way to write a bare short-form add here
+    // anyway once nothing exists yet to copy the shape from).
+    var longForm = false, shortForm = false;
+    for (i = 0; i < fields.length; i++) {
+      var df = fields[i];
+      if (df.service !== serviceName) continue;
+      if (df.binder === 'depends' && !df.fold) longForm = true;
+      else if (df.binder === 'list' && df.listKey === 'depends_on') shortForm = true;
+    }
+    for (i = 0; i < head.length; i++) {
+      if (head[i].key !== 'depends') continue;
+      head[i] = (longForm || !shortForm)
+        ? { key: 'depends', heading: 'Depends on', cls: 'stackman-formgroup--pair',
+            add: 'depends', flag: 'depends',
+            cols: ['service', 'wait until', 'note, kept in the file'] }
+        : { key: 'depends', heading: 'Depends on', cls: 'stackman-formgroup--single',
+            add: 'list:depends_on', flag: 'depends' };
+      break;
+    }
+
     for (i = 0; i < fields.length; i++) {
       var f = fields[i];
-      if (f.service !== serviceName || f.binder !== 'list' || has[f.listKey]) continue;
+      // depends_on has its own static group now (see groupFor) — building a
+      // dynamic "list:depends_on" group here too would show every dependency
+      // twice, once under each heading.
+      if (f.service !== serviceName || f.binder !== 'list' || f.listKey === 'depends_on' ||
+          has[f.listKey]) continue;
       has[f.listKey] = f.groupTitle;
       order.push(f.listKey);
     }
@@ -189,6 +252,7 @@
     var keep = [], kept = {};
     for (i = 0; i < was.length; i++) {
       var k = was[i].key;
+      if (k === 'depends_on') continue;  // never resurrect the dynamic group for it either
       if (has[k])      { keep.push({ key: k, heading: has[k] }); kept[k] = true; }
       else if (gone[k]) { keep.push(was[i]); kept[k] = true; }
     }
@@ -207,6 +271,61 @@
       });
     }
     return head.concat(tail);
+  }
+
+  // The plain-English name of each switchable group, shared by its tick box
+  // label and the confirm/undo sentences the change listener writes below.
+  var FLAG_LABELS = { health: 'Health check', resources: 'Resource limits', depends: 'Depends on' };
+
+  // Which flag (if any) a field's presence counts towards. Broader than
+  // groupFor()'s routing for depends: this also catches the long-form
+  // depends_on map, which groupFor still exiles to Advanced as a locked
+  // field (phase 5) but which just as surely means the file already has
+  // dependencies, so the tick has to read true for it.
+  function flagFor(f) {
+    if (/^healthcheck\./.test(f.target)) return 'health';
+    if (/^deploy\.resources\./.test(f.target)) return 'resources';
+    // binder 'depends' covers the long form (PLAN_8 phase 5) — every one of
+    // its fields, folded restart/required included, so "how many settings
+    // will be deleted" counts them the same way health/resources already do.
+    // The other two catch the short list form and the still-locked inline
+    // flow map, which carries no binder of its own.
+    if (f.binder === 'depends' || f.listKey === 'depends_on' || f.target === 'depends_on') return 'depends';
+    return null;
+  }
+
+  // How many of a service's fields the file genuinely holds for each group —
+  // an absent leaf (harvestLeaves' placeholder for a line the file does not
+  // have) never counts. Used both to decide a flag's starting state and to
+  // name the count in the "are you sure" prompt when it is switched off.
+  function fileFlagCounts(form, name) {
+    var out = { health: 0, resources: 0, depends: 0 };
+    for (var i = 0; i < form.fields.length; i++) {
+      var f = form.fields[i];
+      if (f.service !== name || f.absent) continue;
+      var k = flagFor(f);
+      if (k) out[k]++;
+    }
+    return out;
+  }
+
+  // Whether each of the three switchable groups shows for a service: true
+  // when the file already has it, or when this session ticked it on itself
+  // (flagOn — see its declaration above for why that has to live outside the
+  // form).
+  function serviceFlags(form, name) {
+    var counts = fileFlagCounts(form, name), over = flagOn[name] || {};
+    // depends also stays on once its last entry has been × 'd away this
+    // session. Every other list group survives emptying that way (see
+    // emptiedLists), and it has to: the Add button that refills the list
+    // lives on the group's own header, so a group that vanished with its
+    // last row would take the only way back with it.
+    var emptied = emptiedLists[name] || {};
+    return {
+      health:    counts.health    > 0 || !!over.health,
+      resources: counts.resources > 0 || !!over.resources,
+      depends:   counts.depends   > 0 || !!over.depends || !!emptied['depends_on']
+    };
   }
 
   var logPanel = document.getElementById('stackman-log-panel');
@@ -576,6 +695,20 @@
   var listGroups   = {};   // service -> [{ key, heading }, …] as last rendered
   var emptiedLists = {};   // service -> { listKey: 1 } emptied by × this session
 
+  // Whether the Stack section's <details> is open. Lives here for the same
+  // reason listGroups and emptiedLists do: renderForm() rebuilds the whole
+  // form from scratch on every structural edit, so nothing the DOM itself
+  // remembers survives an add, remove or undo.
+  var stackOpen = false;
+
+  // Which of a service's three switchable groups (health/resources/depends)
+  // this session has ticked on with nothing written yet. A ticked-but-empty
+  // group has no field in the file to remember it by, and renderForm()
+  // rebuilds the whole form from scratch on every structural edit, so the
+  // session is the only place this survives — same reason listGroups and
+  // emptiedLists exist above.
+  var flagOn = {};
+
   function esc(s) {
     return String(s === undefined || s === null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -612,6 +745,29 @@
         ['bridge', 'bridge — Docker’s own private network'],
         ['host',   'host — share the server’s network directly'],
         ['none',   'none — no network at all']
+      ]
+    },
+    // Values are readTest()/writeTest()'s own words (compose-model.js), not
+    // the compose keywords (CMD-SHELL/CMD/NONE) — the dropdown only ever
+    // shows the plain-English label.
+    'setting/healthcheck.test.mode': {
+      hint: 'how the check itself is run',
+      options: [
+        ['shell', 'run a shell line'],
+        ['cmd',   'run a program'],
+        ['none',  'no check']
+      ]
+    },
+    // Not reached by the binder+target key every other entry here uses — a
+    // dependency's target carries its own name (depends_on.db, ...), so
+    // boxHtml() looks this one up directly by binder alone. Compose's own
+    // condition values, given plain-English labels the same way restart's are.
+    'depends/condition': {
+      hint: 'when the dependency counts as ready',
+      options: [
+        ['service_started',               'wait until it has started'],
+        ['service_healthy',               'wait until it reports healthy'],
+        ['service_completed_successfully', 'wait until it has finished OK']
       ]
     }
   };
@@ -650,6 +806,9 @@
   function fromChoice(f) {
     var names = ((MODEL && MODEL.declared && MODEL.declared[f.from]) || []).slice();
     if (f.from === 'networks' && names.indexOf('default') < 0) names.push('default');
+    // A service cannot depend on itself, the same rule serviceModeOptions()
+    // already applies to network_mode's "service:" options.
+    if (f.from === 'services') names = names.filter(function (n) { return n !== f.service; });
     var options = [];
     for (var i = 0; i < names.length; i++) options.push([names[i], names[i]]);
     return { hint: 'a name already declared in this file', options: options };
@@ -715,9 +874,12 @@
     var p = f.parts[which];
     if (!p) return '';
     // Absent counts as writable — typing into an empty Container slot is what
-    // gives it a line in the file. Only a part with truly nowhere to write, or
-    // a locked row, renders disabled.
-    var dead = (!p.spot && !f.absent) || f.locked || f.blocked;
+    // gives it a line in the file. A field carrying a path (a LEAVES leaf, or
+    // a long-form dependency's condition/restart/required) is creatable via
+    // addNested the same way regardless of absence, so it is never dead for
+    // that reason either. Only a part with truly nowhere to write, or a
+    // locked row, renders disabled.
+    var dead = (!p.spot && !f.absent && !f.path) || f.locked || f.blocked;
     var t = TOOLS[tool];
     // The options say what the setting means, so the hint below the box says
     // what the setting is for instead of repeating "value".
@@ -728,7 +890,18 @@
     if (choice && f.target === 'network_mode') {
       choice = { hint: choice.hint, options: choice.options.concat(serviceModeOptions(f.service)) };
     }
-    if (!choice && which === 'value' && f.from) choice = fromChoice(f);
+    // A dependency's condition is a closed set, not a namespace the file
+    // declares — CHOICES keys on binder+target, but a dependency's target
+    // carries its own name (depends_on.db, depends_on.redis...), so it can
+    // never be found that way. Checked directly instead, the same way a
+    // volume's host part gets its own dropdown just below. f.fold excludes
+    // restart/required, which share this binder but take a plain box.
+    if (!choice && which === 'value' && f.binder === 'depends' && !f.fold) choice = CHOICES['depends/condition'];
+    // depends_on's long form is the one place `from` belongs on the name
+    // part rather than the value part — see harvestDependsLong() — so this
+    // is the only binder that looks there instead.
+    var fromPart = f.binder === 'depends' ? 'name' : 'value';
+    if (!choice && which === fromPart && f.from) choice = fromChoice(f);
 
     // A volume's host half: a name is Docker-managed storage, so offer the
     // file's own declared names once there is no path already sitting in the
@@ -837,42 +1010,16 @@
   }
 
   // What separates one piece from the next, per shape. Anchored, because the
-  // splitter below asks each one "does a separator start right here".
+  // splitter asks each one "does a separator start right here".
   var SEP_WS    = /^\s/;          // argv on one line
-  var SEP_COMMA = /^,/;           // a ["a", "b"] flow list
   var SEP_STEP  = /^(&&|;)/;      // one shell line into its steps
 
-  // The one quoted-token splitter every command shape below is built from.
-  // It walks the string, treats ' and " as opening and closing a quoted
-  // run, and only looks for a separator outside one — so `-c "a && b"` is
-  // not chopped on its own spaces. Quote characters are consumed, never
-  // kept, so tokens come back already unwrapped. An unclosed quote means the
-  // text was never meant to be split this way at all, so the whole thing is
-  // abandoned (null) rather than guessed at. A null separator splits
-  // nowhere, which is how a single token gets its quotes stripped.
-  function splitQuoted(str, sep) {
-    var tokens = [], buf = '', quote = '', i = 0, m;
-    while (i < str.length) {
-      var ch = str.charAt(i);
-      if (quote) {
-        if (ch === quote) quote = ''; else buf += ch;
-        i++;
-        continue;
-      }
-      if (ch === '"' || ch === "'") { quote = ch; i++; continue; }
-      m = sep ? sep.exec(str.slice(i)) : null;
-      if (m) {
-        if (buf) { tokens.push(buf); buf = ''; }
-        i += m[0].length;
-        continue;
-      }
-      buf += ch;
-      i++;
-    }
-    if (quote) return null;
-    if (buf) tokens.push(buf);
-    return tokens;
-  }
+  // The one quoted-token splitter every command shape below is built from —
+  // now in compose-model.js, since readTest()/writeTest() (PLAN_8 phase 4)
+  // need the exact same splitting for a healthcheck.test line and keeping two
+  // copies is how they would quietly drift apart. See its own comment there
+  // for what it does.
+  var splitQuoted = YAML.splitQuoted;
 
   function dequote(s) {
     var t = splitQuoted(s, null);
@@ -986,7 +1133,6 @@
     var nl = raw.indexOf('\n');
     var lineOneTail = (nl < 0 ? raw.slice(idx + 1) : raw.slice(idx + 1, nl))
                         .replace(/^\s+|\s+$/g, '');
-    var fullTail = raw.slice(idx + 1);
     var i, lines, t;
 
     if (/^[|>][-+]?$/.test(lineOneTail)) {
@@ -1008,20 +1154,12 @@
     // The bracket has to open the value itself, not merely appear somewhere in
     // it — "- echo [ok]" is a list item that happens to contain one, and
     // reading the whole block as a flow list would report the wrong command
-    // entirely. Once it does open the value, the rest of the text is fair
-    // game, since a flow list may run over several lines.
+    // entirely. parseFlowList() (compose-model.js) makes the same check
+    // itself and is what readTest() uses for healthcheck.test's own flow
+    // shape, so this stays the one copy of that extraction.
     if (lineOneTail.charAt(0) === '[') {
-      var open = fullTail.indexOf('['), close = fullTail.lastIndexOf(']');
-      if (close < open) return null;
-      var toks = splitQuoted(fullTail.slice(open + 1, close), SEP_COMMA);
-      if (toks === null) return null;
-      var argv = [];
-      for (i = 0; i < toks.length; i++) {
-        t = toks[i].replace(/^\s+|\s+$/g, '');
-        if (t) argv.push(t);
-      }
-      if (!argv.length) return null;
-      return { kind: 'argv', argv: argv };
+      var argv = YAML.parseFlowList(raw);
+      return argv ? { kind: 'argv', argv: argv } : null;
     }
 
     if (lineOneTail === '') {
@@ -1107,11 +1245,17 @@
   // declaration's own target, rather than carried on the row itself, so
   // refreshRanges() (which re-maps rows by index and never redraws) needs no
   // new bookkeeping to keep them in step.
+  // Shared by a declaration's fold (declKind set, service '') and a long-form
+  // dependency's restart/required fold (service set, declKind unset) — the
+  // extra t.service === f.service clause is a no-op for a declaration, since
+  // both sides are always '' there, and is what scopes a dependency's fold to
+  // the one service it belongs to.
   function foldFieldsFor(f) {
     var out = [], prefix = f.target + '.';
     for (var i = 0; i < MODEL.fields.length; i++) {
       var t = MODEL.fields[i];
-      if (t.fold && t.declKind === f.declKind && t.target.indexOf(prefix) === 0) out.push(i);
+      if (t.fold && t.declKind === f.declKind && t.service === f.service &&
+          t.target.indexOf(prefix) === 0) out.push(i);
     }
     return out;
   }
@@ -1170,13 +1314,18 @@
     var isContainer = grp === 'container';
     var declared = f.binder === 'declared';
     var mapped = f.binder === 'port' || f.binder === 'volume' || f.binder === 'device';
-    var named  = !!f.parts.name;                  // a variable or a label
+    // A long-form dependency also carries parts.name (its key), but it is not
+    // this env/label shape — it gets its own branch below, checked ahead of
+    // this one for that reason.
+    var named  = !!f.parts.name && f.binder !== 'depends';
     var listy  = mapped || f.binder === 'env' || f.binder === 'label' || f.binder === 'list';
     // Never on a Container row — its four settings are not a list. Not for an
     // entry written in a way the model sealed either, since that refuses
     // anyway and a button that always says no is worse than no button. A
-    // declaration is removable too, so it gets the × the same as any list entry.
-    var showKill  = !isContainer && (listy || declared) && f.target.charAt(0) !== '@';
+    // declaration is removable too, so it gets the × the same as any list
+    // entry — as does a whole dependency, long or short.
+    var showKill  = !isContainer && (listy || declared || f.binder === 'depends') &&
+                    f.target.charAt(0) !== '@';
     var bits = [];
     // A device's folded-away container path. Built inside the branch below but
     // emitted at the very end of the row — see the tail.
@@ -1211,27 +1360,6 @@
               ' data-from="' + (f.range ? f.range.start : -1) + '"' +
               ' data-to="'   + (f.range ? f.range.end   : -1) + '"' +
               ' tabindex="0">');
-
-    // A Container row has no ticks — there is nothing to mark required about a
-    // setting that already always has to be there. Neither does a
-    // declaration: required and sensitive describe a form control, and a
-    // name-and-driver pair has none.
-    if (!isContainer && !declared) {
-      // The words are hidden, not deleted — the group caption above already
-      // names these two columns "R" and "S", so spelling them out again beside
-      // every tick would just be noise. Still in the accessibility tree, since
-      // a bare checkbox with no name is not acceptable there.
-      bits.push('<label class="stackman-flag" title="Do not let this be left empty">' +
-                  '<input type="checkbox" data-row="' + index + '" data-required="1"' +
-                  (f.required ? ' checked' : '') + (f.commentSpot ? '' : ' disabled') + '>' +
-                  '<span class="stackman-sr">required</span>' +
-                '</label>');
-      bits.push('<label class="stackman-flag" title="Hide this value when Sanitise is on">' +
-                  '<input type="checkbox" data-row="' + index + '" data-secret="1"' +
-                  (f.sensitive ? ' checked' : '') + (f.commentSpot ? '' : ' disabled') + '>' +
-                  '<span class="stackman-sr">sensitive</span>' +
-                '</label>');
-    }
 
     if (f.locked) {
       // The boxes are gone, so the name has nowhere else to live — the title
@@ -1329,20 +1457,39 @@
         devMore = '<details class="stackman-devmore"><summary>more settings</summary>' +
                   foldBits.join('') + '</details>';
       }
+    } else if (f.binder === 'depends') {
+      // Long form: the dependency's own name (a dropdown of the file's other
+      // services, written through its key) beside its condition — restart and
+      // required fold away below, same shape as a declaration's own extras.
+      bits.push(boxHtml(f, index, 'name', 'service name'));
+      bits.push(boxHtml(f, index, 'value', 'when it counts as ready'));
+      bits.push(noteBoxHtml(f, index));
+
+      var depFoldIdx = foldFieldsFor(f);
+      if (depFoldIdx.length) {
+        var depFoldBits = [];
+        for (var dfi = 0; dfi < depFoldIdx.length; dfi++) {
+          depFoldBits.push(declaredFoldHtml(MODEL.fields[depFoldIdx[dfi]], depFoldIdx[dfi]));
+        }
+        devMore = '<details class="stackman-devmore"><summary>more settings</summary>' +
+                  depFoldBits.join('') + '</details>';
+      }
     }
 
     if (showKill) {
+      // The × alone, with the words moved to the tooltip and the accessibility
+      // tree — "Remove" beside every one of them was more noise than help.
       bits.push('<button type="button" class="stackman-kill" data-row="' + index + '"' +
-                ' data-remove="1">' +
-                  '<i class="fa fa-times" aria-hidden="true"></i> Remove' +
-                  '<span class="stackman-sr"> ' + esc(f.title) + '</span>' +
+                ' data-remove="1" title="Remove ' + esc(f.title) + '">' +
+                  '<i class="fa fa-times" aria-hidden="true"></i>' +
+                  '<span class="stackman-sr">Remove ' + esc(f.title) + '</span>' +
                 '</button>');
     }
 
     // Everything full-width comes last, after every cell the row's column
     // template names. A full-width child ends the grid row it lands on and
     // resets auto-placement to column 1 below it, so anything emitted after
-    // one is stranded in the tick gutter rather than in its own column.
+    // one is stranded in the label column rather than in its own.
     //
     // A row that is not fully locked can still be partly restricted — an
     // anonymous volume with no host half, a "- FOO" passthrough with no value.
@@ -1359,12 +1506,22 @@
     return bits.join('');
   }
 
-  // A group's header line: its heading, the grey note beside Container's, and
-  // its own Add button where it has one.
-  function groupHeadHtml(g, serviceName) {
+  // A group's header line: its heading, the grey note beside Container's,
+  // the three switchable groups' tick boxes (Container only — flags is only
+  // ever passed for that group), and its own Add button where it has one.
+  function groupHeadHtml(g, serviceName, flags) {
     var bits = ['<div class="stackman-grouphead"><h5 class="stackman-fieldgroup">' + esc(g.heading)];
     if (g.note) bits.push(' <span class="stackman-groupnote">' + esc(g.note) + '</span>');
     bits.push('</h5>');
+    if (flags) {
+      bits.push('<div class="stackman-groupflags">');
+      ['health', 'resources', 'depends'].forEach(function (key) {
+        bits.push('<label class="stackman-groupflag"><input type="checkbox" data-flag="' + key +
+                  '" data-service="' + esc(serviceName) + '"' + (flags[key] ? ' checked' : '') + '> ' +
+                  esc(FLAG_LABELS[key]) + '</label>');
+      });
+      bits.push('</div>');
+    }
     if (g.add) {
       bits.push('<button type="button" class="stackman-add"' +
                ' data-add="' + g.add + '" data-service="' + esc(serviceName) + '">' +
@@ -1382,18 +1539,14 @@
   // to the same one-box shape as Devices, which is the template it shares.
   function captionRow(grp) {
     var declared = grp.key.slice(0, 9) === 'declared:';
-    var cols = CAPTIONS[grp.key] ||
+    // grp.cols lets one render override the columns a shared GROUPS entry
+    // would otherwise show — depends_on's long form needs a third column
+    // CAPTIONS' static 'depends' row does not carry (see groupsForService).
+    var cols = grp.cols || CAPTIONS[grp.key] ||
                (grp.cls === 'stackman-formgroup--single' ? ['value', 'note, kept in the file'] : null) ||
                (declared ? ['name', 'setting', 'note, kept in the file'] : null);
     if (!cols) return '';
     var bits = ['<div class="stackman-caption" aria-hidden="true">'];
-    // Container has nothing to require or hide, and neither does a
-    // declaration — required and sensitive are about a form control, and a
-    // name/driver pair is not one.
-    if (grp.key !== 'container' && !declared) {
-      bits.push('<span class="stackman-capflag" title="required">R</span>');
-      bits.push('<span class="stackman-capflag" title="sensitive">S</span>');
-    }
     for (var i = 0; i < cols.length; i++) bits.push('<span>' + esc(cols[i]) + '</span>');
     // Container is the only group with no × column to leave a blank for.
     if (grp.key !== 'container') bits.push('<span></span>');
@@ -1433,7 +1586,8 @@
     }
 
     var out = ['<section class="stackman-svc stackman-svc--stack">',
-               '<h4 class="stackman-svchead">Stack</h4>'];
+               '<details class="stackman-stackfold"' + (stackOpen ? ' open' : '') + '>',
+               '<summary class="stackman-svchead">Stack</summary>'];
     for (var g = 0; g < DECL_GROUPS.length; g++) {
       var grp = DECL_GROUPS[g], rows = buckets[grp.key] || [];
       out.push('<div class="stackman-formgroup ' + grp.cls + '" data-group="' + grp.key + '">');
@@ -1442,6 +1596,7 @@
       for (var r = 0; r < rows.length; r++) out.push(fieldHtml(form.fields[rows[r]], rows[r]));
       out.push('</div>');
     }
+    out.push('</details>');
     out.push('</section>');
     return out.join('');
   }
@@ -1481,6 +1636,10 @@
         for (var g = 0; g < groups.length; g++) buckets[groups[g].key] = [];
         for (var i = 0; i < form.fields.length; i++) {
           if (form.fields[i].service !== svc.name) continue;
+          // A fold field (a dependency's restart/required) renders inside its
+          // own parent row via foldFieldsFor(), never as a row of its own —
+          // same reason stackSectionHtml() excludes a declaration's fold.
+          if (form.fields[i].fold) continue;
           var gk = groupFor(form.fields[i]);
           // A binder groupsForService did not build a bucket for would
           // otherwise throw on .push — reparse() has no other net under it.
@@ -1488,15 +1647,20 @@
           buckets[gk].push(i);
         }
 
+        var flags = serviceFlags(form, svc.name);
+
         for (var gi = 0; gi < groups.length; gi++) {
           var grp = groups[gi], rows = buckets[grp.key];
-          // A group with an Add button is kept even at zero rows, so the
-          // button survives its list emptying out. One with none — Health
-          // check and Resource limits, so far — has nothing left to show for
-          // an empty bucket but a bare heading, which is noise, not a row.
-          if (!rows.length && !grp.add) continue;
+          // A flagged group (health/resources/depends) shows exactly when its
+          // tick is on, at zero rows or many — health and resources always
+          // have every leaf as a field (harvestLeaves), so "zero rows" never
+          // actually happens for them, but depends can. Anything else keeps
+          // the older rule: an Add button survives its list emptying out, one
+          // with none has nothing left to show for an empty bucket.
+          if (grp.flag) { if (!flags[grp.flag]) continue; }
+          else if (!rows.length && !grp.add) continue;
           out.push('<div class="stackman-formgroup ' + grp.cls + '" data-group="' + grp.key + '">');
-          out.push(groupHeadHtml(grp, svc.name));
+          out.push(groupHeadHtml(grp, svc.name, grp.key === 'container' ? flags : null));
           if (rows.length) out.push(captionRow(grp));
           for (var r = 0; r < rows.length; r++) out.push(fieldHtml(form.fields[rows[r]], rows[r]));
           out.push('</div>');
@@ -1624,18 +1788,13 @@
       rows[i].classList.toggle('stackman-fieldrow--secret', !!f.sensitive);
 
       // A slot that just gained its line in the file goes from having no
-      // comment to write to, to having one — flip the note and tick inputs
-      // back on to match, without redrawing the row they live in.
-      var canComment = !!f.commentSpot;
+      // comment to write to, to having one — flip the note box back on to
+      // match, without redrawing the row it lives in.
       var note = rows[i].querySelector('[data-note]');
-      if (note) note.disabled = !canComment;
-      var req = rows[i].querySelector('[data-required]');
-      if (req) req.disabled = !canComment;
-      var sec = rows[i].querySelector('[data-secret]');
-      if (sec) sec.disabled = !canComment;
+      if (note) note.disabled = !f.commentSpot;
 
       // The command/entrypoint gloss is prose derived from the value, so it
-      // goes stale exactly like the note and ticks above — refreshed in
+      // goes stale exactly like the note box above — refreshed in
       // place rather than by redrawing the row, which would take the caret
       // with it mid-edit.
       var say = rows[i].querySelector('[data-say]');
@@ -1661,21 +1820,16 @@
   function commit(el) {
     if (!MODEL || sanitised) return;
 
-    var row = el.closest('.stackman-fieldrow');
-    var f   = MODEL.fields[el.dataset.row | 0];
+    var f = MODEL.fields[el.dataset.row | 0];
     if (!f) return;
 
     var done;
-    if (el.dataset.note !== undefined || el.dataset.secret !== undefined ||
-        el.dataset.required !== undefined) {
-      // The note and both markers share one comment, so all three are written
-      // at once from whatever the row currently shows.
-      var note = row.querySelector('[data-note]');
-      var sec  = row.querySelector('[data-secret]');
-      var req  = row.querySelector('[data-required]');
-      done = YAML.setComment(MODEL.doc, MODEL, f.id, note ? note.value : '',
-                             sec ? sec.checked : false,
-                             req ? req.checked : false);
+    if (el.dataset.note !== undefined) {
+      // The note shares one comment with the -!S and -!R markers, so the whole
+      // comment is rewritten on every note edit. The markers come from the
+      // model, not from the row — there is no control for them, and passing
+      // false would silently strip a hand-written marker out of the file.
+      done = YAML.setComment(MODEL.doc, MODEL, f.id, el.value, !!f.sensitive, !!f.required);
     } else {
       done = YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, el.value);
     }
@@ -1754,6 +1908,12 @@
     }, 250);
   });
 
+  // 'toggle' does not bubble, so a delegated listener only ever sees it in
+  // the capture phase — the trailing `true` is load-bearing, not decoration.
+  formHost.addEventListener('toggle', function (event) {
+    if (event.target.classList.contains('stackman-stackfold')) stackOpen = event.target.open;
+  }, true);
+
   formHost.addEventListener('change', function (event) {
     var el = event.target;
 
@@ -1764,14 +1924,70 @@
       if (f && f.binder === 'volume') { swapVolumeToPath(el); return; }
     }
 
-    // A tick or a pick from a list is a decision, not a keystroke — commit it
-    // at once. A dropdown fires input as well, so the pending timer that set
-    // off has to be dropped or the same edit is written twice.
-    if (el.dataset.secret === undefined &&
-        el.dataset.required === undefined &&
-        el.tagName !== 'SELECT') return;
+    // A pick from a list is a decision, not a keystroke — commit it at once. A
+    // dropdown fires input as well, so the pending timer that set off has to be
+    // dropped or the same edit is written twice.
+    if (el.tagName !== 'SELECT') return;
     if (commitTimer) { clearTimeout(commitTimer); commitTimer = null; pendingEl = null; }
     commit(el);
+  });
+
+  // Ticking or unticking Health check / Resource limits / Depends on. Not a
+  // value commit — a bare tick writes nothing, so this is its own listener
+  // rather than a branch inside the one above that ends at commit().
+  formHost.addEventListener('change', function (event) {
+    var box = event.target;
+    if (box.dataset.flag === undefined) return;
+
+    var svc = box.dataset.service, flag = box.dataset.flag;
+
+    if (box.checked) {
+      if (!flagOn[svc]) flagOn[svc] = {};
+      flagOn[svc][flag] = true;
+      flushPending();
+      reparse();
+      return;
+    }
+
+    // Off. Nothing to lose if the file never held it — the override was the
+    // only reason the group was showing, so dropping it just hides it again.
+    var n = MODEL ? fileFlagCounts(MODEL, svc)[flag] : 0;
+    if (!n) {
+      if (flagOn[svc]) delete flagOn[svc][flag];
+      // Unticking says "I do not want this group", which has to outrank the
+      // memory that kept it visible after its last row was × 'd away — see
+      // serviceFlags. Left in place, the group would come straight back and
+      // the tick would look like it did nothing.
+      if (flag === 'depends' && emptiedLists[svc]) delete emptiedLists[svc]['depends_on'];
+      flushPending();
+      reparse();
+      return;
+    }
+
+    var label = FLAG_LABELS[flag].toLowerCase();
+    if (!window.confirm('Remove the ' + label + ' from ' + svc + '? Its ' + n +
+                        ' setting' + (n === 1 ? '' : 's') + ' will be deleted from the compose file.')) {
+      box.checked = true;   // No — leave the box ticked and the file untouched.
+      return;
+    }
+
+    var path = flag === 'health'    ? ['healthcheck']
+             : flag === 'resources' ? ['deploy', 'resources']
+             : ['depends_on'];
+
+    flushPending();
+    pushUndo('removing the ' + label + ' from "' + svc + '"');
+    if (!YAML.removeKey(MODEL.doc, MODEL, svc, path)) {
+      undoStack.pop();
+      updateUndo();
+      setYamlStatus('That block is written in a way the form cannot remove — ' +
+                    'remove it in the Compose view instead.');
+      box.checked = true;
+      return;
+    }
+
+    if (flagOn[svc]) delete flagOn[svc][flag];
+    structuralEdit(-1, 'Removed the ' + label + ' from "' + svc + '". Undo is at the bottom if that was wrong.');
   });
 
   /* ---- adding and removing entries ---- */
@@ -1849,6 +2065,42 @@
           return;
         }
         structuralEdit(declLine, '');
+        return;
+      }
+      // The long form of depends_on: pick the first other service this one
+      // does not already depend on, and write condition: service_started —
+      // compose's own default, but the one place a blank cannot be left to
+      // mean "nothing yet", since a bare "name:" here is null and compose
+      // refuses the file.
+      if (add.dataset.add === 'depends') {
+        var dSvc = add.dataset.service, used = {};
+        used[dSvc] = true;   // a service cannot depend on itself
+        for (var ui = 0; ui < MODEL.fields.length; ui++) {
+          var uf = MODEL.fields[ui];
+          if (uf.service !== dSvc) continue;
+          if (uf.binder === 'depends' && !uf.fold) used[uf.parts.name.value] = true;
+          else if (uf.binder === 'list' && uf.listKey === 'depends_on') used[uf.parts.value.value] = true;
+        }
+        var candidates = (MODEL.declared.services || []), pick = null;
+        for (var ci = 0; ci < candidates.length; ci++) {
+          if (!used[candidates[ci]]) { pick = candidates[ci]; break; }
+        }
+        if (!pick) {
+          setYamlStatus(dSvc + ' already depends on every other service in this file, ' +
+                        'so there is nothing left to add.');
+          return;
+        }
+        flushPending();
+        pushUndo('adding that service dependency');
+        var dLine = YAML.addNested(MODEL.doc, MODEL, dSvc, ['depends_on', pick, 'condition'], 'service_started');
+        if (dLine < 0) {
+          undoStack.pop();
+          updateUndo();
+          setYamlStatus('That block is written in a way the form cannot add to — ' +
+                        'add it in the Compose view instead.');
+          return;
+        }
+        structuralEdit(dLine, '');
         return;
       }
       flushPending();
@@ -1992,9 +2244,9 @@
     // list exactly as it was and has nothing to remember. Recorded for every
     // list entry rather than only the last, since a list that still has entries
     // is shown by its own fields anyway.
-    if (f.binder === 'list' && f.listKey) {
+    if ((f.binder === 'list' && f.listKey) || f.binder === 'depends') {
       if (!emptiedLists[f.service]) emptiedLists[f.service] = {};
-      emptiedLists[f.service][f.listKey] = 1;
+      emptiedLists[f.service][f.binder === 'depends' ? 'depends_on' : f.listKey] = 1;
     }
     structuralEdit(-1, 'Removed ' + f.title + '. Undo is at the bottom if that was wrong.');
   });
@@ -2981,6 +3233,7 @@
     // the last stack's editing session may survive into this one.
     emptiedLists = {};
     listGroups   = {};
+    stackOpen    = false;
     setView(defaultView());
 
     undoStack.length = 0;

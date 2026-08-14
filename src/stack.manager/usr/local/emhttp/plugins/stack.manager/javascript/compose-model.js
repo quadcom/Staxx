@@ -602,6 +602,15 @@
   };
   var DECL_PRIMARY = { networks: 'driver', volumes: 'driver', secrets: 'file', configs: 'file' };
 
+  // depends_on's long-form entry: a dependency name (a key, harvested via
+  // keySpot() below — see collectServiceRefs(), which follows a rename the
+  // same way) plus condition on the row itself, and these two folded away
+  // below it, present-or-absent the same way LEAVES treats healthcheck/deploy.
+  var DEPENDS_LEAVES = {
+    restart:  'Restart this service too when the dependency restarts',
+    required: 'This dependency must start successfully for this service to start'
+  };
+
   function keySpec(k) { return KEYS[k] || null; }
 
   // Derived once at load rather than per service. ALWAYS_KEYS must stay in
@@ -782,7 +791,17 @@
       // A plain list entry's position in the seq — undefined for anything
       // that isn't one. Only used to tell two identical-looking entries
       // apart when building a 'list' field's id (see fieldsFor).
-      index: opts.index
+      index: opts.index,
+      // The full key path under the service for a LEAVES sub-value —
+      // ['healthcheck', 'interval'] — null for everything else. This is what
+      // lets setPart() reach addNested()/removeKey() instead of the flat,
+      // one-key writes the rest of the form uses.
+      path: opts.path || null,
+      // 'mode' | 'command' | null. healthcheck.test is one file line shown as
+      // two fields (see harvestHealthTest()), so setPart() needs to know
+      // which half a field is before it can read the other half and write
+      // them back together.
+      testPart: opts.testPart || null
     };
   }
 
@@ -986,15 +1005,20 @@
   }
 
   // healthcheck: and deploy: are 'block' shape — a map that has editable
-  // leaves inside it. Harvest the LEAVES paths first, then cover every direct
-  // child that produced no leaf field, so the block is either broken into
-  // editable leaves or shown whole, never partly both. The parent key itself
-  // emits nothing here, which is what stops it also reaching the catch-all
-  // and rendering twice.
+  // leaves inside it. harvestLeaves() (below) now harvests every LEAVES path
+  // up front, present or not, so this only has two jobs left: cover every
+  // direct child LEAVES does not name (deploy.replicas), and — for
+  // declaredFields()'s DECL_LEAVES call only — do the leaf walk itself,
+  // since a declaration's driver/internal/etc. never gets the "always
+  // offered" treatment harvestLeaves gives healthcheck/deploy. The parent
+  // key itself emits nothing here, which is what stops it also reaching the
+  // catch-all and rendering twice.
   // `table`/`lookupKey` let declaredFields() point this at DECL_LEAVES under
   // a lookup key ('networks') that differs from the target prefix it writes
-  // ('networks.frontend_net') — every existing caller omits both and gets
-  // the original healthcheck/deploy behaviour unchanged.
+  // ('networks.frontend_net'); the plain call (table/lookupKey both omitted)
+  // still needs the same walk to know which direct children the default
+  // LEAVES table already accounts for, but leaves emitting them to
+  // harvestLeaves so a present leaf never appears as two fields.
   function harvestBlock(out, key, p, lines, table, lookupKey) {
     if (!p.value || p.value.kind !== 'map') { out.push(settingTarget(p, key, lines)); return; }
 
@@ -1010,8 +1034,20 @@
         if (!leafPair) { ok = false; break; }
         node = leafPair.value;
       }
+
+      // healthcheck.test is harvested by harvestHealthTest() (see
+      // harvestLeaves()) whenever it can be confidently read, whatever shape
+      // it is written in — not only when it happens to be a scalar. Marking
+      // it covered here on the same terms stops this function's own
+      // uncovered-children pass below from also emitting a third, locked
+      // 'healthcheck.test' field alongside the two live ones.
+      if (!table && key === 'healthcheck' && subPath === 'test') {
+        if (ok && leafPair.value && readTest(leafPair)) covered.push(key + '.' + subPath);
+        continue;
+      }
+
       if (!ok || !leafPair.value || leafPair.value.kind !== 'scalar') continue;
-      out.push(settingTarget(leafPair, key + '.' + subPath, lines));
+      if (table) out.push(settingTarget(leafPair, key + '.' + subPath, lines));
       covered.push(key + '.' + subPath);
     }
 
@@ -1023,6 +1059,330 @@
         if (covered[j] === childTarget || covered[j].indexOf(childTarget + '.') === 0) { already = true; break; }
       }
       if (!already) out.push(settingTarget(p.value.pairs[childName], childTarget, lines));
+    }
+  }
+
+  // Every LEAVES path becomes exactly one field, whether or not the file has
+  // it — the fixed-pass shape ALWAYS_KEYS above already uses, and for the
+  // same reason: a service's field set (and so its tick-box groups, Phase 3)
+  // must not change shape depending on what the file happens to contain.
+  // A leaf actually in the file (a scalar) reads as an ordinary setting; one
+  // genuinely missing gets a blank field carrying the `path` addNested()
+  // needs to create it. A leaf that IS present but not a plain scalar — sealed,
+  // a bare key with nothing under it, or a block of its own — gets neither:
+  // saying nothing here leaves it to harvestBlock's second loop, which shows
+  // it as its own (locked) field exactly as it did before this pass existed,
+  // and avoids two fields ever claiming the same id.
+  //
+  // A block key that exists but is not a map at all (an anchor, alias, flow
+  // map or scalar) is left alone completely — harvestBlock's own first line
+  // shows it whole and read-only, and offering a "create" box into something
+  // sealed would invite writing inside it, which nothing here can do safely.
+  function harvestLeaves(out, serviceMap, lines) {
+    for (var blockKey in LEAVES) {
+      if (!LEAVES.hasOwnProperty(blockKey)) continue;
+      var p = serviceMap.pairs[blockKey];
+      var blockMap = p && p.value && p.value.kind === 'map' ? p.value : null;
+      if (p && p.value && !blockMap) continue;
+
+      var leaves = LEAVES[blockKey];
+      for (var subPath in leaves) {
+        if (!leaves.hasOwnProperty(subPath)) continue;
+        var segs = subPath.split('.'), node = blockMap, leafPair = null, ok = !!blockMap;
+        for (var i = 0; ok && i < segs.length; i++) {
+          if (!node || node.kind !== 'map') { ok = false; break; }
+          leafPair = node.pairs[segs[i]];
+          if (!leafPair) { ok = false; break; }
+          node = leafPair.value;
+        }
+
+        // healthcheck.test is one file line but two fields (the mode and the
+        // command) — see harvestHealthTest() below — so it is pulled out
+        // ahead of the generic one-leaf-one-field handling every other
+        // LEAVES path gets.
+        if (blockKey === 'healthcheck' && subPath === 'test') {
+          harvestHealthTest(out, ok, leafPair, lines);
+          continue;
+        }
+
+        var fullTarget = blockKey + '.' + subPath;
+        var fullPath = [blockKey].concat(segs);
+
+        if (ok && leafPair.value && leafPair.value.kind === 'scalar') {
+          var t = settingTarget(leafPair, fullTarget, lines);
+          t.path = fullPath;
+          out.push(t);
+        } else if (!ok) {
+          out.push(target('setting', fullTarget, {
+            parts: { value: part('', null) }, range: null, absent: true, path: fullPath
+          }));
+        }
+      }
+    }
+  }
+
+  /* ---- healthcheck.test: read as {mode, command}, written back as one line
+   * ----------------------------------------------------------------------
+   * A one-line flow list — ["CMD", "curl", "-f", "..."] — is the shape most
+   * files use, and the parser seals it (scanValue, reason 'flow') because a
+   * flow collection has its own quoting rules this parser does not attempt
+   * to edit in place. PLAN_7.md section 2 weighs teaching the parser to open
+   * a flow sequence against replacing the whole line on write, and lands on
+   * the smaller of the two: readTest() below reads all four real shapes,
+   * including the flow one off its own sealed .raw text, and writeTest()
+   * (further down, beside the other structural writes) replaces the line
+   * wholesale rather than editing inside it.
+   */
+
+  // What separates one piece of a healthcheck test line from the next.
+  // Shared with commandSay()'s splitter in stacks.js — see splitQuoted()
+  // below for why that lives here now rather than in two places.
+  var SEP_WS    = /^\s/;          // argv on one line
+  var SEP_COMMA = /^,/;           // a ["a", "b"] flow list
+
+  // JSON's own backslash escapes, decoded inline by splitQuoted() below —
+  // \u is deliberately not handled (real command text never needs it, and a
+  // half-decoded \uXXXX is a smaller wrong than crashing on one).
+  var JSON_ESCAPE = { '"': '"', '\\': '\\', '/': '/', n: '\n', t: '\t', r: '\r', b: '\b', f: '\f' };
+
+  // The one quoted-token splitter every argv shape in this file (and
+  // stacks.js's commandSay()) is built from. Walks the string treating ' and
+  // " as opening and closing a quoted run, and only looks for a separator
+  // outside one — so `-c "a && b"` is not chopped on its own spaces. Quote
+  // characters are consumed, never kept, so tokens come back already
+  // unwrapped. An unclosed quote means the text was never meant to be split
+  // this way at all, so the whole thing is abandoned (null) rather than
+  // guessed at.
+  //
+  // A double-quoted run also decodes backslash escapes as it goes — the only
+  // way writeTest()'s own JSON.stringify'd elements (a command holding a
+  // literal quote or backslash) can be read back at all. Single-quoted YAML
+  // has no backslash escaping, so this only applies inside a double-quoted
+  // run.
+  //
+  // Originally written in stacks.js for commandSay()'s plain-English gloss;
+  // moved here because readTest()/writeTest() need the exact same splitter,
+  // and stacks.js now calls this copy rather than keeping a second one.
+  function splitQuoted(str, sep) {
+    var tokens = [], buf = '', quote = '', i = 0, m;
+    while (i < str.length) {
+      var ch = str.charAt(i);
+      if (quote) {
+        if (quote === '"' && ch === '\\' && i + 1 < str.length) {
+          var esc = str.charAt(i + 1);
+          buf += JSON_ESCAPE[esc] !== undefined ? JSON_ESCAPE[esc] : esc;
+          i += 2;
+          continue;
+        }
+        if (ch === quote) quote = ''; else buf += ch;
+        i++;
+        continue;
+      }
+      if (ch === '"' || ch === "'") { quote = ch; i++; continue; }
+      m = sep ? sep.exec(str.slice(i)) : null;
+      if (m) {
+        if (buf) { tokens.push(buf); buf = ''; }
+        i += m[0].length;
+        continue;
+      }
+      buf += ch;
+      i++;
+    }
+    if (quote) return null;
+    if (buf) tokens.push(buf);
+    return tokens;
+  }
+
+  // Reads the argv out of a sealed flow list's own source text — "key: [...]"
+  // as line one, same as a locked command/entrypoint's raw. Returns null
+  // rather than the empty list when the text does not open with '[' at all,
+  // so a caller never mistakes "could not find one" for "found an empty one".
+  function parseFlowList(raw) {
+    var idx = raw.indexOf(':');
+    if (idx < 0) return null;
+    var nl = raw.indexOf('\n');
+    var lineOneTail = (nl < 0 ? raw.slice(idx + 1) : raw.slice(idx + 1, nl))
+                        .replace(/^\s+|\s+$/g, '');
+    if (lineOneTail.charAt(0) !== '[') return null;
+
+    var fullTail = raw.slice(idx + 1);
+    var open = fullTail.indexOf('['), close = fullTail.lastIndexOf(']');
+    if (close < open) return null;
+
+    var toks = splitQuoted(fullTail.slice(open + 1, close), SEP_COMMA);
+    if (toks === null) return null;
+    var out = [];
+    for (var i = 0; i < toks.length; i++) {
+      var t = toks[i].replace(/^\s+|\s+$/g, '');
+      if (t) out.push(t);
+    }
+    return out.length ? out : null;
+  }
+
+  // The first element of a healthcheck argv is a mode word, not an argument —
+  // shared by the flow and block-seq shapes, which only differ in how the
+  // argv was found. CMD-SHELL takes exactly one argument (the whole shell
+  // line); anything else there is not a shape this can confidently read.
+  function argvToTest(argv) {
+    if (!argv.length) return null;
+    var head = argv[0].toUpperCase();
+    if (head === 'NONE') return { mode: 'none', command: '' };
+    if (head === 'CMD-SHELL') return argv.length === 2 ? { mode: 'shell', command: argv[1] } : null;
+    if (head === 'CMD') return argv.length > 1 ? { mode: 'cmd', command: argv.slice(1).join(' ') } : null;
+    return null;
+  }
+
+  // Reads healthcheck.test as { mode: 'shell'|'cmd'|'none', command: string },
+  // across every shape a real compose file uses. Anything not confidently
+  // read — an anchor, an alias, a multi-line scalar written oddly — returns
+  // null, and the caller (harvestHealthTest) leaves it to the existing
+  // locked/read-only path rather than guessing.
+  function readTest(pair) {
+    var v = pair && pair.value;
+    if (!v) return null;
+
+    if (v.kind === 'scalar') {
+      // A bare string means CMD-SHELL by compose's own rule. An unquoted
+      // NONE is the one exception — PLAN_8.md treats it the same as the
+      // list form ["NONE"] — but a QUOTED "NONE" was written as a literal
+      // string on purpose and is read as a (very odd) shell command instead.
+      if (v.style === 'plain' && /^NONE$/i.test(v.value)) return { mode: 'none', command: '' };
+      return { mode: 'shell', command: v.value };
+    }
+
+    if (v.kind === 'seq') {
+      var argv = [];
+      for (var i = 0; i < v.items.length; i++) {
+        var it = v.items[i].value;
+        if (!it || it.kind !== 'scalar') return null;
+        argv.push(it.value);
+      }
+      return argvToTest(argv);
+    }
+
+    if (v.kind === 'opaque' && v.reason === 'flow') {
+      var flow = parseFlowList(v.raw);
+      return flow ? argvToTest(flow) : null;
+    }
+
+    return null;
+  }
+
+  // healthcheck.test's own two fields — "How the check runs" (the mode) and
+  // "The check itself" (the command) — rather than one row, so both are
+  // ordinary label/value/note rows and fieldHtml needs no new branch; CHOICES
+  // (stacks.js) turns the mode one into a dropdown the same way any other
+  // setting field's does.
+  //
+  // Both describe one physical line, so only one may own it for the things
+  // that make no sense done twice. The command field gets the real
+  // commentSpot (which resolves to a real spot only when the line is a plain
+  // scalar — commentSpot() itself already returns null for anything else)
+  // and the real range; boxHtml()/noteBoxHtml() already disable the note box
+  // when commentSpot is null, so nothing new is needed there. The mode
+  // field's commentSpot and range are always null — every other field's
+  // range is unique, and giving both fields the same span would make the
+  // Compose view's click-to-scroll ambiguous about which row it means.
+  //
+  // ok===true but readTest() returning null means there IS a test: line but
+  // this cannot confidently read it — nothing is pushed here in that case,
+  // and harvestBlock's own uncovered-children pass shows it whole and locked,
+  // exactly as before this function existed.
+  function harvestHealthTest(out, ok, leafPair, lines) {
+    var read = ok ? readTest(leafPair) : null;
+    if (ok && !read) return;
+
+    var path  = ['healthcheck', 'test'];
+    var range = ok ? { start: leafPair.leadStart, end: leafPair.end } : null;
+    // Truthy but otherwise inert: the real edit happens in writeTest() via
+    // testPart, never through this spot. It only has to (a) make the row
+    // read as present the way every other in-file field does (see
+    // fieldsFor()'s `single` check), and (b) point at a real line, so the
+    // screenshot-sanitise pass — which reads spot.line/col if this field is
+    // ever marked secret — cannot be handed a line that does not exist.
+    var spot = ok ? { line: leafPair.start, col: 0, len: 0, style: 'plain' } : null;
+    var isScalarComment = ok && leafPair.value && leafPair.value.kind === 'scalar';
+
+    out.push(target('setting', 'healthcheck.test.mode', {
+      parts: { value: part(read ? read.mode : '', spot) },
+      range: null, absent: !ok, path: path, testPart: 'mode'
+    }));
+    out.push(target('setting', 'healthcheck.test.command', {
+      parts: { value: part(read ? read.command : '', spot) },
+      range: range, absent: !ok, path: path, testPart: 'command',
+      comment: isScalarComment ? readComment(leafPair.value.comment) : undefined,
+      commentSpot: ok ? commentSpot(leafPair.value, lines) : null
+    }));
+  }
+
+  // Long-form depends_on: one field per dependency, each carrying its name
+  // (a key, not a value) plus its condition, with restart/required folded
+  // away below. PLAN_7.md is firm that this form and the short list form
+  // (harvestList, above) are alternatives never to be converted between.
+  //
+  // A dependency written any way this cannot confidently open — the inline
+  // flow form (db: {condition: ...}), or anything stranger — locks and stays
+  // read-only, same as a sealed value everywhere else in this file.
+  //
+  // A name with nothing under it at all ("db:", value null) is legal-ish:
+  // compose's own schema wants a condition, but nothing stops it being left
+  // out. It is not special-cased — every lookup below already copes with
+  // `depMap` being null, so it reads exactly like a map missing all three
+  // settings, which is what it is.
+  function harvestDependsLong(out, pair, lines) {
+    var map = pair.value;
+    for (var i = 0; i < map.keys.length; i++) {
+      var name = map.keys[i];
+      var depPair = map.pairs[name];
+      var v = depPair.value;
+
+      if (v && v.kind !== 'map') {
+        var raw = v.raw || lines.slice(depPair.start, depPair.end)
+                    .map(function (l) { return l.slice(depPair.indent); }).join('\n');
+        out.push(lockedTarget('depends', 'depends_on.' + name,
+          { start: depPair.leadStart, end: depPair.end },
+          v.kind === 'opaque' ? lockReason(v.reason) : 'this is written in a way the form cannot read',
+          raw));
+        continue;
+      }
+
+      var depMap = v;
+      var condPair = depMap ? depMap.pairs['condition'] : null;
+      var condNode = condPair && condPair.value && condPair.value.kind === 'scalar' ? condPair.value : null;
+
+      var row = target('depends', 'depends_on.' + name, {
+        parts: {
+          name:  part(name, keySpot(depPair)),
+          value: condNode ? part(condNode.value, scalarSpot(condNode)) : part('', null)
+        },
+        range: { start: depPair.leadStart, end: depPair.end },
+        comment: condNode ? readComment(condNode.comment) : undefined,
+        commentSpot: condNode ? commentSpot(condNode, lines) : null,
+        path: ['depends_on', name, 'condition']
+      });
+      // Namespace for the name part's dropdown (stacks.js's fromChoice()) —
+      // set directly rather than through a listKey, since listKey also drives
+      // the 1e dangling-reference check against parts.value, which here holds
+      // the condition, not a reference at all (buildForm excludes binder
+      // 'depends' from that check for exactly this reason).
+      row.from = 'services';
+      out.push(row);
+
+      for (var fk in DEPENDS_LEAVES) {
+        if (!DEPENDS_LEAVES.hasOwnProperty(fk)) continue;
+        var fPair = depMap ? depMap.pairs[fk] : null;
+        var fNode = fPair && fPair.value && fPair.value.kind === 'scalar' ? fPair.value : null;
+        var fRow = target('depends', 'depends_on.' + name + '.' + fk, {
+          parts: { value: fNode ? part(fNode.value, scalarSpot(fNode)) : part('', null) },
+          range: fNode ? { start: fPair.leadStart, end: fPair.end } : null,
+          comment: fNode ? readComment(fNode.comment) : undefined,
+          commentSpot: fNode ? commentSpot(fNode, lines) : null,
+          path: ['depends_on', name, fk],
+          absent: !fNode
+        });
+        fRow.fold = true;
+        out.push(fRow);
+      }
     }
   }
 
@@ -1051,6 +1411,8 @@
                   : target('setting', akey, { parts: { value: part('', null) }, range: null, absent: true }));
     }
 
+    harvestLeaves(out, serviceMap, lines);
+
     for (i = 0; i < serviceMap.keys.length; i++) {
       var key = serviceMap.keys[i];
       if (KEYS[key] && KEYS[key].always) continue;      // already emitted above
@@ -1064,7 +1426,14 @@
         }
         if (s.shape === 'list' && s.entry === 'plain') {
           if (p.value && p.value.kind === 'seq') { harvestList(out, 'list', p, splitPlain, lines, key); continue; }
-          out.push(settingTarget(p, key, lines));   // depends_on's long form, etc.
+          // depends_on is the one 'plain list' key that can also be written as
+          // a map, one dependency per name — no other key sharing this shape
+          // (networks, secrets, profiles...) ever takes this form.
+          if (key === 'depends_on' && p.value && p.value.kind === 'map') {
+            harvestDependsLong(out, p, lines);
+            continue;
+          }
+          out.push(settingTarget(p, key, lines));   // the inline flow form, or anything else unreadable
           continue;
         }
         if (s.shape === 'pairs') {
@@ -1184,8 +1553,21 @@
   }
 
   function inferTitle(t) {
+    // healthcheck.test's own two fields — checked ahead of the dotted-path
+    // lookup below, which cannot find a title for '.mode'/'.command' since
+    // LEAVES only names the whole leaf ('test'), not its two halves.
+    if (t.testPart === 'mode') return 'How the check runs';
+    if (t.testPart === 'command') return 'The check itself';
     if (t.binder === 'setting' && KEYS[t.target] && KEYS[t.target].title) return KEYS[t.target].title;
     if (t.binder === 'port') return 'Port ' + t.target.split('/')[0];
+    // depends_on's long form: 'depends_on.<name>' titles as the dependency's
+    // own name, matching a short-form entry's title; the folded restart/
+    // required settings beneath it ('depends_on.<name>.<leaf>') take their
+    // title from DEPENDS_LEAVES instead.
+    if (t.binder === 'depends') {
+      var dsegs = t.target.split('.');
+      return dsegs.length > 2 ? (DEPENDS_LEAVES[dsegs[2]] || humanise(dsegs[2])) : humanise(dsegs[1]);
+    }
     if (t.target.charAt(0) === '@') return humanise(t.target.slice(1).split('#')[0]);
     // A nested leaf's target is dotted — 'healthcheck.interval' — so its
     // title lives in LEAVES rather than KEYS. A dotted target LEAVES does not
@@ -1292,13 +1674,22 @@
         advice: advice,
         fixed: fixed,
         fixedRequired: fixed && (t.target === 'image' || t.target === 'container_name'),
+        path: t.path || null,
+        testPart: t.testPart || null,
         listKey: t.listKey || '',
         // Carried here rather than in stacks.js, so the KEYS table stays the
         // one place that knows a key's namespace and tool — the whole point
         // of consolidating it in Phase 1.
         groupTitle: listSpec ? (listSpec.title || humanise(t.listKey)) : '',
-        from: listSpec ? (listSpec.from || '') : '',
-        tool: listSpec ? (listSpec.tool || '') : ''
+        // t.from wins when a target sets it directly — depends_on's long-form
+        // row does (see harvestDependsLong), since its reference namespace
+        // ('services') belongs on the name part, not the value part a listSpec
+        // would otherwise hand it.
+        from: t.from || (listSpec ? (listSpec.from || '') : ''),
+        tool: listSpec ? (listSpec.tool || '') : '',
+        // Set only by harvestDependsLong's restart/required rows — everything
+        // else defaults to a falsy fold, same as before this existed.
+        fold: !!t.fold
       });
     }
     return fields;
@@ -1489,7 +1880,13 @@
     // resolve a 'list' binder back to the one key a given field lives under.
     for (var fi = 0; fi < out.fields.length; fi++) {
       var f = out.fields[fi];
-      if (!f.from) continue;
+      // A depends_on long-form row also carries f.from (see harvestDependsLong)
+      // so its name part gets the same services dropdown every other from
+      // field offers, but its OWN parts.value is the condition, not a
+      // reference — checking it here would flag "service_healthy" as an
+      // undeclared service. Excluded rather than taught a second reading of
+      // parts.value, since nothing else with a `from` has this split.
+      if (!f.from || f.binder === 'depends') continue;
 
       var val = f.parts.host ? f.parts.host.value : (f.parts.value ? f.parts.value.value : '');
       if (!val || val.indexOf('${') >= 0) continue;
@@ -1498,6 +1895,31 @@
 
       if (out.declared[f.from].indexOf(val) < 0) {
         f.advice.push('no ' + FROM_WORD[f.from] + ' called ' + val + ' is defined in this file');
+      }
+    }
+
+    // service_healthy only ever comes true if the named service really has a
+    // healthcheck: — PLAN_7.md calls this the mistake a hand-edited file gets
+    // wrong most often, so say so on the row rather than let someone pick a
+    // condition that can never be met. Checked once every service's fields
+    // are in out.fields, since it has to look at a DIFFERENT service's own
+    // healthcheck leaves — harvestLeaves() offers all seven whether or not
+    // the file has them, so "has one" means "at least one is not absent".
+    for (var di = 0; di < out.fields.length; di++) {
+      var df = out.fields[di];
+      if (df.binder !== 'depends' || df.fold) continue;
+      var depCond = df.parts.value ? df.parts.value.value : '';
+      var depName = df.parts.name ? df.parts.name.value : '';
+      if (depCond !== 'service_healthy' || !depName) continue;
+
+      var hasCheck = false;
+      for (var hi = 0; hi < out.fields.length && !hasCheck; hi++) {
+        var hf = out.fields[hi];
+        if (hf.service === depName && hf.target.indexOf('healthcheck.') === 0 && !hf.absent) hasCheck = true;
+      }
+      if (!hasCheck) {
+        df.advice.push('"' + depName + '" has no health check, so this will never come true — ' +
+                        'add one to "' + depName + '", or choose a different condition here');
       }
     }
 
@@ -1565,11 +1987,58 @@
   // setting, or 'host' / 'container' for the two halves of a port or a mount.
   // Returns false when the box cannot be written — a refusal, not a failure,
   // and the form says so rather than guessing.
+  // healthcheck.test's sibling — whichever of the mode/command pair `f` is
+  // not — so setPart() can read the half that did not just change.
+  function siblingTestField(form, f) {
+    var want = f.testPart === 'mode' ? 'command' : 'mode';
+    for (var i = 0; i < form.fields.length; i++) {
+      var g = form.fields[i];
+      if (g.service === f.service && g.testPart === want) return g;
+    }
+    return null;
+  }
+
   function setPart(doc, form, id, which, value) {
     var f = fieldById(form, id);
     if (!f || f.locked) return false;
     var p = f.parts[which];
     if (!p) return false;
+
+    // healthcheck.test is one file line shown as two fields (see
+    // harvestHealthTest() in compose-model.js), so editing either one has to
+    // write both together — read live off the sibling rather than assumed,
+    // since the sibling may itself be mid-edit. Checked ahead of the f.path
+    // branch below: both test fields carry a path too (for fieldsFor()'s
+    // bookkeeping), but must never reach addNested()/removeKey()'s flat,
+    // one-key writes, which know nothing about the two-field split.
+    //
+    // A blank command with mode 'shell' or 'cmd' would write a broken
+    // test: ["CMD-SHELL", ""], so — matching the blank-writes-nothing rule
+    // the rest of this file already follows — that write is skipped and the
+    // line is left exactly as it was. Choosing "no check" always writes,
+    // because that is a real choice, not an empty box; and a blank command
+    // with no mode chosen yet defaults to 'shell', which is what typing a
+    // command straight into a fresh Health check group most naturally means.
+    if (f.testPart) {
+      if (which !== 'value') return false;
+      var sib = siblingTestField(form, f);
+      if (!sib) return false;
+      var modeField = f.testPart === 'mode' ? f : sib;
+      var mode    = f.testPart === 'mode'    ? value : (modeField.absent ? 'shell' : modeField.parts.value.value);
+      var command = f.testPart === 'command' ? value : sib.parts.value.value;
+      if ((mode === 'shell' || mode === 'cmd') && !String(command).trim()) return true;
+      return writeTest(doc, form, f.service, mode, command);
+    }
+
+    // A LEAVES sub-path — healthcheck.interval, deploy.resources.limits.cpus
+    // — is a broken file when blank: compose rejects "interval: ''". So
+    // clearing one that already has a line removes the line (and any parent
+    // it leaves empty) instead of writing an empty value, via the same walk
+    // Phase 3's whole-block removal uses.
+    if (f.path && which === 'value' && p.spot && !String(value).trim()) {
+      return removeKey(doc, form, f.service, f.path);
+    }
+
     if (!p.spot) {
       // A declaration with nothing under it yet — "frontend_net:" and no
       // driver line — needs a nested insert rather than addSetting's
@@ -1584,6 +2053,15 @@
         var primaryKey = DECL_PRIMARY[f.declKind];
         if (!declPair || !primaryKey) return false;
         return insertChild(doc, declPair, primaryKey, value) >= 0;
+      }
+      // A LEAVES sub-path with no line yet. Its target is dotted
+      // ("healthcheck.interval"), which is not itself a compose key, so it
+      // needs addNested's walk rather than addSetting's flat insert — but
+      // the blank-writes-nothing rule below is the same one, for the same
+      // reason.
+      if (f.path && which === 'value') {
+        if (!String(value).trim()) return true;
+        return addNested(doc, form, f.service, f.path, value) >= 0;
       }
       // An absent Container slot has no line yet. A blank must write nothing
       // — typing into an empty box and moving on must not plant a bare
@@ -1884,12 +2362,155 @@
   }
 
   /**
+   * Writes a value nested any number of levels under a service — the
+   * primitive PLAN_7.md names as the shared blocker for turning on an empty
+   * healthcheck/deploy group. Walks `path`, creating each missing level as a
+   * bare key via insertChild, and writes the leaf last.
+   *
+   * splice() (called by insertChild) fully re-parses the document, so every
+   * pair held before it runs is stale the instant it returns — which is why
+   * a level just created is not reused: the whole walk restarts from
+   * serviceMapOf so every position is read fresh.
+   *
+   * Returns -1, rather than guessing, whenever a level along the way is
+   * sealed, opaque, or a scalar — inserting into something the parser could
+   * not read is how a working file gets corrupted.
+   */
+  function addNested(doc, form, service, path, value) {
+    var pair = serviceMapOf(doc, service), i;
+    if (!pair) return -1;
+
+    for (i = 0; i < path.length - 1; i++) {
+      var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
+      if (pair.value && !map) return -1;
+      var next = map ? map.pairs[path[i]] : null;
+      if (!next) {
+        if (insertChild(doc, pair, path[i], null, i === 0 ? 'x-unraid' : null) < 0) return -1;
+        return addNested(doc, form, service, path, value);
+      }
+      pair = next;
+    }
+
+    // The loop above only checks a level before descending past it, so the
+    // leaf's immediate parent — reached only when path.length === 1, or by
+    // falling out of the loop above — needs the same check the intermediate
+    // levels get: a scalar, anchor or flow value here is exactly as unsafe
+    // to write a child into as one higher up the path.
+    if (pair.value && pair.value.kind !== 'map') return -1;
+    return insertChild(doc, pair, path[path.length - 1], value,
+                       path.length === 1 ? 'x-unraid' : null);
+  }
+
+  // Builds the canonical flow-list text for healthcheck.test — the one shape
+  // writeTest() ever writes, whatever shape the file used before. Every
+  // element is JSON-encoded rather than run through emitScalar: emitScalar's
+  // quoting rules are for a plain compose value, not for one argv element
+  // inside a flow list, and JSON.stringify gets a double quote, a backslash
+  // or a '#' inside the command right by construction. Returns null for a
+  // 'cmd' mode whose command has nothing splittable in it, so writeTest never
+  // writes an empty CMD list.
+  function buildTestBody(mode, command) {
+    var els;
+    if (mode === 'none') els = ['NONE'];
+    else if (mode === 'shell') els = ['CMD-SHELL', String(command)];
+    else if (mode === 'cmd') {
+      var argv = splitQuoted(String(command), SEP_WS);
+      if (!argv || !argv.length) return null;
+      els = ['CMD'].concat(argv);
+    } else return null;
+
+    return '[' + els.map(function (e) { return JSON.stringify(e); }).join(', ') + ']';
+  }
+
+  // The trailing "# ..." on an existing test: line, whatever shape it is
+  // written in, so writeTest() can carry it over onto the replacement line.
+  // A plain scalar and a block seq's last item both parsed their comment
+  // already; a sealed flow node has not, so its own raw text (which is the
+  // whole "test: [...]" line) is searched the same way splitComment() finds
+  // any other trailing comment.
+  function testTrailingComment(pair) {
+    var v = pair.value;
+    if (!v) return '';
+    if (v.kind === 'scalar') return v.comment || '';
+    if (v.kind === 'seq' && v.items.length) return v.items[v.items.length - 1].comment || '';
+    if (typeof v.raw === 'string' && v.raw) {
+      return splitComment(v.raw.split('\n').pop()).comment || '';
+    }
+    return '';
+  }
+
+  // Replaces healthcheck.test wholesale with the canonical flow form —
+  // ["CMD-SHELL", "…"], ["CMD", …], or ["NONE"] — creating healthcheck: and/or
+  // test: first when neither exists yet. This is the one write in the whole
+  // model that knowingly reformats a line the file's author wrote rather than
+  // editing only the span someone typed into (see the section comment above
+  // readTest()) — the honest cost is losing that one line's own spacing and
+  // quote style, which PLAN_7.md judges smaller than teaching the parser to
+  // open a flow sequence safely.
+  //
+  // Returns false when healthcheck: is sealed (an anchor, alias or flow map)
+  // or the pair cannot be located even after trying to create it.
+  function writeTest(doc, form, service, mode, command) {
+    var body = buildTestBody(mode, command);
+    if (body === null) return false;
+
+    var svc = serviceMapOf(doc, service);
+    if (!svc) return false;
+    var hc = svc.value.pairs['healthcheck'];
+    if (hc && hc.value && hc.value.kind !== 'map') return false;
+
+    var testPair = hc && hc.value ? hc.value.pairs['test'] : null;
+    var comment = testPair ? testTrailingComment(testPair) : '';
+
+    if (!testPair) {
+      // A bare "test:" placeholder, via the same nested-insert addNested
+      // already uses for every other absent leaf — creating healthcheck:
+      // with it when neither exists yet. splice() re-parses, so the pair has
+      // to be re-read from doc rather than reused once this returns.
+      if (addNested(doc, form, service, ['healthcheck', 'test'], null) < 0) return false;
+      svc = serviceMapOf(doc, service);
+      hc = svc && svc.value ? svc.value.pairs['healthcheck'] : null;
+      testPair = hc && hc.value ? hc.value.pairs['test'] : null;
+      if (!testPair) return false;
+    }
+
+    var line = pad(testPair.indent) + 'test: ' + body + comment;
+    splice(doc, testPair.start, testPair.end - testPair.start, [line]);
+    return true;
+  }
+
+  // Removes the span [from, to), first collapsing a blank line on each side
+  // down to one — taking a whole block out of a file that separates its
+  // blocks with blank lines otherwise leaves two blanks where there was one,
+  // or a stray blank at the end when the block was last. Only collapses when
+  // there is genuinely a blank on both sides, so one the user put there on
+  // purpose is never the one that goes. Shared by removeItem, removeDeclared
+  // and removeKey, which all remove a whole block the same way.
+  function spliceBlock(doc, from, to) {
+    if (from > 0 &&
+        (doc.lines[from - 1] || '').trim() === '' &&
+        (doc.lines[to] || '').trim() === '') {
+      from--;
+    }
+    splice(doc, from, to - from, []);
+  }
+
+  /**
    * Remove one entry, and the list's key with it when it was the only one.
    * Returns false when the entry is sealed and cannot safely be touched.
    */
   function removeItem(doc, form, id) {
     var f = fieldById(form, id);
     if (!f || !f.range) return false;
+
+    // A long-form dependency's name is a map key under depends_on:, not a
+    // list entry, so it goes through removeKey instead of the list-key walk
+    // below — which already collapses depends_on: itself away when this was
+    // the only dependency left, the same rule every other whole-block removal
+    // in this file follows.
+    if (f.binder === 'depends') {
+      return removeKey(doc, form, f.service, ['depends_on', f.target.slice('depends_on.'.length)]);
+    }
 
     var key = f.listKey || LIST_KEY[f.binder];
     if (!key) return false;                     // a plain setting is not a list
@@ -1908,20 +2529,7 @@
     // The last entry takes its key with it. Not tidiness: "ports:" with
     // nothing under it is null, and compose refuses to read the file.
     if (count === 1) {
-      var from = pair.leadStart, to = pair.end;
-
-      // Taking a whole block out of a file that separates its blocks with
-      // blank lines leaves two blanks where there was one — or a stray blank
-      // at the end when the block was last. Collapse them, but only when there
-      // is genuinely one on each side, so a blank the user put there on
-      // purpose is never the one that goes.
-      if (from > 0 &&
-          (doc.lines[from - 1] || '').trim() === '' &&
-          (doc.lines[to] || '').trim() === '') {
-        from--;
-      }
-
-      splice(doc, from, to - from, []);
+      spliceBlock(doc, pair.leadStart, pair.end);
       return true;
     }
 
@@ -1977,22 +2585,57 @@
     if (!pair) return false;
 
     if (block.value.keys.length === 1) {
-      var from = block.leadStart, to = block.end;
-
-      // Collapse a doubled blank line, but only when there is genuinely one
-      // on each side, so a blank the user put there on purpose survives.
-      if (from > 0 &&
-          (doc.lines[from - 1] || '').trim() === '' &&
-          (doc.lines[to] || '').trim() === '') {
-        from--;
-      }
-
-      splice(doc, from, to - from, []);
+      spliceBlock(doc, block.leadStart, block.end);
       return true;
     }
 
     // leadStart takes the name's description comment, if any, along with it.
     splice(doc, pair.leadStart, pair.end - pair.leadStart, []);
+    return true;
+  }
+
+  /**
+   * Removes the pair at `path` under a service, and any parent the removal
+   * leaves with nothing else under it — a bare "healthcheck:" (or a mid-path
+   * "deploy: resources:") is null, and compose refuses the file, the same
+   * rule removeItem/removeDeclared already follow for a list key or a
+   * declared name. Shared by setPart's blank-an-existing-leaf case and (Phase
+   * 3) the tick-box's whole-block removal, so both walk the file the same way.
+   *
+   * Finds the outermost ancestor the removal would leave empty and takes its
+   * whole span in one go, rather than removing level by level — every
+   * intermediate pair is already in hand from one read of the file, so there
+   * is nothing to re-walk the way addNested must after each splice().
+   *
+   * Returns false when there is nothing at `path`, or a level along the way
+   * is sealed, opaque, or not a map.
+   */
+  function removeKey(doc, form, service, path) {
+    var pair = serviceMapOf(doc, service), i;
+    if (!pair) return false;
+
+    var chain = [pair];      // chain[i] is the pair holding path[0..i-1]
+    for (i = 0; i < path.length - 1; i++) {
+      if (!pair.value || pair.value.kind !== 'map') return false;
+      pair = pair.value.pairs[path[i]];
+      if (!pair) return false;
+      chain.push(pair);
+    }
+    if (!pair.value || pair.value.kind !== 'map') return false;
+
+    var leaf = pair.value.pairs[path[path.length - 1]];
+    if (!leaf) return false;
+
+    // Named for what it is rather than "target": target() is the field
+    // factory this whole file is built on, and shadowing it inside a
+    // removal walk is a trap for whoever edits this next.
+    var outermost = leaf;
+    for (i = chain.length - 1; i >= 1; i--) {
+      if (chain[i].value.keys.length !== 1) break;
+      outermost = chain[i];
+    }
+
+    spliceBlock(doc, outermost.leadStart, outermost.end);
     return true;
   }
 
@@ -2282,6 +2925,22 @@
     addDeclared: addDeclared,
     removeDeclared: removeDeclared,
     renameDeclared: renameDeclared,
+    // Phase 3 (PLAN_8) calls this from stacks.js to drop a whole
+    // healthcheck/deploy block when its tick box is switched off.
+    removeKey: removeKey,
+    // Phase 4 (PLAN_8): healthcheck.test read as {mode, command} and written
+    // back as one canonical line. splitQuoted/parseFlowList are exported
+    // because stacks.js's own commandSay() gloss needs the same splitting —
+    // see the comment beside splitQuoted() above for why there is only one
+    // copy of it now.
+    readTest: readTest,
+    writeTest: writeTest,
+    // Phase 5 (PLAN_8): stacks.js calls this directly to add a long-form
+    // dependency — condition: service_started written explicitly alongside
+    // it, since a bare "name:" is null and compose refuses the file.
+    addNested: addNested,
+    splitQuoted: splitQuoted,
+    parseFlowList: parseFlowList,
     fieldById: fieldById,
     fieldAtLine: fieldAtLine,
     serviceAtLine: serviceAtLine,

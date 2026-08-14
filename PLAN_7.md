@@ -1,7 +1,9 @@
 # Future feature notes: editors for the Advanced blocks
 
-**Status: NOTES ONLY** — not a plan, not approved, nothing to build yet. Written down so the thinking
-is not lost. `PLAN_4.md` (done), `PLAN_5.md` and `PLAN_6.md` are the live plans.
+**Status: PARTLY BUILT.** `PLAN_8.md` (complete) built sections 1 and 2 and removed the shared blocker
+below — `addNested()` inserts a nested key at any depth, so a `healthcheck:` or long-form `depends_on:`
+can now be created from nothing. What is left here is section 3 (which of `deploy:` to refuse to offer),
+the boolean-quoting decision, and the CRLF note at the end.
 
 ## Where this comes from
 
@@ -11,30 +13,28 @@ a read-only block that shows itself and says why. That is honest, and for most k
 Three blocks are not most keys. They are the ones an Unraid user actually wants to change, and
 leaving them as grey code blocks means the Compose view is still mandatory for ordinary work:
 
-| Block | After `PLAN_5.md` | Still read-only |
+| Block | Now | Still read-only |
 |---|---|---|
-| `healthcheck:` | timings editable | `test:` — the check itself |
-| `deploy:` | CPU and memory limits editable | everything else |
-| `depends_on:` | nothing — long form stays locked | all of it |
+| `healthcheck:` | timings and `test:` editable, creatable from nothing | a `test:` the reader cannot make sense of |
+| `deploy:` | CPU and memory limits editable, creatable from nothing | the swarm-only keys — section 3 below |
+| `depends_on:` | both forms editable, long form creatable from nothing | the inline flow map (`db: {condition: …}`) |
 
-`PLAN_5.md` covers the *leaves that already exist* in a file. These notes are about the rest: editing
-a block's awkward parts, and **creating** a block that is not there at all.
+`PLAN_5.md` covered the *leaves that already exist* in a file; `PLAN_8.md` covered the rest — editing a
+block's awkward parts, and creating a block that is not there at all. What is left is section 3.
 
-## The shared blocker
+## The shared blocker — resolved
 
-Everything below needs one thing the model does not have: **inserting a nested key**.
+Everything below needed one thing the model did not have: **inserting a nested key**. `addItem`
+inserts a list or map entry one level inside a service and `addSetting` inserts one line at service
+indent, but neither can create an intermediate map, so `healthcheck:` → `test:` could not be written
+from scratch.
 
-`addItem` inserts a list entry or a map entry one level inside a service. `addSetting` inserts one
-line at service indent. Neither can create an intermediate map, and `pad()` is only ever called with
-an indent that already exists in the file. So `healthcheck:` → `test:` → nothing can be written from
-scratch.
+`PLAN_6.md` phase 5 built `addDeclared`, and `PLAN_8.md` generalised it into `addNested(doc, form,
+service, path, value)`, which walks a key path of any depth and creates each missing level. It
+restarts its walk from the top after each level it creates, because `splice()` re-parses the document
+and every position held before it is stale the instant it returns.
 
-`PLAN_6.md` phase 5 builds `addDeclared`, which inserts a name under a top-level block and creates
-that block when absent. **That is the same primitive**, one level deeper. Whichever lands first should
-be written so the other can reuse it, rather than two functions that each insert nested keys their own
-way.
-
-Nothing here should start before `PLAN_6.md` phase 5 exists.
+That is the primitive. Anything else needing a nested insert calls it rather than writing a third way.
 
 ## 1. `depends_on:` long form
 
