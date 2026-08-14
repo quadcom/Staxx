@@ -3560,7 +3560,17 @@
       row.dataset.busy = '1';
       spin(row, true);
       var td = row.querySelector('[data-cell="state"]');
-      if (td) td.innerHTML = '<span class="stackman-pill stackman-pill--busy">' + label + '</span>';
+      if (td) {
+        td.innerHTML = '<span class="stackman-pill stackman-pill--busy">' + label + '</span>';
+
+        // paintState skips a cell whose HTML has not changed since it last
+        // wrote one. "Starting…" was put here by this function instead, so
+        // that record has to go: without it a stack that ends up back in the
+        // state it started in — a restart, or a start that failed — keeps the
+        // busy pill for ever, because the state arriving afterwards matches
+        // what paintState last wrote and gets skipped.
+        td.stackmanTxt = '';
+      }
     });
   }
 
@@ -3698,14 +3708,24 @@
   // Paint one row's state cell, address cell and status dot, unless it is
   // mid-command. The address moves with the state: a container that has just
   // been recreated may be answering somewhere else.
+  //
+  // Both cells come from the server as ready-made HTML, and on a settled
+  // machine that HTML is identical poll after poll — so it is compared and
+  // skipped the same way a figure is. See setCell for why the comparison is
+  // against what we were handed rather than against innerHTML.
   function paintState(row, html, isUp, address) {
     if (row.dataset.busy) return;
     var td = row.querySelector('[data-cell="state"]');
-    if (td) td.innerHTML = html;
+    if (td && td.stackmanTxt !== html) {
+      td.innerHTML = html;
+      td.stackmanTxt = html;
+    }
     var addr = row.querySelector('[data-cell="address"]');
-    if (addr && address !== undefined) addr.innerHTML = address;
-    var dot = row.querySelector('.stackman-dot');
-    if (dot) dot.classList.toggle('stackman-dot--up', !!isUp);
+    if (addr && address !== undefined && addr.stackmanTxt !== address) {
+      addr.innerHTML = address;
+      addr.stackmanTxt = address;
+    }
+    setClass(row.querySelector('.stackman-dot'), 'stackman-dot--up', !!isUp);
   }
 
   // "2 of 3 running". Counted from the rows on screen rather than sent by the
@@ -3732,7 +3752,7 @@
       // The menu is rebuilt from these attributes every time it opens, so
       // updating them is what turns Start into Restart and enables Stop.
       var btn = row.querySelector('[data-menu="stack"]');
-      if (btn) btn.dataset.running = s.running ? '1' : '0';
+      if (btn) setData(btn, 'running', s.running ? '1' : '0');
 
       // Compose only reveals the project name once a stack is up, and it is not
       // always the folder name — a compose file may set its own `name:`. Taking
@@ -3755,8 +3775,8 @@
           // Stopping a stack REMOVES its containers — `compose down` is not
           // `stop` — so a row with nothing behind it is the normal end state,
           // not a missing reading.
-          kid.dataset.container = '';
-          kid.dataset.state = '';
+          setData(kid, 'container', '');
+          setData(kid, 'state', '');
           paintState(kid, res.notCreated || '', false, res.noAddress || '');
           return;
         }
@@ -3764,14 +3784,17 @@
         // Filled in here rather than at render time: the first time a stack is
         // started these rows came from the compose file and had no container
         // to point at yet. This is what binds them to a real one.
-        kid.dataset.container = c.container;
-        kid.dataset.state     = c.state;
+        setData(kid, 'container', c.container);
+        setData(kid, 'state', c.state);
         if (c.state === 'running') up++;
         paintState(kid, c.html, c.state === 'running', c.address);
       });
 
       var sub = row.querySelector('[data-cell="stack-sub"]');
-      if (sub && kids.length) sub.textContent = stackSub(kids.length, up);
+      if (sub && kids.length) {
+        var line = stackSub(kids.length, up);
+        if (sub.textContent !== line) sub.textContent = line;
+      }
     });
 
     var folders = res.folders || {};
@@ -3779,9 +3802,11 @@
       var tr = document.querySelector('[data-folder-row="' + id + '"]');
       if (!tr) return;
       var sub = tr.querySelector('[data-cell="folder-sub"]');
-      if (sub) sub.innerHTML = folders[id].html;
-      var fdot = tr.querySelector('.stackman-dot');
-      if (fdot) fdot.classList.toggle('stackman-dot--up', folders[id].running > 0);
+      if (sub && sub.stackmanTxt !== folders[id].html) {
+        sub.innerHTML = folders[id].html;
+        sub.stackmanTxt = folders[id].html;
+      }
+      setClass(tr.querySelector('.stackman-dot'), 'stackman-dot--up', folders[id].running > 0);
     });
   }
 
@@ -5065,7 +5090,10 @@
    */
   function sparkline(host, values, peakFloor) {
     if (!host) return;
-    if (!values || values.length < 2) { host.innerHTML = ''; return; }
+    if (!values || values.length < 2) {
+      if (host.firstChild) { host.innerHTML = ''; host.stackmanPts = ''; }
+      return;
+    }
 
     var W = 88, H = 24, pad = 1.5;
     var peak = Math.max.apply(null, values);
@@ -5080,13 +5108,31 @@
       line.push(x.toFixed(1) + ',' + y.toFixed(1));
     }
 
-    var area = '0,' + H + ' ' + line.join(' ') + ' ' + W + ',' + H;
+    var pts  = line.join(' ');
+    var area = '0,' + H + ' ' + pts + ' ' + W + ',' + H;
+
+    // A poll lands every three seconds whether anything moved or not, and a
+    // stopped container's graph is the same picture every time. Remembering
+    // the points on the host — a plain property, so it dies with the node when
+    // the table is re-rendered and the next poll redraws from scratch — keeps
+    // an unchanged graph from costing anything at all.
+    if (host.stackmanPts === pts) return;
+    host.stackmanPts = pts;
+
+    var poly = host.querySelector('.stackman-spark-line');
+    if (poly) {
+      // Move the shapes already on screen instead of parsing a fresh SVG:
+      // same picture, two attribute writes rather than a new subtree.
+      poly.setAttribute('points', pts);
+      host.querySelector('.stackman-spark-fill').setAttribute('points', area);
+      return;
+    }
 
     host.innerHTML =
       '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H +
       '" preserveAspectRatio="none" aria-hidden="true">' +
         '<polygon class="stackman-spark-fill" points="' + area + '"/>' +
-        '<polyline class="stackman-spark-line" points="' + line.join(' ') + '"/>' +
+        '<polyline class="stackman-spark-line" points="' + pts + '"/>' +
       '</svg>';
   }
 
@@ -5122,12 +5168,44 @@
     return row.querySelector('[data-stat="' + metric + '"]');
   }
 
+  /* Writes only what actually changed.
+   *
+   * The figure is compared as the HTML we were handed, not as what the cell
+   * reads back: the browser normalises what it parsed (&darr; comes back as
+   * the character itself), so comparing against innerHTML would differ every
+   * time and never skip anything.
+   *
+   * Setting an attribute or innerHTML counts as a change even when the value
+   * is identical, so on a mostly idle server this is the difference between
+   * rewriting every cell of every row three times a minute and touching
+   * nothing at all. */
   function setCell(row, metric, text, values, peakFloor) {
     var td = cell(row, metric);
     if (!td) return;
     var value = td.querySelector('.stackman-statv');
-    if (value) value.innerHTML = text;
+    if (value && value.stackmanTxt !== text) {
+      value.innerHTML = text;
+      value.stackmanTxt = text;
+    }
     sparkline(td.querySelector('.stackman-spark'), values, peakFloor);
+  }
+
+  // Same reasoning as setCell for the two things a row carries outside its
+  // cells: a dataset key is an attribute, and a title is one too.
+  function setData(row, key, value) {
+    value = String(value);
+    if (row.dataset[key] !== value) row.dataset[key] = value;
+  }
+
+  function setTitle(el, text) {
+    if (el && el.title !== text) el.title = text;
+  }
+
+  // classList.add and classList.toggle rewrite the class attribute even when
+  // the class is already in the state being asked for, and a rewritten
+  // attribute is a change to anything watching the document.
+  function setClass(el, name, on) {
+    if (el && el.classList.contains(name) !== on) el.classList.toggle(name, on);
   }
 
   /* ---- one row's figures ----
@@ -5180,26 +5258,24 @@
 
     if (!s.gpuMapped) {
       setCell(row, 'gpu', '', null);
-      if (gpuTd) gpuTd.title = '';
+      setTitle(gpuTd, '');
     } else if (!s.gpuMeasurable) {
       setCell(row, 'gpu', badge + '<span class="stackman-na">n/a</span>', null);
-      if (gpuTd) gpuTd.title = s.gpuWhy || 'No per-container figure available';
+      setTitle(gpuTd, s.gpuWhy || 'No per-container figure available');
     } else {
       setCell(row, 'gpu', badge + s.gpu.toFixed(1) + '<small>%</small>', h.gpu, 5);
-      if (gpuTd) {
-        gpuTd.title = (s.gpuVendors || []).map(function (v) {
-          return GPU_NAMES[v] || v;
-        }).join(' + ') + ' GPU';
-      }
+      setTitle(gpuTd, (s.gpuVendors || []).map(function (v) {
+        return GPU_NAMES[v] || v;
+      }).join(' + ') + ' GPU');
     }
 
     // Kept on the row so folder totals can be added up without re-reading the
     // snapshot. Only stack rows are summed — see updateFolderTotals.
-    row.dataset.statCpu = s.cpu;
-    row.dataset.statMem = s.memUsed;
-    row.dataset.statNet = rx + tx;
-    row.dataset.statGpu = s.gpu;
-    row.dataset.statGpuMapped = s.gpuMapped ? '1' : '';
+    setData(row, 'statCpu', s.cpu);
+    setData(row, 'statMem', s.memUsed);
+    setData(row, 'statNet', rx + tx);
+    setData(row, 'statGpu', s.gpu);
+    setData(row, 'statGpuMapped', s.gpuMapped ? '1' : '');
 
     // The GPU cell itself is dropped, not just left blank, for a row with
     // nothing mapped — see .stackman-row--no-gpu in stack.manager.css for the
@@ -5212,7 +5288,7 @@
     // a class only from code that actually knows the answer avoids that
     // trap by construction, because a folder row simply never has this
     // function called on it at all.
-    row.classList.toggle('stackman-row--no-gpu', !s.gpuMapped);
+    setClass(row, 'stackman-row--no-gpu', !s.gpuMapped);
   }
 
   function blankFigures(row) {
@@ -5220,23 +5296,20 @@
     setCell(row, 'mem', '—', null);
     setCell(row, 'net', '—', null);
     setCell(row, 'gpu', '', null);          // blank, never a dash
-    row.dataset.statCpu = '';
-    row.dataset.statGpuMapped = '';
+    setData(row, 'statCpu', '');
+    setData(row, 'statGpuMapped', '');
 
     // No stats at all this poll — container stopped, never created, or its
     // whole stack is down — means no way to know whether a GPU is mapped
-    // either. Hiding the cell here too, unconditionally, rather than leaving
-    // it as whatever paintFigures last decided: the alternative is a class
-    // that keeps whatever value it happened to have from the last time
-    // stats WERE available, which is fine while a row bounces between
-    // running and stopped in the ordinary case, but leaves a row that has
-    // NEVER had stats (a service declared in the compose file but never
-    // started) with no class at all and its GPU cell visible — showing the
-    // empty label this whole feature exists to remove. Setting it every
-    // time is not a flicker risk: this function is called with the row in
-    // the same "no stats" state on every poll for as long as that stays
-    // true, so the class is written to the same value it already had.
-    row.classList.add('stackman-row--no-gpu');
+    // either. Hiding the cell here too, rather than leaving it as whatever
+    // paintFigures last decided: the alternative is a class that keeps
+    // whatever value it happened to have from the last time stats WERE
+    // available, which is fine while a row bounces between running and
+    // stopped in the ordinary case, but leaves a row that has NEVER had
+    // stats (a service declared in the compose file but never started) with
+    // no class at all and its GPU cell visible — showing the empty label
+    // this whole feature exists to remove.
+    setClass(row, 'stackman-row--no-gpu', true);
   }
 
   /* ---- applying a snapshot ---- */
@@ -5287,16 +5360,20 @@
       var parts = [card('Intel GPU', g.intel), card('AMD GPU', g.amd)]
         .filter(function (p) { return p !== null; });
 
-      stripGpu.innerHTML = parts.join(' &nbsp;&middot;&nbsp; ');
+      var strapline = parts.join(' &nbsp;&middot;&nbsp; ');
+      if (stripGpu.stackmanTxt !== strapline) {      // see setCell
+        stripGpu.innerHTML = strapline;
+        stripGpu.stackmanTxt = strapline;
+      }
       stripGpu.hidden = parts.length === 0;
 
       // The AMD figure comes from radeontop, which watches the card as a whole
       // and has no per-process breakdown; the Intel one can be attributed to a
       // container. That is a real difference in what the numbers mean, so it is
       // said here rather than being allowed to distort how they are printed.
-      stripGpu.title = 'Whole-machine GPU figures. '
-                     + 'The thread count is the number of separate pieces of work each card is '
-                     + 'running, counted the same way for every card.';
+      setTitle(stripGpu, 'Whole-machine GPU figures. '
+                       + 'The thread count is the number of separate pieces of work each card is '
+                       + 'running, counted the same way for every card.');
     }
 
     // Only a snapshot the server has actually refreshed advances the graphs.
@@ -5340,7 +5417,7 @@
     // than left as a full-height strip of empty cells. It reappears by itself
     // the moment a stack with a GPU starts.
     var table = document.querySelector('.stackman-stacks');
-    if (table) table.classList.toggle('stackman-no-gpu', !anyGpu);
+    if (table) setClass(table, 'stackman-no-gpu', !anyGpu);
 
     updateFolderTotals();
     if (fresh) lastAt = res.sampledAt;
@@ -5372,7 +5449,10 @@
 
       var put = function (metric, text) {
         var td = tr.querySelector('[data-stat="' + metric + '"] .stackman-statv');
-        if (td) td.innerHTML = text;
+        if (td && td.stackmanTxt !== text) {        // see setCell
+          td.innerHTML = text;
+          td.stackmanTxt = text;
+        }
       };
 
       if (!any) {
