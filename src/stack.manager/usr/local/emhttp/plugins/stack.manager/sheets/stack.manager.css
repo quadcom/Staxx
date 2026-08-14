@@ -1965,9 +1965,20 @@
   border-left-color: var(--sm-hairline);
 }
 
-.stackman-svchead {
+/* Half again the size of a group heading (.stackman-fieldgroup, 1.2rem), so a
+   service name reads as the thing its groups sit under.
+
+   The scaffold prefix is what makes that size stick. Unraid 7.2's
+   standalone-apps sheet carries `.unapi h1, .unapi h2, ... { font-size:
+   inherit; font-weight: inherit }`, and every page body is inside .unapi — an
+   element-plus-class selector, which outweighs a bare class of ours and left
+   this heading at the inherited body size. font-weight has to be stated for
+   the same reason: the browser's own bold for an <h4> goes with it. Every
+   other heading of ours reached through an element (h4, h5) needs both. */
+.stackman-scaffold .stackman-svchead {
   margin: 0 0 1.2rem;
-  font-size: 2.2rem;
+  font-size: 1.8rem;
+  font-weight: 700;
 }
 
 /* Quiet until the heading is hovered or focused, so a pencil beside every
@@ -2065,16 +2076,12 @@
    user needs. .stackman-svchead already sets the type scale; this only adds
    what a disclosure marker needs — a pointer cursor, the real triangle
    (list-style: revert undoes the summary reset), and a gap so the marker
-   does not crowd the word "Stack".
-
-   font-weight is set here because a <summary> is not bold and the <h4> it
-   replaced was: without it this heading renders lighter than every service
-   heading beside it. Same reason .stackman-details > summary sets it. */
+   does not crowd the word "Stack". The bold a <summary> lacks comes from
+   .stackman-svchead, which now states it for every service heading too. */
 .stackman-stackfold > summary {
   cursor: pointer;
   list-style: revert;
   padding-left: 0.4rem;
-  font-weight: 700;
 }
 
 /* Each group's own top rule is the line between it and the group above, so a
@@ -2128,10 +2135,11 @@
    .stackman-formgroup draws that now — and its margin drops to zero, since
    the band and .stackman-grouphead already own the space around it. What is
    left is pure type. */
-.stackman-fieldgroup {
+.stackman-scaffold .stackman-fieldgroup {
   margin: 0;
   color: var(--sm-fg);
   font-size: 1.2rem;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -2592,7 +2600,7 @@
   overflow-y: auto;
 }
 
-.stackman-devgroup {
+.stackman-scaffold .stackman-devgroup {
   margin: 0.9rem 0 0.4rem;
   color: var(--sm-muted);
   font-size: 1.1rem;
