@@ -152,7 +152,12 @@
     // -----BEGIN, well-known, 3-4 — they are ordinary text.
     if (/^[-?:](\s|$)/.test(v)) return true;
     if (/^[,\[\]{}#&*!|>'"%@`]/.test(v)) return true;
-    if (/:\s/.test(v) || /\s#/.test(v)) return true;
+    // A colon at the END of a scalar is a key indicator just as much as one
+    // followed by a space: "8080:" written plainly is a mapping, not the text
+    // "8080:". Without the $ here, clearing a port's container box wrote a
+    // mapping into the ports list, the entry stopped being a port at all, and
+    // its row vanished from the form while the line stayed in the file.
+    if (/:(\s|$)/.test(v) || /\s#/.test(v)) return true;
     // A number written plainly is read as a number, which is what someone
     // typing a number into a number field means. Only the words that read as
     // something other than themselves are forced into quotes.
@@ -174,9 +179,17 @@
 
     var hasD = value.indexOf('"') >= 0;
     var hasS = value.indexOf("'") >= 0;
-    if (hasD && hasS) return null;
 
+    // A value holding both is still safely written single-quoted: YAML's
+    // single-quote form needs no escaping for a literal '"', and the '' below
+    // escapes any literal "'" the same as it always does. A stashed section's
+    // JSON — which always has "s from its own keys, and often has 's from a
+    // hand-written comment or command — is exactly this case.
     if (hasD) return "'" + value.replace(/'/g, "''") + "'";
+    // Asked for only where the caller knows the value is a real boolean (see
+    // setPart) — never inferred from the text, which is exactly what
+    // needsQuoting() is right to refuse to do.
+    if (style === 'bare') return value;
     if (style === 'single') return "'" + value.replace(/'/g, "''") + "'";
     if (style === 'double') return '"' + value + '"';
     // A key is read only as far as its first colon, so a colon inside one has
@@ -531,8 +544,8 @@
   var KEYS = {
     image:          { shape: 'scalar', always: 1 },
     container_name: { shape: 'scalar', always: 1 },
-    restart:        { shape: 'scalar', always: 1, choices: 'restart' },
-    network_mode:   { shape: 'scalar', always: 1, choices: 'netmode', excludes: 'networks' },
+    restart:        { shape: 'scalar', always: 1 },
+    network_mode:   { shape: 'scalar', always: 1, excludes: 'networks' },
 
     ports:          { shape: 'list',  entry: 'port'   },
     volumes:        { shape: 'list',  entry: 'volume', from: 'volumes' },
@@ -547,11 +560,13 @@
     profiles:       { shape: 'list',  entry: 'plain' },
     dns:            { shape: 'list',  entry: 'plain', title: 'DNS servers' },
     cap_add:        { shape: 'list',  entry: 'plain', title: 'Extra permissions' },
+    cap_drop:       { shape: 'list',  entry: 'plain', title: 'Dropped permissions' },
     expose:         { shape: 'list',  entry: 'plain', title: 'Internal ports', type: 'port' },
     env_file:       { shape: 'list',  entry: 'plain', title: 'Variable files', tool: 'browse' },
 
     healthcheck:    { shape: 'block', title: 'Health check' },
     deploy:         { shape: 'block', title: 'Resource limits' },
+    logging:        { shape: 'block', title: 'Logging' },
 
     command:        { shape: 'scalar' },
     entrypoint:     { shape: 'scalar' },
@@ -560,8 +575,51 @@
     privileged:     { shape: 'scalar', type: 'boolean' },
     shm_size:       { shape: 'scalar' },
     working_dir:    { shape: 'scalar', title: 'Working folder' },
-    mem_limit:      { shape: 'scalar', title: 'Memory limit' }
+    mem_limit:      { shape: 'scalar', title: 'Memory limit' },
+    pull_policy:    { shape: 'scalar', title: 'When to pull the image' },
+    stop_signal:    { shape: 'scalar', title: 'Stop signal' },
+    ipc:            { shape: 'scalar', title: 'IPC mode' },
+    pid:            { shape: 'scalar', title: 'Process namespace' },
+    read_only:      { shape: 'scalar', type: 'boolean', title: 'Read-only filesystem' },
+    init:           { shape: 'scalar', type: 'boolean' },
+    tty:            { shape: 'scalar', type: 'boolean' },
+    stdin_open:     { shape: 'scalar', type: 'boolean', title: 'Keep input open' }
   };
+
+  // TOP_SPEC_KEYS / SERVICE_SPEC_KEYS — the valid keys the COMPOSE
+  // SPECIFICATION itself accepts, at the top level and inside one service.
+  // This is NOT the same list as KEYS above, and merging them would be a
+  // bug: KEYS is the ~40 service keys the FORM currently draws a control
+  // for, whereas compose accepts around 90. A real, valid setting the form
+  // has no control for yet — sysctls, extra_hosts, ulimits — must never be
+  // flagged as a typo just because KEYS does not mention it. KEYS grows
+  // only when a new control is built; these two grow only when the compose
+  // specification itself gains a key. Used only by lint() below.
+  var TOP_SPEC_KEYS = ['services', 'networks', 'volumes', 'configs', 'secrets', 'name', 'include', 'version'];
+
+  var SERVICE_SPEC_KEYS = [
+    'annotations', 'attach', 'blkio_config', 'build', 'cap_add', 'cap_drop', 'cgroup',
+    'cgroup_parent', 'command', 'configs', 'container_name', 'cpu_count', 'cpu_percent',
+    'cpu_period', 'cpu_quota', 'cpu_rt_period', 'cpu_rt_runtime', 'cpu_shares', 'cpus', 'cpuset',
+    'credential_spec', 'depends_on', 'deploy', 'develop', 'device_cgroup_rules', 'devices', 'dns',
+    'dns_opt', 'dns_search', 'domainname', 'entrypoint', 'env_file', 'environment', 'expose',
+    'extends', 'external_links', 'extra_hosts', 'gpus', 'group_add', 'healthcheck', 'hostname',
+    'image', 'init', 'ipc', 'isolation', 'label_file', 'labels', 'links', 'logging', 'mac_address',
+    'mem_limit', 'mem_reservation', 'mem_swappiness', 'memswap_limit', 'network_mode', 'networks',
+    'oom_kill_disable', 'oom_score_adj', 'pid', 'pids_limit', 'platform', 'ports', 'post_start',
+    'pre_stop', 'privileged', 'profiles', 'provider', 'pull_policy', 'pull_refresh_after',
+    'read_only', 'restart', 'runtime', 'scale', 'secrets', 'security_opt', 'shm_size', 'stdin_open',
+    'stop_grace_period', 'stop_signal', 'storage_opt', 'sysctls', 'tmpfs', 'tty', 'ulimits', 'user',
+    'userns_mode', 'uts', 'volumes', 'volumes_from', 'working_dir'
+  ];
+
+  function specSetOf(list) {
+    var out = {};
+    for (var i = 0; i < list.length; i++) out[list[i]] = true;
+    return out;
+  }
+  var TOP_SPEC_SET = specSetOf(TOP_SPEC_KEYS);
+  var SERVICE_SPEC_SET = specSetOf(SERVICE_SPEC_KEYS);
 
   // Nested values the form can edit. The parser reaches these already and
   // writeScalar needs only a spot — the only thing missing was a field pointing
@@ -582,6 +640,11 @@
       'resources.limits.memory':       'Memory limit',
       'resources.reservations.cpus':   'CPU reserved',
       'resources.reservations.memory': 'Memory reserved'
+    },
+    // options is a free-form map with no fixed shape, so it is left to the
+    // Advanced catch-all rather than offered a leaf here.
+    logging: {
+      driver: 'Log driver'
     }
   };
 
@@ -709,11 +772,19 @@
 
     var bits = splitOutsideVars(body);
     if (bits.length === 1) {
-      // Only a container port, so compose picks the host port itself.
+      // Only a container port, so compose picks the host port itself. The
+      // digits still have room for a protocol suffix after them even when
+      // none is written yet, so proto gets a real spot rather than a dead one.
+      var hostPart1 = part('', null);
+      var containerPart1 = part(bits[0], spot, '', proto);
+      // The value carries its own leading slash ('/udp' or '') so choosing
+      // the empty option writes the separator away too — writeScalar needs
+      // no special case for "no protocol chosen".
+      var protoPart1 = part(proto, spot, bits[0], '');
       return {
         key: portKey(bits[0] + proto),
-        host: part('', null),
-        container: part(bits[0], spot, '', proto),
+        host: hostPart1, container: containerPart1, proto: protoPart1,
+        parts: { host: hostPart1, container: containerPart1, proto: protoPart1 },
         hostNote: 'compose picks the host port for this one'
       };
     }
@@ -723,10 +794,15 @@
     var lead      = bits.slice(0, bits.length - 2).join(':');
     var leadIn    = lead ? lead + ':' : '';
 
+    var hostPart      = part(host, spot, leadIn, ':' + container + proto);
+    var containerPart = part(container, spot, leadIn + host + ':', proto);
+    // Same separator-carrying rule as the single-bit branch above.
+    var protoPart      = part(proto, spot, leadIn + host + ':' + container, '');
+
     return {
       key: portKey(container + proto),
-      host:      part(host, spot, leadIn, ':' + container + proto),
-      container: part(container, spot, leadIn + host + ':', proto)
+      host: hostPart, container: containerPart, proto: protoPart,
+      parts: { host: hostPart, container: containerPart, proto: protoPart }
     };
   }
 
@@ -735,11 +811,16 @@
     var bits = splitOutsideVars(text);
     if (bits.length === 1) {
       // An anonymous volume — docker manages the storage, so there is no host
-      // path to show or change.
+      // path to show or change, and no mode slot either: a bare name has
+      // nowhere to hang ':ro' without a host segment beside it. A null spot
+      // renders the box dead rather than dropping it from the form.
+      var hostPart1 = part('', null);
+      var containerPart1 = part(bits[0], spot);
+      var modePart1 = part('', null);
       return {
         key: bits[0],
-        host: part('', null),
-        container: part(bits[0], spot),
+        host: hostPart1, container: containerPart1,
+        parts: { host: hostPart1, container: containerPart1, mode: modePart1 },
         hostNote: 'docker manages the storage for this one'
       };
     }
@@ -752,20 +833,35 @@
     var container = bits[bits.length - 1];
     var host      = bits.slice(0, bits.length - 1).join(':');
 
+    var hostPart      = part(host, spot, '', ':' + container + mode);
+    var containerPart = part(container, spot, host + ':', mode);
+    // The mode part's value carries its own leading colon (':ro' or '') so
+    // choosing the empty option writes the separator away too — writeScalar
+    // needs no special case for "no mode chosen". Kept separate from the
+    // `mode` string below, which stays stripped for callers that read it
+    // directly (collectDeclaredRefs, and the 'ro' tag in stacks.js).
+    var modePart      = part(mode, spot, host + ':' + container, '');
+
     return {
       key: container,
       mode: mode.slice(1),
-      host:      part(host, spot, '', ':' + container + mode),
-      container: part(container, spot, host + ':', mode)
+      host: hostPart, container: containerPart,
+      parts: { host: hostPart, container: containerPart, mode: modePart }
     };
   }
 
   // A plain list entry is one whole value, so it keys on itself. Unlike a port
   // or a mount there is no container half to bind to, which means renaming an
   // entry IS replacing it.
+  //
+  // An empty entry is bound like any other rather than refused. Refusing one
+  // dropped its row from the form while the line stayed in the file, which
+  // left it reachable only in the Compose view — an entry with no value is an
+  // unfinished edit, and the way to finish or delete it is to be able to see
+  // it.
   function splitPlain(text, spot) {
     var s = String(text).trim();
-    return s ? { key: s, parts: { value: part(s, spot) } } : null;
+    return { key: s, parts: { value: part(s, spot) } };
   }
 
   // One editable thing found in a service.
@@ -822,6 +918,23 @@
     for (var i = 0; i < v.items.length; i++) {
       var it = v.items[i];
       var range = { start: it.leadStart, end: it.end };
+
+      // A dash with nothing after it. newEntry() writes one for the keys whose
+      // box is a suggestion list, where a placeholder would hide the very
+      // suggestions the Add button was pressed to see — so it has to come back
+      // as an empty box to type into, not as a locked row. The spot is
+      // zero-width at the column just past the dash, so typing fills the line
+      // in rather than replacing anything. A dash with no space after it has
+      // nowhere to put a value and stays locked, as does an empty entry under
+      // ports/volumes/devices, where the box is one half of a pair and an
+      // empty half says nothing about which half is missing.
+      if (binder === 'list' && !it.value && it.contentCol > it.indent + 1) {
+        out.push(target(binder, '', {
+          parts: { value: part('', { line: it.start, col: it.contentCol, len: 0, style: 'plain' }) },
+          range: range, listKey: listKey, index: i
+        }));
+        continue;
+      }
 
       if (!it.value || it.value.kind === 'opaque') {
         out.push(lockedTarget(binder, '@' + pair.key + '#' + i, range,
@@ -1569,6 +1682,11 @@
       return dsegs.length > 2 ? (DEPENDS_LEAVES[dsegs[2]] || humanise(dsegs[2])) : humanise(dsegs[1]);
     }
     if (t.target.charAt(0) === '@') return humanise(t.target.slice(1).split('#')[0]);
+    // A still-empty list entry has no value to be named after — see
+    // harvestList — so it borrows the name of the key it sits under.
+    if (t.binder === 'list' && t.target === '') {
+      return (KEYS[t.listKey] && KEYS[t.listKey].title) || humanise(t.listKey);
+    }
     // A nested leaf's target is dotted — 'healthcheck.interval' — so its
     // title lives in LEAVES rather than KEYS. A dotted target LEAVES does not
     // name (an uncovered child, e.g. deploy.replicas) falls back to the last
@@ -1584,11 +1702,25 @@
     return humanise(t.target);
   }
 
+  // The three booleans KEYS cannot name, because they are not top-level keys:
+  // a leaf under healthcheck:, a dependency's required, a declaration's
+  // external. Without this they are judged by the value they hold, which
+  // works while one is written and fails the moment it is not — an absent
+  // field has no value to read, so it would fall to 'text', render as a
+  // spelling test rather than a list, and write its boolean quoted.
+  function booleanTail(t) {
+    var tail = String(t.target).split('.').pop();
+    return (t.binder === 'setting'  && tail === 'disable')  ||
+           (t.binder === 'depends'  && tail === 'required') ||
+           (t.binder === 'declared' && tail === 'external');
+  }
+
   function inferType(t) {
     if (t.binder === 'port') return 'port';
     if (t.binder === 'volume' || t.binder === 'device') return 'path';
     if (t.binder === 'setting' && KEYS[t.target] && KEYS[t.target].type) return KEYS[t.target].type;
     if (t.binder === 'list') return (KEYS[t.listKey] && KEYS[t.listKey].type) || 'text';
+    if (booleanTail(t)) return 'boolean';
     var v = t.parts.value ? t.parts.value.value : '';
     if (/^(true|false)$/i.test(v)) return 'boolean';
     if (/^-?\d+$/.test(v)) return 'number';
@@ -2012,21 +2144,38 @@
     // bookkeeping), but must never reach addNested()/removeKey()'s flat,
     // one-key writes, which know nothing about the two-field split.
     //
-    // A blank command with mode 'shell' or 'cmd' would write a broken
-    // test: ["CMD-SHELL", ""], so — matching the blank-writes-nothing rule
-    // the rest of this file already follows — that write is skipped and the
-    // line is left exactly as it was. Choosing "no check" always writes,
-    // because that is a real choice, not an empty box; and a blank command
-    // with no mode chosen yet defaults to 'shell', which is what typing a
-    // command straight into a fresh Health check group most naturally means.
+    // Switching MODE is always written, even with a blank command — a
+    // deliberate pick must never be a silent no-op, because nothing would
+    // ever prompt a retry: the dropdown would show the new choice forever
+    // while the file kept the old one, and every later edit to the command
+    // box would go on being combined with the mode the file still has
+    // (see PLAN_14.md). A blank COMMAND edit is the one case that keeps the
+    // existing blank-writes-nothing leniency, because there the line already
+    // says something sensible and typing-then-clearing should not disturb it.
+    //
+    // "No check" has no room for a command at all, so choosing it lets the
+    // typed line go — but throwing it away outright is hostile if the switch
+    // was a mis-click. It is kept on `doc` itself, not written into the file
+    // (nothing else persists an in-progress edit nobody asked to save), and
+    // handed back the moment the mode returns to one that can hold it again.
     if (f.testPart) {
       if (which !== 'value') return false;
       var sib = siblingTestField(form, f);
       if (!sib) return false;
       var modeField = f.testPart === 'mode' ? f : sib;
+      var wasNone = !modeField.absent && modeField.parts.value.value === 'none';
       var mode    = f.testPart === 'mode'    ? value : (modeField.absent ? 'shell' : modeField.parts.value.value);
       var command = f.testPart === 'command' ? value : sib.parts.value.value;
-      if ((mode === 'shell' || mode === 'cmd') && !String(command).trim()) return true;
+
+      if (f.testPart === 'mode' && mode === 'none' && String(command).trim()) {
+        doc.healthCmdStash = doc.healthCmdStash || {};
+        doc.healthCmdStash[f.service] = command;
+      } else if (f.testPart === 'mode' && wasNone && mode !== 'none' && !String(command).trim() &&
+                 doc.healthCmdStash && doc.healthCmdStash[f.service]) {
+        command = doc.healthCmdStash[f.service];
+      }
+
+      if (f.testPart === 'command' && (mode === 'shell' || mode === 'cmd') && !String(command).trim()) return true;
       return writeTest(doc, form, f.service, mode, command);
     }
 
@@ -2061,7 +2210,9 @@
       // reason.
       if (f.path && which === 'value') {
         if (!String(value).trim()) return true;
-        return addNested(doc, form, f.service, f.path, value) >= 0;
+        // Same bare choice as the overwrite path below: a freshly-created
+        // healthcheck.disable line must be a real boolean, not a quoted one.
+        return addNested(doc, form, f.service, f.path, value, f.type === 'boolean') >= 0;
       }
       // An absent Container slot has no line yet. A blank must write nothing
       // — typing into an empty box and moving on must not plant a bare
@@ -2069,7 +2220,7 @@
       // else creates the line, key and value together, via addSetting.
       if (!f.absent || which !== 'value') return false;
       if (!String(value).trim()) return true;
-      return addSetting(doc, form, f.service, f.target, value) >= 0;
+      return addSetting(doc, form, f.service, f.target, value, f.type === 'boolean') >= 0;
     }
     // Writing a value back unchanged must never touch the file. Beyond being
     // wasteful it is a correctness rule: emitScalar quotes a bare true or false to
@@ -2077,7 +2228,26 @@
     // would rewrite the line it came from. Nothing here needs to decide what the
     // value means when the answer is "leave it exactly as it was".
     if (String(value) === String(p.value)) return true;
-    return writeScalar(doc, p.spot, p.pre + value + p.post, p.spot.style);
+    // A list entry cleared to nothing leaves its dash with nothing after it —
+    // the shape the Add button already writes — rather than "- ''", which is a
+    // real empty string and reads back as an entry that has a value. One shape
+    // for "nothing here yet" is what lets stashSection recognise one. The body
+    // is writeScalar's, without the emitScalar step: emitScalar('') is "''",
+    // which is exactly what must not be written here.
+    if (f.binder === 'list' && which === 'value' && !String(value).trim()) {
+      var bare = doc.lines[p.spot.line];
+      doc.lines[p.spot.line] = bare.slice(0, p.spot.col) + bare.slice(p.spot.col + p.spot.len);
+      splice(doc, 0, 0, []);                  // re-parse, no line count change
+      return true;
+    }
+    // A field the form marks as a real boolean writes true/false bare, not
+    // quoted — needsQuoting() is right to quote the string "true", but a
+    // dropdown choosing the boolean true means the boolean, not the word.
+    // Only turns on for an already-plain line: a file that wrote
+    // privileged: "true" meant a string, and quoting is never removed.
+    var style = p.spot.style;
+    if (f.type === 'boolean' && p.spot.style === 'plain' && /^(true|false)$/.test(String(value))) style = 'bare';
+    return writeScalar(doc, p.spot, p.pre + value + p.post, style);
   }
 
   // Kept for the common single-box case, and for the tests.
@@ -2160,6 +2330,15 @@
       return d + ':' + d;
     }
     if (binder === 'list') {
+      // These three render as a suggestion box — a text box with a dropdown
+      // attached (see choiceFor() in stacks.js) — and a browser only offers
+      // the suggestions that match what is already in the box. A placeholder
+      // there hides the very list the Add button was pressed to see, so they
+      // start empty instead. addService() writes a blank `image:` for the same
+      // reason. Everything else here is a plain box, where a placeholder shows
+      // the shape of the thing wanted and costs nothing.
+      if (listKey === 'cap_add' || listKey === 'cap_drop' || listKey === 'profiles') return '';
+
       // A key with a declared-name namespace (networks, secrets, configs,
       // depends_on) offers the first name not already on this service, so
       // the add button hands over something that is already valid rather
@@ -2172,8 +2351,7 @@
         }
       }
       var LIST_PLACEHOLDER = {
-        networks: 'default', profiles: 'extras', dns: '1.1.1.1',
-        cap_add: 'NET_ADMIN', expose: '8080', env_file: './app.env',
+        networks: 'default', dns: '1.1.1.1', expose: '8080', env_file: './app.env',
         depends_on: 'other-service', secrets: 'my_secret', configs: 'my_config'
       };
       var base = LIST_PLACEHOLDER[listKey] || 'value';
@@ -2312,11 +2490,15 @@
   // tail last. Works whether `pair` already has a map under it or nothing at
   // all, which is what lets addDeclared reuse this for a brand-new block.
   //
+  // `bare`, when true, writes true/false unquoted rather than through the
+  // usual plain-style quoting rules — see setPart's own bare choice, which
+  // this mirrors for a value that has no existing line to inherit style from.
+  //
   // Returns the inserted line number, or -1 when emitScalar refuses the value.
-  function insertChild(doc, pair, key, value, before) {
+  function insertChild(doc, pair, key, value, before, bare) {
     var raw = null;
     if (value !== undefined && value !== null) {
-      raw = emitScalar(value, 'plain', false);
+      raw = emitScalar(value, bare ? 'bare' : 'plain', false);
       if (raw === null) return -1;
     }
 
@@ -2355,50 +2537,81 @@
    * Returns the inserted line number, or -1 when the value cannot be written
    * or the service cannot be read.
    */
-  function addSetting(doc, form, service, key, value) {
+  function addSetting(doc, form, service, key, value, bare) {
     var svc = serviceMapOf(doc, service);
     if (!svc) return -1;
-    return insertChild(doc, svc, key, value, 'x-unraid');
+    return insertChild(doc, svc, key, value, 'x-unraid', bare);
+  }
+
+  /**
+   * Walks `path` from `getPair()`, creating each missing level as a bare key
+   * via insertChild, and returns the pair sitting at the end of it — freshly
+   * created if it did not exist, found as-is if it did. An empty `path`
+   * returns getPair() itself, unchecked, the same as a zero-length walk.
+   *
+   * splice() (called by insertChild) fully re-parses the document, so every
+   * pair held before it runs is stale the instant it returns — which is why
+   * a level just created is not reused: the whole walk restarts from
+   * getPair() so every position is read fresh. `getPair` is a function
+   * rather than a pair for exactly this reason: addNested re-derives its
+   * start from serviceMapOf, and the x-unraid section stash re-derives its
+   * from the document root, and both need that lookup repeated after a
+   * restart, not just the first time.
+   *
+   * Returns null, rather than guessing, whenever a level along the way is
+   * sealed, opaque, or a scalar — inserting into something the parser could
+   * not read is how a working file gets corrupted.
+   */
+  function ensurePath(doc, getPair, path, top, tries) {
+    // One insert per missing level and no more. insertChild reports where it
+    // wrote, not whether the re-parse then read it back as the child it was
+    // meant to be — and in a file whose own indentation is inconsistent it is
+    // not, so the level still looks missing on the next pass. Unbounded, that
+    // appends a line and recurses until the stack gives out, turning a file
+    // the parser merely finds odd into a dead page. Refusing is the answer
+    // every other unreadable shape here gets.
+    if (tries === undefined) tries = path.length;
+
+    var pair = getPair();
+    if (!pair) return null;
+
+    for (var i = 0; i < path.length; i++) {
+      var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
+      if (pair.value && !map) return null;
+      var next = map ? map.pairs[path[i]] : null;
+      if (!next) {
+        if (tries <= 0) return null;
+        if (insertChild(doc, pair, path[i], null, i === 0 ? top : null) < 0) return null;
+        return ensurePath(doc, getPair, path, top, tries - 1);
+      }
+      pair = next;
+    }
+    return pair;
   }
 
   /**
    * Writes a value nested any number of levels under a service — the
    * primitive PLAN_7.md names as the shared blocker for turning on an empty
-   * healthcheck/deploy group. Walks `path`, creating each missing level as a
-   * bare key via insertChild, and writes the leaf last.
-   *
-   * splice() (called by insertChild) fully re-parses the document, so every
-   * pair held before it runs is stale the instant it returns — which is why
-   * a level just created is not reused: the whole walk restarts from
-   * serviceMapOf so every position is read fresh.
+   * healthcheck/deploy group. ensurePath creates every level up to the
+   * leaf's own parent; the leaf itself is written here, since only the
+   * caller knows whether it is a plain value or (Phase 8) a section stash's
+   * raw JSON line.
    *
    * Returns -1, rather than guessing, whenever a level along the way is
    * sealed, opaque, or a scalar — inserting into something the parser could
    * not read is how a working file gets corrupted.
    */
-  function addNested(doc, form, service, path, value) {
-    var pair = serviceMapOf(doc, service), i;
-    if (!pair) return -1;
-
-    for (i = 0; i < path.length - 1; i++) {
-      var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
-      if (pair.value && !map) return -1;
-      var next = map ? map.pairs[path[i]] : null;
-      if (!next) {
-        if (insertChild(doc, pair, path[i], null, i === 0 ? 'x-unraid' : null) < 0) return -1;
-        return addNested(doc, form, service, path, value);
-      }
-      pair = next;
-    }
-
-    // The loop above only checks a level before descending past it, so the
-    // leaf's immediate parent — reached only when path.length === 1, or by
-    // falling out of the loop above — needs the same check the intermediate
-    // levels get: a scalar, anchor or flow value here is exactly as unsafe
-    // to write a child into as one higher up the path.
-    if (pair.value && pair.value.kind !== 'map') return -1;
+  function addNested(doc, form, service, path, value, bare) {
+    var pair = ensurePath(doc, function () { return serviceMapOf(doc, service); },
+                          path.slice(0, -1), 'x-unraid');
+    // The loop inside ensurePath only checks a level before descending past
+    // it, so the leaf's immediate parent — reached only when path.length is
+    // 1, or by falling out of the walk otherwise — needs the same check
+    // every intermediate level gets: a scalar, anchor or flow value here is
+    // exactly as unsafe to write a child into as one higher up the path.
+    if (!pair || (pair.value && pair.value.kind !== 'map')) return -1;
     return insertChild(doc, pair, path[path.length - 1], value,
-                       path.length === 1 ? 'x-unraid' : null);
+                       path.length === 1 ? 'x-unraid' : null, bare);
   }
 
   // Builds the canonical flow-list text for healthcheck.test — the one shape
@@ -2569,6 +2782,64 @@
   }
 
   /**
+   * Adds a new service under `services:`, after the last existing one, seeded
+   * with `image:` (blank) and `restart: unless-stopped` — two lines, never
+   * one, the same rule addItem() follows when it creates a list key's first
+   * entry alongside it: a bare "my-app:" with nothing under it is null, and
+   * compose rejects the file.
+   *
+   * Unlike addDeclared, there is no "no block yet" case: a stack is a compose
+   * file with at least one service already (see the stack model in
+   * CLAUDE.md), so there is no conventional place to invent `services:` from
+   * nothing, and this refuses instead of guessing one.
+   *
+   * Refuses (returns -1, writing nothing) for a name already taken, an
+   * invalid name, a sealed `services:` map, or no `services:` key at all.
+   *
+   * Returns the inserted line, or -1.
+   */
+  function addService(doc, form, name) {
+    if (!name || !SERVICE_NAME_RE.test(name)) return -1;
+    if (!doc.root || doc.root.kind !== 'map') return -1;
+
+    var svc = doc.root.pairs['services'];
+    if (!svc || !svc.value || svc.value.kind !== 'map') return -1;
+    if (svc.value.pairs[name]) return -1;
+
+    // Positioned after the last existing service, the same placement addItem
+    // uses for a list's first entry.
+    var indent = svc.value.indent;
+    var after = null, i;
+    for (i = 0; i < svc.value.keys.length; i++) {
+      after = svc.value.pairs[svc.value.keys[i]];
+    }
+
+    var to = after ? after.end : svc.value.start + 1;
+    var lines = [];
+
+    // Match the file's own habit: if the service above this one is separated
+    // from its neighbour by a blank line, the new one gets one too.
+    if (after && after.leadStart > 0 && doc.lines[after.leadStart - 1] !== undefined &&
+        doc.lines[after.leadStart - 1].trim() === '') {
+      lines.push('');
+    }
+
+    // Nest the new service's settings the way the file already nests its
+    // own, rather than assuming two spaces. A file written four deep would
+    // otherwise get one service indented unlike every other, which is a
+    // hand-authored habit broken for no reason.
+    var childIndent = (after && after.value && after.value.kind === 'map')
+                        ? after.value.indent : indent + 2;
+
+    lines.push(pad(indent) + name + ':');
+    lines.push(pad(childIndent) + 'image:');
+    lines.push(pad(childIndent) + 'restart: unless-stopped');
+
+    splice(doc, to, 0, lines);
+    return to + lines.length - 1;
+  }
+
+  /**
    * Removes one declared name, and the whole <kind>: block with it when it
    * was the last one — a bare "networks:" is null and compose rejects it,
    * the same rule removeItem follows for a service's list key.
@@ -2595,6 +2866,46 @@
   }
 
   /**
+   * Walks `path` from `getPair()` without creating anything, returning
+   * {chain, leaf} — chain[0] is getPair()'s own pair, chain[i] the pair
+   * holding path[0..i-1], leaf the pair at path's end — or null when
+   * anything along the way is missing, sealed, opaque, or not a map.
+   * Shared by removeKey (service-relative) and the x-unraid section stash
+   * (root-relative, via a real x-unraid pair rather than a service one).
+   */
+  function walkToLeaf(getPair, path) {
+    var pair = getPair();
+    if (!pair) return null;
+
+    var chain = [pair], i;
+    for (i = 0; i < path.length - 1; i++) {
+      if (!pair.value || pair.value.kind !== 'map') return null;
+      pair = pair.value.pairs[path[i]];
+      if (!pair) return null;
+      chain.push(pair);
+    }
+    if (!pair.value || pair.value.kind !== 'map') return null;
+
+    var leaf = pair.value.pairs[path[path.length - 1]];
+    return leaf ? { chain: chain, leaf: leaf } : null;
+  }
+
+  // The outermost ancestor in `chain` that removing `leaf` would leave with
+  // nothing else under it — walking upward while each level's only
+  // remaining child is the one below it. `floor` is the lowest chain index
+  // allowed to collapse: removeKey must never remove the service itself
+  // (floor 1, chain[0]), while the section stash has nothing above x-unraid
+  // that needs protecting (floor 0).
+  function outermostEmptied(chain, leaf, floor) {
+    var outermost = leaf;
+    for (var i = chain.length - 1; i >= floor; i--) {
+      if (chain[i].value.keys.length !== 1) break;
+      outermost = chain[i];
+    }
+    return outermost;
+  }
+
+  /**
    * Removes the pair at `path` under a service, and any parent the removal
    * leaves with nothing else under it — a bare "healthcheck:" (or a mid-path
    * "deploy: resources:") is null, and compose refuses the file, the same
@@ -2602,41 +2913,306 @@
    * declared name. Shared by setPart's blank-an-existing-leaf case and (Phase
    * 3) the tick-box's whole-block removal, so both walk the file the same way.
    *
-   * Finds the outermost ancestor the removal would leave empty and takes its
-   * whole span in one go, rather than removing level by level — every
-   * intermediate pair is already in hand from one read of the file, so there
-   * is nothing to re-walk the way addNested must after each splice().
-   *
    * Returns false when there is nothing at `path`, or a level along the way
    * is sealed, opaque, or not a map.
    */
   function removeKey(doc, form, service, path) {
-    var pair = serviceMapOf(doc, service), i;
-    if (!pair) return false;
+    var found = walkToLeaf(function () { return serviceMapOf(doc, service); }, path);
+    if (!found) return false;
 
-    var chain = [pair];      // chain[i] is the pair holding path[0..i-1]
-    for (i = 0; i < path.length - 1; i++) {
-      if (!pair.value || pair.value.kind !== 'map') return false;
-      pair = pair.value.pairs[path[i]];
-      if (!pair) return false;
-      chain.push(pair);
-    }
-    if (!pair.value || pair.value.kind !== 'map') return false;
-
-    var leaf = pair.value.pairs[path[path.length - 1]];
-    if (!leaf) return false;
-
-    // Named for what it is rather than "target": target() is the field
-    // factory this whole file is built on, and shadowing it inside a
-    // removal walk is a trap for whoever edits this next.
-    var outermost = leaf;
-    for (i = chain.length - 1; i >= 1; i--) {
-      if (chain[i].value.keys.length !== 1) break;
-      outermost = chain[i];
-    }
-
+    var outermost = outermostEmptied(found.chain, found.leaf, 1);
     spliceBlock(doc, outermost.leadStart, outermost.end);
     return true;
+  }
+
+  /**
+   * Reads x-unraid.sections into {service: {key: false | {after, lines}}} —
+   * the map a section's tick state, and a stashed block, both live in. A
+   * malformed entry — not the boolean false, and not JSON for an object
+   * with a null-or-string `after` and an array-of-strings `lines` — is
+   * skipped rather than thrown on: this runs on every render of every file,
+   * including one somebody has hand-edited.
+   */
+  function readSections(doc) {
+    var out = {};
+    if (!doc.root || doc.root.kind !== 'map') return out;
+    var xu = doc.root.pairs['x-unraid'];
+    var block = xu && xu.value && xu.value.kind === 'map' ? xu.value.pairs['sections'] : null;
+    if (!block || !block.value || block.value.kind !== 'map') return out;
+
+    for (var s = 0; s < block.value.keys.length; s++) {
+      var svcName = block.value.keys[s];
+      var svcMap = block.value.pairs[svcName].value;
+      if (!svcMap || svcMap.kind !== 'map') continue;
+
+      var entry = {};
+      for (var k = 0; k < svcMap.keys.length; k++) {
+        var key = svcMap.keys[k];
+        var v = svcMap.pairs[key].value;
+        if (!v || v.kind !== 'scalar') continue;
+
+        if (v.style === 'plain' && v.value === 'false') { entry[key] = false; continue; }
+        try {
+          var parsed = JSON.parse(v.value);
+          if (parsed && typeof parsed === 'object' &&
+              (parsed.after === null || typeof parsed.after === 'string') &&
+              Array.isArray(parsed.lines) &&
+              parsed.lines.every(function (l) { return typeof l === 'string'; })) {
+            // gap and blank say where the block sat relative to the key above
+            // it; both are optional, and both default to "flush against it",
+            // which is what an entry written before they existed meant. A
+            // hand-edited nonsense value falls back the same way rather than
+            // moving the block somewhere arbitrary.
+            var gap = typeof parsed.gap === 'number' && parsed.gap >= 0 ? Math.floor(parsed.gap) : 0;
+            entry[key] = { after: parsed.after, lines: parsed.lines,
+                           gap: gap, blank: parsed.blank === true };
+          }
+        } catch (e) { /* not our JSON — ignore rather than throw */ }
+      }
+      if (Object.keys(entry).length) out[svcName] = entry;
+    }
+    return out;
+  }
+
+  // The one place that writes or clears one x-unraid.sections.<service>
+  // entry, used by setSectionState (a true/false/null tick state) and
+  // stashSection (the captured-lines object) alike. `value` is JSON.stringify'd
+  // unless it is the literal boolean false, which is written bare so it reads
+  // as a deliberate "hidden" flag rather than another JSON string. An
+  // existing entry is overwritten in place rather than appended again, which
+  // would leave two lines for the same key and a "first one wins" warning.
+  function writeSectionEntry(doc, service, key, value) {
+    // ensurePath creates a level at a time, so giving up part way leaves the
+    // levels it already made behind — a bare "x-unraid:" and "sections:" over
+    // a file this could not finish writing to. A refusal has to leave the file
+    // exactly as it found it, so the line array is put back on any failure
+    // below; splice re-parses from it, which is all that reverting takes.
+    var before = doc.lines.slice();
+    function refuse() {
+      doc.lines = before;
+      splice(doc, 0, 0, []);
+      return false;
+    }
+
+    var pair = ensurePath(doc, function () {
+      return doc.root && doc.root.kind === 'map'
+             ? { indent: -2, value: doc.root, end: doc.root.end } : null;
+    }, ['x-unraid', 'sections', service], 'x-unraid');
+    if (!pair || (pair.value && pair.value.kind !== 'map')) return refuse();
+
+    var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
+    var existing = map ? map.pairs[key] : null;
+    var raw = value === false ? false : JSON.stringify(value);
+
+    if (existing && existing.value && existing.value.kind === 'scalar') {
+      var done = raw === false ? writeScalar(doc, scalarSpot(existing.value), 'false', 'bare')
+                               : writeScalar(doc, scalarSpot(existing.value), raw, 'plain');
+      return done || refuse();
+    }
+    return insertChild(doc, pair, key, raw, null, value === false) >= 0 || refuse();
+  }
+
+  // Removes one x-unraid.sections.<service>.<key> entry, and any level of
+  // the map it leaves empty — sections, and x-unraid itself, are exactly as
+  // unwelcome empty as any other block this file writes. Missing already is
+  // not a failure: setSectionState's null state means "no opinion", and
+  // that is already true when there is nothing recorded.
+  function removeSectionEntry(doc, service, key) {
+    var found = walkToLeaf(function () {
+      return doc.root && doc.root.kind === 'map' ? doc.root.pairs['x-unraid'] : null;
+    }, ['sections', service, key]);
+    if (!found) return true;
+
+    var outermost = outermostEmptied(found.chain, found.leaf, 0);
+    spliceBlock(doc, outermost.leadStart, outermost.end);
+    return true;
+  }
+
+  /**
+   * The single place that touches an x-unraid.sections entry's on/off state.
+   * `state` is true (ticked on, nothing stashed yet — {"after":null,"lines":[]}),
+   * false (ticked off deliberately, nothing to restore), or null (no
+   * opinion — the entry is removed outright). stashSection and
+   * restoreSection use this rather than writing the map themselves.
+   */
+  function setSectionState(doc, form, service, key, state) {
+    if (state === null) return removeSectionEntry(doc, service, key);
+    return writeSectionEntry(doc, service, key, state === true ? { after: null, lines: [] } : false);
+  }
+
+  // Where a restored line goes: right after `afterKey`'s own span, as the
+  // map's first child when afterKey is null, or at the end of the map when
+  // afterKey named a key that is no longer there — a hand-edit since the
+  // stash was taken is not a reason to fail. Shared by restoreSection's two
+  // cases (the immediate parent survived; it did not, and is rebuilt).
+  function spliceTarget(map, ownerPair, afterKey) {
+    if (afterKey === null) return map ? map.start : ownerPair.end;
+    var afterPair = map ? map.pairs[afterKey] : null;
+    if (afterPair) return afterPair.end;
+    return map && map.keys.length ? map.pairs[map.keys[map.keys.length - 1]].end
+                                   : (map ? map.start : ownerPair.end);
+  }
+
+  /**
+   * Moves a service's section — `path` is its compose path, e.g.
+   * ['healthcheck'], ['deploy','resources'] or ['ports'] — out of the file
+   * proper and into x-unraid.sections.<service>.<path.join('.')> as one
+   * JSON line, verbatim: the lines are carried across as they stand, never
+   * read into values and rebuilt. The write happens before the removal, and
+   * is undone if the removal then fails, so a refusal never destroys a block
+   * without recording where it went.
+   *
+   * `after` records the position of whichever ancestor removeKey (below)
+   * will actually delete — the leaf itself when its own parent survives
+   * (has other children), or the parent when it does not, and so on upward.
+   * That is the same ancestor outermostEmptied finds, so restoreSection can
+   * always place what it rebuilds using the one stored name, whether that
+   * turns out to be the leaf's own old neighbour or the service's.
+   *
+   * Returns false when the block cannot be found, or is written in a way
+   * this parser cannot safely lift out (sealed, opaque, not a map/scalar).
+   */
+  function stashSection(doc, form, service, path) {
+    var found = walkToLeaf(function () { return serviceMapOf(doc, service); }, path);
+    if (!found) return false;
+
+    var outermost = outermostEmptied(found.chain, found.leaf, 1);
+    var fullChain = found.chain.concat([found.leaf]);
+    var idx = fullChain.indexOf(outermost);           // >= 1: index 0 (the service) is protected
+    var parentMap = fullChain[idx - 1].value;
+    var pos = parentMap.keys.indexOf(path[idx - 1]);
+    var after = pos > 0 ? parentMap.keys[pos - 1] : null;
+
+    // Where the removed block sat, measured from the end of the key above it
+    // rather than from an absolute line number, which the removal itself
+    // invalidates. Without this a block separated from its neighbour by a
+    // blank line comes back on the wrong side of that blank.
+    var anchorEnd = after ? parentMap.pairs[after].end : parentMap.start;
+    var gap = outermost.leadStart - anchorEnd;
+
+    // spliceBlock (see removeKey) drops the blank line ABOVE a block when
+    // there is one below it too, so that removing a block from between two
+    // others does not leave a double blank behind. Mirror that test here:
+    // the blank is part of what is about to be removed, so it is part of what
+    // has to come back, and restoreSection puts it back by prepending one.
+    var blank = outermost.leadStart > 0 &&
+                (doc.lines[outermost.leadStart - 1] || '').trim() === '' &&
+                (doc.lines[outermost.end] || '').trim() === '';
+
+    // Strip the leaf's own base indent — measured off its first line that
+    // actually has one, since a blank line would report an indent of nothing
+    // and leave the whole block un-stripped — so the relative indent inside
+    // the block survives and only the absolute level is lost. restoreSection
+    // adds back whatever the target needs when the block returns.
+    var leaf = found.leaf;
+    var raw = doc.lines.slice(leaf.leadStart, leaf.end);
+    var base = 0;
+    for (var bi = 0; bi < raw.length; bi++) {
+      if (raw[bi].trim() === '') continue;
+      base = raw[bi].length - raw[bi].replace(/^ */, '').length;
+      break;
+    }
+    var lines = raw.map(function (l) { return l.trim() === '' ? '' : l.slice(base); });
+
+    // An entry with nothing after its dash is an unfinished edit rather than
+    // something anyone wrote — compose refuses one outright — so it is not
+    // carried across. Dropping them can leave the key standing on its own,
+    // which is nothing worth keeping at all: that records as plainly off, and
+    // is right in both directions — an accurate marker for a section that is
+    // off by default, and exactly what "switched off" means for one that is on
+    // by default. A block that had no blanks in it is stored as it stands, so
+    // a hand-written key with nothing under it still comes back.
+    var kept = lines.filter(function (l) { return !/^ *- *$/.test(l); });
+    var nothingLeft = kept.length !== lines.length && kept.length < 2;
+
+    var key = path.join('.');
+    if (!writeSectionEntry(doc, service, key,
+                           nothingLeft ? false
+                                       : { after: after, gap: gap, blank: blank, lines: kept })) return false;
+
+    if (!removeKey(doc, form, service, path)) {
+      // Should never happen — the same path was just walked successfully
+      // above — but undo the write rather than leave a stash entry behind
+      // for a block that is still live in the file.
+      setSectionState(doc, form, service, key, null);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Splices a stashed block's lines back into a service. Whether the leaf's
+   * immediate parent still exists decides how: if it does, `after` was
+   * recorded relative to it (stashSection found nothing to collapse) and
+   * the leaf's own lines splice straight in; if it does not — removeKey
+   * took it along with the leaf, its only child — `after` was recorded
+   * relative to the service instead, and the whole missing chain (each
+   * absent level, then the leaf) is rebuilt as one unit and spliced in
+   * together, since every level between the service and the leaf was, by
+   * construction, an only child too.
+   *
+   * Returns true whether or not there was anything to splice — a `false`
+   * entry, a missing one, or one holding no lines all mean "nothing to
+   * restore", not a failure. Returns false only when the service itself
+   * cannot be read, or a surviving parent turns out sealed or not a map.
+   */
+  function restoreSection(doc, form, service, key) {
+    var sections = readSections(doc);
+    var entry = sections[service] ? sections[service][key] : undefined;
+    if (!entry || !entry.lines || !entry.lines.length) {
+      return setSectionState(doc, form, service, key, null);
+    }
+
+    var path = key.split('.');
+    var svc = serviceMapOf(doc, service);
+    if (!svc) return false;
+
+    var parent = svc, exists = true, i;
+    for (i = 0; i < path.length - 1 && exists; i++) {
+      var m = parent.value && parent.value.kind === 'map' ? parent.value : null;
+      if (parent.value && !m) return false;
+      var next = m ? m.pairs[path[i]] : null;
+      if (!next) { exists = false; break; }
+      parent = next;
+    }
+
+    // Back to the exact line the removal took it from: the key above it, plus
+    // however far past that key's end it sat, less the blank line spliceBlock
+    // collapsed on the way out (prepended below, so the block and its blank
+    // go back as the one span they were removed as). An entry written before
+    // this was recorded reads as no gap and no blank, which is what the
+    // common case — a block flush against its neighbour — means anyway.
+    var gap = entry.gap || 0;
+    var lead = entry.blank ? [''] : [];
+
+    var lines;
+    if (exists) {
+      var map = parent.value && parent.value.kind === 'map' ? parent.value : null;
+      if (parent.value && !map) return false;
+      var indent = map ? map.indent : parent.indent + 2;
+      lines = lead.concat(entry.lines.map(function (l) { return l === '' ? '' : pad(indent) + l; }));
+      splice(doc, spliceTarget(map, parent, entry.after) + gap - lead.length, 0, lines);
+    } else {
+      // The file's own nesting step, not two spaces: a file indented by four
+      // rebuilds "deploy:" then "resources:" four apart, or the restored block
+      // sits at an indent the rest of the file never uses. The stashed lines
+      // already carry their own relative indent, so only the levels rebuilt
+      // here need this.
+      var step = svc.value.indent - svc.indent;
+      if (step < 1) step = 2;
+      var svcIndent = svc.value.indent;
+      var built = [];
+      for (i = 0; i < path.length - 1; i++) {
+        built.push(pad(svcIndent) + path[i] + ':');
+        svcIndent += step;
+      }
+      var finalIndent = svcIndent;
+      entry.lines.forEach(function (l) { built.push(l === '' ? '' : pad(finalIndent) + l); });
+      built = lead.concat(built);
+      splice(doc, spliceTarget(svc.value, svc, entry.after) + gap - lead.length, 0, built);
+    }
+
+    return setSectionState(doc, form, service, key, null);
   }
 
   /* =====================================================================
@@ -2779,6 +3355,15 @@
       if (p.value && p.value.kind === 'map') collectServiceRefs(edits, p.value, oldName, newName);
     }
 
+    // A ticked-off section's stash is keyed by service name too, one level
+    // up under x-unraid.sections — the same long-form map-key rename
+    // collectServiceRefs already gives depends_on's own long form, above.
+    var xu = doc.root.pairs['x-unraid'];
+    var sections = xu && xu.value && xu.value.kind === 'map' ? xu.value.pairs['sections'] : null;
+    if (sections && sections.value && sections.value.kind === 'map' && sections.value.pairs[oldName]) {
+      edits.push({ spot: keySpot(sections.value.pairs[oldName]), decoded: newName });
+    }
+
     var writes = [{ spot: topSpot, raw: topRaw }];
     for (i = 0; i < edits.length; i++) {
       var raw = emitScalar(edits[i].decoded, edits[i].spot.style, false);
@@ -2909,6 +3494,1750 @@
   }
 
   /* =====================================================================
+   * Text search
+   *
+   * Lives here rather than in stacks.js for two reasons: this is the only
+   * file the test harness under tests/ can reach at all (there is no browser
+   * on the dev machine, so anything written straight into stacks.js cannot
+   * be exercised by an automated test), and this file already owns
+   * offset-to-line arithmetic — see lineAtOffset() above, which walks a
+   * doc's own line-start table. searchMatches() builds that same table
+   * itself, from plain text rather than a parsed doc, since a search runs
+   * over the editor's raw buffer before (or instead of) a successful parse.
+   * ===================================================================== */
+
+  // searchMatches(text, needle, opts) -> [{ start, end, line, col }], ordered
+  // by start. opts is { caseSensitive, regex }; a missing opts is both false.
+  //
+  // Never throws. An invalid regex — expected far more often than not, since
+  // the user is typing it keystroke by keystroke — comes back as [], not an
+  // error. A zero-length match (e.g. "a*" or "^") is never reported: it would
+  // highlight nothing and give a replace nothing to replace, and a naive scan
+  // that emits one never moves past it, so the scan instead steps one
+  // character further and carries on. Capped at 5000 matches so a pattern
+  // like "." over a large file cannot build an unbounded array nobody reads.
+  function searchMatches(text, needle, opts) {
+    try {
+      if (typeof text !== 'string' || !needle) return [];
+      opts = opts || {};
+      var caseSensitive = !!opts.caseSensitive;
+
+      // Line-start offsets, walked once up front rather than re-scanning the
+      // text for every match — the same trade lineAtOffset's caller makes,
+      // just built here instead of read off a doc.
+      var lineStart = [0];
+      for (var i = 0; i < text.length; i++) {
+        if (text.charCodeAt(i) === 10) lineStart.push(i + 1);
+      }
+
+      function locate(offset) {
+        var lo = 0, hi = lineStart.length - 1;
+        while (lo < hi) {
+          var mid = (lo + hi + 1) >> 1;
+          if (lineStart[mid] <= offset) lo = mid; else hi = mid - 1;
+        }
+        return { line: lo, col: offset - lineStart[lo] };
+      }
+
+      var out = [];
+
+      if (opts.regex) {
+        var re;
+        try {
+          // 'm' as well as 'g': in a code editor ^ and $ are expected to mean
+          // the start and end of a LINE, which is how every editor with a
+          // regex search behaves. Without it ^services matches only if the
+          // file opens with it, which reads as the search being broken.
+          re = new RegExp(needle, caseSensitive ? 'gm' : 'gim');
+        } catch (e) {
+          return [];
+        }
+        var pos = 0;
+        while (pos <= text.length && out.length < 5000) {
+          re.lastIndex = pos;
+          var m = re.exec(text);
+          if (!m) break;
+          if (m[0].length === 0) { pos = m.index + 1; continue; }   // see comment above
+          var loc = locate(m.index);
+          out.push({ start: m.index, end: m.index + m[0].length, line: loc.line, col: loc.col });
+          pos = m.index + m[0].length;
+        }
+        return out;
+      }
+
+      // Plain substring search: indexOf in a loop rather than escaping the
+      // needle into a RegExp, which is both slower and has more ways to go
+      // wrong for a case that is only ever a fixed string.
+      var hay = caseSensitive ? text : text.toLowerCase();
+      var pin = caseSensitive ? needle : needle.toLowerCase();
+      var at = 0;
+      while (out.length < 5000) {
+        var idx = hay.indexOf(pin, at);
+        if (idx < 0) break;
+        var l = locate(idx);
+        out.push({ start: idx, end: idx + pin.length, line: l.line, col: l.col });
+        at = idx + pin.length;   // non-overlapping: resume after this match
+      }
+      return out;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /* =====================================================================
+   * Syntax highlighting
+   *
+   * A one-line-at-a-time tokeniser for the editor's overlay: highlight(line,
+   * carry) returns {html, carry}. It is deliberately NOT built on parse() —
+   * that walks a whole file and seals anything it cannot safely rewrite,
+   * whereas every line here has to produce *something* colourable even
+   * inside a sealed region, because the editor still has to show it. It
+   * does reuse classify() and splitComment(), the two line-shaped pieces
+   * parse() itself is built from, rather than inventing a second reading of
+   * the same syntax.
+   *
+   * carry is one of exactly three shapes, chosen so the caller can compare
+   * two with !==: '' (nothing open), 'block:<n>' (inside a block scalar
+   * whose owning key sits at indent <n>), 'flow:<n>' (inside a [ ] or { }
+   * left open at end of line, <n> = bracket depth). Nothing else needs
+   * cross-line state — a quoted string left open across lines is real YAML
+   * but rare enough, and unimportant enough once it happens, that it is
+   * coloured as one best-effort span on its own line and the next line
+   * starts fresh; the alternative is a fourth carry shape for a case that
+   * does not come up in a compose file.
+   *
+   * THE INVARIANT: strip the tags from html and decode &amp; &lt; &gt; and
+   * the result must be `line`, character for character. Every function
+   * below is written to consume exactly the text it is handed and account
+   * for all of it, which is what makes that true without a second pass to
+   * check it.
+   * ===================================================================== */
+
+  var BOOL_RE = /^(?:true|false|yes|no|on|off|null|~)$/i;
+  var NUM_RE  = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/;
+  var BLOCK_INDICATOR_RE = /^[|>][+\-]?[0-9]*/;
+  var TOKEN_RE = /^\S+/;
+  var LEAD_WS_RE = /^[ \t]*/;
+  var TRAIL_WS_RE = /[ \t]*$/;
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>]/g, function (c) {
+      return c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;';
+    });
+  }
+
+  function wrapSpan(kind, text) {
+    return '<span class="stackman-t--' + kind + '">' + escapeHtml(text) + '</span>';
+  }
+
+  // pieces is an array of [kind, text] tuples that together cover the whole
+  // input exactly once. Empty tuples are dropped rather than emitted as a
+  // zero-width span — harmless either way, but this keeps the output small.
+  function piecesToHtml(pieces) {
+    var out = [];
+    for (var i = 0; i < pieces.length; i++) {
+      if (pieces[i][1] === '') continue;
+      out.push(wrapSpan(pieces[i][0], pieces[i][1]));
+    }
+    return out.join('');
+  }
+
+  // Splits text into 'var' spans for ${...} and $NAME, and 'str' for
+  // everything between them. '$$' is a literal dollar (compose's own escape
+  // for one), so it is left inside the surrounding 'str' text rather than
+  // starting a var span.
+  function splitVars(text) {
+    var out = [], start = 0, i = 0, n = text.length;
+    while (i < n) {
+      if (text.charAt(i) !== '$') { i++; continue; }
+      if (text.charAt(i + 1) === '$') { i += 2; continue; }
+      if (text.charAt(i + 1) === '{') {
+        var close = text.indexOf('}', i + 2);
+        var end = close < 0 ? n : close + 1;
+        if (i > start) out.push(['str', text.slice(start, i)]);
+        out.push(['var', text.slice(i, end)]);
+        i = end; start = i; continue;
+      }
+      if (/[A-Za-z_]/.test(text.charAt(i + 1) || '')) {
+        var j = i + 1;
+        while (j < n && /[A-Za-z0-9_]/.test(text.charAt(j))) j++;
+        if (i > start) out.push(['str', text.slice(start, i)]);
+        out.push(['var', text.slice(i, j)]);
+        i = j; start = i; continue;
+      }
+      i++;      // a lone '$' followed by nothing that reads as a name
+    }
+    if (start < n) out.push(['str', text.slice(start)]);
+    return out;
+  }
+
+  // A trailing whitespace-then-comment tail, already split off a value by
+  // splitComment (whose .comment field always includes that leading gap) —
+  // or a raw tail from after a quote or block indicator, where a '#' may not
+  // be present at all. Either way the gap is plain text and only a genuine
+  // '#...' run is the comment span.
+  function tailPieces(s) {
+    if (s === '') return [];
+    var ws = LEAD_WS_RE.exec(s)[0];
+    var rest = s.slice(ws.length);
+    var out = [];
+    if (ws) out.push(['text', ws]);
+    if (rest === '') return out;
+    out.push([rest.charAt(0) === '#' ? 'comment' : 'text', rest]);
+    return out;
+  }
+
+  // A plain (unquoted) scalar: whole-value bool/num, else text with any
+  // ${...}/$NAME split out, then whatever trailing comment splitComment finds.
+  function scanScalarTail(text) {
+    if (text === '') return [];
+    var sc = splitComment(text);
+    var pieces = [];
+    if (sc.value !== '') {
+      var trail = TRAIL_WS_RE.exec(sc.value)[0];
+      var core = trail.length ? sc.value.slice(0, sc.value.length - trail.length) : sc.value;
+      if (core === '') {
+        pieces.push(['text', sc.value]);
+      } else if (BOOL_RE.test(core)) {
+        pieces.push(['bool', core]);
+        if (trail) pieces.push(['text', trail]);
+      } else if (NUM_RE.test(core)) {
+        pieces.push(['num', core]);
+        if (trail) pieces.push(['text', trail]);
+      } else {
+        pieces = pieces.concat(splitVars(core));
+        if (trail) pieces.push(['text', trail]);
+      }
+    }
+    return pieces.concat(tailPieces(sc.comment));
+  }
+
+  // A single quoted token starting at text.charAt(i). Returns null if it
+  // never closes on this line — a genuine multi-line quoted scalar, which is
+  // left as one best-effort 'str' span by the caller rather than growing a
+  // fourth carry shape for it (see the section comment above).
+  function scanQuotedToken(text, i) {
+    var q = text.charAt(i), end = -1, k;
+    if (q === '"') {
+      for (k = i + 1; k < text.length; k++) {
+        if (text.charAt(k) === '\\') { k++; continue; }
+        if (text.charAt(k) === '"') { end = k; break; }
+      }
+    } else {
+      for (k = i + 1; k < text.length; k++) {
+        if (text.charAt(k) === "'") {
+          if (text.charAt(k + 1) === "'") { k++; continue; }
+          end = k; break;
+        }
+      }
+    }
+    if (end < 0) return null;
+    // The quotes themselves are part of the 'str' span; only a real
+    // ${...}/$NAME inside gets split out, same as an unquoted value.
+    return { end: end + 1, pieces: splitVars(text.slice(i, end + 1)) };
+  }
+
+  function classifyBareToken(tok) {
+    if (tok === '') return [];
+    if (BOOL_RE.test(tok)) return [['bool', tok]];
+    if (NUM_RE.test(tok)) return [['num', tok]];
+    return splitVars(tok);
+  }
+
+  // Tokenises `text` as flow-collection content starting at bracket depth
+  // `depth`, used both to open a [ ] / { } value and to carry on across a
+  // following line. Comments, quoted strings and ${...} all still apply
+  // inside a flow collection, so this does not reduce to a dumber scan.
+  function scanFlow(text, depth) {
+    var out = [], i = 0, n = text.length;
+    while (i < n) {
+      var ch = text.charAt(i);
+      if (ch === ' ' || ch === '\t') {
+        var j = i;
+        while (j < n && (text.charAt(j) === ' ' || text.charAt(j) === '\t')) j++;
+        out.push(['text', text.slice(i, j)]); i = j; continue;
+      }
+      if (ch === '#' && (i === 0 || text.charAt(i - 1) === ' ' || text.charAt(i - 1) === '\t')) {
+        out.push(['comment', text.slice(i)]); i = n; continue;
+      }
+      if (ch === '[' || ch === '{') { depth++; out.push(['punct', ch]); i++; continue; }
+      if (ch === ']' || ch === '}') { if (depth > 0) depth--; out.push(['punct', ch]); i++; continue; }
+      if (ch === ',') { out.push(['punct', ch]); i++; continue; }
+      if (ch === '"' || ch === "'") {
+        var q = scanQuotedToken(text, i);
+        if (q) { out.push.apply(out, q.pieces); i = q.end; continue; }
+        out.push(['str', text.slice(i)]); i = n; continue;
+      }
+      var k = i;
+      while (k < n) {
+        var c2 = text.charAt(k);
+        if (c2 === ' ' || c2 === '\t' || c2 === '[' || c2 === ']' || c2 === '{' || c2 === '}' ||
+            c2 === ',' || c2 === '"' || c2 === "'") break;
+        if (c2 === '#' && (text.charAt(k - 1) === ' ' || text.charAt(k - 1) === '\t')) break;
+        k++;
+      }
+      out.push.apply(out, classifyBareToken(text.slice(i, k)));
+      i = k;
+    }
+    return { pieces: out, depth: depth };
+  }
+
+  // Colours one value, from `col` to end of line — whatever compose shape it
+  // turns out to be (quoted or plain scalar, block scalar opener, flow
+  // collection, anchor/alias/tag). `ownerIndent` is what a block scalar
+  // opened here carries forward: the indent of the key or sequence item this
+  // value belongs to, exactly as scanValue()'s own ownerIndent parameter
+  // means it above.
+  function renderValueArea(line, col, ownerIndent) {
+    var text = line.slice(col);
+    if (text === '') return { pieces: [], carry: '' };
+    var head = text.charAt(0);
+
+    if (head === '|' || head === '>') {
+      var ind = BLOCK_INDICATOR_RE.exec(text)[0];
+      return {
+        pieces: [['text', ind]].concat(tailPieces(text.slice(ind.length))),
+        carry: 'block:' + ownerIndent
+      };
+    }
+
+    // '&anchor', '*alias' and '!tag'/'!!tag' all read as one opaque token to
+    // the parser proper (scanValue seals each of them), so here they are one
+    // 'anchor' span each; anything after the token on the same line is rare
+    // enough (an anchored value written beside its own anchor) that it is
+    // coloured as a plain scalar tail rather than re-run through this same
+    // dispatch a second time.
+    if (head === '&' || head === '*' || head === '!') {
+      var tok = TOKEN_RE.exec(text)[0];
+      return { pieces: [['anchor', tok]].concat(scanScalarTail(text.slice(tok.length))), carry: '' };
+    }
+
+    if (head === '[' || head === '{') {
+      var fr = scanFlow(text, 0);
+      return { pieces: fr.pieces, carry: fr.depth > 0 ? 'flow:' + fr.depth : '' };
+    }
+
+    if (head === '"' || head === "'") {
+      var q = scanQuotedToken(text, 0);
+      if (!q) return { pieces: [['str', text]], carry: '' };   // unterminated: best effort
+      return { pieces: q.pieces.concat(tailPieces(text.slice(q.end))), carry: '' };
+    }
+
+    return { pieces: scanScalarTail(text), carry: '' };
+  }
+
+  // Renders a key line (top-level, or a key sitting beside a sequence dash —
+  // `k` is either way a classify()-shaped object with keyRaw/key/valueCol).
+  // `pieces` already holds whatever came before the key (the line's indent).
+  function renderKeyLine(line, k, pieces) {
+    // The merge key itself is one of the constructs the anchor kind covers,
+    // not an ordinary mapping key — see the KIND table in the caller's
+    // contract.
+    pieces.push([k.key === '<<' ? 'anchor' : 'key', k.keyRaw]);
+
+    var afterKey = k.indent + k.keyRaw.length;
+    var colon = afterKey;
+    while (colon < line.length && line.charAt(colon) !== ':') colon++;
+    if (colon > afterKey) pieces.push(['text', line.slice(afterKey, colon)]);
+    if (colon < line.length) pieces.push(['punct', ':']);
+
+    if (k.valueCol < 0) {
+      return { html: piecesToHtml(pieces.concat(tailPieces(line.slice(colon + 1)))), carry: '' };
+    }
+
+    if (k.valueCol > colon + 1) pieces.push(['text', line.slice(colon + 1, k.valueCol)]);
+    var v = renderValueArea(line, k.valueCol, k.indent);
+    return { html: piecesToHtml(pieces.concat(v.pieces)), carry: v.carry };
+  }
+
+  // The classified content beside a dash — a nested key (classifyAt already
+  // reads "- image: alpine" as a key at the content column), a comment, or
+  // anything else, which is a value read at the sequence item's own indent
+  // (scanValue's real ownerIndent for a bare item — see parseItem — is the
+  // dash's indent, not the content column, which is why `ownerIndent` is
+  // threaded through rather than reusing sub.indent).
+  function renderSeqSub(line, sub, pieces, ownerIndent) {
+    if (sub.kind === 'comment') {
+      return { html: piecesToHtml(pieces.concat([['comment', line.slice(sub.indent)]])), carry: '' };
+    }
+    if (sub.kind === 'key') return renderKeyLine(line, sub, pieces);
+    var v = renderValueArea(line, sub.indent, ownerIndent);
+    return { html: piecesToHtml(pieces.concat(v.pieces)), carry: v.carry };
+  }
+
+  function renderNormalLine(line) {
+    var c = classify(line, 0);
+    var pieces = [];
+
+    if (c.kind === 'blank') return { html: piecesToHtml([['text', line]]), carry: '' };
+
+    // Its own kind, not 'text', purely so the editor can hang indent guides on
+    // it. Drawn as a background on the pane instead they run the full width of
+    // every line and strike through the middle of comment prose; on this span
+    // they stop where the indentation does, which is what an indent guide is.
+    if (c.indent) pieces.push(['indent', line.slice(0, c.indent)]);
+
+    if (c.kind === 'comment') {
+      return { html: piecesToHtml(pieces.concat([['comment', line.slice(c.indent)]])), carry: '' };
+    }
+
+    if (c.kind === 'seq') {
+      pieces.push(['punct', '-']);
+      if (!c.sub) {
+        var afterDash = line.slice(c.indent + 1);
+        if (afterDash) pieces.push(['text', afterDash]);
+        return { html: piecesToHtml(pieces), carry: '' };
+      }
+      if (c.contentCol > c.indent + 1) pieces.push(['text', line.slice(c.indent + 1, c.contentCol)]);
+      return renderSeqSub(line, c.sub, pieces, c.indent);
+    }
+
+    if (c.kind === 'key') return renderKeyLine(line, c, pieces);
+
+    // 'other': no recognisable structure (a bare document scalar, a
+    // malformed line, a '---' marker). Coloured as a value with nowhere in
+    // particular to belong, same fallback the rest of the parser gives it.
+    var v = renderValueArea(line, c.indent, c.indent);
+    return { html: piecesToHtml(pieces.concat(v.pieces)), carry: v.carry };
+  }
+
+  // API.highlight — see the section comment above for the carry contract.
+  // Never throws: anything this cannot make sense of comes back as one
+  // 'text' span holding the escaped line, because an editor that stops
+  // colouring is a nuisance and one that throws is a dead page.
+  function highlight(line, carry) {
+    try {
+      carry = carry || '';
+      if (carry.charAt(0) === 'b') {
+        var n = parseInt(carry.slice(6), 10);
+        var bc = classify(line, 0);
+        if (bc.kind === 'blank' || bc.indent > n) {
+          return { html: line === '' ? '' : wrapSpan('text', line), carry: carry };
+        }
+        return renderNormalLine(line);       // back to (or above) the owning indent: the block ends here
+      }
+      if (carry.charAt(0) === 'f') {
+        var fr = scanFlow(line, parseInt(carry.slice(5), 10));
+        return { html: piecesToHtml(fr.pieces), carry: fr.depth > 0 ? 'flow:' + fr.depth : '' };
+      }
+      return renderNormalLine(line);
+    } catch (e) {
+      return { html: line === '' ? '' : wrapSpan('text', line), carry: '' };
+    }
+  }
+
+  /* =====================================================================
+   * Linting
+   *
+   * A read-only second pass over an already-parsed doc: nothing here edits
+   * the file, so it can run after every keystroke without any of the care
+   * splice()/writeScalar() take. Two kinds of thing are worth a line in the
+   * gutter — a construct the parser genuinely could not read (an error), and
+   * a key that is not a real compose setting (a warning) — everything else
+   * (an anchor, a flow list, a block scalar...) is an ordinary construct this
+   * parser chooses not to edit in place, not a fault in the file, and stays
+   * silent here.
+   * ===================================================================== */
+
+  // A short, iterative Levenshtein distance for "did you mean" — only ever
+  // run over short key names, so there is no reason to reach for anything
+  // cleverer than the textbook one-row version.
+  function levenshtein(a, b) {
+    var m = a.length, n = b.length, i, j, row = [];
+    for (j = 0; j <= n; j++) row[j] = j;
+    for (i = 1; i <= m; i++) {
+      var prev = row[0];
+      row[0] = i;
+      for (j = 1; j <= n; j++) {
+        var tmp = row[j];
+        row[j] = a.charAt(i - 1) === b.charAt(j - 1) ? prev : 1 + Math.min(prev, row[j], row[j - 1]);
+        prev = tmp;
+      }
+    }
+    return row[n];
+  }
+
+  // The nearest real key within edit distance 2 — offered only once the typo
+  // itself is at least 4 characters, since below that almost any word is
+  // within 2 of something and the suggestion stops meaning anything.
+  function nearestKey(key, list) {
+    if (key.length < 4) return null;
+    var best = null, bestDist = 3;
+    for (var i = 0; i < list.length; i++) {
+      var d = levenshtein(key, list[i]);
+      if (d < bestDist) { bestDist = d; best = list[i]; }
+    }
+    return best;
+  }
+
+  function unknownKeyMessage(key, list) {
+    var near = nearestKey(key, list);
+    return near
+      ? 'The key "' + key + '" is not a compose setting. Did you mean "' + near + '"?'
+      : 'The key "' + key + '" is not a compose setting, so Docker will ignore it.';
+  }
+
+  // A key is only judged when it reads as an ordinary identifier — letters,
+  // digits, underscores. A quoted key holding spaces or punctuation is
+  // exotic enough that guessing at it would be more likely to mislead than
+  // help, so it is left alone rather than risking a false alarm.
+  var KEY_TEXT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+  // Pushes one warning per key in `map` that is not in `specSet` — used at
+  // the two levels the schema lets us be sure about: top level, and directly
+  // under a service. 'x-' keys are valid everywhere (they are the whole
+  // basis of this project's metadata) and '<<' is YAML's merge key, not a
+  // compose setting — both are skipped rather than judged.
+  function checkSpecKeys(map, specSet, specList, add) {
+    for (var i = 0; i < map.keys.length; i++) {
+      var key = map.keys[i];
+      if (typeof key !== 'string' || key === '<<' || key.slice(0, 2) === 'x-') continue;
+      if (!KEY_TEXT_RE.test(key)) continue;
+      if (specSet[key]) continue;
+      add(map.pairs[key].start, 'warn', unknownKeyMessage(key, specList));
+    }
+  }
+
+  // Seal reasons severe enough to call the file itself unreadable, rather
+  // than merely locking the one value they cover — see the section comment
+  // above for why every other seal reason stays silent here.
+  var LINT_ERROR_REASONS = { 'tab-indent': 1, 'directive': 1, 'multi-doc': 1, 'unparsable': 1 };
+
+  function sealErrorMessage(reason) {
+    if (reason === 'tab-indent') {
+      return 'This file is indented with tabs, which YAML does not allow. Replace the tabs with spaces.';
+    }
+    if (reason === 'directive') {
+      return 'This file uses a YAML directive (%YAML or %TAG), which is not valid in a compose file. Remove it.';
+    }
+    if (reason === 'multi-doc') {
+      return 'This file holds more than one YAML document, which compose does not support. Keep only one.';
+    }
+    return 'This part of the file is written in a way that cannot be read as YAML, so Docker is likely to reject it.';
+  }
+
+  /**
+   * lint(doc) -> [{ line, level: 'error'|'warn', message }]
+   *
+   * `line` is 0-based; -1 would mean a problem with the file as a whole, but
+   * every check here already has a real line to point at. Sorted ascending,
+   * at most one entry per line — several problems on the same line are
+   * joined with a space, keeping 'error' over 'warn' if both occur.
+   *
+   * Never throws: wrapped so any internal failure returns [] rather than
+   * risking a linter that can kill the editor being worse than one that
+   * quietly says nothing.
+   */
+  function lint(doc) {
+    try {
+      var byLine = {};
+      function add(line, level, message) {
+        var cur = byLine[line];
+        if (!cur) { byLine[line] = { level: level, parts: [message] }; return; }
+        cur.parts.push(message);
+        if (level === 'error') cur.level = 'error';
+      }
+
+      var sealed = (doc && doc.sealed) || [];
+      for (var si = 0; si < sealed.length; si++) {
+        if (LINT_ERROR_REASONS[sealed[si].reason]) {
+          add(sealed[si].start, 'error', sealErrorMessage(sealed[si].reason));
+        }
+      }
+
+      // Duplicate keys — parse() already found these; reused, not re-detected.
+      var warnings = (doc && doc.warnings) || [];
+      for (var wi = 0; wi < warnings.length; wi++) {
+        add(warnings[wi].line, 'warn', warnings[wi].message);
+      }
+
+      if (doc && doc.root && doc.root.kind === 'map') {
+        checkSpecKeys(doc.root, TOP_SPEC_SET, TOP_SPEC_KEYS, add);
+
+        var svc = doc.root.pairs['services'];
+        if (svc && svc.value && svc.value.kind === 'map') {
+          for (var i = 0; i < svc.value.keys.length; i++) {
+            var p = svc.value.pairs[svc.value.keys[i]];
+            // A service written in a way this parser cannot open at all
+            // (kind !== 'map') has no keys to check — that is what "skip
+            // anything inside a sealed region" means here.
+            if (p.value && p.value.kind === 'map') checkSpecKeys(p.value, SERVICE_SPEC_SET, SERVICE_SPEC_KEYS, add);
+          }
+        }
+      }
+
+      var out = [];
+      for (var line in byLine) {
+        if (!byLine.hasOwnProperty(line)) continue;
+        out.push({ line: parseInt(line, 10), level: byLine[line].level, message: byLine[line].parts.join(' ') });
+      }
+      out.sort(function (a, b) { return a.line - b.line; });
+      return out;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /* =====================================================================
+   * Key suggestions and descriptions
+   *
+   * Autocomplete for the raw-YAML editor, and the hover text that goes with
+   * it. Both work from the raw text and never call parse() — the file is
+   * mid-edit exactly when a suggestion is wanted, which is when parse() has
+   * the least to say about it. classify() alone is enough: walking upward
+   * through smaller and smaller indents, using only what it reports about
+   * each line, rebuilds a key's ancestry without ever needing a tree.
+   * ===================================================================== */
+
+  // build:'s own sub-keys. Kept separate from LEAVES on purpose: LEAVES is
+  // read by harvestLeaves() to decide which FORM FIELDS every service gets,
+  // whether or not the file has them (see the comment there) — adding
+  // 'build' to it would silently give every service new build.* fields
+  // nobody asked for. This table is read only by keyInfo()/suggestionContext()
+  // below.
+  var BUILD_LEAVES = {
+    context:             'Build context',
+    dockerfile:          'Dockerfile path',
+    args:                'Build arguments',
+    target:              'Build stage',
+    cache_from:          'Cache sources',
+    cache_to:            'Cache export',
+    network:             'Build network',
+    platforms:           'Platforms',
+    shm_size:            'Shared memory size',
+    privileged:          'Privileged build',
+    pull:                'Always pull base images',
+    labels:              'Image labels',
+    secrets:             'Build secrets',
+    ssh:                 'SSH access',
+    additional_contexts: 'Extra build contexts',
+    no_cache:            'Ignore build cache',
+    isolation:           'Isolation',
+    extra_hosts:         'Extra hosts',
+    tags:                'Extra image tags',
+    ulimits:             'Build ulimits'
+  };
+
+  // deploy:'s own direct children. Split from LEAVES.deploy for exactly the
+  // reason BUILD_LEAVES is split from LEAVES above: LEAVES.deploy holds the
+  // four dotted paths harvestLeaves() turns into form fields, so adding
+  // 'mode' or 'replicas' there would silently give every service new fields
+  // nobody asked for. This table is read only by keyInfo()/suggestionContext()
+  // below.
+  var DEPLOY_LEAVES = {
+    mode:            'Replication mode',
+    replicas:        'Number of copies',
+    labels:          'Deployment labels',
+    endpoint_mode:   'Endpoint mode',
+    placement:       'Placement',
+    resources:       'Resource limits',
+    restart_policy:  'Restart policy (swarm)',
+    rollback_config: 'Rollback settings',
+    update_config:   'Update settings'
+  };
+
+  // Two blocks under deploy: with identical shape — a rolling update's
+  // settings and the settings used to roll one back — so one key list
+  // serves both rather than being written out twice.
+  var RESTART_POLICY_KEYS = ['condition', 'delay', 'max_attempts', 'window'];
+  var UPDATE_CONFIG_KEYS  = ['parallelism', 'delay', 'failure_action', 'monitor', 'max_failure_ratio', 'order'];
+
+  // logging.options is a free-form map — a logging driver may accept any
+  // option at all — so this is a hint offered at the caret, not a closed
+  // list the way the other tables here are.
+  var LOGGING_OPTIONS_KEYS = ['mode', 'max-size', 'max-file', 'tag', 'labels', 'env'];
+
+  // The declaration keys the compose specification actually allows, kept
+  // apart from DECL_LEAVES for the same reason DEPLOY_LEAVES is kept apart
+  // from LEAVES.deploy: DECL_LEAVES also drives which fold rows the form
+  // renders, so adding a key here must never touch it. Read only by
+  // suggestionContext() below.
+  var DECL_SPEC_KEYS = {
+    networks: ['driver', 'driver_opts', 'attachable', 'enable_ipv6', 'external', 'internal', 'ipam', 'labels', 'name'],
+    volumes:  ['driver', 'driver_opts', 'external', 'labels', 'name'],
+    secrets:  ['file', 'environment', 'external', 'name'],
+    configs:  ['file', 'environment', 'external', 'name']
+  };
+
+  // PLAN_15 phase 1: the allowed-value lists a dropdown offers, moved out of
+  // stacks.js so the Compose pane's editor can read them too (stacks.js has
+  // no way to reach anything in a browser-only IIFE, and this file is the
+  // only half of the two that a Node test can load). One entry per
+  // vocabulary id, each a [value, label] list in the exact order the
+  // dropdown shows it.
+  //
+  // Four lists that lived beside these in stacks.js's CHOICES table did NOT
+  // move here, on purpose:
+  //   - healthcheck.test's mode (shell/cmd/none) — words readTest()/
+  //     writeTest() invented for the dropdown; the file itself says
+  //     CMD-SHELL, not "shell". Not a compose value.
+  //   - a port's protocol and a volume's mode — the value carries its own
+  //     separator ('', '/udp', ':ro'), so choosing "nothing" writes the
+  //     separator away too. Meaningless as text in an editor.
+  //   - the eight BOOL_CHOICES wordings — the values true/false move below
+  //     as 'boolean', but "true — full access to the host" is form prose
+  //     about one specific setting, not a compose vocabulary.
+  var VOCAB = {
+    restart: [
+      ['no',             'no — leave it stopped'],
+      ['always',         'always — start it again whenever it stops'],
+      ['unless-stopped', 'unless-stopped — always, unless you stopped it'],
+      ['on-failure',     'on-failure — only when it crashes']
+    ],
+    netmode: [
+      ['bridge', 'bridge — Docker’s own private network'],
+      ['host',   'host — share the server’s network directly'],
+      ['none',   'none — no network at all']
+    ],
+    dependscondition: [
+      ['service_started',                'wait until it has started'],
+      ['service_healthy',                'wait until it reports healthy'],
+      ['service_completed_successfully',  'wait until it has finished OK']
+    ],
+    pullpolicy: [
+      ['always',        'always — check and pull every time it starts'],
+      ['never',         'never — only use what is already on this server'],
+      ['missing',       'missing — pull only if the image is not here yet'],
+      ['if_not_present', 'if_not_present — the same as missing, compose’s other name for it'],
+      ['refresh',       'refresh — pull again once the image on this server looks stale'],
+      ['daily',         'daily — check for a newer image once a day'],
+      ['weekly',        'weekly — check for a newer image once a week'],
+      ['build',         'build — build the image instead of pulling it']
+    ],
+    stopsignal: [
+      ['SIGTERM', 'SIGTERM — the usual, polite request to stop'],
+      ['SIGINT',  'SIGINT — the same as pressing Ctrl+C'],
+      ['SIGKILL', 'SIGKILL — stop it at once, no cleanup'],
+      ['SIGHUP',  'SIGHUP — the usual signal for "reload your settings"'],
+      ['SIGQUIT', 'SIGQUIT — stop and dump core, for debugging'],
+      ['SIGUSR1', 'SIGUSR1 — a signal the app defines the meaning of'],
+      ['SIGUSR2', 'SIGUSR2 — a second signal the app defines the meaning of']
+    ],
+    ipc: [
+      ['host',      'host — share the server’s own IPC namespace'],
+      ['none',      'none — its own, empty IPC namespace'],
+      ['shareable', 'shareable — its own, but open to other containers sharing it']
+    ],
+    pid: [
+      ['host', 'host — see and be seen by every process on the server']
+    ],
+    logdriver: [
+      ['json-file', 'json-file — Docker’s own default, kept as files on this server'],
+      ['local',     'local — a more compact version of the same thing'],
+      ['syslog',    'syslog — sent to the server’s syslog'],
+      ['journald',  'journald — sent to systemd’s journal'],
+      ['fluentd',   'fluentd — sent to a Fluentd log collector'],
+      ['none',      'none — logs are discarded']
+    ],
+    networkdriver: [
+      ['bridge',  'bridge — Docker’s own private network, the usual choice'],
+      ['host',    'host — share the server’s network directly'],
+      ['none',    'none — no network at all'],
+      ['macvlan', 'macvlan — gives the network its own address on the LAN'],
+      ['ipvlan',  'ipvlan — a lighter-weight version of the same idea'],
+      ['overlay', 'overlay — connects containers across several Docker hosts in a swarm']
+    ],
+    volumedriver: [
+      ['local', 'local — a folder Docker manages on this server, the usual choice']
+    ],
+    capability: [
+      ['ALL',                'ALL — every capability at once'],
+      ['CHOWN',              'CHOWN — change file ownership'],
+      ['DAC_OVERRIDE',       'DAC_OVERRIDE — bypass file read/write/execute checks'],
+      ['DAC_READ_SEARCH',    'DAC_READ_SEARCH — bypass file read and directory search checks'],
+      ['FOWNER',             'FOWNER — bypass checks that usually require owning the file'],
+      ['FSETID',             'FSETID — keep the setuid/setgid bits when a file changes'],
+      ['KILL',               'KILL — send signals to any process'],
+      ['SETGID',             'SETGID — change a process’s group ID'],
+      ['SETUID',             'SETUID — change a process’s user ID'],
+      ['SETPCAP',            'SETPCAP — grant or remove permissions on other processes'],
+      ['LINUX_IMMUTABLE',    'LINUX_IMMUTABLE — set the immutable and append-only file flags'],
+      ['NET_BIND_SERVICE',   'NET_BIND_SERVICE — bind to a port below 1024'],
+      ['NET_BROADCAST',      'NET_BROADCAST — send and receive network broadcasts'],
+      ['NET_ADMIN',          'NET_ADMIN — manage networking'],
+      ['NET_RAW',            'NET_RAW — use raw and packet sockets'],
+      ['IPC_LOCK',           'IPC_LOCK — lock memory so it is never swapped out'],
+      ['IPC_OWNER',          'IPC_OWNER — bypass shared memory and message queue checks'],
+      ['SYS_MODULE',         'SYS_MODULE — load and unload kernel modules'],
+      ['SYS_RAWIO',          'SYS_RAWIO — read and write raw devices directly'],
+      ['SYS_CHROOT',         'SYS_CHROOT — change the apparent root directory'],
+      ['SYS_PTRACE',         'SYS_PTRACE — trace and control other processes'],
+      ['SYS_PACCT',          'SYS_PACCT — switch process accounting on and off'],
+      ['SYS_ADMIN',          'SYS_ADMIN — wide-ranging administrative access'],
+      ['SYS_BOOT',           'SYS_BOOT — reboot the server'],
+      ['SYS_NICE',           'SYS_NICE — raise process priority above normal'],
+      ['SYS_RESOURCE',       'SYS_RESOURCE — override resource limits'],
+      ['SYS_TIME',           'SYS_TIME — set the system clock'],
+      ['SYS_TTY_CONFIG',     'SYS_TTY_CONFIG — reconfigure virtual terminals'],
+      ['MKNOD',              'MKNOD — create device, pipe and other special files'],
+      ['LEASE',              'LEASE — take out leases on files'],
+      ['AUDIT_WRITE',        'AUDIT_WRITE — write to the kernel’s audit log'],
+      ['AUDIT_CONTROL',      'AUDIT_CONTROL — configure kernel auditing'],
+      ['SETFCAP',            'SETFCAP — set capabilities on files'],
+      ['MAC_OVERRIDE',       'MAC_OVERRIDE — bypass mandatory access control (SELinux/AppArmor)'],
+      ['MAC_ADMIN',          'MAC_ADMIN — configure mandatory access control'],
+      ['SYSLOG',             'SYSLOG — read the kernel’s log buffer'],
+      ['WAKE_ALARM',         'WAKE_ALARM — wake the server from suspend'],
+      ['BLOCK_SUSPEND',      'BLOCK_SUSPEND — stop the server from suspending'],
+      ['AUDIT_READ',         'AUDIT_READ — read the kernel’s audit log'],
+      ['PERFMON',            'PERFMON — use performance monitoring tools'],
+      ['BPF',                'BPF — load BPF programs'],
+      ['CHECKPOINT_RESTORE', 'CHECKPOINT_RESTORE — checkpoint and restore processes']
+    ],
+    // The generic true/false pair — matches BOOL_GENERIC.options in
+    // tests/vocab-snapshot.js, not any one BOOL_CHOICES wording.
+    boolean: [['true', 'true'], ['false', 'false']],
+
+    // PLAN_15 phase 3: the survey's gap list. isolation, deploymode and
+    // endpointmode are Windows-only or Docker-Swarm-only, which almost never
+    // applies on an Unraid server — each value says so, rather than reading
+    // as a plausible everyday choice.
+    uts: [
+      ['host', 'host — share the server’s own hostname and domain name']
+    ],
+    cgroup: [
+      ['host',    'host — share the server’s own cgroup namespace'],
+      ['private', 'private — give it its own cgroup namespace']
+    ],
+    usernsmode: [
+      ['host', 'host — share the server’s own user ID range instead of getting its own']
+    ],
+    isolation: [
+      ['default', 'default — whatever this Docker installation normally uses'],
+      ['process', 'process — lightweight isolation (Windows containers only)'],
+      ['hyperv',  'hyperv — full virtual-machine isolation (Windows containers only)']
+    ],
+    deploymode: [
+      ['replicated',     'replicated — runs a set number of copies (Docker Swarm only)'],
+      ['global',         'global — runs one copy on every node in the swarm (Docker Swarm only)'],
+      ['replicated-job', 'replicated-job — runs as a one-off job, a set number of times (Docker Swarm only)'],
+      ['global-job',     'global-job — runs the job once on every node (Docker Swarm only)']
+    ],
+    endpointmode: [
+      ['vip',    'vip — the swarm gives the service one shared address (Docker Swarm only)'],
+      ['dnsrr',  'dnsrr — DNS returns each copy’s own address directly (Docker Swarm only)']
+    ],
+    restartcondition: [
+      ['none',       'none — never restart it automatically'],
+      ['on-failure', 'on-failure — restart only if it exits with an error'],
+      ['any',        'any — restart it whatever the exit reason']
+    ],
+    updateorder: [
+      ['start-first', 'start-first — starts the new copy before stopping the old one'],
+      ['stop-first',  'stop-first — stops the old copy before starting the new one']
+    ],
+    failureaction: [
+      ['continue', 'continue — carry on with the rest of the update'],
+      ['rollback', 'rollback — undo the update and go back to the previous version'],
+      ['pause',    'pause — stop the update and wait']
+    ],
+    logmode: [
+      ['blocking',     'blocking — the container waits if the log driver falls behind'],
+      ['non-blocking', 'non-blocking — the container carries on even if log lines are dropped']
+    ],
+    buildnetwork: [
+      ['none',    'none — no network access during the build'],
+      ['host',    'host — share the server’s network during the build'],
+      ['default', 'default — whatever Docker normally gives the build']
+    ]
+  };
+
+  // vocab(id) -> null | [[value, label], ...]
+  //
+  // Returns a fresh copy of the list every call, never the registry's own
+  // array. stacks.js's netLoad() today does
+  // CHOICES['setting/network_mode'].options.push(...) to append the
+  // server's own docker networks — which permanently mutates a table every
+  // service's dropdown shares (see the comment above serviceModeOptions()
+  // in stacks.js for what that leak looks like from the far side). Handing
+  // back a copy means a caller that repeats that mistake only ever grows its
+  // own array.
+  // hasOwnProperty, not a plain lookup, for the reason keyInfo() below uses
+  // it too: 'constructor' and 'toString' are inherited from Object and would
+  // come back as functions, so a bare check for truthiness reaches .slice()
+  // on something that has none.
+  function vocab(id) {
+    if (!Object.prototype.hasOwnProperty.call(VOCAB, id)) return null;
+    return VOCAB[id].slice();
+  }
+
+  // PLAN_15 phase 2: which vocabulary (a VOCAB id above) a key's VALUE is
+  // drawn from, mirroring DESCRIPTIONS' "where" buckets for keys. Kept as a
+  // separate table rather than folded into DESCRIPTIONS, because a key can
+  // have help text with no fixed value list (image:) or a value list with no
+  // help text worth adding twice — the two tables answer different questions.
+  //
+  // 'declared' is NOT one shared bucket the way DESCRIPTIONS.declared is. A
+  // description of "driver" reads the same for a network or a volume, but the
+  // LIST of drivers does not — bridge/host/macvlan means nothing for a
+  // volume, and 'local' is the only volume driver this editor knows of. So
+  // the four declaration kinds get their own entries here, keyed by kind
+  // (path[0] for a declaration — 'networks', 'volumes', 'secrets', 'configs'),
+  // and valueSuggestions() below resolves the kind before it ever looks here.
+  var VOCAB_AT = {
+    service: {
+      restart: 'restart', network_mode: 'netmode', pull_policy: 'pullpolicy',
+      stop_signal: 'stopsignal', ipc: 'ipc', pid: 'pid',
+      cap_add: 'capability', cap_drop: 'capability',
+      privileged: 'boolean', read_only: 'boolean', init: 'boolean',
+      tty: 'boolean', stdin_open: 'boolean',
+      // These six are reached through SERVICE_SPEC_KEYS, not KEYS — they have
+      // no form control, so the editor gains a vocabulary with no change to
+      // the form at all.
+      uts: 'uts', cgroup: 'cgroup', userns_mode: 'usernsmode', isolation: 'isolation',
+      attach: 'boolean', oom_kill_disable: 'boolean'
+    },
+    healthcheck: { disable: 'boolean' },
+    logging: { driver: 'logdriver' },
+    networks: { driver: 'networkdriver', internal: 'boolean', attachable: 'boolean', external: 'boolean',
+                enable_ipv6: 'boolean' },
+    volumes:  { driver: 'volumedriver', external: 'boolean' },
+    secrets:  { external: 'boolean' },
+    configs:  { external: 'boolean' },
+    deploy:         { mode: 'deploymode', endpoint_mode: 'endpointmode' },
+    restartpolicy:  { condition: 'restartcondition' },
+    updateconfig:   { order: 'updateorder', failure_action: 'failureaction' },
+    loggingoptions: { mode: 'logmode' },
+    build: {
+      network: 'buildnetwork', isolation: 'isolation',
+      no_cache: 'boolean', pull: 'boolean', privileged: 'boolean'
+    }
+  };
+
+  // vocabIdFor(key, where, path) -> null | a VOCAB id
+  //
+  // hasOwnProperty for the same reason vocab()/keyInfo() use it: 'declared'
+  // is resolved to the declaration's own kind (path[0]) first, since VOCAB_AT
+  // has no 'declared' bucket of its own — see the comment above it.
+  function vocabIdFor(key, where, path) {
+    var bucket = where === 'declared' ? VOCAB_AT[path[0]] : VOCAB_AT[where];
+    if (!bucket || !Object.prototype.hasOwnProperty.call(bucket, key)) return null;
+    return bucket[key];
+  }
+
+  // One entry per key this editor knows how to describe, grouped by the
+  // vocabulary it belongs to (a "where" — see keyInfo()). Titles match
+  // KEYS/LEAVES/DECL_LEAVES exactly where one of those tables already names
+  // the key, so the editor and the form never disagree about what to call
+  // something.
+  var DESCRIPTIONS = {
+    top: {
+      services: { title: 'Services', description: "The containers this compose file defines, each one written under its own name inside this block." },
+      networks: { title: 'Networks', description: "Declares shared networks the services in this file can join, beyond the default network compose creates automatically." },
+      volumes:  { title: 'Volumes', description: "Declares named volumes, storage areas Docker manages on the server's disk, so several containers can share the same data." },
+      configs:  { title: 'Configs', description: "Declares configuration files services can read, kept separately from the file so they are easy to reuse or replace." },
+      secrets:  { title: 'Secrets', description: "Declares sensitive files, such as passwords or keys, that services can read without writing them into the compose file itself." },
+      name:     { title: 'Project name', description: "Sets the project name for this compose file, used as a prefix for the containers and networks it creates." },
+      include:  { title: 'Include', description: "Pulls in another compose file's services as if they were written here." },
+      version:  { title: 'Version', description: "The old compose file format version marker; modern compose ignores it, and it survives only for older tools that still expect one." }
+    },
+
+    service: {
+      annotations:         { title: 'Annotations', description: "Adds metadata to the container in the same key: value form as labels, but on the lower-level object Docker or Kubernetes reads." },
+      attach:              { title: 'Attach', description: "Controls whether this service's output is shown when running docker compose up; set to false to hide a noisy service's console output." },
+      blkio_config:        { title: 'Disk I/O limits', description: "Limits how fast this container can read from and write to disk, using Linux's block I/O (input/output) controls." },
+      build:               { title: 'Build', description: "Builds the image from a Dockerfile instead of pulling a ready-made one — a folder path, or a block of build settings." },
+      cap_add:             { title: 'Extra permissions', description: "Grants Linux capabilities the container would not normally have, such as NET_ADMIN for managing network interfaces." },
+      cap_drop:            { title: 'Dropped permissions', description: "Removes Linux capabilities the container would otherwise have, tightening what it is allowed to do." },
+      cgroup:              { title: 'Cgroup namespace', description: "Chooses whether the container gets its own cgroup, the Linux mechanism that limits CPU and memory, or shares its parent's." },
+      cgroup_parent:       { title: 'Cgroup parent', description: "Puts the container's cgroup (its resource-limiting group) under a specific parent group instead of the default one." },
+      command:             { title: 'Command', description: "Overrides the command the image normally runs when the container starts." },
+      configs:             { title: 'Configs', description: "Lists the configs, declared under the top-level configs: section, this service can read as files inside the container." },
+      container_name:      { title: 'Container name', description: "Sets the exact name Docker gives the container, instead of letting compose generate one." },
+      cpu_count:           { title: 'CPU count', description: "The number of CPUs the container can use (Windows containers only)." },
+      cpu_percent:         { title: 'CPU percent', description: "The percentage of a single CPU core the container can use (Windows containers only)." },
+      cpu_period:          { title: 'CPU period', description: "The length, in microseconds, of the CPU scheduling window used to work out cpu_quota." },
+      cpu_quota:           { title: 'CPU quota', description: "How much CPU time the container gets within each cpu_period, in microseconds." },
+      cpu_rt_period:       { title: 'Real-time CPU period', description: "The real-time CPU scheduling period, in microseconds, for containers that need guaranteed low-latency CPU access." },
+      cpu_rt_runtime:      { title: 'Real-time CPU runtime', description: "How much of each real-time period the container is guaranteed, in microseconds." },
+      cpu_shares:          { title: 'CPU shares', description: "The container's relative share of CPU time compared with other containers when the CPU is under heavy demand." },
+      cpus:                { title: 'CPU limit', description: "The maximum number of CPU cores the container can use, e.g. 1.5 for one and a half cores." },
+      cpuset:              { title: 'CPU set', description: "Restricts the container to specific CPU cores, e.g. 0,1 for the first two." },
+      credential_spec:     { title: 'Credential spec', description: "Points at the credential file a Windows container uses to join an Active Directory domain." },
+      depends_on:          { title: 'Starts after', description: "Lists other services that must start, or finish healthily, before this one starts." },
+      deploy:              { title: 'Resource limits', description: "Caps and reserves how much CPU and memory this container may use, plus restart and scaling settings mostly used by Docker Swarm." },
+      develop:             { title: 'Develop (watch)', description: "Settings for docker compose watch, which rebuilds or syncs the container automatically when files change during development." },
+      device_cgroup_rules: { title: 'Device cgroup rules', description: "Custom rules controlling which host devices the container is allowed to access." },
+      devices:             { title: 'Devices', description: "Gives the container direct access to a host device, such as a USB stick or a graphics card." },
+      dns:                 { title: 'DNS servers', description: "Custom DNS (Domain Name System, which turns names like example.com into addresses) servers this container uses instead of the host's own." },
+      dns_opt:             { title: 'DNS options', description: "Extra options passed to the container's DNS resolver." },
+      dns_search:          { title: 'DNS search domains', description: "Extra domain names appended when this container looks up a short hostname." },
+      domainname:          { title: 'Domain name', description: "Sets the domain name reported inside the container, e.g. example.com." },
+      entrypoint:          { title: 'Entrypoint', description: "Overrides the program the image runs first when the container starts, before any command is added to it." },
+      env_file:            { title: 'Variable files', description: "Loads environment variables from a file instead of, or as well as, writing them one by one." },
+      environment:         { title: 'Environment variables', description: "Sets environment variables inside the container, e.g. PUID=99." },
+      expose:              { title: 'Internal ports', description: "Opens a port to other containers on the same network, without publishing it to the outside network." },
+      extends:             { title: 'Extends', description: "Reuses settings from another service defined elsewhere, adding to or overriding them here." },
+      external_links:      { title: 'External links', description: "Connects this container to another one that compose does not manage, by name." },
+      extra_hosts:         { title: 'Extra hosts', description: "Adds extra entries to the container's hosts file, mapping a hostname to an IP address by hand." },
+      gpus:                { title: 'GPUs', description: "Requests access to the server's graphics card (GPU) for this container, e.g. for hardware-accelerated video or AI workloads." },
+      group_add:           { title: 'Extra groups', description: "Adds the container's user to extra Linux groups inside the container, on top of its own." },
+      healthcheck:         { title: 'Health check', description: "How compose checks that the container is actually working, not just running." },
+      hostname:            { title: 'Hostname', description: "Sets the hostname reported inside the container." },
+      image:               { title: 'Image', description: "The container image to run, e.g. linuxserver/jellyfin:latest." },
+      init:                { title: 'Init process', description: "Runs a minimal init process as PID 1 inside the container, which cleans up properly when the main program exits." },
+      ipc:                 { title: 'IPC mode', description: "Controls whether this container shares memory (IPC, inter-process communication) with the host or another container." },
+      isolation:           { title: 'Isolation', description: "The container isolation technology to use (Windows only, e.g. hyperv)." },
+      label_file:          { title: 'Label files', description: "Loads labels from a file instead of writing them one by one." },
+      labels:              { title: 'Labels', description: "Attaches metadata to the container as key: value pairs, e.g. for a tool like Traefik to read." },
+      links:               { title: 'Links', description: "An older way of connecting this container to another one by name; networks: is preferred now." },
+      logging:             { title: 'Logging', description: "How the container's console output is stored and rotated." },
+      mac_address:         { title: 'MAC address', description: "Sets a fixed MAC (Media Access Control, a network hardware address) for the container's network interface." },
+      mem_limit:           { title: 'Memory limit', description: "The most memory this container is allowed to use." },
+      mem_reservation:     { title: 'Memory reservation', description: "A soft memory limit the container is guaranteed to get before mem_limit is enforced." },
+      mem_swappiness:      { title: 'Memory swappiness', description: "How eagerly the container's memory is swapped to disk, from 0 (hardly ever) to 100 (aggressively)." },
+      memswap_limit:       { title: 'Memory + swap limit', description: "The combined memory-plus-swap limit for the container." },
+      network_mode:        { title: 'Network mode', description: "Chooses how this container connects to the network, e.g. host to share the server's own network directly." },
+      networks:            { title: 'Networks', description: "Which networks, declared under the top-level networks: section, this container joins." },
+      oom_kill_disable:    { title: 'Disable OOM kill', description: "Stops Linux from killing this container first when the server runs out of memory (OOM, out of memory)." },
+      oom_score_adj:       { title: 'OOM score adjustment', description: "Adjusts how likely this container is to be killed first when the server runs out of memory." },
+      pid:                 { title: 'Process namespace', description: "Shares the process namespace with the host or another container, letting one see the other's running processes." },
+      pids_limit:          { title: 'Process limit', description: "The most processes, or threads, this container is allowed to run at once." },
+      platform:            { title: 'Platform', description: "The CPU architecture and operating system to run this container as, e.g. linux/arm64." },
+      ports:               { title: 'Published ports', description: "Makes a port inside the container reachable from your network, written as outside:inside — 8080:80 puts the container's port 80 on port 8080 of the server." },
+      post_start:          { title: 'After start', description: "A command to run once, right after the container starts." },
+      pre_stop:            { title: 'Before stop', description: "A command to run once, just before the container stops." },
+      privileged:          { title: 'Privileged', description: "Gives the container full access to the host, bypassing most of Docker's normal safety limits." },
+      profiles:            { title: 'Profiles', description: "Marks this service as only starting when a matching profile is chosen, so one compose file can describe several optional setups." },
+      provider:            { title: 'Provider', description: "Runs this service through an external provider plugin instead of as a normal container." },
+      pull_policy:         { title: 'When to pull the image', description: "When to fetch the image from its registry — always, never, or only if it is missing." },
+      pull_refresh_after:  { title: 'Pull refresh', description: "How long a pulled image is trusted before compose checks its registry for a newer one again." },
+      read_only:           { title: 'Read-only filesystem', description: "Makes the container's own filesystem read-only, so nothing inside it can write to disk except through mounted volumes." },
+      restart:             { title: 'Restart policy', description: "What to do if the container stops — for example always restart it, or only restart it if it failed." },
+      runtime:             { title: 'Runtime', description: "The container runtime to use, e.g. nvidia for GPU-enabled containers." },
+      scale:               { title: 'Scale', description: "How many copies of this container to run at once." },
+      secrets:             { title: 'Secrets', description: "Which secrets, declared under the top-level secrets: section, this service can read as files inside the container." },
+      security_opt:        { title: 'Security options', description: "Fine-grained Linux security settings, such as which security profile (AppArmor or SELinux) applies to the container." },
+      shm_size:            { title: 'Shared memory size', description: "The size of /dev/shm, a shared-memory folder some programs use for temporary data." },
+      stdin_open:          { title: 'Keep input open', description: "Keeps the container's standard input open, as if it were run interactively." },
+      stop_grace_period:   { title: 'Stop grace period', description: "How long to wait for the container to stop cleanly before forcing it to stop." },
+      stop_signal:         { title: 'Stop signal', description: "The signal sent to ask the container to stop, e.g. SIGTERM." },
+      storage_opt:         { title: 'Storage options', description: "Storage driver options for the container's own filesystem." },
+      sysctls:             { title: 'Kernel settings', description: "Kernel (the core of the operating system) settings applied inside the container." },
+      tmpfs:               { title: 'Temporary filesystem', description: "Mounts a temporary, memory-backed folder inside the container that disappears when it stops." },
+      tty:                 { title: 'Terminal (tty)', description: "Gives the container a terminal, as if it were run interactively." },
+      ulimits:             { title: 'Resource ulimits', description: "Resource limits Linux enforces on the container, such as the most files it can open at once." },
+      user:                { title: 'User', description: "The username or user ID the container's process runs as, instead of the image's default." },
+      userns_mode:         { title: 'User namespace', description: "Controls whether the container gets its own separate range of user IDs from the host." },
+      uts:                 { title: 'UTS namespace', description: "Controls whether the container shares the host's UTS namespace — its hostname and domain name." },
+      volumes:             { title: 'Volumes', description: "Mounts a folder or file from the server into the container, written as host:container — /mnt/user/media:/data shares that folder with the container." },
+      volumes_from:        { title: 'Volumes from', description: "Mounts all the same volumes another container already has." },
+      working_dir:         { title: 'Working folder', description: "The folder inside the container that commands run from by default." }
+    },
+
+    healthcheck: {
+      test:           { title: 'The check itself', description: "The command Docker runs inside the container to decide whether it is healthy, e.g. checking that a web server answers." },
+      interval:       { title: 'Check every', description: "How often the health check runs once the container is up, e.g. every 30 seconds." },
+      timeout:        { title: 'Give up after', description: "How long a single check is allowed to take before it counts as a failure." },
+      retries:        { title: 'Failures allowed', description: "How many failed checks in a row before the container is marked unhealthy." },
+      start_period:   { title: 'Grace period at start', description: "How long a slow-starting container is given before failed checks start counting against it." },
+      start_interval: { title: 'Checking every, while starting', description: "How often the check runs during that start-up grace period, which can be shorter than the normal interval." },
+      disable:        { title: 'Disabled', description: "Switches the health check off entirely, even if the image itself defines one." },
+      // The form splits test: into these two boxes (see readTest()/writeTest())
+      // rather than showing compose's own CMD-SHELL spelling, so their help
+      // talks about what each box does instead.
+      // Titles are inferTitle()'s own two strings, not variations on them —
+      // these describe the two boxes the form splits test: into, and a
+      // description headed differently from the label above it reads as being
+      // about something else.
+      'test.mode':    { title: 'How the check runs', description: "Chooses how the check is carried out — running a command inside the container, or switching the check off." },
+      'test.command': { title: 'The check itself', description: "The command the health check runs; it counts as healthy when this command exits without an error." }
+    },
+
+    // deploy:'s own direct children (from DEPLOY_LEAVES) come first, offered
+    // while typing inside deploy: itself. The four dotted paths below sit
+    // several levels deeper, at LEAVES.deploy's own paths — they exist for
+    // the form's fields, which are built at those deeper paths directly.
+    // Nearly everything here is a Docker Swarm concept and says so, since it
+    // mostly does nothing on the single-host setup Unraid actually runs.
+    deploy: {
+      mode:            { title: 'Replication mode', description: "How this service is scheduled — a set number of copies, or one on every swarm node (Docker Swarm only)." },
+      replicas:        { title: 'Number of copies', description: "How many copies of this service to run when mode is replicated (Docker Swarm only)." },
+      labels:          { title: 'Deployment labels', description: "Metadata attached to the service itself, rather than to the containers it creates, as key: value pairs (Docker Swarm only)." },
+      endpoint_mode:   { title: 'Endpoint mode', description: "How other services reach this one — one shared address, or a DNS record for each copy (Docker Swarm only)." },
+      placement:       { title: 'Placement', description: "Which nodes in the swarm this service is allowed to run on (Docker Swarm only)." },
+      resources:       { title: 'Resource limits', description: "Caps and reserves how much CPU and memory this container is allowed to use." },
+      restart_policy:  { title: 'Restart policy (swarm)', description: "When and how often Docker Swarm restarts a failed task — separate from the restart: setting above, which this replaces under deploy: (Docker Swarm only)." },
+      rollback_config: { title: 'Rollback settings', description: "How to roll a service back to its previous version if an update goes wrong (Docker Swarm only)." },
+      update_config:   { title: 'Update settings', description: "How a rolling update is carried out — how many copies at once, and what to do if one fails (Docker Swarm only)." },
+      'resources.limits.cpus':         { title: 'CPU limit', description: "The most CPU this container may use — a hard cap it is never allowed to cross." },
+      'resources.limits.memory':       { title: 'Memory limit', description: "The most memory this container may use — a hard cap it is never allowed to cross." },
+      'resources.reservations.cpus':   { title: 'CPU reserved', description: "The CPU this container is guaranteed to get, set aside for it even when the server is busy." },
+      'resources.reservations.memory': { title: 'Memory reserved', description: "The memory this container is guaranteed to get, set aside for it even when the server is busy." }
+    },
+
+    // deploy.restart_policy's own settings — a Docker Swarm concept distinct
+    // from the service-level restart: policy above, which is why it needs
+    // its own bucket rather than sharing 'deploy'.
+    restartpolicy: {
+      condition:    { title: 'Restart condition', description: "Which outcomes should trigger a restart — any exit, none, or only a failure (Docker Swarm only)." },
+      delay:        { title: 'Restart delay', description: "How long to wait before restarting a failed task (Docker Swarm only)." },
+      max_attempts: { title: 'Restart attempts', description: "How many times to retry restarting before giving up (Docker Swarm only)." },
+      window:       { title: 'Restart window', description: "How long to wait before deciding whether a restart succeeded (Docker Swarm only)." }
+    },
+
+    // deploy.update_config and deploy.rollback_config share this bucket —
+    // identical settings, for a rolling update and for undoing one.
+    updateconfig: {
+      parallelism:       { title: 'Update parallelism', description: "How many copies to update at once during a rolling update (Docker Swarm only)." },
+      delay:             { title: 'Update delay', description: "How long to wait between updating each batch of copies (Docker Swarm only)." },
+      failure_action:    { title: 'On update failure', description: "What to do if updating a copy fails — carry on, roll back, or pause (Docker Swarm only)." },
+      monitor:           { title: 'Failure monitoring window', description: "How long to watch a newly updated copy for failure before moving on (Docker Swarm only)." },
+      max_failure_ratio: { title: 'Failure tolerance', description: "The share of updated copies allowed to fail before the whole update is considered failed (Docker Swarm only)." },
+      order:             { title: 'Update order', description: "Whether the new copy starts before the old one stops, or the old one stops first (Docker Swarm only)." }
+    },
+
+    logging: {
+      driver: { title: 'Log driver', description: "Which logging driver stores the container's console output, e.g. json-file (the default) or a remote logging service." }
+    },
+
+    // logging.options is a free-form map — any option a driver understands
+    // is legal — so this bucket describes the common ones as a hint, not a
+    // complete list.
+    loggingoptions: {
+      mode:      { title: 'Blocking mode', description: "Whether the container waits for the log driver to keep up, or carries on and risks dropping log lines." },
+      'max-size': { title: 'Max log file size', description: "The largest a single log file is allowed to grow before it is rotated." },
+      'max-file': { title: 'Log files kept', description: "How many rotated log files to keep before the oldest is deleted." },
+      tag:       { title: 'Log tag', description: "A custom tag added to each log line, useful for telling one container's logs apart from another's." },
+      labels:    { title: 'Labels in logs', description: "Which of this container's labels to include alongside its log output." },
+      env:       { title: 'Environment in logs', description: "Which of this container's environment variables to include alongside its log output." }
+    },
+
+    build: {
+      context:             { title: 'Build context', description: "Where to find the files, a folder path or a Git URL, used to build the image." },
+      dockerfile:          { title: 'Dockerfile path', description: "The name of the Dockerfile to use, when it is not simply called Dockerfile." },
+      args:                { title: 'Build arguments', description: "Build-time variables passed into the Dockerfile, e.g. a version number baked into the image." },
+      target:              { title: 'Build stage', description: "Builds only up to a named stage in a multi-stage Dockerfile, instead of the whole thing." },
+      cache_from:          { title: 'Cache sources', description: "Extra image sources to reuse layers from, speeding up the build." },
+      cache_to:            { title: 'Cache export', description: "Where to export this build's layers so a later build can reuse them." },
+      network:             { title: 'Build network', description: "Which network the build process itself can use, e.g. to reach a private package server." },
+      platforms:           { title: 'Platforms', description: "The CPU architectures this image can be built for, e.g. linux/amd64 and linux/arm64." },
+      shm_size:            { title: 'Shared memory size', description: "The size of /dev/shm made available to the build process itself." },
+      privileged:          { title: 'Privileged build', description: "Runs the build process with full access to the host, bypassing Docker's normal safety limits." },
+      pull:                { title: 'Always pull base images', description: "Always fetches the latest version of any base image before building, rather than reusing a cached copy." },
+      labels:              { title: 'Image labels', description: "Attaches metadata to the built image as key: value pairs." },
+      secrets:             { title: 'Build secrets', description: "Makes secrets, declared under the top-level secrets: section, available to the build process without baking them into the image." },
+      ssh:                 { title: 'SSH access', description: "Passes an SSH (Secure Shell, used to authenticate with private Git servers) key or agent into the build, for pulling private dependencies." },
+      additional_contexts: { title: 'Extra build contexts', description: "Extra named sources of files the Dockerfile can pull from, alongside the main build context." },
+      no_cache:            { title: 'Ignore build cache', description: "Rebuilds from scratch, ignoring any cached layers from a previous build." },
+      isolation:           { title: 'Isolation', description: "The container isolation technology used while building (Windows only, e.g. hyperv)." },
+      extra_hosts:         { title: 'Extra hosts', description: "Adds extra entries to the build process's hosts file, mapping a hostname to an IP address by hand." },
+      tags:                { title: 'Extra image tags', description: "Extra names (tags) to give the built image, besides the one from image:." },
+      ulimits:             { title: 'Build ulimits', description: "Resource limits enforced on the build process itself, such as the most files it can open at once." }
+    },
+
+    // One shared bucket for all four declaration kinds (networks, volumes,
+    // secrets, configs) — a network's driver and a volume's driver mean the
+    // same thing, so there is no reason to describe them twice. Titles reused
+    // exactly from DECL_LEAVES.
+    declared: {
+      driver:      { title: 'Driver', description: "Which plugin manages this network or volume — the default is fine for almost everyone, and only needs changing for a specialised storage or networking setup." },
+      internal:    { title: 'Internal only, no outside access', description: "Cuts this network off from the outside world, so containers on it can only talk to each other, not the internet." },
+      external:    { title: 'Created outside this file', description: "Tells compose this network, volume, secret or config already exists, rather than asking it to create one." },
+      name:        { title: 'Real name in Docker', description: "The real name this network or volume has in Docker, if it should differ from the name used inside this file." },
+      attachable:  { title: 'Attachable', description: "Lets standalone containers, ones not managed by this compose file, join this network as well." },
+      file:        { title: 'File on the server', description: "The path on the server to the file this secret or config reads its contents from." },
+      environment: { title: 'From a variable', description: "Reads this secret's value from an environment variable instead of a file." },
+      driver_opts: { title: 'Driver options', description: "Extra settings passed straight to the network or volume driver, specific to whichever one is in use." },
+      enable_ipv6: { title: 'IPv6', description: "Turns on IPv6 addressing for this network, alongside the usual IPv4." },
+      ipam:        { title: 'IP address management', description: "Controls how addresses are handed out on this network, such as a specific subnet, instead of leaving it to Docker." },
+      labels:      { title: 'Labels', description: "Attaches metadata to this network or volume as key: value pairs." }
+    },
+
+    // depends_on's long form: a dependency's OWN settings (its condition,
+    // and the two folded ones below it), not the service keys of the same
+    // name — a dependency's 'restart' has nothing to do with the service-level
+    // restart: policy above.
+    depends: {
+      condition: { title: 'When the dependency counts as ready', description: "What counts as ready before this service starts — the dependency simply running, or reporting healthy, or having finished." },
+      restart:   { title: 'Restart this service too when the dependency restarts', description: "Restarts this service automatically whenever the dependency it relies on restarts." },
+      required:  { title: 'This dependency must start successfully for this service to start', description: "Switch this off to let this service start even if the dependency fails — otherwise a failed dependency stops this service starting too." }
+    }
+  };
+
+  /**
+   * keyInfo(key, where) -> null | { title, description }
+   *
+   * `where` is one of 'top', 'service', 'healthcheck', 'deploy', 'logging',
+   * 'build', 'declared' — the vocabulary the key is being read against, since
+   * the same word can mean different things in different ones ('driver'
+   * under logging is a log driver; under a network it is a network driver).
+   */
+  function keyInfo(key, where) {
+    var table = DESCRIPTIONS[where];
+    var entry = table && Object.prototype.hasOwnProperty.call(table, key) ? table[key] : null;
+    return entry ? { title: entry.title, description: entry.description } : null;
+  }
+
+  /**
+   * fieldHelp(field) -> null | { title, description }
+   *
+   * Maps one field the Form pane rendered (see buildForm()) back to its
+   * DESCRIPTIONS entry. Never throws — a missing or malformed field is null,
+   * the same answer as "nothing to say here", which is also the honest
+   * answer for a field the Advanced catch-all built from a key the file
+   * actually has but this editor does not otherwise recognise (a
+   * misspelling such as portz:).
+   */
+  function fieldHelp(field) {
+    try {
+      if (!field) return null;
+      var target = field.target;
+
+      if (field.binder === 'setting') {
+        if (typeof target !== 'string') return null;
+        var m = /^(healthcheck|deploy|logging)\.(.+)$/.exec(target);
+        return m ? keyInfo(m[2], m[1]) : keyInfo(target, 'service');
+      }
+
+      if (field.binder === 'declared') {
+        // A fold row is one named setting; its LAST dotted segment is that
+        // setting's key. A non-fold row's box holds the declaration's own
+        // primary setting instead — its target is just "<kind>.<name>", and
+        // a name can itself contain dots (a network called "br0.2"), so the
+        // last segment there is part of the name, not a setting.
+        if (field.fold) {
+          var dsegs = String(target).split('.');
+          return keyInfo(dsegs[dsegs.length - 1], 'declared');
+        }
+        var primary = DECL_PRIMARY[field.declKind];
+        return primary ? keyInfo(primary, 'declared') : null;
+      }
+
+      if (field.binder === 'depends') {
+        if (field.fold) {
+          var fsegs = String(target).split('.');
+          return keyInfo(fsegs[fsegs.length - 1], 'depends');
+        }
+        return keyInfo('condition', 'depends');
+      }
+
+      // Ports, volumes, variables, labels, devices and other list entries
+      // get their help from the group heading, not per row.
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Every key one of this file's own tables names but DESCRIPTIONS cannot
+  // describe — the guard that stops a key being added to KEYS/LEAVES/
+  // DECL_LEAVES/DEPENDS_LEAVES without anyone writing its help sentence.
+  // Exists only so a test can demand it comes back empty.
+  function helpGaps() {
+    var gaps = [];
+    function check(key, where) { if (!keyInfo(key, where)) gaps.push({ key: key, where: where }); }
+
+    for (var k in KEYS) { if (KEYS.hasOwnProperty(k)) check(k, 'service'); }
+    for (var hk in LEAVES.healthcheck) { if (LEAVES.healthcheck.hasOwnProperty(hk)) check(hk, 'healthcheck'); }
+    for (var lk in LEAVES.logging) { if (LEAVES.logging.hasOwnProperty(lk)) check(lk, 'logging'); }
+    for (var dk in LEAVES.deploy) { if (LEAVES.deploy.hasOwnProperty(dk)) check(dk, 'deploy'); }
+    for (var dlk in DEPLOY_LEAVES) { if (DEPLOY_LEAVES.hasOwnProperty(dlk)) check(dlk, 'deploy'); }
+    for (var bk in BUILD_LEAVES) { if (BUILD_LEAVES.hasOwnProperty(bk)) check(bk, 'build'); }
+    for (var kind in DECL_LEAVES) {
+      if (!DECL_LEAVES.hasOwnProperty(kind)) continue;
+      for (var ck in DECL_LEAVES[kind]) { if (DECL_LEAVES[kind].hasOwnProperty(ck)) check(ck, 'declared'); }
+    }
+    for (var kind2 in DECL_SPEC_KEYS) {
+      if (!DECL_SPEC_KEYS.hasOwnProperty(kind2)) continue;
+      var specKeys = DECL_SPEC_KEYS[kind2];
+      for (var si = 0; si < specKeys.length; si++) check(specKeys[si], 'declared');
+    }
+    for (var pk in DEPENDS_LEAVES) { if (DEPENDS_LEAVES.hasOwnProperty(pk)) check(pk, 'depends'); }
+    check('condition', 'depends');
+
+    for (var ri = 0; ri < RESTART_POLICY_KEYS.length; ri++) check(RESTART_POLICY_KEYS[ri], 'restartpolicy');
+    for (var ui = 0; ui < UPDATE_CONFIG_KEYS.length; ui++) check(UPDATE_CONFIG_KEYS[ui], 'updateconfig');
+    for (var oi = 0; oi < LOGGING_OPTIONS_KEYS.length; oi++) check(LOGGING_OPTIONS_KEYS[oi], 'loggingoptions');
+
+    return gaps;
+  }
+
+  // LEAVES/BUILD_LEAVES paths are dotted (deploy's are several levels below
+  // deploy: itself), but the suggestion caret only ever sits at a DIRECT
+  // child, so only the first segment of each path is ever offered.
+  function leafTopKeys(table) {
+    var seen = {}, out = [];
+    for (var k in table) {
+      if (!table.hasOwnProperty(k)) continue;
+      var top = k.split('.')[0];
+      if (!seen[top]) { seen[top] = true; out.push(top); }
+    }
+    return out;
+  }
+
+  // Matches a key's ancestry (a top-down array of key names, root first) to
+  // one of the positions this editor understands, returning the keys it
+  // offers there and which DESCRIPTIONS bucket describes them — or null for
+  // anywhere else, including directly under 'services' (a name the user
+  // invents, not a key this editor knows).
+  function suggestionContext(path) {
+    if (path.length === 0) return { keys: TOP_SPEC_KEYS, where: 'top' };
+
+    if (path[0] === 'services') {
+      if (path.length === 2) return { keys: SERVICE_SPEC_KEYS, where: 'service' };
+      if (path.length === 3) {
+        var w = path[2];
+        if (w === 'healthcheck' || w === 'logging') return { keys: leafTopKeys(LEAVES[w]), where: w };
+        if (w === 'deploy') return { keys: leafTopKeys(DEPLOY_LEAVES), where: 'deploy' };
+        if (w === 'build') return { keys: leafTopKeys(BUILD_LEAVES), where: 'build' };
+      }
+      // Two levels deeper than the block above: deploy's own sub-blocks, and
+      // logging's free-form options map (a hint, not a closed list — see the
+      // comment above LOGGING_OPTIONS_KEYS).
+      if (path.length === 4) {
+        if (path[2] === 'deploy' && path[3] === 'restart_policy') {
+          return { keys: RESTART_POLICY_KEYS, where: 'restartpolicy' };
+        }
+        if (path[2] === 'deploy' && (path[3] === 'update_config' || path[3] === 'rollback_config')) {
+          return { keys: UPDATE_CONFIG_KEYS, where: 'updateconfig' };
+        }
+        if (path[2] === 'logging' && path[3] === 'options') {
+          return { keys: LOGGING_OPTIONS_KEYS, where: 'loggingoptions' };
+        }
+      }
+      return null;
+    }
+
+    if (path.length === 2 && DECL_SPEC_KEYS[path[0]]) {
+      return { keys: DECL_SPEC_KEYS[path[0]], where: 'declared' };
+    }
+    return null;
+  }
+
+  function classifyAll(lines) {
+    var cls = [];
+    for (var i = 0; i < lines.length; i++) cls.push(classify(lines[i], i));
+    return cls;
+  }
+
+  // From the caret's own indent, walks up to the nearest line above with a
+  // smaller indent, records it if it is a key, and repeats — rebuilding the
+  // path from the root without ever needing a parsed tree. Returns null the
+  // moment a smaller indent turns up that is NOT a key: something the walk
+  // cannot make sense of, so neither can the caller.
+  function keyPathAbove(cls, lineIdx, indent) {
+    var path = [], curIndent = indent, i = lineIdx - 1;
+    while (i >= 0 && curIndent > 0) {
+      var c = cls[i];
+      if (c.kind === 'blank' || c.kind === 'comment') { i--; continue; }
+      if (c.indent >= curIndent) { i--; continue; }        // a sibling, or a sibling's child
+      if (c.kind !== 'key') return null;
+      path.unshift(c.key);
+      curIndent = c.indent;
+      i--;
+    }
+    return path;
+  }
+
+  // The keys already written in the same block, at the same indent as the
+  // caret's own line — offering one of these again would offer a mapping key
+  // that already exists. The caret's own line is excluded, so retyping an
+  // existing key's own name never suggests that name is somehow taken.
+  function siblingKeysOf(cls, lineIdx, indent) {
+    var keys = {}, i, c;
+    for (i = lineIdx - 1; i >= 0; i--) {
+      c = cls[i];
+      if (c.kind === 'blank' || c.kind === 'comment') continue;
+      if (c.indent < indent) break;
+      if (c.indent === indent && c.kind === 'key') keys[c.key] = true;
+    }
+    for (i = lineIdx + 1; i < cls.length; i++) {
+      c = cls[i];
+      if (c.kind === 'blank' || c.kind === 'comment') continue;
+      if (c.indent < indent) break;
+      if (c.indent === indent && c.kind === 'key') keys[c.key] = true;
+    }
+    return keys;
+  }
+
+  // Is `col` sitting in the key position of this line — after the leading
+  // spaces, before any ':' on it? Returns the partial word's bounds and the
+  // line's indent, or null. A line with no colon at all is read as a key
+  // with nothing typed after it yet, which is what "before any :" means when
+  // there is none.
+  function keyPositionOnLine(line, c, col) {
+    if (c.kind === 'comment' || c.kind === 'seq') return null;
+
+    var indent = c.indent, limit;
+    if (c.kind === 'key') {
+      limit = indent + c.keyRaw.length;                     // the colon sits right here
+    } else if (c.kind === 'blank' || c.kind === 'other') {
+      if (line.slice(indent).indexOf(':') >= 0) return null; // a colon we could not read as a key line
+      limit = line.length;
+    } else {
+      return null;
+    }
+    if (col < indent || col > limit) return null;
+
+    var s = col;
+    while (s > indent && line.charAt(s - 1) !== ' ' && line.charAt(s - 1) !== '\t') s--;
+    var e = col;
+    while (e < limit && line.charAt(e) !== ' ' && line.charAt(e) !== '\t') e++;
+
+    return { indent: indent, start: s, end: e, prefix: line.slice(s, e) };
+  }
+
+  // Orders and filters the vocabulary for one position: prefix matches
+  // first, then the rest that merely contain it, alphabetical within each
+  // group, and never a key the block already has.
+  function suggestionList(keys, where, prefix, exclude) {
+    var pl = prefix.toLowerCase(), starts = [], contains = [];
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      if (exclude[k]) continue;
+      var info = keyInfo(k, where);
+      var entry = { key: k, title: info ? info.title : k };
+      var at = k.toLowerCase().indexOf(pl);
+      if (at === 0) starts.push(entry); else if (at > 0) contains.push(entry);
+    }
+    function byKey(a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; }
+    starts.sort(byKey);
+    contains.sort(byKey);
+    return starts.concat(contains);
+  }
+
+  /**
+   * keySuggestions(text, offset) -> null | { start, end, prefix, keys }
+   *
+   * `offset` is a character offset into `text` (the caret). Works from the
+   * raw text alone — see the section comment above for why parse() is never
+   * called here. Never throws: malformed input comes back as null, the same
+   * answer as "nothing to suggest here".
+   */
+  function keySuggestions(text, offset) {
+    try {
+      text = String(text == null ? '' : text);
+      if (typeof offset !== 'number' || isNaN(offset) || offset < 0) return null;
+
+      var lines = text.split('\n');
+      var cls = classifyAll(lines);
+
+      var starts = [], off = 0, i;
+      for (i = 0; i < lines.length; i++) { starts.push(off); off += lines[i].length + 1; }
+      var lineIdx = lineAtOffset({ lineStart: starts }, offset);
+      var lineStartOff = starts[lineIdx];
+      var col = offset - lineStartOff;
+
+      var pos = keyPositionOnLine(lines[lineIdx], cls[lineIdx], col);
+      if (!pos) return null;
+
+      var path = keyPathAbove(cls, lineIdx, pos.indent);
+      if (!path) return null;
+      var ctx = suggestionContext(path);
+      if (!ctx) return null;
+
+      var exclude = siblingKeysOf(cls, lineIdx, pos.indent);
+      var keys = suggestionList(ctx.keys, ctx.where, pos.prefix, exclude);
+
+      return { start: lineStartOff + pos.start, end: lineStartOff + pos.end, prefix: pos.prefix, keys: keys };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // The value's own span on a line, from `start` (already sitting on the
+  // first non-space character — just past "key: " or just past "- ") to
+  // wherever a trailing comment begins. Mirrors splitComment(), but a '#'
+  // sitting AT `start` itself ("key: # note", "- # note") is still a comment
+  // even though nothing in the sliced text says so — the space that made it
+  // one is the space already skipped to reach `start`, so splitComment()
+  // never gets to see it. Caught here instead, once, rather than at both
+  // call sites below.
+  function valueRegion(line, start) {
+    if (start < line.length && line.charAt(start) === '#') return { start: start, end: start };
+    var split = splitComment(line.slice(start));
+    return { start: start, end: start + split.value.length };
+  }
+
+  // Is the caret sitting inside an unterminated ${...} in `text` (the value
+  // up to the caret)? Any compose value may be written ${VAR} or
+  // ${VAR:-default}, and popping a list of restart policies over someone
+  // typing a variable name is the feature getting in the way rather than
+  // helping.
+  function caretInInterpolation(text) {
+    var open = text.lastIndexOf('${');
+    return open >= 0 && text.indexOf('}', open) < 0;
+  }
+
+  // Orders and filters a vocabulary's [value, label] pairs for one caret
+  // position: prefix matches first, then values that merely contain the
+  // typed text — but, unlike suggestionList() above, NEVER re-sorted within
+  // a group. restart's four values and stop_signal's seven are in a
+  // deliberate order (commonest and safest first), the same order the form's
+  // dropdowns show them in, and alphabetising here would leave the editor
+  // and the form disagreeing about the order of the same list.
+  function vocabSuggestionList(list, prefix) {
+    var pl = prefix.toLowerCase(), starts = [], contains = [];
+    for (var i = 0; i < list.length; i++) {
+      var val = list[i][0], label = list[i][1];
+      var at = val.toLowerCase().indexOf(pl);
+      var entry = { key: val, title: label };
+      if (at === 0) starts.push(entry); else if (at > 0) contains.push(entry);
+    }
+    return starts.concat(contains);
+  }
+
+  /**
+   * valueSuggestions(text, offset) -> null | { start, end, prefix, keys, value: true }
+   *
+   * The mirror image of keySuggestions() above, for the value half of a
+   * key: value line, or an item in a `- ` list whose parent key carries a
+   * vocabulary (cap_add, cap_drop, ...). Returns the exact same shape
+   * keySuggestions() does, so the suggestion panel, its keyboard handling,
+   * positioning and clipping all work unchanged — `value: true` is the only
+   * addition, there only so the caller knows not to append ': ' on accept
+   * the way it does for a key.
+   *
+   * Never calls parse(), for the reason given in the section comment above.
+   * Never throws: malformed input comes back as null.
+   */
+  function valueSuggestions(text, offset) {
+    try {
+      text = String(text == null ? '' : text);
+      if (typeof offset !== 'number' || isNaN(offset) || offset < 0) return null;
+
+      var lines = text.split('\n');
+      var cls = classifyAll(lines);
+
+      var starts = [], off = 0, i;
+      for (i = 0; i < lines.length; i++) { starts.push(off); off += lines[i].length + 1; }
+      var lineIdx = lineAtOffset({ lineStart: starts }, offset);
+      var lineStartOff = starts[lineIdx];
+      var col = offset - lineStartOff;
+      var line = lines[lineIdx];
+      var c = cls[lineIdx];
+
+      var region, path, key;
+
+      if (c.kind === 'key') {
+        // The colon sits right after the key (see keyPositionOnLine's own
+        // comment on the same arithmetic). YAML needs a space after it, so
+        // "restart:|" with no space is not a value position at all — typing
+        // there would write "restart:always", a plain scalar string, not a
+        // key: value pair.
+        var colonPos = c.indent + c.keyRaw.length;
+        if (line.charAt(colonPos + 1) !== ' ' && line.charAt(colonPos + 1) !== '\t') return null;
+        var vs = colonPos + 1;
+        while (vs < line.length && (line.charAt(vs) === ' ' || line.charAt(vs) === '\t')) vs++;
+
+        region = valueRegion(line, vs);
+        if (col < region.start || col > region.end) return null;
+
+        path = keyPathAbove(cls, lineIdx, c.indent);
+        if (!path) return null;
+        key = c.key;
+      } else if (c.kind === 'seq') {
+        // A long form's own keys ("- target: 8080") are not the parent
+        // list's values — out of scope for this phase.
+        if (c.sub && c.sub.kind === 'key') return null;
+
+        region = valueRegion(line, c.contentCol);
+        if (col < region.start || col > region.end) return null;
+
+        // keyPathAbove() walked from the item's own indent ends WITH the key
+        // whose list this item belongs to (cap_add, say) — the containing
+        // context is that path with the key itself lopped off the end.
+        var fullPath = keyPathAbove(cls, lineIdx, c.indent);
+        if (!fullPath || fullPath.length === 0) return null;
+        key = fullPath[fullPath.length - 1];
+        path = fullPath.slice(0, -1);
+      } else {
+        return null;
+      }
+
+      if (caretInInterpolation(line.slice(region.start, col))) return null;
+
+      var ctx = suggestionContext(path);
+      if (!ctx) return null;
+      var vocabId = vocabIdFor(key, ctx.where, path);
+      if (!vocabId) return null;
+      var list = vocab(vocabId);
+      if (!list) return null;
+
+      // The whitespace-delimited word under the caret, bounded to the
+      // value's own span — the same widening keyPositionOnLine() does for a
+      // key, just bounded by the value's start/end instead of the line's.
+      var s = col; while (s > region.start && line.charAt(s - 1) !== ' ' && line.charAt(s - 1) !== '\t') s--;
+      var e = col; while (e < region.end && line.charAt(e) !== ' ' && line.charAt(e) !== '\t') e++;
+      var prefix = line.slice(s, e);
+
+      var matches = vocabSuggestionList(list, prefix);
+      // A single match identical to what is already typed is the thing
+      // already written, popping back up over the next line — not a
+      // suggestion.
+      if (matches.length === 1 && matches[0].key.toLowerCase() === prefix.toLowerCase()) return null;
+
+      return { start: lineStartOff + s, end: lineStartOff + e, prefix: prefix, keys: matches, value: true };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * describeKeyAt(text, line, col) -> null | { key, title, description }
+   *
+   * `line` and `col` are 0-based. Exported as API.keyAt (see Exports below);
+   * named differently in here because the parser already has its own
+   * internal keyAt(ctx, i, col, allowSub) with a different job.
+   */
+  function describeKeyAt(text, line, col) {
+    try {
+      text = String(text == null ? '' : text);
+      var lines = text.split('\n');
+      if (line < 0 || line >= lines.length) return null;
+
+      var cls = classifyAll(lines);
+      var c = cls[line];
+      if (c.kind !== 'key' || col < c.indent || col >= c.indent + c.keyRaw.length) return null;
+
+      var path = keyPathAbove(cls, line, c.indent);
+      if (!path) return null;
+      var ctx = suggestionContext(path);
+      if (!ctx) return null;
+
+      var info = keyInfo(c.key, ctx.where);
+      return info ? { key: c.key, title: info.title, description: info.description } : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /* =====================================================================
+   * Host paths
+   *
+   * API.hostPaths — every host-side path of a volume mount, for a check
+   * that the folder actually exists on the server. Works from classify()
+   * alone, the same way highlight() and keySuggestions() above do: this has
+   * to run on a file mid-edit, which is exactly when parse() has the least
+   * to say. A stack of the mapping keys enclosing the current line rebuilds
+   * "services -> <name> -> volumes" without ever building a tree, so a
+   * top-level volumes: block (named-volume DECLARATIONS, not mounts) never
+   * reaches this — its entries are mapping keys, not sequence items, and
+   * are never even looked at.
+   * ===================================================================== */
+
+  // The text of a scalar starting at `col` on `line`, quote-stripped, plus
+  // where that text starts and how long it is IN THE SOURCE — so a caller
+  // can box exactly what is on screen even though the reported value has
+  // had its quotes removed. Returns null for anything scanValue() would
+  // also seal (an unterminated quote, an escape whose offsets would no
+  // longer line up with the raw text): one unreadable entry is skipped,
+  // not the whole file.
+  function scanEntryText(line, col) {
+    var head = line.charAt(col);
+    if (head === '"' || head === "'") {
+      var i, end = -1;
+      if (head === '"') {
+        for (i = col + 1; i < line.length; i++) {
+          if (line.charAt(i) === '\\') { i++; continue; }
+          if (line.charAt(i) === '"') { end = i; break; }
+        }
+      } else {
+        for (i = col + 1; i < line.length; i++) {
+          if (line.charAt(i) === "'") {
+            if (line.charAt(i + 1) === "'") { i++; continue; }
+            end = i; break;
+          }
+        }
+      }
+      if (end < 0) return null;
+      var inner = line.slice(col + 1, end);
+      if (head === '"' && inner.indexOf('\\') >= 0) return null;
+      if (head === "'" && inner.indexOf("''") >= 0) return null;
+      return { text: inner, col: col + 1 };
+    }
+    var split = splitComment(line.slice(col));
+    return { text: split.value, col: col };
+  }
+
+  // Absolute (/mnt/...) or relative (./data) — the two shapes that resolve
+  // to a real folder. Anything else — a bare name (appdata), a ${...}
+  // reference compose only fills in at run time — is either a named volume
+  // or unresolvable, and neither is a path this can go and check.
+  function isHostPathLike(s) {
+    if (s.indexOf('${') >= 0) return false;
+    return s.charAt(0) === '/' || s.charAt(0) === '.';
+  }
+
+  /**
+   * hostPaths(text) -> [{path, line, col, len}]
+   *
+   * Every host-side path of a volume mount under a service — not a
+   * top-level volumes: declaration, which names a Docker-managed volume
+   * rather than a folder on disk. `line`/`col` are 0-based; `col` points
+   * inside any surrounding quotes. Ordered by line then column. Never
+   * throws: anything this cannot make sense of is simply left out.
+   */
+  function hostPaths(text) {
+    var out = [];
+    try {
+      text = String(text == null ? '' : text);
+      var lines = text.split('\n');
+      var stack = [];    // ancestor mapping keys enclosing the current line
+
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var c = classify(line, i);
+        if (c.kind === 'blank' || c.kind === 'comment') continue;
+
+        // Pop ancestors this line is no longer inside. A sequence item is
+        // allowed to sit at the SAME indent as its own key (compose accepts
+        // both), so only a sibling KEY at that indent replaces the key —
+        // the item itself must not pop it off.
+        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
+        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
+
+        if (c.kind === 'key') { stack.push({ indent: c.indent, key: c.key }); continue; }
+        if (c.kind !== 'seq' || !c.sub) continue;
+
+        var inServiceVolumes = stack.length >= 3 &&
+          stack[stack.length - 1].key === 'volumes' &&
+          stack[stack.length - 3].key === 'services';
+        if (!inServiceVolumes) continue;
+
+        if (c.sub.kind === 'key') {
+          // Long form over several lines: {type:, source:, target:, ...}.
+          // Read the whole item before deciding, since type: can follow
+          // source: in the file — then walk on past it, rather than folding
+          // its fields into the ancestor stack above, which exists to find
+          // volumes: blocks and has no business tracking a mount's own keys.
+          var itemIndent = c.indent, type = null, source = null, j = i;
+          while (j < lines.length) {
+            var cj = j === i ? c.sub : classify(lines[j], j);
+            if (cj.kind === 'blank' || cj.kind === 'comment') { j++; continue; }
+            if (j !== i && cj.indent <= itemIndent) break;
+            if (cj.kind === 'key' && cj.valueCol >= 0) {
+              var sc = scanEntryText(lines[j], cj.valueCol);
+              if (sc && cj.key === 'type') type = sc.text;
+              if (sc && cj.key === 'source') source = { text: sc.text, line: j, col: sc.col };
+            }
+            j++;
+          }
+          if (source && (type === null || type === 'bind') && isHostPathLike(source.text)) {
+            out.push({ path: source.text, line: source.line, col: source.col, len: source.text.length });
+          }
+          i = j - 1;
+          continue;
+        }
+
+        // Short form: "HOST:CONTAINER[:MODE]", possibly quoted whole.
+        var scanned = scanEntryText(line, c.contentCol);
+        if (!scanned) continue;
+        var bits = splitOutsideVars(scanned.text);
+        if (bits.length < 2) continue;               // a bare container path: no host side
+        var host = bits[0];
+        if (!isHostPathLike(host)) continue;          // a named volume, not a path
+        out.push({ path: host, line: i, col: scanned.col, len: host.length });
+      }
+    } catch (e) {
+      return [];
+    }
+    out.sort(function (a, b) { return a.line - b.line || a.col - b.col; });
+    return out;
+  }
+
+  /* =====================================================================
    * Exports
    * ===================================================================== */
 
@@ -2918,6 +5247,7 @@
     buildForm: buildForm,
     setPart: setPart,
     renameService: renameService,
+    addService: addService,
     setValue: setValue,
     setComment: setComment,
     addItem: addItem,
@@ -2946,7 +5276,38 @@
     serviceAtLine: serviceAtLine,
     lineAtOffset: lineAtOffset,
     emitScalar: emitScalar,
-    splice: splice
+    splice: splice,
+    // Phase 1 (PLAN.md): the Sections panel's byte-for-byte move of a
+    // section between the compose file and x-unraid.sections.
+    readSections: readSections,
+    stashSection: stashSection,
+    restoreSection: restoreSection,
+    setSectionState: setSectionState,
+    // The editor overlay's one-line-at-a-time syntax tokeniser — see the
+    // "Syntax highlighting" section above for the carry contract.
+    highlight: highlight,
+    // The gutter's error/warning check — see the "Linting" section above.
+    lint: lint,
+    // The editor's find/replace bar — see the "Text search" section above.
+    searchMatches: searchMatches,
+    // The editor's autocomplete and hover help — see the "Key suggestions
+    // and descriptions" section above. describeKeyAt is exported as keyAt;
+    // the parser's own internal keyAt() is a different function entirely.
+    keySuggestions: keySuggestions,
+    // PLAN_15 phase 2: valueSuggestions() is keySuggestions()'s mirror image
+    // for the value half of a key: value line — see the comment above it.
+    valueSuggestions: valueSuggestions,
+    keyAt: describeKeyAt,
+    keyInfo: keyInfo,
+    // The Form pane's field help — see fieldHelp()/helpGaps() above.
+    fieldHelp: fieldHelp,
+    helpGaps: helpGaps,
+    // Every host-side path of a volume mount — see the "Host paths" section
+    // above. Used to check the folder actually exists on the server.
+    hostPaths: hostPaths,
+    // PLAN_15 phase 1: the dropdown value lists moved out of stacks.js's
+    // CHOICES table — see the comment above VOCAB for what stayed behind.
+    vocab: vocab
   };
 
   if (typeof window !== 'undefined') window.StackmanYaml = API;

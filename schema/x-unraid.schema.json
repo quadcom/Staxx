@@ -35,7 +35,20 @@
         "project":  { "type": "string", "format": "uri" },
         "support":  { "type": "string", "format": "uri" },
         "readme":   { "type": "string", "format": "uri" },
-        "author":   { "type": "string" }
+        "author":   { "type": "string" },
+        "sections": {
+          "type": "object",
+          "description": "Form sections a service has switched off, keyed by service name then by compose key (healthcheck, ports, deploy.resources, cap_add…). Each entry is either the boolean false — hidden, holding nothing — or a string holding JSON ({\"after\":…,\"lines\":[…]}), the section's own lines kept verbatim so re-enabling it restores them byte for byte. The JSON inside that string is deliberately not validated here: it is not YAML, so it is one opaque line to this schema, not a second copy of the compose structure. If the compose file itself still has the block, the file wins and a leftover entry here is ignored.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                { "const": false },
+                { "type": "string" }
+              ]
+            }
+          }
+        }
       }
     },
 

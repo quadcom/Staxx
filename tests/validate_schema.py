@@ -75,6 +75,22 @@ NEGATIVE = [
         "service overview given as a number",
         service_doc(overview=3),
     ),
+    (
+        "sections given as a list rather than a mapping",
+        {"x-unraid": {"sections": [{"web": {"ports": False}}]}},
+    ),
+    (
+        "a sections entry given as a number",
+        {"x-unraid": {"sections": {"web": {"ports": 1}}}},
+    ),
+    (
+        "a sections entry given as true rather than false or a string",
+        {"x-unraid": {"sections": {"web": {"ports": True}}}},
+    ),
+    (
+        "a sections entry given as a nested object instead of a JSON string",
+        {"x-unraid": {"sections": {"web": {"healthcheck": {"after": "image", "lines": []}}}}},
+    ),
 ]
 
 # (description, document) — each must PASS validation.
@@ -113,6 +129,23 @@ POSITIVE = [
     ("a leftover fields: block is just an unknown key", service_doc(
         fields=[{"port": 8096, "title": "Web interface"}],
     )),
+    # The three forms a sections entry can take: switched off holding nothing,
+    # switched off holding its stashed lines as a JSON string, and (implicitly,
+    # by simply not appearing) no opinion at all.
+    ("a sections entry switched off holding nothing", {"x-unraid": {
+        "sections": {"web": {"ports": False}},
+    }}),
+    ("a sections entry switched off holding a JSON string", {"x-unraid": {
+        "sections": {"web": {
+            "healthcheck": '{"after":"image","lines":["healthcheck:","  interval: 30s"]}',
+        }},
+    }}),
+    ("sections across more than one service", {"x-unraid": {
+        "sections": {
+            "web": {"healthcheck": '{"after":"image","lines":[]}', "ports": False},
+            "db": {"logging": '{"after":null,"lines":[]}'},
+        },
+    }}),
 ]
 
 

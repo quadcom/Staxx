@@ -23,8 +23,25 @@
   var yamlPane    = document.getElementById('stackman-yaml');
   var yamlNums    = document.getElementById('stackman-yamlnums');
   var yamlMarks   = document.getElementById('stackman-yamlmarks');
+  var yamlWrap    = document.getElementById('stackman-yamlwrap');
+  var yamlInk     = document.getElementById('stackman-yamlink');
+  // The problem markers' own layer, a sibling of the numbers inside the same
+  // gutter div. May be null while the markup has not landed yet — guarded
+  // wherever it is used, the same way paintInk() guards for YAML.highlight.
+  var yamlDots    = yamlNums.querySelector('.stackman-yamldots');
   var yamlStatus  = document.getElementById('stackman-yaml-status');
+  // The autocomplete list and the hover-help panel, both siblings of the
+  // textarea inside yamlWrap. May be null while the markup has not landed
+  // yet — guarded everywhere they are used, the same way yamlDots is above.
+  var suggestBox  = document.getElementById('stackman-suggest');
+  var keyHelp     = document.getElementById('stackman-keyhelp');
   var formHost    = document.getElementById('stackman-form');
+  // The structure outline: a button in the modal header and the panel it
+  // toggles open, both siblings inside .stackman-outlinewrap. May be null
+  // while the markup has not landed yet — guarded everywhere below, the same
+  // way suggestBox is guarded above.
+  var outlineBtn   = document.getElementById('stackman-outline-btn');
+  var outlinePanel = document.getElementById('stackman-outline');
   var sanitiseBox = document.getElementById('stackman-sanitise');
   var sanitiseNote = document.getElementById('stackman-sanitise-note');
   var gapNote     = document.getElementById('stackman-required-note');
@@ -43,6 +60,22 @@
   var pickerList  = document.getElementById('stackman-picker-list');
   var pickerMsg   = document.getElementById('stackman-picker-msg');
   var pickerNew   = document.getElementById('stackman-picker-newname');
+
+  // The find/replace bar. May be null while the markup has not landed yet —
+  // every function below that touches one of these guards on findBar first,
+  // the same way yamlDots is guarded above.
+  var findBar         = document.getElementById('stackman-find');
+  var findWhat        = document.getElementById('stackman-find-what');
+  var findCount       = document.getElementById('stackman-find-count');
+  var findPrev        = document.getElementById('stackman-find-prev');
+  var findNext        = document.getElementById('stackman-find-next');
+  var findCase        = document.getElementById('stackman-find-case');
+  var findRegex       = document.getElementById('stackman-find-regex');
+  var findClose       = document.getElementById('stackman-find-close');
+  var findReplaceRow  = document.getElementById('stackman-find-replacerow');
+  var findWith        = document.getElementById('stackman-find-with');
+  var findOne         = document.getElementById('stackman-find-one');
+  var findAll         = document.getElementById('stackman-find-all');
 
   var YAML = window.StackmanYaml || null;
 
@@ -70,6 +103,7 @@
     { binder: 'list:profiles',   word: 'profile' },
     { binder: 'list:dns',        word: 'DNS server' },
     { binder: 'list:cap_add',    word: 'permission' },
+    { binder: 'list:cap_drop',   word: 'permission' },
     { binder: 'list:expose',     word: 'port' },
     { binder: 'list:env_file',   word: 'file' },
     // The long form of depends_on — groupsForService swaps the group's own
@@ -114,32 +148,80 @@
   // class.
   var GROUPS = [
     { key: 'container', heading: 'Container', cls: 'stackman-formgroup--container', note: '(required)' },
-    { key: 'port',      heading: 'Ports',     cls: 'stackman-formgroup--pair',   add: 'port' },
-    { key: 'volume',    heading: 'Volumes',   cls: 'stackman-formgroup--pair',   add: 'volume' },
-    { key: 'env',       heading: 'Variables', cls: 'stackman-formgroup--pair',   add: 'env' },
-    { key: 'device',    heading: 'Devices',   cls: 'stackman-formgroup--device', add: 'device' },
+    // --mapped, not --pair: a port and a mount carry a third small box (the
+    // protocol, the read/write mode) that a variable and a label do not, so
+    // they take a five-track template while the other two keep the four.
+    // `flag` gates whether the group shows at all (serviceFlags/the render
+    // loop below) — every group in this table but Container and Advanced has
+    // one now, driven by the SECTIONS table beside it.
+    { key: 'port',      heading: 'Ports',     cls: 'stackman-formgroup--mapped', add: 'port',   flag: 'port' },
+    { key: 'volume',    heading: 'Volumes',   cls: 'stackman-formgroup--mapped', add: 'volume', flag: 'volume' },
+    { key: 'env',       heading: 'Variables', cls: 'stackman-formgroup--pair',   add: 'env',    flag: 'env' },
+    { key: 'device',    heading: 'Devices',   cls: 'stackman-formgroup--device', add: 'device', flag: 'device' },
+    { key: 'label',     heading: 'Labels',    cls: 'stackman-formgroup--pair',   add: 'label',  flag: 'label' },
     // health and resources have no `add`: every one of their leaves is
     // always present as a field (harvestLeaves), so typing into a blank box
     // is what creates the line — an Add button would offer an action that
     // always fails. Same column shape as Advanced (label · value · note) —
-    // reused as-is rather than given a template of their own. `flag` gates
-    // whether the group shows at all (serviceFlags/the render loop below);
-    // depends still needs its own `add`, since a dependency is a list entry
-    // rather than a fixed leaf, and its own group rather than Advanced's.
+    // reused as-is rather than given a template of their own.
     { key: 'health',     heading: 'Health check',     cls: 'stackman-formgroup--advanced', flag: 'health' },
     { key: 'resources',  heading: 'Resource limits',  cls: 'stackman-formgroup--advanced', flag: 'resources' },
     { key: 'depends',    heading: 'Depends on', cls: 'stackman-formgroup--single',
       add: 'list:depends_on', flag: 'depends' },
-    { key: 'label',     heading: 'Labels',    cls: 'stackman-formgroup--pair',   add: 'label' },
+    // The nine list sections used to be discovered per service, one group per
+    // compose key the file happened to use (see groupsForService's history).
+    // SECTIONS now names all of them, so they are static rows here too —
+    // shown or hidden by their own tick, same as everything else in this list.
+    { key: 'list:networks',  heading: 'Networks',            cls: 'stackman-formgroup--single', add: 'list:networks',  flag: 'list:networks' },
+    { key: 'list:secrets',   heading: 'Secrets',             cls: 'stackman-formgroup--single', add: 'list:secrets',   flag: 'list:secrets' },
+    { key: 'list:configs',   heading: 'Configs',             cls: 'stackman-formgroup--single', add: 'list:configs',   flag: 'list:configs' },
+    { key: 'list:profiles',  heading: 'Profiles',            cls: 'stackman-formgroup--single', add: 'list:profiles',  flag: 'list:profiles' },
+    { key: 'list:dns',       heading: 'DNS servers',         cls: 'stackman-formgroup--single', add: 'list:dns',       flag: 'list:dns' },
+    { key: 'list:cap_add',   heading: 'Extra permissions',   cls: 'stackman-formgroup--single', add: 'list:cap_add',   flag: 'list:cap_add' },
+    { key: 'list:cap_drop',  heading: 'Dropped permissions', cls: 'stackman-formgroup--single', add: 'list:cap_drop',  flag: 'list:cap_drop' },
+    { key: 'list:expose',    heading: 'Internal ports',      cls: 'stackman-formgroup--single', add: 'list:expose',    flag: 'list:expose' },
+    { key: 'list:env_file',  heading: 'Variable files',      cls: 'stackman-formgroup--single', add: 'list:env_file',  flag: 'list:env_file' },
+    { key: 'logging',    heading: 'Logging',   cls: 'stackman-formgroup--advanced', flag: 'logging' },
     { key: 'advanced',  heading: 'Advanced',  cls: 'stackman-formgroup--advanced' }
   ];
+
+  // Every switchable section, in the order it renders and the order the
+  // Sections picker lists it. `path` is the compose key(s) stashSection,
+  // restoreSection and setSectionState (compose-model.js) move — joined with
+  // '.' for the entry name x-unraid.sections records it under. `on` is
+  // whether a service with nothing recorded starts ticked. Container and
+  // Advanced are not here: Container is required, and Advanced is the
+  // catch-all for anything with no better home, so hiding it could hide
+  // something the file genuinely has.
+  var SECTIONS = [
+    { key: 'port',          label: 'Ports',               path: ['ports'],               on: true },
+    { key: 'volume',        label: 'Volumes',             path: ['volumes'],             on: true },
+    { key: 'env',           label: 'Variables',           path: ['environment'],         on: true },
+    { key: 'device',        label: 'Devices',             path: ['devices'],             on: true },
+    { key: 'label',         label: 'Labels',              path: ['labels'],              on: true },
+    { key: 'health',        label: 'Health check',        path: ['healthcheck'],         on: false },
+    { key: 'resources',     label: 'Resource limits',     path: ['deploy', 'resources'], on: false },
+    { key: 'depends',       label: 'Depends on',          path: ['depends_on'],          on: false },
+    { key: 'list:networks', label: 'Networks',            path: ['networks'],            on: false },
+    { key: 'list:secrets',  label: 'Secrets',             path: ['secrets'],             on: false },
+    { key: 'list:configs',  label: 'Configs',             path: ['configs'],             on: false },
+    { key: 'list:profiles', label: 'Profiles',            path: ['profiles'],            on: false },
+    { key: 'list:dns',      label: 'DNS servers',         path: ['dns'],                 on: false },
+    { key: 'list:cap_add',  label: 'Extra permissions',   path: ['cap_add'],             on: false },
+    { key: 'list:cap_drop', label: 'Dropped permissions', path: ['cap_drop'],            on: false },
+    { key: 'list:expose',   label: 'Internal ports',      path: ['expose'],              on: false },
+    { key: 'list:env_file', label: 'Variable files',      path: ['env_file'],            on: false },
+    { key: 'logging',       label: 'Logging',             path: ['logging'],             on: false }
+  ];
+  var SECTIONS_BY_KEY = {};
+  for (var _si = 0; _si < SECTIONS.length; _si++) SECTIONS_BY_KEY[SECTIONS[_si].key] = SECTIONS[_si];
 
   // The caption text named per group; container has no trailing blank for a ×
   // column, since it never grows one.
   var CAPTIONS = {
     container: ['setting', 'value', 'note, kept in the file'],
-    port:      ['on the server', 'in the container', 'note, kept in the file'],
-    volume:    ['path on the server', 'path in the container', 'note, kept in the file'],
+    port:      ['on the server', 'in the container', 'protocol', 'note, kept in the file'],
+    volume:    ['path on the server', 'path in the container', 'read and write', 'note, kept in the file'],
     device:    ['device', 'note, kept in the file'],
     env:       ['variable name', 'value', 'note, kept in the file'],
     label:     ['label name', 'value', 'note, kept in the file'],
@@ -149,6 +231,7 @@
     // any other dynamic list. The three-column shape phase 1 wrote here was
     // for the long form's name/condition pair, which does not exist yet.
     depends:   ['service', 'note, kept in the file'],
+    logging:   ['setting', 'value', 'note, kept in the file'],
     advanced:  ['setting', 'value', 'note, kept in the file']
   };
 
@@ -180,6 +263,10 @@
     // key like replicas behind an off tick. The form must never hide
     // something the file has.
     if (/^deploy\.resources\./.test(f.target)) return 'resources';
+    // logging.driver (and the whole logging: block, when it is some shape the
+    // form cannot open) belongs beside its own tick, not off in Advanced —
+    // same reasoning as healthcheck/deploy.resources above.
+    if (/^logging(\.|$)/.test(f.target)) return 'logging';
     // Short-form depends_on shares the Depends on group with the long form —
     // which stays a locked field in Advanced until phase 5 (see f.locked
     // below), so only the short form's own list entries are routed here.
@@ -196,18 +283,13 @@
     return f.binder;
   }
 
-  // A service's own group list: the static table, plus one dynamic group per
-  // distinct list key the service has, inserted after Labels and before
-  // Advanced — which falls out of building the list this way, since Advanced is
-  // the only static entry pulled out to a separate tail.
-  //
-  // A list emptied by the × button is kept too. Its key really has gone from the
-  // file, so there is no field left to name it or place it, and both come from
-  // the last render instead — otherwise the group would either vanish, taking
-  // the Add button that refills it, or come back at the bottom of the service
-  // below lists it used to sit above.
+  // A service's own group list: the static table, with Depends on's row shape
+  // swapped for whichever of the two forms (short list, long name/condition
+  // pairs) the file's depends_on actually uses. Every other group is static
+  // now — SECTIONS names all nine list keys and logging up front, so there is
+  // nothing left to discover per service the way list groups once were.
   function groupsForService(fields, serviceName) {
-    var head = [], tail = [], has = {}, order = [], i;
+    var head = [], tail = [], i;
     for (i = 0; i < GROUPS.length; i++) (GROUPS[i].key === 'advanced' ? tail : head).push(GROUPS[i]);
 
     // Depends on has two row shapes, one per form the file's depends_on can
@@ -236,52 +318,17 @@
             add: 'list:depends_on', flag: 'depends' };
       break;
     }
-
-    for (i = 0; i < fields.length; i++) {
-      var f = fields[i];
-      // depends_on has its own static group now (see groupFor) — building a
-      // dynamic "list:depends_on" group here too would show every dependency
-      // twice, once under each heading.
-      if (f.service !== serviceName || f.binder !== 'list' || f.listKey === 'depends_on' ||
-          has[f.listKey]) continue;
-      has[f.listKey] = f.groupTitle;
-      order.push(f.listKey);
-    }
-
-    var was = listGroups[serviceName] || [], gone = emptiedLists[serviceName] || {};
-    var keep = [], kept = {};
-    for (i = 0; i < was.length; i++) {
-      var k = was[i].key;
-      if (k === 'depends_on') continue;  // never resurrect the dynamic group for it either
-      if (has[k])      { keep.push({ key: k, heading: has[k] }); kept[k] = true; }
-      else if (gone[k]) { keep.push(was[i]); kept[k] = true; }
-    }
-    for (i = 0; i < order.length; i++) {
-      if (kept[order[i]]) continue;
-      keep.push({ key: order[i], heading: has[order[i]] });
-    }
-
-    listGroups[serviceName] = keep;
-    for (i = 0; i < keep.length; i++) {
-      head.push({
-        key: 'list:' + keep[i].key,
-        heading: keep[i].heading,
-        cls: 'stackman-formgroup--single',
-        add: 'list:' + keep[i].key
-      });
-    }
     return head.concat(tail);
   }
 
-  // The plain-English name of each switchable group, shared by its tick box
-  // label and the confirm/undo sentences the change listener writes below.
-  var FLAG_LABELS = { health: 'Health check', resources: 'Resource limits', depends: 'Depends on' };
-
-  // Which flag (if any) a field's presence counts towards. Broader than
+  // Which section (if any) a field's presence counts towards. Broader than
   // groupFor()'s routing for depends: this also catches the long-form
   // depends_on map, which groupFor still exiles to Advanced as a locked
   // field (phase 5) but which just as surely means the file already has
-  // dependencies, so the tick has to read true for it.
+  // dependencies, so the tick has to read true for it. Everything else falls
+  // through to groupFor(), which already sorts port/volume/list:dns/etc. into
+  // the same keys SECTIONS uses — a field groupFor sends to Advanced is
+  // simply not one of them, and is ignored here too.
   function flagFor(f) {
     if (/^healthcheck\./.test(f.target)) return 'health';
     if (/^deploy\.resources\./.test(f.target)) return 'resources';
@@ -291,15 +338,18 @@
     // The other two catch the short list form and the still-locked inline
     // flow map, which carries no binder of its own.
     if (f.binder === 'depends' || f.listKey === 'depends_on' || f.target === 'depends_on') return 'depends';
-    return null;
+    if (/^logging(\.|$)/.test(f.target)) return 'logging';
+    var g = groupFor(f);
+    return SECTIONS_BY_KEY[g] ? g : null;
   }
 
-  // How many of a service's fields the file genuinely holds for each group —
+  // How many of a service's fields the file genuinely holds for each section —
   // an absent leaf (harvestLeaves' placeholder for a line the file does not
-  // have) never counts. Used both to decide a flag's starting state and to
-  // name the count in the "are you sure" prompt when it is switched off.
+  // have) never counts. Used both to decide a tick's starting state and to
+  // tell the stash/setSectionState choice in the change listener below apart.
   function fileFlagCounts(form, name) {
-    var out = { health: 0, resources: 0, depends: 0 };
+    var out = {};
+    for (var si = 0; si < SECTIONS.length; si++) out[SECTIONS[si].key] = 0;
     for (var i = 0; i < form.fields.length; i++) {
       var f = form.fields[i];
       if (f.service !== name || f.absent) continue;
@@ -309,23 +359,35 @@
     return out;
   }
 
-  // Whether each of the three switchable groups shows for a service: true
-  // when the file already has it, or when this session ticked it on itself
-  // (flagOn — see its declaration above for why that has to live outside the
-  // form).
+  /* Sections switched on but still empty, as sectionOn[service][key]. This is
+   * the page's own state and is never written to the file: a section with
+   * nothing in it has nothing to record, and writing a marker for one would
+   * put an x-unraid block into a file that had no need of one. Adding the
+   * first entry makes the file hold the section itself, which is what carries
+   * the state from then on.
+   *
+   * The trade is deliberate: tick a section on, add nothing, save and reopen,
+   * and it is hidden again — having lost nothing, because there was nothing in
+   * it. Cleared whenever the editor opens a stack, beside sectionsOpen. */
+  var sectionOn = {};
+
+  // Whether each switchable section shows for a service: on when the file
+  // genuinely holds it; else when it has been ticked on in this editor; else
+  // what x-unraid.sections says (false hidden, an object with lines shown —
+  // the latter written by earlier versions and still read); else the section's
+  // own default.
   function serviceFlags(form, name) {
-    var counts = fileFlagCounts(form, name), over = flagOn[name] || {};
-    // depends also stays on once its last entry has been × 'd away this
-    // session. Every other list group survives emptying that way (see
-    // emptiedLists), and it has to: the Add button that refills the list
-    // lives on the group's own header, so a group that vanished with its
-    // last row would take the only way back with it.
-    var emptied = emptiedLists[name] || {};
-    return {
-      health:    counts.health    > 0 || !!over.health,
-      resources: counts.resources > 0 || !!over.resources,
-      depends:   counts.depends   > 0 || !!over.depends || !!emptied['depends_on']
-    };
+    var counts = fileFlagCounts(form, name);
+    var sections = YAML.readSections(form.doc)[name] || {};
+    var open = sectionOn[name] || {};
+    var out = {};
+    for (var i = 0; i < SECTIONS.length; i++) {
+      var s = SECTIONS[i];
+      if (counts[s.key] > 0) { out[s.key] = true; continue; }
+      var entry = sections[s.path.join('.')];
+      out[s.key] = entry === false ? false : (entry || open[s.key]) ? true : s.on;
+    }
+    return out;
   }
 
   var logPanel = document.getElementById('stackman-log-panel');
@@ -456,7 +518,14 @@
     input.type = 'text';
     input.className = 'stackman-inline-name';
     input.spellcheck = false;
+    // The same opt-outs NOFILL carries, set one at a time because this box is
+    // built as an element rather than as a string of markup.
     input.autocomplete = 'off';
+    input.setAttribute('data-1p-ignore', '');
+    input.setAttribute('data-lpignore', 'true');
+    input.setAttribute('data-bwignore', '');
+    input.setAttribute('data-form-type', 'other');
+    input.setAttribute('data-protonpass-ignore', 'true');
     input.value = current;
     if (opts.placeholder) input.placeholder = opts.placeholder;
 
@@ -616,15 +685,143 @@
     var w = yamlNums.offsetWidth;
     yamlPane.style.paddingLeft = (w + 9) + 'px';
     yamlMarks.style.left = w + 'px';
+    // The ink layer draws its own text, so it needs the textarea's own left
+    // padding, not the bands' — otherwise the colouring sits under the gutter.
+    yamlInk.firstElementChild.style.paddingLeft = (w + 9) + 'px';
+  }
+
+  // What paintInk() drew last time, so ordinary typing repaints only the one
+  // line that changed. carryAfter[i] is the tokeniser's carry state at the END
+  // of line i — needed because opening a "|" block scalar recolours every line
+  // below it, and closing one recolours them back.
+  var inkLines   = [];
+  var carryAfter = [];
+
+  // A compose file this large is pathological, and painting per-line colour on
+  // every keystroke would make typing laggy — a slow editor is worse than a
+  // plain-coloured one, so past this size the ink layer is switched off.
+  var INK_LIMIT = 3000;
+
+  function paintInk() {
+    if (modalBody.dataset.view === 'form') return;
+    if (!YAML || typeof YAML.highlight !== 'function') return;   // not landed yet
+
+    var text  = yamlPane.value;
+    var lines = text.split('\n');
+    var inner = yamlInk.firstElementChild;
+
+    var big = lines.length > INK_LIMIT;
+    yamlWrap.classList.toggle('stackman-noink', big);
+    if (big) {
+      inner.textContent = '';
+      inkLines   = [];
+      carryAfter = [];
+      return;
+    }
+
+    // The class is not decoration: without it an empty line has no line box at
+    // all, collapses to nothing, and every line below it drifts up out of step
+    // with the textarea and the gutter. The sheet's :empty::after puts the
+    // height back.
+    while (inner.children.length < lines.length) {
+      var row = document.createElement('div');
+      row.className = 'stackman-inkline';
+      inner.appendChild(row);
+    }
+    while (inner.children.length > lines.length) inner.lastElementChild.remove();
+
+    // Read from the OLD carry array throughout — overwriting it as we go would
+    // make a line's "did my incoming carry change" check compare against a
+    // value this same pass already rewrote, instead of what was really there
+    // before the edit.
+    var oldCarry = carryAfter;
+    var newCarry = new Array(lines.length);
+    var carry = '';
+
+    for (var i = 0; i < lines.length; i++) {
+      var carryIn    = carry;
+      var oldCarryIn = i === 0 ? '' : oldCarry[i - 1];
+
+      // Unchanged text with an unchanged carry in front of it tokenises to
+      // exactly what it did last time, so neither the work nor the DOM write
+      // is worth doing — which is what makes ordinary typing cost one line.
+      //
+      // It cannot stop the walk early, though, and an earlier version that did
+      // was wrong: an edit is not always one contiguous run. An undo, a paste
+      // over a selection, or a model write can change line 2 and line 40 and
+      // leave line 3 alone — and stopping at line 3 left line 40 showing the
+      // text it used to hold.
+      if (lines[i] === inkLines[i] && carryIn === oldCarryIn &&
+          oldCarry[i] !== undefined) {
+        newCarry[i] = oldCarry[i];
+        carry = oldCarry[i];
+        continue;
+      }
+
+      var res = YAML.highlight(lines[i], carryIn);
+      inner.children[i].innerHTML = res.html;
+      inkLines[i] = lines[i];
+      newCarry[i] = res.carry;
+      carry = res.carry;
+    }
+
+    inkLines.length = lines.length;
+    carryAfter = newCarry;
+  }
+
+  // Problems are sparse — a handful at most — so one element per problem,
+  // never one per line the way the ink layer works. `list` is whatever
+  // YAML.lint() returned (plus, after a refused save, one extra entry — see
+  // markSaveError()). Cleared and rebuilt in full on every call, since there
+  // are never enough of them for that to be worth avoiding.
+  function paintDots(list) {
+    if (modalBody.dataset.view === 'form') return;   // nothing on screen to paint into
+    if (!yamlDots) return;                            // markup not landed yet
+    yamlDots.textContent = '';
+
+    if (!LINE_H) measure();
+    list = list || [];
+    for (var i = 0; i < list.length; i++) {
+      var item = list[i];
+      if (item.line < 0) continue;   // whole-file problems have no line — setYamlStatus() shows those instead
+      var dot = document.createElement('div');
+      dot.className = 'stackman-yamldot stackman-yamldot--' + (item.level === 'warn' ? 'warn' : 'error');
+      // The MIDDLE of the line, not its top. A band fills the whole line so its
+      // top is the line's top; a dot is a few pixels tall and set that way sits
+      // against the line above's descenders. The sheet pulls it back half its
+      // own height, which keeps this free of any idea how big the dot is.
+      //
+      // No scroll term here, unlike repaintMark(): the marks layer is not
+      // moved on scroll and so has to subtract scrollTop itself, whereas this
+      // layer is inside the gutter and syncGutter() translates it.
+      dot.style.top = (PAD_T + (item.line + 0.5) * LINE_H) + 'px';
+      dot.title = item.message;
+      yamlDots.appendChild(dot);
+    }
   }
 
   function syncGutter() {
     yamlNums.firstElementChild.style.transform =
       'translateY(' + (-yamlPane.scrollTop) + 'px)';
+    // The dots live in the same gutter as the numbers, positioned the same
+    // unshifted way, so they need the same vertical carry — never horizontal,
+    // since the gutter itself never scrolls sideways.
+    if (yamlDots) {
+      yamlDots.style.transform = 'translateY(' + (-yamlPane.scrollTop) + 'px)';
+    }
+    // Unlike the number gutter, ink is full-width text — it has to track the
+    // textarea's horizontal scroll too, or it drifts out from under the words
+    // the moment a long line is scrolled sideways.
+    yamlInk.firstElementChild.style.transform =
+      'translate(' + (-yamlPane.scrollLeft) + 'px, ' + (-yamlPane.scrollTop) + 'px)';
   }
 
   yamlPane.addEventListener('input',  paintGutter);
-  yamlPane.addEventListener('scroll', function () { syncGutter(); repaintMark(); });
+  yamlPane.addEventListener('input',  paintInk);
+  yamlPane.addEventListener('scroll', function () {
+    syncGutter(); repaintMark();
+    hideSuggest(); hideHover();   // both are pixel-positioned; a scroll invalidates them
+  });
 
   // Re-reading the file and redrawing the form is the expensive direction, so
   // it waits for a pause in typing rather than running on every keystroke.
@@ -652,12 +849,21 @@
     // click — but a window dragged narrower can arrive here already in it.
     if (view === 'split' && NARROW.matches) view = 'form';
     modalBody.dataset.view = view;
+    // Both panels are positioned in pixels against the compose pane, which a
+    // view switch just moved or hid outright.
+    hideSuggest();
+    hideHover();
     var btns = modal.querySelectorAll('.stackman-viewbtn');
     for (var i = 0; i < btns.length; i++) {
       btns[i].setAttribute('aria-pressed', btns[i].dataset.view === view ? 'true' : 'false');
     }
     // A band measured while its pane was hidden is a band in the wrong place.
-    if (view !== 'form') { paintGutter(); syncGutter(); repaintMark(); }
+    if (view !== 'form') {
+      paintGutter(); paintInk(); syncGutter(); repaintMark();
+      // Repaint from what is already known rather than re-linting — the
+      // document has not changed just because the pane became visible.
+      redrawDots();
+    }
   }
 
   // The dialog's own width now glides between Form and Split (CSS transition),
@@ -687,27 +893,18 @@
   var MODEL = null;      // the last form that parsed
   var activeField = null;
 
-  // A service's list groups follow its fields, so removing a list's last entry
-  // takes the group and its Add button with it — the key genuinely is gone,
-  // since "networks:" with nothing under it is null and compose refuses the
-  // file. These two remember what a service showed, so an emptied group keeps
-  // its place and its name: the field it took both from has just been removed.
-  var listGroups   = {};   // service -> [{ key, heading }, …] as last rendered
-  var emptiedLists = {};   // service -> { listKey: 1 } emptied by × this session
-
-  // Whether the Stack section's <details> is open. Lives here for the same
-  // reason listGroups and emptiedLists do: renderForm() rebuilds the whole
-  // form from scratch on every structural edit, so nothing the DOM itself
-  // remembers survives an add, remove or undo.
+  // Whether the Stack section's <details> is open. renderForm() rebuilds the
+  // whole form from scratch on every structural edit, so nothing the DOM
+  // itself remembers survives an add, remove or undo — this is the session's
+  // memory of it instead.
   var stackOpen = false;
 
-  // Which of a service's three switchable groups (health/resources/depends)
-  // this session has ticked on with nothing written yet. A ticked-but-empty
-  // group has no field in the file to remember it by, and renderForm()
-  // rebuilds the whole form from scratch on every structural edit, so the
-  // session is the only place this survives — same reason listGroups and
-  // emptiedLists exist above.
-  var flagOn = {};
+  // Whether a service's Sections panel is open. Same reason stackOpen exists:
+  // the panel is rendered by renderForm() itself (see groupHeadHtml), not
+  // built by hand on click, because every tick reparses and redraws the whole
+  // form — a hand-built panel would be destroyed by the first tick made
+  // inside it. This map is what survives that redraw.
+  var sectionsOpen = {};
 
   function esc(s) {
     return String(s === undefined || s === null ? '' : s)
@@ -732,20 +929,11 @@
   var CHOICES = {
     'setting/restart': {
       hint: 'when to start it again',
-      options: [
-        ['no',             'no — leave it stopped'],
-        ['always',         'always — start it again whenever it stops'],
-        ['unless-stopped', 'unless-stopped — always, unless you stopped it'],
-        ['on-failure',     'on-failure — only when it crashes']
-      ]
+      vocab: 'restart'
     },
     'setting/network_mode': {
       hint: 'which network the container joins',
-      options: [
-        ['bridge', 'bridge — Docker’s own private network'],
-        ['host',   'host — share the server’s network directly'],
-        ['none',   'none — no network at all']
-      ]
+      vocab: 'netmode'
     },
     // Values are readTest()/writeTest()'s own words (compose-model.js), not
     // the compose keywords (CMD-SHELL/CMD/NONE) — the dropdown only ever
@@ -764,13 +952,146 @@
     // condition values, given plain-English labels the same way restart's are.
     'depends/condition': {
       hint: 'when the dependency counts as ready',
+      vocab: 'dependscondition'
+    },
+    'setting/pull_policy': {
+      hint: 'when to check for a newer image',
+      vocab: 'pullpolicy'
+    },
+    'setting/stop_signal': {
+      hint: 'which signal asks the container to stop',
+      vocab: 'stopsignal'
+    },
+    // Which values ipc's vocabulary carries — and leaves "container:<name>"
+    // out on purpose — is compose-model.js's call now (see its 'ipc' vocab
+    // and PLAN.md's "everyday enum set only" call). service: options are
+    // still joined per call here, below.
+    'setting/ipc': {
+      hint: 'which IPC namespace the container joins',
+      vocab: 'ipc'
+    },
+    'setting/pid': {
+      hint: 'which process namespace the container joins',
+      vocab: 'pid'
+    },
+    'setting/logging.driver': {
+      hint: 'where this container’s logs are sent',
+      vocab: 'logdriver'
+    },
+    // A short-form port's protocol and a short-form volume's mode (see
+    // splitPortShort()/splitPathShort() in compose-model.js): the value
+    // carries its own separator, so the empty option writes the separator
+    // away too rather than needing a special case for "nothing chosen".
+    //
+    // Two options, not three: '' and '/tcp' mean the same thing to Docker, and
+    // offering both read as one option listed twice. A file that already spells
+    // out '/tcp' keeps it — optionsHtml() puts any value it does not recognise
+    // at the top of the list — so nothing is rewritten behind anyone's back.
+    'port/proto': {
+      hint: 'which protocol this port uses',
       options: [
-        ['service_started',               'wait until it has started'],
-        ['service_healthy',               'wait until it reports healthy'],
-        ['service_completed_successfully', 'wait until it has finished OK']
+        ['',     'tcp — the default'],
+        ['/udp', 'udp']
       ]
+    },
+    'volume/mode': {
+      hint: 'whether the container can write to this mount',
+      options: [
+        ['',    'read and write — the default'],
+        [':ro', 'read-only'],
+        [':rw', 'read and write, spelled out']
+      ]
+    },
+    // A declaration's driver is folded onto the row's OWN value box (see
+    // DECL_PRIMARY in compose-model.js), never a suffix on its target, so
+    // choiceFor() below looks these up by declKind directly rather than by
+    // the binder+target key every other entry here uses.
+    'declared/networks.driver': {
+      hint: 'how Docker implements this network',
+      vocab: 'networkdriver'
+    },
+    // Why only 'local' is listed, and why an unlisted value still joins the
+    // file as it stands, is compose-model.js's 'volumedriver' vocab's call
+    // now — see its own comment there.
+    'declared/volumes.driver': {
+      hint: 'what manages the storage behind this volume',
+      vocab: 'volumedriver'
     }
   };
+
+  // A boolean field's dropdown, worded for what the setting actually does —
+  // f.type === 'boolean' is the trigger (see compose-model.js's booleanTail()
+  // and KEYS[...].type), never a hand-kept list of key names, but the WORDING
+  // still benefits from knowing which setting it is. Keyed the same way
+  // booleanTail() tells the two dynamically-named cases apart (a dependency's
+  // required, a declaration's external) from the five statically-named ones.
+  var BOOL_CHOICES = {
+    'privileged': {
+      hint: 'how much access to the host this container gets',
+      options: [['true', 'true — full access to the host'],
+                ['false', 'false — normal, isolated']]
+    },
+    'read_only': {
+      hint: 'whether the container can write to its own filesystem',
+      options: [['true', 'true — read-only filesystem'],
+                ['false', 'false — normal, writable filesystem']]
+    },
+    'init': {
+      hint: 'whether a tiny init process runs as PID 1',
+      options: [['true', 'true — runs one, to clean up stray processes'],
+                ['false', 'false — the container’s own process is PID 1']]
+    },
+    'tty': {
+      hint: 'whether the container gets a terminal',
+      options: [['true', 'true — allocates one, as if run interactively'],
+                ['false', 'false — no terminal']]
+    },
+    'stdin_open': {
+      hint: 'whether standard input stays open',
+      options: [['true', 'true — keeps it open, as if run interactively'],
+                ['false', 'false — closes it at once']]
+    },
+    'healthcheck.disable': {
+      hint: 'whether the health check above is switched off',
+      options: [['true', 'true — disabled, even though one is written above'],
+                ['false', 'false — runs as written above']]
+    },
+    'depends.required': {
+      hint: 'whether this dependency must succeed for the service to start',
+      options: [['true', 'true — must start successfully, or this service will not start'],
+                ['false', 'false — allowed to fail without stopping this service']]
+    },
+    'declared.external': {
+      hint: 'whether this already exists outside the file',
+      options: [['true', 'true — already exists; this file only refers to it'],
+                ['false', 'false — created by this file']]
+    }
+  };
+  // Guarded the way safeFieldHelp/YAML.keySuggestions already are (see
+  // below) — a stale cached compose-model.js must leave a plain box or a
+  // datalist with no suggestions rather than throw. Returns null, never [],
+  // so a caller can tell "not landed yet" apart from "no values".
+  function safeVocab(id) {
+    if (!YAML || typeof YAML.vocab !== 'function') return null;
+    return YAML.vocab(id);
+  }
+
+  function boolChoice(f) {
+    var kind = f.binder === 'setting' ? f.target
+             : f.binder === 'depends'  && /\.required$/.test(f.target) ? 'depends.required'
+             : f.binder === 'declared' && /\.external$/.test(f.target) ? 'declared.external'
+             : '';
+    if (BOOL_CHOICES[kind]) return BOOL_CHOICES[kind];
+    var options = safeVocab('boolean');
+    return options ? { hint: 'true or false', options: options } : null;
+  }
+
+  // The Linux capability names cap_add/cap_drop accept — a suggestion list,
+  // not a closed one (see the datalist branch in boxHtml()), because compose
+  // also accepts CAP_-prefixed spellings and custom ones this table cannot
+  // know about. The names themselves, and their "what does that mean"
+  // labels, now live in compose-model.js's 'capability' vocab — see
+  // choiceFor()'s cap_add/cap_drop case below.
 
   // What hardware this server says it has. Filled in by the device picker far
   // below and read up here, because a device row is titled after the thing it
@@ -791,13 +1112,26 @@
   var devLoaded  = false;
 
   // This server's own docker networks, appended to the network_mode dropdown
-  // once they arrive — see netLoad() far below, beside devLoad().
+  // once they arrive — see netLoad() far below, beside devLoad(). Held apart
+  // from the vocab table itself (unlike the old CHOICES entry, which netLoad()
+  // used to push straight onto) because YAML.vocab() now hands back a fresh
+  // copy every call — a push onto that copy would vanish before the next
+  // redraw. Joined at render time in choiceFor(), the same way IMAGES/
+  // imageOptions() below is never folded into the image vocab either.
   var netLoaded  = false;
+  var NETWORKS   = [];      // [name, label] pairs found on this server, beyond netmode's own
 
-  // Compose also accepts forms this list does not carry — "on-failure:3" — so
-  // a value already in the file that is not on the list joins it as it stands.
-  // A dropdown that could not show the current value would change the file
-  // just by being opened.
+  // Images already on this server (IMAGES, up near choiceFor()) and, per
+  // repo, its tags from the registry — see imgLoad()/tagLoad() far below.
+  var imgLoaded  = false;
+  var tagCache   = {};      // repo -> tags[], including [] for "nothing found"
+  var tagTimer   = null;
+
+  // Compose also accepts forms a vocab list does not carry — restart's
+  // "on-failure:3" is one such value, kept in compose-model.js's own comment
+  // now — so a value already in the file that is not on the list joins it as
+  // it stands. A dropdown that could not show the current value would change
+  // the file just by being opened.
   // A `from` field points at a namespace the file declares once at the top —
   // networks:, secrets:, configs:, services: — and offers those real names
   // instead of a box to spell one in. `default` is added for networks even
@@ -831,20 +1165,21 @@
     return { hint: 'a named volume Docker manages, or a folder on the server', options: options };
   }
 
-  // network_mode also accepts "service:<name>" — join another service's
-  // network stack instead of getting one of its own — one option per OTHER
-  // service in the file (a service cannot share its own network). Built
+  // network_mode, ipc and pid all also accept "<prefix><name>" — join another
+  // service's namespace instead of getting one of its own — one option per
+  // OTHER service in the file (a service cannot share its own). `what` names
+  // the thing being shared, since the three settings do not share one. Built
   // fresh on every call rather than folded into CHOICES the way netLoad()
   // appends the server's own docker networks: that table is shared by every
   // service's row, and mutating it here would leak one service's option
   // list into every other service's dropdown.
-  function serviceModeOptions(serviceName) {
+  function serviceModeOptions(serviceName, prefix, what) {
     var names = (MODEL && MODEL.declared && MODEL.declared.services) || [];
     var options = [];
     for (var i = 0; i < names.length; i++) {
       if (names[i] === serviceName) continue;
-      options.push(['service:' + names[i],
-                    'service:' + names[i] + ' — share ' + names[i] + '’s network']);
+      options.push([prefix + names[i],
+                    prefix + names[i] + ' — share ' + names[i] + '’s ' + what]);
     }
     return options;
   }
@@ -860,6 +1195,180 @@
     if (!known) out.unshift('<option value="' + esc(value) + '" selected>' + esc(value) + '</option>');
     return out.join('');
   }
+
+  // A <datalist>'s own <option> never needs the "reinject the unknown
+  // current value" treatment optionsHtml() above gives a <select> — the text
+  // box already shows whatever was typed. Value is the bare name that lands
+  // in the box when an option is picked; the label (text content) is only
+  // ever shown as the suggestion's hint, never inserted — confirmed against
+  // Chrome and Firefox, which both fill the box from `value=`, not from the
+  // option's text.
+  function datalistOptionsHtml(options) {
+    var out = [];
+    for (var i = 0; i < options.length; i++) {
+      out.push('<option value="' + esc(options[i][0]) + '">' + esc(options[i][1]) + '</option>');
+    }
+    return out.join('');
+  }
+
+  // Every image already on this server, from imgLoad() below — empty until
+  // that reply lands, same as devIndex/devPresent above.
+  var IMAGES = [];
+
+  function imageOptions() {
+    var out = [];
+    for (var i = 0; i < IMAGES.length; i++) out.push([IMAGES[i], IMAGES[i]]);
+    return out;
+  }
+
+  // profiles: has no namespace of its own the way networks:/secrets:/etc. do
+  // — MODEL.declared only carries those four plus services — so the file's
+  // own services have to be walked by hand, straight off the parsed
+  // document, to find every profile name written anywhere in it.
+  function fileProfiles() {
+    var seen = {}, out = [];
+    var svcBlock = MODEL && MODEL.doc && MODEL.doc.root && MODEL.doc.root.kind === 'map' &&
+                   MODEL.doc.root.pairs.services && MODEL.doc.root.pairs.services.value;
+    if (!svcBlock || svcBlock.kind !== 'map') return out;
+
+    for (var i = 0; i < svcBlock.keys.length; i++) {
+      var svc = svcBlock.pairs[svcBlock.keys[i]];
+      var svcMap = svc && svc.value && svc.value.kind === 'map' ? svc.value : null;
+      var pPair = svcMap ? svcMap.pairs.profiles : null;
+      var seq = pPair && pPair.value && pPair.value.kind === 'seq' ? pPair.value : null;
+      if (!seq) continue;
+
+      for (var j = 0; j < seq.items.length; j++) {
+        var it = seq.items[j].value;
+        if (it && it.kind === 'scalar' && it.value && !seen[it.value]) {
+          seen[it.value] = true;
+          out.push(it.value);
+        }
+      }
+    }
+    return out;
+  }
+
+  function profileOptions() {
+    var names = fileProfiles(), out = [];
+    for (var i = 0; i < names.length; i++) out.push([names[i], names[i]]);
+    return out;
+  }
+
+  // Most of CHOICES now names a compose-model.js vocabulary id rather than
+  // carrying its own options — resolved here, at choiceFor()'s own call
+  // time, so the form never depends on compose-model.js having loaded first.
+  // Falls to a plain box (null), the same as safeVocab() itself, rather than
+  // an empty dropdown when the vocab is missing.
+  function resolveEntry(entry) {
+    if (!entry) return null;
+    if (!entry.vocab) return entry;
+    var options = safeVocab(entry.vocab);
+    return options ? { hint: entry.hint, options: options } : null;
+  }
+
+  // Every box that offers a closed list or a suggestion list, in one place —
+  // boxHtml() below calls this exactly once. Returns { hint, options }, the
+  // same shape with `open: true` added for a suggestion list (rendered as a
+  // <datalist> rather than a <select> — see boxHtml()), or null for a box
+  // that just takes whatever is typed. Precedence among the five original
+  // cases (explicit lookup, network_mode, depends/condition, `from`,
+  // volume's host-part heuristic) is unchanged from before this was pulled
+  // out of boxHtml() — read them in that order if changing any one of them.
+  function choiceFor(f, which) {
+    // A boolean is a boolean whatever it is called — see BOOL_CHOICES above
+    // and compose-model.js's booleanTail(). Checked first since it is the
+    // most specific signal available and never overlaps a key any case below
+    // also matches.
+    if (which === 'value' && f.type === 'boolean') return boolChoice(f);
+
+    // 1: explicit lookup by binder+target.
+    var choice = which === 'value' ? resolveEntry(CHOICES[f.binder + '/' + f.target]) : null;
+
+    // NETWORKS (this server's own docker networks) and serviceModeOptions()
+    // are both joined per call rather than stored on the vocab itself — see
+    // their own comments for why.
+    if (choice && f.target === 'network_mode') {
+      choice = { hint: choice.hint, options: choice.options.concat(NETWORKS, serviceModeOptions(f.service, 'service:', 'network')) };
+    }
+    // ipc and pid share network_mode's "service:<name>" trick, joined the
+    // same way and for the same reason.
+    if (choice && f.binder === 'setting' && (f.target === 'ipc' || f.target === 'pid')) {
+      var what = f.target === 'ipc' ? 'IPC namespace' : 'process namespace';
+      choice = { hint: choice.hint, options: choice.options.concat(serviceModeOptions(f.service, 'service:', what)) };
+    }
+
+    // 3: a dependency's condition is a closed set, not a
+    // namespace the file declares — CHOICES keys on binder+target, but a
+    // dependency's target carries its own name (depends_on.db,
+    // depends_on.redis...), so it can never be found that way. Checked
+    // directly instead, the same way a volume's host part gets its own
+    // dropdown just below. f.fold excludes restart/required, which share
+    // this binder but take a plain box (required gets its own boolean
+    // dropdown above instead).
+    if (!choice && which === 'value' && f.binder === 'depends' && !f.fold) choice = resolveEntry(CHOICES['depends/condition']);
+    // depends_on's long form is the one place `from` belongs on the name
+    // part rather than the value part — see harvestDependsLong() — so this
+    // is the only binder that looks there instead.
+    var fromPart = f.binder === 'depends' ? 'name' : 'value';
+    if (!choice && which === fromPart && f.from) choice = fromChoice(f);
+
+    // 5: a volume's host half: a name is Docker-managed storage, so offer the
+    // file's own declared names once there is no path already sitting in the
+    // box. A value with a slash, or one that interpolates a variable, is a
+    // path already and stays the honest path box instead of being guessed
+    // into a dropdown it does not belong in. `p.spot` excludes an anonymous
+    // volume, which has nothing here to write to at all. `noChoice` (the
+    // sentinel-swap escape hatch) is applied by the caller, since only it
+    // knows when that applies.
+    var p = f.parts[which];
+    if (!choice && which === 'host' && f.binder === 'volume' && p && p.spot &&
+        p.value.indexOf('/') < 0 && p.value.indexOf('${') < 0) {
+      choice = volumeSourceChoice();
+    }
+
+    if (choice) return choice;
+
+    // A declaration's driver is folded onto the row's OWN value box (see
+    // DECL_PRIMARY in compose-model.js) rather than living at a target this
+    // table could key on, so it is checked directly by declKind instead.
+    if (which === 'value' && f.binder === 'declared' && !f.fold &&
+        (f.declKind === 'networks' || f.declKind === 'volumes')) {
+      return resolveEntry(CHOICES['declared/' + f.declKind + '.driver']);
+    }
+
+    // A short-form port's protocol, or a short-form volume's mode — static
+    // pairs, not looked up by target, since a port/volume's target is the
+    // mapping's own key ("8096/tcp"), never "proto" or "mode".
+    if (which === 'proto' && f.binder === 'port')   return CHOICES['port/proto'];
+    if (which === 'mode'  && f.binder === 'volume') return CHOICES['volume/mode'];
+
+    // Suggest, never refuse: image, cap_add/cap_drop and profiles all offer
+    // what is known but accept anything typed — see the datalist branch in
+    // boxHtml() below, which `open: true` switches on.
+    if (which === 'value' && f.binder === 'setting' && f.target === 'image') {
+      return { hint: 'an image already on this server, or a fresh one to pull', options: imageOptions(), open: true };
+    }
+    if (which === 'value' && f.binder === 'list' && (f.listKey === 'cap_add' || f.listKey === 'cap_drop')) {
+      var capOptions = safeVocab('capability');
+      return capOptions ? { hint: 'a Linux capability name', options: capOptions, open: true } : null;
+    }
+    if (which === 'value' && f.binder === 'list' && f.listKey === 'profiles') {
+      return { hint: 'a profile named anywhere in this file', options: profileOptions(), open: true };
+    }
+
+    return null;
+  }
+
+  // Password managers ignore autocomplete="off" — that attribute only speaks
+  // to the browser's own autofill. They read the words around a box instead,
+  // so an environment row named MYSQL_ROOT_PASSWORD gets offered a saved
+  // login and a dropdown gets an icon planted inside it. There is no standard
+  // way to say "not a login field", so each manager's own opt-out is set:
+  // 1Password, LastPass, Bitwarden, Dashlane, Proton Pass. Leading space, so
+  // it appends straight onto an attribute list.
+  var NOFILL = ' autocomplete="off" data-1p-ignore data-lpignore="true"' +
+               ' data-bwignore data-form-type="other" data-protonpass-ignore="true"';
 
   // `head` is raw HTML — already built and already escaped by the caller —
   // rendered inside the box, just above the input line. It exists so a device
@@ -883,69 +1392,52 @@
     var t = TOOLS[tool];
     // The options say what the setting means, so the hint below the box says
     // what the setting is for instead of repeating "value".
-    var choice = which === 'value' ? CHOICES[f.binder + '/' + f.target] : null;
-
-    // See serviceModeOptions() above for why this is joined per call rather
-    // than stored on CHOICES itself.
-    if (choice && f.target === 'network_mode') {
-      choice = { hint: choice.hint, options: choice.options.concat(serviceModeOptions(f.service)) };
-    }
-    // A dependency's condition is a closed set, not a namespace the file
-    // declares — CHOICES keys on binder+target, but a dependency's target
-    // carries its own name (depends_on.db, depends_on.redis...), so it can
-    // never be found that way. Checked directly instead, the same way a
-    // volume's host part gets its own dropdown just below. f.fold excludes
-    // restart/required, which share this binder but take a plain box.
-    if (!choice && which === 'value' && f.binder === 'depends' && !f.fold) choice = CHOICES['depends/condition'];
-    // depends_on's long form is the one place `from` belongs on the name
-    // part rather than the value part — see harvestDependsLong() — so this
-    // is the only binder that looks there instead.
-    var fromPart = f.binder === 'depends' ? 'name' : 'value';
-    if (!choice && which === fromPart && f.from) choice = fromChoice(f);
-
-    // A volume's host half: a name is Docker-managed storage, so offer the
-    // file's own declared names once there is no path already sitting in the
-    // box. A value with a slash, or one that interpolates a variable, is a
-    // path already and stays the honest path box instead of being guessed
-    // into a dropdown it does not belong in. `p.spot` excludes an anonymous
-    // volume, which has nothing here to write to at all.
-    if (!noChoice && !choice && which === 'host' && f.binder === 'volume' && p.spot &&
-        p.value.indexOf('/') < 0 && p.value.indexOf('${') < 0) {
-      choice = volumeSourceChoice();
-    }
+    var choice = noChoice ? null : choiceFor(f, which);
 
     if (choice) hint = choice.hint;
 
     var boxTitle = hint;
+    var listId = 'stackman-dl-' + index + '-' + which;
 
-    var control = choice
-      ? '<select class="stackman-input stackman-choose"' +
-              ' data-row="' + index + '" data-part="' + which + '"' +
-              ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
-              ' title="' + esc(boxTitle) + '"' +
-              (dead ? ' disabled' : '') + '>' +
-          optionsHtml(choice, p.value) +
-        '</select>'
-      : '<input type="text" class="stackman-input"' +
+    var control = choice && choice.open
+      ? '<input type="text" class="stackman-input" list="' + listId + '"' +
               ' data-row="' + index + '" data-part="' + which + '"' +
               ' value="' + esc(p.value) + '"' +
               ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
               ' title="' + esc(boxTitle) + '"' +
-              ' spellcheck="false" autocomplete="off"' +
-              (dead ? ' disabled' : '') + '>';
+              ' spellcheck="false"' + NOFILL +
+              (dead ? ' disabled' : '') + '>' +
+          '<datalist id="' + listId + '">' + datalistOptionsHtml(choice.options) + '</datalist>'
+      : choice
+        ? '<select class="stackman-input stackman-choose"' +
+                ' data-row="' + index + '" data-part="' + which + '"' +
+                ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
+                ' title="' + esc(boxTitle) + '"' + NOFILL +
+                (dead ? ' disabled' : '') + '>' +
+            optionsHtml(choice, p.value) +
+          '</select>'
+        : '<input type="text" class="stackman-input"' +
+                ' data-row="' + index + '" data-part="' + which + '"' +
+                ' value="' + esc(p.value) + '"' +
+                ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
+                ' title="' + esc(boxTitle) + '"' +
+                ' spellcheck="false"' + NOFILL +
+                (dead ? ' disabled' : '') + '>';
 
     // A <div>, not a <label>, because the Browse button sits beside the input.
     // A label may not hold interactive content other than its own control, and
     // a click on a button inside one is not reliably kept away from it — so the
     // input carries its name in aria-label instead of by being wrapped.
-    return '<div class="stackman-box">' +
+    return '<div class="stackman-box' + (choice && choice.open ? ' stackman-box--open' : '') + '">' +
              (head || '') +
              '<div class="stackman-boxline">' +
                control +
-               // Never beside a dropdown: the tool mechanism reads and writes
-               // a text box directly (pickerOpen sets .value on it), and a
-               // <select>'s value has to be one of its own options.
-               (t && !dead && !choice
+               // Never beside a real <select>: the tool mechanism reads and
+               // writes a text box directly (pickerOpen sets .value on it),
+               // and a <select>'s value has to be one of its own options. A
+               // datalist box is still a text box underneath, so it keeps
+               // its picker (env_file's Browse button relies on this).
+               (t && !dead && (!choice || choice.open)
                  ? '<button type="button" class="stackman-browse"' +
                         ' data-tool="' + tool + '" data-row="' + index + '"' +
                         ' title="' + esc(t.title) + '">' +
@@ -979,7 +1471,7 @@
     return '<label class="stackman-box stackman-box--note">' +
              '<input type="text" class="stackman-input" data-row="' + index + '"' +
                    ' data-note="1" value="' + esc(f.note) + '"' +
-                   ' spellcheck="false" autocomplete="off"' +
+                   ' spellcheck="false"' + NOFILL +
                    (f.commentSpot ? '' : ' disabled') + '>' +
              '<span class="stackman-boxhint">note, kept in the file</span>' +
            '</label>';
@@ -1266,13 +1758,21 @@
   // locked leaf (driver_opts:, ipam: — a map, not a scalar) has no editable
   // part at all, so it falls back to the raw text a fully-locked row shows,
   // just without repeating that row's own heading and note.
+  // A fold row is a plain block, label above box, so its help paragraph needs
+  // none of the full-width care a grid field row's does — it simply follows
+  // the box. These are the settings least likely to be understood on sight
+  // (internal, attachable, external), so leaving them the only described
+  // fields with no way to read their description would be the odd one out.
   function declaredFoldHtml(t, index) {
     var body = t.locked
       ? '<pre class="stackman-fieldraw">' + esc(t.raw || '') + '</pre>'
       : boxHtml(t, index, 'value', 'value');
+    var help = t.locked ? null : safeFieldHelp(t);
+    var helpId = 'stackman-help-' + index;
     return '<div class="stackman-foldrow">' +
-             '<span class="stackman-fieldlabel">' + esc(t.title) + '</span>' +
+             '<span class="stackman-fieldlabel">' + esc(t.title) + helpBtnHtml(help, helpId) + '</span>' +
              body +
+             helpParaHtml(help, helpId) +
            '</div>';
   }
 
@@ -1285,6 +1785,7 @@
     var word = DECL_WORD[f.declKind] || 'declaration';
     return '<div class="stackman-declname">' +
              '<span class="stackman-declname-text">' + esc(f.parts.name.value) + '</span>' +
+             helpBtnHtml(safeFieldHelp(f), 'stackman-help-' + index) +
              '<button type="button" class="stackman-svcrename" data-decl-rename="1"' +
                     ' data-row="' + index + '" data-decl-kind="' + esc(f.declKind) + '"' +
                     ' data-decl-name="' + esc(f.parts.name.value) + '"' +
@@ -1309,10 +1810,56 @@
     return n;
   }
 
+  // Guarded the way YAML.keySuggestions/keyAt already are (:4830, :4937) — a
+  // stale cached script must leave a row with no help rather than throw.
+  function safeFieldHelp(f) {
+    if (!YAML || typeof YAML.fieldHelp !== 'function') return null;
+    return YAML.fieldHelp(f);
+  }
+
+  function safeKeyInfo(key, where) {
+    if (!YAML || typeof YAML.keyInfo !== 'function') return null;
+    return YAML.keyInfo(key, where);
+  }
+
+  // The ⓘ itself. '' when there is nothing to say, so a caller can splice
+  // this straight into a label or heading without an extra branch either
+  // side of it. Named in its title and a .stackman-sr span, same pattern as
+  // the × button below — a bare icon is not itself an accessible name.
+  function helpBtnHtml(info, id) {
+    if (!info) return '';
+    return ' <button type="button" class="stackman-helpbtn" data-help="1"' +
+           ' aria-expanded="false" aria-controls="' + esc(id) + '"' +
+           ' title="More about ' + esc(info.title) + '">' +
+             '<i class="fa fa-info-circle" aria-hidden="true"></i>' +
+             '<span class="stackman-sr">More about ' + esc(info.title) + '</span>' +
+           '</button>';
+  }
+
+  // The sentence a helpBtnHtml() button reveals. Always in the markup and
+  // hidden, never added afterwards — the click handler only ever flips the
+  // `hidden` attribute, so there is nothing to build on demand.
+  function helpParaHtml(info, id) {
+    if (!info) return '';
+    return '<p class="stackman-fieldhint stackman-fieldhelp" id="' + esc(id) + '" hidden>' +
+             esc(info.description) + '</p>';
+  }
+
   function fieldHtml(f, index) {
     var grp    = groupFor(f);
     var isContainer = grp === 'container';
     var declared = f.binder === 'declared';
+    // This function attaches help to the two shapes that have a name of their
+    // own: a setting's label and a declaration's name (see fieldHelp() in the
+    // model; the folded settings under either get theirs in declaredFoldHtml).
+    // Ports, volumes, variables, devices, labels and every list entry get
+    // theirs from the group heading instead, since those rows have no label of
+    // their own to hang an icon from. A long-form dependency's fieldHelp answer
+    // describes its condition box, which has no label either, so it is left
+    // unattached rather than forced somewhere that would not read as the row's
+    // own name — the Depends on group heading carries the general sentence.
+    var help = safeFieldHelp(f);
+    var helpId = 'stackman-help-' + index;
     var mapped = f.binder === 'port' || f.binder === 'volume' || f.binder === 'device';
     // A long-form dependency also carries parts.name (its key), but it is not
     // this env/label shape — it gets its own branch below, checked ahead of
@@ -1378,7 +1925,7 @@
       // not which group the row happens to be filed under. One value box,
       // named by a label column because a single box on its own could not
       // say what it holds.
-      bits.push('<span class="stackman-fieldlabel">' + esc(f.title) + '</span>');
+      bits.push('<span class="stackman-fieldlabel">' + esc(f.title) + helpBtnHtml(help, helpId) + '</span>');
       bits.push(boxHtml(f, index, 'value', 'value'));
       bits.push(noteBoxHtml(f, index));
     } else if (dev) {
@@ -1425,6 +1972,27 @@
       bits.push(boxHtml(f, index, 'container',
                 f.binder === 'port' ? 'in the container' : 'path in the container',
                 '', roTag));
+      // The protocol, or the read/write mode: a part of the same scalar as
+      // the two boxes above (see splitPortShort()/splitPathShort()), so it
+      // belongs beside them rather than below.
+      //
+      // Always a cell, even when there is nothing to put in it. Only the
+      // SHORT form carries this part — a long form spells the protocol out
+      // as its own key, which the parser reads but does not hand back here —
+      // and both forms sit in the same group, under the same five columns.
+      // boxHtml() returns '' for the absent part, so without the placeholder
+      // a long-form row would render four children into five tracks: the
+      // note would slide into this narrow column and the × out of its own.
+      // Guarded on the two binders that own this column rather than left to
+      // the branch order above: a device is `mapped` too, and reaches its own
+      // branch first only by sitting higher up the chain. It has three
+      // columns, not five, so a placeholder here would misalign it instead.
+      if (f.binder === 'port' || f.binder === 'volume') {
+        var extra = f.binder === 'port'
+                  ? boxHtml(f, index, 'proto', 'protocol')
+                  : boxHtml(f, index, 'mode', 'read and write');
+        bits.push(extra || '<span class="stackman-boxgap" aria-hidden="true"></span>');
+      }
       bits.push(noteBoxHtml(f, index));
     } else if (named) {
       // The name is a field like any other. Without it, adding a variable
@@ -1501,25 +2069,78 @@
     }
     if (!f.locked) bits.push(commandSay(f));
     if (!f.locked) bits.push(adviceBlock(f));
+    // Only the two shapes that got a button above (a setting's own label, a
+    // declaration's own name) ever have anywhere to reveal this. A locked row
+    // takes the branch at the very top of this function instead, so it never
+    // gets that button — there is deliberately no help paragraph here with
+    // nothing to toggle it, rather than one shown open with no way to hide it.
+    if (!f.locked && help && (f.binder === 'setting' || declared)) {
+      bits.push(helpParaHtml(help, helpId));
+    }
 
     bits.push('</div>');
     return bits.join('');
   }
 
-  // A group's header line: its heading, the grey note beside Container's,
-  // the three switchable groups' tick boxes (Container only — flags is only
-  // ever passed for that group), and its own Add button where it has one.
+  // A group's header line: its heading, the grey note beside Container's, the
+  // Sections button and its picker panel (Container only — flags is only ever
+  // passed for that group), and its own Add button where it has one.
+  //
+  // The panel is only in the markup at all when sectionsOpen[serviceName] is
+  // true — there is no CSS-hidden state — because it is drawn fresh by
+  // renderForm() on every render rather than built once by hand: a tick
+  // reparses and redraws the whole form, so a hand-built panel (the way
+  // devOpen() builds the device picker) would not survive the first tick made
+  // inside it.
+  // The compose key each group heading explains, and the vocabulary to read
+  // it against — 'service' for everything under a service, 'top' for the
+  // file's own networks:/volumes:/secrets:/configs: blocks, which are a
+  // different table from a service's keys (see keyInfo's own comment).
+  // Container and Advanced describe no single key, so they carry no entry
+  // and groupHelpInfo() answers null for both, same as a row with no help.
+  var GROUP_HELP_KEY = {
+    port: 'ports', volume: 'volumes', env: 'environment', device: 'devices',
+    label: 'labels', health: 'healthcheck', resources: 'deploy',
+    depends: 'depends_on', logging: 'logging'
+  };
+  var DECLARED_GROUP_KEY = { 'declared:networks': 'networks', 'declared:volumes': 'volumes',
+                              'declared:secrets': 'secrets', 'declared:configs': 'configs' };
+
+  function groupHelpInfo(g) {
+    if (DECLARED_GROUP_KEY[g.key]) return safeKeyInfo(DECLARED_GROUP_KEY[g.key], 'top');
+    // A dynamic list group's own key IS the compose key it describes
+    // ('list:networks' -> 'networks'), so there is no table row to write.
+    if (g.key.slice(0, 5) === 'list:') return safeKeyInfo(g.key.slice(5), 'service');
+    var key = GROUP_HELP_KEY[g.key];
+    return key ? safeKeyInfo(key, 'service') : null;
+  }
+
   function groupHeadHtml(g, serviceName, flags) {
+    var help = groupHelpInfo(g);
+    // Raw, not esc()'d: helpBtnHtml/helpParaHtml escape it as they emit it,
+    // and escaping here as well would put "&amp;amp;" in the id of a service
+    // whose name holds an "&".
+    var helpId = 'stackman-grouphelp-' + serviceName + '-' + g.key;
     var bits = ['<div class="stackman-grouphead"><h5 class="stackman-fieldgroup">' + esc(g.heading)];
     if (g.note) bits.push(' <span class="stackman-groupnote">' + esc(g.note) + '</span>');
+    bits.push(helpBtnHtml(help, helpId));
     bits.push('</h5>');
     if (flags) {
-      bits.push('<div class="stackman-groupflags">');
-      ['health', 'resources', 'depends'].forEach(function (key) {
-        bits.push('<label class="stackman-groupflag"><input type="checkbox" data-flag="' + key +
-                  '" data-service="' + esc(serviceName) + '"' + (flags[key] ? ' checked' : '') + '> ' +
-                  esc(FLAG_LABELS[key]) + '</label>');
-      });
+      var open = !!sectionsOpen[serviceName];
+      bits.push('<div class="stackman-sections">');
+      bits.push('<button type="button" class="stackman-sectionsbtn" data-sections="' + esc(serviceName) +
+                '" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+                'Sections <i class="fa fa-caret-down" aria-hidden="true"></i></button>');
+      if (open) {
+        bits.push('<div class="stackman-sectionpick">');
+        for (var si = 0; si < SECTIONS.length; si++) {
+          var s = SECTIONS[si];
+          bits.push('<label class="stackman-sectionrow"><input type="checkbox" data-flag="' + s.key +
+                    '" data-service="' + esc(serviceName) + '"' + (flags[s.key] ? ' checked' : '') + '> ' +
+                    esc(s.label) + '</label>');
+        }
+        bits.push('</div>');
+      }
       bits.push('</div>');
     }
     if (g.add) {
@@ -1529,6 +2150,10 @@
                '</button>');
     }
     bits.push('</div>');
+    // After .stackman-grouphead's own closing tag, not inside it — a
+    // full-width paragraph would end that flex row's content early exactly
+    // the way fieldHtml's tail comment describes for a field row.
+    bits.push(helpParaHtml(help, helpId));
     return bits.join('');
   }
 
@@ -1601,8 +2226,11 @@
     return out.join('');
   }
 
+  // A file the parser could not read at all is reparse()'s business — see
+  // brokenFormHtml() — so by the time this runs form.ok is always true, and
+  // the only empty case left is a readable file that simply lists nothing.
   function renderForm(form) {
-    if (!form.ok || !form.services.length) {
+    if (!form.services.length) {
       var why = form.warnings.length ? form.warnings[0].message
                                      : 'There is nothing in this file to show yet.';
       return '<p class="stackman-form-empty">' + esc(why) + '</p>';
@@ -1669,6 +2297,14 @@
 
       out.push('</section>');
     }
+
+    // Sits below the last service, never inside one — adding a whole new
+    // container is not one more entry in a list already on screen. The
+    // handler picks the name (new-container, new-container-2…) itself, so
+    // there is nothing here to disable it over.
+    out.push('<button type="button" class="stackman-addsvc" data-add-service="1">' +
+             '<i class="fa fa-plus" aria-hidden="true"></i> Add container</button>');
+
     return out.join('');
   }
 
@@ -1691,12 +2327,44 @@
     return !p || String(p.value).trim() === '';
   }
 
+  /* A mapping written with a separator but with one side left empty — "8080:"
+   * once the container box is cleared, ":/data" once the host box is. Both
+   * halves carry a spot only when both were written, which is what separates
+   * this from a legitimate one-sided entry ("- 8080", "- /data"), whose absent
+   * half has no spot at all and is compose's business rather than a gap.
+   *
+   * Compose refuses most of these ("invalid proto:", "empty section between
+   * colons") and quietly accepts the rest, so the form says so itself — from
+   * the moment the file opens, naming the row, rather than leaving it to a
+   * refusal from the server after a round trip. */
+  function halfMapping(f) {
+    if (f.binder !== 'port' && f.binder !== 'volume' && f.binder !== 'device') return false;
+    var h = f.parts.host, c = f.parts.container;
+    if (!h || !c || !h.spot || !c.spot) return false;
+    return !String(h.value).trim() || !String(c.value).trim();
+  }
+
+  // What the note says about one gap. A half mapping is named by what it is
+  // rather than by f.title, because the title of a port whose number has just
+  // been cleared is "Port " — the missing half IS its name.
+  function gapWhy(f) {
+    if (!halfMapping(f)) return '"' + f.title + '" is required and empty.';
+    var word = f.binder === 'port' ? 'port' : f.binder === 'volume' ? 'volume' : 'device';
+    var host = String(f.parts.host.value).trim();
+    var cont = String(f.parts.container.value).trim();
+    if (!host && !cont) return 'A ' + word + ' entry has nothing on either side.';
+    return 'A ' + word + ' entry has no ' + (cont ? 'host' : 'container') + ' side.';
+  }
+
   function requiredGaps() {
     var out = [];
     if (!MODEL) return out;
     for (var i = 0; i < MODEL.fields.length; i++) {
       var f = MODEL.fields[i];
-      if ((f.required || f.fixedRequired) && !f.locked && emptyValue(f)) out.push({ index: i, field: f });
+      if (f.locked) continue;
+      if (((f.required || f.fixedRequired) && emptyValue(f)) || halfMapping(f)) {
+        out.push({ index: i, field: f, why: gapWhy(f) });
+      }
     }
     return out;
   }
@@ -1722,12 +2390,14 @@
       return;
     }
 
-    var first = gaps[0].field;
+    // The first gap's own sentence, since the two kinds do not read alike —
+    // see gapWhy() — with the rest counted after it.
     gapNote.hidden = false;
-    gapNote.textContent = gaps.length === 1
-      ? '"' + first.title + '" is required and empty.'
-      : '"' + first.title + '" is required and empty, and ' +
-        (gaps.length - 1) + ' other' + (gaps.length > 2 ? 's are' : ' is') + ' too.';
+    gapNote.textContent = gaps[0].why +
+      (gaps.length > 1
+        ? ' And ' + (gaps.length - 1) + ' other row' +
+          (gaps.length > 2 ? 's need' : ' needs') + ' attention.'
+        : '');
     gapNote.dataset.row = gaps[0].index;
 
     saveBtn.disabled  = true;
@@ -1745,6 +2415,70 @@
     if (box) box.focus();
   });
 
+  // A file the parser cannot read as a mapping at all has no services, which
+  // renderForm() would otherwise draw as an almost-empty form — reading as
+  // "this file has no containers" when the truth is "this could not be
+  // read". Said plainly instead, in the order asked for: what is wrong, why,
+  // then what to do about it.
+  function brokenFormHtml(form) {
+    var why = form.warnings.length ? form.warnings[0].message
+                                   : 'This file could not be read.';
+    // No closing "fix it in the Compose view" line here: the message buildForm
+    // returns on this path already ends with exactly that, and saying it twice
+    // in a four-line panel reads as though they are two different instructions.
+    return '<div class="stackman-form-broken">' +
+           '<strong>This file cannot be shown as a form</strong>' +
+           '<p>' + esc(why) + '</p>' +
+           '</div>';
+  }
+
+  // Form and Split both need the form drawn to be worth showing, so both are
+  // switched off together while the file cannot be read — Compose is left
+  // alone, since that is where the fix has to happen anyway.
+  //
+  // This never forces the view back to Compose by itself. Typing in the
+  // Compose pane makes the file transiently unreadable all the time — mid
+  // word, mid line — and yanking Split or Form away underneath someone on
+  // every 400ms debounce would be worse than the broken moment it is
+  // guarding against. Disabling the buttons stops a NEW jump into a broken
+  // form; the panel above explains it to anyone already there.
+  function setFormGate(ok, why) {
+    var btns = modal.querySelectorAll(
+      '.stackman-viewbtn[data-view="form"], .stackman-viewbtn[data-view="split"]');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].disabled = !ok;
+      btns[i].title = ok ? '' : why;
+    }
+    // Outline needs a readable model exactly as much as Form/Split do — but
+    // keeps its own static title (what the button does), rather than the
+    // other two's title-as-explanation, so only .disabled is touched here.
+    if (outlineBtn) {
+      outlineBtn.disabled = !ok;
+      if (!ok) closeOutline();   // open on a file that just stopped parsing would show stale lines
+    }
+  }
+
+  // The last YAML.lint() result, cached so a view switch (see setView()) can
+  // repaint the same dots rather than re-linting a document that has not
+  // changed. saveErrorDot is one extra entry for a save the server refused
+  // (see markSaveError()) — kept apart from lastLint so relint() dropping it
+  // on the next real reparse is a one-line thing, not a filter.
+  var lastLint     = [];
+  var saveErrorDot = null;
+
+  function redrawDots() {
+    paintDots(saveErrorDot ? lastLint.concat([saveErrorDot]) : lastLint);
+  }
+
+  // Guarded the same way paintInk() guards for YAML.highlight: if the linter
+  // has not landed yet, this simply never finds any problems to mark.
+  function relint() {
+    lastLint = (YAML && typeof YAML.lint === 'function' && MODEL && MODEL.doc)
+      ? YAML.lint(MODEL.doc) : [];
+    saveErrorDot = null;   // a fresh reparse is the moment a save error goes stale
+    redrawDots();
+  }
+
   function reparse() {
     if (!YAML) { formHost.innerHTML = '<p class="stackman-form-empty">The form view could not load.</p>'; return; }
 
@@ -1755,14 +2489,22 @@
 
     var scrollWas = formHost.scrollTop;
     devPanel = null;            // the device panel lives in here and just went
-    formHost.innerHTML = renderForm(form);
+    formHost.innerHTML = form.ok ? renderForm(form) : brokenFormHtml(form);
     formHost.scrollTop = scrollWas;
+
+    setFormGate(form.ok, form.warnings[0] && form.warnings[0].message);
 
     var warned = form.warnings.length;
     setYamlStatus(warned ? form.warnings[0].message +
                            (warned > 1 ? '  (and ' + (warned - 1) + ' more)' : '') : '');
-    repaintMark();
+    // The file's own text just changed underneath any open search, so its
+    // offsets are stale — recompute quietly rather than jumping the caret,
+    // since whatever triggered this reparse (typing, an undo, a structural
+    // edit) already knows where it wants the caret to be.
+    findRecompute();
     updateRequired();
+    relint();
+    checkHostPaths();   // ask the server about any volume host path not already cached
   }
 
   /* ---- form -> file ---- */
@@ -1813,15 +2555,24 @@
       }
     }
     activeField = null;
-    repaintMark();
+    // commit() just rewrote yamlPane.value directly (see its own comment on
+    // why it skips reparse()) — a search still has to notice, quietly (see
+    // reparse() above for why this is the quiet recompute, not findRun()).
+    findRecompute();
     updateRequired();
+    relint();   // a form commit rebuilds MODEL.doc just like reparse() does
   }
 
   function commit(el) {
     if (!MODEL || sanitised) return;
 
     var f = MODEL.fields[el.dataset.row | 0];
-    if (!f) return;
+    // A row's data-row is only ever refreshed, never reassigned (see the
+    // note above refreshRanges()) — so a structural change elsewhere that
+    // reshapes MODEL.fields can leave this row pointing at nothing. Saying
+    // so beats writing quietly nowhere: that is exactly how a box can look
+    // live while every edit to it is silently dropped (PLAN_14.md).
+    if (!f) { setYamlStatus('This box lost track of its place in the file — reopen the stack to fix it.'); return; }
 
     var done;
     if (el.dataset.note !== undefined) {
@@ -1842,7 +2593,8 @@
     setYamlStatus('');
     yamlPane.value = YAML.serialise(MODEL.doc);   // assigning .value fires no
     paintGutter();                                // input event, so this cannot
-    refreshRanges();                              // loop back round
+    paintInk();                                   // loop back round
+    refreshRanges();
   }
 
   // The small button that hands a swapped-to-path volume row back to the
@@ -1932,62 +2684,157 @@
     commit(el);
   });
 
-  // Ticking or unticking Health check / Resource limits / Depends on. Not a
-  // value commit — a bare tick writes nothing, so this is its own listener
-  // rather than a branch inside the one above that ends at commit().
+  /* A mapping with nothing on either side is nothing at all, so the entry goes
+   * rather than sitting in the file as a bare separator. It waits until the
+   * eye has left the row: a value commits on a 250ms pause, so sweeping any
+   * earlier would delete the row from under someone who cleared a box to
+   * retype it — and moving between the two halves of the same mapping is not
+   * leaving it, which is what relatedTarget answers. A null one, focus gone to
+   * the document, counts as leaving. */
+  formHost.addEventListener('focusout', function (event) {
+    var el = event.target;
+    if (!MODEL || sanitised || !el.dataset || el.dataset.row === undefined) return;
+
+    var row = el.closest('.stackman-fieldrow');
+    if (!row || (event.relatedTarget && row.contains(event.relatedTarget))) return;
+
+    flushPending();                     // whatever was typed goes in first
+    var f = MODEL.fields[row.dataset.row | 0];
+    if (!f || f.locked) return;
+    if (f.binder !== 'port' && f.binder !== 'volume' && f.binder !== 'device') return;
+
+    var h = f.parts.host, c = f.parts.container;
+    if (!h || !c || String(h.value).trim() || String(c.value).trim()) return;
+
+    removeRow(f, 'Removed the empty ' + f.binder + ' entry. ' +
+                 'Undo is at the bottom if that was wrong.');
+  });
+
+  // Ticking or unticking a section. Not a value commit — a bare tick writes
+  // no value of its own, so this is its own listener rather than a branch
+  // inside the one above that ends at commit(). Unticking is a move, never a
+  // delete: the block's lines go into x-unraid.sections verbatim and come
+  // back exactly as they were, so there is nothing here for a confirm prompt
+  // to warn about — undo still covers a mis-click.
   formHost.addEventListener('change', function (event) {
     var box = event.target;
-    if (box.dataset.flag === undefined) return;
+    if (box.dataset.flag === undefined || !MODEL) return;
 
-    var svc = box.dataset.service, flag = box.dataset.flag;
+    var svc = box.dataset.service, flagKey = box.dataset.flag;
+    var sect = SECTIONS_BY_KEY[flagKey];
+    if (!sect) return;
 
-    if (box.checked) {
-      if (!flagOn[svc]) flagOn[svc] = {};
-      flagOn[svc][flag] = true;
-      flushPending();
-      reparse();
-      return;
-    }
-
-    // Off. Nothing to lose if the file never held it — the override was the
-    // only reason the group was showing, so dropping it just hides it again.
-    var n = MODEL ? fileFlagCounts(MODEL, svc)[flag] : 0;
-    if (!n) {
-      if (flagOn[svc]) delete flagOn[svc][flag];
-      // Unticking says "I do not want this group", which has to outrank the
-      // memory that kept it visible after its last row was × 'd away — see
-      // serviceFlags. Left in place, the group would come straight back and
-      // the tick would look like it did nothing.
-      if (flag === 'depends' && emptiedLists[svc]) delete emptiedLists[svc]['depends_on'];
-      flushPending();
-      reparse();
-      return;
-    }
-
-    var label = FLAG_LABELS[flag].toLowerCase();
-    if (!window.confirm('Remove the ' + label + ' from ' + svc + '? Its ' + n +
-                        ' setting' + (n === 1 ? '' : 's') + ' will be deleted from the compose file.')) {
-      box.checked = true;   // No — leave the box ticked and the file untouched.
-      return;
-    }
-
-    var path = flag === 'health'    ? ['healthcheck']
-             : flag === 'resources' ? ['deploy', 'resources']
-             : ['depends_on'];
+    var key   = sect.path.join('.');
+    var label = sect.label.toLowerCase();
+    var say, ok;
 
     flushPending();
-    pushUndo('removing the ' + label + ' from "' + svc + '"');
-    if (!YAML.removeKey(MODEL.doc, MODEL, svc, path)) {
-      undoStack.pop();
-      updateUndo();
-      setYamlStatus('That block is written in a way the form cannot remove — ' +
-                    'remove it in the Compose view instead.');
-      box.checked = true;
+
+    if (box.checked) {
+      var entry = YAML.readSections(MODEL.doc)[svc];
+      entry = entry ? entry[key] : undefined;
+      var restoring = !!(entry && entry.lines && entry.lines.length);
+
+      pushUndo('turning on ' + label + ' for "' + svc + '"');
+      // Nothing to restore means nothing to write: the tick is remembered in
+      // sectionOn until something is put in the section. An entry saying
+      // "off" still has to go, though — serviceFlags reads a false ahead of
+      // everything else, so leaving one would hide the section it just
+      // switched on.
+      ok = restoring ? YAML.restoreSection(MODEL.doc, MODEL, svc, key)
+                     : entry === false ? YAML.setSectionState(MODEL.doc, MODEL, svc, key, null)
+                     : true;
+      if (!ok) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus('That block is written in a way the form cannot restore — ' +
+                      'restore it in the Compose view instead.');
+        box.checked = false;
+        return;
+      }
+      (sectionOn[svc] = sectionOn[svc] || {})[flagKey] = true;
+
+      say = 'Turned ' + label + (restoring ? ' back on' : ' on') + ' for "' + svc +
+            '". Undo is at the bottom if that was wrong.';
+
+      // Closed before the redraw, not after, so the form is drawn without the
+      // panel rather than drawn with it and then having it taken away. The
+      // panel hangs off the Container header and the form is about to scroll
+      // away from it — the rule is that the panel closes when the form moves,
+      // which is why unticking, which moves nothing, leaves it open.
+      sectionsOpen[svc] = false;
+    } else {
+      var fileHasIt = fileFlagCounts(MODEL, svc)[flagKey] > 0;
+
+      pushUndo('turning off ' + label + ' for "' + svc + '"');
+      ok = fileHasIt ? YAML.stashSection(MODEL.doc, MODEL, svc, sect.path)
+                     : YAML.setSectionState(MODEL.doc, MODEL, svc, key, sect.on ? false : null);
+      if (!ok) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus('That block is written in a way the form cannot move — ' +
+                      'remove it in the Compose view instead.');
+        box.checked = true;
+        return;
+      }
+      if (sectionOn[svc]) delete sectionOn[svc][flagKey];
+
+      // Read back what the stash actually recorded rather than assuming the
+      // block had something worth keeping in it: stashSection drops entries
+      // with no value, and a block that was nothing but those keeps nothing.
+      var stashed = fileHasIt ? (YAML.readSections(MODEL.doc)[svc] || {})[key] : undefined;
+      var kept    = !!(stashed && stashed.lines && stashed.lines.length);
+
+      // Nothing kept, and off is what this section is anyway — so leave
+      // nothing behind. An entry saying "off" here would be residue, and the
+      // x-unraid block holding it would outlive the reason it was written.
+      // A section that is ON by default is the exception: there, absence
+      // means shown, so the false is the only thing keeping it hidden.
+      if (!kept && !sect.on) YAML.setSectionState(MODEL.doc, MODEL, svc, key, null);
+
+      say = 'Turned ' + label + ' off for "' + svc + '".' +
+            (kept ? ' Its settings are kept — tick it again to bring them back.' : '') +
+            ' Undo is at the bottom if that was wrong.';
+    }
+
+    structuralEdit(-1, say);
+
+    // Switched on: the panel has just closed and the new group is somewhere
+    // below, so take the eye to it and mark which one it is. A section's key
+    // is also its group key, so the group needs no attribute of its own to be
+    // found by — data-service on the service and data-group on the group are
+    // both already emitted.
+    if (box.checked) {
+      // The form has to be the visible view for a scroll to it to mean
+      // anything — the same guard structuralEdit() uses before showing a row.
+      if (modalBody.dataset.view === 'yaml') setView(defaultView());
+
+      var grp = formHost.querySelector('.stackman-svc[data-service="' +
+                svc.replace(/"/g, '\\"') + '"] .stackman-formgroup[data-group="' +
+                flagKey.replace(/"/g, '\\"') + '"]');
+      if (!grp) return;
+
+      // block: 'start', not the 'center' used for a single row elsewhere in
+      // this file: centring an element taller than the pane puts its top
+      // ABOVE the pane, hiding the very heading that names the group.
+      grp.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      grp.classList.add('stackman-formgroup--landed');
+
+      // preventScroll, or the browser's own focus scroll jumps straight to the
+      // control and the smooth scroll then arrives on top of it with a jerk.
+      // Nothing focusable leaves focus where it is rather than throwing it to
+      // the document.
+      var first = grp.querySelector('button:not([disabled]), input:not([disabled]),' +
+                                    ' select:not([disabled])');
+      if (first) first.focus({ preventScroll: true });
       return;
     }
 
-    if (flagOn[svc]) delete flagOn[svc][flag];
-    structuralEdit(-1, 'Removed the ' + label + ' from "' + svc + '". Undo is at the bottom if that was wrong.');
+    // Switched off: the panel is still open and the form has not moved, but
+    // the redraw took focus with it. Land it back on the box just clicked.
+    var back = formHost.querySelector('[data-flag="' + flagKey.replace(/"/g, '\\"') +
+               '"][data-service="' + svc.replace(/"/g, '\\"') + '"]');
+    if (back) back.focus();
   });
 
   /* ---- adding and removing entries ---- */
@@ -2016,6 +2863,7 @@
   function structuralEdit(line, say) {
     yamlPane.value = YAML.serialise(MODEL.doc);
     paintGutter();
+    paintInk();
     activeField = null;          // whatever was highlighted may have just gone
     reparse();
     if (say) setYamlStatus(say);
@@ -2030,14 +2878,44 @@
     if (modalBody.dataset.view === 'yaml') setView(defaultView());
     row.scrollIntoView({ block: 'center' });
 
-    // Selected, not just focused: the new entry arrives with a placeholder in
-    // it, so typing should replace it rather than append to it.
+    // Selected, not just focused: most new entries arrive with a placeholder
+    // in them, so typing should replace it rather than append to it. The few
+    // that arrive empty (see newEntry in compose-model.js) are unaffected —
+    // selecting nothing is the same as not selecting.
     var box = row.querySelector('input:not([disabled])');
     if (box) { box.focus(); box.select(); }
   }
 
   formHost.addEventListener('click', function (event) {
     if (sanitised || !MODEL) return;
+
+    // The ⓘ beside a field's label or a group's heading. Purely a display
+    // toggle — the sentence is already in the markup, hidden — so there is
+    // nothing here to reparse or redraw, unlike every other case below.
+    var helpBtn = event.target.closest('[data-help]');
+    if (helpBtn) {
+      var helpBody = document.getElementById(helpBtn.getAttribute('aria-controls'));
+      if (helpBody) {
+        helpBody.hidden = !helpBody.hidden;
+        helpBtn.setAttribute('aria-expanded', helpBody.hidden ? 'false' : 'true');
+      }
+      return;
+    }
+
+    var secBtn = event.target.closest('[data-sections]');
+    if (secBtn) {
+      // Stopped here, not left to bubble: the document-level listener below
+      // closes any open panel on a click outside it, and this button's own
+      // click would otherwise count as "outside" a panel it has just opened.
+      event.stopPropagation();
+      var secSvc = secBtn.dataset.sections;
+      sectionsOpen[secSvc] = !sectionsOpen[secSvc];
+      flushPending();
+      reparse();
+      var freshBtn = formHost.querySelector('[data-sections="' + secSvc.replace(/"/g, '\\"') + '"]');
+      if (freshBtn) freshBtn.focus();
+      return;
+    }
 
     var add = event.target.closest('[data-add]');
     if (add) {
@@ -2123,6 +3001,35 @@
         return;
       }
       structuralEdit(line, '');
+      return;
+    }
+
+    // The full-width button below the last service — its own data attribute,
+    // not "data-add", since it belongs to no service and addWord() has
+    // nothing to say for it.
+    var addSvc = event.target.closest('[data-add-service]');
+    if (addSvc) {
+      var takenNames = {}, existingSvcs = MODEL.declared.services || [];
+      for (var ni = 0; ni < existingSvcs.length; ni++) takenNames[existingSvcs[ni]] = true;
+      var newSvcName = 'new-container', suffix = 2;
+      while (takenNames[newSvcName]) { newSvcName = 'new-container-' + suffix; suffix++; }
+
+      flushPending();
+      pushUndo('adding a new container');
+      var svcLine = YAML.addService(MODEL.doc, MODEL, newSvcName);
+      if (svcLine < 0) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus('That could not be added — add it in the Compose view instead.');
+        return;
+      }
+      structuralEdit(svcLine, 'Added "' + newSvcName + '". Undo is at the bottom if that was wrong.');
+
+      // Naming it is the first thing to do with a container nobody has
+      // named yet. A real click on its own rename pencil, not a copy of what
+      // that click does, so the two can never drift apart.
+      var newPencil = formHost.querySelector('[data-svc-rename][data-service="' + newSvcName + '"]');
+      if (newPencil) newPencil.click();
       return;
     }
 
@@ -2231,24 +3138,182 @@
     }
 
     flushPending();
+    removeRow(f, 'Removed ' + f.title + '. Undo is at the bottom if that was wrong.');
+  });
+
+  /* Takes one entry out of the file and redraws. Shared by the × button above
+   * and by the empty-mapping sweep below, which needs the same care: a row
+   * that has gone from the file has to leave the screen with it, or the next
+   * edit writes into a field that is no longer there.
+   *
+   * flushPending() is the caller's job, not this function's — the sweep runs
+   * from inside a commit and would otherwise re-enter it. */
+  function removeRow(f, say) {
     pushUndo('removing ' + f.title);
     if (!YAML.removeItem(MODEL.doc, MODEL, f.id)) {
       undoStack.pop();
       updateUndo();
       setYamlStatus('That entry is written in a way the form cannot remove — ' +
                     'remove it in the Compose view instead.');
-      return;
+      return false;
     }
 
     // After the guard, never before it: a removal the model refused leaves the
-    // list exactly as it was and has nothing to remember. Recorded for every
-    // list entry rather than only the last, since a list that still has entries
-    // is shown by its own fields anyway.
-    if ((f.binder === 'list' && f.listKey) || f.binder === 'depends') {
-      if (!emptiedLists[f.service]) emptiedLists[f.service] = {};
-      emptiedLists[f.service][f.binder === 'depends' ? 'depends_on' : f.listKey] = 1;
+    // list exactly as it was. A list section defaults off, so a service whose
+    // last entry has just gone would otherwise revert to that default and
+    // vanish, taking its Add button — the only way back — with it. Remembering
+    // the tick is what keeps it on screen, empty, exactly like unticking then
+    // re-ticking would. The row itself is still deleted outright; this only
+    // records that the section stays open, and in this editor rather than in
+    // the file — an empty section is nothing to write down.
+    var gk = (f.binder === 'depends' || f.listKey === 'depends_on') ? 'depends'
+           : f.listKey ? 'list:' + f.listKey : '';
+    if (SECTIONS_BY_KEY[gk] && fileFlagCounts(YAML.buildForm(MODEL.doc), f.service)[gk] === 0) {
+      (sectionOn[f.service] = sectionOn[f.service] || {})[gk] = true;
     }
-    structuralEdit(-1, 'Removed ' + f.title + '. Undo is at the bottom if that was wrong.');
+    structuralEdit(-1, say);
+    return true;
+  }
+
+  // Closes any open Sections panel: a click outside it, or Escape. The button
+  // that opens one stops its own click reaching here (see [data-sections]
+  // above), so this only ever sees a click genuinely outside.
+  function anySectionsOpen() {
+    for (var k in sectionsOpen) if (sectionsOpen[k]) return true;
+    return false;
+  }
+  document.addEventListener('click', function (event) {
+    if (!modal.open || !anySectionsOpen()) return;
+    if (event.target.closest('.stackman-sections')) return;
+    sectionsOpen = {};
+    flushPending();
+    reparse();
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape' || !modal.open || !anySectionsOpen()) return;
+    sectionsOpen = {};
+    flushPending();
+    reparse();
+  });
+
+  /* ---- structure outline --------------------------------------------------
+   *
+   * A picture of the file, not a search of it: top-level keys in the order
+   * they appear, each service nested under "services". Built once when the
+   * panel opens rather than kept live — it is read-only navigation, so there
+   * is nothing here that has to stay in step with the file the way the
+   * Sections panel above does.
+   *
+   * MODEL's ranges are 0-based line indexes, like everywhere else in this
+   * editor; the gutter numbers lines from 1. outlineRowHtml() is the one
+   * place that +1 happens.
+   */
+
+  function outlineOpen() {
+    return !!(outlinePanel && !outlinePanel.hidden);
+  }
+
+  function closeOutline() {
+    if (!outlineOpen()) return;
+    outlinePanel.hidden = true;
+    outlinePanel.innerHTML = '';
+    outlineBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  function outlineRowHtml(cls, name, line) {
+    return '<div class="stackman-outline-row ' + cls + '" role="menuitem" data-line="' + line + '">' +
+           '<span>' + esc(name) + '</span>' +
+           '<span class="stackman-outline-line">' + (line + 1) + '</span></div>';
+  }
+
+  function outlineHtml() {
+    if (!MODEL || !MODEL.ok) {
+      return '<div class="stackman-outline-empty">This file could not be read, so there is ' +
+             'nothing to list yet. Fix it in the Compose view first.</div>';
+    }
+    var root = MODEL.doc.root;
+    if (!root.keys.length) {
+      return '<div class="stackman-outline-empty">There is nothing in this file yet.</div>';
+    }
+
+    var out = [];
+    for (var i = 0; i < root.keys.length; i++) {
+      var key = root.keys[i];
+      out.push(outlineRowHtml('stackman-outline-row--top', key, root.pairs[key].start));
+      if (key !== 'services') continue;
+      // The service's own key line, taken from the document rather than from
+      // svc.range.start. A service's RANGE deliberately opens at the comment
+      // introducing it, which is right for the form — the comment belongs to
+      // the service — but wrong for a list saying "quirks-alpha, line 56":
+      // it would name a line holding a comment, and send you one line short
+      // of the thing you asked for.
+      var nodes = root.pairs.services.value && root.pairs.services.value.pairs;
+      for (var s = 0; s < MODEL.services.length; s++) {
+        var svc = MODEL.services[s];
+        var node = nodes && nodes[svc.name];
+        var at = node && typeof node.start === 'number' ? node.start : svc.range.start;
+        out.push(outlineRowHtml('stackman-outline-row--svc', svc.name, at));
+      }
+    }
+    return out.join('');
+  }
+
+  function openOutline() {
+    if (!outlineBtn || !outlinePanel) return;
+    outlinePanel.innerHTML = outlineHtml();
+    outlinePanel.hidden = false;
+    outlineBtn.setAttribute('aria-expanded', 'true');
+  }
+
+  // A 0-based line number (as MODEL gives it) to a caret offset. Counted with
+  // indexOf rather than split(), same reasoning lineCount() gives above.
+  function offsetOfLine(line) {
+    var text = yamlPane.value, at = 0;
+    for (var i = 0; i < line; i++) {
+      var nl = text.indexOf('\n', at);
+      if (nl === -1) return text.length;
+      at = nl + 1;
+    }
+    return at;
+  }
+
+  if (outlineBtn) {
+    outlineBtn.addEventListener('click', function (event) {
+      // Stopped here, same reasoning as the Sections button's own click
+      // above: left to bubble, the document-level "click outside" listener
+      // below would see this same click and close what it has just opened.
+      event.stopPropagation();
+      if (outlineOpen()) closeOutline(); else openOutline();
+    });
+  }
+
+  if (outlinePanel) {
+    outlinePanel.addEventListener('click', function (event) {
+      var row = event.target.closest('.stackman-outline-row');
+      if (!row) return;
+      var line = parseInt(row.dataset.line, 10);
+      closeOutline();
+      revealLine(line);
+      var at = offsetOfLine(line);
+      yamlPane.focus();
+      yamlPane.setSelectionRange(at, at);
+    });
+  }
+
+  document.addEventListener('click', function (event) {
+    if (!modal.open || !outlineOpen()) return;
+    if (event.target.closest('.stackman-outlinewrap')) return;
+    closeOutline();
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape' || !modal.open || !outlineOpen()) return;
+    // preventDefault here, not left to the dialog's own Escape-closes-me
+    // action, is the same trick the suggestion list and find bar rely on
+    // (see their own comments) — it is what keeps this closing only the
+    // outline panel rather than the whole editor.
+    event.preventDefault();
+    closeOutline();
+    outlineBtn.focus();
   });
 
   undoBtn.addEventListener('click', function () {
@@ -2256,6 +3321,7 @@
     if (!step) return;
     yamlPane.value = step.text;
     paintGutter();
+    paintInk();
     reparse();
     setYamlStatus('Undid ' + step.what + '.');
     updateUndo();
@@ -2276,7 +3342,7 @@
 
   /* ---- highlighting, both ways ---- */
 
-  var LINE_H = 0, PAD_T = 0;
+  var LINE_H = 0, PAD_T = 0, CHAR_W = 0;
 
   function measure() {
     var cs = window.getComputedStyle(yamlPane);
@@ -2286,21 +3352,217 @@
     // and every band would land at the top of the box.
     if (!LINE_H) LINE_H = parseFloat(cs.fontSize) * 1.45;
     if (!PAD_T) PAD_T = 0;
+
+    // A character's width, needed only for search-hit boxes — the active-field
+    // band spans the full line and never had to sit at a particular column. A
+    // probe span in the pane's own monospace font, a run of characters rather
+    // than one so a fraction-of-a-pixel rounding error does not add up into a
+    // visibly wrong column far along a long line, measured once here (not per
+    // hit) and removed straight after.
+    var probe = document.createElement('span');
+    probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;' +
+      'font-family:' + cs.fontFamily + ';font-size:' + cs.fontSize + ';';
+    var sample = '0123456789012345678901234567890123456789';
+    probe.textContent = sample;
+    yamlWrap.appendChild(probe);
+    CHAR_W = probe.getBoundingClientRect().width / sample.length;
+    probe.remove();
   }
 
   function repaintMark() {
     yamlMarks.textContent = '';
-    if (!activeField || !MODEL) return;
-
-    var f = YAML.fieldById(MODEL, activeField);
-    if (!f || !f.range) return;
-
     if (!LINE_H) measure();
-    var band = document.createElement('div');
-    band.className = 'stackman-mark';
-    band.style.top    = (PAD_T + f.range.start * LINE_H - yamlPane.scrollTop) + 'px';
-    band.style.height = ((f.range.end - f.range.start) * LINE_H) + 'px';
-    yamlMarks.appendChild(band);
+
+    if (activeField && MODEL) {
+      var f = YAML.fieldById(MODEL, activeField);
+      if (f && f.range) {
+        var band = document.createElement('div');
+        band.className = 'stackman-mark';
+        band.style.top    = (PAD_T + f.range.start * LINE_H - yamlPane.scrollTop) + 'px';
+        band.style.height = ((f.range.end - f.range.start) * LINE_H) + 'px';
+        yamlMarks.appendChild(band);
+      }
+    }
+
+    // Search hits share this layer rather than a second one of their own, and
+    // are drawn here — not in a parallel function with its own call sites —
+    // so every place that already repaints this layer (scroll, view switch,
+    // dialog resize, caret move) keeps the hits in step for free. Appended
+    // after the band, so a hit that falls inside the active field's band is
+    // still legible on top of it rather than washed out underneath.
+    repaintHits();
+
+    // Bad host paths, same layer and same reasoning — see repaintPaths()
+    // below. Drawn last so a path mark under a search hit still shows
+    // through: the hit is a fill, the path mark only an underline.
+    repaintPaths();
+  }
+
+  // The visible slice of search hits, drawn into #stackman-yamlmarks. A plain
+  // substring search over a large file can match thousands of times (see
+  // YAML.searchMatches' 5000 cap) and almost none of them are on screen at
+  // once — building a box for each would be a page-freezing amount of DOM for
+  // a result nobody can see, so only the visible range (plus a small margin)
+  // is drawn. The counter above the pane still reflects every match; only the
+  // drawing is limited. The current hit is always drawn even if the line math
+  // puts it just outside the margin, so stepping to it never looks like it
+  // vanished for the instant before the scroll catches up.
+  function repaintHits() {
+    if (!findMatches.length) return;
+
+    var text = yamlPane.value;
+
+    // #stackman-yamlmarks' own box already starts just past the gutter —
+    // paintGutter() offsets its "left" by the gutter's measured width — while
+    // the textarea's padding-left goes a few pixels further so the text has
+    // room to breathe. The difference between the two, read back rather than
+    // recomputed, is how far into THIS layer a hit box has to start to land
+    // under the first real character of a line.
+    var padLeft  = parseFloat(yamlPane.style.paddingLeft) || 0;
+    var markLeft = parseFloat(yamlMarks.style.left) || 0;
+    var leftBase = padLeft - markLeft;
+
+    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
+    var firstLine = Math.floor((top - PAD_T) / LINE_H) - 2;
+    var lastLine  = Math.ceil((top + viewH - PAD_T) / LINE_H) + 2;
+
+    for (var i = 0; i < findMatches.length; i++) {
+      var m = findMatches[i];
+      var isCurrent = i === findCurrent;
+      if (!isCurrent && (m.line < firstLine || m.line > lastLine)) continue;
+
+      // A match that spans a newline (only possible with regex on) is drawn
+      // only on its first line — this pane assumes one box per source line
+      // everywhere else, and a wrapped second box is more machinery than a
+      // rare regex edge case is worth.
+      var nl = text.indexOf('\n', m.start);
+      var lineEnd = nl === -1 ? text.length : nl;
+      var len = Math.max(1, Math.min(m.end, lineEnd) - m.start);
+
+      var box = document.createElement('div');
+      box.className = 'stackman-hit' + (isCurrent ? ' stackman-hit--current' : '');
+      box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
+      box.style.left   = (leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
+      box.style.width  = (len * CHAR_W) + 'px';
+      box.style.height = LINE_H + 'px';
+      yamlMarks.appendChild(box);
+    }
+  }
+
+  /* ---- host path existence ------------------------------------------------
+   *
+   * A volume's host side is often just a typo, or a mount that has not been
+   * created yet. Asking the server is a courtesy, never part of what gets
+   * written — every failure here (a slow reply, a timeout, the model not
+   * having landed) is "no information" and stays silent, the same way every
+   * other advisory lookup in this editor (devLoad, netLoad, imgLoad) treats
+   * its own failures.
+   *
+   * Cached by path STRING, not by line: the same host path often appears on
+   * several volumes, or several services, in one file and only needs asking
+   * about once per editor session. pathsReset() below drops the cache along
+   * with the marks, so nothing survives from one stack's editor into the
+   * next.
+   */
+  var pathCache = {};   // path string -> 'ok' | 'file' | 'missing' | 'skipped'
+  var pathHits  = [];   // last YAML.hostPaths() result: [{path, line, col, len}]
+  var pathToken = 0;    // bumped by pathsReset() so a late reply cannot paint
+
+  function pathsReset() {
+    pathToken++;
+    pathCache = {};
+    pathHits = [];
+    // The boxes themselves, not just the arrays behind them — the same
+    // reasoning findReset() gives for clearing .stackman-hit: left in place
+    // they would show, briefly, at positions measured against a different
+    // file.
+    var stale = yamlMarks.querySelectorAll('.stackman-badpath');
+    for (var i = 0; i < stale.length; i++) stale[i].remove();
+  }
+
+  // Called from reparse(), which is already debounced 400ms behind typing —
+  // this piggybacks on that pause rather than starting a second timer.
+  function checkHostPaths() {
+    if (!YAML || typeof YAML.hostPaths !== 'function') return;   // not landed yet
+
+    pathHits = YAML.hostPaths(yamlPane.value);
+    repaintMark();   // redraw at once with whatever the cache already knows
+
+    var unknown = [];
+    pathHits.forEach(function (h) {
+      if (!(h.path in pathCache) && unknown.indexOf(h.path) < 0) unknown.push(h.path);
+    });
+    if (!unknown.length) return;
+
+    // One request for everything not already answered, not one per path —
+    // twenty mounts in a file is twenty entries in one array, not twenty
+    // round trips.
+    var myToken = pathToken;
+    call('paths', { name: openedName, paths: JSON.stringify(unknown) }, 4000)
+      .then(function (res) {
+        // A reply for a stack that has since closed, or been replaced by
+        // another — stay quiet rather than painting marks over someone
+        // else's file. call() itself never rejects (see its own comment),
+        // so a bad reply lands here as res.ok === false, handled the same
+        // way as a token mismatch: simply nothing drawn.
+        if (myToken !== pathToken || !res || !res.ok || !res.paths) return;
+        Object.keys(res.paths).forEach(function (p) { pathCache[p] = res.paths[p]; });
+        repaintMark();
+      });
+  }
+
+  // The visible slice of bad host paths, drawn into the same layer as the
+  // active-field band and the search hits above — see repaintMark()'s own
+  // comment for why one layer serves all of them. Only 'missing' and 'file'
+  // are ever drawn; 'ok', 'skipped', and any path the server has not
+  // answered for yet, are left alone.
+  function repaintPaths() {
+    if (!pathHits.length) return;
+
+    // Same geometry and the same visible-range trim as repaintHits() above.
+    var padLeft  = parseFloat(yamlPane.style.paddingLeft) || 0;
+    var markLeft = parseFloat(yamlMarks.style.left) || 0;
+    var leftBase = padLeft - markLeft;
+
+    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
+    var firstLine = Math.floor((top - PAD_T) / LINE_H) - 2;
+    var lastLine  = Math.ceil((top + viewH - PAD_T) / LINE_H) + 2;
+
+    for (var i = 0; i < pathHits.length; i++) {
+      var h = pathHits[i];
+      var verdict = pathCache[h.path];
+      if (verdict !== 'missing' && verdict !== 'file') continue;
+      if (h.line < firstLine || h.line > lastLine) continue;
+
+      var box = document.createElement('div');
+      box.className = 'stackman-badpath' + (verdict === 'file' ? ' stackman-badpath--file' : '');
+      box.style.top    = (PAD_T + h.line * LINE_H - yamlPane.scrollTop) + 'px';
+      box.style.left   = (leftBase + h.col * CHAR_W - yamlPane.scrollLeft) + 'px';
+      box.style.width  = (h.len * CHAR_W) + 'px';
+      box.style.height = LINE_H + 'px';
+      yamlMarks.appendChild(box);
+    }
+  }
+
+  // Hit-test for the hover panel: is (line, col) inside a currently-drawn bad
+  // path mark? Same list repaintPaths() draws from, so a mark is hoverable
+  // exactly where it is visible.
+  function pathMarkAt(line, col) {
+    for (var i = 0; i < pathHits.length; i++) {
+      var h = pathHits[i];
+      var verdict = pathCache[h.path];
+      if (verdict !== 'missing' && verdict !== 'file') continue;
+      if (h.line === line && col >= h.col && col < h.col + h.len) {
+        return { path: h.path, verdict: verdict };
+      }
+    }
+    return null;
+  }
+
+  function pathHoverText(mark) {
+    return mark.verdict === 'file'
+      ? mark.path + ' is a file, not a folder. A volume\'s host side must be a folder.'
+      : 'Nothing exists at ' + mark.path + ' on the server. Create the folder, or correct the path.';
   }
 
   function revealLine(line) {
@@ -2471,10 +3733,23 @@
       }
     }
 
+    // The replace half writes into whichever text is on screen right now —
+    // the redacted copy while Sanitise is on, which is thrown away the moment
+    // it goes off — so it is disabled for the same reason the form's own
+    // controls are above. Find is left alone: reading redacted text is
+    // harmless, just less useful.
+    if (findWith)  findWith.disabled  = on;
+    if (findOne)   findOne.disabled   = on;
+    if (findAll)   findAll.disabled   = on;
+
     updateUndo();
     paintGutter();
+    paintInk();
     syncGutter();
     repaintMark();
+    // The pane's own text just swapped between real and redacted, so a search
+    // over it has to notice — quietly, same as reparse()/refreshRanges().
+    findRecompute();
   }
 
   sanitiseBox.addEventListener('change', function () { setSanitised(sanitiseBox.checked); });
@@ -2911,15 +4186,20 @@
     return call('networks', {}, 15000).then(function (res) {
       if (!res.ok) return res;
 
-      var options = CHOICES['setting/network_mode'].options;
+      // Dedupe against netmode's own vocab (a server network actually called
+      // bridge or host must not be listed twice), not against the mutable
+      // NETWORKS this fills in — see NETWORKS's own comment for why the two
+      // are kept apart.
       var known = {};
-      for (var i = 0; i < options.length; i++) known[options[i][0]] = true;
+      var vocab = safeVocab('netmode') || [];
+      for (var i = 0; i < vocab.length; i++) known[vocab[i][0]] = true;
 
+      NETWORKS = [];
       var nets = res.networks || [];
       for (var n = 0; n < nets.length; n++) {
         var name = nets[n].name, driver = nets[n].driver;
         if (!name || known[name]) continue;
-        options.push([name, driver ? name + ' — ' + driver + ' network on this server' : name]);
+        NETWORKS.push([name, driver ? name + ' — ' + driver + ' network on this server' : name]);
         known[name] = true;
       }
 
@@ -2931,10 +4211,104 @@
     });
   }
 
+  // Images already pulled onto this server — offered in the image datalist
+  // alongside whatever tagLoad() below finds for one repo at a time.
+  // Modelled on netLoad() just above: same first-reply-only redraw, guarded
+  // the same way.
+  function imgLoad() {
+    return call('images', {}, 15000).then(function (res) {
+      if (!res.ok) return res;
+
+      IMAGES = res.images || [];
+
+      var first = !imgLoaded;
+      imgLoaded = true;
+      if (first && modal.open && MODEL && !commitTimer && !devPanel) reparse();
+
+      return res;
+    });
+  }
+
+  // "repo:tag" splits on the LAST ':', but only past the last '/' — otherwise
+  // "localhost:5000/foo" loses its port to the split. No colon past the last
+  // slash means no tag has been typed yet, so the whole value is the repo.
+  function repoOf(value) {
+    var v = String(value || '');
+    var slash = v.lastIndexOf('/'), colon = v.lastIndexOf(':');
+    return colon > slash ? v.slice(0, colon) : v;
+  }
+
+  // Unlike imgLoad()/netLoad(), this never redraws the form — a repo is
+  // looked up while its box is being typed in, and a redraw would take the
+  // caret with it. The new tags are spliced straight into that one box's own
+  // <datalist> instead. Cached per repo for the session, a negative result
+  // (registry does not carry it, or was never going to be asked, see
+  // action.php's `tags` case) included, so a private registry is asked about
+  // once and a re-opened stack costs nothing.
+  function tagLoad(box) {
+    var repo = repoOf(box.value);
+    if (!repo) return;
+
+    if (tagCache.hasOwnProperty(repo)) { mergeTags(box, repo, tagCache[repo]); return; }
+
+    call('tags', { repo: repo }, 15000).then(function (res) {
+      if (!res.ok) return;   // a network hiccup, not "no tags" — do not cache it
+      tagCache[repo] = res.tags || [];
+      // The box may have moved on to a different repo, or vanished (removed,
+      // or the form redrew under it), by the time this lands.
+      if (box.isConnected && repoOf(box.value) === repo) mergeTags(box, repo, tagCache[repo]);
+    }).catch(function () {});
+  }
+
+  function mergeTags(box, repo, tags) {
+    var dl = document.getElementById(box.getAttribute('list') || '');
+    if (!dl || !tags.length) return;
+
+    var known = {};
+    var existing = dl.querySelectorAll('option');
+    for (var i = 0; i < existing.length; i++) known[existing[i].value] = true;
+
+    var frag = document.createDocumentFragment();
+    for (var t = 0; t < tags.length; t++) {
+      var full = repo + ':' + tags[t];
+      if (known[full]) continue;
+      var opt = document.createElement('option');
+      opt.value = full;
+      opt.textContent = full;
+      frag.appendChild(opt);
+    }
+    dl.appendChild(frag);
+  }
+
+  function scheduleTagLoad(box) {
+    if (tagTimer) clearTimeout(tagTimer);
+    tagTimer = setTimeout(function () { tagTimer = null; tagLoad(box); }, 400);
+  }
+
+  // Typing in the image box, or landing on it, is what makes its repo worth
+  // asking the registry about — delegated, since the box is redrawn whenever
+  // the form is (adding a service, undo, reparse...).
+  formHost.addEventListener('input', function (event) {
+    var el = event.target;
+    if (el.dataset.part !== 'value' || !el.dataset.row) return;
+    var f = MODEL && MODEL.fields[el.dataset.row | 0];
+    if (f && f.binder === 'setting' && f.target === 'image') scheduleTagLoad(el);
+  });
+
+  // 'focus' does not bubble, so this delegated pair uses 'focusin' instead —
+  // reaching the same box the moment it is tabbed or clicked into, before
+  // anything has been typed.
+  formHost.addEventListener('focusin', function (event) {
+    var el = event.target;
+    if (el.dataset.part !== 'value' || !el.dataset.row) return;
+    var f = MODEL && MODEL.fields[el.dataset.row | 0];
+    if (f && f.binder === 'setting' && f.target === 'image') scheduleTagLoad(el);
+  });
+
   function devShellHtml() {
     return '<div class="stackman-devhead">' +
              '<input type="text" class="stackman-input stackman-devfilter"' +
-                   ' placeholder="Filter devices" spellcheck="false" autocomplete="off"' +
+                   ' placeholder="Filter devices" spellcheck="false"' + NOFILL +
                    ' aria-label="Filter the device list">' +
              '<button type="button" class="stackman-browse stackman-devrefresh"' +
                    ' title="Look again — for something just plugged in">' +
@@ -3230,10 +4604,16 @@
 
     // Before setView, which draws the form: a freshly loaded file that says a
     // service has no networks is telling the truth about it, so nothing from
-    // the last stack's editing session may survive into this one.
-    emptiedLists = {};
-    listGroups   = {};
+    // the last stack's editing session may survive into this one. A search
+    // is exactly the same kind of leftover — findReset() below.
+    sectionsOpen = {};
+    sectionOn    = {};
     stackOpen    = false;
+    findReset();
+    pathsReset();   // a fresh cache and marks for the stack that is about to open
+    hideSuggest();   // neither panel may leak from one stack's editor into the next
+    hideHover();
+    closeOutline();   // yesterday's line numbers are meaningless against today's stack
     setView(defaultView());
 
     undoStack.length = 0;
@@ -3246,10 +4626,16 @@
     // gutter measures zero wide and every band would be positioned against a
     // line height of nothing.
     gutterLines = -1;
+    // A different stack's lines could coincidentally match this one's at the
+    // same index — reset the tracking so paintInk() cannot mistake that for
+    // nothing having changed and skip painting lines that were never drawn.
+    inkLines   = [];
+    carryAfter = [];
     activeField = null;
     LINE_H = 0;
     measure();
     paintGutter();
+    paintInk();
     syncGutter();
     reparse();
 
@@ -3257,9 +4643,11 @@
     // rather than showing a bare path. Not waited for — the form is usable at
     // once and devLoad() redraws it when the names arrive. netLoad() does the
     // same for this server's own docker networks, feeding the network_mode
-    // dropdown.
+    // dropdown, and imgLoad() for the images already on this server, feeding
+    // the image datalist.
     devLoad().catch(function () {});
     netLoad().catch(function () {});
+    imgLoad().catch(function () {});
 
     // Explicit, and after showModal(). The dialog's own "first focusable
     // descendant" rule would land on the view selector, which is nobody's
@@ -3281,6 +4669,14 @@
   }
 
   modal.addEventListener('cancel', function (event) {
+    // The find bar owns Escape first: closing it and landing back in the
+    // textarea is "get me out of this box" too, and takes priority over the
+    // dialog's own Escape-closes-me behaviour below.
+    if (findIsOpen()) {
+      event.preventDefault();
+      closeFind();
+      return;
+    }
     // Escape inside the compose box means "get me out of this box", not "throw
     // my work away". The first press leaves the textarea; a second one closes.
     // This doubles as the escape hatch from the Tab key being captured below.
@@ -3303,6 +4699,11 @@
     if (picker.open) picker.close();
     if (tzModal.open) tzModal.close();
     devClose();
+    findReset();   // a search must not leak from one stack into the next
+    pathsReset();
+    hideSuggest();
+    hideHover();
+    closeOutline();
   });
 
   // <dialog> fires no event for the backdrop, because the backdrop is a
@@ -3321,18 +4722,657 @@
     if (btn) setView(btn.dataset.view);
   });
 
-  // Tab indents rather than leaving the box, which is what anyone editing YAML
-  // expects. execCommand is deprecated everywhere and removed nowhere, and it
-  // is the only way to insert text while keeping the browser's own undo stack;
-  // assigning .value wipes it, and an editor that forgets Ctrl+Z is worse than
-  // one with no Tab key. Escape is the way out — see the cancel handler above.
-  yamlPane.addEventListener('keydown', function (event) {
-    if (event.key !== 'Tab' || event.shiftKey) return;
-    event.preventDefault();
-    if (!document.execCommand('insertText', false, '  ')) {
-      var at = yamlPane.selectionStart;
-      yamlPane.setRangeText('  ', at, yamlPane.selectionEnd, 'end');
+  // Replaces one range with text via execCommand, falling back to setRangeText
+  // — the same pairing every call site here uses, because execCommand is what
+  // keeps the browser's own undo stack working. assigning .value wipes it, and
+  // an editor that forgets Ctrl+Z is worse than one with no smart keys.
+  function replaceRange(from, to, text) {
+    yamlPane.setSelectionRange(from, to);
+    if (!document.execCommand('insertText', false, text)) {
+      yamlPane.setRangeText(text, from, to, 'end');
     }
+  }
+
+  // Two spaces, never a real tab character: YAML forbids tabs in indentation,
+  // and a file that has one is sealed whole by the parser — the form would
+  // silently lose the ability to edit any of it.
+  function indentBlock(text) {
+    return text.split('\n').map(function (l) { return '  ' + l; }).join('\n');
+  }
+
+  function outdentBlock(text) {
+    return text.split('\n').map(function (l) {
+      var lead = /^ {1,2}/.exec(l);
+      return lead ? l.slice(lead[0].length) : l;   // already at column 0: leave it
+    }).join('\n');
+  }
+
+  // The full lines a selection touches, so Tab/Shift-Tab indent whole lines
+  // even when the drag only grazes the first or last one. A selection ending
+  // exactly at another line's column 0 does not pull that line in — nothing of
+  // it was actually selected.
+  function selectedLines(text, start, end) {
+    var lineStart = text.lastIndexOf('\n', start - 1) + 1;
+    var stop = (end > start && text.charAt(end - 1) === '\n') ? end - 1 : end;
+    var nl = text.indexOf('\n', stop);
+    return { start: lineStart, end: nl === -1 ? text.length : nl };
+  }
+
+  /* ---- key suggestions & hover help ---------------------------------------
+   *
+   * Two panels riding on top of the compose pane, both positioned from the
+   * same LINE_H/PAD_T/CHAR_W measurements the search-hit boxes already use
+   * (see measure()) — there is no browser API for a textarea's own caret
+   * pixel position, so this is the only way to place anything against it.
+   *
+   * Guarded on YAML.keySuggestions/YAML.keyAt existing, the same way
+   * paintInk() guards for YAML.highlight: neither has landed in the model
+   * yet, so both panels quietly do nothing until it has. */
+
+  var suggestItems = [];    // the {key, title} list the model offered last
+  var suggestOn    = -1;    // index of the highlighted row
+  var suggestRange = null;  // {start, end} in the text the accepted key replaces
+  var suggestIsValue = false; // true when the open panel is offering values, not keys — see acceptSuggest()
+  var suggestTimer = null;
+  var hoverTimer   = null;
+
+  function suggestOpen() {
+    return !!(suggestBox && !suggestBox.hidden);
+  }
+
+  // Offsets to a 0-based line/col, the terms YAML.keySuggestions() and
+  // YAML.keyAt() both deal in. Walked by hand rather than through
+  // YAML.lineAtOffset(), which needs a parsed doc — one may not exist (the
+  // file may not parse at all) or may not cover where the caret is right now.
+  function offsetToLineCol(text, offset) {
+    var line = 0, lastNL = -1;
+    for (var i = 0; i < offset; i++) {
+      if (text.charCodeAt(i) === 10) { line++; lastNL = i; }
+    }
+    return { line: line, col: offset - lastNL - 1 };
+  }
+
+  // The reverse: a mouse position to a line/col, for the hover panel. There
+  // is no element to hit-test against — the textarea is one opaque box — so
+  // this is repaintHits()'s own column arithmetic, run backwards.
+  function pointToLineCol(clientX, clientY) {
+    if (!LINE_H) measure();
+    var rect    = yamlWrap.getBoundingClientRect();
+    var padLeft = parseFloat(yamlPane.style.paddingLeft) || 0;
+    var x = clientX - rect.left + yamlPane.scrollLeft - padLeft;
+    var y = clientY - rect.top  + yamlPane.scrollTop  - PAD_T;
+    if (x < 0 || y < 0) return null;
+    return { line: Math.floor(y / LINE_H), col: Math.round(x / CHAR_W) };
+  }
+
+  // Positions `panel` against a line/col in the terms paintDots() and
+  // repaintHits() already use. `below` puts it under the line, so it never
+  // covers what is being typed — what the suggestion list wants; the hover
+  // panel sits against the line itself, closer to the pointer that asked
+  // for it.
+  //
+  // .stackman-yamlwrap clips overflow (it has to, so the gutter can hide a
+  // too-long line rather than let it slide past) — so a panel placed past
+  // its bottom or right edge does not reflow, it is just silently cut off.
+  // Flipping above the line, and pulling the left edge back in, is what
+  // keeps it on screen instead.
+  function placeCaretPanel(panel, line, col, below) {
+    if (!LINE_H) measure();
+    var padLeft = parseFloat(yamlPane.style.paddingLeft) || 0;
+    var left    = padLeft + col * CHAR_W - yamlPane.scrollLeft;
+    var lineTop = PAD_T + line * LINE_H - yamlPane.scrollTop;
+    var top     = below ? lineTop + LINE_H : lineTop;
+
+    panel.style.left = left + 'px';
+    panel.style.top  = top + 'px';
+    panel.hidden = false;   // has to be visible before offsetHeight/Width mean anything
+
+    var wrapW = yamlWrap.clientWidth, wrapH = yamlWrap.clientHeight;
+    if (top + panel.offsetHeight > wrapH) top  = Math.max(0, lineTop - panel.offsetHeight);
+    if (left + panel.offsetWidth > wrapW) left = Math.max(0, wrapW - panel.offsetWidth);
+
+    panel.style.top  = top + 'px';
+    panel.style.left = left + 'px';
+  }
+
+  /* ---- suggestions ---- */
+
+  function hideSuggest() {
+    if (suggestTimer) { clearTimeout(suggestTimer); suggestTimer = null; }
+    if (!suggestBox) return;
+    suggestBox.hidden = true;
+    suggestBox.innerHTML = '';
+    suggestItems = [];
+    suggestOn = -1;
+    suggestRange = null;
+    suggestIsValue = false;
+  }
+
+  // The typed letters marked inside the key, matched from the front only —
+  // this is completion, not search, so a hit partway through the key would
+  // be a confusing thing to highlight.
+  function suggestRowHtml(item, prefix, i, on) {
+    var key = String(item.key || '');
+    var hit = prefix && key.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase();
+    var keyHtml = hit
+      ? '<mark class="stackman-suggest-hit">' + esc(key.slice(0, prefix.length)) + '</mark>' +
+        esc(key.slice(prefix.length))
+      : esc(key);
+    return '<div class="stackman-suggest-row' + (on ? ' stackman-suggest-row--on' : '') +
+           '" role="option" data-idx="' + i + '">' +
+           '<span class="stackman-suggest-key">' + keyHtml + '</span>' +
+           '<span class="stackman-suggest-title">' + esc(item.title || '') + '</span></div>';
+  }
+
+  function showSuggest(hit) {
+    suggestItems = hit.keys;
+    suggestRange = { start: hit.start, end: hit.end };
+    suggestIsValue = !!hit.value;
+    suggestOn = 0;
+
+    var rows = [];
+    for (var i = 0; i < suggestItems.length; i++) {
+      rows.push(suggestRowHtml(suggestItems[i], hit.prefix, i, i === 0));
+    }
+    suggestBox.innerHTML = rows.join('');
+
+    var lc = offsetToLineCol(yamlPane.value, yamlPane.selectionStart);
+    placeCaretPanel(suggestBox, lc.line, lc.col, true);
+    hideHover();   // the two panels share a corner; only one shows at once
+  }
+
+  function runSuggest() {
+    suggestTimer = null;
+    if (!suggestBox) return;
+    if (!YAML || typeof YAML.keySuggestions !== 'function') return;   // not landed yet
+    if (yamlPane.readOnly) return;
+    if (document.activeElement !== yamlPane) return;
+    if (yamlPane.selectionStart !== yamlPane.selectionEnd) { hideSuggest(); return; }
+
+    var hit = YAML.keySuggestions(yamlPane.value, yamlPane.selectionStart);
+    if (!hit || !hit.keys || !hit.keys.length) {
+      // A caret is either before the colon or after it, never both — so this
+      // is a fallback to try, not a second source to merge with the first.
+      if (typeof YAML.valueSuggestions === 'function') {
+        hit = YAML.valueSuggestions(yamlPane.value, yamlPane.selectionStart);
+      }
+      if (!hit || !hit.keys || !hit.keys.length) { hideSuggest(); return; }
+    }
+    showSuggest(hit);
+  }
+
+  // Lighter debounce than the 400ms reparse below — this has to feel like it
+  // is keeping up with typing, not settling in after a pause.
+  function scheduleSuggest() {
+    if (!suggestBox) return;
+    if (suggestTimer) clearTimeout(suggestTimer);
+    suggestTimer = setTimeout(runSuggest, 80);
+  }
+
+  function moveSuggest(delta) {
+    if (!suggestItems.length) return;
+    suggestOn = (suggestOn + delta + suggestItems.length) % suggestItems.length;
+    var rows = suggestBox.children;
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].classList.toggle('stackman-suggest-row--on', i === suggestOn);
+    }
+    rows[suggestOn].scrollIntoView({ block: 'nearest' });
+  }
+
+  // Goes through replaceRange(), same as every other scripted edit to this
+  // box, so the browser's own undo stack still covers it.
+  function acceptSuggest() {
+    if (suggestOn < 0 || !suggestRange) { hideSuggest(); return; }
+    var text = suggestItems[suggestOn].key + (suggestIsValue ? '' : ': ');
+    var at = suggestRange.start;
+    replaceRange(suggestRange.start, suggestRange.end, text);
+    yamlPane.setSelectionRange(at + text.length, at + text.length);
+    hideSuggest();
+  }
+
+  yamlPane.addEventListener('input', scheduleSuggest);
+  yamlPane.addEventListener('blur', hideSuggest);
+
+  if (suggestBox) {
+    // mousedown, not click: a click fires after the textarea has already
+    // lost focus, and by then the caret position acceptSuggest() needs is
+    // gone. preventDefault keeps the focus (and the caret) right where it is.
+    suggestBox.addEventListener('mousedown', function (event) {
+      var row = event.target.closest('.stackman-suggest-row');
+      if (!row) return;
+      event.preventDefault();
+      suggestOn = parseInt(row.dataset.idx, 10);
+      acceptSuggest();
+    });
+  }
+
+  // Registered ahead of the Tab/Enter handler just below, so an open list
+  // claims those keys first — see that handler's own comment for why they
+  // are otherwise spoken for. Escape's preventDefault() also stops the
+  // dialog's own cancel-on-Escape default action (the same trick findWhat's
+  // Escape handler further down relies on), so this closes only the list —
+  // never the find bar or the editor behind it.
+  yamlPane.addEventListener('keydown', function (event) {
+    if (!suggestOpen()) return;
+    if (event.isComposing || event.keyCode === 229) return;
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      moveSuggest(event.key === 'ArrowDown' ? 1 : -1);
+    } else if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      acceptSuggest();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      hideSuggest();
+    }
+  });
+
+  /* ---- hover help ---- */
+
+  function hideHover() {
+    if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+    if (!keyHelp) return;
+    keyHelp.hidden = true;
+    keyHelp.innerHTML = '';
+  }
+
+  function runHover(clientX, clientY) {
+    hoverTimer = null;
+    if (!keyHelp) return;
+    if (suggestOpen()) return;   // one panel at a time — see showSuggest()
+
+    var lc = pointToLineCol(clientX, clientY);
+    if (!lc) { hideHover(); return; }
+
+    // A bad host path outranks a key description at the same spot — it is the
+    // thing actually wrong here, and the key description would still be true
+    // but beside the point.
+    var mark = pathMarkAt(lc.line, lc.col);
+    if (mark) {
+      keyHelp.innerHTML = '<strong>' + esc(mark.path) + '</strong><p>' + esc(pathHoverText(mark)) + '</p>';
+      placeCaretPanel(keyHelp, lc.line, lc.col, false);
+      return;
+    }
+
+    if (!YAML || typeof YAML.keyAt !== 'function') return;   // not landed yet
+
+    var info = YAML.keyAt(yamlPane.value, lc.line, lc.col);
+    if (!info) { hideHover(); return; }
+
+    keyHelp.innerHTML = '<strong>' + esc(info.key) + '</strong><p>' +
+      esc(info.description || info.title || '') + '</p>';
+    placeCaretPanel(keyHelp, lc.line, lc.col, false);
+  }
+
+  yamlPane.addEventListener('mousemove', function (event) {
+    var x = event.clientX, y = event.clientY;
+    if (hoverTimer) clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(function () { runHover(x, y); }, 120);
+  });
+  yamlPane.addEventListener('mouseleave', hideHover);
+  // Any key, not just the ones the box cares about — reading a hover panel
+  // while typing past it is not a thing anyone wants.
+  yamlPane.addEventListener('keydown', function () { hideHover(); });
+
+  // Tab indents rather than leaving the box, Enter copies the line above's
+  // indent, and Backspace across leading whitespace jumps back a full stop —
+  // all of it what anyone editing YAML by hand expects. Escape is the way out
+  // of the box — see the cancel handler above, which this doubles as the
+  // escape hatch for.
+  yamlPane.addEventListener('keydown', function (event) {
+    // Mid-composition, Enter and Tab belong to the input method — they pick a
+    // candidate rather than typing anything, and taking them here would make
+    // the box unusable in Japanese, Chinese or Korean. keyCode 229 is the
+    // older browsers' way of saying the same thing.
+    if (event.isComposing || event.keyCode === 229) return;
+
+    // Sanitised is a read-only screenshot mode showing redacted text. The
+    // browser blocks typing into it, but setRangeText below is script and
+    // would go straight through — writing into a copy that is thrown away
+    // when Sanitise is switched off.
+    if (yamlPane.readOnly) return;
+
+    var val = yamlPane.value;
+    var start = yamlPane.selectionStart, end = yamlPane.selectionEnd;
+
+    if (event.key === 'Tab') {
+      event.preventDefault();
+
+      if (event.shiftKey) {
+        if (start !== end) {
+          var outRows = selectedLines(val, start, end);
+          var outText = outdentBlock(val.slice(outRows.start, outRows.end));
+          replaceRange(outRows.start, outRows.end, outText);
+          yamlPane.setSelectionRange(outRows.start, outRows.start + outText.length);
+        } else {
+          // Up to two spaces immediately before the caret — a lone odd space
+          // still goes, rather than leaving the caret one column short of even.
+          var two = val.charAt(start - 1) === ' ' && val.charAt(start - 2) === ' ';
+          var one = !two && val.charAt(start - 1) === ' ';
+          var n = two ? 2 : (one ? 1 : 0);
+          if (n) replaceRange(start - n, start, '');
+        }
+        return;
+      }
+
+      if (start !== end && val.slice(start, end).indexOf('\n') !== -1) {
+        var inRows = selectedLines(val, start, end);
+        var inText = indentBlock(val.slice(inRows.start, inRows.end));
+        replaceRange(inRows.start, inRows.end, inText);
+        yamlPane.setSelectionRange(inRows.start, inRows.start + inText.length);
+      } else {
+        replaceRange(start, end, '  ');
+      }
+      return;
+    }
+
+    if (event.key === 'Enter') {
+      // Only up to the caret — text already on the line after it is not the
+      // line's indent and must not be read as if it were.
+      var lineStart = val.lastIndexOf('\n', start - 1) + 1;
+      var upToCaret = val.slice(lineStart, start);
+      var indent  = /^ */.exec(upToCaret)[0];
+      var trimmed = upToCaret.trim();
+      var extra   = (/:$/.test(trimmed) || trimmed === '-') ? '  ' : '';
+      event.preventDefault();
+      replaceRange(start, end, '\n' + indent + extra);
+      return;
+    }
+
+    if (event.key === 'Backspace' && start === end) {
+      var ls   = val.lastIndexOf('\n', start - 1) + 1;
+      var lead = val.slice(ls, start);
+      if (lead.length && /^ *$/.test(lead)) {
+        // Back to the previous multiple of two, not one space at a time — the
+        // mirror image of Tab's own two-space step.
+        var back = lead.length % 2 === 0 ? 2 : 1;
+        event.preventDefault();
+        replaceRange(start - back, start, '');
+      }
+    }
+  });
+
+  /* ---- find and replace --------------------------------------------------- */
+
+  /* Lives entirely on top of the compose pane's own textarea: a match is just
+   * a selection range (setSelectionRange), stepping is just revealLine() plus
+   * that, and a single replace goes through replaceRange() so the browser's
+   * undo keeps working exactly as it does for ordinary typing (see
+   * replaceRange()'s own comment above). Only Replace All is a big enough
+   * change to earn its own undo step.
+   *
+   * findMatches/findCurrent are declared unconditionally (not inside a
+   * "markup landed" guard) because repaintHits() reads them on every
+   * repaintMark() call, including before the bar itself exists. Every
+   * function below that touches an actual find-bar element guards on
+   * findBar first, same as yamlDots elsewhere in this file. */
+
+  var findMatches = [];
+  var findCurrent = -1;
+  var findDebounceTimer = null;
+
+  function findIsOpen() {
+    return !!(findBar && !findBar.hidden);
+  }
+
+  // The raw match list for whatever is typed right now — no side effects, so
+  // both the quiet resync (findRecompute) and the active one (findRun) build
+  // on it rather than duplicating the call to YAML.searchMatches.
+  function findCompute() {
+    var needle = findWhat.value;
+    return (needle && YAML && typeof YAML.searchMatches === 'function')
+      ? YAML.searchMatches(yamlPane.value, needle, {
+          caseSensitive: findCase.checked,
+          regex: findRegex.checked
+        })
+      : [];
+  }
+
+  function findUpdateCount() {
+    if (!findBar) return;
+    if (!findWhat.value) {
+      findCount.textContent = '';
+      findBar.classList.remove('stackman-find--none');
+      return;
+    }
+    if (!findMatches.length) {
+      findCount.textContent = 'No matches';
+      findBar.classList.add('stackman-find--none');
+      return;
+    }
+    findCount.textContent = (findCurrent + 1) + ' of ' + findMatches.length;
+    findBar.classList.remove('stackman-find--none');
+  }
+
+  // Recomputes the match list and picks whichever match now sits at or after
+  // the previous current match (wrapping to the first when none does), but
+  // does not move the caret or the scroll position. Used whenever the
+  // document changes for a reason that has nothing to do with the search box
+  // itself — typing in the pane, a form commit, Sanitise toggling redacted
+  // text in and out — where grabbing the selection out from under whatever
+  // the user is actually doing would be the wrong kind of "helpful".
+  function findRecompute() {
+    if (!findBar) return;
+    var prevStart = (findCurrent >= 0 && findMatches[findCurrent])
+      ? findMatches[findCurrent].start : yamlPane.selectionStart;
+
+    findMatches = findCompute();
+
+    if (!findMatches.length) {
+      findCurrent = -1;
+    } else {
+      var idx = 0;
+      for (var i = 0; i < findMatches.length; i++) {
+        if (findMatches[i].start >= prevStart) { idx = i; break; }
+      }
+      findCurrent = idx;
+    }
+    findUpdateCount();
+    repaintMark();
+  }
+
+  // The active version: same recompute, but also lands the selection on the
+  // result — for typing in the find box, toggling case/regex, and landing on
+  // the next match after a single replace, all of which are the user (or a
+  // replace acting on the user's behalf) steering the search, not the file
+  // changing out from under it.
+  function findRun() {
+    if (!findBar) return;
+    findRecompute();
+    if (findCurrent >= 0) findGoTo(findCurrent);
+  }
+
+  function findScheduleRun() {
+    if (findDebounceTimer) clearTimeout(findDebounceTimer);
+    // Much cheaper than the 400ms re-parse debounce elsewhere in this file —
+    // a plain scan or a regex exec over the buffer, not a full YAML parse —
+    // so it can afford to feel closer to immediate.
+    findDebounceTimer = setTimeout(function () {
+      findDebounceTimer = null;
+      findRun();
+    }, 150);
+  }
+
+  // Selects match `idx` (wrapping) and scrolls it into view. Shared by Enter,
+  // Shift-Enter, the prev/next buttons, and findRun() landing on a fresh
+  // result.
+  function findGoTo(idx) {
+    if (!findBar || !findMatches.length) return;
+    if (idx < 0) idx = findMatches.length - 1;
+    if (idx >= findMatches.length) idx = 0;
+    findCurrent = idx;
+
+    var m = findMatches[idx];
+    revealLine(m.line);
+    yamlPane.setSelectionRange(m.start, m.end);
+    findUpdateCount();
+    repaintMark();
+  }
+
+  function openFind(mode) {
+    if (!findBar) return;
+    findReplaceRow.hidden = mode !== 'replace';
+
+    var sel = yamlPane.value.slice(yamlPane.selectionStart, yamlPane.selectionEnd);
+    if (sel) findWhat.value = sel;
+
+    findBar.hidden = false;
+    findWhat.focus();
+    findWhat.select();
+    findRun();
+  }
+
+  function closeFind() {
+    if (!findBar) return;
+    findBar.hidden = true;
+    findMatches = [];
+    findCurrent = -1;
+    repaintMark();
+    yamlPane.focus();
+  }
+
+  // Full reset, for a stack that is closing or about to be replaced by
+  // another — unlike closeFind(), this also drops the typed terms, since
+  // carrying "POSTGRES_PASSWORD" from one stack's search into the next one's
+  // freshly-opened editor is not a convenience, it is a leak.
+  function findReset() {
+    if (!findBar) return;
+    findBar.hidden = true;
+    findBar.classList.remove('stackman-find--none');
+    findWhat.value = '';
+    findWith.value = '';
+    findCount.textContent = '';
+    findMatches = [];
+    findCurrent = -1;
+
+    // The boxes themselves, not just the list behind them. Left in place they
+    // survive into the next stack the editor opens, and show for the moment
+    // between the dialog appearing and the first repaint — at positions
+    // measured against a different file.
+    var stale = yamlMarks.querySelectorAll('.stackman-hit');
+    for (var i = 0; i < stale.length; i++) stale[i].remove();
+  }
+
+  // With regex on, "$1" in the replacement is a group reference exactly as it
+  // is everywhere else JavaScript does this — built by replacing the SAME
+  // pattern against just the matched slice, so a capture group is filled from
+  // this match's own text. With regex off, the box is a literal string: a "$"
+  // typed there must reach the file as a literal "$", never as String.replace's
+  // special substitution syntax ($&, $1, $$…) that a literal-mode call would
+  // otherwise still honour even though the search itself was not a regex.
+  // Getting this backwards would silently rewrite someone's file, so it is
+  // never routed through .replace() at all in literal mode — just spliced in.
+  function buildReplacement(m, text) {
+    if (!findRegex.checked) return findWith.value;
+    try {
+      var re = new RegExp(findWhat.value, findCase.checked ? '' : 'i');
+      return text.slice(m.start, m.end).replace(re, findWith.value);
+    } catch (e) {
+      return findWith.value;   // the pattern stopped being valid between the search and this click
+    }
+  }
+
+  function findReplaceOne() {
+    if (!findBar) return;
+    if (yamlPane.readOnly) {
+      setYamlStatus('Turn off Sanitise to replace text — it only edits the redacted copy on screen, not the file.');
+      return;
+    }
+    if (findDebounceTimer) { clearTimeout(findDebounceTimer); findDebounceTimer = null; findRun(); }
+    if (findCurrent < 0 || !findMatches.length) return;
+
+    var text = yamlPane.value;
+    var m = findMatches[findCurrent];
+    replaceRange(m.start, m.end, buildReplacement(m, text));
+    // The replacement just shifted every offset after it — recompute AND land
+    // on the result (findRun(), not findRecompute()), which is what makes
+    // this "replace the current match and move to the next".
+    findRun();
+  }
+
+  function findReplaceAll() {
+    if (!findBar) return;
+    if (yamlPane.readOnly) {
+      setYamlStatus('Turn off Sanitise to replace text — it only edits the redacted copy on screen, not the file.');
+      return;
+    }
+    if (findDebounceTimer) { clearTimeout(findDebounceTimer); findDebounceTimer = null; }
+    findMatches = findCompute();
+    if (!findMatches.length) { setYamlStatus('No matches to replace.'); return; }
+
+    flushPending();
+    var count = findMatches.length;
+    pushUndo('replacing ' + count + ' match' + (count === 1 ? '' : 'es'));
+
+    var text = yamlPane.value, out = [], at = 0;
+    for (var i = 0; i < findMatches.length; i++) {
+      var m = findMatches[i];
+      out.push(text.slice(at, m.start));
+      out.push(buildReplacement(m, text));
+      at = m.end;
+    }
+    out.push(text.slice(at));
+
+    // The same sequence structuralEdit() runs after a model edit, except the
+    // new text here already IS the finished string — this was a plain splice
+    // over the buffer, not a change to MODEL.doc, so there is no document to
+    // re-serialise.
+    yamlPane.value = out.join('');
+    paintGutter();
+    paintInk();
+    activeField = null;
+    reparse();
+    updateUndo();
+    setYamlStatus('Replaced ' + count + ' match' + (count === 1 ? '' : 'es') + '.');
+    // reparse() already calls findRecompute(); findRun() on top of that lands
+    // the selection on the (now empty, until searched again) match list.
+    findRun();
+  }
+
+  if (findBar) {
+    findWhat.addEventListener('input', findScheduleRun);
+    findCase.addEventListener('change', findRun);
+    findRegex.addEventListener('change', findRun);
+    findClose.addEventListener('click', closeFind);
+    findPrev.addEventListener('click', function () { findGoTo(findCurrent - 1); });
+    findNext.addEventListener('click', function () { findGoTo(findCurrent + 1); });
+    findOne.addEventListener('click', findReplaceOne);
+    findAll.addEventListener('click', findReplaceAll);
+
+    findWhat.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') { event.preventDefault(); closeFind(); return; }
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      if (findDebounceTimer) {
+        // Typing then pressing Enter straight away: flush the debounce and
+        // land on the nearest match rather than also stepping past it.
+        clearTimeout(findDebounceTimer);
+        findDebounceTimer = null;
+        findRun();
+      } else {
+        findGoTo(findCurrent + (event.shiftKey ? -1 : 1));
+      }
+    });
+
+    findWith.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') { event.preventDefault(); closeFind(); }
+      else if (event.key === 'Enter') { event.preventDefault(); findReplaceOne(); }
+    });
+  }
+
+  // Ctrl-F/Ctrl-H only take over from the browser's own Find when there is a
+  // compose pane on screen to search — not in Form view, and not anywhere
+  // outside the editor dialog.
+  document.addEventListener('keydown', function (event) {
+    if (!findBar || !modal.open || modalBody.dataset.view === 'form') return;
+    var lower = event.key.toLowerCase();
+    if (!(event.ctrlKey || event.metaKey) || (lower !== 'f' && lower !== 'h')) return;
+    event.preventDefault();
+    openFind(lower === 'h' ? 'replace' : 'find');
   });
 
   // Renaming a service leaves its old container orphaned once the stack is
@@ -3419,6 +5459,21 @@
     });
   }
 
+  // Compose's own refusal message usually names a line ("yaml: line 31: did
+  // not find expected key"), but compose counts lines from 1 and lint()/
+  // paintDots() count from 0 — converted once, here, so a mismatch cannot
+  // creep in anywhere else and send the user to the wrong line. The dot is
+  // merged in on top of whatever lint already found, and lives until the
+  // next reparse() (typing again, or a form commit) replaces it.
+  function markSaveError(message) {
+    var m = /line (\d+)/.exec(message || '');
+    if (!m) return;
+    var line = parseInt(m[1], 10) - 1;
+    saveErrorDot = { line: line, level: 'error', message: message };
+    redrawDots();
+    revealLine(line);
+  }
+
   function save(thenStart) {
     var leaf  = nameInput.value.trim();
     var isNew = modal.dataset.new === '1';
@@ -3444,6 +5499,7 @@
           saveBtn.disabled = false;
           startBtn.disabled = startBtnWasDisabled;
           showError((res.error || 'Save failed.') + strayWarning(res));
+          markSaveError(res.error);
           return;
         }
 

@@ -179,6 +179,47 @@ stop. There is no display-name override.
 Service display order is the order services appear in the compose file — the editor preserves
 document order, so no explicit ordering key is needed.
 
+### Sections
+
+Some parts of the form — Health check, Resource limits, DNS servers, and so on — can be switched
+off from the form without deleting what was written there. Doing that moves the section into
+`sections`, keyed first by service name and then by the compose key it came from:
+
+```yaml
+x-unraid:
+  sections:
+    web:
+      healthcheck: '{"after":"image","lines":["healthcheck:","  test: [\"CMD\", \"curl\", \"-f\", \"http://localhost\"]"]}'
+      ports: false
+```
+
+Each entry means one of three things:
+
+| Written like this | Means |
+|---|---|
+| `ports: false` | Switched off deliberately, holding nothing. |
+| `healthcheck: '{"after":"image","lines":[…]}'` | Switched off, holding the section's own lines — comments, indent and all — so switching it back on restores them exactly. `after` names the compose key the block used to follow, so it goes back in the same place; `null` means it was the service's first key. Two more fields ride along and record spacing, so a block separated from its neighbour by a blank line comes back on the right side of it: `gap`, how many lines sat between the two, and `blank`, whether a blank line was removed along with the block. Both may be left out, which reads as "it sat flush against the key above". |
+| No entry at all | No opinion. The form falls back to whether the compose file has the block, then to the section's own default. |
+
+That middle value is [JSON](https://www.json.org/) — a plainer, quote-heavy way of writing
+structured data — wrapped up as a single string so a whole block, comments included, survives as
+one YAML line rather than being pulled apart into nested keys. The schema checks that it *is* a
+string; it does not look inside it. That is deliberate, not a gap: reparsing it back into YAML would
+recreate the very thing this format exists to avoid.
+
+Deleting one of these lines by hand is a supported thing to do — the section just reverts to its
+default, and switching it on again starts it empty.
+
+An entry holding no lines at all — `'{"after":null,"lines":[]}'` — means the same as no entry:
+shown, and empty. Earlier versions wrote one the moment a section was switched on. Nothing writes
+one now, because a section with nothing in it has nothing worth recording, and an entry saying so
+would put an `x-unraid:` block into a file that had no need of one; the tick is remembered by the
+editor until something is actually put in the section. One already sitting in a file is still read.
+
+**The compose file is the source of truth.** If the block is still actually present in the file, the
+file wins outright and any `sections` entry naming the same key is ignored. An entry naming a
+service that no longer exists is ignored too, never quietly deleted.
+
 ---
 
 ## Service level

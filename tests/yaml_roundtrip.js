@@ -23,6 +23,12 @@ var fs   = require('fs');
 var path = require('path');
 
 var Y = require('../src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js');
+// A photograph of the CHOICES/BOOL_CHOICES/CAP_OPTIONS data exactly as
+// stacks.js held it before PLAN_15 phase 1 moved twelve of the lists into
+// compose-model.js's VOCAB — see the file's own header comment. Never edited
+// to make a test pass: if a value here is wrong, it was wrong before the
+// move too, and fixing it is a separate change.
+var VOCAB_SNAPSHOT = require('./vocab-snapshot.js');
 
 var pass = 0, fail = 0;
 
@@ -707,6 +713,175 @@ FILES.forEach(function (file) {
   });
 })();
 
+/* ---- the keys that start empty ------------------------------------------ */
+
+// cap_add, cap_drop and profiles render as a suggestion box, and a browser only
+// offers the suggestions matching what is already in the box — so these are
+// added blank. That only works if a bare "- " comes back as an editable empty
+// field rather than a locked row, and if typing into it writes a plain value.
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n';
+
+  ['cap_add', 'cap_drop', 'profiles'].forEach(function (key) {
+    var doc  = Y.parse(src);
+    var line = Y.addItem(doc, Y.buildForm(doc), 'a', 'list', undefined, key);
+    ok(key + ' is added empty', Y.serialise(doc).split('\n')[line] === '      - ',
+       JSON.stringify(Y.serialise(doc).split('\n')[line]));
+
+    var form = Y.buildForm(doc);
+    var id   = Y.fieldAtLine(form, line);
+    var f    = form.fields.filter(function (x) { return x.id === id; })[0];
+    ok(key + '\'s empty entry is an editable box, not a locked row',
+       !!f && !f.locked && !!f.parts.value && f.parts.value.value === '');
+
+    Y.setValue(doc, form, id, 'NET_RAW');
+    ok('typing into ' + key + '\'s empty entry writes an unquoted value',
+       Y.serialise(doc).split('\n')[line] === '      - NET_RAW',
+       JSON.stringify(Y.serialise(doc).split('\n')[line]));
+
+    // And removing it while still empty leaves nothing behind.
+    var doc2 = Y.parse(src);
+    var l2   = Y.addItem(doc2, Y.buildForm(doc2), 'a', 'list', undefined, key);
+    var f2   = Y.buildForm(doc2);
+    Y.removeItem(doc2, f2, Y.fieldAtLine(f2, l2));
+    ok('removing ' + key + '\'s empty entry takes its key with it',
+       Y.serialise(doc2) === src, JSON.stringify(Y.serialise(doc2)));
+  });
+
+  // A dash with no space after it has nowhere to put a value, so it stays
+  // locked — writing at that column would produce "-NET_RAW".
+  var tight = Y.parse('services:\n  a:\n    image: alpine\n    cap_drop:\n      -\n');
+  var tf    = Y.buildForm(tight).fields.filter(function (f) { return f.listKey === 'cap_drop'; })[0];
+  ok('a dash with nothing after it at all stays locked', !!tf && tf.locked);
+})();
+
+/* ---- an entry with no value is an unfinished edit ------------------------ */
+
+// It stays visible so it can be finished or deleted, and it is never carried
+// into x-unraid.sections when its section is switched off. Both halves matter:
+// without the first, clearing a box drops its row while the line stays in the
+// file; without the second, switching the section off and on again hands back
+// a blank that compose then refuses to run.
+(function () {
+  var doc  = Y.parse('services:\n  a:\n    image: alpine\n    dns:\n      - 1.1.1.1\n');
+  var form = Y.buildForm(doc);
+  var f    = form.fields.filter(function (x) { return x.listKey === 'dns'; })[0];
+
+  Y.setValue(doc, form, f.id, '');
+  ok('clearing a list entry leaves the dash bare, not "- \'\'"',
+     Y.serialise(doc) === 'services:\n  a:\n    image: alpine\n    dns:\n      - \n',
+     JSON.stringify(Y.serialise(doc)));
+
+  var back = Y.buildForm(Y.parse(Y.serialise(doc)))
+              .fields.filter(function (x) { return x.listKey === 'dns'; })[0];
+  ok('the cleared entry keeps its row rather than vanishing',
+     !!back && !back.locked && back.parts.value.value === '');
+
+  // A file that already holds one — ours never writes it, but a hand-written
+  // empty string is still an entry and must be reachable.
+  var quoted = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    dns:\n      - \'\'\n'))
+                .fields.filter(function (x) { return x.listKey === 'dns'; })[0];
+  ok('a hand-written empty string entry is shown, not dropped',
+     !!quoted && !quoted.locked && quoted.parts.value.value === '');
+
+  function stashed(src) {
+    var d = Y.parse(src);
+    ok('the block stashes', Y.stashSection(d, Y.buildForm(d), 'a', ['cap_drop']));
+    var e = Y.readSections(d).a;
+    return { entry: e ? e.cap_drop : undefined, out: Y.serialise(d) };
+  }
+
+  var mixed = stashed('services:\n  a:\n    image: alpine\n    cap_drop:\n      - ALL\n      - \n');
+  ok('a blank beside a real entry is left behind, the real one kept',
+     !!mixed.entry && mixed.entry.lines.join('|') === 'cap_drop:|  - ALL',
+     JSON.stringify(mixed.entry));
+
+  var allBlank = stashed('services:\n  a:\n    image: alpine\n    cap_drop:\n      - \n');
+  ok('a block that is nothing but blanks keeps nothing at all',
+     allBlank.entry === false, JSON.stringify(allBlank.entry));
+  ok('and the block itself is gone from the file',
+     allBlank.out.indexOf('cap_drop:\n') < 0, allBlank.out);
+
+  // The verbatim promise: a block with no blanks in it is untouched, comments,
+  // dash gaps and all.
+  var clean = stashed('services:\n  a:\n    image: alpine\n    cap_drop:\n' +
+                      '      # keep me\n      -   ALL   # and me\n');
+  ok('a block with no blanks is stashed exactly as it stands',
+     !!clean.entry && clean.entry.lines.join('|') === 'cap_drop:|  # keep me|  -   ALL   # and me',
+     JSON.stringify(clean.entry));
+
+  // Nothing was dropped from this one, so the rule that empties it never fires
+  // and the author's own line survives.
+  var bare = stashed('services:\n  a:\n    image: alpine\n    cap_drop:\n');
+  ok('a key written with nothing under it is still kept',
+     !!bare.entry && bare.entry.lines.join('|') === 'cap_drop:', JSON.stringify(bare.entry));
+
+  // End to end: off, then on again.
+  var d2 = Y.parse('services:\n  a:\n    image: alpine\n    cap_drop:\n      - ALL\n      - \n');
+  Y.stashSection(d2, Y.buildForm(d2), 'a', ['cap_drop']);
+  Y.restoreSection(d2, Y.buildForm(d2), 'a', 'cap_drop');
+  ok('switching the section off and on again returns the real entry and no blank',
+     Y.serialise(d2) === 'services:\n  a:\n    image: alpine\n    cap_drop:\n      - ALL\n',
+     JSON.stringify(Y.serialise(d2)));
+})();
+
+/* ---- half a mapping is still a mapping ---------------------------------- */
+
+// Clearing one side of a port, volume or device used to write "- 8080:", which
+// YAML reads as a MAPPING with the key 8080 and no value — so the entry stopped
+// being a port at all and its row vanished from the form while the line stayed
+// in the file. A colon at the end of a scalar is a key indicator just as much
+// as one followed by a space, so it has to be quoted.
+(function () {
+  var CASES = [
+    ['port',   'ports',   '8080:80',           'container', "      - '8080:'"],
+    ['port',   'ports',   '8080:80',           'host',      '      - :80'],
+    ['volume', 'volumes', '/mnt/a:/data',      'container', "      - '/mnt/a:'"],
+    ['device', 'devices', '/dev/dri:/dev/dri', 'container', "      - '/dev/dri:'"]
+  ];
+
+  CASES.forEach(function (c) {
+    var src  = 'services:\n  a:\n    image: alpine\n    ' + c[1] + ':\n      - ' + c[2] + '\n';
+    var doc  = Y.parse(src), form = Y.buildForm(doc);
+    var pick = function (f) { return f.binder === c[0]; };
+    var f    = form.fields.filter(pick)[0];
+
+    Y.setPart(doc, form, f.id, c[3], '');
+    var line = Y.serialise(doc).split('\n')[4];
+    ok('clearing a ' + c[0] + '\'s ' + c[3] + ' side writes ' + JSON.stringify(c[4]),
+       line === c[4], JSON.stringify(line));
+
+    var after = Y.buildForm(Y.parse(Y.serialise(doc))).fields.filter(pick)[0];
+    ok('and the ' + c[0] + ' row is still there, with its other half intact',
+       !!after && !after.locked &&
+       (String(after.parts.host.value) + String(after.parts.container.value)).trim() !== '',
+       after ? JSON.stringify(after.parts) : 'the row vanished');
+  });
+
+  // A legitimate one-sided entry is a different thing entirely: its missing
+  // half has no spot at all, which is what the form's gap check keys on.
+  [['port', 'ports', '8080'], ['volume', 'volumes', '/data']].forEach(function (c) {
+    var f = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    ' + c[1] + ':\n      - ' + c[2] + '\n'))
+             .fields.filter(function (x) { return x.binder === c[0]; })[0];
+    ok('a one-sided ' + c[0] + ' entry has no host spot and is not a half mapping',
+       !!f && !f.parts.host.spot && f.parts.container.value === c[2]);
+  });
+
+  // The quoting rule itself, from both sides: a trailing colon is quoted, a
+  // colon inside a word is left exactly as it was.
+  var doc2 = Y.parse('services:\n  a:\n    image: alpine\n    environment:\n      A: x\n      B: y\n');
+  var form2 = Y.buildForm(doc2);
+  var byName = function (n) {
+    return form2.fields.filter(function (f) { return f.binder === 'env' && f.target === n; })[0];
+  };
+  Y.setValue(doc2, form2, byName('A').id, 'ends:');
+  Y.setValue(doc2, form2, byName('B').id, 'http://host/path');
+  var got = Y.serialise(doc2).split('\n');
+  ok('a value ending in a colon is quoted', got[4] === "      A: 'ends:'", JSON.stringify(got[4]));
+  ok('a colon inside a value still needs no quotes',
+     got[5] === '      B: http://host/path', JSON.stringify(got[5]));
+})();
+
 /* ---- a chosen value instead of a placeholder ---------------------------- */
 
 (function () {
@@ -1085,17 +1260,18 @@ console.log('\nJ. The always-present Container settings');
 
 (function () {
   // The field count is what refreshRanges() indexes by, so it must never
-  // move when an absent slot gains a line. Sixteen, not four: the four fixed
-  // Container fields, plus twelve blank health-check/resource-limit leaves —
-  // harvestLeaves() (PLAN_8 phase 2) offers those whether or not the file has
-  // healthcheck:/deploy: at all, and healthcheck.test counts as two of them
-  // (PLAN_8 phase 4 — the mode and the command, see harvestHealthTest()).
+  // move when an absent slot gains a line. Seventeen, not four: the four
+  // fixed Container fields, plus thirteen blank health-check/resource-limit/
+  // logging leaves — harvestLeaves() (PLAN_8 phase 2) offers those whether or
+  // not the file has healthcheck:/deploy:/logging: at all, and
+  // healthcheck.test counts as two of them (PLAN_8 phase 4 — the mode and the
+  // command, see harvestHealthTest()).
   var src = 'services:\n  a:\n    image: alpine\n';
   var doc = Y.parse(src), form = Y.buildForm(doc);
   var svcFields = form.fields.filter(function (f) { return f.service === 'a'; });
 
-  ok('a service with no other settings yields four fixed fields plus twelve blank leaves',
-     svcFields.length === 16 &&
+  ok('a service with no other settings yields four fixed fields plus thirteen blank leaves',
+     svcFields.length === 17 &&
      svcFields.slice(0, 4).every(function (f) { return f.fixed; }) &&
      svcFields.slice(4).every(function (f) { return f.absent && f.path; }),
      svcFields.map(function (f) { return f.target; }).join(', '));
@@ -1279,17 +1455,18 @@ var FIXTURE_10_ADVANCED = [
 
 (function () {
   // networks: is two editable list fields rather than one locked block, and
-  // harvestLeaves() (PLAN_8 phase 2) now offers every healthcheck/deploy leaf
-  // whether the file has it or not — seven healthcheck leaves (test counts as
-  // two — the mode and the command, PLAN_8 phase 4) plus all four deploy
-  // ones, as a fixed pass right after the four Container fields, same as
-  // those. The two healthcheck leaves this file does not set (start_interval,
-  // disable) still appear, blank. web's own test: is a flow list
-  // (["CMD", "curl", ...]) which readTest() reads with confidence, so it
-  // surfaces right there with its siblings rather than later as a locked
-  // catch-all field. web's depends_on is long form (PLAN_8 phase 5) — one
-  // field for "db" plus its restart/required fold, in place of the single
-  // locked block earlier phases left it as. So the count is twenty-three, not
+  // harvestLeaves() (PLAN_8 phase 2) now offers every healthcheck/deploy/
+  // logging leaf whether the file has it or not — seven healthcheck leaves
+  // (test counts as two — the mode and the command, PLAN_8 phase 4) plus all
+  // four deploy ones plus logging's one (driver), as a fixed pass right after
+  // the four Container fields, same as those. The two healthcheck leaves this
+  // file does not set (start_interval, disable), and logging.driver (this
+  // file has no logging: at all), still appear, blank. web's own test: is a
+  // flow list (["CMD", "curl", ...]) which readTest() reads with confidence,
+  // so it surfaces right there with its siblings rather than later as a
+  // locked catch-all field. web's depends_on is long form (PLAN_8 phase 5) —
+  // one field for "db" plus its restart/required fold, in place of the single
+  // locked block earlier phases left it as. So the count is twenty-four, not
   // the ten keys the original file has at the top of web:. Pinning f.id
   // rather than binder/target is deliberate — a list field's id carries its
   // list key and index (web/list.networks#0/frontend_net), which is what
@@ -1315,6 +1492,7 @@ var FIXTURE_10_ADVANCED = [
     'web/setting/deploy.resources.limits.memory',
     'web/setting/deploy.resources.reservations.cpus',
     'web/setting/deploy.resources.reservations.memory',
+    'web/setting/logging.driver',
     'web/port/80/tcp',
     'web/env/NGINX_PORT',
     'web/list.networks#0/frontend_net',
@@ -1323,7 +1501,7 @@ var FIXTURE_10_ADVANCED = [
     'web/depends/depends_on.db.restart',
     'web/depends/depends_on.db.required'
   ];
-  ok('web yields exactly these twenty-three fields, in file order',
+  ok('web yields exactly these twenty-four fields, in file order',
      JSON.stringify(got) === JSON.stringify(want), got.join(', '));
 })();
 
@@ -1475,6 +1653,9 @@ var FIXTURE_10_ADVANCED = [
 /* ---- 8. the catch-all floor, and the two exclusions that sit above it -- */
 
 (function () {
+  // ulimits: has no table entry — unlike logging:, which is now its own
+  // block field with a driver leaf (see the KEYS table) — so it still
+  // demonstrates a map value the catch-all can only lock, not edit.
   var src = 'x-shared: &defaults\n' +
             '  restart: unless-stopped\n' +
             '\n' +
@@ -1482,14 +1663,14 @@ var FIXTURE_10_ADVANCED = [
             '  a:\n' +
             '    <<: *defaults\n' +
             '    working_dir: /app\n' +
-            '    logging:\n' +
-            '      driver: json-file\n' +
+            '    ulimits:\n' +
+            '      nofile: 1024\n' +
             '    x-unraid:\n' +
             '      name: Thing\n';
 
   var doc = Y.parse(src), form = Y.buildForm(doc);
   var wd  = Y.fieldById(form, 'a/setting/working_dir');
-  var log = Y.fieldById(form, 'a/setting/logging');
+  var ulm = Y.fieldById(form, 'a/setting/ulimits');
 
   ok('working_dir falls to the catch-all as an editable field, not a locked one',
      !!wd && !wd.locked, wd && JSON.stringify(wd));
@@ -1497,9 +1678,9 @@ var FIXTURE_10_ADVANCED = [
   ok('and setting it rewrites only that one line',
      diffLines(src, Y.serialise(doc)).length === 1, diffLines(src, Y.serialise(doc)).join(', '));
 
-  ok('a logging: block falls to the catch-all as a locked field',
-     !!log && log.locked && log.lockReason === 'this is written as a block of its own',
-     log && JSON.stringify(log));
+  ok('a ulimits: block falls to the catch-all as a locked field',
+     !!ulm && ulm.locked && ulm.lockReason === 'this is written as a block of its own',
+     ulm && JSON.stringify(ulm));
 
   ok('an x-unraid block yields no field at all, because it is already the service overview',
      !form.fields.some(function (f) { return f.service === 'a' && f.target === 'x-unraid'; }));
@@ -1794,7 +1975,9 @@ console.log('\nM. 10-advanced-compose-test (PLAN_4 phase 2)');
      line1 >= 0 && Y.serialise(d1).split('\n')[line1] === '      - default',
      line1 >= 0 && Y.serialise(d1).split('\n')[line1]);
 
-  var CASES = [['dns', '1.1.1.1'], ['cap_add', 'NET_ADMIN'], ['env_file', './app.env']];
+  // cap_add, cap_drop and profiles are not here: they are added empty, and are
+  // covered by "the keys that start empty" above.
+  var CASES = [['dns', '1.1.1.1'], ['expose', '8080'], ['env_file', './app.env']];
   CASES.forEach(function (c) {
     var d = Y.parse('services:\n  a:\n    image: alpine\n'), f = Y.buildForm(d);
     var line = Y.addItem(d, f, 'a', 'list', '', c[0]);
@@ -2925,6 +3108,2200 @@ console.log('\nT. depends_on long form (PLAN_8 phase 5)');
   var removed = Y.removeItem(doc, form2, 'web/depends/depends_on.cache');
   ok('removing it again restores the file exactly, comments and blank lines included',
      removed && Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * U. addService — a new service, seeded with image: and restart:
+ * ========================================================================= */
+
+console.log('\nU. addService');
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n';
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  var line = Y.addService(doc, form, 'b');
+  var want = 'services:\n  a:\n    image: alpine\n  b:\n    image:\n    restart: unless-stopped\n';
+  ok('a service is added after the only existing one',
+     line >= 0 && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n  b:\n    image: nginx\n';
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  var line = Y.addService(doc, form, 'c');
+  var want = 'services:\n  a:\n    image: alpine\n  b:\n    image: nginx\n  c:\n    image:\n    restart: unless-stopped\n';
+  ok('a service is added after the last of several existing ones',
+     line >= 0 && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // The case that was broken and fixed: a new service's children must sit at
+  // whatever column the file's own service already sits at, not a hardcoded
+  // two spaces — checked on both a 2-space and a 4-space file.
+  var CASES = [
+    ['a 2-space file', 'services:\n  a:\n    image: alpine\n'],
+    ['a 4-space file', 'services:\n    a:\n        image: alpine\n']
+  ];
+  CASES.forEach(function (c) {
+    var doc = Y.parse(c[1]), form = Y.buildForm(doc);
+    var existingIndent = /^(\s*)image:/.exec(c[1].split('\n')[2])[1].length;
+    Y.addService(doc, form, 'b');
+    var newImageLine = Y.serialise(doc).split('\n').filter(function (l) { return /^\s*image:$/.test(l); })[0];
+    var newIndent = /^(\s*)/.exec(newImageLine || '')[1].length;
+    ok(c[0] + ': the new service\u2019s children sit at the same column as the existing one\u2019s',
+       !!newImageLine && newIndent === existingIndent,
+       'existing: ' + existingIndent + ', new: ' + newIndent);
+  });
+})();
+
+(function () {
+  var spaced = 'services:\n  a:\n    image: alpine\n\n  b:\n    image: alpine\n';
+  var d1 = Y.parse(spaced), f1 = Y.buildForm(d1);
+  Y.addService(d1, f1, 'c');
+  var want1 = 'services:\n  a:\n    image: alpine\n\n  b:\n    image: alpine\n\n  c:\n    image:\n    restart: unless-stopped\n';
+  ok('a file that blank-separates its services gets a blank line before the new one',
+     Y.serialise(d1) === want1, firstDiff(want1, Y.serialise(d1)));
+
+  var packed = 'services:\n  a:\n    image: alpine\n  b:\n    image: alpine\n';
+  var d2 = Y.parse(packed), f2 = Y.buildForm(d2);
+  Y.addService(d2, f2, 'c');
+  var want2 = 'services:\n  a:\n    image: alpine\n  b:\n    image: alpine\n  c:\n    image:\n    restart: unless-stopped\n';
+  ok('a file that packs its services tight gets no blank line before the new one',
+     Y.serialise(d2) === want2, firstDiff(want2, Y.serialise(d2)));
+})();
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n';
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  var line = Y.addService(doc, form, 'b');
+  var out  = Y.serialise(doc);
+  ok('the file reparses cleanly after the add', !!Y.fieldAtLine(Y.buildForm(Y.parse(out)), line));
+  ok('the new name appears in form.declared.services',
+     Y.buildForm(Y.parse(out)).declared.services.indexOf('b') >= 0,
+     JSON.stringify(Y.buildForm(Y.parse(out)).declared.services));
+})();
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n';
+
+  // Each refusal must return -1 and write nothing at all.
+  var REFUSALS = [
+    ['a name already taken', 'a'],
+    ['an invalid name',      'bad name!'],
+    ['an empty name',        '']
+  ];
+  REFUSALS.forEach(function (r) {
+    var doc = Y.parse(src), form = Y.buildForm(doc);
+    var line = Y.addService(doc, form, r[1]);
+    ok('refused: ' + r[0], line === -1);
+    ok('refused: ' + r[0] + ' \u2014 file untouched', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+  });
+
+  var noKey = 'image: alpine\n';
+  var d2 = Y.parse(noKey), f2 = Y.buildForm(d2);
+  var line2 = Y.addService(d2, f2, 'a');
+  ok('refused: no services: key at all', line2 === -1);
+  ok('refused: no services: key \u2014 file untouched', Y.serialise(d2) === noKey, firstDiff(noKey, Y.serialise(d2)));
+
+  // A services: map sealed as a whole (an alias to a shared block) cannot be
+  // added to, the same rule addItem already follows for a sealed list.
+  var sealed = 'x-shared: &all\n  a:\n    image: alpine\n\nservices: *all\n';
+  var d3 = Y.parse(sealed), f3 = Y.buildForm(d3);
+  var line3 = Y.addService(d3, f3, 'b');
+  ok('refused: a sealed services: map', line3 === -1);
+  ok('refused: a sealed services: map \u2014 file untouched', Y.serialise(d3) === sealed, firstDiff(sealed, Y.serialise(d3)));
+})();
+
+(function () {
+  // Comments, an anchor and the merge key elsewhere in the file survive an
+  // add, untouched and in their original order.
+  var src  = '# top comment\nx-shared: &defaults\n  restart: unless-stopped\n\nservices:\n  a:\n' +
+             '    <<: *defaults\n    image: alpine   # pinned\n';
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  var line = Y.addService(doc, form, 'b');
+  var want = src + '  b:\n    image:\n    restart: unless-stopped\n';
+  ok('comments, the anchor and the merge key survive an add elsewhere in the file',
+     line >= 0 && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * V. proto and mode — the parts a bare port and volume gained
+ *
+ * Both carry their own separator in the value, so choosing the empty option
+ * writes the separator away too and writeScalar needs no special case for
+ * "nothing chosen". Section B already null-edits every f.parts entry
+ * generically (it walks Object.keys(f.parts), not a fixed list of names), so
+ * these two join that guard automatically rather than needing a second copy
+ * of it here.
+ * ========================================================================= */
+
+console.log('\nV. proto and mode parts');
+
+(function () {
+  var noProto = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    ports:\n      - "8080:80"\n'));
+  var p1 = noProto.fields.filter(function (f) { return f.binder === 'port'; })[0];
+  ok('a port with no protocol exposes parts.proto as empty',
+     !!p1 && p1.parts.proto.value === '', p1 && JSON.stringify(p1.parts.proto));
+
+  var udp = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    ports:\n      - "8080:80/udp"\n'));
+  var p2 = udp.fields.filter(function (f) { return f.binder === 'port'; })[0];
+  ok('8080:80/udp exposes parts.proto as "/udp"',
+     !!p2 && p2.parts.proto.value === '/udp', p2 && JSON.stringify(p2.parts.proto));
+
+  var noMode = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    volumes:\n      - /h:/c\n'));
+  var v1 = noMode.fields.filter(function (f) { return f.binder === 'volume'; })[0];
+  ok('a volume with no mode exposes parts.mode as empty',
+     !!v1 && v1.parts.mode.value === '', v1 && JSON.stringify(v1.parts.mode));
+
+  var ro = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    volumes:\n      - /h:/c:ro\n'));
+  var v2 = ro.fields.filter(function (f) { return f.binder === 'volume'; })[0];
+  ok('/h:/c:ro exposes parts.mode as ":ro"',
+     !!v2 && v2.parts.mode.value === ':ro', v2 && JSON.stringify(v2.parts.mode));
+})();
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n    ports:\n      - "8080:80"\n';
+  var want = 'services:\n  a:\n    image: alpine\n    ports:\n      - "8080:80/udp"\n';
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var p   = form.fields.filter(function (f) { return f.binder === 'port'; })[0];
+  Y.setPart(doc, form, p.id, 'proto', '/udp');
+  ok('setting proto to "/udp" on a bare port changes exactly one line',
+     Y.serialise(doc) === want && diffLines(src, Y.serialise(doc)).length === 1,
+     firstDiff(want, Y.serialise(doc)));
+
+  var back = Y.parse(want), formBack = Y.buildForm(back);
+  var pBack = formBack.fields.filter(function (f) { return f.binder === 'port'; })[0];
+  Y.setPart(back, formBack, pBack.id, 'proto', '');
+  ok('setting proto back to empty removes the separator too, restoring the original line',
+     Y.serialise(back) === src, firstDiff(src, Y.serialise(back)));
+})();
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n    volumes:\n      - /h:/c\n';
+  var want = 'services:\n  a:\n    image: alpine\n    volumes:\n      - /h:/c:ro\n';
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var v   = form.fields.filter(function (f) { return f.binder === 'volume'; })[0];
+  Y.setPart(doc, form, v.id, 'mode', ':ro');
+  ok('setting mode to ":ro" on a bare volume changes exactly one line',
+     Y.serialise(doc) === want && diffLines(src, Y.serialise(doc)).length === 1,
+     firstDiff(want, Y.serialise(doc)));
+
+  var back = Y.parse(want), formBack = Y.buildForm(back);
+  var vBack = formBack.fields.filter(function (f) { return f.binder === 'volume'; })[0];
+  Y.setPart(back, formBack, vBack.id, 'mode', '');
+  ok('setting mode back to empty removes the separator too, restoring the original line',
+     Y.serialise(back) === src, firstDiff(src, Y.serialise(back)));
+})();
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    volumes:\n      - /data\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var v   = form.fields.filter(function (f) { return f.binder === 'volume'; })[0];
+
+  ok('an anonymous volume\u2019s mode part has no spot',
+     !!v && !v.parts.mode.spot, v && JSON.stringify(v.parts.mode));
+  ok('and is not writable',
+     Y.setPart(doc, form, v.id, 'mode', ':ro') === false);
+})();
+
+(function () {
+  // The suite already has an ip-qualified port case (section F) — extended
+  // here with a protocol, to show the ip survives a proto-only change.
+  var src  = 'services:\n  a:\n    image: alpine\n    ports:\n      - "127.0.0.1:8080:80/udp"\n';
+  var want = 'services:\n  a:\n    image: alpine\n    ports:\n      - "127.0.0.1:8080:80/tcp"\n';
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var p   = form.fields.filter(function (f) { return f.binder === 'port'; })[0];
+  ok('an ip-qualified port keeps its host and container parts when read',
+     p.parts.host.value === '8080' && p.parts.container.value === '80' && p.parts.proto.value === '/udp',
+     JSON.stringify({ host: p.parts.host.value, container: p.parts.container.value, proto: p.parts.proto.value }));
+
+  Y.setPart(doc, form, p.id, 'proto', '/tcp');
+  ok('changing only the protocol keeps the ip, changing exactly one line',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * W. Boolean writes go unquoted, and quoting is never removed
+ * ========================================================================= */
+
+console.log('\nW. Boolean writes go unquoted');
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n    privileged: true\n';
+  var want = 'services:\n  a:\n    image: alpine\n    privileged: false\n';
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  Y.setPart(doc, form, 'a/setting/privileged', 'value', 'false');
+  ok('privileged: true set to false writes a bare false, not \'false\'',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // The guard on the whole fix: a file that deliberately quoted "true" as a
+  // string keeps its quotes when changed. Quoting is never removed.
+  var src  = 'services:\n  a:\n    image: alpine\n    privileged: "true"\n';
+  var want = 'services:\n  a:\n    image: alpine\n    privileged: "false"\n';
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  Y.setPart(doc, form, 'a/setting/privileged', 'value', 'false');
+  ok('a deliberately quoted privileged: "true" keeps its quotes when changed',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n';
+  var want = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      disable: true\n';
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  var dis  = Y.fieldById(form, 'a/setting/healthcheck.disable');
+  ok('an absent healthcheck.disable is offered as a boolean', !!dis && dis.absent && dis.type === 'boolean');
+  Y.setPart(doc, form, 'a/setting/healthcheck.disable', 'value', 'true');
+  ok('setting it creates disable: true unquoted',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  var src  = 'services:\n  db:\n    image: postgres\n  web:\n    image: nginx\n    depends_on:\n' +
+             '      db:\n        condition: service_healthy\n';
+  var want = 'services:\n  db:\n    image: postgres\n  web:\n    image: nginx\n    depends_on:\n' +
+             '      db:\n        condition: service_healthy\n        required: false\n';
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  var req  = Y.fieldById(form, 'web/depends/depends_on.db.required');
+  ok('an absent dependency required is offered as a boolean', !!req && req.absent && req.type === 'boolean');
+  Y.setPart(doc, form, 'web/depends/depends_on.db.required', 'value', 'false');
+  ok('setting it creates required: false unquoted',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // The fix must not leak into an ordinary string field that merely holds the
+  // text "true" — an environment variable is never inferred as boolean.
+  var src  = 'services:\n  a:\n    image: alpine\n    environment:\n      FLAG: yes\n';
+  var want = 'services:\n  a:\n    image: alpine\n    environment:\n      FLAG: \'true\'\n';
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  var flag = Y.fieldById(form, 'a/env/FLAG');
+  ok('an ordinary environment value is not typed as boolean', !!flag && flag.type === 'text');
+  Y.setPart(doc, form, 'a/env/FLAG', 'value', 'true');
+  ok('setting it to the text "true" still gets quoted',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * X. Sections — a service section moved to x-unraid and back (PLAN.md
+ *    Phase 1): readSections, stashSection, restoreSection, setSectionState.
+ * ========================================================================= */
+
+console.log('\nX. Sections — stash and restore a service section');
+
+var SECTION_PATHS = [
+  ['ports'], ['volumes'], ['environment'], ['devices'], ['labels'],
+  ['healthcheck'], ['deploy', 'resources'], ['depends_on'], ['networks'],
+  ['secrets'], ['configs'], ['profiles'], ['dns'], ['cap_add'], ['cap_drop'],
+  ['expose'], ['env_file'], ['logging']
+];
+
+/* ---- the central case: stash then restore is byte-identical, for every
+ * section a service actually has, across the corpus -----------------------
+ *
+ * The whole corpus, deliberately — including 07-yaml-quirks and
+ * 08-deliberately-broken, which is where this sweep earned its keep. It found
+ * two real defects, both since fixed, and both of a kind only a hostile file
+ * exposes: a blank line flanking a block on both sides was collapsed on the
+ * way out and never rebuilt coming back, and a mis-indented line sent
+ * ensurePath into an unbounded insert loop that ended in a stack overflow.
+ * Excluding the awkward files would have hidden both, so they stay in.
+ */
+
+FILES.forEach(function (file) {
+  var name = path.relative(ROOT, file).replace(/\\/g, '/');
+  var text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  var baseWarnings = Y.parse(text).warnings.length;
+
+  var services = Y.buildForm(Y.parse(text)).services
+                  .filter(function (s) { return s.readable; })
+                  .map(function (s) { return s.name; });
+  if (!services.length) { ok(name + '  (no readable service — skipped)', true); return; }
+
+  var bad = null, tried = 0;
+  services.forEach(function (svc) {
+    SECTION_PATHS.forEach(function (p) {
+      if (bad) return;
+
+      var doc = Y.parse(text), form = Y.buildForm(doc);
+      if (!Y.stashSection(doc, form, svc, p)) return;   // absent or sealed — its own case
+
+      // A stash must not leave the parser any worse off than it found the
+      // file — a duplicate key or a newly-sealed region would show up here
+      // as a warning that was not there before.
+      var afterStash = Y.parse(Y.serialise(doc));
+      if (afterStash.warnings.length > baseWarnings) {
+        bad = svc + '/' + p.join('.') + ': stashing left a new parser warning behind';
+        return;
+      }
+
+      tried++;
+      var key = p.join('.');
+      if (!Y.restoreSection(doc, form, svc, key)) { bad = svc + '/' + key + ': restore refused'; return; }
+
+      var got = Y.serialise(doc);
+      if (got !== text) { bad = svc + '/' + key + '\n' + firstDiff(text, got); return; }
+
+      var afterRestore = Y.parse(got);
+      if (afterRestore.warnings.length > baseWarnings) {
+        bad = svc + '/' + key + ': restoring left a new parser warning behind';
+      }
+    });
+  });
+
+  ok(name + '  (' + tried + ' section stash/restore round trips)', !bad, bad);
+});
+
+/* ---- awkward characters: #, ', ", \ and a trailing comment --------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n' +
+            '      # a note with a # hash, a \'quote\', a "quote" and a \\ backslash\n' +
+            '      test: ["CMD", "echo hi"]  # trailing comment on this line\n' +
+            '    ports:\n      - "8080:80"\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+
+  ok('a block holding #, \', ", \\ and a trailing comment stashes',
+     Y.stashSection(doc, form, 'a', ['healthcheck']));
+  ok('and restores byte-identical — the stash is JSON inside a YAML scalar, so quoting is the risk',
+     Y.restoreSection(doc, form, 'a', 'healthcheck') && Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+  ok('the restored file is still readable, with no new parser warning',
+     Y.parse(Y.serialise(doc)).warnings.length === Y.parse(src).warnings.length);
+})();
+
+/* ---- after: null — the section is the service's first key ---------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    healthcheck:\n      interval: 30s\n    image: alpine\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+
+  ok('a section that is the service\u2019s first key stashes', Y.stashSection(doc, form, 'a', ['healthcheck']));
+  ok('and is recorded with after: null',
+     Y.readSections(doc).a.healthcheck.after === null, JSON.stringify(Y.readSections(doc)));
+  ok('restoring puts it back as the first key again, byte-identical',
+     Y.restoreSection(doc, form, 'a', 'healthcheck') && Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- after in the middle — the section sits between two other keys ------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      interval: 30s\n' +
+            '    ports:\n      - "80:80"\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+
+  Y.stashSection(doc, form, 'a', ['healthcheck']);
+  ok('a section between two keys remembers the one before it',
+     Y.readSections(doc).a.healthcheck.after === 'image', JSON.stringify(Y.readSections(doc)));
+  ok('restoring lands it back between the same two keys, byte-identical',
+     Y.restoreSection(doc, form, 'a', 'healthcheck') && Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- deploy.resources: removing it takes the now-empty deploy: with it,
+ * restoring has to rebuild both together --------------------------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    deploy:\n      resources:\n' +
+            '        limits:\n          cpus: \'0.50\'\n    ports:\n      - "80:80"\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+
+  ok('deploy.resources stashes, taking the now-empty deploy: with it',
+     Y.stashSection(doc, form, 'a', ['deploy', 'resources']) &&
+     Y.serialise(doc).indexOf('deploy:') < 0, Y.serialise(doc));
+  ok('restoring rebuilds deploy: and resources: together, byte-identical',
+     Y.restoreSection(doc, form, 'a', 'deploy.resources') && Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- indent that is not two spaces — the deploy.resources rebuild must use
+ * the file's own nesting step, not a hardcoded two. A defect already found
+ * and fixed once; guarded here on a four-space and a three-space file so it
+ * cannot come back unnoticed. ------------------------------------------- */
+
+(function () {
+  var CASES = [
+    ['a four-space file',
+     'services:\n    a:\n        image: alpine\n        deploy:\n            resources:\n' +
+     '                limits:\n                    cpus: \'0.50\'\n        ports:\n' +
+     '            - "80:80"\n'],
+    ['a three-space file',
+     'services:\n   a:\n      image: alpine\n      deploy:\n         resources:\n' +
+     '            limits:\n               cpus: \'0.50\'\n      ports:\n' +
+     '         - "80:80"\n']
+  ];
+
+  CASES.forEach(function (c) {
+    var doc = Y.parse(c[1]), form = Y.buildForm(doc);
+    Y.stashSection(doc, form, 'a', ['deploy', 'resources']);
+    ok(c[0] + ': deploy.resources rebuilds at the file\u2019s own indent, byte-identical',
+       Y.restoreSection(doc, form, 'a', 'deploy.resources') && Y.serialise(doc) === c[1],
+       firstDiff(c[1], Y.serialise(doc)));
+  });
+})();
+
+/* ---- a blank line inside a stashed block survives in place ---------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      interval: 30s\n\n' +
+            '      timeout: 5s\n    ports:\n      - "80:80"\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+
+  Y.stashSection(doc, form, 'a', ['healthcheck']);
+  ok('a blank line inside the stashed block survives, byte-identical on restore',
+     Y.restoreSection(doc, form, 'a', 'healthcheck') && Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- a hand-mangled entry is ignored, never thrown on --------------------
+ *
+ * This runs on every render of every file, including one somebody has
+ * hand-edited, so a bad line here must not cost the rest of the form.
+ */
+
+(function () {
+  var notJson = Y.parse('services:\n  a:\n    image: alpine\nx-unraid:\n  sections:\n' +
+                         '    a:\n      healthcheck: \'not json\'\n');
+  ok('a value that is not JSON at all is ignored, not thrown on',
+     JSON.stringify(Y.readSections(notJson)) === '{}', JSON.stringify(Y.readSections(notJson)));
+
+  var badShape = Y.parse('services:\n  a:\n    image: alpine\nx-unraid:\n  sections:\n' +
+                          '    a:\n      healthcheck: \'{"lines":"notanarray"}\'\n');
+  ok('valid JSON in the wrong shape (lines not an array, after missing) is ignored too',
+     JSON.stringify(Y.readSections(badShape)) === '{}', JSON.stringify(Y.readSections(badShape)));
+})();
+
+/* ---- an entry naming a service that does not exist ------------------------
+ *
+ * readSections is a plain reader — it reports whatever x-unraid.sections
+ * says, whether or not that service is still in the file. It is
+ * restoreSection, called with a name nothing in the file answers to, that
+ * has to cope: gracefully clearing a leftover "false" flag (there was never
+ * anything to restore), but refusing outright — writing nothing — when the
+ * entry holds real lines it cannot place anywhere.
+ */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\nx-unraid:\n  sections:\n' +
+            '    ghost:\n      healthcheck: false\n';
+  var doc = Y.parse(src);
+  ok('a leftover entry for an absent service is still reported as-is',
+     JSON.stringify(Y.readSections(doc)) === '{"ghost":{"healthcheck":false}}',
+     JSON.stringify(Y.readSections(doc)));
+
+  var form = Y.buildForm(doc);
+  ok('restoring a "false" flag for an absent service just clears it, nothing to place',
+     Y.restoreSection(doc, form, 'ghost', 'healthcheck') &&
+     Y.serialise(doc) === 'services:\n  a:\n    image: alpine\n', JSON.stringify(Y.serialise(doc)));
+
+  var withLines = 'services:\n  a:\n    image: alpine\nx-unraid:\n  sections:\n' +
+                  '    ghost:\n      healthcheck: \'{"after":null,"lines":["healthcheck:","  interval: 30s"]}\'\n';
+  var doc2 = Y.parse(withLines), form2 = Y.buildForm(doc2);
+  ok('restoring real lines for an absent service refuses, since there is nowhere to put them',
+     Y.restoreSection(doc2, form2, 'ghost', 'healthcheck') === false &&
+     Y.serialise(doc2) === withLines, firstDiff(withLines, Y.serialise(doc2)));
+})();
+
+/* ---- a section present in the file AND in sections — the file wins ------- */
+
+(function () {
+  // A stray "ports: false" left over from an earlier hide, while the service
+  // still carries a live ports: block (a hand-edit contradiction). The form
+  // reads the live block regardless of what the stale flag claims — nothing
+  // in this layer special-cases it away — and re-stashing captures the LIVE
+  // content, overwriting the stale flag rather than merging with it.
+  var src = 'services:\n  a:\n    image: alpine\n    ports:\n      - "8080:80"\n' +
+            'x-unraid:\n  sections:\n    a:\n      ports: false\n';
+  var doc = Y.parse(src);
+  ok('the stale flag is reported exactly as written',
+     JSON.stringify(Y.readSections(doc)) === '{"a":{"ports":false}}', JSON.stringify(Y.readSections(doc)));
+
+  var form = Y.buildForm(doc);
+  var portField = form.fields.filter(function (f) { return f.binder === 'port'; })[0];
+  ok('but the form still reads the live block, not the stale flag',
+     !!portField && portField.target === '80/tcp', portField && portField.target);
+
+  ok('stashing again captures the live content and overwrites the stale flag',
+     Y.stashSection(doc, form, 'a', ['ports']) &&
+     JSON.stringify(Y.readSections(doc)) ===
+       '{"a":{"ports":{"after":"image","lines":["ports:","  - \\"8080:80\\""],"gap":0,"blank":false}}}',
+     JSON.stringify(Y.readSections(doc)));
+})();
+
+/* ---- rename while stashed — the stash key follows the service ------------ */
+
+(function () {
+  var src = 'services:\n  web:\n    image: nginx\n    healthcheck:\n      # a note\n' +
+            '      interval: 30s\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.stashSection(doc, form, 'web', ['healthcheck']);
+
+  var res = Y.renameService(doc, 'web', 'website');
+  ok('renaming a service with a hidden section succeeds and carries the stash key',
+     res.ok === true && Y.serialise(doc).indexOf('sections:\n    website:') >= 0, JSON.stringify(res));
+
+  form = Y.buildForm(doc);
+  var want = src.replace('web:', 'website:');
+  ok('the renamed service still restores correctly, comment and all',
+     Y.restoreSection(doc, form, 'website', 'healthcheck') && Y.serialise(doc) === want,
+     firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- setSectionState: true -> false -> null, and cleanup on the way out -- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+
+  ok('ticking a section on with nothing stashed writes the empty-lines form',
+     Y.setSectionState(doc, form, 'a', 'ports', true) &&
+     JSON.stringify(Y.readSections(doc)) === '{"a":{"ports":{"after":null,"lines":[],"gap":0,"blank":false}}}',
+     JSON.stringify(Y.readSections(doc)));
+
+  ok('ticking it off writes a bare false',
+     Y.setSectionState(doc, form, 'a', 'ports', false) &&
+     Y.serialise(doc).indexOf('ports: false') >= 0, Y.serialise(doc));
+
+  Y.setSectionState(doc, form, 'a', 'labels', false);
+  ok('a second entry shares the same sections: block',
+     Y.serialise(doc).indexOf('ports: false') >= 0 && Y.serialise(doc).indexOf('labels: false') >= 0,
+     Y.serialise(doc));
+
+  Y.setSectionState(doc, form, 'a', 'ports', null);
+  ok('clearing one entry leaves the other and the block itself in place',
+     Y.serialise(doc).indexOf('ports') < 0 && Y.serialise(doc).indexOf('labels: false') >= 0,
+     Y.serialise(doc));
+
+  ok('clearing the last entry removes sections: and x-unraid: too, back to the original file',
+     Y.setSectionState(doc, form, 'a', 'labels', null) && Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+
+  // The exact chain a section switched off with nothing worth keeping now
+  // runs: stash it (which records "off", since nothing survived the blanks
+  // filter), then clear that entry because off is what the section is anyway.
+  // Anything less leaves an x-unraid block standing over one dead word.
+  var d2 = Y.parse('services:\n  a:\n    image: alpine\n    cap_drop:\n      - \n');
+  Y.stashSection(d2, Y.buildForm(d2), 'a', ['cap_drop']);
+  Y.setSectionState(d2, Y.buildForm(d2), 'a', 'cap_drop', null);
+  ok('a section switched off holding nothing leaves no x-unraid block behind',
+     Y.serialise(d2) === 'services:\n  a:\n    image: alpine\n',
+     JSON.stringify(Y.serialise(d2)));
+})();
+
+/* ---- refusals leave the file untouched, byte for byte --------------------- */
+
+(function () {
+  var REFUSALS = [
+    ['a sealed intermediate level (deploy.resources, deploy anchored)',
+     'services:\n  a:\n    image: alpine\n    deploy: &d\n      replicas: 3\n' +
+     '  b:\n    image: alpine\n    deploy: *d\n', 'a', ['deploy', 'resources']],
+    ['a key the service does not have',
+     'services:\n  a:\n    image: alpine\n', 'a', ['healthcheck']],
+    ['a service that does not exist',
+     'services:\n  a:\n    image: alpine\n', 'ghost', ['healthcheck']],
+    ['a service that cannot be read (a bare scalar)',
+     'services:\n  a: alpine\n', 'a', ['healthcheck']]
+  ];
+
+  REFUSALS.forEach(function (r) {
+    var doc = Y.parse(r[1]), form = Y.buildForm(doc);
+    ok('stashSection refused: ' + r[0],
+       Y.stashSection(doc, form, r[2], r[3]) === false && Y.serialise(doc) === r[1],
+       firstDiff(r[1], Y.serialise(doc)));
+  });
+
+  // The refusal that happens PART WAY through, which every case above misses:
+  // x-unraid.sections is three levels deep, so a file this cannot finish
+  // writing to has already gained a bare "x-unraid:" and "sections:" by the
+  // time it gives up. Left behind, that is the form quietly adding keys to a
+  // file it then refused to edit. This shape — a service whose own
+  // indentation is inconsistent — is what reaches that path.
+  var ragged = 'services:\n  broken:\n    image: alpine\n    environment:\n' +
+               '      GOOD: 1\n     BAD_INDENT: 2\n';
+  var rdoc = Y.parse(ragged), rform = Y.buildForm(rdoc);
+  var refused = Y.stashSection(rdoc, rform, 'broken', ['environment']);
+  ok('stashSection refused: a partly-created x-unraid is rolled back',
+     refused === false && Y.serialise(rdoc) === ragged,
+     firstDiff(ragged, Y.serialise(rdoc)));
+  ok('stashSection refused: no bare x-unraid was left behind',
+     Y.serialise(rdoc).indexOf('x-unraid') < 0, Y.serialise(rdoc));
+
+  // restoreSection's own refusal: the immediate surviving parent (here,
+  // deploy:, which still holds "replicas" so it was never removed) has since
+  // been hand-turned into an anchor — restoring must not guess inside it.
+  var plain = 'services:\n  a:\n    image: alpine\n    deploy:\n      replicas: 3\n' +
+              '      resources:\n        limits:\n          cpus: \'0.50\'\n';
+  var seed = Y.parse(plain), seedForm = Y.buildForm(seed);
+  Y.stashSection(seed, seedForm, 'a', ['deploy', 'resources']);
+  var corrupted = Y.serialise(seed)
+    .replace('    deploy:\n      replicas: 3\n', '    deploy: &d\n      replicas: 3\n')
+    .replace('x-unraid:', '  b:\n    image: alpine\n    deploy: *d\nx-unraid:');
+
+  var doc2 = Y.parse(corrupted), form2 = Y.buildForm(doc2);
+  ok('restoreSection refused: the surviving parent was hand-turned into an anchor since the stash',
+     Y.restoreSection(doc2, form2, 'a', 'deploy.resources') === false && Y.serialise(doc2) === corrupted,
+     firstDiff(corrupted, Y.serialise(doc2)));
+})();
+
+/* =========================================================================
+ * I. Syntax highlighting — Y.highlight(line, carry)
+ *
+ * The one invariant that matters more than any individual span: strip the
+ * tags from html, decode &amp; &lt; &gt;, and get the input line back
+ * exactly. Checked over the whole compose-file corpus plus every inline
+ * fixture already above, because that is where the real quoting, comment
+ * and block-scalar oddities live — a synthetic one-liner would not have
+ * caught most of what compose files actually do.
+ * ========================================================================= */
+
+console.log('\nI. Syntax highlighting');
+
+function decodeEntities(s) {
+  return s.replace(/&(amp|lt|gt);/g, function (_, n) {
+    return n === 'amp' ? '&' : n === 'lt' ? '<' : '>';
+  });
+}
+
+function decodeHl(html) {
+  return decodeEntities(html.replace(/<[^>]+>/g, ''));
+}
+
+// The ordered {kind, text} spans in one line's html, decoded — so a test can
+// assert "there is a key span reading X" without caring what surrounds it.
+function spans(html) {
+  var re = /<span class="stackman-t--([a-z]+)">([\s\S]*?)<\/span>/g, out = [], m;
+  while ((m = re.exec(html))) out.push({ kind: m[1], text: decodeEntities(m[2]) });
+  return out;
+}
+
+// Runs highlight() over every line of `text`, threading carry through, and
+// returns the reconstructed lines (tags and entities stripped back out).
+function reconstruct(text) {
+  var lines = text.split('\n'), carry = '', out = [];
+  for (var i = 0; i < lines.length; i++) {
+    var r = Y.highlight(lines[i], carry);
+    out.push(decodeHl(r.html));
+    carry = r.carry;
+  }
+  return { lines: out, carry: carry };
+}
+
+function checkReconstruction(name, text) {
+  var lines = text.split('\n');
+  var got = reconstruct(text).lines;
+  var bad = -1;
+  for (var i = 0; i < lines.length; i++) if (got[i] !== lines[i]) { bad = i; break; }
+  ok('highlight reconstructs ' + name + '  (' + lines.length + ' lines)', bad < 0,
+     bad < 0 ? '' : 'line ' + (bad + 1) + '\n  was: ' + JSON.stringify(lines[bad]) +
+                     '\n  got: ' + JSON.stringify(got[bad]));
+}
+
+/* ---- I1. The reconstruction invariant, over the whole corpus ------------ */
+
+FILES.forEach(function (file) {
+  var name = path.relative(ROOT, file).replace(/\\/g, '/');
+  var text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  checkReconstruction(name, text);
+});
+
+// Every inline fixture already used above, plus a handful that exercise
+// block scalars and multi-line flow collections, which none of the EDGE
+// cases happen to cover.
+var HIGHLIGHT_FIXTURES = Object.keys(EDGE).map(function (k) { return EDGE[k]; }).concat([
+  'services:\n  a:\n    ports:\n      - "8096:8097/udp"\n' +
+    '    volumes:\n      - /mnt/user/media:/media:ro\n',
+  'services:\n  a:\n    environment:\n' +
+    '      ADMIN_PASSWORD: hunter2      # the login password -!S\n' +
+    '      SITE_TITLE: Home             # shown at the top -!R\n' +
+    '      LOG_LEVEL: info              # how chatty the logs are\n' +
+    '      PLAIN: x\n',
+  'x-shared: &ports\n  - "80:80"\n\nservices:\n  a:\n    image: alpine\n' +
+    '    ports: *ports\n    volumes: [/a:/b]\n',
+  'services:\n  a:\n    image: alpine\n    command: |\n      echo hi\n      echo bye\n',
+  'services:\n  a:\n    image: alpine\n    ports: [\n      "80:80",\n      81\n    ]\n',
+  'services:\n  a:\n    environment:\n      URL: "https://example.org/${PATH}"\n      SILLY: a$$b\n'
+]);
+
+HIGHLIGHT_FIXTURES.forEach(function (text, idx) {
+  checkReconstruction('inline fixture #' + idx, text);
+});
+
+/* ---- I2. key: value — key/punct/str spans in the right places ---------- */
+
+(function () {
+  var sp = spans(Y.highlight('    image: alpine', '').html);
+  ok('key span holds just the key', sp.some(function (p) { return p.kind === 'key' && p.text === 'image'; }));
+  ok('punct span holds the colon', sp.some(function (p) { return p.kind === 'punct' && p.text === ':'; }));
+  ok('str span holds the value', sp.some(function (p) { return p.kind === 'str' && p.text === 'alpine'; }));
+})();
+
+/* ---- I3. A '#' inside a double-quoted value is not a comment ----------- */
+
+(function () {
+  var r = Y.highlight('    C: "grey #3"', '');
+  var sp = spans(r.html);
+  ok('no comment span appears', !sp.some(function (p) { return p.kind === 'comment'; }));
+  ok('the hash stays inside the str span', sp.some(function (p) { return p.kind === 'str' && p.text === '"grey #3"'; }));
+})();
+
+/* ---- I4. A trailing ' # note' after a value IS a comment ---------------- */
+
+(function () {
+  var sp = spans(Y.highlight('    R: alpha    # note', '').html);
+  ok('the value is its own span', sp.some(function (p) { return p.kind === 'str' && p.text === 'alpha'; }));
+  ok('the comment runs from the hash to end of line',
+     sp.some(function (p) { return p.kind === 'comment' && p.text === '# note'; }));
+})();
+
+/* ---- I5. A block scalar swallows its body, and stops at the owning indent */
+
+(function () {
+  var lines = ['    command: |', '      echo hi', '      echo bye', '    image: alpine'];
+  var carry = '';
+
+  var r1 = Y.highlight(lines[0], carry);
+  ok('opening a block scalar carries the owning key\'s indent', r1.carry === 'block:4', r1.carry);
+  carry = r1.carry;
+
+  var r2 = Y.highlight(lines[1], carry);
+  ok('an indented body line stays in the block', r2.carry === 'block:4', r2.carry);
+  carry = r2.carry;
+
+  var r3 = Y.highlight(lines[2], carry);
+  ok('the next body line stays in too', r3.carry === 'block:4', r3.carry);
+  carry = r3.carry;
+
+  var r4 = Y.highlight(lines[3], carry);
+  ok('a line back at the owning indent leaves the block', r4.carry === '', r4.carry);
+  ok('and is read as an ordinary key line',
+     spans(r4.html).some(function (p) { return p.kind === 'key' && p.text === 'image'; }));
+})();
+
+/* ---- I6. A flow list left open across lines carries flow:1, then closes - */
+
+(function () {
+  var lines = ['    ports: [', '      "80:80",', '      81', '    ]'];
+  var carry = '';
+
+  var r1 = Y.highlight(lines[0], carry);
+  ok('opening a flow collection carries its bracket depth', r1.carry === 'flow:1', r1.carry);
+  carry = r1.carry;
+
+  var r2 = Y.highlight(lines[1], carry);
+  ok('a flow entry line stays open', r2.carry === 'flow:1', r2.carry);
+  carry = r2.carry;
+
+  var r3 = Y.highlight(lines[2], carry);
+  ok('so does the next one', r3.carry === 'flow:1', r3.carry);
+  carry = r3.carry;
+
+  var r4 = Y.highlight(lines[3], carry);
+  ok('the closing bracket returns to empty carry', r4.carry === '', r4.carry);
+})();
+
+/* ---- I7. ${VAR} and ${VAR:-default} are 'var'; '$$' is not -------------- */
+
+(function () {
+  var sp1 = spans(Y.highlight('    X: ${VAR}', '').html);
+  ok('${VAR} is a var span', sp1.some(function (p) { return p.kind === 'var' && p.text === '${VAR}'; }));
+
+  var sp2 = spans(Y.highlight('    Y: ${VAR:-default}', '').html);
+  ok('${VAR:-default} is one whole var span',
+     sp2.some(function (p) { return p.kind === 'var' && p.text === '${VAR:-default}'; }));
+
+  var sp3 = spans(Y.highlight('    Z: a$$b', '').html);
+  ok('$$ produces no var span', !sp3.some(function (p) { return p.kind === 'var'; }));
+  ok('the literal $$ stays in the surrounding text',
+     sp3.some(function (p) { return p.text.indexOf('a$$b') >= 0; }));
+})();
+
+/* ---- I8. &anchor, *alias and the <<: merge key are all 'anchor' --------- */
+
+(function () {
+  var sp1 = spans(Y.highlight('    x: &def', '').html);
+  ok('&anchor is an anchor span', sp1.some(function (p) { return p.kind === 'anchor' && p.text === '&def'; }));
+
+  var sp2 = spans(Y.highlight('    x: *def', '').html);
+  ok('*alias is an anchor span', sp2.some(function (p) { return p.kind === 'anchor' && p.text === '*def'; }));
+
+  var sp3 = spans(Y.highlight('    <<: *defaults', '').html);
+  ok('the merge key itself is an anchor span',
+     sp3.some(function (p) { return p.kind === 'anchor' && p.text === '<<'; }));
+  ok('and so is the alias it points at',
+     sp3.some(function (p) { return p.kind === 'anchor' && p.text === '*defaults'; }));
+})();
+
+/* ---- I9. '- image: alpine' — the dash is punct, image is a key --------- */
+
+(function () {
+  var sp = spans(Y.highlight('      - image: alpine', '').html);
+  ok('the dash is punct', sp.some(function (p) { return p.kind === 'punct' && p.text === '-'; }));
+  ok('image is a key', sp.some(function (p) { return p.kind === 'key' && p.text === 'image'; }));
+  ok('alpine is the value', sp.some(function (p) { return p.kind === 'str' && p.text === 'alpine'; }));
+})();
+
+/* ---- I10. Whitespace-only, empty, and hash-only lines ------------------- */
+
+(function () {
+  var r1 = Y.highlight('   ', '');
+  ok('a whitespace-only line round-trips with empty carry',
+     decodeHl(r1.html) === '   ' && r1.carry === '', JSON.stringify(r1));
+
+  var r2 = Y.highlight('', '');
+  ok('an empty line produces empty html and empty carry',
+     r2.html === '' && r2.carry === '', JSON.stringify(r2));
+
+  var r3 = Y.highlight('#', '');
+  var sp3 = spans(r3.html);
+  ok('a lone "#" is one comment span',
+     sp3.length === 1 && sp3[0].kind === 'comment' && sp3[0].text === '#', JSON.stringify(sp3));
+})();
+
+/* ---- I11. A number is 'num'; a quoted number is 'str', not 'num' -------- */
+
+(function () {
+  var sp1 = spans(Y.highlight('    PORT: 8096', '').html);
+  ok('a bare number is a num span', sp1.some(function (p) { return p.kind === 'num' && p.text === '8096'; }));
+
+  var sp2 = spans(Y.highlight('    PUID: "99"', '').html);
+  ok('a quoted number is a str span', sp2.some(function (p) { return p.kind === 'str' && p.text === '"99"'; }));
+  ok('and never a num span', !sp2.some(function (p) { return p.kind === 'num'; }));
+})();
+
+/* ---- I12. highlight() never throws, whatever it is handed -------------- */
+
+(function () {
+  var NASTY = ['\t\tkey: value', '   key:value:value', '- - - -', '"unterminated',
+               '${', 'key: "a\\', 'key: [', '<<:', '&', '*', '!!'];
+  var bad = null;
+  NASTY.forEach(function (line) {
+    try {
+      var r = Y.highlight(line, '');
+      if (typeof r.html !== 'string' || typeof r.carry !== 'string') bad = line + ' (bad return shape)';
+    } catch (e) {
+      bad = line + ' threw: ' + e.message;
+    }
+  });
+  ok('no input throws or returns the wrong shape', !bad, bad);
+})();
+
+/* =========================================================================
+ * J. Linting — Y.lint(doc)
+ *
+ * The regression this section exists to stop: lint()'s unknown-key check
+ * must run against the compose SPECIFICATION, not against KEYS (the ~40
+ * service keys the form draws a control for). J2 below loops every key the
+ * spec really accepts and demands zero warnings — if someone later "tidies"
+ * lint() to check against KEYS instead, this is what catches it.
+ * ========================================================================= */
+
+console.log('\nJ. Linting');
+
+// Every service key the compose specification accepts — kept in step with
+// SERVICE_SPEC_KEYS in compose-model.js by hand, since that list is
+// deliberately not exported (it is lint()'s own data, not part of the API
+// other code is meant to lean on).
+var SPEC_SERVICE_KEYS = [
+  'annotations', 'attach', 'blkio_config', 'build', 'cap_add', 'cap_drop', 'cgroup',
+  'cgroup_parent', 'command', 'configs', 'container_name', 'cpu_count', 'cpu_percent',
+  'cpu_period', 'cpu_quota', 'cpu_rt_period', 'cpu_rt_runtime', 'cpu_shares', 'cpus', 'cpuset',
+  'credential_spec', 'depends_on', 'deploy', 'develop', 'device_cgroup_rules', 'devices', 'dns',
+  'dns_opt', 'dns_search', 'domainname', 'entrypoint', 'env_file', 'environment', 'expose',
+  'extends', 'external_links', 'extra_hosts', 'gpus', 'group_add', 'healthcheck', 'hostname',
+  'image', 'init', 'ipc', 'isolation', 'label_file', 'labels', 'links', 'logging', 'mac_address',
+  'mem_limit', 'mem_reservation', 'mem_swappiness', 'memswap_limit', 'network_mode', 'networks',
+  'oom_kill_disable', 'oom_score_adj', 'pid', 'pids_limit', 'platform', 'ports', 'post_start',
+  'pre_stop', 'privileged', 'profiles', 'provider', 'pull_policy', 'pull_refresh_after',
+  'read_only', 'restart', 'runtime', 'scale', 'secrets', 'security_opt', 'shm_size', 'stdin_open',
+  'stop_grace_period', 'stop_signal', 'storage_opt', 'sysctls', 'tmpfs', 'tty', 'ulimits', 'user',
+  'userns_mode', 'uts', 'volumes', 'volumes_from', 'working_dir'
+];
+
+/* ---- J1. A clean file reports nothing ----------------------------------- */
+
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    restart: unless-stopped\n');
+  ok('a clean file reports nothing', Y.lint(doc).length === 0, JSON.stringify(Y.lint(doc)));
+})();
+
+/* ---- J2. Every real spec key, looped through one file, warns on none ---- */
+
+(function () {
+  var lines = ['services:', '  a:', '    image: alpine'];
+  SPEC_SERVICE_KEYS.forEach(function (k) {
+    if (k !== 'image') lines.push('    ' + k + ': "x"');
+  });
+  var doc = Y.parse(lines.join('\n') + '\n');
+  var res = Y.lint(doc);
+  ok('every SERVICE_SPEC_KEYS entry (' + SPEC_SERVICE_KEYS.length + ' keys) reports no warnings',
+     res.length === 0, JSON.stringify(res));
+})();
+
+/* ---- J3. Two ordinary keys the FORM has no control for --------------- */
+
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    sysctls:\n      net.core.somaxconn: 1024\n    extra_hosts:\n      - "host.docker.internal:host-gateway"\n');
+  ok('sysctls and extra_hosts report nothing', Y.lint(doc).length === 0, JSON.stringify(Y.lint(doc)));
+})();
+
+/* ---- J4. A duplicate key warns on the right (0-based) line ------------- */
+
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    image: nginx\n');
+  var res = Y.lint(doc);
+  ok('exactly one entry', res.length === 1, JSON.stringify(res));
+  ok('duplicate key warns on line 3 (0-based)', res[0] && res[0].line === 3, JSON.stringify(res));
+  ok('it is a warning, not an error', res[0] && res[0].level === 'warn', JSON.stringify(res));
+})();
+
+/* ---- J5. A typo under a service suggests the real key ------------------ */
+
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    enviroment:\n      X: "1"\n');
+  var res = Y.lint(doc);
+  ok('one warning', res.length === 1, JSON.stringify(res));
+  ok('it names the real key',
+     !!res[0] && res[0].message === 'The key "enviroment" is not a compose setting. Did you mean "environment"?',
+     JSON.stringify(res));
+})();
+
+/* ---- J6. An unknown key with nothing close by gets the plain message ---- */
+
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    wibblewobble: yes\n');
+  var res = Y.lint(doc);
+  ok('the plain "will ignore it" message, no suggestion offered',
+     res.length === 1 && res[0].message === 'The key "wibblewobble" is not a compose setting, so Docker will ignore it.',
+     JSON.stringify(res));
+})();
+
+/* ---- J7. An unknown TOP-level key is caught the same way --------------- */
+
+(function () {
+  var doc = Y.parse('service:\n  a:\n    image: alpine\n');
+  var res = Y.lint(doc);
+  ok('"service" (missing the s) is flagged at the top level',
+     res.length === 1 && res[0].line === 0 && res[0].message.indexOf('"service"') >= 0 &&
+     res[0].message.indexOf('services') >= 0,
+     JSON.stringify(res));
+})();
+
+/* ---- J8. x-anything reports nothing, at either level -------------------- */
+
+(function () {
+  var doc = Y.parse('x-something: 1\nservices:\n  a:\n    image: alpine\n    x-whatever:\n      note: hi\n');
+  ok('x- keys at both levels report nothing', Y.lint(doc).length === 0, JSON.stringify(Y.lint(doc)));
+})();
+
+/* ---- J9. A tab-indented file reports exactly one error ------------------ */
+
+(function () {
+  var doc = Y.parse('services:\n\ta:\n\t\timage: alpine\n');
+  var res = Y.lint(doc);
+  ok('exactly one entry for a tab-indented file', res.length === 1, JSON.stringify(res));
+  ok('it is an error, at line 0', !!res[0] && res[0].level === 'error' && res[0].line === 0, JSON.stringify(res));
+})();
+
+/* ---- J10. Every corpus fixture but 08-deliberately-broken has no errors - */
+
+FILES.forEach(function (file) {
+  var name = path.relative(ROOT, file).replace(/\\/g, '/');
+  if (name.indexOf('08-deliberately-broken') >= 0) return;
+  var text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  var res = Y.lint(Y.parse(text));
+  var errors = res.filter(function (r) { return r.level === 'error'; });
+  var warns = res.filter(function (r) { return r.level === 'warn'; });
+  ok('no errors from ' + name + (warns.length ? ' (' + warns.length + ' warning(s): ' +
+     warns.map(function (w) { return 'line ' + w.line + ': ' + w.message; }).join(' | ') + ')' : ''),
+     errors.length === 0, JSON.stringify(errors));
+});
+
+/* ---- J11. lint() never throws, whatever it is handed -------------------- */
+
+(function () {
+  var NASTY = [null, undefined, 42, 'not a doc', {}, [],
+    { sealed: 'not an array', warnings: null, root: { kind: 'map', keys: ['x'], pairs: {} } },
+    { root: { kind: 'map', keys: ['a'], pairs: null } }];
+  var bad = null;
+  NASTY.forEach(function (input) {
+    try {
+      var r = Y.lint(input);
+      if (!Array.isArray(r)) bad = JSON.stringify(input) + ' (did not return an array)';
+    } catch (e) {
+      bad = JSON.stringify(input) + ' threw: ' + e.message;
+    }
+  });
+  ok('no input throws or returns the wrong shape', !bad, bad);
+})();
+
+/* =========================================================================
+ * K. Search — Y.searchMatches(text, needle, opts)
+ * ========================================================================= */
+
+console.log('\nK. Search');
+
+/* ---- K1. A plain match in the middle of a line -------------------------- */
+
+(function () {
+  var r = Y.searchMatches('services:\n  a:\n    image: alpine\n', 'image');
+  ok('one match found', r.length === 1, JSON.stringify(r));
+  var m = r[0];
+  ok('start/end/line/col all correct', m && m.start === 19 && m.end === 24 &&
+     m.line === 2 && m.col === 4, JSON.stringify(m));
+})();
+
+/* ---- K2. Case-insensitive by default; caseSensitive narrows it ---------- */
+
+(function () {
+  var text = 'Image: alpine\nimage: alpine\n';
+  var loose = Y.searchMatches(text, 'image');
+  ok('case-insensitive by default finds both', loose.length === 2, JSON.stringify(loose));
+  var strict = Y.searchMatches(text, 'image', { caseSensitive: true });
+  ok('caseSensitive narrows to the exact-case one', strict.length === 1 &&
+     strict[0].line === 1, JSON.stringify(strict));
+})();
+
+/* ---- K3. Several matches on one line, and across several lines ---------- */
+
+(function () {
+  var text = 'foo foo\nfoo\nfoo foo foo\n';
+  var r = Y.searchMatches(text, 'foo');
+  ok('finds every occurrence', r.length === 6, JSON.stringify(r));
+  var expect = [
+    { line: 0, col: 0 }, { line: 0, col: 4 },
+    { line: 1, col: 0 },
+    { line: 2, col: 0 }, { line: 2, col: 4 }, { line: 2, col: 8 }
+  ];
+  var bad = null;
+  for (var i = 0; i < expect.length; i++) {
+    if (!r[i] || r[i].line !== expect[i].line || r[i].col !== expect[i].col) { bad = i; break; }
+  }
+  ok('line and col correct for each match', bad === null,
+     'mismatch at index ' + bad + ': ' + JSON.stringify(r));
+})();
+
+/* ---- K4. A match at offset 0, and one at the very end of the text ------- */
+
+(function () {
+  var text = 'abcabc';
+  var r = Y.searchMatches(text, 'abc');
+  ok('match at offset 0 found', r.length === 2 && r[0].start === 0 && r[0].line === 0 && r[0].col === 0,
+     JSON.stringify(r));
+  ok('match at the very end found', r[1].start === 3 && r[1].end === 6, JSON.stringify(r));
+})();
+
+/* ---- K5. Overlapping candidates do not overlap in the result ------------ */
+
+(function () {
+  var r = Y.searchMatches('aaaa', 'aa');
+  ok('"aa" in "aaaa" gives 2 non-overlapping matches, not 3',
+     r.length === 2 && r[0].start === 0 && r[1].start === 2, JSON.stringify(r));
+})();
+
+/* ---- K6. regex: true, a real pattern and a capture group ---------------- */
+
+(function () {
+  var r = Y.searchMatches('port 8096 and 8097', '\\d+', { regex: true });
+  ok('digit runs found', r.length === 2 && r[0].start === 5 && r[0].end === 9 &&
+     r[1].start === 14 && r[1].end === 18, JSON.stringify(r));
+
+  var r2 = Y.searchMatches('image: alpine:3.19', 'alpine:(\\d+\\.\\d+)', { regex: true });
+  ok('a pattern with a capture group still reports the whole match span',
+     r2.length === 1 && r2[0].start === 7 && r2[0].end === 18, JSON.stringify(r2));
+})();
+
+/* ---- K7. regex: true with an invalid pattern returns [] and never throws  */
+
+(function () {
+  var threw = false, r;
+  try { r = Y.searchMatches('anything', '[', { regex: true }); } catch (e) { threw = true; }
+  ok('an invalid pattern returns [] rather than throwing', !threw && Array.isArray(r) && r.length === 0,
+     threw ? 'threw' : JSON.stringify(r));
+})();
+
+/* ---- K8. A pattern that matches emptily returns no zero-length matches --
+ * and terminates. Guarded with a wall-clock check so a regression that loops
+ * forever fails the test instead of hanging the whole run.
+ * ---------------------------------------------------------------------- */
+
+(function () {
+  ['a*', '^'].forEach(function (pattern) {
+    var started = Date.now();
+    var r = Y.searchMatches('aaa\nbbb\naaa\n', pattern, { regex: true });
+    var elapsed = Date.now() - started;
+    ok('"' + pattern + '" terminates', elapsed < 2000, elapsed + 'ms');
+    var zeroLen = r.some(function (m) { return m.end === m.start; });
+    ok('"' + pattern + '" reports no zero-length match', !zeroLen, JSON.stringify(r));
+  });
+})();
+
+/* ---- K9. A regex match spanning a newline reports the start line -------- */
+
+(function () {
+  var text = 'aaa\nbbb';
+  var r = Y.searchMatches(text, 'aaa\\nbbb', { regex: true });
+  ok('a cross-newline match reports the line/col of its start',
+     r.length === 1 && r[0].line === 0 && r[0].col === 0 && r[0].end === text.length, JSON.stringify(r));
+})();
+
+/* ---- K9b. ^ and $ anchor to a line, not to the whole file ---------------- */
+
+(function () {
+  // The 'm' flag. Without it ^services matches only a file that opens with it,
+  // which reads as the search being broken rather than as a subtlety of
+  // regular expressions — and every editor with a regex search behaves this
+  // way. $ follows from the same flag.
+  var text = 'a\nservices:\n  x:\nservices2:';
+  ok('^ anchors to each line',
+     JSON.stringify(Y.searchMatches(text, '^services', { regex: true }).map(function (m) { return m.line; }))
+       === '[1,3]');
+  ok('$ anchors to the end of a line',
+     Y.searchMatches('one\ntwo', 'one$', { regex: true }).length === 1);
+})();
+
+/* ---- K10. Empty needle, empty text, needle longer than text ------------- */
+
+(function () {
+  ok('empty needle returns []', Y.searchMatches('some text', '').length === 0);
+  ok('empty text returns []', Y.searchMatches('', 'x').length === 0);
+  ok('needle longer than text returns []', Y.searchMatches('hi', 'hello there').length === 0);
+})();
+
+/* ---- K11. The 5000-match cap holds --------------------------------------- */
+
+(function () {
+  var text = new Array(6001).join('a');   // 6000 'a's
+  var r = Y.searchMatches(text, 'a');
+  ok('scan stops at the 5000 cap', r.length === 5000, r.length);
+})();
+
+/* ---- K12. Real use: search a corpus fixture and check the count ---------- */
+
+(function () {
+  var file = path.join(ROOT, 'scratch/test-stacks/03-multi-tier/compose.yaml');
+  var text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  var r = Y.searchMatches(text, 'image');
+  var independent = (text.match(/image/g) || []).length;
+  ok('search count matches an independent count of "image" in the fixture',
+     r.length === independent && independent > 0, r.length + ' vs ' + independent);
+})();
+
+/* =========================================================================
+ * L. Key suggestions — Y.keySuggestions(text, offset), Y.keyAt(text, line, col),
+ *    Y.keyInfo(key, where)
+ *
+ * These work from the raw text, never parse() — the file is mid-edit exactly
+ * when a suggestion is wanted. L11 is the one that stops the DESCRIPTIONS
+ * table rotting: every key the compose specification accepts, at top level
+ * and inside a service, must come back with something to say about it.
+ * ========================================================================= */
+
+console.log('\nL. Key suggestions');
+
+// The top-level keys the compose specification accepts — kept in step with
+// TOP_SPEC_KEYS in compose-model.js by hand, for the same reason
+// SPEC_SERVICE_KEYS above is: that list is lint()'s own data, not part of
+// the API other code is meant to lean on.
+var SPEC_TOP_KEYS = ['services', 'networks', 'volumes', 'configs', 'secrets', 'name', 'include', 'version'];
+
+/* ---- L1. Top level, no prefix yet ---------------------------------------- */
+
+(function () {
+  var r = Y.keySuggestions('', 0);
+  ok('offers something at the top of an empty file', !!r && r.keys.length > 0, JSON.stringify(r));
+  ok('every offered key is a real top-level key',
+     r && r.keys.every(function (k) { return SPEC_TOP_KEYS.indexOf(k.key) >= 0; }),
+     r && JSON.stringify(r.keys));
+})();
+
+/* ---- L2. Inside a service, offers SERVICE_SPEC_KEYS, not TOP_SPEC_KEYS -- */
+
+(function () {
+  var text = 'services:\n  a:\n    po\n';
+  var r = Y.keySuggestions(text, text.indexOf('po') + 2);
+  ok('offers "ports"', !!r && r.keys.some(function (k) { return k.key === 'ports'; }), JSON.stringify(r));
+  ok('does not offer "services" (a top-level-only key)',
+     !!r && !r.keys.some(function (k) { return k.key === 'services'; }), JSON.stringify(r));
+})();
+
+/* ---- L3. The prefix filter: starts-with before merely-contains ---------- */
+
+(function () {
+  var text = 'services:\n  a:\n    po\n';
+  var r = Y.keySuggestions(text, text.indexOf('po') + 2);
+  ok('"ports" (starts with "po") sorts ahead of "cpuset" (has no "po" at all excluded, ' +
+     '"expose" merely contains "po")', !!r);
+  var idxPorts = r.keys.map(function (k) { return k.key; }).indexOf('ports');
+  var idxExpose = r.keys.map(function (k) { return k.key; }).indexOf('expose');
+  ok('a starts-with match ("ports") sorts ahead of a contains-only match ("expose")',
+     idxPorts >= 0 && idxExpose >= 0 && idxPorts < idxExpose, JSON.stringify(r && r.keys));
+})();
+
+/* ---- L4. Keys already in the block are excluded -------------------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    image: alpine\n    i\n';
+  var r = Y.keySuggestions(text, text.lastIndexOf('i') + 1);
+  ok('"image" is not offered again, since the service already has one',
+     !!r && !r.keys.some(function (k) { return k.key === 'image'; }), JSON.stringify(r));
+  ok('"init" (also starts with "i") is still offered',
+     !!r && r.keys.some(function (k) { return k.key === 'init'; }), JSON.stringify(r));
+})();
+
+/* ---- L5. Directly under services: — a name the user invents, not a key -- */
+
+(function () {
+  var text = 'services:\n  a\n';
+  var r = Y.keySuggestions(text, text.indexOf('a\n') + 1);
+  ok('null directly under services:', r === null, JSON.stringify(r));
+})();
+
+/* ---- L6. Caret after the colon is in the value, not the key -------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    image: alp\n';
+  var r = Y.keySuggestions(text, text.indexOf('alp') + 3);
+  ok('null once the caret is past the colon', r === null, JSON.stringify(r));
+})();
+
+/* ---- L7. null in a comment, and in an ancestry the walk cannot read ------ */
+
+(function () {
+  var c = Y.keySuggestions('services:\n  a:\n    # a note\n', 25);
+  ok('null inside a comment', c === null, JSON.stringify(c));
+
+  // A sequence item sits above at a smaller indent than the caret's own line,
+  // so the walk cannot tell what encloses it — null beats a wrong guess.
+  var text = 'services:\n- weird\n  im\n';
+  var m = Y.keySuggestions(text, text.lastIndexOf('im') + 2);
+  ok('null when an ancestor line is not a key the walk can read', m === null, JSON.stringify(m));
+})();
+
+/* ---- L8. start/end bracket the partial word exactly ---------------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    imag\n';
+  var wordStart = text.indexOf('imag');
+  var r = Y.keySuggestions(text, wordStart + 4);
+  ok('start is the first character of the partial word',
+     !!r && r.start === wordStart, JSON.stringify(r));
+  ok('end is the caret, right after the last character typed',
+     !!r && r.end === wordStart + 4, JSON.stringify(r));
+  ok('prefix is exactly the word typed so far', !!r && r.prefix === 'imag', JSON.stringify(r));
+
+  var empty = Y.keySuggestions('services:\n  a:\n    \n', 20);
+  ok('with no word yet, start === end === offset',
+     !!empty && empty.start === 20 && empty.end === 20, JSON.stringify(empty));
+})();
+
+/* ---- L9. Inside healthcheck: offers healthcheck keys, not service keys -- */
+
+(function () {
+  var text = 'services:\n  a:\n    healthcheck:\n      te\n';
+  var r = Y.keySuggestions(text, text.indexOf('te', text.indexOf('healthcheck')) + 2);
+  ok('offers "test"', !!r && r.keys.some(function (k) { return k.key === 'test'; }), JSON.stringify(r));
+  ok('does not offer "image" (a service key, not a healthcheck key)',
+     !!r && !r.keys.some(function (k) { return k.key === 'image'; }), JSON.stringify(r));
+})();
+
+/* ---- L10. keyAt finds a key and returns its description ------------------ */
+
+(function () {
+  var text = 'services:\n  a:\n    image: alpine\n';
+  var r = Y.keyAt(text, 2, 6);           // the 'g' in "image"
+  ok('finds the key', !!r && r.key === 'image', JSON.stringify(r));
+  ok('title matches KEYS/DESCRIPTIONS', !!r && r.title === 'Image', JSON.stringify(r));
+  ok('description is a non-empty sentence', !!r && typeof r.description === 'string' && r.description.length > 0,
+     JSON.stringify(r));
+})();
+
+/* ---- L11. keyAt returns null over the value, not the key ----------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    image: alpine\n';
+  var r = Y.keyAt(text, 2, 15);          // inside "alpine"
+  ok('null over a value', r === null, JSON.stringify(r));
+})();
+
+/* ---- L12. Every TOP_SPEC_KEYS / SERVICE_SPEC_KEYS entry has a description */
+
+(function () {
+  var missing = [];
+  SPEC_TOP_KEYS.forEach(function (k) {
+    var info = Y.keyInfo(k, 'top');
+    if (!info || !info.title || !/\.\s*$/.test(info.description || '')) missing.push('top:' + k);
+  });
+  SPEC_SERVICE_KEYS.forEach(function (k) {
+    var info = Y.keyInfo(k, 'service');
+    if (!info || !info.title || !/\.\s*$/.test(info.description || '')) missing.push('service:' + k);
+  });
+  ok('every one of ' + (SPEC_TOP_KEYS.length + SPEC_SERVICE_KEYS.length) +
+     ' spec keys has a title and a description ending in a full stop',
+     missing.length === 0, JSON.stringify(missing));
+})();
+
+/* ---- L13. Neither function throws on malformed input --------------------- */
+
+(function () {
+  var NASTY_TEXT = [null, undefined, 42, {}, [], '\t\tno spaces allowed\n'];
+  var bad = null;
+  NASTY_TEXT.forEach(function (input) {
+    try { Y.keySuggestions(input, 0); Y.keyAt(input, 0, 0); }
+    catch (e) { bad = JSON.stringify(input) + ' threw: ' + e.message; }
+  });
+  try { Y.keySuggestions('services:\n  a:\n', -5); Y.keySuggestions('services:\n  a:\n', 99999); }
+  catch (e) { bad = bad || 'bad offset threw: ' + e.message; }
+  try { Y.keyAt('services:\n  a:\n', -5, -5); Y.keyAt('services:\n  a:\n', 999, 999); }
+  catch (e) { bad = bad || 'bad line/col threw: ' + e.message; }
+  ok('no input throws', !bad, bad);
+})();
+
+/* =========================================================================
+ * M. Host paths — Y.hostPaths(text) -> [{path, line, col, len}]
+ *
+ * Never calls parse(): a mount's host folder is checked while the file is
+ * being edited, which is exactly when it may not parse cleanly. M11 runs it
+ * over every real fixture and just reports what it finds, since a wrong
+ * answer there is the one that matters.
+ * ========================================================================= */
+
+console.log('\nM. Host paths');
+
+/* ---- M1. Short form, absolute path --------------------------------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    volumes:\n      - /mnt/user/media:/data\n';
+  var r = Y.hostPaths(text);
+  ok('one path found', r.length === 1, JSON.stringify(r));
+  ok('path is the host side only', r[0] && r[0].path === '/mnt/user/media', JSON.stringify(r));
+  ok('line is 0-based, pointing at the entry', r[0] && r[0].line === 3, JSON.stringify(r));
+  ok('col is right after "- "', r[0] && r[0].col === 8, JSON.stringify(r));
+  ok('len matches the path text', r[0] && r[0].len === '/mnt/user/media'.length, JSON.stringify(r));
+})();
+
+/* ---- M2. Quoted entry — col points inside the quote ---------------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    volumes:\n      - "/mnt/user/media:/data"\n';
+  var r = Y.hostPaths(text);
+  ok('one path found', r.length === 1, JSON.stringify(r));
+  ok('path has no quotes', r[0] && r[0].path === '/mnt/user/media', JSON.stringify(r));
+  ok('col sits one past the opening quote', r[0] && r[0].col === 9, JSON.stringify(r));
+})();
+
+/* ---- M3. :ro suffix does not get swallowed into the host path ------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    volumes:\n      - /mnt/user/media:/data:ro\n';
+  var r = Y.hostPaths(text);
+  ok('one path found', r.length === 1, JSON.stringify(r));
+  ok('the ":ro" mode is not part of the reported path',
+     r[0] && r[0].path === '/mnt/user/media', JSON.stringify(r));
+})();
+
+/* ---- M4. A named volume (appdata:/config) is not reported ----------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    volumes:\n      - appdata:/config\n';
+  var r = Y.hostPaths(text);
+  ok('nothing reported for a named volume', r.length === 0, JSON.stringify(r));
+})();
+
+/* ---- M5. A top-level volumes: declaration block is not reported ----------- */
+
+(function () {
+  var text = 'volumes:\n  appdata:\n    driver: local\n';
+  var r = Y.hostPaths(text);
+  ok('nothing reported for a named-volume declaration', r.length === 0, JSON.stringify(r));
+})();
+
+/* ---- M6. A relative path is reported, same as an absolute one ------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    volumes:\n      - ./data:/data\n';
+  var r = Y.hostPaths(text);
+  ok('the relative path is reported', r.length === 1 && r[0].path === './data', JSON.stringify(r));
+})();
+
+/* ---- M7. Long form, type: bind reports its source: ------------------------ */
+
+(function () {
+  var text = 'services:\n  a:\n    volumes:\n      - type: bind\n        source: /mnt/user/media\n        target: /data\n';
+  var r = Y.hostPaths(text);
+  ok('the source: value is reported', r.length === 1 && r[0].path === '/mnt/user/media', JSON.stringify(r));
+  ok('line points at the source: line, not the dash', r[0] && r[0].line === 4, JSON.stringify(r));
+})();
+
+/* ---- M8. Long form, type: volume is not reported --------------------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    volumes:\n      - type: volume\n        source: db_data\n        target: /data\n';
+  var r = Y.hostPaths(text);
+  ok('a named-volume source is not reported', r.length === 0, JSON.stringify(r));
+})();
+
+/* ---- M9. A path containing ${VAR} is skipped ------------------------------ */
+
+(function () {
+  var text = 'services:\n  a:\n    volumes:\n      - ${DATA_DIR}/media:/data\n';
+  var r = Y.hostPaths(text);
+  ok('nothing reported when the host side needs a variable substituted',
+     r.length === 0, JSON.stringify(r));
+})();
+
+/* ---- M10. Two services each with volumes both report ---------------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    volumes:\n      - /mnt/a:/data\n  b:\n    volumes:\n      - /mnt/b:/data\n';
+  var r = Y.hostPaths(text);
+  ok('both services\' mounts are found',
+     r.length === 2 && r[0].path === '/mnt/a' && r[1].path === '/mnt/b', JSON.stringify(r));
+})();
+
+/* ---- M11. Never throws, including on a file that is only "volumes:" ------- */
+
+(function () {
+  var NASTY = [null, undefined, 42, {}, [], 'volumes:\n', '\t\tno spaces allowed\n'];
+  var bad = null;
+  NASTY.forEach(function (input) {
+    try { Y.hostPaths(input); }
+    catch (e) { bad = JSON.stringify(input) + ' threw: ' + e.message; }
+  });
+  ok('no input throws, and each comes back as an array', !bad, bad);
+})();
+
+/* ---- M12. Every fixture — reported so a wrong answer is visible ----------- */
+
+console.log('  --- fixture host paths (for review) ---');
+FILES.forEach(function (file) {
+  var text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  var r = Y.hostPaths(text);
+  console.log('  ' + path.relative(ROOT, file) + ':');
+  if (r.length === 0) { console.log('    (none)'); return; }
+  r.forEach(function (p) {
+    console.log('    line ' + p.line + ', col ' + p.col + ': "' + p.path + '" (len ' + p.len + ')');
+  });
+});
+
+/* =========================================================================
+ * N. Health check round trip (PLAN_14.md)
+ *
+ * The reported defect: switching "How the check runs" to "No check" and
+ * then back left the compose file stuck on NONE forever, and every later
+ * edit to "The check itself" silently failed to reach the file. The cause
+ * was setPart()'s combined mode+command write for healthcheck.test: the
+ * blank-writes-nothing leniency applied even to a deliberate MODE switch,
+ * so switching back from NONE (whose sibling command reads as blank, since
+ * NONE has no room for one) was itself silently skipped — leaving the file
+ * on NONE and the model reading "none" from then on, so every subsequent
+ * edit to the command combined with that same stuck mode.
+ * ========================================================================= */
+
+console.log('\nN. Health check round trip');
+
+/* ---- N1. The failing case: NONE and back restores the original line ----- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n' +
+            '      test: ["CMD-SHELL", "wget -q -O - http://localhost/"]\n      interval: 30s\n';
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var mode = form.fields.filter(function (f) { return f.testPart === 'mode'; })[0];
+  ok('the mode field is found', !!mode);
+
+  Y.setPart(doc, form, mode.id, 'value', 'none');
+  ok('switching to NONE writes it', /test: \["NONE"\]/.test(Y.serialise(doc)), Y.serialise(doc));
+
+  var form2 = Y.buildForm(doc);
+  var mode2 = form2.fields.filter(function (f) { return f.testPart === 'mode'; })[0];
+  var r = Y.setPart(doc, form2, mode2.id, 'value', 'shell');
+  ok('switching back to "run a shell line" is written, not silently skipped', r === true);
+
+  ok('the file is restored byte for byte, command and all',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- N2. The same, starting from CMD (list-of-arguments) mode ----------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n' +
+            '      test: ["CMD", "curl", "-f", "http://localhost/health"]\n';
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var mode = form.fields.filter(function (f) { return f.testPart === 'mode'; })[0];
+
+  Y.setPart(doc, form, mode.id, 'value', 'none');
+  var form2 = Y.buildForm(doc);
+  var mode2 = form2.fields.filter(function (f) { return f.testPart === 'mode'; })[0];
+  Y.setPart(doc, form2, mode2.id, 'value', 'cmd');
+
+  ok('CMD mode is restored byte for byte too', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- N3. A value typed after the round trip reaches the file ------------ */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n' +
+            '      test: ["CMD-SHELL", "wget -q -O - http://localhost/"]\n';
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var mode = form.fields.filter(function (f) { return f.testPart === 'mode'; })[0];
+
+  Y.setPart(doc, form, mode.id, 'value', 'none');
+  var form2 = Y.buildForm(doc);
+  var mode2 = form2.fields.filter(function (f) { return f.testPart === 'mode'; })[0];
+  Y.setPart(doc, form2, mode2.id, 'value', 'shell');   // restores the stashed command
+
+  var form3 = Y.buildForm(doc);
+  var cmd3  = form3.fields.filter(function (f) { return f.testPart === 'command'; })[0];
+  ok('the restored command reads back correctly', cmd3.parts.value.value === 'wget -q -O - http://localhost/',
+     cmd3.parts.value.value);
+
+  Y.setPart(doc, form3, cmd3.id, 'value', 'curl -f http://localhost/health');
+  ok('a freshly typed command reaches the file, proving the box is not permanently disconnected',
+     /test: \["CMD-SHELL", "curl -f http:\/\/localhost\/health"\]/.test(Y.serialise(doc)), Y.serialise(doc));
+})();
+
+/* ---- N4. Switching mode is a deliberate choice: it always writes -------- */
+
+(function () {
+  // A fresh healthcheck with no command yet — "run a shell line" is written
+  // even though the sibling command is blank, rather than silently no-op'd.
+  var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      interval: 30s\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var mode = form.fields.filter(function (f) { return f.testPart === 'mode'; })[0];
+
+  var r = Y.setPart(doc, form, mode.id, 'value', 'shell');
+  ok('choosing "run a shell line" with nothing typed yet is written, not skipped', r === true);
+  ok('it writes an (empty) CMD-SHELL line rather than doing nothing',
+     /test: \["CMD-SHELL", ""\]/.test(Y.serialise(doc)), Y.serialise(doc));
+
+  // "Run a program" needs at least one argument, so it has nowhere valid to
+  // write — and says so by returning false, which commit() (stacks.js)
+  // already turns into an on-screen message, rather than leaving the
+  // dropdown showing a choice the file never received.
+  var doc2 = Y.parse(src), form2 = Y.buildForm(doc2);
+  var mode2 = form2.fields.filter(function (f) { return f.testPart === 'mode'; })[0];
+  var r2 = Y.setPart(doc2, form2, mode2.id, 'value', 'cmd');
+  ok('choosing "run a program" with nothing typed yet refuses rather than silently doing nothing', r2 === false);
+})();
+
+/* ---- N5. Every shape healthcheck.test is written in survives untouched -- */
+
+var HEALTH_SHAPES = {
+  'a bare shell line (CMD-SHELL, string form)':
+    'services:\n  a:\n    image: alpine\n    healthcheck:\n      test: curl -f http://localhost/\n',
+  'a block sequence (CMD, one argument per line)':
+    'services:\n  a:\n    image: alpine\n    healthcheck:\n      test:\n        - CMD\n        - curl\n        - -f\n        - http://localhost/\n',
+  'a flow list, CMD':
+    'services:\n  a:\n    image: alpine\n    healthcheck:\n      test: ["CMD", "curl", "-f", "http://localhost/"]\n',
+  'a flow list, CMD-SHELL':
+    'services:\n  a:\n    image: alpine\n    healthcheck:\n      test: ["CMD-SHELL", "curl -f http://localhost/"]\n',
+  'a flow list, NONE':
+    'services:\n  a:\n    image: alpine\n    healthcheck:\n      test: ["NONE"]\n'
+};
+
+Object.keys(HEALTH_SHAPES).forEach(function (name) {
+  var t = HEALTH_SHAPES[name];
+  var got = Y.serialise(Y.parse(t));
+  ok(name + '  [identity]', got === t, got === t ? '' : firstDiff(t, got));
+
+  var form = Y.buildForm(Y.parse(t));
+  var mode = form.fields.filter(function (f) { return f.testPart === 'mode'; })[0];
+  var cmd  = form.fields.filter(function (f) { return f.testPart === 'command'; })[0];
+  var wantMode = /NONE/.test(t) ? 'none' : (/CMD-SHELL/.test(t) || !/CMD/.test(t) ? 'shell' : 'cmd');
+  ok(name + '  reads as mode "' + wantMode + '"', !!mode && mode.parts.value.value === wantMode,
+     mode && mode.parts.value.value);
+  if (wantMode !== 'none') {
+    ok(name + '  reads its command', !!cmd && cmd.parts.value.value === 'curl -f http://localhost/',
+       cmd && JSON.stringify(cmd.parts.value.value));
+  }
+});
+
+/* =========================================================================
+ * O. Field help (Form pane)
+ *
+ * fieldHelp() maps one rendered field back to its DESCRIPTIONS sentence, and
+ * helpGaps() is the guard that stops a key being added to a table without
+ * anyone writing that sentence — checked first, since a gap there would make
+ * the rest of this section fail for a reason that has nothing to do with
+ * fieldHelp() itself.
+ * ========================================================================= */
+
+console.log('\nO. Field help (Form pane)');
+
+/* ---- O1. helpGaps() is empty --------------------------------------------- */
+
+(function () {
+  var gaps = Y.helpGaps();
+  ok('every key one of the model\'s own tables names has a DESCRIPTIONS entry',
+     gaps.length === 0, JSON.stringify(gaps));
+})();
+
+/* ---- O2. fieldHelp() over the whole fixture corpus ----------------------- */
+
+(function () {
+  var unresolvedSetting = [];
+  var declaredMissing = 0, dependsMissing = 0;
+
+  FILES.forEach(function (file) {
+    var text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    var form = Y.buildForm(Y.parse(text));
+
+    form.fields.forEach(function (f) {
+      if (f.binder !== 'setting' && f.binder !== 'declared' && f.binder !== 'depends') return;
+      var help = Y.fieldHelp(f);
+
+      if (f.binder === 'declared' && !help) declaredMissing++;
+      if (f.binder === 'depends'  && !help) dependsMissing++;
+      // A 'setting' field can legitimately come back null: the Advanced
+      // catch-all renders whatever key the file actually has, including a
+      // misspelling (portz: in 08-deliberately-broken) this editor cannot
+      // know the meaning of.
+      if (f.binder === 'setting' && !help) {
+        unresolvedSetting.push(path.relative(ROOT, file) + ' :: ' + f.target);
+      }
+    });
+  });
+
+  ok('every declared field resolves to help', declaredMissing === 0, declaredMissing + ' unresolved');
+  ok('every depends field resolves to help', dependsMissing === 0, dependsMissing + ' unresolved');
+
+  console.log('  --- fixture setting targets fieldHelp cannot describe (for review) ---');
+  if (unresolvedSetting.length === 0) { console.log('    (none)'); }
+  unresolvedSetting.forEach(function (u) { console.log('    ' + u); });
+})();
+
+/* ---- O3. The mapping rules, one at a time -------------------------------- */
+
+(function () {
+  var doc = Y.parse(
+    'services:\n  a:\n    image: alpine\n    healthcheck:\n      interval: 30s\n' +
+    '    deploy:\n      resources:\n        limits:\n          cpus: "1.5"\n' +
+    '    logging:\n      driver: json-file\n'
+  );
+  var form = Y.buildForm(doc);
+  var byTarget = function (target) {
+    return form.fields.filter(function (f) { return f.binder === 'setting' && f.target === target; })[0];
+  };
+
+  var hc = byTarget('healthcheck.interval');
+  ok('healthcheck.interval resolves under healthcheck, not service',
+     !!hc && !!Y.fieldHelp(hc) && Y.fieldHelp(hc).title === Y.keyInfo('interval', 'healthcheck').title);
+  ok('healthcheck.interval does NOT resolve as a service-level key',
+     !Y.keyInfo('healthcheck.interval', 'service'));
+
+  var cpus = byTarget('deploy.resources.limits.cpus');
+  ok('deploy.resources.limits.cpus resolves', !!cpus && !!Y.fieldHelp(cpus));
+
+  var driver = byTarget('logging.driver');
+  ok('logging.driver resolves', !!driver && !!Y.fieldHelp(driver));
+})();
+
+(function () {
+  // A declared name containing a dot: the fold row's LAST segment is the
+  // setting, never a fragment of the name itself.
+  var doc = Y.parse(
+    'services:\n  a:\n    image: alpine\n' +
+    'networks:\n  "br0.2":\n    driver: macvlan\n    internal: true\n'
+  );
+  var form = Y.buildForm(doc);
+  var internalRow = form.fields.filter(function (f) {
+    return f.binder === 'declared' && f.fold && f.target === 'networks.br0.2.internal';
+  })[0];
+  var help = internalRow && Y.fieldHelp(internalRow);
+  ok('a fold row on a dotted declaration name resolves to its setting, not a name fragment',
+     !!help && help.title === Y.keyInfo('internal', 'declared').title, JSON.stringify(help));
+
+  var rowField = form.fields.filter(function (f) {
+    return f.binder === 'declared' && !f.fold && f.target === 'networks.br0.2';
+  })[0];
+  ok('the row itself is found under the dotted name', !!rowField);
+})();
+
+(function () {
+  // A non-fold declaration row's box holds the kind's primary setting.
+  var doc = Y.parse(
+    'services:\n  a:\n    image: alpine\n' +
+    'secrets:\n  db_pass:\n    file: ./db_pass.txt\n'
+  );
+  var form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) {
+    return f.binder === 'declared' && !f.fold && f.target === 'secrets.db_pass';
+  })[0];
+  var help = row && Y.fieldHelp(row);
+  ok('a non-fold secrets row resolves to file', !!help && help.title === Y.keyInfo('file', 'declared').title,
+     JSON.stringify(help));
+})();
+
+(function () {
+  var doc = Y.parse(
+    'services:\n  a:\n    image: alpine\n    depends_on:\n      b:\n        condition: service_healthy\n'
+  );
+  var form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) {
+    return f.binder === 'depends' && !f.fold && f.target === 'depends_on.b';
+  })[0];
+  var help = row && Y.fieldHelp(row);
+  ok('a non-fold depends row resolves to condition', !!help && help.title === Y.keyInfo('condition', 'depends').title,
+     JSON.stringify(help));
+})();
+
+(function () {
+  ok('a nonsense binder returns null', Y.fieldHelp({ binder: 'nonsense', target: 'whatever' }) === null);
+  ok('a missing field returns null', Y.fieldHelp(null) === null);
+  ok('a malformed field returns null rather than throwing',
+     (function () { try { return Y.fieldHelp({ binder: 'setting', target: 42 }); } catch (e) { return 'threw'; } })() === null);
+})();
+
+/* =========================================================================
+ * P. The VOCAB registry (PLAN_15 phase 1, corrected in phase 3)
+ *
+ * Twelve of the thirteen CHOICES lists stacks.js held moved verbatim into
+ * compose-model.js's VOCAB, reachable from a Node test for the first time.
+ * VOCAB_SNAPSHOT is the photograph of the data taken the moment before that
+ * move, so it is never edited to make a test here pass — see its own header.
+ *
+ * Phase 3 then corrected three of the twelve: pullpolicy, networkdriver and
+ * capability were missing real compose values. The snapshot's job was only
+ * ever to guard the MOVE, so those three are now meant to differ from it —
+ * P1 asserts two things instead of exact equality: nothing the snapshot held
+ * was lost, and the full list is exactly the snapshot plus the named
+ * additions, nothing more.
+ * ========================================================================= */
+
+console.log('\nP. The VOCAB registry (PLAN_15 phase 1)');
+
+// Pair-by-pair equality with a diff that names the entry and shows both
+// sides — "not equal" alone would leave whoever reads a failure re-deriving
+// which of ~40 capability entries moved or was mistyped.
+function vocabDiff(expected, actual) {
+  if (!Array.isArray(actual)) return 'not an array: ' + JSON.stringify(actual);
+  if (expected.length !== actual.length) {
+    return 'length ' + expected.length + ' (snapshot) vs ' + actual.length + ' (vocab())';
+  }
+  for (var i = 0; i < expected.length; i++) {
+    var e = expected[i], a = actual[i];
+    if (!Array.isArray(a) || a[0] !== e[0] || a[1] !== e[1]) {
+      return 'entry ' + i + ': expected ' + JSON.stringify(e) + ', got ' + JSON.stringify(a);
+    }
+  }
+  return null;
+}
+
+function pairsEqual(a, b) {
+  return vocabDiff(b, a) === null;
+}
+
+// Every entry in `expected` still appears in `actual`, in the same relative
+// order and byte-identical — `actual` may hold MORE (the named additions a
+// corrected id gained), but never less and never reordered. This is P1's
+// "nothing was lost" half; vocabDiff() above is its "nothing arrived by
+// accident" half, checked against the full expected list including additions.
+function subsequenceDiff(expected, actual) {
+  if (!Array.isArray(actual)) return 'not an array: ' + JSON.stringify(actual);
+  var ai = 0;
+  for (var ei = 0; ei < expected.length; ei++) {
+    var e = expected[ei], found = false;
+    while (ai < actual.length) {
+      var a = actual[ai++];
+      if (Array.isArray(a) && a[0] === e[0] && a[1] === e[1]) { found = true; break; }
+    }
+    if (!found) return 'snapshot entry ' + ei + ' missing or out of order: ' + JSON.stringify(e);
+  }
+  return null;
+}
+
+// Splices `entries` into `list` right after the item whose value is
+// `afterValue`, so a corrected id's expected FULL list is built from the
+// snapshot's own array rather than retyped — a copy-paste slip in an
+// EXISTING label could not hide inside this expectation too.
+function insertAfter(list, afterValue, entries) {
+  var idx = -1;
+  for (var i = 0; i < list.length; i++) { if (list[i][0] === afterValue) { idx = i; break; } }
+  if (idx < 0) throw new Error("insertAfter: '" + afterValue + "' not found in snapshot list");
+  return list.slice(0, idx + 1).concat(entries, list.slice(idx + 1));
+}
+
+var C = VOCAB_SNAPSHOT.CHOICES;
+
+// Every id VOCAB is meant to carry, and the exact snapshot list each one was
+// copied from. 'boolean' has no CHOICES entry of its own to copy from — it
+// is the generic true/false pair every BOOL_CHOICES wording specialises —
+// so its expectation is written out literally instead.
+var VOCAB_SOURCES = {
+  restart:          C['setting/restart'].options,
+  netmode:          C['setting/network_mode'].options,
+  dependscondition: C['depends/condition'].options,
+  pullpolicy:       C['setting/pull_policy'].options,
+  stopsignal:       C['setting/stop_signal'].options,
+  ipc:              C['setting/ipc'].options,
+  pid:              C['setting/pid'].options,
+  logdriver:        C['setting/logging.driver'].options,
+  networkdriver:    C['declared/networks.driver'].options,
+  volumedriver:     C['declared/volumes.driver'].options,
+  capability:       VOCAB_SNAPSHOT.CAP_OPTIONS,
+  boolean:          [['true', 'true'], ['false', 'false']]
+};
+
+/* ---- P1. the three ids phase 3 corrected: snapshot plus the named ------- */
+/* ---- additions, nothing lost and nothing arrived by accident ------------ */
+
+// Where Part 1 (PLAN_15 phase 3) put each addition, and its exact label —
+// copied verbatim from compose-model.js's VOCAB so a wording slip on either
+// side shows up as a failure rather than agreeing with itself.
+var CORRECTED = {
+  pullpolicy: insertAfter(VOCAB_SOURCES.pullpolicy, 'missing', [
+    ['if_not_present', 'if_not_present — the same as missing, compose’s other name for it'],
+    ['refresh',        'refresh — pull again once the image on this server looks stale'],
+    ['daily',          'daily — check for a newer image once a day'],
+    ['weekly',         'weekly — check for a newer image once a week']
+  ]),
+  networkdriver: VOCAB_SOURCES.networkdriver.concat([
+    ['overlay', 'overlay — connects containers across several Docker hosts in a swarm']
+  ]),
+  capability: [['ALL', 'ALL — every capability at once']].concat(VOCAB_SOURCES.capability)
+};
+
+Object.keys(CORRECTED).forEach(function (id) {
+  var actual = Y.vocab(id);
+
+  var lost = subsequenceDiff(VOCAB_SOURCES[id], actual);
+  ok("vocab('" + id + "') keeps every snapshot entry, in order and byte-identical", lost === null, lost);
+
+  var diff = vocabDiff(CORRECTED[id], actual);
+  ok("vocab('" + id + "') is exactly the snapshot plus phase 3's named additions", diff === null, diff);
+});
+
+/* ---- P1b. the nine ids phase 3 left untouched still match exactly ------- */
+
+['restart', 'netmode', 'dependscondition', 'stopsignal', 'ipc', 'pid',
+ 'logdriver', 'volumedriver', 'boolean'].forEach(function (id) {
+  var diff = vocabDiff(VOCAB_SOURCES[id], Y.vocab(id));
+  ok("vocab('" + id + "') matches the snapshot", diff === null, diff);
+});
+
+/* ---- P2. an unknown id comes back null ----------------------------------- */
+
+ok("vocab('nonsense') returns null", Y.vocab('nonsense') === null);
+ok('vocab() with no id returns null', Y.vocab() === null);
+
+/* ---- P3. mutating a returned list does not touch the next call ---------- */
+
+(function () {
+  var before = Y.vocab('restart').length;
+  var got = Y.vocab('restart');
+  got.push(['bogus', 'should not stick']);
+  got.length = 0;                                   // and emptying it outright
+  var after = Y.vocab('restart');
+  ok('mutating what vocab() returned leaves the next call untouched',
+     after.length === before, 'before ' + before + ', after ' + after.length);
+})();
+
+/* ---- P4. the four lists that stayed behind have no id of their own ------ */
+
+(function () {
+  var held = [
+    { name: "CHOICES['setting/healthcheck.test.mode']", list: C['setting/healthcheck.test.mode'].options },
+    { name: "CHOICES['port/proto']",                     list: C['port/proto'].options },
+    { name: "CHOICES['volume/mode']",                    list: C['volume/mode'].options }
+  ];
+  Object.keys(VOCAB_SNAPSHOT.BOOL_CHOICES).forEach(function (k) {
+    held.push({ name: 'BOOL_CHOICES.' + k, list: VOCAB_SNAPSHOT.BOOL_CHOICES[k].options });
+  });
+
+  ok('the snapshot still holds all four held-back entries (3 lists + BOOL_CHOICES\'s 8)',
+     held.length === 11, held.length);
+
+  Object.keys(VOCAB_SOURCES).forEach(function (id) {
+    var actual = Y.vocab(id);
+    var collision = null;
+    held.forEach(function (h) { if (!collision && pairsEqual(actual, h.list)) collision = h.name; });
+    ok("vocab('" + id + "') does not reproduce a list that stayed behind",
+       collision === null, collision);
+  });
+})();
+
+/* =========================================================================
+ * Q. Value suggestions (PLAN_15 phase 2) — Y.valueSuggestions(text, offset)
+ *
+ * keySuggestions()'s mirror image: autocomplete for the VALUE half of a
+ * key: value line, or a `- ` list item whose parent key carries a
+ * vocabulary. Same shape back — {start, end, prefix, keys}, plus
+ * value: true — so the panel that already renders keySuggestions() renders
+ * these unchanged.
+ * ========================================================================= */
+
+console.log('\nQ. Value suggestions');
+
+/* ---- Q1. null before the colon, no space, in a comment, blank, no vocab - */
+
+(function () {
+  var text = 'services:\n  a:\n    restart: always\n';
+  var beforeColon = Y.valueSuggestions(text, text.indexOf('restart'));
+  ok('null before the colon', beforeColon === null, JSON.stringify(beforeColon));
+
+  var noSpace = Y.valueSuggestions('services:\n  a:\n    restart:\n', 'services:\n  a:\n    restart:'.length);
+  ok('null at "restart:" with no space after the colon — writing there would ' +
+     'produce "restart:always", a plain scalar, not a key: value pair',
+     noSpace === null, JSON.stringify(noSpace));
+
+  var withComment = 'services:\n  a:\n    restart: always # note\n';
+  var noteOffset = withComment.indexOf('note') + 2;
+  var r = Y.valueSuggestions(withComment, noteOffset);
+  ok('null with the caret inside a trailing comment', r === null, JSON.stringify(r));
+
+  var blank = Y.valueSuggestions('services:\n  a:\n    \n', 20);
+  ok('null on a blank line', blank === null, JSON.stringify(blank));
+
+  var noVocab = Y.valueSuggestions('services:\n  a:\n    image: alpine\n', 'services:\n  a:\n    image: alp'.length);
+  ok('null on a key with no vocabulary (image:)', noVocab === null, JSON.stringify(noVocab));
+})();
+
+/* ---- Q2. "restart: " with nothing typed offers all four, in order ------- */
+
+(function () {
+  var text = 'services:\n  a:\n    restart: \n';
+  var offset = text.indexOf('restart: ') + 'restart: '.length;
+  var r = Y.valueSuggestions(text, offset);
+  ok('offers something', !!r, JSON.stringify(r));
+  var got = r && r.keys.map(function (k) { return k.key; });
+  ok('offers all four restart values, in the vocabulary\'s own order',
+     !!r && got.join(',') === 'no,always,unless-stopped,on-failure', JSON.stringify(got));
+})();
+
+/* ---- Q3. "restart: unl" narrows to unless-stopped, start/end exact ------- */
+
+(function () {
+  var text = 'services:\n  a:\n    restart: unl\n';
+  var wordStart = text.indexOf('unl');
+  var r = Y.valueSuggestions(text, wordStart + 3);
+  ok('narrows to a single match', !!r && r.keys.length === 1 && r.keys[0].key === 'unless-stopped',
+     JSON.stringify(r));
+  ok('start/end bracket exactly "unl"',
+     !!r && r.start === wordStart && r.end === wordStart + 3, JSON.stringify(r));
+  ok('prefix is exactly "unl"', !!r && r.prefix === 'unl', JSON.stringify(r));
+  ok('value flag is set, so the caller knows not to append ": "',
+     !!r && r.value === true, JSON.stringify(r));
+})();
+
+/* ---- Q4. "restart: always", caret at the end — the exact single match --- */
+
+(function () {
+  var text = 'services:\n  a:\n    restart: always\n';
+  var r = Y.valueSuggestions(text, text.indexOf('always') + 'always'.length);
+  ok('null — the one match is the thing already typed', r === null, JSON.stringify(r));
+})();
+
+/* ---- Q5. A `- ` item under cap_add: offers capabilities, case-insensitive */
+
+(function () {
+  var text = 'services:\n  a:\n    cap_add:\n      - NET_A\n';
+  var r = Y.valueSuggestions(text, text.indexOf('NET_A') + 'NET_A'.length);
+  ok('offers NET_ADMIN', !!r && r.keys.some(function (k) { return k.key === 'NET_ADMIN'; }), JSON.stringify(r));
+
+  var lower = 'services:\n  a:\n    cap_add:\n      - net_\n';
+  var r2 = Y.valueSuggestions(lower, lower.indexOf('net_') + 'net_'.length);
+  ok('matching is case-insensitive: lowercase "net_" still reaches NET_ADMIN',
+     !!r2 && r2.keys.some(function (k) { return k.key === 'NET_ADMIN'; }), JSON.stringify(r2));
+})();
+
+/* ---- Q6. A `- ` item that is really a long-form mapping returns null ----- */
+
+(function () {
+  // The brief's own example — ports has no vocabulary of its own either, so
+  // this alone would pass even without the guard.
+  var ports = 'services:\n  a:\n    ports:\n      - target: 8080\n';
+  var r = Y.valueSuggestions(ports, ports.indexOf('8080'));
+  ok('null for a long-form "- target: 8080" item under ports:', r === null, JSON.stringify(r));
+
+  // cap_add DOES have a vocabulary, so this is the case that actually proves
+  // the sub-key guard fires before any vocabulary lookup, rather than the
+  // result being null merely because the owning key has no vocab.
+  var fabricated = 'services:\n  a:\n    cap_add:\n      - value: NET_ADMIN\n';
+  var r2 = Y.valueSuggestions(fabricated, fabricated.indexOf('NET_ADMIN'));
+  ok('null for a long-form item even under a key that DOES have a vocabulary',
+     r2 === null, JSON.stringify(r2));
+})();
+
+/* ---- Q7. ${...} interpolation: open guards, closed does not crash ------- */
+
+(function () {
+  var open = 'services:\n  a:\n    restart: ${VA\n';
+  var r = Y.valueSuggestions(open, open.indexOf('${VA') + 4);
+  ok('null with the caret inside an unterminated ${...}', r === null, JSON.stringify(r));
+
+  var closed = 'services:\n  a:\n    restart: ${VAR}\n';
+  var bad = null;
+  var r2;
+  try { r2 = Y.valueSuggestions(closed, closed.indexOf('${VAR}') + 6); }
+  catch (e) { bad = e.message; }
+  ok('a caret after a closed ${VAR} does not throw', !bad, bad);
+})();
+
+/* ---- Q8. driver: means different lists under networks: and volumes: ----- */
+
+(function () {
+  var nets = 'networks:\n  net1:\n    driver: br\n';
+  var rn = Y.valueSuggestions(nets, nets.indexOf('br') + 2);
+  ok('networks: driver offers network drivers',
+     !!rn && rn.keys.some(function (k) { return k.key === 'bridge'; }), JSON.stringify(rn));
+
+  var vols = 'volumes:\n  vol1:\n    driver: lo\n';
+  var rv = Y.valueSuggestions(vols, vols.indexOf('lo') + 2);
+  ok('volumes: driver offers volume drivers',
+     !!rv && rv.keys.some(function (k) { return k.key === 'local'; }), JSON.stringify(rv));
+
+  ok('the two lists differ — this is the case the VOCAB_AT split by kind exists for',
+     JSON.stringify(rn && rn.keys) !== JSON.stringify(rv && rv.keys),
+     JSON.stringify({ networks: rn && rn.keys, volumes: rv && rv.keys }));
+})();
+
+/* ---- Q9. healthcheck: disable: offers true/false ------------------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    healthcheck:\n      disable: \n';
+  var offset = text.indexOf('disable: ') + 'disable: '.length;
+  var r = Y.valueSuggestions(text, offset);
+  var got = r && r.keys.map(function (k) { return k.key; });
+  ok('offers true and false', !!r && got.join(',') === 'true,false', JSON.stringify(got));
+})();
+
+/* ---- Q10. Malformed input returns null, never throws --------------------- */
+
+(function () {
+  var bad = null;
+  try {
+    ok('empty text', Y.valueSuggestions('', 0) === null);
+    ok('negative offset', Y.valueSuggestions('restart: al', -5) === null);
+    ok('offset past the end', Y.valueSuggestions('restart: al', 99999) === null);
+  } catch (e) { bad = e.message; }
+  ok('none of the malformed cases throw', !bad, bad);
+})();
+
+/* =========================================================================
+ * R. Reaching the new vocabulary (PLAN_15 phase 3)
+ *
+ * Phase 3 adds ~20 new vocabularies and the tables that let the editor's
+ * caret actually reach them — a vocabulary with no path to it is dead data,
+ * so every id below is proven reachable through valueSuggestions() at a
+ * real caret position, not merely present in VOCAB. The new key tables
+ * (DEPLOY_LEAVES and the two-levels-deeper blocks under deploy: and
+ * logging:) get the same proof as keySuggestions().
+ * ========================================================================= */
+
+console.log('\nR. Reaching the new vocabulary (PLAN_15 phase 3)');
+
+// Builds "services:\n  a:\n    <indented path>\n" and returns the offset
+// right after "<lastKey>: ", so every case below only has to state its own
+// path once rather than hand-counting indentation and string lengths.
+function serviceValueCase(pathLines, lastKeyValuePrefix) {
+  var indent = '    ';
+  var text = 'services:\n  a:\n';
+  pathLines.forEach(function (line) { text += indent + line + '\n'; indent += '  '; });
+  text += indent + lastKeyValuePrefix + '\n';
+  var offset = text.length - 1; // caret right after the trailing space, before '\n'
+  return { text: text, offset: offset };
+}
+
+/* ---- R1. each new vocabulary is reachable through valueSuggestions() ---- */
+
+(function () {
+  var cases = [
+    { name: 'uts: at service level',              c: serviceValueCase([], 'uts: '),        want: 'host' },
+    { name: 'cgroup: at service level',           c: serviceValueCase([], 'cgroup: '),     want: 'host' },
+    { name: 'isolation: at service level',        c: serviceValueCase([], 'isolation: '),  want: 'default' },
+    { name: 'mode: under deploy:',                c: serviceValueCase(['deploy:'], 'mode: '), want: 'replicated' },
+    { name: 'endpoint_mode: under deploy:',       c: serviceValueCase(['deploy:'], 'endpoint_mode: '), want: 'vip' },
+    { name: 'condition: under deploy.restart_policy:',
+      c: serviceValueCase(['deploy:', 'restart_policy:'], 'condition: '), want: 'on-failure' },
+    { name: 'order: under deploy.update_config:',
+      c: serviceValueCase(['deploy:', 'update_config:'], 'order: '), want: 'start-first' },
+    { name: 'failure_action: under deploy.update_config:',
+      c: serviceValueCase(['deploy:', 'update_config:'], 'failure_action: '), want: 'rollback' },
+    { name: 'order: under deploy.rollback_config:',
+      c: serviceValueCase(['deploy:', 'rollback_config:'], 'order: '), want: 'stop-first' },
+    { name: 'failure_action: under deploy.rollback_config:',
+      c: serviceValueCase(['deploy:', 'rollback_config:'], 'failure_action: '), want: 'pause' },
+    { name: 'mode: under logging.options:',
+      c: serviceValueCase(['logging:', 'options:'], 'mode: '), want: 'blocking' },
+    { name: 'network: under build:',              c: serviceValueCase(['build:'], 'network: '), want: 'none' }
+  ];
+
+  cases.forEach(function (t) {
+    var r = Y.valueSuggestions(t.c.text, t.c.offset);
+    var got = r && r.keys.map(function (k) { return k.key; });
+    ok(t.name + ' offers ' + t.want, !!r && got.indexOf(t.want) >= 0, JSON.stringify({ text: t.c.text, r: r }));
+  });
+})();
+
+/* ---- R1b. enable_ipv6: on a network declaration offers true/false ------- */
+
+(function () {
+  var text = 'networks:\n  net1:\n    enable_ipv6: \n';
+  var r = Y.valueSuggestions(text, text.indexOf('enable_ipv6: ') + 'enable_ipv6: '.length);
+  var got = r && r.keys.map(function (k) { return k.key; });
+  ok('networks: enable_ipv6 offers true and false',
+     !!r && got.join(',') === 'true,false', JSON.stringify(r));
+})();
+
+/* ---- R2. deploy's own keys, and the new deep blocks, resolve as KEYS ---- */
+
+(function () {
+  var text = 'services:\n  a:\n    deploy:\n      m\n';
+  var r = Y.keySuggestions(text, text.indexOf('      m') + 7);
+  ok("keySuggestions() at deploy: with prefix 'm' finds mode",
+     !!r && r.keys.some(function (k) { return k.key === 'mode'; }), JSON.stringify(r));
+})();
+
+(function () {
+  var text = 'services:\n  a:\n    deploy:\n      restart_policy:\n        c\n';
+  var r = Y.keySuggestions(text, text.lastIndexOf('c') + 1);
+  ok("deploy.restart_policy: resolves 'condition' as a key",
+     !!r && r.keys.some(function (k) { return k.key === 'condition'; }), JSON.stringify(r));
+})();
+
+(function () {
+  var text = 'services:\n  a:\n    deploy:\n      update_config:\n        o\n';
+  var r = Y.keySuggestions(text, text.lastIndexOf('o') + 1);
+  ok("deploy.update_config: resolves 'order' as a key",
+     !!r && r.keys.some(function (k) { return k.key === 'order'; }), JSON.stringify(r));
+})();
+
+(function () {
+  var text = 'services:\n  a:\n    deploy:\n      rollback_config:\n        o\n';
+  var r = Y.keySuggestions(text, text.lastIndexOf('o') + 1);
+  ok("deploy.rollback_config: resolves 'order' as a key too — the two blocks share one table",
+     !!r && r.keys.some(function (k) { return k.key === 'order'; }), JSON.stringify(r));
+})();
+
+(function () {
+  var text = 'services:\n  a:\n    logging:\n      options:\n        m\n';
+  var r = Y.keySuggestions(text, text.lastIndexOf('m') + 1);
+  ok("logging.options: offers 'mode' as a key (a hint over a free-form map)",
+     !!r && r.keys.some(function (k) { return k.key === 'mode'; }), JSON.stringify(r));
+})();
+
+/* ---- R3. helpGaps() still comes back empty with the new tables added ---- */
+
+ok('helpGaps() is still empty after phase 3\'s additions', Y.helpGaps().length === 0,
+   JSON.stringify(Y.helpGaps()));
+
+/* ---- R4. "on-failure:3" is not fought — nothing offered, nothing throws - */
+
+(function () {
+  var text = 'services:\n  a:\n    restart: on-failure:3\n';
+  var offset = text.indexOf('on-failure:3') + 'on-failure:3'.length;
+  var bad = null, r;
+  try { r = Y.valueSuggestions(text, offset); } catch (e) { bad = e.message; }
+  ok('valueSuggestions() does not throw on "on-failure:3"', !bad, bad);
+  ok('nothing is offered for "on-failure:3" — the prefix matches none of the four values',
+     !r || r.keys.length === 0, JSON.stringify(r));
 })();
 
 /* ---- result ------------------------------------------------------------- */

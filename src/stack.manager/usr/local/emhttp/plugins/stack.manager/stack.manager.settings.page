@@ -14,6 +14,14 @@ Icon="cubes"
  */
 $plugin = 'stack.manager';
 $cfg    = parse_plugin_cfg($plugin);
+
+// A lone text box inside a form reads to a password manager like a username,
+// and autocomplete="off" does not stop one — that attribute only speaks to the
+// browser's own autofill. There is no standard way to say "not a login field",
+// so each manager's own opt-out is set: 1Password, LastPass, Bitwarden,
+// Dashlane, Proton Pass. The Stacks page carries the same list.
+$nofill = 'autocomplete="off" data-1p-ignore data-lpignore="true" '
+        . 'data-bwignore data-form-type="other" data-protonpass-ignore="true"';
 ?>
 
 <form markdown="1" method="POST" action="/update.php" target="progressFrame">
@@ -30,7 +38,7 @@ _(Show Stacks in)_:
 > default landing tab; nothing is replaced either way.
 
 _(Stack directory)_:
-: <input type="text" name="STACK_ROOT" value="<?=htmlspecialchars($cfg['STACK_ROOT'])?>" spellcheck="false">
+: <input type="text" name="STACK_ROOT" value="<?=htmlspecialchars($cfg['STACK_ROOT'])?>" spellcheck="false" <?=$nofill?>>
 
 > Root directory holding stack definitions, one subdirectory per stack. Keeping this on the flash
 > device means stacks are readable before the array starts, which matters for autostart. Placing it

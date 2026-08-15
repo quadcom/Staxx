@@ -246,6 +246,24 @@ switch ($action) {
     if ($made === '') stackman_reply(['ok' => true, 'error' => $error]);
     stackman_reply(['ok' => true, 'path' => $made]);
 
+  /* ---- what's really on disk for the paths in a compose file ----
+   *
+   * Called while someone is typing a volumes: entry, so the Form view can
+   * show whether a bind-mount source exists yet. stackman_check_paths() does
+   * all the safety work; this only shapes the request into what it expects
+   * and refuses anything that isn't a JSON array of strings before it gets
+   * there. Never slow: no shell, no directory listing, one stat per path.
+   */
+  case 'paths':
+    $paths = json_decode((string)($_POST['paths'] ?? ''), true);
+    if (!is_array($paths) || array_filter($paths, fn($p) => !is_string($p))) {
+      stackman_reply([
+        'ok'    => false,
+        'error' => 'Send the paths to check as a JSON array of strings.',
+      ]);
+    }
+    stackman_reply(['ok' => true, 'paths' => stackman_check_paths($paths, $name)]);
+
   /* ---- every timezone, for the picker on a TZ variable ----
    *
    * Asked for once, the first time the picker opens, and held in the page
@@ -276,6 +294,25 @@ switch ($action) {
    */
   case 'networks':
     stackman_reply(['ok' => true, 'networks' => stackman_docker_networks()]);
+
+  /* ---- images this server's docker has already pulled ----
+   *
+   * Asked for when the editor opens, so the Form view's `image:` field can
+   * suggest a repository:tag someone has used before. Takes no parameters.
+   */
+  case 'images':
+    stackman_reply(['ok' => true, 'images' => stackman_docker_images()]);
+
+  /* ---- tags Docker Hub has published for a repository ----
+   *
+   * Asked for as the `image:` field's repository half settles, so the tag
+   * half can offer real values instead of a guess. Takes `repo` (the
+   * repository name typed so far); an unrecognised or host-qualified shape
+   * returns an empty list rather than an error, and the field falls back to
+   * a plain text box.
+   */
+  case 'tags':
+    stackman_reply(['ok' => true, 'tags' => stackman_image_tags((string)($_POST['repo'] ?? ''))]);
 
   // ---- run one external command and report how it went ----
   case 'probe':

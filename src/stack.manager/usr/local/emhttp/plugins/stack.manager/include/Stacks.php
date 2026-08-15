@@ -242,6 +242,148 @@ function stackman_browse_mkdir(string $parent, string $name, string &$error): st
   return $path;
 }
 
+/**
+ * Deepest existing ancestor of a path, resolved.
+ *
+ * realpath() returns false both for a path that does not exist and for one
+ * that resolves outside an allowed root — the two cases this function has to
+ * tell apart. So it walks upward from the path until it finds an ancestor
+ * that DOES exist, and resolves that instead. Containment is then decided on
+ * the ancestor; whether the path itself exists is a separate question the
+ * caller answers afterwards.
+ */
+/**
+ * Collapse "." and ".." on the text of an absolute path, touching no disk.
+ *
+ * A companion to realpath(), not a substitute: this cannot see a symlink, and
+ * realpath cannot resolve a path whose middle does not exist yet. Each covers
+ * the other's blind spot, so stackman_path_verdict() requires both to agree.
+ *
+ * ".." at the root stays at the root, which is what the kernel does — /../etc
+ * is /etc, not an error.
+ */
+function stackman_lexical_path(string $path): string {
+  $out = [];
+  foreach (explode('/', $path) as $part) {
+    if ($part === '' || $part === '.') continue;
+    if ($part === '..') { array_pop($out); continue; }
+    $out[] = $part;
+  }
+  return '/'.implode('/', $out);
+}
+
+function stackman_real_ancestor(string $path): ?string {
+  $walked = $path === '' ? '/' : $path;
+  for ($i = 0; $i < 64; $i++) { // a real filesystem never nests this deep
+    $real = @realpath($walked);
+    if ($real !== false) return $real;
+    $parent = dirname($walked);
+    if ($parent === $walked) return null; // hit the filesystem root; nothing resolved
+    $walked = $parent;
+  }
+  return null;
+}
+
+/**
+ * ok | file | missing | skipped for one already-combined target, checked
+ * against one already-resolved root directory.
+ *
+ * A path outside the root comes back "skipped", never "missing" — reporting
+ * "missing" for something like /etc/shadow would turn this into a way to
+ * probe the whole filesystem for what does and does not exist, and "missing"
+ * is itself an answer. Containment is checked on the deepest existing
+ * ancestor (see stackman_real_ancestor()) so a path that does not exist yet
+ * can still be reported as "missing" rather than falling through to
+ * "skipped" for every path that doesn't already exist.
+ */
+function stackman_path_verdict(string $target, string $root): string {
+  if ($root === '') return 'skipped';
+  $inRoot = fn(string $real) => $real === $root || strpos($real, $root.'/') === 0;
+
+  // Collapse "." and ".." on the text first, and refuse anything that walks out
+  // of the root that way. realpath() cannot do this job alone: it resolves
+  // nothing at all unless every component already exists, so a path through a
+  // stack folder that has not been created yet kept its ".." segments
+  // unresolved, and the walk below then found its containing ancestor inside
+  // the root and let it through.
+  //
+  // This is an EXTRA gate, never a replacement for the realpath checks — text
+  // alone cannot see a symlink, which is the case realpath is there for. Both
+  // have to pass.
+  if (!$inRoot(stackman_lexical_path($target))) return 'skipped';
+
+  $ancestor = stackman_real_ancestor($target);
+  if ($ancestor === null || !$inRoot($ancestor)) return 'skipped';
+
+  $real = @realpath($target);
+  if ($real === false) return 'missing'; // ancestor is contained; nothing at the leaf yet
+  if (!$inRoot($real)) return 'skipped'; // a symlink resolved outside the root after all
+
+  return is_dir($real) ? 'ok' : 'file';
+}
+
+/**
+ * What's really on disk for a batch of paths taken from a compose file
+ * someone is editing — the "does this bind-mount exist" hint under the
+ * volumes list. $rel is the stack's own path, used to resolve a relative
+ * source ("./data") against the stack's own folder.
+ *
+ * Every path here is arbitrary text someone is typing, so it is treated as
+ * hostile: an absolute path must resolve inside STACKMAN_BROWSE_ROOT (/mnt),
+ * exactly like stackman_browse_dirs(); a relative one resolves against the
+ * stack's folder first and the result must still land inside the stack root.
+ * Anything that fails either check is "skipped", not "missing" — see
+ * stackman_path_verdict(). This does no shelling out and no directory
+ * listing, only realpath()/is_dir() — one stat's worth of work per path.
+ *
+ * @param string[] $paths host paths exactly as written in the compose file
+ * @param string   $rel   the editing stack's own relative path, or ''
+ * @return array<string, string> original path string => ok|file|missing|skipped
+ */
+function stackman_check_paths(array $paths, string $rel = ''): array {
+  // Resolved, not the literal constant: every path this is compared against
+  // has been through realpath(), so the root has to be too or the two are not
+  // the same kind of string. It fails closed rather than open — a root that
+  // did not resolve would send every path to "skipped" — but silently doing
+  // nothing is its own kind of bug.
+  $root = @realpath(STACKMAN_BROWSE_ROOT);
+  if ($root === false) $root = '';
+
+  // A relative path only has somewhere safe to resolve against when $rel is
+  // itself a real stack path — an invalid $rel is silently left with no base,
+  // which sends every relative path in the batch to "skipped" below rather
+  // than guessing at what it might have meant.
+  $stackRoot = '';
+  $stackDir  = '';
+  if (stackman_valid_path($rel)) {
+    $real = @realpath(stackman_stack_root());
+    if ($real !== false) { $stackRoot = $real; $stackDir = stackman_stack_dir($rel); }
+  }
+
+  $unique = [];
+  foreach ($paths as $p) {
+    if (!is_string($p)) continue;
+    $unique[$p] = true; // de-duplicate, first occurrence wins the slot
+  }
+  $unique = array_slice(array_keys($unique), 0, 200);
+
+  $out = [];
+  foreach ($unique as $p) {
+    if (strpos($p, "\0") !== false) { $out[$p] = 'skipped'; continue; }
+    $trimmed = trim($p);
+    if ($trimmed === '') { $out[$p] = 'skipped'; continue; }
+
+    if ($trimmed[0] === '/') {
+      $out[$p] = stackman_path_verdict($trimmed, $root);
+    } elseif ($stackDir !== '') {
+      $out[$p] = stackman_path_verdict($stackDir.'/'.$trimmed, $stackRoot);
+    } else {
+      $out[$p] = 'skipped';
+    }
+  }
+  return $out;
+}
+
 /* -------------------------------------------------------------- timezones -- */
 
 /**

@@ -47,6 +47,15 @@ $jsTag   = $assets.'/javascript/stacks.js?v='.(is_file($jsFile) ? filemtime($jsF
 $modelTag = $assets.'/javascript/compose-model.js?v='.(is_file($modelFile) ? filemtime($modelFile) : '0');
 $cssTag  = $assets.'/sheets/stack.manager.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
 
+// Password managers ignore autocomplete="off" — that attribute only speaks to
+// the browser's own autofill. They read the words around a box instead, and a
+// lone name box on a dialog reads to them like a username. There is no
+// standard way to say "not a login field", so each manager's own opt-out is
+// set: 1Password, LastPass, Bitwarden, Dashlane, Proton Pass. The form's own
+// boxes are built in JavaScript and carry the same list as NOFILL there.
+$nofill = 'autocomplete="off" data-1p-ignore data-lpignore="true" '
+        . 'data-bwignore data-form-type="other" data-protonpass-ignore="true"';
+
 if (!function_exists('stackman_status_row')):
 function stackman_status_row(string $label, bool $ok, string $detail): void {
   $icon = $ok ? 'fa-check green-text' : 'fa-times-circle red-text';
@@ -201,7 +210,7 @@ endif;
       <label class="stackman-modal-name" id="stackman-name-field">
         <span><?= _('Stack name') ?></span>
         <span class="stackman-name-folder" id="stackman-name-folder" hidden></span>
-        <input type="text" id="stackman-name" spellcheck="false" autocomplete="off"
+        <input type="text" id="stackman-name" spellcheck="false" <?= $nofill ?>
                placeholder="<?= _('jellyfin') ?>">
         <span class="stackman-name-hint"><?= _("The folder that holds this stack's compose file. Renaming it moves the folder.") ?></span>
       </label>
@@ -211,6 +220,18 @@ endif;
           <input type="checkbox" id="stackman-sanitise">
           <span><?= _('Sanitise') ?></span>
         </label>
+        <!-- Positioning wrapper only, same job as .stackman-sections above the
+             Sections button: the panel hangs from this box, not from the
+             button itself, so it can sit flush against the button's edge
+             regardless of where that button ends up in the flex row. Script
+             fills #stackman-outline with rows and toggles hidden. -->
+        <div class="stackman-outlinewrap">
+          <button type="button" class="stackman-btn stackman-outlinebtn" id="stackman-outline-btn" aria-expanded="false"
+                  title="<?= _('Jump to a block or service in the compose file') ?>">
+            <i class="fa fa-list-ul" aria-hidden="true"></i> <?= _('Outline') ?>
+          </button>
+          <div class="stackman-outline" id="stackman-outline" role="menu" hidden></div>
+        </div>
         <!-- Split is the one anyone wants on a desktop, and meaningless on a
              phone: two panes of twenty characters each are worse than either
              one alone. So its button is hidden below 45rem and the editor
@@ -249,6 +270,48 @@ endif;
       </div>
 
       <div class="stackman-pane stackman-pane--yaml">
+        <!-- Hidden until script opens it (Ctrl+F inside the compose pane).
+             Unhiding it, running the search itself, and painting the
+             .stackman-hit boxes into #stackman-yamlmarks below are all
+             script's job — this is markup only. The replace row is a second
+             line inside the same bar (see .stackman-find-replace in the
+             stylesheet), shown only when replace, not plain find, is open. -->
+        <div class="stackman-find" id="stackman-find" hidden>
+          <label class="stackman-sr" for="stackman-find-what"><?= _('Find in compose file') ?></label>
+          <input type="text" id="stackman-find-what" class="stackman-find-input"
+                 spellcheck="false" <?= $nofill ?>
+                 placeholder="<?= _('find in this file') ?>">
+          <span class="stackman-find-count" id="stackman-find-count"></span>
+          <button type="button" class="stackman-chevron" id="stackman-find-prev"
+                  title="<?= _('Previous match') ?>" aria-label="<?= _('Previous match') ?>">
+            <i class="fa fa-chevron-up"></i>
+          </button>
+          <button type="button" class="stackman-chevron" id="stackman-find-next"
+                  title="<?= _('Next match') ?>" aria-label="<?= _('Next match') ?>">
+            <i class="fa fa-chevron-down"></i>
+          </button>
+          <label class="stackman-sanitise">
+            <input type="checkbox" id="stackman-find-case">
+            <span><?= _('Match case') ?></span>
+          </label>
+          <label class="stackman-sanitise">
+            <input type="checkbox" id="stackman-find-regex">
+            <span><?= _('Regex') ?></span>
+          </label>
+          <button type="button" class="stackman-chevron" id="stackman-find-close"
+                  title="<?= _('Close find') ?>" aria-label="<?= _('Close find') ?>">
+            <i class="fa fa-times"></i>
+          </button>
+
+          <div class="stackman-find-replace" id="stackman-find-replacerow" hidden>
+            <label class="stackman-sr" for="stackman-find-with"><?= _('Replace with') ?></label>
+            <input type="text" id="stackman-find-with" class="stackman-find-input"
+                   spellcheck="false" <?= $nofill ?>
+                   placeholder="<?= _('replace with') ?>">
+            <button type="button" class="stackman-btn" id="stackman-find-one"><?= _('Replace') ?></button>
+            <button type="button" class="stackman-btn" id="stackman-find-all"><?= _('Replace all') ?></button>
+          </div>
+        </div>
         <!-- The highlight bands are painted as absolutely positioned divs
              behind a transparent-background textarea, so the wrapper carries
              the colour. It works without mirroring the text because the box
@@ -260,12 +323,31 @@ endif;
                line would otherwise slide out from under the numbers; an opaque
                gutter on top is what hides it, which is what every code editor
                does. aria-hidden because line numbers read aloud are noise. -->
-          <div class="stackman-yamlnums" id="stackman-yamlnums" aria-hidden="true"><div></div></div>
+          <!-- Second inner div holds one dot per flagged line (script sets its
+               own top offset in pixels and a title with the message), kept as
+               a sibling after the numbers div because script reaches that one
+               as firstElementChild. -->
+          <div class="stackman-yamlnums" id="stackman-yamlnums" aria-hidden="true"><div></div><div class="stackman-yamldots"></div></div>
           <div class="stackman-yamlmarks" id="stackman-yamlmarks" aria-hidden="true"></div>
+          <!-- Syntax colour, same trick again: a coloured copy of the text
+               behind a textarea whose own text is made transparent. Marks,
+               then ink, then the textarea last — in that order — so the
+               textarea's selection highlight paints over the ink, and the
+               gutter (z-index: 2) stays over both. aria-hidden for the same
+               reason as the gutter: it is a decorative duplicate, not content. -->
+          <div class="stackman-yamlink" id="stackman-yamlink" aria-hidden="true"><div></div></div>
           <textarea class="stackman-yaml" id="stackman-yaml" wrap="off" spellcheck="false"
                     autocomplete="off" autocapitalize="off" autocorrect="off"
                     aria-label="<?= _('Compose file') ?>"
                     placeholder="services:&#10;  example:&#10;    image: alpine:3.20&#10;    command: [&quot;sleep&quot;, &quot;infinity&quot;]"></textarea>
+          <!-- Key-suggestion list. Script fills it with rows and positions it
+               with inline left/top in pixels, following the caret; hidden
+               until there is something to suggest. -->
+          <div class="stackman-suggest" id="stackman-suggest" role="listbox" hidden></div>
+          <!-- Hover panel explaining the compose key under the pointer.
+               pointer-events: none in the stylesheet, so it can never sit
+               between the pointer and the text that spawned it. -->
+          <div class="stackman-keyhelp" id="stackman-keyhelp" role="tooltip" hidden></div>
         </div>
         <div class="stackman-yamlstatus" id="stackman-yaml-status" role="status" aria-live="polite"></div>
       </div>
@@ -336,7 +418,7 @@ endif;
     <div class="stackman-picker-new">
       <label class="stackman-sr" for="stackman-picker-newname"><?= _('New folder name') ?></label>
       <input type="text" id="stackman-picker-newname" maxlength="63"
-             spellcheck="false" autocomplete="off"
+             spellcheck="false" <?= $nofill ?>
              placeholder="<?= _('name a new folder to create here') ?>">
       <button type="button" class="stackman-btn" id="stackman-picker-make"><?= _('Create') ?></button>
     </div>
@@ -464,7 +546,7 @@ endif;
 
     <div class="stackman-tz-find">
       <label class="stackman-sr" for="stackman-tz-search"><?= _('Search timezones') ?></label>
-      <input type="text" id="stackman-tz-search" spellcheck="false" autocomplete="off"
+      <input type="text" id="stackman-tz-search" spellcheck="false" <?= $nofill ?>
              placeholder="<?= _('or search every zone — try “tokyo” or “st john”') ?>">
     </div>
 

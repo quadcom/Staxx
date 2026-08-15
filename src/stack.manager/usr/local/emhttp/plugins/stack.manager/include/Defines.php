@@ -207,6 +207,99 @@ function stackman_docker_networks(): array {
 }
 
 /**
+ * Every image:tag this server's docker has already pulled, offered while
+ * typing an `image:` field so a common case does not need retyping.
+ *
+ * `<none>` tags mark dangling layers and half-finished builds — never
+ * something anyone would type into an `image:` field — so they are filtered
+ * out rather than shown as noise.
+ *
+ * @return string[] sorted, de-duplicated "repository:tag" strings
+ */
+function stackman_docker_images(): array {
+  if (!stackman_docker_running()) return [];
+
+  $out = stackman_sh(
+    escapeshellarg(stackman_docker_bin()).' images --format '.escapeshellarg('{{.Repository}}:{{.Tag}}'), 10
+  );
+
+  $images = [];
+  foreach (explode("\n", trim($out)) as $line) {
+    $line = trim($line);
+    if ($line === '' || strpos($line, '<none>') !== false) continue;
+    $images[$line] = true; // de-duplicate as we go
+  }
+  $images = array_keys($images);
+  sort($images);
+  return $images;
+}
+
+/**
+ * Tags Docker Hub has published for a repository, offered while typing an
+ * `image:` field's tag half. This is the only thing in the plugin that talks
+ * to a server other than this one, so the repo string is checked twice before
+ * it gets anywhere near a URL: first for shape, then quoted on top of that —
+ * belt and braces, not either on its own.
+ *
+ * A bare single-segment name (`postgres`) is Docker's own shorthand for
+ * `library/postgres`, where Hub keeps official images. `lscr.io/linuxserver/x`
+ * and `ghcr.io/linuxserver/x` are mirrors of the same image Hub already
+ * indexes under `linuxserver/x`, and worth the two lines because linuxserver
+ * is what most Unraid users run. Any other host-qualified name — a private
+ * registry, a self-hosted one, anything else — is refused outright: this
+ * plugin does not guess at credentials or API shapes it has never seen, and
+ * declining quietly is correct, because the field falls back to a plain text
+ * box the moment the suggestion list comes back empty.
+ *
+ * Every failure — no network, DNS, a non-JSON body, an HTTP error, a reply
+ * shaped nothing like tags — returns the same empty array rather than an
+ * exception or a message. This call runs while someone is mid-keystroke;
+ * surfacing a registry error in the middle of typing would be noise for a
+ * field that still works perfectly well as free text.
+ *
+ * @return string[] up to 50 tag names, most recently updated first
+ */
+function stackman_image_tags(string $repo): array {
+  $repo = trim($repo);
+  if ($repo === '') return [];
+
+  $parts = explode('/', $repo);
+  if (count($parts) === 3 && $parts[1] === 'linuxserver' && in_array($parts[0], ['lscr.io', 'ghcr.io'], true)) {
+    $repo = $parts[1].'/'.$parts[2];
+  } elseif (strpos($parts[0], '.') !== false || strpos($parts[0], ':') !== false) {
+    // Host-qualified and not one of the two mirrors above — decline rather
+    // than guess at a registry we know nothing about.
+    return [];
+  } elseif (strpos($repo, '/') === false) {
+    $repo = 'library/'.$repo;
+  }
+
+  // Shape: [namespace/]name, lowercase alphanumerics with . _ - separators,
+  // at most one slash. The 'D' modifier keeps $ from also matching just
+  // before a trailing newline, which is PCRE's default and would otherwise
+  // let a name end in "\n<anything>" slip past this check.
+  if (!preg_match('#^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)?$#D', $repo)) {
+    return [];
+  }
+
+  $url = 'https://hub.docker.com/v2/repositories/'.$repo.'/tags?page_size=50&ordering=last_updated';
+  // A timeout a little above curl's own --max-time, so curl reports the
+  // failure itself rather than being killed mid-flight by stackman_sh().
+  $out = stackman_sh('curl -fsSL --max-time 8 '.escapeshellarg($url), 12);
+
+  $data = json_decode($out, true);
+  if (!is_array($data) || !isset($data['results']) || !is_array($data['results'])) return [];
+
+  $tags = [];
+  foreach ($data['results'] as $result) {
+    if (!is_array($result) || !isset($result['name']) || !is_string($result['name'])) continue;
+    $tags[] = $result['name'];
+    if (count($tags) >= 50) break;
+  }
+  return $tags;
+}
+
+/**
  * Containers on the system grouped by their compose project.
  *
  * This is the grouping key the whole stack presentation rests on: compose

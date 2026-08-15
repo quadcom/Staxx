@@ -1851,6 +1851,83 @@
   margin-left: auto;
 }
 
+/* ---- modal: the outline button and its panel -----------------------------
+ *
+ * Same visual family as .stackman-sectionpick and .stackman-suggest — opaque
+ * background, border, radius, shadow, a z-index above the form rows — so a
+ * third floating panel in this dialog does not invent a fourth look.
+ * .stackman-outlinewrap only positions the panel against the button, the
+ * same job .stackman-sections does for the Sections button elsewhere; the
+ * button itself is a plain .stackman-btn plus this one modifier.
+ */
+.stackman-outlinewrap {
+  position: relative;
+}
+
+/* Right-aligned to the button and wide enough for a long service name plus
+   its line number without wrapping. max-height plus overflow-y is what lets
+   a compose file with many services list all of them without growing past
+   the dialog. */
+.stackman-outline {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 5;
+  width: 26rem;
+  max-width: calc(100vw - 2rem);
+  max-height: 28rem;
+  overflow-y: auto;
+  padding: 0.4rem 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-bg);
+  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+}
+
+.stackman-outline[hidden] {
+  display: none;
+}
+
+.stackman-outline-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.6rem 1rem;
+  cursor: pointer;
+}
+
+.stackman-outline-row:hover {
+  background: var(--sm-fill);
+}
+
+/* Indented one step from a top-level block, so the shape of the file — the
+   same nesting the compose file itself uses — reads at a glance. */
+.stackman-outline-row--svc {
+  padding-left: 2.2rem;
+}
+
+.stackman-outline-row--top {
+  font-weight: 600;
+}
+
+/* The pane's own monospace stack, same as .stackman-yaml and
+   .stackman-suggest-key: a column of line numbers wants to line up, which a
+   proportional font never quite does. */
+.stackman-outline-line {
+  flex: 0 0 auto;
+  color: var(--sm-muted);
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.1rem;
+}
+
+.stackman-outline-empty {
+  padding: 1.2rem;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+  text-align: center;
+}
+
 /* ---- modal: the Form / Split / Compose control ---- */
 
 .stackman-views {
@@ -1880,6 +1957,21 @@
 .stackman-scaffold .stackman-viewbtn[aria-pressed="true"] {
   background: var(--sm-fill-2);
   font-weight: 700;
+}
+
+/* Form and Split are disabled while the file cannot be read (there is no form
+   to switch to). :disabled after the pressed rule and repeating its
+   background so a disabled-but-pressed button (Split, the default view)
+   cannot end up looking active — disabled must always win. */
+.stackman-scaffold .stackman-viewbtn:disabled {
+  background: transparent;
+  opacity: 0.5;
+  font-weight: 400;
+  cursor: not-allowed;
+}
+
+.stackman-scaffold .stackman-viewbtn:hover:disabled {
+  background: transparent;
 }
 
 /* ---- modal: body and the two panes ---- */
@@ -1937,6 +2029,36 @@
   font-size: 1.3rem;
 }
 
+/* Shown instead of the form when the compose text cannot be parsed. Same
+   recipe as .stackman-notice (border-left, radius, --sm-fill background) so
+   this reads as the same family of panel rather than a third visual language
+   — --sm-danger on the left edge, not --sm-accent, because .stackman-notice--bad
+   already uses danger for "something is wrong" and this is exactly that. Not
+   .stackman-notice itself: that one is an icon-plus-sentence row sized for
+   page-level prose, and this is a heading over quieter detail sitting inside
+   the narrower form pane. */
+.stackman-form-broken {
+  margin: 0;
+  padding: 1rem 1.2rem;
+  border-left: 0.4rem solid var(--sm-danger);
+  border-radius: 0.3rem;
+  background: var(--sm-fill);
+}
+
+.stackman-form-broken strong {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.stackman-form-broken p {
+  margin: 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+  line-height: 1.4;
+}
+
 /* ---- modal: one service's block of fields ---- */
 
 .stackman-svc {
@@ -1950,12 +2072,12 @@
    and leaves no rule hanging under the final service.
 
    Drawn with an outset shadow, not a border-top. A border would meet the
-   transparent border-left above at a mitred corner, so the grey would appear
+   transparent border-left above at a mitred corner, so the line would appear
    to start a few pixels in from the left — and would jump sideways when the
    left edge lights up to mark the active service. */
 .stackman-svc + .stackman-svc {
   padding-top: 2.4rem;
-  box-shadow: 0 -0.3rem 0 var(--sm-line);
+  box-shadow: 0 -0.3rem 0 var(--sm-accent);
 }
 
 /* Shown when the caret is somewhere in this service but on a line no single
@@ -2055,6 +2177,57 @@
    [hidden] rule — so this has to be said again where the specificity is ours. */
 .stackman-scaffold .stackman-btn[hidden] { display: none; }
 
+/* ---- modal: add another container -----------------------------------------
+ *
+ * Sits after the last .stackman-svc, as a sibling in the form rather than
+ * inside one — it creates a whole new section, not one more entry in a list
+ * that is already on screen, so it earns a bigger affordance than the small
+ * dashed .stackman-add buttons a group heading carries (see "adding and
+ * removing entries" further down): full width and centred, rather than a
+ * pill sat in a header row, so the two are never mistaken for the same kind
+ * of control. Still dashed, not a solid filled button, for the same reason
+ * those are: it reads as "there is space here for another one", not as
+ * "press to submit". No extra top margin — .stackman-svc already leaves
+ * 2.4rem under the last section, the same gap every other section break in
+ * this form uses, so this one falls into the existing rhythm rather than
+ * doubling it. */
+.stackman-scaffold .stackman-addsvc {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  width: 100%;
+  margin: 0;
+  padding: 1.1rem;
+  border: 0.15rem dashed var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: transparent;
+  color: var(--sm-muted);
+  font-family: inherit;
+  font-size: 1.3rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-addsvc:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--sm-accent);
+  background: var(--sm-fill);
+  color: var(--sm-accent);
+}
+
+.stackman-scaffold .stackman-addsvc:focus-visible {
+  border-style: solid;
+  border-color: var(--sm-accent);
+  outline: 0.2rem solid var(--sm-accent);
+  outline-offset: 0.2rem;
+}
+
+.stackman-scaffold .stackman-addsvc:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ---- modal: field groups --------------------------------------------------
  *
  * "formgroup", not "group": .stackman-group is the stacks table's subgrid
@@ -2069,6 +2242,13 @@
   margin: 2rem 0;
   padding: 1.2rem 0;
   border-top: 0.1rem solid var(--sm-hairline);
+  /* Where a scrollIntoView aimed at this group stops. Without it the group's
+     own top rule lands flush against the top edge of the scrolling pane —
+     the margin above it is scrolled away, since an element's scroll position
+     is taken from its border box — and the group reads as having gone a
+     fraction too far. 1.4rem is .stackman-form's own padding, so a group
+     scrolled to sits exactly where the first group sits at rest. */
+  scroll-margin-top: 1.4rem;
 }
 
 /* The Stack section's own heading is a <summary>, folded shut by default
@@ -2092,6 +2272,49 @@
   border-bottom: 0.1rem solid var(--sm-hairline);
 }
 
+/* The group a section was just switched on for. stacks.js scrolls the form to
+   it and adds this class; the glow says which of the groups now on screen is
+   the new one.
+
+   A keyframe, not a transition: the group was drawn a moment ago and has no
+   previous state to travel from — the same reason @keyframes stackman-enter
+   exists for a new table row.
+
+   Held at full strength for the first quarter, then faded across the rest. A
+   straight three-second fade is already half gone by the time a smooth scroll
+   finishes, so the glow would be at its weakest exactly when the eye arrives.
+   linear, not ease-out, so that tail fades at a steady rate rather than
+   dropping away and then lingering.
+
+   The halo is a blur with no hard ring, which is what makes it a gradient
+   rather than an outline — and a ring would want a border-radius this group
+   does not otherwise have, which would then have to be taken back off the
+   element afterwards. Its reach is 1.2rem (1rem blur plus 0.2rem spread)
+   against .stackman-form's 1.4rem of padding: anything wider is clipped at
+   the left and right edges of the scrolling pane.
+
+   Nothing cleans the class off again. The animation does not fill forwards
+   and the class carries nothing else, so the group is back to its ordinary
+   self the moment it ends. */
+@keyframes stackman-landed {
+  0% {
+    background-color: rgba(255, 140, 47, 0.16);
+    box-shadow: 0 0 1rem 0.2rem rgba(255, 140, 47, 0.5);
+  }
+  25% {
+    background-color: rgba(255, 140, 47, 0.16);
+    box-shadow: 0 0 1rem 0.2rem rgba(255, 140, 47, 0.5);
+  }
+  100% {
+    background-color: rgba(255, 140, 47, 0);
+    box-shadow: 0 0 1rem 0.2rem rgba(255, 140, 47, 0);
+  }
+}
+
+.stackman-formgroup--landed {
+  animation: stackman-landed 3s linear;
+}
+
 .stackman-grouphead {
   display: flex;
   justify-content: space-between;
@@ -2100,35 +2323,90 @@
   margin-bottom: 0.8rem;
 }
 
-/* A checkbox has no usable text baseline to align against — the same reason
-   .stackman-fieldrow sets align-items: center rather than the baseline every
-   other row shape here uses. Only overrides the rule above when this row's
-   header actually holds the tick boxes (Container's only), so every other
-   group keeps the plain baseline lineup between its heading and Add button. */
-.stackman-grouphead:has(.stackman-groupflags) {
-  align-items: center;
+/* Container's Sections button and the panel of tick boxes it opens — one
+   control standing in for what used to be three separate tick boxes on the
+   same header, now that every switchable section (not just Health check,
+   Resource limits and Depends on) needs a place to live.
+
+   The panel floats over the rows below rather than pushing them down, so
+   ticking a box does not move the form under the pointer. This is the box it
+   is positioned against; the button inside it is what it hangs from. */
+.stackman-sections {
+  position: relative;
 }
 
-/* The three switchable groups' tick boxes, on Container's own header only.
-   .stackman-grouphead's space-between right-aligns the whole row already, so
-   this is pure type — muted and small, to read as secondary to the
-   CONTAINER heading rather than compete with it. */
-.stackman-groupflags {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.4rem 1.2rem;
-}
-
-.stackman-groupflag {
+.stackman-scaffold .stackman-sectionsbtn {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  border: 0.1rem dashed var(--sm-line);
+  border-radius: 0.3rem;
+  background: transparent;
   color: var(--sm-muted);
-  font-size: 1.1rem;
-  font-weight: 400;
+  font-family: inherit;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-sectionsbtn:hover:not(:disabled),
+.stackman-scaffold .stackman-sectionsbtn:focus-visible {
+  border-style: solid;
+  border-color: var(--sm-accent);
+  color: inherit;
+  outline: none;
+}
+
+.stackman-scaffold .stackman-sectionsbtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* The panel is only ever in the DOM while open, so there is no closed state
+   to style here. It hangs from the right edge of the button and floats over
+   whatever is under it, which is why it needs an opaque background, a z-index
+   above the rows and a shadow to sit off the page — a bordered box alone reads
+   as part of the form it is covering.
+
+   .stackman-form is overflow: auto, not hidden, so a panel taller than the
+   remaining pane is not lost: the pane simply gains scroll. The max-height is
+   a fixed length rather than a share of the viewport because that scroll is
+   the pane's, not the window's — a vh cap could still make the panel taller
+   than the pane holding it. Eighteen rows do not fit in 24rem, which is the
+   point: the list scrolls itself.
+
+   max-width is measured against the window, not the parent: the parent is only
+   as wide as the button it wraps, so a 100% cap would squeeze the list to the
+   width of the word "Sections". */
+.stackman-sectionpick {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 5;
+  width: 20rem;
+  max-width: calc(100vw - 2rem);
+  max-height: 24rem;
+  overflow-y: auto;
+  padding: 0.4rem 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-bg);
+  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+}
+
+.stackman-scaffold .stackman-sectionrow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 1rem;
+  color: inherit;
+  font-size: 1.2rem;
   white-space: nowrap;
   cursor: pointer;
+}
+
+.stackman-scaffold .stackman-sectionrow:hover {
+  background: var(--sm-fill);
 }
 
 /* Reused as the group heading. Its own hairline is gone — the band on
@@ -2206,6 +2484,22 @@
 .stackman-formgroup--pair,
 .stackman-formgroup--declared {
   --sm-fieldcols: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) 2.4rem;
+}
+
+/* An empty cell, holding a column open where a row has nothing to put in it.
+   A long-form port or mount spells its protocol out as its own key, so it has
+   no protocol box while its short-form neighbours in the same group do — and
+   a missing grid child does not leave a gap, it pulls everything after it one
+   column left. Needs no appearance of its own; it exists to occupy a track. */
+.stackman-scaffold .stackman-boxgap { display: block; }
+
+/* --mapped is a port or a mount: the same shape as --pair plus one narrow
+   track between the container half and the note, for the protocol (tcp/udp)
+   or the read/write mode. Fixed at 9rem rather than sharing a fraction —
+   its content is one short word from a closed list, so letting it grow with
+   the row would take width from the two paths, which genuinely need it. */
+.stackman-formgroup--mapped {
+  --sm-fieldcols: minmax(0, 1fr) minmax(0, 1fr) 9rem minmax(0, 1.2fr) 2.4rem;
 }
 
 /* --single is a dynamic list group (networks, secrets, depends_on...) — one
@@ -2526,6 +2820,24 @@
   cursor: pointer;
 }
 
+/* A text box with a <datalist> (list="...") looks exactly like a plain one,
+   so the suggestions it offers go undiscovered. A small chevron on the right
+   says "there's a list here" without borrowing .stackman-choose above or the
+   look of a real <select> — anything typed is still accepted, so the arrow
+   is drawn by us, deliberately lighter than the browser's own <select>
+   arrow, rather than promising a closed list. Right padding on the input
+   keeps text clear of it. .stackman-boxline lays the input and any
+   .stackman-browse picker button beside it as separate flex items (see
+   above), so the chevron — painted inside the input's own box — never sits
+   under or against that button. */
+.stackman-scaffold .stackman-box--open .stackman-input {
+  padding-right: 2.6rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='rgba(128,128,128,0.6)' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.8rem center;
+  background-size: 1rem 0.7rem;
+}
+
 .stackman-fieldraw {
   margin: 0;
   padding: 0.6rem 0.9rem;
@@ -2545,6 +2857,49 @@
   color: var(--sm-muted);
   font-size: 1.2rem;
   white-space: pre-wrap;
+}
+
+/* The group-level help paragraph sits straight after .stackman-grouphead's
+   own closing tag, a plain block rather than one more child of a
+   .stackman-fieldrow — so the full-width grid rule further up never reaches
+   it, and it needs its own gap before whatever the group shows next
+   (a caption row, or a field row with none). */
+.stackman-formgroup > .stackman-fieldhelp {
+  margin-bottom: 1rem;
+}
+
+/* The ⓘ that reveals a field's or a group's plain-English help. A bare icon,
+   never a bordered box like Add or Sections beside it — and it sits inside
+   bold label text and inside an uppercase, letter-spaced heading, so every
+   property either of those set has to be undone explicitly rather than left
+   to inherit. */
+.stackman-scaffold .stackman-helpbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--sm-muted);
+  font-family: inherit;
+  font-size: 1.1rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-helpbtn:hover:not(:disabled) {
+  color: var(--sm-fg);
+  background: var(--sm-fill);
+}
+
+.stackman-scaffold .stackman-helpbtn:focus-visible {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.1rem;
 }
 
 .stackman-fieldmap code,
@@ -2804,6 +3159,84 @@
   filter: none;   /* the note and the container side are not the secret */
 }
 
+/* ---- modal: find and replace bar ---- */
+
+/* One flex-wrap container holds both rows. The find controls sit directly in
+   it; .stackman-find-replace below forces itself onto a second line with
+   flex-basis: 100% rather than a second wrapping element — the same trick
+   .stackman-name-hint uses inside .stackman-modal-name above — so a plain
+   find stays one compact row and a replace grows to two with no markup
+   change either way. */
+.stackman-find {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 0.1rem solid var(--sm-line);
+  background: var(--sm-fill-0);
+}
+
+.stackman-find[hidden] {
+  display: none;
+}
+
+/* Monospace: what is typed here is matched against code, and a proportional
+   font makes a search term's length read differently from the code it is
+   about to match. */
+.stackman-find-input {
+  flex: 1 1 14rem;
+  min-width: 8rem;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.5rem 0.8rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: inherit;
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.2rem;
+}
+
+.stackman-find-input:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}
+
+/* Script adds this to the bar when nothing matches, so the input itself reads
+   as "wrong" rather than leaving that to the counter text alone. */
+.stackman-find--none .stackman-find-input {
+  border-color: var(--sm-danger);
+}
+
+/* A fixed width, not a min-width — "3 of 17" and "No matches" are very
+   different lengths, and only a real width stops the buttons after it
+   jumping sideways as the count changes on every keystroke. */
+.stackman-find-count {
+  flex: 0 0 auto;
+  width: 7rem;
+  overflow: hidden;
+  color: var(--sm-muted);
+  font-size: 1.15rem;
+  text-align: center;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Second row, shown only for replace. flex-basis: 100% is what puts it there
+   — see the note on .stackman-find above. */
+.stackman-find-replace {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  flex-basis: 100%;
+}
+
+.stackman-find-replace[hidden] {
+  display: none;
+}
+
 /* ---- modal: the highlight band ---- */
 
 .stackman-mark {
@@ -2812,6 +3245,70 @@
   right: 0;
   border-left: 0.3rem solid var(--sm-accent);
   background: rgba(255, 140, 47, 0.16);
+}
+
+/* ---- modal: search hit highlights ----
+ *
+ * Painted into #stackman-yamlmarks alongside .stackman-mark above — script
+ * sets top, left, width and height in pixels per match, the same
+ * (N-1) x lineHeight arithmetic every other overlay in this pane uses.
+ * pointer-events: none is not repeated here: it is inherited from
+ * .stackman-yamlmarks, which already sets it on the whole layer these sit in.
+ *
+ * Green, not orange: .stackman-mark's orange already means "this is the
+ * active field's lines" elsewhere in this same pane, and a hit in the same
+ * hue would read as the same thing. --sm-good is the only other themed hue
+ * left once --sm-danger is spoken for by .stackman-find--none above.
+ * color-mix() is already how this file builds every syntax-token colour in
+ * the ink layer below (see .stackman-t--str etc.), so this is the same
+ * technique applied here, not a new one.
+ */
+/* The fills are kept low on purpose. The coloured text sits in the ink layer
+   ABOVE this, so a hit's fill becomes that text's background — and a string is
+   drawn in a green mixed from this very token, which at a 55% fill left it at
+   3.2:1, under the 4.5:1 body-text threshold. 15% and 28% measure 6.4:1 and
+   5.2:1 against that same string green, the worst pairing in the palette.
+   Strength comes from the outline below instead, which owes nothing to the
+   colour of the text it surrounds. */
+.stackman-hit {
+  position: absolute;
+  border-radius: 0.15rem;
+  background: color-mix(in srgb, var(--sm-good) 15%, transparent);
+}
+
+/* The match the user is on: a stronger fill plus a thin outline, pulled
+   inward the same way .stackman-row's own focus ring is (see "Keyboard
+   focus" above), so it reads as "here" even sitting on top of an active
+   field's much fainter .stackman-mark band. */
+.stackman-hit--current {
+  background: color-mix(in srgb, var(--sm-good) 28%, transparent);
+  outline: 0.2rem solid var(--sm-good);
+  outline-offset: -0.2rem;
+}
+
+/* ---- modal: host-path warnings ----
+ *
+ * A volume's host path the server could not find, or found but as a file —
+ * see checkHostPaths() in stacks.js. A dotted underline, not a fill: a filled
+ * box behind the text would fight the syntax colours the ink layer already
+ * paints there, and this is a hint about the server, not an error in the file
+ * itself. The box stays transparent; only its bottom edge draws anything.
+ *
+ * pointer-events: none is not repeated here, same reason .stackman-hit above
+ * does not repeat it — inherited from .stackman-yamlmarks, the layer both
+ * sit in. Hovering one is handled separately, from mouse position against
+ * yamlPane itself (see runHover() in stacks.js) — turning pointer-events on
+ * here would also block selecting the very text someone hovers this to
+ * retype. */
+.stackman-badpath {
+  position: absolute;
+  border-bottom: 0.2rem dotted var(--sm-danger);
+}
+
+/* A file where a folder is wanted is a milder problem than nothing existing
+   at all, so it borrows the accent colour rather than the danger one. */
+.stackman-badpath--file {
+  border-bottom-color: var(--sm-accent);
 }
 
 /* ---- modal: the compose pane ---- */
@@ -2853,6 +3350,45 @@
   white-space: pre;
   user-select: none;
   pointer-events: none;
+}
+
+/* Anchor for the problem-marker dots — sized by its children only, translated
+   in step with the numbers div (script moves both the same amount on scroll). */
+.stackman-yamldots {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+/* One per flagged line. Sized to sit inside the gutter's 0.9rem left padding,
+   clear of the digits. top is set from script, in pixels, to the same
+   (N-1) x lineHeight math as everything else in this pane. */
+.stackman-yamldot {
+  position: absolute;
+  left: 0.15rem;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  cursor: help;
+
+  /* Script sets top to the middle of the line; this pulls the dot back half
+     its own height to sit on it. Done here rather than in the arithmetic so
+     the dot's size can change in this sheet alone. */
+  transform: translateY(-50%);
+
+  /* The gutter is pointer-events: none so clicks fall through to the
+     textarea underneath; this one dot needs to catch the pointer anyway; it
+     carries the message as a title attribute, and a dot nobody can hover is a
+     dot with no way to read what it means. */
+  pointer-events: auto;
+}
+
+.stackman-yamldot--error {
+  background: var(--sm-danger);
+}
+
+.stackman-yamldot--warn {
+  background: var(--sm-accent);
 }
 
 .stackman-yamlmarks {
@@ -2901,6 +3437,242 @@
 
 .stackman-yamlstatus:empty {
   display: none;
+}
+
+/* ---- modal: key suggestions and hover help ----
+ *
+ * Same visual family as .stackman-sectionpick (opaque background, border,
+ * radius, shadow, z-index above the rows) but both live inside
+ * .stackman-yamlwrap, which is overflow: hidden — a list opened near the
+ * bottom of the pane can still be clipped. Script is expected to flip it
+ * above the caret when there is no room below; nothing here solves that.
+ *
+ * z-index sits above the gutter (2) because the caret can be anywhere in the
+ * file, including under the line numbers. */
+.stackman-suggest {
+  position: absolute;
+  z-index: 3;
+  min-width: 22rem;
+  max-height: 18rem;
+  overflow-y: auto;
+  padding: 0.4rem 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-bg);
+  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+}
+
+.stackman-suggest[hidden] {
+  display: none;
+}
+
+.stackman-suggest-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+}
+
+.stackman-suggest-row:hover {
+  background: var(--sm-fill);
+}
+
+/* The keyboard-driven highlight, not hover — arrow keys move this, so it has
+   to read clearly on its own rather than leaning on :hover, which the mouse
+   may not even be over. */
+.stackman-suggest-row--on {
+  background: var(--sm-fill-2);
+  color: var(--sm-accent);
+}
+
+.stackman-suggest-key {
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.2rem;
+  color: inherit;
+}
+
+.stackman-suggest-title {
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+/* The already-typed letters inside a suggested key. No background: a filled
+   <mark> on top of .stackman-suggest-row--on's own fill would be unreadable,
+   and the browser default for <mark> is a yellow background regardless. */
+.stackman-suggest-hit {
+  background: none;
+  color: var(--sm-accent);
+  font-weight: 700;
+}
+
+/* Passive explanation, not a menu: no rows, no highlight, and
+   pointer-events: none so it can never swallow a click meant for the text
+   underneath, nor flicker by covering the very word whose hover spawned it. */
+.stackman-keyhelp {
+  position: absolute;
+  z-index: 3;
+  max-width: 32rem;
+  padding: 0.6rem 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-bg);
+  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.stackman-keyhelp[hidden] {
+  display: none;
+}
+
+.stackman-keyhelp strong {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: var(--sm-fg);
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.2rem;
+}
+
+.stackman-keyhelp p {
+  margin: 0;
+  color: var(--sm-muted);
+  font-size: 1.15rem;
+  line-height: 1.4;
+}
+
+/* ---- modal: the ink layer ---- */
+
+/* A second layer over the same geometry as the highlight band and the gutter:
+   a coloured copy of the text sits behind a textarea whose own text is made
+   transparent (see the color: transparent rule below). What is on screen is
+   the copy; what is typed into stays a real textarea, so caret, selection,
+   undo, paste and IME all keep working natively. pointer-events: none for the
+   same reason as the marks layer — clicks must land on the textarea. No
+   z-index: DOM order (marks, ink, textarea) is what puts the caret's
+   selection highlight over the ink and the gutter over both. */
+.stackman-yamlink {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+
+  /* Its own token rather than --sm-hairline, which is the sheet's border grey
+     and is used on real borders everywhere else — a guide needs to read at a
+     glance across a whole pane of text, so it is stronger than a hairline
+     without being a rule you notice. Changing it here changes only the
+     guides. */
+  --sm-guide: rgba(128, 128, 128, 0.38);
+}
+
+/* The translated inner box — script slides it with a transform to match
+   scroll, the same as .stackman-yamlnums > div. width: max-content keeps a
+   long line from being clipped before the textarea's own horizontal scroll
+   gets to it; min-width fills the box on a short file. Padding is the same
+   two-digit-gutter default as the textarea (:~3065); script keeps the two in
+   step once it measures the gutter's real width. */
+.stackman-yamlink > div {
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
+  padding: 1.2rem 1.4rem 1.2rem 5.9rem;
+
+  /* Must match .stackman-scaffold .stackman-yaml exactly, or the coloured
+     letters drift off the caret they are supposed to sit under. */
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.3rem;
+  line-height: 1.45;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+
+}
+
+/* Indent guides. On the leading-whitespace span, not on the pane behind
+   everything: a full-width background draws a line down every other column of
+   the whole file, straight through the middle of comment prose and any value
+   long enough to reach it. Hung here they span exactly the indentation, which
+   is the only place the depth of a line is actually in question.
+
+   A whole pixel wide, not a fraction of a character. 0.1ch works out at about
+   three quarters of a pixel, which the browser cannot draw — it antialiases it
+   across a full pixel at partial strength, so the line came out fainter than
+   its colour asked for and blurred with it. */
+.stackman-t--indent {
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--sm-guide) 0,
+    var(--sm-guide) 1px,
+    transparent 1px,
+    transparent 2ch
+  );
+}
+
+/* One box per source line, built by script to sit under the matching textarea
+   line. An empty line has no children, and a childless block collapses to
+   zero height — which would push every line below it out of step with the
+   textarea and the gutter both. The ::after gives it one space of content so
+   line-height still applies even when there is nothing to colour. */
+.stackman-inkline {
+  display: block;
+  margin: 0;
+  padding: 0;
+  white-space: pre;
+  line-height: 1.45;
+}
+
+.stackman-inkline:empty::after {
+  content: " ";
+}
+
+/* Nine token classes, each a custom property mixed with --sm-fg rather than a
+   fixed literal. --sm-fg already has to clear AA against --sm-bg in every
+   Unraid theme for ordinary body text to be legible at all, so keeping it the
+   majority ingredient of the mix carries that guarantee across into the
+   syntax colours too, in whichever direction a given theme's foreground and
+   background sit — without a separate light/dark rule for each token.
+
+   45% is as far as the foreground share can be cut before the guarantee stops
+   holding at both ends: the palest hue here is --sm-accent, and at 45/55 it
+   still clears AA on a white background (5.5:1) as well as on a black one
+   (9.3:1). Anything more saturated has to give up one theme or the other. */
+.stackman-t--text    { color: var(--sm-fg); }
+.stackman-t--key     { color: color-mix(in srgb, var(--sm-fg) 45%, #4098d7 55%); }
+.stackman-t--str     { color: color-mix(in srgb, var(--sm-fg) 45%, var(--sm-good) 55%); }
+.stackman-t--num     { color: color-mix(in srgb, var(--sm-fg) 45%, #9a6fd0 55%); }
+.stackman-t--bool    { color: color-mix(in srgb, var(--sm-fg) 45%, var(--sm-accent) 55%); }
+.stackman-t--anchor  { color: color-mix(in srgb, var(--sm-fg) 45%, #3fb8a8 55%); }
+.stackman-t--var     { color: color-mix(in srgb, var(--sm-fg) 35%, #c0459a 65%); }
+
+/* Comments and punctuation go the other way on purpose — they are the two
+   kinds of text you read past rather than read, so they stay nearer the muted
+   grey than the rest of the palette does. */
+.stackman-t--comment { color: color-mix(in srgb, var(--sm-fg) 55%, var(--sm-muted) 45%); }
+.stackman-t--punct   { color: color-mix(in srgb, var(--sm-fg) 65%, var(--sm-muted) 35%); }
+
+/* The textarea's real text is made invisible so the ink layer's copy is what
+   is seen — a separate rule rather than editing .stackman-scaffold .stackman-yaml
+   above, so .stackman-noink below can undo just this. A transparent color
+   takes the caret with it in some browsers, hence the explicit caret-color;
+   the placeholder needs its own colour for the same reason, since some
+   browsers derive it from color and it would otherwise vanish too. */
+.stackman-scaffold .stackman-yaml {
+  color: transparent;
+  caret-color: var(--sm-fg);
+}
+
+.stackman-scaffold .stackman-yaml::placeholder {
+  color: var(--sm-muted);
+}
+
+/* Fallback for a file too large to highlight (script decides and adds this
+   class) — and the switch to pull if the overlay ever misbehaves in a user's
+   browser. */
+.stackman-yamlwrap.stackman-noink .stackman-yamlink {
+  display: none;
+}
+
+.stackman-yamlwrap.stackman-noink .stackman-yaml {
+  color: var(--sm-fg);
 }
 
 /* ---- modal: footer ---- */
@@ -4259,7 +5031,15 @@
   .stackman-modal-tools {
     margin-left: 0;
     width: 100%;
+    flex-wrap: wrap;
     justify-content: space-between;
+  }
+
+  /* Same idea as .stackman-modal-tools above: the input claims the row on its
+     own rather than sharing it with the counter and buttons at a width where
+     there is no room for all of them on one line. */
+  .stackman-find-input {
+    flex-basis: 100%;
   }
 
   /* Split is not offered at this width. The JavaScript opens on Form here and
@@ -4314,9 +5094,9 @@
     display: none;
   }
 
-  /* Container's own header can now carry the heading, three tick boxes and
-     nothing else that needs the room — let the flags row drop below the
-     heading rather than squeeze both onto one line. */
+  /* Container's own header carries the heading and the Sections button —
+     let the button drop below the heading rather than squeeze both onto one
+     line when there is not room for both. */
   .stackman-grouphead {
     flex-wrap: wrap;
   }
@@ -4324,6 +5104,7 @@
   .stackman-formgroup--container,
   .stackman-formgroup--advanced,
   .stackman-formgroup--pair,
+  .stackman-formgroup--mapped,
   .stackman-formgroup--device,
   .stackman-formgroup--single,
   .stackman-formgroup--declared {
@@ -4343,6 +5124,13 @@
 
   .stackman-formgroup .stackman-boxhint {
     display: block;
+  }
+
+  /* Padding grows the tap target here rather than font-size, so the icon
+     itself stays the same size it is on the desktop this row shares markup
+     with — only the touch area around it gets more comfortable. */
+  .stackman-helpbtn {
+    padding: 0.6rem;
   }
 }
 
