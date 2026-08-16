@@ -46,7 +46,45 @@ These are the constraints the project is built around, in priority order.
 - Container and stack lifecycle control (start / stop / restart / logs / console)
 - Collapsible stack grouping — stacks can be placed one level deep into user-created folders, and a
   running stack is matched back to its directory via `com.docker.compose.project`
-- Community Applications template → compose conversion, on demand
+- Community Applications template → compose conversion, on demand — **built**; see
+  [Importing from Community Applications](#importing-from-community-applications)
+
+## Importing from Community Applications
+
+The **Apps** button on the Stacks page searches the Unraid Community Applications catalogue — about
+3,700 containers — and turns the one you pick into an ordinary compose file, opened in the editor as
+a new stack for you to look over before saving.
+
+The point is not the image name. It is everything around it: CA's `Description` for each setting
+becomes the comment beside that setting, so the form has real help text; `Required` becomes `-!R`
+and `Mask` becomes `-!S`; the icon, category, project and support links become `x-unraid` metadata.
+An imported app renders as a proper form rather than a wall of YAML, which is the whole reason to
+import rather than retype.
+
+**What converts.** `Repository` → `image`; Port, Path, Variable, Device and Label settings → `ports`,
+`volumes`, `environment`, `devices` and `labels`; `PostArgs` → `command`; `Privileged` → `privileged`;
+`WebUI` → the service's `x-unraid.webui`, with Unraid's own `[IP]` and `[PORT:n]` substitution left
+intact. `bridge` networking is omitted, because compose makes its own; `host` and `none` become
+`network_mode`; a custom network such as `br0` is declared `external: true` and flagged, because it
+has to already exist on the server.
+
+**What does not, and how you find out.** `ExtraParams` holds arbitrary `docker run` flags. Roughly
+thirty of them have a clean compose equivalent and are translated. Anything else — `--gpus`, the
+`--health-*` family, `--memory`, `--ulimit` and so on — is **reported in a warning above the form**,
+naming the flag, rather than dropped quietly. A mistranslated healthcheck or resource limit would be
+worse than an honest "this was not applied".
+
+Values are guessed only where CA left one empty, and every guess is warned about too: a path with no
+value becomes `/mnt/user/appdata/<name><target>`, a port with no value takes the container port, and
+a device with no value is skipped entirely, because there is no sane guess for a device node.
+
+**The catalogue.** CA publishes one 24 MB JSON file and offers no search API — the file is the whole
+interface, and CA's own plugin downloads exactly the same thing. Stack Manager fetches it once, on
+first use of the Apps button, and splits it into a small search index plus one line per app. That
+lives in `/tmp`, so **nothing is written to the flash drive** and it costs nothing at reboot.
+Refreshes are cheap: CA also publishes a 37-byte file saying when the catalogue last changed, so a
+refresh that finds nothing new costs 37 bytes rather than 24 MB. Nothing is downloaded until you
+press the button.
 
 ## Direction
 

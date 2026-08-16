@@ -1,7 +1,14 @@
 # PLAN_17 — Search Community Applications, and import an app as a compose file
 
-**Status: outstanding.** Nothing here is in the tree yet. Independent of `PLAN_16.md`; either can be
-built first.
+**Status: COMPLETE, 2026-08-16.** Built, deployed and verified on the test box — search, import,
+form render and save all work end to end, and `docker compose config -q` accepts the generated file.
+
+Six things in the plan below turned out to be wrong once measured against the live feed, and the
+build follows what was measured rather than what was assumed. They are written up in
+`CA-IMPORT-RESULTS.md`, which is the document to read; the most consequential are that the plugin
+filter proposed here catches nothing, that a build takes 1.3 s rather than "about a minute", and
+that ranking a browse by download count is wrong because that figure belongs to the image, not the
+app.
 
 ---
 

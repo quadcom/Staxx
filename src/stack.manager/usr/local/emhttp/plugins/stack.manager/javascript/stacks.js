@@ -637,6 +637,7 @@
    * racing the one the context menu already owns. */
 
   var textAtOpen  = '';    // what the file said when it opened — the dirty check
+  var composeEol  = '\n';  // the compose file's own line ending — put back on save(), see withEol()
   var openedName  = '';    // the rel this editor opened at — what save() renames FROM
   var serviceRenamed = false;  // a pencil rename happened this session — offer a recreate after save
 
@@ -648,6 +649,7 @@
   var fileOpen   = null;
   var fileStash  = '';    // the compose file's text, held aside while a companion is shown
   var fileAtLoad = '';    // what the companion said when it was loaded — its dirty check
+  var fileEol    = '\n';  // the companion's own line ending — put back on runFileSave(), see withEol()
   // Whether the box is holding a companion's real text. False for a binary,
   // for a read that failed, and for the moment before one lands — and the
   // autosave refuses to write anything while it is false. See loadCompanion().
@@ -703,6 +705,13 @@
 
   function isDirty() {
     return currentText() !== textAtOpen;
+  }
+
+  // A textarea always hands its value back as LF, whatever went into it, so a
+  // file that arrived with Windows line endings needs them put back on the
+  // way out — otherwise saving rewrites every line of a file nobody edited.
+  function withEol(text, eol) {
+    return eol === '\r\n' ? text.replace(/\n/g, '\r\n') : text;
   }
 
   // The page under the backdrop still scrolls on a wheel — <dialog> makes it
@@ -4334,6 +4343,226 @@
 
   tzModal.addEventListener('close', function () { tzFor = null; });
 
+  /* ---- the Apps browser ---- */
+
+  /* Community Applications is roughly 4,100 templates — about 24 MB of JSON —
+   * far too much to ship to the browser and filter here, so every search is a
+   * round trip to ca-search (include/action.php), which keeps the catalogue
+   * on the server and hands back only the page of results asked for.
+   *
+   * The first search after a fresh install (or after the cached catalogue
+   * expires) has nothing to answer with yet — the server is still downloading
+   * it, which takes about a minute — so ca-search replies `state: 'building'`
+   * instead of results, and this polls every three seconds until it flips to
+   * `ready` rather than making the user retype their search once it has. */
+
+  var caModal  = document.getElementById('stackman-ca');
+  var caBox    = document.getElementById('stackman-ca-search');
+  var caCatSel = document.getElementById('stackman-ca-cat');
+  var caList   = document.getElementById('stackman-ca-list');
+  var caMsg    = document.getElementById('stackman-ca-msg');
+
+  var caApps  = [];     // the last results rendered — caChoose() reads the app's name back out of this
+  var caTimer = null;   // the search box's debounce handle
+  var caPoll  = null;   // the "still building" poll handle — cleared on close so a shut dialog never keeps polling
+  var caCats  = false;  // whether the category <select> has been filled in yet
+
+  function caStopPoll() {
+    if (caPoll) { clearTimeout(caPoll); caPoll = null; }
+  }
+
+  // Filled once, from whichever reply first carries a category list. Nothing
+  // here touches the select's value, so whatever the user has chosen (only
+  // ever "Every category" until that first reply lands) is left alone.
+  function caFillCats(categories) {
+    if (caCats || !categories || !categories.length) return;
+    caCats = true;
+    categories.forEach(function (cat) {
+      var opt = document.createElement('option');
+      opt.value = cat;
+      opt.textContent = cat;
+      caCatSel.appendChild(opt);
+    });
+  }
+
+  function caRowHtml(app) {
+    var icon = app.ic
+      ? '<img class="stackman-ca-icon" src="' + esc(app.ic) + '" alt="" loading="lazy" referrerpolicy="no-referrer">'
+      : '<span class="stackman-ca-icon stackman-ca-icon--empty" aria-hidden="true"></span>';
+
+    // 'c' is an array of every category an app claims (the first is its
+    // primary one); an old cache built before that change can still hand
+    // back a plain string, and an app with no category at all omits the key
+    // entirely. Cope with all three, and only its first category, so a row
+    // never prints "MediaApp:Video,MediaServer:Video".
+    var cat = app.c;
+    if (Array.isArray(cat)) cat = cat[0] || '';
+    else if (typeof cat !== 'string') cat = '';
+    var sub = cat ? (esc(app.r) + ' · ' + esc(cat)) : esc(app.r);
+
+    return '<button type="button" class="stackman-ca-row" data-i="' + esc(app.i) + '">' +
+             icon +
+             '<span class="stackman-ca-info">' +
+               '<span class="stackman-ca-line1">' +
+                 '<span class="stackman-ca-name">' + esc(app.n) + '</span>' +
+                 '<span class="stackman-ca-sub">' + sub + '</span>' +
+               '</span>' +
+               '<span class="stackman-ca-desc">' + esc(app.ov) + '</span>' +
+             '</span>' +
+           '</button>';
+  }
+
+  function caRender(apps) {
+    caApps = apps || [];
+    caList.innerHTML = caApps.length
+      ? caApps.map(caRowHtml).join('')
+      : '<p class="stackman-form-empty">Nothing matches that. Try a shorter search.</p>';
+    caList.scrollTop = 0;
+  }
+
+  function caSearch() {
+    call('ca-search', { q: caBox.value.trim(), cat: caCatSel.value }, 20000).then(function (res) {
+      if (!caModal.open) return;   // the dialog closed while this was in flight
+
+      if (!res.ok) { caMsg.textContent = res.error; return; }
+
+      if (res.state === 'building') {
+        caMsg.textContent = res.message || 'Fetching the applications catalogue. This happens the first time only…';
+        caList.innerHTML = '';
+        caStopPoll();
+        caPoll = setTimeout(caSearch, 3000);
+        return;
+      }
+
+      // The download failed, and polling for it to succeed on its own would
+      // be waiting for something that is not going to happen. Say why and
+      // stop; searching again is what retries it, once the server has stopped
+      // reporting the failure as recent.
+      if (res.state === 'failed') {
+        caStopPoll();
+        caList.innerHTML = '';
+        caMsg.textContent = res.message ||
+          'The app catalogue could not be downloaded. Check this server can reach the internet, then search again.';
+        return;
+      }
+
+      caFillCats(res.categories);
+      caRender(res.apps);
+
+      // The count is of what came back, not of the catalogue — res.count is
+      // the whole 4,000-odd and would read as "4033 apps found" after a search
+      // that matched three. The server caps a reply at 60, so a full page says
+      // so rather than implying that is all there is.
+      // Worded from what the user actually did. With an empty box this is a
+      // browse through the whole catalogue, not a search that matched things,
+      // and calling 60 A-Z entries "matches" would read as a result nobody
+      // asked for.
+      var n = caApps.length;
+      var browsing = caBox.value.trim() === '';
+      var inCat = caCatSel.value;
+      var msg;
+      if (n === 0) {
+        msg = 'Nothing matched.';
+      } else if (n < 60) {
+        msg = n + (n === 1 ? ' app' : ' apps') + ' found.';
+      } else if (!browsing) {
+        msg = 'Showing the first ' + n + ' matches — narrow the search to see fewer.';
+      } else if (inCat) {
+        // Never "of 3732" here: that is the whole catalogue, and this list is
+        // one category of it. Nor "pick a category", which is what the line
+        // used to say while a category was already picked.
+        msg = 'Showing the first ' + n + ' in ' + inCat + ', A to Z — search to narrow it.';
+      } else {
+        msg = 'Showing 60 of ' + (res.count || 'the') + ' apps, A to Z — search or pick a category.';
+      }
+      caMsg.textContent = msg;
+    });
+  }
+
+  function caOpen() {
+    flushPending();
+    caBox.value = '';
+    // Yesterday's results are not this search's, and leaving them up while the
+    // new reply is in flight shows a list that does not answer the box above it.
+    caList.innerHTML = '';
+    caApps = [];
+    caMsg.textContent = 'Reading the catalogue…';
+    caModal.showModal();
+    caSearch();   // opens on the most-downloaded apps rather than an empty box
+  }
+
+  function caChoose(ordinal) {
+    call('ca-app', { i: ordinal }, 20000).then(function (res) {
+      if (!res.ok) { caMsg.textContent = res.error; return; }
+
+      if (!window.StackmanCA) {
+        caMsg.textContent = 'The app converter has not loaded. Reload the page and try again.';
+        return;
+      }
+
+      var appName = 'This app';
+      for (var j = 0; j < caApps.length; j++) {
+        if (String(caApps[j].i) === String(ordinal)) { appName = caApps[j].n; break; }
+      }
+
+      // A single odd template must not take the page down — convert() runs
+      // against whatever Community Applications published, which answers to
+      // no schema this plugin controls.
+      var result;
+      try {
+        result = window.StackmanCA.convert(res.app);
+      } catch (e) {
+        caMsg.textContent = appName + ' could not be converted: ' + (e && e.message ? e.message : e);
+        return;
+      }
+
+      caModal.close();
+      openEditor(result.name, result.yaml, true);
+
+      if (result.warnings && result.warnings.length) {
+        showError('This app converted, but some of its settings had no compose equivalent. ' +
+                   'Check these before saving:\n\n' + result.warnings.join('\n'));
+      }
+    });
+  }
+
+  caList.addEventListener('click', function (event) {
+    var row = event.target.closest('.stackman-ca-row');
+    if (row) caChoose(row.dataset.i);
+  });
+
+  // Delegated on the list, in the capture phase, because `error` does not
+  // bubble — same reasoning as the page-wide icon fallback further down this
+  // file, just scoped to this one dialog rather than the whole page.
+  caList.addEventListener('error', function (event) {
+    var img = event.target;
+    if (!img || img.tagName !== 'IMG' || !img.classList.contains('stackman-ca-icon')) return;
+    var span = document.createElement('span');
+    span.className = 'stackman-ca-icon stackman-ca-icon--empty';
+    span.setAttribute('aria-hidden', 'true');
+    if (img.parentNode) img.parentNode.replaceChild(span, img);
+  }, true);
+
+  caBox.addEventListener('input', function () {
+    if (caTimer) clearTimeout(caTimer);
+    caTimer = setTimeout(function () { caTimer = null; caSearch(); }, 250);
+  });
+
+  caCatSel.addEventListener('change', caSearch);
+
+  document.getElementById('stackman-ca-cancel').addEventListener('click', function () {
+    caModal.close();
+  });
+
+  caModal.addEventListener('click', function (event) {
+    if (event.target !== caModal) return;
+    var r = caModal.getBoundingClientRect();
+    if (event.clientX < r.left || event.clientX > r.right ||
+        event.clientY < r.top  || event.clientY > r.bottom) caModal.close();
+  });
+
+  caModal.addEventListener('close', function () { caStopPoll(); });
+
   /* ---- the device picker ---- */
 
   /* What hardware this server has, offered by name.
@@ -4776,6 +5005,7 @@
     fileOpen = null;
     fileStash = '';
     fileAtLoad = '';
+    fileEol = '\n';
     viewBeforeFile = null;
     FILES = [];
     envVars = null;   // yesterday's .env answer is meaningless against today's stack
@@ -4817,8 +5047,15 @@
     // buttons hang off a service, so with nothing in the file there would be
     // nothing to add to — the same trap as a list losing its last entry, one
     // level up.
-    textAtOpen = body || (isNew ? NEW_STACK : '');
-    yamlPane.value = textAtOpen;
+    // A textarea always normalises CRLF to LF on the way in, so a CRLF file's
+    // ending is remembered here (for save() to put back) and textAtOpen is
+    // read from the box itself rather than from the raw text — otherwise the
+    // dirty check below compares CRLF against LF and never agrees, even with
+    // nothing typed.
+    var raw = body || (isNew ? NEW_STACK : '');
+    composeEol = raw.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
+    yamlPane.value = raw;
+    textAtOpen = yamlPane.value;
 
     // Before setView, which draws the form: a freshly loaded file that says a
     // service has no networks is telling the truth about it, so nothing from
@@ -4922,6 +5159,7 @@
     fileOpen = null;
     fileStash = '';
     fileAtLoad = '';
+    fileEol = '\n';
     viewBeforeFile = null;
     FILES = [];
     envVars = null;
@@ -5347,7 +5585,9 @@
     // called on every tab switch and on closing the editor, and stacks live
     // on the flash drive by default, which has a finite number of writes.
     if (body === fileAtLoad) return Promise.resolve();
-    return call('file-save', { name: openedName, file: file, body: body, encoding: 'text' })
+    // fileAtLoad above and fileAtLoad below both stay LF, since that is the
+    // box's own form — only the posted body gets the file's ending back.
+    return call('file-save', { name: openedName, file: file, body: withEol(body, fileEol), encoding: 'text' })
       .then(function (res) {
         if (!res || !res.ok) {
           // Left ON, deliberately — the file on disk is now out of step with
@@ -5506,8 +5746,13 @@
       }
       hideBinPanel();
       yamlPane.readOnly = false;
+      // fileEol remembers the ending for runFileSave() to put back. fileAtLoad
+      // is read from the box, not from res.text — the box has already
+      // normalised CRLF to LF, and if the baseline did not match that an
+      // untouched file would look edited and write itself straight back.
+      fileEol = res.text.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
       yamlPane.value = res.text;
-      fileAtLoad = res.text;
+      fileAtLoad = yamlPane.value;
       fileEditable = true;
       paintGutter();
       paintInk();
@@ -6957,7 +7202,10 @@
     saveBtn.disabled = true;
     startBtn.disabled = true;
 
-    call('save', { name: name, body: body, 'new': modal.dataset.new })
+    // The box only ever holds LF, so the file's own ending — recorded when it
+    // was opened — is put back for the write. textAtOpen below stays LF: it
+    // is compared against the box, not against the file on disk.
+    call('save', { name: name, body: withEol(body, composeEol), 'new': modal.dataset.new })
       .then(function (res) {
         if (!res.ok) {
           saveBtn.disabled = false;
@@ -7495,6 +7743,8 @@
   document.getElementById('stackman-add').addEventListener('click', function () {
     openEditor('', '', true);
   });
+
+  document.getElementById('stackman-apps').addEventListener('click', caOpen);
 
   document.getElementById('stackman-diagnose').addEventListener('click', function () {
     logPanel.hidden = false;

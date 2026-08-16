@@ -47,6 +47,7 @@ require_once '/usr/local/emhttp/plugins/stack.manager/include/Folders.php';
 require_once '/usr/local/emhttp/plugins/stack.manager/include/Stats.php';
 require_once '/usr/local/emhttp/plugins/stack.manager/include/StacksTable.php';
 require_once '/usr/local/emhttp/plugins/stack.manager/include/Devices.php';
+require_once '/usr/local/emhttp/plugins/stack.manager/include/CA.php';
 
 function stackman_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -381,6 +382,87 @@ switch ($action) {
    */
   case 'tags':
     stackman_reply(['ok' => true, 'tags' => stackman_image_tags((string)($_POST['repo'] ?? ''))]);
+
+  /* ---- search the Community Applications catalogue ----
+   *
+   * The catalogue is a 4000+ entry index built in the background by
+   * scripts/ca-index.php — never here, since a page render or a keystroke is
+   * exactly the moment nothing may wait on a 24 MB download. A missing or
+   * stale cache kicks off that rebuild and replies with an empty result list
+   * straight away rather than blocking; the page polls this same action again
+   * in a few seconds, same done:false-style protocol as stackman_icon_sweep().
+   */
+  case 'ca-search':
+    $status = stackman_ca_status();
+
+    // A cache past its TTL is refreshed behind the user rather than in front
+    // of them. It is still 4,000 apps and still right about nearly all of
+    // them, so replacing it with a progress message would cost a working
+    // search to gain nothing — and the refresh itself is usually 37 bytes and
+    // a tenth of a second, since the catalogue publishes a timestamp that says
+    // whether anything has actually changed. See scripts/ca-index.php.
+    if ($status['state'] === 'stale' && $status['usable']) stackman_ca_refresh_start();
+
+    // Whatever is going on behind it — a refresh running, a refresh that
+    // failed, a cache a week old — a catalogue that exists is served. Only a
+    // catalogue that has never been built has nothing to show, which is the
+    // one case the two replies below are for.
+    if ($status['usable']) $status['state'] = 'ready';
+
+    // A failure with no cache to fall back on is reported as a failure, and
+    // nothing is restarted. The page stops polling and shows why, which is the
+    // only useful thing to do for a server with no route to the internet — and
+    // it is what stops a three-second poll turning one failure into a download
+    // attempt every three seconds for as long as the dialog stays open.
+    if ($status['state'] === 'failed') {
+      stackman_reply([
+        'ok'         => true,
+        'state'      => 'failed',
+        'apps'       => [],
+        'categories' => [],
+        'message'    => $status['message']
+                     ?: 'The applications catalogue could not be downloaded. Check this server can reach the internet, then try again.',
+      ]);
+    }
+
+    if ($status['state'] !== 'ready') {
+      if ($status['state'] !== 'building') stackman_ca_refresh_start();
+      stackman_reply([
+        'ok'         => true,
+        'state'      => 'building',
+        'apps'       => [],
+        'categories' => [],
+        // No duration promised. The whole build is a second or two on a decent
+        // connection, but it is a 24 MB download and the honest answer on a
+        // slow one is "longer than that" rather than a number that will be
+        // wrong for somebody.
+        'message'    => 'Fetching the applications catalogue. This happens the first time only — results will appear here on their own.',
+      ]);
+    }
+
+    stackman_reply([
+      'ok'         => true,
+      'state'      => 'ready',
+      'apps'       => stackman_ca_search((string)($_POST['q'] ?? ''), (string)($_POST['cat'] ?? '')),
+      'categories' => stackman_ca_categories(),
+      'count'      => $status['count'],
+      'built'      => $status['built'],
+    ]);
+
+  /* ---- one app's full catalogue entry ----
+   *
+   * A single line read out of apps.jsonl by byte offset — see
+   * stackman_ca_app() — so opening a result costs nothing more than that,
+   * whichever of the 4000+ entries it is. `i` is the ordinal a ca-search
+   * reply handed out, never a path or filename, so a tampered value is only
+   * ever a missing array key, not a read of an arbitrary file.
+   */
+  case 'ca-app':
+    $app = stackman_ca_app((int)($_POST['i'] ?? -1));
+    if ($app === null) {
+      stackman_reply(['ok' => false, 'error' => 'That app is no longer in the catalogue. Try searching again.']);
+    }
+    stackman_reply(['ok' => true, 'app' => $app]);
 
   // ---- run one external command and report how it went ----
   case 'probe':

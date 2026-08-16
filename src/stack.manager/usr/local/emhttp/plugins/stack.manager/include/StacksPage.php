@@ -42,9 +42,11 @@ $csrf = (string)($vars['csrf_token'] ?? '');
 $assets  = '/plugins/'.STACKMAN_PLUGIN;
 $jsFile  = STACKMAN_ROOT.'/javascript/stacks.js';
 $modelFile = STACKMAN_ROOT.'/javascript/compose-model.js';
+$caFile  = STACKMAN_ROOT.'/javascript/ca-convert.js';
 $cssFile = STACKMAN_ROOT.'/sheets/stack.manager.css';
 $jsTag   = $assets.'/javascript/stacks.js?v='.(is_file($jsFile) ? filemtime($jsFile) : '0');
 $modelTag = $assets.'/javascript/compose-model.js?v='.(is_file($modelFile) ? filemtime($modelFile) : '0');
+$caTag   = $assets.'/javascript/ca-convert.js?v='.(is_file($caFile) ? filemtime($caFile) : '0');
 $cssTag  = $assets.'/sheets/stack.manager.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
 
 // Password managers ignore autocomplete="off" — that attribute only speaks to
@@ -122,6 +124,9 @@ endif;
       </button>
       <button type="button" class="stackman-btn" id="stackman-add-folder">
         <i class="fa fa-folder"></i> <?= _('New folder') ?>
+      </button>
+      <button type="button" class="stackman-btn" id="stackman-apps">
+        <i class="fa fa-th"></i> <?= _('Apps') ?>
       </button>
       <button type="button" class="stackman-btn stackman-btn--primary" id="stackman-add">
         <i class="fa fa-plus"></i> <?= _('Add stack') ?>
@@ -618,9 +623,51 @@ endif;
 
   </dialog>
 
+  <!-- ------------------------------------------------ Community Applications -- -->
+
+  <!-- The fourth dialog, opened from the Apps button beside "Add stack". It
+       sits outside the editor for the same reason the picker and timezone
+       dialogs do: nested inside the editor, closing this one with Escape
+       would take the editor with it while this dialog still held focus, and
+       the browser's own focus restore would have nowhere to go.
+
+       Search runs on the server rather than in this page. The catalogue
+       behind it is roughly 4,100 apps — about 24 MB of JSON — which is too
+       much to hand to the browser and filter locally, so the page only ever
+       holds the one page of results it asked for, never the whole thing. -->
+  <dialog class="stackman-ca" id="stackman-ca" aria-labelledby="stackman-ca-title">
+
+    <div class="stackman-ca-head">
+      <h3 class="stackman-ca-title" id="stackman-ca-title"><?= _('Community Applications') ?></h3>
+      <p class="stackman-ca-hint">
+        <?= _('Search the catalogue and pick an app — it opens in the editor as a new stack for you to look over before saving.') ?>
+      </p>
+    </div>
+
+    <div class="stackman-ca-find">
+      <label class="stackman-sr" for="stackman-ca-search"><?= _('Search Community Applications') ?></label>
+      <!-- No count in the placeholder. The catalogue's size moves — it lost 303
+           entries the day Unraid plugins were filtered out of it — and a number
+           baked in here is one nobody will remember to update. -->
+      <input type="text" id="stackman-ca-search" spellcheck="false" <?= $nofill ?>
+             placeholder="<?= _('search the app catalogue — try “jellyfin”') ?>">
+      <select id="stackman-ca-cat">
+        <option value=""><?= _('Every category') ?></option>
+      </select>
+    </div>
+
+    <div class="stackman-ca-list" id="stackman-ca-list"></div>
+
+    <div class="stackman-ca-foot">
+      <p class="stackman-ca-msg" id="stackman-ca-msg" role="status" aria-live="polite"></p>
+      <button type="button" class="stackman-btn" id="stackman-ca-cancel"><?= _('Cancel') ?></button>
+    </div>
+
+  </dialog>
+
   <!-- --------------------------------------------------------- confirm -- -->
 
-  <!-- The fourth dialog, opened from deleteStack() in stacks.js. It sits
+  <!-- The fifth dialog, opened from deleteStack() in stacks.js. It sits
        outside the editor for the same reason the picker does: nested inside
        it, closing the editor with Escape would take this one with it while
        it still held focus, and the browser's own focus restore would have
@@ -764,5 +811,13 @@ endif;
      would only put a 404 in the console for no benefit. -->
 <? if (is_file($modelFile)): ?>
 <script src="<?= $modelTag ?>"></script>
+<? endif; ?>
+<!-- The Community Applications converter is likewise a separate file so a bad
+     conversion never risks the rest of the page — stacks.js guards its own
+     use of it with a presence check for exactly this reason. Conditional
+     because it may not exist yet on an older install; a missing src would
+     only put a 404 in the console for no benefit. -->
+<? if (is_file($caFile)): ?>
+<script src="<?= $caTag ?>"></script>
 <? endif; ?>
 <script src="<?= $jsTag ?>"></script>

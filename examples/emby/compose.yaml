@@ -1,0 +1,39 @@
+# Converted from the Community Applications template for binhex-emby.
+#
+# This is an ordinary compose file — delete every x-unraid block below and
+# it still runs with a plain `docker compose up`. Check the ports and paths
+# before starting it; some may have been filled in with placeholder defaults.
+
+x-unraid:
+  version: 1
+  icon: https://raw.githubusercontent.com/binhex/templates/main/unraid/binhex/images/emby-icon.png
+  category: MediaApp:Video
+  project: https://https://emby.media/
+  support: https://forums.unraid.net/topic/index.php?topic=46382.0/
+  readme: https://github.com/binhex/documentation
+  author: Binhex's Repository
+  overview: |
+    Bringing all of your home videos, music, and photos together into one place
+    has never been easier. Your personal Emby Server automatically converts and
+    streams your media on-the-fly to play on any device.
+
+services:
+  binhex-emby:
+    image: ghcr.io/binhex/arch-emby
+    container_name: binhex-emby
+    restart: unless-stopped
+    ports:
+      - "8096:8096"  # This is the Web UI port for the application. -!R
+    volumes:
+      - /mnt/user/appdata/emby:/config  # This is the container path to your configuration files, e.g. databases, configuration files, logs etc. -!R
+      - /mnt/user:/media                # This is the container path to your media files, e.g. movies, tv, music, pictures etc.
+    environment:
+      ENABLE_HEALTHCHECK: "yes"           # Enable or disable healthchecks.
+      HEALTHCHECK_COMMAND: ""             # The command or script to execute, if not specified then the script healthcheck.sh will be used (process, dns and https checking).
+      HEALTHCHECK_ACTION: ""              # The action to execute if the healthcheck command returns a non zero exit code, if not specified the action will be 'exit 1', if you want the container to exit…
+      HEALTHCHECK_HOSTNAME: "google.com"  # The hostname used when performing HTTPS and DNS healthchecking.
+      PUID: "99"                          # User ID for the running container -!R
+      PGID: "100"                         # Group ID for the running container -!R
+      UMASK: "000"                        # UMASK for the running container -!R
+    x-unraid:
+      webui: "http://[IP]:[PORT:8096]"

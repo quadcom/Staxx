@@ -4388,6 +4388,217 @@
   font-size: 1.2rem;
 }
 
+/* ---- The Apps browser ------------------------------------------------- */
+
+/* The fourth dialog. Same six user-agent defaults to undo as the three above,
+   and comparable width to the timezone one — but no map, so the row count is
+   what decides the height rather than a fixed panel. */
+.stackman-ca {
+  width: min(84rem, 94vw);
+  height: min(80vh, 76rem);
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+
+  /* Same treatment as .stackman-modal above — no width entry, since this
+     dialog never resizes itself. */
+  opacity: 1;
+  transition:
+    opacity var(--sm-motion) var(--sm-ease),
+    display var(--sm-motion) allow-discrete,
+    overlay var(--sm-motion) allow-discrete;
+}
+
+.stackman-ca:not([open]) {
+  display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-ca[open] { opacity: 0; }
+}
+
+.stackman-ca::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 1;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete,
+              overlay var(--sm-motion) allow-discrete;
+}
+
+.stackman-ca:not([open])::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-ca[open]::backdrop { opacity: 0; }
+}
+
+.stackman-ca-head {
+  padding: 1.2rem 1.4rem 0.8rem;
+}
+
+.stackman-ca-title {
+  margin: 0 0 0.4rem;
+  font-size: 1.6rem;
+}
+
+.stackman-ca-hint {
+  margin: 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+.stackman-ca-find {
+  display: flex;
+  align-items: stretch;
+  gap: 0.6rem;
+  padding: 0.8rem 1.4rem;
+}
+
+.stackman-ca-find input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.3rem;
+}
+
+.stackman-ca-find input[type="text"]:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}
+
+/* Fixed rather than flexible — a category name is short and the search box
+   is what deserves the room a longer query needs. */
+.stackman-ca-find select {
+  flex: 0 0 auto;
+  max-width: 40%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.9rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.3rem;
+}
+
+.stackman-ca-find select:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}
+
+.stackman-ca-list {
+  padding: 0 1.4rem;
+  overflow-y: auto;
+}
+
+.stackman-scaffold .stackman-ca-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 0.3rem;
+  padding: 0.7rem 0.9rem;
+  border: 0.1rem solid transparent;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.3rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-ca-row:hover,
+.stackman-scaffold .stackman-ca-row:focus-visible {
+  background: var(--sm-fill);
+  border-color: var(--sm-line);
+  outline: none;
+}
+
+.stackman-ca-icon,
+.stackman-ca-icon--empty {
+  flex: 0 0 auto;
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 0.3rem;
+  object-fit: contain;
+  background: var(--sm-fill);
+}
+
+.stackman-ca-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.stackman-ca-line1 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.stackman-ca-name {
+  flex: 0 1 auto;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stackman-ca-sub {
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--sm-muted);
+  font-size: 1.15rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stackman-ca-desc {
+  overflow: hidden;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stackman-ca-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  padding: 1.2rem 1.4rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.stackman-ca-msg {
+  margin: 0;
+  min-width: 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
 /* ---- The delete confirmation ---------------------------------------------- */
 
 /* The fourth dialog. Same six user-agent defaults to undo as the three above,
@@ -5562,6 +5773,7 @@
   .stackman-modal::backdrop,
   .stackman-picker::backdrop,
   .stackman-tz::backdrop,
+  .stackman-ca::backdrop,
   .stackman-confirm::backdrop {
     transition-duration: 1ms !important;
     animation-duration: 1ms !important;
