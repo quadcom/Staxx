@@ -2,8 +2,9 @@
 
 **Status: PARTLY BUILT.** `PLAN_8.md` (complete) built sections 1 and 2 and removed the shared blocker
 below — `addNested()` inserts a nested key at any depth, so a `healthcheck:` or long-form `depends_on:`
-can now be created from nothing. What is left here is section 3 (which of `deploy:` to refuse to offer),
-the boolean-quoting decision, and the CRLF note at the end.
+can now be created from nothing. The boolean-quoting question is **answered** and needs no code; see
+that section. The CRLF note at the end is `PLAN_18.md`. What is left here is section 3 alone — which
+of `deploy:` to refuse to offer controls for.
 
 ## Where this comes from
 
@@ -132,7 +133,25 @@ containers. `container_name` is one of the four the Container group always shows
 someone straight into it, exactly as it used to with `network_mode`. `PLAN_4.md`'s `excludes` mechanism
 and its `blocked` flag already express this; it wants a second condition rather than new machinery.
 
-## A decision waiting on Adrian: should a plainly-written `true` stay plain?
+## Should a plainly-written `true` stay plain? — ANSWERED, and nothing to build
+
+**Resolved 2026-08-15.** It stays plain, and it already does. The fix that landed is not the one
+proposed below, and is better: `setPart()` (compose-model.js:2249) writes `style: 'bare'` when the
+**form** knows the field is a boolean and the line was unquoted to begin with. The decision comes
+from what the field *is*, not from what its text *looks like* — which is exactly what the comment
+above `needsQuoting()` says that function is right to refuse to guess.
+
+Checked against the model rather than assumed. All of these write an unquoted value: `privileged`,
+an `environment:` value, a label value, `healthcheck.disable`, and `healthcheck.disable` created
+from nothing. Both guards hold — a file that wrote `privileged: "true"` keeps its quotes, since
+quoting is never removed; and typing the word `true` into a box that held ordinary text still writes
+`R: 'true'`, which is right, because compose warns about a bare boolean as an environment value.
+
+So `needsQuoting()` keeps `true|false` in its list, and the loosening argued for below is **not**
+wanted — it would strip the quotes from that last case, which is the one place they earn their keep.
+The rest of this section is kept for the reasoning, not as work outstanding.
+
+---
 
 Found while building `PLAN_6.md` phase 4, and **partly fixed already**.
 
@@ -162,13 +181,18 @@ unquoted `true`, which compose then reads as a boolean. For an `environment:` va
 a non-string value; elsewhere it is usually what they meant anyway. Weigh that against rewriting a line
 in a hand-authored file, which is the thing this project promises not to do.
 
-## Also outstanding, unrelated to these blocks
+## Also outstanding, unrelated to these blocks — now `PLAN_18.md`
 
-**A CRLF compose file is rejected whole.** The parser seals the document and the form says *"This file
-is written in a way the form cannot read"*, which does not name the cause, so there is nothing for the
-user to act on. YAML treats CRLF as a valid line break and `docker compose up` accepts such a file, so
-the plugin is currently stricter than Docker and refuses a file that works. Anyone editing their
-compose file in Notepad on Windows lands here.
+**A CRLF compose file.** This note claimed the file is rejected whole, with the form saying *"This
+file is written in a way the form cannot read"*. **Only half of that is true.** The parser does seal
+such a document — `KEY_RE` allows only spaces and tabs after a key's colon, so `services:\r` is not a
+key — but the browser never hands it one: a `<textarea>` normalises its value to LF, a rule of the
+platform, so the carriage returns are gone before any of this code sees them. The form renders such a
+file perfectly.
 
-Preserving CRLF on write is the correct answer rather than normalising to LF, because normalising
-rewrites every line of a file the user did not ask us to reformat. Its own small plan when wanted.
+What goes wrong instead is quieter. The dirty check compares the box against the server's own text
+and so reports a change nobody made; saving converts every line ending to LF; and a companion file
+rewrites itself on a tab switch with nothing typed.
+
+The conclusion stands unchanged: preserve rather than normalise, because normalising rewrites every
+line of a file the user did not ask us to reformat. Built as `PLAN_18.md`.

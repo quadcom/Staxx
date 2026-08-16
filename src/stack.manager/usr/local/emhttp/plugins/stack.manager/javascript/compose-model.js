@@ -440,12 +440,23 @@
     var bom = '';
     if (text.charAt(0) === '﻿') { bom = '﻿'; text = text.slice(1); }
 
+    // A '\r' left in a line stops KEY_RE matching "key:\r" and seals the whole
+    // document as unparsable, though `docker compose up` reads it perfectly.
+    // Stripped here and restored in serialise(). Any CRLF at all marks the
+    // whole file CRLF, so a file with mixed endings comes out consistent
+    // rather than half-converted. Note that lineStart below counts one
+    // character per break, so an offset handed in from elsewhere has to be
+    // one into the stripped text — which is what a textarea gives, since the
+    // browser normalises its value the same way.
+    var eol = text.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
+    if (eol === '\r\n') text = text.replace(/\r\n/g, '\n');
+
     var lines = text.split('\n');
     var starts = [], off = bom.length, i;
     for (i = 0; i < lines.length; i++) { starts.push(off); off += lines[i].length + 1; }
 
     var doc = {
-      kind: 'doc', bom: bom, lines: lines, lineStart: starts,
+      kind: 'doc', bom: bom, eol: eol, lines: lines, lineStart: starts,
       root: null, sealed: [], warnings: []
     };
 
@@ -491,7 +502,7 @@
   }
 
   function serialise(doc) {
-    return doc.bom + doc.lines.join('\n');
+    return doc.bom + doc.lines.join(doc.eol || '\n');
   }
 
   /* =====================================================================
@@ -510,6 +521,9 @@
   function splice(doc, at, remove, insert) {
     var args = [at, remove].concat(insert || []);
     Array.prototype.splice.apply(doc.lines, args);
+    // Re-parsed joined with plain '\n' — the lines hold no carriage returns
+    // after parse() strips them, so this never touches doc.eol; only lines,
+    // lineStart, root, sealed and warnings are copied back below.
     var next = parse(doc.bom + doc.lines.join('\n'));
     doc.lines = next.lines;
     doc.lineStart = next.lineStart;

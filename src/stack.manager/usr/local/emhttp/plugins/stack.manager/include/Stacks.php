@@ -1476,11 +1476,6 @@ function stackman_save_stack(string $name, string $yaml, string &$error): bool {
   $file = stackman_find_compose_file($dir);
   if ($file === '') $file = $dir.'/compose.yaml';
 
-  // Normalise to Unix line endings. A compose file pasted from a Windows
-  // browser can arrive with carriage returns, which compose tolerates but
-  // which corrupt shell scripts and block scalars inside the file.
-  $yaml = str_replace("\r\n", "\n", $yaml);
-
   if (@file_put_contents($file, $yaml) === false) {
     $error = 'Could not write '.$file;
     return false;
@@ -1792,6 +1787,13 @@ function stackman_read_file(string $rel, string $file, string &$error): ?array {
  * Written to a temp file in the same directory and rename()'d into place, so
  * a reader never sees half a file — the same reasoning stackman_save_stack()
  * uses for the compose file itself.
+ *
+ * The bytes go down exactly as sent, text or binary alike. A file's own line
+ * endings are the editor's to keep — a browser textarea hands its value back
+ * as LF whatever went into it, so the page puts CRLF back for a file that had
+ * it, and normalising here would undo that and reformat the file instead.
+ * $isText no longer changes what is written; it stays because every caller
+ * knows which kind it is holding and the reader reports the same distinction.
  */
 function stackman_write_file(string $rel, string $file, string $body, bool $isText, string &$error): bool {
   $path = stackman_stack_file($rel, $file, $error);
@@ -1804,13 +1806,6 @@ function stackman_write_file(string $rel, string $file, string $body, bool $isTe
   if (is_dir($path)) {
     $error = '"'.$file.'" is a folder, not a file.';
     return false;
-  }
-
-  if ($isText) {
-    // Same reason stackman_save_stack() normalises a pasted compose file: a
-    // Windows browser sends CRLF, which corrupts anything on the other end
-    // that cares about line endings — a shell script, a block scalar.
-    $body = str_replace("\r\n", "\n", $body);
   }
 
   if (strlen($body) > STACKMAN_FILE_MAX) {

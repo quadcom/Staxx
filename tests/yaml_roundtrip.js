@@ -5542,6 +5542,96 @@ console.log('\nT. Variable references');
   ok('every broken or bad input comes back as an array rather than throwing', !bad, bad);
 })();
 
+/* =========================================================================
+ * U. Line endings — a CRLF file is readable, not just byte-identical
+ *
+ * Section A already shows a CRLF file survives parse+serialise byte for
+ * byte, but that alone proves nothing: before doc.eol existed, the file
+ * sealed whole as 'unparsable' and serialise() reproduced it by luck, since
+ * every line still carried its own trailing '\r' straight through the join.
+ * These cases check the file is actually readable — a real map, with fields
+ * buildForm() can hand the form — and that an edit through the form still
+ * comes back CRLF throughout, not just the untouched lines.
+ * ========================================================================= */
+
+console.log('\nU. Line endings');
+
+function isAllCRLF(s) {
+  var lines = s.split('\n');
+  for (var i = 0; i < lines.length - 1; i++) if (!/\r$/.test(lines[i])) return false;
+  return true;
+}
+
+/* ---- U1. A CRLF file parses as a real map, and buildForm() reads it ----- */
+
+(function () {
+  var text = 'services:\r\n  a:\r\n    image: alpine\r\n';
+  var doc = Y.parse(text);
+  ok('root is a map, not a sealed opaque blob', doc.root && doc.root.kind !== 'opaque',
+     doc.root && doc.root.kind);
+  var form;
+  try { form = Y.buildForm(doc); } catch (e) { form = null; }
+  ok('buildForm() reads it without throwing', !!form);
+  ok('the service is found', !!form && form.services.some(function (s) { return s.name === 'a'; }),
+     form && JSON.stringify(form.services));
+})();
+
+/* ---- U2. serialise() gives the CRLF file back byte for byte ------------- */
+
+(function () {
+  var text = 'services:\r\n  a:\r\n    image: alpine\r\n';
+  var got = Y.serialise(Y.parse(text));
+  ok('CRLF file round-trips byte for byte', got === text, firstDiff(text, got));
+})();
+
+/* ---- U3. An edit changes exactly one line, and every line stays CRLF ---- */
+
+(function () {
+  var text = 'services:\r\n  a:\r\n    image: alpine\r\n    environment:\r\n      FOO: bar\r\n';
+  var doc = Y.parse(text);
+  var form = Y.buildForm(doc);
+  var f = form.fields.filter(function (x) { return x.target === 'FOO'; })[0];
+  if (!ok('FOO field is found', !!f)) return;
+  Y.setValue(doc, form, f.id, 'baz');
+  var after = Y.serialise(doc);
+  var moved = diffLines(text.replace(/\r\n/g, '\n'), after.replace(/\r\n/g, '\n'));
+  ok('exactly one line changed', moved.length === 1, 'changed lines: ' + moved.join(', '));
+  ok('every line still ends CRLF', isAllCRLF(after), JSON.stringify(after));
+})();
+
+/* ---- U4. A CRLF file that also starts with a BOM keeps both ------------- */
+
+(function () {
+  var text = '\ufeffservices:\r\n  a:\r\n    image: alpine\r\n';
+  var doc = Y.parse(text);
+  ok('the BOM is recorded', doc.bom === '\ufeff');
+  ok('the root still parses as a map', doc.root && doc.root.kind !== 'opaque');
+  var got = Y.serialise(doc);
+  ok('BOM and CRLF both survive the round trip', got === text, firstDiff(text, got));
+})();
+
+/* ---- U5. Mixed endings come out consistently CRLF ------------------------ */
+
+(function () {
+  // "any CRLF at all marks the whole file CRLF" — a deliberate simplification
+  // so a file is not left half-converted; this is the one case in this
+  // section that is not byte-identical to its input by design.
+  var text = 'services:\r\n  a:\n    image: alpine\r\n    command: echo hi\n';
+  var got = Y.serialise(Y.parse(text));
+  ok('output is consistently CRLF', isAllCRLF(got), JSON.stringify(got));
+  ok('content is otherwise unchanged', got.replace(/\r\n/g, '\n') === text.replace(/\r\n/g, '\n'),
+     firstDiff(text.replace(/\r\n/g, '\n'), got.replace(/\r\n/g, '\n')));
+})();
+
+/* ---- U6. A plain LF file is unaffected — no carriage return gained ------ */
+
+(function () {
+  var text = 'services:\r\n  a:\r\n    image: alpine\r\n'.replace(/\r\n/g, '\n');
+  var got = Y.serialise(Y.parse(text));
+  ok('LF file round-trips unchanged', got === text, firstDiff(text, got));
+  ok('no carriage return appears', got.indexOf('\r') === -1);
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

@@ -43,8 +43,11 @@ $err = '';
 /* ------------------------------------------------------------- writing -- */
 
 ok('writes a text file', stackman_write_file($rel, '.env', "A=1\r\nB=2\r\n", true, $err), $err);
-ok('normalises CRLF',    file_get_contents($dir.'/.env') === "A=1\nB=2\n");
+ok('keeps CRLF',         file_get_contents($dir.'/.env') === "A=1\r\nB=2\r\n");
 ok('leaves no temp file', !file_exists($dir.'/.env.stackman-tmp'));
+
+ok('writes an LF file', stackman_write_file($rel, 'lf.env', "C=3\nD=4\n", true, $err), $err);
+ok('keeps LF, invents no CR', file_get_contents($dir.'/lf.env') === "C=3\nD=4\n");
 
 $bin = "\x00\x01\x02binary\xff";
 ok('writes a binary file', stackman_write_file($rel, 'cert.der', $bin, false, $err), $err);
@@ -66,7 +69,7 @@ ok('leaves no temp file after a refusal', !file_exists($dir.'/big.bin.stackman-t
 
 $read = stackman_read_file($rel, '.env', $err);
 ok('reads text', is_array($read) && ($read['binary'] ?? true) === false
-                 && ($read['text'] ?? '') === "A=1\nB=2\n", $err);
+                 && ($read['text'] ?? '') === "A=1\r\nB=2\r\n", $err);
 
 $read = stackman_read_file($rel, 'cert.der', $err);
 ok('reads binary as base64', is_array($read) && ($read['binary'] ?? false) === true
@@ -88,7 +91,7 @@ $byName = [];
 foreach ((array)$list as $e) $byName[$e['name']] = $e;
 ok('.env is listed as text', ($byName['.env']['text'] ?? false) === true);
 ok('binary is not listed as text', ($byName['cert.der']['text'] ?? true) === false);
-ok('sizes are real', ($byName['.env']['size'] ?? 0) === 8);
+ok('sizes are real', ($byName['.env']['size'] ?? 0) === 10);
 ok('mtimes are set', ($byName['.env']['mtime'] ?? 0) > 0);
 
 /* ------------------------------------------------------------ renaming -- */
