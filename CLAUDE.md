@@ -251,11 +251,20 @@ Other conventions:
 
 ## Explaining things
 
-Adrian is not a professional developer. He owns and directs this project and makes its decisions,
-so anything he cannot read easily is a document that fails at its job.
+Adrian is smart, and is not a professional developer. He owns and directs this project and makes
+its decisions, so anything he cannot read easily is a document that fails at its job. Explain in
+layman's terms — pitch the *vocabulary* low, never the substance.
 
-- Plain English. Define any technical term the first time it appears.
-- **Short and sweet.** Do not pad an explanation with long-winded analogies or extended metaphors —
-  a brief plain-language sentence beats a paragraph-long comparison. Keep explanations under 3-4 sentences.
-- Lead with the summary, then the detail but only if asked for it. This is not a reason to leave detail out; it just gets an understandable way in.
+- **Layman's English.** Say what something does, not what it is called. If a technical term is
+  genuinely unavoidable, define it the first time it appears.
+- **No file names, function names or line numbers.** He does not read the code, so
+  `compose-model.js:1822` tells him nothing — say "the one line that made Image required" instead.
+  Precision like that belongs in code comments, plan files and briefs to other agents, not in an
+  explanation written for him.
+- **Short analogies are welcome.** One sentence that makes a thing click is worth more than a
+  paragraph of accuracy. What is not welcome is the extended metaphor that runs for a paragraph
+  and has to be maintained.
+- **Short and sweet.** Keep an explanation to 3-4 sentences.
+- Lead with the summary, then the detail but only if asked for it. This is not a reason to leave
+  detail out; it just gets an understandable way in.
 - Applies to conversation, commit messages, comments and docs alike.
