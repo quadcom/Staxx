@@ -223,6 +223,14 @@
   font-weight: 700;
 }
 
+/* Coloured at rest, not just on hover — this is the destructive button in the
+   delete confirmation, which needs to read as dangerous before the pointer
+   ever reaches it. */
+.stackman-scaffold .stackman-btn--danger {
+  border-color: var(--sm-danger);
+  color: var(--sm-danger);
+}
+
 .stackman-scaffold .stackman-btn--danger:hover:not(:disabled) {
   border-color: var(--sm-danger);
   color: var(--sm-danger);
@@ -2029,6 +2037,18 @@
   font-size: 1.3rem;
 }
 
+/* Says why the form is locked while a companion file is on screen. A sibling
+   above .stackman-form rather than a child, so it stays put while the form
+   scrolls under it. */
+.stackman-refnote {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.8rem 1.4rem;
+  border-bottom: 0.1rem solid var(--sm-line);
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
 /* Shown instead of the form when the compose text cannot be parsed. Same
    recipe as .stackman-notice (border-left, radius, --sm-fill background) so
    this reads as the same family of panel rather than a third visual language
@@ -2762,6 +2782,51 @@
   .stackman-scaffold .stackman-required { opacity: 0; translate: 0 -0.4rem; }
 }
 
+/* A file the compose file names but the folder does not have. Same shape and
+   weight as .stackman-required just above, but --sm-accent rather than
+   --sm-danger: this will only bite when the stack next starts, not the
+   moment Save is pressed — the same distinction .stackman-badpath--file
+   draws, in the same two colours, further down this sheet. */
+.stackman-scaffold .stackman-missing {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 1.2rem;
+  padding: 0.8rem 1.2rem;
+  border-left: 0.4rem solid var(--sm-accent);
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, var(--sm-accent) 14%, transparent);
+  color: inherit;
+  font-size: 1.2rem;
+  text-align: left;
+  cursor: pointer;
+  opacity: 1;
+  translate: 0 0;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              translate var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete;
+}
+
+.stackman-scaffold .stackman-missing::after {
+  content: '  \2192  create it';
+  color: var(--sm-muted);
+  white-space: pre;
+}
+
+.stackman-scaffold .stackman-missing:hover {
+  background: color-mix(in srgb, var(--sm-accent) 22%, transparent);
+}
+
+.stackman-scaffold .stackman-missing[hidden] {
+  display: none;
+  opacity: 0;
+  translate: 0 -0.4rem;
+}
+
+@starting-style {
+  .stackman-scaffold .stackman-missing { opacity: 0; translate: 0 -0.4rem; }
+}
+
 .stackman-fieldtitle {
   font-weight: 700;
 }
@@ -3157,6 +3222,205 @@
 .stackman-modal[data-sanitised="1"] .stackman-fieldrow--secret .stackman-input[data-note],
 .stackman-modal[data-sanitised="1"] .stackman-fieldrow--secret .stackman-input[data-part="container"] {
   filter: none;   /* the note and the container side are not the secret */
+}
+
+/* ---- modal: the file tab strip ----
+ *
+ * One button per file in the stack's folder, the compose file always first
+ * and never closeable — see renderTabs() in stacks.js. A flex row that
+ * scrolls sideways rather than wraps, so a stack with twenty companion files
+ * gains a scrollbar instead of pushing the editor down the page. */
+.stackman-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  overflow-x: auto;
+  flex: 1 1 auto;
+  min-width: 0;   /* lets the list shrink and scroll rather than push the buttons below off the edge */
+}
+
+.stackman-tabs[hidden] {
+  display: none;
+}
+
+/* Wraps the scrolling tab list together with the two fixed controls beside
+   it (New file, Add a file) — see StacksPage.php — so those controls stay
+   in view no matter how many companion files the list scrolls past. Carries
+   the border and wash that used to sit on .stackman-tabs alone, now that the
+   row spans both. */
+.stackman-tabstrip {
+  display: flex;
+  align-items: center;
+  border-bottom: 0.1rem solid var(--sm-line);
+  background: var(--sm-fill-0);
+}
+
+/* Same weight as the tab menu's own chevron above, not a full .stackman-btn —
+   these sit in a strip of tabs, not among the modal's main actions. */
+.stackman-tabstrip > .stackman-chevron {
+  flex: 0 0 auto;
+  margin: 0 0.3rem;
+}
+
+/* The tab menu panel below is positioned in pixels against whichever
+   chevron opened it (openTabmenu() in stacks.js) — that needs this pane to
+   be the containing block, or the panel would position itself against the
+   dialog instead and land nowhere near the tab it belongs to. */
+.stackman-pane--yaml {
+  position: relative;
+}
+
+/* Muted and slightly translucent while inactive; the active tab takes the
+   editor's own background (the same value .stackman-yamlwrap paints below)
+   so the two read as one surface, with the strip's border sitting against
+   it rather than across it. */
+.stackman-scaffold .stackman-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+  padding: 0.6rem 1.1rem;
+  border-right: 0.1rem solid var(--sm-line);
+  color: var(--sm-muted);
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.2rem;
+  white-space: nowrap;
+  opacity: 0.7;
+}
+
+.stackman-scaffold .stackman-tab:hover {
+  opacity: 1;
+}
+
+.stackman-scaffold .stackman-tab[aria-selected="true"] {
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--sm-fg);
+  opacity: 1;
+}
+
+.stackman-scaffold .stackman-tab:focus-visible {
+  outline: 0.2rem solid var(--sm-accent);
+  outline-offset: -0.2rem;
+}
+
+/* The pending-autosave dot. --sm-danger (the "bad" colour every other error
+   dot in this pane already uses — see .stackman-yamldot--error) marks a
+   write that failed; left showing on purpose, because the file it names is
+   now out of step with what is on disk. */
+.stackman-tab-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--sm-accent);
+}
+
+.stackman-tab-dot[hidden] {
+  display: none;
+}
+
+.stackman-tab-dot--bad {
+  background: var(--sm-danger);
+}
+
+/* A file nothing in the compose file references — quiet, not alarming: an
+   orphan is worth noticing, not worth shouting about. */
+.stackman-scaffold .stackman-tab--orphan .stackman-tab-name {
+  opacity: 0.55;
+}
+
+/* The chevron that opens the active tab's menu. Reuses .stackman-chevron,
+   the same small icon button the find bar's Previous/Next already are, so
+   this does not invent a fourth button look. */
+.stackman-scaffold .stackman-tab-menubtn {
+  margin: 0 0.3rem;
+}
+
+/* Same visual family as .stackman-outline — opaque background, border,
+   radius, shadow, item padding, hover — so a second floating menu in this
+   dialog does not invent a new look. Unlike .stackman-outline it has no
+   fixed button to hang a CSS-only position off (the active tab moves along
+   a strip that scrolls sideways), so top/left are set in pixels by
+   openTabmenu() in stacks.js instead. */
+.stackman-tabmenu {
+  position: absolute;
+  z-index: 5;
+  min-width: 14rem;
+  max-width: calc(100vw - 2rem);
+  padding: 0.4rem 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-bg);
+  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+}
+
+.stackman-tabmenu[hidden] {
+  display: none;
+}
+
+.stackman-tabmenu-row {
+  padding: 0.6rem 1.2rem;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.stackman-tabmenu-row:hover {
+  background: var(--sm-fill);
+}
+
+/* The compose tab's own menu: no items, just this line explaining why —
+   quieter than two disabled items nobody can act on. */
+.stackman-tabmenu-note {
+  padding: 0.6rem 1.2rem;
+  max-width: 22rem;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  line-height: 1.4;
+}
+
+/* The drop target while a file is dragged over the editor — dashed and
+   inset, in the accent colour, so there is something to aim at. Nothing
+   else changes: this is a hint, not a redesign. */
+.stackman-modal-body.stackman-dragover {
+  outline: 0.15rem dashed var(--sm-accent);
+  outline-offset: -0.15rem;
+}
+
+/* ---- modal: the binary-file panel ----
+ *
+ * Shown instead of the textarea for a companion file that failed the
+ * "first 8 KB, no NUL byte" text test — a certificate or a private key,
+ * most often, which is the whole reason a binary file is accepted here at
+ * all. .stackman-yamlwrap is already position: relative, so this sits on
+ * top of the same box the textarea occupies rather than needing a layout
+ * change of its own. */
+.stackman-binfile {
+  position: absolute;
+  inset: 0;
+  z-index: 3;   /* above the gutter (2) and the ink layer, both painted first */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  padding: 2rem;
+  text-align: center;
+  background-color: var(--background-color, #1c1c1c);
+}
+
+.stackman-binfile[hidden] {
+  display: none;
+}
+
+.stackman-binfile-name {
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.4rem;
+  color: var(--sm-fg);
+  word-break: break-all;
+}
+
+.stackman-binfile-meta {
+  color: var(--sm-muted);
+  font-size: 1.2rem;
 }
 
 /* ---- modal: find and replace bar ---- */
@@ -4118,6 +4382,156 @@
 }
 
 .stackman-tz-msg {
+  margin: 0;
+  min-width: 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+/* ---- The delete confirmation ---------------------------------------------- */
+
+/* The fourth dialog. Same six user-agent defaults to undo as the three above,
+   but no fixed height — a plain confirmation should not carry the tall
+   picker/timezone frame around with it. The body grows in place when stage
+   two adds its file list, so the layout is a plain flex column rather than
+   the picker's fixed grid rows. */
+.stackman-confirm {
+  width: min(46rem, 92vw);
+  max-height: 85vh;
+  margin: auto;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+
+  display: flex;
+  flex-direction: column;
+
+  opacity: 1;
+  transition:
+    opacity var(--sm-motion) var(--sm-ease),
+    display var(--sm-motion) allow-discrete,
+    overlay var(--sm-motion) allow-discrete;
+}
+
+.stackman-confirm:not([open]) {
+  display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-confirm[open] { opacity: 0; }
+}
+
+.stackman-confirm::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 1;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete,
+              overlay var(--sm-motion) allow-discrete;
+}
+
+.stackman-confirm:not([open])::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-confirm[open]::backdrop { opacity: 0; }
+}
+
+.stackman-confirm-head {
+  padding: 1.2rem 1.4rem 0.8rem;
+}
+
+.stackman-confirm-title {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.stackman-confirm-body {
+  padding: 0 1.4rem 1.2rem;
+  overflow-y: auto;
+}
+
+.stackman-confirm-body p {
+  margin: 0 0 0.8rem;
+  font-size: 1.3rem;
+  line-height: 1.5;
+}
+
+.stackman-confirm-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* The leftover-files list. Its own scrollbox with a max-height, so a folder
+   holding fifty stray files cannot push Cancel and Delete off the screen. */
+.stackman-confirm-list {
+  margin: 0.8rem 0 0;
+  padding: 0.2rem 0;
+  list-style: none;
+  max-height: 22rem;
+  overflow-y: auto;
+  border: 0.1rem solid var(--sm-hairline);
+  border-radius: 0.3rem;
+}
+
+.stackman-confirm-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.9rem;
+}
+
+.stackman-confirm-list li:not(:last-child) {
+  border-bottom: 0.1rem solid var(--sm-hairline);
+}
+
+.stackman-confirm-list code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.2rem;
+}
+
+.stackman-confirm-meta {
+  flex: none;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+  white-space: nowrap;
+}
+
+/* The env-file wiring picker (Phase B4): a checkbox per service, on the
+   leftover-files list's own box and border above. */
+.stackman-envpick label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  cursor: pointer;
+}
+
+.stackman-envpick input:disabled {
+  cursor: default;
+}
+
+.stackman-envpick-already {
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+.stackman-confirm-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  padding: 1.2rem 1.4rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.stackman-confirm-msg {
   margin: 0;
   min-width: 0;
   color: var(--sm-muted);
@@ -5147,7 +5561,8 @@
   .stackman-scaffold *,
   .stackman-modal::backdrop,
   .stackman-picker::backdrop,
-  .stackman-tz::backdrop {
+  .stackman-tz::backdrop,
+  .stackman-confirm::backdrop {
     transition-duration: 1ms !important;
     animation-duration: 1ms !important;
   }

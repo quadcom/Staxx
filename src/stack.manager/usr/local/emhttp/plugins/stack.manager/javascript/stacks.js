@@ -42,10 +42,32 @@
   // way suggestBox is guarded above.
   var outlineBtn   = document.getElementById('stackman-outline-btn');
   var outlinePanel = document.getElementById('stackman-outline');
+  // The file tab strip above the find bar. May be null on a stale page, same
+  // reasoning as outlinePanel above — guarded wherever it is touched.
+  var tabsBar     = document.getElementById('stackman-tabs');
+  // The active tab's menu (Rename / Delete / Download), a sibling of
+  // tabsBar rather than nested in it — see the markup comment in
+  // StacksPage.php. Same null-guarding reasoning as tabsBar above.
+  var tabmenuPanel = document.getElementById('stackman-tabmenu');
+  // The strip's own New file / Add a file controls and the hidden input
+  // behind both of them (and behind Replace… on the binary panel below).
+  // Same null-guarding reasoning as tabsBar above.
+  var fileNewBtn = document.getElementById('stackman-file-new');
+  var fileAddBtn = document.getElementById('stackman-file-add');
+  var fileInput  = document.getElementById('stackman-file-input');
+  // The panel shown instead of the textarea for a companion file that is
+  // not text. Same null-guarding reasoning as tabsBar above.
+  var binPanel = document.getElementById('stackman-binfile');
+  var binName  = document.getElementById('stackman-binfile-name');
+  var binMeta  = document.getElementById('stackman-binfile-meta');
+  var binGet   = document.getElementById('stackman-binfile-get');
+  var binPut   = document.getElementById('stackman-binfile-put');
   var sanitiseBox = document.getElementById('stackman-sanitise');
   var sanitiseNote = document.getElementById('stackman-sanitise-note');
+  var refNote      = document.getElementById('stackman-refnote');
   var gapNote     = document.getElementById('stackman-required-note');
   var errorBox    = document.getElementById('stackman-error');
+  var missingNote = document.getElementById('stackman-missing');
 
   var tzModal     = document.getElementById('stackman-tz');
   var tzBands     = document.getElementById('stackman-tz-bands');
@@ -60,6 +82,16 @@
   var pickerList  = document.getElementById('stackman-picker-list');
   var pickerMsg   = document.getElementById('stackman-picker-msg');
   var pickerNew   = document.getElementById('stackman-picker-newname');
+
+  // The delete confirmation. May be null while the markup has not landed yet
+  // on a stale page — guarded the same way suggestBox and findBar are above;
+  // deleteStack() falls back to window.confirm() when it is missing.
+  var confirmModal  = document.getElementById('stackman-confirm');
+  var confirmTitle  = document.getElementById('stackman-confirm-title');
+  var confirmBody   = document.getElementById('stackman-confirm-body');
+  var confirmMsg    = document.getElementById('stackman-confirm-msg');
+  var confirmCancel = document.getElementById('stackman-confirm-cancel');
+  var confirmGo     = document.getElementById('stackman-confirm-go');
 
   // The find/replace bar. May be null while the markup has not landed yet —
   // every function below that touches one of these guards on findBar first,
@@ -608,6 +640,31 @@
   var openedName  = '';    // the rel this editor opened at — what save() renames FROM
   var serviceRenamed = false;  // a pencil rename happened this session — offer a recreate after save
 
+  // The tab strip's own state. FILES is the last `files` listing, in the
+  // order it arrived — compose file first, then alphabetical (see
+  // stackman_list_files() in Stacks.php). fileOpen is the companion filename
+  // on screen, or null while the compose file itself is showing.
+  var FILES      = [];
+  var fileOpen   = null;
+  var fileStash  = '';    // the compose file's text, held aside while a companion is shown
+  var fileAtLoad = '';    // what the companion said when it was loaded — its dirty check
+  // Whether the box is holding a companion's real text. False for a binary,
+  // for a read that failed, and for the moment before one lands — and the
+  // autosave refuses to write anything while it is false. See loadCompanion().
+  var fileEditable = false;
+  var viewBeforeFile = null;   // the view (form/split/yaml) to restore on the way back to Compose
+  // filename -> the MIME type the browser reported when the bytes last
+  // arrived from this computer (upload or Replace…). The server has no
+  // reliable way to know a file's type, so this only ever holds an entry for
+  // a file this browser session itself picked up — everything else shows
+  // size alone.
+  var fileMime = {};
+  // The companion filename Replace… is standing in for, while its own
+  // single-file picker is open — null the rest of the time. Read by the
+  // file input's change handler to tell that one pick apart from an
+  // ordinary multi-file add.
+  var fileReplaceTarget = null;
+
   // What a new stack starts as. A placeholder key rather than the pencil
   // straight away — a brand new service has nothing else in it yet either,
   // so the comment points at the one thing worth changing first.
@@ -636,6 +693,11 @@
   // is held aside. Everything that cares about content must ask for it here
   // and never read the box directly.
   function currentText() {
+    // While a companion file is on screen the box is not showing the compose
+    // file at all, so everything that asks "what does the compose file say" —
+    // the dirty check, Save, the parser — has to be told about the copy held
+    // aside rather than reading a .env and calling it YAML.
+    if (fileOpen !== null) return fileStash;
     return sanitised ? realText : yamlPane.value;
   }
 
@@ -703,6 +765,10 @@
   var INK_LIMIT = 3000;
 
   function paintInk() {
+    // A companion file is never YAML — colouring a .env with the YAML
+    // tokeniser would light it up as if it were broken syntax. plainInk()
+    // below is the whole of what a companion file gets instead.
+    if (fileOpen !== null) { plainInk(); return; }
     if (modalBody.dataset.view === 'form') return;
     if (!YAML || typeof YAML.highlight !== 'function') return;   // not landed yet
 
@@ -769,12 +835,62 @@
     carryAfter = newCarry;
   }
 
+  // A companion file's colouring: three cases only, no carry state between
+  // lines because none of them (comment, key=value, plain text) can span one.
+  function plainInk() {
+    // This is about to overwrite the very layer paintInk() keeps a record of,
+    // so that record stops being true here. Left standing, paintInk() compares
+    // the compose file against it on the way back, finds every line
+    // "unchanged", repaints none of them, and leaves the layer holding this
+    // file's lines — or, for an empty one, nothing at all. The textarea's own
+    // text is transparent, so that reads as a blank editor.
+    inkLines   = [];
+    carryAfter = [];
+
+    var lines = yamlPane.value.split('\n');
+    var inner = yamlInk.firstElementChild;
+
+    // Same escape hatch paintInk() has, and for the same reason: a file long
+    // enough to need one div per line costs more to colour than the colour is
+    // worth. .stackman-noink hides the overlay and makes the textarea's own
+    // text visible again, so the file is still perfectly readable.
+    var big = lines.length > INK_LIMIT;
+    yamlWrap.classList.toggle('stackman-noink', big);
+    if (big) { inner.textContent = ''; return; }
+
+    while (inner.children.length < lines.length) {
+      var row = document.createElement('div');
+      row.className = 'stackman-inkline';
+      inner.appendChild(row);
+    }
+    while (inner.children.length > lines.length) inner.lastElementChild.remove();
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i], html, kv;
+      if (/^\s*#/.test(line)) {
+        html = '<span class="stackman-t--comment">' + esc(line) + '</span>';
+      } else if ((kv = /^(\s*[A-Za-z_][A-Za-z0-9_]*)(=)(.*)$/.exec(line))) {
+        html = '<span class="stackman-t--key">' + esc(kv[1]) + '</span>' +
+               '<span class="stackman-t--punct">' + esc(kv[2]) + '</span>' +
+               '<span class="stackman-t--str">' + esc(kv[3]) + '</span>';
+      } else {
+        html = '<span class="stackman-t--text">' + esc(line) + '</span>';
+      }
+      inner.children[i].innerHTML = html;
+    }
+  }
+
   // Problems are sparse — a handful at most — so one element per problem,
   // never one per line the way the ink layer works. `list` is whatever
   // YAML.lint() returned (plus, after a refused save, one extra entry — see
   // markSaveError()). Cleared and rebuilt in full on every call, since there
   // are never enough of them for that to be worth avoiding.
   function paintDots(list) {
+    // A companion file has no compose lint to show, and the compose file's
+    // line numbers mean nothing over its text — so the gutter is cleared
+    // rather than left carrying the last file's marks. In Split those marks
+    // are on screen beside the file, not hidden with the pane.
+    if (fileOpen !== null) { if (yamlDots) yamlDots.textContent = ''; return; }
     if (modalBody.dataset.view === 'form') return;   // nothing on screen to paint into
     if (!yamlDots) return;                            // markup not landed yet
     yamlDots.textContent = '';
@@ -828,6 +944,7 @@
   var yamlTimer = null;
 
   yamlPane.addEventListener('input', function () {
+    if (fileOpen !== null) return;   // a companion file has no compose model to reparse
     if (yamlTimer) clearTimeout(yamlTimer);
     yamlTimer = setTimeout(function () { yamlTimer = null; reparse(); }, 400);
   });
@@ -848,6 +965,11 @@
     // Nothing can ask for Split at this width — the button is not there to
     // click — but a window dragged narrower can arrive here already in it.
     if (view === 'split' && NARROW.matches) view = 'form';
+    // A companion file's editor is the compose pane itself, so Form alone
+    // would hide the very file the tab opened. Split is what shows the compose
+    // form beside it, and the order here matters: the narrow coercion runs
+    // first, and this re-handles what it produced.
+    if (fileOpen !== null && view === 'form') view = NARROW.matches ? 'yaml' : 'split';
     modalBody.dataset.view = view;
     // Both panels are positioned in pixels against the compose pane, which a
     // view switch just moved or hid outright.
@@ -2415,6 +2537,56 @@
     if (box) box.focus();
   });
 
+  // The missing-file names flagged the last time updateMissing() ran, so a
+  // name that is newly missing — a paste that references a file nobody has
+  // added yet, most often — can be told apart from the same warning simply
+  // being redrawn on every reparse. missingRefs() itself is defined further
+  // down, beside fileRefMap(); function declarations hoist, so calling it
+  // from here is fine.
+  var missingSeen = [];
+
+  // Note text and behaviour for #stackman-missing — see missingRefs() below
+  // for what counts as missing. Called from reparse() (every settled edit)
+  // and from filesLoad() (files.length changes without the compose text
+  // moving at all), which between them cover every way the answer changes.
+  function updateMissing() {
+    var missing = missingRefs();
+
+    if (!missing.length) {
+      missingNote.hidden = true;
+      missingNote.textContent = '';
+      missingSeen = [];
+      return;
+    }
+
+    var first = missing[0];
+    missingNote.textContent = '"' + first.file + '" is named in this compose file but is not in ' +
+      'this stack. Create it, or add it with the + button above.' +
+      (missing.length > 1
+        ? ' And ' + (missing.length - 1) + ' other' + (missing.length > 2 ? 's' : '') +
+          ' ' + (missing.length > 2 ? 'are' : 'is') + ' missing.'
+        : '');
+    missingNote.hidden = false;
+
+    // PLAN_13 asked for a second bar just for a paste that references a
+    // missing file. This note already covers that — reparse() runs after a
+    // paste same as any other edit — so the only thing worth adding is
+    // making a freshly-appeared name hard to miss, the same courtesy
+    // showError() gives an outright failure.
+    var names = missing.map(function (m) { return m.file; });
+    var isNew = names.some(function (n) { return missingSeen.indexOf(n) < 0; });
+    missingSeen = names;
+    if (isNew) missingNote.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  missingNote.addEventListener('click', function () {
+    // Recomputed rather than read off a stored dataset — the compose file
+    // is the only source of truth, so a fix made and undone between the
+    // last redraw and this click must never be acted on as stale.
+    var missing = missingRefs();
+    if (missing.length) createMissingFile(missing[0]);
+  });
+
   // A file the parser cannot read as a mapping at all has no services, which
   // renderForm() would otherwise draw as an almost-empty form — reading as
   // "this file has no containers" when the truth is "this could not be
@@ -2446,8 +2618,12 @@
     var btns = modal.querySelectorAll(
       '.stackman-viewbtn[data-view="form"], .stackman-viewbtn[data-view="split"]');
     for (var i = 0; i < btns.length; i++) {
-      btns[i].disabled = !ok;
-      btns[i].title = ok ? '' : why;
+      // Form on its own would hide the companion file the tab just opened —
+      // its editor IS the compose pane. Split is the one that shows both, so
+      // this gate cannot hand Form back while a companion is on screen.
+      var off = !ok || (btns[i].dataset.view === 'form' && fileOpen !== null);
+      btns[i].disabled = off;
+      btns[i].title = off ? (ok ? FORM_GATE_TITLE : why) : '';
     }
     // Outline needs a readable model exactly as much as Form/Split do — but
     // keeps its own static title (what the button does), rather than the
@@ -2460,14 +2636,18 @@
 
   // The last YAML.lint() result, cached so a view switch (see setView()) can
   // repaint the same dots rather than re-linting a document that has not
-  // changed. saveErrorDot is one extra entry for a save the server refused
-  // (see markSaveError()) — kept apart from lastLint so relint() dropping it
-  // on the next real reparse is a one-line thing, not a filter.
+  // changed. varLint is the undefined-${VAR} scan (see varDots() below) —
+  // a second source painted the same way, not a second place that paints.
+  // saveErrorDot is one extra entry for a save the server refused (see
+  // markSaveError()) — kept apart from both so relint() dropping it on the
+  // next real reparse is a one-line thing, not a filter.
   var lastLint     = [];
+  var varLint      = [];
   var saveErrorDot = null;
 
   function redrawDots() {
-    paintDots(saveErrorDot ? lastLint.concat([saveErrorDot]) : lastLint);
+    var list = lastLint.concat(varLint);
+    paintDots(saveErrorDot ? list.concat([saveErrorDot]) : list);
   }
 
   // Guarded the same way paintInk() guards for YAML.highlight: if the linter
@@ -2475,6 +2655,7 @@
   function relint() {
     lastLint = (YAML && typeof YAML.lint === 'function' && MODEL && MODEL.doc)
       ? YAML.lint(MODEL.doc) : [];
+    varLint = varDots();
     saveErrorDot = null;   // a fresh reparse is the moment a save error goes stale
     redrawDots();
   }
@@ -2482,7 +2663,7 @@
   function reparse() {
     if (!YAML) { formHost.innerHTML = '<p class="stackman-form-empty">The form view could not load.</p>'; return; }
 
-    var doc  = YAML.parse(yamlPane.value);
+    var doc  = YAML.parse(currentText());
     var form = YAML.buildForm(doc);
     form.doc = doc;
     MODEL = form;
@@ -2503,8 +2684,13 @@
     // edit) already knows where it wants the caret to be.
     findRecompute();
     updateRequired();
+    updateMissing();
     relint();
     checkHostPaths();   // ask the server about any volume host path not already cached
+    // The form's markup was just rebuilt from scratch, so a companion file
+    // still on screen has to have it locked again — find and replace is the
+    // one path that reaches this from a companion tab.
+    if (fileOpen !== null) lockForm();
   }
 
   /* ---- form -> file ---- */
@@ -2565,6 +2751,12 @@
 
   function commit(el) {
     if (!MODEL || sanitised) return;
+    // A companion file is in the box, so the serialised compose file below
+    // would land in that file and the autosave would write it there. The form
+    // is locked while one is open, but this runs on a 250ms timer that a tab
+    // switch can outlive — openFile() flushes it first so the edit is not
+    // lost, and this is what catches anything still in flight.
+    if (fileOpen !== null) return;
 
     var f = MODEL.fields[el.dataset.row | 0];
     // A row's data-row is only ever refreshed, never reassigned (see the
@@ -2848,14 +3040,22 @@
 
   function updateUndo() {
     var top = undoStack[undoStack.length - 1];
-    undoBtn.disabled = sanitised || !top;
+    // fileChrome() switches Undo off while a companion file is open, and this
+    // is called from paths that reach it there (find and replace runs on a
+    // companion tab) — without the same term it would quietly switch it back
+    // on, and undoing there writes the compose file's text into that file.
+    undoBtn.disabled = sanitised || fileOpen !== null || !top;
     undoBtn.title = top ? 'Undo ' + top.what : 'Nothing to undo yet';
   }
 
   // Called BEFORE the document is touched. The compose pane and the model are
-  // in step at that moment, which is what makes the snapshot honest.
+  // in step at that moment, which is what makes the snapshot honest. It is the
+  // compose file's history, so it snapshots that file's text and not whatever
+  // the box happens to be showing — a find and replace run inside a companion
+  // file would otherwise put that file's text where Undo restores it into the
+  // compose file.
   function pushUndo(what) {
-    undoStack.push({ text: yamlPane.value, what: what });
+    undoStack.push({ text: currentText(), what: what });
     if (undoStack.length > 25) undoStack.shift();
     updateUndo();
   }
@@ -3279,6 +3479,7 @@
 
   if (outlineBtn) {
     outlineBtn.addEventListener('click', function (event) {
+      if (fileOpen !== null) return;   // a companion file has no structure to outline
       // Stopped here, same reasoning as the Sections button's own click
       // above: left to bubble, the document-level "click outside" listener
       // below would see this same click and close what it has just opened.
@@ -3371,6 +3572,9 @@
 
   function repaintMark() {
     yamlMarks.textContent = '';
+    // The band is a range of compose-file lines, which mean nothing painted
+    // over a companion file's text.
+    if (fileOpen !== null) return;
     if (!LINE_H) measure();
 
     if (activeField && MODEL) {
@@ -3483,6 +3687,7 @@
   // Called from reparse(), which is already debounced 400ms behind typing —
   // this piggybacks on that pause rather than starting a second timer.
   function checkHostPaths() {
+    if (fileOpen !== null) return;   // a companion file has no volumes to check
     if (!YAML || typeof YAML.hostPaths !== 'function') return;   // not landed yet
 
     pathHits = YAML.hostPaths(yamlPane.value);
@@ -4565,6 +4770,19 @@
     openedName = name || '';
     serviceRenamed = false;
 
+    // Yesterday's tabs are meaningless against today's stack — cleared before
+    // the fresh listing arrives (or, for a new stack with no folder yet, before
+    // renderTabs() below draws the bare compose tab and leaves it at that).
+    fileOpen = null;
+    fileStash = '';
+    fileAtLoad = '';
+    viewBeforeFile = null;
+    FILES = [];
+    envVars = null;   // yesterday's .env answer is meaningless against today's stack
+    fileDots = {};
+    fileMime = {};
+    hideBinPanel();   // yesterday's stack may have left this showing
+
     // A stack's identity is its path under the stack root — "jellyfin" at the
     // top level, "Media/jellyfin" inside a folder. The box shows only the last
     // part, with the folder beside it as context, because those are two
@@ -4614,6 +4832,7 @@
     hideSuggest();   // neither panel may leak from one stack's editor into the next
     hideHover();
     closeOutline();   // yesterday's line numbers are meaningless against today's stack
+    closeTabmenu();   // yesterday's menu would be positioned against a tab that is gone
     setView(defaultView());
 
     undoStack.length = 0;
@@ -4648,6 +4867,9 @@
     devLoad().catch(function () {});
     netLoad().catch(function () {});
     imgLoad().catch(function () {});
+    // A new stack has no folder on disk yet, so there is nothing to list —
+    // draw the bare, uncloseable compose tab and stop there.
+    if (isNew) renderTabs(); else filesLoad();
 
     // Explicit, and after showModal(). The dialog's own "first focusable
     // descendant" rule would land on the view selector, which is nobody's
@@ -4693,6 +4915,20 @@
   modal.addEventListener('close', function () {
     lockScroll(false);
     clearError();
+    // The dialog is already closing, synchronously, so this cannot be
+    // awaited — but the save request it fires still completes over the
+    // network after that, which is all a last edit needs.
+    flushFileSave();
+    fileOpen = null;
+    fileStash = '';
+    fileAtLoad = '';
+    viewBeforeFile = null;
+    FILES = [];
+    envVars = null;
+    fileDots = {};
+    fileMime = {};
+    hideBinPanel();
+    if (tabsBar) { tabsBar.hidden = true; tabsBar.innerHTML = ''; }
     // Nothing the user can do closes the editor from under the picker, but
     // closeEditor() can be called from code. A picker left open over a closed
     // editor would be pointing at an input that no longer exists.
@@ -4704,6 +4940,7 @@
     hideSuggest();
     hideHover();
     closeOutline();
+    closeTabmenu();
   });
 
   // <dialog> fires no event for the backdrop, because the backdrop is a
@@ -4719,8 +4956,1220 @@
 
   modal.addEventListener('click', function (event) {
     var btn = event.target.closest('.stackman-viewbtn');
-    if (btn) setView(btn.dataset.view);
+    if (!btn) return;
+    // A view picked while a companion tab is on screen is a deliberate choice
+    // and outlives that tab; without this the way back to the compose file
+    // snaps to whatever it was showing before, undoing the choice.
+    if (fileOpen !== null) viewBeforeFile = btn.dataset.view;
+    setView(btn.dataset.view);
   });
+
+  /* ---- the file tab strip -------------------------------------------------
+   *
+   * The compose file and its box are the same textarea a companion file
+   * shows — there is no second editor. openFile() is what moves the box
+   * between them; everything else here supports that one job. */
+
+  // The real compose filename once FILES has arrived; a placeholder for the
+  // instant before that first `files` reply lands.
+  function tabLabel() {
+    for (var i = 0; i < FILES.length; i++) {
+      if (FILES[i].compose) return FILES[i].name;
+    }
+    return 'compose.yaml';
+  }
+
+  // filename -> 'pending' | 'bad', for whichever autosave has not landed (or
+  // failed) yet. Kept apart from the DOM rather than read off it, because
+  // renderTabs() below rebuilds the strip from scratch on every switch —
+  // reading dots back off elements about to be thrown away would lose
+  // exactly the ones this exists to keep visible.
+  var fileDots = {};
+
+  function tabDotHtml(name) {
+    var state = fileDots[name];
+    return '<span class="stackman-tab-dot' + (state === 'bad' ? ' stackman-tab-dot--bad' : '') + '"' +
+           (state ? '' : ' hidden') + '></span>';
+  }
+
+  // [] while the scan has not landed in the model yet — guarded the same way
+  // checkHostPaths() guards for YAML.hostPaths. Always read from
+  // currentText(), never cached: the compose file stays the only source of
+  // truth, so a reference removed by editing it must stop showing at once.
+  function fileRefsSafe() {
+    if (!YAML || typeof YAML.fileRefs !== 'function') return [];
+    return YAML.fileRefs(currentText()) || [];
+  }
+
+  // filename -> the distinct, non-blank service names that reference it (in
+  // the order fileRefs() found them). A file present in this map but with an
+  // empty array is referenced only from a top-level secrets:/configs: entry,
+  // which has no service to name — renderTabs() below turns that into "Used
+  // by this stack" rather than an empty list.
+  function fileRefMap() {
+    var refs = fileRefsSafe(), out = {};
+    refs.forEach(function (r) {
+      var list = out[r.file] || (out[r.file] = []);
+      if (r.service && list.indexOf(r.service) < 0) list.push(r.service);
+    });
+    return out;
+  }
+
+  /* ---- references that point at nothing (PLAN_13 phase B5) --------------
+   *
+   * missingRefs() -> [{file, services, where}], one entry per distinct
+   * missing name — two services naming the same absent file is one thing to
+   * fix, not two. Recomputed from FILES and the live compose text on every
+   * call, never cached: FILES.length === 0 means the first `files` listing
+   * has not landed yet, not an empty folder, so nothing is reported until it
+   * has (see filesLoad()) — otherwise every stack would flash a false
+   * warning the instant it opens. */
+  function missingRefs() {
+    if (!FILES.length) return [];
+
+    var byName = {};
+    FILES.forEach(function (f) { byName[f.name] = f; });
+
+    var out = [], seen = {};
+    fileRefsSafe().forEach(function (r) {
+      var name = r.file;
+      // "." and "../..." are outside this folder's business (build's own
+      // "context: ." means the stack folder itself); a leading ".." is the
+      // same idea one level up.
+      if (name === '.' || name === '..' || name.slice(0, 3) === '../') return;
+
+      var slash = name.indexOf('/');
+      if (slash >= 0) {
+        // FILES only lists one level down. A directory by that first name
+        // existing is as far as this can see — reporting anything past it
+        // would be a guess, and a wrong guess here is worse than no answer.
+        var head = byName[name.slice(0, slash)];
+        if (head && head.dir) return;
+      } else if (byName[name]) {
+        return;   // present, file or directory either one
+      }
+
+      var hit = seen[name];
+      if (!hit) { hit = seen[name] = { file: name, services: [], where: r.where }; out.push(hit); }
+      if (r.service && hit.services.indexOf(r.service) < 0) hit.services.push(r.service);
+    });
+    return out;
+  }
+
+  /* ---- ${VAR} placeholders nothing will ever fill in ---------------------
+   *
+   * Only a file named exactly ".env" is asked about here, never env_file:.
+   * Compose reads ".env" itself, automatically, to fill in "${VAR}" INSIDE
+   * the compose file — that is what settles whether a placeholder is
+   * defined. env_file: does something else entirely: it passes values INTO
+   * THE CONTAINER, with no effect on substitution in the compose file at
+   * all. PLAN_13's own phase B5 line about "a value in an attached env
+   * file" is wrong about this and is overridden here.
+   *
+   * envVars is null until envLoad() below has answered once, and simply
+   * keeps its last answer while a fresh read is in flight — never blanked
+   * back to null for that, or an unrelated rename or upload would flash
+   * every dot off and on. null is only ever seen for the moment right after
+   * a stack opens, and varDots() treats that as "do not know yet" rather
+   * than "nothing is defined": a screenful of warnings that vanish a moment
+   * later is worse than warnings arriving a moment late.
+   */
+  var envVars = null;   // null = not fetched yet; otherwise name -> true
+
+  function envKeys() {
+    return envVars;
+  }
+
+  // "export FOO=1" as well as "FOO=1" — the former is common enough in
+  // hand-written .env files to be worth allowing. A "#" comment line never
+  // matches this at all, since '#' is not a legal first character of NAME.
+  var ENV_KEY_RE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
+
+  // Called from filesLoad() and from runFileSave() after an autosave that
+  // wrote ".env" — the only two moments the answer can go stale. Never
+  // called from relint()/reparse(), so a keystroke in the compose pane never
+  // starts a network request.
+  function envLoad() {
+    var f = null;
+    for (var i = 0; i < FILES.length; i++) {
+      var c = FILES[i];
+      if (c.name === '.env' && !c.dir && !c.link && c.text) { f = c; break; }
+    }
+    if (!f) { envVars = {}; relint(); return; }
+
+    var was = openedName;
+    return call('file-read', { name: openedName, file: '.env' }).then(function (res) {
+      if (openedName !== was) return;   // the editor moved on to a different stack
+      var names = {}, m;
+      if (res && res.ok && !res.binary && typeof res.text === 'string') {
+        var lines = res.text.split('\n');
+        for (var j = 0; j < lines.length; j++) {
+          if ((m = ENV_KEY_RE.exec(lines[j]))) names[m[1]] = true;
+        }
+      }
+      envVars = names;
+      relint();
+    });
+  }
+
+  // parts already reads as English ("${A}", "A and B", "A, B and C") —
+  // shared by the placeholder list and the plain-name list in
+  // varDotMessage() below so the two stay in the same style.
+  function joinEnglish(parts) {
+    if (parts.length < 2) return parts[0] || '';
+    if (parts.length === 2) return parts[0] + ' and ' + parts[1];
+    return parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+  }
+
+  // One line's worth of undefined names -> the gutter dot's tooltip. Always
+  // four sentences' worth: what is missing, why it fails quietly rather than
+  // loudly, the two ways to fix it, and the one place this page cannot see
+  // that may already be fixing it.
+  function varDotMessage(names) {
+    var many = names.length > 1;
+    var placeholders = names.map(function (n) { return '${' + n + '}'; });
+    return joinEnglish(placeholders) + (many ? ' have no values.' : ' has no value.') +
+      ' Compose replaces ' + (many ? 'them' : 'it') + ' with nothing rather than complaining, ' +
+      'so this usually shows up as a setting that looks ignored. Put ' + joinEnglish(names) +
+      ' in this stack\'s .env file, or give ' +
+      (many ? 'each a default, e.g. ${' + names[0] + ':-something}.'
+            : 'it a default with ${' + names[0] + ':-something}.') +
+      ' ' + (many ? 'They' : 'It') +
+      ' may also be coming from this server\'s own environment, which this page cannot see.';
+  }
+
+  // Every YAML.varRefs() hit that is not already "filled" (its own default
+  // or its own loud failure) and whose name is not in envKeys() — one dot
+  // per LINE, not per placeholder, since two undefined names on the same
+  // line are one thing to fix and the gutter has one dot's worth of room.
+  //
+  // [] whenever an input is still unsettled, on purpose: MODEL.ok false
+  // means the file does not parse, so the linter's own error is the useful
+  // message right now rather than a screen of half-typed variables; envKeys()
+  // === null means the .env read has not landed (see the comment on envVars
+  // above).
+  function varDots() {
+    if (!YAML || typeof YAML.varRefs !== 'function') return [];
+    var known = envKeys();
+    if (!MODEL || !MODEL.ok || known === null) return [];
+
+    var byLine = {};
+    YAML.varRefs(yamlPane.value).forEach(function (r) {
+      if (r.filled || known[r.name]) return;
+      var names = byLine[r.line] || (byLine[r.line] = []);
+      if (names.indexOf(r.name) < 0) names.push(r.name);
+    });
+
+    var out = [];
+    for (var line in byLine) {
+      if (!byLine.hasOwnProperty(line)) continue;
+      out.push({ line: parseInt(line, 10), level: 'warn', message: varDotMessage(byLine[line]) });
+    }
+    out.sort(function (a, b) { return a.line - b.line; });
+    return out;
+  }
+
+  // Deliberately the plain, small version: a regular expression straight over
+  // the raw text, not YAML's own variable handling — that fuller pass is not
+  // ready yet (see the comment on fileRefs() in compose-model.js). Every
+  // "${VAR}" with no ":-default" becomes one name, first-appearance order,
+  // no duplicates — good enough for a list of blanks to fill in.
+  function envVarsForPrefill(text) {
+    var names = [], seen = {};
+    var re = /\$\{([A-Za-z_][A-Za-z0-9_]*)([^}]*)\}/g, m;
+    while ((m = re.exec(text))) {
+      if (m[2].slice(0, 2) === ':-') continue;   // already has a default
+      if (!seen[m[1]]) { seen[m[1]] = true; names.push(m[1]); }
+    }
+    return names;
+  }
+
+  // Writes `ref.file` — prefilled with its referenced variables for an
+  // env_file, empty for anything else, since an empty secret or Dockerfile is
+  // the most that can honestly be produced — then opens its tab. A name with
+  // a "/" in it is refused outright: stackman_write_file() only ever writes a
+  // direct child of the stack folder, so the folder itself has to exist on
+  // the server first.
+  function createMissingFile(ref) {
+    var slash = ref.file.indexOf('/');
+    if (slash >= 0) {
+      setYamlStatus('"' + ref.file + '" is inside a folder this cannot create on its own — ' +
+        'make "' + ref.file.slice(0, slash) + '" on the server first, then add the file from there.');
+      return;
+    }
+
+    var isEnv = ref.where === 'env_file';
+    var body = '';
+    if (isEnv) {
+      var names = envVarsForPrefill(currentText());
+      if (names.length) {
+        body = ['# Names taken from this compose file — fill in the values below.']
+          .concat(names.map(function (n) { return n + '='; })).join('\n') + '\n';
+      }
+    }
+
+    call('file-save', { name: openedName, file: ref.file, body: body, encoding: 'text' }).then(function (res) {
+      if (!res || !res.ok) {
+        setYamlStatus((res && res.error) || ('Could not create "' + ref.file + '".'));
+        return;
+      }
+      filesLoad().then(function () {
+        openFile(ref.file);
+        setYamlStatus(isEnv
+          ? 'Created "' + ref.file + '" — fill in its values.'
+          : 'Created "' + ref.file + '" — it is empty and needs its contents.');
+      });
+    });
+  }
+
+  function renderTabs() {
+    if (!tabsBar) return;
+
+    var refs = fileRefMap();
+    var name = tabLabel();
+    var composeActive = fileOpen === null;
+    var rows = [
+      '<button type="button" class="stackman-tab" role="tab" data-file="" ' +
+        'aria-selected="' + (composeActive ? 'true' : 'false') + '" title="' + esc(name) + '">' +
+        '<span class="stackman-tab-name">' + esc(name) + '</span>' + tabDotHtml('') + '</button>' +
+        (composeActive ? tabMenuBtnHtml() : '')
+    ];
+
+    for (var i = 0; i < FILES.length; i++) {
+      var f = FILES[i];
+      // A directory or a link is named in the delete confirmation already,
+      // and neither can be opened here — stackman_read_file() refuses a
+      // link outright, and a directory has no text of its own to show.
+      if (f.compose || f.dir || f.link) continue;
+
+      var active = fileOpen === f.name;
+      var used   = refs[f.name];
+      var cls    = 'stackman-tab';
+      var title  = f.name;
+      if (used) {
+        title = 'Used by ' + (used.length ? used.join(', ') : 'this stack');
+      } else {
+        cls += ' stackman-tab--orphan';
+        title = 'Nothing in the compose file uses this file.';
+      }
+
+      rows.push(
+        '<button type="button" class="' + cls + '" role="tab" data-file="' + esc(f.name) + '" ' +
+          'aria-selected="' + (active ? 'true' : 'false') + '" title="' + esc(title) + '">' +
+          '<span class="stackman-tab-name">' + esc(f.name) + '</span>' + tabDotHtml(f.name) + '</button>' +
+          (active ? tabMenuBtnHtml() : '')
+      );
+    }
+
+    tabsBar.innerHTML = rows.join('');
+    // Left visible even for the bare compose tab — the strip now carries the
+    // New file and Add a file controls beside it (see StacksPage.php), and
+    // those need somewhere to live whether or not there is a second tab yet.
+    // innerHTML above just threw away whatever chevron the open menu, if
+    // any, was positioned against — most callers (a click on another tab)
+    // already close it via the outside-click listener below, but filesLoad()
+    // can land here from a network reply with no click involved at all.
+    closeTabmenu();
+  }
+
+  function filesLoad() {
+    // Guarded the way envLoad() below guards, and for the same reason: this
+    // reply can land after the editor has moved on to another stack, and it
+    // would then draw that stack's tabs over this one's.
+    var was = openedName;
+    return call('files', { name: openedName }).then(function (res) {
+      if (openedName !== was) return;
+
+      // An answer we did not get is not an empty folder. Blanking the list on
+      // a refusal loses the difference between "this stack has no companion
+      // files" and "we never found out" — and it silences the missing-file
+      // note too, since missingRefs() reads the same list and treats empty as
+      // "not landed yet". The server sends a real sentence; show it.
+      if (!res || !res.ok || !res.files) {
+        setYamlStatus((res && res.error) ||
+          'Could not list this stack\'s files. Try "Refresh file list" on the compose tab\'s menu.');
+        return;
+      }
+
+      FILES = res.files;
+      renderTabs();
+      // The set of files just changed without the compose text moving at
+      // all — a reference that was missing a moment ago may not be now, or
+      // vice versa after a delete — so the note is refreshed here too, not
+      // only from reparse().
+      updateMissing();
+      // Same reasoning for .env: an upload, a rename or a delete can add or
+      // remove it without the compose text moving either.
+      envLoad();
+    }).catch(function (e) {
+      // renderTabs() reads the compose text through YAML.fileRefs(), which can
+      // throw on a file it cannot walk. Left to the bare .catch its callers
+      // carry, that produced a strip with no tabs and no explanation — exactly
+      // what a stack with no companion files looks like.
+      setYamlStatus('The file list could not be drawn — ' + ((e && e.message) || e) +
+        '. Try "Refresh file list" on the compose tab\'s menu.');
+    });
+  }
+
+  function fileTabEl(name) {
+    if (!tabsBar) return null;
+    var btns = tabsBar.querySelectorAll('.stackman-tab');
+    for (var i = 0; i < btns.length; i++) {
+      if (btns[i].dataset.file === name) return btns[i];
+    }
+    return null;
+  }
+
+  // The dot lives on the tab, not the strip, precisely so it is still visible
+  // from whatever other tab you move on to — recorded in fileDots first, so
+  // a later renderTabs() (switching tabs again rebuilds the whole strip)
+  // draws it back rather than losing it.
+  function setTabDot(name, state) {
+    if (state === 'hidden') delete fileDots[name]; else fileDots[name] = state;
+    var btn = fileTabEl(name);
+    var dot = btn && btn.querySelector('.stackman-tab-dot');
+    if (!dot) return;
+    dot.hidden = state === 'hidden';
+    dot.classList.toggle('stackman-tab-dot--bad', state === 'bad');
+  }
+
+  var fileSaveTimer = null;
+
+  function runFileSave() {
+    if (fileOpen === null) return Promise.resolve();
+    // See loadCompanion(): only a file whose text actually loaded may be
+    // written back. A binary, or a read that failed, leaves an empty box that
+    // must never reach the disk.
+    if (!fileEditable) return Promise.resolve();
+    var file = fileOpen, body = yamlPane.value;
+    // Nothing typed since the file was loaded or last saved, so there is
+    // nothing to write. Worth the check rather than writing anyway: this is
+    // called on every tab switch and on closing the editor, and stacks live
+    // on the flash drive by default, which has a finite number of writes.
+    if (body === fileAtLoad) return Promise.resolve();
+    return call('file-save', { name: openedName, file: file, body: body, encoding: 'text' })
+      .then(function (res) {
+        if (!res || !res.ok) {
+          // Left ON, deliberately — the file on disk is now out of step with
+          // what is on screen, and that has to stay visible from any tab.
+          setTabDot(file, 'bad');
+          if (fileOpen === file) setYamlStatus((res && res.error) || ('Could not save "' + file + '".'));
+          return;
+        }
+        // The saved text becomes the new baseline — not yamlPane.value, which
+        // may have moved on while the request was in flight and would then
+        // count typing that has not been written as already saved.
+        if (fileOpen === file) fileAtLoad = body;
+        setTabDot(file, 'hidden');
+        if (fileOpen === file) setYamlStatus('Saved');
+        // The other moment envKeys() can go stale — see envLoad()'s comment.
+        // filesLoad() is not involved in an autosave, so nothing else would
+        // notice this write.
+        if (file === '.env') envLoad();
+      });
+  }
+
+  // Cancels the debounce and sends at once, so a tab switch or the editor
+  // closing can wait for a pending edit to land before the box moves on.
+  function flushFileSave() {
+    if (fileSaveTimer) { clearTimeout(fileSaveTimer); fileSaveTimer = null; }
+    return runFileSave();
+  }
+
+  yamlPane.addEventListener('input', function () {
+    if (fileOpen === null) return;
+    setTabDot(fileOpen, 'pending');
+    if (fileSaveTimer) clearTimeout(fileSaveTimer);
+    fileSaveTimer = setTimeout(function () { fileSaveTimer = null; runFileSave(); }, 1000);
+  });
+
+  // Two titles, used from both directions so they cannot say different things
+  // depending on which way you crossed. FORM_GATE_TITLE is the Form button's
+  // alone — Split stays available on a companion tab, and setFormGate() knows
+  // to leave Form gated while one is open.
+  var FORM_GATE_TITLE = 'This file is edited in the Compose pane — choose Split to see the compose form beside it.';
+  var FILE_TAB_TITLE  = 'The compose file is on the first tab.';
+  var sanitiseTitleWas = sanitiseBox.title;
+  // The box's own placeholder is an example compose file. Held aside so a
+  // companion tab can drop it: on an empty new file it reads as though the
+  // file already held somebody else's YAML.
+  var yamlPlaceholder = yamlPane.placeholder;
+
+  // The compose form stays on screen beside a companion file, but it edits the
+  // compose file and nothing else — so while one is open it is there to read.
+  // Text boxes go readOnly rather than disabled because a disabled box's value
+  // cannot be selected, and copying a value out of the form is most of the
+  // reason for showing it at all. Tick boxes and dropdowns have no read-only
+  // state, so those and the buttons are disabled outright.
+  //
+  // One direction only: the way back to the compose file re-renders the form
+  // from scratch, which unlocks it without keeping any record of what was
+  // already off — the fiddly half of the same job in setSanitised().
+  function lockForm() {
+    var els = formHost.querySelectorAll('input, textarea, select, button');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.tagName === 'TEXTAREA' ||
+          (el.tagName === 'INPUT' && el.type !== 'checkbox' && el.type !== 'radio')) {
+        el.readOnly = true;
+      } else {
+        el.disabled = true;
+      }
+    }
+  }
+
+  // Disables (on) or restores (off) everything that only ever acts on the
+  // compose file. One function for both directions, called from openFile()
+  // each way, so they cannot drift apart.
+  function fileChrome(on) {
+    var formBtn = modal.querySelector('.stackman-viewbtn[data-view="form"]');
+    if (formBtn) { formBtn.disabled = on; formBtn.title = on ? FORM_GATE_TITLE : ''; }
+    // Split is deliberately left alone. The compose form beside a companion
+    // file is what says which service reads that file and what it has to
+    // define, which is worth more than the pane it costs.
+    if (on) lockForm();
+
+    if (refNote) {
+      refNote.textContent = on
+        ? 'Showing the compose file for reference while "' + fileOpen +
+          '" is open. Switch to its tab to make changes.'
+        : '';
+      refNote.hidden = !on;
+    }
+
+    yamlPane.placeholder = on ? '' : yamlPlaceholder;
+
+    saveBtn.disabled  = on || sanitised;
+    saveBtn.title     = on ? FILE_TAB_TITLE : '';
+    // Save and start carries its own server-side gate (compose or Docker
+    // missing) — restored here rather than simply switched back on.
+    startBtn.disabled = on || sanitised || startBtnWasDisabled;
+    startBtn.title    = on ? FILE_TAB_TITLE : '';
+    sanitiseBox.disabled = on;
+    sanitiseBox.title    = on ? FILE_TAB_TITLE : sanitiseTitleWas;
+    undoBtn.title = on ? FILE_TAB_TITLE : '';
+    if (on) undoBtn.disabled = true; else updateUndo();   // updateUndo() knows the real stack, not just "on"
+  }
+
+  // filename -> its size, read off the last `files` listing — the only
+  // place the server tells the browser how big a companion is.
+  function binFileSize(name) {
+    for (var i = 0; i < FILES.length; i++) {
+      if (FILES[i].name === name) return FILES[i].size;
+    }
+    return null;
+  }
+
+  // Certificates and key files are the reason a binary file is accepted at
+  // all — this is what stands in for an editor it cannot usefully offer one.
+  //
+  // bytes() is the stats table's formatter, declared further down and reached
+  // by hoisting. Every size on this page reads the same way because there is
+  // one of it; a second formatter here would quietly disagree with the delete
+  // confirmation's list about how big the same file is.
+  function showBinPanel(name) {
+    if (!binPanel) return;
+    binName.textContent = name;
+    var n = binFileSize(name);
+    var size = n == null ? '' : bytes(n);
+    var type = fileMime[name];
+    binMeta.textContent = type ? (size + ' — ' + type) : size;
+    binPanel.hidden = false;
+  }
+
+  function hideBinPanel() {
+    if (binPanel) binPanel.hidden = true;
+  }
+
+  // Reads a companion file and puts it on screen — pulled out of openFile()
+  // so the Replace… flow (further down) can redraw a tab without it, since a
+  // replacement can turn a binary file into a text one or back and both have
+  // to redraw exactly as a fresh open would.
+  function loadCompanion(name) {
+    // Nothing may be written back until a read has actually succeeded and
+    // handed us the file's own text. Without this the empty box shown for a
+    // binary — or for a file that failed to load at all — counts as an edit,
+    // and switching tabs saves that emptiness over the real file. It did:
+    // opening a certificate's tab and clicking away truncated it to nothing.
+    fileEditable = false;
+    return call('file-read', { name: openedName, file: name }).then(function (res) {
+      if (fileOpen !== name) return;   // the tab moved on again before this answered
+      if (!res || !res.ok) {
+        setYamlStatus((res && res.error) || ('Could not read "' + name + '".'));
+        return;
+      }
+      if (res.binary) {
+        yamlPane.readOnly = true;
+        yamlPane.value = '';
+        showBinPanel(name);
+        return;
+      }
+      hideBinPanel();
+      yamlPane.readOnly = false;
+      yamlPane.value = res.text;
+      fileAtLoad = res.text;
+      fileEditable = true;
+      paintGutter();
+      paintInk();
+      syncGutter();
+    });
+  }
+
+  // name is '' for the compose file, or a companion's filename.
+  function openFile(name) {
+    name = name || '';
+    if (name === (fileOpen || '')) return Promise.resolve();   // already the tab on screen
+
+    // A form edit still on its timer belongs to the compose file, and this is
+    // the last moment the box is still showing it — the same reason the folder
+    // picker flushes before it opens.
+    flushPending();
+
+    // Returned (nothing used to) so the env-file offer below can wait for
+    // the switch back to the compose tab to actually land before it writes
+    // to MODEL.doc — this and that are the only callers that need to know.
+    return flushFileSave().then(function () {
+      if (name === '') {
+        // Back to the compose tab: hand the box the real text and the view
+        // back, and let reparse() rebuild everything that depends on it.
+        fileOpen = null;
+        hideBinPanel();   // easy to forget — the panel covers the box, not just a companion tab's own text
+        yamlPane.readOnly = false;
+        yamlPane.value = fileStash;
+        fileChrome(false);
+        setView(viewBeforeFile || defaultView());
+        paintGutter();
+        paintInk();
+        syncGutter();
+        reparse();
+        renderTabs();
+        return;
+      }
+
+      if (fileOpen === null) {
+        // Leaving the compose tab. Sanitise redacts the compose file only —
+        // turned off through its own path (setSanitised()) so every control
+        // it disables comes back in step, not just the box's own text.
+        if (sanitised) { sanitiseBox.checked = false; setSanitised(false); }
+        fileStash = yamlPane.value;
+        viewBeforeFile = modalBody.dataset.view;
+      }
+
+      fileOpen = name;
+      hideBinPanel();   // last tab's panel, if any, would otherwise sit over this one while the read is in flight
+      fileChrome(true);
+      setView(modalBody.dataset.view);   // setView() coerces Form to Split; any other view is kept
+      closeOutline();   // yesterday's — this stack's own compose file's — structure means nothing here
+      renderTabs();
+
+      loadCompanion(name);
+    });
+  }
+
+  if (tabsBar) {
+    tabsBar.addEventListener('click', function (event) {
+      var menuBtn = event.target.closest('.stackman-tab-menubtn');
+      if (menuBtn) {
+        // Stopped here, same reasoning the Outline button gives for its own
+        // click: left to bubble, the document-level "click outside"
+        // listener below would see this same click and close what it just
+        // opened.
+        event.stopPropagation();
+        if (tabmenuOpen()) closeTabmenu(); else openTabmenu(menuBtn);
+        return;
+      }
+      var btn = event.target.closest('.stackman-tab');
+      if (btn) openFile(btn.dataset.file || '');
+    });
+  }
+
+  /* ---- the active tab's menu: Rename, Delete, Download -----------------
+   *
+   * One menu, for whichever tab is active — a menu on a tab you are not
+   * looking at would act on a file you cannot see. Modelled on the Outline
+   * button and #stackman-outline (openOutline()/closeOutline() above), not
+   * on #stackman-menu: that one lives outside this <dialog>, and a dialog
+   * opened with showModal() paints in the top layer above anything outside
+   * it, so it would be invisible here regardless of z-index.
+   */
+
+  function tabMenuBtnHtml() {
+    return '<button type="button" class="stackman-chevron stackman-tab-menubtn" ' +
+           'aria-haspopup="menu" aria-expanded="false" title="' + esc('File options') + '">' +
+           '<i class="fa fa-chevron-down" aria-hidden="true"></i></button>';
+  }
+
+  function tabmenuOpen() {
+    return !!(tabmenuPanel && !tabmenuPanel.hidden);
+  }
+
+  function closeTabmenu() {
+    if (!tabmenuOpen()) return;
+    tabmenuPanel.hidden = true;
+    tabmenuPanel.innerHTML = '';
+    var btn = tabsBar && tabsBar.querySelector('.stackman-tab-menubtn');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  }
+
+  // The compose tab's own menu offers Download only — renaming it would
+  // change which file compose runs, and deleting it deletes the stack, so
+  // both are said plainly rather than shown as two items nobody can use.
+  function tabmenuItemsHtml() {
+    if (fileOpen === null) {
+      return '<div class="stackman-tabmenu-note">Renaming or deleting this file would change ' +
+             'which file compose runs, or delete the stack — do either from the stack list ' +
+             'instead.</div>' +
+             // Re-reads the folder. The listing is otherwise fetched once, when
+             // the editor opens, so this is the way back from a listing that
+             // failed or from a file put there by something other than this page.
+             '<div class="stackman-tabmenu-row" role="menuitem" data-act="refresh">Refresh file list</div>' +
+             '<div class="stackman-tabmenu-row" role="menuitem" data-act="download">Download</div>';
+    }
+    return '<div class="stackman-tabmenu-row" role="menuitem" data-act="rename">Rename</div>' +
+           '<div class="stackman-tabmenu-row" role="menuitem" data-act="delete">Delete</div>' +
+           '<div class="stackman-tabmenu-row" role="menuitem" data-act="download">Download</div>';
+  }
+
+  // Positioned in pixels against the chevron that opened it, the same
+  // technique placeCaretPanel() (further down) uses to follow the caret —
+  // the active tab can be anywhere along a strip that scrolls sideways, so
+  // there is nothing fixed here to hang a CSS-only position off, unlike
+  // #stackman-outline's own button.
+  function openTabmenu(btn) {
+    if (!tabmenuPanel) return;
+    tabmenuPanel.innerHTML = tabmenuItemsHtml();
+    tabmenuPanel.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+
+    var pane = tabmenuPanel.parentElement;
+    var paneRect = pane.getBoundingClientRect();
+    var btnRect  = btn.getBoundingClientRect();
+    var left = btnRect.left - paneRect.left;
+    var maxLeft = pane.clientWidth - tabmenuPanel.offsetWidth;
+    tabmenuPanel.style.left = Math.max(0, Math.min(left, maxLeft)) + 'px';
+    tabmenuPanel.style.top  = (btnRect.bottom - paneRect.top) + 'px';
+  }
+
+  if (tabmenuPanel) {
+    tabmenuPanel.addEventListener('click', function (event) {
+      var row = event.target.closest('.stackman-tabmenu-row');
+      if (!row) return;
+      var act = row.dataset.act;
+      closeTabmenu();
+      if (act === 'rename') renameFile();
+      else if (act === 'delete') deleteFile();
+      else if (act === 'download') downloadFile();
+      else if (act === 'refresh') filesLoad();
+    });
+  }
+
+  // A file can arrive in the folder from a terminal, a share, or another
+  // browser tab, and the listing is otherwise only fetched when the editor
+  // opens. Coming back to the window is the moment to catch up — cheap, since
+  // this is one directory read, and skipped entirely while the editor is shut.
+  var filesFocusTimer = null;
+  window.addEventListener('focus', function () {
+    if (!modal.open || modal.dataset.new === '1') return;
+    if (filesFocusTimer) return;   // several focus events can arrive together
+    filesFocusTimer = setTimeout(function () {
+      filesFocusTimer = null;
+      if (modal.open && modal.dataset.new !== '1') filesLoad();
+    }, 400);
+  });
+
+  document.addEventListener('click', function (event) {
+    if (!modal.open || !tabmenuOpen()) return;
+    if (event.target.closest('.stackman-tabmenu') || event.target.closest('.stackman-tab-menubtn')) return;
+    closeTabmenu();
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape' || !modal.open || !tabmenuOpen()) return;
+    // preventDefault here, not left to the dialog's own Escape-closes-me
+    // action, is the same trick the outline panel relies on — it is what
+    // keeps this closing only the tab menu rather than the whole editor.
+    event.preventDefault();
+    closeTabmenu();
+  });
+
+  // The server's own rules (stackman_valid_filename() and STACKMAN_FILE_MAX
+  // in Stacks.php), mirrored here so an obviously bad name or an oversized
+  // file is refused before a round trip — not so the server-side check can
+  // be skipped.
+  var FILENAME_RE = /^\.?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+  var COMPOSE_FILENAMES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'];
+  var STACKMAN_FILE_MAX = 262144;   // 256 KB
+
+  function validFilename(file) {
+    if (!file || file.length > 63) return false;
+    if (file.indexOf('..') !== -1 || file.indexOf('/') !== -1) return false;
+    if (!FILENAME_RE.test(file)) return false;
+    return COMPOSE_FILENAMES.indexOf(file.toLowerCase()) === -1;
+  }
+
+  // window.prompt, not a dialog — this file already uses window.prompt and
+  // window.confirm for one-line questions, and a dialog would be more
+  // furniture than "what should this be called?" needs.
+  function renameFile() {
+    var name = fileOpen;
+    if (name === null) return;   // the compose tab has no Rename item
+
+    var to = window.prompt('Rename "' + name + '" to:', name);
+    if (to === null) return;   // cancelled
+    to = to.trim();
+    if (to === name || to === '') return;
+
+    if (!validFilename(to)) {
+      setYamlStatus('File names may contain letters, numbers, dots, dashes and underscores, ' +
+                     'must be 63 characters or fewer, and may not be a compose file.');
+      return;
+    }
+
+    call('file-rename', { name: openedName, file: name, to: to }).then(function (res) {
+      if (!res || !res.ok) {
+        setYamlStatus((res && res.error) || ('Could not rename "' + name + '".'));
+        return;
+      }
+      // The pending-autosave dot, if any, follows the file to its new name —
+      // otherwise it would keep showing under a filename no tab has any more.
+      if (fileDots[name] !== undefined) { fileDots[to] = fileDots[name]; delete fileDots[name]; }
+      // fileOpen has to end up holding the new name, or the next autosave
+      // (runFileSave() keys off it) would write to a file that no longer
+      // exists.
+      if (fileOpen === name) fileOpen = to;
+      filesLoad();
+    });
+  }
+
+  // Deletes the file on the active tab. A file nothing references only
+  // needs one sentence, so window.confirm() is enough for that case — the
+  // same reasoning openFile()'s comments give for using window.prompt above.
+  // A file the compose file DOES reference needs more than one sentence, so
+  // that case goes through #stackman-confirm via askConfirm() instead.
+  function deleteFile() {
+    var name = fileOpen;
+    if (name === null) return;   // the compose tab has no Delete item
+
+    function go() {
+      // Whatever autosave was pending is moot the moment the file is gone —
+      // cleared rather than flushed, or the next tick would recreate the
+      // file it was just asked to delete.
+      if (fileSaveTimer) { clearTimeout(fileSaveTimer); fileSaveTimer = null; }
+      call('file-delete', { name: openedName, file: name }).then(function (res) {
+        if (!res || !res.ok) {
+          setYamlStatus((res && res.error) || ('Could not delete "' + name + '".'));
+          return;
+        }
+        if (fileOpen === name) {
+          fileAtLoad = yamlPane.value;   // nothing left to autosave — mark it clean
+          openFile('');
+        }
+        filesLoad();
+      });
+    }
+
+    var users = fileRefMap()[name];
+    if (!users) {
+      if (window.confirm('Delete "' + name + '"? This cannot be undone.')) go();
+      return;
+    }
+
+    var who = users.length ? users.join(', ') : 'this stack';
+    askConfirm({
+      title: 'Delete "' + name + '"?',
+      bodyHtml:
+        '<p>The compose file uses "' + esc(name) + '" — ' + esc(who) + ' will stop working ' +
+        'until it is put back or the reference is removed.</p>' +
+        '<p>This only removes "' + esc(name) + '" itself; the compose file is left exactly as ' +
+        'it is.</p>',
+      goLabel: 'Delete file'
+    }).then(function (goAhead) {
+      closeConfirm();
+      if (goAhead) go();
+    });
+  }
+
+  function base64ToBytes(b64) {
+    var bin = atob(b64), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  // data is a string (text) or a Uint8Array (binary) — either is a valid
+  // Blob part. The object URL is revoked in a finally, or every download
+  // leaks the whole file until the page is closed.
+  function triggerDownload(name, data) {
+    var url = URL.createObjectURL(new Blob([data]));
+    try {
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  // The compose file's own text is already on screen, so that tab downloads
+  // it with no round trip. A companion file is not necessarily loaded —
+  // read() it fresh, so Download works for a file that is not the one open.
+  function downloadFile() {
+    if (fileOpen === null) { triggerDownload(tabLabel(), currentText()); return; }
+
+    var name = fileOpen;
+    call('file-read', { name: openedName, file: name }).then(function (res) {
+      if (!res || !res.ok) {
+        setYamlStatus((res && res.error) || ('Could not read "' + name + '".'));
+        return;
+      }
+      triggerDownload(name, res.binary ? base64ToBytes(res.b64) : res.text);
+    });
+  }
+
+  /* ---- uploading and creating files ---------------------------------------
+   *
+   * Deliberately not a file upload — call()'s own comment (above, near
+   * where it builds URLSearchParams) explains why FormData is off the table
+   * on this server. The browser reads the dropped or picked file itself with
+   * FileReader, and the bytes go up through call() exactly like any other
+   * field: text as text, binary as base64. */
+
+  // Matches stackman_looks_text() in Stacks.php — the first 8 KB with no NUL
+  // byte is text — so a file this decides is text can never come back from
+  // the server reading as binary, or vice versa.
+  function looksText(bytes) {
+    var n = Math.min(bytes.length, 8192);
+    for (var i = 0; i < n; i++) if (bytes[i] === 0) return false;
+    return true;
+  }
+
+  // btoa() takes a string. String.fromCharCode.apply(null, bytes) blows the
+  // argument limit and throws once bytes gets into the tens of thousands, so
+  // the string is built a chunk at a time instead.
+  function bytesToBase64(bytes) {
+    var CHUNK = 8192, parts = [];
+    for (var i = 0; i < bytes.length; i += CHUNK) {
+      parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK)));
+    }
+    return btoa(parts.join(''));
+  }
+
+  // Resolves to {name, body, encoding} or rejects with a sentence naming the
+  // file and the reason. The size is checked off the File object itself,
+  // before anything is read — a multi-gigabyte drop fails at once rather
+  // than after it has all been pulled into memory.
+  function readUpload(file) {
+    if (file.size > STACKMAN_FILE_MAX) {
+      return Promise.reject('"' + file.name + '" is ' + bytes(file.size) +
+        ', over the 256 KiB limit for a file kept alongside a stack.');
+    }
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onerror = function () { reject('"' + file.name + '" could not be read from this computer.'); };
+      reader.onload = function () {
+        var bytes = new Uint8Array(reader.result);
+        if (looksText(bytes)) {
+          resolve({ name: file.name, body: new TextDecoder('utf-8').decode(bytes), encoding: 'text' });
+        } else {
+          resolve({ name: file.name, body: bytesToBase64(bytes), encoding: 'base64' });
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  // Saves body/encoding under `name`, asking first if that would replace a
+  // file already in the folder. Resolves to the name once it has landed, or
+  // to null if the overwrite was declined — never rejects for that, since a
+  // decline is not a failure a batch upload needs to report.
+  function saveUpload(name, body, encoding) {
+    if (!validFilename(name)) {
+      return Promise.reject('"' + name + '" is not a name this can use — file names may contain ' +
+        'letters, numbers, dots, dashes and underscores, must be 63 characters or fewer, and may ' +
+        'not be a compose file.');
+    }
+    var exists = FILES.some(function (f) { return f.name === name && !f.dir; });
+    if (exists && !window.confirm('"' + name + '" is already in this folder. Replace it?')) {
+      return Promise.resolve(null);
+    }
+    return call('file-save', { name: openedName, file: name, body: body, encoding: encoding })
+      .then(function (res) {
+        if (!res || !res.ok) return Promise.reject((res && res.error) || ('Could not save "' + name + '".'));
+        return name;
+      });
+  }
+
+  /* ---- offering to wire a freshly added settings file in ---------------
+   *
+   * Only ever offered right after an add — never a Replace (the file kept
+   * whatever wiring it already had) and never a rename. uploadFiles() and
+   * newFile() below each know, at the point they call in, whether what just
+   * landed is genuinely new. */
+
+  var ENV_LINE_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+  // By name first — unambiguous, and needs no peek at the content — and only
+  // then by sniffing lines for KEY=value pairs, since a couple of those turn
+  // up by coincidence in all sorts of files that are not settings at all.
+  function looksEnvFile(name, text) {
+    if (name === '.env' || name.slice(0, 5) === '.env.' || name.slice(-4) === '.env') return true;
+
+    var lines = String(text == null ? '' : text).split('\n');
+    var total = 0, hits = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (line === '' || line.charAt(0) === '#') continue;
+      total++;
+      if (ENV_LINE_RE.test(line)) hits++;
+    }
+    return total >= 2 && hits / total >= 0.8;
+  }
+
+  // Which services already read `name` as an env_file, keyed by service
+  // name — used both to grey those rows out in the picker below and to skip
+  // the offer altogether when every service already has it.
+  function envFileServices(name) {
+    var out = {};
+    fileRefsSafe().forEach(function (r) {
+      if (r.file === name && r.where === 'env_file' && r.service) out[r.service] = true;
+    });
+    return out;
+  }
+
+  // Two extra paragraphs first for a file named exactly ".env" — Compose
+  // already reads that name on its own, with no env_file: at all, and
+  // confusing the two is the single most common mistake with settings files.
+  function envPickBodyHtml(name, services, already) {
+    var rows = services.map(function (svc) {
+      var got = !!already[svc.name];
+      return '<li><label><input type="checkbox" data-service="' + esc(svc.name) + '" checked' +
+             (got ? ' disabled' : '') + '> ' + esc(svc.name) +
+             (got ? ' <span class="stackman-envpick-already">(already)</span>' : '') +
+             '</label></li>';
+    }).join('');
+
+    var intro = '<p>This looks like a list of settings. Tick the services that should read it.</p>';
+    if (name === '.env') {
+      intro = '<p>A file named exactly ".env" is already special to Compose: it is read on its ' +
+        'own to fill in <code>${...}</code> placeholders inside the compose file, with no ' +
+        '<code>env_file:</code> entry at all. That happens whether or not anything below is ' +
+        'ticked.</p>' +
+        '<p><code>env_file:</code> is a different thing — it passes these settings into the ' +
+        'containers themselves. Both are useful, and the two get confused constantly.</p>' + intro;
+    }
+    return intro + '<ul class="stackman-confirm-list stackman-envpick">' + rows + '</ul>';
+  }
+
+  // Asks, then wires `name` in as an env_file for whichever services were
+  // ticked — see YAML.addItem's own call site in formHost's click handler
+  // above for the add/undo/repaint pattern this follows.
+  function envPickAndWire(name, body) {
+    if (!looksEnvFile(name, body)) return Promise.resolve();
+    if (!MODEL || !MODEL.ok) return Promise.resolve();   // nothing safe to edit
+    var services = MODEL.services || [];
+    if (!services.length) return Promise.resolve();
+
+    var already = envFileServices(name);
+    if (services.every(function (svc) { return already[svc.name]; })) return Promise.resolve();
+
+    return askConfirm({
+      title: 'Use "' + name + '" in this stack?',
+      bodyHtml: envPickBodyHtml(name, services, already),
+      goLabel: 'Add to compose file'
+    }).then(function (goAhead) {
+      // Read the ticks before anything else, while the dialog's own body is
+      // still the one this askConfirm() call filled in — openFile('') just
+      // below hands the box to a different tab, and nothing past that point
+      // is a safe place left to still be reading this markup from.
+      var picked = [];
+      if (goAhead) {
+        confirmBody.querySelectorAll('input[data-service]').forEach(function (box) {
+          if (box.checked && !box.disabled) picked.push(box.dataset.service);
+        });
+      }
+      closeConfirm();
+      if (!picked.length) return;
+
+      // The tab on screen right now is the settings file that just landed,
+      // not the compose file — MODEL.doc is still the compose document
+      // underneath it. Writing the edit out without switching back first
+      // would serialise the compose file's own YAML into the settings
+      // file's tab and corrupt it.
+      return openFile('').then(function () {
+        flushPending();
+        pushUndo('adding "' + name + '" as an env_file');
+        var lastLine = -1, failed = [];
+        picked.forEach(function (svc) {
+          var line = YAML.addItem(MODEL.doc, MODEL, svc, 'list', name, 'env_file');
+          if (line < 0) failed.push(svc); else lastLine = line;
+        });
+        // Nothing changed, so there is nothing to undo — matches what the
+        // single-item Add button does on its own -1.
+        if (lastLine < 0) { undoStack.pop(); updateUndo(); }
+        structuralEdit(lastLine, null);
+        renderTabs();   // the file just stopped being an orphan, on however many services landed
+
+        var added = picked.length - failed.length, parts = [];
+        if (added) {
+          parts.push('Added "' + name + '" as an env_file for ' + added +
+                      ' service' + (added === 1 ? '' : 's') + '.');
+        }
+        if (failed.length) {
+          parts.push('Could not add it for ' + failed.join(', ') + ' — that env_file is written ' +
+                      'in a way the form cannot add to; use the Compose view instead.');
+        }
+        setYamlStatus(parts.join(' '));
+      });
+    });
+  }
+
+  // Sends a batch one at a time, not all at once, so a failure names the
+  // file it belongs to rather than racing several requests against each
+  // other. Ends by opening the last file that landed, and reporting through
+  // setYamlStatus() what landed plus the first refusal, with a count of any
+  // others.
+  function uploadFiles(fileList) {
+    var files = Array.prototype.slice.call(fileList);
+    var landed = [], lastName = null, firstError = null, errorCount = 0;
+
+    // Snapshotted once, before any of this batch lands, so a file replaced
+    // partway through a multi-file drop is never mistaken for a fresh add —
+    // the settings-file offer below is only ever about one that has just
+    // arrived, not one that already had a place (and wiring) in the folder.
+    var hadAlready = {};
+    FILES.forEach(function (f) { if (!f.dir) hadAlready[f.name] = true; });
+    var freshAdds = [];
+
+    return files.reduce(function (chain, file) {
+      return chain
+        .then(function () { return readUpload(file); })
+        .then(function (r) {
+          return saveUpload(r.name, r.body, r.encoding).then(function (name) {
+            if (!name) return;
+            landed.push(name);
+            lastName = name;
+            // Binaries never look like settings, so only text is worth
+            // carrying the body along for — see looksEnvFile()'s own note.
+            if (!hadAlready[name] && r.encoding === 'text') freshAdds.push({ name: name, body: r.body });
+          });
+        })
+        .catch(function (msg) { if (firstError === null) firstError = msg; else errorCount++; });
+    }, Promise.resolve()).then(function () {
+      return filesLoad().then(function () {
+        if (lastName) openFile(lastName);
+        var parts = [];
+        if (landed.length) {
+          parts.push(landed.length + ' file' + (landed.length === 1 ? '' : 's') + ' added.');
+        }
+        if (firstError) {
+          parts.push(firstError + (errorCount ? ' (' + errorCount + ' more failed.)' : ''));
+        }
+        setYamlStatus(parts.join(' ') || 'Nothing to add.');
+
+        // One at a time, in order — several of these dialogs stacked on top
+        // of each other would be worse than a short queue of them.
+        return freshAdds.reduce(function (chain, f) {
+          return chain.then(function () { return envPickAndWire(f.name, f.body); });
+        }, Promise.resolve());
+      });
+    });
+  }
+
+  if (fileAddBtn && fileInput) {
+    fileAddBtn.addEventListener('click', function () { fileInput.click(); });
+  }
+
+  // window.prompt, same reasoning renameFile() gives above for using it over
+  // a dialog — "what should this be called?" is one line, not a form.
+  function newFile() {
+    var name = window.prompt('New file name:');
+    if (name === null) return;   // cancelled
+    name = name.trim();
+    if (!name) return;
+
+    var existed = FILES.some(function (f) { return f.name === name && !f.dir; });
+    saveUpload(name, '', 'text').then(function (landed) {
+      if (!landed) return;
+      return filesLoad().then(function () {
+        openFile(landed);
+        if (!existed) return envPickAndWire(landed, '');
+      });
+    }).catch(function (msg) { setYamlStatus(msg); });
+  }
+
+  if (fileNewBtn) fileNewBtn.addEventListener('click', newFile);
+
+  // The picker driving both Add a file (multiple) and Replace… on the binary
+  // panel (one file, standing in for whatever is already on the active tab —
+  // set just below). Cleared afterwards regardless of outcome, or picking
+  // the same file twice in a row does nothing the second time.
+  if (fileInput) {
+    fileInput.addEventListener('change', function () {
+      var picked = fileInput.files;
+      var target = fileReplaceTarget;
+      fileReplaceTarget = null;
+      fileInput.multiple = true;   // Replace… below turns this off for one pick only
+
+      if (picked && picked.length) {
+        if (target !== null) {
+          var chosen = picked[0];
+          readUpload(chosen).then(function (r) {
+            fileMime[target] = chosen.type || null;
+            return call('file-save', { name: openedName, file: target, body: r.body, encoding: r.encoding });
+          }).then(function (res) {
+            if (!res || !res.ok) throw (res && res.error) || ('Could not save "' + target + '".');
+            return filesLoad().then(function () {
+              // A replacement can turn a binary file into a text one or
+              // back — loadCompanion() redraws the tab either way, exactly
+              // as opening it fresh would.
+              if (fileOpen === target) loadCompanion(target);
+              setYamlStatus('Replaced "' + target + '".');
+            });
+          }).catch(function (msg) { setYamlStatus(String(msg)); });
+        } else {
+          uploadFiles(picked);
+        }
+      }
+      fileInput.value = '';
+    });
+  }
+
+  if (binPut) {
+    // Replace… keeps the name already on the tab, whatever the chosen file
+    // is called — a certificate gets renewed and stays the file every
+    // service already points at, rather than landing under a new name that
+    // nothing references.
+    binPut.addEventListener('click', function () {
+      if (fileOpen === null || !fileInput) return;
+      fileReplaceTarget = fileOpen;
+      fileInput.multiple = false;
+      fileInput.click();
+    });
+  }
+
+  if (binGet) binGet.addEventListener('click', downloadFile);
+
+  // Dropping is anywhere on the editor, not just the strip — listened for on
+  // the modal body, which covers both panes. preventDefault() on dragenter
+  // AND dragover: without both the browser treats the drop as opening the
+  // file in the tab instead of handing it to this listener, and a drop
+  // inside the textarea itself would insert the file's path as text.
+  if (modalBody) {
+    modalBody.addEventListener('dragenter', function (event) {
+      event.preventDefault();
+      modalBody.classList.add('stackman-dragover');
+    });
+    modalBody.addEventListener('dragover', function (event) { event.preventDefault(); });
+    modalBody.addEventListener('dragleave', function () {
+      modalBody.classList.remove('stackman-dragover');
+    });
+    modalBody.addEventListener('drop', function (event) {
+      event.preventDefault();
+      modalBody.classList.remove('stackman-dragover');
+      if (event.dataTransfer && event.dataTransfer.files.length) uploadFiles(event.dataTransfer.files);
+    });
+  }
 
   // Replaces one range with text via execCommand, falling back to setRangeText
   // — the same pairing every call site here uses, because execCommand is what
@@ -4883,6 +6332,7 @@
 
   function runSuggest() {
     suggestTimer = null;
+    if (fileOpen !== null) return;   // a companion file has no compose keys to suggest
     if (!suggestBox) return;
     if (!YAML || typeof YAML.keySuggestions !== 'function') return;   // not landed yet
     if (yamlPane.readOnly) return;
@@ -4982,6 +6432,7 @@
 
   function runHover(clientX, clientY) {
     hoverTimer = null;
+    if (fileOpen !== null) return;   // a companion file has no compose keys to explain
     if (!keyHelp) return;
     if (suggestOpen()) return;   // one panel at a time — see showSuggest()
 
@@ -5279,7 +6730,12 @@
   function findReplaceOne() {
     if (!findBar) return;
     if (yamlPane.readOnly) {
-      setYamlStatus('Turn off Sanitise to replace text — it only edits the redacted copy on screen, not the file.');
+      // Read-only means one of two different things now — a redacted compose
+      // copy, or a binary companion this box cannot show at all — and the two
+      // need two different sentences.
+      setYamlStatus(fileOpen !== null
+        ? 'That file is not text, so it cannot be edited here.'
+        : 'Turn off Sanitise to replace text — it only edits the redacted copy on screen, not the file.');
       return;
     }
     if (findDebounceTimer) { clearTimeout(findDebounceTimer); findDebounceTimer = null; findRun(); }
@@ -5297,7 +6753,10 @@
   function findReplaceAll() {
     if (!findBar) return;
     if (yamlPane.readOnly) {
-      setYamlStatus('Turn off Sanitise to replace text — it only edits the redacted copy on screen, not the file.');
+      // See findReplaceOne()'s own comment — read-only has two causes now.
+      setYamlStatus(fileOpen !== null
+        ? 'That file is not text, so it cannot be edited here.'
+        : 'Turn off Sanitise to replace text — it only edits the redacted copy on screen, not the file.');
       return;
     }
     if (findDebounceTimer) { clearTimeout(findDebounceTimer); findDebounceTimer = null; }
@@ -5475,6 +6934,11 @@
   }
 
   function save(thenStart) {
+    // A no-op in practice — Save is disabled whenever a companion tab is on
+    // screen — but the compose file is what gets written next, so any pending
+    // autosave for another file must be on its way to disk first regardless.
+    flushFileSave();
+
     var leaf  = nameInput.value.trim();
     var isNew = modal.dataset.new === '1';
 
@@ -6139,23 +7603,187 @@
     });
   }
 
-  function deleteStack(name, label) {
-    var where = label === name ? '' : ' Its folder, "' + name + '", goes with it.';
+  // One row of the delete confirmation's file list: a plain file shows its
+  // size, a subdirectory shows how many entries it holds one level down, and
+  // a symlink is called out on its own — stackman_rmtree() unlinks a symlink
+  // rather than following it, so whatever one points at is never touched.
+  //
+  // bytes() is the stats table's formatter, declared further down and reached
+  // by hoisting. A second one here would shadow it for the whole IIFE and
+  // change every memory figure on the page, which is exactly what happened.
+  function extraLine(e) {
+    var meta;
+    if (e.link) {
+      meta = 'link — what it points to is left alone';
+    } else if (e.dir) {
+      meta = e.count === 0 ? 'empty' : e.count + (e.count === 1 ? ' file' : ' files');
+    } else {
+      meta = bytes(e.size);
+    }
+    return '<li><code>' + esc(e.name) + '</code><span class="stackman-confirm-meta">' +
+           esc(meta) + '</span></li>';
+  }
 
-    if (!window.confirm(
-          'Delete "' + label + '"?\n\n' +
-          'Its containers are stopped and removed, and the compose file is deleted.' + where + '\n\n' +
-          'Data stored outside the stack folder is left alone.')) {
+  // Whether a delete is in flight (disables both buttons) and the resolve
+  // function for whichever askConfirm() question is currently open — set by
+  // askConfirm() below, consumed once by whichever button, or closing,
+  // settles it.
+  var confirmBusy    = false;
+  var confirmResolve = null;
+
+  function confirmSetBusy(busy) {
+    confirmBusy = busy;
+    confirmCancel.disabled = busy;
+    confirmGo.disabled = busy;
+  }
+
+  function closeConfirm() {
+    if (confirmModal.open) confirmModal.close();
+  }
+
+  function settleConfirm(value) {
+    if (!confirmResolve) return;
+    var resolve = confirmResolve;
+    confirmResolve = null;
+    resolve(value);
+  }
+
+  // A yes/no question through #stackman-confirm, resolving true (Go) or
+  // false (Cancel, Escape, a backdrop click, or the dialog closing any other
+  // way). Callable again while the dialog is already open — it updates the
+  // title, body and button label in place rather than closing and
+  // reopening — so a multi-stage question (deleteStack()'s needsConfirm flow
+  // below) can grow the same dialog instead of flickering through a second
+  // one. Leaves confirmMsg alone: that is a status line for the request a
+  // question leads to, not part of the question itself, and clearing it here
+  // would erase an error the moment a caller re-asks to offer a retry.
+  function askConfirm(opts) {
+    confirmSetBusy(false);
+    confirmTitle.textContent = opts.title;
+    confirmBody.innerHTML = opts.bodyHtml;
+    confirmGo.textContent = opts.goLabel;
+    if (!confirmModal.open) confirmModal.showModal();
+    // Explicit, and after showModal(), for the same reason openEditor() sets
+    // focus explicitly: the dialog's own "first focusable descendant" rule
+    // would land on the destructive button, and a stray Enter must not
+    // activate it. Refocused on every call, including a dialog that is
+    // already open and growing into a bigger question, so focus does not
+    // linger on a button whose label just changed under it.
+    confirmCancel.focus({ preventScroll: true });
+    return new Promise(function (resolve) { confirmResolve = resolve; });
+  }
+
+  if (confirmModal) {
+    confirmCancel.addEventListener('click', function () {
+      closeConfirm();
+      settleConfirm(false);
+    });
+
+    confirmModal.addEventListener('close', function () {
+      settleConfirm(false);
+    });
+
+    // A request in flight must finish before Escape can close the dialog —
+    // otherwise a fetch already sent could still delete everything after the
+    // dialog the person thought they backed out of has gone.
+    confirmModal.addEventListener('cancel', function (event) {
+      if (confirmBusy) event.preventDefault();
+    });
+
+    // Same hit-test the picker and editor use: <dialog> fires no backdrop
+    // click of its own, because a click on the backdrop targets the dialog
+    // element itself.
+    confirmModal.addEventListener('click', function (event) {
+      if (event.target !== confirmModal || confirmBusy) return;
+      var r = confirmModal.getBoundingClientRect();
+      if (event.clientX < r.left || event.clientX > r.right ||
+          event.clientY < r.top  || event.clientY > r.bottom) closeConfirm();
+    });
+
+    confirmGo.addEventListener('click', function () {
+      if (confirmBusy) return;
+      settleConfirm(true);
+    });
+  }
+
+  // Stage one's body: the same warning window.confirm() used to show, as
+  // paragraphs instead of a string with blank lines baked into it.
+  function confirmStageOneHtml(name, label) {
+    var where = label === name ? '' : ' Its folder, "' + name + '", goes with it.';
+    return '<p>Its containers are stopped and removed, and the compose file is deleted.' + where + '</p>' +
+           '<p>Data stored outside the stack folder is left alone.</p>';
+  }
+
+  // Stage two's addendum: the folder held more than the compose file, so
+  // the dialog grows in place — naming what else would go with it — rather
+  // than the person finding out only after they have already clicked
+  // through.
+  function confirmStageTwoHtml(entries) {
+    return '<p>This folder also holds files that are not part of the compose file. ' +
+           'Deleting the stack deletes these too:</p>' +
+           '<ul class="stackman-confirm-list">' + entries.map(extraLine).join('') + '</ul>';
+  }
+
+  function deleteStack(name, label) {
+    if (!confirmModal) {
+      // Markup from before this dialog existed. Same wording as stage one,
+      // so deleting still works rather than silently doing nothing.
+      var where = label === name ? '' : ' Its folder, "' + name + '", goes with it.';
+      if (!window.confirm(
+            'Delete "' + label + '"?\n\n' +
+            'Its containers are stopped and removed, and the compose file is deleted.' + where + '\n\n' +
+            'Data stored outside the stack folder is left alone.')) {
+        return;
+      }
+      call('delete', { name: name }).then(function (res) {
+        if (!res.ok) { failed('Could not delete ' + label, res.error); return; }
+        var row = rowFor(name);
+        if (row) row.classList.add('stackman-row--leave');
+        setTimeout(refreshRows, 140);
+      });
       return;
     }
-    call('delete', { name: name }).then(function (res) {
-      if (!res.ok) { failed('Could not delete ' + label, res.error); return; }
-      // Fade the row before the table re-renders wholesale, rather than
-      // having it just vanish when the replacement HTML arrives without it.
-      var row = rowFor(name);
-      if (row) row.classList.add('stackman-row--leave');
-      setTimeout(refreshRows, 140);
-    });
+
+    confirmMsg.textContent = '';
+
+    // Asks one question, then either finishes or asks again in place: a
+    // plain failure re-asks the same question so Go still works as a retry,
+    // and needsConfirm re-asks with the dialog grown into stage two — both
+    // without ever closing and reopening it.
+    function step(fields, bodyHtml, goLabel) {
+      askConfirm({ title: 'Delete "' + label + '"?', bodyHtml: bodyHtml, goLabel: goLabel })
+        .then(function (go) {
+          if (!go) return;
+          confirmSetBusy(true);
+          confirmMsg.textContent = '';
+
+          call('delete', fields).then(function (res) {
+            confirmSetBusy(false);
+
+            if (res.ok) {
+              closeConfirm();
+              // Fade the row before the table re-renders wholesale, rather
+              // than having it just vanish when the replacement HTML
+              // arrives without it.
+              var row = rowFor(name);
+              if (row) row.classList.add('stackman-row--leave');
+              setTimeout(refreshRows, 140);
+              return;
+            }
+
+            if (res.needsConfirm) {
+              step({ name: name, confirm: '1' }, bodyHtml + confirmStageTwoHtml(res.entries || []),
+                   'Delete everything');
+              return;
+            }
+
+            confirmMsg.textContent = res.error || ('Could not delete ' + label + '.');
+            step(fields, bodyHtml, goLabel);
+          });
+        });
+    }
+
+    step({ name: name }, confirmStageOneHtml(name, label), 'Delete stack');
   }
 
   function afterRun(verb) {

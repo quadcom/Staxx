@@ -192,7 +192,7 @@ explanation. Three edits carry it:
 - `fieldsFor()` (:1014) — `blocked` counts toward `usable`, so the row does not fall into `locked`
 - `boxHtml()`'s `dead` test (stacks.js:565) — `|| f.blocked`
 
-The field count per service stays constant, which is the hazard `PLAN.md` recorded: a row must never
+The field count per service stays constant, which is the hazard `PLAN_1.md` recorded: a row must never
 appear or disappear without a redraw.
 
 ## 1e / 1f. Two kinds of advisory note

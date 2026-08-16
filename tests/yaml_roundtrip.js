@@ -5304,6 +5304,244 @@ ok('helpGaps() is still empty after phase 3\'s additions', Y.helpGaps().length =
      !r || r.keys.length === 0, JSON.stringify(r));
 })();
 
+/* =========================================================================
+ * S. File references — Y.fileRefs(text) -> [{file, service, where}]
+ *
+ * Every place a compose file names a file it expects to find beside it in
+ * the stack's own folder: env_file, a build context/Dockerfile, a relative
+ * volume host side, and a top-level secrets:/configs: file:. Built from
+ * classify() alone, the same as hostPaths() just above it — never parse(),
+ * since this has to survive running on a file mid-edit. S9 is the case that
+ * matters most: a file that cannot parse must still come back as an array.
+ * ========================================================================= */
+
+console.log('\nS. File references');
+
+/* ---- S1. env_file as a list, and as a scalar on the key's own line ------ */
+
+(function () {
+  var text = 'services:\n  a:\n    env_file:\n      - .env\n    image: alpine\n  b:\n    env_file: prod.env\n';
+  var r = Y.fileRefs(text);
+  ok('the list item is found', r.some(function (x) { return x.file === '.env' && x.service === 'a' && x.where === 'env_file'; }), JSON.stringify(r));
+  ok('the scalar form is found', r.some(function (x) { return x.file === 'prod.env' && x.service === 'b' && x.where === 'env_file'; }), JSON.stringify(r));
+})();
+
+/* ---- S1b. env_file's long form (- path: .env) is deliberately unread ---- */
+
+(function () {
+  var text = 'services:\n  a:\n    env_file:\n      - path: .env\n        required: false\n';
+  var r = Y.fileRefs(text);
+  ok('the long form is not reported — not read, not guessed at', r.length === 0, JSON.stringify(r));
+})();
+
+/* ---- S2. Two services naming the same file get one entry each ----------- */
+
+(function () {
+  var text = 'services:\n  a:\n    env_file:\n      - shared.env\n  b:\n    env_file:\n      - shared.env\n';
+  var r = Y.fileRefs(text);
+  ok('both services report the file', r.length === 2 &&
+     r[0].file === 'shared.env' && r[0].service === 'a' &&
+     r[1].file === 'shared.env' && r[1].service === 'b', JSON.stringify(r));
+})();
+
+/* ---- S3. An absolute path is ignored -------------------------------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    env_file:\n      - /etc/shared.env\n';
+  var r = Y.fileRefs(text);
+  ok('an absolute env_file is not reported', r.length === 0, JSON.stringify(r));
+})();
+
+/* ---- S4. "./x" and "x" come back the same -------------------------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    env_file:\n      - ./x\n  b:\n    env_file:\n      - x\n';
+  var r = Y.fileRefs(text);
+  ok('both are reported as the bare name',
+     r.length === 2 && r[0].file === 'x' && r[1].file === 'x', JSON.stringify(r));
+})();
+
+/* ---- S5. A quoted value is unquoted --------------------------------------- */
+
+(function () {
+  var text = 'services:\n  a:\n    env_file: ".env"\n';
+  var r = Y.fileRefs(text);
+  ok('the quotes are stripped', r.length === 1 && r[0].file === '.env', JSON.stringify(r));
+})();
+
+/* ---- S6. build: long form reports context: and dockerfile:; short form -- */
+/* ---- names a directory and is left out ------------------------------------ */
+
+(function () {
+  var text = 'services:\n  a:\n    build:\n      context: ./app\n      dockerfile: Dockerfile.dev\n';
+  var r = Y.fileRefs(text);
+  ok('context: is reported', r.some(function (x) { return x.file === 'app' && x.service === 'a' && x.where === 'build'; }), JSON.stringify(r));
+  ok('dockerfile: is reported', r.some(function (x) { return x.file === 'Dockerfile.dev' && x.service === 'a' && x.where === 'build'; }), JSON.stringify(r));
+})();
+
+(function () {
+  var text = 'services:\n  a:\n    build: .\n';
+  var r = Y.fileRefs(text);
+  ok('build\'s short form names a directory, not a file, and is left out',
+     r.length === 0, JSON.stringify(r));
+})();
+
+/* ---- S7. Top-level secrets:/configs: file: — service is '' --------------- */
+
+(function () {
+  var text = 'secrets:\n  cert:\n    file: ./cert.pem\nconfigs:\n  conf:\n    file: conf.txt\n';
+  var r = Y.fileRefs(text);
+  ok('the secret is reported with no service',
+     r.some(function (x) { return x.file === 'cert.pem' && x.service === '' && x.where === 'secret'; }), JSON.stringify(r));
+  ok('the config is reported with no service',
+     r.some(function (x) { return x.file === 'conf.txt' && x.service === '' && x.where === 'config'; }), JSON.stringify(r));
+})();
+
+/* ---- S8. A relative volume host side is included, an absolute one is not - */
+
+(function () {
+  var text = 'services:\n  a:\n    volumes:\n      - ./data:/data\n      - /mnt/user/media:/media\n';
+  var r = Y.fileRefs(text);
+  ok('only the relative mount is reported',
+     r.length === 1 && r[0].file === 'data' && r[0].service === 'a' && r[0].where === 'volume', JSON.stringify(r));
+})();
+
+/* ---- S9. A deliberately broken file returns something, never throws ----- */
+
+(function () {
+  var BROKEN = [
+    'services:\n  a:\n    env_file: "unterminated\n',
+    'services:\n  a:\n\tenv_file: .env\n',                 // a tab in the indentation
+    'services:\n  a:\n    env_file:\n      - .env',        // truncated, no trailing newline
+    null, undefined, 42, {}, []
+  ];
+  var bad = null;
+  BROKEN.forEach(function (input) {
+    try {
+      var r = Y.fileRefs(input);
+      if (!Array.isArray(r)) bad = JSON.stringify(input) + ' did not return an array';
+    } catch (e) { bad = JSON.stringify(input) + ' threw: ' + e.message; }
+  });
+  ok('every broken or bad input comes back as an array rather than throwing', !bad, bad);
+})();
+
+/* =========================================================================
+ * T. Variable references — Y.varRefs(text) -> [{name, line, col, len, filled}]
+ *
+ * Every ${NAME}/$NAME placeholder, read from the raw text with no ancestor
+ * stack — a variable is a variable wherever it sits. $$ is compose's own
+ * escape for a literal dollar and names nothing. ${NAME:-x}/${NAME-x} give
+ * compose a fallback, and ${NAME:?msg}/${NAME?msg} make compose refuse to
+ * start rather than carry on quietly — both count as filled, since either
+ * way something already tells the user what is missing.
+ * ========================================================================= */
+
+console.log('\nT. Variable references');
+
+/* ---- T1. "${VAR}" and bare "$VAR" ---------------------------------------- */
+
+(function () {
+  var text = '${TAG}\n$USER end\n';
+  var r = Y.varRefs(text);
+  ok('${TAG} is found with the right line/col/len',
+     r.some(function (x) { return x.name === 'TAG' && x.line === 0 && x.col === 0 && x.len === 6 && x.filled === false; }),
+     JSON.stringify(r));
+  ok('bare $USER is found and stops at the end of the name',
+     r.some(function (x) { return x.name === 'USER' && x.line === 1 && x.col === 0 && x.len === 5 && x.filled === false; }),
+     JSON.stringify(r));
+})();
+
+/* ---- T2. All four default/error forms count as filled -------------------- */
+
+(function () {
+  var text = '${A:-x}\n${B-x}\n${C:?msg}\n${D?msg}\n';
+  var r = Y.varRefs(text);
+  ['A', 'B', 'C', 'D'].forEach(function (n) {
+    ok(n + ' is filled', r.some(function (x) { return x.name === n && x.filled === true; }), JSON.stringify(r));
+  });
+})();
+
+/* ---- T3. "$$" is an escape and names nothing ------------------------------ */
+
+(function () {
+  var text = 'a: $$\nb: $$FOO\nc: $${VAR}\n';
+  var r = Y.varRefs(text);
+  ok('$$ alone produces nothing', !r.some(function (x) { return x.line === 0; }), JSON.stringify(r));
+  ok('$$FOO produces nothing — the escape eats the FOO', !r.some(function (x) { return x.line === 1; }), JSON.stringify(r));
+  ok('$${VAR} produces nothing — the escape eats the brace pair too', !r.some(function (x) { return x.line === 2; }), JSON.stringify(r));
+})();
+
+/* ---- T4. Two references on one line, both with the right columns -------- */
+
+(function () {
+  var text = '${A}-${B}\n';
+  var r = Y.varRefs(text);
+  ok('both references are found at their own columns',
+     r.length === 2 &&
+     r[0].name === 'A' && r[0].col === 0 && r[0].len === 4 &&
+     r[1].name === 'B' && r[1].col === 5 && r[1].len === 4,
+     JSON.stringify(r));
+})();
+
+/* ---- T5. A reference inside a quoted value is still a reference ---------- */
+
+(function () {
+  var text = 'image: "myimage:${TAG:-latest}"\n';
+  var r = Y.varRefs(text);
+  ok('the placeholder is found inside the quotes, filled by its default',
+     r.length === 1 && r[0].name === 'TAG' && r[0].filled === true, JSON.stringify(r));
+})();
+
+/* ---- T6. A reference on a comment line is ignored ------------------------ */
+
+(function () {
+  var text = '# see ${EXAMPLE} for the format\nimage: alpine\n';
+  var r = Y.varRefs(text);
+  ok('nothing is reported from the comment line', r.length === 0, JSON.stringify(r));
+})();
+
+/* ---- T7. An unterminated "${VAR" is treated as no reference -------------- */
+
+(function () {
+  // Judgement call: with no closing "}" on the line this is unreadable
+  // syntax, not a variable — the same "leave it out" rule sealed regions
+  // follow elsewhere in this file, rather than guessing where it would have
+  // ended.
+  var text = 'command: echo ${VAR and some more text\n';
+  var r = Y.varRefs(text);
+  ok('an unterminated placeholder is reported as nothing', r.length === 0, JSON.stringify(r));
+})();
+
+/* ---- T8. An empty name "${}" is likewise treated as no reference -------- */
+
+(function () {
+  // Judgement call: an empty name is not a variable a fallback could ever
+  // be checked against, so it is left out rather than reported as a nameless
+  // entry.
+  var text = 'value: ${}\n';
+  var r = Y.varRefs(text);
+  ok('${} is reported as nothing', r.length === 0, JSON.stringify(r));
+})();
+
+/* ---- T9. A deliberately broken file returns something, never throws ----- */
+
+(function () {
+  var BROKEN = [
+    'services:\n  a:\n    image: "${unterminated\n',
+    'services:\n  a:\n\timage: ${TAG}\n',                  // a tab in the indentation
+    'services:\n  a:\n    image: ${TAG}',                  // truncated, no trailing newline
+    null, undefined, 42, {}, []
+  ];
+  var bad = null;
+  BROKEN.forEach(function (input) {
+    try {
+      var r = Y.varRefs(input);
+      if (!Array.isArray(r)) bad = JSON.stringify(input) + ' did not return an array';
+    } catch (e) { bad = JSON.stringify(input) + ' threw: ' + e.message; }
+  });
+  ok('every broken or bad input comes back as an array rather than throwing', !bad, bad);
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

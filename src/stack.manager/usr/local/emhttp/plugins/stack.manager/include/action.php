@@ -131,9 +131,77 @@ switch ($action) {
       'bytes'   => $written !== '' ? (int)@filesize($written) : 0,
     ]);
 
-  // ---- delete a stack ----
+  /* ---- delete a stack ----
+   *
+   * The confirmation is asked for here, not inside stackman_delete_stack().
+   * What is about to be destroyed has to reach the user BEFORE anything is
+   * removed, and a function that both asks and acts cannot do that — so this
+   * case looks first, replies with the list if the folder holds more than
+   * the compose file, and only calls the delete once the browser sends the
+   * same request back with confirm=1.
+   */
   case 'delete':
-    if (!stackman_delete_stack($name, $error)) {
+    $confirmed = ($_POST['confirm'] ?? '') === '1';
+    if (!$confirmed) {
+      $extras = stackman_stack_extras($name, $error);
+      if ($extras === null) stackman_reply(['ok' => false, 'error' => $error]);
+      if ($extras) stackman_reply(['ok' => false, 'needsConfirm' => true, 'entries' => $extras]);
+    }
+    if (!stackman_delete_stack($name, $error, $confirmed)) {
+      stackman_reply(['ok' => false, 'error' => $error]);
+    }
+    stackman_reply(['ok' => true]);
+
+  /* ------------------------------------------------------ companion files --
+   *
+   * A stack folder may hold more than its compose file now — a .env, a
+   * certificate, a config snippet — and these five actions are how the
+   * editor reaches them: list what's there, read one, save one, delete one,
+   * rename one. Every helper below confines itself to the one stack's own
+   * folder; see stackman_stack_file() in Stacks.php.
+   */
+
+  case 'files':
+    $files = stackman_list_files($name, $error);
+    if ($files === null) stackman_reply(['ok' => false, 'error' => $error]);
+    stackman_reply(['ok' => true, 'files' => $files]);
+
+  case 'file-read':
+    $file = (string)($_POST['file'] ?? '');
+    $read = stackman_read_file($name, $file, $error);
+    if ($read === null) stackman_reply(['ok' => false, 'error' => $error]);
+    stackman_reply(['ok' => true, 'name' => $name, 'file' => $file] + $read);
+
+  case 'file-save':
+    $file     = (string)($_POST['file'] ?? '');
+    $body     = (string)($_POST['body'] ?? '');
+    $encoding = (string)($_POST['encoding'] ?? '');
+
+    if ($encoding === 'base64') {
+      $decoded = base64_decode($body, true);
+      if ($decoded === false) {
+        stackman_reply([
+          'ok'    => false,
+          'error' => 'That file did not arrive intact. Try uploading it again.',
+        ]);
+      }
+      $body = $decoded;
+    }
+
+    if (!stackman_write_file($name, $file, $body, $encoding !== 'base64', $error)) {
+      stackman_reply(['ok' => false, 'error' => $error]);
+    }
+    stackman_reply(['ok' => true]);
+
+  case 'file-delete':
+    if (!stackman_delete_file($name, (string)($_POST['file'] ?? ''), $error)) {
+      stackman_reply(['ok' => false, 'error' => $error]);
+    }
+    stackman_reply(['ok' => true]);
+
+  case 'file-rename':
+    if (!stackman_rename_file($name, (string)($_POST['file'] ?? ''),
+                              (string)($_POST['to'] ?? ''), $error)) {
       stackman_reply(['ok' => false, 'error' => $error]);
     }
     stackman_reply(['ok' => true]);

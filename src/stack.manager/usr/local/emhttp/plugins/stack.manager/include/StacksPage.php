@@ -259,6 +259,11 @@ endif;
     <div class="stackman-modal-body" data-view="split">
 
       <div class="stackman-pane stackman-pane--form">
+        <!-- Why the form is locked, shown only while a companion file's tab is
+             open. It sits above #stackman-form rather than inside it because
+             reparse() replaces that element's contents wholesale, and it would
+             go with them. Script fills in the filename. -->
+        <p class="stackman-refnote" id="stackman-refnote" hidden></p>
         <div class="stackman-form" id="stackman-form">
           <!-- Replaced by the real form as soon as the file is parsed, so it is
                only ever seen for an instant — but this pane is on screen from
@@ -270,6 +275,40 @@ endif;
       </div>
 
       <div class="stackman-pane stackman-pane--yaml">
+        <!-- Always visible now, not only when there is more than one tab —
+             it also carries the New file and Add a file controls, and
+             hiding the strip would hide those with it. Filled by script
+             (renderTabs() in stacks.js) with one button per file in the
+             stack's own folder; the compose file's own tab is pinned first
+             and cannot be closed — everything else in the folder follows it
+             alphabetically. -->
+        <div class="stackman-tabstrip">
+          <div class="stackman-tabs" id="stackman-tabs" role="tablist" aria-label="<?= _('Files in this stack') ?>"></div>
+          <button type="button" class="stackman-chevron" id="stackman-file-new"
+                  title="<?= _('Add a new, empty file to this stack') ?>"
+                  aria-label="<?= _('New file') ?>">
+            <i class="fa fa-plus" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="stackman-chevron" id="stackman-file-add"
+                  title="<?= _('Add a file from this computer') ?>"
+                  aria-label="<?= _('Add a file from this computer') ?>">
+            <i class="fa fa-upload" aria-hidden="true"></i>
+          </button>
+          <!-- Never shown itself. Both buttons above click it open, and so
+               does Replace… on the binary panel further down — for that one
+               it is switched to single-file for the one pick, because a
+               replacement keeps the name already on the tab regardless of
+               what the chosen file is called (see stacks.js). -->
+          <input type="file" id="stackman-file-input" multiple hidden>
+        </div>
+        <!-- The active tab's menu (Rename / Delete / Download). Not
+             #stackman-menu — that one lives outside this dialog, and a
+             <dialog> opened with showModal() paints in the top layer above
+             anything outside it. A plain sibling of the strip rather than
+             nested inside it, because the strip scrolls sideways and script
+             positions this in pixels against whichever chevron opened it —
+             see openTabmenu() in stacks.js. -->
+        <div class="stackman-tabmenu" id="stackman-tabmenu" role="menu" hidden></div>
         <!-- Hidden until script opens it (Ctrl+F inside the compose pane).
              Unhiding it, running the search itself, and painting the
              .stackman-hit boxes into #stackman-yamlmarks below are all
@@ -348,6 +387,20 @@ endif;
                pointer-events: none in the stylesheet, so it can never sit
                between the pointer and the text that spawned it. -->
           <div class="stackman-keyhelp" id="stackman-keyhelp" role="tooltip" hidden></div>
+          <!-- Shown instead of the textarea for a companion file that is not
+               text — a certificate or a key, most often, which is the whole
+               reason a binary file is accepted here at all. It covers the
+               box rather than replacing it, so nothing about the editor's
+               own layout has to change; script shows and hides it in
+               openFile() and loadCompanion() (stacks.js). -->
+          <div class="stackman-binfile" id="stackman-binfile" hidden>
+            <div class="stackman-binfile-name" id="stackman-binfile-name"></div>
+            <div class="stackman-binfile-meta" id="stackman-binfile-meta"></div>
+            <div class="stackman-buttons stackman-buttons--inline">
+              <button type="button" class="stackman-btn" id="stackman-binfile-get"><?= _('Download') ?></button>
+              <button type="button" class="stackman-btn" id="stackman-binfile-put"><?= _('Replace…') ?></button>
+            </div>
+          </div>
         </div>
         <div class="stackman-yamlstatus" id="stackman-yaml-status" role="status" aria-live="polite"></div>
       </div>
@@ -356,6 +409,12 @@ endif;
 
     <div class="stackman-modal-foot">
       <div class="stackman-error" id="stackman-error" hidden></div>
+
+      <!-- A button, not a paragraph: naming the file that is not there is
+           only half the point — clicking it creates that file, which is why
+           this is stacks.js's updateMissing()/createMissingFile(), not a
+           second one-shot "paste bar" as PLAN_13 first sketched it. -->
+      <button type="button" class="stackman-missing" id="stackman-missing" hidden></button>
 
       <!-- A button, not a paragraph: it says which field is empty AND takes
            you to it, which is the whole reason it is worth showing. -->
@@ -555,6 +614,37 @@ endif;
     <div class="stackman-tz-foot">
       <p class="stackman-tz-msg" id="stackman-tz-msg" role="status" aria-live="polite"></p>
       <button type="button" class="stackman-btn" id="stackman-tz-cancel"><?= _('Cancel') ?></button>
+    </div>
+
+  </dialog>
+
+  <!-- --------------------------------------------------------- confirm -- -->
+
+  <!-- The fourth dialog, opened from deleteStack() in stacks.js. It sits
+       outside the editor for the same reason the picker does: nested inside
+       it, closing the editor with Escape would take this one with it while
+       it still held focus, and the browser's own focus restore would have
+       nowhere to go.
+
+       One dialog serves both stages of the confirmation. The body starts
+       with the plain warning; if the folder holds more than the compose
+       file, script appends a second paragraph and the file list in place,
+       and relabels the button, rather than opening a second dialog on top
+       of the first. -->
+  <dialog class="stackman-confirm" id="stackman-confirm" aria-labelledby="stackman-confirm-title">
+
+    <div class="stackman-confirm-head">
+      <h3 class="stackman-confirm-title" id="stackman-confirm-title"></h3>
+    </div>
+
+    <div class="stackman-confirm-body" id="stackman-confirm-body"></div>
+
+    <div class="stackman-confirm-foot">
+      <p class="stackman-confirm-msg" id="stackman-confirm-msg" role="status" aria-live="polite"></p>
+      <div class="stackman-buttons stackman-buttons--inline">
+        <button type="button" class="stackman-btn" id="stackman-confirm-cancel"><?= _('Cancel') ?></button>
+        <button type="button" class="stackman-btn stackman-btn--danger" id="stackman-confirm-go"><?= _('Delete stack') ?></button>
+      </div>
     </div>
 
   </dialog>

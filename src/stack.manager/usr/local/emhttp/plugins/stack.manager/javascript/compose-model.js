@@ -5160,6 +5160,29 @@
     return s.charAt(0) === '/' || s.charAt(0) === '.';
   }
 
+  // Reads one long-form volume item ({type:, source:, target:, ...}) that
+  // starts at line i, whose dash-line classification is c (c.sub is the
+  // mapping key beside the dash). Walks past every field at a deeper indent
+  // so type: is seen even when it follows source: in the file, and returns
+  // the index of the line after the item so the caller can skip straight
+  // past it. Shared by hostPaths() and fileRefs(), which both need this and
+  // nothing more from a long-form entry.
+  function readVolumeItem(lines, i, c) {
+    var itemIndent = c.indent, type = null, source = null, j = i;
+    while (j < lines.length) {
+      var cj = j === i ? c.sub : classify(lines[j], j);
+      if (cj.kind === 'blank' || cj.kind === 'comment') { j++; continue; }
+      if (j !== i && cj.indent <= itemIndent) break;
+      if (cj.kind === 'key' && cj.valueCol >= 0) {
+        var sc = scanEntryText(lines[j], cj.valueCol);
+        if (sc && cj.key === 'type') type = sc.text;
+        if (sc && cj.key === 'source') source = { text: sc.text, line: j, col: sc.col };
+      }
+      j++;
+    }
+    return { type: type, source: source, next: j };
+  }
+
   /**
    * hostPaths(text) -> [{path, line, col, len}]
    *
@@ -5198,26 +5221,14 @@
 
         if (c.sub.kind === 'key') {
           // Long form over several lines: {type:, source:, target:, ...}.
-          // Read the whole item before deciding, since type: can follow
-          // source: in the file — then walk on past it, rather than folding
-          // its fields into the ancestor stack above, which exists to find
-          // volumes: blocks and has no business tracking a mount's own keys.
-          var itemIndent = c.indent, type = null, source = null, j = i;
-          while (j < lines.length) {
-            var cj = j === i ? c.sub : classify(lines[j], j);
-            if (cj.kind === 'blank' || cj.kind === 'comment') { j++; continue; }
-            if (j !== i && cj.indent <= itemIndent) break;
-            if (cj.kind === 'key' && cj.valueCol >= 0) {
-              var sc = scanEntryText(lines[j], cj.valueCol);
-              if (sc && cj.key === 'type') type = sc.text;
-              if (sc && cj.key === 'source') source = { text: sc.text, line: j, col: sc.col };
-            }
-            j++;
+          // Reading it is not folded into the ancestor stack above, which
+          // exists to find volumes: blocks and has no business tracking a
+          // mount's own keys — see readVolumeItem().
+          var r = readVolumeItem(lines, i, c);
+          if (r.source && (r.type === null || r.type === 'bind') && isHostPathLike(r.source.text)) {
+            out.push({ path: r.source.text, line: r.source.line, col: r.source.col, len: r.source.text.length });
           }
-          if (source && (type === null || type === 'bind') && isHostPathLike(source.text)) {
-            out.push({ path: source.text, line: source.line, col: source.col, len: source.text.length });
-          }
-          i = j - 1;
+          i = r.next - 1;
           continue;
         }
 
@@ -5234,6 +5245,195 @@
       return [];
     }
     out.sort(function (a, b) { return a.line - b.line || a.col - b.col; });
+    return out;
+  }
+
+  /* =====================================================================
+   * File references
+   *
+   * API.fileRefs — every place a compose file names a file that is meant to
+   * sit beside it in the stack's own folder: a service's env_file, a build
+   * context or Dockerfile, a bind-mounted volume's host side, and a
+   * top-level secrets:/configs: entry's file:. Built the same way as
+   * hostPaths() just above — classify() and an ancestor-key stack, never
+   * parse() — because this has to survive running on a file mid-edit too.
+   *
+   * Only relative references are reported; an absolute path lives somewhere
+   * else on the server and is not this stack's folder to carry along. A
+   * leading "./" is stripped so "./x" and "x" come back as the one file.
+   * ===================================================================== */
+
+  // Quote-strip and relativise one scalar. Returns null for an absolute
+  // path — this exists to find files the stack's own folder holds, not
+  // anything else on the server.
+  function relFile(s) {
+    if (s == null || s === '' || s.charAt(0) === '/') return null;
+    var rel = s.slice(0, 2) === './' ? s.slice(2) : s;
+    // "env_file:" with nothing after it, and a bare "./", both land here.
+    // Neither names a file, and an empty name would match the compose tab's
+    // own empty data-file and claim the compose file was referenced.
+    return rel === '' ? null : rel;
+  }
+
+  function pushFileRef(out, raw, service, where) {
+    var rel = relFile(raw);
+    if (rel !== null) out.push({ file: rel, service: service, where: where });
+  }
+
+  /**
+   * fileRefs(text) -> [{file, service, where}]
+   *
+   * `where` is one of 'env_file', 'secret', 'config', 'build', 'volume'.
+   * `service` is the owning service, or '' for a top-level secrets:/configs:
+   * entry, which names no service. Never throws: anything this cannot make
+   * sense of is simply left out.
+   */
+  function fileRefs(text) {
+    var out = [];
+    try {
+      text = String(text == null ? '' : text);
+      var lines = text.split('\n');
+      var stack = [];    // ancestor mapping keys enclosing the current line
+
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var c = classify(line, i);
+        if (c.kind === 'blank' || c.kind === 'comment') continue;
+
+        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
+        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
+
+        // services -> <name> is always stack[0]/stack[1] once inside it,
+        // since every other top-level key (volumes:, secrets:, ...) pops
+        // "services" off the moment its own indent-0 key is reached.
+        var svc = (stack.length >= 2 && stack[0].key === 'services') ? stack[1].key : null;
+
+        if (c.kind === 'key') {
+          // A service's env_file: written as a single scalar, not a list.
+          if (svc !== null && stack.length === 2 && c.key === 'env_file' && c.valueCol >= 0) {
+            var sc1 = scanEntryText(line, c.valueCol);
+            if (sc1) pushFileRef(out, sc1.text, svc, 'env_file');
+          }
+          // build:'s own context:/dockerfile: keys — long form only. A bare
+          // "build: ." names a directory, not a file, so the short form is
+          // left out rather than reported as one.
+          if (svc !== null && stack.length === 3 && stack[2].key === 'build' &&
+              (c.key === 'context' || c.key === 'dockerfile') && c.valueCol >= 0) {
+            var sc2 = scanEntryText(line, c.valueCol);
+            if (sc2) pushFileRef(out, sc2.text, svc, 'build');
+          }
+          // Top-level secrets:/configs: <name>: file: — never seen under
+          // services, so this names no service.
+          if (stack.length === 2 && (stack[0].key === 'secrets' || stack[0].key === 'configs') &&
+              c.key === 'file' && c.valueCol >= 0) {
+            var sc3 = scanEntryText(line, c.valueCol);
+            if (sc3) pushFileRef(out, sc3.text, '', stack[0].key === 'secrets' ? 'secret' : 'config');
+          }
+          stack.push({ indent: c.indent, key: c.key });
+          continue;
+        }
+
+        if (c.kind !== 'seq' || !c.sub) continue;
+
+        // A service's env_file: written as a list. The compose spec also
+        // allows a long form here (- path: .env, required: false); that is
+        // deliberately left unread rather than guessed at.
+        if (svc !== null && stack.length === 3 && stack[2].key === 'env_file') {
+          if (c.sub.kind !== 'key') {
+            var ef = scanEntryText(line, c.contentCol);
+            if (ef) pushFileRef(out, ef.text, svc, 'env_file');
+          }
+          continue;
+        }
+
+        // A service's volumes: list — the same host-side extraction as
+        // hostPaths() above, restricted to a relative path and attributed
+        // to the enclosing service.
+        if (svc !== null && stack.length === 3 && stack[2].key === 'volumes') {
+          if (c.sub.kind === 'key') {
+            var r = readVolumeItem(lines, i, c);
+            if (r.source && (r.type === null || r.type === 'bind') && isHostPathLike(r.source.text)) {
+              pushFileRef(out, r.source.text, svc, 'volume');
+            }
+            i = r.next - 1;
+            continue;
+          }
+          var scanned = scanEntryText(line, c.contentCol);
+          if (scanned) {
+            var bits = splitOutsideVars(scanned.text);
+            if (bits.length >= 2 && isHostPathLike(bits[0])) pushFileRef(out, bits[0], svc, 'volume');
+          }
+        }
+      }
+    } catch (e) {
+      return [];
+    }
+    return out;
+  }
+
+  /* =====================================================================
+   * Variable references
+   *
+   * API.varRefs — every ${NAME}/$NAME placeholder a compose file uses, so
+   * the editor can flag one nothing will ever fill in. A variable is a
+   * variable wherever it sits on the line, so unlike hostPaths()/fileRefs()
+   * above this needs no ancestor-key stack — just a left-to-right walk over
+   * the raw text, which is also why a placeholder inside a quoted string is
+   * still picked up: going through the parser would only lose the column.
+   *
+   * $$ is compose's own escape for a literal dollar sign and names nothing,
+   * so "$$FOO" is not a reference to FOO. ${NAME:-x} and ${NAME-x} give
+   * compose a fallback value; ${NAME:?msg} and ${NAME?msg} make compose
+   * refuse to start rather than carry on silently. All four count as
+   * "filled" here, because either way something already tells the user what
+   * is missing — the case this scan exists to catch is the bare
+   * ${NAME}/$NAME that fails with nothing said at all.
+   * ===================================================================== */
+
+  // \$ then one of: \$ (escaped, names nothing) | {NAME with an optional
+  // :-/-/:?/? default or error clause} | a bare NAME. The bare alternative
+  // can match zero characters, so every '$' in the line is accounted for —
+  // the scan can never stall on one it does not understand.
+  var VAR_RE = /\$(?:\$|\{([A-Za-z0-9_]*)((?::-|-|:\?|\?)[^}]*)?\}|([A-Za-z0-9_]*))/g;
+
+  /**
+   * varRefs(text) -> [{name, line, col, len, filled}]
+   *
+   * `line`/`col` are 0-based, matching hostPaths()/fileRefs() above; `col`
+   * and `len` cover the whole placeholder as written, "${NAME}" braces
+   * included, so a caller can underline exactly what is on screen. Already
+   * in line-then-column order because the scan itself walks the file top to
+   * bottom and each line left to right — no separate sort is needed.
+   *
+   * An unterminated "${NAME" and an empty "${}" both come back as nothing:
+   * this reads the syntax that is actually there rather than guessing at
+   * what was meant, the same rule sealed regions follow elsewhere in this
+   * file. Never throws: anything this cannot make sense of is left out.
+   */
+  function varRefs(text) {
+    var out = [];
+    try {
+      text = String(text == null ? '' : text);
+      var lines = text.split('\n');
+
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var c = classify(line, i);
+        if (c.kind === 'blank' || c.kind === 'comment') continue;
+
+        VAR_RE.lastIndex = 0;
+        var m;
+        while ((m = VAR_RE.exec(line))) {
+          if (m[0] === '$$') continue;                // an escaped dollar, not a reference
+          var name = m[1] !== undefined ? m[1] : m[3];
+          if (name === '') continue;                   // "${}", or a lone "$" naming nothing
+          var filled = m[1] !== undefined && m[2] !== undefined;
+          out.push({ name: name, line: i, col: m.index, len: m[0].length, filled: filled });
+        }
+      }
+    } catch (e) {
+      return [];
+    }
     return out;
   }
 
@@ -5305,6 +5505,12 @@
     // Every host-side path of a volume mount — see the "Host paths" section
     // above. Used to check the folder actually exists on the server.
     hostPaths: hostPaths,
+    // Every file the compose file expects to find beside it in the stack's
+    // own folder — see the "File references" section above.
+    fileRefs: fileRefs,
+    // Every ${NAME}/$NAME placeholder, so the editor can flag one nothing
+    // will ever fill in — see the "Variable references" section above.
+    varRefs: varRefs,
     // PLAN_15 phase 1: the dropdown value lists moved out of stacks.js's
     // CHOICES table — see the comment above VOCAB for what stayed behind.
     vocab: vocab

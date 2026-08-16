@@ -34,6 +34,12 @@ const STACKMAN_COMPOSE_FILENAMES = [
   'compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
 ];
 
+// A companion file's size cap. The browser reads the file itself and posts
+// its content as an ordinary form field, so the whole thing sits in one POST
+// body — this keeps that comfortably under PHP's post_max_size (8M on the
+// test box).
+define('STACKMAN_FILE_MAX', 262144);   // 256 KiB
+
 /* ------------------------------------------------------------------ paths -- */
 
 function stackman_stack_root(): string {
@@ -80,6 +86,28 @@ function stackman_valid_path(string $rel): bool {
     if (!stackman_valid_name($part)) return false;
   }
   return true;
+}
+
+/**
+ * Is this a name we are willing to write into a stack's folder as a
+ * companion file — a .env, a certificate, a config snippet?
+ *
+ * Deliberately separate from stackman_valid_name(): that function requires a
+ * leading letter or digit, which is right for a directory name and wrong for
+ * a file called ".env". This allows one optional leading dot and otherwise
+ * shares the same safe character set, no slash, no traversal.
+ */
+function stackman_valid_filename(string $file): bool {
+  if ($file === '' || strlen($file) > 63) return false;
+  if (strpos($file, '..') !== false) return false;
+  if (strpos($file, '/') !== false) return false;
+  if (!preg_match('/^\.?[A-Za-z0-9][A-Za-z0-9._-]*$/', $file)) return false;
+
+  // Compared lowercased even though the filesystem is case-sensitive: a
+  // second compose file in the folder would silently change which one the
+  // stack runs, and a near-miss in case ("Compose.YAML") is exactly the sort
+  // of thing someone would upload by accident.
+  return !in_array(strtolower($file), STACKMAN_COMPOSE_FILENAMES, true);
 }
 
 /** The folder half of a stack's path, or '' when it sits at the top. */
@@ -1462,17 +1490,65 @@ function stackman_save_stack(string $name, string $yaml, string &$error): bool {
 }
 
 /**
- * Delete a stack directory.
+ * Everything in a stack's folder except its compose file, for the delete
+ * confirmation. A subdirectory's count is how many entries it holds one
+ * level down, so the confirmation can say "3 files" rather than just
+ * "a folder"; a plain file's count is always 0.
  *
- * Checked before anything is removed, never during. A stack folder is allowed
- * to hold a compose file and .env files; anything else means the user put
- * something there we do not understand, and the safe answer is to refuse and
- * say what is in the way — not to delete half of it and then complain.
- *
- * The containers are stopped first. Deleting the file while the stack is up
- * would leave containers running that nothing on this page can reach.
+ * @return array<int, array{name:string, size:int, dir:bool, count:int, link:bool}>|null
  */
-function stackman_delete_stack(string $name, string &$error): bool {
+function stackman_stack_extras(string $rel, string &$error): ?array {
+  $error = '';
+  if (!stackman_valid_path($rel)) { $error = 'Invalid stack name.'; return null; }
+  $dir = @realpath(stackman_stack_dir($rel));
+  if ($dir === false || !is_dir($dir)) {
+    $error = 'There is no stack called "'.$rel.'".';
+    return null;
+  }
+
+  $out = [];
+  foreach ((array)@scandir($dir) as $name) {
+    if ($name === '.' || $name === '..') continue;
+    if (in_array($name, STACKMAN_COMPOSE_FILENAMES, true)) continue;
+
+    $path  = $dir.'/'.$name;
+    $link  = is_link($path);
+    $isDir = !$link && is_dir($path);
+    $count = $isDir ? max(0, count((array)@scandir($path)) - 2) : 0;
+    $st    = @lstat($path) ?: [];
+
+    $out[] = [
+      'name'  => $name,
+      'size'  => $isDir ? 0 : (int)($st['size'] ?? 0),
+      'dir'   => $isDir,
+      'count' => $count,
+      'link'  => $link,
+    ];
+  }
+
+  usort($out, fn($a, $b) => strnatcasecmp($a['name'], $b['name']));
+  return $out;
+}
+
+/**
+ * Delete a stack's directory.
+ *
+ * Unconfirmed, the guard is what it has always been: a stack folder is
+ * allowed to hold a compose file and .env files, and anything else means the
+ * user put something there we do not understand — refuse and say what is in
+ * the way, rather than delete half of it and then complain.
+ *
+ * Confirmed, that guard is skipped and the whole tree is removed by
+ * stackman_rmtree() below. The function itself never asks; the list of what
+ * is about to be destroyed has to reach the user BEFORE anything is removed,
+ * and a function that both asks and acts cannot do that — see the "delete"
+ * case in action.php, which is what shows the list and sets $confirmed.
+ *
+ * The containers are stopped first either way. Deleting the file while the
+ * stack is up would leave containers running that nothing on this page can
+ * reach.
+ */
+function stackman_delete_stack(string $name, string &$error, bool $confirmed = false): bool {
   $error = '';
   if (!stackman_valid_path($name)) { $error = 'Invalid stack name.'; return false; }
 
@@ -1489,7 +1565,7 @@ function stackman_delete_stack(string $name, string &$error): bool {
     else $blocked[] = $entry;
   }
 
-  if ($blocked) {
+  if ($blocked && !$confirmed) {
     $error = 'Nothing was deleted. This folder also contains: '
            . implode(', ', array_slice($blocked, 0, 6))
            . (count($blocked) > 6 ? ', …' : '')
@@ -1517,10 +1593,289 @@ function stackman_delete_stack(string $name, string &$error): bool {
     }
   }
 
+  if ($confirmed) {
+    $real = @realpath($dir);
+    if ($real === false || !stackman_rmtree($real, $real)) {
+      $error = 'Could not remove the folder '.$dir;
+      return false;
+    }
+    return true;
+  }
+
   foreach ($remove as $entry) @unlink($dir.'/'.$entry);
 
   if (!@rmdir($dir)) {
     $error = 'Removed the files, but could not remove the folder '.$dir;
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Remove a directory tree. The most destructive code in the plugin, so every
+ * step is guarded rather than trusted.
+ *
+ * $root is fixed for the whole walk — it is always the top of the tree being
+ * deleted, never the current recursion's own directory — and every path
+ * visited must resolve inside it. That is what stops a path from walking
+ * this out of the stack folder.
+ *
+ * A link is dealt with BEFORE anything resolves the path, and is unlinked
+ * rather than entered. Two separate reasons, both learned the hard way:
+ *
+ * - is_dir() follows a symlink, so testing that first would walk straight
+ *   through a link inside the stack folder pointing at, say, /mnt/user, and
+ *   delete a real share.
+ * - realpath() follows one too, and a link's target is outside $root by
+ *   definition — so resolving first turned "remove this link" into "refuse,
+ *   that is outside the tree", and one link anywhere made the whole delete
+ *   fail with nothing removed.
+ *
+ * Nothing below the link check can be reached by a link, which is also what
+ * makes the containment test sound: every path realpath() sees here is a real
+ * directory or file whose ancestors have each already been checked.
+ */
+function stackman_rmtree(string $path, string $root): bool {
+  if (is_link($path)) return @unlink($path);
+
+  $real = @realpath($path);
+  if ($real === false) return false;
+  if ($real !== $root && strpos($real, $root.'/') !== 0) return false;
+
+  if (is_dir($real)) {
+    foreach ((array)@scandir($real) as $entry) {
+      if ($entry === '.' || $entry === '..') continue;
+      if (!stackman_rmtree($real.'/'.$entry, $root)) return false;
+    }
+    return @rmdir($real);
+  }
+
+  return @unlink($real);
+}
+
+/* ------------------------------------------------------- companion files --
+ *
+ * A stack folder may hold more than the compose file now: a .env, a
+ * certificate, a config snippet the compose file reads with `configs:` or a
+ * bind mount. These are "companion files" — everything below reads, writes,
+ * renames or deletes one, always confined to a single stack's own folder.
+ *
+ * Every helper resolves its target through stackman_stack_file(), which
+ * validates the stack's path AND the filename before touching disk, so none
+ * of the checks below can drift out of step between one helper and another.
+ */
+
+/**
+ * Resolve a companion file's path inside a stack, validating both halves.
+ */
+function stackman_stack_file(string $rel, string $file, string &$error): string {
+  $error = '';
+  if (!stackman_valid_path($rel)) { $error = 'Invalid stack name.'; return ''; }
+  if (!stackman_valid_filename($file)) {
+    $error = 'File names may contain letters, numbers, dots, dashes and underscores, '
+           . 'must be 63 characters or fewer, and may not be a compose file.';
+    return '';
+  }
+
+  $dir = @realpath(stackman_stack_dir($rel));
+  if ($dir === false || !is_dir($dir)) {
+    $error = 'There is no stack called "'.$rel.'".';
+    return '';
+  }
+
+  // Safe to concatenate: $file has just been through stackman_valid_filename(),
+  // which forbids both a slash and "..", so it cannot name anything but a
+  // direct child of $dir — and $dir has itself just been resolved with
+  // realpath(). Neither half is trusted on its own; both checks have to pass.
+  return $dir.'/'.$file;
+}
+
+/**
+ * Everything in a stack's folder, compose file first and then alphabetical.
+ *
+ * @return array<int, array{name:string, size:int, mtime:int, compose:bool,
+ *                           text:bool, dir:bool, link:bool}>|null
+ */
+function stackman_list_files(string $rel, string &$error): ?array {
+  $error = '';
+  if (!stackman_valid_path($rel)) { $error = 'Invalid stack name.'; return null; }
+  $dir = @realpath(stackman_stack_dir($rel));
+  if ($dir === false || !is_dir($dir)) {
+    $error = 'There is no stack called "'.$rel.'".';
+    return null;
+  }
+
+  $out = [];
+  foreach ((array)@scandir($dir) as $name) {
+    if ($name === '.' || $name === '..') continue;
+
+    $path  = $dir.'/'.$name;
+    $link  = is_link($path);
+    $isDir = is_dir($path);
+    $st    = @lstat($path) ?: [];
+
+    $out[] = [
+      'name'    => $name,
+      'size'    => (int)($st['size'] ?? 0),
+      'mtime'   => (int)($st['mtime'] ?? 0),
+      'compose' => in_array($name, STACKMAN_COMPOSE_FILENAMES, true),
+      // A directory or a link is never offered as editable text — a link is
+      // listed but never followed for editing; see stackman_read_file().
+      'text'    => (!$isDir && !$link) ? stackman_looks_text($path) : false,
+      'dir'     => $isDir,
+      'link'    => $link,
+    ];
+  }
+
+  usort($out, function ($a, $b) {
+    if ($a['compose'] !== $b['compose']) return $a['compose'] ? -1 : 1;
+    return strnatcasecmp($a['name'], $b['name']);
+  });
+  return $out;
+}
+
+/**
+ * Does this look like a text file? The same test git uses: no NUL byte in
+ * the first 8 KB. A UTF-16 file will be called binary, which is the safe way
+ * round to get this wrong.
+ */
+function stackman_looks_text(string $path): bool {
+  $fh = @fopen($path, 'rb');
+  if ($fh === false) return false;
+  $chunk = fread($fh, 8192);
+  fclose($fh);
+  return $chunk !== false && strpos($chunk, "\0") === false;
+}
+
+/**
+ * Read one companion file for the editor.
+ *
+ * @return array{text?:string, b64?:string, binary:bool}|null
+ */
+function stackman_read_file(string $rel, string $file, string &$error): ?array {
+  $path = stackman_stack_file($rel, $file, $error);
+  if ($path === '') return null;
+
+  if (is_link($path)) {
+    $error = 'That is a link, not a file. Links are shown but not edited here.';
+    return null;
+  }
+  if (is_dir($path)) {
+    $error = '"'.$file.'" is a folder, not a file.';
+    return null;
+  }
+  if (!is_file($path)) {
+    $error = 'There is no file called "'.$file.'" in this stack.';
+    return null;
+  }
+
+  $size = @filesize($path);
+  if ($size !== false && $size > STACKMAN_FILE_MAX) {
+    // ceil(), not round(): a file one byte over the cap rounds back down to
+    // the cap itself, and "is 256 KiB, over the 256 KiB limit" reads as a
+    // mistake rather than a rule.
+    $error = '"'.$file.'" is '.ceil($size / 1024).' KiB, over the '
+           . round(STACKMAN_FILE_MAX / 1024).' KiB limit for editing here.';
+    return null;
+  }
+
+  $raw = @file_get_contents($path);
+  if ($raw === false) { $error = 'Could not read '.$path; return null; }
+
+  if (stackman_looks_text($path)) return ['text' => $raw, 'binary' => false];
+  return ['b64' => base64_encode($raw), 'binary' => true];
+}
+
+/**
+ * Write one companion file, text or binary.
+ *
+ * Written to a temp file in the same directory and rename()'d into place, so
+ * a reader never sees half a file — the same reasoning stackman_save_stack()
+ * uses for the compose file itself.
+ */
+function stackman_write_file(string $rel, string $file, string $body, bool $isText, string &$error): bool {
+  $path = stackman_stack_file($rel, $file, $error);
+  if ($path === '') return false;
+
+  if (is_link($path)) {
+    $error = 'That is a link, not a file. Links are shown but not edited here.';
+    return false;
+  }
+  if (is_dir($path)) {
+    $error = '"'.$file.'" is a folder, not a file.';
+    return false;
+  }
+
+  if ($isText) {
+    // Same reason stackman_save_stack() normalises a pasted compose file: a
+    // Windows browser sends CRLF, which corrupts anything on the other end
+    // that cares about line endings — a shell script, a block scalar.
+    $body = str_replace("\r\n", "\n", $body);
+  }
+
+  if (strlen($body) > STACKMAN_FILE_MAX) {
+    $error = 'That file is over the '.round(STACKMAN_FILE_MAX / 1024).' KiB limit for a companion file.';
+    return false;
+  }
+
+  $tmp = $path.'.stackman-tmp';
+  if (@file_put_contents($tmp, $body) === false) {
+    $error = 'Could not write '.$tmp;
+    return false;
+  }
+  @chmod($tmp, 0644);
+  if (!@rename($tmp, $path)) {
+    @unlink($tmp);
+    $error = 'Could not save "'.$file.'" — the temporary file could not be put in place.';
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Delete one companion file. A link is unlinked, never followed; a directory
+ * is refused — the caller means the stack's own delete for that.
+ */
+function stackman_delete_file(string $rel, string $file, string &$error): bool {
+  $path = stackman_stack_file($rel, $file, $error);
+  if ($path === '') return false;
+
+  if (is_link($path)) {
+    if (!@unlink($path)) { $error = 'Could not delete "'.$file.'".'; return false; }
+    return true;
+  }
+  if (is_dir($path)) {
+    $error = '"'.$file.'" is a folder. Delete the stack itself if you want the folder gone.';
+    return false;
+  }
+  if (!is_file($path)) {
+    $error = 'There is no file called "'.$file.'" in this stack.';
+    return false;
+  }
+  if (!@unlink($path)) {
+    $error = 'Could not delete "'.$file.'".';
+    return false;
+  }
+  return true;
+}
+
+/** Rename one companion file within its own folder. */
+function stackman_rename_file(string $rel, string $from, string $to, string &$error): bool {
+  $fromPath = stackman_stack_file($rel, $from, $error);
+  if ($fromPath === '') return false;
+  $toPath = stackman_stack_file($rel, $to, $error);
+  if ($toPath === '') return false;
+
+  if (!file_exists($fromPath) && !is_link($fromPath)) {
+    $error = 'There is no file called "'.$from.'" in this stack.';
+    return false;
+  }
+  if (file_exists($toPath) || is_link($toPath)) {
+    $error = 'There is already a file called "'.$to.'" in this stack.';
+    return false;
+  }
+  if (!@rename($fromPath, $toPath)) {
+    $error = 'Could not rename "'.$from.'" to "'.$to.'".';
     return false;
   }
   return true;
