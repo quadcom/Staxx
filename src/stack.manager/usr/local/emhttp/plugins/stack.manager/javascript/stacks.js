@@ -710,6 +710,13 @@
   // A textarea always hands its value back as LF, whatever went into it, so a
   // file that arrived with Windows line endings needs them put back on the
   // way out — otherwise saving rewrites every line of a file nobody edited.
+  //
+  // The one place this project's "only what changed is written" promise does
+  // not hold literally: composeEol is decided by whether the file held ANY
+  // CRLF, so a file with mixed endings comes out wholly CRLF, rewriting even
+  // lines nobody touched. A textarea gives no way to know which lines ended
+  // how, and a consistent file beats a half-converted one — but it is a
+  // rewrite, and pretending otherwise in this comment would be worse.
   function withEol(text, eol) {
     return eol === '\r\n' ? text.replace(/\n/g, '\r\n') : text;
   }
@@ -1252,6 +1259,17 @@
   var netLoaded  = false;
   var NETWORKS   = [];      // [name, label] pairs found on this server, beyond netmode's own
 
+  // Just the names, for YAML.lint()'s network_mode check. null — not [] —
+  // until the server has answered, because "we do not know yet" and "there
+  // are none" have to lead to different behaviour: the first must not let a
+  // real network like br0 be reported as a typo of bridge.
+  function netNames() {
+    if (!netLoaded) return null;
+    var out = [];
+    for (var i = 0; i < NETWORKS.length; i++) out.push(NETWORKS[i][0]);
+    return out;
+  }
+
   // Images already on this server (IMAGES, up near choiceFor()) and, per
   // repo, its tags from the registry — see imgLoad()/tagLoad() far below.
   var imgLoaded  = false;
@@ -1315,6 +1333,10 @@
     return options;
   }
 
+  // Returns both the <option> markup and whether the file's own value was on
+  // the list — boxHtml() below folds `known` into the <select>'s class so an
+  // unrecognised value looks different from a normal one, without changing
+  // which option ends up selected.
   function optionsHtml(choice, value) {
     var out = [], known = false;
     for (var i = 0; i < choice.options.length; i++) {
@@ -1324,7 +1346,7 @@
                '>' + esc(o[1]) + '</option>');
     }
     if (!known) out.unshift('<option value="' + esc(value) + '" selected>' + esc(value) + '</option>');
-    return out.join('');
+    return { html: out.join(''), known: known };
   }
 
   // A <datalist>'s own <option> never needs the "reinject the unknown
@@ -1529,6 +1551,9 @@
 
     var boxTitle = hint;
     var listId = 'stackman-dl-' + index + '-' + which;
+    // Computed even when unused (the input/datalist branches below ignore
+    // it) — cheaper than a second choice-shaped branch just to defer this.
+    var opts = choice ? optionsHtml(choice, p.value) : null;
 
     var control = choice && choice.open
       ? '<input type="text" class="stackman-input" list="' + listId + '"' +
@@ -1540,12 +1565,19 @@
               (dead ? ' disabled' : '') + '>' +
           '<datalist id="' + listId + '">' + datalistOptionsHtml(choice.options) + '</datalist>'
       : choice
-        ? '<select class="stackman-input stackman-choose"' +
+        // stackman-choose--odd marks a value optionsHtml() had to keep on the
+        // list even though it is not one of the known ones — see the comment
+        // on optionsHtml() itself for why that value is never dropped.
+        // An empty box is not an odd value, it is no value — a setting left
+        // unset, or one inherited from a shared block, is blank here and must
+        // not be marked as though the file said something wrong.
+        ? '<select class="stackman-input stackman-choose' +
+                (opts.known || !p.value ? '' : ' stackman-choose--odd') + '"' +
                 ' data-row="' + index + '" data-part="' + which + '"' +
                 ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
                 ' title="' + esc(boxTitle) + '"' + NOFILL +
                 (dead ? ' disabled' : '') + '>' +
-            optionsHtml(choice, p.value) +
+            opts.html +
           '</select>'
         : '<input type="text" class="stackman-input"' +
                 ' data-row="' + index + '" data-part="' + which + '"' +
@@ -2649,23 +2681,32 @@
   // a second source painted the same way, not a second place that paints.
   // saveErrorDot is one extra entry for a save the server refused (see
   // markSaveError()) — kept apart from both so relint() dropping it on the
-  // next real reparse is a one-line thing, not a filter.
+  // next real reparse is a one-line thing, not a filter. checkDot is the
+  // same idea for the live "does compose accept this" round trip below (see
+  // runCheck()) — one dot, cleared the same way.
   var lastLint     = [];
   var varLint      = [];
   var saveErrorDot = null;
+  var checkDot     = null;
 
   function redrawDots() {
     var list = lastLint.concat(varLint);
-    paintDots(saveErrorDot ? list.concat([saveErrorDot]) : list);
+    if (saveErrorDot) list = list.concat([saveErrorDot]);
+    if (checkDot)     list = list.concat([checkDot]);
+    paintDots(list);
   }
 
   // Guarded the same way paintInk() guards for YAML.highlight: if the linter
   // has not landed yet, this simply never finds any problems to mark.
   function relint() {
+    // netNames() is null until the server has answered, which switches the
+    // network_mode value check off rather than letting it call a real network
+    // a typo — netLoad()'s first reply triggers a reparse, so it starts then.
     lastLint = (YAML && typeof YAML.lint === 'function' && MODEL && MODEL.doc)
-      ? YAML.lint(MODEL.doc) : [];
+      ? YAML.lint(MODEL.doc, netNames()) : [];
     varLint = varDots();
     saveErrorDot = null;   // a fresh reparse is the moment a save error goes stale
+    checkDot = null;       // ditto — the line numbers a stale check answer named may no longer mean the same thing
     redrawDots();
   }
 
@@ -2696,6 +2737,7 @@
     updateMissing();
     relint();
     checkHostPaths();   // ask the server about any volume host path not already cached
+    scheduleCheck();    // ask the server whether compose itself accepts this file (own, longer debounce)
     // The form's markup was just rebuilt from scratch, so a companion file
     // still on screen has to have it locked again — find and replace is the
     // one path that reaches this from a companion tab.
@@ -3722,6 +3764,86 @@
         if (myToken !== pathToken || !res || !res.ok || !res.paths) return;
         Object.keys(res.paths).forEach(function (p) { pathCache[p] = res.paths[p]; });
         repaintMark();
+      });
+  }
+
+  /* ---- does compose itself accept this file? --------------------------
+   *
+   * Our own lint and the schema check catch structure; neither has a rule
+   * for a value that parses fine but means nothing to compose — restart:
+   * alwyas, network_mode: hots (see PLAN_20). Docker Compose's own
+   * `config -q` already rejects the first and warns on nothing we would
+   * ever guess, so asking it is a courtesy, not a replacement for a
+   * vocabulary list. Debounced separately from, and longer than, reparse()'s
+   * own 400ms — a network round trip is not worth firing on every pause in
+   * typing the way checkHostPaths() above does.
+   *
+   * Advisory only, exactly like checkHostPaths(): never blocks Save, never
+   * disables anything, never rewrites the text. Every failure — a slow
+   * reply, a timeout, no compose on the server, ok:false — is "no
+   * information" and stays silent.
+   */
+  var checkTimer   = null;   // the debounce handle, 800ms after typing settles
+  var checkSeq     = 0;      // bumped by every request sent, so a superseded reply cannot paint
+  var checkedText  = null;   // text the last request was sent for, so an unchanged pane asks only once
+  var checkVerdict = null;   // what that answer was, so an unchanged pane can put its mark back
+
+  // Called from reparse(). relint() has just cleared checkDot, so an answer
+  // we already have has to be put back rather than merely not re-asked for:
+  // reparse() runs on things other than typing — netLoad()'s first reply is
+  // one — and without this the mark would vanish a second after it appeared
+  // and never return, since the text never changed to trigger a new ask.
+  function scheduleCheck() {
+    if (fileOpen !== null) return;   // a companion file is not the compose file
+    if (checkTimer) clearTimeout(checkTimer);
+
+    var text = currentText();
+    if (text === checkedText) {
+      if (checkVerdict) { checkDot = checkVerdict; redrawDots(); }
+      return;
+    }
+
+    checkTimer = setTimeout(function () {
+      checkTimer = null;
+      runCheck(text);
+    }, 800);
+  }
+
+  function runCheck(text) {
+    checkedText  = text;
+    checkVerdict = null;
+    var mySeq = ++checkSeq;
+    call('check', { name: openedName, body: text }, 4000)
+      .then(function (res) {
+        // A reply for text an edit has since moved past — call() itself
+        // never rejects (see its own comment), so a bad reply lands here as
+        // res.ok === false and is handled the same way as a superseded
+        // sequence number: simply nothing painted.
+        if (mySeq !== checkSeq || !res || !res.ok) return;
+
+        if (!res.valid) {
+          // Reuses markSaveError()'s own line extraction so the compose
+          // line -> gutter line mapping lives in one place. A message that
+          // names no line is shown in the status line rather than guessed at.
+          // Compose names a line for a YAML syntax error, but only a path
+          // for a schema one ("services.web.pull_policy 'alwyas' does not
+          // match …"). Both end up on the right line; only the way of
+          // finding it differs.
+          var line = lineFromMessage(res.error);
+          if (line === null) line = lineFromPath(res.error);
+          if (line !== null) {
+            checkVerdict = { line: line, level: 'error', message: res.error };
+            checkDot = checkVerdict;
+            redrawDots();
+          } else if (res.error) {
+            setYamlStatus(res.error);
+          }
+        } else if (res.warnings && res.warnings.length) {
+          // Warnings carry no line of their own, so the status line is the
+          // only place for them — never a guessed gutter dot.
+          var extra = res.warnings.length - 1;
+          setYamlStatus(res.warnings[0] + (extra ? '  (and ' + extra + ' more)' : ''));
+        }
       });
   }
 
@@ -5070,6 +5192,14 @@
     stackOpen    = false;
     findReset();
     pathsReset();   // a fresh cache and marks for the stack that is about to open
+    // Yesterday's compose-check answer, and any request still in flight for
+    // it, are meaningless against today's stack — the seq bump is what stops
+    // a late reply for the stack just left from painting over this one.
+    if (checkTimer) { clearTimeout(checkTimer); checkTimer = null; }
+    checkSeq++;
+    checkedText = null;
+    checkVerdict = null;
+    checkDot = null;
     hideSuggest();   // neither panel may leak from one stack's editor into the next
     hideHover();
     closeOutline();   // yesterday's line numbers are meaningless against today's stack
@@ -5179,6 +5309,11 @@
     devClose();
     findReset();   // a search must not leak from one stack into the next
     pathsReset();
+    if (checkTimer) { clearTimeout(checkTimer); checkTimer = null; }
+    checkSeq++;   // a reply landing after close must find itself superseded
+    checkedText = null;
+    checkVerdict = null;
+    checkDot = null;
     hideSuggest();
     hideHover();
     closeOutline();
@@ -7170,13 +7305,34 @@
   // Compose's own refusal message usually names a line ("yaml: line 31: did
   // not find expected key"), but compose counts lines from 1 and lint()/
   // paintDots() count from 0 — converted once, here, so a mismatch cannot
-  // creep in anywhere else and send the user to the wrong line. The dot is
-  // merged in on top of whatever lint already found, and lives until the
-  // next reparse() (typing again, or a form commit) replaces it.
-  function markSaveError(message) {
+  // creep in anywhere else and send the user to the wrong line. Shared with
+  // the live compose check below (see runCheck()) so this stays the one
+  // place that mapping lives; returns null when the message names no line,
+  // rather than inventing one.
+  function lineFromMessage(message) {
     var m = /line (\d+)/.exec(message || '');
-    if (!m) return;
-    var line = parseInt(m[1], 10) - 1;
+    return m ? parseInt(m[1], 10) - 1 : null;
+  }
+
+  // The other half: a schema complaint names a dotted path where a syntax
+  // error names a line. Only paths that start at a real top-level compose
+  // section are followed, so an ordinary sentence containing a full stop
+  // cannot be mistaken for one.
+  var PATH_HEAD = /^(services|networks|volumes|configs|secrets|include)\./;
+
+  function lineFromPath(message) {
+    var m = /validating[^:]*:\s*([A-Za-z0-9_.\-]+)/.exec(message || '');
+    if (!m || !PATH_HEAD.test(m[1])) return null;
+    if (!YAML || typeof YAML.lineOfPath !== 'function' || !MODEL || !MODEL.doc) return null;
+    var line = YAML.lineOfPath(MODEL.doc, m[1]);
+    return line >= 0 ? line : null;
+  }
+
+  // The dot is merged in on top of whatever lint already found, and lives
+  // until the next reparse() (typing again, or a form commit) replaces it.
+  function markSaveError(message) {
+    var line = lineFromMessage(message);
+    if (line === null) return;
     saveErrorDot = { line: line, level: 'error', message: message };
     redrawDots();
     revealLine(line);

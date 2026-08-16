@@ -1270,15 +1270,34 @@ function stackman_read_stack(string $name, string &$error): ?string {
  * parses it fully and says nothing if it is fine. The error text compose
  * produces is far better than anything we would write, so it is passed
  * straight through to the user.
+ *
+ * $dir is the stack's real folder. When it exists, it is passed to compose as
+ * `--project-directory` so a relative `env_file:` or a `.env` sitting beside
+ * the real compose file can resolve — measured on the test box, without this
+ * an ordinary file using env_file: was refused with "env file not found"
+ * even though it was perfectly valid. A new stack has no folder yet, so $dir
+ * is '' and the flag is simply omitted.
+ *
+ * There is no local "does this look like a compose file" check any more — an
+ * include:-only file with no services: key is valid and compose accepts it,
+ * so a services: gate was refusing good files. That means the guard below
+ * (nothing to validate with, so accept) now waves through ANY non-empty text
+ * when compose cannot be found, where previously the services: check still
+ * caught some nonsense in that case. Compose missing is already a broken
+ * install, so this trade only matters on a server in that state.
+ *
+ * $warnings, if passed by reference, is filled with compose's own advisory
+ * notes on a file that PASSES — e.g. an unset variable defaulting to blank.
+ * These are informational only and never turn a pass into a failure.
  */
-function stackman_validate_compose(string $yaml, string &$error): bool {
+// $warnings is ?array, not array: PHP 8.4 (which Unraid 7.2 ships) deprecates
+// implicitly nullable parameters, and a deprecation notice on every save would
+// land inside action.php's JSON reply.
+function stackman_validate_compose(string $yaml, string &$error, string $dir = '', ?array &$warnings = null): bool {
   $error = '';
+  $warnings = [];
 
   if (trim($yaml) === '') { $error = 'The compose file is empty.'; return false; }
-  if (!preg_match('/^services:/m', $yaml)) {
-    $error = 'This does not look like a compose file — it has no "services:" section.';
-    return false;
-  }
 
   $cmd = stackman_compose_cmd();
   if ($cmd === '') return true;   // Nothing to check with; accept and warn elsewhere.
@@ -1291,17 +1310,32 @@ function stackman_validate_compose(string $yaml, string &$error): bool {
   $tmpfile = $tmpdir.'/compose.yaml';
   @file_put_contents($tmpfile, str_replace("\r\n", "\n", $yaml));
 
+  $projectFlag = ($dir !== '' && is_dir($dir))
+    ? '--project-directory '.escapeshellarg($dir).' '
+    : '';
+
   // Judge this on the exit code, not on whether anything was printed. Compose
   // writes deprecation notices and other warnings to stderr for files that are
   // perfectly valid; treating any output as failure would reject them.
   $lines = [];
   $code  = 1;
-  @exec('timeout -k 2 20 '.$cmd.' -f '.escapeshellarg($tmpfile).' config -q </dev/null 2>&1', $lines, $code);
+  @exec('timeout -k 2 20 '.$cmd.' '.$projectFlag.'-f '.escapeshellarg($tmpfile).' config -q </dev/null 2>&1', $lines, $code);
 
   @unlink($tmpfile);
   @rmdir($tmpdir);
 
-  if ($code === 0) return true;
+  if ($code === 0) {
+    // Compose still writes advisory notes to stderr for a file it accepts —
+    // logfmt, one per line. Pull the msg="…" payload out of the warning lines
+    // only; anything that does not match this shape is never shown, so raw
+    // logfmt never reaches a user.
+    foreach ($lines as $line) {
+      if (preg_match('/level=warning msg="((?:[^"\\\\]|\\\\.)*)"/', $line, $m)) {
+        $warnings[] = str_replace('\\"', '"', $m[1]);
+      }
+    }
+    return true;
+  }
   if ($code === 124) {
     $error = 'Compose took too long to read this file and was stopped. '
            . 'The file was not saved.';
@@ -1464,7 +1498,11 @@ function stackman_save_stack(string $name, string $yaml, string &$error): bool {
     $error = 'There is no folder called "'.$folder.'".';
     return false;
   }
-  if (!stackman_validate_compose($yaml, $error)) return false;
+  // Pass the stack's real folder so relative env_file: paths and a sibling
+  // .env can resolve during validation — see stackman_validate_compose(). A
+  // new stack's folder does not exist yet; that is fine, the flag is just
+  // omitted for it.
+  if (!stackman_validate_compose($yaml, $error, stackman_stack_dir($name))) return false;
 
   $dir = stackman_stack_dir($name);
   if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
@@ -1886,7 +1924,7 @@ function stackman_rename_file(string $rel, string $from, string $to, string &$er
  * inlined rather than called — Stacks.php sits below Folders.php in the
  * include order and must not depend on it.
  */
-function stackman_rename_stack(string $rel, string $newLeaf, string &$error = null): string {
+function stackman_rename_stack(string $rel, string $newLeaf, ?string &$error = null): string {
   $error   = '';
   $newLeaf = trim($newLeaf);
 

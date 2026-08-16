@@ -1337,6 +1337,16 @@ console.log('\nL. 10-advanced-compose-test (PLAN_4 phase 1)');
 var FIXTURE_10_ADVANCED = [
   'version: "3.9"',
   '',
+  // Two more top-level anchors, feeding the "worker" service below — the
+  // constructs seal() exists to protect (anchor, merge key, alias, block and
+  // folded scalars, flow map, flow list, an escaped backslash) were entirely
+  // absent from this fixture despite its name, so the null-edit proof at the
+  // top of section L never touched them.
+  'x-worker-labels: &worker_labels {app: "worker", path: "C:\\\\data"}',
+  '',
+  'x-shared: &defaults',
+  '  restart: unless-stopped',
+  '',
   'services:',
   '  web:',
   '    image: nginx:alpine',
@@ -1387,6 +1397,23 @@ var FIXTURE_10_ADVANCED = [
   '      timeout: 5s',
   '      retries: 5',
   '',
+  '  worker:',
+  '    image: alpine:latest',
+  '    <<: *defaults',
+  '    container_name: advanced_worker',
+  '    profiles:',
+  '      - extras',
+  '    extends:',
+  '      service: web',
+  '    command: |',
+  '      echo starting',
+  '      echo done',
+  '    entrypoint: >',
+  '      /bin/sh -c',
+  '      run.sh',
+  '    labels: *worker_labels',
+  '    networks: [frontend_net]',
+  '',
   'networks:',
   '  frontend_net:',
   '    driver: bridge',
@@ -1429,7 +1456,7 @@ var FIXTURE_10_ADVANCED = [
 (function () {
   var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
   var want = { networks: ['frontend_net', 'backend_net'], volumes: ['db_data'],
-               secrets: ['db_password'], configs: [], services: ['web', 'db'] };
+               secrets: ['db_password'], configs: [], services: ['web', 'db', 'worker'] };
   ok('declared holds the four top-level namespaces plus the service list',
      JSON.stringify(form.declared) === JSON.stringify(want), JSON.stringify(form.declared));
 })();
@@ -4033,8 +4060,13 @@ var SPEC_SERVICE_KEYS = [
 
 (function () {
   var lines = ['services:', '  a:', '    image: alpine'];
+  // checkSpecValues() now judges restart and network_mode against real value lists, so the
+  // generic "x" filler correctly warns on those two. Give them real values instead — this
+  // test is about every key being recognised, not about what each key is set to.
+  var VALUE_OVERRIDE = { restart: 'unless-stopped', network_mode: 'bridge' };
   SPEC_SERVICE_KEYS.forEach(function (k) {
-    if (k !== 'image') lines.push('    ' + k + ': "x"');
+    if (k === 'image') return;
+    lines.push('    ' + k + ': "' + (VALUE_OVERRIDE[k] || 'x') + '"');
   });
   var doc = Y.parse(lines.join('\n') + '\n');
   var res = Y.lint(doc);
@@ -4137,6 +4169,133 @@ FILES.forEach(function (file) {
     }
   });
   ok('no input throws or returns the wrong shape', !bad, bad);
+})();
+
+/* ---- J12. checkSpecValues() — restart:, silent on every real value ------
+ *
+ * The negative cases matter more than the positive ones here: a false
+ * warning on a working file costs more trust than ten missed typos.
+ */
+
+(function () {
+  var SILENT = ['always', 'no', 'unless-stopped', 'on-failure', 'on-failure:5'];
+  var bad = null;
+  SILENT.forEach(function (v) {
+    var doc = Y.parse('services:\n  a:\n    image: alpine\n    restart: "' + v + '"\n');
+    var res = Y.lint(doc);
+    if (res.length !== 0) bad = v + ': ' + JSON.stringify(res);
+  });
+  ok('every real restart value reports nothing', !bad, bad);
+})();
+
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    restart: ${SOMEVAR}\n');
+  ok('an interpolated restart: is never judged, since its real value is unknown',
+     Y.lint(doc).length === 0, JSON.stringify(Y.lint(doc)));
+})();
+
+(function () {
+  var doc = Y.parse('x-r: &r always\nservices:\n  a:\n    image: alpine\n    restart: *r\n');
+  ok('a restart: aliased to a sealed anchor is never judged',
+     Y.lint(doc).length === 0, JSON.stringify(Y.lint(doc)));
+})();
+
+/* ---- J13. checkSpecValues() — restart:, warns on a real typo ------------ */
+
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    restart: alwyas\n');
+  var res = Y.lint(doc);
+  ok('"alwyas" warns and names "always"',
+     res.length === 1 && res[0].level === 'warn' &&
+     res[0].message === '"alwyas" is not one of the values restart accepts. Did you mean "always"?',
+     JSON.stringify(res));
+})();
+
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    restart: banana\n');
+  var res = Y.lint(doc);
+  ok('"banana" (no near match) warns and lists the accepted values',
+     res.length === 1 && res[0].level === 'warn' &&
+     res[0].message === '"banana" is not one of the values restart accepts. It accepts no, always, unless-stopped or on-failure.',
+     JSON.stringify(res));
+})();
+
+/* ---- J14. checkSpecValues() — network_mode: is a tri-state on realNets --
+ *
+ * Passing no realNets at all means "the server has not said what networks
+ * it has yet" — different from "it has none" — so the whole check is off
+ * until netLoad() answers. Passing [] means it answered with nothing, and
+ * the check runs for real from that point on.
+ */
+
+(function () {
+  var SILENT = ['host', 'none', 'bridge', 'service:db', 'container:x', 'br0', 'br0.100'];
+  var bad = null;
+  SILENT.forEach(function (v) {
+    var doc = Y.parse('services:\n  a:\n    image: alpine\n    network_mode: "' + v + '"\n');
+    var res = Y.lint(doc, []);
+    if (res.length !== 0) bad = v + ': ' + JSON.stringify(res);
+  });
+  ok('every real network_mode value reports nothing, even with the check switched on ([])', !bad, bad);
+})();
+
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    network_mode: node\n');
+  ok('a real network called "node" is never called a typo once the server confirms it',
+     Y.lint(doc, ['node']).length === 0, JSON.stringify(Y.lint(doc, ['node'])));
+})();
+
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    network_mode: node\n');
+  ok('with no realNets at all, network_mode is left alone entirely — the check is off, not a miss',
+     Y.lint(doc).length === 0, JSON.stringify(Y.lint(doc)));
+})();
+
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    network_mode: hots\n');
+  var res = Y.lint(doc, []);
+  ok('"hots" warns and names "host", once realNets has arrived (even empty)',
+     res.length === 1 && res[0].level === 'warn' &&
+     res[0].message === '"hots" is not one of the values network_mode accepts. Did you mean "host"?',
+     JSON.stringify(res));
+})();
+
+(function () {
+  // The tri-state itself, pinned: the same document, judged twice, disagrees
+  // — omitted defers judgement, [] carries it out. Easy to regress silently
+  // since both "no argument" and "empty array" look like "nothing to check"
+  // at a glance.
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    network_mode: hots\n');
+  var withoutList = Y.lint(doc);
+  var withEmptyList = Y.lint(doc, []);
+  ok('the same file lints differently depending on whether realNets has arrived yet',
+     withoutList.length === 0 && withEmptyList.length === 1,
+     JSON.stringify({ withoutList: withoutList, withEmptyList: withEmptyList }));
+})();
+
+/* ---- J15. checkSpecValues() never marks a working fixture --------------- */
+
+(function () {
+  var res = Y.lint(Y.parse(FIXTURE_10_ADVANCED), []);
+  var bad = res.filter(function (r) {
+    return r.message.indexOf('restart accepts') >= 0 || r.message.indexOf('network_mode accepts') >= 0;
+  });
+  ok('FIXTURE_10_ADVANCED carries no restart/network_mode warning, check switched on',
+     bad.length === 0, JSON.stringify(bad));
+})();
+
+(function () {
+  var bad = null;
+  FILES.filter(function (f) { return f.indexOf(path.join('examples', '')) >= 0; }).forEach(function (file) {
+    var text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    var res = Y.lint(Y.parse(text), []);
+    var hit = res.filter(function (r) {
+      return r.message.indexOf('restart accepts') >= 0 || r.message.indexOf('network_mode accepts') >= 0;
+    });
+    if (hit.length) bad = (bad || []).concat(hit.map(function (h) { return file + ': ' + h.message; }));
+  });
+  ok('every examples/*/compose.yaml carries no restart/network_mode warning, check switched on',
+     !bad, JSON.stringify(bad));
 })();
 
 /* =========================================================================

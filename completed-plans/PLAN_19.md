@@ -119,3 +119,10 @@ The gap belongs to the editor, and the file that most needs it is the one somebo
   duration, a port outside 1–65535, a bad cron expression. Worth having, much larger, and each needs
   its own rule; this plan is only the fixed-list ones.
 - **Making any of it an error.** Nothing here should stop a save. The file is the user's.
+
+---
+
+**Superseded by PLAN_20**, which measured what `docker compose config -q` actually rejects
+and found this plan checked two fields compose already judges properly, and missed a great
+deal it judges for free. Kept for the reasoning about never being stricter than Docker,
+which PLAN_20 carries forward.

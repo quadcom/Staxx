@@ -80,7 +80,7 @@ function stackman_folders_load(): array {
   return ['version' => 2, 'collapsed' => $collapsed];
 }
 
-function stackman_folders_save(array $data, string &$error = null): bool {
+function stackman_folders_save(array $data, ?string &$error = null): bool {
   $error = '';
   if (!is_dir(STACKMAN_CFG_DIR) && !@mkdir(STACKMAN_CFG_DIR, 0755, true)) {
     $error = 'Could not create '.STACKMAN_CFG_DIR;
@@ -110,7 +110,7 @@ function stackman_folder_name_rule(): string {
 }
 
 /** Is anything already using this name at the top of the stack root? */
-function stackman_folder_taken(string $name, string &$what = null): bool {
+function stackman_folder_taken(string $name, ?string &$what = null): bool {
   $scan = stackman_scan_stacks();
 
   foreach ($scan['folders'] as $f) {

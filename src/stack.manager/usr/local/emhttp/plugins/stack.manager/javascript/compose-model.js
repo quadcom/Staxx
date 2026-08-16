@@ -4012,6 +4012,71 @@
     }
   }
 
+  // The two service-level keys compose's schema types as a plain string
+  // rather than a closed enum (PLAN_20's measurement is what narrowed this
+  // to just these two). restart's list is closed: anything else is silently
+  // ignored by Docker and the container just never restarts again, with
+  // nothing to say why. network_mode stays open, because a bare word may be
+  // a real docker network on this server (br0, br0.100) that no list of
+  // ours could ever know about — so it only warns on a near-miss of the
+  // three built-in values, via the same edit-distance test nearestKey()
+  // already runs, and never on an unrecognised word.
+  var RESTART_VALUES = ['no', 'always', 'unless-stopped', 'on-failure'];
+  var NETWORK_MODE_VALUES = ['host', 'none', 'bridge'];
+
+  // English-join a short list — "a, b or c" — so the accepted-values
+  // sentence is built from the list itself rather than typed out by hand
+  // and left to drift the day the list changes.
+  function joinOr(list) {
+    if (list.length < 2) return list[0] || '';
+    return list.slice(0, -1).join(', ') + ' or ' + list[list.length - 1];
+  }
+
+  // A scalar pair's value, or null when there is nothing safe to judge: no
+  // such key, a sealed anchor/alias (kind !== 'scalar'), an empty string, or
+  // one that reaches into a variable defined outside the file — a value we
+  // cannot see the real contents of has no business being called a typo.
+  function specScalar(map, key) {
+    var pair = map.pairs[key];
+    if (!pair || !pair.value || pair.value.kind !== 'scalar') return null;
+    var v = pair.value.value;
+    if (!v || interpolates(v)) return null;
+    return { start: pair.start, value: v };
+  }
+
+  // restart: and network_mode: — see the comment above RESTART_VALUES for
+  // why each is judged differently. Always 'warn': a wrong value here still
+  // leaves a working container, just not the one the file describes.
+  //
+  // `realNets` is the server's own docker network names, passed down from the
+  // page once netLoad() has them. Without it a network genuinely called "node"
+  // reads as a typo of "none" — one edit apart — and the file is perfectly
+  // correct. A name the server confirms is never second-guessed.
+  function checkSpecValues(map, add, realNets) {
+    var r = specScalar(map, 'restart');
+    if (r && RESTART_VALUES.indexOf(r.value) < 0 && !/^on-failure:\d+$/.test(r.value)) {
+      var rNear = nearestKey(r.value, RESTART_VALUES);
+      add(r.start, 'warn', rNear
+        ? '"' + r.value + '" is not one of the values restart accepts. Did you mean "' + rNear + '"?'
+        : '"' + r.value + '" is not one of the values restart accepts. It accepts ' + joinOr(RESTART_VALUES) + '.');
+    }
+
+    // No list means the server has not said what networks it has yet, which is
+    // not the same as "it has none" — so network_mode is left alone entirely
+    // rather than judged against three built-in names. netLoad()'s reply
+    // triggers a redraw, so the check simply starts a moment later.
+    if (!realNets) return;
+
+    var n = specScalar(map, 'network_mode');
+    if (n && NETWORK_MODE_VALUES.indexOf(n.value) < 0 && !/^(service|container):/.test(n.value)
+        && realNets.indexOf(n.value) < 0) {
+      var nNear = nearestKey(n.value, NETWORK_MODE_VALUES);
+      if (nNear) {
+        add(n.start, 'warn', '"' + n.value + '" is not one of the values network_mode accepts. Did you mean "' + nNear + '"?');
+      }
+    }
+  }
+
   // Seal reasons severe enough to call the file itself unreadable, rather
   // than merely locking the one value they cover — see the section comment
   // above for why every other seal reason stays silent here.
@@ -4022,16 +4087,56 @@
       return 'This file is indented with tabs, which YAML does not allow. Replace the tabs with spaces.';
     }
     if (reason === 'directive') {
-      return 'This file uses a YAML directive (%YAML or %TAG), which is not valid in a compose file. Remove it.';
+      return 'This file uses a YAML directive (%YAML or %TAG), which the form cannot read. Use the Compose view to edit it.';
     }
     if (reason === 'multi-doc') {
-      return 'This file holds more than one YAML document, which compose does not support. Keep only one.';
+      return 'This file holds more than one YAML document, which the form cannot read. Use the Compose view to edit it.';
     }
     return 'This part of the file is written in a way that cannot be read as YAML, so Docker is likely to reject it.';
   }
 
   /**
-   * lint(doc) -> [{ line, level: 'error'|'warn', message }]
+   * lineOfPath(doc, path) -> 0-based line, or -1
+   *
+   * Compose's schema complaints name a path rather than a line — "validating
+   * your compose file: services.web.pull_policy 'alwyas' does not match …" —
+   * so without this they can only be shown in the status bar, where they are
+   * easy to miss. Walking the path back to a line puts the mark on the line
+   * that is actually wrong.
+   *
+   * Segments are matched longest-first, because a service may legitimately be
+   * called something like "my.app" and a naive split on '.' would walk past
+   * it. A segment that cannot be found stops the walk and returns the deepest
+   * parent reached: pointing at the enclosing block is honest, whereas
+   * guessing a line is not.
+   */
+  function lineOfPath(doc, path) {
+    if (!doc || !doc.root || doc.root.kind !== 'map' || !path) return -1;
+
+    var parts = String(path).split('.');
+    var map = doc.root, at = -1, i = 0;
+
+    while (i < parts.length && map && map.kind === 'map') {
+      var pair = null, used = 0;
+      for (var take = parts.length - i; take >= 1; take--) {
+        var key = parts.slice(i, i + take).join('.');
+        if (map.pairs[key]) { pair = map.pairs[key]; used = take; break; }
+      }
+      if (!pair) break;
+      at = pair.start;
+      i += used;
+      map = pair.value;
+    }
+    return at;
+  }
+
+  /**
+   * lint(doc, realNets) -> [{ line, level: 'error'|'warn', message }]
+   *
+   * `realNets` is the docker network names this server actually has, so a
+   * network_mode naming one of them is never mistaken for a typo. Omitting it
+   * means "not known yet" — which is not the same as "there are none" — and
+   * switches the network_mode check off rather than letting it guess.
    *
    * `line` is 0-based; -1 would mean a problem with the file as a whole, but
    * every check here already has a real line to point at. Sorted ascending,
@@ -4042,7 +4147,7 @@
    * risking a linter that can kill the editor being worse than one that
    * quietly says nothing.
    */
-  function lint(doc) {
+  function lint(doc, realNets) {
     try {
       var byLine = {};
       function add(line, level, message) {
@@ -4075,7 +4180,10 @@
             // A service written in a way this parser cannot open at all
             // (kind !== 'map') has no keys to check — that is what "skip
             // anything inside a sealed region" means here.
-            if (p.value && p.value.kind === 'map') checkSpecKeys(p.value, SERVICE_SPEC_SET, SERVICE_SPEC_KEYS, add);
+            if (p.value && p.value.kind === 'map') {
+              checkSpecKeys(p.value, SERVICE_SPEC_SET, SERVICE_SPEC_KEYS, add);
+              checkSpecValues(p.value, add, realNets);
+            }
           }
         }
       }
@@ -5502,6 +5610,10 @@
     highlight: highlight,
     // The gutter's error/warning check — see the "Linting" section above.
     lint: lint,
+    // Turns a path in compose's own complaint ("services.web.pull_policy")
+    // into the line it lives on, so a schema error can be marked rather than
+    // only mentioned — see lineOfPath() above.
+    lineOfPath: lineOfPath,
     // The editor's find/replace bar — see the "Text search" section above.
     searchMatches: searchMatches,
     // The editor's autocomplete and hover help — see the "Key suggestions

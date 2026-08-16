@@ -132,6 +132,22 @@ switch ($action) {
       'bytes'   => $written !== '' ? (int)@filesize($written) : 0,
     ]);
 
+  /* ---- check a compose file without saving it ----
+   *
+   * Same function the save path itself runs, just earlier and without
+   * writing anything. `ok` means the check ran at all; `valid` means compose
+   * accepted the text — the two are not the same thing, and the caller
+   * relies on that: a check that could not run must not read as a file that
+   * failed. An unrecognised or missing name is not an error here, since
+   * typing is exactly when the name may not exist yet or not resolve — the
+   * check still runs, just without --project-directory.
+   */
+  case 'check':
+    $body = (string)($_POST['body'] ?? '');
+    $dir  = stackman_valid_path($name) ? stackman_stack_dir($name) : '';
+    $ok   = stackman_validate_compose($body, $error, $dir, $warnings);
+    stackman_reply(['ok' => true, 'valid' => $ok, 'error' => $error, 'warnings' => $warnings]);
+
   /* ---- delete a stack ----
    *
    * The confirmation is asked for here, not inside stackman_delete_stack().

@@ -2885,6 +2885,16 @@
   cursor: pointer;
 }
 
+/* A value the file already holds that is not on the dropdown's own list —
+   kept as a self-labelled option rather than dropped (see the comment on
+   optionsHtml() in stacks.js), so this only has to stop it looking like a
+   normal choice. Amber, the same caution colour .stackman-badpath--file
+   uses for a milder problem, never the danger colour: the value is kept and
+   saved unchanged. */
+.stackman-scaffold .stackman-choose--odd {
+  border-color: var(--sm-accent);
+}
+
 /* A text box with a <datalist> (list="...") looks exactly like a plain one,
    so the suggestions it offers go undiscovered. A small chevron on the right
    says "there's a list here" without borrowing .stackman-choose above or the
