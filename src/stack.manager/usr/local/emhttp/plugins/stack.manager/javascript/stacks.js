@@ -191,13 +191,14 @@
     { key: 'env',       heading: 'Variables', cls: 'stackman-formgroup--pair',   add: 'env',    flag: 'env' },
     { key: 'device',    heading: 'Devices',   cls: 'stackman-formgroup--device', add: 'device', flag: 'device' },
     { key: 'label',     heading: 'Labels',    cls: 'stackman-formgroup--pair',   add: 'label',  flag: 'label' },
-    // health and resources have no `add`: every one of their leaves is
+    // health, resources and build have no `add`: every one of their leaves is
     // always present as a field (harvestLeaves), so typing into a blank box
     // is what creates the line — an Add button would offer an action that
     // always fails. Same column shape as Advanced (label · value · note) —
     // reused as-is rather than given a template of their own.
     { key: 'health',     heading: 'Health check',     cls: 'stackman-formgroup--advanced', flag: 'health' },
     { key: 'resources',  heading: 'Resource limits',  cls: 'stackman-formgroup--advanced', flag: 'resources' },
+    { key: 'build',      heading: 'Build',            cls: 'stackman-formgroup--advanced', flag: 'build' },
     { key: 'depends',    heading: 'Depends on', cls: 'stackman-formgroup--single',
       add: 'list:depends_on', flag: 'depends' },
     // The nine list sections used to be discovered per service, one group per
@@ -233,6 +234,10 @@
     { key: 'label',         label: 'Labels',              path: ['labels'],              on: true },
     { key: 'health',        label: 'Health check',        path: ['healthcheck'],         on: false },
     { key: 'resources',     label: 'Resource limits',     path: ['deploy', 'resources'], on: false },
+    // Most services pull a ready-made image, so Build starts unticked the
+    // same as health/resources — the file itself flips it on when a service
+    // already has a build: key (serviceFlags/fileFlagCounts).
+    { key: 'build',         label: 'Build',               path: ['build'],               on: false },
     { key: 'depends',       label: 'Depends on',          path: ['depends_on'],          on: false },
     { key: 'list:networks', label: 'Networks',            path: ['networks'],            on: false },
     { key: 'list:secrets',  label: 'Secrets',             path: ['secrets'],             on: false },
@@ -259,6 +264,7 @@
     label:     ['label name', 'value', 'note, kept in the file'],
     health:    ['setting', 'value', 'note, kept in the file'],
     resources: ['setting', 'value', 'note, kept in the file'],
+    build:     ['setting', 'value', 'note, kept in the file'],
     // Short form only this phase — one box per dependency, the same shape as
     // any other dynamic list. The three-column shape phase 1 wrote here was
     // for the long form's name/condition pair, which does not exist yet.
@@ -299,6 +305,12 @@
     // form cannot open) belongs beside its own tick, not off in Advanced —
     // same reasoning as healthcheck/deploy.resources above.
     if (/^logging(\.|$)/.test(f.target)) return 'logging';
+    // Same reasoning as health/resources/logging above: a build leaf can lock
+    // (e.g. build.cache_from, a map or list child harvestBlock's second loop
+    // emits read-only) and must still land beside its editable siblings in
+    // Build, not be exiled to Advanced by the locked test below. Matches the
+    // short form too — build: ./app is the target build with no dot.
+    if (/^build(\.|$)/.test(f.target)) return 'build';
     // Short-form depends_on shares the Depends on group with the long form —
     // which stays a locked field in Advanced until phase 5 (see f.locked
     // below), so only the short form's own list entries are routed here.
@@ -2389,11 +2401,52 @@
     return out.join('');
   }
 
+  // One block per top-level `include:` entry, shown in place of the empty-
+  // form message when a file only points at others rather than listing any
+  // services itself. Its own function, not folded into renderForm(), so an
+  // editable version can replace this renderer later without unpicking the
+  // branch that calls it (PLAN_21).
+  //
+  // A file can carry both `include:` and its own `services:` — that
+  // combination renders as an ordinary service list, since this only runs
+  // from renderForm's empty branch, so the include blocks never show
+  // alongside real services in this pass.
+  function includesHtml(form) {
+    var out = ['<div class="stackman-includes">'];
+    for (var i = 0; i < form.includes.length; i++) {
+      var inc = form.includes[i];
+      var outside = inc.file.indexOf('/') >= 0 || inc.file.slice(0, 3) === '../';
+      var known = false;
+      if (!outside) {
+        for (var j = 0; j < FILES.length; j++) {
+          // Same exclusions renderTabs() uses to decide a file has no tab of
+          // its own — a directory or a link cannot be opened here either.
+          if (FILES[j].name === inc.file && !FILES[j].compose && !FILES[j].dir && !FILES[j].link) {
+            known = true;
+            break;
+          }
+        }
+      }
+      out.push('<div class="stackman-includeblock">');
+      out.push('<div class="stackman-includehead">' +
+               '<span class="stackman-includename">' + esc(inc.file) + '</span>' +
+               '<span class="stackman-fieldtag">include</span></div>');
+      out.push('<p class="stackman-fieldhint">Its services are defined in that file, not this one.</p>');
+      out.push(known
+        ? '<button type="button" class="stackman-add" data-open-file="' + esc(inc.file) + '">Open</button>'
+        : '<p class="stackman-fieldnote">This file cannot be opened here.</p>');
+      out.push('</div>');
+    }
+    out.push('</div>');
+    return out.join('');
+  }
+
   // A file the parser could not read at all is reparse()'s business — see
   // brokenFormHtml() — so by the time this runs form.ok is always true, and
   // the only empty case left is a readable file that simply lists nothing.
   function renderForm(form) {
     if (!form.services.length) {
+      if (form.includes && form.includes.length) return includesHtml(form);
       var why = form.warnings.length ? form.warnings[0].message
                                      : 'There is nothing in this file to show yet.';
       return '<p class="stackman-form-empty">' + esc(why) + '</p>';
@@ -5678,6 +5731,14 @@
       // Same reasoning for .env: an upload, a rename or a delete can add or
       // remove it without the compose text moving either.
       envLoad();
+      // includesHtml() decides whether each include: gets an Open button by
+      // looking this list up, and it renders before this reply lands — so
+      // without a redraw here every include reads "cannot be opened here"
+      // even when the file is sitting right beside the compose file. Only
+      // the include view needs it: every other form reads FILES nowhere.
+      if (MODEL && MODEL.includes && MODEL.includes.length && !MODEL.services.length) {
+        formHost.innerHTML = includesHtml(MODEL);
+      }
     }).catch(function (e) {
       // renderTabs() reads the compose text through YAML.fileRefs(), which can
       // throw on a file it cannot walk. Left to the bare .catch its callers
@@ -5966,6 +6027,14 @@
       if (btn) openFile(btn.dataset.file || '');
     });
   }
+
+  // The Open button on an include: block (includesHtml() above) — switches
+  // to the file's own tab through the same path a click on that tab already
+  // takes, rather than a second way to open one.
+  formHost.addEventListener('click', function (event) {
+    var openBtn = event.target.closest('[data-open-file]');
+    if (openBtn) openFile(openBtn.dataset.openFile);
+  });
 
   /* ---- the active tab's menu: Rename, Delete, Download -----------------
    *

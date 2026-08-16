@@ -1260,18 +1260,19 @@ console.log('\nJ. The always-present Container settings');
 
 (function () {
   // The field count is what refreshRanges() indexes by, so it must never
-  // move when an absent slot gains a line. Seventeen, not four: the four
-  // fixed Container fields, plus thirteen blank health-check/resource-limit/
-  // logging leaves — harvestLeaves() (PLAN_8 phase 2) offers those whether or
-  // not the file has healthcheck:/deploy:/logging: at all, and
+  // move when an absent slot gains a line. Twenty, not four: the four
+  // fixed Container fields, plus sixteen blank health-check/resource-limit/
+  // logging/build leaves — harvestLeaves() (PLAN_8 phase 2) offers those
+  // whether or not the file has healthcheck:/deploy:/logging:/build: at all,
   // healthcheck.test counts as two of them (PLAN_8 phase 4 — the mode and the
-  // command, see harvestHealthTest()).
+  // command, see harvestHealthTest()), and build (PLAN_21) added its three
+  // scalars (context, dockerfile, target) at the end of the fixed pass.
   var src = 'services:\n  a:\n    image: alpine\n';
   var doc = Y.parse(src), form = Y.buildForm(doc);
   var svcFields = form.fields.filter(function (f) { return f.service === 'a'; });
 
-  ok('a service with no other settings yields four fixed fields plus thirteen blank leaves',
-     svcFields.length === 17 &&
+  ok('a service with no other settings yields four fixed fields plus sixteen blank leaves',
+     svcFields.length === 20 &&
      svcFields.slice(0, 4).every(function (f) { return f.fixed; }) &&
      svcFields.slice(4).every(function (f) { return f.absent && f.path; }),
      svcFields.map(function (f) { return f.target; }).join(', '));
@@ -1483,22 +1484,24 @@ var FIXTURE_10_ADVANCED = [
 (function () {
   // networks: is two editable list fields rather than one locked block, and
   // harvestLeaves() (PLAN_8 phase 2) now offers every healthcheck/deploy/
-  // logging leaf whether the file has it or not — seven healthcheck leaves
-  // (test counts as two — the mode and the command, PLAN_8 phase 4) plus all
-  // four deploy ones plus logging's one (driver), as a fixed pass right after
-  // the four Container fields, same as those. The two healthcheck leaves this
-  // file does not set (start_interval, disable), and logging.driver (this
-  // file has no logging: at all), still appear, blank. web's own test: is a
-  // flow list (["CMD", "curl", ...]) which readTest() reads with confidence,
-  // so it surfaces right there with its siblings rather than later as a
-  // locked catch-all field. web's depends_on is long form (PLAN_8 phase 5) —
-  // one field for "db" plus its restart/required fold, in place of the single
-  // locked block earlier phases left it as. So the count is twenty-four, not
-  // the ten keys the original file has at the top of web:. Pinning f.id
-  // rather than binder/target is deliberate — a list field's id carries its
-  // list key and index (web/list.networks#0/frontend_net), which is what
-  // stops the same name colliding across two different list keys (see the
-  // ids-cannot-collide case below).
+  // logging/build leaf whether the file has it or not — seven healthcheck
+  // leaves (test counts as two — the mode and the command, PLAN_8 phase 4)
+  // plus all four deploy ones plus logging's one (driver) plus build's three
+  // (context, dockerfile, target — PLAN_21), as a fixed pass right after the
+  // four Container fields, same as those. The two healthcheck leaves this
+  // file does not set (start_interval, disable), logging.driver (this file
+  // has no logging: at all) and all three build leaves (web has no build: at
+  // all) still appear, blank. web's own test: is a flow list (["CMD", "curl",
+  // ...]) which readTest() reads with confidence, so it surfaces right there
+  // with its siblings rather than later as a locked catch-all field. web's
+  // depends_on is long form (PLAN_8 phase 5) — one field for "db" plus its
+  // restart/required fold, in place of the single locked block earlier
+  // phases left it as. So the count is twenty-seven, not the ten keys the
+  // original file has at the top of web:. Pinning f.id rather than
+  // binder/target is deliberate — a list field's id carries its list key and
+  // index (web/list.networks#0/frontend_net), which is what stops the same
+  // name colliding across two different list keys (see the ids-cannot-
+  // collide case below).
   var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
   var web  = form.fields.filter(function (f) { return f.service === 'web'; });
   var got  = web.map(function (f) { return f.id; });
@@ -1520,6 +1523,9 @@ var FIXTURE_10_ADVANCED = [
     'web/setting/deploy.resources.reservations.cpus',
     'web/setting/deploy.resources.reservations.memory',
     'web/setting/logging.driver',
+    'web/setting/build.context',
+    'web/setting/build.dockerfile',
+    'web/setting/build.target',
     'web/port/80/tcp',
     'web/env/NGINX_PORT',
     'web/list.networks#0/frontend_net',
@@ -1528,7 +1534,7 @@ var FIXTURE_10_ADVANCED = [
     'web/depends/depends_on.db.restart',
     'web/depends/depends_on.db.required'
   ];
-  ok('web yields exactly these twenty-four fields, in file order',
+  ok('web yields exactly these twenty-seven fields, in file order',
      JSON.stringify(got) === JSON.stringify(want), got.join(', '));
 })();
 
@@ -5584,6 +5590,32 @@ console.log('\nS. File references');
   ok('every broken or bad input comes back as an array rather than throwing', !bad, bad);
 })();
 
+/* ---- S10. Top-level include:, scalar and list forms (PLAN_21) ----------- */
+
+(function () {
+  var text = 'include: other.yaml\n';
+  var r = Y.fileRefs(text);
+  ok('the scalar form is reported with where: include',
+     r.length === 1 && r[0].file === 'other.yaml' && r[0].service === '' && r[0].where === 'include',
+     JSON.stringify(r));
+})();
+
+(function () {
+  var text = 'include:\n  - other.yaml\n  - second.yaml\n';
+  var r = Y.fileRefs(text);
+  ok('the list form is reported with where: include, one entry each',
+     r.length === 2 && r[0].file === 'other.yaml' && r[0].where === 'include' &&
+     r[1].file === 'second.yaml' && r[1].where === 'include', JSON.stringify(r));
+})();
+
+/* ---- S11. A list entry written as a map is skipped, not guessed at ------ */
+
+(function () {
+  var text = 'include:\n  - path: other.yaml\n    env_file: extra.env\n';
+  var r = Y.fileRefs(text);
+  ok('a map-shaped include entry is not reported', r.length === 0, JSON.stringify(r));
+})();
+
 /* =========================================================================
  * T. Variable references — Y.varRefs(text) -> [{name, line, col, len, filled}]
  *
@@ -5789,6 +5821,279 @@ function isAllCRLF(s) {
   var got = Y.serialise(Y.parse(text));
   ok('LF file round-trips unchanged', got === text, firstDiff(text, got));
   ok('no carriage return appears', got.indexOf('\r') === -1);
+})();
+
+/* =========================================================================
+ * V. Nothing is required any more; build: as a block; include: (PLAN_21)
+ *
+ * The requirement compose-model.js used to hardcode — image and
+ * container_name are both fixedRequired — is gone. Compose itself refuses a
+ * service with neither image: nor build:, and stackman_save_stack() enforces
+ * that server-side; the form only explains, through f.advice, and never
+ * blocks Save. Negatives first, as always: the case that started this is a
+ * service that IS valid compose and must not be flagged as broken.
+ * ========================================================================= */
+
+console.log('\nV. Nothing required any more; build: as a block; include:');
+
+/* ---- V1. No fixedRequired flag survives, in any of the three shapes ----- */
+
+(function () {
+  var form = Y.buildForm(Y.parse('services:\n  a:\n    build: ./app\n'));
+  var svcFields = form.fields.filter(function (f) { return f.service === 'a'; });
+  ok('a service with build: and no image: yields no fixedRequired field',
+     svcFields.length > 0 && svcFields.every(function (f) { return !f.fixedRequired; }),
+     svcFields.map(function (f) { return f.target + ':' + f.fixedRequired; }).join(', '));
+})();
+
+(function () {
+  var form = Y.buildForm(Y.parse('services:\n  a:\n    restart: always\n'));
+  var svcFields = form.fields.filter(function (f) { return f.service === 'a'; });
+  ok('a service with neither image: nor build: also yields no fixedRequired field — compose\'s job now',
+     svcFields.length > 0 && svcFields.every(function (f) { return !f.fixedRequired; }),
+     svcFields.map(function (f) { return f.target + ':' + f.fixedRequired; }).join(', '));
+})();
+
+(function () {
+  var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
+  ok('fixedRequired is false for every field of a normal, fully-populated service too',
+     form.fields.every(function (f) { return !f.fixedRequired; }),
+     form.fields.filter(function (f) { return f.fixedRequired; }).map(function (f) { return f.id; }).join(', '));
+})();
+
+/* ---- V2. The -!R marker is a separate flag, and still works ------------- */
+
+(function () {
+  // Same shape as section J's marker test — an author's explicit choice via
+  // the comment marker is untouched by fixedRequired going away, because
+  // f.required and f.fixedRequired have always been two different flags.
+  var src = 'services:\n  a:\n    image: alpine\n    restart: always  # -!R\n';
+  var form = Y.buildForm(Y.parse(src));
+  var restart = Y.fieldById(form, 'a/setting/restart');
+  ok('a -!R marker still sets f.required', !!restart && restart.required === true,
+     restart && JSON.stringify({ required: restart.required, fixedRequired: restart.fixedRequired }));
+  ok('and does not turn fixedRequired back on', !!restart && !restart.fixedRequired);
+})();
+
+/* ---- V3. The advice notes on an empty image/container_name -------------- */
+
+(function () {
+  var form = Y.buildForm(Y.parse('services:\n  a:\n    build: ./app\n'));
+  var image = Y.fieldById(form, 'a/setting/image');
+  ok('an empty image with a build: key present carries the "builds its own image" note',
+     !!image && image.advice.some(function (a) { return /builds its own image/.test(a); }),
+     image && JSON.stringify(image.advice));
+})();
+
+(function () {
+  var form = Y.buildForm(Y.parse('services:\n  a:\n    image:\n'));
+  var image = Y.fieldById(form, 'a/setting/image');
+  ok('an empty image with no build: key carries no such note',
+     !!image && !image.advice.some(function (a) { return /builds its own image/.test(a); }),
+     image && JSON.stringify(image.advice));
+})();
+
+(function () {
+  var form = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    container_name:\n'));
+  var cn = Y.fieldById(form, 'a/setting/container_name');
+  ok('an empty container_name carries the "Docker names the container itself" note',
+     !!cn && cn.advice.some(function (a) { return /names the container itself/.test(a); }),
+     cn && JSON.stringify(cn.advice));
+})();
+
+(function () {
+  var form = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    container_name: myapp\n'));
+  var cn = Y.fieldById(form, 'a/setting/container_name');
+  ok('a container_name holding a value carries no such note',
+     !!cn && !cn.advice.some(function (a) { return /names the container itself/.test(a); }),
+     cn && JSON.stringify(cn.advice));
+})();
+
+/* ---- V3b. image: and build: coexist — the note is role-aware, not a --------
+ * mutual-exclusion warning. Compose allows both (build: says how to make the
+ * image, image: names the result), so the field must stay fully editable in
+ * every one of these four combinations. */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    build:\n      context: ./app\n';
+  var form = Y.buildForm(Y.parse(src));
+  var image = Y.fieldById(form, 'a/setting/image');
+  ok('image: set alongside a block build: carries the "names the image built here" note',
+     !!image && image.advice.some(function (a) { return /names the image built here/.test(a); }),
+     image && JSON.stringify(image.advice));
+  ok('and not the "so this is optional" note',
+     !!image && !image.advice.some(function (a) { return /so this is optional/.test(a); }),
+     image && JSON.stringify(image.advice));
+  ok('the image field stays fully editable',
+     !!image && image.locked === false && !image.blocked && image.fixedRequired === false,
+     image && JSON.stringify({ locked: image.locked, blocked: image.blocked, fixedRequired: image.fixedRequired }));
+})();
+
+(function () {
+  var src = 'services:\n  a:\n    build:\n      context: ./app\n';
+  var form = Y.buildForm(Y.parse(src));
+  var image = Y.fieldById(form, 'a/setting/image');
+  ok('an empty image alongside a block build: carries the "so this is optional" note',
+     !!image && image.advice.some(function (a) { return /so this is optional/.test(a); }),
+     image && JSON.stringify(image.advice));
+  ok('and not the "names the image built here" note',
+     !!image && !image.advice.some(function (a) { return /names the image built here/.test(a); }),
+     image && JSON.stringify(image.advice));
+  ok('the image field stays fully editable',
+     !!image && image.locked === false && !image.blocked && image.fixedRequired === false,
+     image && JSON.stringify({ locked: image.locked, blocked: image.blocked, fixedRequired: image.fixedRequired }));
+})();
+
+(function () {
+  var form = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n'));
+  var image = Y.fieldById(form, 'a/setting/image');
+  ok('image: set with no build: at all carries neither note',
+     !!image && !image.advice.some(function (a) { return /names the image built here|so this is optional/.test(a); }),
+     image && JSON.stringify(image.advice));
+  ok('the image field stays fully editable',
+     !!image && image.locked === false && !image.blocked && image.fixedRequired === false,
+     image && JSON.stringify({ locked: image.locked, blocked: image.blocked, fixedRequired: image.fixedRequired }));
+})();
+
+(function () {
+  var form = Y.buildForm(Y.parse('services:\n  a:\n    restart: always\n'));
+  var image = Y.fieldById(form, 'a/setting/image');
+  ok('neither image: nor build: present carries neither note',
+     !!image && !image.advice.some(function (a) { return /names the image built here|so this is optional/.test(a); }),
+     image && JSON.stringify(image.advice));
+  ok('the image field stays fully editable',
+     !!image && image.locked === false && !image.blocked && image.fixedRequired === false,
+     image && JSON.stringify({ locked: image.locked, blocked: image.blocked, fixedRequired: image.fixedRequired }));
+})();
+
+(function () {
+  // Short-form build: ./app produces the target 'build' with no dot — the
+  // routing bug fix in stacks.js's groupFor() means this now reaches the
+  // Build group instead of Advanced, but groupFor() itself lives in stacks.js
+  // and these node tests cannot reach it; this only checks what the model
+  // hands it. The group routing is verified in the browser instead.
+  var form = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    build: ./app\n'));
+  var build = Y.fieldById(form, 'a/setting/build');
+  ok('short-form build: yields a field whose target is exactly "build"',
+     !!build && build.target === 'build',
+     build && JSON.stringify({ target: build.target }));
+})();
+
+/* ---- V4. build: as a block — the guarantee is that nothing goes missing - */
+
+(function () {
+  var form = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    build: ./app\n'));
+  var svcFields = form.fields.filter(function (f) { return f.service === 'a' && /^build/.test(f.target); });
+  ok('build: ./app (scalar) still yields exactly one editable, unlocked build field',
+     svcFields.length === 1 && svcFields[0].target === 'build' && !svcFields[0].locked,
+     JSON.stringify(svcFields.map(function (f) { return { target: f.target, locked: f.locked }; })));
+})();
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    build:\n      context: ./app\n' +
+            '      dockerfile: Dockerfile.dev\n      target: builder\n';
+  var form = Y.buildForm(Y.parse(src));
+  var context    = Y.fieldById(form, 'a/setting/build.context');
+  var dockerfile = Y.fieldById(form, 'a/setting/build.dockerfile');
+  var target     = Y.fieldById(form, 'a/setting/build.target');
+  ok('a block build: yields three editable fields for context/dockerfile/target',
+     !!context && !!dockerfile && !!target &&
+     !context.locked && !dockerfile.locked && !target.locked &&
+     context.parts.value.value === './app' &&
+     dockerfile.parts.value.value === 'Dockerfile.dev' &&
+     target.parts.value.value === 'builder',
+     JSON.stringify({ context: context, dockerfile: dockerfile, target: target }));
+})();
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    build:\n      context: ./app\n' +
+            '      args:\n        FOO: bar\n      cache_from:\n        - alpine:latest\n' +
+            '      ssh:\n        - default\n';
+  var form = Y.buildForm(Y.parse(src));
+  var svcFields = form.fields.filter(function (f) { return f.service === 'a' && /^build\./.test(f.target); });
+  var byTarget = {};
+  svcFields.forEach(function (f) { byTarget[f.target] = f; });
+  // The guarantee that matters most: args:, cache_from: and ssh: are maps and
+  // lists harvestBlock's own leaves table does not name, so they fall to its
+  // second, uncovered-children pass — still their own row, locked rather than
+  // vanished, exactly as any other map/list child of a block key does.
+  ok('args:, cache_from: and ssh: still appear as their own (locked) rows rather than vanishing',
+     !!byTarget['build.args'] && byTarget['build.args'].locked &&
+     !!byTarget['build.cache_from'] && byTarget['build.cache_from'].locked &&
+     !!byTarget['build.ssh'] && byTarget['build.ssh'].locked,
+     Object.keys(byTarget).map(function (k) { return k + ':' + byTarget[k].locked; }).join(', '));
+})();
+
+(function () {
+  var form = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n    build:\n      context: ./app\n'));
+  var f = Y.fieldById(form, 'a/setting/build.context');
+  var help = f && Y.fieldHelp(f);
+  ok('keyInfo()/fieldHelp() resolves help text for build.context',
+     !!help && help.title === 'Build context', JSON.stringify(help));
+})();
+
+/* ---- V5. include: — buildForm().includes, and the file-lists-no-services  */
+/* ---- warning still fires alongside it ------------------------------------ */
+
+(function () {
+  var form = Y.buildForm(Y.parse('include:\n  - other.yaml\n'));
+  ok('an include:-only file returns ok: true',
+     form.ok === true);
+  ok('and a populated includes array',
+     form.includes.length === 1 && form.includes[0].file === 'other.yaml', JSON.stringify(form.includes));
+  ok('and still pushes the "lists no services" warning',
+     form.warnings.some(function (w) { return w.message === 'This file lists no services.'; }),
+     JSON.stringify(form.warnings));
+})();
+
+(function () {
+  var form = Y.buildForm(Y.parse('services:\n  a:\n    image: alpine\n'));
+  ok('buildForm().includes is [] (never undefined) on an ordinary file',
+     Array.isArray(form.includes) && form.includes.length === 0, JSON.stringify(form.includes));
+})();
+
+(function () {
+  var src = 'include:\n  - other.yaml\nservices:\n  a:\n    image: alpine\n';
+  var form = Y.buildForm(Y.parse(src));
+  ok('a file with both include: and services: populates includes',
+     form.includes.length === 1 && form.includes[0].file === 'other.yaml', JSON.stringify(form.includes));
+  ok('and still yields its services',
+     form.services.length === 1 && form.services[0].name === 'a', JSON.stringify(form.services));
+})();
+
+/* ---- V6. The null edit still holds on build: blocks and include: -------- */
+
+(function () {
+  var text = [
+    'include:',
+    '  - other.yaml',
+    '',
+    'services:',
+    '  web:',
+    '    image: nginx:alpine',
+    '    container_name: myweb',
+    '    build:',
+    '      context: ./app',
+    '      dockerfile: Dockerfile.dev',
+    '      target: builder',
+    '',
+    '  api:',
+    '    build: ./api'
+  ].join('\n') + '\n';
+
+  var doc = Y.parse(text);
+  ok('the fixture round-trips byte for byte with no edit applied',
+     Y.serialise(doc) === text, firstDiff(text, Y.serialise(doc)));
+
+  var all = boxes(Y.buildForm(doc)), bad = null;
+  for (var i = 0; i < all.length && !bad; i++) {
+    var d = Y.parse(text), m = Y.buildForm(d);
+    if (!Y.setPart(d, m, all[i].id, all[i].part, all[i].value)) continue;
+    var got = Y.serialise(d);
+    if (got !== text) bad = all[i].id + ' [' + all[i].part + ']\n' + firstDiff(text, got);
+  }
+  ok('and still identical after setting every writable box to what it already says (' + all.length + ' boxes)',
+     !bad, bad);
 })();
 
 /* ---- result ------------------------------------------------------------- */

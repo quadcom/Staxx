@@ -2037,6 +2037,39 @@
   font-size: 1.3rem;
 }
 
+/* One block per top-level include: entry (includesHtml(), stacks.js) — shown
+   instead of .stackman-form-empty when a file only points at others. Same
+   dashed-box language as .stackman-fieldraw's locked block further down, so
+   this reads as "what the file says", not an editable row. */
+.stackman-includes {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.stackman-includeblock {
+  padding: 0.9rem 1.1rem;
+  border: 0.1rem dashed var(--sm-line);
+  border-radius: 0.3rem;
+  background: var(--sm-fill-0);
+}
+
+.stackman-includehead {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.stackman-includename {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.stackman-includeblock .stackman-add {
+  margin-top: 0.8rem;
+}
+
 /* Says why the form is locked while a companion file is on screen. A sibling
    above .stackman-form rather than a child, so it stays put while the form
    scrolls under it. */

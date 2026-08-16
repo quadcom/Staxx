@@ -581,6 +581,10 @@
     healthcheck:    { shape: 'block', title: 'Health check' },
     deploy:         { shape: 'block', title: 'Resource limits' },
     logging:        { shape: 'block', title: 'Logging' },
+    // No `always: 1` — unlike the Container group's four keys, an absent
+    // build: is not offered as a blank block on every service, only shown
+    // when the file already has one.
+    build:          { shape: 'block', title: 'Build' },
 
     command:        { shape: 'scalar' },
     entrypoint:     { shape: 'scalar' },
@@ -659,6 +663,18 @@
     // Advanced catch-all rather than offered a leaf here.
     logging: {
       driver: 'Log driver'
+    },
+
+    // The everyday build: scalars only — BUILD_LEAVES (below) lists all 20
+    // of build:'s own keys, but harvestLeaves() offers every LEAVES path on
+    // every service whether or not the file has it, so a long list here would
+    // be 17 empty boxes nobody asked for (PLAN_21 section 2). Anything else
+    // written under build: (args, cache_from, ssh...) still gets its own row
+    // from harvestBlock's uncovered-children pass, so nothing goes missing.
+    build: {
+      context:    'Build context',
+      dockerfile: 'Dockerfile path',
+      target:     'Build stage'
     }
   };
 
@@ -1534,8 +1550,27 @@
         continue;
       }
 
-      out.push(p ? settingTarget(p, akey, lines)
-                  : target('setting', akey, { parts: { value: part('', null) }, range: null, absent: true }));
+      var akeyTarget = p ? settingTarget(p, akey, lines)
+                  : target('setting', akey, { parts: { value: part('', null) }, range: null, absent: true });
+
+      // Neither of these is required (PLAN_21 section 1) — an empty image
+      // only needs explaining when build: is why it's empty, and an empty
+      // container_name is simply Docker's own default naming. image: and
+      // build: are not mutually exclusive in compose, so when both are set
+      // the note explains what the pair together means instead.
+      var akeyVal = akeyTarget.parts.value ? akeyTarget.parts.value.value : null;
+      if (akey === 'image' && serviceMap.pairs['build']) {
+        if (!akeyVal) {
+          akeyTarget.advice.push('this service builds its own image, so this is optional');
+        } else {
+          akeyTarget.advice.push('this names the image built here, rather than one to pull');
+        }
+      }
+      if (akey === 'container_name' && !akeyVal) {
+        akeyTarget.advice.push('leave this empty and Docker names the container itself, from the stack and service names');
+      }
+
+      out.push(akeyTarget);
     }
 
     harvestLeaves(out, serviceMap, lines);
@@ -1819,7 +1854,12 @@
         blocked: t.blocked,
         advice: advice,
         fixed: fixed,
-        fixedRequired: fixed && (t.target === 'image' || t.target === 'container_name'),
+        // Neither name is genuinely required: a service with build: and no
+        // image: is valid compose, and nothing reads container_name's value
+        // (see PLAN_21). Compose's own live check catches the case that
+        // really is broken, so nothing here blocks Save any more — the
+        // advice pushed in harvest() explains instead.
+        fixedRequired: false,
         path: t.path || null,
         testPart: t.testPart || null,
         listKey: t.listKey || '',
@@ -1933,7 +1973,8 @@
     // early returns below happen first — a caller reading declared.networks on
     // an unreadable file must find an empty list, not undefined.
     var out = { stack: {}, services: [], fields: [], warnings: [], sealed: doc.sealed, ok: true,
-                declared: { networks: [], volumes: [], secrets: [], configs: [], services: [] } };
+                declared: { networks: [], volumes: [], secrets: [], configs: [], services: [] },
+                includes: [] };
 
     if (!doc.root || doc.root.kind !== 'map') {
       out.ok = false;
@@ -1948,6 +1989,24 @@
 
     var xs = doc.root.pairs['x-unraid'];
     out.stack = xs && xs.value ? flatOf(xs.value) : {};
+
+    // Top-level include: — read before the no-services return below, since an
+    // include-only file (PLAN_20's measured case) is exactly what that branch
+    // covers. A list entry written as a map ("- path: other.yaml") is skipped
+    // rather than guessed at, same as fileRefs() treats the same shape.
+    var incPair = doc.root.pairs['include'];
+    if (incPair && incPair.value) {
+      if (incPair.value.kind === 'scalar') {
+        out.includes.push({ file: incPair.value.value, line: incPair.value.line });
+      } else if (incPair.value.kind === 'seq') {
+        for (var ii = 0; ii < incPair.value.items.length; ii++) {
+          var incItem = incPair.value.items[ii].value;
+          if (incItem && incItem.kind === 'scalar') {
+            out.includes.push({ file: incItem.value, line: incItem.line });
+          }
+        }
+      }
+    }
 
     var svc = doc.root.pairs['services'];
     if (!svc || !svc.value || svc.value.kind !== 'map') {
@@ -4558,7 +4617,7 @@
       annotations:         { title: 'Annotations', description: "Adds metadata to the container in the same key: value form as labels, but on the lower-level object Docker or Kubernetes reads." },
       attach:              { title: 'Attach', description: "Controls whether this service's output is shown when running docker compose up; set to false to hide a noisy service's console output." },
       blkio_config:        { title: 'Disk I/O limits', description: "Limits how fast this container can read from and write to disk, using Linux's block I/O (input/output) controls." },
-      build:               { title: 'Build', description: "Builds the image from a Dockerfile instead of pulling a ready-made one — a folder path, or a block of build settings." },
+      build:               { title: 'Build', description: "Builds the image from a Dockerfile — a folder path, or a block of build settings. Set Image too to name what the build produces." },
       cap_add:             { title: 'Extra permissions', description: "Grants Linux capabilities the container would not normally have, such as NET_ADMIN for managing network interfaces." },
       cap_drop:            { title: 'Dropped permissions', description: "Removes Linux capabilities the container would otherwise have, tightening what it is allowed to do." },
       cgroup:              { title: 'Cgroup namespace', description: "Chooses whether the container gets its own cgroup, the Linux mechanism that limits CPU and memory, or shares its parent's." },
@@ -4808,7 +4867,7 @@
 
       if (field.binder === 'setting') {
         if (typeof target !== 'string') return null;
-        var m = /^(healthcheck|deploy|logging)\.(.+)$/.exec(target);
+        var m = /^(healthcheck|deploy|logging|build)\.(.+)$/.exec(target);
         return m ? keyInfo(m[2], m[1]) : keyInfo(target, 'service');
       }
 
@@ -5405,10 +5464,10 @@
   /**
    * fileRefs(text) -> [{file, service, where}]
    *
-   * `where` is one of 'env_file', 'secret', 'config', 'build', 'volume'.
-   * `service` is the owning service, or '' for a top-level secrets:/configs:
-   * entry, which names no service. Never throws: anything this cannot make
-   * sense of is simply left out.
+   * `where` is one of 'env_file', 'secret', 'config', 'build', 'volume',
+   * 'include'. `service` is the owning service, or '' for a top-level
+   * secrets:/configs:/include: entry, which names no service. Never throws:
+   * anything this cannot make sense of is simply left out.
    */
   function fileRefs(text) {
     var out = [];
@@ -5451,11 +5510,28 @@
             var sc3 = scanEntryText(line, c.valueCol);
             if (sc3) pushFileRef(out, sc3.text, '', stack[0].key === 'secrets' ? 'secret' : 'config');
           }
+          // Top-level include:, written as a single scalar. Names no service —
+          // an include sits above the services: block, not inside one.
+          if (stack.length === 0 && c.key === 'include' && c.valueCol >= 0) {
+            var sc4 = scanEntryText(line, c.valueCol);
+            if (sc4) pushFileRef(out, sc4.text, '', 'include');
+          }
           stack.push({ indent: c.indent, key: c.key });
           continue;
         }
 
         if (c.kind !== 'seq' || !c.sub) continue;
+
+        // Top-level include:, written as a list. Each entry can also be a map
+        // (- path: other.yaml, with extra keys) — left unread rather than
+        // guessed at, same as env_file's own long form just below.
+        if (stack.length === 1 && stack[0].key === 'include') {
+          if (c.sub.kind !== 'key') {
+            var inc = scanEntryText(line, c.contentCol);
+            if (inc) pushFileRef(out, inc.text, '', 'include');
+          }
+          continue;
+        }
 
         // A service's env_file: written as a list. The compose spec also
         // allows a long form here (- path: .env, required: false); that is
