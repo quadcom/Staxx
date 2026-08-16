@@ -4583,6 +4583,20 @@
   white-space: nowrap;
 }
 
+/* CA still lists a deprecated app (with a notice of its own), so this is
+   information to weigh, not an error — --sm-accent, the same "notice" colour
+   as .stackman-form-broken's neighbour, never --sm-danger. */
+.stackman-ca-dep {
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.2rem;
+  background: transparent;
+  box-shadow: inset 0 0 0 0.1rem var(--sm-accent);
+  color: var(--sm-accent);
+  font-size: 1.05rem;
+  white-space: nowrap;
+}
+
 .stackman-ca-foot {
   display: flex;
   align-items: center;

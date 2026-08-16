@@ -182,6 +182,73 @@ environment, which is the only reason it is not split further.
 
 ---
 
+---
+
+## Is every one of them really a Docker container? — checked properly, 2026-08-16
+
+The first answer to this was an **exclusion** filter — not a plugin, not a URL — which is not the same
+as confirming what is left. Checking properly found a positive marker and three real problems.
+
+### There is a positive marker, and it agrees exactly
+
+**`Registry`.** Exactly 3,730 feed entries carry it — precisely the set the exclusion filter kept,
+with **zero** plugins, **zero** language packs, and **zero** kept entries missing it. Two completely
+independent tests landing on the same 3,730 is as close to proof as this data offers.
+
+Worth knowing where the little Docker logo in CA actually comes from, since it is not what it looks
+like: `ca_fa-docker` in CA's own skin (`skins/Narrow/skin.php:856`) is the **Registry link** in the
+support menu — "open this image's registry page" — shown `if ($template['Registry'])`. It is not a
+type badge. It only *appears* to mark containers because only containers have a `Registry`.
+
+CA's own type test is a negative three-way, not a positive one: `Language` → language pack, else
+`Plugin` → plugin, else container. That yields 3,792 — our 3,730 plus **62 parse-error stubs**,
+entries CA itself failed to read. They carry nothing but a path and an error
+(`"errors":["char '&' is not expected."]`) — no name, no repository, no registry. Correctly excluded.
+
+### Three problems it turned up, now fixed
+
+| Problem | Count | What was done |
+|---|---|---|
+| **Blacklisted** — CA flags these broken or withdrawn and drops them from its own listing | 83 | excluded |
+| **Hidden** (`hideFromCA` / `hideFromWeb`) | 10 | excluded |
+| **Deprecated** — CA still shows these, with a notice | 153 | **kept and marked** with a `deprecated` badge on the row |
+| **Uppercase repository path** — `docker pull` refuses outright | 6 | warned, not rewritten |
+
+Deprecated apps are kept deliberately: CA shows them, and people legitimately still run some. Hiding
+them would be making a decision that is not ours; showing them unmarked would be worse.
+
+The uppercase ones are **not** auto-lowercased. `ghcr.io/Suvir0/ripuz` → `ghcr.io/suvir0/ripuz` is a
+different reference that may not exist, and silently rewriting an image name to a registry path we
+have not checked is the kind of guess this project refuses to make. The warning names the image and
+says Docker will refuse it as written.
+
+**Count now: 3,639** (it drifts by a couple as CA republishes; it was 3,637 when measured).
+
+---
+
+## The editor does not flag an invalid value — `PLAN_19.md`
+
+Asked whether the editor's gutter would mark a bad value in an imported file, and whether it could
+suggest the right one. It will not, and the reason is worth recording.
+
+`lint()` validates **keys**, not values (`compose-model.js:4005`). And the form's dropdown
+deliberately keeps an unrecognised value rather than correcting it — a `<select>` can only hold its
+own options, so dropping it would silently rewrite the file — but it renders identically to a valid
+one. So `restart: alwyas` is invisible today, whatever wrote it.
+
+**This is not a CA problem.** All 4,116 conversions were checked: every `restart` produced is valid
+(`unless-stopped` ×4112, `no` ×3, `on-failure:5` ×1) and every `network_mode` is `host` or `none`.
+Nothing the catalogue can produce trips it. The gap belongs to the editor, and the file that most
+needs it is one somebody typed by hand.
+
+Written up as `PLAN_19.md` rather than bolted on here, because the hard part is not the check — it is
+not becoming stricter than Docker. `on-failure:5`, `network_mode: service:db`, `container:x` and a
+real network like `br0` are all valid and all absent from the offered lists, and `br0` only becomes
+known *after* the server's networks load. One false warning on a working file costs more trust than
+ten missed typos.
+
+---
+
 ## Where the code lives
 
 | File | What it is |

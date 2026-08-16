@@ -179,7 +179,7 @@ function stackman_ca_refresh_start(): void {
  * comes first. An empty query lists by download count alone, which is also
  * what makes "browse this category" and "what's popular" the same code path.
  *
- * @return array<int, array{i:int,n:string,r:string,a:string,ic:string,c:string[],d:int,ov:string}>
+ * @return array<int, array{i:int,n:string,r:string,a:string,ic:string,c:string[],d:int,ov:string,dep?:int}>
  */
 function stackman_ca_search(string $q, string $cat, int $limit = 60): array {
   $apps = stackman_ca_index_data()['apps'];
@@ -243,7 +243,7 @@ function stackman_ca_search(string $q, string $cat, int $limit = 60): array {
     // o/len (the byte offset into apps.jsonl) never leave the server — the
     // client only ever sees the ordinal below, so a tampered value is a
     // missing array key in stackman_ca_app(), not an arbitrary file read.
-    $out[] = [
+    $row = [
       'i'  => $m['i'],
       'n'  => (string)($app['n'] ?? ''),
       'r'  => (string)($app['r'] ?? ''),
@@ -253,6 +253,11 @@ function stackman_ca_search(string $q, string $cat, int $limit = 60): array {
       'd'  => (int)($app['d'] ?? 0),
       'ov' => (string)($app['ov'] ?? ''),
     ];
+    // Carried through, not ranked on — CA still shows deprecated apps (with a
+    // notice), so a deprecated match should appear exactly where its text
+    // match earns it, just flagged for the row to render a warning.
+    if (isset($app['dep'])) $row['dep'] = $app['dep'];
+    $out[] = $row;
   }
   return $out;
 }

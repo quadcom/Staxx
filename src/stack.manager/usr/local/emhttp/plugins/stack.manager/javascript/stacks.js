@@ -4399,6 +4399,10 @@
     if (Array.isArray(cat)) cat = cat[0] || '';
     else if (typeof cat !== 'string') cat = '';
     var sub = cat ? (esc(app.r) + ' · ' + esc(cat)) : esc(app.r);
+    // CA still lists a deprecated app (with a notice of its own), so this is
+    // a caution shown alongside the match, not a reason to hide the row.
+    var depTag = app.dep ? '<span class="stackman-ca-dep">deprecated</span>' : '';
+    sub = sub + depTag;
 
     return '<button type="button" class="stackman-ca-row" data-i="' + esc(app.i) + '">' +
              icon +

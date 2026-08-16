@@ -222,6 +222,24 @@
     return { mode: null, network: name };
   }
 
+  // The repository path out of an image reference — everything except a
+  // leading registry host and a trailing tag/digest. Docker requires this
+  // part to be lowercase; the host is case-insensitive and the tag is
+  // case-sensitive and legitimately mixed-case, so both must be stripped
+  // before the check or they produce false warnings.
+  //
+  // Same order Icons.php's stackman_icon_candidates() uses, and for the same
+  // reason: a registry with a port (host:5000/thing) must not have its port
+  // mistaken for a tag, because the tag pattern only matches a colon with no
+  // slash after it, up to the end of the string.
+  function repositoryPath(image) {
+    var bare = String(image == null ? '' : image).replace(/@sha256:.*$/, '');
+    bare = bare.replace(/:[^\/]*$/, '');
+    var segments = bare.split('/');
+    if (segments.length > 1 && /[.:]/.test(segments[0])) segments = segments.slice(1);
+    return segments.join('/');
+  }
+
   function pathModeSuffix(mode) {
     var m = String(mode == null ? '' : mode).trim();
     if (m === '' || m === 'rw') return '';
@@ -502,6 +520,18 @@
     var svc = [];
     if (app.Repository) {
       svc.push('    image: ' + app.Repository);
+      // Written through unchanged either way — lowercasing it would be a
+      // guess at a registry path nobody has checked exists (see the module
+      // comment on ExtraParams for why a guessed "fix" is worse than none).
+      //
+      // Some feed entries are Unraid plugins, not containers: their
+      // Repository is a .plg download URL, never a Docker image reference,
+      // so a "://" rules those out before the check even runs.
+      if (app.Repository.indexOf('://') === -1 && /[A-Z]/.test(repositoryPath(app.Repository))) {
+        warnings.push('The image "' + app.Repository + '" has an uppercase letter in its ' +
+          'repository name. Docker requires repository names to be lowercase and will refuse ' +
+          'to pull this image as written — check the app\'s own page for the correct name.');
+      }
     } else {
       warnings.push('This template has no image name. Check "image:" before starting the stack.');
       svc.push('    image: ' + name);

@@ -471,6 +471,58 @@ ok('an app with no warnings has no heading and no stray comment block',
    embyNoWarn.yaml.indexOf('Could not be translated automatically') === -1);
 
 /* =========================================================================
+ * H2. Uppercase repository-path warning
+ *
+ * Docker rejects a repository name outright if it contains an uppercase
+ * letter — the registry host and the tag are exempt, since a host is
+ * case-insensitive and a tag is legitimately mixed-case. Every case below
+ * checks the image line is written through byte-for-byte unchanged, so a
+ * future "helpful" lowercasing cannot slip in unnoticed.
+ * ========================================================================= */
+
+console.log('\nH2. Uppercase repository-path warning');
+
+var upperOwnerR = CA.convert({
+  Name: 'lm-studio-test', Repository: 'MarkSupinski/lm-studio-headless:latest', Network: 'bridge'
+});
+ok('an uppercase owner/repository segment produces the warning',
+   upperOwnerR.warnings.some(function (w) { return /MarkSupinski\/lm-studio-headless:latest/.test(w) && /lowercase/.test(w); }));
+ok('the image line is written unchanged (owner uppercase case)',
+   upperOwnerR.yaml.indexOf('image: MarkSupinski/lm-studio-headless:latest') >= 0);
+
+var upperHostR = CA.convert({
+  Name: 'ripuz-test', Repository: 'ghcr.io/Suvir0/ripuz:latest', Network: 'bridge'
+});
+ok('an uppercase segment after a registry host still produces the warning',
+   upperHostR.warnings.some(function (w) { return /ghcr\.io\/Suvir0\/ripuz:latest/.test(w) && /lowercase/.test(w); }));
+ok('the image line is written unchanged (host+path case)',
+   upperHostR.yaml.indexOf('image: ghcr.io/Suvir0/ripuz:latest') >= 0);
+
+var upperTagOnlyR = CA.convert({
+  Name: 'code-server-test', Repository: 'linuxserver/code-server:V1.2', Network: 'bridge'
+});
+ok('an uppercase TAG only produces no lowercase-repository warning',
+   !upperTagOnlyR.warnings.some(function (w) { return /lowercase/.test(w); }));
+ok('the image line is written unchanged (tag-only case)',
+   upperTagOnlyR.yaml.indexOf('image: linuxserver/code-server:V1.2') >= 0);
+
+var upperHostOnlyR = CA.convert({
+  Name: 'ghcr-host-test', Repository: 'GHCR.io/owner/app', Network: 'bridge'
+});
+ok('an uppercase registry HOST only produces no lowercase-repository warning',
+   !upperHostOnlyR.warnings.some(function (w) { return /lowercase/.test(w); }));
+ok('the image line is written unchanged (host-only case)',
+   upperHostOnlyR.yaml.indexOf('image: GHCR.io/owner/app') >= 0);
+
+var lowerR = CA.convert({
+  Name: 'redis-test', Repository: 'redis:7', Network: 'bridge'
+});
+ok('an ordinary all-lowercase image produces no lowercase-repository warning',
+   !lowerR.warnings.some(function (w) { return /lowercase/.test(w); }));
+ok('the image line is written unchanged (all-lowercase case)',
+   lowerR.yaml.indexOf('image: redis:7') >= 0);
+
+/* =========================================================================
  * I. Bulk sanity — every app in the live feed, if it is on disk
  *
  * Skipped entirely when the feed is not present, so the checked-in suite

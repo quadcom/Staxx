@@ -185,12 +185,29 @@ function stackman_ca_index_category(string $raw): array {
 }
 
 /**
+ * A feed flag counted as "set", coping with the two shapes CA sends it in:
+ * the JSON boolean true and the string "true". A bare (bool) cast would also
+ * read the string "false" as set, since PHP treats any non-empty string as
+ * truthy — this is the one place that distinction is checked once, rather
+ * than repeated (and risked) at every call site.
+ */
+function stackman_ca_truthy($v): bool {
+  if ($v === true || $v === 1 || $v === '1') return true;
+  if (is_string($v)) return strtolower($v) === 'true';
+  return false;
+}
+
+/**
  * Turn one decoded app object into what apps.jsonl and index.json each need,
- * or null for the 386 entries that are not containers at all: 83 with no
- * Repository (language packs) and 303 Unraid plugins. Neither has an `image:`
- * to run. 4,116 entries in, 3,730 out.
+ * or null for the 476 entries that should not be offered at all: 83 with no
+ * Repository (language packs), 303 Unraid plugins, 83 blacklisted by CA
+ * itself (broken, malicious or withdrawn) and 10 flagged not to display.
+ * Neither the language packs nor the plugins have an `image:` to run; the
+ * blacklisted and hidden ones do, but CA has disowned or hidden them, so
+ * offering them for import here would be offering what CA itself will not.
+ * 4,116 entries in, 3,637 out.
  *
- * @return array{line:string,n:string,r:string,a:string,ic:string,c:string[],d:int,ov:string}|null
+ * @return array{line:string,n:string,r:string,a:string,ic:string,c:string[],d:int,ov:string,dep?:int}|null
  */
 function stackman_ca_index_entry(array $app): ?array {
   $repo = trim((string)($app['Repository'] ?? ''));
@@ -205,6 +222,12 @@ function stackman_ca_index_entry(array $app): ?array {
   // the one that would still hold if the feed stopped setting the other two.
   if (preg_match('#^https?://#i', $repo)) return null;
   if (!empty($app['PluginURL']) || !empty($app['Plugin'])) return null;
+
+  // CA's own blacklist (broken, malicious or withdrawn — 83 entries) and its
+  // "don't display this" flags (10 entries). Offering either for import would
+  // be offering something CA's own catalogue has disowned or hidden.
+  if (stackman_ca_truthy($app['Blacklist'] ?? null) || stackman_ca_truthy($app['CABlacklist'] ?? null)) return null;
+  if (stackman_ca_truthy($app['hideFromCA'] ?? null) || stackman_ca_truthy($app['HideFromCA'] ?? null) || stackman_ca_truthy($app['hideFromWeb'] ?? null)) return null;
 
   // Fat fields nobody searches or installs by: screenshots, moderator notes,
   // and the download-trend history CA keeps for its own graphs. Stripping
@@ -240,7 +263,7 @@ function stackman_ca_index_entry(array $app): ?array {
   $line = json_encode($app);
   if ($line === false) return null;
 
-  return [
+  $entry = [
     'line' => $line,
     'n'    => (string)($app['Name'] ?? ''),
     'r'    => $repo,
@@ -250,6 +273,14 @@ function stackman_ca_index_entry(array $app): ?array {
     'd'    => (int)($app['downloads'] ?? 0),
     'ov'   => $overview,
   ];
+
+  // CA still lists deprecated apps (with a notice) rather than hiding them, so
+  // they stay in the index too — but only 154 of 3,730 carry the flag, and
+  // index.json is read on every search, so 'dep' is omitted rather than
+  // written as 0 onto every entry that does not need it.
+  if (stackman_ca_truthy($app['Deprecated'] ?? null)) $entry['dep'] = 1;
+
+  return $entry;
 }
 
 /**
@@ -358,7 +389,7 @@ function stackman_ca_index_split(string $feedPath, string $outDir, int $feedStam
               'n' => $built['n'], 'r' => $built['r'], 'a' => $built['a'], 'ic' => $built['ic'],
               'c' => $built['c'], 'd' => $built['d'], 'ov' => $built['ov'],
               'o' => $offset, 'len' => $lineLen,
-            ];
+            ] + (isset($built['dep']) ? ['dep' => $built['dep']] : []);
             foreach ($built['c'] as $cat) $categories[$cat] = true;
             $offset += $lineLen + 1;
             $count++;
