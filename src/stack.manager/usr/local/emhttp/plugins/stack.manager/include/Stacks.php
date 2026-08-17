@@ -271,6 +271,89 @@ function stackman_browse_mkdir(string $parent, string $name, string &$error): st
 }
 
 /**
+ * Make every directory a bind-mount host path needs, the same way
+ * stackman_browse_mkdir() makes one: ownership and mode copied from the
+ * parent, so a container running as 99:100 can actually write to what gets
+ * made for it. $path is already absolute — the caller resolves it (see
+ * stackman_resolve_host_path()) before this is reached.
+ *
+ * Validated the same belt-and-braces way stackman_path_verdict() checks
+ * containment: stackman_lexical_path() catches a ".." that walks out of /mnt
+ * on the text alone, and stackman_real_ancestor() catches a symlink that
+ * resolves outside it — text cannot see a symlink, and realpath() cannot
+ * resolve a path whose middle does not exist yet, so both have to agree.
+ */
+function stackman_make_path(string $path, string &$error): bool {
+  $error = '';
+  if ($path === '' || $path[0] !== '/' || strpos($path, "\0") !== false) {
+    $error = 'That is not a path this plugin can create.';
+    return false;
+  }
+
+  $root   = STACKMAN_BROWSE_ROOT; // /mnt
+  $inRoot = fn(string $real) => $real === $root || strpos($real, $root.'/') === 0;
+
+  $lexical = stackman_lexical_path($path);
+  if (!$inRoot($lexical)) {
+    $error = 'Folders can only be made under '.$root.'.';
+    return false;
+  }
+  $ancestor = stackman_real_ancestor($path);
+  if ($ancestor === null || !$inRoot($ancestor)) {
+    $error = 'Folders can only be made under '.$root.'.';
+    return false;
+  }
+
+  // Never invent a share. A path has to be at least three segments below
+  // /mnt ("user/appdata/<folder>") — /mnt/user/<share> on its own covers the
+  // user, cache and every diskN share layout in one rule. Making a directory
+  // directly inside /mnt/user creates a whole new top-level share with
+  // whatever defaults happen to apply, and with the array stopped it would
+  // land on Unraid's in-memory root instead of the array at all.
+  $segments = explode('/', trim(substr($lexical, strlen($root)), '/'));
+  if (count($segments) < 3 || $segments[0] === '') {
+    $error = 'This would create a new share. Make the share itself on the '
+           . 'Shares page first, then this folder can be made inside it.';
+    return false;
+  }
+
+  if (file_exists($path)) {
+    if (is_dir($path)) return true; // already there; nothing to do
+    $error = $path.' is a file, not a folder. A volume\'s host side must be a folder.';
+    return false;
+  }
+
+  // Walk down one level at a time from the deepest existing ancestor, so each
+  // new folder copies its OWN parent's owner and mode rather than the top of
+  // the tree's — a folder made two levels under appdata should look like
+  // appdata, not like /mnt.
+  $parts = explode('/', trim($path, '/'));
+  $built = '';
+  foreach ($parts as $part) {
+    $built .= '/'.$part;
+    if (is_dir($built)) continue;
+
+    $parent = dirname($built);
+    $st     = @stat($parent);
+    $mode   = $st ? ($st['mode'] & 0777) : 0777;
+
+    if (!@mkdir($built, $mode)) {
+      $error = 'The folder "'.$built.'" could not be created. Check that '
+             . $parent.' can be written to.';
+      return false;
+    }
+
+    // Ownership first, then the mode: chown can clear permission bits. The
+    // mode is set again regardless of what mkdir() was given, because the
+    // process umask filters it.
+    if ($st) { @chown($built, $st['uid']); @chgrp($built, $st['gid']); }
+    @chmod($built, $mode);
+  }
+
+  return true;
+}
+
+/**
  * Deepest existing ancestor of a path, resolved.
  *
  * realpath() returns false both for a path that does not exist and for one
@@ -313,8 +396,25 @@ function stackman_real_ancestor(string $path): ?string {
 }
 
 /**
- * ok | file | missing | skipped for one already-combined target, checked
- * against one already-resolved root directory.
+ * Cheap emptiness test for stackman_path_verdict()'s 'inuse' verdict: stop at
+ * the first entry that isn't "." or "..", never build a listing and never
+ * recurse — the same "one stat's worth of work per path" spirit
+ * stackman_check_paths() holds itself to. An unreadable directory reads as
+ * empty; 'ok' is already the safer of the two answers to guess wrong on.
+ */
+function stackman_dir_has_entries(string $dir): bool {
+  $dh = @opendir($dir);
+  if ($dh === false) return false;
+  while (($entry = readdir($dh)) !== false) {
+    if ($entry !== '.' && $entry !== '..') { closedir($dh); return true; }
+  }
+  closedir($dh);
+  return false;
+}
+
+/**
+ * ok | file | missing | skipped | inuse for one already-combined target,
+ * checked against one already-resolved root directory.
  *
  * A path outside the root comes back "skipped", never "missing" — reporting
  * "missing" for something like /etc/shadow would turn this into a way to
@@ -323,8 +423,14 @@ function stackman_real_ancestor(string $path): ?string {
  * ancestor (see stackman_real_ancestor()) so a path that does not exist yet
  * can still be reported as "missing" rather than falling through to
  * "skipped" for every path that doesn't already exist.
+ *
+ * $checkInUse turns an existing, non-empty folder into "inuse" instead of
+ * "ok" — only worth asking for a stack being created, where a folder full of
+ * another app's data is a hazard rather than the normal state of the world an
+ * existing stack lives in. Off by default so nothing changes for a stack
+ * being edited.
  */
-function stackman_path_verdict(string $target, string $root): string {
+function stackman_path_verdict(string $target, string $root, bool $checkInUse = false): string {
   if ($root === '') return 'skipped';
   $inRoot = fn(string $real) => $real === $root || strpos($real, $root.'/') === 0;
 
@@ -347,7 +453,50 @@ function stackman_path_verdict(string $target, string $root): string {
   if ($real === false) return 'missing'; // ancestor is contained; nothing at the leaf yet
   if (!$inRoot($real)) return 'skipped'; // a symlink resolved outside the root after all
 
-  return is_dir($real) ? 'ok' : 'file';
+  if (!is_dir($real)) return 'file';
+  if ($checkInUse && stackman_dir_has_entries($real)) return 'inuse';
+  return 'ok';
+}
+
+/**
+ * Turn one path exactly as written in a compose file into an absolute path,
+ * and say which root it has to land inside. The single resolution step
+ * stackman_check_paths() and the make-paths action both need done
+ * identically, so what the editor underlines is exactly what the button can
+ * create.
+ *
+ * An absolute path is returned as-is, checked against STACKMAN_BROWSE_ROOT
+ * (/mnt) — the same root stackman_browse_dirs() confines itself to. A
+ * relative one resolves against the stack's own folder, checked against the
+ * stack root instead; that only has somewhere safe to resolve against when
+ * $rel names a real stack, so an invalid $rel is left with nothing to resolve
+ * against rather than a guess at what it might have meant.
+ *
+ * Returns null for anything with nowhere sound to resolve against: a null
+ * byte, an empty string, a root that failed to resolve, or a relative path
+ * with no valid stack behind it. stackman_check_paths() turns that into
+ * "skipped".
+ *
+ * @return array{path:string, root:string}|null
+ */
+function stackman_resolve_host_path(string $p, string $rel): ?array {
+  if (strpos($p, "\0") !== false) return null;
+  $trimmed = trim($p);
+  if ($trimmed === '') return null;
+
+  if ($trimmed[0] === '/') {
+    // Resolved, not the literal constant: every path this is compared against
+    // has been through realpath(), so the root has to be too or the two are
+    // not the same kind of string.
+    $root = @realpath(STACKMAN_BROWSE_ROOT);
+    return $root === false ? null : ['path' => $trimmed, 'root' => $root];
+  }
+
+  if (!stackman_valid_path($rel)) return null;
+  $stackRoot = @realpath(stackman_stack_root());
+  if ($stackRoot === false) return null;
+
+  return ['path' => stackman_stack_dir($rel).'/'.$trimmed, 'root' => $stackRoot];
 }
 
 /**
@@ -357,37 +506,22 @@ function stackman_path_verdict(string $target, string $root): string {
  * source ("./data") against the stack's own folder.
  *
  * Every path here is arbitrary text someone is typing, so it is treated as
- * hostile: an absolute path must resolve inside STACKMAN_BROWSE_ROOT (/mnt),
- * exactly like stackman_browse_dirs(); a relative one resolves against the
- * stack's folder first and the result must still land inside the stack root.
- * Anything that fails either check is "skipped", not "missing" — see
+ * hostile — see stackman_resolve_host_path() for the containment rules.
+ * Anything that fails to resolve is "skipped", not "missing" — see
  * stackman_path_verdict(). This does no shelling out and no directory
  * listing, only realpath()/is_dir() — one stat's worth of work per path.
  *
+ * $checkInUse asks stackman_path_verdict() to report an existing non-empty
+ * folder as "inuse" rather than "ok" — pass true only for a stack being
+ * created, where that folder is someone else's live data rather than the
+ * stack's own. Off by default: an existing stack's volumes are expected to
+ * be full of its own data, and flagging those would be noise.
+ *
  * @param string[] $paths host paths exactly as written in the compose file
  * @param string   $rel   the editing stack's own relative path, or ''
- * @return array<string, string> original path string => ok|file|missing|skipped
+ * @return array<string, string> original path string => ok|file|missing|skipped|inuse
  */
-function stackman_check_paths(array $paths, string $rel = ''): array {
-  // Resolved, not the literal constant: every path this is compared against
-  // has been through realpath(), so the root has to be too or the two are not
-  // the same kind of string. It fails closed rather than open — a root that
-  // did not resolve would send every path to "skipped" — but silently doing
-  // nothing is its own kind of bug.
-  $root = @realpath(STACKMAN_BROWSE_ROOT);
-  if ($root === false) $root = '';
-
-  // A relative path only has somewhere safe to resolve against when $rel is
-  // itself a real stack path — an invalid $rel is silently left with no base,
-  // which sends every relative path in the batch to "skipped" below rather
-  // than guessing at what it might have meant.
-  $stackRoot = '';
-  $stackDir  = '';
-  if (stackman_valid_path($rel)) {
-    $real = @realpath(stackman_stack_root());
-    if ($real !== false) { $stackRoot = $real; $stackDir = stackman_stack_dir($rel); }
-  }
-
+function stackman_check_paths(array $paths, string $rel = '', bool $checkInUse = false): array {
   $unique = [];
   foreach ($paths as $p) {
     if (!is_string($p)) continue;
@@ -397,17 +531,8 @@ function stackman_check_paths(array $paths, string $rel = ''): array {
 
   $out = [];
   foreach ($unique as $p) {
-    if (strpos($p, "\0") !== false) { $out[$p] = 'skipped'; continue; }
-    $trimmed = trim($p);
-    if ($trimmed === '') { $out[$p] = 'skipped'; continue; }
-
-    if ($trimmed[0] === '/') {
-      $out[$p] = stackman_path_verdict($trimmed, $root);
-    } elseif ($stackDir !== '') {
-      $out[$p] = stackman_path_verdict($stackDir.'/'.$trimmed, $stackRoot);
-    } else {
-      $out[$p] = 'skipped';
-    }
+    $resolved = stackman_resolve_host_path($p, $rel);
+    $out[$p] = $resolved === null ? 'skipped' : stackman_path_verdict($resolved['path'], $resolved['root'], $checkInUse);
   }
   return $out;
 }

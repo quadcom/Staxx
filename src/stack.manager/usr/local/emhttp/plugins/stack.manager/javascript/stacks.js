@@ -13,6 +13,7 @@
 
   var ENDPOINT = scaffold.dataset.endpoint;
   var CSRF     = scaffold.dataset.csrf;
+  var APPDATA  = scaffold.dataset.appdata || '';
 
   var modal       = document.getElementById('stackman-modal');
   var modalTitle  = document.getElementById('stackman-modal-title');
@@ -68,6 +69,8 @@
   var gapNote     = document.getElementById('stackman-required-note');
   var errorBox    = document.getElementById('stackman-error');
   var missingNote = document.getElementById('stackman-missing');
+  var makePathsNote = document.getElementById('stackman-makepaths');
+  var inUseNote     = document.getElementById('stackman-inusepaths');
 
   var tzModal     = document.getElementById('stackman-tz');
   var tzBands     = document.getElementById('stackman-tz-bands');
@@ -3677,8 +3680,10 @@
   function repaintMark() {
     yamlMarks.textContent = '';
     // The band is a range of compose-file lines, which mean nothing painted
-    // over a companion file's text.
-    if (fileOpen !== null) return;
+    // over a companion file's text. missingHostPaths() itself returns empty
+    // for a companion file, so this still hides the "create folders" note
+    // rather than leaving it showing over a file with no volumes at all.
+    if (fileOpen !== null) { updateMissingPaths(); updateInUsePaths(); return; }
     if (!LINE_H) measure();
 
     if (activeField && MODEL) {
@@ -3704,6 +3709,8 @@
     // below. Drawn last so a path mark under a search hit still shows
     // through: the hit is a fill, the path mark only an underline.
     repaintPaths();
+    updateMissingPaths();
+    updateInUsePaths();
   }
 
   // The visible slice of search hits, drawn into #stackman-yamlmarks. A plain
@@ -3772,7 +3779,7 @@
    * with the marks, so nothing survives from one stack's editor into the
    * next.
    */
-  var pathCache = {};   // path string -> 'ok' | 'file' | 'missing' | 'skipped'
+  var pathCache = {};   // path string -> 'ok' | 'file' | 'missing' | 'skipped' | 'inuse'
   var pathHits  = [];   // last YAML.hostPaths() result: [{path, line, col, len}]
   var pathToken = 0;    // bumped by pathsReset() so a late reply cannot paint
 
@@ -3786,6 +3793,11 @@
     // file.
     var stale = yamlMarks.querySelectorAll('.stackman-badpath');
     for (var i = 0; i < stale.length; i++) stale[i].remove();
+    makePathsNote.hidden = true;
+    makePathsNote.textContent = '';
+    inUseNote.hidden = true;
+    inUseNote.textContent = '';
+    inUseText = '';
   }
 
   // Called from reparse(), which is already debounced 400ms behind typing —
@@ -3806,8 +3818,11 @@
     // One request for everything not already answered, not one per path —
     // twenty mounts in a file is twenty entries in one array, not twenty
     // round trips.
+    // isNew: only a stack being created gets the "inuse" verdict — an
+    // existing stack's volumes are expected to already hold its own data, so
+    // asking for that flag there would just teach people to ignore it.
     var myToken = pathToken;
-    call('paths', { name: openedName, paths: JSON.stringify(unknown) }, 4000)
+    call('paths', { name: openedName, paths: JSON.stringify(unknown), isNew: modal.dataset.new }, 4000)
       .then(function (res) {
         // A reply for a stack that has since closed, or been replaced by
         // another — stay quiet rather than painting marks over someone
@@ -3819,6 +3834,119 @@
         repaintMark();
       });
   }
+
+  // The distinct host paths currently underlined as 'missing' — not 'file'
+  // (nothing to create there) and not 'skipped' or 'ok'. Recomputed fresh on
+  // every call rather than cached, the same reasoning missingNote's click
+  // handler gives: a path made or corrected between the last redraw and a
+  // click must never be acted on as stale.
+  //
+  // Only paths under /mnt are offered, because that is the only place the
+  // server will make one — a button that can only ever answer "folders can
+  // only be made under /mnt" is worse than no button. A relative path is
+  // still underlined; it just does not get the offer, since whether it lands
+  // under /mnt depends on where the stack root is and only the server knows.
+  function missingHostPaths() {
+    if (fileOpen !== null) return [];   // a companion file has no volumes at all
+    var out = [];
+    pathHits.forEach(function (h) {
+      if (h.path.indexOf('/mnt/') !== 0) return;
+      if (pathCache[h.path] === 'missing' && out.indexOf(h.path) < 0) out.push(h.path);
+    });
+    return out;
+  }
+
+  // Note text for #stackman-makepaths — same shape as updateMissing() above,
+  // but for a volume's host side rather than a file inside the stack. Called
+  // from repaintMark(), which already runs after every reply checkHostPaths()
+  // gets back and after every redraw that could change which paths are still
+  // missing (a view switch, a scroll, a field focus) — so this needs no call
+  // sites of its own.
+  // Written only when it actually changes: repaintMark() runs on every scroll
+  // frame, and rewriting the same sentence into the DOM sixty times a second
+  // dirties a node that never moved.
+  var makePathsText = '';
+
+  function updateMissingPaths() {
+    var missing = missingHostPaths();
+    var text = !missing.length ? ''
+      : (missing.length === 1
+          ? '"' + missing[0] + '" is named in this compose file but does not exist on the server yet. Create it.'
+          : missing.length + ' folders named in this compose file do not exist yet. Create them.');
+    if (text === makePathsText) return;
+    makePathsText = text;
+    makePathsNote.textContent = text;
+    makePathsNote.hidden = text === '';
+  }
+
+  // The distinct host paths currently underlined as 'inuse' — an existing,
+  // non-empty folder, only ever reported for a stack being created (see
+  // checkHostPaths()'s isNew flag). No /mnt-only filter here, unlike
+  // missingHostPaths() above: this note has no button and nothing to act on,
+  // so there is no "can the server reach it" question to narrow it by.
+  function inUseHostPaths() {
+    if (fileOpen !== null) return [];   // a companion file has no volumes at all
+    var out = [];
+    pathHits.forEach(function (h) {
+      if (pathCache[h.path] === 'inuse' && out.indexOf(h.path) < 0) out.push(h.path);
+    });
+    return out;
+  }
+
+  // Note text for #stackman-inusepaths — same shape and same call sites as
+  // updateMissingPaths() just above, but for the "this folder already has
+  // something in it" caution rather than the "nothing here yet" one.
+  var inUseText = '';
+
+  function updateInUsePaths() {
+    var inuse = inUseHostPaths();
+    var text = !inuse.length ? ''
+      : (inuse.length === 1
+          ? '"' + inuse[0] + '" already has files in it. Starting this stack would point it at whatever is already there — check that is what you mean before starting it.'
+          : inuse.length + ' folders named in this compose file already have files in them. Starting this stack would point it at whatever is already there — check each one before starting it.');
+    if (text === inUseText) return;
+    inUseText = text;
+    inUseNote.textContent = text;
+    inUseNote.hidden = text === '';
+  }
+
+  // True while a make-paths request is in flight, so a second click cannot
+  // fire a second request for the same folders before the first has answered.
+  var makePathsBusy = false;
+
+  makePathsNote.addEventListener('click', function () {
+    if (makePathsBusy) return;
+    var missing = missingHostPaths();
+    if (!missing.length) return;
+
+    makePathsBusy = true;
+    call('make-paths', { name: openedName, paths: JSON.stringify(missing) }, 8000)
+      .then(function (res) {
+        makePathsBusy = false;
+        if (!res || !res.ok || !res.results) {
+          setYamlStatus((res && res.error) || 'Could not create these folders.');
+          return;
+        }
+
+        // Every path just asked about, made or not, is stale cached knowledge
+        // now — dropped so checkHostPaths() below asks the server again
+        // rather than assuming today's answer still holds.
+        var errors = [];
+        Object.keys(res.results).forEach(function (p) {
+          var r = res.results[p];
+          if (r && r.status === 'error') errors.push(r.error || ('Could not create "' + p + '".'));
+          delete pathCache[p];
+        });
+
+        // Server messages shown exactly as written, never reworded or
+        // merged — the same courtesy the compose-check error path gives.
+        if (errors.length) {
+          setYamlStatus(errors[0] +
+            (errors.length > 1 ? '  (and ' + (errors.length - 1) + ' more failed)' : ''));
+        }
+        checkHostPaths();   // re-ask, so the underlines that were fixed disappear on their own
+      });
+  });
 
   /* ---- does compose itself accept this file? --------------------------
    *
@@ -3902,8 +4030,8 @@
 
   // The visible slice of bad host paths, drawn into the same layer as the
   // active-field band and the search hits above — see repaintMark()'s own
-  // comment for why one layer serves all of them. Only 'missing' and 'file'
-  // are ever drawn; 'ok', 'skipped', and any path the server has not
+  // comment for why one layer serves all of them. Only 'missing', 'file' and
+  // 'inuse' are ever drawn; 'ok', 'skipped', and any path the server has not
   // answered for yet, are left alone.
   function repaintPaths() {
     if (!pathHits.length) return;
@@ -3920,11 +4048,12 @@
     for (var i = 0; i < pathHits.length; i++) {
       var h = pathHits[i];
       var verdict = pathCache[h.path];
-      if (verdict !== 'missing' && verdict !== 'file') continue;
+      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse') continue;
       if (h.line < firstLine || h.line > lastLine) continue;
 
       var box = document.createElement('div');
-      box.className = 'stackman-badpath' + (verdict === 'file' ? ' stackman-badpath--file' : '');
+      box.className = 'stackman-badpath' +
+        (verdict === 'file' ? ' stackman-badpath--file' : verdict === 'inuse' ? ' stackman-badpath--inuse' : '');
       box.style.top    = (PAD_T + h.line * LINE_H - yamlPane.scrollTop) + 'px';
       box.style.left   = (leftBase + h.col * CHAR_W - yamlPane.scrollLeft) + 'px';
       box.style.width  = (h.len * CHAR_W) + 'px';
@@ -3940,7 +4069,7 @@
     for (var i = 0; i < pathHits.length; i++) {
       var h = pathHits[i];
       var verdict = pathCache[h.path];
-      if (verdict !== 'missing' && verdict !== 'file') continue;
+      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse') continue;
       if (h.line === line && col >= h.col && col < h.col + h.len) {
         return { path: h.path, verdict: verdict };
       }
@@ -3949,9 +4078,14 @@
   }
 
   function pathHoverText(mark) {
-    return mark.verdict === 'file'
-      ? mark.path + ' is a file, not a folder. A volume\'s host side must be a folder.'
-      : 'Nothing exists at ' + mark.path + ' on the server. Create the folder, or correct the path.';
+    if (mark.verdict === 'file') {
+      return mark.path + ' is a file, not a folder. A volume\'s host side must be a folder.';
+    }
+    if (mark.verdict === 'inuse') {
+      return mark.path + ' already has files in it. Another container may already be using it. ' +
+        'Starting this stack would point this container at that same data.';
+    }
+    return 'Nothing exists at ' + mark.path + ' on the server. Create the folder, or correct the path.';
   }
 
   function revealLine(line) {
@@ -4536,11 +4670,53 @@
   var caCatSel = document.getElementById('stackman-ca-cat');
   var caList   = document.getElementById('stackman-ca-list');
   var caMsg    = document.getElementById('stackman-ca-msg');
+  var caTabHome   = document.getElementById('stackman-ca-tab-home');
+  var caTabSearch = document.getElementById('stackman-ca-tab-search');
 
-  var caApps  = [];     // the last results rendered — caChoose() reads the app's name back out of this
+  // The details window a card opens. A sibling dialog, not nested inside
+  // stackman-ca, so Escape closing the search dialog does not take a focused
+  // child down with it — instead caModal's own 'close' handler below force-
+  // closes this one, the way the editor's does for the picker and timezone
+  // dialogs.
+  var caAppModal = document.getElementById('stackman-ca-app');
+  var caAppIcon  = document.getElementById('stackman-ca-app-icon');
+  var caAppTitle = document.getElementById('stackman-ca-app-title');
+  var caAppBy    = document.getElementById('stackman-ca-app-by');
+  var caAppAdd   = document.getElementById('stackman-ca-app-add');
+  var caAppClose = document.getElementById('stackman-ca-app-close');
+  var caAppBody  = document.getElementById('stackman-ca-app-body');
+
+  var caApps  = [];     // the last results rendered — caAdd()/caDetails() read the app's name back out of this
   var caTimer = null;   // the search box's debounce handle
   var caPoll  = null;   // the "still building" poll handle — cleared on close so a shut dialog never keeps polling
   var caCats  = false;  // whether the category <select> has been filled in yet
+  var caCatCount = null;   // the whole catalogue's size, from the last ca-search reply — for the footer message only
+  var caSearched = false;  // whether caSearch() has run yet in this open — so the Search tab knows to run one rather than show a blank list
+
+  // The dialog opens on a curated homepage rather than a search; caView says
+  // which of the two views of this one panel is on screen, caHomeData is the
+  // last ca-home reply (kept so switching back from Search needs no refetch),
+  // and caPage is which two-row page each home section is currently showing.
+  var caView = 'home';
+  var caHomeData = null;
+  var CA_ROWS = 2;   // rows per pager page — every "two rows" below means this
+  var caPage = { spot: 0, new: 0, trend: 0 };
+  var caFitTimer = null;   // the resize listener's debounce handle, cleared in caModal's 'close' handler below
+
+  var caAppOrdinal = null;  // which ordinal the open details window is showing, or is mid-fetch for
+  var caAppRecord  = null;  // the full ca-app record behind the open details window — kept so its own
+                            // Add button does not ask the server again for what it is already looking at
+
+  // The two extra sources, B2-B5. Docker Hub is a network round trip on every
+  // keystroke, so it gets its own debounce and a stamp to discard a reply for
+  // a query the user has since moved on from. Local images are fetched once
+  // per dialog open and filtered here rather than asked of docker per keystroke.
+  var caHubHits    = [];    // the last Docker Hub reply rendered, capped at 25
+  var caHubTimer   = null;  // Docker Hub's own 600ms debounce handle, separate from caTimer's 250ms
+  var caHubStamp   = 0;     // bumped on every request; a reply is only used while it still matches this
+  var caLocalImages = null; // every repo:tag on this server, fetched once by caOpen()
+  var caLocalHits   = [];   // caLocalImages filtered by the search box, capped at 15
+  var caLocalTotal  = 0;    // the filtered count before that cap, so the footer can say "first 15 of N"
 
   function caStopPoll() {
     if (caPoll) { clearTimeout(caPoll); caPoll = null; }
@@ -4560,48 +4736,481 @@
     });
   }
 
-  function caRowHtml(app) {
-    var icon = app.ic
-      ? '<img class="stackman-ca-icon" src="' + esc(app.ic) + '" alt="" loading="lazy" referrerpolicy="no-referrer">'
-      : '<span class="stackman-ca-icon stackman-ca-icon--empty" aria-hidden="true"></span>';
+  // The feed is third-party data and these values land in href/src
+  // attributes. esc() only escapes markup characters, not scheme — one live
+  // entry's project link is "https://https://emby.media/", so a bare esc()
+  // would still emit a malformed-but-well-formed-looking URL. Anything that
+  // is not http(s) is dropped rather than "fixed".
+  function caUrl(u) { return (typeof u === 'string' && /^https?:\/\//i.test(u)) ? u : ''; }
 
-    // 'c' is an array of every category an app claims (the first is its
-    // primary one); an old cache built before that change can still hand
-    // back a plain string, and an app with no category at all omits the key
-    // entirely. Cope with all three, and only its first category, so a row
-    // never prints "MediaApp:Video,MediaServer:Video".
-    var cat = app.c;
-    if (Array.isArray(cat)) cat = cat[0] || '';
-    else if (typeof cat !== 'string') cat = '';
-    var sub = cat ? (esc(app.r) + ' · ' + esc(cat)) : esc(app.r);
-    // CA still lists a deprecated app (with a notice of its own), so this is
-    // a caution shown alongside the match, not a reason to hide the row.
-    var depTag = app.dep ? '<span class="stackman-ca-dep">deprecated</span>' : '';
-    sub = sub + depTag;
+  // A Docker Hub repository's own page. "nginx" (no slash) is a single-segment
+  // official image, which Docker Hub serves at /_/name rather than /r/ns/name.
+  function caHubUrl(name) {
+    var n = String(name || '');
+    var slash = n.indexOf('/');
+    if (slash === -1) return 'https://hub.docker.com/_/' + encodeURIComponent(n);
+    return 'https://hub.docker.com/r/' + n.split('/').map(encodeURIComponent).join('/');
+  }
 
-    return '<button type="button" class="stackman-ca-row" data-i="' + esc(app.i) + '">' +
-             icon +
-             '<span class="stackman-ca-info">' +
-               '<span class="stackman-ca-line1">' +
-                 '<span class="stackman-ca-name">' + esc(app.n) + '</span>' +
-                 '<span class="stackman-ca-sub">' + sub + '</span>' +
-               '</span>' +
-               '<span class="stackman-ca-desc">' + esc(app.ov) + '</span>' +
-             '</span>' +
-           '</button>';
+  // A stack/service name derived from an image reference, for the two sources
+  // that carry nothing else to name it by. The last path segment is what
+  // identifies the app — linuxserver/jellyfin -> jellyfin, and a registry host
+  // or tag is neither — lowercased and stripped to what stackman_valid_name()
+  // (include/Stacks.php) actually accepts: starts with a letter or digit, then
+  // letters, digits, '.', '_' or '-', at most 63 characters.
+  function caImageName(image) {
+    var s = String(image || '');
+    var slash = s.lastIndexOf('/');
+    var tail = slash >= 0 ? s.slice(slash + 1) : s;
+    var colon = tail.lastIndexOf(':');
+    if (colon > 0) tail = tail.slice(0, colon);
+    tail = tail.toLowerCase().replace(/[^a-z0-9._-]/g, '').replace(/^[^a-z0-9]+/, '');
+    return tail.slice(0, 63) || 'app';
+  }
+
+  // Pull counts run into the billions; a card has room for "151M pulls", not
+  // the sentence CA's own tile spells the number out as.
+  // A decimal place while the leading figure is still a single digit, and
+  // none after that: 1577 reads as "1.6k" rather than "2k", which looks like
+  // a different number rather than a rounded one, while 405321880 reads as
+  // "405M" rather than a false precision nobody asked for.
+  function caCompact(n) {
+    n = Number(n) || 0;
+    var units = [[1e9, 'B'], [1e6, 'M'], [1e3, 'k']];
+    for (var i = 0; i < units.length; i++) {
+      if (n >= units[i][0]) {
+        var v = n / units[i][0];
+        return (v < 10 ? Math.round(v * 10) / 10 : Math.round(v)) + units[i][1];
+      }
+    }
+    return String(n);
+  }
+
+  // At most one badge. Deprecated wins outright; otherwise "official" is the
+  // same test Unraid itself derives it by — a repository with no namespace,
+  // or explicitly under library/, is a Docker Hub official image — so it
+  // costs no extra index field.
+  function caFlagHtml(app) {
+    if (app.dep) return '<span class="stackman-ca-flag stackman-ca-flag--dep">deprecated</span>';
+    var r = app.r || '';
+    if (r.indexOf('/') === -1 || r.indexOf('library/') === 0) {
+      return '<span class="stackman-ca-flag stackman-ca-flag--off">official</span>';
+    }
+    return '';
+  }
+
+  function caCardHtml(app) {
+    var iconUrl = caUrl(app.ic);
+    var icon = iconUrl
+      ? '<img class="stackman-ca-cardicon" src="' + esc(iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer">'
+      : '<span class="stackman-ca-cardicon stackman-ca-cardicon--empty" aria-hidden="true"></span>';
+
+    // One metadata line under the name, beside the thumbnail: who publishes it
+    // and how many have pulled the image. The category used to sit here too and
+    // no longer does — this column is narrow, since the Add button and the star
+    // count are pinned above its right-hand end, and a third fact only pushed
+    // the other two out of view.
+    var byParts = [];
+    if (app.a) byParts.push(esc(app.a));
+    if (app.d) byParts.push(caCompact(app.d) + ' pulls');
+    var by = byParts.length
+      ? '<span class="stackman-ca-cardby">' + byParts.join(' · ') + '</span>'
+      : '';
+
+    // Docker Hub stars — the nearest thing the catalogue has to a rating, since
+    // Community Applications itself has had no likes or votes for years. Absent
+    // on about half the entries, and absent there means nobody counted rather
+    // than nobody liked it, so a card with no figure shows no line at all.
+    var stars = app.st
+      ? '<span class="stackman-ca-cardstars" title="' + app.st + ' Docker Hub stars">★ ' + caCompact(app.st) + '</span>'
+      : '';
+
+    // Add, stars and the flag share the top-right corner, so they are one
+    // absolutely-positioned column rather than three things each guessing an
+    // offset that the absence of either of the others would leave as a gap.
+    var corner = '<div class="stackman-ca-cardtop">' +
+                   '<button type="button" class="stackman-ca-cardadd" data-add="' + esc(app.i) + '">Add</button>' +
+                   stars + caFlagHtml(app) +
+                 '</div>';
+
+    // Spotlight rows only — CA's own reason for the pick, and who gave it.
+    // That is the whole point of a spotlight, so it earns a line of its own
+    // rather than being folded into the description underneath.
+    var rec = app.why
+      ? '<span class="stackman-ca-cardrec">' + esc(app.why) + (app.who ? ' — ' + esc(app.who) : '') + '</span>'
+      : '';
+
+    // Thumbnail and identity share the top row; everything that needs the
+    // card's full width — the image reference, the reason, the description —
+    // runs underneath it.
+    return '<div class="stackman-ca-card" data-i="' + esc(app.i) + '" role="button" tabindex="0">' +
+             corner +
+             '<div class="stackman-ca-cardhead">' +
+               icon +
+               '<div class="stackman-ca-cardid">' +
+                 '<span class="stackman-ca-cardname">' + esc(app.n) + '</span>' +
+                 by +
+               '</div>' +
+             '</div>' +
+             '<span class="stackman-ca-cardrepo">' + esc(app.r) + '</span>' +
+             rec +
+             '<span class="stackman-ca-carddesc">' + caPlainText(app.ov) + '</span>' +
+           '</div>';
+  }
+
+  // A Docker Hub hit carries no icon and barely any metadata next to a CA
+  // record, so it renders as a compact row rather than a card — see PLAN_23 B3.
+  // data-src tells the click/keydown handlers below which skeleton wording to
+  // use, without having to sniff back up the DOM for which group a row is in.
+  function caHubRowHtml(hit) {
+    var name = String(hit.name || '');
+    // Emitted even when empty: it is the only child that grows, so without it
+    // a description-less hit leaves its stars and its Docker Hub link stranded
+    // against the name instead of out at the right edge with every other row's.
+    var descText = hit.desc ? String(hit.desc).trim() : '';
+    var desc = '<span class="stackman-ca-rowdesc">' + esc(descText) + '</span>';
+
+    var metaParts = [];
+    if (hit.official) metaParts.push('official');
+    if (hit.stars !== undefined && hit.stars !== null && hit.stars !== '') {
+      metaParts.push(caCompact(hit.stars) + ' stars');
+    }
+    if (hit.pulls) metaParts.push(caCompact(hit.pulls) + ' pulls');
+    var meta = metaParts.length
+      ? '<span class="stackman-ca-rowmeta">' + metaParts.join(' · ') + '</span>'
+      : '';
+
+    var url = caHubUrl(name);
+    var link = url
+      ? '<a class="stackman-ca-rowlink" href="' + esc(url) +
+        '" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">Docker Hub</a>'
+      : '';
+
+    return '<div class="stackman-ca-row" data-img="' + esc(name) + '" data-src="hub" role="button" tabindex="0">' +
+             '<span class="stackman-ca-rowname">' + esc(name) + '</span>' + desc + meta + link +
+           '</div>';
+  }
+
+  // A local image carries nothing beyond its own reference — no description,
+  // no stars, nowhere to link out to.
+  function caImgRowHtml(ref) {
+    return '<div class="stackman-ca-row" data-img="' + esc(ref) + '" data-src="local" role="button" tabindex="0">' +
+             '<span class="stackman-ca-rowname">' + esc(ref) + '</span>' +
+           '</div>';
+  }
+
+  // Assembles all three groups from whatever is currently known — the three
+  // sources land at different times, so this is called again by each one
+  // independently rather than only after the Community Applications reply.
+  // A heading is only ever written for a group that has results; the "nothing
+  // matches" state now depends on all three being empty, not just the first.
+  // resetScroll is true only for a genuinely new search settling (the
+  // ca-search reply, a category change) — a Docker Hub or local-image update
+  // filling in underneath must not yank the list back to the top on the user.
+  function caRenderAll(resetScroll) {
+    var blocks = [];
+
+    if (caApps.length) {
+      blocks.push(
+        '<h4 class="stackman-ca-group">Community Applications ' +
+        '<span class="stackman-ca-count">' + caApps.length + '</span></h4>' +
+        '<div class="stackman-ca-cards">' + caApps.map(caCardHtml).join('') + '</div>');
+    }
+
+    if (caHubHits.length) {
+      blocks.push(
+        '<h4 class="stackman-ca-group">Docker Hub ' +
+        '<span class="stackman-ca-count">' + caHubHits.length + '</span></h4>' +
+        '<div class="stackman-ca-rows">' + caHubHits.map(caHubRowHtml).join('') + '</div>');
+    }
+
+    if (caLocalHits.length) {
+      blocks.push(
+        '<h4 class="stackman-ca-group">Images on this server ' +
+        '<span class="stackman-ca-count">' + caLocalHits.length + '</span></h4>' +
+        '<div class="stackman-ca-rows">' + caLocalHits.map(caImgRowHtml).join('') + '</div>');
+    }
+
+    caList.innerHTML = blocks.length
+      ? blocks.join('')
+      : '<p class="stackman-form-empty">Nothing matches that. Try a shorter search.</p>';
+
+    if (resetScroll) caList.scrollTop = 0;
+    caFooterMsg();
+  }
+
+  // The homepage — three curated rows from the last ca-home reply. Kept
+  // separate from caRenderAll() because the two views never share a reply:
+  // this one re-renders on switching back from Search, with no round trip.
+  // Nothing to render yet (caHomeData still null, the fetch still in flight)
+  // is left alone rather than shown as "empty" — caHomeFetch() owns the
+  // footer message until its first reply lands.
+  function caRenderHome() {
+    var data = caHomeData;
+    if (!data) return;
+
+    var sections = [
+      ['spot',  'Spotlight Apps',     data.spot],
+      ['new',   'Recently Added',     data.new],
+      ['trend', 'Top Trending Apps',  data.trend]
+    ];
+
+    var blocks = [];
+    sections.forEach(function (s) {
+      var key = s[0], label = s[1], rows = s[2] || [];
+      if (!rows.length) return;
+      // No count beside a home heading, unlike the search view's — there the
+      // number says how much a search matched, which is the answer; here it
+      // would only ever say how long a list nobody asked for the length of is.
+      //
+      // Heading, deck and pager stay flat siblings — NEVER wrap a section in
+      // a container element. .stackman-ca-group:first-child in the
+      // stylesheet kills the top margin on the first heading, and that only
+      // works while the heading is a direct child of the list.
+      //
+      // Every card for the section goes into one grid; the deck just clips
+      // it to two rows and the track slides it. How many cards make two rows
+      // depends on how many columns the current window width gives the CSS
+      // grid, which is decided entirely by media queries — nothing here
+      // duplicates those breakpoints. The pager is always emitted because
+      // whether it is needed depends on the row count, which is not known
+      // until the layout is measured; caDeckFitAll() below hides it again
+      // when a section turns out to fit on one page.
+      blocks.push(
+        '<h4 class="stackman-ca-group">' + label + '</h4>' +
+        '<div class="stackman-ca-deck" data-deck="' + key + '">' +
+          '<div class="stackman-ca-track">' +
+            '<div class="stackman-ca-cards stackman-ca-cards--home">' + rows.map(caCardHtml).join('') + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="stackman-ca-pager">' +
+          '<button type="button" class="stackman-ca-step" data-page="' + key + '" data-dir="-1" ' +
+            'aria-label="Previous two rows" title="Previous">&#9650;</button>' +
+          '<button type="button" class="stackman-ca-step" data-page="' + key + '" data-dir="1" ' +
+            'aria-label="Next two rows" title="Next">&#9660;</button>' +
+        '</div>');
+    });
+
+    caList.innerHTML = blocks.length
+      ? blocks.join('')
+      : '<p class="stackman-form-empty">Nothing to show here yet. Try Search instead.</p>';
+
+    // A deck's own scrollTop is never a legitimate state — the track's
+    // transform is what moves the content here. Attached once per fresh set
+    // of deck elements (this function only runs for a genuine re-render, so
+    // there is no risk of piling up duplicate listeners on the same element).
+    // Without this, anything that scrolls a clipped descendant into view —
+    // focusing a tabbed-to card, browser find-in-page, assistive tech —
+    // leaves the deck offset with nothing to put it back afterwards.
+    var decks = caList.querySelectorAll('.stackman-ca-deck');
+    for (var di = 0; di < decks.length; di++) {
+      decks[di].addEventListener('scroll', function () { this.scrollTop = 0; this.scrollLeft = 0; });
+    }
+
+    // Run synchronously, in the same tick as the innerHTML write above — a
+    // deferred fit would let the browser paint all of a section's cards
+    // before the clip applies, so every section would flash full height and
+    // then visibly collapse to two rows.
+    caDeckFitAll(false);
+
+    // Still correct here: this function now only runs for a genuine first
+    // render — opening the dialog, or switching back from Search — paging
+    // between pages never calls it, so jumping to the top of the list is
+    // still the right thing to do.
+    caList.scrollTop = 0;
+    caFooterMsg();
+  }
+
+  // Distinct row start positions inside a home section's grid, in document
+  // order. Cards on the same CSS grid row share an offsetTop, so walking the
+  // children and keeping every value that differs from the one before it
+  // gives exactly one entry per row — however many columns the current media
+  // query has chosen, without this file ever needing to know that number.
+  //
+  // offsetTop is measured from the element's offsetParent, which for a card
+  // here is the <dialog> itself — the nearest positioned ancestor, since the
+  // deck, the track and the grid are all statically positioned. That is a
+  // position on the page, not a position within the grid, so the first value
+  // is subtracted from every value before returning: the result always
+  // starts at 0, regardless of how much sits above the grid or what the
+  // offsetParent turns out to be. Deleting this subtraction looks harmless —
+  // the numbers still look like offsets — but it is what keeps the sums
+  // below correct if the layout above the grid ever changes.
+  function caDeckRows(grid) {
+    var raw = [];
+    var kids = grid.children;
+    for (var i = 0; i < kids.length; i++) {
+      var top = kids[i].offsetTop;
+      if (!raw.length || top !== raw[raw.length - 1]) raw.push(top);
+    }
+    if (!raw.length) return [];
+    var base = raw[0];
+    return raw.map(function (t) { return t - base; });
+  }
+
+  // The row/page arithmetic shared between caDeckFit (which also writes the
+  // geometry) and caPageStep (which only needs to know how many pages exist)
+  // — kept in one place so the two never drift into subtly different counts.
+  function caDeckPages(grid) {
+    var tops = caDeckRows(grid);
+    return { tops: tops, pages: Math.max(1, Math.ceil(tops.length / CA_ROWS)) };
+  }
+
+  // Positions one home section at its current page: clips the deck to the
+  // height of two rows and slides the track up so that page's first row sits
+  // at the top. The height is measured rather than calculated because a
+  // card's name clamps at two lines and its description at three, so rows
+  // here are not all the same height — reading where the row after this page
+  // actually begins is the only way two rows land exactly on the boundary
+  // instead of half-clipping the third.
+  function caDeckFit(deck, animate) {
+    var key = deck.dataset.deck;
+    var track = deck.firstElementChild;
+    var grid = track.firstElementChild;
+    var pager = deck.nextElementSibling;
+
+    var info = caDeckPages(grid);
+    var tops = info.tops, pages = info.pages;
+    if (caPage[key] >= pages) caPage[key] = pages - 1;   // a resize can leave the index past the end
+
+    if (pager) pager.hidden = pages < 2;   // only worth a pager once there is more than one page
+
+    var first = caPage[key] * CA_ROWS;
+    var offset = tops[first] || 0;
+    var nextTop = tops[first + CA_ROWS];
+    var gap = parseFloat(getComputedStyle(grid).rowGap) || 0;   // read live — never hard-code the stylesheet's gap
+    var bottom = (nextTop === undefined) ? grid.offsetHeight : (nextTop - gap);
+    var height = bottom - offset;
+
+    // Cards outside the visible pair of rows stay in the DOM — the whole
+    // point of this design is that every card is rendered so the layout can
+    // be measured — but must leave the tab order. Left alone, tabbing
+    // through the dialog would walk every card and Add button a section
+    // has, not just the two rows on screen, and focusing a clipped card
+    // makes the browser scroll it into view, which drags the deck's own
+    // scrollTop away from zero and corrupts the very clip this function is
+    // setting. row increments each time offsetTop changes, exactly as it
+    // does inside caDeckRows above, so a card counts as visible when its row
+    // falls inside [first, first + CA_ROWS).
+    var row = -1, lastTop = null;
+    var kids = grid.children;
+    for (var i = 0; i < kids.length; i++) {
+      var card = kids[i];
+      if (lastTop === null || card.offsetTop !== lastTop) { row++; lastTop = card.offsetTop; }
+      var visible = row >= first && row < first + CA_ROWS;
+      card.setAttribute('tabindex', visible ? '0' : '-1');
+      var addBtn = card.querySelector('[data-add]');
+      if (addBtn) addBtn.setAttribute('tabindex', visible ? '0' : '-1');
+    }
+
+    // No transition wanted for a first fit or a resize snap, so the geometry
+    // is written with the "still" classes on and they come off afterwards.
+    if (!animate) {
+      deck.classList.add('stackman-ca-deck--still');
+      track.classList.add('stackman-ca-track--still');
+    }
+    deck.style.height = height + 'px';
+    track.style.transform = 'translateY(-' + offset + 'px)';
+    if (!animate) {
+      // The forced reflow belongs AFTER the writes, not before them. A
+      // transition is decided by comparing the last style the browser
+      // resolved against the next one, so what has to be true is that it
+      // resolves the NEW height and transform while transitions are still
+      // switched off. Reading offsetHeight here makes it do exactly that,
+      // after which removing the classes changes nothing and starts nothing.
+      // Reading it before the writes instead flushes the old values, leaves
+      // the new ones and the class removal in the same tick, and the deck
+      // animates on every drag-resize frame — which is the bug this shape
+      // exists to avoid.
+      void deck.offsetHeight;
+      deck.classList.remove('stackman-ca-deck--still');
+      track.classList.remove('stackman-ca-track--still');
+    }
+  }
+
+  // Runs caDeckFit over every home section currently in the DOM — called
+  // after a fresh render and after a debounced window resize.
+  function caDeckFitAll(animate) {
+    var decks = caList.querySelectorAll('.stackman-ca-deck');
+    for (var i = 0; i < decks.length; i++) caDeckFit(decks[i], animate);
+  }
+
+  // Rebuilds the footer line from whatever is currently known. Kept separate
+  // from caRenderAll's DOM write because it is also the thing a Docker Hub or
+  // local-image update calls on its own, without re-deriving the Community
+  // Applications wording every time.
+  function caFooterMsg() {
+    // The homepage reads caHomeData, not caApps — caApps is last search's
+    // results, which is not what is on screen while this view is up, and
+    // describing it here would be describing a search nobody ran.
+    if (caView === 'home') {
+      var d = caHomeData;
+      var total = d ? (d.spot.length + d.new.length + d.trend.length) : 0;
+      caMsg.textContent = total
+        ? 'Browsing a few curated picks. Type to search the whole catalogue instead.'
+        : 'Nothing to show here yet. Type to search the whole catalogue instead.';
+      return;
+    }
+
+    var n = caApps.length;
+    var browsing = caBox.value.trim() === '';
+    var inCat = caCatSel.value;
+
+    // Worded from what the user actually did. With an empty box this is a
+    // browse through the whole catalogue, not a search that matched things,
+    // and calling 60 A-Z entries "matches" would read as a result nobody
+    // asked for. res.count (the whole 4,000-odd) only appears in the full-
+    // browse case; elsewhere it would read as "4033 apps found" after a
+    // search that matched three.
+    var caPart = '';
+    if (n > 0) {
+      if (n < 60) {
+        caPart = n + (n === 1 ? ' app' : ' apps') + ' found.';
+      } else if (!browsing) {
+        caPart = 'Showing the first ' + n + ' matches — narrow the search to see fewer.';
+      } else if (inCat) {
+        caPart = 'Showing the first ' + n + ' in ' + inCat + ', A to Z — search to narrow it.';
+      } else {
+        caPart = 'Showing ' + n + ' of ' + (caCatCount || 'the') + ' apps, A to Z — search or pick a category.';
+      }
+    }
+
+    var hubPart = '';
+    if (caHubHits.length) {
+      var h = caHubHits.length;
+      hubPart = h + (h >= 25 ? '+' : '') + (h === 1 ? ' image' : ' images') + ' from Docker Hub.';
+    }
+
+    // caLocalTotal is the filtered count before the 15-row cap, so a fuller
+    // match still says how many there really were rather than just "15".
+    var localPart = '';
+    if (caLocalTotal) {
+      localPart = (caLocalTotal > 15 ? 'The first 15 of ' + caLocalTotal : caLocalTotal) +
+        (caLocalTotal === 1 ? ' image' : ' images') + ' already on this server.';
+      localPart = localPart.charAt(0).toUpperCase() + localPart.slice(1);
+    }
+
+    var msg = [caPart, hubPart, localPart].filter(Boolean).join(' ');
+    caMsg.textContent = msg || 'Nothing matches that. Try a shorter search.';
   }
 
   function caRender(apps) {
     caApps = apps || [];
-    caList.innerHTML = caApps.length
-      ? caApps.map(caRowHtml).join('')
-      : '<p class="stackman-form-empty">Nothing matches that. Try a shorter search.</p>';
-    caList.scrollTop = 0;
+    caRenderAll(true);   // a settled ca-search reply is a genuinely new search
   }
 
   function caSearch() {
+    caSearched = true;   // so the Search tab knows not to run another one just to avoid a blank list
     call('ca-search', { q: caBox.value.trim(), cat: caCatSel.value }, 20000).then(function (res) {
       if (!caModal.open) return;   // the dialog closed while this was in flight
+
+      // Typing and then clearing the box quickly leaves this reply arriving
+      // after the homepage is back on screen. Keep the results for when the
+      // user returns to Search, but do not draw over the view they are on.
+      if (caView !== 'search') {
+        if (res.ok && res.state === 'ready') caApps = res.apps || [];
+        return;
+      }
 
       if (!res.ok) { caMsg.textContent = res.error; return; }
 
@@ -4625,37 +5234,80 @@
         return;
       }
 
+      // Kept for caFooterMsg()'s full-browse wording — res.count is the whole
+      // 4,000-odd catalogue, only ever worth saying when nothing narrowed it.
+      caCatCount = res.count || null;
       caFillCats(res.categories);
-      caRender(res.apps);
-
-      // The count is of what came back, not of the catalogue — res.count is
-      // the whole 4,000-odd and would read as "4033 apps found" after a search
-      // that matched three. The server caps a reply at 60, so a full page says
-      // so rather than implying that is all there is.
-      // Worded from what the user actually did. With an empty box this is a
-      // browse through the whole catalogue, not a search that matched things,
-      // and calling 60 A-Z entries "matches" would read as a result nobody
-      // asked for.
-      var n = caApps.length;
-      var browsing = caBox.value.trim() === '';
-      var inCat = caCatSel.value;
-      var msg;
-      if (n === 0) {
-        msg = 'Nothing matched.';
-      } else if (n < 60) {
-        msg = n + (n === 1 ? ' app' : ' apps') + ' found.';
-      } else if (!browsing) {
-        msg = 'Showing the first ' + n + ' matches — narrow the search to see fewer.';
-      } else if (inCat) {
-        // Never "of 3732" here: that is the whole catalogue, and this list is
-        // one category of it. Nor "pick a category", which is what the line
-        // used to say while a category was already picked.
-        msg = 'Showing the first ' + n + ' in ' + inCat + ', A to Z — search to narrow it.';
-      } else {
-        msg = 'Showing 60 of ' + (res.count || 'the') + ' apps, A to Z — search or pick a category.';
-      }
-      caMsg.textContent = msg;
+      caRender(res.apps);   // renders all three groups and rebuilds the footer message
     });
+  }
+
+  // The homepage's fetch — same building/failed handling as caSearch(),
+  // since both are reading the one catalogue cache underneath and hit the
+  // same "still downloading" and "download failed" states.
+  function caHomeFetch() {
+    call('ca-home', {}, 20000).then(function (res) {
+      if (!caModal.open) return;   // the dialog closed while this was in flight
+
+      // The user may have switched to Search while this was travelling. A
+      // stale reply landing then must not stomp the search view or its
+      // message — except a ready one, which is still worth keeping so
+      // switching back to Home needs no second round trip.
+      if (caView !== 'home') {
+        if (res.ok && res.state === 'ready') caHomeData = res;
+        return;
+      }
+
+      if (!res.ok) { caMsg.textContent = res.error; return; }
+
+      if (res.state === 'building') {
+        caMsg.textContent = res.message || 'Fetching the applications catalogue. This happens the first time only…';
+        caList.innerHTML = '';
+        caStopPoll();
+        caPoll = setTimeout(caHomeFetch, 3000);
+        return;
+      }
+
+      if (res.state === 'failed') {
+        caStopPoll();
+        caList.innerHTML = '';
+        caMsg.textContent = res.message ||
+          'The app catalogue could not be downloaded. Check this server can reach the internet, then search again.';
+        return;
+      }
+
+      caCatCount = res.count || null;
+      caFillCats(res.categories);
+      caHomeData = res;
+      caRenderHome();
+    });
+  }
+
+  // Flips between the homepage and the search results — the only two views
+  // this one panel ever shows. Re-renders from whatever is already known;
+  // fetching (or not) is left to whoever calls this, since the two tab
+  // buttons and the search box each have their own opinion on when a fetch
+  // is actually needed.
+  function caShowView(view) {
+    var changed = caView !== view;
+    caView = view;
+    var onHome = view === 'home';
+    caTabHome.classList.toggle('is-on', onHome);
+    caTabHome.setAttribute('aria-pressed', onHome ? 'true' : 'false');
+    caTabSearch.classList.toggle('is-on', !onHome);
+    caTabSearch.setAttribute('aria-pressed', onHome ? 'false' : 'true');
+
+    // Only a genuine switch redraws. Every settled keystroke asks for the
+    // search view, and re-rendering there would tear down and rebuild sixty
+    // cards showing the PREVIOUS search's results, a flicker for a list that
+    // is about to be replaced by the reply anyway.
+    if (!changed) return;
+    if (onHome) { caRenderHome(); return; }
+
+    // Switching to Search before any search has run: an empty caApps would
+    // draw "nothing matches", which is a claim about a search nobody made.
+    if (!caSearched) { caList.innerHTML = ''; caMsg.textContent = 'Searching the catalogue…'; return; }
+    caRenderAll(true);
   }
 
   function caOpen() {
@@ -4665,49 +5317,497 @@
     // new reply is in flight shows a list that does not answer the box above it.
     caList.innerHTML = '';
     caApps = [];
+    caHubHits = [];
+    caLocalImages = null;
+    caLocalHits = [];
+    caLocalTotal = 0;
+    caCatCount = null;
+    caHomeData = null;
+    caPage = { spot: 0, new: 0, trend: 0 };
+    caSearched = false;
+    if (caHubTimer) { clearTimeout(caHubTimer); caHubTimer = null; }
+    caHubStamp++;   // invalidates any Docker Hub reply still travelling from a previous open
     caMsg.textContent = 'Reading the catalogue…';
     caModal.showModal();
-    caSearch();   // opens on the most-downloaded apps rather than an empty box
-  }
+    // showModal() focuses the first focusable thing in the dialog, which is now
+    // the Home tab — so it opened wearing a focus ring that read as a selected
+    // border. The box is where anyone opening this wants to be anyway.
+    caBox.focus();
+    caShowView('home');   // always opens on the homepage; caHomeData is still null so this renders nothing yet
+    caHomeFetch();
 
-  function caChoose(ordinal) {
-    call('ca-app', { i: ordinal }, 20000).then(function (res) {
-      if (!res.ok) { caMsg.textContent = res.error; return; }
-
-      if (!window.StackmanCA) {
-        caMsg.textContent = 'The app converter has not loaded. Reload the page and try again.';
-        return;
-      }
-
-      var appName = 'This app';
-      for (var j = 0; j < caApps.length; j++) {
-        if (String(caApps[j].i) === String(ordinal)) { appName = caApps[j].n; break; }
-      }
-
-      // A single odd template must not take the page down — convert() runs
-      // against whatever Community Applications published, which answers to
-      // no schema this plugin controls.
-      var result;
-      try {
-        result = window.StackmanCA.convert(res.app);
-      } catch (e) {
-        caMsg.textContent = appName + ' could not be converted: ' + (e && e.message ? e.message : e);
-        return;
-      }
-
-      caModal.close();
-      openEditor(result.name, result.yaml, true);
-
-      if (result.warnings && result.warnings.length) {
-        showError('This app converted, but some of its settings had no compose equivalent. ' +
-                   'Check these before saving:\n\n' + result.warnings.join('\n'));
-      }
+    // Every repo:tag on this server, fetched once per open — caFilterLocalImages()
+    // does the per-keystroke work from here on, client-side, since a docker
+    // images call for every keypress would be absurd.
+    call('images', {}, 15000).then(function (res) {
+      if (!caModal.open) return;   // the dialog closed while this was in flight
+      caLocalImages = (res.ok && res.images) ? res.images : [];
+      caFilterLocalImages();
+      // Skipped while the homepage is up — this reply landing a moment later
+      // must not wipe it out from under the user.
+      if (caView !== 'home') caRenderAll(false);
     });
   }
 
+  // Filters the one-time images fetch by plain substring, case-insensitive —
+  // there is no network call here to debounce. caLocalTotal is the count
+  // before the 15-row cap, so caFooterMsg() can say how many really matched.
+  // The same word-start rule the catalogue search uses: 'plex' must not match
+  // mintplexlabs/anythingllm. Written by hand rather than as a lookbehind,
+  // which older browsers do not all support. Both arguments are lowercase.
+  function caWordStart(hay, needle) {
+    for (var i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + 1)) {
+      if (i === 0 || !/[a-z0-9]/.test(hay.charAt(i - 1))) return true;
+    }
+    return false;
+  }
+
+  function caFilterLocalImages() {
+    var q = caBox.value.trim().toLowerCase();
+    var list = caLocalImages || [];
+    var hits = q ? list.filter(function (ref) { return caWordStart(ref.toLowerCase(), q); }) : list;
+    caLocalTotal = hits.length;
+    caLocalHits = hits.slice(0, 15);
+  }
+
+  // Docker Hub's own search, on its own 600ms debounce (separate from
+  // caTimer's 250ms) and only for a query of 3+ characters — the catalogue is
+  // local and instant, Docker Hub is a network round trip on every keystroke.
+  // Stamped so a slow reply for a shorter query cannot land under a box that
+  // has since moved on.
+  function caHubSearch(q) {
+    var stamp = ++caHubStamp;
+    call('hub-search', { q: q }, 15000).then(function (res) {
+      if (!caModal.open || stamp !== caHubStamp) return;
+      caHubHits = (res.ok && res.hits) ? res.hits.slice(0, 25) : [];
+      caRenderAll(false);   // a Docker Hub reply filling in must not move the scroll position
+    });
+  }
+
+  // The shared tail of the import path: convert an already-fetched record and
+  // open the editor on it. caAdd() reaches this after its own fetch; the
+  // details window's own Add button reaches it with the record caDetails()
+  // already fetched, so pressing Add in there never asks the server twice.
+  function caImport(ordinal, app) {
+    if (!window.StackmanCA) {
+      caMsg.textContent = 'The app converter has not loaded. Reload the page and try again.';
+      return;
+    }
+
+    var appName = 'This app';
+    for (var j = 0; j < caApps.length; j++) {
+      if (String(caApps[j].i) === String(ordinal)) { appName = caApps[j].n; break; }
+    }
+
+    // A single odd template must not take the page down — convert() runs
+    // against whatever Community Applications published, which answers to
+    // no schema this plugin controls.
+    var result;
+    try {
+      result = window.StackmanCA.convert(app, { appdataRoot: APPDATA });
+    } catch (e) {
+      caMsg.textContent = appName + ' could not be converted: ' + (e && e.message ? e.message : e);
+      return;
+    }
+
+    // Closing the search dialog also force-closes the details window, via
+    // caModal's own 'close' handler below — so this needs no opinion on
+    // whether that dialog happens to be open too.
+    caModal.close();
+    openEditor(result.name, result.yaml, true);
+
+    // Two different lists, two different headlines. warnings are settings
+    // that had nothing to convert TO — a real gap worth calling a failure.
+    // notes are values the template never set at all (SWAG's blank config
+    // path, most often) that a placeholder was filled in for — not a
+    // failure, so it must not be announced as one. Kept visually apart in
+    // the body too, so which list said what is never in doubt.
+    var warnings = result.warnings || [];
+    var notes    = result.notes || [];
+    if (warnings.length && notes.length) {
+      showError('This app converted, but some settings had no compose equivalent, and some ' +
+                 'values were not in the template and have been filled in. Check these before saving:\n\n' +
+                 'No compose equivalent:\n' + warnings.join('\n') +
+                 '\n\nFilled in:\n' + notes.join('\n'));
+    } else if (warnings.length) {
+      showError('This app converted, but some of its settings had no compose equivalent. ' +
+                 'Check these before saving:\n\n' + warnings.join('\n'));
+    } else if (notes.length) {
+      showError('This app converted. Some values were not in the template and have been filled in. ' +
+                 'Check these before saving:\n\n' + notes.join('\n'));
+    }
+  }
+
+  function caAdd(ordinal) {
+    call('ca-app', { i: ordinal }, 20000).then(function (res) {
+      if (!res.ok) { caMsg.textContent = res.error; return; }
+      caImport(ordinal, res.app);
+    });
+  }
+
+  // What a Docker Hub or local-image row adds — there is no template and no
+  // converter behind either, so this is the same six-line shape NEW_STACK
+  // uses for a brand new stack, with the image substituted in. The leading
+  // comment is where the difference from a Community Applications app has to
+  // show, because nothing else in the dialog says it once the editor is open.
+  function caSkeleton(image, source) {
+    var note = source === 'hub'
+      ? '  # Added from a Docker Hub search — just the image, nothing else.'
+      : '  # Added from an image already on this server — just the image, nothing else.';
+    return [
+      'services:',
+      '',
+      note,
+      '  # Ports, paths and variables are not set; add whatever this container needs.',
+      '  ' + caImageName(image) + ':',
+      '    image: ' + image,
+      '    restart: unless-stopped',
+      ''
+    ].join('\n');
+  }
+
+  // caAdd()/caImport() convert a Community Applications record; this is the
+  // equivalent for the other two groups, which carry nothing to convert.
+  function caAddImage(image, source) {
+    caModal.close();   // force-closes the details window too, via caModal's own 'close' handler below
+    openEditor(caImageName(image), caSkeleton(image, source), true);
+  }
+
+  // A row in the details window's table — omitted outright when its value is
+  // absent, rather than printed blank or as "undefined". 0 is a real value
+  // (zero Docker Hub stars, say) and must still show, so this checks for
+  // absence rather than falsiness.
+  function caTableRow(label, value) {
+    if (value === '' || value === null || value === undefined) return '';
+    return '<div class="stackman-ca-app-tr"><span class="stackman-ca-app-tk">' + esc(label) +
+           '</span><span class="stackman-ca-app-tv">' + esc(value) + '</span></div>';
+  }
+
+  function caLinkRow(label, url) {
+    var u = caUrl(url);
+    if (!u) return '';
+    return '<a class="stackman-ca-app-link" href="' + esc(u) +
+           '" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">' + esc(label) + '</a>';
+  }
+
+  // Markdown is not rendered here, deliberately. CA runs these overviews
+  // through a markdown renderer; we do not carry one, and will not add one
+  // just to turn a bare "(https://…)" back into a link — that is exactly how
+  // a client-side library creeps into a page that has none.
+  //
+  // Bracket tags are a different thing: a small, fixed list of about twenty
+  // BBCode-ish tokens ([b], [br], [span style='...'], and so on) that CA's own
+  // site renders as HTML. Because the list is closed and known, converting
+  // exactly those tags is not "adding a markdown renderer" — it is matching
+  // twenty literal strings.
+  //
+  // The alternation below matches each tag's full name, never a prefix — [p]
+  // is its own alternative, not "p" followed by anything up to "]". A prefix
+  // pattern would also swallow the placeholders several apps write as literal
+  // bracketed text, not markup: [PORT], [port:5001], [unraid-ip], and a run of
+  // forty DDNS provider names such as [aliyun] and [godaddy]. Only span, color
+  // and a ever carry anything before their closing bracket, so only those
+  // three are written as open-ended alternatives (and "a" requires a space
+  // straight after it, so a literal [aliyun] cannot match it).
+  var CA_TAG_RE = /\[(?:br\s*\/?|\/br|\/?(?:b|strong|u|i|code|ul|ol|center|url)|\/?h[1-6]|li|\/li|p|\/p|span[^\]]*|\/span|color=[^\]]*|\/color|a\s[^\]]*|\/a)\]/gi;
+
+  // Walks the tag list once, in two modes: caTextHtml keeps the structure
+  // CA's own renderer would show (line breaks, bold, headings); caPlainText
+  // flattens the same tags to nothing for the card blurb, which has no room
+  // for any of it. Colour is dropped in both — the dialog has its own palette
+  // and a hard-coded style='color: #E80000;' is not ours to honour — and
+  // links are unwrapped rather than turned into anchors, since only a couple
+  // of dozen occurrences exist and Project/Support/Read Me already sit at the
+  // top of every details window as real links.
+  function caConvertTags(s, plain) {
+    return s.replace(CA_TAG_RE, function (m) {
+      var t = m.slice(1, -1).toLowerCase();
+      if (t === 'b' || t === 'strong') return plain ? '' : '<strong>';
+      if (t === '/b' || t === '/strong') return plain ? '' : '</strong>';
+      if (t === 'u') return plain ? '' : '<u>';
+      if (t === '/u') return plain ? '' : '</u>';
+      if (t === 'i') return plain ? '' : '<em>';
+      if (t === '/i') return plain ? '' : '</em>';
+      if (t === 'code') return plain ? '' : '<code>';
+      if (t === '/code') return plain ? '' : '</code>';
+      if (/^h[1-6]$/.test(t)) return plain ? ' ' : '<br><strong>';
+      if (/^\/h[1-6]$/.test(t)) return plain ? '' : '</strong>';
+      if (t === 'li') return plain ? ' ' : '<br>&bull; ';
+      if (t === 'p') return plain ? ' ' : '<br>';
+      if (t === '/br' || /^br/.test(t)) return plain ? ' ' : '<br>';
+      // Everything else recognised — /li, /p, span/color/url/ul/ol/center and
+      // their closers, and a — is unwrapped: the inner text stays, the tag
+      // itself contributes nothing.
+      return '';
+    });
+  }
+
+  // esc() runs FIRST, then the bracket conversion runs on the already-escaped
+  // string. That order is the whole safety argument: esc() neutralises "<"
+  // and ">" but leaves square brackets alone, so the only HTML tags that can
+  // end up in the output are the ones caConvertTags() builds itself — nothing
+  // from the feed can inject one. Nothing here re-emits an attribute value
+  // either: esc() does not escape a single quote, and the one source tag that
+  // carries one (style='...') is unwrapped rather than reproduced.
+  //
+  // The 160-character cut the server applies to the card blurb can land
+  // mid-tag ("...this updated mod[b"), so a trailing "[" with no closing "]"
+  // is dropped once tag conversion is done — left alone it would render as
+  // literal, meaningless bracket text.
+  // A newline is only a line break when the text has no [br] tags of its own.
+  // These overviews live inside an XML template and arrive pretty-printed, so
+  // an overview that already breaks its lines with [br] also carries a newline
+  // and several spaces of indentation after each one. Honouring both put a
+  // blank line between every line of EmbyServer's directory list.
+  function caTextHtml(s) {
+    var t = esc(s);
+    t = /\[br\s*\/?\]/i.test(t)
+      ? t.replace(/[ \t]*(?:\r\n|\r|\n)[ \t]*/g, ' ')
+      : t.replace(/\r\n|\r|\n/g, '<br>');
+    return caConvertTags(t, false).replace(/\[[^\]]*$/, '');
+  }
+
+  // Same tag list, flattened to one line for the card blurb rather than kept
+  // as structured HTML — a card has no space for headings or bulleted lists.
+  // Escaping and the trailing-cut-tag guard are identical to caTextHtml, so
+  // it must not be wrapped in esc() again at the call site.
+  function caPlainText(s) {
+    return caConvertTags(esc(s), true)
+      .replace(/\[[^\]]*$/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  // FirstSeen and LastUpdate are Unix seconds. Some records carry junk far
+  // below any real date — one well-known app's Date is literally
+  // "1970-01-01", which is why Date itself is never read at all — so
+  // anything under roughly the year 2001 is treated as absent rather than
+  // printed as a nonsense day.
+  function caDate(ts) {
+    ts = Number(ts);
+    if (!ts || ts < 1000000000) return '';
+    var d = new Date(ts * 1000);
+    var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return months[d.getUTCMonth()] + ' ' + d.getUTCDate() + ', ' + d.getUTCFullYear();
+  }
+
+  // The description is rendered in full and clamped by CSS; this only decides
+  // whether the clamp is actually cutting anything off. A short overview gets
+  // no toggle at all, rather than a button that does nothing.
+  function caSetupClip(textEl, moreBtn) {
+    if (textEl.scrollHeight <= textEl.clientHeight + 2) {
+      moreBtn.hidden = true;
+      textEl.classList.remove('stackman-ca-app-text--clip');
+      return;
+    }
+    moreBtn.hidden = false;
+    moreBtn.textContent = 'Show more';
+    moreBtn.onclick = function () {
+      // toggle() reports whether the class ended up present, i.e. whether
+      // this click just re-clipped the text — so the label always names
+      // what the *next* click will do, not what this one just did.
+      var clipped = textEl.classList.toggle('stackman-ca-app-text--clip');
+      moreBtn.textContent = clipped ? 'Show more' : 'Show less';
+    };
+  }
+
+  // Fills the details window from the full ca-app record, matching Unraid's
+  // own Apps panel minus the parts that are theirs (install, pin, trend
+  // charts, changelog). Every section is omitted outright when its data is
+  // absent, rather than shown empty.
+  function caFillDetails(app) {
+    var iconUrl = caUrl(app.Icon);
+    caAppIcon.innerHTML = iconUrl
+      ? '<img src="' + esc(iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer">'
+      : '';
+    caAppTitle.textContent = app.Name || '';
+    caAppBy.textContent = app.Author || app.Repo || '';
+
+    var sections = [];
+
+    var links = [
+      caLinkRow('Project', app.Project),
+      caLinkRow('Support', app.Support),
+      caLinkRow('Read Me', app.ReadMe),
+      caLinkRow('Registry', app.Registry),
+      caLinkRow('Donate', app.DonateLink)
+    ].filter(Boolean);
+    if (links.length) sections.push('<div class="stackman-ca-app-links">' + links.join('') + '</div>');
+
+    var overview = app.OriginalOverview || app.Overview || '';
+    if (overview) {
+      sections.push(
+        '<div class="stackman-ca-app-sec">' +
+          '<h4 class="stackman-ca-app-h">Description</h4>' +
+          '<div class="stackman-ca-app-text stackman-ca-app-text--clip" data-role="desc">' + caTextHtml(overview) + '</div>' +
+          '<button type="button" class="stackman-ca-app-more" data-role="desc-more" hidden>Show more</button>' +
+        '</div>');
+    }
+
+    var requires = app.Requires || '';
+    if (requires) {
+      sections.push(
+        '<div class="stackman-ca-app-sec">' +
+          '<h4 class="stackman-ca-app-h">Additional requirements</h4>' +
+          '<div class="stackman-ca-app-text">' + caTextHtml(requires) + '</div>' +
+        '</div>');
+    }
+
+    if (app.Deprecated) {
+      sections.push(
+        '<div class="stackman-ca-app-sec">' +
+          '<h4 class="stackman-ca-app-h">Attention</h4>' +
+          '<p class="stackman-ca-app-note">The catalogue still lists this app, but its maintainer ' +
+          'has marked it as no longer kept up.</p>' +
+        '</div>');
+    }
+
+    // The feed spells this both ways — Screenshot and Screenshots — and either
+    // spelling may carry a single URL string or an array of them.
+    var shots = [];
+    if (Array.isArray(app.Screenshot)) shots = shots.concat(app.Screenshot);
+    else if (app.Screenshot) shots.push(app.Screenshot);
+    if (Array.isArray(app.Screenshots)) shots = shots.concat(app.Screenshots);
+    else if (app.Screenshots) shots.push(app.Screenshots);
+    shots = shots.map(caUrl).filter(Boolean);
+    if (shots.length) {
+      sections.push(
+        '<div class="stackman-ca-app-sec">' +
+          '<h4 class="stackman-ca-app-h">Screenshots</h4>' +
+          '<div class="stackman-ca-app-shots">' +
+            shots.map(function (u) {
+              return '<a class="stackman-ca-app-shot" href="' + esc(u) +
+                     '" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">' +
+                     '<img src="' + esc(u) + '" alt="" loading="lazy" referrerpolicy="no-referrer"></a>';
+            }).join('') +
+          '</div>' +
+        '</div>');
+    }
+
+    var cats = Array.isArray(app.CategoryList) && app.CategoryList.length
+      ? app.CategoryList.join(', ')
+      : (app.Category || '');
+    var stars = (app.stars !== undefined && app.stars !== null && app.stars !== '') ? app.stars : '';
+    var rows =
+      caTableRow('Categories', cats) +
+      caTableRow('Added', caDate(app.FirstSeen)) +
+      caTableRow('Downloads', app.downloads ? caCompact(app.downloads) : '') +
+      caTableRow('Repository', app.Repository) +
+      caTableRow('Docker Hub stars', stars) +
+      caTableRow('Last update', caDate(app.LastUpdate)) +
+      caTableRow('Minimum Unraid version', app.MinVer) +
+      caTableRow('Licence', app.Licence || app.License || '');
+    if (rows) {
+      sections.push(
+        '<div class="stackman-ca-app-sec">' +
+          '<h4 class="stackman-ca-app-h">Details</h4>' +
+          '<div class="stackman-ca-app-table">' + rows + '</div>' +
+        '</div>');
+    }
+
+    // No profile, bio or icon for a maintainer — that lives in a second CA
+    // catalogue file (repositoryList.json) we do not download.
+    var maintainer = app.RepoName || app.Repo || '';
+    if (maintainer) {
+      sections.push(
+        '<div class="stackman-ca-app-sec">' +
+          '<h4 class="stackman-ca-app-h">Maintainer</h4>' +
+          '<p>' + esc(maintainer) + '</p>' +
+        '</div>');
+    }
+
+    caAppBody.innerHTML = sections.join('');
+
+    var descText = caAppBody.querySelector('[data-role="desc"]');
+    var descMore = caAppBody.querySelector('[data-role="desc-more"]');
+    if (descText && descMore) caSetupClip(descText, descMore);
+  }
+
+  function caDetails(ordinal) {
+    caAppOrdinal = ordinal;
+    caAppRecord = null;
+    caAppBody.innerHTML = '';
+    caAppTitle.textContent = 'Loading…';
+    caAppBy.textContent = '';
+    caAppIcon.innerHTML = '';
+    caAppModal.showModal();
+    // Explicit, and after showModal(), for the same reason every dialog in
+    // this file sets focus by hand: the browser's own "first focusable
+    // descendant" choice is not where anyone wants to land.
+    caAppAdd.focus({ preventScroll: true });
+
+    call('ca-app', { i: ordinal }, 20000).then(function (res) {
+      // Closed, or superseded by a second card clicked before this landed —
+      // either way, this reply is not for what is on screen any more.
+      if (!caAppModal.open || caAppOrdinal !== ordinal) return;
+      if (!res.ok) {
+        caAppBody.innerHTML = '<p class="stackman-form-empty">' + esc(res.error) + '</p>';
+        return;
+      }
+      caAppRecord = res.app;
+      caFillDetails(res.app);
+    });
+  }
+
+  // Steps one home section forward or back by one page, wrapping at both
+  // ends (dir is +1 or -1) — the single expression below is what makes it
+  // wrap in both directions at once, rather than needing a clamp either side.
+  // No DOM is inserted or removed here: the whole motion is two animated
+  // property changes (height and transform) on elements that already exist,
+  // so there is no clean-up to do, nothing to orphan, and no need for a lock
+  // against rapid clicks — a click that lands mid-slide just retargets the
+  // transition, which is what a carousel should do.
+  function caPageStep(key, dir) {
+    var deck = caList.querySelector('[data-deck="' + key + '"]');
+    if (!deck) return;
+    var grid = deck.firstElementChild.firstElementChild;
+    var pages = caDeckPages(grid).pages;
+    if (pages < 2) return;
+    caPage[key] = (caPage[key] + dir + pages) % pages;
+    caDeckFit(deck, true);
+  }
+
   caList.addEventListener('click', function (event) {
+    var addBtn = event.target.closest('[data-add]');
+    if (addBtn) { caAdd(addBtn.dataset.add); return; }
+
+    // The Docker Hub link inside a row opens in its own tab; it must not also
+    // add the image the row represents.
+    if (event.target.closest('.stackman-ca-rowlink')) return;
+
     var row = event.target.closest('.stackman-ca-row');
-    if (row) caChoose(row.dataset.i);
+    if (row) { caAddImage(row.dataset.img, row.dataset.src); return; }
+
+    // The homepage's own pager arrows — slide a section by two rows. Only
+    // ever present beside a .stackman-ca-deck, never inside a card, so this
+    // must run before the card check below.
+    var pageBtn = event.target.closest('[data-page]');
+    if (pageBtn) { caPageStep(pageBtn.dataset.page, parseInt(pageBtn.dataset.dir, 10)); return; }
+
+    var card = event.target.closest('.stackman-ca-card');
+    if (card) caDetails(card.dataset.i);
+  });
+
+  // The card is a div with role="button", not an actual button — it now
+  // contains one (Add) of its own, and a button inside a button is invalid.
+  // A Docker Hub/local-image row is the same shape, minus the Add button.
+  // Enter and Space stand in for the click a real button would get for free.
+  caList.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (event.target.closest('[data-add]')) return;         // the Add button handles its own activation
+    if (event.target.closest('.stackman-ca-rowlink')) return;   // likewise the Docker Hub link
+
+    var row = event.target.closest('.stackman-ca-row');
+    if (row) {
+      if (event.key === ' ') event.preventDefault();   // stop the list scrolling
+      caAddImage(row.dataset.img, row.dataset.src);
+      return;
+    }
+
+    var card = event.target.closest('.stackman-ca-card');
+    if (!card) return;
+    if (event.key === ' ') event.preventDefault();   // stop the list scrolling
+    caDetails(card.dataset.i);
   });
 
   // Delegated on the list, in the capture phase, because `error` does not
@@ -4715,19 +5815,117 @@
   // file, just scoped to this one dialog rather than the whole page.
   caList.addEventListener('error', function (event) {
     var img = event.target;
-    if (!img || img.tagName !== 'IMG' || !img.classList.contains('stackman-ca-icon')) return;
+    if (!img || img.tagName !== 'IMG' || !img.classList.contains('stackman-ca-cardicon')) return;
     var span = document.createElement('span');
-    span.className = 'stackman-ca-icon stackman-ca-icon--empty';
+    span.className = 'stackman-ca-cardicon stackman-ca-cardicon--empty';
     span.setAttribute('aria-hidden', 'true');
     if (img.parentNode) img.parentNode.replaceChild(span, img);
   }, true);
 
-  caBox.addEventListener('input', function () {
-    if (caTimer) clearTimeout(caTimer);
-    caTimer = setTimeout(function () { caTimer = null; caSearch(); }, 250);
+  /* The same treatment for the details window's own images, and needed more
+   * often than it looks: an app's icon and screenshots are wherever its
+   * author put them years ago, and plenty of those addresses are now dead —
+   * one catalogue entry points every one of its four images at a GitHub
+   * repository that no longer answers. Left alone that is a broken-image box
+   * where the icon goes and a tall empty gap under the Screenshots heading,
+   * both of which read as this page failing rather than as the catalogue
+   * being out of date. The icon falls back to its own empty tile; a dead
+   * screenshot is dropped, and the heading goes with the last one.
+   *
+   * Capture phase, because `error` does not bubble. */
+  caAppModal.addEventListener('error', function (event) {
+    var img = event.target;
+    if (!img || img.tagName !== 'IMG') return;
+
+    if (img.parentNode === caAppIcon) { caAppIcon.innerHTML = ''; return; }
+
+    var shot = img.closest ? img.closest('.stackman-ca-app-shot') : null;
+    if (!shot) return;
+    var strip = shot.parentNode;
+    shot.remove();
+    if (strip && !strip.querySelector('.stackman-ca-app-shot')) {
+      var section = strip.closest('.stackman-ca-app-sec');
+      if (section) section.remove();
+    }
+  }, true);
+
+  caAppAdd.addEventListener('click', function () {
+    if (!caAppRecord) return;   // still loading — nothing to add yet
+    caImport(caAppOrdinal, caAppRecord);
   });
 
-  caCatSel.addEventListener('change', caSearch);
+  caAppClose.addEventListener('click', function () { caAppModal.close(); });
+
+  caAppModal.addEventListener('click', function (event) {
+    if (event.target !== caAppModal) return;
+    var r = caAppModal.getBoundingClientRect();
+    if (event.clientX < r.left || event.clientX > r.right ||
+        event.clientY < r.top  || event.clientY > r.bottom) caAppModal.close();
+  });
+
+  caAppModal.addEventListener('close', function () {
+    // A stale app must never flash up on the next open.
+    caAppBody.innerHTML = '';
+    caAppRecord = null;
+    caAppOrdinal = null;
+  });
+
+  caBox.addEventListener('input', function () {
+    // Local images are filtered from the one-time fetch — no debounce, there
+    // is no network call to spare one for.
+    caFilterLocalImages();
+
+    var q = caBox.value.trim();
+    if (q.length < 3) {
+      // Below the Docker Hub minimum: drop whatever that group was showing
+      // and invalidate a request still travelling for a longer query.
+      if (caHubTimer) { clearTimeout(caHubTimer); caHubTimer = null; }
+      caHubHits = [];
+      caHubStamp++;
+    } else {
+      if (caHubTimer) clearTimeout(caHubTimer);
+      caHubTimer = setTimeout(function () { caHubTimer = null; caHubSearch(q); }, 600);
+    }
+
+    // Deliberately no redraw here. The list is one innerHTML write, so
+    // redrawing on every keystroke would tear down and rebuild all sixty
+    // cards — and their sixty <img> elements — while the user is still
+    // typing, which flickers. The filtered local images are held in state and
+    // appear with the catalogue reply a quarter of a second later, so every
+    // group updates together rather than in three separate lurches.
+
+    if (caTimer) clearTimeout(caTimer);
+    caTimer = setTimeout(function () {
+      caTimer = null;
+      // An emptied box goes back to the homepage rather than running an
+      // empty-query search — caHomeData is already in hand from caOpen()
+      // unless this view was never visited yet this open.
+      if (caBox.value.trim() === '') {
+        caShowView('home');
+        if (!caHomeData) caHomeFetch();
+      } else {
+        caShowView('search');
+        caSearch();
+      }
+    }, 250);
+  });
+
+  caCatSel.addEventListener('change', function () {
+    caShowView('search');   // picking a category is itself a search
+    caSearch();
+  });
+
+  caTabHome.addEventListener('click', function () {
+    if (caView === 'home') return;
+    caShowView('home');
+    if (!caHomeData) caHomeFetch();
+  });
+
+  caTabSearch.addEventListener('click', function () {
+    if (caView === 'search') return;
+    caShowView('search');
+    if (!caSearched) caSearch();   // nothing has run yet this open — an empty list would look broken, not blank on purpose
+  });
 
   document.getElementById('stackman-ca-cancel').addEventListener('click', function () {
     caModal.close();
@@ -4740,7 +5938,28 @@
         event.clientY < r.top  || event.clientY > r.bottom) caModal.close();
   });
 
-  caModal.addEventListener('close', function () { caStopPoll(); });
+  caModal.addEventListener('close', function () {
+    caStopPoll();
+    if (caFitTimer) { clearTimeout(caFitTimer); caFitTimer = null; }   // a pending fit must not fire against a closed dialog
+    // Nested-dialog rule, same as the editor's close handler for the picker
+    // and timezone dialogs: a dialog left open over a closed parent would be
+    // stacked over nothing, still holding focus.
+    if (caAppModal.open) caAppModal.close();
+  });
+
+  // The column count is a CSS media query on the window width, so a resize
+  // can change how many cards make up two rows for every home section at
+  // once. Debounced the same way as the search box (caTimer) — a live
+  // drag-resize fires this continuously and re-measuring on every tick would
+  // be wasted work. No animation on the refit: a deck animating its height
+  // through a drag-resize only lags behind the pointer.
+  window.addEventListener('resize', function () {
+    if (caFitTimer) clearTimeout(caFitTimer);
+    caFitTimer = setTimeout(function () {
+      caFitTimer = null;
+      if (caModal.open && caView === 'home') caDeckFitAll(false);
+    }, 150);
+  });
 
   /* ---- the device picker ---- */
 
@@ -5353,7 +6572,12 @@
     fileDots = {};
     fileMime = {};
     hideBinPanel();
-    if (tabsBar) { tabsBar.hidden = true; tabsBar.innerHTML = ''; }
+    // Emptied, never hidden. The strip is permanent — it carries the New file
+    // and Add a file buttons whether or not there is a second tab — and
+    // nothing anywhere sets `hidden` back to false, so hiding it here was a
+    // one-way door: renderTabs() went on building the tabs correctly on every
+    // later open, into a strip CSS had already taken out of the layout.
+    if (tabsBar) tabsBar.innerHTML = '';
     // Nothing the user can do closes the editor from under the picker, but
     // closeEditor() can be called from code. A picker left open over a closed
     // editor would be pointing at an input that no longer exists.
@@ -9646,6 +10870,15 @@
   // Not gated on CAN_RUN: icons are worth having whether or not docker and
   // compose are usable, and a stack that cannot start still deserves a face.
   fetchIcons();
+
+  // The applications catalogue refreshes itself here rather than waiting for
+  // somebody to open the Apps dialog, so it is normally already current by the
+  // time they do — and on a server that has just booted, where /tmp is RAM and
+  // the cache is simply gone, the first build runs while the stack list is
+  // being read. Deferred so it never competes with the table, the state
+  // refresh and the icon sweep. The reply says nothing and nothing is shown:
+  // a catalogue failure belongs in the dialog that asked for it.
+  setTimeout(function () { call('ca-refresh', {}, 10000); }, 2000);
 
   if (CAN_RUN) {
     pollStats();

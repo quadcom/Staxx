@@ -27,6 +27,28 @@ define('STACKMAN_MARKER_HEADER_MENU', STACKMAN_CFG_DIR.'/header_menu');
 define('STACKMAN_BROWSE_ROOT', '/mnt');
 
 /**
+ * Where Unraid keeps container application data, read from its own config so
+ * the folder-creation button offers the same default Community Applications
+ * does rather than inventing one of its own.
+ *
+ * That file belongs to Unraid, not this plugin, so every way of failing to
+ * read it — missing, unreadable, parse_ini_file() returning false, a relative
+ * or empty value — falls back to the path Unraid ships by default, quietly,
+ * rather than raising an error.
+ */
+function stackman_appdata_root(): string {
+  static $root = null;
+  if ($root !== null) return $root;
+
+  $fallback = '/mnt/user/appdata/';
+  $cfg  = @parse_ini_file('/boot/config/docker.cfg') ?: [];
+  $path = trim((string)($cfg['DOCKER_APP_CONFIG_PATH'] ?? ''));
+
+  if ($path === '' || strpos($path, '/mnt/') !== 0) return $root = $fallback;
+  return $root = rtrim($path, '/').'/';
+}
+
+/**
  * Read the plugin config, falling back to the shipped defaults for any key the
  * user's config predates. Returns a flat key => string map.
  */
@@ -297,6 +319,63 @@ function stackman_image_tags(string $repo): array {
     if (count($tags) >= 50) break;
   }
   return $tags;
+}
+
+/**
+ * Docker Hub's own search, offered in the Apps dialog as a second source
+ * alongside the Community Applications catalogue — CA is a curated list, not
+ * an index of everything on Hub, so a query that misses there can still land
+ * here. Takes the text typed into the search box.
+ *
+ * Same shape check, same `curl` through stackman_sh() and the same "return
+ * an empty array for every failure" contract as stackman_image_tags(), and
+ * for the same reason: this runs on every keystroke, live against Hub, with
+ * no catalogue behind it to fall back on. A dropped connection, a non-JSON
+ * body, an HTTP error — all of it comes back as no results rather than an
+ * error, because a search that quietly finds nothing is better than one that
+ * interrupts typing to complain.
+ *
+ * @return array<int, array{name:string, desc:string, stars:int, pulls:int, official:bool}> up to 25 hits
+ */
+function stackman_hub_search(string $q): array {
+  // Lower-cased before the shape check, not after: a repository name on Hub
+  // is always lower case, so "Jellyfin" is the same search as "jellyfin" —
+  // but the check below rejects a capital letter, which would have made a
+  // capitalised query silently return nothing while the catalogue beside it
+  // went on matching perfectly.
+  $q = strtolower(trim($q));
+  if (strlen($q) < 3) return [];
+
+  // Same shape a repository name is held to: lowercase alphanumerics with
+  // . _ - separators, at most one slash. A search box invites more than
+  // that, but anything wider is not a repository fragment worth sending to
+  // this particular endpoint. The 'D' modifier keeps $ from also matching
+  // just before a trailing newline, PCRE's default.
+  if (!preg_match('#^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)?$#D', $q)) {
+    return [];
+  }
+
+  $url = 'https://hub.docker.com/v2/search/repositories/?query='.rawurlencode($q).'&page_size=25';
+  // A timeout a little above curl's own --max-time, so curl reports the
+  // failure itself rather than being killed mid-flight by stackman_sh().
+  $out = stackman_sh('curl -fsSL --max-time 8 '.escapeshellarg($url), 12);
+
+  $data = json_decode($out, true);
+  if (!is_array($data) || !isset($data['results']) || !is_array($data['results'])) return [];
+
+  $hits = [];
+  foreach ($data['results'] as $result) {
+    if (!is_array($result) || !isset($result['repo_name']) || !is_string($result['repo_name'])) continue;
+    $hits[] = [
+      'name'     => $result['repo_name'],
+      'desc'     => trim((string)($result['short_description'] ?? '')),
+      'stars'    => (int)($result['star_count'] ?? 0),
+      'pulls'    => (int)($result['pull_count'] ?? 0),
+      'official' => (bool)($result['is_official'] ?? false),
+    ];
+    if (count($hits) >= 25) break;
+  }
+  return $hits;
 }
 
 /**

@@ -210,14 +210,14 @@
 
   // bridge/empty -> Compose's own default network, nothing to write.
   // host/none -> network_mode. Anything else is a named network that must
-  // already exist on the server, so a warning rides along with it.
-  function networkInfo(app, warnings) {
+  // already exist on the server, so a note rides along with it.
+  function networkInfo(app, notes) {
     var raw = String(app.Network == null ? '' : app.Network).trim();
     if (raw === '' || raw.toLowerCase() === 'bridge') return { mode: null, network: null };
     var lower = raw.toLowerCase();
     if (lower === 'host' || lower === 'none') return { mode: lower, network: null };
     var name = raw.replace(/^custom:\s*/i, '').trim();
-    warnings.push('This container is set to use the network "' + name + '". That network ' +
+    notes.push('This container is set to use the network "' + name + '". That network ' +
       'must already exist on this server or Compose will refuse to start the stack.');
     return { mode: null, network: name };
   }
@@ -322,7 +322,7 @@
       tmpfs: [], loggingDriver: '', loggingOptions: [], extraHosts: [],
       entrypoint: '', stopSignal: '', stopGracePeriod: '', cgroup: '',
       macAddress: '', platform: '', workingDir: '', labels: [], environment: [],
-      privileged: false, warnings: []
+      privileged: false, warnings: [], notes: []
     };
     if (!str) return out;
 
@@ -410,7 +410,7 @@
     }
 
     if (dropped.length) {
-      out.warnings.push('Dropped these `docker run` options, which Compose already provides on its own: ' + dropped.join(', ') + '.');
+      out.notes.push('Dropped these `docker run` options, which Compose already provides on its own: ' + dropped.join(', ') + '.');
     }
     return out;
   }
@@ -427,7 +427,7 @@
     return def.indexOf('|') >= 0 ? def.split('|')[0] : def;
   }
 
-  function processConfig(configArr, name, warnings) {
+  function processConfig(configArr, name, warnings, notes, appdataRoot) {
     var ports = [], volumes = [], devices = [], environment = [], labels = [];
     if (!Array.isArray(configArr)) configArr = [];
 
@@ -452,14 +452,14 @@
       if (type === 'Port') {
         if (val === '') {
           val = target;
-          warnings.push('The port "' + label + '" had no value; used the container port ' + target + ' as the host port too.');
+          notes.push('The port "' + label + '" had no value; used the container port ' + target + ' as the host port too.');
         }
         var udp = String(a.Mode || '').toLowerCase() === 'udp';
         ports.push({ content: '      - ' + dq(val + ':' + target + (udp ? '/udp' : '')), comment: comment });
       } else if (type === 'Path') {
         if (val === '') {
-          val = '/mnt/user/appdata/' + name + target;
-          warnings.push('The path "' + label + '" had no value; used ' + val + ' as a placeholder — check it before starting the stack.');
+          val = appdataRoot + name + target;
+          notes.push('The path "' + label + '" had no value; used ' + val + ' as a placeholder — check it before starting the stack.');
         }
         volumes.push({ content: '      - ' + scalarOut(val + ':' + target + pathModeSuffix(a.Mode)), comment: comment });
       } else if (type === 'Device') {
@@ -492,16 +492,27 @@
     for (var i = 0; i < arr.length; i++) svc.push('      - ' + scalarOut(arr[i]));
   }
 
-  function convert(app) {
+  function convert(app, opts) {
     app = app || {};
+    opts = opts || {};
+    // The box's own Docker settings decide where appdata lives — hardcoding
+    // the Unraid stock path would be wrong the day someone moves it to a
+    // pool. "ends in exactly one slash" keeps the no-separator concatenation
+    // below ('root + name + target', target already starts with '/') working
+    // whatever the caller passed in.
+    var appdataRoot = (typeof opts.appdataRoot === 'string' && opts.appdataRoot !== '')
+      ? opts.appdataRoot : '/mnt/user/appdata/';
+    appdataRoot = appdataRoot.replace(/\/*$/, '/');
     var warnings = [];
+    var notes = [];
     var name = normaliseName(app.Name);
     var service = name;
 
-    var net = networkInfo(app, warnings);
-    var cfg = processConfig(app.Config, name, warnings);
+    var net = networkInfo(app, notes);
+    var cfg = processConfig(app.Config, name, warnings, notes, appdataRoot);
     var extra = parseExtraParams(app.ExtraParams || '');
     warnings = warnings.concat(extra.warnings);
+    notes = notes.concat(extra.notes);
 
     var privileged = app.Privileged === 'true' || extra.privileged;
 
@@ -528,12 +539,12 @@
       // Repository is a .plg download URL, never a Docker image reference,
       // so a "://" rules those out before the check even runs.
       if (app.Repository.indexOf('://') === -1 && /[A-Z]/.test(repositoryPath(app.Repository))) {
-        warnings.push('The image "' + app.Repository + '" has an uppercase letter in its ' +
+        notes.push('The image "' + app.Repository + '" has an uppercase letter in its ' +
           'repository name. Docker requires repository names to be lowercase and will refuse ' +
           'to pull this image as written — check the app\'s own page for the correct name.');
       }
     } else {
-      warnings.push('This template has no image name. Check "image:" before starting the stack.');
+      notes.push('This template has no image name. Check "image:" before starting the stack.');
       svc.push('    image: ' + name);
     }
     svc.push('    container_name: ' + name);
@@ -632,6 +643,11 @@
       lines.push('# Could not be translated automatically:');
       lines = lines.concat(warningCommentLines(warnings));
     }
+    if (notes.length) {
+      lines.push('#');
+      lines.push('# Filled in for you — check these before starting:');
+      lines = lines.concat(warningCommentLines(notes));
+    }
     lines.push('');
     lines.push('x-unraid:');
     lines = lines.concat(stackMeta);
@@ -649,7 +665,7 @@
 
     var yaml = lines.join('\n') + '\n';
 
-    return { name: name, service: service, yaml: yaml, warnings: warnings };
+    return { name: name, service: service, yaml: yaml, warnings: warnings, notes: notes };
   }
 
   /* =====================================================================

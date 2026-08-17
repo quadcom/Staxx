@@ -2860,6 +2860,32 @@
   .stackman-scaffold .stackman-missing { opacity: 0; translate: 0 -0.4rem; }
 }
 
+/* One button covers both "one folder" and "several folders" wording, and "→
+   create it" does not fit the plural case — this swaps in a suffix with no
+   pronoun instead of forking the whole rule. */
+.stackman-scaffold .stackman-missing--paths::after {
+  content: '  \2192  create';
+}
+
+/* A folder that already exists and already has files in it, found only while
+   creating a new stack (see stackman_path_verdict()'s 'inuse' verdict). Same
+   shape and colour as .stackman-missing above — this is a caution, not an
+   error — but there is nothing to click: pointing a new container at
+   someone's existing data might be exactly what was meant, so the plugin can
+   only say so, never act on it. Drops the pointer cursor, the hover fill and
+   the "→ …" suffix that say "click me" on the other notes. */
+.stackman-scaffold .stackman-missing--inuse {
+  cursor: default;
+}
+
+.stackman-scaffold .stackman-missing--inuse::after {
+  content: '';
+}
+
+.stackman-scaffold .stackman-missing--inuse:hover {
+  background: color-mix(in srgb, var(--sm-accent) 14%, transparent);
+}
+
 .stackman-fieldtitle {
   font-weight: 700;
 }
@@ -3282,10 +3308,6 @@
   min-width: 0;   /* lets the list shrink and scroll rather than push the buttons below off the edge */
 }
 
-.stackman-tabs[hidden] {
-  display: none;
-}
-
 /* Wraps the scrolling tab list together with the two fixed controls beside
    it (New file, Add a file) — see StacksPage.php — so those controls stay
    in view no matter how many companion files the list scrolls past. Carries
@@ -3313,10 +3335,12 @@
   position: relative;
 }
 
-/* Muted and slightly translucent while inactive; the active tab takes the
-   editor's own background (the same value .stackman-yamlwrap paints below)
-   so the two read as one surface, with the strip's border sitting against
-   it rather than across it. */
+/* Muted while inactive — in colour only. An opacity on top of --sm-muted
+   dropped an unselected tab to roughly the contrast of disabled placeholder
+   text, which is how a companion file could sit in the strip and read as
+   absent. The active tab takes the editor's own background (the same value
+   .stackman-yamlwrap paints below) so the two read as one surface, with the
+   strip's border sitting against it rather than across it. */
 .stackman-scaffold .stackman-tab {
   display: inline-flex;
   align-items: center;
@@ -3328,17 +3352,21 @@
   font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
   font-size: 1.2rem;
   white-space: nowrap;
-  opacity: 0.7;
 }
 
 .stackman-scaffold .stackman-tab:hover {
-  opacity: 1;
+  color: var(--sm-fg);
 }
 
+/* The accent bar is what marks the open tab now that its neighbours are
+   legible enough to compete with it. An inset shadow rather than a
+   border-bottom on purpose: a border would add height, shifting the whole
+   strip every time the selection moved, and would need a transparent
+   counterpart on every other tab to avoid it. */
 .stackman-scaffold .stackman-tab[aria-selected="true"] {
   background-color: var(--background-color, #1c1c1c);
   color: var(--sm-fg);
-  opacity: 1;
+  box-shadow: inset 0 -0.2rem 0 var(--sm-accent);
 }
 
 .stackman-scaffold .stackman-tab:focus-visible {
@@ -3366,9 +3394,11 @@
 }
 
 /* A file nothing in the compose file references — quiet, not alarming: an
-   orphan is worth noticing, not worth shouting about. */
+   orphan is worth noticing, not worth shouting about. Italic rather than
+   faded, because fading it compounded with the tab's own muted colour and
+   took the name below anything readable; the tooltip says it in words. */
 .stackman-scaffold .stackman-tab--orphan .stackman-tab-name {
-  opacity: 0.55;
+  font-style: italic;
 }
 
 /* The chevron that opens the active tab's menu. Reuses .stackman-chevron,
@@ -3615,6 +3645,13 @@
 /* A file where a folder is wanted is a milder problem than nothing existing
    at all, so it borrows the accent colour rather than the danger one. */
 .stackman-badpath--file {
+  border-bottom-color: var(--sm-accent);
+}
+
+/* An existing folder already full of data, found only while creating a new
+   stack — a caution, not a fault in the file, so it borrows the same accent
+   colour as .stackman-badpath--file above rather than the danger one. */
+.stackman-badpath--inuse {
   border-bottom-color: var(--sm-accent);
 }
 
@@ -4433,12 +4470,13 @@
 
 /* ---- The Apps browser ------------------------------------------------- */
 
-/* The fourth dialog. Same six user-agent defaults to undo as the three above,
-   and comparable width to the timezone one — but no map, so the row count is
-   what decides the height rather than a fixed panel. */
+/* The fourth dialog. Same six user-agent defaults to undo as the three above.
+   Sized identically to .stackman-modal on purpose — the two are meant to be
+   the same box, not merely similar, so switching between editor and Apps
+   browser does not shift the page underneath. */
 .stackman-ca {
-  width: min(84rem, 94vw);
-  height: min(80vh, 76rem);
+  width: min(168rem, 96vw);
+  height: min(94vh, 108rem);
   max-width: none;
   max-height: none;
   margin: auto;
@@ -4449,8 +4487,10 @@
   color: var(--text-color, #e0e0e0);
   overflow: hidden;
 
+  /* Five children now: head, tabs, find, list, foot. Only the list (1fr)
+     stretches — get this wrong and the results stop scrolling. */
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr auto;
 
   /* Same treatment as .stackman-modal above — no width entry, since this
      dialog never resizes itself. */
@@ -4499,6 +4539,44 @@
   margin: 0;
   color: var(--sm-muted);
   font-size: 1.2rem;
+}
+
+/* Home/Search switch, same horizontal padding as .stackman-ca-find below so
+   the two rows line up. */
+.stackman-ca-tabs {
+  display: flex;
+  gap: 1.4rem;
+  padding: 0.8rem 1.4rem 0;
+}
+
+/* Underlined rather than boxed. These are two views of one panel, not two
+   actions, so the selected one is marked the way a tab is — a rule beneath
+   the word it belongs to — and the other carries no chrome at all. The
+   transparent border is what stops the text shifting by its width when the
+   selection moves.
+
+   Scoped for the specificity, like the group headings above: Unraid's own
+   sheet carries `.unapi button { color: inherit }`, which outranks a bare
+   class of ours and left the unselected tab in full text colour. */
+.stackman-scaffold .stackman-ca-tab {
+  padding: 0.3rem 0.2rem;
+  border: 0;
+  border-bottom: 0.2rem solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--sm-muted);
+  font-family: inherit;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-ca-tab:hover {
+  color: var(--sm-fg);
+}
+
+.stackman-scaffold .stackman-ca-tab.is-on {
+  border-bottom-color: var(--sm-accent);
+  color: var(--sm-accent);
 }
 
 .stackman-ca-find {
@@ -4552,6 +4630,102 @@
   overflow-y: auto;
 }
 
+/* CA results only — Docker Hub and local-image results stay compact rows,
+   since neither carries an icon or enough detail to fill a card. Three
+   across at the dialog's own width, dropping to two and then one as it
+   narrows. */
+.stackman-ca-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(23rem, 1fr));
+  gap: 1rem;
+}
+
+/* The homepage pins its column count rather than leaving it to auto-fill
+   like the search results above, so every section clips to two tidy rows
+   whatever width it renders at. The cards-per-page figure (8, 6, 4, or 2)
+   follows from the column count below rather than being fixed anywhere of
+   its own. Keyed on the viewport rather than the dialog's own width because
+   the dialog's width already tracks the viewport (96vw) at every size below
+   175rem, so the two move together. minmax(0, 1fr) rather than a bare 1fr
+   because a bare 1fr will not shrink below its content, and a long
+   repository name would push the grid sideways.
+
+   A rem inside a media query is NOT this page's rem. Everything else in this
+   sheet sizes against the 10px root, but a media query is evaluated before
+   any element exists to carry that root, so its rem is the browser's initial
+   16px — 75rem here means 1200px, not 750px. Written as though it were 10px,
+   every breakpoint below fires 1.6x too early and the grid sits one column
+   short of what it should be at any ordinary desktop width. (56rem is 896px
+   and 36rem is 576px, by the same reasoning.)
+
+   The tablet step lands at 896px rather than being pushed lower: three
+   columns held down to there gives roughly 270px cards, while two columns at
+   a portrait tablet's 768px gives roughly 355px — the more comfortable width
+   of the two, hence the drop to two columns at 896px rather than further
+   down. */
+.stackman-ca-cards--home {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 75rem) {
+  .stackman-ca-cards--home {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 56rem) {
+  .stackman-ca-cards--home {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 36rem) {
+  .stackman-ca-cards--home {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Clips a homepage section to exactly two rows. Its height is set inline by
+   script from the measured height of the two rows currently in view — rows
+   here are not a fixed height, since card names clamp to two lines and
+   descriptions to three, so there is no fixed figure to hard-code here. */
+.stackman-ca-deck {
+  overflow: hidden;
+  transition: height var(--sm-motion-height) var(--sm-ease-height);
+}
+
+/* --sm-motion-height / --sm-ease-height (~line 132) are reused rather than a
+   new pair being invented: a page slide covers the same hundreds of pixels
+   as the folder accordion those tokens were written for, and the comment
+   beside their definition already argues this exact case — at that
+   distance 180ms reads as a blink rather than movement, and ease-out spends
+   its time decelerating so the eye misses the part that says "this is
+   sliding". */
+.stackman-ca-track {
+  transition: transform var(--sm-motion-height) var(--sm-ease-height);
+}
+
+/* What script applies for the initial fit and after a resize, so neither the
+   deck's height nor the track's slide animates. A class rather than an
+   inline style.transition, because an inline value would also override the
+   reduced-motion query further down this file, which must always win. */
+.stackman-ca-deck--still,
+.stackman-ca-track--still {
+  transition: none;
+}
+
+.stackman-ca-pager {
+  display: flex;
+  justify-content: center;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+/* A Docker Hub or local-image result — no icon, so a compact row rather than
+   a card, per the comment above .stackman-ca-cards. Was a <button> before
+   these two sources existed; now a div with role="button" because it holds
+   a real <a> (.stackman-ca-rowlink) and a button cannot nest one, so the
+   focus ring is hand-written here the same way .stackman-ca-card's is. */
 .stackman-scaffold .stackman-ca-row {
   display: flex;
   align-items: center;
@@ -4577,40 +4751,22 @@
   outline: none;
 }
 
-.stackman-ca-icon,
-.stackman-ca-icon--empty {
+/* Name keeps its width — flex: 0 0 auto never lets it shrink — because it is
+   the whole point of the row; the description is what gives way, via
+   min-width: 0 letting its own ellipsis bite before the name's does. */
+.stackman-ca-rowname {
   flex: 0 0 auto;
-  width: 3.2rem;
-  height: 3.2rem;
-  border-radius: 0.3rem;
-  object-fit: contain;
-  background: var(--sm-fill);
-}
-
-.stackman-ca-info {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.stackman-ca-line1 {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-  min-width: 0;
-}
-
-.stackman-ca-name {
-  flex: 0 1 auto;
+  max-width: 55%;
   overflow: hidden;
-  font-weight: 600;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.25rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.stackman-ca-sub {
+.stackman-ca-rowdesc {
   flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   color: var(--sm-muted);
   font-size: 1.15rem;
@@ -4618,26 +4774,280 @@
   white-space: nowrap;
 }
 
-.stackman-ca-desc {
+/* Meta and the outbound link sit at the row's right edge and never shrink —
+   a long name or description is what gives, not these. */
+.stackman-ca-rowmeta {
+  flex: 0 0 auto;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  white-space: nowrap;
+}
+
+/* Underlined by default, not just on hover: it sits inside a row that is
+   itself a click target, so it has to read as a link at a glance rather than
+   depend on a hover a keyboard or touch user will never trigger. */
+.stackman-ca-rowlink {
+  flex: 0 0 auto;
+  color: var(--sm-accent);
+  font-size: 1.1rem;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+
+.stackman-ca-rowlink:hover {
+  text-decoration-thickness: 0.15rem;
+}
+
+.stackman-ca-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+/* The section titles in both views — the homepage's three rows and the search
+   results' three sources. One rule, because they do the same job and reading
+   as two different kinds of heading in one panel is what made the search view
+   look like an afterthought. Titles, not labels: full text colour, sized like
+   a heading, and in their own case rather than shouted in caps. Not sticky:
+   each section is short enough that a heading pinned mid-scroll would only
+   ever cover the row right beneath it.
+
+   Scoped under .stackman-scaffold for the specificity, the same reason the
+   card icons are: Unraid's own sheet carries `.unapi h1…h6 { font-size:
+   inherit }`, an element-plus-class rule that outranks a bare class of ours,
+   so an unscoped font-size here is silently ignored and the heading takes its
+   parent's size instead. Two classes beat it. */
+.stackman-scaffold .stackman-ca-group {
+  margin: 1.6rem 0 0.8rem;
+  color: var(--sm-fg);
+  font-size: 2.5rem;
+  font-weight: 600;
+}
+
+.stackman-ca-group:first-child {
+  margin-top: 0;
+}
+
+/* Quieter than its label by weight and case, not by a second helping of
+   fade: --sm-muted is already the muted colour, and an opacity on top of it
+   is what took the editor's file tabs down to the contrast of disabled
+   placeholder text. Same mistake, so the same answer. */
+.stackman-scaffold .stackman-ca-count {
+  margin-left: 0.6rem;
+  color: var(--sm-muted);
+  /* Its own size, not the heading's — inheriting left a 25px grey number
+     sitting level with the title, reading as part of it rather than as a
+     figure attached to it. */
+  font-size: 1.3rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+/* One card per CA result, as tall as its own contents and no taller. There
+   is deliberately no fixed height: grid rows stretch their items to match the
+   tallest in that row on their own, so the cards line up across a row without
+   a magic number, and a row of short descriptions is simply a shorter row.
+   An earlier fixed height did keep everything level, but only by padding out
+   every card to the height of the worst case.
+
+   The description is clamped to three lines, which is what keeps the variation
+   small; overflow: hidden is what makes that clamp crop rather than spill past
+   the card's edge. The no-shrink rule below matters for the same reason it
+   always did: a flex column shrinks its items to fit rather than overflowing,
+   and squashed text lines run into each other illegibly, where a cropped one
+   at least reads as cropped. */
+.stackman-scaffold .stackman-ca-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 0.9rem;
+  border: 0.1rem solid transparent;
+  border-radius: 0.3rem;
+  background: transparent;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-ca-card > * {
+  flex: 0 0 auto;
+}
+
+/* A div, not a button, because it now contains one — so the focus ring and
+   the hover treatment both have to be written by hand instead of coming free. */
+.stackman-scaffold .stackman-ca-card:hover,
+.stackman-scaffold .stackman-ca-card:focus-visible {
+  background: var(--sm-fill);
+  border-color: var(--sm-line);
+  outline: none;
+}
+
+/* Scoped under .stackman-scaffold for the specificity, not for the scoping:
+   Unraid's own sheet carries `.unapi img { height: auto }`, which outranks a
+   bare class of ours and stretched every card icon to its natural aspect
+   ratio, pushing the description out of the card. Two classes beat it. Every
+   img rule below is scoped the same way and for the same reason. */
+.stackman-scaffold .stackman-ca-cardicon,
+.stackman-scaffold .stackman-ca-cardicon--empty {
+  flex: 0 0 auto;
+  width: 6.4rem;
+  height: 6.4rem;
+  border-radius: 0.3rem;
+  object-fit: contain;
+  background: var(--sm-fill);
+}
+
+/* Thumbnail on the left, name and its metadata line beside it. The right
+   padding is the room the Add button and stars need — they are positioned out
+   of the flow above, so nothing else here knows they are there, and without it
+   a long name runs straight underneath them. */
+.stackman-ca-cardhead {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  margin-bottom: 0.6rem;
+  padding-right: 5.4rem;
+}
+
+/* min-width: 0 is what lets the two lines inside clip. A flex item defaults to
+   the width of its content, so without it a long name widens the card's inner
+   column instead of cropping, and pushes the thumbnail off the left edge. */
+.stackman-ca-cardid {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Both lines wrap to a second line before they crop, rather than ellipsing on
+   the first: the head row is already as tall as the 6.4rem thumbnail beside
+   it, so those lines are free, and a name is worth reading in full. */
+.stackman-ca-cardname {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 1.5rem;
+  font-weight: 600;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.stackman-ca-cardby {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 0.2rem;
+  color: var(--sm-muted);
+  font-size: 1.15rem;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* Monospace, because this is an image reference and not prose — the same
+   treatment the compose editor gives one. */
+.stackman-ca-cardrepo {
   overflow: hidden;
   color: var(--sm-muted);
-  font-size: 1.2rem;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.15rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* CA still lists a deprecated app (with a notice of its own), so this is
-   information to weigh, not an error — --sm-accent, the same "notice" colour
-   as .stackman-form-broken's neighbour, never --sm-danger. */
-.stackman-ca-dep {
-  margin-left: 0.5rem;
+/* Spotlight cards only — CA's own reason for the pick, and who picked it.
+   One line, clamped like .stackman-ca-carddesc below it, so a long reason
+   crops rather than pushing the card past its neighbours' height. */
+.stackman-ca-cardrec {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 0.4rem;
+  color: var(--sm-accent);
+  font-size: 1.15rem;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+.stackman-ca-carddesc {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 0.4rem;
+  color: var(--sm-muted);
+  font-size: 1.15rem;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+/* Top-right, and out of the flow entirely. Pinned to the bottom instead — by
+   an auto margin, which is where this started — it forced every card to the
+   height of the tallest possible one just to keep the buttons in line, and
+   padded out every shorter card with dead space to get there. Up here it
+   costs no height at all, and the cards can be as tall as their contents.
+
+   Always visible rather than revealed on hover: a keyboard user tabbed onto a
+   card never triggers a hover state to reveal it with. */
+.stackman-ca-cardtop {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+}
+
+.stackman-scaffold .stackman-ca-cardadd {
+  padding: 0.3rem 0.8rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background: var(--sm-fill);
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.15rem;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-ca-cardadd:hover {
+  border-color: var(--sm-accent);
+  color: var(--sm-accent);
+}
+
+.stackman-scaffold .stackman-ca-cardadd:focus-visible {
+  outline: 0.2rem solid var(--sm-accent);
+  outline-offset: 0.2rem;
+}
+
+/* Docker Hub stars, under the Add button. Labelled with a star rather than
+   the word, because the number is a popularity signal at a glance and the
+   tooltip carries the full sentence for anyone who wants to know what it
+   counts. Not a rating anybody gave the app — see the note where it is
+   built. */
+.stackman-ca-cardstars {
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  white-space: nowrap;
+}
+
+/* One flag, never both: --dep or --off, last in the top-right column. CA
+   still lists a deprecated app (with
+   a notice of its own), so that is information to weigh, not an error —
+   --sm-accent, the same "notice" colour as .stackman-form-broken's
+   neighbour, never --sm-danger. --off carries no such judgement, just a
+   fact, so it gets plain --sm-muted instead. */
+.stackman-ca-flag {
   padding: 0.05rem 0.4rem;
   border-radius: 0.2rem;
   background: transparent;
-  box-shadow: inset 0 0 0 0.1rem var(--sm-accent);
-  color: var(--sm-accent);
   font-size: 1.05rem;
   white-space: nowrap;
+}
+
+.stackman-ca-flag--dep {
+  box-shadow: inset 0 0 0 0.1rem var(--sm-accent);
+  color: var(--sm-accent);
+}
+
+.stackman-ca-flag--off {
+  box-shadow: inset 0 0 0 0.1rem var(--sm-muted);
+  color: var(--sm-muted);
 }
 
 .stackman-ca-foot {
@@ -4656,9 +5066,294 @@
   font-size: 1.2rem;
 }
 
+/* ---- CA app details ---------------------------------------------------- */
+
+/* The fifth dialog, opened from a card in the one above. Same six
+   user-agent defaults to undo as the four above. Deliberately smaller than
+   .stackman-ca so it reads as a panel over the list rather than replacing
+   it. Two grid rows rather than .stackman-ca's four: there is no search bar
+   or footer here, just a head and a body that is the only thing that
+   scrolls. */
+.stackman-ca-app {
+  width: min(104rem, 92vw);
+  height: min(88vh, 96rem);
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+
+  display: grid;
+  grid-template-rows: auto 1fr;
+
+  opacity: 1;
+  transition:
+    opacity var(--sm-motion) var(--sm-ease),
+    display var(--sm-motion) allow-discrete,
+    overlay var(--sm-motion) allow-discrete;
+}
+
+.stackman-ca-app:not([open]) {
+  display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-ca-app[open] { opacity: 0; }
+}
+
+.stackman-ca-app::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 1;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete,
+              overlay var(--sm-motion) allow-discrete;
+}
+
+.stackman-ca-app:not([open])::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-ca-app[open]::backdrop { opacity: 0; }
+}
+
+.stackman-ca-app-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  padding: 1.2rem 1.4rem;
+  border-bottom: 0.1rem solid var(--sm-line);
+}
+
+/* An empty span filled in by the script, not an <img> with no src — an
+   empty src still fires a broken-image icon. Sized as a box either way, so
+   it holds its place in the head before the script has run. */
+.stackman-ca-app-icon {
+  flex: 0 0 auto;
+  width: 10rem;
+  height: 10rem;
+  border-radius: 0.4rem;
+  background: var(--sm-fill) center / contain no-repeat;
+}
+
+.stackman-scaffold .stackman-ca-app-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.stackman-ca-app-id {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.stackman-ca-app-title {
+  margin: 0 0 0.3rem;
+  overflow: hidden;
+  font-size: 1.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stackman-ca-app-by {
+  margin: 0;
+  overflow: hidden;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stackman-ca-app-body {
+  padding: 1.2rem 1.4rem;
+  overflow-y: auto;
+}
+
+.stackman-ca-app-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin-bottom: 1.3rem;
+}
+
+.stackman-ca-app-link {
+  color: var(--sm-accent);
+  font-size: 1.2rem;
+  text-decoration: none;
+}
+
+.stackman-ca-app-link:hover,
+.stackman-ca-app-link:focus-visible {
+  text-decoration: underline;
+}
+
+.stackman-ca-app-sec {
+  margin-bottom: 1.4rem;
+}
+
+.stackman-ca-app-sec:last-child {
+  margin-bottom: 0;
+}
+
+.stackman-ca-app-h {
+  margin: 0 0 0.5rem;
+  font-size: 1.3rem;
+}
+
+/* Ordinary collapsing whitespace, deliberately — every break in here is now
+   an explicit <br> that caTextHtml() emitted, either from the catalogue's own
+   [br] tag or from a newline. pre-wrap was right when the text was raw, and is
+   wrong now: it would honour the source indentation as well, and these
+   overviews are written inside an XML template, so most lines arrive with four
+   spaces in front of them.
+
+   Still not markdown. The feed runs its overviews through a renderer CA
+   carries and we do not, so a bare "(https://…)" shows here where CA would
+   print a link — that is not a bug to fix by importing a markdown library for
+   one field. */
+.stackman-ca-app-text {
+  margin: 0;
+  color: inherit;
+  font-size: 1.25rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.stackman-ca-app-text--clip {
+  max-height: 25rem;
+  overflow: hidden;
+}
+
+.stackman-scaffold .stackman-ca-app-more {
+  display: inline-flex;
+  margin-top: 0.5rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sm-accent);
+  font-family: inherit;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-ca-app-more:hover,
+.stackman-scaffold .stackman-ca-app-more:focus-visible {
+  text-decoration: underline;
+}
+
+/* The pager's up/down arrows, replacing .stackman-ca-more now the homepage
+   slides instead of growing. Same quiet treatment — borderless, transparent,
+   coming forward only on hover or focus — but not full-width, since two of
+   these sit side by side in a centred row, and the glyph runs a little
+   larger with some padding around it so each arrow is a comfortable target.
+
+   Scoped for the specificity, like .stackman-ca-tab above: Unraid's own sheet
+   carries `.unapi button { color: inherit }`, which outranks a bare class of
+   ours. */
+.stackman-scaffold .stackman-ca-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.2rem;
+  height: 2.4rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--sm-muted);
+  font-family: inherit;
+  /* A sized box rather than padding around a glyph, and the solid triangles
+     (U+25B2/U+25BC) rather than the small ones: these two arrows are now the
+     only way through a section, where the bar they replaced at least carried
+     the words "Show more". Drawn as faintly as that bar was, they read as
+     decoration and go unnoticed. */
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.stackman-scaffold .stackman-ca-step:hover,
+.stackman-scaffold .stackman-ca-step:focus-visible {
+  background: var(--sm-fill);
+  color: var(--sm-accent);
+}
+
+.stackman-scaffold .stackman-ca-step:focus-visible {
+  outline: 0.2rem solid var(--sm-accent);
+  outline-offset: 0.2rem;
+}
+
+/* Same reasoning and treatment as .stackman-ca-flag--dep: CA still lists this
+   app, with a notice of its own, so it is information to weigh, not an
+   error — --sm-accent, never --sm-danger. */
+.stackman-ca-app-note {
+  padding: 0.7rem 0.9rem;
+  border-radius: 0.3rem;
+  background: transparent;
+  box-shadow: inset 0 0 0 0.1rem var(--sm-accent);
+  color: var(--sm-accent);
+  font-size: 1.2rem;
+}
+
+/* A row that scrolls sideways rather than wrapping — screenshots are wide
+   thumbnails, and wrapping them would need many more rows of vertical space
+   than this dialog has to spare. */
+.stackman-ca-app-shots {
+  display: flex;
+  gap: 0.8rem;
+  overflow-x: auto;
+  padding-bottom: 0.3rem;
+}
+
+.stackman-ca-app-shot {
+  flex: 0 0 auto;
+}
+
+.stackman-scaffold .stackman-ca-app-shot img {
+  display: block;
+  height: 12rem;
+  border-radius: 0.3rem;
+  object-fit: contain;
+  background: var(--sm-fill);
+}
+
+/* Divs and grid rather than a <table> — a bare table would inherit Unraid's
+   own table rules, which we do not control and did not write. display:
+   contents on each row hands its two spans straight to the grid as if the
+   row itself were not there, which is what lines the labels and values up
+   into two columns. The value column wraps rather than growing, so a long
+   image address cannot widen the dialog. */
+.stackman-ca-app-table {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.5rem 1.2rem;
+}
+
+.stackman-ca-app-tr {
+  display: contents;
+}
+
+.stackman-ca-app-tk {
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+  white-space: nowrap;
+}
+
+.stackman-ca-app-tv {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 1.2rem;
+}
+
 /* ---- The delete confirmation ---------------------------------------------- */
 
-/* The fourth dialog. Same six user-agent defaults to undo as the three above,
+/* The sixth dialog. Same six user-agent defaults to undo as the five above,
    but no fixed height — a plain confirmation should not carry the tall
    picker/timezone frame around with it. The body grows in place when stage
    two adds its file list, so the layout is a plain flex column rather than
@@ -5689,8 +6384,15 @@
    * And dvh, not vh. On a phone, vh is the viewport height with the browser's
    * toolbar hidden, so while the toolbar is showing 100vh is taller than what
    * you can see. dvh tracks the toolbar sliding in and out, which is the
-   * measurement this actually wanted. */
-  .stackman-modal {
+   * measurement this actually wanted.
+   *
+   * The Apps browser and its app-details dialog get the same treatment for
+   * the same reason: a centred box wastes the screen on a phone, so all
+   * three dialogs go edge-to-edge here rather than each duplicating the
+   * rule. */
+  .stackman-modal,
+  .stackman-ca,
+  .stackman-ca-app {
     inset: 0;
     margin: 0;
     width: 100%;
@@ -5831,6 +6533,7 @@
   .stackman-picker::backdrop,
   .stackman-tz::backdrop,
   .stackman-ca::backdrop,
+  .stackman-ca-app::backdrop,
   .stackman-confirm::backdrop {
     transition-duration: 1ms !important;
     animation-duration: 1ms !important;

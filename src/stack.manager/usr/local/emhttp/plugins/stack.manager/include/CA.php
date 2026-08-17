@@ -43,6 +43,15 @@ const STACKMAN_CA_LOCK = STACKMAN_CA_DIR.'/.lock';
 const STACKMAN_CA_TTL = 24 * 3600;
 
 /**
+ * The shape of what the indexer keeps. Bumped whenever a change to
+ * scripts/ca-index.php means an existing cache no longer holds everything the
+ * page needs — an old cache is otherwise indistinguishable from a current one,
+ * since the freshness stamp describes CA's feed rather than our build of it.
+ */
+// v4 added the 'home' block (Spotlight/Recently Added/Top Trending ordinals).
+const STACKMAN_CA_INDEX_VERSION = 4;
+
+/**
  * index.json, decoded once per request and shared by every function below —
  * it is asked for on every keystroke of a search, and re-decoding a megabyte
  * of JSON per keystroke would make the search box feel sluggish for no
@@ -94,6 +103,13 @@ function stackman_ca_status(): array {
 
   $indexTime = @filemtime(STACKMAN_CA_INDEX);
   $stale     = $indexTime === false || (time() - $indexTime) > STACKMAN_CA_TTL;
+
+  // A cache built by an older indexer is also stale, even if it is young by
+  // the clock — it may be missing a field the page now reads (screenshots,
+  // say). Still USABLE, though: the existing "stale but usable" path below
+  // rebuilds it behind the user, and replacing 3,600 working apps with a
+  // progress message over one missing field would be a worse page.
+  $stale = $stale || (int)(stackman_ca_index_data()['v'] ?? 0) !== STACKMAN_CA_INDEX_VERSION;
 
   if ($stale) {
     // A "building" status only counts while it is fresh — five minutes is
@@ -171,13 +187,50 @@ function stackman_ca_refresh_start(): void {
 }
 
 /**
+ * One index entry, plus its ordinal, shaped into what the browser wants for
+ * a card — shared by stackman_ca_search() and stackman_ca_home() so there is
+ * exactly one place that decides what a hit looks like.
+ *
+ * @return array{i:int,n:string,r:string,a:string,ic:string,c:string[],d:int,ov:string,dep?:int,st?:int}
+ */
+function stackman_ca_row(array $app, int $i): array {
+  $appCats = $app['c'] ?? [];
+  if (!is_array($appCats)) $appCats = ($appCats === '' ? [] : [$appCats]);
+  // o/len (the byte offset into apps.jsonl) never leave the server — the
+  // client only ever sees the ordinal below, so a tampered value is a
+  // missing array key in stackman_ca_app(), not an arbitrary file read.
+  $row = [
+    'i'  => $i,
+    'n'  => (string)($app['n'] ?? ''),
+    'r'  => (string)($app['r'] ?? ''),
+    'a'  => (string)($app['a'] ?? ''),
+    'ic' => (string)($app['ic'] ?? ''),
+    'c'  => $appCats,
+    'd'  => (int)($app['d'] ?? 0),
+    'ov' => (string)($app['ov'] ?? ''),
+  ];
+  // Carried through, not ranked on — CA still shows deprecated apps (with a
+  // notice), so a deprecated match should appear exactly where its text
+  // match earns it, just flagged for the row to render a warning.
+  if (isset($app['dep'])) $row['dep'] = $app['dep'];
+  // Docker Hub stars, carried the same way and for the same reason: absent
+  // on about half the catalogue, and absent means "not counted" rather than
+  // "none", so the key is missing rather than zero. Not ranked on either —
+  // a popular image is not the same thing as the app somebody searched for.
+  if (isset($app['st'])) $row['st'] = (int)$app['st'];
+  return $row;
+}
+
+/**
  * Search the catalogue.
  *
- * Ranked best first: an exact name match, then a name prefix, then a name
- * substring, then a repository or author substring — ties broken by download
- * count, so of two equally good text matches the one more people actually use
- * comes first. An empty query lists by download count alone, which is also
- * what makes "browse this category" and "what's popular" the same code path.
+ * Ranked best first: an exact name match, a name prefix, the query at the
+ * start of a later word of the name, a name substring anywhere, then the
+ * query at the start of a word of the image or the author — ties broken by
+ * download count, so of two equally good text matches the one more people
+ * actually use comes first. An empty query lists by download count alone,
+ * which is also what makes "browse this category" and "what's popular" the
+ * same code path.
  *
  * @return array<int, array{i:int,n:string,r:string,a:string,ic:string,c:string[],d:int,ov:string,dep?:int}>
  */
@@ -187,6 +240,15 @@ function stackman_ca_search(string $q, string $cat, int $limit = 60): array {
   $q   = trim($q);
   $cat = trim($cat);
   $ql  = strtolower($q);
+
+  // An image name is a compound string — binhex/arch-plexpass,
+  // mintplexlabs/anythingllm — so a bare "is it in there" test cannot tell a
+  // word from a fragment of one, and searching 'plex' returned AnythingLLM.
+  // A match only counts at a word start: position 0, or after anything that
+  // is not a letter or digit. Built once rather than per app, because the
+  // loop below runs the length of the whole catalogue on every keystroke.
+  // $ql is user input, so it is quoted; both haystacks are already lowercase.
+  $pat = $ql === '' ? '' : '/(?<![a-z0-9])'.preg_quote($ql, '/').'/';
 
   $matches = [];
   foreach ($apps as $i => $app) {
@@ -209,11 +271,18 @@ function stackman_ca_search(string $q, string $cat, int $limit = 60): array {
     $repo = strtolower((string)($app['r'] ?? ''));
     $auth = strtolower((string)($app['a'] ?? ''));
 
+    // A name substring is NOT tightened with the rest, and keeps a rank of
+    // its own below the word-start one. Requiring a word start here would
+    // lose 'arr' → Radarr and Sonarr, which is a search people really run;
+    // splitting the two is what puts binhex-plex and Music-Manager-for-Plex
+    // above SimpleX-XFTP, which only matches at all because 'simplexchat'
+    // happens to contain the letters.
     if ($name === $ql)                    $rank = 0;
     elseif (strpos($name, $ql) === 0)     $rank = 1;
-    elseif (strpos($name, $ql) !== false) $rank = 2;
-    elseif (strpos($repo, $ql) !== false) $rank = 3;
-    elseif (strpos($auth, $ql) !== false) $rank = 4;
+    elseif (preg_match($pat, $name))      $rank = 2;
+    elseif (strpos($name, $ql) !== false) $rank = 3;
+    elseif (preg_match($pat, $repo))      $rank = 4;
+    elseif (preg_match($pat, $auth))      $rank = 5;
     else continue;
 
     $matches[] = ['i' => $i, 'rank' => $rank, 'd' => (int)($app['d'] ?? 0), 'k' => $name];
@@ -237,29 +306,52 @@ function stackman_ca_search(string $q, string $cat, int $limit = 60): array {
 
   $out = [];
   foreach (array_slice($matches, 0, $limit) as $m) {
-    $app = $apps[$m['i']];
-    $appCats = $app['c'] ?? [];
-    if (!is_array($appCats)) $appCats = ($appCats === '' ? [] : [$appCats]);
-    // o/len (the byte offset into apps.jsonl) never leave the server — the
-    // client only ever sees the ordinal below, so a tampered value is a
-    // missing array key in stackman_ca_app(), not an arbitrary file read.
-    $row = [
-      'i'  => $m['i'],
-      'n'  => (string)($app['n'] ?? ''),
-      'r'  => (string)($app['r'] ?? ''),
-      'a'  => (string)($app['a'] ?? ''),
-      'ic' => (string)($app['ic'] ?? ''),
-      'c'  => $appCats,
-      'd'  => (int)($app['d'] ?? 0),
-      'ov' => (string)($app['ov'] ?? ''),
-    ];
-    // Carried through, not ranked on — CA still shows deprecated apps (with a
-    // notice), so a deprecated match should appear exactly where its text
-    // match earns it, just flagged for the row to render a warning.
-    if (isset($app['dep'])) $row['dep'] = $app['dep'];
-    $out[] = $row;
+    $out[] = stackman_ca_row($apps[$m['i']], $m['i']);
   }
   return $out;
+}
+
+/**
+ * The Apps dialog's front page: Spotlight, Recently Added and Top Trending,
+ * exactly as scripts/ca-index.php ordered and capped them at build time — this
+ * only turns their ordinals back into rows.
+ *
+ * A v3 cache (built before this existed) has no 'home' key at all, which is
+ * exactly what every server shows in the seconds after an upgrade while the
+ * stale-but-usable cache is still being replaced — so that reads as three
+ * empty rows rather than a notice.
+ *
+ * @return array{spot:array,new:array,trend:array}
+ */
+function stackman_ca_home(): array {
+  $data = stackman_ca_index_data();
+  $apps = $data['apps'];
+  $home = $data['home'] ?? null;
+  if (!is_array($home)) $home = ['spot' => [], 'new' => [], 'trend' => []];
+
+  $spot = [];
+  foreach ($home['spot'] ?? [] as $s) {
+    $i = (int)($s['i'] ?? -1);
+    if (!isset($apps[$i])) continue; // defensive: an ordinal the index no longer has
+    $row = stackman_ca_row($apps[$i], $i);
+    if (!empty($s['who'])) $row['who'] = (string)$s['who'];
+    if (!empty($s['why'])) $row['why'] = (string)$s['why'];
+    $spot[] = $row;
+  }
+
+  $new = [];
+  foreach ($home['new'] ?? [] as $i) {
+    $i = (int)$i;
+    if (isset($apps[$i])) $new[] = stackman_ca_row($apps[$i], $i);
+  }
+
+  $trend = [];
+  foreach ($home['trend'] ?? [] as $i) {
+    $i = (int)$i;
+    if (isset($apps[$i])) $trend[] = stackman_ca_row($apps[$i], $i);
+  }
+
+  return ['spot' => $spot, 'new' => $new, 'trend' => $trend];
 }
 
 /**

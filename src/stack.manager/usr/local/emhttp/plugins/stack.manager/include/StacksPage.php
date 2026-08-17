@@ -84,7 +84,8 @@ endif;
      data-canrun="<?= $canRun ? '1' : '0' ?>"
      data-folders="<?= htmlspecialchars(json_encode(array_map(
          fn($f) => ['id' => $f, 'name' => $f], $folders
-     )), ENT_QUOTES) ?>">
+     )), ENT_QUOTES) ?>"
+     data-appdata="<?= htmlspecialchars(stackman_appdata_root()) ?>">
 
   <!-- Deliberately not Unraid's .notice class. Borrowing a stock class means
        inheriting layout rules we do not control and cannot see change. -->
@@ -421,6 +422,20 @@ endif;
            second one-shot "paste bar" as PLAN_13 first sketched it. -->
       <button type="button" class="stackman-missing" id="stackman-missing" hidden></button>
 
+      <!-- Same shape and job as #stackman-missing above, but for a volume's
+           HOST side rather than a file inside the stack: clicking it asks the
+           server to create the folder(s) checkHostPaths() found nothing at,
+           rather than leaving Docker to make them at 99:100-unfriendly
+           root:root 755 on first start. See stacks.js's updateMissingPaths(). -->
+      <button type="button" class="stackman-missing stackman-missing--paths" id="stackman-makepaths" hidden></button>
+
+      <!-- Same warning colour and weight as #stackman-makepaths above, but a
+           paragraph, not a button: a folder found already full of data while
+           creating a new stack is something to check by eye, not something
+           this plugin can safely act on for you. See stacks.js's
+           updateInUsePaths(). -->
+      <p class="stackman-missing stackman-missing--inuse" id="stackman-inusepaths" hidden></p>
+
       <!-- A button, not a paragraph: it says which field is empty AND takes
            you to it, which is the whole reason it is worth showing. -->
       <button type="button" class="stackman-required" id="stackman-required-note" hidden></button>
@@ -638,19 +653,27 @@ endif;
   <dialog class="stackman-ca" id="stackman-ca" aria-labelledby="stackman-ca-title">
 
     <div class="stackman-ca-head">
-      <h3 class="stackman-ca-title" id="stackman-ca-title"><?= _('Community Applications') ?></h3>
+      <h3 class="stackman-ca-title" id="stackman-ca-title"><?= _('Add an app') ?></h3>
       <p class="stackman-ca-hint">
-        <?= _('Search the catalogue and pick an app — it opens in the editor as a new stack for you to look over before saving.') ?>
+        <?= _('A Community Applications app arrives with its ports, paths and settings already filled in. A Docker Hub image, or one already on this server, arrives as just the image. Either way it opens in the editor for you to look over before anything is saved.') ?>
       </p>
     </div>
 
+    <!-- Two views of one panel — a curated homepage, or a search's results —
+         so only one is ever on screen; typing or picking a category switches
+         to Search on its own, but these two buttons are the only way back. -->
+    <div class="stackman-ca-tabs">
+      <button type="button" class="stackman-ca-tab is-on" id="stackman-ca-tab-home" aria-pressed="true"><?= _('Home') ?></button>
+      <button type="button" class="stackman-ca-tab" id="stackman-ca-tab-search" aria-pressed="false"><?= _('Search') ?></button>
+    </div>
+
     <div class="stackman-ca-find">
-      <label class="stackman-sr" for="stackman-ca-search"><?= _('Search Community Applications') ?></label>
+      <label class="stackman-sr" for="stackman-ca-search"><?= _('Search apps and images') ?></label>
       <!-- No count in the placeholder. The catalogue's size moves — it lost 303
            entries the day Unraid plugins were filtered out of it — and a number
            baked in here is one nobody will remember to update. -->
       <input type="text" id="stackman-ca-search" spellcheck="false" <?= $nofill ?>
-             placeholder="<?= _('search the app catalogue — try “jellyfin”') ?>">
+             placeholder="<?= _('search apps and images — try “jellyfin”') ?>">
       <select id="stackman-ca-cat">
         <option value=""><?= _('Every category') ?></option>
       </select>
@@ -665,9 +688,32 @@ endif;
 
   </dialog>
 
+  <!-- -------------------------------------------------- CA app details -- -->
+
+  <!-- The fifth dialog, opened from a card inside the Apps dialog above. It
+       sits outside stackman-ca rather than nested in it, for the same reason
+       the picker sits outside the editor: nested inside, closing stackman-ca
+       with Escape would take this one with it while it still held focus, and
+       the browser's own focus restore would have nowhere to go. -->
+  <dialog class="stackman-ca-app" id="stackman-ca-app" aria-labelledby="stackman-ca-app-title">
+
+    <div class="stackman-ca-app-head">
+      <span class="stackman-ca-app-icon" id="stackman-ca-app-icon"></span>
+      <div class="stackman-ca-app-id">
+        <h3 class="stackman-ca-app-title" id="stackman-ca-app-title"></h3>
+        <p class="stackman-ca-app-by" id="stackman-ca-app-by"></p>
+      </div>
+      <button type="button" class="stackman-btn stackman-btn--primary" id="stackman-ca-app-add"><?= _('Add this app') ?></button>
+      <button type="button" class="stackman-btn" id="stackman-ca-app-close"><?= _('Close') ?></button>
+    </div>
+
+    <div class="stackman-ca-app-body" id="stackman-ca-app-body"></div>
+
+  </dialog>
+
   <!-- --------------------------------------------------------- confirm -- -->
 
-  <!-- The fifth dialog, opened from deleteStack() in stacks.js. It sits
+  <!-- The sixth dialog, opened from deleteStack() in stacks.js. It sits
        outside the editor for the same reason the picker does: nested inside
        it, closing the editor with Escape would take this one with it while
        it still held focus, and the browser's own focus restore would have

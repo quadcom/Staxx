@@ -350,7 +350,7 @@ console.log('\nD. Network handling');
 var wgerY = CA.convert(WGER_REDIS).yaml;
 ok('a named network with no custom: prefix still becomes networks:', wgerY.indexOf('networks:\n      - wger_network') >= 0);
 ok('the named network is declared external: true at the top level', /\nnetworks:\n {2}wger_network:\n {4}external: true\n?$/.test(wgerY));
-ok('a named network produces a warning that it must already exist', CA.convert(WGER_REDIS).warnings.some(function (w) { return /wger_network/.test(w); }));
+ok('a named network produces a note that it must already exist', CA.convert(WGER_REDIS).notes.some(function (w) { return /wger_network/.test(w); }));
 
 var absY = CA.convert(ABS_KOSYNC).yaml;
 ok('Network: host becomes network_mode: host', absY.indexOf('network_mode: host') >= 0);
@@ -372,7 +372,7 @@ ok('bridge network on linkstack emits nothing network-related', linkY.indexOf('n
 
 console.log('\nE. Path/Port/Device/Label edge rules');
 ok('a Path with no value and no Default gets a generated placeholder', absY.indexOf('/mnt/user/appdata/abs-kosync-bridge/books:/books:rw,slave') >= 0);
-ok('the generated-path case produces a warning naming it', CA.convert(ABS_KOSYNC).warnings.some(function (w) { return /had no value/.test(w) && /Books/.test(w); }));
+ok('the generated-path case produces a note naming it', CA.convert(ABS_KOSYNC).notes.some(function (w) { return /had no value/.test(w) && /Books/.test(w); }));
 ok('Mode "rw,slave" passes through verbatim, not collapsed to :ro', absY.indexOf(':rw,slave') >= 0);
 
 var deviceEmptyR = CA.convert(DEVICE_EMPTY);
@@ -419,8 +419,8 @@ var dropTest = CA.convert({
   Name: 'drop-test', Repository: 'example/drop-test', Network: 'bridge',
   ExtraParams: '-d --rm --name foo --gpus all -v /host:/container'
 });
-ok('mechanics (-d, --rm, --name) are dropped with one combined warning naming them',
-   dropTest.warnings.some(function (w) { return /-d/.test(w) && /--rm/.test(w) && /--name/.test(w); }));
+ok('mechanics (-d, --rm, --name) are dropped with one combined note naming them',
+   dropTest.notes.some(function (w) { return /-d/.test(w) && /--rm/.test(w) && /--name/.test(w); }));
 ok('the dropped --name\'s value ("foo") is consumed, not left as a stray warning',
    !dropTest.warnings.some(function (w) { return /^The extra Docker option "foo"/.test(w); }));
 ok('--gpus is never guessed at — it is reported, not mapped', dropTest.warnings.some(function (w) { return w.indexOf('--gpus=all') >= 0; }));
@@ -467,11 +467,14 @@ ok('a converted app with warnings carries them as comment lines in yaml',
 
 var embyNoWarn = CA.convert(EMBY);
 ok('binhex-emby converts with no warnings at all (precondition for the next check)', embyNoWarn.warnings.length === 0);
+ok('binhex-emby also carries no notes — every value it needed came from its own Default',
+   embyNoWarn.notes.length === 0);
 ok('an app with no warnings has no heading and no stray comment block',
    embyNoWarn.yaml.indexOf('Could not be translated automatically') === -1);
+ok('a clean conversion has no comment block at all', !/^# Filled in for you/m.test(embyNoWarn.yaml));
 
 /* =========================================================================
- * H2. Uppercase repository-path warning
+ * H2. Uppercase repository-path note
  *
  * Docker rejects a repository name outright if it contains an uppercase
  * letter — the registry host and the tag are exempt, since a host is
@@ -480,47 +483,85 @@ ok('an app with no warnings has no heading and no stray comment block',
  * future "helpful" lowercasing cannot slip in unnoticed.
  * ========================================================================= */
 
-console.log('\nH2. Uppercase repository-path warning');
+console.log('\nH2. Uppercase repository-path note');
 
 var upperOwnerR = CA.convert({
   Name: 'lm-studio-test', Repository: 'MarkSupinski/lm-studio-headless:latest', Network: 'bridge'
 });
-ok('an uppercase owner/repository segment produces the warning',
-   upperOwnerR.warnings.some(function (w) { return /MarkSupinski\/lm-studio-headless:latest/.test(w) && /lowercase/.test(w); }));
+ok('an uppercase owner/repository segment produces the note',
+   upperOwnerR.notes.some(function (w) { return /MarkSupinski\/lm-studio-headless:latest/.test(w) && /lowercase/.test(w); }));
 ok('the image line is written unchanged (owner uppercase case)',
    upperOwnerR.yaml.indexOf('image: MarkSupinski/lm-studio-headless:latest') >= 0);
 
 var upperHostR = CA.convert({
   Name: 'ripuz-test', Repository: 'ghcr.io/Suvir0/ripuz:latest', Network: 'bridge'
 });
-ok('an uppercase segment after a registry host still produces the warning',
-   upperHostR.warnings.some(function (w) { return /ghcr\.io\/Suvir0\/ripuz:latest/.test(w) && /lowercase/.test(w); }));
+ok('an uppercase segment after a registry host still produces the note',
+   upperHostR.notes.some(function (w) { return /ghcr\.io\/Suvir0\/ripuz:latest/.test(w) && /lowercase/.test(w); }));
 ok('the image line is written unchanged (host+path case)',
    upperHostR.yaml.indexOf('image: ghcr.io/Suvir0/ripuz:latest') >= 0);
 
 var upperTagOnlyR = CA.convert({
   Name: 'code-server-test', Repository: 'linuxserver/code-server:V1.2', Network: 'bridge'
 });
-ok('an uppercase TAG only produces no lowercase-repository warning',
-   !upperTagOnlyR.warnings.some(function (w) { return /lowercase/.test(w); }));
+ok('an uppercase TAG only produces no lowercase-repository note',
+   !upperTagOnlyR.notes.some(function (w) { return /lowercase/.test(w); }));
 ok('the image line is written unchanged (tag-only case)',
    upperTagOnlyR.yaml.indexOf('image: linuxserver/code-server:V1.2') >= 0);
 
 var upperHostOnlyR = CA.convert({
   Name: 'ghcr-host-test', Repository: 'GHCR.io/owner/app', Network: 'bridge'
 });
-ok('an uppercase registry HOST only produces no lowercase-repository warning',
-   !upperHostOnlyR.warnings.some(function (w) { return /lowercase/.test(w); }));
+ok('an uppercase registry HOST only produces no lowercase-repository note',
+   !upperHostOnlyR.notes.some(function (w) { return /lowercase/.test(w); }));
 ok('the image line is written unchanged (host-only case)',
    upperHostOnlyR.yaml.indexOf('image: GHCR.io/owner/app') >= 0);
 
 var lowerR = CA.convert({
   Name: 'redis-test', Repository: 'redis:7', Network: 'bridge'
 });
-ok('an ordinary all-lowercase image produces no lowercase-repository warning',
-   !lowerR.warnings.some(function (w) { return /lowercase/.test(w); }));
+ok('an ordinary all-lowercase image produces no lowercase-repository note',
+   !lowerR.notes.some(function (w) { return /lowercase/.test(w); }));
 ok('the image line is written unchanged (all-lowercase case)',
    lowerR.yaml.indexOf('image: redis:7') >= 0);
+
+/* =========================================================================
+ * H3. warnings vs notes, and a configurable appdata root
+ *
+ * warnings is for something that did NOT get applied; notes is for
+ * something that DID convert but is worth a glance. A converter this is
+ * uncertain about should say so quietly, not read as broken.
+ * ========================================================================= */
+
+console.log('\nH3. warnings vs notes, and a configurable appdata root');
+
+// A single blank Path and nothing else — nothing here can fail to convert,
+// so this proves a good conversion gets the "filled in for you" heading
+// only, never the "could not be translated" one.
+var PATH_ONLY_TEST = {
+  Name: 'path-only-test', Repository: 'example/path-only-test', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'Config', Target: '/config', Default: '', Description: '',
+        Type: 'Path', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+
+var pathOnlyR = CA.convert(PATH_ONLY_TEST);
+ok('a template with only a blank Path has no warnings', pathOnlyR.warnings.length === 0);
+ok('...and exactly one note', pathOnlyR.notes.length === 1);
+ok('its comment block carries only the "Filled in for you" heading',
+   pathOnlyR.yaml.indexOf('# Filled in for you') >= 0 &&
+   pathOnlyR.yaml.indexOf('# Could not be translated automatically:') === -1);
+ok('omitting opts falls back to /mnt/user/appdata/',
+   pathOnlyR.yaml.indexOf('/mnt/user/appdata/path-only-test/config') >= 0);
+
+var customRootR = CA.convert(PATH_ONLY_TEST, { appdataRoot: '/mnt/cache/appdata/' });
+ok('convert(app, { appdataRoot }) uses it for the placeholder path',
+   customRootR.yaml.indexOf('/mnt/cache/appdata/path-only-test/config') >= 0);
+
+var noSlashRootR = CA.convert(PATH_ONLY_TEST, { appdataRoot: '/mnt/cache/appdata' });
+ok('a root with no trailing slash is normalised to exactly one',
+   noSlashRootR.yaml.indexOf('/mnt/cache/appdata/path-only-test/config') >= 0);
 
 /* =========================================================================
  * I. Bulk sanity — every app in the live feed, if it is on disk

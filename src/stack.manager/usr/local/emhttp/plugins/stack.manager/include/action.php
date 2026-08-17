@@ -347,7 +347,56 @@ switch ($action) {
         'error' => 'Send the paths to check as a JSON array of strings.',
       ]);
     }
-    stackman_reply(['ok' => true, 'paths' => stackman_check_paths($paths, $name)]);
+    // The browser says whether this is a stack being created — only then is an
+    // existing, non-empty folder worth flagging as "inuse" rather than "ok".
+    $checkInUse = (string)($_POST['isNew'] ?? '') === '1';
+    stackman_reply(['ok' => true, 'paths' => stackman_check_paths($paths, $name, $checkInUse)]);
+
+  /* ---- make the host folder for one or more volume paths ----
+   *
+   * The server half of the editor's "Create the folder" prompt. Each path is
+   * resolved with the exact same rule stackman_check_paths() uses — see
+   * stackman_resolve_host_path() — so what gets created is exactly what the
+   * editor underlined, then stackman_make_path() does the actual mkdir. No
+   * command is run: this is mkdir, not a job, so there is nothing to
+   * allow-list and nothing to poll.
+   */
+  case 'make-paths':
+    $paths = json_decode((string)($_POST['paths'] ?? ''), true);
+    if (!is_array($paths) || array_filter($paths, fn($p) => !is_string($p))) {
+      stackman_reply([
+        'ok'    => false,
+        'error' => 'Send the paths to create as a JSON array of strings.',
+      ]);
+    }
+
+    $unique = [];
+    foreach ($paths as $p) $unique[$p] = true; // de-duplicate, first occurrence wins
+    $unique = array_slice(array_keys($unique), 0, 20);
+
+    $results = [];
+    foreach ($unique as $p) {
+      $resolved = stackman_resolve_host_path($p, $name);
+      if ($resolved === null) {
+        $results[$p] = [
+          'status' => 'error',
+          'error'  => 'That path could not be resolved to somewhere this plugin can create.',
+        ];
+        continue;
+      }
+
+      // Checked before creating, since stackman_make_path() itself cannot say
+      // afterwards whether it did any work or found the folder already there.
+      $existed  = is_dir($resolved['path']);
+      $pathErr  = '';
+      if (!stackman_make_path($resolved['path'], $pathErr)) {
+        $results[$p] = ['status' => 'error', 'error' => $pathErr];
+      } else {
+        $results[$p] = ['status' => $existed ? 'exists' : 'made'];
+      }
+    }
+
+    stackman_reply(['ok' => true, 'results' => $results]);
 
   /* ---- every timezone, for the picker on a TZ variable ----
    *
@@ -398,6 +447,37 @@ switch ($action) {
    */
   case 'tags':
     stackman_reply(['ok' => true, 'tags' => stackman_image_tags((string)($_POST['repo'] ?? ''))]);
+
+  /* ---- Docker Hub's own search, the Apps dialog's second source ----
+   *
+   * Unlike ca-search there is no catalogue behind this one to cache, so it
+   * reaches the network on every call — which is also why the browser side
+   * asks less often than it does for the catalogue. Docker Hub has no
+   * equivalent of CA's "has anything changed" stamp to check first. Takes
+   * `q` (the search box text); a failure here returns an empty hit list
+   * rather than an error, because a search that still finds Community
+   * Applications results is more useful than one that reports a Docker Hub
+   * outage.
+   */
+  case 'hub-search':
+    stackman_reply(['ok' => true, 'hits' => stackman_hub_search((string)($_POST['q'] ?? ''))]);
+
+  /* ---- start a catalogue rebuild early, quietly ----
+   *
+   * This is what the Stacks page calls a couple of seconds after it loads, so
+   * the catalogue is normally already current by the time anyone presses
+   * Apps, and a server that has just booted starts its first build while the
+   * stack list is being read rather than when the dialog opens. It reports
+   * NOTHING — no state, no message, no count — because a failure here belongs
+   * in the Apps dialog, where somebody actually asked for the catalogue; a
+   * warning on the Stacks page for a dialog nobody opened would be noise.
+   * stackman_ca_refresh_start()'s own atomic-mkdir lock is what stops several
+   * tabs starting several downloads.
+   */
+  case 'ca-refresh':
+    $status = stackman_ca_status();
+    if (!$status['usable'] || $status['state'] === 'stale') stackman_ca_refresh_start();
+    stackman_reply(['ok' => true]);
 
   /* ---- search the Community Applications catalogue ----
    *
@@ -460,6 +540,58 @@ switch ($action) {
       'ok'         => true,
       'state'      => 'ready',
       'apps'       => stackman_ca_search((string)($_POST['q'] ?? ''), (string)($_POST['cat'] ?? '')),
+      'categories' => stackman_ca_categories(),
+      'count'      => $status['count'],
+      'built'      => $status['built'],
+    ]);
+
+  /* ---- the Apps dialog's front page ----
+   *
+   * Spotlight, Recently Added and Top Trending — three rows built once at
+   * index time (see scripts/ca-index.php) and just read back here, so opening
+   * the dialog costs no more than a search does. Takes no parameters. Mirrors
+   * ca-search's building/failed/ready state machine exactly, because it reads
+   * the same cache and can be stale, building or missing for the same reasons.
+   */
+  case 'ca-home':
+    $status = stackman_ca_status();
+
+    if ($status['state'] === 'stale' && $status['usable']) stackman_ca_refresh_start();
+    if ($status['usable']) $status['state'] = 'ready';
+
+    if ($status['state'] === 'failed') {
+      stackman_reply([
+        'ok'         => true,
+        'state'      => 'failed',
+        'spot'       => [],
+        'new'        => [],
+        'trend'      => [],
+        'categories' => [],
+        'message'    => $status['message']
+                     ?: 'The applications catalogue could not be downloaded. Check this server can reach the internet, then try again.',
+      ]);
+    }
+
+    if ($status['state'] !== 'ready') {
+      if ($status['state'] !== 'building') stackman_ca_refresh_start();
+      stackman_reply([
+        'ok'         => true,
+        'state'      => 'building',
+        'spot'       => [],
+        'new'        => [],
+        'trend'      => [],
+        'categories' => [],
+        'message'    => 'Fetching the applications catalogue. This happens the first time only — results will appear here on their own.',
+      ]);
+    }
+
+    $home = stackman_ca_home();
+    stackman_reply([
+      'ok'         => true,
+      'state'      => 'ready',
+      'spot'       => $home['spot'],
+      'new'        => $home['new'],
+      'trend'      => $home['trend'],
       'categories' => stackman_ca_categories(),
       'count'      => $status['count'],
       'built'      => $status['built'],

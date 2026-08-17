@@ -132,9 +132,9 @@ would produce a file `docker compose config` rejects, which breaks the project's
 no hint keeps the plain wording rather than getting an invented one.
 
 **And they now persist.** The warnings were only ever a banner that vanished when the editor closed —
-which is exactly when they become useful. They are now also written into the file as a comment block
-under `# Could not be translated automatically:`, so they travel with the file and sit where the
-editing happens. An app that converts cleanly gets no block at all.
+which is exactly when they become useful. They are now also written into the file as a comment block,
+so they travel with the file and sit where the editing happens. An app that converts cleanly gets no
+block at all. There are two headings — see "Two kinds of message" below.
 
 Still not translated, and still deliberately: a subtly wrong healthcheck or resource limit produces a
 file that looks right and behaves differently.
@@ -246,6 +246,67 @@ not becoming stricter than Docker. `on-failure:5`, `network_mode: service:db`, `
 real network like `br0` are all valid and all absent from the offered lists, and `br0` only becomes
 known *after* the server's networks load. One false warning on a working file costs more trust than
 ten missed typos.
+
+---
+
+---
+
+## Two kinds of message, and the folders nobody made — 2026-08-17
+
+Found by importing SWAG. Three problems, all fixed.
+
+### The banner cried wolf
+
+SWAG converts perfectly — its network is `bridge`, its one extra Docker option has a proper compose
+equivalent, and every port, path and variable maps. Yet it was announced as *"some of its settings
+had no compose equivalent"*, because its Appdata setting ships blank and the converter invented
+`/mnt/user/appdata/swag/config` and said so. Every message, whatever kind, got that headline and was
+filed in the file under `# Could not be translated automatically:`.
+
+Messages are now two lists. **Warnings** are things that were not applied — a setting with no type,
+an untranslated `docker run` flag. **Notes** are things that converted but are worth a glance — a
+blank port or path filled in, a named network that must already exist, an uppercase image name. The
+banner picks its headline from whichever lists have entries, and the file's comment block carries
+`# Could not be translated automatically:` and `# Filled in for you — check these before starting:`
+separately. A clean import still gets neither. SWAG now produces zero warnings and one note.
+
+### Nothing ever made the host folder
+
+Docker makes a missing bind-mount folder itself at first start — as `root:root 755`, which a
+container running as 99:100 cannot write to. `Nginx-Proxy-Manager-Official` on the test box is
+exactly that, sitting among a hundred `nobody:users` folders. Unraid's own Add Container makes them
+properly before it starts anything; we did nothing, then underlined the path and said "Create the
+folder" while offering no way to.
+
+The editor now offers a button beside that underline. It copies the owner and mode of the folder it
+goes into — the same rule the folder picker already followed — so a folder under appdata comes out
+`nobody:users`, not root's. Two refusals are built in: **it will not invent an Unraid share** (a
+folder made directly inside `/mnt/user` becomes a new share with default settings, and with the array
+stopped it would land in memory instead of on the array), and it will not touch anything outside
+`/mnt`. Only paths under `/mnt` are offered at all, so no button can appear that the server would
+then refuse.
+
+### An existing folder looked exactly like a correct one
+
+Adrian's catch. Import Plex when a Plex is already installed and the new stack points at the running
+one's configuration — and the editor said `ok`, because the folder exists. A host path that exists
+**and already holds files** now reads `inuse` and is marked in the caution colour with a note above
+the form. It is deliberately a warning and not a block: re-pointing at existing data is sometimes
+exactly what someone means. It is asked for only while **creating** a stack — for a stack being
+edited, folders full of data are simply what the world looks like, and flagging those would teach
+people to ignore the warning.
+
+Verified on the test box: `/mnt/user/appdata/Plex` reads `inuse` as a new stack and `ok` as an
+existing one. The match is exact, so a folder differing only in case is not caught — CA templates
+that ship their own default path collide exactly, and only the invented placeholder is lowercased.
+
+### Also
+
+The invented placeholder root is no longer hardcoded. It follows `DOCKER_APP_CONFIG_PATH` from
+Unraid's own Docker settings, which is what Community Applications reads, falling back to
+`/mnt/user/appdata/` for every way that can fail.
+
+`tests/server/paths.php` is new and covers the lot — 26 cases, all passing on the box.
 
 ---
 

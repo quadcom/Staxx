@@ -207,7 +207,7 @@ function stackman_ca_truthy($v): bool {
  * offering them for import here would be offering what CA itself will not.
  * 4,116 entries in, 3,637 out.
  *
- * @return array{line:string,n:string,r:string,a:string,ic:string,c:string[],d:int,ov:string,dep?:int}|null
+ * @return array{line:string,n:string,r:string,a:string,ic:string,c:string[],d:int,ov:string,dep?:int,fs?:int,tr?:float,rec?:int,rw?:string,why?:string}|null
  */
 function stackman_ca_index_entry(array $app): ?array {
   $repo = trim((string)($app['Repository'] ?? ''));
@@ -229,10 +229,14 @@ function stackman_ca_index_entry(array $app): ?array {
   if (stackman_ca_truthy($app['Blacklist'] ?? null) || stackman_ca_truthy($app['CABlacklist'] ?? null)) return null;
   if (stackman_ca_truthy($app['hideFromCA'] ?? null) || stackman_ca_truthy($app['HideFromCA'] ?? null) || stackman_ca_truthy($app['hideFromWeb'] ?? null)) return null;
 
-  // Fat fields nobody searches or installs by: screenshots, moderator notes,
-  // and the download-trend history CA keeps for its own graphs. Stripping
-  // these is most of why apps.jsonl is a fraction of the feed's size.
-  foreach (['trends', 'downloadtrend', 'trendsDate', 'pluginStats', 'Screenshot', 'Screenshots', 'CAComment', 'ModeratorComment'] as $k) {
+  // Fat fields nobody searches or installs by: moderator notes and the
+  // download-trend history CA keeps for its own graphs. Stripping these is
+  // most of why apps.jsonl is a fraction of the feed's size. Screenshots stay
+  // — a handful of URLs per app costs nothing next to the trend arrays and
+  // moderator comments, which are the bulk this list exists to remove, and
+  // the details window needs them. (/tmp is RAM on Unraid, which is why this
+  // list exists at all.)
+  foreach (['trends', 'downloadtrend', 'trendsDate', 'pluginStats', 'CAComment', 'ModeratorComment'] as $k) {
     unset($app[$k]);
   }
   foreach (array_keys($app) as $k) {
@@ -279,6 +283,42 @@ function stackman_ca_index_entry(array $app): ?array {
   // index.json is read on every search, so 'dep' is omitted rather than
   // written as 0 onto every entry that does not need it.
   if (stackman_ca_truthy($app['Deprecated'] ?? null)) $entry['dep'] = 1;
+
+  // Docker Hub stars, the nearest thing the catalogue has to a rating —
+  // Community Applications itself has had no likes or votes for years. Only
+  // about half of all entries carry it, so, like 'dep', it is omitted rather
+  // than written as 0 onto every entry: a 0 here would read on a card as "no
+  // one likes this" when it actually means "nobody has counted".
+  $stars = (int)($app['stars'] ?? 0);
+  if ($stars > 0) $entry['st'] = $stars;
+
+  // These three are only ever read while building the 'home' block below —
+  // they never reach index.json itself, so there is no cost to carrying them
+  // on every entry the way 'dep'/'st' are avoided for that reason.
+  //
+  // FirstSeen carries junk dates on some entries ("1970-01-01"), the same
+  // guard the browser already applies when it prints "Added" on the details
+  // window.
+  $fs = (int)($app['FirstSeen'] ?? 0);
+  if ($fs >= 1000000000) $entry['fs'] = $fs;
+
+  if (isset($app['trending'])) $entry['tr'] = (float)$app['trending'];
+
+  // A recommended app carries a date CA stamped it with; that is what marks
+  // it as recommended at all; RecommendedWho/Reason are only ever set
+  // alongside it.
+  $rec = (int)($app['RecommendedDate'] ?? 0);
+  if ($rec > 0) {
+    $entry['rec'] = $rec;
+    $entry['rw']  = (string)($app['RecommendedWho'] ?? '');
+    // RecommendedReason is usually {"en_US": "…"} but has turned up as a bare
+    // string too, so both shapes are handled rather than assuming the object.
+    $reason = $app['RecommendedReason'] ?? '';
+    if (is_array($reason)) {
+      $reason = $reason['en_US'] ?? (reset($reason) ?: '');
+    }
+    $entry['why'] = (string)$reason;
+  }
 
   return $entry;
 }
@@ -342,6 +382,13 @@ function stackman_ca_index_split(string $feedPath, string $outDir, int $feedStam
   $count      = 0;
   $categories = [];
   $indexEntries = [];
+  // The three home-page rows, gathered alongside the index entries so the
+  // whole feed is only ever walked once. Each holds just an ordinal and its
+  // sort key (plus who/why for spotlight) until the sort-and-slice below —
+  // never the full entry, which is already sitting in $indexEntries.
+  $spotList   = [];
+  $newList    = [];
+  $trendList  = [];
   $closed     = false;
 
   for (;;) {
@@ -385,14 +432,25 @@ function stackman_ca_index_split(string $feedPath, string $outDir, int $feedStam
           if ($built !== null) {
             $lineLen = strlen($built['line']);
             fwrite($out, $built['line']."\n");
+            $ordinal = count($indexEntries);
             $indexEntries[] = [
               'n' => $built['n'], 'r' => $built['r'], 'a' => $built['a'], 'ic' => $built['ic'],
               'c' => $built['c'], 'd' => $built['d'], 'ov' => $built['ov'],
               'o' => $offset, 'len' => $lineLen,
-            ] + (isset($built['dep']) ? ['dep' => $built['dep']] : []);
+            ] + (isset($built['dep']) ? ['dep' => $built['dep']] : [])
+              + (isset($built['st'])  ? ['st'  => $built['st']]  : []);
             foreach ($built['c'] as $cat) $categories[$cat] = true;
             $offset += $lineLen + 1;
             $count++;
+
+            // A deprecated app is not offered on the home page in any of the
+            // three rows — recommending something CA itself has flagged as
+            // abandoned is not something to do by accident.
+            if (!isset($built['dep'])) {
+              if (isset($built['rec'])) $spotList[]  = ['i' => $ordinal, 'k' => $built['rec'], 'rw' => $built['rw'] ?? '', 'why' => $built['why'] ?? ''];
+              if (isset($built['fs']))  $newList[]   = ['i' => $ordinal, 'k' => $built['fs']];
+              if (isset($built['tr']))  $trendList[] = ['i' => $ordinal, 'k' => $built['tr']];
+            }
           }
           $elem = '';
         }
@@ -409,15 +467,39 @@ function stackman_ca_index_split(string $feedPath, string $outDir, int $feedStam
   $categoryList = array_keys($categories);
   sort($categoryList);
 
+  // Newest/highest first, capped at 32 apiece — a front page, not the whole
+  // catalogue re-sorted. Sorting three ~2-3k-entry lists of ordinal+key pairs
+  // costs nothing next to the feed walk that built them. 32 rather than 30:
+  // the homepage reveals eight cards at a time in rows of four, so the length
+  // must be a multiple of four or the last "Show more" leaves a short row.
+  usort($spotList,  fn($a, $b) => $b['k'] <=> $a['k']);
+  usort($newList,   fn($a, $b) => $b['k'] <=> $a['k']);
+  usort($trendList, fn($a, $b) => $b['k'] <=> $a['k']);
+
+  $home = [
+    'spot' => array_map(function ($s) {
+      $row = ['i' => $s['i']];
+      if ($s['rw'] !== '')  $row['who'] = $s['rw'];
+      if ($s['why'] !== '') $row['why'] = $s['why'];
+      return $row;
+    }, array_slice($spotList, 0, 32)),
+    'new'   => array_map(fn($s) => $s['i'], array_slice($newList, 0, 32)),
+    'trend' => array_map(fn($s) => $s['i'], array_slice($trendList, 0, 32)),
+  ];
+
   stackman_ca_index_write_json($outDir.'/index.json', [
     'built'      => time(),
     // What Community Applications said its catalogue's own timestamp was when
     // this was built. The next rebuild compares against it and skips the whole
     // download when it has not moved — see stackman_ca_index_feed_stamp().
     'feed_ts'    => $feedStamp,
+    // The shape this build wrote, so a future indexer can tell an old cache
+    // apart from a current one even when the feed stamp has not moved.
+    'v'          => STACKMAN_CA_INDEX_VERSION,
     'count'      => $count,
     'categories' => $categoryList,
     'apps'       => $indexEntries,
+    'home'       => $home,
   ]);
 
   return ['count' => $count, 'categories' => $categoryList];
@@ -443,12 +525,18 @@ try {
    * the full download rather than guessing the cache is still good. */
   $feedStamp = stackman_ca_index_feed_stamp();
   $haveStamp = 0;
+  $haveVer   = 0;
   if (is_file(STACKMAN_CA_INDEX)) {
     $existing  = json_decode((string)@file_get_contents(STACKMAN_CA_INDEX), true);
     $haveStamp = is_array($existing) ? (int)($existing['feed_ts'] ?? 0) : 0;
+    $haveVer   = is_array($existing) ? (int)($existing['v'] ?? 0) : 0;
   }
 
-  if ($feedStamp > 0 && $feedStamp === $haveStamp) {
+  // The feed stamp says whether CA's own catalogue changed; it says nothing
+  // about whether OUR cache holds the fields the page now reads. Without the
+  // version test here, a cache upgrade (adding screenshots, say) would sit
+  // waiting for CA to republish before it ever took effect.
+  if ($feedStamp > 0 && $feedStamp === $haveStamp && $haveVer === STACKMAN_CA_INDEX_VERSION) {
     echo "The catalogue has not changed since this cache was built. Nothing to download.\n";
     // touch() resets the TTL, so the next search reads the cache as fresh
     // rather than asking for this same check all over again.
