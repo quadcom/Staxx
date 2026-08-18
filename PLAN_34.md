@@ -1,48 +1,31 @@
-# PLAN_34 — fixed IP and MAC addresses, and the advanced settings behind them
+# PLAN_34 — fixed IP and MAC addresses
 
-**Status: DRAFT, awaiting Adrian. Do not start.** Written 2026-08-18 alongside PLAN_33 and PLAN_35.
+**Status: DRAFT v2, awaiting Adrian. Do not start.** Written 2026-08-18, rewritten the same day
+after a five-agent verification pass and three adversarial reviews. **Version 1 was wrong in four
+material ways** and its cheapest item has been split out as `PLAN_36.md`, which should ship first.
 
-## What you would notice
+## What the review changed
 
-Today there is no way to say "give this container its own address on the network". On the test box
-that is not a corner case: **26 of the 86 Unraid containers there sit on `br0.2` with a fixed IP
-and a fixed hardware address**, and none of them could be described in a compose file this form can
-write. That is the hole.
+Read this before the plan. Version 1 measured the server carefully and then described our own code
+from memory, and that is where it went wrong.
 
-Filling it means exposing settings most people never touch, and if they all appear at once the form
-stops being the friendly thing it is. So this plan is half about the settings and half about
-keeping them out of the way until they are wanted.
-
-## Part A — what the form covers now, and what it does not
-
-The form knows **39** service settings. The compose specification has **90**. The 51 it does not
-draw a control for are not lost — anything the file already holds still renders, as a read-only row
-in Advanced — but they cannot be *added*, and several of them are the ones Unraid users need most.
-
-The 51, triaged:
-
-| Where they should land | Keys |
+| v1 said | Actually |
 |---|---|
-| **Network** (new section) | `mac_address` `domainname` `dns_search` `dns_opt` `extra_hosts` `links` `external_links` |
-| **Resource limits** (existing section, grown) | `cpus` `cpu_shares` `cpuset` `cpu_count` `cpu_percent` `mem_reservation` `mem_swappiness` `memswap_limit` `pids_limit` `oom_kill_disable` `oom_score_adj` `storage_opt` `blkio_config` `ulimits` |
-| **Hardware** (new section) | `gpus` `runtime` `security_opt` `group_add` `device_cgroup_rules` |
-| **Lifecycle** (new section) | `stop_grace_period` `post_start` `pre_stop` `scale` `platform` `pull_refresh_after` |
-| **Stays a read-only Advanced row** | `annotations` `attach` `cgroup` `cgroup_parent` `cpu_period` `cpu_quota` `cpu_rt_period` `cpu_rt_runtime` `credential_spec` `develop` `extends` `isolation` `label_file` `provider` `tmpfs` `userns_mode` `uts` `volumes_from` |
+| "26 containers have a fixed IP and the same ones have a fixed MAC" | **32** templates carry a fixed IP — 26 on `br0.2`, **6 on `eth0.2`, which is not a Docker network on that box at all**. Only **10** carry a MAC, a subset. The two halves are different-sized problems and can ship separately. |
+| "The machinery works today; the missing piece is only promotion" | True of **reading**. False of **writing**. Promotion is the easiest of at least four missing write paths. |
+| "This unblocks PLAN_35's import of 26 containers" | It does not. The import writes YAML as text through the converter, which **already** emits the external-network declaration and the hardware address. Writing the map form there is about four lines and needs none of this plan. |
+| "The 51 uncovered settings render as read-only rows" | About two thirds are **editable text boxes today**. That correction moved the whole cheap half of this plan into `PLAN_36.md`. |
+| "The test box has a container running with `--runtime=nvidia`" | **No container on the box uses it.** The string is in one template's extra parameters (for a container that does not exist) and in another's description prose. |
 
-The last row is deliberate. Those are swarm-era, Windows-only, or restructure the file in ways a
-form cannot safely undo (`extends`, `volumes_from`). Rendering them read-only keeps the promise
-that nothing in the file is ever hidden, without pretending we can edit them.
+The one thing v1 got right, and the reason to build this at all, is the diagnosis of the failure
+mode. It is in Part 1 below and it has not changed.
 
-`gpus` and `runtime` are not optional extras here — the test box has a container running with
-`--runtime=nvidia`, and there is already a GPU fixture in the corpus.
+## Part 1 — how a fixed address is actually written
 
-## Part B — how a fixed address is actually written
+Three places have to agree, and only one of them is the obvious one.
 
-This is the part worth getting right before any code is written, because there are three separate
-places involved and they have to agree.
-
-**One:** the address lives on the *service's* entry for that network, which means the service's
-`networks:` has to be written as a **map**, not a list:
+**One.** The address hangs off the *service's* entry for that network, which means the service's
+`networks:` must be written as a **map**, not a list:
 
 ```yaml
 services:
@@ -53,12 +36,12 @@ services:
         ipv4_address: 192.168.202.66
 ```
 
-**Two:** `mac_address` exists in two places — on the service (above) and on the individual network
-entry. Compose treats the per-network one as the specific case and the service-level one as the
-default. Offer the service-level one; read both.
+**Two.** `mac_address` exists in two places — on the service (above) and on the individual network
+entry. Compose treats the per-network one as the specific case. Offer the service-level one; read
+both.
 
-**Three:** the network itself has to be *declared* at the top of the file. On Unraid `br0.2` already
-exists — Unraid made it — so the declaration says so rather than trying to create it:
+**Three.** The network must be **declared** at the top of the file. On Unraid `br0.2` already
+exists, so the declaration says so rather than trying to create it:
 
 ```yaml
 networks:
@@ -66,89 +49,189 @@ networks:
     external: true
 ```
 
-Without that, compose invents a project-scoped network called `<project>_br0.2`, the container comes
-up on the wrong network, and the fixed address silently does nothing. **This is the failure mode
-that will burn people**, and it must be impossible to reach from the form: ticking a fixed address
-on a network the file has not declared must add the declaration in the same edit.
+Without that, compose invents a project-scoped `<project>_br0.2`, the container comes up on the
+wrong network, and the fixed address silently does nothing. **This is the failure that will burn
+people**, and it must be unreachable from the form: setting a fixed address on a network the file
+has not declared must add the declaration in the same edit.
 
-### What already exists, and is nearly enough
+Two things the review found about this rule:
 
-The model already reads a long-form networks map and already has friendly labels for
-`ipv4_address`, `ipv6_address`, `mac_address`, `priority` and `gw_priority`. The per-row "more
-settings" toggle already renders them. **All of that works today — if the file already happens to
-be written that way.** The missing piece is the promotion: turning a plain list entry into a map
-entry from the form, and adding the declaration alongside it.
+- It is the item in this plan with **zero write machinery under it today** (see Part 2).
+- There is already a case where the form **shows a declaration as if it were absent**: written
+  inline as `br0.2: {external: true}`, it renders as an empty unlocked box with no fold rows. So a
+  user could be told to add a declaration that is already there. That is data being hidden, which
+  breaks this project's own rule, and it should be fixed in the same change.
 
-So Part B is much smaller than it looks:
+### The portability tension, stated
 
-1. A per-entry **"more settings"** control on a Networks row that, on a short-form entry, rewrites
-   the list into a map with the same names before opening.
-2. Boxes for the rest of the per-network keys the model does not yet label: `aliases`,
-   `link_local_ips`, `interface_name`, `driver_opts`.
-3. A service-level `mac_address` box in the new Network section.
-4. Declaration support for `external: true` and for `ipam:` (`subnet`, `gateway`, `ip_range`), plus
-   the rule above that a fixed address implies a declaration.
-5. The reverse: emptying every extra on a map entry collapses it back to a plain list entry, so the
-   file does not accumulate empty maps. **Never** collapse an entry a human wrote as a map with a
-   comment in it — that is the round-trip promise.
+A file declaring `br0.2: external: true` only runs on a machine that has a Docker network called
+`br0.2`. **This is the first thing StaXX will write that is not portable**, and it is unavoidable if
+you want a fixed address on your LAN. That is an acceptable trade, but it should be said in the plan
+rather than discovered by whoever first copies a stack to another server. Consider a note in the
+file saying so.
 
-## Part C — keeping the form neat
+## Part 2 — what actually has to be built
 
-Four new sections and roughly thirty new rows land on a form that is already dense. Three rules,
-and one of them is borrowed.
+The reading side works: the model already parses a long-form networks map, already labels
+`ipv4_address`, `ipv6_address`, `mac_address`, `priority` and `gw_priority`, and the per-row
+"more settings" fold already renders them as editable boxes. **If the file already holds a fixed
+address, you can already edit it.** Everything below is the writing side.
 
-### The borrowed one: basic and advanced, the way Unraid already does it
+### Stage A — model work, no interface at all
 
-Every Unraid container template marks its own settings `Display="always"` or `Display="advanced"`,
-and the stock Docker page hides the advanced ones behind a switch. **Adrian's users already know
-that switch.** Use the same idea and the same word.
+This is the part v1 did not know existed, and everything else waits on it. All of it is testable in
+the round-trip suite with nothing drawn on screen.
 
-So: each section gets a **"Show advanced settings"** toggle on its heading line, and each row in
-that section is marked basic or advanced. Resource limits shows a CPU limit and a memory limit;
-the other twelve sit behind the toggle. Network shows the network list, the fixed address and the
-hardware address; DNS search domains, extra hosts and links sit behind it.
+1. **Add an absent key to an existing long-form entry.** Today the write path refuses immediately
+   when the named part does not exist — the extras harvester only creates a part for a key already
+   present in the map. So even a successfully promoted entry has no way to receive its *first*
+   fixed address.
+2. **Insert a child under a top-level declaration.** There is no exported function that reaches
+   one: the declaration creator writes a bare name with nothing under it, the nested-insert is
+   hardcoded to walk into a *service*, and the low-level insert is not exported. This is what
+   Part 1's third rule needs.
+3. **Promote a short-form list entry to a map entry** — the shape change itself.
+4. **Read and write a comment on a mapping key.** Needed because of the regression in the next
+   paragraph.
 
-The toggle is per-section, per-service, and **lives in the browser only** — it is not written to
-`x-unraid`. Which settings a *viewer* wants to look at is not a property of the file.
+**The promotion regression, which the obvious implementation will cause:** a short-form list entry
+binds a trailing comment; a long-form map entry does not, because the model never reads a comment
+on a mapping key. So clicking "more settings" would make the note you typed *disappear*. Either
+build item 4 first, or make promotion carry each list item's comment onto its new map key line —
+and say in the plan that it must, because nothing about the natural implementation does it.
 
-### The rule that overrides it: the file always wins
+### Stage B — the controls
 
-**A setting the file actually holds is never hidden, ever.** If a service has `sysctls`, the
-Advanced group shows it whether or not the toggle is on, and the toggle shows as already-open. This
-is the same rule the section ticks already follow, and it is what makes the disclosure safe: hiding
-a control is fine, hiding *data* is a bug.
+5. **The promotion control, in three states.** The "more settings" fold only renders when a row
+   *already has* extras — so it is absent on a short-form entry and on a bare map entry, which are
+   two of the three states this control must cover. That makes it a change to the list-rendering
+   branch, not a tweak to the fold builder.
+6. **Keep the fold open across the redraw.** Every structural edit rebuilds the whole form and the
+   fold's open state is remembered nowhere, so the promotion click would open a fold that instantly
+   closes — the headline feature visibly doing nothing on its first click. The codebase has already
+   solved this twice for other open states; reuse that.
+7. **A service-level `mac_address` box.**
+8. **The declaration rule** from Part 1, on top of stage A item 2.
+9. **The reverse `network_mode` guard.** `network_mode` and `networks` are mutually exclusive, and
+   the enforcement runs in **one direction only**: a service with `networks:` gets the network-mode
+   box drawn empty and disabled, but a service with `network_mode: host` will happily let you press
+   Add on the Networks group and write a `networks:` key beside it. No lint rule, no save-time
+   refusal. This belongs in the same change, because that is where a network gets added.
+10. **Labels for `interface_name` and `driver_opts`.** These already harvest and already render as
+    editable boxes — they need a name and nothing else.
 
-### The picker needs grouping
+### Explicitly cut
 
-The Sections picker lists 19 sections today; this takes it to 23. A flat list of 23 ticks is a wall.
-Split it under three headings — **Common** (ports, volumes, variables, devices, labels),
-**Networking** (network, DNS servers, internal ports), **Advanced** (everything else) — in the
-picker only. The sections themselves still render in their existing order.
+- **`ipam:`** (subnets, gateways, address ranges). It is not in the declaration's known-settings
+  table, reaches the form as a locked read-only block, and its real payload is a *list of maps* — a
+  shape nothing in this codebase can write at any depth. It is a deeper build than everything else
+  here combined, and it is **not needed**: an Unraid network is made by Unraid, so the file declares
+  it external and the address range is Unraid's, not the file's.
+- **Auto-collapse** (v1 item 5: emptying every extra turns a map entry back into a list entry). Its
+  own safety guard — "never collapse an entry a human wrote as a map with a comment in it" — cannot
+  be implemented, because the model reads no comment there. An empty map entry is valid compose and
+  harms nothing. Tidiness is not worth risking the round-trip promise.
+- **`aliases` and `link_local_ips`** from stage B. v1 grouped these with `interface_name` and
+  `driver_opts` as four keys needing a label. They are not the same: these two are **lists**, the
+  extras harvester cannot bind a list at all, and there is no box to label — the row currently grows
+  the sentence "this entry has settings only the Compose view can show". `aliases` is the thing
+  users will want next after the fixed address, so it deserves its own item: a list-shaped extra
+  with its own add and remove controls inside the fold. Not in phase 1.
 
-## Phases
+## Part 3 — where the extra settings go, and the disclosure question
 
-Each phase is independently useful and independently shippable. Stop after any of them.
+**Recommendation: build no new hiding mechanism. Use the one that already exists.**
 
-1. **The fixed address.** Part B items 1–5, plus a service-level `mac_address` box. This alone
-   unblocks PLAN_35's import of 26 containers, and is the only phase with a deadline attached to it.
-2. **The Network section.** `hostname` and `network_mode` move into it from Container/Advanced;
-   `domainname`, `dns_search`, `dns_opt`, `extra_hosts`, `links`, `external_links` gain controls.
-3. **Basic/advanced disclosure**, and the picker grouping. Do this before phase 4, not after —
-   phase 4 is what makes the form unusable without it.
-4. **Resource limits grown**, plus the new Hardware and Lifecycle sections.
-5. **The read-only 18** get proper labels and help text instead of bare key names in Advanced.
+Version 1 proposed a per-section "Show advanced settings" toggle, borrowed from Unraid's own
+templates. Three findings killed it:
 
-## Things that will bite
+1. **The four new sections cannot be sections.** A section carries exactly one `path`, that path is
+   walked one map level per segment to find the block to move, and the entry written into the file
+   is literally that path joined with dots. Network (seven sibling keys), Hardware (five) and
+   Lifecycle (six) have **no representable path**. "Resource limits, grown" is the same defect in
+   disguise — the section points at the nested `deploy.resources` block while every key v1 adds to
+   it is a top-level service key. Route `cpus` into it and you get a section that either cannot be
+   unticked, or unticks and leaves `cpus` in the file with its row hidden. That second one is the
+   exact bug the rules exist to prevent.
+2. **The toggle hides at field granularity, and nothing in the form does that today.** The
+   file-always-wins safeguard exists in one place and works at *section* granularity by counting
+   fields the file holds. A per-field advanced flag that does not itself test absence will hide a
+   value the file holds, silently. Advanced is also deliberately the only group with no switch,
+   precisely so it can never be hidden — a uniform toggle would give it one.
+3. **It is a second question for the user to ask.** Today: "is the section ticked?" With this:
+   "is the section ticked, *and* is its advanced fold open?" For a non-technical user that is
+   worse, and it is far more code.
 
-- **`network_mode` and `networks` are mutually exclusive** — the model already knows this
-  (`excludes: 'networks'`). A Network section that shows both side by side has to enforce it
-  visibly, not just refuse the save.
-- **A fixed IP on a bridge network is not the same as one on a macvlan.** `br0.2` is macvlan and
-  the address is on the LAN; `mybridge` is a bridge and it is not. The help text has to say which,
-  because getting it wrong looks like a working setting that does nothing.
-- **A hardware address must be locally administered** or it can collide with real equipment.
-  Unraid generates one; offer to do the same rather than leaving an empty box.
-- **`extra_hosts` has two forms** (a list of `host:ip` strings, or a map). Same problem `depends_on`
-  already solved — reuse that shape, do not invent a second one.
-- **The schema.** `x-unraid` gains nothing here except possibly section entries for the four new
-  sections. Check `schema/x-unraid.schema.json` accepts them before the first save writes one.
+**The alternative, which needs no new machinery.** A section that starts unticked *is already* a
+hidden advanced setting. Six of the nineteen existing sections are exactly that — single list-shaped
+keys, off by default. `dns_search`, `dns_opt`, `security_opt`, `group_add`, `device_cgroup_rules`,
+`volumes_from`, `links` and `external_links` are the same shape and slot straight in with zero new
+machinery, and **every one-key section has a legal path**, which dissolves problem 1 entirely.
+
+What is left over — plain scalars like `mac_address`, `domainname`, `runtime`, `cpus` — needs no
+section at all. It needs a name, which is `PLAN_36.md`. If Advanced then feels long, **sort it**;
+do not hide it.
+
+So Part 3 is: **add one-key sections for the list-shaped keys, and stop.** Reassess afterwards
+whether any further disclosure is wanted. My expectation is that it will not be.
+
+### If a multi-key section is built anyway
+
+It needs a decision first about what happens when three of seven keys stash and the fourth refuses,
+and it changes the entry name written into people's files. **A block stashed under one naming scheme
+and read under another is a lost block of someone's file.** So: existing section names are never
+renamed or repurposed, new sections take new names, and the restore path must leave an entry it does
+not recognise untouched rather than dropping it. Write the round-trip tests before the first save
+writes an entry under a new scheme.
+
+The schema needs no change — section names have no enum, no pattern and no property-name
+constraint. v1's checklist item about this was a no-op.
+
+## Build order
+
+Close to the reverse of version 1's.
+
+0. **`PLAN_36.md`** — the label fix and the simple table entries. A day, improves 51 rows, blocks
+   nothing.
+1. **A test fixture** carrying the uncovered keys and both network forms. Nothing after this should
+   ship blind.
+2. **The four-line converter change** so the template import writes the map form with a fixed
+   address. This is what actually unblocks PLAN_35, and it needs none of the form work.
+3. **Stage A** — the model write primitives, with no interface, tested in the round-trip suite.
+4. **Stage B** — the promotion control, comments carried across, fold state preserved, the
+   service-level hardware address, the reverse network-mode guard, the declaration rule.
+5. **One-key sections** for the list-shaped keys.
+6. Stop and reassess.
+
+### Two existing tests will go red on purpose
+
+The round-trip suite already asserts, deliberately, that a network alias list produces the
+"only the Compose view can show this" sentence, and that a bare network name is not a long-form row.
+Stage A and the `aliases` item change both. **Invert those assertions; do not delete them** — they
+are the only guard on the shapes being built, and deleting them is the tempting fix for what looks
+like your own bug.
+
+## Documentation
+
+Not named in v1 and it should be: the plain-English overview, the glossary (no entry for a fixed
+address or an externally-made network), and the architecture tables that enumerate every file and
+endpoint action.
+
+## Decisions only you can make
+
+1. **Auto-collapse: cut it?** I have cut it above. The guard it needs cannot be built and an empty
+   map entry is harmless. Agree, or is the tidiness worth building comment-reading on mapping keys
+   first?
+2. **One switch or two?** I am recommending the longer picker over a second toggle. Your users, your
+   call.
+3. **How should the declaration be written** — `br0.2: external: true`, or the alias form your own
+   box already uses in one project (`hft: {name: br0.2, external: true}`)? The alias form reads
+   better and v1 did not know it existed.
+4. **Should StaXX generate a hardware address when the box is empty?** If yes: what happens when
+   someone duplicates that stack, and should the form refuse two stacks carrying the same address?
+   Five templates on your box already share a *fixed IP* with another template.
+5. **`eth0.2`.** Six templates name it, it is not a Docker network on the box any more, and all six
+   carry a fixed IP in the `br0.2` subnet — almost certainly the old name for the same VLAN.
+   Translate it on import (a guess about your network, made on your behalf), or refuse those six and
+   say why? **I lean refuse-and-explain**, because guessing at someone's network is exactly the kind
+   of silent wrongness this plan exists to prevent.
