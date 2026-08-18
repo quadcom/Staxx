@@ -2,8 +2,8 @@
 /* StaXX — the Stacks screen.
  * Copyright 2026, StaXX contributors.
  *
- * Included by both staxx.page (tab under the Docker menu) and
- * Stacks.page (own button in the top navigation bar). Exactly one of those is
+ * Included by both Stacks.page (tab under the Docker menu) and
+ * StaXX.page (own button in the top navigation bar). Exactly one of those is
  * enabled at a time, decided by the HEADER_MENU config key, so this file is
  * only ever rendered once per request.
  *
@@ -89,16 +89,12 @@ endif;
      )), ENT_QUOTES) ?>"
      data-appdata="<?= htmlspecialchars(staxx_appdata_root()) ?>">
 
-  <!-- Deliberately not Unraid's .notice class. Borrowing a stock class means
-       inheriting layout rules we do not control and cannot see change. -->
-  <div class="staxx-notice">
-    <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
-    <div>
-      <strong><?= _('StaXX is alpha.') ?></strong>
-      <?= _('You can add, edit, start and stop stacks. The friendly form view is being built — for now the editor shows the compose file itself.') ?>
-    </div>
-  </div>
+  <!-- Only conditions that need acting on get a banner here. The standing
+       "this is alpha" notice is gone: a banner shown on every visit stops
+       being read, and takes the top of the page with it.
 
+       Deliberately not Unraid's .notice class. Borrowing a stock class means
+       inheriting layout rules we do not control and cannot see change. -->
   <? if (!$compose['available']): ?>
     <div class="staxx-notice staxx-notice--bad">
       <i class="fa fa-times-circle" aria-hidden="true"></i>
@@ -119,8 +115,12 @@ endif;
 
   <!-- ---------------------------------------------------------- stacks -- -->
 
-  <div class="staxx-bar">
-    <h3><?= _('Stacks') ?></h3>
+  <!-- No heading: Unraid's own title bar directly above already names the
+       page, so a second "Stacks" under it said the same thing twice. --end
+       keeps the buttons in the corner they were in when a heading held the
+       other side of the row; the plain .staxx-bar is still space-between for
+       the log panel, which does have a heading. -->
+  <div class="staxx-bar staxx-bar--end">
     <div class="staxx-buttons staxx-buttons--inline">
       <button type="button" class="staxx-btn" id="staxx-settings-btn">
         <i class="fa fa-cog"></i> <?= _('Settings') ?>

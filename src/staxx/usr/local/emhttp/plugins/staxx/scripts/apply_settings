@@ -44,7 +44,7 @@ if [[ -f "${CFG}" ]]; then
   takeover_docker_tab="${takeover_docker_tab:-false}"
 fi
 
-# Projected onto a marker file for the same reason HEADER_MENU is: Stacks.page's
+# Projected onto a marker file for the same reason HEADER_MENU is: StaXX.page's
 # Cond has to know about this, and Cond runs on every render of every page. It
 # matters because removing the Docker button takes our own Docker sub-tab down
 # with it — so without this, turning the takeover on with HEADER_MENU off would

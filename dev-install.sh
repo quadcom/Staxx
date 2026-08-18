@@ -63,7 +63,7 @@ case "${MODE}" in
       echo "    Settings kept at ${CFG_DIR} (use --purge to remove them)"
     fi
     echo
-    echo "Done. Refresh the web interface — the Stacks pages should be gone."
+    echo "Done. Refresh the web interface — the StaXX pages should be gone."
     exit 0
     ;;
 esac
@@ -126,7 +126,7 @@ printf '    Array state      : %s\n' \
 echo
 echo "Installed. Now:"
 echo "  1. Hard-refresh the web interface (Ctrl-F5)."
-echo "  2. Look under the Docker tab for a 'Stacks' sub-tab."
+echo "  2. Look under the Docker tab for a 'StaXX' sub-tab."
 echo "  3. Look under Settings for 'StaXX'."
 echo
 echo "If a page is blank or missing, watch the log while you load it:"

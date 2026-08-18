@@ -9762,12 +9762,12 @@
    */
   var SETTINGS_ROWS = [
     {
-      key: 'HEADER_MENU', control: 'choice', label: 'Show Stacks in',
+      key: 'HEADER_MENU', control: 'choice', label: 'Show StaXX in',
       choices: [
         ['false', 'A tab under the Docker menu'],
         ['true',  'Its own button in the top navigation bar']
       ],
-      help: 'Where the Stacks view appears. As a Docker tab it sits ahead of Docker Containers ' +
+      help: 'Where the stacks view appears. As a Docker tab it sits ahead of Docker Containers ' +
             'and becomes the default landing tab; nothing is replaced either way.'
     },
     {
@@ -9781,14 +9781,14 @@
       key: 'TAKEOVER_DOCKER_TAB', control: 'choice', label: 'Docker menu',
       choices: [
         ['false', 'Leave the Docker menu alone'],
-        ['true',  'Replace it with Stacks']
+        ['true',  'Replace it with StaXX']
       ],
       help: 'Off by default. Switched on, the Docker button disappears from the top of the ' +
-            'screen and Stacks takes its place as a menu item of its own. Everything that lived ' +
+            'screen and StaXX takes its place as a menu item of its own. Everything that lived ' +
             'under the Docker menu goes with it — Unraid\'s own container list included, and any ' +
             'other plugin\'s Docker pages. Nothing is modified and no container is touched; ' +
             'turning it back off puts all of it straight back. While this is on, the "Show ' +
-            'Stacks in" setting above has no effect, because Stacks has to be a top-level item ' +
+            'StaXX in" setting above has no effect, because StaXX has to be a top-level item ' +
             'for there to be any way in.'
     },
     {

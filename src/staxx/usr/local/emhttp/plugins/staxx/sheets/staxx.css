@@ -187,6 +187,13 @@
   margin: 0;
 }
 
+/* A bar with nothing on its left. space-between collapses to flex-start with
+   one child, which would move the buttons across the page; this holds them
+   where they have always been. */
+.staxx-bar--end {
+  justify-content: flex-end;
+}
+
 /* ---- Buttons ------------------------------------------------------------ */
 
 .staxx-scaffold .staxx-btn {

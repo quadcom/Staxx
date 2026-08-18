@@ -110,8 +110,8 @@ render of every page.
 
 Three pages, two of them mutually exclusive:
 
-- `staxx.page` — `Menu="Docker:0"`, a tab ahead of the stock Docker Containers tab
-- `Stacks.page` — `Menu="Tasks:59"`, its own top-nav button just left of stock Docker (`Tasks:60`)
+- `Stacks.page` — `Menu="Docker:0"`, a tab ahead of the stock Docker Containers tab (`/Docker/Stacks`)
+- `StaXX.page` — `Menu="Tasks:59"`, its own top-nav button just left of stock Docker (`Tasks:60`), at `/StaXX`
 - `staxx.settings.page` — Settings → Utilities
 
 Both view pages `include` the same `include/StacksPage.php`, and their `Cond` expressions test for
