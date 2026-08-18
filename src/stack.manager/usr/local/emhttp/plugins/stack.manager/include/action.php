@@ -462,6 +462,21 @@ switch ($action) {
   case 'hub-search':
     stackman_reply(['ok' => true, 'hits' => stackman_hub_search((string)($_POST['q'] ?? ''))]);
 
+  /* ---- what an image and its own documentation say about themselves ----
+   *
+   * Asked for when Add is pressed on a Docker Hub or local image, so the
+   * editor can open with more than a name and a comment. Takes `image` and
+   * `source` ('local' or otherwise); `config` is '1' when the caller also
+   * wants the registry fallback for ports/volumes/labels, which the common
+   * path skips because it is four chained requests. Every field is missing
+   * rather than an error when its source failed or was never asked for.
+   */
+  case 'image-facts':
+    stackman_reply(['ok' => true, 'facts' => stackman_image_facts(
+      (string)($_POST['image'] ?? ''),
+      (string)($_POST['source'] ?? ''),
+      ($_POST['config'] ?? '') === '1')]);
+
   /* ---- start a catalogue rebuild early, quietly ----
    *
    * This is what the Stacks page calls a couple of seconds after it loads, so

@@ -1,9 +1,20 @@
 # PLAN_24 — Fill in what an image can say about itself
 
-**Status: outstanding.** Nothing here is in the tree. Written up after `PLAN_23.md` added Docker
-Hub and local images as import sources, because what those two currently produce is thin. The
-measurements below were taken live from the test box on 2026-08-17 — they are the point of this
-document, and they should be re-checked rather than trusted if this sits for a year.
+**Status: SUPERSEDED, 2026-08-17. Built as `PLAN_31.md`** — read that instead; it carries the
+approved design, the decisions Adrian took, and what the build found.
+
+This file is the survey it was written from, kept for the measurements. Two of them were wrong in a
+way that would have sunk the flagship case, both corrected in PLAN_31: **the acceptance test here
+rejects `linuxserver/jellyfin`**, because its own README example writes the image as
+`lscr.io/linuxserver/jellyfin:latest` and comparing that string to the reference being imported
+fails — canonical repository paths have to be compared instead, with an implicit `library/` filled
+in so `postgres`'s bare `image: postgres` also matches. And nothing here noticed that **a compose
+file opening with three dashes was sealed whole by our own parser**, which every linuxserver example
+does, so the README route could not have worked at all.
+
+The rest was re-measured live on 2026-08-17 and still holds: both READMEs carry exactly one fenced
+`yaml` block, the registry chain works anonymously and needs `curl -L` for the config blob, and
+`Env` is still build-time internals.
 
 ---
 

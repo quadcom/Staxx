@@ -675,7 +675,17 @@
   var API = {
     convert: convert,
     normaliseName: normaliseName,
-    parseExtraParams: parseExtraParams
+    parseExtraParams: parseExtraParams,
+    // Those below are string helpers with no CA-specific knowledge in them at
+    // all — image-import.js reuses them rather than keeping a second copy of
+    // the quoting rules, which is where the anchor and trailing-colon bugs
+    // both lived. If a third caller ever wants them, move them somewhere
+    // neutral instead of leaving them here as CA-flavoured exports.
+    repositoryPath: repositoryPath,
+    dq: dq,
+    scalarOut: scalarOut,
+    wrapText: wrapText,
+    warningCommentLines: warningCommentLines
   };
 
   if (typeof window !== 'undefined') window.StackmanCA = API;

@@ -61,6 +61,19 @@ _(Container icons)_:
 > Icons are by [selfh.st](https://selfh.st/icons/) and used under the
 > [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) licence.
 
+_(Image documentation)_:
+: <select name="IMAGE_LOOKUP" size="1">
+    <?=mk_option($cfg['IMAGE_LOOKUP'] ?? 'true', 'true',  _('Read it automatically'))?>
+    <?=mk_option($cfg['IMAGE_LOOKUP'] ?? 'true', 'false', _('Do not look anything up'))?>
+  </select>
+
+> When you press Add on a Docker Hub or local image, your server reads that image's own
+> documentation from Docker Hub and uses it to build a fuller starting file — with the ports, paths
+> and settings it describes, instead of just four bare lines. This only ever happens the moment you
+> add something; it never runs in the background. The only thing sent out is the name of the image
+> being added, nothing else. Turning it off gives you the four-line starting file only, instantly,
+> and nothing leaves the server.
+
 &nbsp;
 : <span class="buttons-spaced">
     <input type="submit" name="#apply" value="_(Apply)_" disabled>

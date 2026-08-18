@@ -257,11 +257,38 @@ function stackman_docker_images(): array {
 }
 
 /**
- * Tags Docker Hub has published for a repository, offered while typing an
- * `image:` field's tag half. This is the only thing in the plugin that talks
- * to a server other than this one, so the repo string is checked twice before
- * it gets anywhere near a URL: first for shape, then quoted on top of that —
- * belt and braces, not either on its own.
+ * Build a GET request to another server, run it and decode its JSON body.
+ * Factored out of stackman_image_tags(), stackman_hub_search() and
+ * stackman_hub_repo(), which all did this by hand.
+ *
+ * Every header is passed through escapeshellarg() same as the URL — nothing
+ * here trusts a caller's string more than it trusts a query parameter.
+ *
+ * @param  string   $url        already-built, unescaped
+ * @param  string[] $headers    each a whole "Name: value" line
+ * @param  int      $maxTime    curl's own --max-time, seconds
+ * @param  int      $shSeconds  stackman_sh()'s hard limit, seconds
+ * @return array|null decoded body, or null on anything wrong at all —
+ *                     no network, DNS, a non-JSON body, an HTTP error
+ */
+function stackman_hub_json(string $url, array $headers = [], int $maxTime = 8, int $shSeconds = 12): ?array {
+  $cmd = 'curl -fsSL --max-time '.$maxTime;
+  foreach ($headers as $header) $cmd .= ' -H '.escapeshellarg($header);
+  $cmd .= ' '.escapeshellarg($url);
+
+  // A timeout a little above curl's own --max-time, so curl reports the
+  // failure itself rather than being killed mid-flight by stackman_sh().
+  $out  = stackman_sh($cmd, $shSeconds);
+  $data = json_decode($out, true);
+  return is_array($data) ? $data : null;
+}
+
+/**
+ * Canonical Docker Hub repository path for an image reference — the
+ * normalisation stackman_image_tags() and stackman_hub_repo() both need, so
+ * it lives here once rather than a third time. A digest and a tag are
+ * stripped first: a reference arriving here from an `image:` line will
+ * usually carry one, and the shape check below rejects a colon.
  *
  * A bare single-segment name (`postgres`) is Docker's own shorthand for
  * `library/postgres`, where Hub keeps official images. `lscr.io/linuxserver/x`
@@ -269,9 +296,46 @@ function stackman_docker_images(): array {
  * indexes under `linuxserver/x`, and worth the two lines because linuxserver
  * is what most Unraid users run. Any other host-qualified name — a private
  * registry, a self-hosted one, anything else — is refused outright: this
- * plugin does not guess at credentials or API shapes it has never seen, and
- * declining quietly is correct, because the field falls back to a plain text
- * box the moment the suggestion list comes back empty.
+ * plugin does not guess at credentials or API shapes it has never seen.
+ *
+ * @return string canonical "namespace/name", or '' when refused
+ */
+function stackman_hub_repo_path(string $image): string {
+  $repo = trim($image);
+  if ($repo === '') return '';
+
+  $repo = preg_replace('/@sha256:[0-9a-f]+$/', '', $repo);
+  $slash = strrpos($repo, '/');
+  $colon = strrpos($repo, ':');
+  if ($colon !== false && ($slash === false || $colon > $slash)) $repo = substr($repo, 0, $colon);
+
+  $parts = explode('/', $repo);
+  if (count($parts) === 3 && $parts[1] === 'linuxserver' && in_array($parts[0], ['lscr.io', 'ghcr.io'], true)) {
+    $repo = $parts[1].'/'.$parts[2];
+  } elseif (strpos($parts[0], '.') !== false || strpos($parts[0], ':') !== false) {
+    // Host-qualified and not one of the two mirrors above — decline rather
+    // than guess at a registry we know nothing about.
+    return '';
+  } elseif (strpos($repo, '/') === false) {
+    $repo = 'library/'.$repo;
+  }
+
+  // Shape: [namespace/]name, lowercase alphanumerics with . _ - separators,
+  // at most one slash. The 'D' modifier keeps $ from also matching just
+  // before a trailing newline, which is PCRE's default and would otherwise
+  // let a name end in "\n<anything>" slip past this check.
+  if (!preg_match('#^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)?$#D', $repo)) {
+    return '';
+  }
+  return $repo;
+}
+
+/**
+ * Tags Docker Hub has published for a repository, offered while typing an
+ * `image:` field's tag half. This is the only thing in the plugin that talks
+ * to a server other than this one, so the repo string is checked twice before
+ * it gets anywhere near a URL: first for shape (inside stackman_hub_repo_path()),
+ * then quoted on top of that — belt and braces, not either on its own.
  *
  * Every failure — no network, DNS, a non-JSON body, an HTTP error, a reply
  * shaped nothing like tags — returns the same empty array rather than an
@@ -282,35 +346,12 @@ function stackman_docker_images(): array {
  * @return string[] up to 50 tag names, most recently updated first
  */
 function stackman_image_tags(string $repo): array {
-  $repo = trim($repo);
+  $repo = stackman_hub_repo_path($repo);
   if ($repo === '') return [];
 
-  $parts = explode('/', $repo);
-  if (count($parts) === 3 && $parts[1] === 'linuxserver' && in_array($parts[0], ['lscr.io', 'ghcr.io'], true)) {
-    $repo = $parts[1].'/'.$parts[2];
-  } elseif (strpos($parts[0], '.') !== false || strpos($parts[0], ':') !== false) {
-    // Host-qualified and not one of the two mirrors above — decline rather
-    // than guess at a registry we know nothing about.
-    return [];
-  } elseif (strpos($repo, '/') === false) {
-    $repo = 'library/'.$repo;
-  }
-
-  // Shape: [namespace/]name, lowercase alphanumerics with . _ - separators,
-  // at most one slash. The 'D' modifier keeps $ from also matching just
-  // before a trailing newline, which is PCRE's default and would otherwise
-  // let a name end in "\n<anything>" slip past this check.
-  if (!preg_match('#^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)?$#D', $repo)) {
-    return [];
-  }
-
-  $url = 'https://hub.docker.com/v2/repositories/'.$repo.'/tags?page_size=50&ordering=last_updated';
-  // A timeout a little above curl's own --max-time, so curl reports the
-  // failure itself rather than being killed mid-flight by stackman_sh().
-  $out = stackman_sh('curl -fsSL --max-time 8 '.escapeshellarg($url), 12);
-
-  $data = json_decode($out, true);
-  if (!is_array($data) || !isset($data['results']) || !is_array($data['results'])) return [];
+  $url  = 'https://hub.docker.com/v2/repositories/'.$repo.'/tags?page_size=50&ordering=last_updated';
+  $data = stackman_hub_json($url);
+  if ($data === null || !isset($data['results']) || !is_array($data['results'])) return [];
 
   $tags = [];
   foreach ($data['results'] as $result) {
@@ -355,13 +396,9 @@ function stackman_hub_search(string $q): array {
     return [];
   }
 
-  $url = 'https://hub.docker.com/v2/search/repositories/?query='.rawurlencode($q).'&page_size=25';
-  // A timeout a little above curl's own --max-time, so curl reports the
-  // failure itself rather than being killed mid-flight by stackman_sh().
-  $out = stackman_sh('curl -fsSL --max-time 8 '.escapeshellarg($url), 12);
-
-  $data = json_decode($out, true);
-  if (!is_array($data) || !isset($data['results']) || !is_array($data['results'])) return [];
+  $url  = 'https://hub.docker.com/v2/search/repositories/?query='.rawurlencode($q).'&page_size=25';
+  $data = stackman_hub_json($url);
+  if ($data === null || !isset($data['results']) || !is_array($data['results'])) return [];
 
   $hits = [];
   foreach ($data['results'] as $result) {
@@ -376,6 +413,217 @@ function stackman_hub_search(string $q): array {
     if (count($hits) >= 25) break;
   }
   return $hits;
+}
+
+/**
+ * Docker Hub's own description of a repository, offered as an image's
+ * starting documentation when nothing more specific exists. One request,
+ * same failure contract as stackman_hub_search(): anything wrong at all —
+ * an unresolvable name, no network, an HTTP error, a non-JSON body — comes
+ * back as an empty array.
+ *
+ * The README is capped at 256 KB: it is third-party text of unbounded size
+ * and it is about to be handed to a browser.
+ *
+ * @return array{readme?:string, description?:string}
+ */
+function stackman_hub_repo(string $image): array {
+  $repo = stackman_hub_repo_path($image);
+  if ($repo === '') return [];
+
+  $data = stackman_hub_json('https://hub.docker.com/v2/repositories/'.$repo.'/');
+  if ($data === null) return [];
+
+  return [
+    'readme'      => substr((string)($data['full_description'] ?? ''), 0, 256 * 1024),
+    'description' => (string)($data['description'] ?? ''),
+  ];
+}
+
+/**
+ * Ports, volumes and labels straight out of the image's own registry
+ * manifest — the fallback used only when the image's Hub README gave
+ * nothing usable, since it is four chained requests rather than one: a
+ * short-lived anonymous pull token, the multi-architecture manifest index,
+ * the amd64/linux entry's own manifest, then the config blob it points at.
+ *
+ * A single-architecture image answers the manifest-index request with no
+ * "manifests" list at all, just its own "config" — that reply is used
+ * directly rather than treated as a failure. Attestation entries in a
+ * multi-architecture index report architecture/os "unknown" and are skipped
+ * while looking for amd64/linux.
+ *
+ * The blob request redirects to a CDN, so following redirects matters —
+ * stackman_hub_json() always does (curl -fsSL), which is exactly why: without
+ * it the blob comes back empty and the whole chain looks broken for no
+ * visible reason.
+ *
+ * Never returns Env: those are the image's build-time internals (PATH,
+ * S6_VERBOSITY, ...) baked in when it was built, and writing them into a
+ * compose file pins a snapshot that breaks the day the image changes them.
+ *
+ * @return array{ports?:string[], volumes?:string[], labels?:array<string,string>}
+ */
+function stackman_registry_config(string $image): array {
+  $repo = stackman_hub_repo_path($image);
+  if ($repo === '') return [];
+
+  $tag = 'latest';
+  $ref = trim($image);
+  $slash = strrpos($ref, '/');
+  $colon = strrpos($ref, ':');
+  if ($colon !== false && ($slash === false || $colon > $slash)) $tag = substr($ref, $colon + 1);
+
+  $token = stackman_hub_json(
+    'https://auth.docker.io/token?service=registry.docker.io&scope=repository:'.$repo.':pull',
+    [], 6, 8
+  );
+  if ($token === null || (string)($token['token'] ?? '') === '') return [];
+  $bearer = 'Authorization: Bearer '.$token['token'];
+
+  $index = stackman_hub_json(
+    'https://registry-1.docker.io/v2/'.$repo.'/manifests/'.rawurlencode($tag),
+    [$bearer, 'Accept: application/vnd.oci.image.index.v1+json,'
+             .'application/vnd.docker.distribution.manifest.list.v2+json,'
+             .'application/vnd.docker.distribution.manifest.v2+json'],
+    6, 8
+  );
+  if ($index === null) return [];
+
+  $manifest = $index;
+  if (isset($index['manifests']) && is_array($index['manifests'])) {
+    $digest = '';
+    foreach ($index['manifests'] as $entry) {
+      $platform = is_array($entry['platform'] ?? null) ? $entry['platform'] : [];
+      if (($platform['architecture'] ?? '') === 'amd64' && ($platform['os'] ?? '') === 'linux') {
+        $digest = (string)($entry['digest'] ?? '');
+        break;
+      }
+    }
+    if ($digest === '') return [];
+
+    $manifest = stackman_hub_json(
+      'https://registry-1.docker.io/v2/'.$repo.'/manifests/'.$digest,
+      [$bearer, 'Accept: application/vnd.oci.image.manifest.v1+json'],
+      6, 8
+    );
+    if ($manifest === null) return [];
+  }
+
+  $configDigest = (string)($manifest['config']['digest'] ?? '');
+  if ($configDigest === '') return [];
+
+  $blob = stackman_hub_json(
+    'https://registry-1.docker.io/v2/'.$repo.'/blobs/'.$configDigest,
+    [$bearer], 6, 8
+  );
+  if ($blob === null) return [];
+
+  $config = is_array($blob['config'] ?? null) ? $blob['config'] : [];
+  return [
+    'ports'   => array_keys(is_array($config['ExposedPorts'] ?? null) ? $config['ExposedPorts'] : []),
+    'volumes' => array_keys(is_array($config['Volumes'] ?? null) ? $config['Volumes'] : []),
+    'labels'  => is_array($config['Labels'] ?? null) ? $config['Labels'] : [],
+  ];
+}
+
+/**
+ * The same three fields read straight off an image already pulled onto this
+ * server — no network at all, so a locally-sourced image is never made to
+ * wait on Docker Hub for something it can already answer itself.
+ *
+ * The reference is checked for shape before it reaches the shell —
+ * lowercase alphanumerics and `. _ - / :` only — on top of, not instead of,
+ * escapeshellarg(). This is the first use of `--format json` outside
+ * stackman_compose_state(); the other `docker inspect` in this plugin is
+ * template-formatted and has its own unrelated whitespace trap.
+ *
+ * Never returns Env, for the same reason stackman_registry_config() does not.
+ *
+ * @return array{ports?:string[], volumes?:string[], labels?:array<string,string>}
+ */
+function stackman_local_image_config(string $ref): array {
+  $ref = trim($ref);
+  if ($ref === '' || !preg_match('#^[a-z0-9][a-z0-9._/:-]*$#D', $ref)) return [];
+
+  $docker = escapeshellarg(stackman_docker_bin());
+  $out = stackman_sh(
+    $docker.' image inspect --format '.escapeshellarg('{{json .Config}}').' '.escapeshellarg($ref),
+    10
+  );
+
+  $config = json_decode($out, true);
+  if (!is_array($config)) return [];
+
+  return [
+    'ports'   => array_keys(is_array($config['ExposedPorts'] ?? null) ? $config['ExposedPorts'] : []),
+    'volumes' => array_keys(is_array($config['Volumes'] ?? null) ? $config['Volumes'] : []),
+    'labels'  => is_array($config['Labels'] ?? null) ? $config['Labels'] : [],
+  ];
+}
+
+/**
+ * This server's timezone, e.g. "America/Toronto", read from the symlink
+ * Linux keeps at /etc/localtime. '' when it cannot be read or the target
+ * doesn't look like a zone name — nothing downstream may guess a timezone
+ * when this comes back empty.
+ */
+function stackman_server_timezone(): string {
+  $out = trim(stackman_sh('readlink -f /etc/localtime', 5));
+  if ($out === '') return '';
+
+  $prefix = '/usr/share/zoneinfo/';
+  if (strpos($out, $prefix) !== 0) return '';
+  $zone = substr($out, strlen($prefix));
+
+  // "Region/City", or one of the bare names also shipped (UTC, GMT, ...).
+  if (!preg_match('#^[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*$#D', $zone)) return '';
+  return $zone;
+}
+
+/**
+ * What an image and its own documentation say about themselves — the
+ * orchestrator include/action.php's `image-facts` case calls. Always
+ * returns an array; a field is left absent, not empty, when it was never
+ * asked for, so the browser can tell "didn't ask" apart from "asked and
+ * got nothing".
+ *
+ * $wantConfig gates stackman_registry_config() deliberately: it is four
+ * chained requests and only worth paying for when the image's README gave
+ * nothing usable, which only the browser can judge — it holds the compose
+ * parser this file does not have. The common path never runs it; the
+ * browser asks a second time with `config=1` once it knows it needs the
+ * fallback. A local image's config is free and offline, so it is always
+ * included regardless of $wantConfig.
+ *
+ * @return array{off?:bool, readme?:string, description?:string,
+ *               ports?:string[], volumes?:string[], labels?:array<string,string>,
+ *               appdata?:string, timezone?:string}
+ */
+function stackman_image_facts(string $image, string $source, bool $wantConfig = false): array {
+  if ((stackman_cfg()['IMAGE_LOOKUP'] ?? 'true') === 'false') return ['off' => true];
+
+  $facts = [];
+
+  $repo = stackman_hub_repo($image);
+  if (isset($repo['readme']))      $facts['readme']      = $repo['readme'];
+  if (isset($repo['description'])) $facts['description'] = $repo['description'];
+
+  if ($source === 'local') {
+    $config = stackman_local_image_config($image);
+  } elseif ($wantConfig) {
+    $config = stackman_registry_config($image);
+  } else {
+    $config = [];
+  }
+  if (isset($config['ports']))   $facts['ports']   = $config['ports'];
+  if (isset($config['volumes'])) $facts['volumes'] = $config['volumes'];
+  if (isset($config['labels']))  $facts['labels']  = $config['labels'];
+
+  $facts['appdata']  = stackman_appdata_root();
+  $facts['timezone'] = stackman_server_timezone();
+
+  return $facts;
 }
 
 /**

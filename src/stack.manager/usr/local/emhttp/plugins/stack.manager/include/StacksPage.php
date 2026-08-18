@@ -43,10 +43,12 @@ $assets  = '/plugins/'.STACKMAN_PLUGIN;
 $jsFile  = STACKMAN_ROOT.'/javascript/stacks.js';
 $modelFile = STACKMAN_ROOT.'/javascript/compose-model.js';
 $caFile  = STACKMAN_ROOT.'/javascript/ca-convert.js';
+$imageFile = STACKMAN_ROOT.'/javascript/image-import.js';
 $cssFile = STACKMAN_ROOT.'/sheets/stack.manager.css';
 $jsTag   = $assets.'/javascript/stacks.js?v='.(is_file($jsFile) ? filemtime($jsFile) : '0');
 $modelTag = $assets.'/javascript/compose-model.js?v='.(is_file($modelFile) ? filemtime($modelFile) : '0');
 $caTag   = $assets.'/javascript/ca-convert.js?v='.(is_file($caFile) ? filemtime($caFile) : '0');
+$imageTag = $assets.'/javascript/image-import.js?v='.(is_file($imageFile) ? filemtime($imageFile) : '0');
 $cssTag  = $assets.'/sheets/stack.manager.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
 
 // Password managers ignore autocomplete="off" — that attribute only speaks to
@@ -865,5 +867,11 @@ endif;
      only put a 404 in the console for no benefit. -->
 <? if (is_file($caFile)): ?>
 <script src="<?= $caTag ?>"></script>
+<? endif; ?>
+<!-- Turns an image-facts reply into a compose file for caAddImage(); reads
+     window.StackmanCA and window.StackmanYaml, so it must load after both.
+     Conditional for the same reason as the two above. -->
+<? if (is_file($imageFile)): ?>
+<script src="<?= $imageTag ?>"></script>
 <? endif; ?>
 <script src="<?= $jsTag ?>"></script>
