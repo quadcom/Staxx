@@ -549,7 +549,11 @@
           notes.push('The port "' + label + '" had no value; used the container port ' + target + ' as the host port too.');
         }
         var udp = String(a.Mode || '').toLowerCase() === 'udp';
-        ports.push({ content: '      - ' + dq(val + ':' + target + (udp ? '/udp' : '')), comment: comment });
+        // host/target ride along so reorderPortsForWebUI() can match this entry
+        // against the template's own web address after the whole list is
+        // built — see that function for why. They are never read by the YAML
+        // emitters below, which only ever look at .content and .comment.
+        ports.push({ content: '      - ' + dq(val + ':' + target + (udp ? '/udp' : '')), comment: comment, host: val, target: target });
       } else if (type === 'Path') {
         if (val === '') {
           val = appdataRoot + name + target;
@@ -574,6 +578,37 @@
     });
 
     return { ports: ports, volumes: volumes, devices: devices, environment: environment, labels: labels };
+  }
+
+  // PLAN_39's rule is that the web-page button always opens the FIRST port
+  // in a service's list, so import puts the port the template's own address
+  // named at the front — the one place the unreliable [PORT:nnn] token is
+  // still read, and only under human review here, never at button-press time.
+  //
+  // Measured across 85 real templates the number inside the token matches
+  // the host port 10 times, the container port 15 times, both 36 times
+  // (they were equal) and neither 3 times — so it is checked against the
+  // host first, then the container, and a template in that last group is
+  // left in its original order with a note rather than given a guess.
+  function reorderPortsForWebUI(ports, webui, notes) {
+    if (ports.length <= 1) return;                      // already the only choice
+    var raw = scalarPresent(webui) ? String(webui) : '';
+    var m = /\[PORT:([^\]]*)\]/i.exec(raw);
+    if (!m) return;                                      // no token — nothing to go on
+    var token = m[1].trim();
+    if (token === '') return;
+
+    var idx = -1, i;
+    for (i = 0; i < ports.length; i++) { if (ports[i].host === token) { idx = i; break; } }
+    if (idx < 0) {
+      for (i = 0; i < ports.length; i++) { if (ports[i].target === token) { idx = i; break; } }
+    }
+    if (idx < 0) {
+      notes.push('The web address names port ' + token + ', which this template does not list ' +
+        'among its ports; the first port listed will be the one the web page button opens instead.');
+      return;
+    }
+    if (idx > 0) ports.unshift(ports.splice(idx, 1)[0]);
   }
 
   /* =====================================================================
@@ -610,6 +645,7 @@
     notes = notes.concat(extra.notes);
     var net = networkInfo(app, notes, warnings, extra.macAddress);
     var cfg = processConfig(app.Config, name, warnings, notes, appdataRoot);
+    reorderPortsForWebUI(cfg.ports, app.WebUI, notes);
 
     var privileged = app.Privileged === 'true' || extra.privileged;
 

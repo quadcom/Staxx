@@ -846,6 +846,118 @@ function staxx_yaml_flatten(string $yaml): array {
 }
 
 /**
+ * The first published port of every service, read from the same
+ * `docker compose config` text staxx_compose_meta() already has in hand.
+ *
+ * staxx_yaml_flatten() SKIPS every sequence on purpose (see its own $skip
+ * handling), so a `ports:` list is invisible to it — and extending it to read
+ * one would affect every caller that relies on sequences being skipped. This
+ * is a second, narrow pass over the same text instead, understanding nothing
+ * except the one shape `docker compose config` always normalises a port to:
+ *
+ *   ports:
+ *     - mode: host
+ *       host_ip: 127.0.0.1
+ *       target: 80
+ *       published: "15114"
+ *       protocol: tcp
+ *     - mode: ingress
+ *       target: 443
+ *
+ * Only the first entry under each service is read; the rest are skipped once
+ * found, deliberately — see PLAN_39 for why the first port is the one that
+ * matters.
+ *
+ * @return array<string, array{target:string, published:string}> service name
+ *         => its first port. A service that publishes none has no entry.
+ */
+function staxx_first_ports(string $yaml): array {
+  $out = [];
+
+  $atServices    = false;   // have we reached the top-level services: block
+  $service       = null;    // the service whose ports: is being read
+  $serviceIndent = null;    // indent of a service's own key, e.g. 2
+
+  $inPorts     = false;     // inside THIS service's ports: sequence
+  $portsIndent = null;      // indent of the 'ports:' key itself
+  $itemIndent  = null;      // indent of the '- ' that opened the first item
+  $donePorts   = false;     // first item already read; ignore any more
+  $target = ''; $published = '';
+
+  // Saved whenever we are about to leave the ports block, however that
+  // happens — a sibling key, the next service, or the end of services: — so
+  // it only needs writing in one place.
+  $save = function () use (&$out, &$service, &$target, &$published) {
+    if ($service !== null && $target !== '') {
+      $out[$service] = ['target' => $target, 'published' => $published];
+    }
+  };
+
+  foreach (explode("\n", $yaml) as $raw) {
+    $line = rtrim($raw, "\r");
+    if (trim($line) === '' || preg_match('/^\s*#/', $line)) continue;
+
+    $indent = strlen($line) - strlen(ltrim($line, ' '));
+    $body   = ltrim($line, ' ');
+
+    if (!$atServices) {
+      if ($indent === 0 && $body === 'services:') $atServices = true;
+      continue;
+    }
+
+    if ($indent === 0) { $save(); break; }   // a sibling of services: — done
+
+    if ($serviceIndent === null) $serviceIndent = $indent;
+
+    if ($indent === $serviceIndent) {
+      $save();
+      $service     = rtrim($body, ':');
+      $inPorts     = false; $portsIndent = null; $itemIndent = null;
+      $donePorts   = false; $target = ''; $published = '';
+      continue;
+    }
+
+    if ($service === null) continue;
+
+    if ($indent === $serviceIndent + 2) {
+      // A direct property of the service — only 'ports:' matters here.
+      $save();
+      $inPorts     = ($body === 'ports:');
+      $portsIndent = $indent;
+      $itemIndent  = null; $donePorts = false;
+      $target = ''; $published = '';
+      continue;
+    }
+
+    if (!$inPorts || $indent <= $portsIndent || $donePorts) continue;
+
+    $isItem = strncmp($body, '- ', 2) === 0 || $body === '-';
+
+    if ($isItem) {
+      if ($itemIndent === null) {
+        $itemIndent = $indent;               // the first item — read it
+      } elseif ($indent === $itemIndent) {
+        $donePorts = true;                   // a second item — stop here
+        continue;
+      }
+      $body = ltrim(substr($body, 1));       // drop the leading '-'
+    }
+
+    if (preg_match('/^(target|published)\s*:\s*(.*)$/', $body, $m)) {
+      $value = trim($m[2]);
+      if (strlen($value) > 1 && ($value[0] === '"' || $value[0] === "'")) {
+        $value = substr($value, 1, -1);
+      }
+      if ($m[1] === 'target') $target = $value; else $published = $value;
+    }
+  }
+
+  $save();   // services: was the last thing in the file — nothing dedented to catch it
+
+  return $out;
+}
+
+/**
  * Everything this plugin needs to know from a compose file.
  *
  * One `docker compose config` per stack, which costs the same 60ms the old
@@ -859,7 +971,8 @@ function staxx_yaml_flatten(string $yaml): array {
  *
  * @return array{ok:bool, error:?string, x:array<string,string>,
  *                services:array<string,array{image:string, container_name:string,
- *                                            x:array<string,string>}>}
+ *                                            x:array<string,string>, fixedIp:string,
+ *                                            firstPort:array{target?:string,published?:string}}>}
  */
 function staxx_compose_meta(string $file, ?string &$error = null): array {
   static $cache = [];
@@ -903,7 +1016,8 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
     if ($parts[0] !== 'services' || count($parts) < 3) continue;
     $service = $parts[1];
     if (!isset($meta['services'][$service])) {
-      $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => []];
+      $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
+                                      'fixedIp' => '', 'firstPort' => []];
     }
 
     if ($parts[2] === 'image' && count($parts) === 3) {
@@ -915,7 +1029,23 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
       $meta['services'][$service]['container_name'] = $value;
     } elseif ($parts[2] === 'x-unraid' && count($parts) === 4) {
       $meta['services'][$service]['x'][$parts[3]] = $value;
+    } elseif ($parts[2] === 'networks' && count($parts) === 5 && $parts[4] === 'ipv4_address') {
+      // A service on more than one network with more than one fixed address
+      // is not a case worth ranking — the first one found wins.
+      if ($meta['services'][$service]['fixedIp'] === '') {
+        $meta['services'][$service]['fixedIp'] = $value;
+      }
     }
+  }
+
+  // A separate pass: ports live in a sequence, which the flattener above
+  // never sees at all (see staxx_first_ports()'s own comment for why).
+  foreach (staxx_first_ports($yaml) as $service => $port) {
+    if (!isset($meta['services'][$service])) {
+      $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
+                                      'fixedIp' => '', 'firstPort' => []];
+    }
+    $meta['services'][$service]['firstPort'] = $port;
   }
 
   $error = null;
@@ -1113,6 +1243,50 @@ function staxx_host_ip(): string {
     if ($value !== '') return $ip = $value;
   }
   return $ip = '';
+}
+
+/**
+ * The address that opens a service's own web page, or '' when there is none
+ * to open.
+ *
+ * `x-unraid.webui` supplies the scheme and any path — `https://`, a trailing
+ * `/admin` — but its `[PORT:nnn]` number cannot be trusted: checked against 64
+ * real templates it names the host port 10 times, the container port 15
+ * times, and neither 3 times. Template authors do not agree with each other,
+ * so the number inside the token is ignored outright (see PLAN_39) and StaXX
+ * always substitutes the service's own first published port instead.
+ *
+ * @param array  $service one entry of staxx_compose_meta()['services']
+ * @param string $hostIp  staxx_host_ip()
+ */
+function staxx_webui_url(array $service, string $hostIp): string {
+  $raw = trim((string)($service['x']['webui'] ?? ''));
+  if ($raw === '') return '';
+
+  $fixedIp = (string)($service['fixedIp'] ?? '');
+  $address = $fixedIp !== '' ? $fixedIp : $hostIp;
+
+  if (strpos($raw, '[IP]') !== false) {
+    if ($address === '') return '';
+    $raw = str_replace('[IP]', $address, $raw);
+  }
+
+  if (strpos($raw, '[PORT:') !== false) {
+    $firstPort = $service['firstPort'] ?? [];
+    // A service with its own fixed address publishes nothing to the host —
+    // Docker ignores the host half of the mapping entirely for it — so the
+    // container port is the only one that can ever answer there.
+    $port = $fixedIp !== ''
+      ? (string)($firstPort['target'] ?? '')
+      : (string)($firstPort['published'] ?? '');
+    if ($port === '') return '';
+    $raw = preg_replace('/\[PORT:[^\]]*\]/', $port, $raw);
+  }
+
+  // Whatever came out has to actually be a web address. Without this check a
+  // webui typed by hand — or one left with a stray token nothing replaced —
+  // could turn a row button into something other than a link.
+  return preg_match('/^https?:\/\//i', $raw) ? $raw : '';
 }
 
 /**

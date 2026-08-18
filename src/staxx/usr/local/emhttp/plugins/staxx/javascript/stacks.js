@@ -2229,7 +2229,11 @@
              esc(info.description) + '</p>';
   }
 
-  function fieldHtml(f, index) {
+  // firstPort is true only for the first port row of a service, in file
+  // order — set by the one caller that knows a row's position within its
+  // group (renderForm). It draws the badge marking the port PLAN_39's web
+  // page button opens; every other row ignores the argument entirely.
+  function fieldHtml(f, index, firstPort) {
     var grp    = groupFor(f);
     var isContainer = grp === 'container';
     var declared = f.binder === 'declared';
@@ -2285,9 +2289,18 @@
                 ? '<span class="staxx-fieldtag staxx-fieldtag--lost">' +
                   'not found on this server</span>' : '';
 
+    // The whole line is outlined, not one box inside it, because the fact
+    // belongs to the mapping rather than to either half of it: this is the
+    // port the row's WebUI button opens (PLAN_39 — the first port wins).
+    var webPortRow = firstPort && f.binder === 'port';
+
     bits.push('<div class="staxx-fieldrow' + (f.locked ? ' staxx-fieldrow--locked' : '') +
               (f.sensitive ? ' staxx-fieldrow--secret' : '') +
+              (webPortRow ? ' staxx-fieldrow--webport' : '') +
               '" data-row="' + index + '" data-field-row="' + esc(f.id) + '"' +
+              (webPortRow ? ' title="' +
+                esc('The WebUI button on this container’s row opens this port. ' +
+                    'Put a different port first to change which one.') + '"' : '') +
               ' data-from="' + (f.range ? f.range.start : -1) + '"' +
               ' data-to="'   + (f.range ? f.range.end   : -1) + '"' +
               ' tabindex="0">');
@@ -2345,6 +2358,9 @@
       }
       bits.push(noteBoxHtml(f, index));
     } else if (mapped) {
+      // The rule the web page button follows (PLAN_39): the first port in
+      // the file is the one it opens. Said here, on that row's own host box,
+      // rather than left as a fact nobody but the button knows.
       // Only a volume gets the folder picker. A port is a number, so browsing
       // for one would be a button that never finds what you came for.
       bits.push(boxHtml(f, index, 'host',
@@ -2380,6 +2396,14 @@
         bits.push(extra || '<span class="staxx-boxgap" aria-hidden="true"></span>');
       }
       bits.push(noteBoxHtml(f, index));
+
+      // Named as well as outlined. The outline alone says "this one is
+      // different" without saying how, and this row is the answer to a
+      // question — which port does the WebUI button open — that nobody can
+      // guess from a colour.
+      if (firstPort && f.binder === 'port') {
+        bits.push('<span class="staxx-webchip">WebUI</span>');
+      }
 
       devMore = longExtrasDevMoreHtml(f, index);
     } else if (named) {
@@ -2724,7 +2748,9 @@
           out.push('<div class="staxx-formgroup ' + grp.cls + '" data-group="' + grp.key + '">');
           out.push(groupHeadHtml(grp, svc.name, grp.key === 'container' ? flags : null));
           if (rows.length) out.push(captionRow(grp));
-          for (var r = 0; r < rows.length; r++) out.push(fieldHtml(form.fields[rows[r]], rows[r]));
+          for (var r = 0; r < rows.length; r++) {
+            out.push(fieldHtml(form.fields[rows[r]], rows[r], grp.key === 'port' && r === 0));
+          }
           out.push('</div>');
         }
       }
@@ -10909,6 +10935,17 @@
 
     if (el.dataset.toggleFolder) { toggleFolder(el.dataset.toggleFolder, el); return; }
     if (el.dataset.toggleStack)  { toggleStack(el.dataset.toggleStack, el);  return; }
+    // Same call shape as the stack menu's and the container menu's own Logs
+    // item (buildStackMenu/buildContainerMenu above) — undefined service
+    // scopes it to the whole stack, exactly as those two call sites rely on.
+    // The stack name is in data-logs itself, the way data-toggle-stack above
+    // carries its own subject — the button has no separate data-stack, and
+    // reading one gave every click an empty stack name and "no compose file
+    // found in this stack".
+    if (el.dataset.logs) {
+      run(el.dataset.logs, 'logs', afterRun('logs'), el.dataset.service);
+      return;
+    }
     if (el.dataset.menu) {
       event.stopPropagation();
       var ownerKey = menuOwnerKey(el);

@@ -240,15 +240,22 @@ there is no display-name override. `display: advanced` is accepted and stored, a
 fold a sidecar such as a database away behind a toggle — but nothing acts on it yet, so setting it
 today changes nothing you can see.
 
-`webui` uses Unraid's existing substitution convention, so it behaves the way users already expect:
+`webui` uses Unraid's existing substitution convention for the scheme and the address:
 
-| Token        | Replaced with                                                   |
-|--------------|-----------------------------------------------------------------|
-| `[IP]`       | The server's address                                             |
-| `[PORT:8096]`| The **host** port currently mapped to container port 8096        |
+| Token        | Replaced with                                                        |
+|--------------|-----------------------------------------------------------------------|
+| `[IP]`       | The server's address, or a service's own fixed address when it has one |
+| `[PORT:…]`   | The port StaXX opens — see below. The number written inside the token is not read. |
 
-Using `[PORT:…]` rather than a literal means the link keeps working after someone changes the host
-port in the form.
+The number inside `[PORT:8096]` was meant to be the **container** port, with the host port
+substituted in its place. Checked against 64 real templates, it agrees with that reading 15 times,
+means the **host** port instead 10 times, and matches neither 3 times — template authors do not
+agree with each other, and the disagreement is silent: a link to the wrong port on a page that looks
+fine. So **StaXX ignores the number and opens the first port in the service's `ports:` list
+instead** — a rule that is always true and visible in the file itself, rather than a token that is
+only right four times out of five. `webui` still supplies the scheme and any path, `https://` or a
+trailing `/admin`; StaXX fills in only the address and the port. A `webui` with no tokens at all is
+honoured verbatim.
 
 ---
 

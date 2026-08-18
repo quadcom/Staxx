@@ -774,6 +774,116 @@ ok('ipv4_address is an editable field on the network row',
 ok('mac_address is an editable field on the network row',
    !!rtRow && rtRow.parts.mac_address && rtRow.parts.mac_address.value === '02:42:ac:11:00:02');
 
+/* =========================================================================
+ * K. Import puts the web port first (PLAN_39)
+ *
+ * The web-page button always opens the FIRST port in a service's list, so
+ * import orders the port the template's own address named to the front —
+ * the one place the unreliable [PORT:nnn] token is still read, checked
+ * against the host port first, then the container port (see
+ * reorderPortsForWebUI()'s own comment for the measurement behind that
+ * order). A miss leaves the order alone and says so in a note, because a
+ * guess there would be worse than the honest default of "the first one".
+ * ========================================================================= */
+
+console.log('\nK. Import puts the web port first');
+
+// Two ports: host 9000/container 8080, then host 8081/container 80. The
+// address names 8081 — the HOST port of the second entry — which must move
+// to the front, carrying its own comment with it.
+var HOST_MATCH = {
+  Name: 'host-match-test', Repository: 'example/host-match-test', Network: 'bridge',
+  WebUI: 'http://[IP]:[PORT:8081]',
+  Config: [
+    { '@attributes': { Name: 'First port', Target: '8080', Default: '9000', Mode: 'tcp',
+        Description: 'First port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' },
+    { '@attributes': { Name: 'Second port', Target: '80', Default: '8081', Mode: 'tcp',
+        Description: 'Second port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var hostMatchY = CA.convert(HOST_MATCH).yaml;
+ok('a web address naming a later entry\'s HOST port moves that entry first',
+   hostMatchY.indexOf('"8081:80"') >= 0 && hostMatchY.indexOf('"8081:80"') < hostMatchY.indexOf('"9000:8080"'));
+ok('the moved entry keeps its own comment',
+   /"8081:80"\s+# Second port/.test(hostMatchY));
+ok('no reordering note is added when a match is found',
+   !CA.convert(HOST_MATCH).notes.some(function (w) { return /web address names port/.test(w); }));
+
+// Same two ports; the address instead names 80 — the CONTAINER port of the
+// second entry — which must also move to the front.
+var CONTAINER_MATCH = {
+  Name: 'container-match-test', Repository: 'example/container-match-test', Network: 'bridge',
+  WebUI: 'http://[IP]:[PORT:80]',
+  Config: [
+    { '@attributes': { Name: 'First port', Target: '8080', Default: '9000', Mode: 'tcp',
+        Description: 'First port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' },
+    { '@attributes': { Name: 'Second port', Target: '80', Default: '8081', Mode: 'tcp',
+        Description: 'Second port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var containerMatchY = CA.convert(CONTAINER_MATCH).yaml;
+ok('a web address naming a later entry\'s CONTAINER port moves that entry first',
+   containerMatchY.indexOf('"8081:80"') >= 0 && containerMatchY.indexOf('"8081:80"') < containerMatchY.indexOf('"9000:8080"'));
+
+// Same shape again; the address names a port neither entry declares. Order
+// stays as written, and a note names the port and explains the fallback.
+var NO_MATCH = {
+  Name: 'no-match-test', Repository: 'example/no-match-test', Network: 'bridge',
+  WebUI: 'http://[IP]:[PORT:1234]',
+  Config: [
+    { '@attributes': { Name: 'First port', Target: '8080', Default: '9000', Mode: 'tcp',
+        Description: 'First port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' },
+    { '@attributes': { Name: 'Second port', Target: '80', Default: '8081', Mode: 'tcp',
+        Description: 'Second port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var noMatchR = CA.convert(NO_MATCH);
+ok('a web address matching neither port leaves the order unchanged',
+   noMatchR.yaml.indexOf('"9000:8080"') >= 0 && noMatchR.yaml.indexOf('"9000:8080"') < noMatchR.yaml.indexOf('"8081:80"'));
+ok('...and a note names the port that could not be matched',
+   noMatchR.notes.some(function (w) { return /web address names port 1234/.test(w); }));
+
+// A single port: nothing to reorder, so no note either way, even though the
+// address names a port that entry does not have.
+var SINGLE_PORT_MISMATCH = {
+  Name: 'single-port-mismatch-test', Repository: 'example/single-port-mismatch-test', Network: 'bridge',
+  WebUI: 'http://[IP]:[PORT:9999]',
+  Config: [
+    { '@attributes': { Name: 'Only port', Target: '8080', Default: '9000', Mode: 'tcp',
+        Description: 'Only port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var singlePortR = CA.convert(SINGLE_PORT_MISMATCH);
+ok('a single port is left alone with no note and no crash',
+   singlePortR.yaml.indexOf('"9000:8080"') >= 0 &&
+   !singlePortR.notes.some(function (w) { return /web address names port/.test(w); }));
+
+// Two ports, no WebUI at all: nothing to key the reorder on, order untouched.
+var NO_WEBUI = {
+  Name: 'no-webui-test', Repository: 'example/no-webui-test', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'First port', Target: '8080', Default: '9000', Mode: 'tcp',
+        Description: 'First port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' },
+    { '@attributes': { Name: 'Second port', Target: '80', Default: '8081', Mode: 'tcp',
+        Description: 'Second port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var noWebuiR = CA.convert(NO_WEBUI);
+ok('no webui at all leaves the order unchanged',
+   noWebuiR.yaml.indexOf('"9000:8080"') >= 0 && noWebuiR.yaml.indexOf('"9000:8080"') < noWebuiR.yaml.indexOf('"8081:80"'));
+ok('...and adds no note', !noWebuiR.notes.some(function (w) { return /web address names port/.test(w); }));
+
+// The reordered output still round-trips through compose-model.js unsealed —
+// same pattern as section A and J-8, proving the reorder produced an
+// ordinary list a hand-written file could equally contain.
+var kDoc = Y.parse(hostMatchY);
+var kBack = Y.serialise(kDoc);
+ok('the reordered output round-trips byte for byte', kBack === hostMatchY,
+   kBack !== hostMatchY ? 'first mismatch near: ' + JSON.stringify(kBack.slice(0, 200)) : null);
+ok('nothing is sealed in the reordered output', kDoc.sealed.length === 0, JSON.stringify(kDoc.sealed));
+var kForm = Y.buildForm(kDoc);
+ok('buildForm().ok is true for the reordered output', kForm.ok === true);
+
 /* ---- summary ------------------------------------------------------------ */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

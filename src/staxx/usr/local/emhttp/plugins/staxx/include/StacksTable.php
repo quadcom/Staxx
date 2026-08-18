@@ -213,6 +213,64 @@ function staxx_container_pill(array $c): string {
 }
 
 /**
+ * The web page and logs buttons drawn under a row's icon.
+ *
+ * One renderer for both row types: a stack row and a container row need the
+ * same two buttons pointed at different targets, and writing the markup twice
+ * would be two copies to keep in sync rather than one. Hidden entirely by the
+ * caller for a stack awaiting review, alongside the run verbs.
+ *
+ * @param string $stack   the stack's name — data-stack on both buttons
+ * @param string $service the service name, or '' on the stack row (whose logs
+ *                         button means "every service")
+ * @param string $url     staxx_webui_url() for the one service this button
+ *                         speaks for, or '' when there is none
+ * @param bool   $running whether that service's own container is running
+ * @param string $offWhy  why the web button is off when $url is ''; ignored
+ *                         when $url is set (then it is always "not running")
+ */
+function staxx_row_actions_html(string $stack, string $service, string $url, bool $running, string $offWhy): string {
+  $label = _('Open web page');
+
+  // Checked here as well as in staxx_webui_url(), which is the only caller
+  // that has any business producing one — because this is the function that
+  // writes an href, and the value behind it comes out of a file the user can
+  // type anything into. Escaping is not enough on its own: a `javascript:`
+  // URL contains nothing that needs escaping and would still run on click.
+  // The one place that emits the attribute is the right place to be sure.
+  if (!preg_match('~^https?://~i', $url)) $url = '';
+
+  // Named in words rather than by an icon, and the pair sized to match each
+  // other by the stylesheet's grid — an external-link glyph and a document
+  // glyph are not something anybody reads at 11px under a container tile.
+  $webText  = _('WebUI');
+  $logsWord = _('Logs');
+
+  if ($url !== '' && $running) {
+    $web = '<a class="staxx-webbtn" href="'.htmlspecialchars($url).'"'
+         . ' target="_blank" rel="noopener" title="'.htmlspecialchars($label).'">'
+         . htmlspecialchars($webText).'</a>';
+  } else {
+    // $url set but not running says one thing; no $url at all (or, on the
+    // stack row, more than one candidate) says another — the caller knows
+    // which applies here.
+    $why = $url !== '' ? _('Start the container to open its web page.') : $offWhy;
+    $web = '<span class="staxx-webbtn staxx-webbtn--off" title="'.htmlspecialchars($why).'">'
+         . htmlspecialchars($webText).'</span>';
+  }
+
+  $svcAttr  = $service !== '' ? ' data-service="'.htmlspecialchars($service).'"' : '';
+  $logsText = _('View logs');
+  // Never disabled — logs are worth reading precisely when something is not
+  // running, which is the one moment a disabled button would hide them.
+  $logs = '<button type="button" class="staxx-logsbtn" data-logs="'.htmlspecialchars($stack).'"'.$svcAttr
+        . ' title="'.htmlspecialchars($logsText).'">'
+        . htmlspecialchars($logsWord).'</button>';
+
+  return '<span class="staxx-rowactions">'.$web.$logs.'</span>';
+}
+
+/**
  * The containers to list underneath a stack, one row each.
  *
  * Two sources have to be reconciled, and neither alone is enough. The compose
@@ -224,8 +282,8 @@ function staxx_container_pill(array $c): string {
  * anything docker knows about is then merged onto it.
  *
  * @return array<int, array{key:string, service:string, name:string, id:string,
- *                          image:string, icon:string, state:string, status:string,
- *                          exists:bool}>
+ *                          image:string, icon:string, webui:string, state:string,
+ *                          status:string, exists:bool}>
  */
 function staxx_stack_children(array $s): array {
   $containers = staxx_stack_containers($s);
@@ -236,12 +294,17 @@ function staxx_stack_children(array $s): array {
   $declared = $s['file'] !== '' ? staxx_compose_meta($s['file'])['services'] : [];
 
   $rows = [];
+  $hostIp = staxx_host_ip();
 
   foreach ($s['services'] as $service) {
     $rows[$service] = [
       'key' => $service, 'service' => $service, 'name' => '', 'id' => '',
       'image' => (string)($declared[$service]['image'] ?? ''),
       'icon'  => (string)($declared[$service]['x']['icon'] ?? ''),
+      // Read here rather than only where it is drawn, so a service that has
+      // never run still has one — declared[$service] is the compose file's
+      // own view, nothing docker knows.
+      'webui' => staxx_webui_url($declared[$service] ?? [], $hostIp),
       'state' => '', 'status' => '', 'exists' => false,
     ];
   }
@@ -264,6 +327,7 @@ function staxx_stack_children(array $s): array {
       // file edited since the container was created says something else.
       'image'   => $c['image'] !== '' ? $c['image'] : (string)($declared[$service]['image'] ?? ''),
       'icon'    => (string)($declared[$service]['x']['icon'] ?? ''),
+      'webui'   => staxx_webui_url($declared[$service] ?? [], $hostIp),
       'state'   => $c['state'],
       'status'  => $c['status'],
       'exists'  => true,
@@ -525,6 +589,21 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 
       $kids = $s['parses'] ? staxx_stack_children($s) : [];
 
+      // The stack row's own web-page button: only meaningful when exactly one
+      // container has one to offer. Picking between several would be a guess,
+      // so more than one collapses to the same disabled shape as none at all,
+      // with a title that says why.
+      $webKids    = array_filter($kids, fn($k) => $k['webui'] !== '');
+      $webKid     = count($webKids) === 1 ? reset($webKids) : null;
+      $webUrl     = $webKid['webui'] ?? '';
+      $webRunning = ($webKid['state'] ?? '') === 'running';
+      // Only read when $webUrl is '' (see staxx_row_actions_html()), so this
+      // is the one message worth getting right for the two ways there can be
+      // nothing to open: none at all, or too many to guess between.
+      $webOffWhy  = count($webKids) > 1
+        ? _('More than one container here has its own web page — open one from the container row below.')
+        : _('This stack has no web page to open.');
+
       // A stack with one service has nothing to break down: the row already
       // names it and gives its state, and a chevron that reveals a single line
       // repeating what is above it is a click that buys nothing. Only stacks
@@ -613,6 +692,17 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                 <span class="staxx-spinner"><i class="fa fa-refresh fa-spin"></i></span>
                 <? if ($canRun && $s['parses']): ?>
                   <span class="staxx-dot<?= $s['running'] ? ' staxx-dot--up' : '' ?>"></span>
+                <? endif; ?>
+                <?
+                  // Not on a stack that breaks out into container rows: every
+                  // one of those has its own pair a few pixels below, and a
+                  // parent's would either duplicate a child's or have to pick
+                  // between them. A stack with a single service renders no
+                  // child row at all ($expandable above), so it IS the
+                  // container row and keeps them.
+                ?>
+                <? if (!$s['review'] && !$expandable): ?>
+                  <?= staxx_row_actions_html($s['name'], '', $webUrl, $webRunning, $webOffWhy) ?>
                 <? endif; ?>
               </span>
 
@@ -780,6 +870,10 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                      later is a dot that does not appear. -->
                 <? if ($canRun): ?>
                   <span class="staxx-dot<?= $kid['state'] === 'running' ? ' staxx-dot--up' : '' ?>"></span>
+                <? endif; ?>
+                <? if (!$s['review']): ?>
+                  <?= staxx_row_actions_html($s['name'], $kid['service'], $kid['webui'],
+                        $kid['state'] === 'running', _('This container has no web page to open.')) ?>
                 <? endif; ?>
               </span>
 
