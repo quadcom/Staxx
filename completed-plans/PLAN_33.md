@@ -1,6 +1,14 @@
 # PLAN_33 — the app is called StaXX
 
-**Status: APPROVED (standing instruction, 2026-08-18). Build it.**
+**Status: COMPLETE 2026-08-18.** Built, deployed, confirmed in the browser and committed as
+`9b417da` on `settings-panel`. 4,212 replacements across 76 files; every test suite passes; the
+installed copy migrated with all fifteen test stacks intact and no PHP or console error.
+
+Two notes from the build, for anyone replaying this:
+- The lower-case "stack manager" review step in phase 2 turned out to be unnecessary — see phase 2.
+- The Docker sub-tab URL was corrected to `/Docker/staxx` from the rule PageBuilder demonstrably
+  follows, but **not tested in the browser**, because reaching that branch means switching Adrian's
+  own header-menu setting off. Still outstanding.
 
 ## What you would notice
 
