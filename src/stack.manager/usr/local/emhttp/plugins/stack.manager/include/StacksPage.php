@@ -657,7 +657,7 @@ endif;
     <div class="stackman-ca-head">
       <h3 class="stackman-ca-title" id="stackman-ca-title"><?= _('Add an app') ?></h3>
       <p class="stackman-ca-hint">
-        <?= _('A Community Applications app arrives with its ports, paths and settings already filled in. A Docker Hub image, or one already on this server, arrives as just the image. Either way it opens in the editor for you to look over before anything is saved.') ?>
+        <?= _('A Community Applications app arrives with its ports, paths and settings already filled in. A Docker Hub image, or one already on this server, arrives with whatever its own documentation describes — and with just the image when there is nothing to read. Either way it opens in the editor for you to look over before anything is saved.') ?>
       </p>
     </div>
 
