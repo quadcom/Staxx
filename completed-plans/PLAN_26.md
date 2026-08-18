@@ -1,5 +1,9 @@
 # PLAN_26 — Give the Apps dialog a front page
 
+**Status: COMPLETE, 2026-08-17.** Built and deployed to the test box; every part of it is in the
+tree. This line was added retrospectively — the plan was filed as complete without one, which is
+why it read as unfinished.
+
 ## Context
 
 The Apps dialog opens straight into a flat A-Z list of the whole catalogue. That is a fine answer

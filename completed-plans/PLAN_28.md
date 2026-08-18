@@ -1,5 +1,9 @@
 # PLAN_28 — Page the Apps homepage instead of growing it
 
+**Status: COMPLETE, 2026-08-17.** Built and deployed to the test box; every part of it is in the
+tree. This line was added retrospectively — the plan was filed as complete without one, which is
+why it read as unfinished.
+
 ## Context
 
 "Show more" on the Apps homepage adds eight cards to a section and re-renders the whole homepage to

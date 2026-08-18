@@ -1,6 +1,11 @@
 # PLAN_19 — Say when a value is not one of the ones that field accepts
 
-**Status: outstanding.** Nothing here is in the tree. Found while reviewing `PLAN_17.md`'s Community
+**Status: SUPERSEDED, 2026-08-16, by `PLAN_20.md`** — which says so itself, and answered the
+same question a better way: ask compose while you type, rather than checking four fields against
+our own vocabulary lists. Nothing here was built as written. Kept for the reasoning about not
+becoming stricter than Docker, which still holds.
+
+**Status when written: outstanding.** Nothing here is in the tree. Found while reviewing `PLAN_17.md`'s Community
 Applications import, but it is **not a CA problem** — it applies to every compose file, including one
 typed by hand, and it has been there since the form was built.
 
