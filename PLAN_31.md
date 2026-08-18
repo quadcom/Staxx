@@ -1,9 +1,27 @@
 # PLAN_31 — what an image can say about itself (approved 2026-08-17, finishing PLAN_24)
 
-**Status: BUILT AND DEPLOYED 2026-08-17. Every step is done; the browser pass is the one thing
-outstanding**, because there is no browser on the dev machine. Everything reachable without one has
-been verified against the live test box, including the endpoint over real HTTP with a real session.
-Not committed.
+**Status: COMPLETE 2026-08-18. Built, deployed, committed and confirmed in the browser.** Commits
+`10c9a59` and `f729c7a` on `editor-and-field-help`, pushed.
+
+**The browser pass was done with Claude for Chrome**, driving Adrian's own browser against the box —
+which works, and is worth knowing for every future plan that ends "needs a look in the browser".
+Confirmed on screen: no JavaScript error anywhere; all four scripts load in order with their
+cache-busting; a file opening `---` and closing `...` renders as a full editable form; all three
+formerly-invisible entries in `15-long-forms-broken` show as locked rows each naming what it is
+missing; **the whole import flow** — `linuxserver/duplicati` from Docker Hub arriving with its ports,
+paths and variables, 99/100 in place of 1000/1000, the timezone set, three placeholder paths under
+appdata, `x-unraid` with its overview and readme, and the route-aware banner listing both what needs
+attention and what was filled in; and the new setting on the Settings page with its full prose.
+
+**The empty-secret warning fired on real documentation** — duplicati's own example leaves
+`SETTINGS_ENCRYPTION_KEY` blank and unmarked, and without it the container will not start.
+
+Still not checked, both because they change Adrian's own settings: **the two Unraid themes**, and the
+lookup **switched off** (already proven server-side — it answers `{"off":true}` in 0.000 s and
+fetches nothing).
+
+Nothing was written to the server during the pass and nothing was started: the editor opens with
+unsaved content, so the whole flow is visible before anything reaches disk.
 
 Counts: **1129** round-trip assertions, **61** image-import, **162** converter, schema and lint
 clean, `php -l` clean over all ten `include/*.php`.
