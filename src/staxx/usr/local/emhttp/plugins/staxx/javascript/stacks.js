@@ -3872,18 +3872,15 @@
     if (grip) grip.focus();
   }
 
-  // Clears any drop-position line a dragover left behind — called before
-  // drawing a fresh one, and again once a drag ends however it ends.
-  function clearDropMark(grp) {
-    var marked = grp.querySelectorAll('.staxx-dropline--before, .staxx-dropline--after');
-    for (var i = 0; i < marked.length; i++) {
-      marked[i].classList.remove('staxx-dropline--before', 'staxx-dropline--after');
-    }
-  }
-
   // The row a port grip is dragging, from pointerdown until the drag ends —
   // one variable is enough, since only one row can ever be mid-drag.
   var draggingPortRow = null;
+  // The placeholder that holds the gap open while draggingPortRow is hidden,
+  // and that row's index among all rows at the moment the drag started. The
+  // row itself is only ever hidden, never moved in the DOM, so that index is
+  // exactly what 'from' means at drop time.
+  var portSlot = null;
+  var draggingPortFrom = -1;
 
   formHost.addEventListener('pointerdown', function (event) {
     var grip = event.target.closest('[data-port-grip]');
@@ -3905,8 +3902,9 @@
   function endPortDrag() {
     if (!draggingPortRow) return;
     draggingPortRow.draggable = false;
-    var grp = draggingPortRow.closest('.staxx-formgroup--ports');
-    if (grp) clearDropMark(grp);
+    draggingPortRow.classList.remove('staxx-portdrag');
+    if (portSlot && portSlot.parentNode) portSlot.parentNode.removeChild(portSlot);
+    portSlot = null;
     draggingPortRow = null;
   }
   formHost.addEventListener('pointerup', endPortDrag);
@@ -3917,49 +3915,81 @@
     event.dataTransfer.effectAllowed = 'move';
     // Firefox refuses to start a drag that carries no data at all.
     event.dataTransfer.setData('text/plain', '');
+
+    var row  = draggingPortRow;
+    var grp  = row.closest('.staxx-formgroup--ports');
+    var rows = grp ? Array.prototype.slice.call(grp.querySelectorAll(':scope > .staxx-fieldrow')) : [];
+    draggingPortFrom = rows.indexOf(row);
+    var rowHeight = row.offsetHeight;   // measured now, while the row is still laid out
+
+    // Deferred by one tick: Chrome snapshots the drag image asynchronously,
+    // so hiding the row synchronously here — inside dragstart itself — blanks
+    // or cancels that snapshot instead of leaving it to finish first.
+    setTimeout(function () {
+      if (draggingPortRow !== row) return;   // drag already over — a click with no drag
+      portSlot = document.createElement('div');
+      portSlot.className = 'staxx-portslot';
+      portSlot.style.height = rowHeight + 'px';
+      row.parentNode.insertBefore(portSlot, row);
+      row.classList.add('staxx-portdrag');
+    }, 0);
   });
 
-  // Draws a drop line rather than reordering rows live under the pointer — a
-  // real edit only happens on drop, and moving rows about beforehand would
-  // tell the user something has happened when it has not.
+  // Every position inside the group accepts the drop unconditionally — that
+  // is the whole flicker fix, since there is no longer a dead zone the
+  // browser can read as "cannot drop" and flip the cursor over. The target
+  // position comes from comparing the pointer to each row's midpoint, not
+  // from whatever element happens to be under it.
   formHost.addEventListener('dragover', function (event) {
-    if (!draggingPortRow) return;
+    if (!draggingPortRow || !portSlot) return;
     var grp = draggingPortRow.closest('.staxx-formgroup--ports');
-    var row = event.target.closest('.staxx-fieldrow');
-    if (!grp || !row || !grp.contains(row)) return;
-    event.preventDefault();   // only a prevented dragover lets 'drop' fire
+    if (!grp) return;
+    var rect = grp.getBoundingClientRect();
+    if (event.clientY < rect.top || event.clientY > rect.bottom ||
+        event.clientX < rect.left || event.clientX > rect.right) {
+      // Outside the group: refuse the drop and send the placeholder home.
+      // The row itself never moved, only hid — "home" is just beside it.
+      if (portSlot.nextSibling !== draggingPortRow) {
+        draggingPortRow.parentNode.insertBefore(portSlot, draggingPortRow);
+      }
+      return;
+    }
+    event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
-    clearDropMark(grp);
-    if (row === draggingPortRow) return;   // no line drawn against dropping on itself
-    var before = (event.clientY - row.getBoundingClientRect().top) < row.offsetHeight / 2;
-    row.classList.add(before ? 'staxx-dropline--before' : 'staxx-dropline--after');
+
+    var rows = Array.prototype.slice.call(grp.querySelectorAll(':scope > .staxx-fieldrow'))
+      .filter(function (r) { return r !== draggingPortRow; });
+    var target = null;
+    for (var i = 0; i < rows.length; i++) {
+      var mid = rows[i].getBoundingClientRect().top + rows[i].offsetHeight / 2;
+      if (mid > event.clientY) { target = rows[i]; break; }
+    }
+    // The hidden row and the placeholder are the same height, so the group's
+    // total height never changes as the gap moves — that is what stops the
+    // classic gap-drag oscillation, where opening a gap shifts the row out
+    // from under the pointer and the decision flips back and forth.
+    if (portSlot.nextSibling !== target) grp.insertBefore(portSlot, target);
   });
 
   formHost.addEventListener('drop', function (event) {
-    if (!draggingPortRow) return;
+    if (!draggingPortRow || !portSlot) return;
     event.preventDefault();
-    var fromRow    = draggingPortRow;
-    var grp        = fromRow.closest('.staxx-formgroup--ports');
-    var svcSection = fromRow.closest('.staxx-svc');
-    var overRow    = event.target.closest('.staxx-fieldrow');
-    // Measured from THIS event, not read back off the drop line the last
-    // dragover drew. The line is for the eye; it can easily be absent or
-    // stale — a drag that crosses a row in one jump fires no dragover over
-    // it at all, and the fallback then read as "insert before", which for a
-    // downward move collapses to putting the row back where it started.
-    // Seen doing exactly that, so the drop measures for itself.
-    var before     = true;
-    if (overRow) {
-      var box = overRow.getBoundingClientRect();
-      before = (event.clientY - box.top) < box.height / 2;
+    var svcSection = draggingPortRow.closest('.staxx-svc');
+    var grp        = draggingPortRow.closest('.staxx-formgroup--ports');
+    var from       = draggingPortFrom;
+    // 'to' is the number of still-visible rows before the placeholder — the
+    // final position the moved entry lands at, which is exactly what
+    // YAML.moveItem means by 'to'.
+    var to = 0;
+    if (grp) {
+      var kids = grp.children;
+      for (var i = 0; i < kids.length; i++) {
+        if (kids[i] === portSlot) break;
+        if (kids[i] !== draggingPortRow && kids[i].classList.contains('staxx-fieldrow')) to++;
+      }
     }
-    endPortDrag();   // clears the line and resets draggable either way
-    if (!grp || !svcSection || !overRow || !grp.contains(overRow) || overRow === fromRow) return;
-    var rows = Array.prototype.slice.call(grp.querySelectorAll(':scope > .staxx-fieldrow'));
-    var from = rows.indexOf(fromRow), at = rows.indexOf(overRow);
-    if (from < 0 || at < 0) return;
-    var to = before ? at : at + 1;
-    if (from < to) to -= 1;   // the removal above shifts everything after it left by one
+    endPortDrag();   // unhides the row and drops the placeholder either way
+    if (!svcSection || from < 0 || to === from) return;
     movePort(svcSection.dataset.service, from, to);
   });
 

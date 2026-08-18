@@ -2914,7 +2914,16 @@
    quiet until a row is actually being looked at. `grab`/`grabbing` name what
    the handle does even before dragging starts. */
 .staxx-scaffold .staxx-portgrip {
+  /* Fills the whole leading 2.4rem track rather than sitting centred in a
+     fixed padding box, so the entire left edge of a port row is grabbable —
+     not just a ~20px square inside it. */
+  width: 100%;
+  align-self: stretch;
+  min-height: 2rem;
   padding: 0.2rem 0.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   border-radius: 0.2rem;
   background: transparent;
@@ -2923,7 +2932,6 @@
   line-height: 1;
   opacity: 0;
   cursor: grab;
-  justify-self: center;
 }
 
 .staxx-fieldrow:hover .staxx-portgrip,
@@ -2943,18 +2951,26 @@
   cursor: grabbing;
 }
 
-/* The line shown between two port rows while one is dragged over them —
-   box-shadow rather than a border, so it draws without changing the row's
-   height or shifting the columns beneath it. Transitions on these, like every
-   other one under .staxx-scaffold, collapse to near-nothing under the
-   reduced-motion rule at the bottom of this file. */
-.staxx-dropline--before,
-.staxx-dropline--after {
-  transition: box-shadow 0.1s ease;
+/* The row being dragged, hidden rather than removed — removing it outright
+   would shift every row after it and defeat the placeholder held open in its
+   place (see .staxx-portslot below). */
+.staxx-scaffold .staxx-portdrag {
+  display: none;
 }
 
-.staxx-dropline--before { box-shadow: inset 0 0.2rem 0 0 var(--sm-accent); }
-.staxx-dropline--after  { box-shadow: inset 0 -0.2rem 0 0 var(--sm-accent); }
+/* The gap a port drag opens at the drop position. box-sizing: border-box so
+   its own border counts toward the inline height set in script, which is
+   measured off the dragged row's offsetHeight — the sheet sets border-box
+   nowhere globally, so content-box (the default) would make the slot taller
+   than the row it stands in for. Same bottom margin as .staxx-fieldrow so
+   the rest of the list does not shift as the gap moves. */
+.staxx-scaffold .staxx-portslot {
+  box-sizing: border-box;
+  margin: 0 0 0.2rem;
+  border: 0.15rem dashed var(--sm-accent);
+  border-radius: var(--sm-radius);
+  background: color-mix(in srgb, var(--sm-accent) 10%, transparent);
+}
 
 .staxx-scaffold .staxx-add:disabled,
 .staxx-scaffold .staxx-kill:disabled {
@@ -7041,10 +7057,17 @@
   /* The port grip rides the same top row as the ×, opposite corner — same
      reasoning as the × rule above: without an explicit row it would be
      placed after the label/box's unconditional 1/-1 span claims row 1 for
-     itself, which pushes the grip down instead of leaving it up top. */
+     itself, which pushes the grip down instead of leaving it up top. Here
+     the leading column is the mapped template's wide `1fr`, not the desktop
+     ports template's narrow 2.4rem track, so the full-width stretch that
+     makes the grip fill that track on desktop is cancelled back to a plain
+     icon-sized target — stretching it here would turn most of the row's top
+     edge into a drag handle. */
   .staxx-fieldrow > .staxx-portgrip {
     grid-row: 1;
     grid-column: 1;
+    width: auto;
+    align-self: center;
     justify-self: start;
   }
 
