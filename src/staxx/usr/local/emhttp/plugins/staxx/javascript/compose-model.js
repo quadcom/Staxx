@@ -728,7 +728,7 @@
   var DECL_LEAVES = {
     networks: { driver: 'Driver', internal: 'Internal only, no outside access',
                 external: 'Created outside this file', name: 'Real name in Docker',
-                attachable: 'Attachable' },
+                attachable: 'Attachable', ipam: 'IP address management' },
     volumes:  { driver: 'Driver', external: 'Created outside this file',
                 name: 'Real name in Docker' },
     secrets:  { file: 'File on the server', environment: 'From a variable',
@@ -1921,6 +1921,12 @@
     if (t.binder === 'list' && t.target === '') {
       return (KEYS[t.listKey] && KEYS[t.listKey].title) || humanise(t.listKey);
     }
+    // A network's own name is a proper noun, not a phrase — humanise() would
+    // split Unraid's VLAN names ("br0.2") into "Br0 2", which reads as a
+    // different network than the one the file names. This is the service
+    // row's own network entry, short form or long; the declaration row sets
+    // its title the same way, separately, in declaredFields().
+    if (t.binder === 'list' && t.listKey === 'networks') return t.target;
     // A nested leaf's target is dotted — 'healthcheck.interval' — so its
     // title lives in LEAVES rather than KEYS. A dotted target LEAVES does not
     // name (an uncovered child, e.g. deploy.mode) falls back to the heading
@@ -2159,7 +2165,11 @@
         fields.push({
           id: '/declared/' + rowTarget.target,
           service: '', binder: rowTarget.binder, target: rowTarget.target,
-          title: humanise(name), type: 'text', mode: rowTarget.mode,
+          // A network's name is a proper noun (see inferTitle's own copy of
+          // this reasoning for the service-row side of the same name) —
+          // Unraid's VLAN names all carry a dot, so humanising this one
+          // splits "br0.2" into "Br0 2" on every declaration row there is.
+          title: kind === 'networks' ? name : humanise(name), type: 'text', mode: rowTarget.mode,
           parts: rowTarget.parts, note: rowTarget.note,
           sensitive: rowTarget.secret, required: rowTarget.required,
           commentSpot: rowTarget.commentSpot, raw: rowTarget.raw, range: rowTarget.range,

@@ -83,6 +83,22 @@ Two things fall out. **`external: true` is the most-used network setting he has,
 form cannot create** — that is the highest-value fix in this whole plan. And **`network_mode` appears
 in none of his own files**, which supports removing it.
 
+### Considered and rejected: surfacing the address on the network row
+
+Seen in the browser on `14-long-forms`: the fixed address is editable today, but it sits inside a
+collapsed **more settings** toggle on a row that shows only a network name, so it reads as absent. The
+obvious response is to promote the address (and the hardware address) onto the row itself, since it is
+the most-wanted network setting there is.
+
+**Decided against, 2026-08-18.** Adrian's call, and the reasoning is the project's core goal: too many
+fields visible at once is overwhelming, and this form exists so someone who does not know compose can
+work without being intimidated. A fixed address is the most-wanted setting *among people who want one
+at all* — which is a minority of containers. Promoting it puts a box in front of everyone to serve
+some. It stays in **more settings**.
+
+Do not revisit this as a "quick win". The discoverability concern is real but the answer, if one is
+ever needed, is better wording on the toggle — not more boxes on the row.
+
 ### The answer to "are we too far into the weeds?"
 
 No, because the choice is not what a user *can* do — the Compose view is in the same dialog, one

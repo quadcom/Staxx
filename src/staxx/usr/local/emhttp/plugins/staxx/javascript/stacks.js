@@ -212,6 +212,7 @@
     'mac_address':             { label: 'fixed hardware address' },
     'priority':                { label: 'which network it prefers' },
     'gw_priority':             { label: 'which network it uses as its gateway' },
+    'interface_name':          { label: 'name of the network interface inside the container' },
 
     // secrets:/configs: written the long way.
     'target':                  { label: 'file name inside the container' },
@@ -248,6 +249,7 @@
     // `flag` gates whether the group shows at all (serviceFlags/the render
     // loop below) — every group in this table but Container and Advanced has
     // one now, driven by the SECTIONS table beside it.
+    { key: 'list:networks',  heading: 'Networks',            cls: 'staxx-formgroup--single', add: 'list:networks',  flag: 'list:networks' },
     { key: 'port',      heading: 'Ports',     cls: 'staxx-formgroup--mapped', add: 'port',   flag: 'port' },
     { key: 'volume',    heading: 'Volumes',   cls: 'staxx-formgroup--mapped', add: 'volume', flag: 'volume' },
     { key: 'env',       heading: 'Variables', cls: 'staxx-formgroup--pair',   add: 'env',    flag: 'env' },
@@ -267,7 +269,6 @@
     // compose key the file happened to use (see groupsForService's history).
     // SECTIONS now names all of them, so they are static rows here too —
     // shown or hidden by their own tick, same as everything else in this list.
-    { key: 'list:networks',  heading: 'Networks',            cls: 'staxx-formgroup--single', add: 'list:networks',  flag: 'list:networks' },
     { key: 'list:secrets',   heading: 'Secrets',             cls: 'staxx-formgroup--single', add: 'list:secrets',   flag: 'list:secrets' },
     { key: 'list:configs',   heading: 'Configs',             cls: 'staxx-formgroup--single', add: 'list:configs',   flag: 'list:configs' },
     { key: 'list:profiles',  heading: 'Profiles',            cls: 'staxx-formgroup--single', add: 'list:profiles',  flag: 'list:profiles' },
@@ -289,6 +290,7 @@
   // catch-all for anything with no better home, so hiding it could hide
   // something the file genuinely has.
   var SECTIONS = [
+    { key: 'list:networks', label: 'Networks',            path: ['networks'],            on: false },
     { key: 'port',          label: 'Ports',               path: ['ports'],               on: true },
     { key: 'volume',        label: 'Volumes',             path: ['volumes'],             on: true },
     { key: 'env',           label: 'Variables',           path: ['environment'],         on: true },
@@ -301,7 +303,6 @@
     // already has a build: key (serviceFlags/fileFlagCounts).
     { key: 'build',         label: 'Build',               path: ['build'],               on: false },
     { key: 'depends',       label: 'Depends on',          path: ['depends_on'],          on: false },
-    { key: 'list:networks', label: 'Networks',            path: ['networks'],            on: false },
     { key: 'list:secrets',  label: 'Secrets',             path: ['secrets'],             on: false },
     { key: 'list:configs',  label: 'Configs',             path: ['configs'],             on: false },
     { key: 'list:profiles', label: 'Profiles',            path: ['profiles'],            on: false },
@@ -1664,7 +1665,15 @@
     // addNested the same way regardless of absence, so it is never dead for
     // that reason either. Only a part with truly nowhere to write, or a
     // locked row, renders disabled.
-    var dead = (!p.spot && !f.absent && !f.path) || f.locked || f.blocked;
+    // A bare declaration ("backend:" with nothing after it) is neither
+    // absent (the line already exists) nor carrying a path (declarations
+    // aren't LEAVES), so it fell through both escape hatches above and read
+    // as dead with no lock reason to explain why. setPart's declaration
+    // branch already inserts the primary key under a name with nothing
+    // there yet, so the box is genuinely writable — only a locked or
+    // blocked declaration (an unreadable shape, or one still needing a fix
+    // elsewhere) should stay disabled.
+    var dead = (!p.spot && !f.absent && !f.path && f.binder !== 'declared') || f.locked || f.blocked;
     var t = TOOLS[tool];
     // The options say what the setting means, so the hint below the box says
     // what the setting is for instead of repeating "value".

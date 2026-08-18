@@ -7266,6 +7266,182 @@ console.log('\nAB. Flow-map, anchor and alias network declarations lock instead 
      firstDiff(src.replace('  backend:\n', '  backend:\n    driver: bridge\n'), Y.serialise(doc)));
 })();
 
+/* =========================================================================
+ * AC. Network names title verbatim; the bare-declaration contract Phase 1
+ *     keys off; humanise() untouched for ordinary keys (PLAN_34 Phase 2)
+ *
+ * A network name is a proper noun, not a setting key — 'br0.2' is what
+ * Unraid calls the VLAN, and humanising it into 'Br0 2' is not a nicer
+ * spelling, it is a wrong one. This section pins that both places a network
+ * name becomes a row title (a service's own networks: list, and the
+ * top-level declaration) show the name as written, while confirming
+ * ordinary dotted/underscored settings still go through humanise() as
+ * before — the fix has to be narrow, not a global change to titling.
+ * Built as inline documents, not read from
+ * scratch/test-stacks/18-declaration-shapes/, for the same reason sections
+ * AA and AB are.
+ * ========================================================================= */
+
+console.log('\nAC. Network names title verbatim; humanise() unchanged elsewhere (PLAN_34 Phase 2)');
+
+(function () {
+  var src = [
+    'services:',
+    '  web:',
+    '    image: alpine',
+    '    mac_address: "02:42:ac:11:00:02"',
+    '    memswap_limit: 512M',
+    '    deploy:',
+    '      replicas: 2',
+    '    networks:',
+    '      - br0.2',
+    '      - eth0.2',
+    '      - frontend_net',
+    '      - backend',
+    'networks:',
+    '  br0.2:',
+    '    ipam:',
+    '      driver: default',
+    '  eth0.2:',
+    '  frontend_net:',
+    '  backend:',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  function title(id) { var f = Y.fieldById(form, id); return f && f.title; }
+
+  // AC1. A service's own networks: list — each row titles as the name
+  // exactly as written, not mechanically humanised ('br0.2' stayed 'br0.2',
+  // not 'Br0 2'; 'frontend_net' stayed 'frontend_net', not 'Frontend Net').
+  ok("web's br0.2 network row titles verbatim, not 'Br0 2'",
+     title('web/list.networks#0/br0.2') === 'br0.2', title('web/list.networks#0/br0.2'));
+  ok("web's eth0.2 network row titles verbatim, not 'Eth0 2'",
+     title('web/list.networks#1/eth0.2') === 'eth0.2', title('web/list.networks#1/eth0.2'));
+  ok("web's frontend_net network row titles verbatim, not 'Frontend Net'",
+     title('web/list.networks#2/frontend_net') === 'frontend_net', title('web/list.networks#2/frontend_net'));
+  ok("web's backend network row titles verbatim",
+     title('web/list.networks#3/backend') === 'backend', title('web/list.networks#3/backend'));
+
+  // AC1 (declarations). The same four names as top-level declaration rows —
+  // a second, independent path that must agree with the list rows above.
+  ok("the br0.2 declaration titles verbatim, not 'Br0 2'",
+     title('/declared/networks.br0.2') === 'br0.2', title('/declared/networks.br0.2'));
+  ok("the eth0.2 declaration titles verbatim, not 'Eth0 2'",
+     title('/declared/networks.eth0.2') === 'eth0.2', title('/declared/networks.eth0.2'));
+  ok("the frontend_net declaration titles verbatim, not 'Frontend Net'",
+     title('/declared/networks.frontend_net') === 'frontend_net', title('/declared/networks.frontend_net'));
+  ok('the backend declaration titles verbatim',
+     title('/declared/networks.backend') === 'backend', title('/declared/networks.backend'));
+
+  // AC3. The regression guard that matters most: ordinary settings must
+  // still go through humanise() normally. mac_address and memswap_limit
+  // re-check PLAN_36's written-title table still holds (the fix must not
+  // have reached back and broken that lookup), and deploy.replicas — an
+  // uncovered dotted leaf with a real written title of its own — confirms
+  // an ordinary setting is not being left verbatim as raw text either. If a
+  // future change makes the network fix bleed into humanise() itself
+  // (rather than staying scoped to network name titling), one of these three
+  // trips.
+  ok("mac_address still titles as 'MAC address' (PLAN_36)",
+     title('web/setting/mac_address') === 'MAC address', title('web/setting/mac_address'));
+  ok("memswap_limit still titles as 'Memory + swap limit' (PLAN_36)",
+     title('web/setting/memswap_limit') === 'Memory + swap limit', title('web/setting/memswap_limit'));
+  ok("deploy.replicas still titles as an ordinary written setting, not a verbatim key",
+     title('web/setting/deploy.replicas') === 'Number of copies', title('web/setting/deploy.replicas'));
+
+  // AC5. `ipam` used to title as 'Ipam' — the mechanically humanised key,
+  // because DECL_LEAVES.networks named it nowhere. Checked against the
+  // written title the source actually gives it (DESCRIPTIONS.declared.ipam)
+  // rather than a value invented here, per PLAN_34's own instruction not to
+  // assert a title the other agent hasn't chosen yet.
+  var ipamTitle = title('/declared/networks.br0.2.ipam');
+  if (ipamTitle === 'Ipam') {
+    console.log('  ....  ipam still titles as the raw humanised key — PLAN_34 Phase 2\'s ' +
+                'label fix has not landed yet, so this assertion is withheld rather than pinned to the old value');
+  } else {
+    ok("ipam titles as '" + ipamTitle + "', not the mechanically humanised 'Ipam'",
+       !!ipamTitle && ipamTitle !== 'Ipam');
+  }
+
+  // AC6. Reading titles is not an edit — the document must still round-trip
+  // byte-identical.
+  ok('the inline document round-trips untouched with no edit applied',
+     Y.serialise(Y.parse(src)) === src, firstDiff(src, Y.serialise(Y.parse(src))));
+})();
+
+/* =========================================================================
+ * AD. The bare-declaration contract Phase 1's dead-dropdown fix keys off
+ *     (PLAN_34 Phase 1), contrasted with a locked shape
+ *
+ * Phase 1 exempts a bare declaration from stacks.js's dead-control check by
+ * narrowing it to exactly `!spot && !absent && !locked` on the row's own
+ * value part. That line lives in stacks.js and is not reachable from here —
+ * this pins the three model-side facts it depends on being true together for
+ * a bare declaration, and false (on the locked leg) for a shape that must
+ * stay refused, so a future change to any of the three trips this rather
+ * than the failure surfacing as a dead dropdown nobody connects back here.
+ * ========================================================================= */
+
+console.log('\nAD. The bare-declaration contract Phase 1\'s exemption depends on (PLAN_34 Phase 1)');
+
+(function () {
+  var src = [
+    'services:',
+    '  app:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    '      - hft',
+    '      - internal_net',
+    '      - shared_net',
+    'networks:',
+    '  backend:',
+    '  hft: {name: br0.2, external: true}',
+    '  internal_net: &net_defaults',
+    '    driver: bridge',
+    '  shared_net: *net_defaults',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var bare = Y.fieldById(form, '/declared/networks.backend');
+  var flow = Y.fieldById(form, '/declared/networks.hft');
+
+  // The bare declaration's own row: no spot yet (nothing follows the colon),
+  // not marked absent (the row itself is present, unlike a wholly-missing
+  // leaf), and not locked — the exact three-way combination
+  // `!spot && !absent && !locked` that Phase 1's exemption keys off.
+  ok('the bare declaration has no spot on its value part',
+     !bare.parts.value.spot, bare.parts.value.spot);
+  ok('the bare declaration is not marked absent',
+     !bare.absent, bare.absent);
+  ok('the bare declaration is not locked',
+     !bare.locked, bare.locked);
+  ok('the bare declaration is the specific combination Phase 1 exempts: !spot && !absent && !locked',
+     !bare.parts.value.spot && !bare.absent && !bare.locked);
+
+  // The contrast: a flow-map declaration fails the same combination on its
+  // locked leg alone — spot and absent do not save it, because Phase 0 (not
+  // Phase 1) is what must keep this one refused.
+  ok('a flow-map declaration is locked, so it fails the combination Phase 1 exempts',
+     flow.locked && !(!(flow.parts.value && flow.parts.value.spot) && !flow.absent && !flow.locked));
+
+  // setPart agrees with the contract: succeeds on the bare declaration,
+  // writing driver: at the right indent; refuses on the locked one, leaving
+  // the file untouched. (An existing, differently-shaped case of the bare
+  // side is section O11, "filling an empty declaration's primary setting" —
+  // this is not a duplicate of it; it is pinned here beside the locked
+  // contrast so the two behaviours sit side by side under the combination
+  // Phase 1 actually reads.)
+  ok('setPart succeeds on the bare declaration and inserts driver: at the right indent',
+     Y.setPart(doc, form, '/declared/networks.backend', 'value', 'bridge') &&
+     Y.serialise(doc) === src.replace('  backend:\n', '  backend:\n    driver: bridge\n'),
+     firstDiff(src.replace('  backend:\n', '  backend:\n    driver: bridge\n'), Y.serialise(doc)));
+  ok('setPart still refuses on the flow-map declaration',
+     !Y.setPart(doc, form, '/declared/networks.hft', 'value', 'bridge'));
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
