@@ -154,6 +154,63 @@ and break the project's first rule.
 
 ---
 
+## The switch-over, as Adrian described it
+
+Decided 2026-08-18. This **merges what were phases 3 and 5** — reviewing and taking over are one act,
+not two — and it is the whole user-facing shape of the importer.
+
+1. **Import writes the files and stops.** Compose file, lock file, nothing else. The existing
+   container goes on running, untouched, indefinitely. Phase 0 already guarantees this: a locked
+   stack refuses every action and shows no state of its own.
+2. **Acting on the lock opens a modal** explaining what is about to happen: that the Unraid template
+   is left exactly as it is, that it simply will not have a container any more, and that **the
+   container is rebuilt** rather than moved.
+3. **On accept**, the old container is taken out of the way and the StaXX stack is brought up under
+   the same name.
+4. **A second modal encourages testing it.**
+
+### Two changes to that sequence, both about what happens when it goes wrong
+
+**Rename the old container rather than deleting it outright.** Adrian's step 3 says shut down and
+delete, then start. If the start then fails — a bad path, a pulled image that will not run, a port
+already taken — the user has no container at all and must rebuild from the template to get back.
+Renaming it out of the way first costs nothing, frees the name just as well, and means a failed start
+can put the original back and restart it. The end state is identical. This is the sequence already
+designed further down; it is now on the main path rather than an optional extra.
+
+**Keep the renamed container until the user says it works.** The second modal is there to get the app
+tested — so make testing mean something: *working?* finishes and removes the old container;
+*not working?* puts it straight back. That turns "go and test it" from advice into a real way out,
+and it is the difference between an undo button and a rebuild.
+
+The cost is a stopped container hanging about until somebody answers. It is a few megabytes, the row
+says plainly that it is waiting to be confirmed, and it can be finished at any later time.
+
+### What the first modal has to say, plainly
+
+- What is being replaced, by name.
+- **The Unraid template is untouched.** It stays where it is, with every setting as configured, and
+  the old container can be rebuilt from it at any time — which is the same thing Unraid does whenever
+  an update is applied.
+- **The container is rebuilt, not moved.** Anything written inside the container rather than into a
+  mapped folder is lost. Appdata is untouched.
+- It will keep its name, so anything pointing at it by name goes on working.
+- Boot-start goes on working too, because Unraid's autostart list is keyed by container name and the
+  rebuilt container has the same one.
+- For a Compose Manager project this is **several containers**, named.
+
+### Consequences
+
+- **The guarded raw-docker job is needed here**, not at the end. Stopping, renaming and removing a
+  container that is not a service of this stack cannot go through the compose-verb allowlist — see
+  "It cannot be one more entry on the verb allowlist" below.
+- **Deleting the lock file by hand is still possible** and now skips the switch-over. It leaves a
+  stack whose container name is still taken, so `up` fails loudly with a name conflict rather than
+  doing damage. Acceptable, and worth a line in the lock file itself saying which button to use
+  instead.
+- **The lock file's wording changes**: it is no longer "check this over", it is "this is ready to
+  take over — here is what will happen".
+
 ## Source 1 — Unraid templates
 
 85 templates (not 86; the 86th is a `.bak`), 70 containers. The happy accident holds: a Community
@@ -449,9 +506,9 @@ Manager projects resolve through `indirect`, through a label, or not at all.
 **2. Unraid templates**, written in the background, arriving as needs-review. Normalisation first,
 then provenance, category splitting, the `.xml` filter and the malformed-path check.
 
-**3. The review screen**, including the collision check. Could merge with phase 0; kept separate
-because phase 0 is a safety property and this is a user interface, and the first should ship even if
-the second slips.
+**3. The switch-over** — the two modals, the guarded raw-docker job behind them, and the collision
+check that feeds the first one. This is what was phases 3 and 5 in earlier drafts; Adrian's flow
+makes reviewing and taking over one act, so they are one phase.
 
 **4a. Compose Manager, projects with no override.**
 
@@ -459,10 +516,8 @@ the second slips.
 the metadata reader and the validator. Split this way so the missing capability is visible rather
 than discovered.
 
-**5. Adoption**, optional, as its own guarded job with the second job kind, saying plainly that
-boot-start does not come with it. Last because nothing depends on it: an import starts perfectly well
-without it. Its only unavoidable customer is the four Compose Manager projects that pin a container
-name.
+**5. — folded into phase 3.** Taking over used to be a separate, optional act. Under Adrian's flow it
+is the only way a stack ever unlocks, so it is not optional and not last.
 
 ---
 
