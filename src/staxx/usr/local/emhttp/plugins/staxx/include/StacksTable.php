@@ -513,7 +513,15 @@ function staxx_render_rows(array $rows, bool $canRun): string {
       // moment it starts. The browser corrects this from the server's answer
       // once it is running, which matters for any stack whose compose file
       // sets its own `name:`.
-      $project = $s['project'] !== '' ? $s['project'] : staxx_project_name($s['leaf']);
+      // …but never for a stack awaiting review. That fallback derives the name
+      // from the folder, which for an import is the name it was copied FROM,
+      // so the stats reply — which is keyed by project — would paint the live
+      // containers' processor, memory and network figures onto this row and
+      // make an unreviewed import look like it was already working. Blank is
+      // safe: the stats reply has no empty-project bucket (staxx_stats() skips
+      // a container that has no project), so the row simply shows dashes.
+      $project = $s['review'] ? ''
+               : ($s['project'] !== '' ? $s['project'] : staxx_project_name($s['leaf']));
 
       $kids = $s['parses'] ? staxx_stack_children($s) : [];
 
@@ -590,6 +598,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                         data-parses="<?= $s['parses'] ? '1' : '0' ?>"
                         data-hasfile="<?= $s['hasFile'] ? '1' : '0' ?>"
                         data-running="<?= $s['running'] ? '1' : '0' ?>"
+                        data-review="<?= $s['review'] ? '1' : '0' ?>"
                         data-folder="<?= htmlspecialchars($row['folder']) ?>"
                         title="<?= _('Stack actions') ?>">
                   <?= $s['parses']
@@ -613,6 +622,15 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                      (if it sits in one) is a different thing, carried by the
                      data attributes above rather than printed here. -->
                 <span class="staxx-name-text"><?= htmlspecialchars($s['leaf']) ?></span>
+                <? if ($s['review']): ?>
+                  <!-- Imported and not yet reviewed — see the "review lock"
+                       section of Stacks.php. Read-only marker; the menu item
+                       that clears it lives in the stack actions button above. -->
+                  <span class="staxx-reviewbadge"
+                        title="<?= htmlspecialchars(_('Imported and not yet reviewed. Open the stack and choose Mark as reviewed once checked.')) ?>">
+                    <?= _('needs review') ?>
+                  </span>
+                <? endif; ?>
                 <!-- The count is only worth printing for a stack that has more
                      than one container; for a single one the State column
                      already says everything this would. -->

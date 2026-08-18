@@ -9910,6 +9910,16 @@
     step({ name: name }, confirmStageOneHtml(name, label), 'Delete stack');
   }
 
+  // Unlocking is just deleting the lock file — the same companion-file
+  // delete action the editor already uses, so there is nothing new on the
+  // endpoint to guard or test.
+  function markReviewed(name, label) {
+    call('file-delete', { name: name, file: 'NEEDS-REVIEW.md' }).then(function (r) {
+      if (!r.ok) { failed('Could not mark ' + label + ' as reviewed', r.error); return; }
+      refreshRows();
+    });
+  }
+
   function afterRun(verb) {
     // Logs and config change nothing, so leave the table as it is.
     return function () {
@@ -10256,9 +10266,19 @@
     var parses  = d.parses === '1';
     var hasFile = d.hasfile === '1';
     var running = d.running === '1';
+    var review  = d.review === '1';
     var inFolder = d.folder || '';
 
-    if (parses) {
+    // An imported stack awaiting review has nothing runnable — its identity
+    // may belong to containers someone else already runs, so the run verbs
+    // are skipped outright rather than shown disabled, which would read as a
+    // fault instead of the deliberate refusal it is.
+    if (review) {
+      menuItem('Mark as reviewed', 'check', function () { markReviewed(name, label); });
+      menuSeparator();
+    }
+
+    if (parses && !review) {
       var why = CAN_RUN ? '' : 'Docker or compose unavailable';
       menuItem(running ? 'Restart' : 'Start', running ? 'refresh' : 'play',
                function () { run(name, running ? 'restart' : 'up', afterRun('up')); },

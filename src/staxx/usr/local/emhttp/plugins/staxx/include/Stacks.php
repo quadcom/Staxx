@@ -947,7 +947,7 @@ function staxx_service_names(string $file, ?string &$error = null): array {
  * @return array<int, array{name:string, leaf:string, dir:string, file:string,
  *                          filename:string, services:string[], x:array<string,string>,
  *                          project:string, status:string, running:bool, hasFile:bool,
- *                          parses:bool, error:?string}>
+ *                          parses:bool, error:?string, review:bool}>
  */
 function staxx_list_stacks(): array {
   $stacks = [];
@@ -955,7 +955,14 @@ function staxx_list_stacks(): array {
   foreach (staxx_scan_stacks()['stacks'] as $found) {
     $dir    = $found['dir'];
     $file   = staxx_find_compose_file($dir);
-    $state  = staxx_state_for($file, $found['leaf']);
+    // Locked stacks report no state — same reasoning, and the same one-line
+    // guard, as staxx_stack_states(); see its comment for why a green row on
+    // an unreviewed import is the hazard rather than a cosmetic problem.
+    // Both paths need it: this one draws the row, that one repaints it on
+    // every poll, so guarding only one leaves the row turning green seconds
+    // after it is drawn.
+    $locked = staxx_review_file($dir) !== '';
+    $state  = $locked ? null : staxx_state_for($file, $found['leaf']);
     $status = $state['status'] ?? '';
 
     $parseError = null;
@@ -987,6 +994,8 @@ function staxx_list_stacks(): array {
       'hasFile'  => $file !== '',
       'parses'   => $file !== '' && $parseError === null,
       'error'    => $parseError,
+      // Imported and not yet reviewed — see the "review lock" section below.
+      'review'   => $locked,
     ];
   }
 
@@ -1320,6 +1329,15 @@ function staxx_container_net(): array {
  * @param array $s one entry from staxx_list_stacks()
  */
 function staxx_stack_containers(array $s): array {
+  // A stack awaiting review owns nothing, by definition — it was imported and
+  // nobody has confirmed what it refers to. The project-name fallback below
+  // would otherwise hand it the LIVE containers of whatever it was copied
+  // from, and the row would then show their state, address, processor and
+  // memory as though the import were already working. Guarded here rather
+  // than at each of the three call sites so the full render and the cheap
+  // state refresh cannot disagree about it.
+  if (isset($s['name']) && staxx_review_locked((string)$s['name'])) return [];
+
   $index = staxx_container_index();
 
   if ($s['file'] !== '' && isset($index['byFile'][$s['file']])) {
@@ -1357,7 +1375,15 @@ function staxx_stack_states(): array {
 
   foreach (staxx_scan_stacks()['stacks'] as $found) {
     $file   = staxx_find_compose_file($found['dir']);
-    $state  = staxx_state_for($file, $found['leaf']);
+    // A locked stack is reported as having no state at all, and deliberately.
+    // staxx_state_for() falls back to matching on the project name, which
+    // compose derives from the folder — so an imported copy sitting in a
+    // folder named after the project it came from matches the LIVE one and
+    // the row goes green for containers that are not ours. That green row is
+    // the mechanism of the whole hazard the review lock exists to stop, so it
+    // must not appear even though the verbs behind it are already refused.
+    $state  = staxx_review_file($found['dir']) !== '' ? null
+                                                     : staxx_state_for($file, $found['leaf']);
     $status = (string)($state['status'] ?? '');
 
     $out[$found['rel']] = [
@@ -1492,6 +1518,13 @@ function staxx_selftest(): array {
   $dirs  = count($scan['stacks']);
   $folds = count($scan['folders']);
 
+  // Pure PHP, like everything else here — no external command, so this stays
+  // instant and checkable from the server with no browser.
+  $awaitingReview = 0;
+  foreach ($scan['stacks'] as $found) {
+    if (staxx_review_file($found['dir']) !== '') $awaitingReview++;
+  }
+
   $canWrite = false;
   $writeErr = '';
   if (!is_dir($root)) {
@@ -1530,6 +1563,7 @@ function staxx_selftest(): array {
                                : 'unknown',
     'stacks found'        => (string)$dirs,
     'folders found'       => (string)$folds,
+    'stacks awaiting review' => (string)$awaitingReview,
     'dockerd pid file'    => is_file('/var/run/dockerd.pid') ? 'present' : 'MISSING',
     'compose on disk'     => $composePath !== '' ? $composePath : 'not found in known locations',
     'docker on disk'      => staxx_docker_bin(),
@@ -1713,13 +1747,23 @@ function staxx_delete_stack(string $name, string &$error, bool $confirmed = fals
   $dir = staxx_stack_dir($name);
   if (!is_dir($dir)) { $error = 'No such stack.'; return false; }
 
+  // A locked stack's containers, if anything answers to its name, belong to
+  // whatever it was imported from — tearing them down is the exact accident
+  // the review lock exists to prevent, so this skips straight to removing
+  // the folder for one, below.
+  $locked = staxx_review_file($dir) !== '';
+
   $remove = [];
   $blocked = [];
   foreach ((array)@scandir($dir) as $entry) {
     if ($entry === '.' || $entry === '..') continue;
     $isCompose = in_array($entry, STAXX_COMPOSE_FILENAMES, true);
     $isEnv     = $entry === '.env' || str_starts_with($entry, '.env.');
-    if (is_file($dir.'/'.$entry) && ($isCompose || $isEnv)) $remove[] = $entry;
+    // The review-lock file is ours too — StaXX writes it on import — so it
+    // must not fall into $blocked and demand a by-hand removal, which would
+    // refuse to delete every imported stack that has not yet been reviewed.
+    $isReview  = strcasecmp($entry, STAXX_REVIEW_FILE) === 0;
+    if (is_file($dir.'/'.$entry) && ($isCompose || $isEnv || $isReview)) $remove[] = $entry;
     else $blocked[] = $entry;
   }
 
@@ -1733,7 +1777,7 @@ function staxx_delete_stack(string $name, string &$error, bool $confirmed = fals
 
   $file = staxx_find_compose_file($dir);
   $cmd  = staxx_compose_cmd();
-  if ($file !== '' && $cmd !== '' && staxx_docker_running()) {
+  if (!$locked && $file !== '' && $cmd !== '' && staxx_docker_running()) {
     $code = 1;
     $out  = staxx_sh(
       'cd '.escapeshellarg($dir).' && '.$cmd.' -f '.escapeshellarg($file).' down 2>&1',
@@ -1811,6 +1855,51 @@ function staxx_rmtree(string $path, string $root): bool {
   return @unlink($real);
 }
 
+/* ----------------------------------------------------------- review lock --
+ *
+ * An imported stack (phase 2 of the importer) can share its identity with
+ * containers somebody else already runs, so it is held "locked pending
+ * review" until a human says otherwise: every run verb refused, and delete
+ * removes only the folder rather than tearing down containers that might not
+ * even be ours. The lock is a plain file in the stack's own folder rather
+ * than an entry in settings, so it survives a rename or a folder move for
+ * free and doubles as the note explaining the import to whoever opens it.
+ */
+
+// The review-lock file's name, sitting beside the compose file it guards.
+define('STAXX_REVIEW_FILE', 'NEEDS-REVIEW.md');
+
+/**
+ * The review-lock file actually present in $dir, by its real name on disk, or
+ * '' when there is none.
+ *
+ * Matched case-insensitively and the real name returned: the default stack
+ * root is the flash drive, which is vfat and does not distinguish case, while
+ * an appdata root does. A caller that goes on to delete this file needs the
+ * name the filesystem actually holds, not the one we would have written.
+ */
+function staxx_review_file(string $dir): string {
+  foreach ((array)@scandir($dir) as $entry) {
+    if (strcasecmp($entry, STAXX_REVIEW_FILE) === 0 && is_file($dir.'/'.$entry)) {
+      return $entry;
+    }
+  }
+  return '';
+}
+
+/**
+ * Is this stack still waiting to be reviewed after an import?
+ *
+ * Fails safe: an invalid path never resolves to a directory scandir() can
+ * read, so this returns false rather than throwing — there is no path where
+ * a locked stack quietly reads as unlocked, but there also isn't one where a
+ * bad name reads as locked.
+ */
+function staxx_review_locked(string $rel): bool {
+  if (!staxx_valid_path($rel)) return false;
+  return staxx_review_file(staxx_stack_dir($rel)) !== '';
+}
+
 /* ------------------------------------------------------- companion files --
  *
  * A stack folder may hold more than the compose file now: a .env, a
@@ -1852,7 +1941,7 @@ function staxx_stack_file(string $rel, string $file, string &$error): string {
  * Everything in a stack's folder, compose file first and then alphabetical.
  *
  * @return array<int, array{name:string, size:int, mtime:int, compose:bool,
- *                           text:bool, dir:bool, link:bool}>|null
+ *                           text:bool, dir:bool, link:bool, review:bool}>|null
  */
 function staxx_list_files(string $rel, string &$error): ?array {
   $error = '';
@@ -1882,11 +1971,19 @@ function staxx_list_files(string $rel, string &$error): ?array {
       'text'    => (!$isDir && !$link) ? staxx_looks_text($path) : false,
       'dir'     => $isDir,
       'link'    => $link,
+      // Matched case-insensitively, same as staxx_review_file() — this is the
+      // per-entry flag the sort below uses to put it right after the compose
+      // file, so it reads as the first thing worth opening.
+      'review'  => strcasecmp($name, STAXX_REVIEW_FILE) === 0,
     ];
   }
 
   usort($out, function ($a, $b) {
     if ($a['compose'] !== $b['compose']) return $a['compose'] ? -1 : 1;
+    // The review note sorts right after the compose file rather than
+    // alphabetically among the companions, so it is the first thing seen —
+    // it explains an import that nothing else in the folder does.
+    if ($a['review']  !== $b['review'])  return $a['review']  ? -1 : 1;
     return strnatcasecmp($a['name'], $b['name']);
   });
   return $out;
@@ -2189,6 +2286,16 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   $verbs = staxx_job_verbs();
   if (!isset($verbs[$verb]))       { $error = 'Unknown action.';     return ''; }
   if (!staxx_valid_path($name)) { $error = 'Invalid stack name.'; return ''; }
+
+  // Checked before anything about the environment, and before the scope
+  // split below, so a locked stack is refused for the right reason — and at
+  // every scope, whole-stack or single-service — even when compose or docker
+  // also happen to be unavailable.
+  if (staxx_review_locked($name)) {
+    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
+           . STAXX_REVIEW_FILE . ', then choose "Mark as reviewed" before starting it.';
+    return '';
+  }
 
   $cmd = staxx_compose_cmd();
   if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }

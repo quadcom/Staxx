@@ -1552,6 +1552,22 @@
   color: var(--sm-accent);
 }
 
+/* A stack imported with its run buttons locked. Outlined rather than filled,
+   so it reads as "check this" and not as an error — the accent colour it
+   shares with the warn pill is enough on its own. */
+.staxx-reviewbadge {
+  display: inline-block;
+  margin-left: 0.6rem;
+  padding: 0.15rem 0.6rem;
+  border: 0.1rem solid var(--sm-accent);
+  border-radius: 1rem;
+  color: var(--sm-accent);
+  font-size: 1rem;
+  font-weight: 600;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
 /* ---- Panels: editor and output ------------------------------------------ */
 
 .staxx-panel {
