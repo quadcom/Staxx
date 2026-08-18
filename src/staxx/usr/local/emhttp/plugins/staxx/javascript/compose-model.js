@@ -831,6 +831,15 @@
     return { value: value, spot: spot || null, pre: pre || '', post: post || '', creatable: !!creatable };
   }
 
+  // A part with no line of its own to bind to — an unreadable child of a
+  // long-form entry (a list such as aliases:, or a map nested two levels
+  // down such as bind.options). A separate constructor rather than more
+  // optional arguments on part(): every call site there passes positionally,
+  // and this shape needs two fields (raw, reason) part() has no use for.
+  function lockedPart(raw, reason) {
+    return { value: '', spot: null, pre: '', post: '', creatable: false, locked: true, raw: raw, reason: reason };
+  }
+
   // Split on ':' only outside a ${...}, because a variable's default value can
   // contain one — "${PORT:-8080}:80" is two fields, not three, and splitting it
   // naively hands the host box "-8081}" and destroys the expression on write.
@@ -1051,7 +1060,7 @@
                 index: i
               });
               st.longForm = true;
-              harvestLongExtras(st, it.value, ['source']);
+              harvestLongExtras(st, it.value, ['source'], lines);
               out.push(st);
               continue;
             }
@@ -1136,7 +1145,7 @@
       // long form, not the short form's slash-carrying one — see stacks.js's
       // choiceFor().
       t.longForm = true;
-      harvestLongExtras(t, map, ['target', 'published', 'protocol']);
+      harvestLongExtras(t, map, ['target', 'published', 'protocol'], lines);
       out.push(t);
       return;
     }
@@ -1153,7 +1162,7 @@
       listKey: listKey
     });
     vt.longForm = true;
-    harvestLongExtras(vt, map, ['source', 'target']);
+    harvestLongExtras(vt, map, ['source', 'target'], lines);
     out.push(vt);
   }
 
@@ -1163,9 +1172,9 @@
   // further, becoming a 'parent.child' part — bind.propagation, tmpfs.size.
   // One level only. Anything else here (a list, something the parser sealed,
   // a map nested deeper than that) has no single line the form can bind to,
-  // so it is left to the Compose view and the row says so, once, however
-  // many such things it holds.
-  function harvestLongExtras(t, map, owned) {
+  // so it becomes a locked part instead — named, showing the file's own text
+  // and why it cannot be edited here, in file order among the editable ones.
+  function harvestLongExtras(t, map, owned, lines) {
     var extras = [];
     for (var i = 0; i < map.keys.length; i++) {
       var key = map.keys[i];
@@ -1187,19 +1196,25 @@
             t.parts[name] = part(p2.value.value, scalarSpot(p2.value));
             extras.push(name);
           } else {
-            longExtrasAdvice(t);
+            // A grandchild that is not a scalar — bind.options is the shape
+            // this exists for. Locked rather than a generic notice, same as
+            // the direct-child case below, so the reader sees what is there
+            // instead of just being told something is.
+            var name2 = key + '.' + key2;
+            t.parts[name2] = lockedPart(unreadableRaw(p2, lines), unreadableWhy(p2));
+            extras.push(name2);
           }
         }
         continue;
       }
-      longExtrasAdvice(t);
+      // A direct child that is neither a scalar nor a map — a list such as
+      // aliases: or link_local_ips:. No single line to bind a box to, so the
+      // row shows the file's own text and why, the same treatment an
+      // unreadable SETTINGS key gets from settingTarget().
+      t.parts[key] = lockedPart(unreadableRaw(p, lines), unreadableWhy(p));
+      extras.push(key);
     }
     t.longExtras = extras;
-  }
-
-  function longExtrasAdvice(t) {
-    var msg = 'this entry has settings only the Compose view can show';
-    if (t.advice.indexOf(msg) < 0) t.advice.push(msg);
   }
 
   // environment and labels, which compose accepts as either a mapping or a
@@ -1269,6 +1284,33 @@
     }
   }
 
+  // The two things an unreadable pair needs shown, split out of
+  // settingTarget() so harvestLongExtras() can give an unreadable child of a
+  // long-form entry the same locked-row treatment instead of a generic
+  // "ask the Compose view" sentence (PLAN_34 phase 6).
+  //
+  // A command spelled out as a list of arguments is a perfectly ordinary
+  // thing to find, so say that rather than falling back on "the form cannot
+  // read this", which sounds like the file is wrong.
+  function unreadableWhy(p) {
+    return !p.value ? 'this setting has no value'
+         : p.value.kind === 'seq' ? 'this is written as a list of separate items'
+         : p.value.kind === 'map' ? 'this is written as a block of its own'
+         : lockReason(p.value.reason);
+  }
+
+  // Only a sealed node carries `raw`. A seq or map was parsed properly and
+  // has none, so a command written as a list would otherwise reach the form
+  // as an empty code block. Either way the text shown is the file's own
+  // lines less the key's own indent, so a command reads as a command rather
+  // than as a fragment of a file — and so the two ways of writing one over
+  // several lines, a list and a block scalar, look the same on screen.
+  function unreadableRaw(p, lines) {
+    var span = p.value && p.value.raw ? p.value.raw.split('\n')
+                                      : lines.slice(p.start, p.end);
+    return span.map(function (l) { return l.slice(p.indent); }).join('\n');
+  }
+
   // One SETTINGS key that IS present in the file, as either an editable
   // target or a locked one. Shared by the ALWAYS loop and the file-order
   // loop below so the two can never drift apart.
@@ -1282,23 +1324,7 @@
         commentSpot: commentSpot(p.value, lines)
       });
     }
-    // A command spelled out as a list of arguments is a perfectly ordinary
-    // thing to find, so say that rather than falling back on "the form
-    // cannot read this", which sounds like the file is wrong.
-    var why = !p.value ? 'this setting has no value'
-            : p.value.kind === 'seq' ? 'this is written as a list of separate items'
-            : p.value.kind === 'map' ? 'this is written as a block of its own'
-            : lockReason(p.value.reason);
-    // Only a sealed node carries `raw`. A seq or map was parsed properly and
-    // has none, so a command written as a list would otherwise reach the form
-    // as an empty code block. Either way the text shown is the file's own
-    // lines less the key's own indent, so a command reads as a command rather
-    // than as a fragment of a file — and so the two ways of writing one over
-    // several lines, a list and a block scalar, look the same on screen.
-    var span = p.value && p.value.raw ? p.value.raw.split('\n')
-                                      : lines.slice(p.start, p.end);
-    var raw = span.map(function (l) { return l.slice(p.indent); }).join('\n');
-    return lockedTarget('setting', key, range, why, raw);
+    return lockedTarget('setting', key, range, unreadableWhy(p), unreadableRaw(p, lines));
   }
 
   // healthcheck: and deploy: are 'block' shape — a map that has editable
@@ -1736,7 +1762,7 @@
       // settings" toggle (gated on f.longForm && f.longExtras.length in
       // stacks.js) has somewhere to hang them.
       row.longForm = true;
-      if (v && v.kind === 'map') harvestLongExtras(row, v, []);
+      if (v && v.kind === 'map') harvestLongExtras(row, v, [], lines);
       else row.longExtras = [];
 
       // Offer the fixed address and hardware address blank when the entry
@@ -2428,6 +2454,11 @@
 
       if (out.declared[f.from].indexOf(val) < 0) {
         f.advice.push('no ' + FROM_WORD[f.from] + ' called ' + val + ' is defined in this file');
+        // Networks only: an Unraid network (br0.2 and the like) is the
+        // overwhelming case here, and declaring it is one predictable line
+        // (see declareNetwork()) — volumes/secrets/configs/services have no
+        // such single obvious fix, so they keep the plain sentence.
+        if (f.from === 'networks') f.declareMissing = val;
       }
     }
 
@@ -2563,6 +2594,11 @@
     var f = fieldById(form, id);
     if (!f || f.locked) return false;
     var p = f.parts[which];
+    // A locked part (an unreadable child of a long-form entry) has no spot,
+    // so without this check it would fall into the phase-3c creation branch
+    // below for any name that happens to be in NETWORK_ENTRY_EXTRAS and write
+    // a second copy of a key the file already has.
+    if (p && p.locked) return false;
 
     // The fourth creation case (PLAN_34 phase 3c): a known scalar extra a
     // network map entry's own map does not have a line for yet. `p` is
@@ -3373,6 +3409,55 @@
     var rootPair = { indent: -2, value: doc.root, end: doc.root.end };
     if (insertChild(doc, rootPair, kind, null, 'x-unraid') < 0) return -1;
     return insertChild(doc, doc.root.pairs[kind], name, null);
+  }
+
+  /**
+   * Declares a whole network the file references but never defines — the fix
+   * behind the "Add it to this file" button next to an undeclared network's
+   * advice (see the declareMissing flag set alongside that advice). Written
+   * as `external: true` rather than a bare key: on Unraid the network being
+   * joined (br0.2 and the like) is one Unraid itself already made, so the
+   * file has to say "this already exists, do not create it" — a bare key
+   * tells compose to create its own network under that name instead, which
+   * is a second, different network with a mangled name, not the one the
+   * service actually joins.
+   *
+   * Refuses (returns -1, writing nothing) when the networks: block is
+   * written in a way this parser cannot add to, or when `name` is already
+   * declared — checked explicitly rather than left to addDeclared's own
+   * freeName(), which would silently declare "name-2" and leave the original
+   * reference still dangling.
+   *
+   * The name comes off whatever the service's own row says, so it is checked
+   * against the same shape every other declaration name is: insertChild
+   * writes a key verbatim with no quoting, so a name carrying a colon would
+   * be written as two keys and the re-parse would not find the entry back.
+   *
+   * Returns the declaration key's own line number.
+   */
+  function declareNetwork(doc, name) {
+    if (!name || !SERVICE_NAME_RE.test(name)) return -1;
+    if (!doc.root || doc.root.kind !== 'map') return -1;
+
+    var block = doc.root.pairs['networks'];
+    if (block && block.value) {
+      if (block.value.kind !== 'map') return -1;
+      if (block.value.keys.indexOf(name) >= 0) return -1;
+    }
+
+    var line = addDeclared(doc, 'networks', name);
+    if (line < 0) return -1;
+
+    // addDeclared's insert re-parses the document, so a pair read before
+    // that call is stale (addDeclared's own comment says the same about
+    // doc.root.pairs[kind]) — re-read the fresh one to hang external: off.
+    // A bare "name:" is already valid compose (compose creates it with
+    // defaults), so a failure here is a bug rather than a user error, and
+    // the file stays loadable either way — return the declaration's own
+    // line regardless of whether this second write succeeds.
+    var netPair = doc.root.pairs['networks'].value.pairs[name];
+    if (netPair) insertChild(doc, netPair, 'external', 'true', null, true);
+    return line;
   }
 
   /**
@@ -6433,6 +6518,7 @@
     addItem: addItem,
     removeItem: removeItem,
     addDeclared: addDeclared,
+    declareNetwork: declareNetwork,
     removeDeclared: removeDeclared,
     renameDeclared: renameDeclared,
     // Phase 3 (PLAN_8) calls this from stacks.js to drop a whole

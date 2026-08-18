@@ -3057,6 +3057,31 @@
   color: var(--sm-accent);
 }
 
+/* The one-click fix beside an undeclared network's advice (adviceText() in
+   stacks.js). Bordered like .staxx-svcrename rather than a bare icon like
+   .staxx-helpbtn, but shown plainly rather than dimmed until hover — this is
+   the row's only way to act on what the note above it just said, not a
+   decoration beside a heading. */
+.staxx-declfix {
+  margin-top: 0.4rem;
+  padding: 0.2rem 0.6rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--sm-fg);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.staxx-declfix:hover {
+  background: var(--sm-fill);
+}
+
+.staxx-declfix:focus-visible {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.1rem;
+}
+
 /* ---- the device picker ---- */
 
 /* A panel in the flow of the form, not a floating menu.

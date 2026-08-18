@@ -213,6 +213,11 @@
     'priority':                { label: 'which network it prefers' },
     'gw_priority':             { label: 'which network it uses as its gateway' },
     'interface_name':          { label: 'name of the network interface inside the container' },
+    // Both always render locked (harvestLongExtras() only ever gives them a
+    // lockedPart — one is a list, the other a list of addresses), so neither
+    // gets a vocab: there is no box to give one to.
+    'aliases':                 { label: 'other names it answers to on this network' },
+    'link_local_ips':          { label: 'extra link-local addresses' },
 
     // secrets:/configs: written the long way.
     'target':                  { label: 'file name inside the container' },
@@ -2026,6 +2031,18 @@
     for (var i = 0; i < advice.length; i++) {
       out += '<p class="staxx-fieldnote">' + esc(advice[i]) + '</p>';
     }
+    // Networks only (declareMissing is set nowhere else — see the 1e loop in
+    // compose-model.js): one click writes the missing network's whole
+    // declaration, so the advice above gets a fix rather than leaving the
+    // reader to go and add it in the Compose view by hand. Rebuilt on every
+    // keystroke along with the rest of this block, which is fine since
+    // nothing inside it ever holds focus.
+    if (f.declareMissing) {
+      out += '<button type="button" class="staxx-declfix" data-declare-net="1" ' +
+             'data-net-name="' + esc(f.declareMissing) + '" ' +
+             'title="Declares ' + esc(f.declareMissing) + ' as a network created outside this file, ' +
+             'which is what an Unraid network is.">Add it to this file</button>';
+    }
     return out;
   }
 
@@ -2091,6 +2108,19 @@
   // through the ordinary boxHtml()/setPart() path — no new ids or binders.
   function longExtraFoldHtml(f, index, name) {
     var info = longExtraInfo(f, name) || { label: name };
+    var p = f.parts[name];
+    if (p && p.locked) {
+      // Same treatment settingTarget()'s locked case gets at field level: the
+      // file's own text plus a plain-English reason, since there is no box to
+      // bind. staxx-foldrow--long is left off here — that modifier exists
+      // only to hide a box's own duplicate hint (see the stylesheet's note on
+      // it), and a locked part renders no box at all.
+      return '<div class="staxx-foldrow">' +
+               '<span class="staxx-fieldlabel">' + esc(info.label) + '</span>' +
+               '<pre class="staxx-fieldraw">' + esc(p.raw || '') + '</pre>' +
+               '<p class="staxx-fieldnote">' + esc(p.reason || '') + '</p>' +
+             '</div>';
+    }
     // The label is passed as the box's hint as well, so the box carries its
     // own name for a screen reader — the modifier class hides the second,
     // visible copy of it. See the stylesheet's own note on that rule.
@@ -3419,6 +3449,28 @@
       reparse();
       var freshBtn = formHost.querySelector('[data-sections="' + secSvc.replace(/"/g, '\\"') + '"]');
       if (freshBtn) freshBtn.focus();
+      return;
+    }
+
+    // The "Add it to this file" button beside an undeclared network's advice
+    // (adviceText()). Checked ahead of [data-add] below: this button carries
+    // no data-add attribute of its own, and sits inside a field row rather
+    // than inside a group header, so closest('[data-add]') would not have
+    // caught it anyway — but the check still comes first, so a later change
+    // to either markup cannot make one swallow the other silently.
+    var declareNet = event.target.closest('[data-declare-net]');
+    if (declareNet) {
+      flushPending();
+      pushUndo('adding that network');
+      var nLine = YAML.declareNetwork(MODEL.doc, declareNet.dataset.netName);
+      if (nLine < 0) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus('The networks block in this file is written in a way the form cannot add to — ' +
+                      'add the declaration in the Compose view instead.');
+        return;
+      }
+      structuralEdit(nLine, '');
       return;
     }
 

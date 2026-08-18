@@ -1,6 +1,25 @@
 # PLAN_34 — networking in the form
 
-**Status: APPROVED 2026-08-18, building.** Third version. v1 was written from memory and corrected by
+**Status: COMPLETE 2026-08-18.** All seven phases built, deployed and confirmed in the browser.
+1349 tests passing (up from 1263 when the plan was approved), no console error, and every fixture's
+file byte-identical after a round trip through the editor.
+
+What shipped, phase by phase: the corruption fix, so a declaration written as a flow map, an anchor
+or an alias locks and shows its text instead of offering an edit that made the file unreadable; the
+dead driver dropdown on a bare declaration; Networks moved above Ports and network names shown
+verbatim; three Add paths, giving `external: true`, a fixed IPv4 address and a hardware address where
+the form could write none of them; Network mode removed from the form, with the reverse exclusion now
+guarded; the promote control, which turns a plain network list into a map so an address has somewhere
+to live; and the consistency fix, where a setting the form cannot edit is shown as a named, locked row
+with the file's own text, plus a one-click fix that writes a missing network's whole declaration.
+
+One thing this plan predicted and one it did not. It predicted `external: true` would be the
+highest-value item, and that held. It did not predict that the promote control's obvious
+implementation silently deletes a note the user typed, nor that the nearest precedent in the codebase
+keeps only the last comment of a block — both were caught by reading rather than by a failing test,
+which is why Phase 5 got its own wave and most of its tests are about not losing anything.
+
+Third version. v1 was written from memory and corrected by
 a verification pass; v2 was rewritten from that; **this one replaces both** after Adrian opened
 `14-long-forms` and found three real gaps, and the investigation into them turned up a bug that can
 make a compose file unreadable.

@@ -6693,8 +6693,8 @@ var X6_SRC = 'services:\n  a:\n    image: alpine\n    volumes:\n' +
      firstDiff(X6_SRC, Y.serialise(doc)));
 })();
 
-/* ---- X10. A doubly-nested key and a list-valued child add the advice
-             sentence exactly once, and don't disturb the row's other
+/* ---- X10. A doubly-nested key and a list-valued child become locked,
+             named parts in file order, and don't disturb the row's other
              extras ------------------------------------------------------- */
 
 (function () {
@@ -6711,17 +6711,39 @@ var X6_SRC = 'services:\n  a:\n    image: alpine\n    volumes:\n' +
   var form = Y.buildForm(Y.parse(src));
   var vol = form.fields.filter(function (f) { return f.binder === 'volume'; })[0];
   var msg = 'this entry has settings only the Compose view can show';
-  var count = 0;
-  (vol ? vol.advice : []).forEach(function (a) { if (a === msg) count++; });
 
-  ok('a nested map two levels down and a list-valued child are not shown as boxes',
-     !!vol && vol.longExtras.indexOf('bind.options') < 0 && vol.longExtras.indexOf('aliases') < 0,
+  // INVERTED DELIBERATELY by PLAN_34 phase 6, not deleted — this is the only
+  // guard on this shape. A nested map two levels down and a list-valued
+  // child used to fold into one generic "ask the Compose view" sentence,
+  // which said something was there without ever showing what. Both are now
+  // locked parts in their own right, named after their key, carrying the
+  // file's own text and a plain reason — and the generic sentence is gone.
+  ok('the nested map and the list-valued child are locked parts, not boxes',
+     !!vol && !!vol.parts['bind.options'] && vol.parts['bind.options'].locked === true &&
+     !!vol.parts.aliases && vol.parts.aliases.locked === true,
+     vol && JSON.stringify({ 'bind.options': vol.parts['bind.options'], aliases: vol.parts.aliases }));
+  ok('...each showing the file\'s own text, dedented, and why it can\'t be a box',
+     !!vol &&
+     vol.parts['bind.options'].raw === 'options:\n  ro: true' &&
+     vol.parts['bind.options'].reason === 'this is written as a block of its own' &&
+     vol.parts.aliases.raw === 'aliases:\n  - foo' &&
+     vol.parts.aliases.reason === 'this is written as a list of separate items',
+     vol && JSON.stringify({ 'bind.options': vol.parts['bind.options'], aliases: vol.parts.aliases }));
+  ok('...both locked with no spot and not creatable',
+     !!vol &&
+     vol.parts['bind.options'].spot === null && !vol.parts['bind.options'].creatable &&
+     vol.parts.aliases.spot === null && !vol.parts.aliases.creatable,
+     vol && JSON.stringify({ 'bind.options': vol.parts['bind.options'], aliases: vol.parts.aliases }));
+  ok('longExtras carries all four names in file order, locked ones included',
+     !!vol && vol.longExtras.join(',') === 'type,bind.propagation,bind.options,aliases',
      vol && JSON.stringify(vol.longExtras));
-  ok('...but the row\'s other extras still come through',
-     !!vol && vol.longExtras.indexOf('type') >= 0 && vol.longExtras.indexOf('bind.propagation') >= 0,
-     vol && JSON.stringify(vol.longExtras));
-  ok('...and the advice sentence appears exactly once, however many things it covers',
-     count === 1, JSON.stringify(vol && vol.advice));
+  ok('...and the row\'s ordinary extras are still ordinary, editable parts',
+     !!vol &&
+     vol.parts.type.value === 'bind' && !vol.parts.type.locked &&
+     vol.parts['bind.propagation'].value === 'rslave' && !vol.parts['bind.propagation'].locked,
+     vol && JSON.stringify(vol.parts));
+  ok('the generic advice sentence is gone entirely',
+     !!vol && vol.advice.indexOf(msg) < 0, vol && JSON.stringify(vol.advice));
 })();
 
 /* ---- X11. A compose key the label table has never heard of is still
@@ -6768,11 +6790,20 @@ var X12_SRC = 'services:\n  a:\n    image: alpine\n    networks:\n' +
      !!front && front.longForm === true && front.longExtras.indexOf('ipv4_address') >= 0 &&
      front.parts.ipv4_address.value === '10.0.1.20',
      front && JSON.stringify({ longForm: front.longForm, extras: front.longExtras }));
-  ok('the aliases list produces the advice sentence once',
-     !!front && front.advice.filter(function (a) {
-       return a === 'this entry has settings only the Compose view can show';
-     }).length === 1,
-     front && JSON.stringify(front.advice));
+  // INVERTED DELIBERATELY by PLAN_34 phase 6, not deleted — this is the only
+  // guard on this shape. aliases: used to fold into the generic "ask the
+  // Compose view" sentence; it is now a locked part named 'aliases', showing
+  // the file's own two lines dedented and a reason that names it as a list.
+  ok('the aliases list is now a locked part, not the generic advice sentence',
+     !!front && !!front.parts.aliases && front.parts.aliases.locked === true &&
+     front.advice.indexOf('this entry has settings only the Compose view can show') < 0,
+     front && JSON.stringify({ aliases: front.parts.aliases, advice: front.advice }));
+  ok('...its raw text is exactly the file\'s own two lines, dedented',
+     !!front && front.parts.aliases.raw === 'aliases:\n  - web',
+     front && JSON.stringify(front.parts.aliases));
+  ok('...and its reason names it as a list',
+     !!front && front.parts.aliases.reason === 'this is written as a list of separate items',
+     front && JSON.stringify(front.parts.aliases));
   // INVERTED DELIBERATELY by PLAN_34 phase 3c, not deleted — it is the only
   // guard on this shape. A bare `backend:` used to be "just a name row" with
   // no fold at all, which is exactly why a fixed address could not be added
@@ -7908,6 +7939,298 @@ console.log('\nAF. PLAN_34 Phase 5 — the promote control');
   ok('a four-space-indented block promotes', !!res && res.ok === true, JSON.stringify(res));
   ok('...with the new keys lined up at the file\'s own depth (12 spaces), not a hardcoded one',
      Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * AG. PLAN_34 Phase 6 — locked long extras, and declaring a missing network
+ *     from the row
+ *
+ * Part one makes an unreadable child of a long-form entry (aliases:,
+ * link_local_ips:, or a network-entry extra written as a block rather than a
+ * scalar) a locked part in its own right — named, showing the file's own
+ * text and why, exactly like every other unreadable node in the form —
+ * rather than the one generic "ask the Compose view" sentence this shape
+ * used to fall back on. setPart() must refuse writing to one whether or not
+ * its name also happens to be an ordinary network-entry extra, because a
+ * locked part has no spot to write through.
+ *
+ * Part two turns "no network called X is defined in this file" into a
+ * one-click fix: declareNetwork() writes the whole `name:\n  external:
+ * true` declaration in one go, refusing rather than guessing wherever the
+ * networks: block cannot safely take it.
+ * ========================================================================= */
+
+console.log('\nAG. PLAN_34 Phase 6 — locked long extras, and declareNetwork');
+
+/* ---- 1/2. A locked long extra is genuinely locked, whether or not its name
+             is also an ordinary network-entry extra ---------------------- */
+
+var AG12_SRC = [
+  'services:',
+  '  a:',
+  '    image: alpine',
+  '    networks:',
+  '      backend:',
+  '        priority:',
+  '          - 1',
+  '        aliases:',
+  '          - web',
+  '          - api',
+  ''
+].join('\n');
+
+(function () {
+  var doc = Y.parse(AG12_SRC), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+
+  ok('a networks: map entry\'s aliases: is a genuinely locked part',
+     !!row && !!row.parts.aliases &&
+     row.parts.aliases.locked === true && row.parts.aliases.spot === null &&
+     !row.parts.aliases.creatable &&
+     row.parts.aliases.raw === 'aliases:\n  - web\n  - api' &&
+     typeof row.parts.aliases.reason === 'string' && row.parts.aliases.reason.length > 0,
+     row && JSON.stringify(row.parts.aliases));
+
+  ok('setPart refuses to write it, and the file is untouched',
+     !!row && Y.setPart(doc, form, row.id, 'aliases', 'anything') === false &&
+     Y.serialise(doc) === AG12_SRC, firstDiff(AG12_SRC, Y.serialise(doc)));
+
+  // priority: is one of NETWORK_ENTRY_EXTRAS — the names setPart's own
+  // phase-3c branch is willing to create a bare line for when it finds no
+  // spot. Written here as a block rather than a scalar, so it is locked
+  // exactly like aliases: — this pins the guard sitting BEFORE that creation
+  // branch, since without it a locked, in-the-extras-list name would fall
+  // through and get a second, colliding line written under it.
+  ok('...and the same holds for a locked part whose name IS a network-entry extra (priority)',
+     !!row && !!row.parts.priority && row.parts.priority.locked === true &&
+     row.parts.priority.raw === 'priority:\n  - 1' &&
+     Y.setPart(doc, form, row.id, 'priority', '5') === false &&
+     Y.serialise(doc) === AG12_SRC, firstDiff(AG12_SRC, Y.serialise(doc)));
+})();
+
+/* ---- 3. link_local_ips gets the same treatment — the fix is about shape,
+            not two hard-coded key names ------------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    '        link_local_ips:',
+    '          - 169.254.1.1',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+
+  ok('link_local_ips: is locked the same way aliases: is',
+     !!row && !!row.parts.link_local_ips && row.parts.link_local_ips.locked === true &&
+     row.parts.link_local_ips.spot === null && !row.parts.link_local_ips.creatable &&
+     row.parts.link_local_ips.raw === 'link_local_ips:\n  - 169.254.1.1' &&
+     row.parts.link_local_ips.reason === 'this is written as a list of separate items',
+     row && JSON.stringify(row.parts.link_local_ips));
+  ok('...and setPart refuses it too, leaving the file untouched',
+     !!row && Y.setPart(doc, form, row.id, 'link_local_ips', 'x') === false &&
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- 4. f.declareMissing is set only for a dangling network, never for a
+            dangling volume or secret ---------------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0.2',
+    '      - back',
+    '    volumes:',
+    '      - myvol:/data',
+    '    secrets:',
+    '      - db_password',
+    'networks:',
+    '  back:',
+    '    external: true',
+    ''
+  ].join('\n');
+  var form = Y.buildForm(Y.parse(src));
+  var nets = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; });
+  var missingNet = nets.filter(function (f) { return f.parts.value.value === 'br0.2'; })[0];
+  var declaredNet = nets.filter(function (f) { return f.parts.value.value === 'back'; })[0];
+  var vol = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'volumes'; })[0];
+  var sec = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'secrets'; })[0];
+
+  ok('a service joining a network the file never declares gets declareMissing set to that name',
+     !!missingNet && missingNet.declareMissing === 'br0.2' &&
+     missingNet.advice.indexOf('no network called br0.2 is defined in this file') >= 0,
+     missingNet && JSON.stringify({ declareMissing: missingNet.declareMissing, advice: missingNet.advice }));
+  ok('a service joining a network the file DOES declare has no declareMissing',
+     !!declaredNet && !declaredNet.declareMissing,
+     declaredNet && JSON.stringify({ declareMissing: declaredNet.declareMissing, advice: declaredNet.advice }));
+  ok('a dangling volume reference gets the advice, but never declareMissing — the fix is networks-only',
+     !!vol && !vol.declareMissing &&
+     vol.advice.indexOf('no volume called myvol is defined in this file') >= 0,
+     vol && JSON.stringify({ declareMissing: vol.declareMissing, advice: vol.advice }));
+  ok('a dangling secret reference gets the advice, but never declareMissing either',
+     !!sec && !sec.declareMissing &&
+     sec.advice.indexOf('no secret called db_password is defined in this file') >= 0,
+     sec && JSON.stringify({ declareMissing: sec.declareMissing, advice: sec.advice }));
+})();
+
+/* ---- 5. declareNetwork writes the whole declaration, from a file with no
+            networks: block at all ------------------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0.2',
+    ''
+  ].join('\n');
+  var want = src + 'networks:\n  br0.2:\n    external: true\n';
+
+  var doc = Y.parse(src);
+  var line = Y.declareNetwork(doc, 'br0.2');
+  ok('declareNetwork returns a real line number', line >= 0, line);
+
+  var out = Y.serialise(doc);
+  ok('...and the file now holds a networks: block with br0.2: and external: true under it, indented correctly',
+     out === want, firstDiff(want, out));
+
+  var form2 = Y.buildForm(Y.parse(out));
+  var row2 = form2.fields.filter(function (f) {
+    return f.service === 'a' && f.listKey === 'networks' && f.parts.value.value === 'br0.2';
+  })[0];
+  ok('re-parsed, buildForm no longer reports the dangling-network advice for that row',
+     !!row2 && row2.advice.indexOf('no network called br0.2 is defined in this file') < 0 && !row2.declareMissing,
+     row2 && JSON.stringify(row2.advice));
+})();
+
+/* ---- 6. From a file that already has a networks: block: the new
+            declaration is added alongside, and every comment and blank
+            line already there survives ------------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0.2',
+    '      - frontend',
+    'networks:',
+    '  frontend:',
+    '    # a note on frontend\'s driver',
+    '    driver: bridge',
+    '# a note after the whole networks: block',
+    ''
+  ].join('\n');
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0.2',
+    '      - frontend',
+    'networks:',
+    '  frontend:',
+    '    # a note on frontend\'s driver',
+    '    driver: bridge',
+    '  br0.2:',
+    '    external: true',
+    '# a note after the whole networks: block',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src);
+  ok('the fixture itself round-trips byte for byte before any edit',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+
+  var line = Y.declareNetwork(doc, 'br0.2');
+  ok('declareNetwork succeeds alongside an existing entry', line >= 0, line);
+
+  var out = Y.serialise(doc);
+  ok('the existing entry, its comment and the comment after the block all survive untouched',
+     out === want, firstDiff(want, out));
+})();
+
+/* ---- 7. Refusals write nothing: already declared, an alias, a flow map -- */
+
+(function () {
+  var already = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0.2',
+    'networks:',
+    '  br0.2:',
+    '    external: true',
+    ''
+  ].join('\n');
+  var doc1 = Y.parse(already);
+  ok('a name already declared is refused, writing nothing',
+     Y.declareNetwork(doc1, 'br0.2') === -1 && Y.serialise(doc1) === already,
+     firstDiff(already, Y.serialise(doc1)));
+
+  var aliasSrc = 'x-net: &shared\n  frontend:\n\nservices:\n  a:\n    image: alpine\nnetworks: *shared\n';
+  var doc2 = Y.parse(aliasSrc);
+  ok('a top-level networks: block written as an alias is refused, writing nothing',
+     Y.declareNetwork(doc2, 'frontend') === -1 && Y.serialise(doc2) === aliasSrc,
+     firstDiff(aliasSrc, Y.serialise(doc2)));
+
+  var flowSrc = 'services:\n  a:\n    image: alpine\nnetworks: {a: {}}\n';
+  var doc3 = Y.parse(flowSrc);
+  ok('a top-level networks: block written as a flow map is refused, writing nothing',
+     Y.declareNetwork(doc3, 'a') === -1 && Y.serialise(doc3) === flowSrc,
+     firstDiff(flowSrc, Y.serialise(doc3)));
+})();
+
+/* ---- 8. A name that genuinely needs quoting as a YAML key -------------- */
+
+(function () {
+  // "br0.2" (a real Unraid VLAN name) is fine bare — a colon is not: written
+  // bare, "vlan: 2:" reads back as key "vlan" with value "2:", not the
+  // single key "vlan: 2" that was asked for. Either quoting it correctly or
+  // refusing outright keeps the file honest; writing it bare and unquoted
+  // does not, and is a silently corrupt file even though it round-trips
+  // through THIS parser (which treats every key as a literal string).
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0.2',
+    ''
+  ].join('\n');
+  // declareNetwork itself has no documented failure mode beyond returning
+  // -1, so a crash here is as much a finding as a wrong value — caught
+  // rather than left to take the whole suite down, so every other section
+  // still gets to report.
+  var doc = Y.parse(src), line, out, crashed = null;
+  try {
+    line = Y.declareNetwork(doc, 'vlan: 2');
+    out = Y.serialise(doc);
+  } catch (e) { crashed = e; }
+
+  var refused = !crashed && line === -1 && out === src;
+  var quotedSafely = false;
+  if (!crashed && line >= 0) {
+    try {
+      var reparsed = Y.parse(out);
+      var net = reparsed.root.pairs.networks && reparsed.root.pairs.networks.value;
+      quotedSafely = /^\s*["']vlan: 2["']\s*:/m.test(out) && !!net && net.pairs.hasOwnProperty('vlan: 2');
+    } catch (e) { quotedSafely = false; }
+  }
+
+  ok('a network name needing YAML quoting is either quoted safely (and reparses to the same name) or refused outright — never written bare and corrupted, and never a crash',
+     refused || quotedSafely,
+     crashed ? ('declareNetwork threw: ' + crashed) : ('declareNetwork returned ' + line + '\n' + out));
 })();
 
 /* ---- result ------------------------------------------------------------- */
