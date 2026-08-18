@@ -2438,6 +2438,21 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
  *             because a front end started without its database is a
  *             container that immediately falls over.
  *
+ *   restart   is NOT `compose restart`. That command stops and starts the
+ *             container that already exists, and a container's settings —
+ *             its published ports above all — are fixed when it is built, so
+ *             an edited compose file has no effect on it whatsoever. Someone
+ *             who adds a port, presses Restart and finds the port missing has
+ *             been told the change was applied when it was not. Unraid's own
+ *             Apply on a template rebuilds the container, and Restart here
+ *             means the same thing: `up -d --force-recreate`, which rebuilds
+ *             on the current file. `--force-recreate` rather than a plain
+ *             `up -d` because `up -d` alone does nothing at all to a
+ *             container whose settings did not change, and a Restart that
+ *             sometimes restarts nothing is worse than a slow one. Anonymous
+ *             volumes survive a recreate — compose carries them over unless
+ *             asked not to — so this costs time, not data.
+ *
  *   remove    exists only at service scope; `down` already IS the stack-scope
  *             version of removing containers, so a second stack-scope entry
  *             would just be `down` under another name.
@@ -2451,11 +2466,11 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
  *             recreates the container on it, which is the only reason it is
  *             here at all: without it, "update" would just be `pull` wearing
  *             a more promising name. There is deliberately no stack-scope
- *             `update` — chaining `up -d` after a whole-stack pull could
- *             recreate several containers at once from a single click, which
- *             is a bigger decision than this pass makes, so the stack menu's
- *             "Update images" stays a plain pull; see the note beside that
- *             item in stacks.js.
+ *             `update`: at stack scope the two halves are separate buttons,
+ *             "Update images" to fetch and Restart to rebuild onto what was
+ *             fetched, so a pull can be left to finish on a busy stack
+ *             without taking it down as a side effect. See the note beside
+ *             that item in stacks.js.
  *
  * `config` has no service form because nothing in the menu ever asks for one
  * — "resolved settings" is a whole-file question.
@@ -2464,7 +2479,8 @@ function staxx_job_verbs(): array {
   return [
     'up'      => ['args' => 'up -d --remove-orphans', 'svc' => 'up -d',             'label' => 'Start'],
     'down'    => ['args' => 'down',                   'svc' => 'stop',              'label' => 'Stop'],
-    'restart' => ['args' => 'restart',                'svc' => 'restart',           'label' => 'Restart'],
+    'restart' => ['args' => 'up -d --force-recreate --remove-orphans',
+                  'svc'  => 'up -d --force-recreate',                                'label' => 'Restart'],
     'pull'    => ['args' => 'pull',                   'svc' => 'pull',              'label' => 'Update images'],
     'logs'    => ['args' => 'logs --tail 200',        'svc' => 'logs --tail 200',   'label' => 'Logs'],
     'config'  => ['args' => 'config',                                               'label' => 'Resolved settings'],

@@ -10736,11 +10736,13 @@
                { disabled: !CAN_RUN, hint: why });
       menuItem('Stop', 'stop', function () { run(name, 'down', afterRun('down')); },
                { disabled: !CAN_RUN || !running });
-      // Still a plain pull, not pull-then-up-d like the container menu's own
-      // Update below — recreating several containers across a whole stack
-      // from one click is a bigger decision than this plugin makes for you
-      // yet, so for now this only fetches new images; nothing running is
-      // touched. Deliberate gap, not a missed spot.
+      // A plain pull, not pull-then-up-d like the container menu's own
+      // Update below: at stack scope the two halves are separate buttons.
+      // This fetches the new images and leaves everything running on the old
+      // ones; Restart above is what rebuilds the containers onto them, since
+      // that is already what it does to apply any other change. Splitting
+      // them means a pull can be left to finish on a busy stack without
+      // taking it down as a side effect.
       menuItem('Update images', 'download', function () { run(name, 'pull', afterRun('pull')); },
                { disabled: !CAN_RUN });
       menuItem('Logs', 'file-text-o', function () { run(name, 'logs', afterRun('logs')); },
