@@ -3205,11 +3205,13 @@
   font-size: 1.2rem;
 }
 
-/* ---- a device row's second path ---- */
+/* ---- the 'more settings' toggle a row folds extras behind ---- */
 
-/* Folded away, because for nearly every device the two halves of the mapping
-   are the same path. The summary carries the value when they differ, so the
-   collapsed row still says everything — it is shorter, not quieter. */
+/* Shared by four rows now: a device's second path, a declaration's own
+   extras, a long dependency's restart/required, and a long-form port or
+   mount's own settings beyond its main boxes. A device's summary carries
+   its value when the two halves differ, so the collapsed row still says
+   everything — it is shorter, not quieter. */
 
 .stackman-devmore {
   margin-top: 0.5rem;
@@ -3245,6 +3247,15 @@
   display: block;
   margin-bottom: 0.2rem;
   font-size: 1.1rem;
+}
+
+/* A long-form port or mount's extras name the setting twice — once as the
+   label above the box, and again as the box's own hint, which every fold
+   shows (see .stackman-devmore .stackman-boxhint above). The hint stays in
+   the markup, where a screen reader still reads it as the box's name; only
+   the second, visible copy goes. */
+.stackman-foldrow--long .stackman-boxhint {
+  display: none;
 }
 
 /* ---- modal: Sanitise ---- */

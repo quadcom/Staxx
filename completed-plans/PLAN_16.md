@@ -1,7 +1,11 @@
 # PLAN_16 — The file's own names, and the long ways of writing things
 
-**Status: outstanding.** The two areas `PLAN_15.md` deliberately left out, written up now so they
-are not lost. They are independent of each other and can be built in either order, or separately.
+**Status: COMPLETE (2026-08-17).** Both parts are built, tested and deployed — see
+`completed-plans/PLAN_30.md`, which carries the approved plan, what changed while building it, and
+the one claim below that turned out to be wrong (a map-form `networks:` was locked, not dropped).
+
+The two areas `PLAN_15.md` deliberately left out, written up so they were not lost. They were
+independent of each other and could be built in either order, or separately.
 
 Both come from `comp-autocomplete.md`, whose claims about them I have checked against the code —
 all of them hold, and the specifics are quoted below.

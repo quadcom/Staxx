@@ -2185,7 +2185,7 @@ console.log('\nN. 10-advanced-compose-test (PLAN_5 phase 3)');
   // map (placement) cannot be written as a single value and stays locked.
   var repl = Y.fieldById(f2, 'a/setting/deploy.replicas');
   ok('an uncovered deploy.replicas: 3 is a plain scalar, so it comes out as an ordinary editable number field',
-     !!repl && repl.locked === false && repl.title === 'Replicas' && repl.type === 'number',
+     !!repl && repl.locked === false && repl.title === 'Number of copies' && repl.type === 'number',
      repl && JSON.stringify({ locked: repl.locked, title: repl.title, type: repl.type }));
 
   Y.setPart(doc2, f2, 'a/setting/deploy.replicas', 'value', '5');
@@ -6094,6 +6094,896 @@ console.log('\nV. Nothing required any more; build: as a block; include:');
   }
   ok('and still identical after setting every writable box to what it already says (' + all.length + ' boxes)',
      !bad, bad);
+})();
+
+/* =========================================================================
+ * VI. PLAN_29 — the swarm-only sentence on the five dead deploy: keys, and
+ * the container_name/replicas clash. Both are advice only — nothing here
+ * changes what a field locks or blocks — so there is no new null-edit case:
+ * section V6's byte-for-byte check already covers every box these two
+ * fixtures touch.
+ * ========================================================================= */
+
+console.log('\nVI. Swarm-only advice, and the container_name/replicas clash');
+
+/* ---- VI1. The five swarm-only keys carry the "ignored" sentence --------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    deploy:',
+    '      mode: replicated',
+    '      endpoint_mode: vip',
+    '      placement:',
+    '        constraints:',
+    '          - node.role==manager',
+    '      update_config:',
+    '        parallelism: 1',
+    '      rollback_config:',
+    '        parallelism: 1'
+  ].join('\n') + '\n';
+  var form = Y.buildForm(Y.parse(src));
+  var targets = ['deploy.mode', 'deploy.endpoint_mode', 'deploy.placement',
+                 'deploy.update_config', 'deploy.rollback_config'];
+  targets.forEach(function (t) {
+    var f = Y.fieldById(form, 'a/setting/' + t);
+    ok(t + ' carries the "server is part of a swarm cluster" sentence',
+       !!f && f.advice.some(function (a) { return /swarm cluster/.test(a); }),
+       f && JSON.stringify(f.advice));
+  });
+})();
+
+/* ---- VI2. container_name + replicas > 1 warns on both rows -------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    container_name: myapp\n' +
+            '    deploy:\n      replicas: 3\n';
+  var form = Y.buildForm(Y.parse(src));
+  var cn = Y.fieldById(form, 'a/setting/container_name');
+  var rp = Y.fieldById(form, 'a/setting/deploy.replicas');
+  ok('container_name warns about the clash when replicas: 3',
+     !!cn && cn.advice.some(function (a) { return /clear one of the two/.test(a); }),
+     cn && JSON.stringify(cn.advice));
+  ok('deploy.replicas warns about the clash too',
+     !!rp && rp.advice.some(function (a) { return /clear one of the two/.test(a); }),
+     rp && JSON.stringify(rp.advice));
+})();
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    container_name: myapp\n' +
+            '    deploy:\n      replicas: 1\n';
+  var form = Y.buildForm(Y.parse(src));
+  var cn = Y.fieldById(form, 'a/setting/container_name');
+  var rp = Y.fieldById(form, 'a/setting/deploy.replicas');
+  ok('replicas: 1 carries no clash advice on either row',
+     !!cn && !!rp &&
+     !cn.advice.some(function (a) { return /clear one of the two/.test(a); }) &&
+     !rp.advice.some(function (a) { return /clear one of the two/.test(a); }),
+     JSON.stringify({ cn: cn && cn.advice, rp: rp && rp.advice }));
+})();
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    container_name: myapp\n' +
+            '    deploy:\n      replicas: ${COPIES}\n';
+  var form = Y.buildForm(Y.parse(src));
+  var cn = Y.fieldById(form, 'a/setting/container_name');
+  var rp = Y.fieldById(form, 'a/setting/deploy.replicas');
+  ok('an interpolated replicas value carries no clash advice — it does not parse as a plain integer',
+     !!cn && !!rp &&
+     !cn.advice.some(function (a) { return /clear one of the two/.test(a); }) &&
+     !rp.advice.some(function (a) { return /clear one of the two/.test(a); }),
+     JSON.stringify({ cn: cn && cn.advice, rp: rp && rp.advice }));
+})();
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    deploy:\n      replicas: 3\n';
+  var form = Y.buildForm(Y.parse(src));
+  var rp = Y.fieldById(form, 'a/setting/deploy.replicas');
+  ok('no container_name at all: replicas: 3 carries no clash advice',
+     !!rp && !rp.advice.some(function (a) { return /clear one of the two/.test(a); }),
+     rp && JSON.stringify(rp.advice));
+})();
+
+/* =========================================================================
+ * W. The file's own names (PLAN_16/PLAN_30 Part A) — Y.fileNames(text),
+ *    Y.refNames(names, kind, serviceName), and the editor's suggestions
+ *    reaching them through keySuggestions()/valueSuggestions()
+ *
+ * fileNames() works from classify() alone, never parse(), for the same
+ * reason hostPaths() (section M) does: a suggestion is wanted exactly when
+ * the file is mid-edit. W10 is the one that proves it — a syntax error later
+ * in the file must not stop a suggestion for a position above it.
+ * ========================================================================= */
+
+console.log('\nW. The file\'s own names');
+
+/* ---- W1. fileNames() collects every bucket, deduplicated, file order ---- */
+
+(function () {
+  var text = [
+    'services:',
+    '  web:',
+    '    image: nginx',
+    '    depends_on:',
+    '      - db',
+    '    networks:',
+    '      - front',
+    '    profiles:',
+    '      - dev',
+    '      - dev',
+    '  db:',
+    '    image: mysql',
+    '    profiles:',
+    '      - dev',
+    '      - prod',
+    'networks:',
+    '  front:',
+    '    driver: bridge',
+    'volumes:',
+    '  appdata:',
+    '    driver: local',
+    'secrets:',
+    '  pw:',
+    '    file: ./pw.txt',
+    'configs:',
+    '  conf1:',
+    '    file: ./conf.txt'
+  ].join('\n') + '\n';
+  var r = Y.fileNames(text);
+  ok('services, in file order', r.services.join(',') === 'web,db', JSON.stringify(r.services));
+  ok('declared networks', r.networks.join(',') === 'front', JSON.stringify(r.networks));
+  ok('declared volumes', r.volumes.join(',') === 'appdata', JSON.stringify(r.volumes));
+  ok('declared secrets', r.secrets.join(',') === 'pw', JSON.stringify(r.secrets));
+  ok('declared configs', r.configs.join(',') === 'conf1', JSON.stringify(r.configs));
+  ok('profiles, deduplicated across both services, file order',
+     r.profiles.join(',') === 'dev,prod', JSON.stringify(r.profiles));
+})();
+
+/* ---- W2. A service's own networks:/secrets:/configs: never leak into the
+            top-level declared buckets — stack depth is what tells them
+            apart, the same way hostPaths() tells a mount apart from a
+            top-level volumes: declaration ------------------------------- */
+
+(function () {
+  var text = 'services:\n  web:\n    image: nginx\n    networks:\n      mynet:\n' +
+             '        ipv4_address: 10.0.0.5\nnetworks:\n  front:\n    driver: bridge\n';
+  var r = Y.fileNames(text);
+  ok('a service-level networks: map key is not read as a declared network',
+     r.networks.join(',') === 'front', JSON.stringify(r.networks));
+})();
+
+/* ---- W3. profiles: skips a block item and an empty one ------------------ */
+
+(function () {
+  var text = 'services:\n  web:\n    image: nginx\n    profiles:\n      - dev\n' +
+             '      - foo: bar\n      - \n';
+  var r = Y.fileNames(text);
+  ok('a block item ("foo: bar") under profiles: is not read as a name',
+     r.profiles.indexOf('foo') < 0, JSON.stringify(r.profiles));
+  ok('an empty profiles: item is skipped, leaving just "dev"',
+     r.profiles.join(',') === 'dev', JSON.stringify(r.profiles));
+})();
+
+/* ---- W4. depends_on: offers the other services, never the service itself */
+
+(function () {
+  var text = 'services:\n  web:\n    image: nginx\n    depends_on:\n      - \n' +
+             '  db:\n    image: mysql\n  cache:\n    image: redis\n';
+  var offset = text.indexOf('depends_on:') + 'depends_on:\n      - '.length;
+  var r = Y.valueSuggestions(text, offset);
+  var got = r && r.keys.map(function (k) { return k.key; });
+  ok('offers the other two services, never "web" itself',
+     !!r && got.sort().join(',') === 'cache,db', JSON.stringify(got));
+})();
+
+/* ---- W5. service networks: offers the declared ones plus "default", and
+            stays out of volumes:'s own namespace (and vice versa) -------- */
+
+(function () {
+  var text = 'services:\n  web:\n    image: nginx\n    volumes:\n      - \n' +
+             '    networks:\n      - \nnetworks:\n  front:\n    driver: bridge\n' +
+             'volumes:\n  appdata:\n    driver: local\n';
+  var volOffset = text.indexOf('volumes:') + 'volumes:\n      - '.length;
+  var netOffset = text.indexOf('networks:\n      -') + 'networks:\n      - '.length;
+  var rv = Y.valueSuggestions(text, volOffset);
+  var rn = Y.valueSuggestions(text, netOffset);
+  var gotV = rv && rv.keys.map(function (k) { return k.key; });
+  var gotN = rn && rn.keys.map(function (k) { return k.key; });
+  ok('a service\'s volumes: offers only the declared volume ("appdata"), not a network name',
+     !!rv && gotV.join(',') === 'appdata', JSON.stringify(gotV));
+  ok('a service\'s networks: offers the declared network plus "default", not a volume name',
+     !!rn && gotN.join(',') === 'front,default', JSON.stringify(gotN));
+})();
+
+/* ---- W6. profiles: offers a profile named under a different service ----- */
+
+(function () {
+  var text = 'services:\n  web:\n    image: nginx\n    profiles:\n      - \n' +
+             '  db:\n    image: mysql\n    profiles:\n      - prod\n';
+  var offset = text.indexOf('profiles:') + 'profiles:\n      - '.length;
+  var r = Y.valueSuggestions(text, offset);
+  ok('"prod", named only under db, is offered to web',
+     !!r && r.keys.some(function (k) { return k.key === 'prod'; }), JSON.stringify(r));
+})();
+
+/* ---- W7. network_mode: service: offers "service:<other>", never self ---- */
+
+(function () {
+  var text = 'services:\n  web:\n    image: nginx\n    network_mode: \n' +
+             '  db:\n    image: mysql\n';
+  var offset = text.indexOf('network_mode: ') + 'network_mode: '.length;
+  var r = Y.valueSuggestions(text, offset);
+  var got = r && r.keys.map(function (k) { return k.key; });
+  ok('offers "service:db"', !!r && got.indexOf('service:db') >= 0, JSON.stringify(got));
+  ok('never offers "service:web" (itself)', !!r && got.indexOf('service:web') < 0, JSON.stringify(got));
+  ok('the static netmode vocabulary is still there too',
+     !!r && got.indexOf('bridge') >= 0, JSON.stringify(got));
+})();
+
+/* ---- W8. A volume entry's host half: a bare word offers a declared volume
+            name; once a colon is on the line the list goes quiet --------- */
+
+(function () {
+  var declared = 'volumes:\n  appdata:\n    driver: local\n';
+  var bare = 'services:\n  web:\n    image: nginx\n    volumes:\n      - appd\n' + declared;
+  var rBare = Y.valueSuggestions(bare, bare.indexOf('- appd') + '- appd'.length);
+  ok('a bare word offers the declared volume name',
+     !!rBare && rBare.keys.some(function (k) { return k.key === 'appdata'; }), JSON.stringify(rBare));
+
+  var full = 'services:\n  web:\n    image: nginx\n    volumes:\n      - appdata:/config\n' + declared;
+  var rFull = Y.valueSuggestions(full, full.indexOf('appdata:/config') + 'appdata'.length);
+  ok('once "appdata:/config" is on the line, the typed word matches no name and the list goes quiet',
+     !!rFull && rFull.keys.length === 0, JSON.stringify(rFull));
+})();
+
+/* ---- W9. Long-form depends_on: the child key position offers services;
+            condition: offers the three conditions ------------------------ */
+
+(function () {
+  var text = 'services:\n  web:\n    image: nginx\n    depends_on:\n      db:\n' +
+             '        condition: service_started\n      \n' +
+             '  db:\n    image: mysql\n  cache:\n    image: redis\n';
+  var keyOffset = text.lastIndexOf('      \n') + 6;
+  var rk = Y.keySuggestions(text, keyOffset);
+  var gotK = rk && rk.keys.map(function (k) { return k.key; });
+  ok('offers "cache", the service not already listed',
+     !!rk && gotK.indexOf('cache') >= 0, JSON.stringify(gotK));
+  ok('does not re-offer "db", already a dependency', !!rk && gotK.indexOf('db') < 0, JSON.stringify(gotK));
+  ok('does not offer "web" (itself)', !!rk && gotK.indexOf('web') < 0, JSON.stringify(gotK));
+
+  // A fresh (empty) condition: value, the same shape Q2/Q9 test their own
+  // "nothing typed yet" case with — the filled one above would otherwise
+  // match its own already-typed word and pop back up (Q4's own rule).
+  var condText = 'services:\n  web:\n    image: nginx\n    depends_on:\n      db:\n        condition: \n' +
+                 '  db:\n    image: mysql\n';
+  var condOffset = condText.indexOf('condition: ') + 'condition: '.length;
+  var rc = Y.valueSuggestions(condText, condOffset);
+  var gotC = rc && rc.keys.map(function (k) { return k.key; });
+  ok('condition: offers the three dependscondition values',
+     !!rc && gotC.join(',') === 'service_started,service_healthy,service_completed_successfully',
+     JSON.stringify(gotC));
+})();
+
+/* ---- W10. A deliberate syntax error further down the file stops none of it,
+             which is the whole reason this avoids parse() -------------- */
+
+(function () {
+  var text = 'services:\n  web:\n    image: nginx\n    depends_on:\n      - \n' +
+             '  db:\n    image: mysql\n  broken::: not valid yaml at all\n';
+  var offset = text.indexOf('depends_on:') + 'depends_on:\n      - '.length;
+  var r = Y.valueSuggestions(text, offset);
+  ok('depends_on: still offers "db" despite the broken line below it',
+     !!r && r.keys.some(function (k) { return k.key === 'db'; }), JSON.stringify(r));
+
+  var names = Y.fileNames(text);
+  ok('fileNames() still finds both services despite the same broken line',
+     names.services.join(',') === 'web,db', JSON.stringify(names.services));
+})();
+
+/* ---- W11. refNames() — the one rule shared with the form's own dropdowns  */
+
+(function () {
+  ok('adds "default" once, for networks', Y.refNames(['front'], 'networks').join(',') === 'front,default');
+  ok('never duplicates "default" already present',
+     Y.refNames(['front', 'default'], 'networks').join(',') === 'front,default');
+  ok('excludes the named service, for services',
+     Y.refNames(['web', 'db'], 'services', 'web').join(',') === 'db');
+  ok('leaves any other kind untouched', Y.refNames(['x'], 'volumes', 'x').join(',') === 'x');
+})();
+
+/* ---- W12. Neither fileNames() nor refNames() throws on malformed input -- */
+
+(function () {
+  var NASTY = [null, undefined, 42, {}, [], 'volumes:\n', '\t\tno spaces allowed\n'];
+  var bad = null;
+  NASTY.forEach(function (input) {
+    try {
+      var r = Y.fileNames(input);
+      if (!r || !r.services || !r.networks || !r.volumes || !r.secrets || !r.configs || !r.profiles) {
+        bad = JSON.stringify(input) + ' returned a malformed shape: ' + JSON.stringify(r);
+      }
+    } catch (e) { bad = JSON.stringify(input) + ' threw: ' + e.message; }
+  });
+  try { Y.refNames(null, 'networks'); Y.refNames(undefined, 'services', undefined); }
+  catch (e) { bad = bad || 'refNames threw: ' + e.message; }
+  ok('no input throws, and fileNames() always returns all six buckets', !bad, bad);
+})();
+
+/* ---- W13. A name Object already has is still a name --------------------- */
+
+/* 'constructor' and 'toString' come back truthy from any plain object, so a
+ * bare lookup would drop such a service silently — and a bare DECL_BUCKET
+ * lookup on one would reach push() on nothing and lose the whole scan. */
+
+(function () {
+  var src = 'services:\n  constructor:\n    image: alpine\n' +
+            '  toString:\n    image: alpine\n' +
+            'volumes:\n  constructor:\n';
+  var n = Y.fileNames(src);
+  ok('a service called constructor or toString is collected like any other',
+     n.services.join(',') === 'constructor,toString' && n.volumes.join(',') === 'constructor',
+     JSON.stringify(n));
+})();
+
+/* =========================================================================
+ * X. The long forms, part B1/B2 (PLAN_30) — a long-form port or mount with no
+ *    target: line stays visible instead of vanishing, and a long-form port's
+ *    protocol: line becomes an editable 'proto' part (f.longForm marks it, so
+ *    choiceFor() in stacks.js can tell it apart from the short form's
+ *    slash-carrying one).
+ * ========================================================================= */
+
+console.log('\nX. Long forms — the vanishing entry, and a long-form port\'s protocol');
+
+/* ---- X1. A long-form port/mount missing target: locks instead of vanishing */
+
+(function () {
+  var src = 'services:\n' +
+    '  a:\n' +
+    '    image: alpine\n' +
+    '    ports:\n' +
+    '      - published: 8080\n' +
+    '        protocol: udp\n' +
+    '    volumes:\n' +
+    '      - type: bind\n' +
+    '        source: /host/path\n';
+
+  var form = Y.buildForm(Y.parse(src));
+  var ports = form.fields.filter(function (f) { return f.binder === 'port'; });
+  var vols  = form.fields.filter(function (f) { return f.binder === 'volume'; });
+
+  ok('a long-form port with no target: yields exactly one row', ports.length === 1,
+     JSON.stringify(ports.map(function (f) { return f.id; })));
+  ok('...locked, naming the missing container port',
+     !!ports[0] && ports[0].locked &&
+     ports[0].lockReason === 'this entry does not say which port inside the container to use',
+     ports[0] && JSON.stringify({ locked: ports[0].locked, reason: ports[0].lockReason }));
+  ok('...raw holds the entry\'s own lines',
+     !!ports[0] && ports[0].raw.indexOf('published: 8080') >= 0 &&
+     ports[0].raw.indexOf('protocol: udp') >= 0,
+     ports[0] && ports[0].raw);
+
+  ok('a long-form volume with no target: yields exactly one row', vols.length === 1,
+     JSON.stringify(vols.map(function (f) { return f.id; })));
+  ok('...locked, naming the missing container path',
+     !!vols[0] && vols[0].locked &&
+     vols[0].lockReason === 'this mount does not say where it goes in the container',
+     vols[0] && JSON.stringify({ locked: vols[0].locked, reason: vols[0].lockReason }));
+  ok('...raw holds the entry\'s own lines',
+     !!vols[0] && vols[0].raw.indexOf('type: bind') >= 0 &&
+     vols[0].raw.indexOf('source: /host/path') >= 0,
+     vols[0] && vols[0].raw);
+
+  ok('neither entry is touched by any of this — both stay exactly as written',
+     Y.serialise(Y.parse(src)) === src, firstDiff(src, Y.serialise(Y.parse(src))));
+})();
+
+/* ---- X2. A long-form port's protocol: reaches the form as an editable
+            'proto' part, holding the bare word ----------------------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    ports:\n' +
+            '      - target: 8096\n        published: 8096\n        protocol: udp\n';
+  var form = Y.buildForm(Y.parse(src));
+  var p = form.fields.filter(function (f) { return f.binder === 'port'; })[0];
+
+  ok('the row is marked longForm', !!p && p.longForm === true, p && JSON.stringify(p.longForm));
+  ok('its proto part holds the bare word, with a real spot',
+     !!p && p.parts.proto && p.parts.proto.value === 'udp' && !!p.parts.proto.spot,
+     p && JSON.stringify(p.parts.proto));
+  ok('the row\'s id is still keyed on target+protocol, unmoved by adding the part',
+     !!p && p.id === 'a/port/8096/udp', p && p.id);
+})();
+
+/* ---- X3. The null edit — every part, including the new one, written back
+            unchanged must not touch the file --------------------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    ports:\n' +
+            '      - target: 8096\n        published: 8096\n        protocol: udp\n        mode: host\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var p = form.fields.filter(function (f) { return f.binder === 'port'; })[0];
+
+  if (ok('fixture has the long-form port field', !!p,
+         JSON.stringify(form.fields.map(function (f) { return f.id; })))) {
+    ['host', 'container', 'proto'].forEach(function (which) {
+      ok('setPart(' + which + ') accepts its own current value',
+         Y.setPart(doc, form, p.id, which, p.parts[which].value) === true);
+    });
+  }
+  ok('the null edit leaves the file byte for byte the same',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- X4. Changing the protocol writes only that word ------------------- */
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n    ports:\n' +
+             '      - target: 8096\n        published: 8096\n        protocol: udp\n        mode: host\n';
+  var want = 'services:\n  a:\n    image: alpine\n    ports:\n' +
+             '      - target: 8096\n        published: 8096\n        protocol: tcp\n        mode: host\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var p = form.fields.filter(function (f) { return f.binder === 'port'; })[0];
+  Y.setPart(doc, form, p.id, 'proto', 'tcp');
+  ok('changing the protocol to tcp writes only that word, leaving mode: and everything else untouched',
+     Y.serialise(doc) === want && diffLines(src, Y.serialise(doc)).length === 1,
+     firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- X5. A long-form port with no protocol: line has nowhere to write —
+            no line is invented ------------------------------------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    ports:\n' +
+            '      - target: 8096\n        published: 8096\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var p = form.fields.filter(function (f) { return f.binder === 'port'; })[0];
+
+  ok('a long-form port with no protocol: line has no spot for its proto part',
+     !!p && (!p.parts.proto || !p.parts.proto.spot), p && JSON.stringify(p.parts.proto));
+  ok('writing to it is refused and invents no line',
+     !!p && Y.setPart(doc, form, p.id, 'proto', 'udp') === false && Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- X6. B3 fixture — every scalar leaf the main boxes don't own reaches
+            the form as a longExtras part, in file order -------------------- */
+
+var X6_SRC = 'services:\n  a:\n    image: alpine\n    volumes:\n' +
+  '      - type: bind\n' +
+  '        source: /mnt/user/appdata/x\n' +
+  '        target: /config\n' +
+  '        read_only: true\n' +
+  '        consistency: cached\n' +
+  '        bind:\n' +
+  '          propagation: rslave\n' +
+  '          create_host_path: true\n' +
+  '    ports:\n' +
+  '      - target: 8096\n' +
+  '        published: 8096\n' +
+  '        mode: host\n' +
+  '        host_ip: 127.0.0.1\n';
+
+(function () {
+  var form = Y.buildForm(Y.parse(X6_SRC));
+  var vol = form.fields.filter(function (f) { return f.binder === 'volume'; })[0];
+  var port = form.fields.filter(function (f) { return f.binder === 'port'; })[0];
+
+  ok('the volume row is marked longForm with its extras in file order',
+     !!vol && vol.longForm === true &&
+     vol.longExtras.join(',') === 'type,read_only,consistency,bind.propagation,bind.create_host_path',
+     vol && JSON.stringify(vol.longExtras));
+  ok('...and each extra part holds the file\'s own value',
+     !!vol &&
+     vol.parts.type.value === 'bind' && vol.parts.read_only.value === 'true' &&
+     vol.parts.consistency.value === 'cached' &&
+     vol.parts['bind.propagation'].value === 'rslave' &&
+     vol.parts['bind.create_host_path'].value === 'true',
+     vol && JSON.stringify(vol.parts));
+
+  ok('the port row\'s extras are mode and host_ip, in file order',
+     !!port && port.longForm === true && port.longExtras.join(',') === 'mode,host_ip',
+     port && JSON.stringify(port.longExtras));
+  ok('...holding the file\'s own values',
+     !!port && port.parts.mode.value === 'host' && port.parts.host_ip.value === '127.0.0.1',
+     port && JSON.stringify(port.parts));
+})();
+
+/* ---- X7. The null edit — every part of both rows, including every extra,
+            written back unchanged must not touch the file -------------- */
+
+(function () {
+  var doc = Y.parse(X6_SRC), form = Y.buildForm(doc);
+  var vol = form.fields.filter(function (f) { return f.binder === 'volume'; })[0];
+  var port = form.fields.filter(function (f) { return f.binder === 'port'; })[0];
+  var okAll = true;
+
+  ['host', 'container'].concat(vol.longExtras).forEach(function (which) {
+    if (Y.setPart(doc, form, vol.id, which, vol.parts[which].value) !== true) okAll = false;
+  });
+  ['host', 'container'].concat(port.longExtras).forEach(function (which) {
+    if (Y.setPart(doc, form, port.id, which, port.parts[which].value) !== true) okAll = false;
+  });
+
+  ok('every part of both rows accepts its own current value', okAll);
+  ok('the null edit leaves the file byte for byte the same',
+     Y.serialise(doc) === X6_SRC, firstDiff(X6_SRC, Y.serialise(doc)));
+})();
+
+/* ---- X8. A nested extra writes to its own line and nothing else -------- */
+
+(function () {
+  var doc = Y.parse(X6_SRC), form = Y.buildForm(doc);
+  var vol = form.fields.filter(function (f) { return f.binder === 'volume'; })[0];
+  Y.setPart(doc, form, vol.id, 'bind.propagation', 'rshared');
+  var out = Y.serialise(doc);
+  ok('changing bind.propagation writes only that line',
+     out.indexOf('propagation: rshared') >= 0 && diffLines(X6_SRC, out).length === 1,
+     firstDiff(X6_SRC, out));
+})();
+
+/* ---- X9. A blank edit to an extra writes nothing, and still reports
+            success ------------------------------------------------------ */
+
+(function () {
+  var doc = Y.parse(X6_SRC), form = Y.buildForm(doc);
+  var vol = form.fields.filter(function (f) { return f.binder === 'volume'; })[0];
+  var result = Y.setPart(doc, form, vol.id, 'consistency', '');
+  ok('a blank edit to an extra reports success', result === true);
+  ok('...and leaves the file untouched', Y.serialise(doc) === X6_SRC,
+     firstDiff(X6_SRC, Y.serialise(doc)));
+})();
+
+/* ---- X10. A doubly-nested key and a list-valued child add the advice
+             sentence exactly once, and don't disturb the row's other
+             extras ------------------------------------------------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    volumes:\n' +
+    '      - type: bind\n' +
+    '        source: /host\n' +
+    '        target: /container\n' +
+    '        bind:\n' +
+    '          propagation: rslave\n' +
+    '          options:\n' +
+    '            ro: true\n' +
+    '        aliases:\n' +
+    '          - foo\n';
+  var form = Y.buildForm(Y.parse(src));
+  var vol = form.fields.filter(function (f) { return f.binder === 'volume'; })[0];
+  var msg = 'this entry has settings only the Compose view can show';
+  var count = 0;
+  (vol ? vol.advice : []).forEach(function (a) { if (a === msg) count++; });
+
+  ok('a nested map two levels down and a list-valued child are not shown as boxes',
+     !!vol && vol.longExtras.indexOf('bind.options') < 0 && vol.longExtras.indexOf('aliases') < 0,
+     vol && JSON.stringify(vol.longExtras));
+  ok('...but the row\'s other extras still come through',
+     !!vol && vol.longExtras.indexOf('type') >= 0 && vol.longExtras.indexOf('bind.propagation') >= 0,
+     vol && JSON.stringify(vol.longExtras));
+  ok('...and the advice sentence appears exactly once, however many things it covers',
+     count === 1, JSON.stringify(vol && vol.advice));
+})();
+
+/* ---- X11. A compose key the label table has never heard of is still
+             harvested, by the generic walk ------------------------------ */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    volumes:\n' +
+    '      - type: bind\n' +
+    '        source: /host\n' +
+    '        target: /container\n' +
+    '        foobar: baz\n';
+  var form = Y.buildForm(Y.parse(src));
+  var vol = form.fields.filter(function (f) { return f.binder === 'volume'; })[0];
+  ok('an unrecognised scalar key is still harvested as a part',
+     !!vol && vol.longExtras.indexOf('foobar') >= 0 && vol.parts.foobar.value === 'baz',
+     vol && JSON.stringify(vol.longExtras));
+})();
+
+/* ---- X12. B4 — networks: written as a map yields one 'list' row per name,
+             its settings as B3-style extras -------------------------------- */
+
+var X12_SRC = 'services:\n  a:\n    image: alpine\n    networks:\n' +
+  '      frontend:\n' +
+  '        ipv4_address: 10.0.1.20\n' +
+  '        aliases:\n' +
+  '          - web\n' +
+  '      backend:\n';
+
+(function () {
+  var form = Y.buildForm(Y.parse(X12_SRC));
+  var nets = form.fields.filter(function (f) { return f.listKey === 'networks'; });
+
+  ok('two map entries yield two list rows', nets.length === 2,
+     JSON.stringify(nets.map(function (f) { return f.id; })));
+  ok('their ids are distinct', nets[0] && nets[1] && nets[0].id !== nets[1].id,
+     JSON.stringify(nets.map(function (f) { return f.id; })));
+  ok('the names are the mapping keys',
+     !!nets[0] && nets[0].parts.value.value === 'frontend' &&
+     !!nets[1] && nets[1].parts.value.value === 'backend',
+     JSON.stringify(nets.map(function (f) { return f.parts.value.value; })));
+
+  var front = nets[0], back = nets[1];
+  ok('the entry with settings is longForm, with ipv4_address as an extra',
+     !!front && front.longForm === true && front.longExtras.indexOf('ipv4_address') >= 0 &&
+     front.parts.ipv4_address.value === '10.0.1.20',
+     front && JSON.stringify({ longForm: front.longForm, extras: front.longExtras }));
+  ok('the aliases list produces the advice sentence once',
+     !!front && front.advice.filter(function (a) {
+       return a === 'this entry has settings only the Compose view can show';
+     }).length === 1,
+     front && JSON.stringify(front.advice));
+  ok('a bare name with nothing under it is not longForm — just a name row',
+     !!back && back.longForm !== true && back.longExtras.length === 0,
+     back && JSON.stringify({ longForm: back.longForm, extras: back.longExtras }));
+})();
+
+/* ---- X13. The null edit over every part of both rows --------------------- */
+
+(function () {
+  var doc = Y.parse(X12_SRC), form = Y.buildForm(doc);
+  var nets = form.fields.filter(function (f) { return f.listKey === 'networks'; });
+  var okAll = true;
+
+  nets.forEach(function (f) {
+    for (var which in f.parts) {
+      if (!f.parts.hasOwnProperty(which) || !f.parts[which].spot) continue;
+      if (Y.setPart(doc, form, f.id, which, f.parts[which].value) !== true) okAll = false;
+    }
+  });
+
+  ok('every part of both rows accepts its own current value', okAll);
+  ok('the null edit leaves the file byte for byte the same',
+     Y.serialise(doc) === X12_SRC, firstDiff(X12_SRC, Y.serialise(doc)));
+})();
+
+/* ---- X14. Renaming one entry rewrites only that key ----------------------- */
+
+(function () {
+  var doc = Y.parse(X12_SRC), form = Y.buildForm(doc);
+  var front = form.fields.filter(function (f) { return f.listKey === 'networks'; })[0];
+  Y.setPart(doc, form, front.id, 'value', 'frontnet');
+  var out = Y.serialise(doc);
+  ok('renaming rewrites only the one key',
+     out.indexOf('frontnet:') >= 0 && out.indexOf('backend:') >= 0 &&
+     diffLines(X12_SRC, out).length === 1,
+     firstDiff(X12_SRC, out));
+})();
+
+/* ---- X15. removeItem on a map entry — one of two, then the last ---------- */
+
+(function () {
+  var doc = Y.parse(X12_SRC), form = Y.buildForm(doc);
+  var back = form.fields.filter(function (f) { return f.listKey === 'networks'; })[1];
+  ok('removing one of two entries succeeds', Y.removeItem(doc, form, back.id) === true);
+  var out = Y.serialise(doc);
+  ok('...leaving the other, and the file still valid',
+     out.indexOf('frontend:') >= 0 && out.indexOf('backend:') < 0,
+     out);
+
+  var form2 = Y.buildForm(Y.parse(out));
+  var nets2 = form2.fields.filter(function (f) { return f.listKey === 'networks'; });
+  ok('...and the remaining entry still reads back as one row', nets2.length === 1,
+     JSON.stringify(nets2.map(function (f) { return f.id; })));
+
+  var doc3 = Y.parse(out), form3 = Y.buildForm(doc3);
+  var last = form3.fields.filter(function (f) { return f.listKey === 'networks'; })[0];
+  ok('removing the last entry succeeds', Y.removeItem(doc3, form3, last.id) === true);
+  ok('...and takes the networks: key with it',
+     Y.serialise(doc3).indexOf('networks:') < 0, Y.serialise(doc3));
+})();
+
+/* ---- X16. addItem on a map-shaped networks: writes a mapping entry, not a
+             '- ' item ------------------------------------------------------ */
+
+(function () {
+  var doc = Y.parse(X12_SRC), form = Y.buildForm(doc);
+  var line = Y.addItem(doc, form, 'a', 'list', '', 'networks');
+  ok('addItem reports a line', line >= 0, line);
+
+  var out = Y.serialise(doc);
+  ok('the new entry is a bare mapping key ("name:"), not a "- name" sequence item',
+     out.indexOf('      default:\n') >= 0 && out.indexOf('- default') < 0, out);
+  ok('the file still round-trips through parse/serialise',
+     Y.serialise(Y.parse(out)) === out, firstDiff(out, Y.serialise(Y.parse(out))));
+
+  var form2 = Y.buildForm(Y.parse(out));
+  var nets2 = form2.fields.filter(function (f) { return f.listKey === 'networks'; });
+  ok('the new entry is visible in a rebuilt form, and not locked', nets2.length === 3 &&
+     nets2.every(function (f) { return !f.locked; }),
+     JSON.stringify(nets2.map(function (f) { return f.id + (f.locked ? ' [locked]' : ''); })));
+})();
+
+/* ---- X17. Long-form secrets:/configs: entries ----------------------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    secrets:\n' +
+    '      - source: db_password\n' +
+    '        target: pw\n' +
+    '        uid: "103"\n' +
+    '        mode: "0400"\n' +
+    '      - target: nosource\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var secrets = form.fields.filter(function (f) { return f.listKey === 'secrets'; });
+  var named = secrets.filter(function (f) { return !f.locked; })[0];
+  var unnamed = secrets.filter(function (f) { return f.locked; })[0];
+
+  ok('the entry with source: is editable, named after the secret',
+     !!named && named.parts.value.value === 'db_password' && named.longForm === true,
+     named && JSON.stringify({ value: named.parts.value.value, longForm: named.longForm }));
+  ok('its extras are target, uid and mode',
+     !!named && ['target', 'uid', 'mode'].every(function (k) { return named.longExtras.indexOf(k) >= 0; }),
+     named && JSON.stringify(named.longExtras));
+  ok('...holding the file\'s own values',
+     !!named && named.parts.target.value === 'pw' && named.parts.uid.value === '103' &&
+     named.parts.mode.value === '0400',
+     named && JSON.stringify(named.parts));
+
+  var okAll = true;
+  if (named) {
+    ['value'].concat(named.longExtras).forEach(function (which) {
+      if (Y.setPart(doc, form, named.id, which, named.parts[which].value) !== true) okAll = false;
+    });
+  }
+  ok('the null edit holds over every part', okAll);
+  ok('...and leaves the file byte for byte the same',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+
+  ok('an entry with no source: stays locked, with the new reason',
+     !!unnamed && unnamed.locked &&
+     unnamed.lockReason === 'this entry does not say which secret it uses',
+     unnamed && JSON.stringify({ locked: unnamed.locked, reason: unnamed.lockReason }));
+})();
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    configs:\n' +
+    '      - target: nosource\n';
+  var form = Y.buildForm(Y.parse(src));
+  var cfg = form.fields.filter(function (f) { return f.listKey === 'configs'; })[0];
+  ok('a config entry with no source: uses the config wording',
+     !!cfg && cfg.locked && cfg.lockReason === 'this entry does not say which config it uses',
+     cfg && JSON.stringify({ locked: cfg.locked, reason: cfg.lockReason }));
+})();
+
+/* ---- X18. Unchanged: an ordinary list-form networks: and a plain '- name'
+             secret still produce exactly what they did before this step --- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    networks:\n' +
+    '      - frontend\n      - backend\n    secrets:\n      - my_secret\n';
+  var form = Y.buildForm(Y.parse(src));
+  var nets = form.fields.filter(function (f) { return f.listKey === 'networks'; });
+  var secs = form.fields.filter(function (f) { return f.listKey === 'secrets'; });
+
+  ok('the short-form networks: entries are still plain, unlocked list rows',
+     nets.length === 2 && nets.every(function (f) { return !f.locked && f.longForm !== true; }) &&
+     nets[0].parts.value.value === 'frontend' && nets[1].parts.value.value === 'backend',
+     JSON.stringify(nets.map(function (f) { return f.parts.value.value; })));
+  ok('the short-form secret is still a plain, unlocked list row',
+     secs.length === 1 && !secs[0].locked && secs[0].longForm !== true &&
+     secs[0].parts.value.value === 'my_secret',
+     JSON.stringify(secs.map(function (f) { return f.parts.value.value; })));
+})();
+
+/* ---- X19. Clearing a map entry's name writes nothing --------------------- */
+
+/* Its name IS the mapping key, so there is no dash to leave behind the way a
+ * cleared '- entry' has one. Blanked as a key it would leave a bare ':', and
+ * written the ordinary way it would leave "''" — neither is a shape anyone
+ * asked for, so the file is left exactly as it was and the × removes it. */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    networks:\n' +
+    '      frontend:\n        ipv4_address: 10.0.1.20\n      backend:\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var bare = form.fields.filter(function (f) {
+    return f.listKey === 'networks' && f.parts.value && f.parts.value.value === 'backend';
+  })[0];
+  var withIp = form.fields.filter(function (f) {
+    return f.listKey === 'networks' && f.parts.value && f.parts.value.value === 'frontend';
+  })[0];
+
+  var okBare = bare && Y.setPart(doc, form, bare.id, 'value', '');
+  var okIp   = withIp && Y.setPart(doc, form, withIp.id, 'value', '  ');
+  ok('a blank name reports success and changes not one byte, with or without settings under it',
+     !!okBare && !!okIp && Y.serialise(doc) === src, JSON.stringify(Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * Y. A leading '---' (or trailing '...') no longer seals the whole file
+ *    (PLAN_31) — every linuxserver.io example starts with a document-start
+ *    marker, which used to lock the entire form as one uneditable blob.
+ * ========================================================================= */
+
+console.log('\nY. Document markers no longer seal the file');
+
+/* ---- Y1. A leading --- parses to a form and round-trips verbatim -------- */
+
+(function () {
+  var text = '---\nservices:\n  a:\n    image: alpine\n';
+  var doc = Y.parse(text);
+  ok('root is a map, not sealed', doc.root && doc.root.kind === 'map', doc.root && doc.root.kind);
+  ok('the marker round-trips byte for byte', Y.serialise(doc) === text, firstDiff(text, Y.serialise(doc)));
+})();
+
+/* ---- Y2. A comment between the marker and the content is skipped too ---- */
+
+(function () {
+  var text = '---\n# a comment\nservices:\n  a:\n    image: alpine\n';
+  var doc = Y.parse(text);
+  ok('root is a map, not sealed', doc.root && doc.root.kind === 'map', doc.root && doc.root.kind);
+  ok('the marker and comment round-trip byte for byte', Y.serialise(doc) === text, firstDiff(text, Y.serialise(doc)));
+})();
+
+/* ---- Y3. Setting a value leaves the marker and every other line untouched */
+
+(function () {
+  var text = '---\nservices:\n  a:\n    image: alpine\n    environment:\n      FOO: bar\n';
+  var doc = Y.parse(text);
+  var form = Y.buildForm(doc);
+  var f = form.fields.filter(function (x) { return x.target === 'FOO'; })[0];
+  if (!ok('FOO field is found', !!f)) return;
+  Y.setValue(doc, form, f.id, 'baz');
+  var after = Y.serialise(doc);
+  var moved = diffLines(text, after);
+  ok('exactly one line changed', moved.length === 1, 'changed lines: ' + moved.join(', '));
+  ok('the changed line holds the new value', /FOO: baz/.test(after.split('\n')[moved[0]]), after);
+})();
+
+/* ---- Y4. A file ending in a lone '...' after real content round-trips --- */
+
+(function () {
+  var text = 'services:\n  a:\n    image: alpine\n...\n';
+  var doc = Y.parse(text);
+  ok('root is a map, not sealed', doc.root && doc.root.kind === 'map', doc.root && doc.root.kind);
+  ok('the closing marker round-trips byte for byte', Y.serialise(doc) === text, firstDiff(text, Y.serialise(doc)));
+})();
+
+/* ---- Y5. '---' at the top and '...' at the bottom, together ------------- */
+
+(function () {
+  var text = '---\nservices:\n  a:\n    image: alpine\n...\n';
+  var doc = Y.parse(text);
+  ok('root is a map, not sealed', doc.root && doc.root.kind === 'map', doc.root && doc.root.kind);
+  ok('both markers round-trip byte for byte', Y.serialise(doc) === text, firstDiff(text, Y.serialise(doc)));
+})();
+
+/* ---- Y6. A genuine two-document file still seals as multi-doc ----------- */
+
+(function () {
+  var text = '---\nservices:\n  a:\n    image: alpine\n---\nservices:\n  b:\n    image: alpine\n';
+  var doc = Y.parse(text);
+  ok('the whole file seals', doc.root && doc.root.kind === 'opaque', doc.root && doc.root.kind);
+  ok('the reason is multi-doc', doc.root && doc.root.reason === 'multi-doc', doc.root && doc.root.reason);
+})();
+
+/* ---- Y7. A file that is only '---' and blanks does not throw ------------ */
+
+(function () {
+  var text = '---\n\n\n';
+  var doc;
+  try { doc = Y.parse(text); } catch (e) { doc = null; }
+  ok('parse() does not throw', !!doc);
+  ok('root is an empty map, not sealed', !!doc && doc.root && doc.root.kind === 'map',
+     doc && doc.root && doc.root.kind);
+})();
+
+/* ---- Y8. A run of markers before the first real line -------------------- *
+ *
+ * The whole-file scan accepts any number of them, so the root-kind check has
+ * to skip the whole run: stopping after one sealed a file the scan had just
+ * called fine.
+ */
+
+(function () {
+  var text = '...\n---\nservices:\n  a:\n    image: alpine\n';
+  var doc = Y.parse(text);
+  ok('root is a map, not sealed', doc.root && doc.root.kind === 'map',
+     doc.root && (doc.root.kind + '/' + doc.root.reason));
+  ok('both leading markers round-trip byte for byte', Y.serialise(doc) === text, firstDiff(text, Y.serialise(doc)));
 })();
 
 /* ---- result ------------------------------------------------------------- */

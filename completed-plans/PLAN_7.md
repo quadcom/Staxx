@@ -1,10 +1,11 @@
 # Future feature notes: editors for the Advanced blocks
 
-**Status: PARTLY BUILT.** `PLAN_8.md` (complete) built sections 1 and 2 and removed the shared blocker
-below — `addNested()` inserts a nested key at any depth, so a `healthcheck:` or long-form `depends_on:`
-can now be created from nothing. The boolean-quoting question is **answered** and needs no code; see
-that section. The CRLF note at the end is `PLAN_18.md`. What is left here is section 3 alone — which
-of `deploy:` to refuse to offer controls for.
+**Status: COMPLETE.** `PLAN_8.md` built sections 1 and 2 and removed the shared blocker below —
+`addNested()` inserts a nested key at any depth, so a `healthcheck:` or long-form `depends_on:` can
+be created from nothing. The boolean-quoting question is **answered** and needs no code; see that
+section. The CRLF note at the end became `PLAN_18.md`. Section 3 — which of `deploy:` to refuse to
+offer controls for, and the `container_name`/`replicas` conflict — became `PLAN_29.md`, which took
+the decision to warn rather than lock in both cases.
 
 ## Where this comes from
 

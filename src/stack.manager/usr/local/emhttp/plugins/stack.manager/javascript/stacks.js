@@ -172,6 +172,57 @@
   var DECL_HINT = { networks: 'driver', volumes: 'driver',
                      secrets: 'file on the server', configs: 'file on the server' };
 
+  // Label, and where one exists a closed vocabulary, for every extra part
+  // harvestLongExtras() (compose-model.js) can find on a long-form port,
+  // mount, networks: map entry or secrets:/configs: entry — read (via
+  // longExtraInfo() below) by longExtrasDevMoreHtml() to build the row's
+  // 'more settings' toggle, and by choiceFor() to give the dropdown ones a
+  // vocab. A key not listed here still renders, labelled with the key itself
+  // — a compose setting we have never heard of must not vanish.
+  var LONG_EXTRA_INFO = {
+    'mode':                    { label: 'how it is published',        vocab: 'portmode' },
+    'host_ip':                 { label: 'address on the server' },
+    'name':                    { label: 'name for this port' },
+    'type':                    { label: 'kind of mount',               vocab: 'volumetype' },
+    'read_only':               { label: 'read-only',                   vocab: 'boolean' },
+    'consistency':             { label: 'consistency' },
+    'subpath':                 { label: 'path inside the source' },
+    'bind.propagation':        { label: 'how mounts inside it are shared', vocab: 'propagation' },
+    'bind.selinux':            { label: 'SELinux label',               vocab: 'selinux' },
+    'bind.create_host_path':   { label: 'create the folder if it is missing', vocab: 'boolean' },
+    'bind.recursive':          { label: 'include mounts underneath it', vocab: 'boolean' },
+    'volume.nocopy':           { label: 'do not copy existing files in', vocab: 'boolean' },
+    'volume.subpath':          { label: 'path inside the volume' },
+    'tmpfs.size':              { label: 'size limit' },
+    'tmpfs.mode':              { label: 'permissions' },
+    'image.subpath':           { label: 'path inside the image' },
+
+    // networks: written as a map — the entry's own settings beyond the name
+    // (see harvestNetworksMap() in compose-model.js).
+    'ipv4_address':            { label: 'fixed IPv4 address' },
+    'ipv6_address':            { label: 'fixed IPv6 address' },
+    'mac_address':             { label: 'fixed hardware address' },
+    'priority':                { label: 'which network it prefers' },
+    'gw_priority':             { label: 'which network it uses as its gateway' },
+
+    // secrets:/configs: written the long way.
+    'target':                  { label: 'file name inside the container' },
+    'uid':                     { label: 'owning user id' },
+    'gid':                     { label: 'owning group id' }
+  };
+
+  // secrets:/configs:' own mode: is a file permission ("0400"), not a port's
+  // publish mode ("host"/"ingress") — the same part name from two different
+  // compose keys, told apart by listKey rather than a second lookup table for
+  // one entry. Both call sites below go through this rather than indexing
+  // LONG_EXTRA_INFO directly.
+  function longExtraInfo(f, name) {
+    if (name === 'mode' && (f.listKey === 'secrets' || f.listKey === 'configs')) {
+      return { label: 'file permission' };
+    }
+    return LONG_EXTRA_INFO[name];
+  }
+
   // The groups a service's fields are sorted into, in the order they render.
   // `cls` picks the group's column template in the stylesheet, and `add`
   // (when set) is the binder passed through to the Add button on that group's
@@ -1147,6 +1198,13 @@
         ['/udp', 'udp']
       ]
     },
+    // The long form's own protocol: line — a bare word with no separator to
+    // strip, so unlike port/proto above it draws on compose-model.js's
+    // 'protocol' vocabulary rather than carrying its own options here.
+    'port/protocol': {
+      hint: 'which protocol this port uses',
+      vocab: 'protocol'
+    },
     'volume/mode': {
       hint: 'whether the container can write to this mount',
       options: [
@@ -1229,6 +1287,15 @@
     return YAML.vocab(id);
   }
 
+  // Guarded the same way — the `default` network and no-self-reference rule
+  // now live in compose-model.js's refNames() (shared with the editor's own
+  // suggestions), so a stale cached copy falls back to the plain name list
+  // rather than losing the dropdown entirely.
+  function safeRefNames(names, kind, serviceName) {
+    if (!YAML || typeof YAML.refNames !== 'function') return names;
+    return YAML.refNames(names, kind, serviceName);
+  }
+
   function boolChoice(f) {
     var kind = f.binder === 'setting' ? f.target
              : f.binder === 'depends'  && /\.required$/.test(f.target) ? 'depends.required'
@@ -1298,15 +1365,11 @@
   // the file just by being opened.
   // A `from` field points at a namespace the file declares once at the top —
   // networks:, secrets:, configs:, services: — and offers those real names
-  // instead of a box to spell one in. `default` is added for networks even
-  // when the file never declares it, because compose creates that network
-  // itself regardless.
+  // instead of a box to spell one in. The `default` network and no-self rule
+  // are refNames()'s own, in compose-model.js, so the editor's suggestions
+  // agree with this dropdown rather than each holding its own copy.
   function fromChoice(f) {
-    var names = ((MODEL && MODEL.declared && MODEL.declared[f.from]) || []).slice();
-    if (f.from === 'networks' && names.indexOf('default') < 0) names.push('default');
-    // A service cannot depend on itself, the same rule serviceModeOptions()
-    // already applies to network_mode's "service:" options.
-    if (f.from === 'services') names = names.filter(function (n) { return n !== f.service; });
+    var names = safeRefNames((MODEL && MODEL.declared && MODEL.declared[f.from]) || [], f.from, f.service);
     var options = [];
     for (var i = 0; i < names.length; i++) options.push([names[i], names[i]]);
     return { hint: 'a name already declared in this file', options: options };
@@ -1338,10 +1401,9 @@
   // service's row, and mutating it here would leak one service's option
   // list into every other service's dropdown.
   function serviceModeOptions(serviceName, prefix, what) {
-    var names = (MODEL && MODEL.declared && MODEL.declared.services) || [];
+    var names = safeRefNames((MODEL && MODEL.declared && MODEL.declared.services) || [], 'services', serviceName);
     var options = [];
     for (var i = 0; i < names.length; i++) {
-      if (names[i] === serviceName) continue;
       options.push([prefix + names[i],
                     prefix + names[i] + ' — share ' + names[i] + '’s ' + what]);
     }
@@ -1507,9 +1569,24 @@
 
     // A short-form port's protocol, or a short-form volume's mode — static
     // pairs, not looked up by target, since a port/volume's target is the
-    // mapping's own key ("8096/tcp"), never "proto" or "mode".
-    if (which === 'proto' && f.binder === 'port')   return CHOICES['port/proto'];
+    // mapping's own key ("8096/tcp"), never "proto" or "mode". A long-form
+    // port's proto part holds the bare word a protocol: line writes, not the
+    // short form's slash-carrying value, so it needs its own vocabulary.
+    if (which === 'proto' && f.binder === 'port') {
+      return f.longForm ? resolveEntry(CHOICES['port/protocol']) : CHOICES['port/proto'];
+    }
     if (which === 'mode'  && f.binder === 'volume') return CHOICES['volume/mode'];
+
+    // A long-form port or mount's own extras (see harvestLongExtras() in the
+    // model) — checked after the two lines above, which is what makes this
+    // safe rather than a collision: a long-form port's OWN `mode:` line
+    // ('host'/'ingress') looks like the same name as the short-form volume's
+    // `mode` part just above, but the volume line is guarded on
+    // f.binder === 'volume', so a long-form port's `mode` never reaches it.
+    if (f.longForm) {
+      var extraInfo = longExtraInfo(f, which);
+      if (extraInfo && extraInfo.vocab) return resolveEntry({ hint: extraInfo.label, vocab: extraInfo.vocab });
+    }
 
     // Suggest, never refuse: image, cap_add/cap_drop and profiles all offer
     // what is known but accept anything typed — see the datalist branch in
@@ -1954,6 +2031,39 @@
            '</div>';
   }
 
+  // One extra part of a long-form entry — a port, a mount, a networks: map
+  // entry or a secrets:/configs: entry — a 'more settings' row built from
+  // LONG_EXTRA_INFO, mirroring declaredFoldHtml() above but for a PART of
+  // this field rather than a field of its own, so it reads f.parts[name]
+  // through the ordinary boxHtml()/setPart() path — no new ids or binders.
+  function longExtraFoldHtml(f, index, name) {
+    var info = longExtraInfo(f, name) || { label: name };
+    // The label is passed as the box's hint as well, so the box carries its
+    // own name for a screen reader — the modifier class hides the second,
+    // visible copy of it. See the stylesheet's own note on that rule.
+    return '<div class="stackman-foldrow stackman-foldrow--long">' +
+             '<span class="stackman-fieldlabel">' + esc(info.label) + '</span>' +
+             boxHtml(f, index, name, info.label) +
+           '</div>';
+  }
+
+  // The "more settings" <details> for a long-form row's own extras — target:,
+  // published:/protocol: or source:/read_only:/bind: and the rest for a port
+  // or mount, a networks: map entry's fixed IP/priority, a secrets:/configs:
+  // entry's target/uid/gid/mode. One .stackman-foldrow per part
+  // harvestLongExtras() found, in file order. Built once here and called from
+  // both fieldHtml() branches that can carry longExtras (mapped, and list) —
+  // pulled out so the two call sites cannot drift apart.
+  function longExtrasDevMoreHtml(f, index) {
+    if (!f.longForm || !f.longExtras || !f.longExtras.length) return '';
+    var extraBits = [];
+    for (var lei = 0; lei < f.longExtras.length; lei++) {
+      extraBits.push(longExtraFoldHtml(f, index, f.longExtras[lei]));
+    }
+    return '<details class="stackman-devmore"><summary>more settings</summary>' +
+           extraBits.join('') + '</details>';
+  }
+
   // A declaration's name: text plus a pencil, never a live box — a box
   // commits through the debounce, so it would rename to every half-typed
   // spelling as it goes, rewriting every reference each time. `data-decl-kind`
@@ -2154,17 +2264,19 @@
       // the two boxes above (see splitPortShort()/splitPathShort()), so it
       // belongs beside them rather than below.
       //
-      // Always a cell, even when there is nothing to put in it. Only the
-      // SHORT form carries this part — a long form spells the protocol out
-      // as its own key, which the parser reads but does not hand back here —
-      // and both forms sit in the same group, under the same five columns.
-      // boxHtml() returns '' for the absent part, so without the placeholder
-      // a long-form row would render four children into five tracks: the
-      // note would slide into this narrow column and the × out of its own.
-      // Guarded on the two binders that own this column rather than left to
-      // the branch order above: a device is `mapped` too, and reaches its own
-      // branch first only by sitting higher up the chain. It has three
-      // columns, not five, so a placeholder here would misalign it instead.
+      // Always a cell, even when there is nothing to put in it. A long-form
+      // port carries this part too now (see harvestLongForm() and
+      // choiceFor()'s f.longForm branch) — with a spot when the file has a
+      // protocol: line, a dead one when it doesn't, but never absent, so
+      // boxHtml() never falls through to the placeholder for a port. A
+      // long-form volume has no equivalent part at all, so that row still
+      // does: without the placeholder it would render four children into
+      // five tracks, the note sliding into this narrow column and the × out
+      // of its own. Guarded on the two binders that own this column rather
+      // than left to the branch order above: a device is `mapped` too, and
+      // reaches its own branch first only by sitting higher up the chain. It
+      // has three columns, not five, so a placeholder here would misalign it
+      // instead.
       if (f.binder === 'port' || f.binder === 'volume') {
         var extra = f.binder === 'port'
                   ? boxHtml(f, index, 'proto', 'protocol')
@@ -2172,6 +2284,8 @@
         bits.push(extra || '<span class="stackman-boxgap" aria-hidden="true"></span>');
       }
       bits.push(noteBoxHtml(f, index));
+
+      devMore = longExtrasDevMoreHtml(f, index);
     } else if (named) {
       // The name is a field like any other. Without it, adding a variable
       // would produce a row that could never be called anything.
@@ -2189,6 +2303,11 @@
       // its own whenever f.from names a namespace the file declares.
       bits.push(boxHtml(f, index, 'value', 'value', f.tool));
       bits.push(noteBoxHtml(f, index));
+
+      // A networks: map entry's own settings beyond its name (fixed IP,
+      // priority...), or a long-form secrets:/configs: entry's target/uid/
+      // gid/mode — see harvestNetworksMap()/harvestList() in the model.
+      devMore = longExtrasDevMoreHtml(f, index);
     } else if (declared) {
       bits.push(declNameHtml(f, index));
       bits.push(boxHtml(f, index, 'value', DECL_HINT[f.declKind] || 'setting'));
@@ -4718,6 +4837,12 @@
   var caLocalHits   = [];   // caLocalImages filtered by the search box, capped at 15
   var caLocalTotal  = 0;    // the filtered count before that cap, so the footer can say "first 15 of N"
 
+  // caAddImage()'s own lookup — same stamp precedent as caHubStamp, plus a
+  // busy flag: a second click while one is still running must do nothing,
+  // not race the first for which editor opens.
+  var caFactsStamp = 0;
+  var caFactsBusy  = false;
+
   function caStopPoll() {
     if (caPoll) { clearTimeout(caPoll); caPoll = null; }
   }
@@ -5467,10 +5592,118 @@
   }
 
   // caAdd()/caImport() convert a Community Applications record; this is the
-  // equivalent for the other two groups, which carry nothing to convert.
+  // equivalent for the other two groups, which carry nothing of their own to
+  // convert — so this asks the server what the image and its own
+  // documentation say about itself, and builds a compose file from that.
+  // Any failure at any stage — no reply, a refused request, a bug in the
+  // builder — falls silently back to caSkeleton(), which was always an
+  // acceptable answer and still is; the dialog must never look like it is
+  // doing nothing, and it must never be left stuck saying so either.
   function caAddImage(image, source) {
-    caModal.close();   // force-closes the details window too, via caModal's own 'close' handler below
-    openEditor(caImageName(image), caSkeleton(image, source), true);
+    if (caFactsBusy) return;   // a lookup is already running; a second click must not open a second editor
+    if (!window.StackmanImage) {
+      caModal.close();
+      openEditor(caImageName(image), caSkeleton(image, source), true);
+      return;
+    }
+
+    caFactsBusy = true;
+    var stamp = ++caFactsStamp;
+    caMsg.textContent = 'Reading ' + image + "'s own documentation…";
+
+    // True only while this is still the lookup the user is waiting on — a
+    // reply for a dialog since closed, or superseded by a later stamp, is
+    // dropped rather than acted on.
+    function stillLive() {
+      return stamp === caFactsStamp && caModal.open;
+    }
+
+    // Clears the busy flag and, while the dialog is still open, restores the
+    // ordinary footer text — the one place both the fallback and the success
+    // path have to leave tidy, so it is written once rather than in each.
+    function settle() {
+      caFactsBusy = false;
+      if (caModal.open) caFooterMsg();
+    }
+
+    function fallback() {
+      settle();
+      caModal.close();
+      openEditor(caImageName(image), caSkeleton(image, source), true);
+    }
+
+    function finish(result) {
+      settle();
+      caModal.close();
+      openEditor(result.name, result.yaml, true);
+
+      // caImport()'s own three wordings, in shape: warnings are settings a
+      // correction had nothing to put right, notes are values filled in on
+      // the user's behalf. A clean import says nothing at all.
+      var warnings = result.warnings || [];
+      var notes    = result.notes || [];
+
+      // The two routes produce very different files, so they cannot share one
+      // opening sentence: an example somebody wrote and published is not the
+      // same claim as a guess assembled from the image's own declared ports.
+      var lead = result.route === 'readme'
+        ? 'This image came with an example file in its own documentation, and that is what ' +
+          'the editor is showing.'
+        : 'This image publishes no example file, so this was built from what the image itself ' +
+          'declares.';
+
+      if (warnings.length && notes.length) {
+        showError(lead + ' Some of it needs your attention, and some values were filled in for ' +
+                   'you. Check these before saving:\n\n' +
+                   'Needs your attention:\n' + warnings.join('\n') +
+                   '\n\nFilled in for you:\n' + notes.join('\n'));
+      } else if (warnings.length) {
+        showError(lead + ' Some of it needs your attention. Check this before saving:\n\n' +
+                   warnings.join('\n'));
+      } else if (notes.length) {
+        showError(lead + ' Some values were filled in for you. Check these before saving:\n\n' +
+                   notes.join('\n'));
+      }
+    }
+
+    call('image-facts', { image: image, source: source }, 20000).then(function (reply) {
+      if (!stillLive()) { settle(); return; }
+      if (!reply || !reply.ok) { fallback(); return; }
+
+      var facts = reply.facts || {};
+      var opts = { appdata: facts.appdata || '', timezone: facts.timezone || '' };
+      var result;
+      try {
+        result = window.StackmanImage.build(image, source, facts, opts);
+      } catch (e) {
+        fallback();
+        return;
+      }
+
+      if (!result.wantConfig) { finish(result); return; }
+
+      // The registry fallback is four chained requests, so it is only ever
+      // asked for once — whatever this second reply says, build() runs
+      // exactly one more time and that answer is final.
+      call('image-facts', { image: image, source: source, config: '1' }, 40000).then(function (reply2) {
+        if (!stillLive()) { settle(); return; }
+
+        var facts2 = (reply2 && reply2.ok && reply2.facts) || {};
+        var merged = {};
+        Object.keys(facts).forEach(function (k) { merged[k] = facts[k]; });
+        Object.keys(facts2).forEach(function (k) { merged[k] = facts2[k]; });
+        var opts2 = { appdata: merged.appdata || '', timezone: merged.timezone || '' };
+
+        var result2;
+        try {
+          result2 = window.StackmanImage.build(image, source, merged, opts2);
+        } catch (e) {
+          fallback();
+          return;
+        }
+        finish(result2);
+      });
+    });
   }
 
   // A row in the details window's table — omitted outright when its value is

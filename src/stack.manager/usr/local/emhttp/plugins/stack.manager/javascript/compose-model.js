@@ -477,7 +477,21 @@
         var k = ctx.cls[i];
         if (k.kind === 'blank' || k.kind === 'comment') continue;
         if (/^(---|\.\.\.)\s*$/.test(lines[i])) {
-          if (seenReal) { whole = 'multi-doc'; break; }
+          if (seenReal) {
+            // A marker after real content only starts a second document if
+            // more real content actually follows it. A lone trailing '...'
+            // that just closes the file, with nothing but blanks/comments
+            // (or further markers) after it, is one document.
+            var after = i + 1;
+            while (after < lines.length) {
+              var ak = ctx.cls[after];
+              if (ak.kind === 'blank' || ak.kind === 'comment') { after++; continue; }
+              if (/^(---|\.\.\.)\s*$/.test(lines[after])) { after++; continue; }
+              break;
+            }
+            if (after < lines.length) { whole = 'multi-doc'; break; }
+            continue;
+          }
           continue;                                   // a leading --- is fine
         }
         seenReal = true;
@@ -489,6 +503,18 @@
     }
 
     var j = significant(ctx, 0);
+    // A lone document marker at the top (or a leading '...') doesn't decide
+    // the root kind itself — skip it exactly as a leading comment already is,
+    // and look at what follows. doc.lines is untouched either way, so every
+    // offset the parser records stays line-based and serialise() reproduces
+    // the marker verbatim; skipping it here only changes where root parsing
+    // starts, not what gets written back. A loop rather than one skip because
+    // the scan above accepts any run of markers before the first real line,
+    // and one that stopped after a single marker would seal a file that scan
+    // had just called fine.
+    while (j < lines.length && /^(---|\.\.\.)\s*$/.test(lines[j])) {
+      j = significant(ctx, j + 1);
+    }
     if (j >= lines.length) {
       doc.root = { kind: 'map', indent: 0, start: 0, end: 0, keys: [], pairs: {} };
       return doc;
@@ -677,6 +703,14 @@
       target:     'Build stage'
     }
   };
+
+  // Measured on compose 2.40.3 outside a swarm: these five are parsed and then
+  // ignored, while resources, replicas and restart_policy are honoured. A box
+  // that looks like it works and does nothing is the failure this form exists
+  // to avoid. Keyed by full target name so it cannot collide with another
+  // block's child.
+  var SWARM_ONLY = { 'deploy.placement': 1, 'deploy.update_config': 1,
+                     'deploy.rollback_config': 1, 'deploy.endpoint_mode': 1, 'deploy.mode': 1 };
 
   // A declaration's settings the form knows what to do with — the same shape
   // as LEAVES above, pointed at harvestBlock via a table argument rather than
@@ -975,17 +1009,44 @@
 
       if (it.value.kind === 'map') {
         // A 'list' binder has no long form — {target:, ...} is a ports/volumes
-        // thing — so a map item here is not something harvestLongForm can read
-        // either; it would bail on the missing target: and drop the entry
-        // silently. Lock it instead, so it stays visible.
+        // thing — except secrets:/configs:, whose long form names itself with
+        // a source: scalar the row can bind to exactly the way a short-form
+        // entry's own value does, keeping its declared-name dropdown; target,
+        // uid, gid and mode become B3-style extras. Nothing else sharing this
+        // binder (networks, depends_on, profiles...) ever writes a seq item
+        // this way, so everything else here still has no name to show it by.
         if (binder === 'list') {
+          if (listKey === 'secrets' || listKey === 'configs') {
+            var srcPair = it.value.pairs['source'];
+            var srcNode = srcPair && srcPair.value && srcPair.value.kind === 'scalar' ? srcPair.value : null;
+            if (srcNode) {
+              var st = target(binder, srcNode.value, {
+                parts: { value: part(srcNode.value, scalarSpot(srcNode)) },
+                range: range,
+                comment: readComment(srcNode.comment),
+                commentSpot: commentSpot(srcNode, lines),
+                listKey: listKey,
+                index: i
+              });
+              st.longForm = true;
+              harvestLongExtras(st, it.value, ['source']);
+              out.push(st);
+              continue;
+            }
+            var span2 = lines.slice(it.start, it.end);
+            var raw2 = span2.map(function (l) { return l.slice(it.indent); }).join('\n');
+            out.push(lockedTarget(binder, '@' + pair.key + '#' + i, range,
+              'this entry does not say which ' + (listKey === 'secrets' ? 'secret' : 'config') + ' it uses',
+              raw2, listKey));
+            continue;
+          }
           var span = lines.slice(it.start, it.end);
           var raw = span.map(function (l) { return l.slice(it.indent); }).join('\n');
           out.push(lockedTarget(binder, '@' + pair.key + '#' + i, range,
             'this entry is written as a block of its own', raw, listKey));
           continue;
         }
-        harvestLongForm(out, binder, it, range, lines, listKey);
+        harvestLongForm(out, binder, it, range, lines, listKey, i);
         continue;
       }
       if (it.value.kind !== 'scalar') continue;
@@ -1008,7 +1069,7 @@
   // The spelled-out forms: {target, published, protocol} for a port,
   // {type, source, target} for a volume. Here the two halves are separate
   // scalars on separate lines, so each part addresses its own.
-  function harvestLongForm(out, binder, item, range, lines, listKey) {
+  function harvestLongForm(out, binder, item, range, lines, listKey, index) {
     var map = item.value;
     var pick = function (k) {
       var p = map.pairs[k];
@@ -1016,27 +1077,50 @@
     };
 
     var tgt = pick('target');
-    if (!tgt) return;
+    if (!tgt) {
+      // No container-side target: line means Docker refuses the entry
+      // outright, so this is invalid compose, not a form limitation — locked
+      // rather than dropped, so the reader can see what the file actually
+      // says here, the same treatment the map branch above already gives a
+      // shape harvestLongForm cannot read at all.
+      var span = lines.slice(item.start, item.end);
+      var raw = span.map(function (l) { return l.slice(item.indent); }).join('\n');
+      out.push(lockedTarget(binder, '@' + listKey + '#' + index, range,
+        binder === 'port'
+          ? 'this entry does not say which port inside the container to use'
+          : 'this mount does not say where it goes in the container',
+        raw, listKey));
+      return;
+    }
 
     // The note belongs to the entry as a whole, so it rides on the first line.
     var note = { comment: readComment(tgt.comment), spot: commentSpot(tgt, lines) };
 
     if (binder === 'port') {
       var pub = pick('published'), proto = pick('protocol');
-      out.push(target('port', portKey(tgt.value + (proto ? '/' + proto.value : '')), {
+      var t = target('port', portKey(tgt.value + (proto ? '/' + proto.value : '')), {
         parts: {
           host:      part(pub ? pub.value : '', pub ? scalarSpot(pub) : null),
-          container: part(tgt.value, scalarSpot(tgt))
+          container: part(tgt.value, scalarSpot(tgt)),
+          // Bare word on its own line, unlike the short form's slash-carrying
+          // part below — no separator to strip or restore.
+          proto:     part(proto ? proto.value : '', proto ? scalarSpot(proto) : null)
         },
         range: range, comment: note.comment, commentSpot: note.spot,
         lockReason: pub ? '' : 'no host port is set here',
         listKey: listKey
-      }));
+      });
+      // Tells fieldsFor()/choiceFor() this row's proto part is the bare-word
+      // long form, not the short form's slash-carrying one — see stacks.js's
+      // choiceFor().
+      t.longForm = true;
+      harvestLongExtras(t, map, ['target', 'published', 'protocol']);
+      out.push(t);
       return;
     }
 
     var src = pick('source'), ro = pick('read_only');
-    out.push(target(binder, tgt.value, {
+    var vt = target(binder, tgt.value, {
       parts: {
         host:      part(src ? src.value : '', src ? scalarSpot(src) : null),
         container: part(tgt.value, scalarSpot(tgt))
@@ -1045,7 +1129,55 @@
       range: range, comment: note.comment, commentSpot: note.spot,
       lockReason: src ? '' : 'this mount has no source path to edit',
       listKey: listKey
-    }));
+    });
+    vt.longForm = true;
+    harvestLongExtras(vt, map, ['source', 'target']);
+    out.push(vt);
+  }
+
+  // Everything under a long-form port/mount item that the main boxes above
+  // do not already own: a direct scalar child becomes a part named after its
+  // key, and a direct map child (bind:, tmpfs:, volume:) is walked one level
+  // further, becoming a 'parent.child' part — bind.propagation, tmpfs.size.
+  // One level only. Anything else here (a list, something the parser sealed,
+  // a map nested deeper than that) has no single line the form can bind to,
+  // so it is left to the Compose view and the row says so, once, however
+  // many such things it holds.
+  function harvestLongExtras(t, map, owned) {
+    var extras = [];
+    for (var i = 0; i < map.keys.length; i++) {
+      var key = map.keys[i];
+      if (owned.indexOf(key) >= 0) continue;
+      var p = map.pairs[key];
+      if (!p.value) continue;
+
+      if (p.value.kind === 'scalar') {
+        t.parts[key] = part(p.value.value, scalarSpot(p.value));
+        extras.push(key);
+        continue;
+      }
+      if (p.value.kind === 'map') {
+        for (var j = 0; j < p.value.keys.length; j++) {
+          var key2 = p.value.keys[j];
+          var p2 = p.value.pairs[key2];
+          if (p2.value && p2.value.kind === 'scalar') {
+            var name = key + '.' + key2;
+            t.parts[name] = part(p2.value.value, scalarSpot(p2.value));
+            extras.push(name);
+          } else {
+            longExtrasAdvice(t);
+          }
+        }
+        continue;
+      }
+      longExtrasAdvice(t);
+    }
+    t.longExtras = extras;
+  }
+
+  function longExtrasAdvice(t) {
+    var msg = 'this entry has settings only the Compose view can show';
+    if (t.advice.indexOf(msg) < 0) t.advice.push(msg);
   }
 
   // environment and labels, which compose accepts as either a mapping or a
@@ -1201,7 +1333,13 @@
       for (var j = 0; j < covered.length; j++) {
         if (covered[j] === childTarget || covered[j].indexOf(childTarget + '.') === 0) { already = true; break; }
       }
-      if (!already) out.push(settingTarget(p.value.pairs[childName], childTarget, lines));
+      if (!already) {
+        var childField = settingTarget(p.value.pairs[childName], childTarget, lines);
+        if (SWARM_ONLY.hasOwnProperty(childTarget)) {
+          childField.advice.push('Docker ignores this unless the server is part of a swarm cluster, so setting it here has no effect');
+        }
+        out.push(childField);
+      }
     }
   }
 
@@ -1529,6 +1667,38 @@
     }
   }
 
+  // networks: written as a map — one entry per network this service attaches
+  // to, rather than a bare list of names. Same "list written as a map" shape
+  // harvestDependsLong just handled, so it copies that shape: the name is the
+  // mapping key (bound via keySpot() as parts.value, the row's one box, so
+  // renaming it rewrites the key), and everything under it — the fixed IP a
+  // map is usually written for, plus priority, aliases and the rest — is a
+  // B3-style extra rather than a leaf table of its own, since there is no
+  // fixed set of them worth naming individually.
+  function harvestNetworksMap(out, pair, lines) {
+    var map = pair.value;
+    for (var i = 0; i < map.keys.length; i++) {
+      var name = map.keys[i];
+      var netPair = map.pairs[name];
+      var v = netPair.value;
+
+      var row = target('list', name, {
+        parts: { value: part(name, keySpot(netPair)) },
+        range: { start: netPair.leadStart, end: netPair.end },
+        listKey: 'networks',
+        index: i
+      });
+
+      // A bare "backend:" (no settings under it) is a complete, valid entry
+      // on its own — just the name, no toggle to open onto nothing.
+      if (v && v.kind === 'map') {
+        row.longForm = true;
+        harvestLongExtras(row, v, []);
+      }
+      out.push(row);
+    }
+  }
+
   function harvest(serviceMap, lines) {
     var out = [], i, p;
 
@@ -1588,11 +1758,18 @@
         }
         if (s.shape === 'list' && s.entry === 'plain') {
           if (p.value && p.value.kind === 'seq') { harvestList(out, 'list', p, splitPlain, lines, key); continue; }
-          // depends_on is the one 'plain list' key that can also be written as
-          // a map, one dependency per name — no other key sharing this shape
-          // (networks, secrets, profiles...) ever takes this form.
+          // depends_on and networks are the two 'plain list' keys that can
+          // also be written as a map — depends_on one dependency per name
+          // (its own condition/restart/required leaves), networks one
+          // attachment per name (its own fixed-IP/priority leaves, see
+          // harvestNetworksMap). secrets, configs and profiles never take
+          // this form.
           if (key === 'depends_on' && p.value && p.value.kind === 'map') {
             harvestDependsLong(out, p, lines);
+            continue;
+          }
+          if (key === 'networks' && p.value && p.value.kind === 'map') {
+            harvestNetworksMap(out, p, lines);
             continue;
           }
           out.push(settingTarget(p, key, lines));   // the inline flow form, or anything else unreadable
@@ -1738,13 +1915,19 @@
     }
     // A nested leaf's target is dotted — 'healthcheck.interval' — so its
     // title lives in LEAVES rather than KEYS. A dotted target LEAVES does not
-    // name (an uncovered child, e.g. deploy.replicas) falls back to the last
-    // segment, so it reads "Replicas" rather than the whole path.
+    // name (an uncovered child, e.g. deploy.mode) falls back to the heading
+    // DESCRIPTIONS already carries for it — via dottedBucket(), the same
+    // lookup fieldHelp() uses for the ⓘ bubble — so the row's label agrees
+    // with its own help; only a target neither table names falls all the way
+    // back to humanising the last segment.
     var dot = t.target.indexOf('.');
     if (t.binder === 'setting' && dot > 0) {
       var block = LEAVES[t.target.slice(0, dot)];
       var title = block && block[t.target.slice(dot + 1)];
       if (title) return title;
+      var db = dottedBucket(t.target);
+      var info = db && keyInfo(db.key, db.where);
+      if (info) return info.title;
       var segs = t.target.split('.');
       return humanise(segs[segs.length - 1]);
     }
@@ -1862,6 +2045,15 @@
         fixedRequired: false,
         path: t.path || null,
         testPart: t.testPart || null,
+        // A long-form port/volume entry (spelled-out target:/source: lines)
+        // vs. the short "host:container" scalar — read by choiceFor() in
+        // stacks.js, since the two forms need different handling for an
+        // otherwise identical 'proto' part.
+        longForm: !!t.longForm,
+        // Extra part names harvestLongExtras() found beyond the main boxes,
+        // in file order — read by fieldHtml()'s 'mapped' branch in stacks.js
+        // to build the row's 'more settings' toggle.
+        longExtras: t.longExtras || [],
         listKey: t.listKey || '',
         // Carried here rather than in stacks.js, so the KEYS table stays the
         // one place that knows a key's namespace and tool — the whole point
@@ -2128,6 +2320,34 @@
       }
     }
 
+    // Docker refuses a fixed container name together with more than one
+    // replica of the same service outright — flag both rows rather than let
+    // the combination fail only on save. Only fires on a plain integer: a
+    // replicas value written as '${COPIES}' or anything else that doesn't
+    // parse already gets the interpolation note, and guessing past that would
+    // be wrong as often as right.
+    for (var ci = 0; ci < out.fields.length; ci++) {
+      var cf = out.fields[ci];
+      if (cf.target !== 'container_name') continue;
+      var nameVal = cf.parts.value ? cf.parts.value.value : '';
+      if (!nameVal) continue;
+
+      var rf = null;
+      for (var rj = 0; rj < out.fields.length; rj++) {
+        if (out.fields[rj].service === cf.service && out.fields[rj].target === 'deploy.replicas') {
+          rf = out.fields[rj];
+          break;
+        }
+      }
+      if (!rf) continue;
+
+      var repVal = rf.parts.value ? String(rf.parts.value.value).trim() : '';
+      if (!/^\d+$/.test(repVal) || parseInt(repVal, 10) <= 1) continue;
+
+      cf.advice.push('Docker refuses this together with more than one copy below — clear one of the two');
+      rf.advice.push('Docker refuses more than one copy together with a fixed container name — clear one of the two');
+    }
+
     out.index = buildIndex(out);
     return out;
   }
@@ -2301,13 +2521,27 @@
     // would rewrite the line it came from. Nothing here needs to decide what the
     // value means when the answer is "leave it exactly as it was".
     if (String(value) === String(p.value)) return true;
+    // A long-form entry's parts are each their own line, and compose refuses
+    // an empty one exactly as it refuses "interval: ''" — but there is no
+    // removeKey() for a line inside a numbered list item, only for a key
+    // under a service, so a blank edit here can only write nothing and
+    // report success. Deleting the line itself is the Compose view's job.
+    if (f.longForm && !String(value).trim()) return true;
     // A list entry cleared to nothing leaves its dash with nothing after it —
     // the shape the Add button already writes — rather than "- ''", which is a
     // real empty string and reads back as an entry that has a value. One shape
     // for "nothing here yet" is what lets stashSection recognise one. The body
     // is writeScalar's, without the emitScalar step: emitScalar('') is "''",
     // which is exactly what must not be written here.
+    //
+    // A map entry (networks: written as a map, see harvestNetworksMap) binds
+    // its name through the same 'value' part, but there is no dash to leave
+    // behind: the spot covers the key text only, so blanking it that way
+    // leaves a bare ":", and writing it the ordinary way leaves "''". An
+    // entry with no name is not a shape worth having either, so a blank name
+    // writes nothing — removing the entry is what the × is for.
     if (f.binder === 'list' && which === 'value' && !String(value).trim()) {
+      if (p.spot.isKey) return true;
       var bare = doc.lines[p.spot.line];
       doc.lines[p.spot.line] = bare.slice(0, p.spot.col) + bare.slice(p.spot.col + p.spot.len);
       splice(doc, 0, 0, []);                  // re-parse, no line count change
@@ -2403,6 +2637,12 @@
       return d + ':' + d;
     }
     if (binder === 'list') {
+      // A map-shaped list — only networks: ever takes this form under a
+      // service — needs a "name:" line, since a bare word is not a valid
+      // mapping entry; addItem's own v.kind === 'map' branch splices this
+      // return value straight in with no key/dash of its own.
+      var mapSuffix = shape === 'map' ? ':' : '';
+
       // These three render as a suggestion box — a text box with a dropdown
       // attached (see choiceFor() in stacks.js) — and a browser only offers
       // the suggestions that match what is already in the box. A placeholder
@@ -2410,7 +2650,7 @@
       // start empty instead. addService() writes a blank `image:` for the same
       // reason. Everything else here is a plain box, where a placeholder shows
       // the shape of the thing wanted and costs nothing.
-      if (listKey === 'cap_add' || listKey === 'cap_drop' || listKey === 'profiles') return '';
+      if (listKey === 'cap_add' || listKey === 'cap_drop' || listKey === 'profiles') return '' + mapSuffix;
 
       // A key with a declared-name namespace (networks, secrets, configs,
       // depends_on) offers the first name not already on this service, so
@@ -2420,7 +2660,7 @@
       var spec = KEYS[listKey] || {};
       if (spec.from && declared) {
         for (var d2 = 0; d2 < declared.length; d2++) {
-          if (taken.indexOf(declared[d2]) < 0) return declared[d2];
+          if (taken.indexOf(declared[d2]) < 0) return declared[d2] + mapSuffix;
         }
       }
       var LIST_PLACEHOLDER = {
@@ -2436,7 +2676,7 @@
       if (listKey === 'expose') {
         var pn = parseInt(base, 10);
         while (taken.indexOf(String(pn)) >= 0) pn++;
-        return String(pn);
+        return String(pn) + mapSuffix;
       }
       if (listKey === 'dns') {
         var octets = base.split('.'), last = parseInt(octets[3], 10), candidate;
@@ -2444,12 +2684,12 @@
           candidate = octets.slice(0, 3).join('.') + '.' + last;
           last++;
         } while (taken.indexOf(candidate) >= 0);
-        return candidate;
+        return candidate + mapSuffix;
       }
       // Everything else here is an obvious placeholder already, and the new
       // box's text is selected for overtyping immediately (structuralEdit in
       // stacks.js), so a suffix is enough.
-      return freeName(taken, base, '-');
+      return freeName(taken, base, '-') + mapSuffix;
     }
     // A plain word rather than "". Quoting is never removed once it is there,
     // so an empty double-quoted placeholder would leave every variable added
@@ -4328,6 +4568,11 @@
   // list the way the other tables here are.
   var LOGGING_OPTIONS_KEYS = ['mode', 'max-size', 'max-file', 'tag', 'labels', 'env'];
 
+  // A long-form dependency's own keys — DEPENDS_LEAVES (:710) plus
+  // condition, which lives apart from it because helpGaps() checks it
+  // separately too. Read only by suggestionContext() below.
+  var DEPENDS_KEYS = ['restart', 'required', 'condition'];
+
   // The declaration keys the compose specification actually allows, kept
   // apart from DECL_LEAVES for the same reason DEPLOY_LEAVES is kept apart
   // from LEAVES.deploy: DECL_LEAVES also drives which fold rows the form
@@ -4352,9 +4597,11 @@
   //   - healthcheck.test's mode (shell/cmd/none) — words readTest()/
   //     writeTest() invented for the dropdown; the file itself says
   //     CMD-SHELL, not "shell". Not a compose value.
-  //   - a port's protocol and a volume's mode — the value carries its own
-  //     separator ('', '/udp', ':ro'), so choosing "nothing" writes the
-  //     separator away too. Meaningless as text in an editor.
+  //   - a SHORT-form port's protocol and a SHORT-form volume's mode — the
+  //     value carries its own separator ('', '/udp', ':ro'), so choosing
+  //     "nothing" writes the separator away too. Meaningless as text in an
+  //     editor. (The long form spells the protocol out as its own bare-word
+  //     line with no separator to carry, so it draws on 'protocol' below.)
   //   - the eight BOOL_CHOICES wordings — the values true/false move below
   //     as 'boolean', but "true — full access to the host" is form prose
   //     about one specific setting, not a compose vocabulary.
@@ -4369,6 +4616,40 @@
       ['bridge', 'bridge — Docker’s own private network'],
       ['host',   'host — share the server’s network directly'],
       ['none',   'none — no network at all']
+    ],
+    // A long-form port's protocol: — a bare word on its own line, unlike the
+    // short form's slash-carrying value, so it is a genuine closed vocabulary
+    // rather than something a dropdown's "nothing chosen" option has to undo.
+    protocol: [
+      ['tcp', 'tcp — a reliable, ordered connection, the usual choice'],
+      ['udp', 'udp — faster, but nothing resends what gets lost']
+    ],
+    // The four B3 vocabularies below serve a long-form port or mount's
+    // "more settings" extras — values taken from the compose specification,
+    // not guessed, since these are otherwise unreachable in either view.
+    portmode: [
+      ['host',    'host — published on this server’s own network'],
+      ['ingress', 'ingress — published through a swarm’s routing mesh']
+    ],
+    volumetype: [
+      ['bind',   'bind — a folder or file already on this server'],
+      ['volume', 'volume — storage Docker manages itself'],
+      ['tmpfs',  'tmpfs — memory only, gone when the container stops'],
+      ['npipe',  'npipe — a Windows named pipe'],
+      ['cluster','cluster — storage shared across a Docker Swarm cluster'],
+      ['image',  'image — files taken from another image']
+    ],
+    propagation: [
+      ['rprivate', 'rprivate — changes here stay private, the usual choice'],
+      ['private',  'private — the same, but without watching for new mounts'],
+      ['rshared',  'rshared — new mounts are shared with the host in both directions'],
+      ['shared',   'shared — the same, but without watching for new mounts'],
+      ['rslave',   'rslave — new mounts made on the host appear here too'],
+      ['slave',    'slave — the same, but without watching for new mounts']
+    ],
+    selinux: [
+      ['z', 'z — shared with other containers'],
+      ['Z', 'Z — private to this container']
     ],
     dependscondition: [
       ['service_started',                'wait until it has started'],
@@ -4579,11 +4860,67 @@
     restartpolicy:  { condition: 'restartcondition' },
     updateconfig:   { order: 'updateorder', failure_action: 'failureaction' },
     loggingoptions: { mode: 'logmode' },
+    // A long-form dependency's own condition: — previously unreachable from
+    // the editor, since suggestionContext() had no branch for it either.
+    depends: { condition: 'dependscondition' },
     build: {
       network: 'buildnetwork', isolation: 'isolation',
       no_cache: 'boolean', pull: 'boolean', privileged: 'boolean'
     }
   };
+
+  // Where a key's value (or list item) draws its NAMES from — the file's own
+  // services, or one of its four declared namespaces, or every profile named
+  // anywhere in it — alongside VOCAB_AT's fixed vocabularies above. Keyed the
+  // same way: a `where` bucket, then the key itself. `prefix` is set only for
+  // network_mode/ipc/pid, whose value is "service:<name>", not the bare name.
+  //
+  // Two things this needs no extra work for:
+  //  - "service:" needs no "closed head, open tail" mechanism: the caret's
+  //    word is whitespace-delimited, so the whole string "service:db"
+  //    prefix-matches a typed "service:" and replaces the whole word on
+  //    accept.
+  //  - A volume's host half only suggests while the value is still a bare
+  //    word — "- appd|" offers "appdata", but once "appdata:/config" is on
+  //    the line the typed word ("appdata:/config") prefix-matches no
+  //    declared name and the list goes quiet. That is correct, not a gap.
+  var REF_AT = {
+    service: {
+      depends_on:   { from: 'services' },
+      networks:     { from: 'networks' },
+      secrets:      { from: 'secrets' },
+      configs:      { from: 'configs' },
+      profiles:     { from: 'profiles' },
+      volumes:      { from: 'volumes' },
+      network_mode: { from: 'services', prefix: 'service:' },
+      ipc:          { from: 'services', prefix: 'service:' },
+      pid:          { from: 'services', prefix: 'service:' }
+    },
+    build: { secrets: { from: 'secrets' } }
+  };
+
+  // refAtFor(key, where) -> null | a REF_AT entry — mirrors vocabIdFor()
+  // just below, and is looked up the same way.
+  function refAtFor(key, where) {
+    var bucket = REF_AT[where];
+    return bucket && Object.prototype.hasOwnProperty.call(bucket, key) ? bucket[key] : null;
+  }
+
+  // Turns a scanned name list into [value, label] pairs, through refNames()'s
+  // one shared rule below — the same rule fromChoice()/serviceModeOptions()
+  // in stacks.js apply to the form's own dropdowns. A bare name's label is
+  // the name itself; a prefixed one (network_mode's service:db) gets a short
+  // gloss the same plain shape serviceModeOptions() already uses, without
+  // repeating that function's per-setting wording (network/IPC/process
+  // namespace) — one generic gloss covers all three call sites here.
+  function refOptions(names, info, serviceName) {
+    var list = refNames(names, info.from, serviceName), out = [];
+    for (var i = 0; i < list.length; i++) {
+      var val = info.prefix ? info.prefix + list[i] : list[i];
+      out.push([val, info.prefix ? val + ' — another service in this file' : val]);
+    }
+    return out;
+  }
 
   // vocabIdFor(key, where, path) -> null | a VOCAB id
   //
@@ -4850,6 +5187,16 @@
     return entry ? { title: entry.title, description: entry.description } : null;
   }
 
+  // A dotted setting target such as 'deploy.mode' names a leaf several levels
+  // under one of these four blocks; splits it into the DESCRIPTIONS bucket
+  // ('deploy') and the key inside it ('mode'). Shared by fieldHelp() below
+  // and inferTitle()'s dotted-target fallback, so there is exactly one place
+  // that knows the four bucket names.
+  function dottedBucket(target) {
+    var m = /^(healthcheck|deploy|logging|build)\.(.+)$/.exec(target);
+    return m ? { where: m[1], key: m[2] } : null;
+  }
+
   /**
    * fieldHelp(field) -> null | { title, description }
    *
@@ -4867,8 +5214,8 @@
 
       if (field.binder === 'setting') {
         if (typeof target !== 'string') return null;
-        var m = /^(healthcheck|deploy|logging|build)\.(.+)$/.exec(target);
-        return m ? keyInfo(m[2], m[1]) : keyInfo(target, 'service');
+        var db = dottedBucket(target);
+        return db ? keyInfo(db.key, db.where) : keyInfo(target, 'service');
       }
 
       if (field.binder === 'declared') {
@@ -4952,7 +5299,15 @@
   // offers there and which DESCRIPTIONS bucket describes them — or null for
   // anywhere else, including directly under 'services' (a name the user
   // invents, not a key this editor knows).
-  function suggestionContext(path) {
+  //
+  // `scan` is optional and carries fileNames()'s result — needed for exactly
+  // one position, a long-form dependency's own key, since that key IS
+  // another service's name and has no fixed vocabulary to offer instead.
+  // keySuggestions() only computes it once this shape is already confirmed,
+  // so an ordinary caret position never pays for a scan it does not need;
+  // describeKeyAt() never passes one, so that path keeps returning null,
+  // unchanged from before.
+  function suggestionContext(path, scan) {
     if (path.length === 0) return { keys: TOP_SPEC_KEYS, where: 'top' };
 
     if (path[0] === 'services') {
@@ -4962,10 +5317,15 @@
         if (w === 'healthcheck' || w === 'logging') return { keys: leafTopKeys(LEAVES[w]), where: w };
         if (w === 'deploy') return { keys: leafTopKeys(DEPLOY_LEAVES), where: 'deploy' };
         if (w === 'build') return { keys: leafTopKeys(BUILD_LEAVES), where: 'build' };
+        if (w === 'depends_on' && scan) {
+          return { keys: refNames(scan.services, 'services', path[1]), where: 'services' };
+        }
       }
-      // Two levels deeper than the block above: deploy's own sub-blocks, and
+      // Two levels deeper than the block above: deploy's own sub-blocks,
       // logging's free-form options map (a hint, not a closed list — see the
-      // comment above LOGGING_OPTIONS_KEYS).
+      // comment above LOGGING_OPTIONS_KEYS), and a long-form dependency's own
+      // settings (condition/restart/required) — a closed set, so no scan is
+      // needed here even though the block above it needed one.
       if (path.length === 4) {
         if (path[2] === 'deploy' && path[3] === 'restart_policy') {
           return { keys: RESTART_POLICY_KEYS, where: 'restartpolicy' };
@@ -4975,6 +5335,9 @@
         }
         if (path[2] === 'logging' && path[3] === 'options') {
           return { keys: LOGGING_OPTIONS_KEYS, where: 'loggingoptions' };
+        }
+        if (path[2] === 'depends_on') {
+          return { keys: DEPENDS_KEYS, where: 'depends' };
         }
       }
       return null;
@@ -5106,6 +5469,12 @@
       var path = keyPathAbove(cls, lineIdx, pos.indent);
       if (!path) return null;
       var ctx = suggestionContext(path);
+      // A long-form dependency's own key is another service's name, not a
+      // fixed vocabulary — the one shape that needs a scan, and only once
+      // the shape itself is already confirmed, so the scan stays lazy.
+      if (!ctx && path.length === 3 && path[0] === 'services' && path[2] === 'depends_on') {
+        ctx = suggestionContext(path, fileNames(text));
+      }
       if (!ctx) return null;
 
       var exclude = siblingKeysOf(cls, lineIdx, pos.indent);
@@ -5231,9 +5600,21 @@
 
       var ctx = suggestionContext(path);
       if (!ctx) return null;
+
+      // Resolved ALONGSIDE the static vocabulary lookup, not after it: a key
+      // with no VOCAB_AT entry (depends_on, service networks/secrets/...)
+      // would otherwise hit the old "return null" below before this ever
+      // ran. Static vocabulary first, then names, matching choiceFor()'s own
+      // order in the form. The scan itself only runs once a position that
+      // actually wants names has been confirmed (REF_AT has an entry) — see
+      // the section comment above hostPaths() for why this never parse()s.
       var vocabId = vocabIdFor(key, ctx.where, path);
-      if (!vocabId) return null;
-      var list = vocab(vocabId);
+      var list = vocabId ? vocab(vocabId) : null;
+      var refInfo = refAtFor(key, ctx.where);
+      if (refInfo) {
+        var scanned = fileNames(text)[refInfo.from];
+        list = (list || []).concat(refOptions(scanned, refInfo, path[1]));
+      }
       if (!list) return null;
 
       // The whitespace-delimited word under the caret, bounded to the
@@ -5426,6 +5807,108 @@
       return [];
     }
     out.sort(function (a, b) { return a.line - b.line || a.col - b.col; });
+    return out;
+  }
+
+  /* =====================================================================
+   * The file's own names
+   *
+   * API.fileNames — every service, declared network/volume/secret/config,
+   * and profile name the file itself writes, so the editor's autocomplete
+   * can offer them alongside the fixed vocabulary — see REF_AT above and
+   * valueSuggestions()/keySuggestions() below. Built from classify() alone,
+   * the same reason hostPaths() just above gives: a suggestion is wanted
+   * exactly when the file is mid-edit, which is exactly when parse() has
+   * the least to say.
+   * ===================================================================== */
+
+  // The four top-level declaration blocks, and which fileNames() bucket each
+  // one fills — a service's OWN networks:/secrets:/configs: never reaches
+  // this, since its key sits three deep under services: rather than one
+  // deep at the root, the same depth check hostPaths() uses to tell a
+  // top-level volumes: block apart from a service's mount list.
+  var DECL_BUCKET = { networks: 'networks', volumes: 'volumes', secrets: 'secrets', configs: 'configs' };
+
+  /**
+   * fileNames(text) -> {services, networks, volumes, secrets, configs, profiles}
+   *
+   * Each value is a plain array of names, deduplicated and in file order.
+   * Never throws: anything this cannot make sense of is simply left out.
+   */
+  function fileNames(text) {
+    var out = { services: [], networks: [], volumes: [], secrets: [], configs: [], profiles: [] };
+    try {
+      text = String(text == null ? '' : text);
+      var lines = text.split('\n');
+      var stack = [];    // ancestor mapping keys enclosing the current line
+      var seen = { services: {}, networks: {}, volumes: {}, secrets: {}, configs: {}, profiles: {} };
+
+      // hasOwnProperty, not a plain lookup, for the reason vocab()/keyInfo()
+      // above use it too: a service or volume called 'constructor' inherits a
+      // truthy value from Object and would be dropped silently, and a
+      // DECL_BUCKET miss on the same name would reach push() on nothing.
+      function has(obj, k) { return Object.prototype.hasOwnProperty.call(obj, k); }
+
+      function add(bucket, name) {
+        if (name === '' || has(seen[bucket], name)) return;
+        seen[bucket][name] = true;
+        out[bucket].push(name);
+      }
+
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var c = classify(line, i);
+        if (c.kind === 'blank' || c.kind === 'comment') continue;
+
+        // Pop ancestors this line is no longer inside. A sequence item is
+        // allowed to sit at the SAME indent as its own key (compose accepts
+        // both), so only a sibling KEY at that indent replaces the key —
+        // the item itself must not pop it off.
+        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
+        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
+
+        if (c.kind === 'key') {
+          // A service name: a mapping key whose ancestor stack is exactly
+          // ['services']. A declared name: a mapping key whose ancestor
+          // stack is exactly one of the four top-level blocks.
+          if (stack.length === 1 && stack[0].key === 'services') add('services', c.key);
+          if (stack.length === 1 && has(DECL_BUCKET, stack[0].key)) add(DECL_BUCKET[stack[0].key], c.key);
+          stack.push({ indent: c.indent, key: c.key });
+          continue;
+        }
+        if (c.kind !== 'seq' || !c.sub) continue;
+
+        // A profile name: a plain scalar item under services -> <name> ->
+        // profiles. c.sub.kind === 'key' means the item is a block, not a
+        // name, so it is skipped the same way a long-form volume item is
+        // skipped by the check just below hostPaths()'s own equivalent.
+        var inProfiles = stack.length >= 3 &&
+          stack[stack.length - 1].key === 'profiles' &&
+          stack[stack.length - 3].key === 'services';
+        if (!inProfiles || c.sub.kind === 'key') continue;
+
+        var scanned = scanEntryText(line, c.contentCol);
+        if (scanned) add('profiles', scanned.text);
+      }
+    } catch (e) {
+      return { services: [], networks: [], volumes: [], secrets: [], configs: [], profiles: [] };
+    }
+    return out;
+  }
+
+  /**
+   * refNames(names, kind, serviceName) -> string[]
+   *
+   * The one rule for offering a name from the file's own namespaces, shared
+   * by the form (fromChoice()/serviceModeOptions() in stacks.js) and the
+   * editor (refOptions() above): `default` is always offered as a network,
+   * declared or not, because compose creates it regardless; and a service is
+   * never offered as its own dependency or namespace-mate.
+   */
+  function refNames(names, kind, serviceName) {
+    var out = (names || []).slice();
+    if (kind === 'networks' && out.indexOf('default') < 0) out.push('default');
+    if (kind === 'services') out = out.filter(function (n) { return n !== serviceName; });
     return out;
   }
 
@@ -5707,6 +6190,13 @@
     // Every host-side path of a volume mount — see the "Host paths" section
     // above. Used to check the folder actually exists on the server.
     hostPaths: hostPaths,
+    // Every service/network/volume/secret/config/profile name the file
+    // itself declares — see the "The file's own names" section above.
+    fileNames: fileNames,
+    // The one rule for offering a name from the file's own namespaces,
+    // shared with stacks.js's fromChoice()/serviceModeOptions() — see the
+    // comment above it.
+    refNames: refNames,
     // Every file the compose file expects to find beside it in the stack's
     // own folder — see the "File references" section above.
     fileRefs: fileRefs,
