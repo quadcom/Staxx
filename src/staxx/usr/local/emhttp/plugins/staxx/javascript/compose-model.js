@@ -2787,6 +2787,68 @@
     return nw && nw.value && nw.value.kind === 'map' ? (nw.value.pairs[name] || null) : null;
   }
 
+  /**
+   * Turns a service's `networks:` from a plain list of names into a map of
+   * them — one bare "name:" per entry, nothing else changed — so a name
+   * written as "- backend" gains a line to hang a fixed address or a hardware
+   * address on (PLAN_34 phase 5; harvestNetworksMap() above is what then
+   * offers those two blank boxes on it).
+   *
+   * Whole-block by design: YAML cannot mix a sequence and a mapping under one
+   * key, so promoting one name promotes every name in this service's list.
+   *
+   * Refuses, leaving the file untouched, the moment any entry is something
+   * this cannot safely turn into a bare key: an anchor, an alias, a merge
+   * key, a flow sequence, anything else the parser sealed, an entry written
+   * as its own block ("- name: value"), or a dash with no name at all.
+   * Partial promotion of a block is worse than none.
+   *
+   * Rebuilt line by line rather than as one new block, so a trailing "# ..."
+   * comment on an entry's own line rides onto its new key line, and any
+   * blank line or standalone comment between entries is copied through
+   * untouched — the naive version of this (see writeTest()'s own note on the
+   * one comment it knowingly drops) loses exactly this.
+   *
+   * -> { ok: true }
+   * -> { ok: false, error: '<what to do next>' }
+   */
+  function promoteNetworksList(doc, service) {
+    var svc = serviceMapOf(doc, service);
+    var pair = svc && svc.value.pairs['networks'];
+    var v = pair ? pair.value : null;
+    if (!v || v.kind !== 'seq') {
+      return { ok: false, error: 'There is no list of networks here to change.' };
+    }
+
+    var i;
+    for (i = 0; i < v.items.length; i++) {
+      var chk = v.items[i].value;
+      if (!chk) {
+        return { ok: false, error: 'One of these entries has no name yet, so it cannot become a setting.' };
+      }
+      if (chk.kind === 'opaque') {
+        return { ok: false, error: 'One of these entries cannot be changed here, because ' + lockReason(chk.reason) + '.' };
+      }
+      if (chk.kind !== 'scalar') {
+        return { ok: false, error: 'One of these entries is written as a block of its own, so it cannot be turned into a setting.' };
+      }
+    }
+
+    // Every entry is a plain name, so rewrite each one's own line in place
+    // and copy every other line in the span verbatim.
+    var lines = [];
+    for (i = v.start; i < v.end; i++) {
+      var owner = null;
+      for (var j = 0; j < v.items.length; j++) {
+        if (i >= v.items[j].start && i < v.items[j].end) { owner = v.items[j]; break; }
+      }
+      lines.push(owner ? pad(v.indent) + owner.value.raw + ':' + (owner.value.comment || '') : doc.lines[i]);
+    }
+
+    splice(doc, v.start, v.end - v.start, lines);
+    return { ok: true };
+  }
+
   // A name not already in use, so that two adds in a row cannot produce two
   // fields sharing one id.
   function freeName(taken, base, joiner) {
@@ -6390,6 +6452,10 @@
     // PLAN_34 phase 3a: addNested's sibling for a top-level declaration
     // rather than a service.
     addDeclNested: addDeclNested,
+    // PLAN_34 phase 5: turns a service's networks: from a list of names into
+    // a map of them, so an entry gains somewhere to hang a fixed or hardware
+    // address — see the function's own comment for why it is whole-block.
+    promoteNetworksList: promoteNetworksList,
     splitQuoted: splitQuoted,
     parseFlowList: parseFlowList,
     fieldById: fieldById,

@@ -287,6 +287,39 @@ Adrian's decision. Three consequences the change must carry:
   network-removed case. The real invariant those protect is **field index stability**, which
   `refreshRanges` depends on; keep that intact and update the counts deliberately.
 
+### Should a pasted `network_mode` be converted into a network list?
+
+Asked 2026-08-18. **Answer: no, and mostly it is not possible.** Recorded because the question will
+come back.
+
+First, a correction to the premise: `network_mode` is **not** marked uneditable today. A file that has
+one gets an ordinary editable row in Advanced, with a dropdown. So the choice is not between
+converting and locking.
+
+Second, only one of its six value families has a network-list equivalent at all:
+
+| Value | Means | Convertible? |
+|---|---|---|
+| `host` | share the server's own network stack | **No.** No network you can join grants the host's namespace. |
+| `none` | no networking | **No.** A list cannot express "no network". |
+| `service: x` / `container: x` | share another container's stack | **No.** Same reason. |
+| `bridge` | Docker's default `docker0` bridge | **No** — and this is the trap. Compose's default network is a *project-scoped* bridge where services resolve each other by name; `bridge` is not, and containers on it cannot. Converting silently changes both addressing and name resolution. |
+| a real network name | joins that network | **Yes** — equals `networks: [name]` plus a declaration. |
+
+So auto-conversion would take a file saying "share the server's network" and turn it into "join a
+network called host", which breaks the container. That is exactly the silent wrongness Phase 0 existed
+to remove.
+
+Third, the one convertible case **is never produced by StaXX**. The importer already maps Unraid's
+network setting correctly: `bridge`/empty writes nothing, `host`/`none` write `network_mode`, and any
+named network already writes a `networks:` list plus its declaration. So the convertible value only
+arises in a hand-pasted file. On this server: **zero occurrences** — the six templates using
+`network_mode` are all `host`.
+
+**Decision:** build nothing. If a bare network name ever shows up in a pasted file, the honest
+treatment is an *offer* to convert with the equivalence explained — never automatic, never for the
+other five. One line of future work, not worth doing before it is seen.
+
 ## Phase 5 — the promote control
 
 The fixed-address path only reaches a network written as a **map** entry. A plain `- backend` has

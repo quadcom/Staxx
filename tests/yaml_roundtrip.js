@@ -7689,6 +7689,227 @@ console.log('\nAE. PLAN_34 Phase 3 — the three new Add paths');
      !!sec && !sec.parts.uid, sec && JSON.stringify(Object.keys(sec.parts)));
 })();
 
+/* =========================================================================
+ * AF. PLAN_34 Phase 5 — the promote control (promoteNetworksList)
+ *
+ * A plain `- backend` has nowhere to hang a fixed address, so it has to be
+ * promotable to a bare `backend:` map entry — but only as a whole block,
+ * since YAML cannot mix a sequence and a mapping under one key. The risk
+ * that matters most is comment loss: a list item's trailing "# ..." binds to
+ * that item, and the naive way to rebuild the block as a map (this file's
+ * own writeTest() is the precedent — it knowingly keeps only the LAST
+ * item's comment when it rewrites healthcheck.test) drops every note but
+ * one. These assertions demand every note survive, on its own line, with
+ * its own original spacing before the '#' — a strict string comparison
+ * throughout, not a substring check, so a partial fix cannot pass by luck.
+ * ========================================================================= */
+
+console.log('\nAF. PLAN_34 Phase 5 — the promote control');
+
+/* ---- 1/2. Both notes survive; nothing else in the file moves ------------ */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    # keep this network first',
+    '    networks:',
+    '      - backend        # a note someone typed',
+    '      - frontend   # another note',
+    '    # do not touch this',
+    '    restart: unless-stopped',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src);
+  var res = Y.promoteNetworksList(doc, 'a');
+  ok('promoting a two-entry list reports ok: true — the model\'s own report of a structural edit, same as addItem/removeItem',
+     !!res && res.ok === true, JSON.stringify(res));
+
+  var out = Y.serialise(doc);
+  var want = src
+    .replace('      - backend        # a note someone typed\n', '      backend:        # a note someone typed\n')
+    .replace('      - frontend   # another note\n', '      frontend:   # another note\n');
+
+  ok('both trailing notes survive, on their own new key lines, with their original spacing before the #',
+     out === want, firstDiff(want, out));
+  ok('nothing else moves: only the two entry lines differ from the original — the comment above the block, ' +
+     'the comment below it and the sibling key after it are all untouched',
+     diffLines(src, out).length === 2, JSON.stringify(diffLines(src, out)));
+})();
+
+/* ---- 3. An anchor, an alias or a flow sequence is refused, whole-block or
+            per-entry, and refusing leaves the file byte-identical -------- */
+
+(function () {
+  // Whole-block shapes: the entire networks: value is sealed as one opaque
+  // node, so promoteNetworksList never reaches a single entry — it reads as
+  // "there is no list here" rather than naming which shape sealed it, which
+  // is the truth: v.kind isn't 'seq' at all in these three cases.
+  var whole = {
+    'a flow sequence':  'services:\n  a:\n    image: alpine\n    networks: [frontend, backend]\n',
+    'an anchor':        'services:\n  a:\n    image: alpine\n    networks: &shared\n      - backend\n',
+    'an alias':         'x-net: &shared\n  - frontend\nservices:\n  a:\n    image: alpine\n    networks: *shared\n'
+  };
+  Object.keys(whole).forEach(function (label) {
+    var src = whole[label];
+    var doc = Y.parse(src);
+    var res = Y.promoteNetworksList(doc, 'a');
+    ok('a networks: list sealed whole by ' + label + ' is refused',
+       !!res && res.ok === false && res.error === 'There is no list of networks here to change.',
+       JSON.stringify(res));
+    ok('...and refusing leaves the file byte-identical (' + label + ')',
+       Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+  });
+
+  // Per-entry shapes: the list itself parses fine, but one entry is sealed —
+  // this is the path that actually calls lockReason(), so the real LOCK_WORDS
+  // text (read from the source, not invented) has to appear in the message.
+  var perEntry = {
+    'an anchored entry': {
+      src: 'services:\n  a:\n    image: alpine\n    networks:\n      - &netref backend\n      - frontend\n',
+      reason: 'this is a shared block other parts of the file reuse'
+    },
+    'an aliased entry': {
+      src: 'x-net: &nn frontend\nservices:\n  a:\n    image: alpine\n    networks:\n      - *nn\n      - backend\n',
+      reason: 'this points at a shared block higher up the file'
+    },
+    'a flow-sequence entry': {
+      src: 'services:\n  a:\n    image: alpine\n    networks:\n      - [x, y]\n      - backend\n',
+      reason: 'this is written as a list on one line'
+    }
+  };
+  Object.keys(perEntry).forEach(function (label) {
+    var c = perEntry[label], doc = Y.parse(c.src);
+    var res = Y.promoteNetworksList(doc, 'a');
+    ok(label + ' refuses the whole block, naming the real LOCK_WORDS reason',
+       !!res && res.ok === false &&
+       res.error === 'One of these entries cannot be changed here, because ' + c.reason + '.',
+       JSON.stringify(res));
+    ok('...and refusing leaves the file byte-identical (' + label + ')',
+       Y.serialise(doc) === c.src, firstDiff(c.src, Y.serialise(doc)));
+  });
+
+  // A dash with no name at all — the function's own doc comment names this
+  // case alongside anchor/alias/flow, and it costs nothing extra to pin.
+  var blankSrc = 'services:\n  a:\n    image: alpine\n    networks:\n      -\n      - backend\n';
+  var blankDoc = Y.parse(blankSrc);
+  var blankRes = Y.promoteNetworksList(blankDoc, 'a');
+  ok('an entry with no name yet is refused rather than promoted as an empty key',
+     !!blankRes && blankRes.ok === false &&
+     blankRes.error === 'One of these entries has no name yet, so it cannot become a setting.',
+     JSON.stringify(blankRes));
+  ok('...and refusing leaves the file byte-identical',
+     Y.serialise(blankDoc) === blankSrc, firstDiff(blankSrc, Y.serialise(blankDoc)));
+})();
+
+/* ---- 4. A single-entry block promotes the same way ----------------------- */
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n    networks:\n      - backend\n';
+  var want = 'services:\n  a:\n    image: alpine\n    networks:\n      backend:\n';
+  var doc = Y.parse(src);
+  var res = Y.promoteNetworksList(doc, 'a');
+  ok('a single-entry list promotes', !!res && res.ok === true, JSON.stringify(res));
+  ok('...to a single bare map key', Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 5. An already-map block is refused, not silently accepted as a no-op
+            (the other agent's choice — promoteNetworksList requires the
+            value to be a seq and refuses everything else, an already-map
+            block included, with the same generic message as the sealed-
+            whole-block shapes above) ----------------------------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    networks:\n      backend:\n';
+  var doc = Y.parse(src);
+  var res = Y.promoteNetworksList(doc, 'a');
+  ok('an already-map networks: block is refused rather than treated as a no-op',
+     !!res && res.ok === false && res.error === 'There is no list of networks here to change.',
+     JSON.stringify(res));
+  ok('...and the file is untouched', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- 6. Phase 5 chains into Phase 3: a promoted entry offers exactly the
+            two blank boxes, and nothing else -------------------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    networks:\n      - backend\n      - frontend\n';
+  var doc = Y.parse(src);
+  Y.promoteNetworksList(doc, 'a');
+  var form = Y.buildForm(doc);
+  var rows = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; });
+
+  ok('both promoted entries are longForm, offering exactly ipv4_address and mac_address blank',
+     rows.length === 2 && rows.every(function (f) {
+       return f.longForm === true &&
+         f.longExtras.slice().sort().join(',') === 'ipv4_address,mac_address' &&
+         f.parts.ipv4_address.value === '' && f.parts.ipv4_address.creatable === true &&
+         f.parts.mac_address.value === ''  && f.parts.mac_address.creatable === true;
+     }),
+     JSON.stringify(rows.map(function (f) { return { name: f.parts.value.value, extras: f.longExtras }; })));
+
+  ['priority', 'gw_priority', 'interface_name', 'aliases'].forEach(function (k) {
+    ok('a promoted entry does not also offer a blank ' + k + ' box',
+       rows.every(function (f) { return !f.parts[k]; }),
+       JSON.stringify(rows.map(function (f) { return Object.keys(f.parts); })));
+  });
+})();
+
+/* ---- 7. The whole journey: plain entry, promote, set a fixed address ---- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    networks:\n' +
+    '      - backend        # a note someone typed\n' +
+    '      - frontend\n';
+  var want = 'services:\n  a:\n    image: alpine\n    networks:\n' +
+    '      backend:        # a note someone typed\n' +
+    '        ipv4_address: 10.0.0.5\n' +
+    '      frontend:\n';
+
+  var doc = Y.parse(src);
+  ok('the promotion succeeds', Y.promoteNetworksList(doc, 'a').ok === true);
+
+  var form = Y.buildForm(doc);
+  var backend = form.fields.filter(function (f) {
+    return f.service === 'a' && f.listKey === 'networks' && f.parts.value.value === 'backend';
+  })[0];
+  ok('setPart writes the fixed address onto the promoted entry',
+     !!backend && Y.setPart(doc, form, backend.id, 'ipv4_address', '10.0.0.5') === true);
+  ok('the final text is exactly: plain entry promoted, note kept, address added, sibling entry untouched',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 8. Indentation is inherited from the file, not assumed -------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '    a:',
+    '        image: alpine',
+    '        networks:',
+    '            - backend        # note',
+    '            - frontend',
+    ''
+  ].join('\n');
+  var want = [
+    'services:',
+    '    a:',
+    '        image: alpine',
+    '        networks:',
+    '            backend:        # note',
+    '            frontend:',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src);
+  var res = Y.promoteNetworksList(doc, 'a');
+  ok('a four-space-indented block promotes', !!res && res.ok === true, JSON.stringify(res));
+  ok('...with the new keys lined up at the file\'s own depth (12 spaces), not a hardcoded one',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

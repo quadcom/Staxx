@@ -1121,6 +1121,13 @@
   // inside it. This map is what survives that redraw.
   var sectionsOpen = {};
 
+  // Whether a networks: entry's "more settings" fold is open, keyed by field
+  // id rather than by row — an id is stable across the reparse a promote
+  // (PLAN_34 phase 5) causes, since the entry keeps its name and position, so
+  // this is what stops the very click that promotes a list entry from also
+  // closing the fold it just opened. Same reason stackOpen/sectionsOpen exist.
+  var netFoldOpen = {};
+
   function esc(s) {
     return String(s === undefined || s === null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -2101,12 +2108,25 @@
   // both fieldHtml() branches that can carry longExtras (mapped, and list) —
   // pulled out so the two call sites cannot drift apart.
   function longExtrasDevMoreHtml(f, index) {
+    // A networks: entry written as a plain list item ("- backend") has no
+    // long form at all, so there is nothing here for the ordinary check below
+    // to find — but it still needs this same toggle, because opening it is
+    // what promotes the whole list into a map (PLAN_34 phase 5), which is
+    // what gives the entry somewhere to hang a fixed or hardware address.
+    // See the capture-phase 'toggle' listener for what an open here actually
+    // does, and netFoldOpen for why the fold survives the redraw that causes.
+    var netList = f.binder === 'list' && f.listKey === 'networks';
+    if (netList && !f.longForm) {
+      return '<details class="staxx-devmore" data-row="' + index + '" data-promote-networks="1"' +
+             (netFoldOpen[f.id] ? ' open' : '') + '><summary>more settings</summary></details>';
+    }
     if (!f.longForm || !f.longExtras || !f.longExtras.length) return '';
     var extraBits = [];
     for (var lei = 0; lei < f.longExtras.length; lei++) {
       extraBits.push(longExtraFoldHtml(f, index, f.longExtras[lei]));
     }
-    return '<details class="staxx-devmore"><summary>more settings</summary>' +
+    return '<details class="staxx-devmore"' + (netList ? ' data-row="' + index + '"' : '') +
+           (netList && netFoldOpen[f.id] ? ' open' : '') + '><summary>more settings</summary>' +
            extraBits.join('') + '</details>';
   }
 
@@ -3127,7 +3147,20 @@
   // 'toggle' does not bubble, so a delegated listener only ever sees it in
   // the capture phase — the trailing `true` is load-bearing, not decoration.
   formHost.addEventListener('toggle', function (event) {
-    if (event.target.classList.contains('staxx-stackfold')) stackOpen = event.target.open;
+    var el = event.target;
+    if (el.classList.contains('staxx-stackfold')) { stackOpen = el.open; return; }
+
+    // A networks: entry's own "more settings" fold — remembered by field id
+    // so it survives the redraw a promote causes (see netFoldOpen above), and
+    // for a not-yet-promoted list entry, opening it IS the promote (PLAN_34
+    // phase 5) rather than merely revealing something already there.
+    if (el.dataset.row !== undefined && el.classList.contains('staxx-devmore')) {
+      var nf = MODEL && MODEL.fields[el.dataset.row | 0];
+      if (nf) {
+        netFoldOpen[nf.id] = el.open;
+        if (el.open && el.dataset.promoteNetworks) promoteNetworks(nf);
+      }
+    }
   }, true);
 
   formHost.addEventListener('change', function (event) {
@@ -3674,6 +3707,25 @@
     }
     structuralEdit(-1, say);
     return true;
+  }
+
+  // Turns a service's whole networks: block from a list of names into a map
+  // of them (PLAN_34 phase 5), called when the "more settings" fold on a
+  // not-yet-promoted entry is opened — see the capture-phase 'toggle'
+  // listener. Reversible the same way every other structural edit here is.
+  function promoteNetworks(f) {
+    flushPending();
+    pushUndo('turning "' + f.target + '" into a setting');
+    var res = YAML.promoteNetworksList(MODEL.doc, f.service);
+    if (!res.ok) {
+      undoStack.pop();
+      updateUndo();
+      setYamlStatus(res.error);
+      return;
+    }
+    netFoldOpen[f.id] = true;
+    structuralEdit(-1, 'Every network under "' + f.service + '" can now take a fixed address ' +
+                       'or a hardware address. Undo is at the bottom if that was wrong.');
   }
 
   // Closes any open Sections panel: a click outside it, or Escape. The button
@@ -6775,6 +6827,7 @@
     sectionsOpen = {};
     sectionOn    = {};
     stackOpen    = false;
+    netFoldOpen  = {};
     findReset();
     pathsReset();   // a fresh cache and marks for the stack that is about to open
     // Yesterday's compose-check answer, and any request still in flight for
