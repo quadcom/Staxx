@@ -2124,16 +2124,37 @@
         var primaryNode = primaryPair && primaryPair.value && primaryPair.value.kind === 'scalar'
                            ? primaryPair.value : null;
 
-        // The row itself.
-        var rowTarget = target('declared', kind + '.' + name, {
-          parts: {
-            name:  part(name, keySpot(pair)),
-            value: primaryNode ? part(primaryNode.value, scalarSpot(primaryNode)) : part('', null)
-          },
-          range: { start: pair.leadStart, end: pair.start + 1 },
-          comment: primaryNode ? readComment(primaryNode.comment) : undefined,
-          commentSpot: primaryNode ? commentSpot(primaryNode, lines) : null
-        });
+        // The row itself. A present value that is not a map — a flow map, an
+        // anchor, an alias, a tag — parses to an 'opaque' node, the same shape
+        // settingTarget() and harvestList() already lock via lockReason(); this
+        // was the one path that never called it, so `hft: {name: br0.2,
+        // external: true}` rendered as an ordinary row with an empty box —
+        // indistinguishable from a bare `backend:`, while the file said
+        // something. Lock it and show its own raw text instead. A null value
+        // (a bare declaration with nothing after the colon) is untouched by
+        // this: that is the normal, still-editable case Phase 1 depends on.
+        var declOpaque = pair.value && pair.value.kind !== 'map';
+        var rowTarget = declOpaque
+          ? lockedTarget('declared', kind + '.' + name,
+              { start: pair.leadStart, end: pair.start + 1 },
+              lockReason(pair.value.reason), pair.value.raw)
+          : target('declared', kind + '.' + name, {
+              parts: {
+                name:  part(name, keySpot(pair)),
+                value: primaryNode ? part(primaryNode.value, scalarSpot(primaryNode)) : part('', null)
+              },
+              range: { start: pair.leadStart, end: pair.start + 1 },
+              comment: primaryNode ? readComment(primaryNode.comment) : undefined,
+              commentSpot: primaryNode ? commentSpot(primaryNode, lines) : null
+            });
+        // lockedTarget() carries no name part, and a locked row does not render
+        // the declaration's name — fieldHtml's locked branch short-circuits the
+        // declared one, so nothing draws the name or its rename pencil. The ×
+        // still draws though (showKill covers every declared row, locked or
+        // not), and its handler reads f.parts.name.value unguarded to know
+        // which declaration to remove. Without a name part, removing a locked
+        // declaration throws and takes the whole page with it.
+        if (declOpaque) rowTarget.parts.name = part(name, keySpot(pair));
 
         fields.push({
           id: '/declared/' + rowTarget.target,
@@ -2515,6 +2536,16 @@
                         ? block.value.pairs[f.target.slice(f.declKind.length + 1)] : null;
         var primaryKey = DECL_PRIMARY[f.declKind];
         if (!declPair || !primaryKey) return false;
+        // insertChild() appends an indented child under declPair's own value
+        // node, which only has somewhere to put one when that node is a map
+        // (settings already exist) or absent (still a bare declaration). A
+        // flow map, anchor or alias parses to an 'opaque' node that cannot
+        // take a child — appending one there is what produced a file real
+        // compose refused to parse at all, not merely one it read oddly.
+        // Fix 1 already locks the row so this control is never offered, but
+        // refuse here too rather than trust that no later path ever reaches
+        // this with an unlocked field — belt and braces for one bug.
+        if (declPair.value && declPair.value.kind !== 'map') return false;
         return insertChild(doc, declPair, primaryKey, value) >= 0;
       }
       // A LEAVES sub-path with no line yet. Its target is dotted

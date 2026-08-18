@@ -7165,6 +7165,107 @@ console.log('\nAA. Uncovered service-level keys carry their written title (PLAN_
      Y.serialise(Y.parse(src)) === src, firstDiff(src, Y.serialise(Y.parse(src))));
 })();
 
+/* =========================================================================
+ * AB. A network declaration written as a flow map, an anchor or an alias
+ *     must lock rather than corrupt the file (PLAN_34 Phase 0)
+ *
+ * declaredFields() used to skip the locked/usable computation fieldsFor()
+ * already did, so a flow-map, anchored or aliased network showed as an
+ * ordinary unlocked row with an empty driver box — indistinguishable from a
+ * bare declaration, even though the file said something. Choosing a driver
+ * for one appended an indented child under a node that cannot take one, and
+ * real compose then refused the file outright:
+ *
+ *   $ docker compose -f bad-flow.yaml config -q
+ *   yaml: line 4: did not find expected key
+ *
+ * Built as an inline document, not read from
+ * scratch/test-stacks/18-declaration-shapes/, because that folder is
+ * gitignored — the same reason section AA's fixture is copied out verbatim
+ * rather than read from disk. The lock reasons are hardcoded from
+ * LOCK_WORDS rather than looked up through it, the same way section L's
+ * alias assertions do, since the table is not exported.
+ * ========================================================================= */
+
+console.log('\nAB. Flow-map, anchor and alias network declarations lock instead of corrupting the file');
+
+(function () {
+  var src = [
+    'services:',
+    '  app:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    '      - hft',
+    '      - internal_net',
+    '      - shared_net',
+    'networks:',
+    '  backend:',
+    '  hft: {name: br0.2, external: true}',
+    '  internal_net: &net_defaults',
+    '    driver: bridge',
+    '  shared_net: *net_defaults',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+
+  var flow   = Y.fieldById(form, '/declared/networks.hft');
+  var anchor = Y.fieldById(form, '/declared/networks.internal_net');
+  var alias  = Y.fieldById(form, '/declared/networks.shared_net');
+  var bare   = Y.fieldById(form, '/declared/networks.backend');
+
+  // 1 & 2. Each unreadable shape locks, carries the specific reason for its
+  // own shape (not the generic "cannot read" fallback), and shows its raw
+  // text — so the data is visible instead of hidden behind an empty box.
+  ok('a flow map (hft) locks with the flow-specific reason',
+     !!flow && flow.locked && flow.lockReason === 'this is written as a list on one line',
+     flow && JSON.stringify({ locked: flow.locked, lockReason: flow.lockReason }));
+  ok('the flow map’s raw text is on the row, not hidden',
+     !!flow && flow.raw.indexOf('br0.2') >= 0, flow && flow.raw);
+
+  ok('an anchored declaration (internal_net) locks with the anchor-specific reason',
+     !!anchor && anchor.locked && anchor.lockReason === 'this is a shared block other parts of the file reuse',
+     anchor && JSON.stringify({ locked: anchor.locked, lockReason: anchor.lockReason }));
+  ok('the anchor’s raw text is on the row, not hidden',
+     !!anchor && anchor.raw.indexOf('driver: bridge') >= 0, anchor && anchor.raw);
+
+  ok('an alias (shared_net) locks with the alias-specific reason',
+     !!alias && alias.locked && alias.lockReason === 'this points at a shared block higher up the file',
+     alias && JSON.stringify({ locked: alias.locked, lockReason: alias.lockReason }));
+  ok('the alias’s raw text is on the row, not hidden',
+     !!alias && alias.raw.indexOf('*net_defaults') >= 0, alias && alias.raw);
+
+  // 3 & 4. setPart refuses on all three, and the document comes back
+  // byte-identical — the assertion that actually guards against corruption.
+  ok('setPart refuses on the flow map',
+     !Y.setPart(doc, form, '/declared/networks.hft', 'value', 'bridge'));
+  ok('the document is untouched after the refused flow-map edit',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+
+  ok('setPart refuses on the anchored declaration',
+     !Y.setPart(doc, form, '/declared/networks.internal_net', 'value', 'overlay'));
+  ok('the document is untouched after the refused anchor edit',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+
+  ok('setPart refuses on the alias',
+     !Y.setPart(doc, form, '/declared/networks.shared_net', 'value', 'overlay'));
+  ok('the document is untouched after the refused alias edit',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+
+  // 5. The control: a bare declaration is not locked, setPart succeeds, and
+  // the write lands as driver: at the right indent — pinned here beside the
+  // three shapes above that must not, so the two behaviours sit side by side.
+  // (An existing, differently-shaped case of this is section O11, "filling
+  // an empty declaration's primary setting" — this is not a duplicate of it.)
+  ok('the bare declaration (backend) is not locked',
+     !!bare && !bare.locked, bare && JSON.stringify({ locked: bare.locked, lockReason: bare.lockReason }));
+  ok('setPart succeeds on the bare declaration and inserts driver: at the right indent',
+     Y.setPart(doc, form, '/declared/networks.backend', 'value', 'bridge') &&
+     Y.serialise(doc) === src.replace('  backend:\n', '  backend:\n    driver: bridge\n'),
+     firstDiff(src.replace('  backend:\n', '  backend:\n    driver: bridge\n'), Y.serialise(doc)));
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
