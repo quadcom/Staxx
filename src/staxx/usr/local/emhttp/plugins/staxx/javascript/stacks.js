@@ -329,7 +329,11 @@
   // column, since it never grows one.
   var CAPTIONS = {
     container: ['setting', 'value', 'note, kept in the file'],
-    port:      ['on the server', 'in the container', 'protocol', 'note, kept in the file'],
+    // Ports are captioned in single words where mounts get phrases: the two
+    // boxes hold a five-digit number, so the columns are narrow and anything
+    // longer wrapped the heading onto a second line. The fuller wording is
+    // still what a screen reader hears — see the hints passed to boxHtml().
+    port:      ['Host', 'Container', 'protocol', 'note, kept in the file'],
     volume:    ['path on the server', 'path in the container', 'read and write', 'note, kept in the file'],
     device:    ['device', 'note, kept in the file'],
     env:       ['variable name', 'value', 'note, kept in the file'],
@@ -2359,13 +2363,13 @@
       // Only a volume gets the folder picker. A port is a number, so browsing
       // for one would be a button that never finds what you came for.
       bits.push(boxHtml(f, index, 'host',
-                f.binder === 'port' ? 'on the server' : 'path on the server',
+                f.binder === 'port' ? 'port on the server' : 'path on the server',
                 f.binder === 'volume' ? 'browse' : ''));
       // A mount someone deliberately made read-only has to keep saying so.
       // The row lost its title, so the badge moves in beside the path it
       // qualifies rather than disappearing with it.
       bits.push(boxHtml(f, index, 'container',
-                f.binder === 'port' ? 'in the container' : 'path in the container',
+                f.binder === 'port' ? 'port inside the container' : 'path in the container',
                 '', roTag));
       // The protocol, or the read/write mode: a part of the same scalar as
       // the two boxes above (see splitPortShort()/splitPathShort()), so it
