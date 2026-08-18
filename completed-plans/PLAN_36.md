@@ -1,6 +1,16 @@
 # PLAN_36 — the 51 settings that already work but look broken
 
-**Status: APPROVED 2026-08-18, building.** Split out of PLAN_34 after the review found it was
+**Status: COMPLETE 2026-08-18.** Built, deployed, confirmed in the browser and committed as
+`b1f3db9` on `settings-panel`. 42 labels corrected, four dropdowns reachable, two booleans typed,
+1178 tests passing (up 31), no console error, and the fixture's file byte-identical after a round
+trip through the editor.
+
+One thing the browser showed that was not designed here and is worth knowing: the fixture writes
+`oom_kill_disable: yes`, and the dropdown came up offering `yes|true|false` with `yes` selected and
+marked as the odd one out. The form adds the file's own spelling rather than correcting it. The
+never-destroy rule was already holding on its own.
+
+**Status was: APPROVED 2026-08-18, building.** Split out of PLAN_34 after the review found it was
 neither part of that plan's problem nor blocked by any of it.
 
 **Scoped down after pinning the work to real lines** — see "What pinning it down changed" below.
