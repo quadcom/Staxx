@@ -227,18 +227,93 @@
     return CATEGORY_HEADS.indexOf(head) >= 0 ? head + ':' + rest : raw;
   }
 
+  var IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+  var MAC_RE = /^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/;
+
+  function isValidIPv4(s) {
+    var m = IPV4_RE.exec(s);
+    if (!m) return false;
+    for (var i = 1; i <= 4; i++) { if (+m[i] > 255) return false; }
+    return true;
+  }
+
   // bridge/empty -> Compose's own default network, nothing to write.
   // host/none -> network_mode. Anything else is a named network that must
   // already exist on the server, so a note rides along with it.
-  function networkInfo(app, notes) {
+  //
+  // A fixed IP/MAC (Unraid's MyIP/MyMAC) rides along when there is somewhere
+  // for it to live. `extraMac` is ExtraParams' --mac-address, read via
+  // scalarPresent() by the caller before it gets here — MyIP/MyMAC need the
+  // same care, since an empty `<MyIP/>` element survives PHP's XML parse as
+  // an empty array, which is truthy, so a plain `if (app.MyIP)` would fire on
+  // a template that set no address at all.
+  function networkInfo(app, notes, warnings, extraMac) {
     var raw = String(app.Network == null ? '' : app.Network).trim();
-    if (raw === '' || raw.toLowerCase() === 'bridge') return { mode: null, network: null };
     var lower = raw.toLowerCase();
-    if (lower === 'host' || lower === 'none') return { mode: lower, network: null };
-    var name = raw.replace(/^custom:\s*/i, '').trim();
-    notes.push('This container is set to use the network "' + name + '". That network ' +
-      'must already exist on this server or Compose will refuse to start the stack.');
-    return { mode: null, network: name };
+    var mode = null, network = null;
+    if (raw !== '' && lower !== 'bridge') {
+      if (lower === 'host' || lower === 'none') {
+        mode = lower;
+      } else {
+        network = raw.replace(/^custom:\s*/i, '').trim();
+        notes.push('This container is set to use the network "' + network + '". That network ' +
+          'must already exist on this server or Compose will refuse to start the stack.');
+      }
+    }
+
+    var ipRaw = scalarPresent(app.MyIP) ? String(app.MyIP).trim() : '';
+    var macRaw = scalarPresent(app.MyMAC) ? String(app.MyMAC).trim() : '';
+    extraMac = extraMac || '';
+
+    // --mac-address in ExtraParams is an explicit instruction; MyMAC is only
+    // a template field, so the explicit one wins when both are set. Its value
+    // is never format-checked below — ExtraParams values are passed through
+    // untouched everywhere else in this file (e.g. --hostname, --user), and
+    // this is no different.
+    var macFromExtra = extraMac !== '';
+    var macCandidate = macFromExtra ? extraMac : macRaw;
+    if (macFromExtra && macRaw) {
+      warnings.push('MyMAC ("' + macRaw + '") and --mac-address in ExtraParams ("' + extraMac +
+        '") disagreed for this container; the ExtraParams value was kept.');
+    }
+
+    var result = { mode: mode, network: network, ipv4: null, mac: null };
+
+    // host/none have no interface at all, so neither address has anywhere to
+    // live. Writing one anyway would produce a file Compose starts without
+    // ever applying it, which is worse than dropping it visibly.
+    if (mode === 'host' || mode === 'none') {
+      if (ipRaw) warnings.push('The fixed IP "' + ipRaw + '" was dropped: network_mode "' +
+        mode + '" has no interface to put it on.');
+      if (macCandidate) warnings.push('The fixed MAC address "' + macCandidate +
+        '" was dropped: network_mode "' + mode + '" has no interface to put it on.');
+      return result;
+    }
+
+    // Compose's own default network hands out its own addresses, so a fixed
+    // IP has nowhere to go — but a MAC address is still a plain container
+    // setting that works on that network too, so only the IP is dropped here.
+    if (!network) {
+      if (ipRaw) warnings.push('The fixed IP "' + ipRaw + '" was dropped: it needs a named ' +
+        'network to attach to, and this container uses the default network.');
+    } else if (ipRaw) {
+      if (isValidIPv4(ipRaw)) result.ipv4 = ipRaw;
+      else warnings.push('The fixed IP "' + ipRaw + '" is not a valid IPv4 address and was dropped.');
+    }
+
+    if (macCandidate) {
+      if (macFromExtra || MAC_RE.test(macCandidate)) result.mac = macCandidate;
+      else warnings.push('The fixed MAC address "' + macCandidate + '" is not a valid MAC address and was dropped.');
+    }
+
+    // Nothing failed here — this is a heads-up, not a warning — but a moved
+    // address can silently collide with something else already using it.
+    if (result.ipv4 || result.mac) {
+      notes.push('This container keeps the fixed address it already had. Make sure nothing ' +
+        'else on the network is using it.');
+    }
+
+    return result;
   }
 
   // The repository path out of an image reference — everything except a
@@ -527,11 +602,14 @@
     var name = normaliseName(app.Name);
     var service = name;
 
-    var net = networkInfo(app, notes);
-    var cfg = processConfig(app.Config, name, warnings, notes, appdataRoot);
+    // Parsed before networkInfo() so a fixed address can be checked against
+    // ExtraParams' --mac-address — the two can name conflicting MACs, and
+    // that precedence is networkInfo()'s job, not this function's.
     var extra = parseExtraParams(app.ExtraParams || '');
     warnings = warnings.concat(extra.warnings);
     notes = notes.concat(extra.notes);
+    var net = networkInfo(app, notes, warnings, extra.macAddress);
+    var cfg = processConfig(app.Config, name, warnings, notes, appdataRoot);
 
     var privileged = app.Privileged === 'true' || extra.privileged;
 
@@ -587,7 +665,9 @@
     if (extra.pid) svc.push('    pid: ' + scalarOut(extra.pid));
     if (extra.ipc) svc.push('    ipc: ' + scalarOut(extra.ipc));
     if (extra.cgroup) svc.push('    cgroup: ' + scalarOut(extra.cgroup));
-    if (extra.macAddress) svc.push('    mac_address: ' + scalarOut(extra.macAddress));
+    // Once a named network exists, the map form under `networks:` carries the
+    // MAC instead (see below) — writing it here too would set it twice.
+    if (net.mac && !net.network) svc.push('    mac_address: ' + scalarOut(net.mac));
     if (extra.stopSignal) svc.push('    stop_signal: ' + scalarOut(extra.stopSignal));
     if (extra.stopGracePeriod) svc.push('    stop_grace_period: ' + scalarOut(extra.stopGracePeriod));
     if (extra.shmSize) svc.push('    shm_size: ' + scalarOut(extra.shmSize));
@@ -596,7 +676,15 @@
       svc.push('    network_mode: ' + net.mode);
     } else if (net.network) {
       svc.push('    networks:');
-      svc.push('      - ' + scalarOut(net.network));
+      if (net.ipv4 || net.mac) {
+        // The map form is the only one that can carry an address — a plain
+        // list entry has no key to hang ipv4_address/mac_address off.
+        svc.push('      ' + keyOut(net.network) + ':');
+        if (net.ipv4) svc.push('        ipv4_address: ' + scalarOut(net.ipv4));
+        if (net.mac)  svc.push('        mac_address: ' + scalarOut(net.mac));
+      } else {
+        svc.push('      - ' + scalarOut(net.network));
+      }
     }
 
     if (cfg.ports.length) { svc.push('    ports:'); emitAlignedBlock(cfg.ports).forEach(function (l) { svc.push(l); }); }

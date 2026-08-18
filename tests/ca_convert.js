@@ -640,6 +640,140 @@ if (fs.existsSync(FEED)) {
   console.log('  (skipped — feed not found at ' + FEED + ')');
 }
 
+/* =========================================================================
+ * J. Fixed address and hardware address carried across on import
+ *
+ * MyIP/MyMAC pin a container's address on a named network. Only a named
+ * network has an interface to hang an address on, so host/none/bridge drop
+ * it with a warning rather than write it somewhere compose cannot use it;
+ * a malformed value is refused the same way rather than written half-baked.
+ * ========================================================================= */
+
+console.log('\nJ. Fixed address and hardware address on import');
+
+// 1. A fixed IP on a named network writes the map form.
+var FIXEDIP_ONLY = {
+  Name: 'fixedip-only-test', Repository: 'example/fixedip-only-test',
+  Network: 'br0.2', MyIP: '192.168.202.66'
+};
+var fixedIpOnlyY = CA.convert(FIXEDIP_ONLY).yaml;
+ok('a fixed IP on a named network writes the map form',
+   fixedIpOnlyY.indexOf('    networks:\n      br0.2:\n        ipv4_address: 192.168.202.66\n') >= 0);
+ok('the stack-level declaration is unchanged',
+   /\nnetworks:\n {2}br0\.2:\n {4}external: true\n?$/.test(fixedIpOnlyY));
+
+// 2. MyIP and MyMAC together write both keys, in that order, and no
+// service-level mac_address line duplicates the one in the map.
+var FIXEDIP_AND_MAC = {
+  Name: 'fixedip-and-mac-test', Repository: 'example/fixedip-and-mac-test',
+  Network: 'br0.2', MyIP: '192.168.202.66', MyMAC: '02:42:ac:11:00:02'
+};
+var fixedIpMacY = CA.convert(FIXEDIP_AND_MAC).yaml;
+ok('MyIP and MyMAC together write both keys, ipv4_address then mac_address',
+   fixedIpMacY.indexOf('    networks:\n      br0.2:\n        ipv4_address: 192.168.202.66\n        mac_address: 02:42:ac:11:00:02\n') >= 0);
+ok('no service-level mac_address line duplicates the one already in the map',
+   fixedIpMacY.indexOf('\n    mac_address:') === -1);
+
+// 3. A named network with neither address still keeps the plain list form —
+// the regression that would otherwise hit 53 of the 85 measured templates.
+var FIXEDIP_NEITHER = {
+  Name: 'fixedip-neither-test', Repository: 'example/fixedip-neither-test',
+  Network: 'br0.2'
+};
+var fixedIpNeitherY = CA.convert(FIXEDIP_NEITHER).yaml;
+ok('a named network with neither address still writes the plain list form',
+   fixedIpNeitherY.indexOf('    networks:\n      - br0.2\n') >= 0);
+ok('...and never the map form',
+   fixedIpNeitherY.indexOf('ipv4_address') === -1 && fixedIpNeitherY.indexOf('mac_address') === -1);
+
+// 4. MyIP on network_mode: host has no interface to hang it on, so it is
+// dropped, warned about by name, and never written — not even the digits,
+// since naming the value would not help here the way it does for a typo.
+var FIXEDIP_HOST = {
+  Name: 'fixedip-host-test', Repository: 'example/fixedip-host-test',
+  Network: 'host', MyIP: '192.168.202.66'
+};
+var fixedIpHostR = CA.convert(FIXEDIP_HOST);
+var fixedIpHostY = fixedIpHostR.yaml;
+ok('MyIP on network_mode: host is dropped with a warning naming it',
+   fixedIpHostR.warnings.some(function (w) { return /fixed ip|MyIP/i.test(w) && /host/i.test(w); }));
+ok('network_mode: host is still written', fixedIpHostY.indexOf('network_mode: host') >= 0);
+// "No address anywhere in the output" means never written as a field a
+// compose parser would read — not that the warning comment above may not
+// name the value. Naming it there is the point: it lets the user see which
+// address it was, same as the malformed-value warning does.
+ok('the dropped address is never written as a field, only named in the warning comment',
+   fixedIpHostY.indexOf('ipv4_address') === -1 && fixedIpHostY.indexOf('networks:') === -1);
+
+// 5. A malformed address is refused, not written — and the network still
+// comes out in the plain list form rather than a half-written map.
+var FIXEDIP_BAD_IP = {
+  Name: 'fixedip-bad-ip-test', Repository: 'example/fixedip-bad-ip-test',
+  Network: 'br0.2', MyIP: 'not-an-ip'
+};
+var badIpR = CA.convert(FIXEDIP_BAD_IP);
+ok('a malformed MyIP is refused with a warning naming the value',
+   badIpR.warnings.some(function (w) { return w.indexOf('not-an-ip') >= 0; }));
+ok('...and the network still comes out in the plain list form, not a half-written map',
+   badIpR.yaml.indexOf('    networks:\n      - br0.2\n') >= 0 && badIpR.yaml.indexOf('ipv4_address') === -1);
+
+var FIXEDIP_BAD_MAC = {
+  Name: 'fixedip-bad-mac-test', Repository: 'example/fixedip-bad-mac-test',
+  Network: 'br0.2', MyMAC: 'not-a-mac'
+};
+var badMacR = CA.convert(FIXEDIP_BAD_MAC);
+ok('a malformed MyMAC is refused with a warning naming the value',
+   badMacR.warnings.some(function (w) { return w.indexOf('not-a-mac') >= 0; }));
+ok('...and the network still comes out in the plain list form, not a half-written map',
+   badMacR.yaml.indexOf('    networks:\n      - br0.2\n') >= 0 && badMacR.yaml.indexOf('mac_address') === -1);
+
+// 6. MyMAC with no named network falls back to the service-level
+// mac_address line — a MAC can be pinned even on the default bridge network,
+// unlike an IP, which that network hands out itself.
+var FIXEDIP_MAC_NO_NETWORK = {
+  Name: 'fixedip-mac-no-network-test', Repository: 'example/fixedip-mac-no-network-test',
+  Network: 'bridge', MyMAC: '02:42:ac:11:00:02'
+};
+var macNoNetY = CA.convert(FIXEDIP_MAC_NO_NETWORK).yaml;
+ok('MyMAC with no named network falls back to the service-level mac_address line',
+   macNoNetY.indexOf('\n    mac_address: 02:42:ac:11:00:02\n') >= 0);
+
+// 7. MyMAC and --mac-address in ExtraParams disagree: the explicit
+// ExtraParams instruction wins, is written once (into the map, not also as
+// the service-level fallback), and a warning says the two disagreed.
+var FIXEDIP_MAC_CONFLICT = {
+  Name: 'fixedip-mac-conflict-test', Repository: 'example/fixedip-mac-conflict-test',
+  Network: 'br0.2', MyMAC: '02:42:ac:11:00:02', ExtraParams: '--mac-address=02:42:ac:99:99:99'
+};
+var conflictR = CA.convert(FIXEDIP_MAC_CONFLICT);
+var conflictY = conflictR.yaml;
+ok('ExtraParams --mac-address wins over MyMAC and is written into the map form',
+   conflictY.indexOf('      br0.2:\n        mac_address: 02:42:ac:99:99:99') >= 0);
+ok('no service-level mac_address line duplicates it',
+   conflictY.indexOf('\n    mac_address:') === -1);
+ok('a warning says the two disagreed',
+   conflictR.warnings.some(function (w) { return w.indexOf('02:42:ac:11:00:02') >= 0 && w.indexOf('02:42:ac:99:99:99') >= 0; }));
+
+// 8. The output still round-trips — this file's standing contract — and
+// buildForm() finds the address and hardware address as editable fields on
+// the network row, same as any other value a hand-written file could carry.
+var rtR = CA.convert(FIXEDIP_AND_MAC);
+var rtDoc = Y.parse(rtR.yaml);
+var rtBack = Y.serialise(rtDoc);
+ok('the fixed-address conversion round-trips byte for byte', rtBack === rtR.yaml,
+   rtBack !== rtR.yaml ? 'first mismatch near: ' + JSON.stringify(rtBack.slice(0, 200)) : null);
+ok('nothing is sealed', rtDoc.sealed.length === 0, JSON.stringify(rtDoc.sealed));
+var rtForm = Y.buildForm(rtDoc);
+ok('buildForm().ok is true', rtForm.ok === true);
+var rtRow = rtForm.fields.filter(function (f) {
+  return f.service === rtR.service && f.listKey === 'networks' && f.parts.value && f.parts.value.value === 'br0.2';
+})[0];
+ok('the br0.2 network row exists in the built form', !!rtRow);
+ok('ipv4_address is an editable field on the network row',
+   !!rtRow && rtRow.parts.ipv4_address && rtRow.parts.ipv4_address.value === '192.168.202.66');
+ok('mac_address is an editable field on the network row',
+   !!rtRow && rtRow.parts.mac_address && rtRow.parts.mac_address.value === '02:42:ac:11:00:02');
+
 /* ---- summary ------------------------------------------------------------ */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
