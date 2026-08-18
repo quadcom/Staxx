@@ -8233,6 +8233,344 @@ var AG12_SRC = [
      crashed ? ('declareNetwork threw: ' + crashed) : ('declareNetwork returned ' + line + '\n' + out));
 })();
 
+/* =========================================================================
+ * AH. PLAN_40 — dragging a port into a different place in the list
+ *
+ * moveItem() lifts a whole entry — leadStart..end, comments and all — the
+ * same span removeItem already trusts to be "the whole entry" — and drops
+ * it elsewhere. Two failure modes have actually happened in this codebase
+ * before: a comment left behind when a block gets rebuilt (PLAN_34 phase 5
+ * kept only the last comment of a networks block), and a multi-line entry
+ * only half-moved. Every assertion below is byte-for-byte, so a comment
+ * dropped, a blank line dragged along, or an off-by-one on the insertion
+ * point cannot pass by luck.
+ * ========================================================================= */
+
+console.log('\nAH. PLAN_40 — dragging a port (moveItem)');
+
+/* ---- 1. Two short-form ports swap, byte-identical to the same file
+            written the other way round by hand ------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"',
+    '      - "9090:90"',
+    ''
+  ].join('\n');
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "9090:90"',
+    '      - "8080:80"',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var res = Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+  ok('swapping the two entries reports ok: true', !!res && res.ok === true, JSON.stringify(res));
+  ok('...and the file matches the same two lines written in the other order',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 2. Each entry's own trailing comment travels with it — the one that
+            would have been silently wrong -------------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"   # web',
+    '      - "9090:90"   # admin',
+    ''
+  ].join('\n');
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "9090:90"   # admin',
+    '      - "8080:80"   # web',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+  ok('each entry keeps its own trailing comment after the swap',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 3. A standalone comment line above an entry travels with it; one
+            above the ports: key itself does not move ---------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    # do not touch this',
+    '    ports:',
+    '      # note about web',
+    '      - "8080:80"',
+    '      - "9090:90"',
+    ''
+  ].join('\n');
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    # do not touch this',
+    '    ports:',
+    '      - "9090:90"',
+    '      # note about web',
+    '      - "8080:80"',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+  ok('the comment above the entry moves with it, and the comment above ports: itself stays put',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 4. A long-form entry (four lines) moves as a whole block, its inner
+            lines keeping their original order ----------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - target: 80',
+    '        published: 8080',
+    '        protocol: tcp',
+    '        host_ip: 0.0.0.0',
+    '      - target: 90',
+    '        published: 9090',
+    ''
+  ].join('\n');
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - target: 90',
+    '        published: 9090',
+    '      - target: 80',
+    '        published: 8080',
+    '        protocol: tcp',
+    '        host_ip: 0.0.0.0',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+  ok('the four-line entry moves as one block, its own lines in their original order, nothing split off',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 5. A blank line between two entries stays where it was rather than
+            travelling with either one ------------------------------------ */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"',
+    '',
+    '      - "9090:90"',
+    ''
+  ].join('\n');
+  // The blank sits outside both items' spans, so it stays at its own line —
+  // the second line of the block — rather than following either entry. Once
+  // the swap makes "9090:90" the first entry, the blank ends up ahead of it
+  // instead of between the two entries as it was before the move.
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '',
+    '      - "9090:90"',
+    '      - "8080:80"',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+  ok('the blank line stays at its own line rather than travelling with either entry',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 6. Last-to-first and first-to-last, the two off-by-one cases -------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"',
+    '      - "9090:90"',
+    '      - "7070:70"',
+    ''
+  ].join('\n');
+
+  var wantLastToFirst = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "7070:70"',
+    '      - "8080:80"',
+    '      - "9090:90"',
+    ''
+  ].join('\n');
+  var doc1 = Y.parse(src), form1 = Y.buildForm(doc1);
+  Y.moveItem(doc1, form1, 'a', 'ports', 2, 0);
+  ok('moving the last entry to the front lands it there and shifts the rest down',
+     Y.serialise(doc1) === wantLastToFirst, firstDiff(wantLastToFirst, Y.serialise(doc1)));
+
+  var wantFirstToLast = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "9090:90"',
+    '      - "7070:70"',
+    '      - "8080:80"',
+    ''
+  ].join('\n');
+  var doc2 = Y.parse(src), form2 = Y.buildForm(doc2);
+  Y.moveItem(doc2, form2, 'a', 'ports', 0, 2);
+  ok('moving the first entry to the back lands it there and shifts the rest up',
+     Y.serialise(doc2) === wantFirstToLast, firstDiff(wantFirstToLast, Y.serialise(doc2)));
+})();
+
+/* ---- 7. from === to writes nothing, byte-identical ----------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"',
+    '      - "9090:90"',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var res = Y.moveItem(doc, form, 'a', 'ports', 1, 1);
+  ok('moving an entry onto its own position reports ok: true and writes nothing',
+     !!res && res.ok === true && Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- 8. Refusals leave the file byte-identical: a flow sequence, an
+            anchored entry, an aliased entry and a tagged entry — the last
+            three sitting where they are NOT touched by the move, since the
+            rule is "anywhere in the list", not just the two entries being
+            swapped ------------------------------------------------------- */
+
+(function () {
+  var flowSrc = 'services:\n  a:\n    image: alpine\n    ports: ["80:80", "81:81"]\n';
+  var flowDoc = Y.parse(flowSrc), flowForm = Y.buildForm(flowDoc);
+  var flowRes = Y.moveItem(flowDoc, flowForm, 'a', 'ports', 0, 1);
+  ok('a flow sequence is refused, naming there being no list here to reorder',
+     !!flowRes && flowRes.ok === false && flowRes.error === 'There is no list here to reorder.',
+     JSON.stringify(flowRes));
+  ok('...and refusing leaves the file byte-identical',
+     Y.serialise(flowDoc) === flowSrc, firstDiff(flowSrc, Y.serialise(flowDoc)));
+
+  var perEntry = {
+    'an anchored entry': {
+      src: 'services:\n  a:\n    image: alpine\n    ports:\n      - "8080:80"\n      - &p1 "9090:90"\n      - "7070:70"\n',
+      reason: 'this is a shared block other parts of the file reuse'
+    },
+    'an aliased entry': {
+      src: 'x-ports: &pp "9090:90"\nservices:\n  a:\n    image: alpine\n    ports:\n      - "8080:80"\n      - *pp\n      - "7070:70"\n',
+      reason: 'this points at a shared block higher up the file'
+    },
+    'a tagged entry': {
+      src: 'services:\n  a:\n    image: alpine\n    ports:\n      - "8080:80"\n      - !!str "9090:90"\n      - "7070:70"\n',
+      reason: 'this carries a YAML tag'
+    }
+  };
+  Object.keys(perEntry).forEach(function (label) {
+    var c = perEntry[label], doc = Y.parse(c.src), form = Y.buildForm(doc);
+    // Neither index 0 nor index 2 is the sealed entry at index 1 — moving
+    // around it must still be refused, because it sits inside the span
+    // [leadStart of the moved entry .. leadStart of the target] either way.
+    var res = Y.moveItem(doc, form, 'a', 'ports', 0, 2);
+    ok(label + ' anywhere in the list is refused, even though it is not one of the two entries being moved',
+       !!res && res.ok === false &&
+       res.error === 'One of these entries cannot be moved, because ' + c.reason + '.',
+       JSON.stringify(res));
+    ok('...and refusing leaves the file byte-identical (' + label + ')',
+       Y.serialise(doc) === c.src, firstDiff(c.src, Y.serialise(doc)));
+  });
+})();
+
+/* ---- 9. After a move, buildForm reports the ports in the new order, and
+            the field now first is the one PLAN_39's WebUI chip marks ------ */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"',
+    '      - "9090:90"',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+
+  var ports = Y.buildForm(doc).fields.filter(function (f) { return f.service === 'a' && f.binder === 'port'; });
+  ok('both ports still appear, in the new order — the first one is what PLAN_39\'s rule ' +
+     'hands the WebUI button, so this is the field the chip would now mark',
+     ports.length === 2 &&
+     ports[0].parts.host.value === '9090' && ports[0].parts.container.value === '90' &&
+     ports[1].parts.host.value === '8080' && ports[1].parts.container.value === '80',
+     JSON.stringify(ports.map(function (f) { return { host: f.parts.host.value, container: f.parts.container.value }; })));
+})();
+
+/* ---- 10. The moved file still round-trips unsealed ----------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - target: 80',
+    '        published: 8080',
+    '        protocol: tcp',
+    '      - target: 90',
+    '        published: 9090',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+  var out = Y.serialise(doc);
+
+  ok('the moved file is itself well-formed: parsing it again and serialising it back matches exactly',
+     Y.serialise(Y.parse(out)) === out, firstDiff(out, Y.serialise(Y.parse(out))));
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

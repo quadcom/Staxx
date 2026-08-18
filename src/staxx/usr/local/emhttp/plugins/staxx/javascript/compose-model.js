@@ -3383,6 +3383,76 @@
   }
 
   /**
+   * Move one entry inside a service's list to a new position — the model
+   * side of dragging a port row. `from` and `to` are 0-based indices into
+   * the sequence; the entry currently at `from` ends up at index `to` of the
+   * resulting list, the same "remove then insert-at-to" convention
+   * Array.prototype.splice itself uses for a move.
+   *
+   * Moves `leadStart..end` as one span, the same one removeItem already
+   * trusts to be the whole entry: leadStart has walked back over any
+   * standalone comment sitting directly above the item, and a trailing "#…"
+   * on the item's own line is inside its own last line, so both travel with
+   * it rather than being orphaned. A blank line between entries sits outside
+   * every item's span, so it is never part of what moves and the file's own
+   * spacing is left exactly where the user put it.
+   *
+   * Refuses, changing nothing, the moment anything sealed sits anywhere in
+   * the list — an anchor, an alias, a merge key, a flow list, a block
+   * scalar, anything else the parser could not confidently read — not only
+   * in the entry being moved. An anchor and the alias pointing at it can
+   * both live in the same list, and reordering around that pair is exactly
+   * the case a move that only checked the two entries touched would get
+   * wrong. Same all-or-nothing posture as promoteNetworksList.
+   *
+   * `from === to`, or either index out of range, is a no-op success that
+   * writes nothing — there is nothing here worth refusing.
+   *
+   * -> { ok: true }
+   * -> { ok: false, error: '<what to do next>' }
+   */
+  function moveItem(doc, form, service, listKey, from, to) {
+    var svc = serviceMapOf(doc, service);
+    var pair = svc && svc.value.pairs[listKey];
+    var v = pair ? pair.value : null;
+    if (!v || v.kind !== 'seq') {
+      return { ok: false, error: 'There is no list here to reorder.' };
+    }
+
+    var n = v.items.length;
+    if (from === to || from < 0 || from >= n || to < 0 || to >= n) {
+      return { ok: true };
+    }
+
+    for (var i = 0; i < doc.sealed.length; i++) {
+      var s = doc.sealed[i];
+      if (s.start < v.end && s.end > v.start) {
+        return { ok: false, error: 'One of these entries cannot be moved, because ' + lockReason(s.reason) + '.' };
+      }
+    }
+
+    var moving = v.items[from];
+    var block = doc.lines.slice(moving.leadStart, moving.end);
+
+    splice(doc, moving.leadStart, moving.end - moving.leadStart, []);
+
+    // The removal shifted every line at or after the moved block up by the
+    // block's own length, so the target has to be re-read fresh off the
+    // re-parsed document rather than reused — reusing the old leadStart is
+    // the classic off-by-one this kind of move gets wrong when the entry
+    // travels downwards.
+    svc = serviceMapOf(doc, service);
+    pair = svc.value.pairs[listKey];
+    v = pair.value;
+
+    var rest = v.items;
+    var insertAt = to < rest.length ? rest[to].leadStart : v.end;
+
+    splice(doc, insertAt, 0, block);
+    return { ok: true };
+  }
+
+  /**
    * Declares a name under the top-level <kind>: block — networks, volumes,
    * secrets or configs — creating the block (plus this, its first child) at
    * the end of the document when it is not there yet, since that is where
@@ -6517,6 +6587,11 @@
     setComment: setComment,
     addItem: addItem,
     removeItem: removeItem,
+    // PLAN_40: reorders one entry inside a service's list — the model side
+    // of dragging a port row. Generic over any list key; only ports wires a
+    // handle up to it, because no other list has an order that means
+    // anything.
+    moveItem: moveItem,
     addDeclared: addDeclared,
     declareNetwork: declareNetwork,
     removeDeclared: removeDeclared,

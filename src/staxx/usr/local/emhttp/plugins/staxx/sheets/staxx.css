@@ -1662,8 +1662,9 @@
 .staxx-webchip-gap {
   /* Pinned to the last track rather than auto-placed into it. A row where the
      × is suppressed would otherwise slide the chip one column left, and the
-     whole point of the column is that it does not move. */
-  grid-column: 6;
+     whole point of the column is that it does not move. Track 7, not 6, now
+     that the leading grip column (PLAN_40) sits ahead of it. */
+  grid-column: 7;
 }
 
 .staxx-webchip-gap { display: block; }
@@ -2694,11 +2695,14 @@
 
 /* A port is at most five digits, so the two halves do not need a share of the
    row the way a mount's two paths do — fixed and narrow, with the width handed
-   back to the note, which is the part that actually runs long. The sixth track
-   is the WebUI chip's, held open on every port row so the rows line up and so
-   reordering cannot make a column appear and disappear mid-drag. */
+   back to the note, which is the part that actually runs long. Two more
+   tracks bookend those: a leading one for the drag/reorder grip (PLAN_40) and
+   a trailing one for the WebUI chip — both held open on every port row
+   whether or not this particular row has anything to put in them, so the
+   columns line up and reordering cannot make one appear or disappear
+   mid-drag. */
 .staxx-formgroup--ports {
-  --sm-fieldcols: 7rem 7rem 9rem minmax(0, 1fr) 2.4rem 4.6rem;
+  --sm-fieldcols: 2.4rem 7rem 7rem 9rem minmax(0, 1fr) 2.4rem 4.6rem;
 }
 
 /* --single is a dynamic list group (networks, secrets, depends_on...) — one
@@ -2904,6 +2908,53 @@
   color: var(--sm-danger);
   outline: none;
 }
+
+/* The drag/reorder handle at the front of a port row (PLAN_40) — same
+   fade-in-on-hover/focus treatment as the × above, so a settled list stays
+   quiet until a row is actually being looked at. `grab`/`grabbing` name what
+   the handle does even before dragging starts. */
+.staxx-scaffold .staxx-portgrip {
+  padding: 0.2rem 0.4rem;
+  border: 0;
+  border-radius: 0.2rem;
+  background: transparent;
+  color: var(--sm-muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  opacity: 0;
+  cursor: grab;
+  justify-self: center;
+}
+
+.staxx-fieldrow:hover .staxx-portgrip,
+.staxx-fieldrow--active .staxx-portgrip,
+.staxx-fieldrow:focus-within .staxx-portgrip,
+.staxx-scaffold .staxx-portgrip:focus-visible {
+  opacity: 1;
+}
+
+.staxx-scaffold .staxx-portgrip:hover,
+.staxx-scaffold .staxx-portgrip:focus-visible {
+  color: var(--sm-fg);
+  outline: none;
+}
+
+.staxx-scaffold .staxx-portgrip:active {
+  cursor: grabbing;
+}
+
+/* The line shown between two port rows while one is dragged over them —
+   box-shadow rather than a border, so it draws without changing the row's
+   height or shifting the columns beneath it. Transitions on these, like every
+   other one under .staxx-scaffold, collapse to near-nothing under the
+   reduced-motion rule at the bottom of this file. */
+.staxx-dropline--before,
+.staxx-dropline--after {
+  transition: box-shadow 0.1s ease;
+}
+
+.staxx-dropline--before { box-shadow: inset 0 0.2rem 0 0 var(--sm-accent); }
+.staxx-dropline--after  { box-shadow: inset 0 -0.2rem 0 0 var(--sm-accent); }
 
 .staxx-scaffold .staxx-add:disabled,
 .staxx-scaffold .staxx-kill:disabled {
@@ -6985,6 +7036,16 @@
     grid-row: 1;
     grid-column: 2;
     justify-self: end;
+  }
+
+  /* The port grip rides the same top row as the ×, opposite corner — same
+     reasoning as the × rule above: without an explicit row it would be
+     placed after the label/box's unconditional 1/-1 span claims row 1 for
+     itself, which pushes the grip down instead of leaving it up top. */
+  .staxx-fieldrow > .staxx-portgrip {
+    grid-row: 1;
+    grid-column: 1;
+    justify-self: start;
   }
 
   .staxx-fieldrow > .staxx-fieldlabel,

@@ -258,7 +258,8 @@
     // --ports rides alongside --mapped rather than replacing it: a port row is
     // the same five-cell shape as a mount, but its two halves hold numbers,
     // not paths, so they get much narrower tracks and give the width back to
-    // the note. It also adds the sixth track the WebUI chip lives in.
+    // the note. It also adds two more tracks: a leading one for the
+    // drag/reorder grip (PLAN_40) and a trailing one the WebUI chip lives in.
     { key: 'port',      heading: 'Ports',     cls: 'staxx-formgroup--mapped staxx-formgroup--ports', add: 'port',   flag: 'port' },
     { key: 'volume',    heading: 'Volumes',   cls: 'staxx-formgroup--mapped', add: 'volume', flag: 'volume' },
     { key: 'env',       heading: 'Variables', cls: 'staxx-formgroup--pair',   add: 'env',    flag: 'env' },
@@ -2214,6 +2215,19 @@
     return YAML.keyInfo(key, where);
   }
 
+  // Whether this script can ask the model to reorder a list at all — gates
+  // the port grip's own markup below, so a stale cached compose-model.js
+  // (missing moveItem) leaves a row with no grip rather than one that throws
+  // the moment it is pressed.
+  function hasMoveItem() {
+    return !!(YAML && typeof YAML.moveItem === 'function');
+  }
+
+  function safeMoveItem(doc, form, service, listKey, from, to) {
+    if (!hasMoveItem()) return null;
+    return YAML.moveItem(doc, form, service, listKey, from, to);
+  }
+
   // The ⓘ itself. '' when there is nothing to say, so a caller can splice
   // this straight into a label or heading without an extra branch either
   // side of it. Named in its title and a .staxx-sr span, same pattern as
@@ -2357,6 +2371,21 @@
       }
       bits.push(noteBoxHtml(f, index));
     } else if (mapped) {
+      // The drag/keyboard handle that reorders a port (PLAN_40) — only ports
+      // carry one; a mount or a device's order carries no meaning, so a
+      // handle there would be motion without purpose. Always a cell, even
+      // when hasMoveItem() says no, so the leading track never appears or
+      // disappears and the columns stay put (see --sm-fieldcols above).
+      if (f.binder === 'port') {
+        bits.push(hasMoveItem()
+          ? '<button type="button" class="staxx-portgrip" data-port-grip="1"' +
+            ' title="Drag to reorder, or use the up and down arrow keys">' +
+              '<i class="fa fa-arrows-v" aria-hidden="true"></i>' +
+              '<span class="staxx-sr">Drag to reorder this port, or focus it and use the ' +
+              'up and down arrow keys</span>' +
+            '</button>'
+          : '<span class="staxx-boxgap" aria-hidden="true"></span>');
+      }
       // The rule the web page button follows (PLAN_39): the first port in
       // the file is the one it opens. Said here, on that row's own host box,
       // rather than left as a fact nobody but the button knows.
@@ -2594,6 +2623,10 @@
                (declared ? ['name', 'setting', 'note, kept in the file'] : null);
     if (!cols) return '';
     var bits = ['<div class="staxx-caption" aria-hidden="true">'];
+    // Ports alone carry a leading grip column (PLAN_40) with nothing to name
+    // — a blank cell here keeps every heading lined up with the box beneath
+    // it instead of sliding one column left of where it belongs.
+    if (grp.key === 'port') bits.push('<span></span>');
     for (var i = 0; i < cols.length; i++) bits.push('<span>' + esc(cols[i]) + '</span>');
     // Container is the only group with no × column to leave a blank for.
     if (grp.key !== 'container') bits.push('<span></span>');
@@ -3810,6 +3843,150 @@
     structuralEdit(-1, 'Every network under "' + f.service + '" can now take a fixed address ' +
                        'or a hardware address. Undo is at the bottom if that was wrong.');
   }
+
+  // Moves one port to a new spot in its service's list (PLAN_40) — the same
+  // shape the promote control above and the declare-network button use: flush
+  // whatever is pending, push one undo entry, ask the model, and pop that
+  // entry again if it refuses. from === to is a plain no-op: nothing changed,
+  // so nothing is flushed and no undo entry goes on the stack for it.
+  function movePort(service, from, to) {
+    if (from === to) return;
+    flushPending();
+    pushUndo('moving that port');
+    var res = safeMoveItem(MODEL.doc, MODEL, service, 'ports', from, to);
+    if (!res || !res.ok) {
+      undoStack.pop();
+      updateUndo();
+      if (res) setYamlStatus(res.error);
+      return;
+    }
+    structuralEdit(-1, '');
+    // structuralEdit() just redrew the whole form, taking focus with it —
+    // land it back on the grip that moved, at its new spot, so a keyboard
+    // move can be repeated without hunting the row down again.
+    var svcSel = '.staxx-svc[data-service="' + service.replace(/"/g, '\\"') + '"]';
+    var grp    = formHost.querySelector(svcSel + ' .staxx-formgroup--ports');
+    var rows   = grp ? grp.querySelectorAll(':scope > .staxx-fieldrow') : [];
+    var landed = rows[Math.min(to, rows.length - 1)];
+    var grip   = landed && landed.querySelector('[data-port-grip]');
+    if (grip) grip.focus();
+  }
+
+  // Clears any drop-position line a dragover left behind — called before
+  // drawing a fresh one, and again once a drag ends however it ends.
+  function clearDropMark(grp) {
+    var marked = grp.querySelectorAll('.staxx-dropline--before, .staxx-dropline--after');
+    for (var i = 0; i < marked.length; i++) {
+      marked[i].classList.remove('staxx-dropline--before', 'staxx-dropline--after');
+    }
+  }
+
+  // The row a port grip is dragging, from pointerdown until the drag ends —
+  // one variable is enough, since only one row can ever be mid-drag.
+  var draggingPortRow = null;
+
+  formHost.addEventListener('pointerdown', function (event) {
+    var grip = event.target.closest('[data-port-grip]');
+    if (!grip) return;
+    var row = grip.closest('.staxx-fieldrow');
+    if (!row) return;
+    // A port row holds text inputs, so it is not draggable by default — a
+    // permanently draggable row would swallow the pointer gesture used to
+    // select text inside them (dragging inside a box would move the row
+    // instead of the caret). The grip arms dragging only for as long as it is
+    // actually held; endPortDrag() below disarms it again on release or once
+    // a drag finishes. Both paths matter — either alone would leave a row
+    // stuck draggable if the other never fired: a plain click with no drag,
+    // or a drag released outside the window.
+    row.draggable = true;
+    draggingPortRow = row;
+  });
+
+  function endPortDrag() {
+    if (!draggingPortRow) return;
+    draggingPortRow.draggable = false;
+    var grp = draggingPortRow.closest('.staxx-formgroup--ports');
+    if (grp) clearDropMark(grp);
+    draggingPortRow = null;
+  }
+  formHost.addEventListener('pointerup', endPortDrag);
+  formHost.addEventListener('dragend', endPortDrag);
+
+  formHost.addEventListener('dragstart', function (event) {
+    if (!draggingPortRow || event.target.closest('.staxx-fieldrow') !== draggingPortRow) return;
+    event.dataTransfer.effectAllowed = 'move';
+    // Firefox refuses to start a drag that carries no data at all.
+    event.dataTransfer.setData('text/plain', '');
+  });
+
+  // Draws a drop line rather than reordering rows live under the pointer — a
+  // real edit only happens on drop, and moving rows about beforehand would
+  // tell the user something has happened when it has not.
+  formHost.addEventListener('dragover', function (event) {
+    if (!draggingPortRow) return;
+    var grp = draggingPortRow.closest('.staxx-formgroup--ports');
+    var row = event.target.closest('.staxx-fieldrow');
+    if (!grp || !row || !grp.contains(row)) return;
+    event.preventDefault();   // only a prevented dragover lets 'drop' fire
+    event.dataTransfer.dropEffect = 'move';
+    clearDropMark(grp);
+    if (row === draggingPortRow) return;   // no line drawn against dropping on itself
+    var before = (event.clientY - row.getBoundingClientRect().top) < row.offsetHeight / 2;
+    row.classList.add(before ? 'staxx-dropline--before' : 'staxx-dropline--after');
+  });
+
+  formHost.addEventListener('drop', function (event) {
+    if (!draggingPortRow) return;
+    event.preventDefault();
+    var fromRow    = draggingPortRow;
+    var grp        = fromRow.closest('.staxx-formgroup--ports');
+    var svcSection = fromRow.closest('.staxx-svc');
+    var overRow    = event.target.closest('.staxx-fieldrow');
+    // Measured from THIS event, not read back off the drop line the last
+    // dragover drew. The line is for the eye; it can easily be absent or
+    // stale — a drag that crosses a row in one jump fires no dragover over
+    // it at all, and the fallback then read as "insert before", which for a
+    // downward move collapses to putting the row back where it started.
+    // Seen doing exactly that, so the drop measures for itself.
+    var before     = true;
+    if (overRow) {
+      var box = overRow.getBoundingClientRect();
+      before = (event.clientY - box.top) < box.height / 2;
+    }
+    endPortDrag();   // clears the line and resets draggable either way
+    if (!grp || !svcSection || !overRow || !grp.contains(overRow) || overRow === fromRow) return;
+    var rows = Array.prototype.slice.call(grp.querySelectorAll(':scope > .staxx-fieldrow'));
+    var from = rows.indexOf(fromRow), at = rows.indexOf(overRow);
+    if (from < 0 || at < 0) return;
+    var to = before ? at : at + 1;
+    if (from < to) to -= 1;   // the removal above shifts everything after it left by one
+    movePort(svcSection.dataset.service, from, to);
+  });
+
+  // The grip is a keyboard control too (PLAN_40) — focused, the arrow keys
+  // and Home/End move the row the same way a drag would, which is what makes
+  // reordering usable without a mouse. Default is prevented for every key
+  // handled here so the page does not scroll under it.
+  formHost.addEventListener('keydown', function (event) {
+    var grip = event.target.closest('[data-port-grip]');
+    if (!grip || sanitised || !MODEL) return;
+    var key = event.key;
+    if (key !== 'ArrowUp' && key !== 'ArrowDown' && key !== 'Home' && key !== 'End') return;
+    event.preventDefault();
+    var row        = grip.closest('.staxx-fieldrow');
+    var grp        = row && row.closest('.staxx-formgroup--ports');
+    var svcSection = row && row.closest('.staxx-svc');
+    if (!row || !grp || !svcSection) return;
+    var rows = Array.prototype.slice.call(grp.querySelectorAll(':scope > .staxx-fieldrow'));
+    var from = rows.indexOf(row);
+    if (from < 0) return;
+    var to = key === 'ArrowUp'   ? from - 1
+           : key === 'ArrowDown' ? from + 1
+           : key === 'Home'      ? 0
+           :                       rows.length - 1;
+    if (to < 0 || to >= rows.length || to === from) return;
+    movePort(svcSection.dataset.service, from, to);
+  });
 
   // Closes any open Sections panel: a click outside it, or Escape. The button
   // that opens one stops its own click reaching here (see [data-sections]
