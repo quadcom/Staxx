@@ -2421,9 +2421,9 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
  * Most verbs carry two argument strings: `args` for the whole stack and `svc`
  * for a single service. Either one can instead be an array of command
  * strings — a short sequence, run in order — rather than a single string; see
- * `update` below and staxx_start_job(), which is what actually walks that
- * array. Every verb except `update` still uses a single string. Three of
- * those pairs are not the obvious mirror of each other:
+ * `restart` and `update` below and staxx_start_job(), which is what actually
+ * walks that array. Every other verb uses a single string. Four of these
+ * pairs are not the obvious mirror of each other:
  *
  *   down/svc  is `stop`, not `down <service>`. `compose down` tears down the
  *             whole project's containers, networks and default volumes; it
@@ -2438,20 +2438,38 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
  *             because a front end started without its database is a
  *             container that immediately falls over.
  *
- *   restart   is NOT `compose restart`. That command stops and starts the
- *             container that already exists, and a container's settings —
- *             its published ports above all — are fixed when it is built, so
- *             an edited compose file has no effect on it whatsoever. Someone
- *             who adds a port, presses Restart and finds the port missing has
- *             been told the change was applied when it was not. Unraid's own
- *             Apply on a template rebuilds the container, and Restart here
- *             means the same thing: `up -d --force-recreate`, which rebuilds
- *             on the current file. `--force-recreate` rather than a plain
- *             `up -d` because `up -d` alone does nothing at all to a
- *             container whose settings did not change, and a Restart that
- *             sometimes restarts nothing is worse than a slow one. Anonymous
- *             volumes survive a recreate — compose carries them over unless
- *             asked not to — so this costs time, not data.
+ *   restart   is not `compose restart` on its own. That command stops and
+ *             starts the container that already exists, and a container's
+ *             settings — its published ports above all — are fixed when it
+ *             is built, so an edited compose file has no effect on it
+ *             whatsoever. Someone who adds a port, presses Restart and finds
+ *             the port missing has been told the change was applied when it
+ *             was not. Unraid's own Apply on a template rebuilds the
+ *             container, and Restart here means the same thing.
+ *
+ *             So it is two steps: `up -d` and then `restart`. Compose stamps
+ *             each container with a hash of the settings it was built from
+ *             and compares it, so `up -d` rebuilds exactly the containers
+ *             whose settings changed and returns in milliseconds when none
+ *             did — there is nothing for this plugin to track. `restart`
+ *             then bounces the rest, which is the half `up -d` will not do
+ *             on its own.
+ *
+ *             Not `up -d --force-recreate`, which would be one step and does
+ *             both jobs at once: it rebuilds every container in the stack
+ *             whether or not anything about it changed, and rebuilding
+ *             throws away a container's logs. Restart is what you press when
+ *             something is misbehaving, so destroying the evidence is the
+ *             worst possible moment. Measured on a four-container stack:
+ *             force-recreate 20.9s, this pair 10.5s when nothing changed.
+ *
+ *             `up -d` goes first for a second reason. The steps are chained
+ *             with `&&`, so a file compose rejects fails there having
+ *             disturbed nothing, rather than after the whole stack has
+ *             already been bounced. The cost of the pair is that a container
+ *             that DID change is started by the rebuild and then bounced
+ *             again by the restart — wasted, but only for the ones that
+ *             changed, and cheaper than the alternative for all the rest.
  *
  *   remove    exists only at service scope; `down` already IS the stack-scope
  *             version of removing containers, so a second stack-scope entry
@@ -2479,8 +2497,8 @@ function staxx_job_verbs(): array {
   return [
     'up'      => ['args' => 'up -d --remove-orphans', 'svc' => 'up -d',             'label' => 'Start'],
     'down'    => ['args' => 'down',                   'svc' => 'stop',              'label' => 'Stop'],
-    'restart' => ['args' => 'up -d --force-recreate --remove-orphans',
-                  'svc'  => 'up -d --force-recreate',                                'label' => 'Restart'],
+    'restart' => ['args' => ['up -d --remove-orphans', 'restart'],
+                  'svc'  => ['up -d', 'restart'],                                    'label' => 'Restart'],
     'pull'    => ['args' => 'pull',                   'svc' => 'pull',              'label' => 'Update images'],
     'logs'    => ['args' => 'logs --tail 200',        'svc' => 'logs --tail 200',   'label' => 'Logs'],
     'config'  => ['args' => 'config',                                               'label' => 'Resolved settings'],
@@ -2541,9 +2559,9 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
       : 'That action cannot be run against a whole stack.';
     return '';
   }
-  // Normalise to a list of steps. Every verb but `update` supplies a single
-  // string, which becomes a one-element list here and behaves exactly as it
-  // always has; `update` supplies ['pull', 'up -d'] already.
+  // Normalise to a list of steps. Most verbs supply a single string, which
+  // becomes a one-element list here and behaves exactly as it always has;
+  // `restart` and `update` supply their pair of steps already.
   $steps = is_array($args) ? $args : [$args];
 
   if ($service !== '') {
@@ -2575,8 +2593,8 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   $log = STAXX_JOB_DIR.'/'.$job.'.log';
 
   // Each step becomes its own `compose -f <file> <step>` invocation, and the
-  // chain below is what actually runs — `update` is `pull` and `up -d` back
-  // to back in the same shell command, not two separate jobs. Two things
+  // chain below is what actually runs — `restart` is `up -d` and `restart`
+  // back to back in the same shell command, not two separate jobs. Two things
   // about how they are joined matter enough to spell out:
   //
   // `2>&1` is attached to EVERY step here, not once at the end of the chain.
