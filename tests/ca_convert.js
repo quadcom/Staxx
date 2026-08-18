@@ -564,6 +564,46 @@ ok('a root with no trailing slash is normalised to exactly one',
    noSlashRootR.yaml.indexOf('/mnt/cache/appdata/path-only-test/config') >= 0);
 
 /* =========================================================================
+ * H4. A PHP-shaped template — empty XML elements decode as arrays
+ *
+ * simplexml_load_file() plus json_decode(json_encode(...)) — how Import.php
+ * reads a template — turns an empty element written <WebUI/> into an empty
+ * ARRAY, not an empty string. PHP treats that as falsy; JavaScript treats an
+ * empty array as truthy. Left unguarded that writes command: "" into most
+ * real templates, silently overriding the image's own start-up command —
+ * proven against the 85 templates on the box, not inferred. Import.php
+ * coerces this away before a template ever reaches the browser, but this is
+ * the assertion that would have caught the bug in the first place, so it
+ * belongs in the suite that owns the converter, not only the one that owns
+ * the PHP fix.
+ * ========================================================================= */
+
+console.log('\nH4. A PHP-shaped template — empty elements decode as arrays');
+var PHP_EMPTY_ELEMENTS = {
+  Name: 'php-shaped-test',
+  Repository: 'example/php-shaped-test',
+  Network: 'bridge',
+  WebUI: [],
+  Icon: [],
+  Overview: [],
+  Support: [],
+  ReadMe: [],
+  Project: [],
+  PostArgs: [],
+  ExtraParams: [],
+  Category: [],
+  Config: [
+    { '@attributes': { Name: 'PUID', Target: 'PUID', Default: '99', Description: 'User ID',
+        Type: 'Variable', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var phpShapedR = CA.convert(PHP_EMPTY_ELEMENTS);
+ok('an empty PostArgs array produces no command: line', phpShapedR.yaml.indexOf('command:') === -1);
+ok('an empty WebUI array produces no webui: line', phpShapedR.yaml.indexOf('webui:') === -1);
+ok('an empty Icon array produces no empty icon: line', phpShapedR.yaml.indexOf('icon: ""') === -1);
+ok('an empty Category array produces no empty category: line', phpShapedR.yaml.indexOf('category: ""') === -1);
+
+/* =========================================================================
  * I. Bulk sanity — every app in the live feed, if it is on disk
  *
  * Skipped entirely when the feed is not present, so the checked-in suite

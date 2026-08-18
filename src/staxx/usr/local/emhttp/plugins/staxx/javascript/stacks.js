@@ -6378,6 +6378,217 @@
     }, 150);
   });
 
+  /* ---- Import (PLAN_38 phase 1) ----
+   *
+   * A sibling of the Community Applications panel just above: one dialog,
+   * one fetch on open, rendered from whatever the last reply said. Far
+   * simpler than that one though — there is no search, no tabs and nothing
+   * to add, since this phase only lists what could be brought into StaXX and
+   * previews what it would write. Nothing here calls the server again after
+   * the initial fetch; a row's preview is generated once, from data already
+   * in hand, the first time that row is opened. */
+
+  var importModal = document.getElementById('staxx-import-dlg');
+  var importList  = document.getElementById('staxx-import-list');
+  var importMsg   = document.getElementById('staxx-import-msg');
+
+  var importData    = null;  // the last import-list reply — {templates, projects, loose}
+  var importEntries = [];    // every entry from that reply, flattened in the order rendered — data-import-toggle below is a position in this array
+  var importOpenIdx = {};    // which rows are expanded this open, keyed by that position
+
+  function importSourceLabel(entry) {
+    if (entry.source === 'project') return 'Compose Manager project';
+    if (entry.source === 'loose') return 'Not managed by StaXX';
+    return 'Unraid template';
+  }
+
+  function importStateLabel(entry) {
+    if (!entry.exists) return 'Not installed';
+    return entry.running ? 'Running' : 'Stopped';
+  }
+
+  // A project's preview has no endpoint to read the file's contents yet
+  // (phase 2) — it can only say where the file was found, which is the thing
+  // PLAN_38 itself says is most likely to be wrong.
+  function importProjectPreviewHtml(entry) {
+    var viaText = {
+      indirect: 'an indirect file',
+      label: "the container's own label",
+      flash: 'the project folder on the flash drive'
+    }[entry.via];
+
+    if (!entry.file) {
+      return '<p class="staxx-form-empty">No compose file could be found for this project.</p>';
+    }
+
+    return '<p class="staxx-import-via">' +
+             'Found via ' + esc(viaText || 'an unrecorded source') + '. This file would be copied:' +
+           '</p>' +
+           '<pre class="staxx-fieldraw">' + esc(entry.file) + '</pre>';
+  }
+
+  // A template's preview runs the same converter Add-an-app uses, on the
+  // decoded template the server already sent — guarded the same way
+  // caImport() guards it (:5701 or thereabouts), because a stale cached
+  // script must leave the row without a preview rather than throw and take
+  // the whole page down with it.
+  function importTemplatePreviewHtml(entry) {
+    if (!window.StaxxCA || typeof window.StaxxCA.convert !== 'function') {
+      return '<p class="staxx-form-empty">The app converter has not loaded. Reload the page and try again.</p>';
+    }
+
+    var result;
+    try {
+      result = window.StaxxCA.convert(entry.app, { appdataRoot: APPDATA });
+    } catch (e) {
+      return '<p class="staxx-form-empty">This template could not be converted: ' +
+             esc(e && e.message ? e.message : String(e)) + '</p>';
+    }
+
+    var bits = ['<pre class="staxx-fieldraw">' + esc(result.yaml) + '</pre>'];
+    if (result.warnings && result.warnings.length) {
+      bits.push('<p class="staxx-import-warn">Could not be translated automatically:</p>' +
+        '<ul class="staxx-import-notes">' +
+          result.warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') +
+        '</ul>');
+    }
+    if (result.notes && result.notes.length) {
+      bits.push('<p class="staxx-import-warn">Filled in for you — check these before starting:</p>' +
+        '<ul class="staxx-import-notes">' +
+          result.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
+        '</ul>');
+    }
+    return bits.join('');
+  }
+
+  function importPreviewHtml(entry) {
+    if (entry.source === 'project') return importProjectPreviewHtml(entry);
+    if (entry.source === 'loose') {
+      return '<p class="staxx-form-empty">This container belongs to neither a template nor a ' +
+             'compose project, so there is nothing to preview.</p>';
+    }
+    return importTemplatePreviewHtml(entry);
+  }
+
+  function importRowHtml(entry, idx) {
+    var open = !!importOpenIdx[idx];
+    var notesHtml = (entry.notes && entry.notes.length)
+      ? '<ul class="staxx-import-notes">' +
+          entry.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
+        '</ul>'
+      : '';
+    var takenHtml = entry.taken
+      ? '<span class="staxx-import-flag staxx-import-flag--taken">Already in StaXX</span>' : '';
+
+    return '<div class="staxx-import-row' + (entry.taken ? ' staxx-import-row--taken' : '') + '">' +
+             '<button type="button" class="staxx-import-rowhead" data-import-toggle="' + idx + '" ' +
+               'aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="staxx-import-body-' + idx + '">' +
+               '<span class="staxx-import-rowname">' + esc(entry.name) + '</span>' +
+               '<span class="staxx-import-rowsrc">' + importSourceLabel(entry) + '</span>' +
+               '<span class="staxx-import-rowstate">' + importStateLabel(entry) + '</span>' +
+               takenHtml +
+             '</button>' +
+             notesHtml +
+             '<div class="staxx-import-body" id="staxx-import-body-' + idx + '"' + (open ? '' : ' hidden') + '></div>' +
+           '</div>';
+  }
+
+  // Three groups, each only written when it has something to show — same
+  // rule caRenderAll() uses above. importEntries is rebuilt here rather than
+  // kept from the fetch, because it has to hold exactly the entries in the
+  // order they were rendered for the toggle handler's index to mean anything.
+  function importRenderAll() {
+    var data = importData;
+    if (!data) return;
+
+    var groups = [
+      ['Unraid templates', data.templates || []],
+      ['Compose Manager projects', data.projects || []],
+      ['Neither', data.loose || []]
+    ];
+
+    importEntries = [];
+    var blocks = [];
+    groups.forEach(function (g) {
+      var label = g[0], list = g[1];
+      if (!list.length) return;
+      var rowsHtml = list.map(function (entry) {
+        var idx = importEntries.length;
+        importEntries.push(entry);
+        return importRowHtml(entry, idx);
+      }).join('');
+      blocks.push(
+        '<h4 class="staxx-import-group">' + label +
+        ' <span class="staxx-import-count">' + list.length + '</span></h4>' +
+        '<div class="staxx-import-rows">' + rowsHtml + '</div>');
+    });
+
+    importList.innerHTML = blocks.length
+      ? blocks.join('')
+      : '<p class="staxx-form-empty">Nothing was found to import.</p>';
+  }
+
+  function importOpen() {
+    flushPending();
+    importData = null;
+    importEntries = [];
+    importOpenIdx = {};
+    importList.innerHTML = '';
+    importMsg.textContent = 'Reading the server…';
+    importModal.showModal();
+
+    call('import-list', {}, 20000).then(function (res) {
+      if (!importModal.open) return;   // the dialog closed while this was in flight
+      if (!res.ok) { importMsg.textContent = res.error; return; }
+      importData = res;
+      importMsg.textContent = '';
+      importRenderAll();
+    });
+  }
+
+  // One delegated listener for every row, the same shape as helpBtnHtml's
+  // toggle (:3434) — the preview is built once, the first time a row opens,
+  // and left in the DOM rather than rebuilt on every click.
+  importList.addEventListener('click', function (event) {
+    var btn = event.target.closest('[data-import-toggle]');
+    if (!btn) return;
+
+    var idx = Number(btn.dataset.importToggle);
+    var entry = importEntries[idx];
+    if (!entry) return;
+
+    var open = !importOpenIdx[idx];
+    importOpenIdx[idx] = open;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+
+    var body = document.getElementById('staxx-import-body-' + idx);
+    if (!body) return;
+    body.hidden = !open;
+    if (open && !body.dataset.filled) {
+      body.innerHTML = importPreviewHtml(entry);
+      body.dataset.filled = '1';
+    }
+  });
+
+  document.getElementById('staxx-import-close').addEventListener('click', function () {
+    importModal.close();
+  });
+
+  importModal.addEventListener('click', function (event) {
+    if (event.target !== importModal) return;
+    var r = importModal.getBoundingClientRect();
+    if (event.clientX < r.left || event.clientX > r.right ||
+        event.clientY < r.top  || event.clientY > r.bottom) importModal.close();
+  });
+
+  importModal.addEventListener('close', function () {
+    // A stale list must never flash up on the next open.
+    importData = null;
+    importEntries = [];
+    importOpenIdx = {};
+    importList.innerHTML = '';
+  });
+
   /* ---- the device picker ---- */
 
   /* What hardware this server has, offered by name.
@@ -9619,6 +9830,8 @@
   });
 
   document.getElementById('staxx-apps').addEventListener('click', caOpen);
+
+  document.getElementById('staxx-import').addEventListener('click', importOpen);
 
   document.getElementById('staxx-diagnose').addEventListener('click', function () {
     logPanel.hidden = false;

@@ -1547,6 +1547,32 @@ function staxx_selftest(): array {
 
   $disabled = array_map('trim', explode(',', (string)ini_get('disable_functions')));
 
+  /* What could be imported, counted the only way this function is allowed to
+   * count anything: by looking at the disk.
+   *
+   * NOT by calling Import.php's own readers. Those ask docker which containers
+   * exist and compose what each project holds — and this function's whole
+   * promise is that it runs no external command and therefore cannot hang,
+   * because it is what you reach for WHEN docker is hanging. A self-test that
+   * blocks on the thing being diagnosed is worse than no self-test.
+   *
+   * So these are file counts, and they are honest about being file counts: a
+   * template here is an .xml on disk, not one that has been parsed. The
+   * "belongs to neither" figure has no disk answer at all — it needs to ask
+   * docker what is running — so it is named as unavailable rather than
+   * quietly reported as zero. Paths are spelled out rather than read from
+   * Import.php's constants, which are not defined when only this file is
+   * loaded (see the troubleshooting one-liner in stacks.js). */
+  $tplDir  = '/boot/config/plugins/dockerMan/templates-user';
+  $projDir = '/boot/config/plugins/compose.manager/projects';
+
+  $templatesReport = is_dir($tplDir)
+    ? (string)count((array)@glob($tplDir.'/*.xml'))
+    : 'none — no Unraid template folder on this server';
+  $projectsReport = is_dir($projDir)
+    ? (string)count((array)@glob($projDir.'/*', GLOB_ONLYDIR))
+    : 'none — Compose Manager is not installed';
+
   return [
     'endpoint reachable'  => 'yes — you are reading its reply',
     'php version'         => PHP_VERSION,
@@ -1564,6 +1590,9 @@ function staxx_selftest(): array {
     'stacks found'        => (string)$dirs,
     'folders found'       => (string)$folds,
     'stacks awaiting review' => (string)$awaitingReview,
+    'unraid templates on disk'  => $templatesReport,
+    'compose manager projects on disk' => $projectsReport,
+    'containers matching neither' => 'needs docker — see the Import panel, not this list',
     'dockerd pid file'    => is_file('/var/run/dockerd.pid') ? 'present' : 'MISSING',
     'compose on disk'     => $composePath !== '' ? $composePath : 'not found in known locations',
     'docker on disk'      => staxx_docker_bin(),

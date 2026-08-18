@@ -5412,9 +5412,216 @@
   font-size: 1.2rem;
 }
 
+/* ---- Import ---------------------------------------------------------- */
+
+/* The sixth dialog. Same shell as .staxx-ca above — sizing, backdrop and
+   open/close transition — but three grid rows instead of five: there is no
+   tab switch and no search box here, just a head, the list, and a footer. */
+.staxx-import {
+  width: min(140rem, 96vw);
+  height: min(90vh, 100rem);
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+
+  opacity: 1;
+  transition:
+    opacity var(--sm-motion) var(--sm-ease),
+    display var(--sm-motion) allow-discrete,
+    overlay var(--sm-motion) allow-discrete;
+}
+
+.staxx-import:not([open]) {
+  display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .staxx-import[open] { opacity: 0; }
+}
+
+.staxx-import::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 1;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete,
+              overlay var(--sm-motion) allow-discrete;
+}
+
+.staxx-import:not([open])::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .staxx-import[open]::backdrop { opacity: 0; }
+}
+
+.staxx-import-head {
+  padding: 1.2rem 1.4rem 0.8rem;
+}
+
+.staxx-import-title {
+  margin: 0 0 0.4rem;
+  font-size: 1.6rem;
+}
+
+.staxx-import-hint {
+  margin: 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+.staxx-import-list {
+  padding: 0 1.4rem;
+  overflow-y: auto;
+}
+
+/* Scoped under .staxx-scaffold for the same specificity reason as
+   .staxx-ca-group: Unraid's own sheet carries an element-plus-class rule
+   for headings that otherwise wins over a bare class of ours. */
+.staxx-scaffold .staxx-import-group {
+  margin: 1.6rem 0 0.8rem;
+  color: var(--sm-fg);
+  font-size: 2.5rem;
+  font-weight: 600;
+}
+
+.staxx-import-group:first-child {
+  margin-top: 0;
+}
+
+.staxx-scaffold .staxx-import-count {
+  margin-left: 0.6rem;
+  color: var(--sm-muted);
+  font-size: 1.3rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.staxx-import-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.staxx-import-row {
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+}
+
+/* Shown, not hidden — a stack already taken is still worth reading about,
+   just visibly not on offer, the same way a disabled control still shows
+   its label. */
+.staxx-import-row--taken {
+  opacity: 0.7;
+}
+
+.staxx-scaffold .staxx-import-rowhead {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.3rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-import-rowhead:hover,
+.staxx-scaffold .staxx-import-rowhead:focus-visible {
+  background: var(--sm-fill);
+  outline: none;
+}
+
+.staxx-import-rowname {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.25rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staxx-import-rowsrc,
+.staxx-import-rowstate {
+  flex: 0 0 auto;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  white-space: nowrap;
+}
+
+.staxx-import-flag {
+  flex: 0 0 auto;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.2rem;
+  font-size: 1.05rem;
+  white-space: nowrap;
+}
+
+.staxx-import-flag--taken {
+  box-shadow: inset 0 0 0 0.1rem var(--sm-muted);
+  color: var(--sm-muted);
+}
+
+.staxx-import-notes {
+  margin: 0 0.9rem 0.7rem;
+  padding-left: 1.6rem;
+  color: var(--sm-muted);
+  font-size: 1.15rem;
+}
+
+.staxx-import-body {
+  padding: 0 0.9rem 0.9rem;
+}
+
+.staxx-import-via {
+  margin: 0 0 0.5rem;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+.staxx-import-warn {
+  margin: 0.8rem 0 0.3rem;
+  font-size: 1.2rem;
+}
+
+.staxx-import-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  padding: 1.2rem 1.4rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.staxx-import-msg {
+  margin: 0;
+  min-width: 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
 /* ---- The delete confirmation ---------------------------------------------- */
 
-/* The sixth dialog. Same six user-agent defaults to undo as the five above,
+/* The seventh dialog. Same six user-agent defaults to undo as the six above,
    but no fixed height — a plain confirmation should not carry the tall
    picker/timezone frame around with it. The body grows in place when stage
    two adds its file list, so the layout is a plain flex column rather than
@@ -5564,7 +5771,7 @@
 
 /* ---- Settings panel ------------------------------------------------------ */
 
-/* The seventh dialog. Same recipe as .staxx-confirm — its own class, its
+/* The eighth dialog. Same recipe as .staxx-confirm — its own class, its
    own :not([open]), ::backdrop and @starting-style — but wider, since it
    holds five settings with explanation paragraphs rather than one warning,
    and the body scrolls on its own (flex column, head/foot fixed) because the

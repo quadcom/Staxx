@@ -134,6 +134,9 @@ endif;
       <button type="button" class="staxx-btn" id="staxx-apps">
         <i class="fa fa-th"></i> <?= _('Apps') ?>
       </button>
+      <button type="button" class="staxx-btn" id="staxx-import">
+        <i class="fa fa-download"></i> <?= _('Import') ?>
+      </button>
       <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-add">
         <i class="fa fa-plus"></i> <?= _('Add stack') ?>
       </button>
@@ -716,9 +719,35 @@ endif;
 
   </dialog>
 
+  <!-- ---------------------------------------------------------- import -- -->
+
+  <!-- The sixth dialog, opened from the Import button beside Apps. Read-only
+       throughout this phase — it lists everything on the server that could be
+       brought into StaXX and lets a row's would-be compose file be previewed,
+       but writes nothing and touches no container, so there is no import
+       button here yet. Sits outside the editor for the same reason the Apps
+       dialog immediately above does. -->
+  <dialog class="staxx-import" id="staxx-import-dlg" aria-labelledby="staxx-import-title">
+
+    <div class="staxx-import-head">
+      <h3 class="staxx-import-title" id="staxx-import-title"><?= _('Import') ?></h3>
+      <p class="staxx-import-hint">
+        <?= _('Everything below is read-only — nothing is imported yet, and nothing here changes anything on this server.') ?>
+      </p>
+    </div>
+
+    <div class="staxx-import-list" id="staxx-import-list"></div>
+
+    <div class="staxx-import-foot">
+      <p class="staxx-import-msg" id="staxx-import-msg" role="status" aria-live="polite"></p>
+      <button type="button" class="staxx-btn" id="staxx-import-close"><?= _('Close') ?></button>
+    </div>
+
+  </dialog>
+
   <!-- --------------------------------------------------------- confirm -- -->
 
-  <!-- The sixth dialog, opened from deleteStack() in stacks.js. It sits
+  <!-- The seventh dialog, opened from deleteStack() in stacks.js. It sits
        outside the editor for the same reason the picker does: nested inside
        it, closing the editor with Escape would take this one with it while
        it still held focus, and the browser's own focus restore would have
@@ -749,7 +778,7 @@ endif;
 
   <!-- ------------------------------------------------------------ settings -- -->
 
-  <!-- The seventh dialog, a sibling of the six above for the same reason:
+  <!-- The eighth dialog, a sibling of the seven above for the same reason:
        outside .staxx-table-wrap, inside the scaffold. No <form> wrapper,
        for the same reason as the editor above. The body starts empty; script
        fills it from the settings-read action before showModal(). -->

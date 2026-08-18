@@ -197,10 +197,29 @@
     'GameServers', 'HomeAutomation', 'MediaApp', 'MediaServer', 'Network', 'Plugins',
     'Productivity', 'Security', 'Tools', 'Other'];
 
+  // Is this field a value we can write, rather than merely present?
+  //
+  // A catalogue entry arrives as JSON and its unset fields are absent. An
+  // Unraid TEMPLATE arrives as XML, and an empty element (`<PostArgs/>`)
+  // survives the trip through PHP as an empty ARRAY — which is truthy in
+  // JavaScript. A plain `if (app.PostArgs)` therefore fires for a template
+  // that sets no arguments at all and writes `command: ""`, overriding
+  // whatever the image itself was going to run. Measured: it would have hit
+  // 83 of 85 real templates.
+  //
+  // The importer coerces these away before they reach here, but this file has
+  // its own tests and more than one caller, so it refuses the shape itself
+  // rather than trusting every one of them. An object is rejected for the
+  // same reason: neither an array nor a map is a scalar we can write.
+  function scalarPresent(v) {
+    if (typeof v === 'string') return v !== '';
+    return v !== null && v !== undefined && typeof v !== 'object';
+  }
+
   function normaliseCategory(app) {
     var raw;
     if (Array.isArray(app.CategoryList) && app.CategoryList.length) raw = app.CategoryList[0];
-    else if (app.Category) raw = app.Category;
+    else if (scalarPresent(app.Category)) raw = String(app.Category);
     else return '';
     var idx = raw.indexOf('-');
     if (idx < 0) return raw;
@@ -560,7 +579,7 @@
     if (extra.workingDir) svc.push('    working_dir: ' + scalarOut(extra.workingDir));
     if (extra.user) svc.push('    user: ' + scalarOut(extra.user));
     if (extra.entrypoint) svc.push('    entrypoint: ' + scalarOut(extra.entrypoint));
-    if (app.PostArgs) svc.push('    command: ' + scalarOut(app.PostArgs));
+    if (scalarPresent(app.PostArgs)) svc.push('    command: ' + scalarOut(app.PostArgs));
     if (extra.runtime) svc.push('    runtime: ' + scalarOut(extra.runtime));
     if (extra.platform) svc.push('    platform: ' + scalarOut(extra.platform));
     if (extra.readOnly) svc.push('    read_only: true');
@@ -608,7 +627,7 @@
       }
     }
 
-    if (app.WebUI) {
+    if (scalarPresent(app.WebUI)) {
       svc.push('    x-unraid:');
       svc.push('      webui: ' + dq(app.WebUI));
     }
@@ -616,7 +635,7 @@
     /* ---- stack-level x-unraid ------------------------------------------ */
 
     var stackMeta = ['  version: 1'];
-    if (app.Icon) stackMeta.push('  icon: ' + scalarOut(app.Icon));
+    if (scalarPresent(app.Icon)) stackMeta.push('  icon: ' + scalarOut(app.Icon));
     var category = normaliseCategory(app);
     if (category) stackMeta.push('  category: ' + scalarOut(category));
     if (app.Project) stackMeta.push('  project: ' + scalarOut(app.Project));

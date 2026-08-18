@@ -49,6 +49,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Devices.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/CA.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -730,6 +731,19 @@ switch ($action) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
     staxx_reply(['ok' => true, 'settings' => $saved, 'reload' => $reload]);
+
+  /* ---- everything that could be imported: templates, projects, loose ----
+   *
+   * Read-only — see Import.php. It writes nothing and changes nothing, but it
+   * is not free: it asks docker what containers exist, and asks compose what
+   * each Compose Manager project holds, so it costs roughly one compose call
+   * per project. Fine for a panel somebody opened on purpose; the reason the
+   * self-test counts these from the disk instead.
+   *
+   * Nothing selects and nothing imports yet; this is only the list.
+   */
+  case 'import-list':
+    staxx_reply(['ok' => true] + staxx_import_list());
 }
 
 staxx_reply(['ok' => false, 'error' => 'Unknown action "'.$action.'".'], 400);
