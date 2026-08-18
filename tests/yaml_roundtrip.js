@@ -1219,10 +1219,13 @@ console.log('\nI. Renaming a service');
 /* =========================================================================
  * J. The always-present Container settings
  *
- * image, container_name, restart and network_mode are always in the model,
- * whether or not the file has them, so refreshRanges() can index fields by
- * array position without a redraw. See harvest() and setPart() for the
- * absent-slot handling this exercises.
+ * image, container_name and restart are always in the model, whether or not
+ * the file has them, so refreshRanges() can index fields by array position
+ * without a redraw. network_mode was a fourth always-present key until
+ * PLAN_34 phase 4 dropped it: a file that already sets one still shows it,
+ * editable, in Advanced, but nothing offers a blank one any more, so the
+ * Container group's fixed slot count fell from four to three. See harvest()
+ * and setPart() for the absent-slot handling this exercises.
  * ========================================================================= */
 
 console.log('\nJ. The always-present Container settings');
@@ -1260,10 +1263,12 @@ console.log('\nJ. The always-present Container settings');
 
 (function () {
   // The field count is what refreshRanges() indexes by, so it must never
-  // move when an absent slot gains a line. Twenty, not four: the four
-  // fixed Container fields, plus sixteen blank health-check/resource-limit/
-  // logging/build leaves — harvestLeaves() (PLAN_8 phase 2) offers those
-  // whether or not the file has healthcheck:/deploy:/logging:/build: at all,
+  // move when an absent slot gains a line. Nineteen, not twenty: PLAN_34
+  // phase 4 dropped network_mode out of the fixed Container pass, so the
+  // fixed count fell from four to three (image, container_name, restart),
+  // plus the same sixteen blank health-check/resource-limit/logging/build
+  // leaves as before — harvestLeaves() (PLAN_8 phase 2) offers those whether
+  // or not the file has healthcheck:/deploy:/logging:/build: at all,
   // healthcheck.test counts as two of them (PLAN_8 phase 4 — the mode and the
   // command, see harvestHealthTest()), and build (PLAN_21) added its three
   // scalars (context, dockerfile, target) at the end of the fixed pass.
@@ -1271,10 +1276,10 @@ console.log('\nJ. The always-present Container settings');
   var doc = Y.parse(src), form = Y.buildForm(doc);
   var svcFields = form.fields.filter(function (f) { return f.service === 'a'; });
 
-  ok('a service with no other settings yields four fixed fields plus sixteen blank leaves',
-     svcFields.length === 20 &&
-     svcFields.slice(0, 4).every(function (f) { return f.fixed; }) &&
-     svcFields.slice(4).every(function (f) { return f.absent && f.path; }),
+  ok('a service with no other settings yields three fixed fields plus sixteen blank leaves',
+     svcFields.length === 19 &&
+     svcFields.slice(0, 3).every(function (f) { return f.fixed; }) &&
+     svcFields.slice(3).every(function (f) { return f.absent && f.path; }),
      svcFields.map(function (f) { return f.target; }).join(', '));
 
   var before = form.fields.length;
@@ -1479,7 +1484,7 @@ var FIXTURE_10_ADVANCED = [
      JSON.stringify(noServices.declared) === JSON.stringify(EMPTY), JSON.stringify(noServices.declared));
 })();
 
-/* ---- 3. web accounts for all nine of its keys, plus network_mode ------- */
+/* ---- 3. web accounts for all nine of its keys --------------------------- */
 
 (function () {
   // networks: is two editable list fields rather than one locked block, and
@@ -1488,20 +1493,23 @@ var FIXTURE_10_ADVANCED = [
   // leaves (test counts as two — the mode and the command, PLAN_8 phase 4)
   // plus all four deploy ones plus logging's one (driver) plus build's three
   // (context, dockerfile, target — PLAN_21), as a fixed pass right after the
-  // four Container fields, same as those. The two healthcheck leaves this
-  // file does not set (start_interval, disable), logging.driver (this file
-  // has no logging: at all) and all three build leaves (web has no build: at
-  // all) still appear, blank. web's own test: is a flow list (["CMD", "curl",
-  // ...]) which readTest() reads with confidence, so it surfaces right there
-  // with its siblings rather than later as a locked catch-all field. web's
-  // depends_on is long form (PLAN_8 phase 5) — one field for "db" plus its
-  // restart/required fold, in place of the single locked block earlier
-  // phases left it as. So the count is twenty-seven, not the ten keys the
-  // original file has at the top of web:. Pinning f.id rather than
-  // binder/target is deliberate — a list field's id carries its list key and
-  // index (web/list.networks#0/frontend_net), which is what stops the same
-  // name colliding across two different list keys (see the ids-cannot-
-  // collide case below).
+  // three Container fields (PLAN_34 phase 4 dropped network_mode out of that
+  // fixed pass — web sets no network_mode: at all, so there is now nothing
+  // here standing for it, not even a blocked placeholder). The two
+  // healthcheck leaves this file does not set (start_interval, disable),
+  // logging.driver (this file has no logging: at all) and all three build
+  // leaves (web has no build: at all) still appear, blank. web's own test:
+  // is a flow list (["CMD", "curl", ...]) which readTest() reads with
+  // confidence, so it surfaces right there with its siblings rather than
+  // later as a locked catch-all field. web's depends_on is long form
+  // (PLAN_8 phase 5) — one field for "db" plus its restart/required fold, in
+  // place of the single locked block earlier phases left it as. So the count
+  // is twenty-six, not the ten keys the original file has at the top of
+  // web:. Pinning f.id rather than binder/target is deliberate — a list
+  // field's id carries its list key and index
+  // (web/list.networks#0/frontend_net), which is what stops the same name
+  // colliding across two different list keys (see the ids-cannot-collide
+  // case below).
   var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
   var web  = form.fields.filter(function (f) { return f.service === 'web'; });
   var got  = web.map(function (f) { return f.id; });
@@ -1509,7 +1517,6 @@ var FIXTURE_10_ADVANCED = [
     'web/setting/image',
     'web/setting/container_name',
     'web/setting/restart',
-    'web/setting/network_mode',
     'web/setting/healthcheck.test.mode',
     'web/setting/healthcheck.test.command',
     'web/setting/healthcheck.interval',
@@ -1534,7 +1541,7 @@ var FIXTURE_10_ADVANCED = [
     'web/depends/depends_on.db.restart',
     'web/depends/depends_on.db.required'
   ];
-  ok('web yields exactly these twenty-seven fields, in file order',
+  ok('web yields exactly these twenty-six fields, in file order',
      JSON.stringify(got) === JSON.stringify(want), got.join(', '));
 })();
 
@@ -1605,38 +1612,48 @@ var FIXTURE_10_ADVANCED = [
      as && JSON.stringify({ locked: as.locked, lockReason: as.lockReason }));
 })();
 
-/* ---- 5. network_mode is blocked, not locked, once networks: is present - */
+/* ---- 5. network_mode, when the file has one, is an ordinary editable
+ *        Advanced row (PLAN_34 phase 4) --------------------------------
+ * Until phase 4, network_mode was always in the model and got blocked (not
+ * locked) once networks: was also present, since compose refuses a service
+ * with both. That whole always-offered slot — and the exclusion check that
+ * lived beside it — is gone: a service that already writes network_mode: now
+ * reads as an ordinary setting row, editable like any other, in file order.
+ * The shared fixture never sets network_mode:, so this uses its own small
+ * one built specifically to have it. */
 
 (function () {
-  var text = FIXTURE_10_ADVANCED;
-  var doc  = Y.parse(text), form = Y.buildForm(doc);
-  var nm   = Y.fieldById(form, 'web/setting/network_mode');
+  var src = 'services:\n  a:\n    image: alpine\n    network_mode: host\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var nm  = Y.fieldById(form, 'a/setting/network_mode');
 
-  ok('web\u2019s network_mode is blocked rather than locked',
-     !!nm && nm.blocked === true && nm.locked === false,
-     nm && JSON.stringify({ blocked: nm.blocked, locked: nm.locked }));
-  ok('and carries the advice that networks: is how this is done instead',
-     !!nm && nm.advice.indexOf('this service joins the networks listed below instead') >= 0,
-     nm && JSON.stringify(nm.advice));
-  ok('setPart on a blocked field is refused',
-     Y.setPart(doc, form, 'web/setting/network_mode', 'value', 'bridge') === false);
-  ok('and the refusal writes nothing', Y.serialise(doc) === text);
+  ok('a service with network_mode: host gets an ordinary editable Advanced row',
+     !!nm && nm.binder === 'setting' && !nm.blocked && !nm.locked && !nm.absent,
+     nm && JSON.stringify({ binder: nm.binder, blocked: nm.blocked, locked: nm.locked, absent: nm.absent }));
+  ok('its value reads back exactly as written',
+     !!nm && nm.parts.value.value === 'host', nm && nm.parts.value.value);
+  ok('the null edit on it leaves the file untouched',
+     !!nm && Y.setPart(doc, form, 'a/setting/network_mode', 'value', nm.parts.value.value) &&
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
 })();
 
-/* ---- 6. no networks: key still gives a normal absent network_mode slot - */
+/* ---- 6. no network_mode: line means no network_mode field at all ------- */
 
 (function () {
+  // PLAN_34 phase 4 dropped network_mode out of ALWAYS_KEYS, so unlike every
+  // other Container field it is no longer offered as a blank slot when the
+  // file lacks it — the row simply does not exist, the way any ordinary
+  // (non-`always`) service key already worked before Container had one at
+  // all. There is nothing left to create it with either: this was the one
+  // capability PLAN_34 deliberately removed.
   var src  = 'services:\n  c:\n    image: alpine\n';
   var doc  = Y.parse(src), form = Y.buildForm(doc);
   var nm   = Y.fieldById(form, 'c/setting/network_mode');
 
-  ok('a service with no networks: key has an absent, unblocked network_mode slot',
-     !!nm && nm.absent === true && !nm.blocked,
-     nm && JSON.stringify({ absent: nm.absent, blocked: nm.blocked }));
-  ok('setPart on it succeeds', Y.setPart(doc, form, 'c/setting/network_mode', 'value', 'bridge'));
-  ok('and writes network_mode: bridge at the service\u2019s own indent',
-     Y.serialise(doc) === 'services:\n  c:\n    image: alpine\n    network_mode: bridge\n',
-     JSON.stringify(Y.serialise(doc)));
+  ok('a service with no network_mode: line has no network_mode field at all', !nm, nm);
+  ok('and there is nothing to write into',
+     Y.setPart(doc, form, 'c/setting/network_mode', 'value', 'bridge') === false);
+  ok('so the file is untouched', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
 })();
 
 /* ---- 7. titles: the KEYS table overrides only where it needs to -------- */
@@ -1887,9 +1904,12 @@ console.log('\nM. 10-advanced-compose-test (PLAN_4 phase 2)');
   var nm = Y.fieldById(f4, 'web/setting/network_mode');
   ok('removing the last entry leaves the service with no networks: fields at all',
      f4.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'networks'; }).length === 0);
-  ok('and network_mode reverts to an ordinary absent, unblocked slot',
-     !!nm && nm.absent === true && nm.blocked === false,
-     nm && JSON.stringify({ absent: nm.absent, blocked: nm.blocked }));
+  // PLAN_34 phase 4: network_mode is no longer an always-present slot, so
+  // there is no blocked placeholder to revert here any more — before and
+  // after networks: is removed, web (which never wrote network_mode: itself)
+  // has no field for it at all.
+  ok('and there is still no network_mode field, since web never wrote one',
+     !nm, nm);
 })();
 
 /* ---- 3. depends_on written as a block of conditions reads as one field
@@ -2416,15 +2436,52 @@ console.log('\nO. The Stack section — declarations as fields');
 
   var got = decl.map(function (f) { return { target: f.target, declKind: f.declKind, fold: f.fold }; })
                 .sort(function (a, b) { return a.target < b.target ? -1 : 1; });
+  // PLAN_34 phase 3b: a declaration's own settings are now offered as blank
+  // fold rows when the file has none, so this set grew from five to sixteen —
+  // one row per declaration plus every DECL_LEAVES key for its kind, minus the
+  // primary (driver/file, which IS the row's own box) and minus ipam, which is
+  // a block and stays locked. The point of this assertion is unchanged: the
+  // exact set, so an unexpected extra or missing declaration field is caught.
   var want = [
-    { target: 'networks.backend_net',          declKind: 'networks', fold: false },
-    { target: 'networks.backend_net.internal', declKind: 'networks', fold: true  },
-    { target: 'networks.frontend_net',         declKind: 'networks', fold: false },
-    { target: 'secrets.db_password',           declKind: 'secrets',  fold: false },
-    { target: 'volumes.db_data',               declKind: 'volumes',  fold: false }
+    { target: 'networks.backend_net',            declKind: 'networks', fold: false },
+    { target: 'networks.backend_net.attachable',  declKind: 'networks', fold: true  },
+    { target: 'networks.backend_net.external',    declKind: 'networks', fold: true  },
+    { target: 'networks.backend_net.internal',    declKind: 'networks', fold: true  },
+    { target: 'networks.backend_net.name',        declKind: 'networks', fold: true  },
+    { target: 'networks.frontend_net',            declKind: 'networks', fold: false },
+    { target: 'networks.frontend_net.attachable', declKind: 'networks', fold: true  },
+    { target: 'networks.frontend_net.external',   declKind: 'networks', fold: true  },
+    { target: 'networks.frontend_net.internal',   declKind: 'networks', fold: true  },
+    { target: 'networks.frontend_net.name',       declKind: 'networks', fold: true  },
+    { target: 'secrets.db_password',              declKind: 'secrets',  fold: false },
+    { target: 'secrets.db_password.environment',  declKind: 'secrets',  fold: true  },
+    { target: 'secrets.db_password.external',     declKind: 'secrets',  fold: true  },
+    { target: 'volumes.db_data',                  declKind: 'volumes',  fold: false },
+    { target: 'volumes.db_data.external',         declKind: 'volumes',  fold: true  },
+    { target: 'volumes.db_data.name',             declKind: 'volumes',  fold: true  }
   ];
-  ok('the fixture yields exactly these five declared fields, with the right declKind',
+  ok('the fixture yields exactly these sixteen declared fields, with the right declKind',
      JSON.stringify(got) === JSON.stringify(want), JSON.stringify(got));
+  // The two kinds of fold row must not be confused with each other. A row the
+  // file HAS carries its value and needs no path — backend_net's internal: true
+  // is the one in this fixture. A row the file LACKS is the phase 3b blank:
+  // absent, empty, and carrying the path setPart writes through. Asserting both
+  // halves is what would catch a blank that claims the file says something, or
+  // a real value quietly turned into an empty box.
+  var folds = decl.filter(function (f) { return f.fold; });
+  ok('a fold row the file has keeps its value and needs no path',
+     folds.filter(function (f) { return !f.absent; }).every(function (f) {
+       return f.parts.value.value !== '' && !f.path;
+     }),
+     JSON.stringify(folds.filter(function (f) { return !f.absent; })
+                         .map(function (f) { return [f.target, f.parts.value.value, !!f.path]; })));
+  ok('every other fold row is a blank carrying a path to write through',
+     folds.filter(function (f) { return f.absent; }).length === 11 &&
+     folds.filter(function (f) { return f.absent; }).every(function (f) {
+       return f.parts.value.value === '' && !!f.path;
+     }),
+     JSON.stringify(folds.filter(function (f) { return f.absent; })
+                         .map(function (f) { return [f.target, f.parts.value.value, !!f.path]; })));
 })();
 
 /* ---- 2. a row is name + value, nothing else; value is the primary setting */
@@ -6716,8 +6773,17 @@ var X12_SRC = 'services:\n  a:\n    image: alpine\n    networks:\n' +
        return a === 'this entry has settings only the Compose view can show';
      }).length === 1,
      front && JSON.stringify(front.advice));
-  ok('a bare name with nothing under it is not longForm — just a name row',
-     !!back && back.longForm !== true && back.longExtras.length === 0,
+  // INVERTED DELIBERATELY by PLAN_34 phase 3c, not deleted — it is the only
+  // guard on this shape. A bare `backend:` used to be "just a name row" with
+  // no fold at all, which is exactly why a fixed address could not be added
+  // to it. It is now longForm with two blank creatable extras and nothing
+  // else, so the address can be created where before there was nowhere to
+  // put it. Section AE-3 asserts the same two from the other direction.
+  ok('a bare name is now longForm, offering exactly the two creatable blanks',
+     !!back && back.longForm === true &&
+     back.longExtras.slice().sort().join(',') === 'ipv4_address,mac_address' &&
+     back.parts.ipv4_address.value === '' && back.parts.ipv4_address.creatable === true &&
+     back.parts.mac_address.value === ''  && back.parts.mac_address.creatable === true,
      back && JSON.stringify({ longForm: back.longForm, extras: back.longExtras }));
 })();
 
@@ -7440,6 +7506,187 @@ console.log('\nAD. The bare-declaration contract Phase 1\'s exemption depends on
      firstDiff(src.replace('  backend:\n', '  backend:\n    driver: bridge\n'), Y.serialise(doc)));
   ok('setPart still refuses on the flow-map declaration',
      !Y.setPart(doc, form, '/declared/networks.hft', 'value', 'bridge'));
+})();
+
+/* =========================================================================
+ * AE. PLAN_34 Phase 3 — three Add paths, and the no-clutter guards around
+ *     them
+ *
+ * Phase 3 makes four DECL_LEAVES keys (external, name, internal, attachable)
+ * addable on a network declaration via an always-offered blank-fold pass —
+ * the same shape harvestLeaves() already gives healthcheck/deploy — and
+ * makes a fixed IPv4 address plus a hardware address addable on a network
+ * map entry, offered as exactly two blank extras rather than the full set a
+ * network entry can carry. `ipam` sits in DECL_LEAVES only for its title; it
+ * is a map, and must stay a locked, read-only row throughout — the easiest
+ * property for the always-offered pass to break by treating every
+ * DECL_LEAVES key alike, so it is pinned directly rather than left to fall
+ * out of the other assertions here.
+ * ========================================================================= */
+
+console.log('\nAE. PLAN_34 Phase 3 — the three new Add paths');
+
+/* ---- 1. a declaration's own settings can be created --------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    ''
+  ].join('\n');
+
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  var ext  = Y.fieldById(form, '/declared/networks.backend.external');
+  var name = Y.fieldById(form, '/declared/networks.backend.name');
+  var intl = Y.fieldById(form, '/declared/networks.backend.internal');
+  var att  = Y.fieldById(form, '/declared/networks.backend.attachable');
+
+  ok('a bare declaration offers external, name, internal and attachable as blank writable fold fields',
+     !!ext && ext.absent && !ext.locked && ext.fold &&
+     !!name && name.absent && !name.locked && name.fold &&
+     !!intl && intl.absent && !intl.locked && intl.fold &&
+     !!att && att.absent && !att.locked && att.fold,
+     JSON.stringify({
+       external:   ext  && { absent: ext.absent,  locked: ext.locked,  fold: ext.fold },
+       name:       name && { absent: name.absent, locked: name.locked, fold: name.fold },
+       internal:   intl && { absent: intl.absent, locked: intl.locked, fold: intl.fold },
+       attachable: att  && { absent: att.absent,  locked: att.locked,  fold: att.fold }
+     }));
+
+  var want = src.replace('  backend:\n', '  backend:\n    external: true\n');
+  ok('setPart on external writes external: true under the declaration at its own indent, and nothing else moves',
+     !!ext && Y.setPart(doc, form, '/declared/networks.backend.external', 'value', 'true') &&
+     Y.serialise(doc) === want,
+     firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 2. ipam must never get a blank box, present or absent -------------- */
+
+(function () {
+  // Absent case: the same bare declaration as above never had an ipam:
+  // block, so nothing should offer one to create — DECL_LEAVES names it only
+  // for its title, not as something the always-offered pass may create.
+  var bareSrc = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    ''
+  ].join('\n');
+  var bareForm = Y.buildForm(Y.parse(bareSrc));
+  ok('a declaration without ipam: is never offered a blank ipam field',
+     !Y.fieldById(bareForm, '/declared/networks.backend.ipam'));
+
+  // Present case: an existing ipam: block stays exactly as locked and
+  // read-only as it is today — Phase 3 must not loosen this while making the
+  // other four DECL_LEAVES keys editable.
+  var mapSrc = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0',
+    'networks:',
+    '  br0:',
+    '    ipam:',
+    '      driver: default',
+    ''
+  ].join('\n');
+  var doc  = Y.parse(mapSrc), form = Y.buildForm(doc);
+  var ipam = Y.fieldById(form, '/declared/networks.br0.ipam');
+
+  ok('a declaration with an ipam: block keeps it locked, not editable',
+     !!ipam && ipam.locked, ipam && JSON.stringify({ locked: ipam.locked }));
+  ok('and still shows its raw text rather than hiding it',
+     !!ipam && ipam.raw && ipam.raw.indexOf('driver: default') >= 0, ipam && ipam.raw);
+  ok('setPart refuses on the locked ipam row, leaving the file untouched',
+     !Y.setPart(doc, form, '/declared/networks.br0.ipam', 'value', 'x') &&
+     Y.serialise(doc) === mapSrc, firstDiff(mapSrc, Y.serialise(doc)));
+})();
+
+/* ---- 3. exactly two blank extras on a network map entry, not eight ----- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    ''
+  ].join('\n');
+  var form = Y.buildForm(Y.parse(src));
+  var row  = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  var extras = (row && row.longExtras || []).slice().sort();
+
+  ok('a network map entry with nothing set offers precisely ipv4_address and mac_address blank',
+     extras.length === 2 && extras[0] === 'ipv4_address' && extras[1] === 'mac_address',
+     JSON.stringify(extras));
+
+  ['priority', 'gw_priority', 'interface_name', 'aliases'].forEach(function (k) {
+    ok('and does not offer a blank ' + k + ' box',
+       !row || !row.parts[k], row && JSON.stringify(Object.keys(row.parts)));
+  });
+})();
+
+/* ---- 4. creating a fixed address and a hardware address works ---------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+
+  ok('setPart creates a fixed IPv4 address line under the entry',
+     !!row && Y.setPart(doc, form, row.id, 'ipv4_address', '10.0.0.5'));
+
+  var form2 = Y.buildForm(doc);
+  var row2  = form2.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  ok('setPart creates a hardware address line alongside it',
+     !!row2 && Y.setPart(doc, form2, row2.id, 'mac_address', '02:42:ac:11:00:02'));
+
+  var want = src.replace('      backend:\n',
+    '      backend:\n        ipv4_address: 10.0.0.5\n        mac_address: 02:42:ac:11:00:02\n');
+  ok('both lines land at the entry’s own indent and nothing else in the file moves',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 5. scope guard: ports and secrets gained no blank extras ---------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"',
+    '    secrets:',
+    '      - source: db_password',
+    '        target: db_pw',
+    ''
+  ].join('\n');
+  var form = Y.buildForm(Y.parse(src));
+  var port = form.fields.filter(function (f) { return f.service === 'a' && f.binder === 'port'; })[0];
+  var sec  = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'secrets'; })[0];
+
+  ok('a short-form port offers no blank host_ip box',
+     !!port && !port.parts.host_ip, port && JSON.stringify(Object.keys(port.parts)));
+  ok('a long-form secret offers no blank uid box',
+     !!sec && !sec.parts.uid, sec && JSON.stringify(Object.keys(sec.parts)));
 })();
 
 /* ---- result ------------------------------------------------------------- */

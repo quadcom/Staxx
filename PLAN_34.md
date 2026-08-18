@@ -245,11 +245,28 @@ when the file has it. Each needs a different mechanism, and two of them hand us 
    This is the fixed-address path: `setPart(..., 'ipv4_address', ...)` returns `false` today on an
    entry that lacks the line. *Free siblings:* `ipv6_address`, per-network `mac_address`, `priority`,
    `gw_priority` and `interface_name` all become addable by the same code.
-4. **A service-level slot for `mac_address`.** This is the expensive one and worth pricing openly:
-   the existing always-offered machinery is either Container-bound (`f.fixed` routes to Container at
-   `stacks.js:345`) or nested-path-only (`LEAVES` walks one map level per segment, so a top-level
-   sibling key has no legal path). It needs a genuine new mechanism for one setting — the per-network
-   hardware address comes free from (3), so if this proves costly, this is the item to drop.
+4. ~~**A service-level slot for `mac_address`.**~~ **DROPPED 2026-08-18**, using this plan's own
+   escape hatch. Three reasons, and they compound:
+   - It is the only item needing brand-new machinery. The existing always-offered mechanisms are
+     Container-bound (`f.fixed` routes to Container at `stacks.js:345`) or nested-path-only (`LEAVES`
+     walks one map level per segment, so a top-level sibling key has no legal path).
+   - **It has nowhere to go that respects the no-clutter rule.** An addable setting needs a visible
+     affordance, and there is no Add control in Advanced. Putting it in Container is exactly the
+     clutter Adrian ruled out.
+   - **It is redundant.** The per-network hardware address comes free from (3) and lands in the same
+     fold as the fixed address — which is where Adrian asked for both. Unraid's own `MyMAC` is set
+     against a container on a specific network, so per-network is the more faithful shape anyway.
+
+   A service-level `mac_address` the file already has stays editable in Advanced, correctly labelled
+   since PLAN_36. Only *adding* one from scratch is off the table, and the per-network box does that
+   job.
+
+### How many blank boxes the fold offers
+
+Item (3) could offer a blank box for every extra a network entry can take — eight or so. **It must
+not.** That is the clutter rule again, inside the fold this time. Offer blanks for exactly the two
+worth adding — **fixed IPv4 address** and **hardware address** — and leave the rest
+editable-when-present. So a network entry with nothing set opens onto two empty boxes, not eight.
 
 **Do not implement any of this by adding `always: 1` to more keys** — `f.fixed` routes straight to
 Container, so they would all land back in the Container group.

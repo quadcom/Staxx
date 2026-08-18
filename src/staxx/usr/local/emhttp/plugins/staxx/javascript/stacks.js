@@ -1673,7 +1673,13 @@
     // there yet, so the box is genuinely writable — only a locked or
     // blocked declaration (an unreadable shape, or one still needing a fix
     // elsewhere) should stay disabled.
-    var dead = (!p.spot && !f.absent && !f.path && f.binder !== 'declared') || f.locked || f.blocked;
+    // `p.creatable` is the same idea one level down: a network map entry's
+    // fixed IPv4/hardware address (PLAN_34 phase 3c) has no spot either, but
+    // the field it belongs to is an ordinary present row, not absent and
+    // carrying no path — none of the field-level escape hatches above see
+    // it, so the part itself says it is writable.
+    var dead = (!p.spot && !f.absent && !f.path && f.binder !== 'declared' && !p.creatable) ||
+               f.locked || f.blocked;
     var t = TOOLS[tool];
     // The options say what the setting means, so the hint below the box says
     // what the setting is for instead of repeating "value".
@@ -3458,6 +3464,35 @@
         listKey   = addBinder.slice(5);
         addBinder = 'list';
       }
+
+      // Compose refuses a service with both network_mode and networks: —
+      // KEYS.network_mode's own `excludes` in the model. PLAN_34 phase 4
+      // took network_mode out of the form, which removed the row that used
+      // to block this from the OTHER side (setting network_mode while
+      // networks: already existed), so this is now the only guard left
+      // against the reverse: adding a network from underneath a service that
+      // already sets network_mode. Reported the same way an unreadable list
+      // is below — pop the undo entry the generic push above already made,
+      // and explain in the status line instead of leaving addItem to refuse
+      // with a message about the wrong problem.
+      if (listKey === 'networks') {
+        var svcNm = null;
+        for (var nmi = 0; nmi < MODEL.fields.length; nmi++) {
+          var nmf = MODEL.fields[nmi];
+          if (nmf.service === add.dataset.service && nmf.binder === 'setting' && nmf.target === 'network_mode') {
+            svcNm = nmf;
+            break;
+          }
+        }
+        if (svcNm && !svcNm.absent) {
+          undoStack.pop();
+          updateUndo();
+          setYamlStatus(add.dataset.service + ' already sets network_mode, and compose does not allow a ' +
+                        'service to have both network_mode and networks — remove network_mode first.');
+          return;
+        }
+      }
+
       var line = YAML.addItem(MODEL.doc, MODEL, add.dataset.service, addBinder, '', listKey);
       if (line < 0) {
         undoStack.pop();

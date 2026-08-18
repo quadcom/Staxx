@@ -585,7 +585,11 @@
     image:          { shape: 'scalar', always: 1 },
     container_name: { shape: 'scalar', always: 1 },
     restart:        { shape: 'scalar', always: 1 },
-    network_mode:   { shape: 'scalar', always: 1, excludes: 'networks' },
+    // No `always: 1` — PLAN_34 phase 4 took network_mode out of the form
+    // deliberately (Adrian's own files never use it). A file that already
+    // sets one still reads as an ordinary editable Advanced row, in file
+    // order, same as any other key with no control of its own.
+    network_mode:   { shape: 'scalar' },
 
     ports:          { shape: 'list',  entry: 'port'   },
     volumes:        { shape: 'list',  entry: 'volume', from: 'volumes' },
@@ -607,7 +611,7 @@
     healthcheck:    { shape: 'block', title: 'Health check' },
     deploy:         { shape: 'block', title: 'Resource limits' },
     logging:        { shape: 'block', title: 'Logging' },
-    // No `always: 1` — unlike the Container group's four keys, an absent
+    // No `always: 1` — unlike the Container group's three keys, an absent
     // build: is not offered as a blank block on every service, only shown
     // when the file already has one.
     build:          { shape: 'block', title: 'Build' },
@@ -749,8 +753,10 @@
   function keySpec(k) { return KEYS[k] || null; }
 
   // Derived once at load rather than per service. ALWAYS_KEYS must stay in
-  // table order — image, container_name, restart, network_mode — because the
-  // Container group's field count depends on it (see harvest()). LIST_KEY
+  // table order — image, container_name, restart — because the Container
+  // group's field count depends on it (see harvest()); network_mode was a
+  // fourth entry here until PLAN_34 phase 4 took it out of the form
+  // entirely. LIST_KEY
   // maps a binder (what a harvested field calls itself) back to the compose
   // key it lives under, for addItem()/removeItem(); env/label are pairs
   // shapes so the table carries no `entry` for them and they are added by
@@ -813,8 +819,16 @@
   // One editable box. Writing it back is spot := pre + value + post, so a part
   // can address half of a scalar that holds two things — which is exactly what
   // "8096:8097" is.
-  function part(value, spot, pre, post) {
-    return { value: value, spot: spot || null, pre: pre || '', post: post || '' };
+  //
+  // `creatable`, when true, marks a part that has no spot yet but is still
+  // meant to render as a writable box rather than a disabled one — the two
+  // blank extras (fixed IPv4/hardware address) harvestNetworksMap() offers on
+  // a network map entry (PLAN_34 phase 3c). It exists because boxHtml()'s own
+  // dead/disabled check in stacks.js only recognises a whole FIELD as
+  // creatable (f.absent, f.path) — this is one PART of an otherwise-present
+  // field, so the field-level flags say nothing about it.
+  function part(value, spot, pre, post, creatable) {
+    return { value: value, spot: spot || null, pre: pre || '', post: post || '', creatable: !!creatable };
   }
 
   // Split on ':' only outside a ${...}, because a variable's default value can
@@ -1683,6 +1697,26 @@
   // map is usually written for, plus priority, aliases and the rest — is a
   // B3-style extra rather than a leaf table of its own, since there is no
   // fixed set of them worth naming individually.
+  // The two extras worth adding from scratch on a network map entry (PLAN_34
+  // phase 3c) — a fixed IPv4 address and a hardware address. Everything else
+  // an entry can take (priority, aliases, driver_opts…) stays
+  // editable-when-present via the ordinary harvestLongExtras() walk below;
+  // offering all eight or so blank would be exactly the clutter the plan
+  // rules out ("how many blank boxes the fold offers").
+  var NETWORK_EXTRA_BLANKS = ['ipv4_address', 'mac_address'];
+
+  // Every scalar-valued extra a network map entry can carry beyond its own
+  // name — read by setPart()'s fourth creation case below to know which
+  // missing part names are safe to insert as a plain "key: value" line.
+  // aliases and link_local_ips are lists and driver_opts is a map, so none of
+  // the three belongs here — inserting a bare scalar line under a key that
+  // needs a list or a map would write something compose refuses to parse.
+  // A superset of NETWORK_EXTRA_BLANKS: only two of these six are ever
+  // offered blank in the fold, but all six become writable once a part
+  // exists for them — "Free siblings" in the plan.
+  var NETWORK_ENTRY_EXTRAS = ['ipv4_address', 'ipv6_address', 'mac_address',
+                               'priority', 'gw_priority', 'interface_name'];
+
   function harvestNetworksMap(out, pair, lines) {
     var map = pair.value;
     for (var i = 0; i < map.keys.length; i++) {
@@ -1697,12 +1731,25 @@
         index: i
       });
 
-      // A bare "backend:" (no settings under it) is a complete, valid entry
-      // on its own — just the name, no toggle to open onto nothing.
-      if (v && v.kind === 'map') {
-        row.longForm = true;
-        harvestLongExtras(row, v, []);
+      // Every entry is longForm now, even a bare "backend:" with nothing
+      // under it — it still gets the two blank extras below, so the "more
+      // settings" toggle (gated on f.longForm && f.longExtras.length in
+      // stacks.js) has somewhere to hang them.
+      row.longForm = true;
+      if (v && v.kind === 'map') harvestLongExtras(row, v, []);
+      else row.longExtras = [];
+
+      // Offer the fixed address and hardware address blank when the entry
+      // does not already have a line for them — `creatable` is what keeps
+      // boxHtml() in stacks.js from rendering the box disabled just because
+      // it has no spot yet, the same way f.absent/f.path do for a whole field.
+      for (var b = 0; b < NETWORK_EXTRA_BLANKS.length; b++) {
+        var bk = NETWORK_EXTRA_BLANKS[b];
+        if (row.parts[bk]) continue;
+        row.parts[bk] = part('', null, '', '', true);
+        row.longExtras.push(bk);
       }
+
       out.push(row);
     }
   }
@@ -1710,23 +1757,13 @@
   function harvest(serviceMap, lines) {
     var out = [], i, p;
 
-    // The Container group's four rows come first, in a fixed order, whether
+    // The Container group's three rows come first, in a fixed order, whether
     // or not the file has them — so the field count for a service never
     // changes when one of them materialises (see fieldsFor()).
     for (i = 0; i < ALWAYS_KEYS.length; i++) {
       var akey = ALWAYS_KEYS[i];
       var spec = KEYS[akey];
       p = serviceMap.pairs[akey];
-
-      // Compose refuses a service with both of these, so an empty slot here is
-      // a trap: filling it in would make a working file invalid.
-      if (spec.excludes && serviceMap.pairs[spec.excludes]) {
-        out.push(target('setting', akey, {
-          parts: { value: part('', null) }, range: null, blocked: true,
-          advice: ['this service joins the networks listed below instead']
-        }));
-        continue;
-      }
 
       var akeyTarget = p ? settingTarget(p, akey, lines)
                   : target('setting', akey, { parts: { value: part('', null) }, range: null, absent: true });
@@ -1961,17 +1998,21 @@
     return humanise(t.target);
   }
 
-  // The three booleans KEYS cannot name, because they are not top-level keys:
-  // a leaf under healthcheck:, a dependency's required, a declaration's
-  // external. Without this they are judged by the value they hold, which
-  // works while one is written and fails the moment it is not — an absent
-  // field has no value to read, so it would fall to 'text', render as a
-  // spelling test rather than a list, and write its boolean quoted.
+  // The booleans KEYS cannot name, because they are not top-level keys: a
+  // leaf under healthcheck:, a dependency's required, a declaration's
+  // external/internal/attachable. Without this they are judged by the value
+  // they hold, which works while one is written and fails the moment it is
+  // not — an absent field has no value to read, so it would fall to 'text',
+  // render as a spelling test rather than a list, and write its boolean
+  // quoted. Matters most for a DECL_LEAVES leaf harvestDeclLeaves() offers
+  // blank (PLAN_34 phase 3b): driver and name are strings and ipam is never
+  // offered blank at all, so external/internal/attachable are the only
+  // declaration leaves that ever reach this with nothing to sniff a type from.
   function booleanTail(t) {
     var tail = String(t.target).split('.').pop();
     return (t.binder === 'setting'  && tail === 'disable')  ||
            (t.binder === 'depends'  && tail === 'required') ||
-           (t.binder === 'declared' && tail === 'external');
+           (t.binder === 'declared' && (tail === 'external' || tail === 'internal' || tail === 'attachable'));
   }
 
   function inferType(t) {
@@ -2100,6 +2141,35 @@
     return fields;
   }
 
+  // Mirrors harvestLeaves() for a declaration's own settings (PLAN_34 phase
+  // 3b): every DECL_LEAVES key the file lacks becomes a blank, writable fold
+  // field instead of simply not appearing, so external/name/internal/
+  // attachable can be created rather than only ever edited when the file
+  // already has them. Two keys are deliberately left out —
+  // driver (DECL_PRIMARY) is the row's own value box, not a fold entry, and
+  // ipam is a map rather than a scalar, so a blank writable box for it would
+  // misrepresent what a bare `ipam:` could hold; it stays the locked,
+  // read-only row it already is. `path` is a single segment (a declaration's
+  // leaves sit one level deep, unlike healthcheck's dotted ones), and is what
+  // setPart() reads to route the eventual write through addDeclNested().
+  //
+  // `blockMap` is null for a bare declaration ("backend:" with nothing after
+  // it) — still a complete, valid declaration, so every leaf below driver is
+  // offered blank exactly as it would be for one already holding settings.
+  function harvestDeclLeaves(out, kind, name, blockMap) {
+    var leaves = DECL_LEAVES[kind] || {};
+    var primaryKey = DECL_PRIMARY[kind];
+    var pairs = blockMap && blockMap.kind === 'map' ? blockMap.pairs : {};
+    for (var leafKey in leaves) {
+      if (!leaves.hasOwnProperty(leafKey)) continue;
+      if (leafKey === primaryKey || leafKey === 'ipam') continue;
+      if (pairs[leafKey]) continue;   // present — harvestBlock's walk already covers it
+      out.push(target('declared', kind + '.' + name + '.' + leafKey, {
+        parts: { value: part('', null) }, range: null, absent: true, path: [leafKey]
+      }));
+    }
+  }
+
   /* ---- the file's own declarations: networks, volumes, secrets, configs -- */
 
   // A top-level declaration is a name with a map of settings under it — the
@@ -2183,11 +2253,20 @@
         // Everything else on the declaration, in the fold. Same shape as
         // healthcheck:, so harvestBlock does the walk — just pointed at
         // DECL_LEAVES under the kind, rather than LEAVES under the target.
-        if (!pair.value || pair.value.kind !== 'map') continue;
+        // An opaque value (flow map, anchor, alias) has no fold at all — Fix
+        // 1 already locks the row entirely. A null value (a bare declaration
+        // with nothing after the colon) is different: it is still a fully
+        // editable, valid declaration, so harvestDeclLeaves() below must run
+        // for it too — only harvestBlock's present-children walk needs an
+        // actual map to walk.
+        if (declOpaque) continue;
 
         var titleTable = DECL_LEAVES[kind] || {};
         var raw = [];
-        harvestBlock(raw, kind + '.' + name, pair, lines, DECL_LEAVES, kind);
+        if (pair.value && pair.value.kind === 'map') {
+          harvestBlock(raw, kind + '.' + name, pair, lines, DECL_LEAVES, kind);
+        }
+        harvestDeclLeaves(raw, kind, name, pair.value);
 
         for (var ri = 0; ri < raw.length; ri++) {
           var t = raw[ri];
@@ -2204,6 +2283,11 @@
             absent: t.absent, blocked: t.blocked, advice: t.advice,
             fixed: false, fixedRequired: false, listKey: '',
             groupTitle: '', from: '', tool: '',
+            // path/declName are read by setPart() to route a create through
+            // addDeclNested() — only ever set on a field harvestDeclLeaves()
+            // built, since an already-present leaf writes back through its
+            // own spot the ordinary way.
+            path: t.path || null, declName: name,
             declKind: kind, fold: true
           });
         }
@@ -2479,6 +2563,23 @@
     var f = fieldById(form, id);
     if (!f || f.locked) return false;
     var p = f.parts[which];
+
+    // The fourth creation case (PLAN_34 phase 3c): a known scalar extra a
+    // network map entry's own map does not have a line for yet. `p` is
+    // either absent altogether (an extra nothing pre-populated — priority,
+    // interface_name…) or a blank `creatable` part harvestNetworksMap()
+    // offered (ipv4_address, mac_address) — either way there is no spot to
+    // write through, so this is checked ahead of the `if (!p) return false;`
+    // below rather than folded into it. Scoped to `networks` map entries
+    // only for now, matching the plan's own scope guard — ports, volumes,
+    // secrets and configs entries still refuse an unwritten extra.
+    if ((!p || !p.spot) && f.binder === 'list' && f.listKey === 'networks' && f.longForm &&
+        NETWORK_ENTRY_EXTRAS.indexOf(which) >= 0) {
+      if (!String(value).trim()) return true;
+      var netEntry = networkEntryPair(doc, f.service, f.target);
+      if (!netEntry) return false;
+      return insertChild(doc, netEntry, which, value, null, false) >= 0;
+    }
     if (!p) return false;
 
     // healthcheck.test is one file line shown as two fields (see
@@ -2539,7 +2640,7 @@
       // service-level one. A blank value leaves it exactly as it was: a
       // bare declaration is already a complete, valid one (an ordinary
       // bridge network), so there is nothing to write.
-      if (f.binder === 'declared' && which === 'value') {
+      if (f.binder === 'declared' && !f.path && which === 'value') {
         if (!String(value).trim()) return true;
         var block = doc.root.pairs[f.declKind];
         var declPair = block && block.value && block.value.kind === 'map'
@@ -2557,6 +2658,17 @@
         // this with an unlocked field — belt and braces for one bug.
         if (declPair.value && declPair.value.kind !== 'map') return false;
         return insertChild(doc, declPair, primaryKey, value) >= 0;
+      }
+      // A declaration's own absent leaf (external, name, internal,
+      // attachable — PLAN_34 phase 3b) needs addDeclNested() rather than
+      // addNested(): a declaration has no enclosing service, and
+      // declaredFields() builds these fields with `service: ''`, so
+      // addNested's serviceMapOf(doc, '') lookup would just fail. Checked
+      // ahead of the generic f.path branch below for exactly that reason —
+      // both carry a path, but only one of them has a service to resolve.
+      if (f.binder === 'declared' && f.path && which === 'value') {
+        if (!String(value).trim()) return true;
+        return addDeclNested(doc, form, f.declKind, f.declName, f.path, value, f.type === 'boolean') >= 0;
       }
       // A LEAVES sub-path with no line yet. Its target is dotted
       // ("healthcheck.interval"), which is not itself a compose key, so it
@@ -2662,6 +2774,17 @@
     if (!svc || !svc.value || svc.value.kind !== 'map') return null;
     var p = svc.value.pairs[name];
     return p && p.value && p.value.kind === 'map' ? p : null;
+  }
+
+  /** The pair holding one `networks:` map entry under a service — the mapping
+   * key harvestNetworksMap() reads as the entry's own name — or null if it
+   * cannot be found. setPart()'s fourth creation case (PLAN_34 phase 3c)
+   * uses this to insert a missing scalar extra (ipv4_address, mac_address…)
+   * under the entry's own map. */
+  function networkEntryPair(doc, service, name) {
+    var svc = serviceMapOf(doc, service);
+    var nw = svc && svc.value.pairs['networks'];
+    return nw && nw.value && nw.value.kind === 'map' ? (nw.value.pairs[name] || null) : null;
   }
 
   // A name not already in use, so that two adds in a row cannot produce two
@@ -2987,6 +3110,40 @@
     if (!pair || (pair.value && pair.value.kind !== 'map')) return -1;
     return insertChild(doc, pair, path[path.length - 1], value,
                        path.length === 1 ? 'x-unraid' : null, bare);
+  }
+
+  /** The pair holding one top-level declaration (networks.foo, volumes.bar…),
+   * or null if it cannot be read. serviceMapOf's sibling one level shallower
+   * — a declaration has no services: layer above it — for addDeclNested's
+   * root-resolver closure below.
+   */
+  function declPairOf(doc, kind, name) {
+    if (!doc.root || doc.root.kind !== 'map') return null;
+    var block = doc.root.pairs[kind];
+    if (!block || !block.value || block.value.kind !== 'map') return null;
+    return block.value.pairs[name] || null;
+  }
+
+  /**
+   * addNested's sibling for a top-level declaration rather than a service —
+   * PLAN_34 phase 3's declaration-scoped child insert. Everything else is
+   * identical: ensurePath and insertChild take a root-resolver closure and a
+   * pair respectively, so addNested's own hardcoding of serviceMapOf is the
+   * only thing that made it service-only, and this is the same walk pointed
+   * at declPairOf instead. There is no x-unraid tail to keep last at this
+   * level (a declaration carries no metadata block of its own), so `top` is
+   * omitted where addNested passes one.
+   *
+   * Returns -1, rather than guessing, whenever a level along the way is
+   * sealed, opaque, or a scalar — inserting into something the parser could
+   * not read is how a working file gets corrupted (the same guard Phase 0
+   * put in setPart's own declaration branch, for the same reason).
+   */
+  function addDeclNested(doc, form, kind, name, path, value, bare) {
+    var pair = ensurePath(doc, function () { return declPairOf(doc, kind, name); },
+                          path.slice(0, -1));
+    if (!pair || (pair.value && pair.value.kind !== 'map')) return -1;
+    return insertChild(doc, pair, path[path.length - 1], value, null, bare);
   }
 
   // Builds the canonical flow-list text for healthcheck.test — the one shape
@@ -6230,6 +6387,9 @@
     // dependency — condition: service_started written explicitly alongside
     // it, since a bare "name:" is null and compose refuses the file.
     addNested: addNested,
+    // PLAN_34 phase 3a: addNested's sibling for a top-level declaration
+    // rather than a service.
+    addDeclNested: addDeclNested,
     splitQuoted: splitQuoted,
     parseFlowList: parseFlowList,
     fieldById: fieldById,
