@@ -5,7 +5,7 @@ An entry gets promoted to its own numbered plan when it is picked up, and delete
 ships or is ruled out.
 
 Sibling to `settings-ideas.md`, which holds the same kind of list for things that would be a
-*setting*. An entry belongs there if it needs a switch on the settings page and here if it does not.
+*setting*. An entry belongs there if it needs a switch in the settings panel and here if it does not.
 
 Started 2026-08-17.
 

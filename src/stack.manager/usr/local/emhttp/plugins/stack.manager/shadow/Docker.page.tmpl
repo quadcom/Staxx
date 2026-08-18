@@ -1,0 +1,33 @@
+Menu="Tasks:60"
+Cond="false"
+---
+<?PHP
+/* Stack Manager — dormant shadow of Unraid's stock Docker top-nav button.
+ * Copyright 2026, Stack Manager contributors.
+ *
+ * Ships as .tmpl, never .page, so it stays inert: every .page file in this
+ * folder is picked up by PageBuilder, so this cannot carry that extension
+ * while dormant or it would run permanently. scripts/apply_settings copies it
+ * to Docker.page — the same bare filename as dynamix.docker.manager's own
+ * top-nav page — only while TAKEOVER_DOCKER_TAB is on, and deletes that copy
+ * the moment the setting goes off. PageBuilder keys pages by bare filename
+ * and gives the win to whichever plugin folder sorts last alphabetically,
+ * which is us, so once copied this shadows the stock button out of the top
+ * navigation entirely.
+ *
+ * Taking the button removes everything under it too — the stock container
+ * list and any other plugin's Docker sub-tab — since none of them are
+ * reachable once the menu they hang off no longer exists. That is the whole
+ * point: Stacks becomes its own top-level button instead, in place of Docker.
+ *
+ * Cond is permanently false: this file's only job is to occupy the stock
+ * page's Menu slot so nothing else can, never to render anything of its own.
+ * No Title is set, matching the stock file, whose label comes from its
+ * filename. If Unraid ever renames its file this stops matching and the
+ * stock button simply reappears — the safe direction to fail in.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version 2,
+ * as published by the Free Software Foundation.
+ */
+?>

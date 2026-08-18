@@ -1,6 +1,55 @@
 # PLAN_32 — Settings belong in the app, not on Unraid's Settings page
 
-**Status: APPROVED 2026-08-18, not started.** Written to be picked up cold — everything needed is here, no earlier conversation required.
+**Status: COMPLETE 2026-08-18.** Built on branch `settings-panel`, deployed, and confirmed in the
+browser against the live server — all ten checks including the takeover switch, which was tested with
+Adrian's explicit go-ahead and left **off**.
+
+**One thing this plan got wrong, found during the takeover test and fixed.** Step 4 says "Our own page
+is already `Menu="Docker:0"`, so with the stock list suppressed it is the only Docker sub-tab." That
+holds only when `HEADER_MENU` is **false**. `stack.manager.page`'s `Cond` switches our Docker sub-tab
+*off* whenever the header-menu marker exists — so with both settings on, the shadow page suppressed
+Unraid's list and our tab was absent too, leaving the Docker tab holding **nothing at all**. Adrian's
+own server is in exactly that state (`HEADER_MENU="true"`), so this was the default outcome, not an
+edge case.
+
+Fixed by projecting `TAKEOVER_DOCKER_TAB` onto its own marker file — the same trick `HEADER_MENU`
+already uses, and for the same reason — and widening that `Cond` to
+`!header_menu_marker || takeover_marker`. With the takeover on, Stacks appears both in the top nav and
+as the Docker tab; showing it twice is the lesser fault.
+
+**Step 4 was then rebuilt to Adrian's actual intent (2026-08-18, same day).** This plan scoped the
+takeover as "suppress Unraid's *Docker Containers* sub-tab, keep the Docker menu", and explicitly
+ruled the alternative out under *Left out*: "touching the nav button would put our own name on
+Unraid's furniture." That was **not what he wanted**. On seeing it work he said the takeover should
+always have removed the **Docker top-navigation button itself**, with Stacks as a top-level menu item
+and no "Docker" label anywhere.
+
+Rebuilt accordingly, and it is *simpler* than what this plan specified — one shadow file, not two.
+Shadowing `Docker.page` (`Menu="Tasks:60"`, and note it carries **no `Title=`**, so its label comes
+from the filename) removes the button, and everything under that menu goes with it because nothing
+under it is reachable any more. So the `DockerContainers.page` shadow was deleted.
+
+His decisions, taken at the same time: the button stays called **"Stacks"**; and losing *everything*
+under the Docker menu — Unraid's container list and the separately-installed `compose.manager`
+plugin's "Compose" sub-tab — is intended, not a cost to mitigate. (`compose.manager` also has its own
+top-nav button at `Tasks:61`, which survives independently.)
+
+Two consequences worth keeping:
+
+- **`Stacks.page`'s `Cond` is what had to widen, not `stack.manager.page`'s.** With the Docker menu
+  gone, our Docker sub-tab is irrelevant; the top-nav button is the only way in. So the takeover
+  marker forces `Stacks.page` on, which makes `HEADER_MENU` inert while the takeover is on — said
+  plainly in the setting's own help text.
+- **`TAKEOVER_DOCKER_TAB` was added to the Unraid settings page** beside `STACK_ROOT`, on the same
+  unvalidated `/update.php` form, for the same reason: a switch that can hide the entire Docker menu
+  needs a way back that does not depend on the app it hides.
+
+**The shadowing mechanism, verified in Unraid's own source rather than inferred** (`webGui/include/PageBuilder.php`
+and `plugins/dynamix/template.php`): `template.php` iterates `glob('plugins/*', GLOB_ONLYDIR)` with
+glob's **default alphabetical sort**, and `build_pages()` writes into `$site[basename]`, so a later
+plugin folder overwrites an earlier one's same-named page. `page_enabled()` is evaluated *afterwards*,
+in `find_pages()` — which is why a `Cond="false"` page still claims the slot and suppresses the stock
+one. Measured on the box: `dynamix.docker.manager` is 10th, `stack.manager` is 30th.
 
 ## Context
 

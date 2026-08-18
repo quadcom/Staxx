@@ -122,6 +122,9 @@ endif;
   <div class="stackman-bar">
     <h3><?= _('Stacks') ?></h3>
     <div class="stackman-buttons stackman-buttons--inline">
+      <button type="button" class="stackman-btn" id="stackman-settings-btn">
+        <i class="fa fa-cog"></i> <?= _('Settings') ?>
+      </button>
       <button type="button" class="stackman-btn" id="stackman-diagnose">
         <i class="fa fa-stethoscope"></i> <?= _('Self-test') ?>
       </button>
@@ -739,6 +742,30 @@ endif;
       <div class="stackman-buttons stackman-buttons--inline">
         <button type="button" class="stackman-btn" id="stackman-confirm-cancel"><?= _('Cancel') ?></button>
         <button type="button" class="stackman-btn stackman-btn--danger" id="stackman-confirm-go"><?= _('Delete stack') ?></button>
+      </div>
+    </div>
+
+  </dialog>
+
+  <!-- ------------------------------------------------------------ settings -- -->
+
+  <!-- The seventh dialog, a sibling of the six above for the same reason:
+       outside .stackman-table-wrap, inside the scaffold. No <form> wrapper,
+       for the same reason as the editor above. The body starts empty; script
+       fills it from the settings-read action before showModal(). -->
+  <dialog class="stackman-settings" id="stackman-settings" aria-labelledby="stackman-settings-title">
+
+    <div class="stackman-settings-head">
+      <h3 class="stackman-settings-title" id="stackman-settings-title"><?= _('Settings') ?></h3>
+    </div>
+
+    <div class="stackman-settings-body" id="stackman-settings-body"></div>
+
+    <div class="stackman-settings-foot">
+      <p class="stackman-settings-msg" id="stackman-settings-msg" role="status" aria-live="polite"></p>
+      <div class="stackman-buttons stackman-buttons--inline">
+        <button type="button" class="stackman-btn" id="stackman-settings-cancel"><?= _('Cancel') ?></button>
+        <button type="button" class="stackman-btn stackman-btn--primary" id="stackman-settings-save"><?= _('Save') ?></button>
       </div>
     </div>
 

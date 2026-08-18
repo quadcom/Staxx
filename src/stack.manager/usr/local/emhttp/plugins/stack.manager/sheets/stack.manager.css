@@ -1580,9 +1580,10 @@
   margin: 0.4rem 0 0;
 }
 
-/* The scaffold is marked `unapi`, so Unraid's input and textarea styling does
-   not reach these. They are styled here in full, on purpose. */
+/* The scaffold is marked `unapi`, so Unraid's input, select and textarea
+   styling does not reach these. They are styled here in full, on purpose. */
 .stackman-field input[type="text"],
+.stackman-field select,
 .stackman-field textarea {
   display: block;
   width: 100%;
@@ -1598,6 +1599,7 @@
 }
 
 .stackman-field input[type="text"]:focus,
+.stackman-field select:focus,
 .stackman-field textarea:focus {
   border-color: var(--sm-accent);
   outline: none;
@@ -5512,6 +5514,103 @@
   font-size: 1.2rem;
 }
 
+/* ---- Settings panel ------------------------------------------------------ */
+
+/* The seventh dialog. Same recipe as .stackman-confirm — its own class, its
+   own :not([open]), ::backdrop and @starting-style — but wider, since it
+   holds five settings with explanation paragraphs rather than one warning,
+   and the body scrolls on its own (flex column, head/foot fixed) because the
+   explanations are long enough to hit the max-height on a short screen. No
+   z-index here — showModal() promotes the dialog to the top layer on its
+   own, which already outranks the context menu's 9999. */
+.stackman-settings {
+  width: min(58rem, 94vw);
+  max-height: 85vh;
+  margin: auto;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+
+  display: flex;
+  flex-direction: column;
+
+  opacity: 1;
+  transition:
+    opacity var(--sm-motion) var(--sm-ease),
+    display var(--sm-motion) allow-discrete,
+    overlay var(--sm-motion) allow-discrete;
+}
+
+.stackman-settings:not([open]) {
+  display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-settings[open] { opacity: 0; }
+}
+
+.stackman-settings::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 1;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete,
+              overlay var(--sm-motion) allow-discrete;
+}
+
+.stackman-settings:not([open])::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .stackman-settings[open]::backdrop { opacity: 0; }
+}
+
+.stackman-settings-head {
+  flex: 0 0 auto;
+  padding: 1.2rem 1.4rem 0.8rem;
+}
+
+.stackman-settings-title {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.stackman-settings-body {
+  flex: 1 1 auto;
+  padding: 0 1.4rem 1.2rem;
+  overflow-y: auto;
+}
+
+.stackman-settings-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  padding: 1.2rem 1.4rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.stackman-settings-msg {
+  margin: 0;
+  min-width: 0;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+/* A refused save is the one message here that must not read as grey status
+   noise — it is the only thing telling someone why nothing was written. The
+   confirm dialog's status line has no such state because its failures are
+   already shouted by the error banner above it; this panel has no banner. */
+.stackman-settings-msg--bad {
+  color: var(--sm-danger);
+  font-weight: 700;
+}
+
 /* ---- Collapsible environment section ------------------------------------ */
 
 .stackman-details {
@@ -6545,7 +6644,8 @@
   .stackman-tz::backdrop,
   .stackman-ca::backdrop,
   .stackman-ca-app::backdrop,
-  .stackman-confirm::backdrop {
+  .stackman-confirm::backdrop,
+  .stackman-settings::backdrop {
     transition-duration: 1ms !important;
     animation-duration: 1ms !important;
   }

@@ -96,6 +96,14 @@
   var confirmCancel = document.getElementById('stackman-confirm-cancel');
   var confirmGo     = document.getElementById('stackman-confirm-go');
 
+  // The Settings panel. May be null on a stale page — guarded the same way
+  // confirmModal is above; openSettings() itself is a no-op without it.
+  var settingsModal  = document.getElementById('stackman-settings');
+  var settingsBody   = document.getElementById('stackman-settings-body');
+  var settingsMsg    = document.getElementById('stackman-settings-msg');
+  var settingsCancel = document.getElementById('stackman-settings-cancel');
+  var settingsSave   = document.getElementById('stackman-settings-save');
+
   // The find/replace bar. May be null while the markup has not landed yet —
   // every function below that touches one of these guards on findBar first,
   // the same way yamlDots is guarded above.
@@ -4518,8 +4526,13 @@
     if (pickerFor) {
       pickerFor.value = pickerAt;
       // Assigning .value fires no input event, so nothing else would ever
-      // notice this. Commit it here or the choice never reaches the file.
-      commit(pickerFor);
+      // notice this. The compose form commits its own boxes through
+      // commit(), which expects a row of MODEL.fields behind it — anything
+      // else that opens this picker (the Settings panel's stack directory
+      // box, for one) has no such row, so it only gets a plain input event
+      // for its own listener to notice instead.
+      if (formHost.contains(pickerFor)) commit(pickerFor);
+      else pickerFor.dispatchEvent(new Event('input', { bubbles: true }));
       pickerFor.focus();
     }
     picker.close();
@@ -9428,6 +9441,9 @@
 
   /* ------------------------------------------------------------ wiring -- */
 
+  var settingsBtn = document.getElementById('stackman-settings-btn');
+  if (settingsBtn) settingsBtn.addEventListener('click', openSettings);
+
   document.getElementById('stackman-add').addEventListener('click', function () {
     openEditor('', '', true);
   });
@@ -9729,6 +9745,274 @@
     return function () {
       if (verb !== 'logs' && verb !== 'config') refreshStateSoon();
     };
+  }
+
+  /* ---- settings panel -----------------------------------------------------
+   *
+   * One row per setting the server allows (stackman_settings_keys() holds the
+   * matching allowlist), described once here so a sixth setting is one more
+   * entry rather than a fresh block of markup. `id` is filled in below rather
+   * than repeated in every entry.
+   *
+   * Prose is carried over verbatim from the old settings.page — same voice,
+   * same facts about what does and does not leave the server, same selfh.st
+   * licence line — because that page is being cut down to a signpost and this
+   * is now the only place any of it is said. TAKEOVER_DOCKER_TAB is the one
+   * setting that never had a control before this, so its wording is new.
+   */
+  var SETTINGS_ROWS = [
+    {
+      key: 'HEADER_MENU', control: 'choice', label: 'Show Stacks in',
+      choices: [
+        ['false', 'A tab under the Docker menu'],
+        ['true',  'Its own button in the top navigation bar']
+      ],
+      help: 'Where the Stacks view appears. As a Docker tab it sits ahead of Docker Containers ' +
+            'and becomes the default landing tab; nothing is replaced either way.'
+    },
+    {
+      key: 'STACK_ROOT', control: 'path', label: 'Stack directory',
+      help: 'Root directory holding stack definitions, one subdirectory per stack. Keeping this ' +
+            'on the flash device means stacks are readable before the array starts, which matters ' +
+            'for autostart. Placing it on an array share gives more room but is unavailable until ' +
+            'the array is up.'
+    },
+    {
+      key: 'TAKEOVER_DOCKER_TAB', control: 'choice', label: 'Docker menu',
+      choices: [
+        ['false', 'Leave the Docker menu alone'],
+        ['true',  'Replace it with Stacks']
+      ],
+      help: 'Off by default. Switched on, the Docker button disappears from the top of the ' +
+            'screen and Stacks takes its place as a menu item of its own. Everything that lived ' +
+            'under the Docker menu goes with it — Unraid\'s own container list included, and any ' +
+            'other plugin\'s Docker pages. Nothing is modified and no container is touched; ' +
+            'turning it back off puts all of it straight back. While this is on, the "Show ' +
+            'Stacks in" setting above has no effect, because Stacks has to be a top-level item ' +
+            'for there to be any way in.'
+    },
+    {
+      key: 'ICON_FETCH', control: 'choice', label: 'Container icons',
+      choices: [
+        ['true',  'Download them automatically'],
+        ['false', 'Do not download anything']
+      ],
+      help: 'Each container shows the logo of the software it runs, taken from the ' +
+            '<a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st icon ' +
+            'collection</a>. Your server fetches an icon the first time it sees a container and ' +
+            'then keeps it, so this happens once per icon and never again; the only thing sent ' +
+            'out is the name of the icon being asked for. Turning it off stops all downloading — ' +
+            'icons already saved keep working, and containers with no icon show a coloured tile ' +
+            'with their initials instead. You can always name an icon yourself with ' +
+            '<code>icon:</code> in a stack\'s <code>x-unraid</code> section, which works whichever ' +
+            'way this is set.<br><br>Icons are by ' +
+            '<a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st</a> and ' +
+            'used under the <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" ' +
+            'rel="noopener">CC BY 4.0</a> licence.'
+    },
+    {
+      key: 'IMAGE_LOOKUP', control: 'choice', label: 'Image documentation',
+      choices: [
+        ['true',  'Read it automatically'],
+        ['false', 'Do not look anything up']
+      ],
+      help: 'When you press Add on a Docker Hub or local image, your server reads that image\'s ' +
+            'own documentation from Docker Hub and uses it to build a fuller starting file — with ' +
+            'the ports, paths and settings it describes, instead of just four bare lines. This ' +
+            'only ever happens the moment you add something; it never runs in the background. The ' +
+            'only thing sent out is the name of the image being added, nothing else. Turning it ' +
+            'off gives you the four-line starting file only, instantly, and nothing leaves the ' +
+            'server.'
+    }
+  ];
+  SETTINGS_ROWS.forEach(function (row) {
+    row.id = 'stackman-setting-' + row.key.toLowerCase().replace(/_/g, '-');
+  });
+
+  // What the open fetched, keyed the same way as SETTINGS_ROWS — compared
+  // against the controls on every input/change to decide whether Save may be
+  // pressed. Null while the panel is shut, so a stray listener firing late
+  // cannot read a dirty state that no longer means anything.
+  var settingsOpenValues = null;
+  var settingsBusy = false;
+
+  function settingsFieldHtml(row, value) {
+    var control;
+    if (row.control === 'choice') {
+      var opts = row.choices.map(function (o) {
+        return '<option value="' + esc(o[0]) + '"' + (o[0] === value ? ' selected' : '') +
+               '>' + esc(o[1]) + '</option>';
+      }).join('');
+      control = '<select id="' + row.id + '" aria-label="' + esc(row.label) + '">' + opts + '</select>';
+    } else {
+      // A plain <div>, not a <label>, for the same reason boxHtml() above
+      // uses one: a label may not hold interactive content besides its own
+      // control, and the Browse button beside this box is a second one.
+      control = '<div class="stackman-boxline">' +
+                  '<input type="text" class="stackman-input" id="' + row.id + '" ' +
+                       'aria-label="' + esc(row.label) + '" spellcheck="false" value="' + esc(value) + '">' +
+                  '<button type="button" class="stackman-browse" data-browse="' + row.id + '" ' +
+                       'title="Choose a folder on this server">' +
+                    '<i class="fa fa-folder-open-o" aria-hidden="true"></i>' +
+                    '<span class="stackman-sr">Choose a folder</span>' +
+                  '</button>' +
+                '</div>';
+    }
+    return '<div class="stackman-field">' +
+             '<span>' + esc(row.label) + '</span>' +
+             control +
+             '<span class="stackman-hint">' + row.help + '</span>' +
+           '</div>';
+  }
+
+  function settingsControlValue(row) {
+    var el = document.getElementById(row.id);
+    return el ? el.value : '';
+  }
+
+  function settingsDirty() {
+    if (!settingsOpenValues) return false;
+    return SETTINGS_ROWS.some(function (row) {
+      return settingsControlValue(row) !== settingsOpenValues[row.key];
+    });
+  }
+
+  function settingsUpdateDirty() {
+    if (settingsSave) settingsSave.disabled = !settingsDirty();
+  }
+
+  function openSettings() {
+    if (!settingsModal) return;
+    call('settings', {}).then(function (res) {
+      if (!res.ok || !res.settings) {
+        failed('Could not open Settings', res.error || 'The server did not return anything usable.');
+        return;
+      }
+      settingsOpenValues = res.settings;
+      settingsMsg.textContent = '';
+      settingsMsg.classList.remove('stackman-settings-msg--bad');
+      settingsBody.innerHTML = SETTINGS_ROWS.map(function (row) {
+        return settingsFieldHtml(row, res.settings[row.key] || '');
+      }).join('');
+      settingsSave.disabled = true;
+      settingsModal.showModal();
+      // Explicit, and after showModal(), for the same reason every dialog in
+      // this file sets focus by hand: the browser's own "first focusable
+      // descendant" choice is never where anyone wants to land.
+      var first = document.getElementById(SETTINGS_ROWS[0].id);
+      if (first) first.focus({ preventScroll: true });
+    });
+  }
+
+  // Closing with something unsaved asks first, through the project's own
+  // yes/no dialog rather than window.confirm() — askConfirm() is guarded the
+  // same way deleteStack() guards it, falling back to window.confirm() on a
+  // stale page with no #stackman-confirm markup.
+  function closeSettingsAsk() {
+    if (!settingsModal || !settingsModal.open || settingsBusy) return;
+    if (!settingsDirty()) { settingsModal.close(); return; }
+
+    if (!confirmModal) {
+      if (window.confirm('Settings has changes that have not been saved. Discard them?')) settingsModal.close();
+      return;
+    }
+
+    askConfirm({
+      title: 'Discard changes?',
+      bodyHtml: '<p>Settings has changes that have not been saved.</p>',
+      goLabel: 'Discard'
+    }).then(function (go) {
+      if (go) settingsModal.close();
+    });
+  }
+
+  function saveSettings() {
+    if (!settingsOpenValues || settingsBusy) return;
+
+    var fields = {};
+    SETTINGS_ROWS.forEach(function (row) { fields[row.key] = settingsControlValue(row); });
+
+    settingsBusy = true;
+    settingsSave.disabled = true;
+    settingsCancel.disabled = true;
+    settingsMsg.classList.remove('stackman-settings-msg--bad');
+    settingsMsg.textContent = 'Saving…';
+
+    call('settings-save', fields).then(function (res) {
+      settingsBusy = false;
+      settingsCancel.disabled = false;
+
+      if (!res.ok) {
+        settingsSave.disabled = false;
+        settingsMsg.textContent = res.error || 'Could not save settings.';
+        settingsMsg.classList.add('stackman-settings-msg--bad');
+        return;
+      }
+
+      if (res.reload) {
+        settingsMsg.textContent = 'Saved. The page needs to reload for this to show.';
+        // The first location.reload() in this file — justified because the
+        // navigation, the page's own prose about where stacks live, and the
+        // flash-drive warning are all rendered on the server at page load, so
+        // nothing short of a reload brings any of them up to date. (A
+        // stack-folder change is reported through this same flag, which is
+        // why there is no separate refreshRows() branch here: the reload
+        // already covers it.)
+        location.reload();
+        return;
+      }
+
+      // Neither ICON_FETCH nor IMAGE_LOOKUP — the only two settings that
+      // never set reload — change anything already on screen, so closing is
+      // the whole of a successful save.
+      settingsModal.close();
+    });
+  }
+
+  if (settingsModal) {
+    settingsBody.addEventListener('input', settingsUpdateDirty);
+    settingsBody.addEventListener('change', settingsUpdateDirty);
+
+    settingsBody.addEventListener('click', function (event) {
+      var btn = event.target.closest('[data-browse]');
+      if (!btn) return;
+      var input = document.getElementById(btn.dataset.browse);
+      if (input) pickerOpen(input);
+    });
+
+    settingsCancel.addEventListener('click', closeSettingsAsk);
+    settingsSave.addEventListener('click', saveSettings);
+
+    // Same hit-test every dialog here uses: <dialog> fires no backdrop click
+    // of its own, because a click on the backdrop targets the dialog element.
+    settingsModal.addEventListener('click', function (event) {
+      if (event.target !== settingsModal || settingsBusy) return;
+      var r = settingsModal.getBoundingClientRect();
+      if (event.clientX < r.left || event.clientX > r.right ||
+          event.clientY < r.top  || event.clientY > r.bottom) closeSettingsAsk();
+    });
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key !== 'Escape' || !settingsModal.open) return;
+      // Two dialogs can sit on top of this one and each owns Escape while it
+      // is showing: the discard question, and the folder browser opened from
+      // the stack directory row. Without these checks one Escape press would
+      // reach this handler too — asking twice in the first case, and in the
+      // second closing the panel out from under the browser the person was
+      // actually trying to back out of.
+      if (confirmModal && confirmModal.open) return;
+      if (picker && picker.open) return;
+      // preventDefault here, not left to the dialog's own Escape-closes-me
+      // action, is the same trick the outline panel, tab menu, devices panel
+      // and find bar all rely on — it is what lets closeSettingsAsk() ask
+      // first instead of the browser discarding silently.
+      event.preventDefault();
+      closeSettingsAsk();
+    });
+
+    settingsModal.addEventListener('close', function () {
+      settingsOpenValues = null;
+    });
   }
 
   /* --------------------------------------------------------- context menu -- */
@@ -11122,4 +11406,8 @@
       if (!document.hidden) pollStats();
     });
   }
+
+  // The signpost page (Settings → Stack Manager) links here to open the
+  // panel directly, for whoever followed it from the Plugins list.
+  if (location.hash === '#settings') openSettings();
 })();

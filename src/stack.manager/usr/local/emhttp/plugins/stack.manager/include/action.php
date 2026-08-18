@@ -48,6 +48,7 @@ require_once '/usr/local/emhttp/plugins/stack.manager/include/Stats.php';
 require_once '/usr/local/emhttp/plugins/stack.manager/include/StacksTable.php';
 require_once '/usr/local/emhttp/plugins/stack.manager/include/Devices.php';
 require_once '/usr/local/emhttp/plugins/stack.manager/include/CA.php';
+require_once '/usr/local/emhttp/plugins/stack.manager/include/Settings.php';
 
 function stackman_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -708,6 +709,27 @@ switch ($action) {
       stackman_reply(['ok' => false, 'error' => $error ?: 'Nothing in this folder can be run.']);
     }
     stackman_reply(['ok' => true, 'jobs' => $jobs]);
+
+  /* ------------------------------------------------------------ settings -- */
+
+  // ---- the panel's current values ----
+  case 'settings':
+    stackman_reply(['ok' => true, 'settings' => stackman_settings_read()]);
+
+  /* ---- validate and write a settings save ----
+   *
+   * $settings in the reply comes from stackman_settings_save()'s own $saved
+   * out-param, never from a fresh stackman_settings_read() call: stackman_cfg()
+   * caches the parsed config in a per-request static, so a second read in this
+   * same request would still hand back the values from before this write.
+   */
+  case 'settings-save':
+    $reload = false;
+    $saved  = null;
+    if (!stackman_settings_save($_POST, $error, $reload, $saved)) {
+      stackman_reply(['ok' => false, 'error' => $error]);
+    }
+    stackman_reply(['ok' => true, 'settings' => $saved, 'reload' => $reload]);
 }
 
 stackman_reply(['ok' => false, 'error' => 'Unknown action "'.$action.'".'], 400);
