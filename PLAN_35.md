@@ -1,8 +1,11 @@
 # PLAN_35 — bringing containers you already run into StaXX
 
-**Status: DRAFT v3, awaiting Adrian.** Written 2026-08-18. v1 was corrected by a verification pass;
+**Status: approved and part-built.** Written 2026-08-18. v1 was corrected by a verification pass;
 v2 by three adversarial reviews; **this one by measurement on the server**, plus Adrian's four
 decisions. Two of v2's headline claims did not survive contact with the real box.
+
+**Phases 0 and 1 have shipped** — see `completed-plans/PLAN_37.md` and `PLAN_38.md`. Phase 2 is
+next. The phase list near the foot of this document carries the current state of each.
 
 ## What you would notice
 
@@ -493,18 +496,21 @@ two never share a code path.
 
 ## Phases
 
-**0. Needs review, and the delete fix.** The row state, the run verbs disabled, and delete no longer
-running `down` for a stack in that state. Everything below assumes this exists; it cannot be bolted
-on afterwards, because it is what makes the rest safe to ship.
+**0. Needs review, and the delete fix. — SHIPPED, `completed-plans/PLAN_37.md`.** The row state, the
+run verbs disabled, and delete no longer running `down` for a stack in that state. Everything below
+assumes this exists; it cannot be bolted on afterwards, because it is what makes the rest safe to
+ship. Built as Adrian designed it: a `NEEDS-REVIEW.md` file in the stack folder is the lock, which
+survives a rename or a folder move, goes when the stack goes, and doubles as the note itself.
 
-**1. The list.** All three sources, what each is, where it came from, whether it is running, whether
+**1. The list. — SHIPPED, `completed-plans/PLAN_38.md`.** All three sources, what each is, where it
+came from, whether it is running, whether
 it is already imported, and what StaXX can and cannot represent about it. Reads only. Build it first:
 it needs nothing from anyone, and it is how everything else gets tested. Two things it should prove
 before a byte is written — what the converter would produce for all 85 templates, and which Compose
 Manager projects resolve through `indirect`, through a label, or not at all.
 
-**2. Unraid templates**, written in the background, arriving as needs-review. Normalisation first,
-then provenance, category splitting, the `.xml` filter and the malformed-path check.
+**2. Unraid templates — NEXT.** Written in the background, arriving as needs-review. Normalisation
+first, then provenance, category splitting, the `.xml` filter and the malformed-path check.
 
 **3. The switch-over** — the two modals, the guarded raw-docker job behind them, and the collision
 check that feeds the first one. This is what was phases 3 and 5 in earlier drafts; Adrian's flow

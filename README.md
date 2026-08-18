@@ -43,7 +43,10 @@ These are the constraints the project is built around, in priority order.
 
 - Compose engine — install the compose CLI, manage stacks as ordinary directories of ordinary files
 - Compose → form UI, with comment-preserving write-back
-- Container and stack lifecycle control (start / stop / restart / logs / console)
+- Container and stack lifecycle control (start / stop / restart / logs / console). Restart means
+  what Apply means on an Unraid template: a container's settings are fixed when it is built, so
+  restarting one that already exists could never apply an edit. It rebuilds whatever the file no
+  longer matches, and restarts the rest — leaving those containers, and their logs, alone.
 - Collapsible stack grouping — stacks can be placed one level deep into user-created folders, and a
   running stack is matched back to its directory via `com.docker.compose.project`
 - Community Applications template → compose conversion, on demand — **built**; see

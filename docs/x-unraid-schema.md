@@ -257,6 +257,17 @@ only right four times out of five. `webui` still supplies the scheme and any pat
 trailing `/admin`; StaXX fills in only the address and the port. A `webui` with no tokens at all is
 honoured verbatim.
 
+Which port is first is yours to choose: the form gives every port row a handle you can drag, or
+focus and move with the arrow keys, and the row that ends up at the top is marked **WebUI**. The
+order is written back to `ports:` in the compose file, so the choice is visible in the file rather
+than kept in a setting somewhere. A service with no published ports has no web page button.
+
+**Known gap.** `webui` itself cannot be edited in the form — nothing renders any of `x-unraid` as
+form fields yet, which is the piece this whole project is still missing. So a service whose file
+carries no `webui` shows the button greyed out with no way inside the app to give it one; the
+Compose view is the only route today. Every hand-written file is in that position, as is every
+Compose Manager import and, measured across the catalogue, 19 templates in 85.
+
 ---
 
 ## Icons
