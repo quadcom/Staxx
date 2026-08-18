@@ -3287,6 +3287,24 @@
     return out;
   }
 
+  /**
+   * Whether a readSections() entry means the section is switched off: the
+   * bare `false`, or a stash object actually holding lines. There is no
+   * stored shape that means "shown" — a shown section has no entry at all,
+   * because the compose block itself is the record. This lives beside
+   * readSections() rather than in stacks.js because the meaning of the
+   * stored shape belongs with the code that writes it; a caller testing the
+   * shape by hand is what let a truthy stash be mistaken for "on", making a
+   * tick box's restore path unreachable. An object with an empty `lines`
+   * deliberately reads as not hidden, so a malformed or hand-edited entry
+   * cannot hide a section permanently — the same forgiving direction
+   * readSections() already takes with its "skip rather than throw" comment.
+   */
+  function sectionHidden(entry) {
+    if (entry === false) return true;
+    return !!(entry && entry.lines && entry.lines.length);
+  }
+
   // The one place that writes or clears one x-unraid.sections.<service>
   // entry, used by setSectionState (a true/false/null tick state) and
   // stashSection (the captured-lines object) alike. `value` is JSON.stringify'd
@@ -6161,6 +6179,10 @@
     // Phase 1 (PLAN.md): the Sections panel's byte-for-byte move of a
     // section between the compose file and x-unraid.sections.
     readSections: readSections,
+    // Whether a readSections() entry means the section is off — see the
+    // docblock above sectionHidden() for why stacks.js must not test the
+    // stored shape itself.
+    sectionHidden: sectionHidden,
     stashSection: stashSection,
     restoreSection: restoreSection,
     setSectionState: setSectionState,

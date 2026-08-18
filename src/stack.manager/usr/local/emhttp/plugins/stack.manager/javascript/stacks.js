@@ -470,10 +470,9 @@
   var sectionOn = {};
 
   // Whether each switchable section shows for a service: on when the file
-  // genuinely holds it; else when it has been ticked on in this editor; else
-  // what x-unraid.sections says (false hidden, an object with lines shown —
-  // the latter written by earlier versions and still read); else the section's
-  // own default.
+  // genuinely holds it; else off when x-unraid.sections marks it hidden
+  // (false, or a stash with lines still in it — see sectionHidden()); else on
+  // when it has been ticked on in this editor; else the section's own default.
   function serviceFlags(form, name) {
     var counts = fileFlagCounts(form, name);
     var sections = YAML.readSections(form.doc)[name] || {};
@@ -483,7 +482,10 @@
       var s = SECTIONS[i];
       if (counts[s.key] > 0) { out[s.key] = true; continue; }
       var entry = sections[s.path.join('.')];
-      out[s.key] = entry === false ? false : (entry || open[s.key]) ? true : s.on;
+      // A stashed entry is a truthy object, but it means the block was taken
+      // OUT of the file — so hidden must be checked before treating entry
+      // itself as a sign the section is on.
+      out[s.key] = YAML.sectionHidden(entry) ? false : open[s.key] ? true : s.on;
     }
     return out;
   }

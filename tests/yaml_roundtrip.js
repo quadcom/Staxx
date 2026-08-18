@@ -6986,6 +6986,81 @@ console.log('\nY. Document markers no longer seal the file');
   ok('both leading markers round-trip byte for byte', Y.serialise(doc) === text, firstDiff(text, Y.serialise(doc)));
 })();
 
+console.log('\nZ. A stashed section reads as hidden, not shown, so ticking it back on works');
+
+/* ---- Z1. sectionHidden() itself ------------------------------------------ */
+
+(function () {
+  ok('false is hidden', Y.sectionHidden(false) === true);
+  ok('undefined (no entry at all) is not hidden', Y.sectionHidden(undefined) === false);
+  ok('a stash with a line in it is hidden', Y.sectionHidden({ lines: ['x'] }) === true);
+  ok('a stash with no lines is not hidden', Y.sectionHidden({ lines: [] }) === false);
+})();
+
+/* ---- Z2. the full cycle: stash, then restore, comes back byte-identical -- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    environment:\n      FOO: bar\n';
+  var doc = Y.parse(src);
+  var form = Y.buildForm(doc);
+
+  ok('environment stashes', Y.stashSection(doc, form, 'a', ['environment']));
+  var entry = Y.readSections(doc).a && Y.readSections(doc).a.environment;
+  ok('the stashed entry reads as hidden', Y.sectionHidden(entry) === true, JSON.stringify(entry));
+  // Not a bare indexOf('environment:') — the sections key is named
+  // "environment" too, since the path is only one level deep, so the string
+  // still occurs (moved into x-unraid). What must be gone is environment:
+  // sitting directly under the service, straight after image:.
+  ok('the block is gone from the service, not just renamed in place',
+     Y.serialise(doc).indexOf('    image: alpine\n    environment:') < 0, Y.serialise(doc));
+
+  form = Y.buildForm(doc);   // a stale form is what the page hands restoreSection in real use
+  ok('restoring puts it back, byte-identical',
+     Y.restoreSection(doc, form, 'a', 'environment') && Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+  ok('no x-unraid block is left behind', Y.serialise(doc).indexOf('x-unraid') < 0, Y.serialise(doc));
+})();
+
+/* ---- Z3. the same cycle on a nested path (deploy.resources) -------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    deploy:\n      resources:\n' +
+            '        limits:\n          cpus: \'0.5\'\n';
+  var doc = Y.parse(src);
+  var form = Y.buildForm(doc);
+
+  ok('deploy.resources stashes', Y.stashSection(doc, form, 'a', ['deploy', 'resources']));
+  var entry = Y.readSections(doc).a && Y.readSections(doc).a['deploy.resources'];
+  ok('the stashed entry reads as hidden', Y.sectionHidden(entry) === true, JSON.stringify(entry));
+  ok('deploy: is gone from the file, parent chain and all', Y.serialise(doc).indexOf('deploy:') < 0,
+     Y.serialise(doc));
+
+  form = Y.buildForm(doc);
+  ok('restoring rebuilds the missing parent chain, byte-identical',
+     Y.restoreSection(doc, form, 'a', 'deploy.resources') && Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+  ok('no x-unraid block is left behind', Y.serialise(doc).indexOf('x-unraid') < 0, Y.serialise(doc));
+})();
+
+/* ---- Z4. the same cycle on a file bounded by '---' and '...' ------------- */
+
+(function () {
+  var src = '---\nservices:\n  a:\n    image: alpine\n    environment:\n      FOO: bar\n...\n';
+  var doc = Y.parse(src);
+  var form = Y.buildForm(doc);
+
+  ok('environment stashes into a --- / ... file', Y.stashSection(doc, form, 'a', ['environment']));
+  var entry = Y.readSections(doc).a && Y.readSections(doc).a.environment;
+  ok('the stashed entry reads as hidden', Y.sectionHidden(entry) === true, JSON.stringify(entry));
+  ok('both markers survive the stash', Y.serialise(doc).indexOf('---\n') === 0 &&
+     Y.serialise(doc).indexOf('\n...\n') > -1, Y.serialise(doc));
+
+  form = Y.buildForm(doc);
+  ok('restoring puts it back, byte-identical markers and all',
+     Y.restoreSection(doc, form, 'a', 'environment') && Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
