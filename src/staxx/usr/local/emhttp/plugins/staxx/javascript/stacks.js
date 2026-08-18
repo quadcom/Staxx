@@ -255,7 +255,11 @@
     // loop below) — every group in this table but Container and Advanced has
     // one now, driven by the SECTIONS table beside it.
     { key: 'list:networks',  heading: 'Networks',            cls: 'staxx-formgroup--single', add: 'list:networks',  flag: 'list:networks' },
-    { key: 'port',      heading: 'Ports',     cls: 'staxx-formgroup--mapped', add: 'port',   flag: 'port' },
+    // --ports rides alongside --mapped rather than replacing it: a port row is
+    // the same five-cell shape as a mount, but its two halves hold numbers,
+    // not paths, so they get much narrower tracks and give the width back to
+    // the note. It also adds the sixth track the WebUI chip lives in.
+    { key: 'port',      heading: 'Ports',     cls: 'staxx-formgroup--mapped staxx-formgroup--ports', add: 'port',   flag: 'port' },
     { key: 'volume',    heading: 'Volumes',   cls: 'staxx-formgroup--mapped', add: 'volume', flag: 'volume' },
     { key: 'env',       heading: 'Variables', cls: 'staxx-formgroup--pair',   add: 'env',    flag: 'env' },
     { key: 'device',    heading: 'Devices',   cls: 'staxx-formgroup--device', add: 'device', flag: 'device' },
@@ -2289,18 +2293,9 @@
                 ? '<span class="staxx-fieldtag staxx-fieldtag--lost">' +
                   'not found on this server</span>' : '';
 
-    // The whole line is outlined, not one box inside it, because the fact
-    // belongs to the mapping rather than to either half of it: this is the
-    // port the row's WebUI button opens (PLAN_39 — the first port wins).
-    var webPortRow = firstPort && f.binder === 'port';
-
     bits.push('<div class="staxx-fieldrow' + (f.locked ? ' staxx-fieldrow--locked' : '') +
               (f.sensitive ? ' staxx-fieldrow--secret' : '') +
-              (webPortRow ? ' staxx-fieldrow--webport' : '') +
               '" data-row="' + index + '" data-field-row="' + esc(f.id) + '"' +
-              (webPortRow ? ' title="' +
-                esc('The WebUI button on this container’s row opens this port. ' +
-                    'Put a different port first to change which one.') + '"' : '') +
               ' data-from="' + (f.range ? f.range.start : -1) + '"' +
               ' data-to="'   + (f.range ? f.range.end   : -1) + '"' +
               ' tabindex="0">');
@@ -2397,14 +2392,6 @@
       }
       bits.push(noteBoxHtml(f, index));
 
-      // Named as well as outlined. The outline alone says "this one is
-      // different" without saying how, and this row is the answer to a
-      // question — which port does the WebUI button open — that nobody can
-      // guess from a colour.
-      if (firstPort && f.binder === 'port') {
-        bits.push('<span class="staxx-webchip">WebUI</span>');
-      }
-
       devMore = longExtrasDevMoreHtml(f, index);
     } else if (named) {
       // The name is a field like any other. Without it, adding a variable
@@ -2469,6 +2456,20 @@
                   '<i class="fa fa-times" aria-hidden="true"></i>' +
                   '<span class="staxx-sr">Remove ' + esc(f.title) + '</span>' +
                 '</button>');
+    }
+
+    // Last cell on a port row, after the ×, and a column that is ALWAYS there
+    // — an empty one when this is not the first port. Two reasons it holds its
+    // place rather than appearing only where it is needed: every port row then
+    // lines up with its neighbours, and reordering (PLAN_40) can move rows
+    // around without the chip's column appearing and disappearing under the
+    // drag.
+    if (f.binder === 'port') {
+      bits.push(firstPort
+        ? '<span class="staxx-webchip" title="' +
+          esc('The WebUI button on this container’s row opens this port. ' +
+              'Put a different port first to change which one.') + '">WebUI</span>'
+        : '<span class="staxx-webchip-gap" aria-hidden="true"></span>');
     }
 
     // Everything full-width comes last, after every cell the row's column

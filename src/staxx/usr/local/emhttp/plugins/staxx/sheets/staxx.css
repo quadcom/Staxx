@@ -1654,21 +1654,20 @@
    the same spot a device row's .staxx-fieldtag warnings use. Filled rather
    than outlined like .staxx-reviewbadge: this states a fact about the row,
    it does not ask for anything to be checked. */
-/* The port the row's WebUI button opens — the first one in the file. Marked
-   by outlining the whole line rather than either box inside it, because the
-   fact belongs to the mapping, not to the host half or the container half.
-   Deliberately quiet: this states something true, it is not a warning, so it
-   borrows the accent at low opacity rather than shouting in full strength. */
-.staxx-fieldrow--webport {
-  border: 0.1rem solid color-mix(in srgb, var(--sm-accent) 45%, transparent);
-  border-radius: 0.4rem;
-  padding: 0.3rem 0.4rem;
+/* The chip naming the port the row's WebUI button opens. Small on purpose —
+   it labels one row among several, so it only has to be legible. It sits in a
+   track of its own that every port row keeps whether or not it has a chip (see
+   --ports below), so the column does not shift about when rows are reordered. */
+.staxx-webchip,
+.staxx-webchip-gap {
+  /* Pinned to the last track rather than auto-placed into it. A row where the
+     × is suppressed would otherwise slide the chip one column left, and the
+     whole point of the column is that it does not move. */
+  grid-column: 6;
 }
 
-/* The chip that names it, sitting after the note box on that same line. Small
-   on purpose — it labels a row that is already outlined, so it only has to be
-   legible, not loud. align-self keeps it to its own text height instead of
-   stretching to the height of the boxes beside it. */
+.staxx-webchip-gap { display: block; }
+
 .staxx-webchip {
   align-self: center;
   justify-self: start;
@@ -2691,6 +2690,15 @@
    the row would take width from the two paths, which genuinely need it. */
 .staxx-formgroup--mapped {
   --sm-fieldcols: minmax(0, 1fr) minmax(0, 1fr) 9rem minmax(0, 1.2fr) 2.4rem;
+}
+
+/* A port is at most five digits, so the two halves do not need a share of the
+   row the way a mount's two paths do — fixed and narrow, with the width handed
+   back to the note, which is the part that actually runs long. The sixth track
+   is the WebUI chip's, held open on every port row so the rows line up and so
+   reordering cannot make a column appear and disappear mid-drag. */
+.staxx-formgroup--ports {
+  --sm-fieldcols: 7rem 7rem 9rem minmax(0, 1fr) 2.4rem 4.6rem;
 }
 
 /* --single is a dynamic list group (networks, secrets, depends_on...) — one
