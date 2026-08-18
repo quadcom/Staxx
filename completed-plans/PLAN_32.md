@@ -6,7 +6,7 @@ Adrian's explicit go-ahead and left **off**.
 
 **One thing this plan got wrong, found during the takeover test and fixed.** Step 4 says "Our own page
 is already `Menu="Docker:0"`, so with the stock list suppressed it is the only Docker sub-tab." That
-holds only when `HEADER_MENU` is **false**. `stack.manager.page`'s `Cond` switches our Docker sub-tab
+holds only when `HEADER_MENU` is **false**. `staxx.page`'s `Cond` switches our Docker sub-tab
 *off* whenever the header-menu marker exists — so with both settings on, the shadow page suppressed
 Unraid's list and our tab was absent too, leaving the Docker tab holding **nothing at all**. Adrian's
 own server is in exactly that state (`HEADER_MENU="true"`), so this was the default outcome, not an
@@ -36,7 +36,7 @@ top-nav button at `Tasks:61`, which survives independently.)
 
 Two consequences worth keeping:
 
-- **`Stacks.page`'s `Cond` is what had to widen, not `stack.manager.page`'s.** With the Docker menu
+- **`Stacks.page`'s `Cond` is what had to widen, not `staxx.page`'s.** With the Docker menu
   gone, our Docker sub-tab is irrelevant; the top-nav button is the only way in. So the takeover
   marker forces `Stacks.page` on, which makes `HEADER_MENU` inert while the takeover is on — said
   plainly in the setting's own help text.
@@ -49,11 +49,11 @@ and `plugins/dynamix/template.php`): `template.php` iterates `glob('plugins/*', 
 glob's **default alphabetical sort**, and `build_pages()` writes into `$site[basename]`, so a later
 plugin folder overwrites an earlier one's same-named page. `page_enabled()` is evaluated *afterwards*,
 in `find_pages()` — which is why a `Cond="false"` page still claims the slot and suppresses the stock
-one. Measured on the box: `dynamix.docker.manager` is 10th, `stack.manager` is 30th.
+one. Measured on the box: `dynamix.docker.manager` is 10th, `staxx` is 30th.
 
 ## Context
 
-Stack Manager's settings live on Unraid's Settings → Utilities page, separated from the UI they
+StaXX's settings live on Unraid's Settings → Utilities page, separated from the UI they
 govern. Adrian's call, 2026-08-18: put them behind a **Settings button on the Stacks page**, in a
 modal, every setting carrying an explanation of what it does, with a **Save button**. All future
 settings go there too.
@@ -73,25 +73,25 @@ Four decisions he took at the same time:
 
 - **Nothing in the plugin writes the config today.** The settings page posts to Unraid's
   `/update.php` into a hidden iframe, with two hidden fields doing the work
-  (`stack.manager.settings.page:27-29`): `#file` names the cfg, `#command` runs
+  (`staxx.settings.page:27-29`): `#file` names the cfg, `#command` runs
   `scripts/apply_settings` afterwards. `/update.php` writes every non-`#` field verbatim with **no
   allowlist** — `docs/settings-ideas.md:18-20` states this outright.
 - **`apply_settings` does exactly two things** (41 lines): touches or removes
-  `/boot/config/plugins/stack.manager/header_menu` from `HEADER_MENU`, and `mkdir -p`s `STACK_ROOT`.
-  It is run from three places: the settings form's `#command`, `stack.manager.plg:81`, and
+  `/boot/config/plugins/staxx/header_menu` from `HEADER_MENU`, and `mkdir -p`s `STACK_ROOT`.
+  It is run from three places: the settings form's `#command`, `staxx.plg:81`, and
   `dev-install.sh:93`.
 - **No setting reaches the browser at all** (`docs/settings-ideas.md:32-35`).
-- **`stackman_cfg()`** (`include/Defines.php:55-62`) merges `default.cfg` under the user's file and
-  caches per request in a `static`. `stackman_cfg_bool()` beside it has **zero callers** and its
+- **`staxx_cfg()`** (`include/Defines.php:55-62`) merges `default.cfg` under the user's file and
+  caches per request in a `static`. `staxx_cfg_bool()` beside it has **zero callers** and its
   absent-default is `false`, which is wrong for `ICON_FETCH`/`IMAGE_LOOKUP` — do not press it into
   service without changing it.
-- **`STACK_ROOT` is validated nowhere.** `stackman_stack_root()` (`include/Stacks.php:45-49`) only
+- **`STACK_ROOT` is validated nowhere.** `staxx_stack_root()` (`include/Stacks.php:45-49`) only
   trims and strips a trailing slash. A nonsense value yields an empty list plus self-test errors;
   `/mnt/user` would present every directory holding a compose file as a stack.
-- **`.stackman-field` already exists and is used by nothing** (`sheets/stack.manager.css:1567-1620`):
+- **`.staxx-field` already exists and is used by nothing** (`sheets/staxx.css:1567-1620`):
   label above, full-width box, hint below. It is the settings row, already written.
 - **Takeover is viable, and smaller than `docs/feasibility.md:132-140` implies.** Verified on the
-  server: plugin folders load alphabetically and `stack.manager` (31st) loads after
+  server: plugin folders load alphabetically and `staxx` (31st) loads after
   `dynamix.docker.manager` (10th), so a same-named `.page` file in our folder wins. The stock list is
   `dynamix.docker.manager/DockerContainers.page`, `Menu="Docker:1" Title="Docker Containers"`.
 
@@ -104,30 +104,30 @@ Four decisions he took at the same time:
 A small file rather than more weight in `Defines.php`. Guard against double-inclusion with the
 `defined()` early return every other include uses, and `require_once` by absolute path.
 
-**`stackman_settings_keys(): array`** — the allowlist, and the single source of truth for what a
+**`staxx_settings_keys(): array`** — the allowlist, and the single source of truth for what a
 setting *is*: key ⇒ `['type' => 'choice'|'path', 'default' => …, 'choices' => [...]]`. Five entries:
 `HEADER_MENU`, `TAKEOVER_DOCKER_TAB`, `STACK_ROOT`, `ICON_FETCH`, `IMAGE_LOOKUP`.
 
-**`stackman_settings_read(): array`** — the current value of each allowlisted key, from
-`stackman_cfg()`, defaults filled in. Nothing else; the browser never sees a key we do not name.
+**`staxx_settings_read(): array`** — the current value of each allowlisted key, from
+`staxx_cfg()`, defaults filled in. Nothing else; the browser never sees a key we do not name.
 
-**`stackman_settings_save(array $posted, ?string &$error): bool`**
+**`staxx_settings_save(array $posted, ?string &$error): bool`**
 
 - Validate every key **before writing anything**; one bad value saves none of them.
 - A `choice` value must be one of its listed choices.
 - **`STACK_ROOT` rules:** must be absolute; must not contain `..`; must sit under `/mnt/` or under
-  `/boot/config/plugins/stack.manager`; must be an existing directory, or have an existing parent so
+  `/boot/config/plugins/staxx`; must be an existing directory, or have an existing parent so
   `mkdir -p` can succeed. Anything else is refused with a full sentence saying what to do — house
   style, and this is the one setting that can empty the page.
 - **Write atomically**: read the existing cfg into a map, overlay the validated keys, write every
   key back as `KEY="value"` to a temp file in the same directory, then `rename()`. A half-written cfg
-  is worse than any value in it. (`stackman_folders_save()` at `include/Folders.php:83-95` is *not*
+  is worse than any value in it. (`staxx_folders_save()` at `include/Folders.php:83-95` is *not*
   atomic — do not copy it here.) Unknown keys already in the file are preserved rather than dropped,
   so a key from a newer version survives a save by an older one.
 - Comments are lost, exactly as they are lost today the first time `/update.php` saves. If any
   comment is ever written back, **it must start with `;` and never `#`** — the reason fills the top
   of `default.cfg` and it is not a style preference.
-- Then run `scripts/apply_settings` through `stackman_sh()`, so the marker file and the shadow page
+- Then run `scripts/apply_settings` through `staxx_sh()`, so the marker file and the shadow page
   land the same way they do from the Unraid form. Report its failure rather than swallowing it.
 - Return which of the three page-affecting keys changed (`HEADER_MENU`, `TAKEOVER_DOCKER_TAB`,
   `STACK_ROOT`) so the browser knows whether a reload is needed.
@@ -135,44 +135,44 @@ setting *is*: key ⇒ `['type' => 'choice'|'path', 'default' => …, 'choices' =
 ### `include/action.php`, two new cases
 
 Beside the existing cluster, matching `folder-collapse`'s shape exactly (`:687-694`): POST only,
-validation in the callee, `stackman_reply()` which `exit`s, booleans arriving as the string `'1'`.
+validation in the callee, `staxx_reply()` which `exit`s, booleans arriving as the string `'1'`.
 
 ```php
 case 'settings':
-  stackman_reply(['ok' => true, 'settings' => stackman_settings_read()]);
+  staxx_reply(['ok' => true, 'settings' => staxx_settings_read()]);
 
 case 'settings-save':
   $error = '';
   $reload = false;
-  if (!stackman_settings_save($_POST, $error, $reload)) {
-    stackman_reply(['ok' => false, 'error' => $error]);
+  if (!staxx_settings_save($_POST, $error, $reload)) {
+    staxx_reply(['ok' => false, 'error' => $error]);
   }
-  stackman_reply(['ok' => true, 'settings' => stackman_settings_read(), 'reload' => $reload]);
+  staxx_reply(['ok' => true, 'settings' => staxx_settings_read(), 'reload' => $reload]);
 ```
 
-`stackman_cfg()`'s per-request `static` cache means the re-read above sees the old values — so
-`stackman_settings_read()` here must re-parse, or the reply must be built from the validated input.
+`staxx_cfg()`'s per-request `static` cache means the re-read above sees the old values — so
+`staxx_settings_read()` here must re-parse, or the reply must be built from the validated input.
 **Build the reply from the validated input**; it is simpler and cannot go stale.
 
 ## Step 2 — The panel
 
 ### Markup — `include/StacksPage.php`
 
-A sixth `<dialog id="stackman-settings">`, **a direct sibling of the others inside
-`.stackman-scaffold`**. The reason is written out three times already (`:194-205`, `:472-479`,
+A sixth `<dialog id="staxx-settings">`, **a direct sibling of the others inside
+`.staxx-scaffold`**. The reason is written out three times already (`:194-205`, `:472-479`,
 `:718-728`) and applies unchanged: outside the table wrapper, whose `container-type: inline-size`
 would trap a fixed-position descendant; inside the scaffold, because the `--sm-*` colour tokens are
 scoped there. **No `<form>` wrapper** — Enter would implicitly submit and a `method="dialog"` submit
 closes and discards.
 
-Copy `#stackman-confirm` (`:729-745`) as the shell — head / body / foot, with a
-`role="status" aria-live="polite"` line in the foot and `.stackman-buttons--inline` holding Cancel
+Copy `#staxx-confirm` (`:729-745`) as the shell — head / body / foot, with a
+`role="status" aria-live="polite"` line in the foot and `.staxx-buttons--inline` holding Cancel
 and Save.
 
 A Settings button in the toolbar (`:122-138`), matching the others exactly:
 
 ```html
-<button type="button" class="stackman-btn" id="stackman-settings-btn">
+<button type="button" class="staxx-btn" id="staxx-settings-btn">
   <i class="fa fa-cog"></i> <?= _('Settings') ?>
 </button>
 ```
@@ -180,12 +180,12 @@ A Settings button in the toolbar (`:122-138`), matching the others exactly:
 ### Rows — one table, in `stacks.js`
 
 Build the body from an ordered table of `{key, label, control, choices, help}` so a future setting is
-one entry. Each row is **`.stackman-field`** — the unused style at `sheets/stack.manager.css:1567-1620`
+one entry. Each row is **`.staxx-field`** — the unused style at `sheets/staxx.css:1567-1620`
 gives label above, box full width, hint below, which is exactly the shape asked for. The help text
 is a visible line, never a `title` attribute: the rule is stated at `StacksPage.php:214-217` — a
 tooltip cannot be reached on a phone.
 
-**Move the explanation prose across verbatim** from `stack.manager.settings.page` (`:37-38`, `:43-45`,
+**Move the explanation prose across verbatim** from `staxx.settings.page` (`:37-38`, `:43-45`,
 `:53-62`, `:70-75`). It is already written, already in the right voice, and includes the selfh.st
 CC BY 4.0 attribution, which must survive the move.
 
@@ -207,9 +207,9 @@ The stack-folder row gets the existing folder browser beside it — `pickerOpen(
 **Deep link:** on load, `location.hash === '#settings'` opens the panel. That is what the signpost
 page links to.
 
-### Style — `sheets/stack.manager.css`
+### Style — `sheets/staxx.css`
 
-One new dialog shell copying `.stackman-confirm`'s recipe (`:5372-5513`) — its own class, its own
+One new dialog shell copying `.staxx-confirm`'s recipe (`:5372-5513`) — its own class, its own
 `:not([open])`, `::backdrop` and `@starting-style` block, and **no z-index**: `showModal()` promotes
 to the top layer, which outranks everything including the context menu's 9999 (`:1677-1685`).
 
@@ -221,9 +221,9 @@ the `unapi` class on the scaffold and the local `all: unset` reset exist to esca
 
 ## Step 3 — The signpost, which is also the way back
 
-Rewrite `stack.manager.settings.page` to hold two things and nothing else:
+Rewrite `staxx.settings.page` to hold two things and nothing else:
 
-1. One short paragraph — Stack Manager's settings are in the app now — and a link to
+1. One short paragraph — StaXX's settings are in the app now — and a link to
    `/Docker/Stacks#settings`, which opens the panel.
 2. **The stack folder, still editable here**, with its own explanation in Adrian's words: set it here
    only if you moved where stacks are stored by hand and the Stacks page can no longer find them.
@@ -233,13 +233,13 @@ Rewrite `stack.manager.settings.page` to hold two things and nothing else:
 if the Stacks page, its JavaScript or `action.php` are broken, this still works and can put the path
 back. Say so in a comment so nobody "tidies" it into the new endpoint later.
 
-`stack.manager.plg`'s launch entity (`:6`, `Settings/&name;.settings`) is unchanged, so the Plugins
+`staxx.plg`'s launch entity (`:6`, `Settings/&name;.settings`) is unchanged, so the Plugins
 list still lands somewhere useful.
 
 ## Step 4 — Build the dead switch
 
 Verified on the server, so this is mechanism rather than guesswork: pages are keyed by bare filename
-and the **last plugin folder alphabetically wins**; `stack.manager` loads after
+and the **last plugin folder alphabetically wins**; `staxx` loads after
 `dynamix.docker.manager`. So a `DockerContainers.page` in our own folder replaces the stock one.
 
 **The whole feature is one file, appearing and disappearing.** Ship a dormant template —
@@ -258,7 +258,7 @@ Four things that matter:
 - **It fails in the safe direction.** If Unraid ever renames its file, our shadow stops matching and
   the stock list simply comes back.
 - **A reboot does not undo it.** Unraid reinstalls plugins at boot, which re-runs
-  `stack.manager.plg:81` → `apply_settings`, which re-creates the shadow while the setting is on. For
+  `staxx.plg:81` → `apply_settings`, which re-creates the shadow while the setting is on. For
   everything else in this project a reboot is the panic button; here it is not. The way out is the
   switch, from either the panel or by deleting the file.
 
@@ -282,8 +282,8 @@ switch on the settings page".
 | `include/action.php` | `settings` and `settings-save` |
 | `include/StacksPage.php` | the dialog, the toolbar button, `require_once` the new include |
 | `javascript/stacks.js` | the row table, open/dirty/save/close, the `#settings` deep link |
-| `sheets/stack.manager.css` | the dialog shell; reuse `.stackman-field` as-is |
-| `stack.manager.settings.page` | rewritten as signpost + the folder recovery field |
+| `sheets/staxx.css` | the dialog shell; reuse `.staxx-field` as-is |
+| `staxx.settings.page` | rewritten as signpost + the folder recovery field |
 | `scripts/apply_settings` | install or remove the shadow page |
 | `shadow/DockerContainers.page.tmpl` | **new**, dormant |
 | `default.cfg` | keep all five keys; `TAKEOVER_DOCKER_TAB` is real now |
@@ -296,7 +296,7 @@ Locally — none of these can see any of this, which is worth stating plainly; t
 test:
 
 ```sh
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node tests/js_undeclared.js
 node tests/yaml_roundtrip.js
 node tests/image_import.js
@@ -320,7 +320,7 @@ Then in the browser (Claude for Chrome reaches the box and works — the editor 
    written. Then to something valid → saved, page reloads, the table reads from the new folder.
 5. The folder browser opens from the panel and fills the box.
 6. Change where Stacks appears → saved, page reloads, the navigation has moved.
-7. Unraid's Settings → Stack Manager shows the signpost; its link opens the panel; its folder field
+7. Unraid's Settings → StaXX shows the signpost; its link opens the panel; its folder field
    still saves on its own, with the Stacks page's JavaScript irrelevant to it.
 8. Both Unraid themes.
 

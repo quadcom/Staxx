@@ -95,7 +95,7 @@ the compose pane to start marking these, which is most of the argument for putti
 ### 4. The form marks the odd option
 
 `optionsHtml()` already knows when it is injecting an unrecognised value — that is its `known` flag.
-Have it add a `stackman-choose--odd` class to the `<select>` in that case, and a `stackman-`-prefixed
+Have it add a `staxx-choose--odd` class to the `<select>` in that case, and a `staxx-`-prefixed
 rule styling it as a caution, matching the host-path warning treatment already in the sheet. The value
 is still shown and still saved unchanged; it just no longer looks the same as a valid one.
 

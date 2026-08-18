@@ -252,8 +252,8 @@ Where it attaches needs care, because only `setting` rows have a label of their 
 
 Two constraints already documented in the code and obeyed here: the help paragraph is emitted in
 the tail block beside `adviceBlock`, **after** the `×`, because a full-width child strands anything
-emitted after it (`stacks.js:2062-2065`); and it reuses `.stackman-fieldhint`, not
-`.stackman-fieldnote`, which is accent-coloured and means *something is wrong here*.
+emitted after it (`stacks.js:2062-2065`); and it reuses `.staxx-fieldhint`, not
+`.staxx-fieldnote`, which is accent-coloured and means *something is wrong here*.
 
 Wording comes from `keyInfo()`, already exported. **Test:** new section `Q` — every field the form
 renders resolves to a description, so the two cannot drift apart as fields are added.
@@ -306,8 +306,8 @@ Locally, before every deploy:
 ```sh
 node tests/yaml_roundtrip.js
 node tests/js_undeclared.js
-node --check src/stack.manager/.../stacks.js
-node --check src/stack.manager/.../compose-model.js
+node --check src/staxx/.../stacks.js
+node --check src/staxx/.../compose-model.js
 python tests/validate_schema.py
 ```
 

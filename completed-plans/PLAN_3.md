@@ -23,7 +23,7 @@ Four things from the latest look at the Form view on the test box:
 
 ## 1 — why the captions are off, in one line
 
-`.stackman-fieldrow` has `padding: 0.8rem 1rem`; `.stackman-caption` has none. Both grids read the
+`.staxx-fieldrow` has `padding: 0.8rem 1rem`; `.staxx-caption` has none. Both grids read the
 same `--sm-fieldcols`, so both have identical tracks — but the row's start **1rem further right**
 than the caption's. Hence a constant offset in every group, which is exactly what it looks like.
 
@@ -98,7 +98,7 @@ Code-ish fragments are wrapped in `<code>`; every value goes through `esc()` fir
 ### `javascript/stacks.js` — where it appears, and keeping it fresh
 
 - **Locked row** (the `if (f.locked)` branch of `fieldHtml()`): emit
-  `<p class="stackman-fieldhint" data-say="1">` between the `<pre class="stackman-fieldraw">` and
+  `<p class="staxx-fieldhint" data-say="1">` between the `<pre class="staxx-fieldraw">` and
   the "Not editable here…" note, so the explanation sits directly under what it explains.
 - **Editable row**: emit the same paragraph in the row's tail, alongside the other full-width
   children — after the `showKill` block, per the rule established last round.
@@ -106,25 +106,25 @@ Code-ish fragments are wrapped in `<code>`; every value goes through `esc()` fir
   find `[data-say]` in the row and rewrite its `innerHTML` from the fresh field. Editing the box
   therefore keeps the sentence in step without a redraw, which is what preserves the caret.
 
-### `sheets/stack.manager.css`
+### `sheets/staxx.css`
 
-- `.stackman-caption` — add `padding: 0 1rem`, matching `.stackman-fieldrow`'s horizontal padding.
+- `.staxx-caption` — add `padding: 0 1rem`, matching `.staxx-fieldrow`'s horizontal padding.
   This is fix 1 in its entirety; comment it, because the reason is not visible from either rule on
   its own.
-- `.stackman-fieldrow` — `margin: 0 0 1.4rem` → `0 0 0.2rem`, `padding: 0.8rem 1rem` →
+- `.staxx-fieldrow` — `margin: 0 0 1.4rem` → `0 0 0.2rem`, `padding: 0.8rem 1rem` →
   `0.45rem 1rem`. About 1.9rem off every row.
-- `.stackman-svchead` — `font-size: 1.5rem` → `2.2rem`, bottom margin `0.8rem` → `1.2rem`. Against
-  a 1.2rem uppercase group heading that is a clear step. `.stackman-svcrename` stays 1.1rem, so
+- `.staxx-svchead` — `font-size: 1.5rem` → `2.2rem`, bottom margin `0.8rem` → `1.2rem`. Against
+  a 1.2rem uppercase group heading that is a clear step. `.staxx-svcrename` stays 1.1rem, so
   the pencil does not grow with it.
-- Add `.stackman-fieldhint` to the `grid-column: 1 / -1` list of full-width row children — it is
+- Add `.staxx-fieldhint` to the `grid-column: 1 / -1` list of full-width row children — it is
   now emitted inside a field row, not only above one.
-- Extend the existing `.stackman-fieldmap code` chip rule to cover `.stackman-fieldhint code`
+- Extend the existing `.staxx-fieldmap code` chip rule to cover `.staxx-fieldhint code`
   rather than writing a second one.
 
 ## Verification
 
 ```sh
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node tests/js_undeclared.js
 node tests/yaml_roundtrip.js
 ```

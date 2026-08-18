@@ -190,7 +190,7 @@ Initialise the project in `D:\!! Working Projects\!!VSCode\MyWSpaces\Unraid Comp
 - `<plugin>.plg` installer skeleton + `pkg_build.sh`.
 - Copy this report into `docs/feasibility.md` so the findings live with the code.
 
-**Plugin directory name** — decision #1, and it gates everything. It must sort after `dynamix.docker.manager`, which in practice means any name starting with `dz`–`z`. Proposed default: **`stack.manager`** (descriptive, sorts safely, doesn't imply official Unraid endorsement the way an `unraid.*` prefix would). Easy to change now, effectively permanent after first release — say the word if you want a different one.
+**Plugin directory name** — decision #1, and it gates everything. It must sort after `dynamix.docker.manager`, which in practice means any name starting with `dz`–`z`. Proposed default: **`staxx`** (descriptive, sorts safely, doesn't imply official Unraid endorsement the way an `unraid.*` prefix would). Easy to change now, effectively permanent after first release — say the word if you want a different one.
 
 Deliberately **not** in Phase 0: the `x-unraid:` schema. It's the project's real public API and deserves its own design pass rather than being improvised alongside scaffolding.
 

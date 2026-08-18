@@ -54,7 +54,7 @@ render. It is downloaded and split **once**, on first use, by a detached CLI scr
 bargain `Icons.php` strikes, and for the same reason: nothing reaches the network during a page
 render.
 
-`/tmp/stack.manager/ca/`, a sibling of the existing `jobs/`:
+`/tmp/staxx/ca/`, a sibling of the existing `jobs/`:
 
 | File | Contents |
 |---|---|
@@ -72,32 +72,32 @@ thing — it cuts one element out of `applist` at a time, so peak memory is one 
 no `memory_limit` fiddling is needed anywhere.
 
 Staleness is `filemtime` on `index.json` against a 24 h TTL, the same shape as
-`STACKMAN_ICON_INDEX_TTL` at `Icons.php:62`.
+`STAXX_ICON_INDEX_TTL` at `Icons.php:62`.
 
 ### `include/CA.php` — new
 
 Cache paths and TTL constants, then five functions:
 
-- `stackman_ca_status(): array` — reads `status.json`; a missing or stale index reads as `'stale'`.
-- `stackman_ca_refresh_start(): void` — takes the `mkdir` lock, then detaches
-  `php <STACKMAN_ROOT>/scripts/ca-index.php` with `setsid … </dev/null &`, copying
-  `stackman_start_job()` at `Stacks.php:1673`. Does nothing at all if the lock is held.
-- `stackman_ca_search(string $q, string $cat, int $limit = 60): array` — decodes `index.json` and
+- `staxx_ca_status(): array` — reads `status.json`; a missing or stale index reads as `'stale'`.
+- `staxx_ca_refresh_start(): void` — takes the `mkdir` lock, then detaches
+  `php <STAXX_ROOT>/scripts/ca-index.php` with `setsid … </dev/null &`, copying
+  `staxx_start_job()` at `Stacks.php:1673`. Does nothing at all if the lock is held.
+- `staxx_ca_search(string $q, string $cat, int $limit = 60): array` — decodes `index.json` and
   ranks: exact name, name prefix, name contains, repository contains, author contains; ties broken
   by download count. Returns index **ordinals**, never byte offsets.
-- `stackman_ca_app(int $i): ?array` — looks the ordinal up in `index.json`, `fseek`/`fread`s that
+- `staxx_ca_app(int $i): ?array` — looks the ordinal up in `index.json`, `fseek`/`fread`s that
   one line out of `apps.jsonl`, decodes it. The client only ever sends an ordinal, so a bad value is
   a missing array key rather than an arbitrary file read. That is the whole reason offsets stay
   server-side.
-- `stackman_ca_categories(): array` — the feed's own category list, for the filter dropdown.
+- `staxx_ca_categories(): array` — the feed's own category list, for the filter dropdown.
 
 ### `scripts/ca-index.php` — new
 
 CLI only. Writes `status.json` = building; downloads the feed with PHP curl straight to a file
-(`CURLOPT_FILE`, 180 s, the `Stack Manager (Unraid plugin)` user agent that `stackman_icon_get()`
+(`CURLOPT_FILE`, 180 s, the `StaXX (Unraid plugin)` user agent that `staxx_icon_get()`
 already uses at `Icons.php:339`); brace-depth splits it into `apps.jsonl` and `index.json` inside a
 `ca.new/` directory; `rename()`s that into place so a reader never sees a half-built cache — the
-reasoning behind `stackman_icon_write()` at `Icons.php:326`; writes `status.json` = ready; releases
+reasoning behind `staxx_icon_write()` at `Icons.php:326`; writes `status.json` = ready; releases
 the lock in a `finally`, including on failure.
 
 ---
@@ -106,7 +106,7 @@ the lock in a `finally`, including on failure.
 
 ### `javascript/ca-convert.js` — new
 
-Pure, no DOM, dual-target exactly like `compose-model.js` — `window.StackmanCA` in the browser,
+Pure, no DOM, dual-target exactly like `compose-model.js` — `window.StaxxCA` in the browser,
 `module.exports` under node, so the test harness can require it directly.
 
 ```js
@@ -115,7 +115,7 @@ convert(app) → { name, service, yaml, warnings: [] }
 
 | Source | Compose |
 |---|---|
-| `Name` | service key and `container_name`, normalised: lowercase, invalid characters → `-`, ≤63, must start alphanumeric, to satisfy `stackman_valid_name()` at `Stacks.php:53` |
+| `Name` | service key and `container_name`, normalised: lowercase, invalid characters → `-`, ≤63, must start alphanumeric, to satisfy `staxx_valid_name()` at `Stacks.php:53` |
 | `Repository` | `image` |
 | `Network` | `bridge` → omitted, since compose makes its own; `host` / `none` → `network_mode` |
 | `Privileged` | `privileged: true` |
@@ -183,21 +183,21 @@ by `tests/validate_schema.py`.
 - **`include/action.php`** — `require_once` `CA.php`, and two cases beside the existing `tags` case
   at line 314, which is already the one outbound-HTTP action:
   - `ca-search` → `{ok, state, apps:[…], categories:[…]}`. When the cache is stale or missing it
-    fires `stackman_ca_refresh_start()` and returns `state:'building'` with no results, and the
-    client polls. Same protocol as `stackman_icon_sweep()`'s `done:false`.
+    fires `staxx_ca_refresh_start()` and returns `state:'building'` with no results, and the
+    client polls. Same protocol as `staxx_icon_sweep()`'s `done:false`.
   - `ca-app` → `{ok, app:{…}}` for one ordinal.
-- **`include/StacksPage.php`** — an **Apps** button beside `stackman-add` (L120-128); a
-  `<dialog id="stackman-ca">` modelled on `#stackman-tz` (L454-560), with a search box, a category
+- **`include/StacksPage.php`** — an **Apps** button beside `staxx-add` (L120-128); a
+  `<dialog id="staxx-ca">` modelled on `#staxx-tz` (L454-560), with a search box, a category
   select, a result list and a status line; and a `<script>` tag for `ca-convert.js` carrying the
   `filemtime()` cache-buster, loaded **before** `stacks.js` (L675-678).
 - **`javascript/stacks.js`** — `caOpen()` / `caClose()` / `caSearch()`, following `tzOpen()` at
   L4051: `showModal()`, a debounced `call('ca-search', …)`, results rendered into the list, a
   backdrop click and a `close` handler to clean up. Clicking a result calls `ca-app`, hands the
-  entry to `StackmanCA.convert()`, closes the dialog and calls **`openEditor(name, yaml, true)`**
-  at L4559. Everything downstream — `save()`, `stackman_save_stack()`, `compose config -q` — is
+  entry to `StaxxCA.convert()`, closes the dialog and calls **`openEditor(name, yaml, true)`**
+  at L4559. Everything downstream — `save()`, `staxx_save_stack()`, `compose config -q` — is
   already built and needs no change. Warnings go to `showError()` (L624) so they sit above the form
   where they cannot be missed. Search is server-side, so the page never holds a large payload.
-- **`sheets/stack.manager.css`** — `stackman-ca-*` rules for the result rows: icon, name, repo, a
+- **`sheets/staxx.css`** — `staxx-ca-*` rules for the result rows: icon, name, repo, a
   one-line overview. All prefixed, as the house rule requires.
 - **`README.md`** and **`docs/`** — move CA conversion out of planned scope, and a short section on
   what converts, what does not, and where the `ExtraParams` warnings come from.
@@ -216,21 +216,21 @@ node tests/js_undeclared.js           # stacks.js is one strict-mode IIFE — th
 python tests/validate_schema.py
 ```
 
-On the server, after `pscp` and `bash /boot/stack.manager-dev/dev-install.sh`:
+On the server, after `pscp` and `bash /boot/staxx-dev/dev-install.sh`:
 
 ```sh
 php -l include/CA.php && php -l include/action.php && php -l scripts/ca-index.php
-time php /usr/local/emhttp/plugins/stack.manager/scripts/ca-index.php
-ls -la /tmp/stack.manager/ca/          # index.json ~1 MB, apps.jsonl ~12 MB, status.json ready
+time php /usr/local/emhttp/plugins/staxx/scripts/ca-index.php
+ls -la /tmp/staxx/ca/          # index.json ~1 MB, apps.jsonl ~12 MB, status.json ready
 ```
 
 Then the no-browser check `CLAUDE.md` describes — a throwaway PHP script beats driving the UI:
 
 ```php
-require '/usr/local/emhttp/plugins/stack.manager/include/CA.php';
-print_r(stackman_ca_search('jellyfin', ''));   // ranking, and jellyfin first
-print_r(stackman_ca_app(0));                   // one entry, decoded
-var_dump(stackman_ca_app(999999));             // null — not a warning, and not a file read
+require '/usr/local/emhttp/plugins/staxx/include/CA.php';
+print_r(staxx_ca_search('jellyfin', ''));   // ranking, and jellyfin first
+print_r(staxx_ca_app(0));                   // one entry, decoded
+var_dump(staxx_ca_app(999999));             // null — not a warning, and not a file read
 ```
 
 Finally, in the browser: open **Apps**, search, watch the "building the catalogue" state resolve on

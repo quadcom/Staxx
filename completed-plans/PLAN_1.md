@@ -3,9 +3,9 @@
 **Status: COMPLETE** — built and deployed to the test box on 2026-08-13. Kept for reference.
 
 Three things came out differently from the plan, all noted in place below: the form's group class
-is `stackman-formgroup` rather than `stackman-group`, which the stacks table already owns; the
+is `staxx-formgroup` rather than `staxx-group`, which the stacks table already owns; the
 `read-only mount` badge moved inside the container-path box rather than disappearing with the
-titles; and `.stackman-fieldhead` survives as the wrapper for a device or locked row's heading.
+titles; and `.staxx-fieldhead` survives as the wrapper for a device or locked row's heading.
 
 ## Why
 
@@ -64,54 +64,54 @@ constant, and a key materialising changes a field's contents but never the array
 
 All three files below must agree on this. Class names are fixed here, not invented per file.
 
-`stackman-formgroup`, not `stackman-group` — the latter is the stacks table's subgrid wrapper, and
+`staxx-formgroup`, not `staxx-group` — the latter is the stacks table's subgrid wrapper, and
 its rule sets `display` and `grid-template-columns` on the bare class.
 
 ```html
-<div class="stackman-formgroup stackman-formgroup--pair" data-group="volume">
-  <div class="stackman-grouphead">
-    <h5 class="stackman-fieldgroup">Volumes</h5>
-    <button type="button" class="stackman-add" data-add="volume" data-service="web">
+<div class="staxx-formgroup staxx-formgroup--pair" data-group="volume">
+  <div class="staxx-grouphead">
+    <h5 class="staxx-fieldgroup">Volumes</h5>
+    <button type="button" class="staxx-add" data-add="volume" data-service="web">
       <i class="fa fa-plus" aria-hidden="true"></i> Volume</button>
   </div>
 
-  <div class="stackman-caption" aria-hidden="true">
-    <span class="stackman-capflag" title="required">R</span>
-    <span class="stackman-capflag" title="sensitive">S</span>
+  <div class="staxx-caption" aria-hidden="true">
+    <span class="staxx-capflag" title="required">R</span>
+    <span class="staxx-capflag" title="sensitive">S</span>
     <span>path on the server</span>
     <span>path in the container</span>
     <span>note, kept in the file</span>
     <span></span>
   </div>
 
-  <div class="stackman-fieldrow" data-row="7" data-field-row="web/volume/…"
+  <div class="staxx-fieldrow" data-row="7" data-field-row="web/volume/…"
        data-from="12" data-to="12" tabindex="0">
-    <label class="stackman-flag">…required checkbox…</label>
-    <label class="stackman-flag">…sensitive checkbox…</label>
-    <div class="stackman-box">…host…</div>
-    <div class="stackman-box">…container…</div>
-    <label class="stackman-box stackman-box--note">…</label>
-    <button type="button" class="stackman-kill" data-row="7" data-remove="1">…×…</button>
+    <label class="staxx-flag">…required checkbox…</label>
+    <label class="staxx-flag">…sensitive checkbox…</label>
+    <div class="staxx-box">…host…</div>
+    <div class="staxx-box">…container…</div>
+    <label class="staxx-box staxx-box--note">…</label>
+    <button type="button" class="staxx-kill" data-row="7" data-remove="1">…×…</button>
   </div>
 </div>
 ```
 
 Rules:
 
-- The two `.stackman-flag` labels are **direct grid children**, one column each, so they sit under
+- The two `.staxx-flag` labels are **direct grid children**, one column each, so they sit under
   the `R` and `S` captions. There is no wrapper element.
-- `.stackman-boxes` and `.stackman-boxes--mapped` are gone — the row owns the columns.
-- A **Container** row emits no flags, no `×`, and a `<span class="stackman-fieldlabel">` first.
+- `.staxx-boxes` and `.staxx-boxes--mapped` are gone — the row owns the columns.
+- A **Container** row emits no flags, no `×`, and a `<span class="staxx-fieldlabel">` first.
   An **Advanced** row emits flags, then the label, then the rest.
-- A device row's heading, a locked row's `<pre class="stackman-fieldraw">`, `.stackman-fieldnote`
-  and `<details class="stackman-devmore">` span every column (`grid-column: 1 / -1`). The heading
-  keeps its `.stackman-fieldhead` wrapper so the title and its tags span as one thing — loose, each
+- A device row's heading, a locked row's `<pre class="staxx-fieldraw">`, `.staxx-fieldnote`
+  and `<details class="staxx-devmore">` span every column (`grid-column: 1 / -1`). The heading
+  keeps its `.staxx-fieldhead` wrapper so the title and its tags span as one thing — loose, each
   tag would claim a column and shove the boxes out of line with the captions.
 - A volume's `read-only mount` badge rides inside its container-path box, for the same reason.
 - A caption row is omitted when the group has no rows.
-- `.stackman-groupnote` is the grey `(required)` inside the Container heading.
+- `.staxx-groupnote` is the grey `(required)` inside the Container heading.
 
-Group classes and templates — set on `.stackman-group`, inherited by both the caption row and the
+Group classes and templates — set on `.staxx-group`, inherited by both the caption row and the
 field rows so they line up without subgrid, which needs the outer columns fixed-width:
 
 | Group class | Columns |
@@ -151,11 +151,11 @@ field rows so they line up without subgrid, which needs the outer columns fixed-
 - New `GROUPS` table and a function placing a field by `fixed` / `binder` / `locked`. A `fixed`
   field goes to Container even when locked, so that group always has exactly four rows.
 - `renderForm()` (:680) buckets a service's fields into groups **preserving each field's original
-  index into `form.fields`**, then emits one `.stackman-group` each. The `.stackman-adds` strip
+  index into `form.fields`**, then emits one `.staxx-group` each. The `.staxx-adds` strip
   (:707–717) goes; its buttons move onto the header lines with their `data-add` / `data-service`
   attributes intact, so the click handler at :959 is untouched.
 - `fieldHtml()` (:542) emits flat grid cells instead of head-over-boxes.
-- `boxHtml()` (:498) keeps emitting `.stackman-boxhint` — CSS hides it where a caption names the
+- `boxHtml()` (:498) keeps emitting `.staxx-boxhint` — CSS hides it where a caption names the
   column, and shows it again on a narrow screen. Its `dead` test (:501) becomes
   `(!p.spot && !f.absent) || f.locked`, or an empty slot renders disabled and can never be typed in.
   The hint also goes into the input's `title`, so a Container row's explanation survives as a
@@ -164,19 +164,19 @@ field rows so they line up without subgrid, which needs the outer columns fixed-
 - `refreshRanges()` (:833) also syncs the `disabled` state of each row's note and tick inputs, so a
   slot that has just gained its line stops being greyed out without a full redraw.
 
-### `sheets/stack.manager.css`
+### `sheets/staxx.css`
 
-- `.stackman-fieldgroup` (:2030) is written but never emitted — reuse it as the group heading, its
-  bottom hairline replaced by the rule-above-and-below band on `.stackman-group`.
-- New `.stackman-grouphead`, `.stackman-caption`, `.stackman-capflag`, `.stackman-fieldlabel`,
-  `.stackman-groupnote`.
-- `.stackman-fieldrow` (:2040) becomes `display: grid`; `.stackman-boxes` (:2067) and
+- `.staxx-fieldgroup` (:2030) is written but never emitted — reuse it as the group heading, its
+  bottom hairline replaced by the rule-above-and-below band on `.staxx-group`.
+- New `.staxx-grouphead`, `.staxx-caption`, `.staxx-capflag`, `.staxx-fieldlabel`,
+  `.staxx-groupnote`.
+- `.staxx-fieldrow` (:2040) becomes `display: grid`; `.staxx-boxes` (:2067) and
   `--mapped` (:2074) lose theirs.
-- Drop `.stackman-flag:first-of-type { margin-left: auto }` (:2136), which is what pushes the ticks
-  right today, and `.stackman-adds` (:2152).
-- `.stackman-kill` becomes a quiet `×` shown on row hover and `:focus-within`.
+- Drop `.staxx-flag:first-of-type { margin-left: auto }` (:2136), which is what pushes the ticks
+  right today, and `.staxx-adds` (:2152).
+- `.staxx-kill` becomes a quiet `×` shown on row hover and `:focus-within`.
 - **Narrow screens.** Below the existing breakpoint the group drops to one column per row: caption
-  hidden, boxes stacked, `.stackman-boxhint` visible again so each box still says what it is.
+  hidden, boxes stacked, `.staxx-boxhint` visible again so each box still says what it is.
 
 ### `tests/yaml_roundtrip.js`
 
@@ -190,8 +190,8 @@ field rows so they line up without subgrid, which needs the outer columns fixed-
 ## Verification
 
 ```sh
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node tests/js_undeclared.js
 node tests/yaml_roundtrip.js
 ```

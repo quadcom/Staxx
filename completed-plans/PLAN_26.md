@@ -40,7 +40,7 @@ untouched: no new per-entry fields, no growth in the file read on every keystrok
 
 **`scripts/ca-index.php`**
 
-- `stackman_ca_index_entry()` (line 212) currently deletes `trends`, `downloadtrend`, `trendsDate`
+- `staxx_ca_index_entry()` (line 212) currently deletes `trends`, `downloadtrend`, `trendsDate`
   at line 239 and keeps nothing about recency. Keep that deletion — the trend *history* arrays are
   the bulk being stripped and are still not wanted. Instead return three extra scalars alongside
   `line`/`n`/`r`/…, all optional and all dropped before the entry is written to `index.json`:
@@ -64,19 +64,19 @@ untouched: no new per-entry fields, no growth in the file read on every keystrok
   Spotlight carries its blurb inline because only ~41 entries have one; putting `who`/`why` on
   every index entry to serve 41 of them would be the `dep`/`st` mistake the file already avoids.
 
-- Bump `STACKMAN_CA_INDEX_VERSION` (`include/CA.php:51`) from 3 to **4**. This forces one full
+- Bump `STAXX_CA_INDEX_VERSION` (`include/CA.php:51`) from 3 to **4**. This forces one full
   24 MB re-download per server, which is the known cost of a shape change and is already handled
-  gracefully: `stackman_ca_status()` (`CA.php:105-111`) marks a version mismatch stale **but still
+  gracefully: `staxx_ca_status()` (`CA.php:105-111`) marks a version mismatch stale **but still
   usable**, so the old cache keeps serving while the rebuild runs behind the user.
 
 **`include/CA.php`**
 
-- Extract the per-hit row builder from `stackman_ca_search()` (lines 279-298) into
-  `stackman_ca_row(array $app, int $i): array`, returning the existing `i, n, r, a, ic, c, d, ov`
-  plus conditional `dep`/`st`. `stackman_ca_search()` calls it; so does the new home function.
+- Extract the per-hit row builder from `staxx_ca_search()` (lines 279-298) into
+  `staxx_ca_row(array $app, int $i): array`, returning the existing `i, n, r, a, ic, c, d, ov`
+  plus conditional `dep`/`st`. `staxx_ca_search()` calls it; so does the new home function.
   This is the only change to the search path.
-- Add `stackman_ca_home(): array` returning `['spot'=>[…rows…], 'new'=>[…], 'trend'=>[…]]`, each
-  row from `stackman_ca_row()` and each spotlight row carrying the extra `who`/`why`.
+- Add `staxx_ca_home(): array` returning `['spot'=>[…rows…], 'new'=>[…], 'trend'=>[…]]`, each
+  row from `staxx_ca_row()` and each spotlight row carrying the extra `who`/`why`.
 - **A v3 cache has no `home` block.** That is a real state, not a theoretical one — it is exactly
   what a user sees in the seconds after upgrading, while the stale-but-usable cache is still being
   replaced. Return three empty lists in that case and let the client say so.
@@ -88,27 +88,27 @@ still gets filled on open now that opening no longer runs a search.
 
 ### Browser — a second view of the same panel
 
-**`include/StacksPage.php`** — a new fourth child of the dialog, between `.stackman-ca-head`
-(line 640) and `.stackman-ca-find` (line 647):
+**`include/StacksPage.php`** — a new fourth child of the dialog, between `.staxx-ca-head`
+(line 640) and `.staxx-ca-find` (line 647):
 
 ```php
-<div class="stackman-ca-tabs" role="tablist">
-  <button type="button" class="stackman-ca-tab" id="stackman-ca-tab-home" aria-selected="true">Home</button>
-  <button type="button" class="stackman-ca-tab" id="stackman-ca-tab-search" aria-selected="false">Search</button>
+<div class="staxx-ca-tabs" role="tablist">
+  <button type="button" class="staxx-ca-tab" id="staxx-ca-tab-home" aria-selected="true">Home</button>
+  <button type="button" class="staxx-ca-tab" id="staxx-ca-tab-search" aria-selected="false">Search</button>
 </div>
 ```
 
 The search box and the category select stay visible on both views — you need the box on the
 homepage to leave it, and changing the category is itself a search.
 
-**`sheets/stack.manager.css`**
+**`sheets/staxx.css`**
 
-- `.stackman-ca` (line 4443) is `grid-template-rows: auto auto 1fr auto`. It gains a fifth row:
+- `.staxx-ca` (line 4443) is `grid-template-rows: auto auto 1fr auto`. It gains a fifth row:
   `auto auto auto 1fr auto`. Missing this is how the list stops scrolling.
-- New `.stackman-ca-tabs` / `.stackman-ca-tab` with a selected state, and `.stackman-ca-more` for
-  the full-width bar under each section — style it on `.stackman-ca-app-more` (line 5018), which
+- New `.staxx-ca-tabs` / `.staxx-ca-tab` with a selected state, and `.staxx-ca-more` for
+  the full-width bar under each section — style it on `.staxx-ca-app-more` (line 5018), which
   is already a text-button-in-a-bar.
-- The section grids reuse `.stackman-ca-cards` (line 4563) unchanged. It is
+- The section grids reuse `.staxx-ca-cards` (line 4563) unchanged. It is
   `repeat(auto-fill, minmax(23rem, 1fr))`, which gives three across at the dialog's normal width
   and degrades to two then one on a narrow screen — so "two rows of three" is what it renders at
   full size without a fixed three-column rule that would break when the dialog is narrow.
@@ -119,12 +119,12 @@ homepage to leave it, and changing the category is itself a search.
   `caShown` (`{spot: 6, new: 6, trend: 6}`).
 - `caHomeFetch()` — POSTs `ca-home`, handles `building` with the same 3 s self-poll `caSearch()`
   uses at 4846, then renders.
-- `caRenderHome()` — three sections, each an `<h4 class="stackman-ca-group">` heading like the
-  search view's, a `.stackman-ca-cards` grid of the first `caShown[key]` cards, and a Show-more
+- `caRenderHome()` — three sections, each an `<h4 class="staxx-ca-group">` heading like the
+  search view's, a `.staxx-ca-cards` grid of the first `caShown[key]` cards, and a Show-more
   bar when more remain. **Cards are `caCardHtml()` verbatim** — home rows carry the same global
   ordinal `i` in `data-i` and `data-add`, so the existing click, keyboard and broken-icon handlers
   (5202, 5221, 5242) work with no change at all.
-- `caCardHtml()` gains one `if`: when `app.why` is present, a `.stackman-ca-cardrec` line reading
+- `caCardHtml()` gains one `if`: when `app.why` is present, a `.staxx-ca-cardrec` line reading
   the reason and who gave it. That is the whole point of a spotlight — it says why.
 - `caShowView(view)` — sets `caView`, flips `aria-selected` on the two tabs, and calls
   `caRenderHome()` or `caRenderAll(true)`.
@@ -144,7 +144,7 @@ homepage to leave it, and changing the category is itself a search.
 ## Left out
 
 - **Any new sort control on the search results.** The three lists are a front page, not a sort
-  order; wiring "newest first" into `stackman_ca_search()` is a separate question.
+  order; wiring "newest first" into `staxx_ca_search()` is a separate question.
 - **Per-section categories** ("trending in Media"). The home lists are whole-catalogue.
 - **Remembering which view you were on** between opens. It opens on the homepage, every time.
 - Docker Hub and local-image groups on the homepage. Both are searches by definition — they have
@@ -159,8 +159,8 @@ No local runtime, so the real check is the test box.
 1. `node --check` on `stacks.js`, then `node tests/js_undeclared.js` — several new names go into
    the strict-mode IIFE, which is exactly what that second check exists to catch.
 2. `php -l` over `include/*.php` and `scripts/ca-index.php` after the deploy.
-3. **Force the rebuild and read the block**, on the server: delete `/tmp/stack.manager/ca`, trigger
-   a refresh, then a throwaway PHP script printing `stackman_ca_home()`. Expect 30 spotlight rows
+3. **Force the rebuild and read the block**, on the server: delete `/tmp/staxx/ca`, trigger
+   a refresh, then a throwaway PHP script printing `staxx_ca_home()`. Expect 30 spotlight rows
    led by the most recent recommendation, 30 recently-added led by today's date, and 30 trending
    led by roughly 60% growth. Confirm none carries `dep`.
 4. Confirm the **stale-cache path** by hand: with a v3 `index.json` in place, `ca-home` must return

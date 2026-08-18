@@ -11,11 +11,11 @@
  *
  * THIS TEST WRITES TO THE REAL CONFIG FILE. Adrian runs this on his
  * production server, so the writer tests back up
- * /boot/config/plugins/stack.manager/stack.manager.cfg before touching it and
+ * /boot/config/plugins/staxx/staxx.cfg before touching it and
  * restore it afterwards — including on a failing exit, via a shutdown
  * function, so a crash partway through cannot leave his settings changed. */
 
-require_once '/usr/local/emhttp/plugins/stack.manager/include/Settings.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
 
 $fails = 0;
 function ok(string $what, bool $pass, string $note = ''): void {
@@ -26,67 +26,67 @@ function ok(string $what, bool $pass, string $note = ''): void {
 
 /* ------------------------------------------------------------- keys ---- */
 
-$keys = stackman_settings_keys();
+$keys = staxx_settings_keys();
 ok('exactly five keys', count($keys) === 5, implode(',', array_keys($keys)));
 foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STACK_ROOT', 'ICON_FETCH', 'IMAGE_LOOKUP'] as $k) {
   ok('has '.$k, array_key_exists($k, $keys));
 }
 
-$read = stackman_settings_read();
+$read = staxx_settings_read();
 ok('read returns exactly five keys', count($read) === 5);
 foreach (array_keys($keys) as $k) ok('read has '.$k, array_key_exists($k, $read));
 
 /* --------------------------------------------------------- validator ---- */
 
-// Validated directly, with no write involved — stackman_settings_validate()
-// and stackman_settings_validate_stack_root() are pure functions.
+// Validated directly, with no write involved — staxx_settings_validate()
+// and staxx_settings_validate_stack_root() are pure functions.
 
 $err = '';
 $badRoots = ['', '..', 'relative/path', '/', '/etc', '/mnt/../etc'];
 foreach ($badRoots as $bad) {
-  $v = stackman_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], $bad, $err);
+  $v = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], $bad, $err);
   ok('rejects STACK_ROOT '.var_export($bad, true), $v === '' && $err !== '', $err);
 }
 
 $err = '';
-$v = stackman_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], '/mnt/user"quote', $err);
+$v = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], '/mnt/user"quote', $err);
 ok('rejects a STACK_ROOT containing a quote', $v === '' && $err !== '', $err);
 
 $err = '';
-$v = stackman_settings_validate('HEADER_MENU', $keys['HEADER_MENU'], 'yes', $err);
+$v = staxx_settings_validate('HEADER_MENU', $keys['HEADER_MENU'], 'yes', $err);
 ok('rejects HEADER_MENU "yes"', $v === '' && $err !== '', $err);
 
 $err = '';
-$v = stackman_settings_validate('ICON_FETCH', $keys['ICON_FETCH'], '', $err);
+$v = staxx_settings_validate('ICON_FETCH', $keys['ICON_FETCH'], '', $err);
 ok('rejects ICON_FETCH ""', $v === '' && $err !== '', $err);
 
 // A good root under /mnt/ whose parent exists — /mnt itself always does.
 $err  = '';
 $good = '/mnt/zzb1-settings-test-'.getmypid();
-$v    = stackman_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], $good, $err);
+$v    = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], $good, $err);
 ok('accepts a STACK_ROOT under /mnt/ with an existing parent', $v === $good, $err);
 
 foreach ($keys as $k => $spec) {
   if ($spec['type'] !== 'choice') continue;
   foreach ($spec['choices'] as $choice) {
     $err = '';
-    $v = stackman_settings_validate($k, $spec, $choice, $err);
+    $v = staxx_settings_validate($k, $spec, $choice, $err);
     ok('accepts '.$k.'='.$choice, $v === $choice, $err);
   }
 }
 
 /* --------------------------------------------------- writer, guarded ---- */
 
-$cfgFile = STACKMAN_CFG;
+$cfgFile = STAXX_CFG;
 $backup  = @file_get_contents($cfgFile); // false if the file does not exist yet
 $hadFile = $backup !== false;
 
-function stackman_test_restore_cfg(): void {
+function staxx_test_restore_cfg(): void {
   global $cfgFile, $backup, $hadFile;
   if ($hadFile) file_put_contents($cfgFile, $backup);
   else @unlink($cfgFile);
 }
-register_shutdown_function('stackman_test_restore_cfg');
+register_shutdown_function('staxx_test_restore_cfg');
 
 // A marker key untouched by the allowlist, so its survival proves unknown
 // keys are preserved rather than dropped.
@@ -99,7 +99,7 @@ $posted = [
   'action'     => 'settings-save', // not an allowlisted key — must be ignored, not error
   'ICON_FETCH' => 'false',
 ];
-$okSave = stackman_settings_save($posted, $err, $reload, $saved);
+$okSave = staxx_settings_save($posted, $err, $reload, $saved);
 ok('save with an unknown posted key succeeds', $okSave, $err);
 ok('unknown posted key is not in the saved map', $okSave && !array_key_exists('action', (array)$saved));
 
@@ -114,15 +114,15 @@ ok('the cfg still parses', is_array(@parse_ini_file($cfgFile)));
 // A refused value must leave the file exactly as the last good write left it.
 $before = file_get_contents($cfgFile);
 $err = ''; $reload = null; $saved = null;
-$okBad = stackman_settings_save(['HEADER_MENU' => 'yes'], $err, $reload, $saved);
+$okBad = staxx_settings_save(['HEADER_MENU' => 'yes'], $err, $reload, $saved);
 ok('save refuses an invalid choice', !$okBad, $err);
 ok('file is untouched by a refused save', file_get_contents($cfgFile) === $before);
 $tmpGlob = glob($cfgFile.'.tmp-*');
 ok('no temp file left behind after a refusal', $tmpGlob === [] || $tmpGlob === false);
 
-// Worth knowing when reading a failure here: stackman_cfg() caches the parsed
+// Worth knowing when reading a failure here: staxx_cfg() caches the parsed
 // config in a per-request static, and this whole file is one request. So the
-// "before" values stackman_settings_save() compares against are the ones that
+// "before" values staxx_settings_save() compares against are the ones that
 // were on disk when the very first read above ran, not the ones the previous
 // save just wrote. The reload checks below still hold — they turn on whether a
 // page-affecting key was submitted at all — but do not add a case here that
@@ -131,25 +131,25 @@ ok('no temp file left behind after a refusal', $tmpGlob === [] || $tmpGlob === f
 // A change to one of the three page-affecting keys must ask for a reload;
 // one that doesn't must not.
 $err = ''; $reload = null; $saved = null;
-stackman_settings_save(['ICON_FETCH' => 'true'], $err, $reload, $saved);
+staxx_settings_save(['ICON_FETCH' => 'true'], $err, $reload, $saved);
 ok('a non-page-affecting change does not ask for a reload', $reload === false, $err);
 
 // TAKEOVER_DOCKER_TAB rather than HEADER_MENU deliberately: apply_settings
 // (as it stands before Step 4) reads HEADER_MENU and would flip the marker
-// that decides where Stack Manager's own page appears, live, on the box this
+// that decides where StaXX's own page appears, live, on the box this
 // runs on. TAKEOVER_DOCKER_TAB is a no-op for apply_settings until Step 4
 // builds the shadow-page mechanism, so toggling it here has no live effect —
-// but it is still one of the three keys stackman_settings_save() treats as
+// but it is still one of the three keys staxx_settings_save() treats as
 // page-affecting, so it proves the same reload logic just as well.
 $err = ''; $reload = null; $saved = null;
 $targetTakeover = ($after['TAKEOVER_DOCKER_TAB'] ?? 'false') === 'true' ? 'false' : 'true';
-stackman_settings_save(['TAKEOVER_DOCKER_TAB' => $targetTakeover], $err, $reload, $saved);
+staxx_settings_save(['TAKEOVER_DOCKER_TAB' => $targetTakeover], $err, $reload, $saved);
 ok('changing TAKEOVER_DOCKER_TAB asks for a reload', $reload === true, $err);
 // Put it back so the restore below has less to undo, though the shutdown
 // function restores the original file regardless.
-stackman_settings_save(['TAKEOVER_DOCKER_TAB' => $after['TAKEOVER_DOCKER_TAB'] ?? 'false'], $err, $reload, $saved);
+staxx_settings_save(['TAKEOVER_DOCKER_TAB' => $after['TAKEOVER_DOCKER_TAB'] ?? 'false'], $err, $reload, $saved);
 
-stackman_test_restore_cfg();
+staxx_test_restore_cfg();
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

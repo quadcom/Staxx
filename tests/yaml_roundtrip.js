@@ -1,5 +1,5 @@
-/* Stack Manager — round-trip tests for the compose model.
- * Copyright 2026, Stack Manager contributors. GPL-2.0.
+/* StaXX — round-trip tests for the compose model.
+ * Copyright 2026, StaXX contributors. GPL-2.0.
  *
  *   node tests/yaml_roundtrip.js
  *
@@ -22,7 +22,7 @@
 var fs   = require('fs');
 var path = require('path');
 
-var Y = require('../src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js');
+var Y = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 // A photograph of the CHOICES/BOOL_CHOICES/CAP_OPTIONS data exactly as
 // stacks.js held it before PLAN_15 phase 1 moved twelve of the lists into
 // compose-model.js's VOCAB — see the file's own header comment. Never edited
@@ -180,7 +180,7 @@ FILES.forEach(function (file) {
 
   var b = all[0];
   var before = text.split('\n')[b.field.parts[b.part].spot.line];
-  Y.setPart(doc, form, b.id, b.part, 'STACKMANTESTVALUE');
+  Y.setPart(doc, form, b.id, b.part, 'STAXXTESTVALUE');
   var after = Y.serialise(doc);
 
   var moved = diffLines(text, after);
@@ -3807,7 +3807,7 @@ function decodeHl(html) {
 // The ordered {kind, text} spans in one line's html, decoded — so a test can
 // assert "there is a key span reading X" without caring what surrounds it.
 function spans(html) {
-  var re = /<span class="stackman-t--([a-z]+)">([\s\S]*?)<\/span>/g, out = [], m;
+  var re = /<span class="staxx-t--([a-z]+)">([\s\S]*?)<\/span>/g, out = [], m;
   while ((m = re.exec(html))) out.push({ kind: m[1], text: decodeEntities(m[2]) });
   return out;
 }
@@ -5828,7 +5828,7 @@ function isAllCRLF(s) {
  *
  * The requirement compose-model.js used to hardcode — image and
  * container_name are both fixedRequired — is gone. Compose itself refuses a
- * service with neither image: nor build:, and stackman_save_stack() enforces
+ * service with neither image: nor build:, and staxx_save_stack() enforces
  * that server-side; the form only explains, through f.advice, and never
  * blocks Save. Negatives first, as always: the case that started this is a
  * service that IS valid compose and must not be flagged as broken.

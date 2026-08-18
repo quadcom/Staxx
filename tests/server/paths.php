@@ -1,5 +1,5 @@
 <?php
-/* stackman_make_path() and stackman_check_paths(), checked against the real
+/* staxx_make_path() and staxx_check_paths(), checked against the real
  * installed Stacks.php.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine:
@@ -14,7 +14,7 @@
  * removes one folder under /tmp, outside /mnt, to stand in for a symlink's
  * target. */
 
-require_once '/usr/local/emhttp/plugins/stack.manager/include/Stacks.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
 $fails = 0;
 function ok(string $what, bool $pass, string $note = ''): void {
@@ -46,31 +46,31 @@ $err = '';
 
 /* ------------------------------------------------------------- never a share */
 
-ok('refuses /mnt itself',       !stackman_make_path('/mnt', $err), $err);
-ok('refuses /mnt/user',         !stackman_make_path('/mnt/user', $err), $err);
+ok('refuses /mnt itself',       !staxx_make_path('/mnt', $err), $err);
+ok('refuses /mnt/user',         !staxx_make_path('/mnt/user', $err), $err);
 ok('refuses /mnt/user/appdata even though it already exists',
-   !stackman_make_path($appdata, $err), $err);
+   !staxx_make_path($appdata, $err), $err);
 ok('and says to make the share first', stripos($err, 'share') !== false, $err);
 
 /* -------------------------------------------------------------- outside /mnt */
 
-ok('refuses /etc/passwd',  !stackman_make_path('/etc/passwd', $err), $err);
-ok('refuses a /tmp path',  !stackman_make_path('/tmp/x/y/z', $err), $err);
+ok('refuses /etc/passwd',  !staxx_make_path('/etc/passwd', $err), $err);
+ok('refuses a /tmp path',  !staxx_make_path('/tmp/x/y/z', $err), $err);
 ok('refuses a path that climbs out of /mnt via ..',
-   !stackman_make_path($appdata.'/../../../etc/x', $err), $err);
+   !staxx_make_path($appdata.'/../../../etc/x', $err), $err);
 
 /* --------------------------------------------------------- symlinked ancestor */
 
 mkdir($outside, 0755, true);
 symlink($outside, $base.'/link');
 ok('refuses through a symlink whose target is outside /mnt',
-   !stackman_make_path($base.'/link/sub', $err), $err);
+   !staxx_make_path($base.'/link/sub', $err), $err);
 ok('nothing was made at the symlink target', !is_dir($outside.'/sub'));
 
 /* --------------------------------------------------------------------- creation */
 
 ok('makes two levels under an existing folder',
-   stackman_make_path($base.'/a/b', $err), $err);
+   staxx_make_path($base.'/a/b', $err), $err);
 ok('both levels exist', is_dir($base.'/a') && is_dir($base.'/a/b'));
 
 $sa = stat($base.'/a');
@@ -81,16 +81,16 @@ ok('the second level inherits owner and mode too',
    $sb && $sb['uid'] === 99 && $sb['gid'] === 100 && ($sb['mode'] & 0777) === 0751);
 
 ok('calling it again on the same path is a no-op, not an error',
-   stackman_make_path($base.'/a/b', $err), $err);
+   staxx_make_path($base.'/a/b', $err), $err);
 
 /* ------------------------------------------------------------------ leaf is a file */
 
 file_put_contents($base.'/isafile', 'x');
 ok('refuses a leaf that already exists as a file',
-   !stackman_make_path($base.'/isafile', $err), $err);
+   !staxx_make_path($base.'/isafile', $err), $err);
 ok('and says it is a file, not a folder', strpos($err, 'not a folder') !== false, $err);
 
-/* --------------------------------------------------------- stackman_check_paths() --
+/* --------------------------------------------------------- staxx_check_paths() --
  *
  * The 'inuse' verdict — an existing, non-empty folder — only shows up when
  * the caller asks for it, which is the whole point: an existing stack's
@@ -102,16 +102,16 @@ mkdir($emptyDir, 0751, true);
 mkdir($fullDir, 0751, true);
 file_put_contents($fullDir.'/existing.conf', 'x');
 
-$r1 = stackman_check_paths([$emptyDir], '', true);
+$r1 = staxx_check_paths([$emptyDir], '', true);
 ok('empty folder is "ok" with the flag on', $r1[$emptyDir] === 'ok', $r1[$emptyDir]);
 
-$r2 = stackman_check_paths([$fullDir], '', true);
+$r2 = staxx_check_paths([$fullDir], '', true);
 ok('non-empty folder is "inuse" with the flag on', $r2[$fullDir] === 'inuse', $r2[$fullDir]);
 
-$r3 = stackman_check_paths([$fullDir], '', false);
+$r3 = staxx_check_paths([$fullDir], '', false);
 ok('the same folder is "ok" with the flag off', $r3[$fullDir] === 'ok', $r3[$fullDir]);
 
-$r4 = stackman_check_paths([$fullDir]); // default, unchanged for every existing call site
+$r4 = staxx_check_paths([$fullDir]); // default, unchanged for every existing call site
 ok('and "ok" by default with no third argument at all', $r4[$fullDir] === 'ok', $r4[$fullDir]);
 
 // missing / file / skipped are untouched by the flag either way — 'inuse'
@@ -121,7 +121,7 @@ $filePath    = $base.'/isafile-check';
 file_put_contents($filePath, 'x');
 foreach ([true, false] as $flag) {
   $note = $flag ? 'flag on' : 'flag off';
-  $r = stackman_check_paths([$missingPath, $filePath, '/etc/passwd'], '', $flag);
+  $r = staxx_check_paths([$missingPath, $filePath, '/etc/passwd'], '', $flag);
   ok("missing folder stays \"missing\" ($note)", $r[$missingPath] === 'missing', $r[$missingPath]);
   ok("a file stays \"file\" ($note)",            $r[$filePath] === 'file',       $r[$filePath]);
   ok("outside /mnt stays \"skipped\" ($note)",   $r['/etc/passwd'] === 'skipped', $r['/etc/passwd']);

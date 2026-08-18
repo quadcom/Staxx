@@ -42,7 +42,7 @@ block renders as a locked grey `<pre>` in Advanced, so the user is told a field 
 *and* cannot see the thing that makes it unnecessary.
 
 The same conversation turned up `include:`. Compose accepts an `include:`-only file (measured;
-`PLAN_20`), and `stackman_compose_meta()` runs `docker compose config`, which **expands
+`PLAN_20`), and `staxx_compose_meta()` runs `docker compose config`, which **expands
 includes — so the stacks table already lists the included services correctly.** Only the form
 is blank, because it parses the raw file text. A stack using includes is already half-working.
 
@@ -58,7 +58,7 @@ editing them later.
 
 Nothing is lost, because compose's own live check (`PLAN_20`) already reports
 `service "web" has neither an image nor a build context specified` on the genuinely broken
-case, and `stackman_save_stack()` refuses it server-side regardless. This is the layering the
+case, and `staxx_save_stack()` refuses it server-side regardless. This is the layering the
 project already committed to: **never be stricter than Docker.**
 
 In its place, two notes through the existing `f.advice` mechanism (`adviceBlock()`,

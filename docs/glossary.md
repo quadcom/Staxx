@@ -13,7 +13,7 @@ it as the installer. `jellyfin/jellyfin:10.10.3` is an image.
 **Container** — a running copy of an image, with your settings applied. The image is the installer;
 the container is the installed, running program. One image can run as many containers. A
 container's name is whatever `container_name:` says in the compose file, or one Docker makes up if
-that key is absent — an ordinary compose field, not something Stack Manager renames.
+that key is absent — an ordinary compose field, not something StaXX renames.
 
 **Compose file** — a text file listing the containers you want and how they should be set up. Its
 filename is usually `compose.yaml`. It is the standard way to describe containers, understood by
@@ -149,7 +149,7 @@ name. Unraid loads plugin folders in alphabetical order and the last one wins, s
 folder sorts later can take over a screen without modifying any Unraid file.
 
 *Why it matters here:* it is how the optional Docker tab takeover works, and it is why the plugin
-folder is named `stack.manager` — the name has to sort after `dynamix.docker.manager`.
+folder is named `staxx` — the name has to sort after `dynamix.docker.manager`.
 
 **DOM injection** — reaching into a page that another program built and inserting your own bits into
 it. It works, but it breaks every time the other program changes its page.

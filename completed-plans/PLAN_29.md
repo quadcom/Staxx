@@ -41,7 +41,7 @@ That makes this a text-and-annotation change. **The existing `blocked` flag is n
 `refreshRanges()` (`stacks.js:2844-2848`).
 
 Everything below is in
-`src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js`.
+`src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js`.
 
 ---
 
@@ -126,8 +126,8 @@ Local, before deploying:
 ```sh
 node tests/yaml_roundtrip.js
 node tests/js_undeclared.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 python tests/validate_schema.py
 ```
 

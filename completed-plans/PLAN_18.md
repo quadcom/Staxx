@@ -71,7 +71,7 @@ Reproduced on the box. This is the one you would actually hit.
 
 ### 2. Saving silently converts the whole file to LF
 
-`stackman_save_stack()` (`Stacks.php:1482`) forces `\r\n` → `\n` on the way to disk. So the first
+`staxx_save_stack()` (`Stacks.php:1482`) forces `\r\n` → `\n` on the way to disk. So the first
 save of a Windows-authored compose file rewrites **every line in it** — the exact thing rule 2 says
 is a bug rather than a trade-off.
 
@@ -84,7 +84,7 @@ happen, at the price of reformatting files that can.
 The same shape, one level worse. `loadCompanion()` sets `fileAtLoad = res.text` (with CRs) while the
 box holds the LF version, and `runFileSave()` writes whenever `body !== fileAtLoad`. It is called on
 every tab switch and on closing the editor. So **opening a Windows-format `.conf`, clicking another
-tab, and closing rewrites that file to LF without a keystroke** — and `stackman_write_file()`
+tab, and closing rewrites that file to LF without a keystroke** — and `staxx_write_file()`
 (`Stacks.php:1813`) would strip the CRs even if we sent them.
 
 ---
@@ -125,9 +125,9 @@ path that does not go through a textarea. It is not what fixes the three symptom
 
 ### C. `Stacks.php` — stop overriding the client
 
-Remove the forced normalisation in **`stackman_save_stack()`** and in **`stackman_write_file()`**,
+Remove the forced normalisation in **`staxx_save_stack()`** and in **`staxx_write_file()`**,
 each replaced by a comment saying why the file is now written exactly as sent, and why the old
-reasoning was wrong. `stackman_compose_validate()`'s normalisation at `:1292` **stays** — it writes a
+reasoning was wrong. `staxx_compose_validate()`'s normalisation at `:1292` **stays** — it writes a
 throwaway temp file for `docker compose config -q` and never touches the user's.
 
 Both functions already refuse anything outside the stack folder, over the size cap, or onto a link or
@@ -159,8 +159,8 @@ a directory, so nothing about the safety of a write changes here.
 On Windows, before any deploy:
 
 ```sh
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node tests/js_undeclared.js
 node tests/yaml_roundtrip.js        # 939 passing now, plus the new cases
 python tests/validate_schema.py

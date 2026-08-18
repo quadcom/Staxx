@@ -266,20 +266,20 @@ first, not last.
   tick, it does not stash the row.
 - **The confirm prompt goes** (`:2340-2345`). Unticking is no longer destructive, so there is nothing
   to warn about. Undo still covers a mis-click.
-- **The button and panel** replace `.stackman-groupflags` in `groupHeadHtml()` (`:1877`). The
+- **The button and panel** replace `.staxx-groupflags` in `groupHeadHtml()` (`:1877`). The
   checkbox markup is unchanged, so the existing change listener (`:2311`) keeps working behind the
   generalised resolver. **The panel is rendered by `renderForm()`, not built on click** — every tick
   reparses and rebuilds the form, so a hand-built panel (the way `devOpen()` builds the device
   picker, `:3538`) would be destroyed on the first tick and you could only ever tick one thing. Its
   open state is the one thing left in the session, keyed by service. Focus returns to the box just
   clicked. Closes on the button again, `Escape`, or a click outside.
-- **CSS:** `.stackman-sections` gains `position: relative`; the panel is absolutely positioned below
+- **CSS:** `.staxx-sections` gains `position: relative`; the panel is absolutely positioned below
   the button and floats over the rows, so ticking a box does not shift the form under the pointer.
-  It is opaque, carries a shadow, and scrolls past a maximum height. `.stackman-form` is
+  It is opaque, carries a shadow, and scrolls past a maximum height. `.staxx-form` is
   `overflow: auto` rather than `hidden`, so a panel taller than the remaining pane gains scroll
   instead of being clipped. Its `max-width` is measured against the window, not the parent — the
   parent is only as wide as the button. Narrow screens drop the button below the heading under the
-  existing `flex-wrap: wrap` rule (`stack.manager.css:4456`).
+  existing `flex-wrap: wrap` rule (`staxx.css:4456`).
 
 ### Schema — `schema/x-unraid.schema.json`, `docs/x-unraid-schema.md`
 
@@ -289,7 +289,7 @@ array instead of the object form, a number where the string belongs, an unknown 
 
 ### PHP
 
-`stackman_compose_meta()` reads `x-unraid` blocks. It must tolerate a nested `sections` map with long
+`staxx_compose_meta()` reads `x-unraid` blocks. It must tolerate a nested `sections` map with long
 string values without complaint. Checked on the server, not assumed.
 
 ---
@@ -299,8 +299,8 @@ string values without complaint. Checked on the server, not assumed.
 Local, before deploy:
 
 ```sh
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node tests/js_undeclared.js
 node tests/yaml_roundtrip.js
 python tests/validate_schema.py

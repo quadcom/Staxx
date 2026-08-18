@@ -67,7 +67,7 @@ see [Inference](#inference-when-metadata-is-absent).
 anyone's server.
 
 It does **not** describe *this server's* operational policy — autostart, start order delays, CPU
-pinning. Those live in Stack Manager's own config, because they are facts about one machine, not
+pinning. Those live in StaXX's own config, because they are facts about one machine, not
 about the app. Putting them in the compose file would make a portable artefact quietly
 machine-specific.
 
@@ -280,7 +280,7 @@ the icons of the containers inside it, shrunk and tiled together, up to four; be
 cell counts what did not fit.
 
 Downloaded icons are cached on the flash device and never fetched twice. The whole thing can be
-turned off under **Settings → Stack Manager**, in which case icons already saved keep working.
+turned off under **Settings → StaXX**, in which case icons already saved keep working.
 
 ---
 
@@ -381,7 +381,7 @@ parser will not touch — is shown read-only with the reason on it, rather than 
 ### Reading rules
 
 1. **Unknown keys in an `x-unraid` block are ignored.** A file written for a later version still
-   renders on an older Stack Manager, minus the parts it does not understand.
+   renders on an older StaXX, minus the parts it does not understand.
 2. **A higher major `version` degrades, it does not fail.** If `version` is higher than the
    implementation knows, it falls back to working everything out from the file and says why, rather
    than reading metadata under rules it may have misunderstood.

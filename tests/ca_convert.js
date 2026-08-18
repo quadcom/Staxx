@@ -1,5 +1,5 @@
-/* Stack Manager — tests for the Community Applications template converter.
- * Copyright 2026, Stack Manager contributors. GPL-2.0.
+/* StaXX — tests for the Community Applications template converter.
+ * Copyright 2026, StaXX contributors. GPL-2.0.
  *
  *   node tests/ca_convert.js
  *
@@ -20,8 +20,8 @@
 var fs = require('fs');
 var path = require('path');
 
-var CA = require('../src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/ca-convert.js');
-var Y  = require('../src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js');
+var CA = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/ca-convert.js');
+var Y  = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 
 var pass = 0, fail = 0;
 
@@ -298,7 +298,7 @@ console.log('\nB. Name normalisation');
 var VALID_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 FIXTURES.forEach(function (pair) {
   var r = CA.convert(pair[1]);
-  ok(pair[0] + ': name matches stackman_valid_name()', VALID_NAME.test(r.name), r.name);
+  ok(pair[0] + ': name matches staxx_valid_name()', VALID_NAME.test(r.name), r.name);
   ok(pair[0] + ': name is 63 characters or fewer', r.name.length <= 63);
   ok(pair[0] + ': name has no ".."', r.name.indexOf('..') === -1);
   ok(pair[0] + ': service key equals the name', r.service === r.name);

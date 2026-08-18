@@ -2,7 +2,7 @@
 #
 # This is an ordinary compose file. Everything under x-unraid is ignored by
 # Compose, so `docker compose up` runs it unchanged on any machine, with or
-# without Stack Manager. Delete every x-unraid block and it still works — you
+# without StaXX. Delete every x-unraid block and it still works — you
 # just get a plainer form, with the names worked out from the file.
 #
 # Note where the two kinds of information sit. x-unraid describes the stack and
