@@ -1,7 +1,11 @@
 # PLAN_36 — the 51 settings that already work but look broken
 
-**Status: DRAFT, recommended to build first. Written 2026-08-18**, split out of PLAN_34 after the
-review found it was neither part of that plan's problem nor blocked by any of it.
+**Status: APPROVED 2026-08-18, building.** Split out of PLAN_34 after the review found it was
+neither part of that plan's problem nor blocked by any of it.
+
+**Scoped down after pinning the work to real lines** — see "What pinning it down changed" below.
+Three of the five items dissolved on contact with the code. What is left is smaller, verified, and
+still the best-value change available.
 
 ## What you would notice
 
@@ -12,7 +16,8 @@ knocked out. Meanwhile the little information bubble beside that very row shows 
 a full plain-English explanation, because help text was written for all ninety compose settings a
 long time ago.
 
-The label lookup just never asks that table. **One line fixes the name on all 51 rows at once.**
+The label lookup just never asks that table. **One line fixes the name on 42 of those rows at
+once** — the other 9 already read correctly by accident.
 
 ## Why this is its own plan
 
@@ -20,7 +25,8 @@ PLAN_34 buried this at the bottom as "phase 5 — the read-only 18 get proper la
 writing job. Three things were wrong with that:
 
 - It is not a writing job. The words already exist, in the project's own voice.
-- It is not 18 rows, it is 51 — every uncovered setting, not just the uneditable ones.
+- It is not 18 rows, it is 42 — every uncovered setting whose written name differs from the
+  mechanical one, not just the uneditable ones.
 - Put last, it means every earlier phase ships next to mangled labels for no reason.
 
 It also depends on nothing and blocks nothing. It is a day.
@@ -35,68 +41,100 @@ and writing them already works.
 
 So the real deficit is narrower and cheaper than it looked:
 
-1. **No proper name** — all 51. One lookup fix.
-2. **Cannot be added when the file lacks them** — all 51. Needs a table entry each.
-3. **No dropdown where the value is one of a known few** — and four of these already have their
-   vocabularies written and sitting unused, with a comment in the source saying so.
+1. **No proper name** — 42 of them. One lookup fix.
+2. **No dropdown where the value is one of a known few** — six already have their vocabularies
+   written and sitting unused, with a comment in the source saying so.
+3. **Cannot be added when the file lacks them.** Real, but *not* fixable with a table entry — see
+   below. It belongs to PLAN_34.
+
+## What pinning it down changed
+
+Measured against the code rather than described from it, three items went away and the numbers got
+sharper.
+
+- **The label fix is real, and it improves 42 rows, not 51.** All 51 uncovered keys do have a
+  written title and explanation — `DESCRIPTIONS.service` holds 90 entries and covers every one. But
+  for 9 of them the written title and the mechanical humanising already read identically
+  (`Isolation`, `Runtime`, `Attach`, `Platform`, `Scale`, `Links`, `Extends`, `Annotations`,
+  `Provider`), so the fix is a no-op there. The other 42 go from `Mac Address` to `MAC address`,
+  `Cpus` to `CPU limit`, `Oom Kill Disable` to `Disable OOM kill`, `Sysctls` to `Kernel settings`.
+- **The twenty-eight table entries are not needed.** A service key the vocabulary table says nothing
+  about is handed to the same function a known scalar is: an unknown *scalar* already becomes an
+  ordinary editable Advanced row, and its type is already inferred from its value. So for a plain
+  scalar a table entry changes nothing that the label fix does not already fix.
+- **A table entry does not make a setting addable, either.** There is no add-a-plain-setting
+  affordance anywhere in the form — every Add button belongs to a list, a pair group or a
+  declaration. Adding a scalar the file lacks is *not possible today at all*, and making it possible
+  is PLAN_34's single-setting-sections item. The v1 claim that a table entry buys addability was
+  wrong.
+- **`sysctls` and the eight list-shaped keys move to PLAN_34** for the same reason. `sysctls` is
+  `=`-separated pairs, but the pairs harvester routes to either the Variables or the Labels binder,
+  so giving `sysctls` that shape would file it under **Labels** — wrong, and confusing. A home of
+  its own is a group, a section, a caption and an Add binder: the one-key-sections work, not a
+  one-liner. Same for `dns_search`, `dns_opt`, `security_opt`, `group_add`,
+  `device_cgroup_rules`, `links`, `external_links` and `volumes_from`.
+- **The CPU-pair swap dissolves.** It only mattered while this plan was building controls for
+  scalars. It is not, so there is nothing to swap. The correction still stands and belongs in
+  PLAN_34: `cpu_count`/`cpu_percent` are Windows-only, `cpu_period`/`cpu_quota` are what throttles a
+  container on Linux.
+- **Six dropdowns already exist, not four**, and the source says so in a comment: `uts`, `cgroup`,
+  `userns_mode`, `isolation`, `attach` and `oom_kill_disable` all have a vocabulary the *editor*
+  reaches and the *form* does not. Two of them are booleans and need a different fix from the other
+  four.
 
 ## The work
 
-### 1. The label lookup (one line, all 51 rows)
+### 1. A test fixture, first
 
-Make the row-title lookup consult the ninety-key help table for a key it does not otherwise know,
-instead of falling through to the mechanical humaniser. Check whether the same fall-through affects
-dotted keys (`deploy.resources.limits.cpus`) — if it does, that is more rows again for free.
+No compose file in the corpus carries any of these keys at service level, so everything here would
+otherwise ship blind. Add `scratch/test-stacks/17-uncovered-keys/`, matching the numbered corpus
+convention. Note that folder is deliberately not committed — the round-trip suite already reads it
+that way — so the **assertions themselves use an inline compose string**, the pattern the suite
+already uses for exactly this reason. The fixture is for looking at in the browser.
 
-### 2. About twenty-eight table entries
+### 2. The label fix — 42 rows
 
-One line each in the form's vocabulary table, giving a plain scalar key a title, a type and a home.
-Read and write already work; this is what makes them *addable* and gives them a sensible group.
-Triage by the **shape of the value**, not by a guess about editability:
+In `inferTitle()` (`compose-model.js`), the final fall-through humanises the raw key. Before it,
+consult the same description table the ⓘ bubble beside that row already uses, so the label agrees
+with its own help:
 
-- **Plain scalar** — one line each. This is most of them.
-- **Plain list of strings** — one line plus a home. `dns_search`, `dns_opt`, `security_opt`,
-  `group_add`, `device_cgroup_rules`, `volumes_from`, `links`, `external_links`.
-- **`=`-separated pairs** — reuses the Variables/Labels shape as-is: `sysctls`, `annotations`.
-- **Everything else** — out of scope here. See "Not in this plan".
+```js
+    if (t.binder === 'setting') {
+      var si = keyInfo(t.target, 'service');
+      if (si) return si.title;
+    }
+    return humanise(t.target);
+```
 
-### 3. Switch on the dropdowns that are already written
+Gated on `binder === 'setting'` deliberately: a list entry's target is its own *value*, and a value
+that happened to match a compose key name would otherwise be titled as that key. The dotted branch
+above already does the same lookup through `dottedBucket()`, so this is that pattern extended to
+undotted keys rather than a new mechanism.
 
-`cgroup`, `isolation`, `userns_mode`, `uts` and `attach` have finished vocabularies in the code that
-nothing currently reaches. Wire them up. PLAN_34 had all five in a "stays read-only forever" bucket,
-which would have left finished code dead.
+### 3. Four form dropdowns
 
-### 4. Two corrections to fold in while here
+`cgroup`, `isolation`, `userns_mode` and `uts` have closed vocabularies in the model already. The
+form picks a dropdown by looking up `CHOICES[binder + '/' + target]`, so this is four entries in
+that table naming the existing vocabulary — **no vocabulary table entry needed**, and nothing in the
+model changes.
 
-- **`sysctls` is missing from PLAN_34's triage table entirely** — the table listed 50 keys, not 51.
-  It matters more than most: StaXX's own template converter *writes* `sysctls` into files, as a
-  list, so a Community Applications app carrying one produces a file with a row the form refuses to
-  touch. Worst of both worlds.
-- **`cpu_count`/`cpu_percent` and `cpu_period`/`cpu_quota` were the wrong way round.** The repo's own
-  help text says the first pair is Windows containers only; the second pair is the Linux scheduling
-  knobs that actually throttle a container on Unraid. Build the second pair, not the first.
+### 4. Two booleans
 
-## Not in this plan
+`oom_kill_disable` and `attach` are booleans, and a boolean box is chosen from the field's *type*,
+which for an unknown key is guessed from its value. That works while the value is `true` or `false`
+and fails for `yes`/`no`. Give both a vocabulary entry carrying `type: 'boolean'` — which also stops
+the value being written back quoted.
 
-Structured shapes have **no writer in this codebase at any depth** — a list of maps cannot be
-produced at all. So `blkio_config`, `ulimits`, `post_start`, `pre_stop`, `credential_spec`,
-`develop` and `gpus` beyond its simple `all` form stay as they are. Each is its own project.
-`extends` and `volumes_from` stay read-only for a different reason: editing them restructures the
-file in ways a form cannot safely undo.
-
-`extra_hosts` is deliberately excluded too, and PLAN_34 had it priced as a cheap reuse. It is not:
-it has **three** forms (a list of `host:ip` strings, a map, and a map of host to a *list* of IPs),
-and the pairs shape that superficially fits splits on `=`, so it would read `somehost:10.0.0.1` as
-one name with no value. Price it separately or defer it.
-
-## Before any of it: a test fixture
-
-**Not one of the 51 keys appears at service level anywhere in the test corpus.** Every change here
-ships blind without one. Add a fixture stack carrying them first — it is cheap, and it is also what
-PLAN_34 will need later.
+**Deliberately no `title` in either entry.** The title now comes from the description table, and
+duplicating it would create a second source of truth for the same words.
 
 ## Checks
 
-The usual list, plus: open the fixture and confirm every row reads with its proper name and its
-help bubble; add a setting from each of the three shapes and confirm the file round-trips
-byte-identically apart from the added line.
+The usual list from CLAUDE.md, plus:
+
+- The new inline assertions: every one of the 42 keys whose label changes reports its written title,
+  and the 9 that already read correctly are unchanged.
+- A round-trip over the fixture is byte-identical — nothing here should rewrite a file at all.
+- On the server, in the browser: open the fixture and confirm the rows read with their proper names,
+  that the four dropdowns offer their values, and that the two booleans offer yes/no rather than a
+  text box.

@@ -627,7 +627,15 @@
     read_only:      { shape: 'scalar', type: 'boolean', title: 'Read-only filesystem' },
     init:           { shape: 'scalar', type: 'boolean' },
     tty:            { shape: 'scalar', type: 'boolean' },
-    stdin_open:     { shape: 'scalar', type: 'boolean', title: 'Keep input open' }
+    stdin_open:     { shape: 'scalar', type: 'boolean', title: 'Keep input open' },
+    // Explicit type, no title, for these two and none of the other ~49
+    // uncovered keys: an unknown key's type is guessed from its value, which
+    // works for true/false and fails for yes/no — the explicit type is also
+    // what stops the value being written back quoted. The title comes from
+    // DESCRIPTIONS via inferTitle() now, so giving one here would be a
+    // second source of truth for the same words.
+    oom_kill_disable: { shape: 'scalar', type: 'boolean' },
+    attach:           { shape: 'scalar', type: 'boolean' }
   };
 
   // TOP_SPEC_KEYS / SERVICE_SPEC_KEYS — the valid keys the COMPOSE
@@ -1930,6 +1938,19 @@
       if (info) return info.title;
       var segs = t.target.split('.');
       return humanise(segs[segs.length - 1]);
+    }
+    // An undotted setting with no KEYS title still has a written name in
+    // DESCRIPTIONS — the same table the ⓘ bubble beside this row reads from
+    // — so the label agrees with its own help instead of showing the
+    // mechanically humanised key. Extends the dotted branch above, which
+    // already does this same lookup via dottedBucket(); this is that pattern
+    // for undotted keys, not a new mechanism. Gated on binder === 'setting'
+    // because a list entry's target is its own value, and a value that
+    // happened to match a compose key name would otherwise be titled as
+    // that key.
+    if (t.binder === 'setting') {
+      var si = keyInfo(t.target, 'service');
+      if (si) return si.title;
     }
     return humanise(t.target);
   }

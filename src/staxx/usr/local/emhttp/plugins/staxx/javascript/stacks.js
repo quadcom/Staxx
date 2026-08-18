@@ -1188,6 +1188,27 @@
       hint: 'which process namespace the container joins',
       vocab: 'pid'
     },
+    // These four vocabularies already existed, for the editor's own
+    // autocomplete — see compose-model.js's VOCAB_AT comment noting they
+    // were reached "through SERVICE_SPEC_KEYS, not KEYS", meaning no form
+    // control used them. These entries are what closes that gap and gives
+    // the form the same dropdown.
+    'setting/cgroup': {
+      hint: 'which cgroup namespace the container uses',
+      vocab: 'cgroup'
+    },
+    'setting/isolation': {
+      hint: 'which isolation technology the container uses',
+      vocab: 'isolation'
+    },
+    'setting/userns_mode': {
+      hint: 'whose user ID range the container uses',
+      vocab: 'usernsmode'
+    },
+    'setting/uts': {
+      hint: 'whose hostname and domain name the container uses',
+      vocab: 'uts'
+    },
     'setting/logging.driver': {
       hint: 'where this container’s logs are sent',
       vocab: 'logdriver'

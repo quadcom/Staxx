@@ -7061,6 +7061,110 @@ console.log('\nZ. A stashed section reads as hidden, not shown, so ticking it ba
      firstDiff(src, Y.serialise(doc)));
 })();
 
+/* =========================================================================
+ * AA. Uncovered service-level keys carry their written title (PLAN_36)
+ *
+ * DESCRIPTIONS.service already has a proper written name for every one of
+ * the compose spec's service-level keys — it is what the (i) help bubble
+ * beside a row reads from. Until now the label on that same row came from
+ * mechanically humanising the raw key instead, so it disagreed with its own
+ * help ("Mac Address" beside help text that says "MAC address"). This is
+ * built as an inline document, not read from
+ * scratch/test-stacks/17-uncovered-keys/, because that folder is gitignored
+ * — the same reason section L's fixture is copied out verbatim rather than
+ * read from disk.
+ * ========================================================================= */
+
+console.log('\nAA. Uncovered service-level keys carry their written title (PLAN_36)');
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    mac_address: "02:42:ac:11:00:02"',
+    "    cpus: '1.5'",
+    '    oom_kill_disable: true',
+    '    sysctls:',
+    '      net.core.somaxconn: "1024"',
+    '    dns_search:',
+    '      - example.com',
+    '    memswap_limit: 512M',
+    '    ulimits:',
+    '      nofile: 1024',
+    '    isolation: default',
+    '    runtime: runc',
+    '    attach: false',
+    '    platform: linux/amd64',
+    '    scale: 1',
+    '    links:',
+    '      - b',
+    '    extends:',
+    '      service: b',
+    '    annotations:',
+    '      com.example.note: hi',
+    '    provider:',
+    '      type: foo',
+    // Profile names are arbitrary strings, so this is still a legal file —
+    // "gpus" is chosen because it happens to spell another compose key whose
+    // written title is a jarring acronym, the sharpest case for AA3 below.
+    '    profiles:',
+    '      - gpus',
+    '  b:',
+    '    image: alpine',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  function title(id) { var f = Y.fieldById(form, id); return f && f.title; }
+
+  // AA1. Each of these went from a mechanically humanised label to the
+  // written one in DESCRIPTIONS.service — checked against the table itself
+  // rather than taken on trust from the plan.
+  ok("mac_address titles as 'MAC address'",
+     title('a/setting/mac_address') === 'MAC address', title('a/setting/mac_address'));
+  ok("cpus titles as 'CPU limit'",
+     title('a/setting/cpus') === 'CPU limit', title('a/setting/cpus'));
+  ok("oom_kill_disable titles as 'Disable OOM kill'",
+     title('a/setting/oom_kill_disable') === 'Disable OOM kill', title('a/setting/oom_kill_disable'));
+  ok("sysctls titles as 'Kernel settings'",
+     title('a/setting/sysctls') === 'Kernel settings', title('a/setting/sysctls'));
+  ok("dns_search titles as 'DNS search domains'",
+     title('a/setting/dns_search') === 'DNS search domains', title('a/setting/dns_search'));
+  ok("memswap_limit titles as 'Memory + swap limit'",
+     title('a/setting/memswap_limit') === 'Memory + swap limit', title('a/setting/memswap_limit'));
+  // The bucket-bleed case: ulimits also exists under build:, titled 'Build
+  // ulimits' there. A service-level ulimits has to read the service
+  // bucket's 'Resource ulimits', not fall through to the build one.
+  ok("ulimits titles as 'Resource ulimits', not the build bucket's title",
+     title('a/setting/ulimits') === 'Resource ulimits', title('a/setting/ulimits'));
+
+  // AA2. The nine keys whose written title already reads identically to the
+  // humanised key — asserted so a future change to either side cannot drift
+  // one away from the other without this section noticing.
+  ok("isolation still titles as 'Isolation'", title('a/setting/isolation') === 'Isolation');
+  ok("runtime still titles as 'Runtime'", title('a/setting/runtime') === 'Runtime');
+  ok("attach still titles as 'Attach'", title('a/setting/attach') === 'Attach');
+  ok("platform still titles as 'Platform'", title('a/setting/platform') === 'Platform');
+  ok("scale still titles as 'Scale'", title('a/setting/scale') === 'Scale');
+  ok("links still titles as 'Links'", title('a/setting/links') === 'Links');
+  ok("extends still titles as 'Extends'", title('a/setting/extends') === 'Extends');
+  ok("annotations still titles as 'Annotations'", title('a/setting/annotations') === 'Annotations');
+  ok("provider still titles as 'Provider'", title('a/setting/provider') === 'Provider');
+
+  // AA3. The trap the fix is gated against: a list entry's target is its own
+  // VALUE, not a setting name, so an entry that happens to spell a compose
+  // key ("gpus", inside profiles: here) must not be titled as that key.
+  var gpuEntry = title('a/list.profiles#0/gpus');
+  ok("a profile entry named 'gpus' titles as the humanised value, not the GPUs setting",
+     gpuEntry === 'Gpus' && gpuEntry !== 'GPUs', gpuEntry);
+
+  // AA4. Reading titles for a form is not an edit — the document must still
+  // round-trip byte-identical.
+  ok('the inline document round-trips untouched with no edit applied',
+     Y.serialise(Y.parse(src)) === src, firstDiff(src, Y.serialise(Y.parse(src))));
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
