@@ -4,8 +4,9 @@
 v2 by three adversarial reviews; **this one by measurement on the server**, plus Adrian's four
 decisions. Two of v2's headline claims did not survive contact with the real box.
 
-**Phases 0 and 1 have shipped** — see `completed-plans/PLAN_37.md` and `PLAN_38.md`. Phase 2 is
-next. The phase list near the foot of this document carries the current state of each.
+**Phases 0 to 3 have shipped** — see `completed-plans/PLAN_37.md`, `PLAN_38.md`, `PLAN_41.md` and
+`PLAN_42.md`. Only Compose Manager (phase 4) is left, and it has no sub-plan yet. The phase list near
+the foot of this document carries the current state of each.
 
 ## What you would notice
 
@@ -509,14 +510,17 @@ it needs nothing from anyone, and it is how everything else gets tested. Two thi
 before a byte is written — what the converter would produce for all 85 templates, and which Compose
 Manager projects resolve through `indirect`, through a label, or not at all.
 
-**2. Unraid templates — NEXT.** Written in the background, arriving as needs-review. Normalisation
-first, then provenance, category splitting, the `.xml` filter and the malformed-path check.
+**2. Unraid templates — SHIPPED, `completed-plans/PLAN_41.md`.** Written in the background, arriving
+as needs-review. Normalisation first, then provenance, category splitting, the `.xml` filter and the
+malformed-path check.
 
-**3. The switch-over** — the two modals, the guarded raw-docker job behind them, and the collision
-check that feeds the first one. This is what was phases 3 and 5 in earlier drafts; Adrian's flow
-makes reviewing and taking over one act, so they are one phase.
+**3. The switch-over — SHIPPED, `completed-plans/PLAN_42.md`.** The two modals, the guarded
+raw-docker job behind them, and the collision check that feeds the first one. This is what was phases
+3 and 5 in earlier drafts; Adrian's flow makes reviewing and taking over one act, so they are one
+phase. Built with phase 2 as a single piece of work, because either half alone leaves stacks that
+cannot start.
 
-**4a. Compose Manager, projects with no override.**
+**4a. Compose Manager, projects with no override — NEXT.** No sub-plan written yet.
 
 **4b. Compose Manager, projects with an override** — blocked on multi-file support in the job runner,
 the metadata reader and the validator. Split this way so the missing capability is visible rather

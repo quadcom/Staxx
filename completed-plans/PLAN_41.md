@@ -1,6 +1,6 @@
 # PLAN_41 — phase 2 of the importer: writing Unraid templates in
 
-**Status: DRAFT, awaiting Adrian.** Sub-plan of PLAN_35, whose phase 2 this is. Phases 0
+**Status: BUILT 2026-08-19**, shipped in one commit with `PLAN_42.md`. Sub-plan of PLAN_35, whose phase 2 this is. Phases 0
 (`completed-plans/PLAN_37.md`, the review lock) and 1 (`PLAN_38.md`, the list) have shipped and this
 builds directly on both.
 

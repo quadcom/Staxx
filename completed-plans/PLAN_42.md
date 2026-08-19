@@ -1,6 +1,6 @@
 # PLAN_42 — phase 3 of the importer: the handover
 
-**Status: DRAFT, awaiting Adrian.** Sub-plan of PLAN_35, whose phase 3 this is. Adrian chose on
+**Status: BUILT 2026-08-19**, shipped in one commit with `PLAN_41.md`. Sub-plan of PLAN_35, whose phase 3 this is. Adrian chose on
 2026-08-18 to build this together with PLAN_41 (phase 2, the writing), so that an import works from
 end to end rather than producing stacks that cannot start. Read PLAN_41 first; this takes over where
 it stops.
