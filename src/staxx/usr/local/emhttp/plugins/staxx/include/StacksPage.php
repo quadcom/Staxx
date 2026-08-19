@@ -19,11 +19,15 @@
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Folders.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Autostart.php';
 
 $compose       = staxx_compose();
 $dockerRunning = staxx_docker_running();
 $projects      = staxx_containers_by_project();
 $stacks        = staxx_list_stacks();
+// Reconcile with Unraid's boot list before the layout is worked out, since
+// adopting a change made on its own Docker page can reorder what follows.
+staxx_autostart_sync($stacks);
 $rows          = staxx_folder_layout($stacks);
 $folders       = staxx_folder_names();
 $root          = staxx_stack_root();

@@ -44,6 +44,7 @@ register_shutdown_function(function () {
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Folders.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Autostart.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Stats.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Devices.php';
@@ -328,6 +329,10 @@ switch ($action) {
 
   case 'rows':
     $stacks = staxx_list_stacks();
+    // Reconcile with Unraid's boot list before drawing anything, so a switch
+    // flipped on its own Docker page shows up here rather than being quietly
+    // overwritten the next time something is dragged.
+    staxx_autostart_sync($stacks);
     staxx_reply([
       'ok'      => true,
       'html'    => staxx_render_rows(staxx_folder_layout($stacks), staxx_can_run()),
@@ -774,6 +779,49 @@ switch ($action) {
   case 'folder-collapse':
     if (!staxx_folder_collapse((string)($_POST['folder'] ?? ''),
                                   ($_POST['collapsed'] ?? '') === '1', $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
+
+  /* -------------------------------------------------- boot order and start --
+   *
+   * The order is one thing, saved here; what actually starts at boot is
+   * another, and lives only in Unraid's own list. See Autostart.php.
+   */
+
+  // One sibling group's order after a drag, posted whole rather than as a
+  // move: the browser already knows the finished order, and a whole list
+  // cannot land half-applied the way "move item 3 to position 5" can.
+  case 'start-order':
+    $names = array_values(array_filter(
+      array_map('trim', explode(';', (string)($_POST['names'] ?? ''))),
+      fn($n) => $n !== ''
+    ));
+    if (!staxx_start_order_set((string)($_POST['scope'] ?? ''),
+                               (string)($_POST['parent'] ?? ''), $names, $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    // The stored order is only half the job — Unraid boots from its own file,
+    // so that has to follow. A refusal here still leaves the order saved,
+    // which is why the reply says what happened rather than failing outright.
+    $projected = staxx_autostart_project(staxx_list_stacks(), $error);
+    staxx_reply(['ok' => true, 'boot' => $projected, 'error' => $projected ? '' : $error]);
+
+  // Start at boot, for a whole stack ('' service) or one service of it.
+  case 'autostart':
+    if (!staxx_autostart_set(staxx_list_stacks(), $name,
+                             (string)($_POST['service'] ?? ''),
+                             ($_POST['on'] ?? '') === '1', $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
+
+  // How long to wait after a folder, a stack or one service before the next
+  // thing starts.
+  case 'autostart-wait':
+    if (!staxx_autostart_wait(staxx_list_stacks(), (string)($_POST['scope'] ?? ''),
+                              (string)($_POST['key'] ?? ''),
+                              (int)($_POST['wait'] ?? 0), $error)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
     staxx_reply(['ok' => true]);
