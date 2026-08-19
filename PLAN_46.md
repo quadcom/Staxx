@@ -276,7 +276,22 @@ Three things this plan had wrong, found by running it against the real projects:
 Still to prove in a browser: ticking a project, the fixed destination name, and the preview's
 account of what will and will not be copied.
 
-**4. The takeover.** Part D — the one button, its warning, and clearing the note on success.
+**4. The takeover. — BUILT 2026-08-19, deployed.** Part D, as designed: one bring-up, no renames, no
+undo state, no follow-up question, and the review lock still the only door in. Which of the two acts
+a stack gets is decided by the server, and a project match wins over a pinned container name — the
+four projects that name their own containers would otherwise hit the handover's refusal, when compose
+will simply reuse those very containers. That refusal was not loosened.
+
+Two doors the design had left open: a takeover cannot start while a handover is waiting on an answer,
+and the running check no longer assumes how Docker capitalises a state.
+
+Proved on the server by refusals only — the one thing this does when it is *not* refused is rebuild
+containers that are really running, which no test may do here. Of the six importable projects, four
+take the rebuild route and two — never brought up, so nothing exists to rebuild — take the plain
+"clear the lock and start it yourself" route.
+
+**Still to prove in a browser, and it is the last real risk in this plan:** one actual takeover, on
+one project, watched. Everything up to the bring-up is proved; the bring-up itself is not.
 
 **5. The loose ends PLAN_35 flags.** The self-test's project count learning to say how many resolve
 and how many do not; the plain-English docs finally mentioning imports at all; and a row that says
