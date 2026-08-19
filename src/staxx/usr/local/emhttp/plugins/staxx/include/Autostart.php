@@ -594,17 +594,39 @@ function staxx_autostart_adopt(array $stacks, array $start, array $read): void {
     $lastLineIdx[$rel.'/'.$svc] = $i; // last write wins — walking in order
   }
 
+  // Each stored list is completed with everything else in its group before the
+  // merge, and the reason is the very first run: the stored lists are empty
+  // then, so a merge into them would come back holding only the things that
+  // start at boot — and staxx_start_sort() puts what it is given first, which
+  // would shove every stack that does not start at boot to the bottom of its
+  // folder the moment the page was opened. Merging into the complete group
+  // instead reorders only the lines the file actually spoke about and leaves
+  // everything else exactly where it already sat.
+  $completed = function (array $stored, array $all): array {
+    foreach ($all as $name) if (!in_array($name, $stored, true)) $stored[] = $name;
+    return $stored;
+  };
+
+  $leavesByFolder = [];
+  $servicesByRel  = [];
+  foreach ($stacks as $s) {
+    $leavesByFolder[$s['folder'] ?? ''][] = $s['leaf'] ?? staxx_path_leaf($s['name']);
+    $servicesByRel[$s['name']] = $s['services'];
+  }
+
   $start['folders'] = staxx_autostart_merge_order(
-    (array)($start['folders'] ?? []), array_keys($folderSeen)
+    $completed((array)($start['folders'] ?? []), staxx_folder_names()), array_keys($folderSeen)
   );
   foreach ($stackSeen as $folder => $leaves) {
     $start['stacks'][$folder] = staxx_autostart_merge_order(
-      (array)($start['stacks'][$folder] ?? []), array_keys($leaves)
+      $completed((array)($start['stacks'][$folder] ?? []), $leavesByFolder[$folder] ?? []),
+      array_keys($leaves)
     );
   }
   foreach ($serviceSeen as $rel => $svcs) {
     $start['services'][$rel] = staxx_autostart_merge_order(
-      (array)($start['services'][$rel] ?? []), array_keys($svcs)
+      $completed((array)($start['services'][$rel] ?? []), $servicesByRel[$rel] ?? []),
+      array_keys($svcs)
     );
   }
 

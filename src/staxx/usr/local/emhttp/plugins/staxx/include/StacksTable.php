@@ -26,6 +26,7 @@
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Folders.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Autostart.php';
 
 // NO "already loaded?" guard here, deliberately.
 //
@@ -470,6 +471,73 @@ function staxx_icon_wanted(): array {
 }
 
 /**
+ * The drag grip drawn on every folder, stack and container row (PLAN_43).
+ *
+ * Always drawn, disabled with a reason when dragging cannot mean anything
+ * here — the same doctrine staxx_row_actions_html() already argues for the
+ * webui/logs pair: omitting it on some rows pulls the name column out of
+ * alignment.
+ *
+ * @param string $kind  'folder', 'stack' or 'service' — matches data-row-grip
+ * @param string $label what the aria-label says this grip moves
+ */
+function staxx_grip_html(string $kind, string $label, bool $disabled, string $disabledWhy): string {
+  $title = $disabled ? $disabledWhy : _('Drag to reorder, or use the up and down arrow keys');
+  $cls   = 'staxx-grip'.($disabled ? ' staxx-grip--off' : '');
+  return '<button type="button" class="'.$cls.'" data-row-grip="'.htmlspecialchars($kind).'"'
+       . ($disabled ? ' disabled' : '')
+       . ' title="'.htmlspecialchars($title).'"'
+       . ' aria-label="'.htmlspecialchars(sprintf(_('Reorder %s'), $label)).'">'
+       . '<i class="fa fa-bars"></i></button>';
+}
+
+/**
+ * The sentence a boot marker's title carries — one thing said plainly rather
+ * than a code the reader has to look up, since this is the only place that
+ * says whether a row starts at boot at all.
+ *
+ * @param string $mode        'all'/'on', 'some', or 'none'/'off'
+ * @param string $groupNoun   what "some of its ___ start at boot" fills in —
+ *                             'stacks' for a folder, 'services' for a stack;
+ *                             unused (and left '') for a single container.
+ */
+function staxx_boot_title(string $mode, int $wait, bool $interleaved, string $groupNoun): string {
+  if ($mode === 'all' || $mode === 'on') {
+    $text = $wait > 0
+      ? sprintf(_('Starts at boot, then waits %d seconds before the next one starts.'), $wait)
+      : _('Starts at boot.');
+  } elseif ($mode === 'some') {
+    $text = sprintf(_('Some of its %s start at boot.'), $groupNoun);
+  } else {
+    $text = _('Does not start at boot.');
+  }
+
+  if ($interleaved) {
+    // Only ever true for a stack: a flat autostart list can interleave one
+    // stack's lines with another's, which the folder/stack/service tree
+    // cannot express — see the module comment in Autostart.php.
+    $text .= ' '._("Unraid's own Docker page has this stack's containers out of one run — "
+                  . 'StaXX will gather them together the next time anything is dragged.');
+  }
+
+  return $text;
+}
+
+/**
+ * The always-rendered boot marker inside .staxx-nameinfo. Hiding it
+ * entirely for the "off" case is left to CSS, keyed off the row's own
+ * data-boot attribute — see sheets/staxx.css — because the row element is
+ * what the browser actually toggles after a drag or a switch.
+ */
+function staxx_boot_mark_html(int $wait, string $title): string {
+  $waitHtml = $wait > 0
+    ? '<span class="staxx-boot-wait">'.htmlspecialchars($wait.'s').'</span>'
+    : '';
+  return '<span class="staxx-boot" data-boot-mark title="'.htmlspecialchars($title).'">'
+       . '<i class="fa fa-bolt"></i>'.$waitHtml.'</span>';
+}
+
+/**
  * Every row of the table body, as HTML.
  *
  * Divs standing in for a table, arranged as CSS grid / subgrid so the columns
@@ -487,6 +555,19 @@ function staxx_icon_wanted(): array {
  * @param bool  $canRun whether docker and compose are both usable
  */
 function staxx_render_rows(array $rows, bool $canRun): string {
+  // Gathered once, up front, rather than per row: staxx_autostart_state()
+  // reads Unraid's own boot file and the live container labels, and $rows
+  // does not carry the stack list itself — only each stack row does.
+  $stackList   = [];
+  $groupCounts = [];   // folder (or '' for unfiled) => how many stacks sit in it
+  $folderCount = 0;
+  foreach ($rows as $r) {
+    if ($r['type'] === 'folder') { $folderCount++; continue; }
+    $stackList[] = $r['stack'];
+    $groupCounts[$r['folder']] = ($groupCounts[$r['folder']] ?? 0) + 1;
+  }
+  $autostart = staxx_autostart_state($stackList);
+
   ob_start();
 
   if (!$rows):
@@ -517,16 +598,36 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 <?
       endif;
       $inFolderGroup = true;
+
+      // A folder's own boot state is the OR of its stacks': 'on' only when
+      // every stack in it starts at boot, 'some' when any does. No
+      // interleaving concept at this level — that is a single stack's flat
+      // lines getting split apart, not something a folder can suffer.
+      $fBoot   = $autostart['available'] ? ($autostart['folders'][$row['id']] ?? ['mode' => 'none', 'wait' => 0]) : ['mode' => 'none', 'wait' => 0];
+      $fMode   = $autostart['available'] ? ($fBoot['mode'] === 'all' ? 'on' : ($fBoot['mode'] === 'some' ? 'some' : 'off')) : 'off';
+      $fWait   = (int)($fBoot['wait'] ?? 0);
+      $fTitle  = $autostart['available']
+        ? staxx_boot_title($fBoot['mode'], $fWait, false, _('stacks'))
+        : _('The boot list cannot be read while Docker is stopped.');
+      // Nothing to drag when the folder holds fewer than two stacks, or when
+      // there is only one folder to trade a place with in the first place.
+      $fGripOff = $row['count'] < 2 || $folderCount < 2;
+      $fGripWhy = $row['count'] < 2
+        ? _('This folder holds fewer than two stacks, so there is nothing to reorder.')
+        : _('There is only one folder, so there is nothing to reorder it against.');
 ?>
       <div class="staxx-group staxx-group--folder" role="presentation" data-folder-group="<?= htmlspecialchars($row['id']) ?>">
         <div class="staxx-row staxx-folder-row" role="row" aria-level="1"
              aria-expanded="<?= $row['collapsed'] ? 'false' : 'true' ?>"
-             data-folder-row="<?= htmlspecialchars($row['id']) ?>">
+             data-folder-row="<?= htmlspecialchars($row['id']) ?>"
+             data-boot="<?= $fMode ?>"
+             <?= $fWait > 0 ? 'data-boot-wait="'.$fWait.'"' : '' ?>>
           <!-- Spans the name, services, state and address columns: a folder has
                none of those of its own, only the four figures on the right. -->
           <span class="staxx-cell staxx-cell--span4" role="gridcell">
             <!-- Flex lives on a div, never on the cell itself. -->
             <div class="staxx-namebox">
+              <?= staxx_grip_html('folder', $row['name'] !== '' ? $row['name'] : _('this folder'), $fGripOff, $fGripWhy) ?>
               <button type="button" class="staxx-chevron"
                       data-toggle-folder="<?= htmlspecialchars($row['id']) ?>"
                       aria-expanded="<?= $row['collapsed'] ? 'false' : 'true' ?>"
@@ -541,6 +642,9 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                         data-menu="folder"
                         data-folder="<?= htmlspecialchars($row['id']) ?>"
                         data-label="<?= htmlspecialchars($row['name']) ?>"
+                        data-boot="<?= $fMode ?>"
+                        data-boot-wait="<?= $fWait ?>"
+                        data-boot-available="<?= $autostart['available'] ? '1' : '0' ?>"
                         title="<?= _('Folder actions') ?>">
                   <i class="fa fa-folder<?= $row['collapsed'] ? '' : '-open' ?>"></i>
                 </button>
@@ -550,6 +654,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 
               <span class="staxx-nameinfo">
                 <span class="staxx-folder-name"><?= htmlspecialchars($row['name']) ?></span>
+                <?= staxx_boot_mark_html($fWait, $fTitle) ?>
                 <span class="staxx-sub" data-cell="folder-sub"><?= staxx_folder_sub($row['count'], $row['running']) ?></span>
               </span>
             </div>
@@ -620,6 +725,18 @@ function staxx_render_rows(array $rows, bool $canRun): string {
       // container's logo rather than a generic cube.
       $expandable = count($kids) > 1;
 
+      $sBoot   = $autostart['available'] ? ($autostart['stacks'][$s['name']] ?? ['mode' => 'none', 'wait' => 0, 'interleaved' => false]) : ['mode' => 'none', 'wait' => 0, 'interleaved' => false];
+      $sMode   = $autostart['available'] ? ($sBoot['mode'] === 'all' ? 'on' : ($sBoot['mode'] === 'some' ? 'some' : 'off')) : 'off';
+      $sWait   = (int)($sBoot['wait'] ?? 0);
+      $sInterleaved = $autostart['available'] && !empty($sBoot['interleaved']);
+      $sTitle  = $autostart['available']
+        ? staxx_boot_title($sBoot['mode'], $sWait, $sInterleaved, _('services'))
+        : _('The boot list cannot be read while Docker is stopped.');
+      // Nothing to drag when this stack is the only one in its folder (or,
+      // for an unfiled stack, the only one at the top level).
+      $sGripOff = ($groupCounts[$row['folder']] ?? 0) < 2;
+      $sGripWhy = _('This stack is alone in its group, so there is nothing to reorder it against.');
+
       $expanded = $expandable && !empty($row['expanded']);
       $kidsUp   = count(array_filter($kids, fn($k) => $k['state'] === 'running'));
 
@@ -658,10 +775,14 @@ function staxx_render_rows(array $rows, bool $canRun): string {
              data-project="<?= htmlspecialchars($project) ?>"
              data-in-folder="<?= htmlspecialchars($row['folder']) ?>"
              data-expanded="<?= $expanded ? '1' : '0' ?>"
+             data-boot="<?= $sMode ?>"
+             <?= $sWait > 0 ? 'data-boot-wait="'.$sWait.'"' : '' ?>
+             <?= $sInterleaved ? 'data-interleaved="1"' : '' ?>
              <?= $row['hidden'] ? 'hidden' : '' ?>>
 
           <span class="staxx-cell staxx-cell--name staxx-stack-name" role="gridcell">
             <div class="staxx-namebox">
+              <?= staxx_grip_html('stack', $s['leaf'], $sGripOff, $sGripWhy) ?>
               <? if ($expandable): ?>
                 <button type="button" class="staxx-chevron"
                         data-toggle-stack="<?= htmlspecialchars($s['name']) ?>"
@@ -685,6 +806,10 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                         data-review="<?= $s['review'] ? '1' : '0' ?>"
                         data-handover="<?= ($s['handover'] ?? false) ? '1' : '0' ?>"
                         data-folder="<?= htmlspecialchars($row['folder']) ?>"
+                        data-boot="<?= $sMode ?>"
+                        data-boot-wait="<?= $sWait ?>"
+                        data-interleaved="<?= $sInterleaved ? '1' : '0' ?>"
+                        data-boot-available="<?= $autostart['available'] ? '1' : '0' ?>"
                         title="<?= _('Stack actions') ?>">
                   <?= $s['parses']
                         ? staxx_stack_tile($s, $kids)
@@ -723,6 +848,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                      (if it sits in one) is a different thing, carried by the
                      data attributes above rather than printed here. -->
                 <span class="staxx-name-text"><?= htmlspecialchars($s['leaf']) ?></span>
+                <?= staxx_boot_mark_html($sWait, $sTitle) ?>
                 <? if ($s['handover'] ?? false): ?>
                   <!-- A handover has switched the old container off and set it
                        aside, and this stack is running in its place — see the
@@ -827,6 +953,17 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 
       /* ---- one row per container inside this stack ---- */
       foreach ($expandable ? $kids : [] as $kid):
+        $cBoot  = $autostart['available'] ? ($autostart['services'][$s['name']][$kid['service']] ?? ['on' => false, 'wait' => 0]) : ['on' => false, 'wait' => 0];
+        $cMode  = $autostart['available'] ? ($cBoot['on'] ? 'on' : 'off') : 'off';
+        $cWait  = (int)($cBoot['wait'] ?? 0);
+        $cTitle = $autostart['available']
+          ? staxx_boot_title($cBoot['on'] ? 'all' : 'none', $cWait, false, '')
+          : _('The boot list cannot be read while Docker is stopped.');
+        // count($kids) is always > 1 here — a single-service stack is not
+        // $expandable, so its one container row is never even drawn — but the
+        // check stays honest rather than assuming the caller never changes.
+        $cGripOff = count($kids) < 2;
+        $cGripWhy = _('This is the only service here, so there is nothing to reorder it against.');
 ?>
         <!-- data-state below is read by the container menu (buildContainerMenu()
              in stacks.js) straight off the row, so it has to be right on the
@@ -835,18 +972,29 @@ function staxx_render_rows(array $rows, bool $canRun): string {
              (kid.dataset.state = c.state, or '' for a container that does not
              exist) — $kid['state'] is already '' for a service that has never
              been started, which is exactly what applyState writes for the
-             same case, so the two never disagree. -->
+             same case, so the two never disagree.
+
+             data-order-key: the row's own data-service above is $kid['key'],
+             which for a replica is "service/container-name" — not a compose
+             service name, so the drag order (which must post a real service
+             name) needs its own attribute rather than reusing that one. Same
+             trap the comment on the menu button below already describes for
+             a different attribute pair. -->
         <div class="staxx-row staxx-container-row"
              role="row" aria-level="<?= $containerLevel ?>"
              data-in-stack="<?= htmlspecialchars($s['name']) ?>"
              data-in-folder="<?= htmlspecialchars($row['folder']) ?>"
              data-service="<?= htmlspecialchars($kid['key']) ?>"
+             data-order-key="<?= htmlspecialchars($kid['service']) ?>"
              data-container="<?= htmlspecialchars($kid['name']) ?>"
              data-project="<?= htmlspecialchars($project) ?>"
-             data-state="<?= htmlspecialchars($kid['state']) ?>">
+             data-state="<?= htmlspecialchars($kid['state']) ?>"
+             data-boot="<?= $cMode ?>"
+             <?= $cWait > 0 ? 'data-boot-wait="'.$cWait.'"' : '' ?>>
 
           <span class="staxx-cell staxx-cell--name staxx-stack-name" role="gridcell">
             <div class="staxx-namebox staxx-namebox--child">
+              <?= staxx_grip_html('service', $kid['service'] !== '' ? $kid['service'] : $kid['name'], $cGripOff, $cGripWhy) ?>
               <span class="staxx-iconwrap">
                 <!-- A real button now, not a dead <span> — this is the menu
                      trigger for a single container, mirroring the stack row's
@@ -879,6 +1027,9 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                             ? $kid['service'].' · '.$kid['name']
                             : $kid['service']
                         ) ?>"
+                        data-boot="<?= $cMode ?>"
+                        data-boot-wait="<?= $cWait ?>"
+                        data-boot-available="<?= $autostart['available'] ? '1' : '0' ?>"
                         title="<?= _('Container actions') ?>">
                   <?= staxx_icon_tile(
                         staxx_icon_resolve($kid['icon'], $s['dir'], $kid['image'],
@@ -905,6 +1056,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 
               <span class="staxx-nameinfo">
                 <span class="staxx-name-text"><?= htmlspecialchars($kid['service']) ?></span>
+                <?= staxx_boot_mark_html($cWait, $cTitle) ?>
                 <? if ($kid['name'] !== '' && $kid['name'] !== $kid['service']): ?>
                   <span class="staxx-sub"><?= htmlspecialchars($kid['name']) ?></span>
                 <? endif; ?>

@@ -277,6 +277,51 @@ if (count($peers) >= 2) {
      !isset($delay['folder:'.$folder]) && !isset($delay['stack:'.$b['name']]), json_encode($delay));
 }
 
+/* ------------------------------- what does NOT start at boot keeps its place */
+
+/* The first sync of a fresh install reads a file that mentions only some of
+   the stacks. Everything it does not mention has to stay exactly where it
+   already sat — otherwise opening the page once would shove every stack that
+   does not start at boot to the bottom of its folder. */
+if (count($peers) >= 2) {
+  $a = $peers[0];
+  $b = $peers[1];
+  $folderLeaves = array_values(array_map(
+    fn($s) => $s['leaf'],
+    array_filter($stacks, fn($s) => $s['folder'] === $folder)
+  ));
+
+  reset_start();
+  put(array_merge(...array_values(staxx_autostart_names($b))));   // only B starts at boot
+  staxx_autostart_sync($stacks, $e);
+  $stored = staxx_start_load()['stacks'][$folder] ?? [];
+
+  ok('adopt: the whole folder is kept, not just what starts at boot',
+     count($stored) === count($folderLeaves), count($stored).' of '.count($folderLeaves));
+  ok('adopt: nothing was invented or lost',
+     !array_diff($stored, $folderLeaves) && !array_diff($folderLeaves, $stored));
+  /* B is the only one mentioned, so it lands in the slot it already held and
+     nothing else moves — the stored order equals the natural order. */
+  ok('adopt: the unmentioned stacks did not move', $stored === $folderLeaves,
+     implode(',', array_slice($stored, 0, 6)).' vs '.implode(',', array_slice($folderLeaves, 0, 6)));
+
+  /* And with the file naming them the other way round, only those two swap. */
+  reset_start();
+  put(array_merge(
+    array_merge(...array_values(staxx_autostart_names($b))),
+    array_merge(...array_values(staxx_autostart_names($a)))
+  ));
+  staxx_autostart_sync($stacks, $e);
+  $stored = staxx_start_load()['stacks'][$folder] ?? [];
+  $want = $folderLeaves;
+  $ia = array_search($a['leaf'], $want, true);
+  $ib = array_search($b['leaf'], $want, true);
+  $want[$ia] = $b['leaf'];
+  $want[$ib] = $a['leaf'];
+  ok('adopt: only the two the file named swapped', $stored === $want,
+     implode(',', array_slice($stored, 0, 6)).' vs '.implode(',', array_slice($want, 0, 6)));
+}
+
 /* -------------------------------------------------------------- sorting --- */
 
 ok('sort: listed first, in order', staxx_start_sort(['a', 'b', 'c'], ['c', 'a']) === ['c', 'a', 'b']);

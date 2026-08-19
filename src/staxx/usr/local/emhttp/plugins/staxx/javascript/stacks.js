@@ -11857,6 +11857,59 @@
     menuItems.appendChild(d);
   }
 
+  /* ---- start-at-boot menu items (PLAN_43 phase 4) -------------------------
+   *
+   * Shared by the stack and container menus — a folder has no switch of its
+   * own, only the wait. `boot` is 'on' | 'some' | 'off'; the only decision a
+   * click ever makes is binary (see bootMenuLabel below), so 'some' and 'off'
+   * both move to fully on.
+   */
+  function bootMenuLabel(boot) {
+    if (boot === 'on')   return 'Turn off start at boot';
+    if (boot === 'some') return 'Turn on start at boot for every service';
+    return 'Turn on start at boot';
+  }
+
+  function addBootMenuItem(d, name, service) {
+    var boot      = d.boot || 'off';
+    var available = d.bootAvailable !== '0';
+    menuItem(bootMenuLabel(boot), boot === 'on' ? 'toggle-on' : 'toggle-off', function () {
+      call('autostart', { name: name, service: service || '', on: boot === 'on' ? '0' : '1' })
+        .then(function (r) {
+          if (!r.ok) { failed('Could not change start at boot', r.error); return; }
+          refreshRows();
+        });
+    }, {
+      disabled: !available,
+      hint: available ? '' : 'Docker is not running, so what starts at boot cannot be changed.'
+    });
+  }
+
+  // The wait dialog reuses askConfirm()'s own scaffolding — its body is
+  // arbitrary HTML and whatever is ticked or typed in it is still there to
+  // read from confirmBody once the promise resolves (see envPickAndWire()
+  // above for the same trick with checkboxes). Nothing simpler was needed.
+  function openWaitMenuItem(scope, key, wait, subject) {
+    return askConfirm({
+      title: 'Wait after ' + subject + '…',
+      bodyHtml: '<p>How long should Unraid wait after ' + esc(subject) + ' before starting ' +
+                'the next thing in the list? 0 to 600 seconds; 0 clears it.</p>' +
+                '<p><label>' +
+                '<input type="number" id="staxx-wait-input" min="0" max="600" step="1" value="' +
+                String(wait || 0) + '"> ' + 'seconds</label></p>',
+      goLabel: 'Save'
+    }).then(function (goAhead) {
+      var box = goAhead ? confirmBody.querySelector('#staxx-wait-input') : null;
+      var val = box ? Math.max(0, Math.min(600, parseInt(box.value, 10) || 0)) : null;
+      closeConfirm();
+      if (val === null) return;
+      call('autostart-wait', { scope: scope, key: key, wait: String(val) }).then(function (r) {
+        if (!r.ok) { failed('Could not save that wait', r.error); return; }
+        refreshRows();
+      });
+    });
+  }
+
   function buildStackMenu(d) {
     var name    = d.stack;
     // What the row says, which is not always the folder name. Commands take the
@@ -11935,6 +11988,21 @@
     }
 
     menuSeparator();
+    // Information, not an action — a foreign hand-reorder on Unraid's own
+    // Docker page can split one stack's containers apart in its list; nothing
+    // here fixes that except dragging something, so the item stays disabled.
+    if (d.interleaved === '1') {
+      menuItem('Containers are out of order on Unraid\'s own list', 'info-circle', function () {}, {
+        disabled: true,
+        hint: 'StaXX will gather them back together the next time anything here is dragged.'
+      });
+    }
+    addBootMenuItem(d, name, '');
+    menuItem('Wait after this…', 'clock-o', function () {
+      openWaitMenuItem('stack', name, parseInt(d.bootWait || '0', 10), label);
+    });
+
+    menuSeparator();
     menuItem('Delete stack', 'trash-o', function () { deleteStack(name, label); }, { danger: true });
   }
 
@@ -11996,6 +12064,14 @@
 
     menuSeparator();
 
+    addBootMenuItem(trigger.dataset, stack, service);
+    menuItem('Wait after this…', 'clock-o', function () {
+      openWaitMenuItem('service', stack + '/' + service,
+                        parseInt(trigger.dataset.bootWait || '0', 10), service);
+    });
+
+    menuSeparator();
+
     // A container's settings live in its STACK's compose file — there is no
     // separate file to open for one service — so this is the very same
     // handler the stack menu's own "Edit compose file" calls. Offering it
@@ -12044,6 +12120,11 @@
           });
         }
       });
+    });
+    // No start-at-boot switch here — a folder has none of its own, only the
+    // stacks and services inside it do.
+    menuItem('Wait after this…', 'clock-o', function () {
+      openWaitMenuItem('folder', id, parseInt(d.bootWait || '0', 10), name);
     });
     menuSeparator();
     menuItem('Delete folder', 'trash-o', function () {
@@ -12243,6 +12324,286 @@
       setStackExpanded(row, chevron, true);
     });
     applyVisibility();
+  }
+
+  /* ---- row reordering (grips) — PLAN_43 phase 4 --------------------------
+   *
+   * The same shape as the port-row drag above (draggingPortRow and friends):
+   * draggable armed only while the grip is held, disarmed on both pointerup
+   * and dragend, a placeholder the same height as the hidden row so the gap
+   * does not oscillate, Arrow/Home/End on the grip doing the same move. The
+   * one thing this drag never does that the port drag does is physically
+   * move anything in the DOM — refreshRows() below redraws the whole table
+   * from the server's own (now-saved) order, so all a drop or a keypress has
+   * to do is work out the finished order and post it.
+   *
+   * A grip only trades places with its own siblings: a folder against every
+   * other folder, a stack against the others in its own folder, a service
+   * against the others in its own stack. "Its own siblings" is worked out
+   * fresh each time from the data attributes already on the rows — folders
+   * never nest, so a folder's siblings are simply every other folder; a
+   * stack's are those sharing its data-in-folder; a service's are those
+   * sharing its data-in-stack.
+   *
+   * A folder or an expandable stack has children rendered inside it, and
+   * those have to travel with it rather than being left behind mid-drag or
+   * counted as if they were siblings of whatever the drag is reordering.
+   * gripUnit() below is what "the row" actually means for each kind: for a
+   * folder it is the whole .staxx-group--folder wrapper (folder heading row
+   * plus [data-folder-children]), for an expandable stack it is the whole
+   * .staxx-group--stack wrapper (stack row plus its own children), and for
+   * everything else it is just the row. Hiding that one element for the
+   * length of a drag is what makes a folder's or a stack's whole subtree
+   * disappear and reappear as a single block instead of leaving orphaned
+   * child rows on screen.
+   */
+
+  function gripRowOf(grip) {
+    var kind = grip.dataset.rowGrip;
+    var row  = kind === 'folder' ? grip.closest('[data-folder-row]')
+             : kind === 'stack'  ? grip.closest('[data-stack-row]')
+             :                     grip.closest('.staxx-container-row');
+    return { kind: kind, row: row };
+  }
+
+  function gripParentKey(row, kind) {
+    if (kind === 'stack')   return row.dataset.inFolder || '';
+    if (kind === 'service') return row.dataset.inStack  || '';
+    return '';   // folders do not nest
+  }
+
+  function gripUnit(row, kind) {
+    if (kind === 'folder') return row.closest('[data-folder-group]') || row;
+    if (kind === 'stack')  return row.closest('[data-stack-group]')  || row;
+    return row;
+  }
+
+  // The row inside a unit that actually carries the data attributes — the
+  // unit itself for a folder or a stack with no children wrapper, otherwise
+  // the heading row nested inside it.
+  function gripUnitRow(unit, kind) {
+    var sel = kind === 'folder' ? '[data-folder-row]'
+            : kind === 'stack'  ? '[data-stack-row]'
+            :                     '.staxx-container-row';
+    return unit.matches(sel) ? unit : unit.querySelector(sel);
+  }
+
+  // Every unit this grip's row can trade places with, in document order —
+  // read fresh from the DOM every time rather than cached, since the whole
+  // point is that it changes mid-drag.
+  function gripSiblingUnits(kind, parentKey) {
+    var sel = kind === 'folder' ? '[data-folder-row]'
+            : kind === 'stack'  ? '[data-stack-row]'
+            :                     '.staxx-container-row';
+    var rows = rowsHost ? Array.prototype.slice.call(rowsHost.querySelectorAll(sel)) : [];
+    if (kind !== 'folder') {
+      rows = rows.filter(function (r) {
+        var key = kind === 'stack' ? (r.dataset.inFolder || '') : (r.dataset.inStack || '');
+        return key === parentKey;
+      });
+    }
+    var units = [];
+    rows.forEach(function (r) {
+      var u = gripUnit(r, kind);
+      if (units.indexOf(u) === -1) units.push(u);
+    });
+    return units;
+  }
+
+  // The complete finished order of one sibling group, as the names
+  // start-order wants them — see the endpoint contract: a folder id, a
+  // stack's own leaf name (never the full path), or a service's real compose
+  // name (data-order-key), de-duplicated because a scaled service has one
+  // row per container.
+  function gripOrderNames(kind, units) {
+    var names = units.map(function (u) {
+      var row = gripUnitRow(u, kind);
+      if (kind === 'folder') return row.dataset.folderRow;
+      if (kind === 'stack') {
+        var full = row.dataset.stackRow || '';
+        return full.slice(full.lastIndexOf('/') + 1);
+      }
+      return row.dataset.orderKey || '';
+    });
+    if (kind !== 'service') return names;
+    var seen = {}, out = [];
+    names.forEach(function (n) { if (n && !seen[n]) { seen[n] = true; out.push(n); } });
+    return out;
+  }
+
+  // Shared by the drag drop and the keyboard move: post the whole finished
+  // order, then let the server's own render settle where everything landed
+  // — a whole-list save, so it can never come back half-applied.
+  function postStartOrder(kind, parent, units, afterRefresh) {
+    call('start-order', {
+      scope: kind + 's',
+      parent: parent,
+      names: gripOrderNames(kind, units).join(';')
+    }).then(function (r) {
+      if (!r.ok) { failed('Could not save that order', r.error); return; }
+      // The order itself is saved either way — a refusal here is only about
+      // Unraid's own boot list, not about what StaXX just did, so it is
+      // reported rather than treated as the drag having failed.
+      if (r.boot === false) {
+        failed('Saved the order, but could not update Unraid\'s own start-at-boot list',
+               r.error || '(no detail given)');
+      }
+      refreshRows(afterRefresh);
+    });
+  }
+
+  // The identity a moved row can be found by again after refreshRows()
+  // rebuilds the whole table from scratch — see restoreExpandedStacks()
+  // above for the same problem with expansion state instead of focus.
+  function gripIdentity(row, kind) {
+    if (kind === 'folder') return row.dataset.folderRow;
+    if (kind === 'stack')  return row.dataset.stackRow;
+    return row.dataset.service;   // the row-matching key, stable across a refresh
+  }
+
+  function restoreGripFocus(kind, ident) {
+    if (!ident) return;
+    var sel = kind === 'folder' ? '[data-folder-row="' + ident + '"]'
+            : kind === 'stack'  ? '[data-stack-row="' + ident + '"]'
+            :                     '.staxx-container-row[data-service="' + ident + '"]';
+    var row  = rowsHost && rowsHost.querySelector(sel);
+    var grip = row && row.querySelector('.staxx-grip[data-row-grip]');
+    if (grip) grip.focus();
+  }
+
+  var draggingGripRow    = null;   // the unit currently mid-drag, or null
+  var gripSlot           = null;   // the placeholder holding its gap open
+  var draggingGripFrom   = -1;     // its index among its siblings when the drag started
+  var draggingGripKind   = '';     // 'folder' | 'stack' | 'service'
+  var draggingGripParent = '';     // '' for a folder, else the parent's key
+
+  if (rowsHost) {
+    rowsHost.addEventListener('pointerdown', function (event) {
+      var grip = event.target.closest('.staxx-grip[data-row-grip]');
+      if (!grip || grip.classList.contains('staxx-grip--off')) return;
+      var info = gripRowOf(grip);
+      if (!info.row) return;
+      var unit = gripUnit(info.row, info.kind);
+      unit.draggable = true;
+      draggingGripRow    = unit;
+      draggingGripKind   = info.kind;
+      draggingGripParent = gripParentKey(info.row, info.kind);
+    });
+
+    function endGripDrag() {
+      if (!draggingGripRow) return;
+      draggingGripRow.draggable = false;
+      draggingGripRow.classList.remove('staxx-row--dragging');
+      if (gripSlot && gripSlot.parentNode) gripSlot.parentNode.removeChild(gripSlot);
+      gripSlot = null;
+      draggingGripRow = null;
+      draggingGripKind = '';
+      draggingGripParent = '';
+      draggingGripFrom = -1;
+    }
+    rowsHost.addEventListener('pointerup', endGripDrag);
+    rowsHost.addEventListener('dragend', endGripDrag);
+
+    rowsHost.addEventListener('dragstart', function (event) {
+      if (!draggingGripRow) return;
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', '');   // Firefox refuses an empty drag
+
+      var unit = draggingGripRow;
+      draggingGripFrom = gripSiblingUnits(draggingGripKind, draggingGripParent).indexOf(unit);
+      var h = unit.offsetHeight;   // measured now, before it is hidden
+
+      // Deferred one tick for the same reason the port drag above defers it:
+      // Chrome snapshots the drag image asynchronously, so hiding the unit
+      // inside dragstart itself would blank that snapshot.
+      setTimeout(function () {
+        if (draggingGripRow !== unit) return;   // drag already over
+        gripSlot = document.createElement('div');
+        gripSlot.className = 'staxx-drop-slot';
+        gripSlot.style.height = h + 'px';
+        unit.parentNode.insertBefore(gripSlot, unit);
+        unit.classList.add('staxx-row--dragging');
+      }, 0);
+    });
+
+    rowsHost.addEventListener('dragover', function (event) {
+      if (!draggingGripRow || !gripSlot) return;
+      var container = draggingGripRow.parentNode;
+      var rect = container.getBoundingClientRect();
+      if (event.clientY < rect.top || event.clientY > rect.bottom ||
+          event.clientX < rect.left || event.clientX > rect.right) {
+        // Outside this row's own sibling group: refuse the drop and send the
+        // placeholder home rather than let it land among unrelated rows.
+        if (gripSlot.nextSibling !== draggingGripRow) {
+          container.insertBefore(gripSlot, draggingGripRow);
+        }
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+
+      var siblings = gripSiblingUnits(draggingGripKind, draggingGripParent)
+        .filter(function (u) { return u !== draggingGripRow; });
+      var target = null;
+      for (var i = 0; i < siblings.length; i++) {
+        var mid = siblings[i].getBoundingClientRect().top + siblings[i].offsetHeight / 2;
+        if (mid > event.clientY) { target = siblings[i]; break; }
+      }
+      if (gripSlot.nextSibling !== target) container.insertBefore(gripSlot, target);
+    });
+
+    rowsHost.addEventListener('drop', function (event) {
+      if (!draggingGripRow || !gripSlot) return;
+      event.preventDefault();
+
+      var unit   = draggingGripRow;
+      var kind   = draggingGripKind;
+      var parent = draggingGripParent;
+      var from   = draggingGripFrom;
+
+      var siblings = gripSiblingUnits(kind, parent).filter(function (u) { return u !== unit; });
+      var to = 0;
+      for (var i = 0; i < siblings.length; i++) {
+        if (siblings[i].compareDocumentPosition(gripSlot) & Node.DOCUMENT_POSITION_FOLLOWING) to++;
+        else break;
+      }
+
+      endGripDrag();   // unhides the unit either way; nothing here moved it for real
+      if (from < 0 || to === from) return;
+
+      siblings.splice(to, 0, unit);
+      postStartOrder(kind, parent, siblings);
+    });
+
+    // Arrow/Home/End on a focused grip do the same move a drag would.
+    // event.preventDefault() throughout so the page does not scroll under it.
+    rowsHost.addEventListener('keydown', function (event) {
+      var grip = event.target.closest('.staxx-grip[data-row-grip]');
+      if (!grip || grip.classList.contains('staxx-grip--off')) return;
+      var key = event.key;
+      if (key !== 'ArrowUp' && key !== 'ArrowDown' && key !== 'Home' && key !== 'End') return;
+      event.preventDefault();
+
+      var info = gripRowOf(grip);
+      if (!info.row) return;
+      var kind   = info.kind;
+      var parent = gripParentKey(info.row, kind);
+      var unit   = gripUnit(info.row, kind);
+      var units  = gripSiblingUnits(kind, parent);
+      var from   = units.indexOf(unit);
+      if (from < 0) return;
+      var to = key === 'ArrowUp'   ? from - 1
+             : key === 'ArrowDown' ? from + 1
+             : key === 'Home'      ? 0
+             :                       units.length - 1;
+      if (to < 0 || to >= units.length || to === from) return;
+
+      units.splice(from, 1);
+      units.splice(to, 0, unit);
+
+      var ident = gripIdentity(info.row, kind);
+      postStartOrder(kind, parent, units, function () { restoreGripFocus(kind, ident); });
+    });
   }
 
   function toggleFolder(id, chevron) {

@@ -1189,6 +1189,83 @@
   pointer-events: none;
 }
 
+/* The drag grip (PLAN_43) — first thing in .staxx-namebox on a folder, stack
+   or container row alike. Sized and coloured to match .staxx-chevron beside
+   it, not the port row's own grip: this one is drawn on every row without
+   exception (see staxx_grip_html()'s doctrine), so it never fades in on
+   hover the way the port grip does — a control that is always there should
+   always be visible. */
+.staxx-scaffold .staxx-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--sm-muted);
+  font-size: 1.3rem;
+  cursor: grab;
+}
+
+.staxx-scaffold .staxx-grip:hover {
+  color: var(--sm-accent);
+  background: var(--sm-fill-2);
+}
+
+.staxx-scaffold .staxx-grip:active {
+  cursor: grabbing;
+}
+
+.staxx-scaffold .staxx-grip:focus-visible {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: -0.1rem;
+}
+
+/* Disabled where dragging cannot mean anything (a lone folder, a stack alone
+   in its group, a service with no sibling) — kept at full size rather than
+   removed, or the name column beside it would ripple one notch out of line
+   with every row that does have something to drag. */
+.staxx-scaffold .staxx-grip--off {
+  color: var(--sm-muted);
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* The unit currently being dragged, hidden for the duration — the same thing
+   the port row's drag does, and for a reason that took a while to see: the
+   placeholder below stands in at exactly the dragged unit's height, so the
+   table's total height does not change while the pointer moves. Leaving the
+   row visible and adding the placeholder beside it grows the list by one row,
+   which shifts everything below the pointer, which moves the midpoint the drop
+   position is worked out from — and the placeholder then flips back and forth
+   across a boundary it has itself created.
+
+   Two classes deep on purpose: the unit being dragged is a .staxx-row for a
+   stack or a container but a .staxx-group for a folder (its heading and its
+   children travel as one), and both of those already carry display: grid from
+   a single-class rule further up. */
+.staxx-row.staxx-row--dragging,
+.staxx-group.staxx-row--dragging {
+  display: none;
+}
+
+/* The gap a folder/stack/service drag opens at the drop position. No fixed
+   height, deliberately — unlike the port row's dashed slot (a single fixed
+   line height), this placeholder has to be able to stand in for a folder
+   heading, a stack row or a whole subgrid row, whichever is being dragged,
+   so the browser sets its height inline from the dragged row's own. */
+.staxx-drop-slot {
+  grid-column: 1 / -1;
+  box-sizing: border-box;
+  border: 0.15rem dashed var(--sm-accent);
+  border-radius: var(--sm-radius);
+  background: color-mix(in srgb, var(--sm-accent) 10%, transparent);
+}
+
 /* Indentation for everything filed under a folder heading, set once here on
    the wrapper that is the folder's real ancestor and read by
    .staxx-namebox above. This replaces .staxx-nested .staxx-namebox,
@@ -1714,6 +1791,42 @@
   font-size: 1rem;
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* The boot marker (PLAN_43) — always in the markup (see staxx_boot_mark_html())
+   but hidden by default, because "off" is the common case and a lightning
+   bolt on every row would be noise, not information. Keyed off the ROW's own
+   data-boot rather than a class on the marker itself: a drag or a switch
+   rewrites that attribute on the row, never this element, so visibility
+   follows it automatically. align-self for the same reason as the badges
+   above — .staxx-nameinfo's cross-axis stretch would otherwise blow this out
+   to the width of the name beside it. */
+.staxx-boot {
+  display: none;
+  align-items: center;
+  gap: 0.3rem;
+  align-self: flex-start;
+  color: var(--sm-accent);
+  font-size: 1.1rem;
+}
+
+.staxx-row[data-boot="on"] .staxx-boot,
+.staxx-row[data-boot="some"] .staxx-boot {
+  display: inline-flex;
+}
+
+/* "some" (a folder or stack where only part of it starts at boot) reads at
+   half strength rather than full, so a glance at the column tells "all" and
+   "some" apart without having to read the title. */
+.staxx-row[data-boot="some"] .staxx-boot {
+  opacity: 0.5;
+}
+
+/* The wait, shown only when one is set — a wait nobody can see is a wait
+   nobody remembers setting. */
+.staxx-boot-wait {
+  font-size: 0.95rem;
+  font-weight: 600;
 }
 
 /* Marks the one port in a service's list the web page button opens (PLAN_39's
