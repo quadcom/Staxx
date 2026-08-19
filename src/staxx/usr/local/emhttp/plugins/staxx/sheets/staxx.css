@@ -2723,6 +2723,15 @@
   grid-column: 4;
 }
 
+/* Both cells on the second line start at its top rather than centring in it:
+   the row's own align-items centres each cell independently, so the taller
+   one (the note, which carries a hint the mode box does not) pushed its input
+   below the dropdown beside it. */
+.staxx-formgroup--volumes .staxx-fieldrow > .staxx-box--mode,
+.staxx-formgroup--volumes .staxx-fieldrow > .staxx-box--note {
+  align-self: start;
+}
+
 .staxx-formgroup--volumes .staxx-fieldrow > .staxx-box--mode {
   grid-row: 2;
   grid-column: 1;
@@ -2904,10 +2913,12 @@
   display: block;
 }
 
-/* Same exception, for the same reason: a mount's second line (mode, note)
-   has no caption of its own above it — CAPTIONS.volume only names the first
-   line — so its hint is the only thing that says what either box is for. */
-.staxx-formgroup--volumes .staxx-box--mode .staxx-boxhint,
+/* Same exception, for the same reason: a mount's second line has no caption
+   of its own above it — CAPTIONS.volume only names the first line — so the
+   note box's hint is the only thing naming it. The mode box beside it is
+   deliberately NOT in this rule: its options already read "read and write"
+   and "read-only", so a title above them said nothing the box did not, on
+   every mount in the file. */
 .staxx-formgroup--volumes .staxx-box--note .staxx-boxhint {
   display: block;
 }

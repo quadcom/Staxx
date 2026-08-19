@@ -5147,53 +5147,59 @@
   //     editor. (The long form spells the protocol out as its own bare-word
   //     line with no separator to carry, so it draws on 'protocol' below.)
   //   - the eight BOOL_CHOICES wordings — the values true/false move below
-  //     as 'boolean', but "true — full access to the host" is form prose
-  //     about one specific setting, not a compose vocabulary.
+  //     as 'boolean', but privileged's true/false labels are form prose about
+  //     one specific setting, not a compose vocabulary.
+  //
+  // A label is always the value itself, nothing appended: what the dropdown
+  // shows must be exactly what the file ends up holding, or picking an
+  // option stops teaching anyone what their compose file says. Any
+  // explanation of what a value does belongs behind the field's own help
+  // button, not in the option text.
   var VOCAB = {
     restart: [
-      ['no',             'no — leave it stopped'],
-      ['always',         'always — start it again whenever it stops'],
-      ['unless-stopped', 'unless-stopped — always, unless you stopped it'],
-      ['on-failure',     'on-failure — only when it crashes']
+      ['no',             'no'],
+      ['always',         'always'],
+      ['unless-stopped', 'unless-stopped'],
+      ['on-failure',     'on-failure']
     ],
     netmode: [
-      ['bridge', 'bridge — Docker’s own private network'],
-      ['host',   'host — share the server’s network directly'],
-      ['none',   'none — no network at all']
+      ['bridge', 'bridge'],
+      ['host',   'host'],
+      ['none',   'none']
     ],
     // A long-form port's protocol: — a bare word on its own line, unlike the
     // short form's slash-carrying value, so it is a genuine closed vocabulary
     // rather than something a dropdown's "nothing chosen" option has to undo.
     protocol: [
-      ['tcp', 'tcp — a reliable, ordered connection, the usual choice'],
-      ['udp', 'udp — faster, but nothing resends what gets lost']
+      ['tcp', 'tcp'],
+      ['udp', 'udp']
     ],
     // The four B3 vocabularies below serve a long-form port or mount's
     // "more settings" extras — values taken from the compose specification,
     // not guessed, since these are otherwise unreachable in either view.
     portmode: [
-      ['host',    'host — published on this server’s own network'],
-      ['ingress', 'ingress — published through a swarm’s routing mesh']
+      ['host',    'host'],
+      ['ingress', 'ingress']
     ],
     volumetype: [
-      ['bind',   'bind — a folder or file already on this server'],
-      ['volume', 'volume — storage Docker manages itself'],
-      ['tmpfs',  'tmpfs — memory only, gone when the container stops'],
-      ['npipe',  'npipe — a Windows named pipe'],
-      ['cluster','cluster — storage shared across a Docker Swarm cluster'],
-      ['image',  'image — files taken from another image']
+      ['bind',   'bind'],
+      ['volume', 'volume'],
+      ['tmpfs',  'tmpfs'],
+      ['npipe',  'npipe'],
+      ['cluster','cluster'],
+      ['image',  'image']
     ],
     propagation: [
-      ['rprivate', 'rprivate — changes here stay private, the usual choice'],
-      ['private',  'private — the same, but without watching for new mounts'],
-      ['rshared',  'rshared — new mounts are shared with the host in both directions'],
-      ['shared',   'shared — the same, but without watching for new mounts'],
-      ['rslave',   'rslave — new mounts made on the host appear here too'],
-      ['slave',    'slave — the same, but without watching for new mounts']
+      ['rprivate', 'rprivate'],
+      ['private',  'private'],
+      ['rshared',  'rshared'],
+      ['shared',   'shared'],
+      ['rslave',   'rslave'],
+      ['slave',    'slave']
     ],
     selinux: [
-      ['z', 'z — shared with other containers'],
-      ['Z', 'Z — private to this container']
+      ['z', 'z'],
+      ['Z', 'Z']
     ],
     dependscondition: [
       ['service_started',                'wait until it has started'],
@@ -5201,94 +5207,94 @@
       ['service_completed_successfully',  'wait until it has finished OK']
     ],
     pullpolicy: [
-      ['always',        'always — check and pull every time it starts'],
-      ['never',         'never — only use what is already on this server'],
-      ['missing',       'missing — pull only if the image is not here yet'],
-      ['if_not_present', 'if_not_present — the same as missing, compose’s other name for it'],
-      ['refresh',       'refresh — pull again once the image on this server looks stale'],
-      ['daily',         'daily — check for a newer image once a day'],
-      ['weekly',        'weekly — check for a newer image once a week'],
-      ['build',         'build — build the image instead of pulling it']
+      ['always',        'always'],
+      ['never',         'never'],
+      ['missing',       'missing'],
+      ['if_not_present', 'if_not_present'],
+      ['refresh',       'refresh'],
+      ['daily',         'daily'],
+      ['weekly',        'weekly'],
+      ['build',         'build']
     ],
     stopsignal: [
-      ['SIGTERM', 'SIGTERM — the usual, polite request to stop'],
-      ['SIGINT',  'SIGINT — the same as pressing Ctrl+C'],
-      ['SIGKILL', 'SIGKILL — stop it at once, no cleanup'],
-      ['SIGHUP',  'SIGHUP — the usual signal for "reload your settings"'],
-      ['SIGQUIT', 'SIGQUIT — stop and dump core, for debugging'],
-      ['SIGUSR1', 'SIGUSR1 — a signal the app defines the meaning of'],
-      ['SIGUSR2', 'SIGUSR2 — a second signal the app defines the meaning of']
+      ['SIGTERM', 'SIGTERM'],
+      ['SIGINT',  'SIGINT'],
+      ['SIGKILL', 'SIGKILL'],
+      ['SIGHUP',  'SIGHUP'],
+      ['SIGQUIT', 'SIGQUIT'],
+      ['SIGUSR1', 'SIGUSR1'],
+      ['SIGUSR2', 'SIGUSR2']
     ],
     ipc: [
-      ['host',      'host — share the server’s own IPC namespace'],
-      ['none',      'none — its own, empty IPC namespace'],
-      ['shareable', 'shareable — its own, but open to other containers sharing it']
+      ['host',      'host'],
+      ['none',      'none'],
+      ['shareable', 'shareable']
     ],
     pid: [
-      ['host', 'host — see and be seen by every process on the server']
+      ['host', 'host']
     ],
     logdriver: [
-      ['json-file', 'json-file — Docker’s own default, kept as files on this server'],
-      ['local',     'local — a more compact version of the same thing'],
-      ['syslog',    'syslog — sent to the server’s syslog'],
-      ['journald',  'journald — sent to systemd’s journal'],
-      ['fluentd',   'fluentd — sent to a Fluentd log collector'],
-      ['none',      'none — logs are discarded']
+      ['json-file', 'json-file'],
+      ['local',     'local'],
+      ['syslog',    'syslog'],
+      ['journald',  'journald'],
+      ['fluentd',   'fluentd'],
+      ['none',      'none']
     ],
     networkdriver: [
-      ['bridge',  'bridge — Docker’s own private network, the usual choice'],
-      ['host',    'host — share the server’s network directly'],
-      ['none',    'none — no network at all'],
-      ['macvlan', 'macvlan — gives the network its own address on the LAN'],
-      ['ipvlan',  'ipvlan — a lighter-weight version of the same idea'],
-      ['overlay', 'overlay — connects containers across several Docker hosts in a swarm']
+      ['bridge',  'bridge'],
+      ['host',    'host'],
+      ['none',    'none'],
+      ['macvlan', 'macvlan'],
+      ['ipvlan',  'ipvlan'],
+      ['overlay', 'overlay']
     ],
     volumedriver: [
-      ['local', 'local — a folder Docker manages on this server, the usual choice']
+      ['local', 'local']
     ],
     capability: [
-      ['ALL',                'ALL — every capability at once'],
-      ['CHOWN',              'CHOWN — change file ownership'],
-      ['DAC_OVERRIDE',       'DAC_OVERRIDE — bypass file read/write/execute checks'],
-      ['DAC_READ_SEARCH',    'DAC_READ_SEARCH — bypass file read and directory search checks'],
-      ['FOWNER',             'FOWNER — bypass checks that usually require owning the file'],
-      ['FSETID',             'FSETID — keep the setuid/setgid bits when a file changes'],
-      ['KILL',               'KILL — send signals to any process'],
-      ['SETGID',             'SETGID — change a process’s group ID'],
-      ['SETUID',             'SETUID — change a process’s user ID'],
-      ['SETPCAP',            'SETPCAP — grant or remove permissions on other processes'],
-      ['LINUX_IMMUTABLE',    'LINUX_IMMUTABLE — set the immutable and append-only file flags'],
-      ['NET_BIND_SERVICE',   'NET_BIND_SERVICE — bind to a port below 1024'],
-      ['NET_BROADCAST',      'NET_BROADCAST — send and receive network broadcasts'],
-      ['NET_ADMIN',          'NET_ADMIN — manage networking'],
-      ['NET_RAW',            'NET_RAW — use raw and packet sockets'],
-      ['IPC_LOCK',           'IPC_LOCK — lock memory so it is never swapped out'],
-      ['IPC_OWNER',          'IPC_OWNER — bypass shared memory and message queue checks'],
-      ['SYS_MODULE',         'SYS_MODULE — load and unload kernel modules'],
-      ['SYS_RAWIO',          'SYS_RAWIO — read and write raw devices directly'],
-      ['SYS_CHROOT',         'SYS_CHROOT — change the apparent root directory'],
-      ['SYS_PTRACE',         'SYS_PTRACE — trace and control other processes'],
-      ['SYS_PACCT',          'SYS_PACCT — switch process accounting on and off'],
-      ['SYS_ADMIN',          'SYS_ADMIN — wide-ranging administrative access'],
-      ['SYS_BOOT',           'SYS_BOOT — reboot the server'],
-      ['SYS_NICE',           'SYS_NICE — raise process priority above normal'],
-      ['SYS_RESOURCE',       'SYS_RESOURCE — override resource limits'],
-      ['SYS_TIME',           'SYS_TIME — set the system clock'],
-      ['SYS_TTY_CONFIG',     'SYS_TTY_CONFIG — reconfigure virtual terminals'],
-      ['MKNOD',              'MKNOD — create device, pipe and other special files'],
-      ['LEASE',              'LEASE — take out leases on files'],
-      ['AUDIT_WRITE',        'AUDIT_WRITE — write to the kernel’s audit log'],
-      ['AUDIT_CONTROL',      'AUDIT_CONTROL — configure kernel auditing'],
-      ['SETFCAP',            'SETFCAP — set capabilities on files'],
-      ['MAC_OVERRIDE',       'MAC_OVERRIDE — bypass mandatory access control (SELinux/AppArmor)'],
-      ['MAC_ADMIN',          'MAC_ADMIN — configure mandatory access control'],
-      ['SYSLOG',             'SYSLOG — read the kernel’s log buffer'],
-      ['WAKE_ALARM',         'WAKE_ALARM — wake the server from suspend'],
-      ['BLOCK_SUSPEND',      'BLOCK_SUSPEND — stop the server from suspending'],
-      ['AUDIT_READ',         'AUDIT_READ — read the kernel’s audit log'],
-      ['PERFMON',            'PERFMON — use performance monitoring tools'],
-      ['BPF',                'BPF — load BPF programs'],
-      ['CHECKPOINT_RESTORE', 'CHECKPOINT_RESTORE — checkpoint and restore processes']
+      ['ALL',                'ALL'],
+      ['CHOWN',              'CHOWN'],
+      ['DAC_OVERRIDE',       'DAC_OVERRIDE'],
+      ['DAC_READ_SEARCH',    'DAC_READ_SEARCH'],
+      ['FOWNER',             'FOWNER'],
+      ['FSETID',             'FSETID'],
+      ['KILL',               'KILL'],
+      ['SETGID',             'SETGID'],
+      ['SETUID',             'SETUID'],
+      ['SETPCAP',            'SETPCAP'],
+      ['LINUX_IMMUTABLE',    'LINUX_IMMUTABLE'],
+      ['NET_BIND_SERVICE',   'NET_BIND_SERVICE'],
+      ['NET_BROADCAST',      'NET_BROADCAST'],
+      ['NET_ADMIN',          'NET_ADMIN'],
+      ['NET_RAW',            'NET_RAW'],
+      ['IPC_LOCK',           'IPC_LOCK'],
+      ['IPC_OWNER',          'IPC_OWNER'],
+      ['SYS_MODULE',         'SYS_MODULE'],
+      ['SYS_RAWIO',          'SYS_RAWIO'],
+      ['SYS_CHROOT',         'SYS_CHROOT'],
+      ['SYS_PTRACE',         'SYS_PTRACE'],
+      ['SYS_PACCT',          'SYS_PACCT'],
+      ['SYS_ADMIN',          'SYS_ADMIN'],
+      ['SYS_BOOT',           'SYS_BOOT'],
+      ['SYS_NICE',           'SYS_NICE'],
+      ['SYS_RESOURCE',       'SYS_RESOURCE'],
+      ['SYS_TIME',           'SYS_TIME'],
+      ['SYS_TTY_CONFIG',     'SYS_TTY_CONFIG'],
+      ['MKNOD',              'MKNOD'],
+      ['LEASE',              'LEASE'],
+      ['AUDIT_WRITE',        'AUDIT_WRITE'],
+      ['AUDIT_CONTROL',      'AUDIT_CONTROL'],
+      ['SETFCAP',            'SETFCAP'],
+      ['MAC_OVERRIDE',       'MAC_OVERRIDE'],
+      ['MAC_ADMIN',          'MAC_ADMIN'],
+      ['SYSLOG',             'SYSLOG'],
+      ['WAKE_ALARM',         'WAKE_ALARM'],
+      ['BLOCK_SUSPEND',      'BLOCK_SUSPEND'],
+      ['AUDIT_READ',         'AUDIT_READ'],
+      ['PERFMON',            'PERFMON'],
+      ['BPF',                'BPF'],
+      ['CHECKPOINT_RESTORE', 'CHECKPOINT_RESTORE']
     ],
     // The generic true/false pair — matches BOOL_GENERIC.options in
     // tests/vocab-snapshot.js, not any one BOOL_CHOICES wording.
@@ -5299,52 +5305,52 @@
     // applies on an Unraid server — each value says so, rather than reading
     // as a plausible everyday choice.
     uts: [
-      ['host', 'host — share the server’s own hostname and domain name']
+      ['host', 'host']
     ],
     cgroup: [
-      ['host',    'host — share the server’s own cgroup namespace'],
-      ['private', 'private — give it its own cgroup namespace']
+      ['host',    'host'],
+      ['private', 'private']
     ],
     usernsmode: [
-      ['host', 'host — share the server’s own user ID range instead of getting its own']
+      ['host', 'host']
     ],
     isolation: [
-      ['default', 'default — whatever this Docker installation normally uses'],
-      ['process', 'process — lightweight isolation (Windows containers only)'],
-      ['hyperv',  'hyperv — full virtual-machine isolation (Windows containers only)']
+      ['default', 'default'],
+      ['process', 'process'],
+      ['hyperv',  'hyperv']
     ],
     deploymode: [
-      ['replicated',     'replicated — runs a set number of copies (Docker Swarm only)'],
-      ['global',         'global — runs one copy on every node in the swarm (Docker Swarm only)'],
-      ['replicated-job', 'replicated-job — runs as a one-off job, a set number of times (Docker Swarm only)'],
-      ['global-job',     'global-job — runs the job once on every node (Docker Swarm only)']
+      ['replicated',     'replicated'],
+      ['global',         'global'],
+      ['replicated-job', 'replicated-job'],
+      ['global-job',     'global-job']
     ],
     endpointmode: [
-      ['vip',    'vip — the swarm gives the service one shared address (Docker Swarm only)'],
-      ['dnsrr',  'dnsrr — DNS returns each copy’s own address directly (Docker Swarm only)']
+      ['vip',    'vip'],
+      ['dnsrr',  'dnsrr']
     ],
     restartcondition: [
-      ['none',       'none — never restart it automatically'],
-      ['on-failure', 'on-failure — restart only if it exits with an error'],
-      ['any',        'any — restart it whatever the exit reason']
+      ['none',       'none'],
+      ['on-failure', 'on-failure'],
+      ['any',        'any']
     ],
     updateorder: [
-      ['start-first', 'start-first — starts the new copy before stopping the old one'],
-      ['stop-first',  'stop-first — stops the old copy before starting the new one']
+      ['start-first', 'start-first'],
+      ['stop-first',  'stop-first']
     ],
     failureaction: [
-      ['continue', 'continue — carry on with the rest of the update'],
-      ['rollback', 'rollback — undo the update and go back to the previous version'],
-      ['pause',    'pause — stop the update and wait']
+      ['continue', 'continue'],
+      ['rollback', 'rollback'],
+      ['pause',    'pause']
     ],
     logmode: [
-      ['blocking',     'blocking — the container waits if the log driver falls behind'],
-      ['non-blocking', 'non-blocking — the container carries on even if log lines are dropped']
+      ['blocking',     'blocking'],
+      ['non-blocking', 'non-blocking']
     ],
     buildnetwork: [
-      ['none',    'none — no network access during the build'],
-      ['host',    'host — share the server’s network during the build'],
-      ['default', 'default — whatever Docker normally gives the build']
+      ['none',    'none'],
+      ['host',    'host'],
+      ['default', 'default']
     ]
   };
 
@@ -5452,16 +5458,14 @@
 
   // Turns a scanned name list into [value, label] pairs, through refNames()'s
   // one shared rule below — the same rule fromChoice()/serviceModeOptions()
-  // in stacks.js apply to the form's own dropdowns. A bare name's label is
-  // the name itself; a prefixed one (network_mode's service:db) gets a short
-  // gloss the same plain shape serviceModeOptions() already uses, without
-  // repeating that function's per-setting wording (network/IPC/process
-  // namespace) — one generic gloss covers all three call sites here.
+  // in stacks.js apply to the form's own dropdowns. The label is the value,
+  // prefix and all, and never a description of it: a dropdown has to show
+  // what the compose file will say, or nothing connects the two.
   function refOptions(names, info, serviceName) {
     var list = refNames(names, info.from, serviceName), out = [];
     for (var i = 0; i < list.length; i++) {
       var val = info.prefix ? info.prefix + list[i] : list[i];
-      out.push([val, info.prefix ? val + ' — another service in this file' : val]);
+      out.push([val, val]);
     }
     return out;
   }

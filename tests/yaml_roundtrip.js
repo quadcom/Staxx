@@ -5099,9 +5099,27 @@ console.log('\nO. Field help (Form pane)');
  * P1 asserts two things instead of exact equality: nothing the snapshot held
  * was lost, and the full list is exactly the snapshot plus the named
  * additions, nothing more.
+ *
+ * A later decision stripped every label back to its bare value (no more
+ * " — gloss" suffix, so a dropdown shows exactly what lands in the file).
+ * The snapshot still carries the old glossed wording — it is a photograph of
+ * stacks.js as it was, not of current policy — so stripGloss() below is
+ * applied to every expected label before comparing it against vocab()'s
+ * output, rather than editing the snapshot to match.
  * ========================================================================= */
 
 console.log('\nP. The VOCAB registry (PLAN_15 phase 1)');
+
+// The snapshot predates the no-gloss-labels decision; strip " — ..." from its
+// labels before comparing, so this test tracks values and order, not wording
+// that was deliberately retired.
+function stripGloss(label) {
+  var i = label.indexOf(' — ');
+  return i === -1 ? label : label.slice(0, i);
+}
+function degloss(list) {
+  return list.map(function (pair) { return [pair[0], stripGloss(pair[1])]; });
+}
 
 // Pair-by-pair equality with a diff that names the entry and shows both
 // sides — "not equal" alone would leave whoever reads a failure re-deriving
@@ -5175,6 +5193,12 @@ var VOCAB_SOURCES = {
   boolean:          [['true', 'true'], ['false', 'false']]
 };
 
+// The snapshot's own labels still carry the old gloss wording — degloss every
+// list here rather than the snapshot itself, per the note above.
+Object.keys(VOCAB_SOURCES).forEach(function (id) {
+  VOCAB_SOURCES[id] = degloss(VOCAB_SOURCES[id]);
+});
+
 /* ---- P1. the three ids phase 3 corrected: snapshot plus the named ------- */
 /* ---- additions, nothing lost and nothing arrived by accident ------------ */
 
@@ -5183,15 +5207,15 @@ var VOCAB_SOURCES = {
 // side shows up as a failure rather than agreeing with itself.
 var CORRECTED = {
   pullpolicy: insertAfter(VOCAB_SOURCES.pullpolicy, 'missing', [
-    ['if_not_present', 'if_not_present — the same as missing, compose’s other name for it'],
-    ['refresh',        'refresh — pull again once the image on this server looks stale'],
-    ['daily',          'daily — check for a newer image once a day'],
-    ['weekly',         'weekly — check for a newer image once a week']
+    ['if_not_present', 'if_not_present'],
+    ['refresh',        'refresh'],
+    ['daily',          'daily'],
+    ['weekly',         'weekly']
   ]),
   networkdriver: VOCAB_SOURCES.networkdriver.concat([
-    ['overlay', 'overlay — connects containers across several Docker hosts in a swarm']
+    ['overlay', 'overlay']
   ]),
-  capability: [['ALL', 'ALL — every capability at once']].concat(VOCAB_SOURCES.capability)
+  capability: [['ALL', 'ALL']].concat(VOCAB_SOURCES.capability)
 };
 
 Object.keys(CORRECTED).forEach(function (id) {

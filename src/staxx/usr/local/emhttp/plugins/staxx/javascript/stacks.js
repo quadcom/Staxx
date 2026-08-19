@@ -334,29 +334,30 @@
   // The caption text named per group; container has no trailing blank for a ×
   // column, since it never grows one.
   var CAPTIONS = {
-    container: ['setting', 'value', 'note, kept in the file'],
+    container: ['setting', 'value', 'Notes'],
     // Ports are captioned in single words where mounts get phrases: the two
     // boxes hold a five-digit number, so the columns are narrow and anything
     // longer wrapped the heading onto a second line. The fuller wording is
     // still what a screen reader hears — see the hints passed to boxHtml().
-    port:      ['Host', 'Container', 'protocol', 'note, kept in the file'],
+    port:      ['Host', 'Container', 'protocol', 'Notes'],
     // Two headings only: a mount is a two-line row now (see
-    // .staxx-formgroup--volumes), and its second line — mode and note — has
-    // no caption above it, the same reason Devices' own hint stays visible
-    // (see the .staxx-boxhint exception in the stylesheet).
+    // .staxx-formgroup--volumes), and its second line has no caption above
+    // it. The note box there names itself through its hint; the mode box
+    // beside it needs no name, since its options read "read and write" and
+    // "read-only" already.
     volume:    ['path on the server', 'path in the container'],
-    device:    ['device', 'note, kept in the file'],
-    env:       ['variable name', 'value', 'note, kept in the file'],
-    label:     ['label name', 'value', 'note, kept in the file'],
-    health:    ['setting', 'value', 'note, kept in the file'],
-    resources: ['setting', 'value', 'note, kept in the file'],
-    build:     ['setting', 'value', 'note, kept in the file'],
+    device:    ['device', 'Notes'],
+    env:       ['variable name', 'value', 'Notes'],
+    label:     ['label name', 'value', 'Notes'],
+    health:    ['setting', 'value', 'Notes'],
+    resources: ['setting', 'value', 'Notes'],
+    build:     ['setting', 'value', 'Notes'],
     // Short form only this phase — one box per dependency, the same shape as
     // any other dynamic list. The three-column shape phase 1 wrote here was
     // for the long form's name/condition pair, which does not exist yet.
-    depends:   ['service', 'note, kept in the file'],
-    logging:   ['setting', 'value', 'note, kept in the file'],
-    advanced:  ['setting', 'value', 'note, kept in the file']
+    depends:   ['service', 'Notes'],
+    logging:   ['setting', 'value', 'Notes'],
+    advanced:  ['setting', 'value', 'Notes']
   };
 
   // Where a field lands. `fixed` wins outright, even over `locked` — that is
@@ -443,7 +444,7 @@
       head[i] = (longForm || !shortForm)
         ? { key: 'depends', heading: 'Depends on', cls: 'staxx-formgroup--pair',
             add: 'depends', flag: 'depends',
-            cols: ['service', 'wait until', 'note, kept in the file'] }
+            cols: ['service', 'wait until', 'Notes'] }
         : { key: 'depends', heading: 'Depends on', cls: 'staxx-formgroup--single',
             add: 'list:depends_on', flag: 'depends' };
       break;
@@ -1171,6 +1172,11 @@
   // Settings whose value is one of a fixed few, so the box is a list to pick
   // from rather than something to spell correctly. Keyed by binder and target,
   // which is what identifies a field.
+  //
+  // An option's label is the value itself, never the value plus an explanation
+  // — showing anything else breaks the link between what someone picks and
+  // what lands in the compose file, which is exactly what this form exists to
+  // teach. Explanations live behind the field's ⓘ help button instead.
   var CHOICES = {
     'setting/restart': {
       hint: 'when to start it again',
@@ -1256,7 +1262,7 @@
     'port/proto': {
       hint: 'which protocol this port uses',
       options: [
-        ['',     'tcp — the default'],
+        ['',     'tcp'],
         ['/udp', 'udp']
       ]
     },
@@ -1295,52 +1301,54 @@
     }
   };
 
-  // A boolean field's dropdown, worded for what the setting actually does —
-  // f.type === 'boolean' is the trigger (see compose-model.js's booleanTail()
-  // and KEYS[...].type), never a hand-kept list of key names, but the WORDING
-  // still benefits from knowing which setting it is. Keyed the same way
-  // booleanTail() tells the two dynamically-named cases apart (a dependency's
-  // required, a declaration's external) from the five statically-named ones.
+  // A boolean field's dropdown: the options are always plain true/false, but
+  // the HINT text below the box is worded for what the setting actually does
+  // — f.type === 'boolean' is the trigger (see compose-model.js's
+  // booleanTail() and KEYS[...].type), never a hand-kept list of key names,
+  // yet the hint still benefits from knowing which setting it is. Keyed the
+  // same way booleanTail() tells the two dynamically-named cases apart (a
+  // dependency's required, a declaration's external) from the five
+  // statically-named ones.
   var BOOL_CHOICES = {
     'privileged': {
       hint: 'how much access to the host this container gets',
-      options: [['true', 'true — full access to the host'],
-                ['false', 'false — normal, isolated']]
+      options: [['true', 'true'],
+                ['false', 'false']]
     },
     'read_only': {
       hint: 'whether the container can write to its own filesystem',
-      options: [['true', 'true — read-only filesystem'],
-                ['false', 'false — normal, writable filesystem']]
+      options: [['true', 'true'],
+                ['false', 'false']]
     },
     'init': {
       hint: 'whether a tiny init process runs as PID 1',
-      options: [['true', 'true — runs one, to clean up stray processes'],
-                ['false', 'false — the container’s own process is PID 1']]
+      options: [['true', 'true'],
+                ['false', 'false']]
     },
     'tty': {
       hint: 'whether the container gets a terminal',
-      options: [['true', 'true — allocates one, as if run interactively'],
-                ['false', 'false — no terminal']]
+      options: [['true', 'true'],
+                ['false', 'false']]
     },
     'stdin_open': {
       hint: 'whether standard input stays open',
-      options: [['true', 'true — keeps it open, as if run interactively'],
-                ['false', 'false — closes it at once']]
+      options: [['true', 'true'],
+                ['false', 'false']]
     },
     'healthcheck.disable': {
       hint: 'whether the health check above is switched off',
-      options: [['true', 'true — disabled, even though one is written above'],
-                ['false', 'false — runs as written above']]
+      options: [['true', 'true'],
+                ['false', 'false']]
     },
     'depends.required': {
       hint: 'whether this dependency must succeed for the service to start',
-      options: [['true', 'true — must start successfully, or this service will not start'],
-                ['false', 'false — allowed to fail without stopping this service']]
+      options: [['true', 'true'],
+                ['false', 'false']]
     },
     'declared.external': {
       hint: 'whether this already exists outside the file',
-      options: [['true', 'true — already exists; this file only refers to it'],
-                ['false', 'false — created by this file']]
+      options: [['true', 'true'],
+                ['false', 'false']]
     }
   };
   // Guarded the way safeFieldHelp/YAML.keySuggestions already are (see
@@ -1459,18 +1467,18 @@
 
   // network_mode, ipc and pid all also accept "<prefix><name>" — join another
   // service's namespace instead of getting one of its own — one option per
-  // OTHER service in the file (a service cannot share its own). `what` names
-  // the thing being shared, since the three settings do not share one. Built
+  // OTHER service in the file (a service cannot share its own). What each of
+  // the three shares differs, but that belongs in the field's help, not in an
+  // option label, which shows the value and nothing else. Built
   // fresh on every call rather than folded into CHOICES the way netLoad()
   // appends the server's own docker networks: that table is shared by every
   // service's row, and mutating it here would leak one service's option
   // list into every other service's dropdown.
-  function serviceModeOptions(serviceName, prefix, what) {
+  function serviceModeOptions(serviceName, prefix) {
     var names = safeRefNames((MODEL && MODEL.declared && MODEL.declared.services) || [], 'services', serviceName);
     var options = [];
     for (var i = 0; i < names.length; i++) {
-      options.push([prefix + names[i],
-                    prefix + names[i] + ' — share ' + names[i] + '’s ' + what]);
+      options.push([prefix + names[i], prefix + names[i]]);
     }
     return options;
   }
@@ -1584,13 +1592,12 @@
     // are both joined per call rather than stored on the vocab itself — see
     // their own comments for why.
     if (choice && f.target === 'network_mode') {
-      choice = { hint: choice.hint, options: choice.options.concat(NETWORKS, serviceModeOptions(f.service, 'service:', 'network')) };
+      choice = { hint: choice.hint, options: choice.options.concat(NETWORKS, serviceModeOptions(f.service, 'service:')) };
     }
     // ipc and pid share network_mode's "service:<name>" trick, joined the
     // same way and for the same reason.
     if (choice && f.binder === 'setting' && (f.target === 'ipc' || f.target === 'pid')) {
-      var what = f.target === 'ipc' ? 'IPC namespace' : 'process namespace';
-      choice = { hint: choice.hint, options: choice.options.concat(serviceModeOptions(f.service, 'service:', what)) };
+      choice = { hint: choice.hint, options: choice.options.concat(serviceModeOptions(f.service, 'service:')) };
     }
 
     // 3: a dependency's condition is a closed set, not a
@@ -1830,7 +1837,7 @@
                    ' data-note="1" value="' + esc(f.note) + '"' +
                    ' spellcheck="false"' + NOFILL +
                    (f.commentSpot ? '' : ' disabled') + '>' +
-             '<span class="staxx-boxhint">note, kept in the file</span>' +
+             '<span class="staxx-boxhint">Notes</span>' +
            '</label>';
   }
 
@@ -2660,8 +2667,8 @@
     // would otherwise show — depends_on's long form needs a third column
     // CAPTIONS' static 'depends' row does not carry (see groupsForService).
     var cols = grp.cols || CAPTIONS[grp.key] ||
-               (grp.cls === 'staxx-formgroup--single' ? ['value', 'note, kept in the file'] : null) ||
-               (declared ? ['name', 'setting', 'note, kept in the file'] : null);
+               (grp.cls === 'staxx-formgroup--single' ? ['value', 'Notes'] : null) ||
+               (declared ? ['name', 'setting', 'Notes'] : null);
     if (!cols) return '';
     var bits = ['<div class="staxx-caption" aria-hidden="true">'];
     // Ports alone carry a leading grip column (PLAN_40) with nothing to name
@@ -7458,7 +7465,7 @@
       for (var n = 0; n < nets.length; n++) {
         var name = nets[n].name, driver = nets[n].driver;
         if (!name || known[name]) continue;
-        NETWORKS.push([name, driver ? name + ' — ' + driver + ' network on this server' : name]);
+        NETWORKS.push([name, name]);
         known[name] = true;
       }
 
