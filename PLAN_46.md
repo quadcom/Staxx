@@ -256,8 +256,25 @@ test written for it wrongly passed.
 Still to prove in a browser: that the pair's own tab checks live, that Start's log names both files,
 and that a single-file stack looks and behaves exactly as before.
 
-**3. Reading and writing projects in.** Part A and Part B — the import panel's Compose Manager group
-becomes tickable, projects land needing review, nothing can start yet.
+**3. Reading and writing projects in. — BUILT 2026-08-19, deployed.** Part A and Part B. Proved
+against all seven real projects: six import, and Wazuh is refused because Docker rejects its
+ten-byte file. Copies come out byte-identical, the pair is recognised, the review lock holds, and the
+project name matches what Docker already calls it in every case.
+
+Three things this plan had wrong, found by running it against the real projects:
+
+- **A project's files can live in appdata while an older copy sits on flash**, and for one of yours
+  those copies differ — the compose file *and* the settings file. The override and settings file are
+  now taken from beside the file actually in use, falling back to the project's own folder, which is
+  where one project genuinely keeps its override. Left as written, the import would have quietly
+  carried settings the project itself stopped using.
+- **A file Docker rejects is not a file with nothing in it.** The refusal now quotes Docker rather
+  than calling a broken file empty.
+- **Whether a project can be imported is stated by the server**, not worked out in the browser by
+  pattern-matching the sentences it also sent.
+
+Still to prove in a browser: ticking a project, the fixed destination name, and the preview's
+account of what will and will not be copied.
 
 **4. The takeover.** Part D — the one button, its warning, and clearing the note on success.
 
