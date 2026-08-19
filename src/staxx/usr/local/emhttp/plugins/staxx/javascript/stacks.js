@@ -1414,6 +1414,16 @@
   var netLoaded  = false;
   var NETWORKS   = [];      // [name, label] pairs found on this server, beyond netmode's own
 
+  // Every network name the server reported, unfiltered — unlike NETWORKS
+  // above, bridge/host/none stay in here because a declared network's `name`
+  // (external: true) can legitimately be one of those. Filled in the same
+  // netLoad() loop; kept apart from NETWORKS for the same reason NETWORKS is
+  // kept apart from the vocab table (see the comment above it). netPresent is
+  // the same list as a lookup, for the "not found on this server" tag —
+  // mirrors devPresent's split between a naming list and a presence check.
+  var ALL_NETS   = [];      // [name, name] pairs, every server network as-is
+  var netPresent = {};      // name -> true
+
   // Just the names, for YAML.lint()'s network_mode check. null — not [] —
   // until the server has answered, because "we do not know yet" and "there
   // are none" have to lead to different behaviour: the first must not let a
@@ -1658,6 +1668,17 @@
       return driverChoice;
     }
 
+    // A declared network's own name is that network on the server when the
+    // row is external, so it gets the same typeable-suggestion shape as the
+    // image box rather than declNameHtml()'s plain pencil — see fieldHtml()'s
+    // declared branch. ALL_NETS, not NETWORKS: bridge/host/none are real
+    // networks someone may legitimately declare as external, and this list
+    // is not netmode's dropdown.
+    if (which === 'name' && f.binder === 'declared' && !f.fold && f.declKind === 'networks') {
+      return { hint: 'a network on this server, or a name for one this file creates',
+               options: ALL_NETS, open: true };
+    }
+
     // A short-form port's protocol, or a short-form volume's mode — static
     // pairs, not looked up by target, since a port/volume's target is the
     // mapping's own key ("8096/tcp"), never "proto" or "mode". A long-form
@@ -1715,7 +1736,12 @@
   // its value would otherwise read as a bare name — see swapVolumeToPath(),
   // which renders that box by hand right after the sentinel option is chosen,
   // while the value itself (still blank) has not changed at all.
-  function boxHtml(f, index, which, hint, tool, head, noChoice) {
+  // `rename` is the one other marker this ever carries beyond the usual
+  // data-row/data-part pair — raw HTML-attribute text, e.g. ' data-rename="1"',
+  // set only for a declared network's name box (see fieldHtml's declared
+  // branch) so the input/change listeners can route it away from the
+  // ordinary debounce-and-setPart path and into YAML.renameDeclared instead.
+  function boxHtml(f, index, which, hint, tool, head, noChoice, rename) {
     var p = f.parts[which];
     if (!p) return '';
     // Absent counts as writable — typing into an empty Container slot is what
@@ -1754,7 +1780,7 @@
 
     var control = choice && choice.open
       ? '<input type="text" class="staxx-input" list="' + listId + '"' +
-              ' data-row="' + index + '" data-part="' + which + '"' +
+              ' data-row="' + index + '" data-part="' + which + '"' + (rename || '') +
               ' value="' + esc(p.value) + '"' +
               ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
               ' title="' + esc(boxTitle) + '"' +
@@ -1776,8 +1802,13 @@
                 (dead ? ' disabled' : '') + '>' +
             opts.html +
           '</select>'
+        // `rename` rides on this branch too, not just the datalist one above:
+        // a rename box that lost its suggestions (an empty list, a choice
+        // that answered null) must still route to renameDeclared, never fall
+        // through to setPart, which rewrites the key and strands every
+        // reference to it.
         : '<input type="text" class="staxx-input"' +
-                ' data-row="' + index + '" data-part="' + which + '"' +
+                ' data-row="' + index + '" data-part="' + which + '"' + (rename || '') +
                 ' value="' + esc(p.value) + '"' +
                 ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
                 ' title="' + esc(boxTitle) + '"' +
@@ -2497,7 +2528,32 @@
       // gid/mode — see harvestNetworksMap()/harvestList() in the model.
       devMore = longExtrasDevMoreHtml(f, index);
     } else if (declared) {
-      bits.push(declNameHtml(f, index));
+      if (f.declKind === 'networks') {
+        // A network's name IS the network on the server once it is external,
+        // so it gets a typeable box with suggestions instead of the pencil —
+        // see choiceFor()'s 'name'/'declared'/'networks' branch. The ⓘ and
+        // the "not found" tag ride in `head`, the same slot a device row's
+        // heading uses, because declNameHtml() is not called here to carry
+        // them itself.
+        var netVal = f.parts.name.value;
+        var netExternal = !!(YAML && YAML.externalChoice && f.parts.value &&
+                              f.parts.value.value === YAML.externalChoice);
+        var netLost = netExternal && netLoaded && netVal && !netPresent[netVal];
+        var netTag = netLost
+                   ? '<span class="staxx-fieldtag staxx-fieldtag--lost">not found on this server</span>'
+                   : '';
+        // The ⓘ sits BESIDE the box, not in its head slot: head renders above
+        // the control, which suits a tag ("read-only mount", "not found on
+        // this server") but leaves a lone icon floating on a line of its own.
+        // .staxx-declname is the flex cell the pencil already used for
+        // exactly this — one grid column holding a control and its button.
+        bits.push('<div class="staxx-declname">' +
+                    boxHtml(f, index, 'name', 'network name', '', netTag, false, ' data-rename="1"') +
+                    helpBtnHtml(help, helpId) +
+                  '</div>');
+      } else {
+        bits.push(declNameHtml(f, index));
+      }
       bits.push(boxHtml(f, index, 'value', DECL_HINT[f.declKind] || 'setting'));
       bits.push(noteBoxHtml(f, index));
 
@@ -3200,6 +3256,42 @@
     // live while every edit to it is silently dropped (PLAN_14.md).
     if (!f) { setYamlStatus('This box lost track of its place in the file — reopen the stack to fix it.'); return; }
 
+    // A declared network's own name box (data-rename, set in fieldHtml's
+    // declared/networks branch) never reaches YAML.setPart below — that
+    // writes the mapping key and nothing else, dropping every service
+    // reference that still pointed at the old name. Mirrors the rename
+    // pencil's click handler exactly (renameDeclared carries the references;
+    // a refusal goes to the footer, since the compose pane's status line is
+    // hidden in Form view).
+    if (el.dataset.rename !== undefined) {
+      var was = f.parts.name.value;
+      var next = el.value.trim();
+      if (!next || next === was) return;
+
+      clearError();
+      flushPending();
+      pushUndo('renaming the network "' + was + '" to "' + next + '"');
+      var renamed = YAML.renameDeclared(MODEL.doc, 'networks', was, next);
+      if (!renamed.ok) {
+        undoStack.pop();
+        updateUndo();
+        showError(renamed.error);
+        return;
+      }
+
+      structuralEdit(-1, 'Renamed "' + was + '" to "' + next + '"' +
+                    (renamed.refs > 0
+                      ? '. ' + renamed.refs + (renamed.refs === 1 ? ' reference' : ' references') + ' updated.'
+                      : '.'));
+
+      // structuralEdit() just redrew the whole form, which took focus with it
+      // — land back on the renamed row's own box, found by its new value the
+      // way the pencil re-finds its pencil by declKind/declName.
+      var freshBox = formHost.querySelector('[data-rename="1"][value="' + next.replace(/"/g, '\\"') + '"]');
+      if (freshBox) freshBox.focus();
+      return;
+    }
+
     var done;
     if (el.dataset.note !== undefined) {
       // The note shares one comment with the -!S and -!R markers, so the whole
@@ -3275,6 +3367,14 @@
 
   formHost.addEventListener('input', function (event) {
     if (!event.target.dataset.row) return;
+    // A declared network's rename box (data-rename) commits on Enter/blur via
+    // the change listener below, never on this 250ms debounce — a live rename
+    // mid-keystroke would rewrite the mapping key, and every service
+    // reference pointing at it, to each half-typed spelling in turn. Returning
+    // here rather than inside commit() means no timer is ever armed for this
+    // box, so every flushPending() call site downstream stays correct without
+    // having to know this box exists.
+    if (event.target.dataset.rename !== undefined) return;
     if (commitTimer) clearTimeout(commitTimer);
     pendingEl = event.target;
     // Long enough to skip mid-word churn, short enough that the compose pane
@@ -3318,7 +3418,11 @@
     // A pick from a list is a decision, not a keystroke — commit it at once. A
     // dropdown fires input as well, so the pending timer that set off has to be
     // dropped or the same edit is written twice.
-    if (el.tagName !== 'SELECT') return;
+    // A text box fires change too, but only ever on Enter or on blur after an
+    // edit — exactly the moment a rename box (never debounced, see the input
+    // listener above) is meant to commit, so it is let through here rather
+    // than gaining a keydown/focusout handler of its own.
+    if (el.tagName !== 'SELECT' && el.dataset.rename === undefined) return;
     if (commitTimer) { clearTimeout(commitTimer); commitTimer = null; pendingEl = null; }
     commit(el);
   });
@@ -7461,10 +7565,15 @@
       for (var i = 0; i < vocab.length; i++) known[vocab[i][0]] = true;
 
       NETWORKS = [];
+      ALL_NETS = [];
+      netPresent = {};
       var nets = res.networks || [];
       for (var n = 0; n < nets.length; n++) {
         var name = nets[n].name, driver = nets[n].driver;
-        if (!name || known[name]) continue;
+        if (!name) continue;
+        ALL_NETS.push([name, name]);
+        netPresent[name] = true;
+        if (known[name]) continue;
         NETWORKS.push([name, name]);
         known[name] = true;
       }

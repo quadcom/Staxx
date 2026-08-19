@@ -2732,6 +2732,77 @@ console.log('\nP. The Stack section, editable');
      r3.ok === true && r3.refs === 0 && Y.serialise(d3) === before3, JSON.stringify(r3));
 })();
 
+/* ---- 10b. renameDeclared accounts for the map-form network reference ---- */
+
+(function () {
+  // The literal reproduction from the bug report: a fixed IP address forces
+  // a service's networks: into the long form, a map keyed by network name
+  // rather than a sequence of names — that key is a reference too, and the
+  // collector used to miss it, so a rename left the file unable to start.
+  var repro = 'services:\n  a:\n    image: x\n    networks:\n      br0.2:\n' +
+    '        ipv4_address: 1.2.3.4\n  b:\n    image: y\n    networks:\n' +
+    '      - br0.2\nnetworks:\n  br0.2:\n    external: true\n';
+  var rd = Y.parse(repro);
+  var rres = Y.renameDeclared(rd, 'networks', 'br0.2', 'br0.9');
+  ok('renaming a network rewrites a service\u2019s map-form reference, not just a sequence one',
+     rres.ok === true && rres.refs === 2 && Y.serialise(rd) === repro.replace(/br0\.2/g, 'br0.9'),
+     JSON.stringify(rres) + '\n' + firstDiff(repro.replace(/br0\.2/g, 'br0.9'), Y.serialise(rd)));
+
+  // The fuller matrix: the same network named in both forms across
+  // different services, a fixed hardware address alongside the IP address,
+  // and a second network that must stay untouched throughout.
+  var src = 'services:\n' +
+    '  a:\n' +
+    '    image: x\n' +
+    '    networks:\n' +
+    '      br0.2:\n' +
+    '        ipv4_address: 1.2.3.4\n' +
+    '        mac_address: "02:42:ac:11:00:02"\n' +
+    '  b:\n' +
+    '    image: y\n' +
+    '    networks:\n' +
+    '      - br0.2\n' +
+    '  c:\n' +
+    '    image: z\n' +
+    '    networks:\n' +
+    '      other:\n' +
+    '        ipv4_address: 9.9.9.9\n' +
+    'networks:\n' +
+    '  br0.2:\n' +
+    '    external: true\n' +
+    '  other:\n' +
+    '    external: true\n';
+
+  var doc = Y.parse(src);
+  var res = Y.renameDeclared(doc, 'networks', 'br0.2', 'br0.9');
+  var out = Y.serialise(doc);
+
+  ok('renaming a network named in both forms across services rewrites every one of them',
+     res.ok === true && res.refs === 2 && out === src.replace(/br0\.2/g, 'br0.9'),
+     JSON.stringify(res) + '\n' + firstDiff(src.replace(/br0\.2/g, 'br0.9'), out));
+
+  ok('the fixed IPv4 and hardware address lines survive untouched, indentation and all',
+     out.indexOf('      br0.9:\n        ipv4_address: 1.2.3.4\n        mac_address: "02:42:ac:11:00:02"\n') >= 0,
+     out);
+
+  ok('a service naming a different network in map form is untouched',
+     out.indexOf('      other:\n        ipv4_address: 9.9.9.9\n') >= 0, out);
+
+  var d2 = Y.parse(src), before2 = Y.serialise(d2);
+  var r2 = Y.renameDeclared(d2, 'networks', 'br0.2', 'other');
+  ok('renaming to a name that collides with an existing declaration is refused, and the file is unchanged',
+     r2.ok === false && typeof r2.error === 'string' && r2.error.length > 0 && Y.serialise(d2) === before2,
+     JSON.stringify(r2));
+
+  // removeDeclared does not check usage (case 9) — that contract holds for
+  // a map-form reference too: the declaration goes, the dead reference stays.
+  var d3 = Y.parse(src);
+  var removed = Y.removeDeclared(d3, 'networks', 'br0.2');
+  ok('removing a declaration still referenced in map form does not refuse, and leaves the reference behind',
+     removed === true && Y.serialise(d3) === src.replace('  br0.2:\n    external: true\n', ''),
+     firstDiff(src.replace('  br0.2:\n    external: true\n', ''), Y.serialise(d3)));
+})();
+
 /* ---- 11. filling an empty declaration's primary setting ----------------- */
 
 (function () {

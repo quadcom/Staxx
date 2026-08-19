@@ -2331,6 +2331,13 @@
   white-space: nowrap;
 }
 
+/* A network's name is a box rather than text, so it takes the width the name
+   text used to and leaves the ⓘ beside it at its own size. */
+.staxx-declname > .staxx-box {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .staxx-svcrename:hover,
 .staxx-svcrename:focus-visible {
   border-color: var(--sm-line);

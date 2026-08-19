@@ -4258,7 +4258,20 @@
       if (!sp.value || sp.value.kind !== 'map') continue;
 
       var lp = sp.value.pairs[kind];
-      if (!lp || !lp.value || lp.value.kind !== 'seq') continue;
+      if (!lp || !lp.value) continue;
+
+      // A service's networks: is either this sequence of names or, for the
+      // long form that carries a fixed IPv4/hardware address, a map keyed
+      // by network name — that key is a reference too.
+      if (kind === 'networks' && lp.value.kind === 'map') {
+        for (var ni = 0; ni < lp.value.keys.length; ni++) {
+          var nk = lp.value.keys[ni];
+          if (nk === name) edits.push({ spot: keySpot(lp.value.pairs[nk]) });
+        }
+        continue;
+      }
+
+      if (lp.value.kind !== 'seq') continue;
 
       for (var i = 0; i < lp.value.items.length; i++) {
         var iv = lp.value.items[i].value;
@@ -4279,9 +4292,9 @@
           continue;
         }
 
-        // Networks has no long form to check here — a service's networks:
-        // is either this sequence of names or a map keyed by name, never a
-        // sequence of maps — so only secrets/configs/volumes reach this.
+        // Networks' long form is a map keyed by name, handled above before
+        // this loop runs at all — a sequence of maps never happens for
+        // networks, so only secrets/configs/volumes reach this branch.
         if (iv.kind === 'map' && kind !== 'networks') {
           // A long-form volume only names a declared volume when its type
           // says so; a bind mount's source is a path, never this bare name.
@@ -5695,9 +5708,14 @@
     // One shared bucket for all four declaration kinds (networks, volumes,
     // secrets, configs) — a network's driver and a volume's driver mean the
     // same thing, so there is no reason to describe them twice. Titles reused
-    // exactly from DECL_LEAVES.
+    // exactly from DECL_LEAVES, except networkRow/volumeRow: those two are
+    // not compose keys at all but the whole row, whose one box answers
+    // "already exists, or created here" rather than naming a driver, so
+    // driver's own text no longer describes what the reader is looking at.
     declared: {
       driver:      { title: 'Driver', description: "Which plugin manages this network or volume — the default is fine for almost everyone, and only needs changing for a specialised storage or networking setup." },
+      networkRow:  { title: 'Network', description: "This network, by name. Set the box beside it to external if the network already exists on the server and this file only joins it, to a driver name if compose should create it a particular way, or leave it blank for compose to create an ordinary network with that name." },
+      volumeRow:   { title: 'Volume', description: "This volume, by name. Set the box beside it to external if the volume already exists on the server and this file only uses it, to a driver name if compose should create it a particular way, or leave it blank for compose to create an ordinary volume with that name." },
       internal:    { title: 'Internal only, no outside access', description: "Cuts this network off from the outside world, so containers on it can only talk to each other, not the internet." },
       external:    { title: 'Created outside this file', description: "Tells compose this network, volume, secret or config already exists, rather than asking it to create one." },
       name:        { title: 'Real name in Docker', description: "The real name this network or volume has in Docker, if it should differ from the name used inside this file." },
@@ -5776,6 +5794,8 @@
           var dsegs = String(target).split('.');
           return keyInfo(dsegs[dsegs.length - 1], 'declared');
         }
+        if (field.declKind === 'networks') return keyInfo('networkRow', 'declared');
+        if (field.declKind === 'volumes') return keyInfo('volumeRow', 'declared');
         var primary = DECL_PRIMARY[field.declKind];
         return primary ? keyInfo(primary, 'declared') : null;
       }
