@@ -2442,25 +2442,29 @@ console.log('\nO. The Stack section — declarations as fields');
   // primary (driver/file, which IS the row's own box) and minus ipam, which is
   // a block and stays locked. The point of this assertion is unchanged: the
   // exact set, so an unexpected extra or missing declaration field is caught.
+  //
+  // A later change folded external into the row's own box for networks and
+  // volumes (their box is a driver dropdown, so "created outside this file"
+  // is just another answer to it) — dropping the count for those two kinds'
+  // absent external from sixteen to thirteen. Secrets keeps its own external
+  // as an ordinary fold field, since its row box is a file path and cannot
+  // represent the choice.
   var want = [
     { target: 'networks.backend_net',            declKind: 'networks', fold: false },
     { target: 'networks.backend_net.attachable',  declKind: 'networks', fold: true  },
-    { target: 'networks.backend_net.external',    declKind: 'networks', fold: true  },
     { target: 'networks.backend_net.internal',    declKind: 'networks', fold: true  },
     { target: 'networks.backend_net.name',        declKind: 'networks', fold: true  },
     { target: 'networks.frontend_net',            declKind: 'networks', fold: false },
     { target: 'networks.frontend_net.attachable', declKind: 'networks', fold: true  },
-    { target: 'networks.frontend_net.external',   declKind: 'networks', fold: true  },
     { target: 'networks.frontend_net.internal',   declKind: 'networks', fold: true  },
     { target: 'networks.frontend_net.name',       declKind: 'networks', fold: true  },
     { target: 'secrets.db_password',              declKind: 'secrets',  fold: false },
     { target: 'secrets.db_password.environment',  declKind: 'secrets',  fold: true  },
     { target: 'secrets.db_password.external',     declKind: 'secrets',  fold: true  },
     { target: 'volumes.db_data',                  declKind: 'volumes',  fold: false },
-    { target: 'volumes.db_data.external',         declKind: 'volumes',  fold: true  },
     { target: 'volumes.db_data.name',             declKind: 'volumes',  fold: true  }
   ];
-  ok('the fixture yields exactly these sixteen declared fields, with the right declKind',
+  ok('the fixture yields exactly these thirteen declared fields, with the right declKind',
      JSON.stringify(got) === JSON.stringify(want), JSON.stringify(got));
   // The two kinds of fold row must not be confused with each other. A row the
   // file HAS carries its value and needs no path — backend_net's internal: true
@@ -2476,7 +2480,7 @@ console.log('\nO. The Stack section — declarations as fields');
      JSON.stringify(folds.filter(function (f) { return !f.absent; })
                          .map(function (f) { return [f.target, f.parts.value.value, !!f.path]; })));
   ok('every other fold row is a blank carrying a path to write through',
-     folds.filter(function (f) { return f.absent; }).length === 11 &&
+     folds.filter(function (f) { return f.absent; }).length === 8 &&
      folds.filter(function (f) { return f.absent; }).every(function (f) {
        return f.parts.value.value === '' && !!f.path;
      }),
@@ -7572,28 +7576,25 @@ console.log('\nAE. PLAN_34 Phase 3 — the three new Add paths');
   ].join('\n');
 
   var doc  = Y.parse(src), form = Y.buildForm(doc);
+  // A later change folded external into the row's own value box for networks
+  // and volumes, so it is no longer offered here as a separate blank leaf —
+  // see section BC below for the row-based path this replaced it with.
   var ext  = Y.fieldById(form, '/declared/networks.backend.external');
   var name = Y.fieldById(form, '/declared/networks.backend.name');
   var intl = Y.fieldById(form, '/declared/networks.backend.internal');
   var att  = Y.fieldById(form, '/declared/networks.backend.attachable');
 
-  ok('a bare declaration offers external, name, internal and attachable as blank writable fold fields',
-     !!ext && ext.absent && !ext.locked && ext.fold &&
+  ok('external is no longer offered as its own fold field on a network; name, internal and attachable still are',
+     !ext &&
      !!name && name.absent && !name.locked && name.fold &&
      !!intl && intl.absent && !intl.locked && intl.fold &&
      !!att && att.absent && !att.locked && att.fold,
      JSON.stringify({
-       external:   ext  && { absent: ext.absent,  locked: ext.locked,  fold: ext.fold },
+       external:   ext,
        name:       name && { absent: name.absent, locked: name.locked, fold: name.fold },
        internal:   intl && { absent: intl.absent, locked: intl.locked, fold: intl.fold },
        attachable: att  && { absent: att.absent,  locked: att.locked,  fold: att.fold }
      }));
-
-  var want = src.replace('  backend:\n', '  backend:\n    external: true\n');
-  ok('setPart on external writes external: true under the declaration at its own indent, and nothing else moves',
-     !!ext && Y.setPart(doc, form, '/declared/networks.backend.external', 'value', 'true') &&
-     Y.serialise(doc) === want,
-     firstDiff(want, Y.serialise(doc)));
 })();
 
 /* ---- 2. ipam must never get a blank box, present or absent -------------- */
@@ -8569,6 +8570,268 @@ console.log('\nAH. PLAN_40 — dragging a port (moveItem)');
 
   ok('the moved file is itself well-formed: parsing it again and serialising it back matches exactly',
      Y.serialise(Y.parse(out)) === out, firstDiff(out, Y.serialise(Y.parse(out))));
+})();
+
+/* =========================================================================
+ * AI. Driver and external share one box on a network/volume row
+ *
+ * A network or volume declared `external: true` with no driver used to read
+ * back as a row with an empty box — indistinguishable from an unconfigured
+ * one, even though the file said something. `external: true` alongside a
+ * driver: is also a file real compose refuses outright. The fix folds the
+ * two into the row's single value box: EXTERNAL_CHOICE is one more answer a
+ * driver dropdown can hold, so the row can never show both or neither.
+ * Secrets and configs are unaffected — their row box is a file path, and the
+ * same merge there would misrepresent it — so external stays an ordinary
+ * fold field for those two kinds.
+ * ========================================================================= */
+
+console.log('\nAI. Driver and external share one box on a network/volume row');
+
+/* ---- 1. external: true, no driver, reads as the sentinel ---------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    external: true',
+    ''
+  ].join('\n');
+  var f = Y.fieldById(Y.buildForm(Y.parse(src)), '/declared/networks.backend');
+
+  ok('a network declared external: true with no driver reads back as the external sentinel',
+     !!f && f.parts.value.value === Y.externalChoice,
+     f && JSON.stringify(f.parts.value));
+})();
+
+/* ---- 2. that row set to a driver name drops external -------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    external: true',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, '/declared/networks.backend', 'value', 'bridge');
+
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    driver: bridge',
+    ''
+  ].join('\n');
+  ok('setting that row to a driver name writes driver: bridge and removes the external line',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 3. an existing driver, set to external, drops the driver line ------ */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    driver: bridge',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, '/declared/networks.backend', 'value', Y.externalChoice);
+
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    external: true',
+    ''
+  ].join('\n');
+  ok('setting a driver:-bearing row to "external" writes external: true (unquoted, bare) and removes the driver line',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 4. that row cleared to blank leaves a bare, valid declaration ------ */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    external: true',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, '/declared/networks.backend', 'value', '');
+
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    ''
+  ].join('\n');
+  ok('clearing that row to blank leaves the declaration bare — no driver, no external, name line intact',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 5. external: false never takes over the row ------------------------ */
+
+(function () {
+  var withDriver = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    driver: bridge',
+    '    external: false',
+    ''
+  ].join('\n');
+  var fWithDriver = Y.fieldById(Y.buildForm(Y.parse(withDriver)), '/declared/networks.backend');
+  ok('external: false alongside a driver leaves the row showing the driver, not the sentinel',
+     !!fWithDriver && fWithDriver.parts.value.value === 'bridge',
+     fWithDriver && JSON.stringify(fWithDriver.parts.value));
+
+  var noDriver = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    external: false',
+    ''
+  ].join('\n');
+  var fNoDriver = Y.fieldById(Y.buildForm(Y.parse(noDriver)), '/declared/networks.backend');
+  ok('external: false with no driver leaves the row blank, not the sentinel',
+     !!fNoDriver && fNoDriver.parts.value.value === '',
+     fNoDriver && JSON.stringify(fNoDriver.parts.value));
+})();
+
+/* ---- 6. a map-shaped external cannot be shown on the row, so it keeps its
+ *        own fold field and leaves the driver box alone ------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    driver: bridge',
+    '    external:',
+    '      name: real_net',
+    ''
+  ].join('\n');
+  var form = Y.buildForm(Y.parse(src));
+  var row  = Y.fieldById(form, '/declared/networks.backend');
+  var leaf = Y.fieldById(form, '/declared/networks.backend.external');
+
+  ok('the deprecated long-form external (a map) leaves the row showing the driver, and keeps its own fold field',
+     !!row && row.parts.value.value === 'bridge' && !!leaf && leaf.fold,
+     JSON.stringify({ row: row && row.parts.value.value, leaf: leaf && { fold: leaf.fold, locked: leaf.locked } }));
+})();
+
+/* ---- 7. a volumes: declaration behaves the same way ---------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    volumes:',
+    '      - data:/var/lib/data',
+    'volumes:',
+    '  data:',
+    '    external: true',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var f = Y.fieldById(form, '/declared/volumes.data');
+  ok('a volume declared external: true with no driver reads back as the sentinel too',
+     !!f && f.parts.value.value === Y.externalChoice,
+     f && JSON.stringify(f.parts.value));
+
+  var wrote = Y.setPart(doc, form, '/declared/volumes.data', 'value', 'local');
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    volumes:',
+    '      - data:/var/lib/data',
+    'volumes:',
+    '  data:',
+    '    driver: local',
+    ''
+  ].join('\n');
+  ok('setting a volume row from external to a driver writes driver: local and drops external',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 8. secrets are unaffected: external stays an ordinary fold field --- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    secrets:',
+    '      - creds',
+    'secrets:',
+    '  creds:',
+    '    file: ./creds.txt',
+    '    external: true',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row  = Y.fieldById(form, '/declared/secrets.creds');
+  var leaf = Y.fieldById(form, '/declared/secrets.creds.external');
+
+  ok('a secret\'s row box still shows the file path, and external stays an ordinary, unlocked fold field',
+     !!row && row.parts.value.value === './creds.txt' &&
+     !!leaf && leaf.fold && !leaf.locked && leaf.parts.value.value === 'true',
+     JSON.stringify({
+       row:  row  && row.parts.value.value,
+       leaf: leaf && { fold: leaf.fold, locked: leaf.locked, value: leaf.parts.value.value }
+     }));
+
+  ok('...and the file round-trips untouched — this section only reads',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
 })();
 
 /* ---- result ------------------------------------------------------------- */

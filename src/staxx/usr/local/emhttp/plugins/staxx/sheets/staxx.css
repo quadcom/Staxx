@@ -2693,6 +2693,65 @@
   --sm-fieldcols: minmax(0, 1fr) minmax(0, 1fr) 9rem minmax(0, 1.2fr) 2.4rem;
 }
 
+/* --volumes rides alongside --mapped (stacks.js's GROUPS carries both
+   classes on the row) rather than replacing it, the same way --ports does —
+   --mapped's own template above still backs a port's single line. A mount's
+   server path is long and unreadable in a track sized for a port number, so
+   it gets a track of its own on a first line, with the mode dropdown and the
+   note pushed to a second line below.
+   Every cell below is placed explicitly, by which part it is
+   (staxx-box--host/container/mode/note, set in boxHtml()) rather than by
+   document order: a long-form mount has no mode part at all — boxHtml()
+   returns '' for it — so nth-child placement would silently shift every
+   cell after the gap. */
+.staxx-formgroup--volumes {
+  --sm-fieldcols: 13rem minmax(0, 1fr) minmax(0, 1fr) 2.4rem;
+}
+
+.staxx-formgroup--volumes .staxx-fieldrow > .staxx-box--host {
+  grid-row: 1;
+  grid-column: 1 / span 2;
+}
+
+.staxx-formgroup--volumes .staxx-fieldrow > .staxx-box--container {
+  grid-row: 1;
+  grid-column: 3;
+}
+
+.staxx-formgroup--volumes .staxx-fieldrow > .staxx-kill {
+  grid-row: 1;
+  grid-column: 4;
+}
+
+.staxx-formgroup--volumes .staxx-fieldrow > .staxx-box--mode {
+  grid-row: 2;
+  grid-column: 1;
+}
+
+/* The placeholder a long-form mount leaves where its mode box would be is
+   only ever needed to hold a track open, and named placement no longer needs
+   one held — left visible it would claim a cell and draw an empty second
+   line under a mount that has nothing to put there. */
+.staxx-formgroup--volumes .staxx-fieldrow > .staxx-boxgap {
+  display: none;
+}
+
+.staxx-formgroup--volumes .staxx-fieldrow > .staxx-box--note {
+  grid-row: 2;
+  grid-column: 2 / -1;
+}
+
+/* The caption above only names the first line — CAPTIONS.volume carries two
+   headings, not four — so its two spans need the same explicit columns as
+   the boxes they sit above rather than the one-per-track default. */
+.staxx-formgroup--volumes .staxx-caption > span:nth-child(1) {
+  grid-column: 1 / span 2;
+}
+
+.staxx-formgroup--volumes .staxx-caption > span:nth-child(2) {
+  grid-column: 3;
+}
+
 /* A port is at most five digits, so the two halves do not need a share of the
    row the way a mount's two paths do — fixed and narrow, with the width handed
    back to the note, which is the part that actually runs long. Two more
@@ -2842,6 +2901,14 @@
 
 .staxx-formgroup--device .staxx-boxhint,
 .staxx-devmore .staxx-boxhint {
+  display: block;
+}
+
+/* Same exception, for the same reason: a mount's second line (mode, note)
+   has no caption of its own above it — CAPTIONS.volume only names the first
+   line — so its hint is the only thing that says what either box is for. */
+.staxx-formgroup--volumes .staxx-box--mode .staxx-boxhint,
+.staxx-formgroup--volumes .staxx-box--note .staxx-boxhint {
   display: block;
 }
 
@@ -7240,6 +7307,28 @@
   .staxx-fieldrow > .staxx-fieldlabel,
   .staxx-fieldrow > .staxx-box {
     grid-column: 1 / -1;
+  }
+
+  /* A mount's desktop two-line layout (see .staxx-formgroup--volumes, well
+     above the narrow-screen block) names each cell's row AND column
+     explicitly, on a selector three classes deep — more specific than the
+     two rules just above, so left alone it would keep outranking them here
+     too and land a mount's container path, × and second line in columns a
+     two-track phone grid does not have. grid-row: auto is the trap this
+     file already warns about elsewhere: an explicit row set outside this
+     query survives into it and fights auto-placement, so it has to be
+     reset here by name, the same as the desktop rule that set it. */
+  .staxx-formgroup--volumes .staxx-fieldrow > .staxx-box--host,
+  .staxx-formgroup--volumes .staxx-fieldrow > .staxx-box--container,
+  .staxx-formgroup--volumes .staxx-fieldrow > .staxx-box--mode,
+  .staxx-formgroup--volumes .staxx-fieldrow > .staxx-box--note {
+    grid-row: auto;
+    grid-column: 1 / -1;
+  }
+
+  .staxx-formgroup--volumes .staxx-fieldrow > .staxx-kill {
+    grid-row: 1;
+    grid-column: 2;
   }
 
   .staxx-formgroup .staxx-boxhint {

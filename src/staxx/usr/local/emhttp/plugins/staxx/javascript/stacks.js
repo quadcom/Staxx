@@ -261,7 +261,12 @@
     // the note. It also adds two more tracks: a leading one for the
     // drag/reorder grip (PLAN_40) and a trailing one the WebUI chip lives in.
     { key: 'port',      heading: 'Ports',     cls: 'staxx-formgroup--mapped staxx-formgroup--ports', add: 'port',   flag: 'port' },
-    { key: 'volume',    heading: 'Volumes',   cls: 'staxx-formgroup--mapped', add: 'volume', flag: 'volume' },
+    // --volumes rides alongside --mapped the same way --ports does, and for
+    // the same reason: it is what lets the two column shapes diverge without
+    // Ports losing its own seven-track single line. A mount's server path is
+    // long and unreadable in a track sized for a port number, so it gets a
+    // two-line layout of its own — see the stylesheet rule this class picks.
+    { key: 'volume',    heading: 'Volumes',   cls: 'staxx-formgroup--mapped staxx-formgroup--volumes', add: 'volume', flag: 'volume' },
     { key: 'env',       heading: 'Variables', cls: 'staxx-formgroup--pair',   add: 'env',    flag: 'env' },
     { key: 'device',    heading: 'Devices',   cls: 'staxx-formgroup--device', add: 'device', flag: 'device' },
     { key: 'label',     heading: 'Labels',    cls: 'staxx-formgroup--pair',   add: 'label',  flag: 'label' },
@@ -335,7 +340,11 @@
     // longer wrapped the heading onto a second line. The fuller wording is
     // still what a screen reader hears — see the hints passed to boxHtml().
     port:      ['Host', 'Container', 'protocol', 'note, kept in the file'],
-    volume:    ['path on the server', 'path in the container', 'read and write', 'note, kept in the file'],
+    // Two headings only: a mount is a two-line row now (see
+    // .staxx-formgroup--volumes), and its second line — mode and note — has
+    // no caption above it, the same reason Devices' own hint stays visible
+    // (see the .staxx-boxhint exception in the stylesheet).
+    volume:    ['path on the server', 'path in the container'],
     device:    ['device', 'note, kept in the file'],
     env:       ['variable name', 'value', 'note, kept in the file'],
     label:     ['label name', 'value', 'note, kept in the file'],
@@ -1261,7 +1270,10 @@
     'volume/mode': {
       hint: 'whether the container can write to this mount',
       options: [
-        ['',    'read and write — the default'],
+        // Short enough to read whole in the narrow track the mode box now
+        // sits in on a mount's second line — the two write options still read
+        // apart from each other, and the hint below says what the box is for.
+        ['',    'read and write'],
         [':ro', 'read-only'],
         [':rw', 'read and write, spelled out']
       ]
@@ -1617,7 +1629,23 @@
     // table could key on, so it is checked directly by declKind instead.
     if (which === 'value' && f.binder === 'declared' && !f.fold &&
         (f.declKind === 'networks' || f.declKind === 'volumes')) {
-      return resolveEntry(CHOICES['declared/' + f.declKind + '.driver']);
+      var driverChoice = resolveEntry(CHOICES['declared/' + f.declKind + '.driver']);
+      // "external" is not a driver — it says Docker never creates this
+      // network/volume at all, it must already exist. compose-model.js owns
+      // the sentinel (a leading space, so it can never collide with a real
+      // driver name) because it also has to read the value back out; the
+      // option list itself is only ever wanted here. Copy the array rather
+      // than unshifting onto it — driverChoice.options IS the shared vocab
+      // resolveEntry() just handed back, and mutating it would grow the
+      // dropdown by one "external" every time this row re-renders.
+      if (driverChoice && YAML && YAML.externalChoice) {
+        driverChoice = {
+          hint: driverChoice.hint,
+          options: [[YAML.externalChoice, 'external — already exists, not created by this file']]
+                      .concat(driverChoice.options)
+        };
+      }
+      return driverChoice;
     }
 
     // A short-form port's protocol, or a short-form volume's mode — static
@@ -1750,7 +1778,11 @@
     // A label may not hold interactive content other than its own control, and
     // a click on a button inside one is not reliably kept away from it — so the
     // input carries its name in aria-label instead of by being wrapped.
-    return '<div class="staxx-box' + (choice && choice.open ? ' staxx-box--open' : '') + '">' +
+    // staxx-box--<which> names the cell by the part it holds rather than its
+    // position in the markup — a mount's two-line layout places cells by
+    // name (see the stylesheet), and a long-form mount has no mode part at
+    // all, so nth-child would silently shift every cell after the gap.
+    return '<div class="staxx-box staxx-box--' + which + (choice && choice.open ? ' staxx-box--open' : '') + '">' +
              (head || '') +
              '<div class="staxx-boxline">' +
                control +
@@ -2273,8 +2305,14 @@
     var mapped = f.binder === 'port' || f.binder === 'volume' || f.binder === 'device';
     // A long-form dependency also carries parts.name (its key), but it is not
     // this env/label shape — it gets its own branch below, checked ahead of
-    // this one for that reason.
-    var named  = !!f.parts.name && f.binder !== 'depends';
+    // this one for that reason. A declaration carries one too, and for the
+    // same reason must not be caught here: its name is text plus a pencil
+    // (declNameHtml), never a live box, because renaming one has to go
+    // through renameDeclared() and carry every service reference with it —
+    // caught by this branch instead, its name box wrote the key directly and
+    // left every reference pointing at a network that no longer existed, and
+    // its folded settings never rendered at all.
+    var named  = !!f.parts.name && f.binder !== 'depends' && f.binder !== 'declared';
     var listy  = mapped || f.binder === 'env' || f.binder === 'label' || f.binder === 'list';
     // Never on a Container row — its four settings are not a list. Not for an
     // entry written in a way the model sealed either, since that refuses

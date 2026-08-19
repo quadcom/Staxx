@@ -741,6 +741,17 @@
   };
   var DECL_PRIMARY = { networks: 'driver', volumes: 'driver', secrets: 'file', configs: 'file' };
 
+  // A leading space is never a legal driver name, so this can never collide
+  // with one the file actually names — the same guard VOL_FOLDER_SENTINEL
+  // uses in stacks.js for the volume host box.
+  var EXTERNAL_CHOICE = ' external';
+
+  // networks and volumes only: their row box is a driver dropdown, and driver
+  // and external are two answers to the same question. A secret's or config's
+  // row box is a file path, so the same merge there would cost more than it
+  // saves — they keep external as an ordinary folded leaf.
+  var DECL_EXTERNAL_ROW = { networks: 1, volumes: 1 };
+
   // depends_on's long-form entry: a dependency name (a key, harvested via
   // keySpot() below — see collectServiceRefs(), which follows a rename the
   // same way) plus condition on the row itself, and these two folded away
@@ -2189,6 +2200,12 @@
     for (var leafKey in leaves) {
       if (!leaves.hasOwnProperty(leafKey)) continue;
       if (leafKey === primaryKey || leafKey === 'ipam') continue;
+      // Networks/volumes: this only ever runs for an ABSENT key (present ones
+      // are skipped just below, already covered by harvestBlock's walk), and
+      // an absent external has nothing to take over — the row's own box
+      // already offers it via EXTERNAL_CHOICE — so skipping it here
+      // unconditionally cannot hide a setting the fold alone would show.
+      if (leafKey === 'external' && DECL_EXTERNAL_ROW[kind]) continue;
       if (pairs[leafKey]) continue;   // present — harvestBlock's walk already covers it
       out.push(target('declared', kind + '.' + name + '.' + leafKey, {
         parts: { value: part('', null) }, range: null, absent: true, path: [leafKey]
@@ -2226,6 +2243,15 @@
         var primaryNode = primaryPair && primaryPair.value && primaryPair.value.kind === 'scalar'
                            ? primaryPair.value : null;
 
+        // Networks/volumes: the row's one box takes external over too, but
+        // only when it can actually represent it — a scalar. The deprecated
+        // long form (`external: {name: foo}`) parses to a map and is left
+        // exactly as it behaves today: folded leaf, driver box on the row.
+        var externalPair = DECL_EXTERNAL_ROW[kind] && pair.value && pair.value.kind === 'map'
+                            ? pair.value.pairs['external'] : null;
+        var externalNode = externalPair && externalPair.value && externalPair.value.kind === 'scalar'
+                            ? externalPair.value : null;
+
         // The row itself. A present value that is not a map — a flow map, an
         // anchor, an alias, a tag — parses to an 'opaque' node, the same shape
         // settingTarget() and harvestList() already lock via lockReason(); this
@@ -2242,8 +2268,16 @@
               lockReason(pair.value.reason), pair.value.raw)
           : target('declared', kind + '.' + name, {
               parts: {
-                name:  part(name, keySpot(pair)),
-                value: primaryNode ? part(primaryNode.value, scalarSpot(primaryNode)) : part('', null)
+                name: part(name, keySpot(pair)),
+                // A scalar external overrides what the box shows, but never
+                // where it points — the spot stays the driver's (or null,
+                // when there is none), since setPart()'s declaration branch
+                // resolves this case by key, not by writing through a spot.
+                value: externalNode
+                  ? part(/^(true|yes|on)$/i.test(String(externalNode.value).trim()) ? EXTERNAL_CHOICE
+                           : (primaryNode ? primaryNode.value : ''),
+                         primaryNode ? scalarSpot(primaryNode) : null)
+                  : (primaryNode ? part(primaryNode.value, scalarSpot(primaryNode)) : part('', null))
               },
               range: { start: pair.leadStart, end: pair.start + 1 },
               comment: primaryNode ? readComment(primaryNode.comment) : undefined,
@@ -2298,6 +2332,10 @@
           var t = raw[ri];
           var childKey = t.target.slice((kind + '.' + name + '.').length);
           if (childKey === primaryKey) continue;   // already the row's own value box
+          // A scalar external is folded into that same box (as EXTERNAL_CHOICE)
+          // whether true or false — externalNode is only set when it could be,
+          // so this cannot skip the map/anchor/alias form the row can't show.
+          if (childKey === 'external' && externalNode) continue;
 
           fields.push({
             id: '/declared/' + t.target,
@@ -2668,6 +2706,37 @@
     // Phase 3's whole-block removal uses.
     if (f.path && which === 'value' && p.spot && !String(value).trim()) {
       return removeKey(doc, form, f.service, f.path);
+    }
+
+    // Networks/volumes: the row's one box answers "driver, or created
+    // outside this file" — the two can never both be written, so a swap
+    // between them is a key change, not a text edit, and has to be handled
+    // before the ordinary paths below (the in-place overwrite included,
+    // since a file may already have a driver line whose spot this would
+    // otherwise just be rewritten through). Guarded to fire only on an
+    // actual swap — a plain rename of one driver to another never touches
+    // this and keeps its line, comment and quoting via the overwrite below.
+    if (f.binder === 'declared' && !f.path && which === 'value' && DECL_EXTERNAL_ROW[f.declKind] &&
+        (value === EXTERNAL_CHOICE || p.value === EXTERNAL_CHOICE)) {
+      if (String(value) === String(p.value)) return true;
+
+      var declName = f.target.slice(f.declKind.length + 1);
+      var primaryKey0 = DECL_PRIMARY[f.declKind];
+      var declPair0 = declPairOf(doc, f.declKind, declName);
+      if (!declPair0) return false;
+      if (declPair0.value && declPair0.value.kind !== 'map') return false;
+
+      // Drop both candidate lines unconditionally, whichever the file
+      // actually had — the only way to guarantee the new one never lands as
+      // a duplicate key beside a stale driver or external line.
+      removeDeclKey(doc, f.declKind, declName, [primaryKey0]);
+      removeDeclKey(doc, f.declKind, declName, ['external']);
+
+      if (value === EXTERNAL_CHOICE) {
+        return insertChild(doc, declPairOf(doc, f.declKind, declName), 'external', 'true', null, true) >= 0;
+      }
+      if (!String(value).trim()) return true;   // both gone is already a bare, valid declaration
+      return insertChild(doc, declPairOf(doc, f.declKind, declName), primaryKey0, value) >= 0;
     }
 
     if (!p.spot) {
@@ -3667,6 +3736,27 @@
    */
   function removeKey(doc, form, service, path) {
     var found = walkToLeaf(function () { return serviceMapOf(doc, service); }, path);
+    if (!found) return false;
+
+    var outermost = outermostEmptied(found.chain, found.leaf, 1);
+    spliceBlock(doc, outermost.leadStart, outermost.end);
+    return true;
+  }
+
+  /**
+   * removeKey's twin for a top-level declaration rather than a service —
+   * setPart()'s declaration branch uses this to drop whichever of
+   * driver/external is losing when the row's one box swaps between them.
+   * Rooted at declPairOf() instead of serviceMapOf(); floor 1 is what stops
+   * the declaration's own name line being removed along with its last
+   * remaining key, the same protection floor 1 gives the service pair in
+   * removeKey above — chain[0] here is the declaration pair itself.
+   *
+   * Returns false when there is nothing at `path`, or a level along the way
+   * is sealed, opaque, or not a map.
+   */
+  function removeDeclKey(doc, kind, name, path) {
+    var found = walkToLeaf(function () { return declPairOf(doc, kind, name); }, path);
     if (!found) return false;
 
     var outermost = outermostEmptied(found.chain, found.leaf, 1);
@@ -6594,6 +6684,10 @@
     moveItem: moveItem,
     addDeclared: addDeclared,
     declareNetwork: declareNetwork,
+    // The row's sentinel value for "created outside this file" — stacks.js
+    // needs the exact same string to build the dropdown option, and a second
+    // literal there would be a bug waiting to happen.
+    externalChoice: EXTERNAL_CHOICE,
     removeDeclared: removeDeclared,
     renameDeclared: renameDeclared,
     // Phase 3 (PLAN_8) calls this from stacks.js to drop a whole
