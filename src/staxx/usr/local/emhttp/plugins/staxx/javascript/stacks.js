@@ -1435,6 +1435,39 @@
     return out;
   }
 
+  // The order a declared network's own name dropdown offers the server's
+  // networks in: the default first, custom ones next alphabetically, then
+  // the two special modes nobody usually means to declare, last. Built from
+  // ALL_NETS (not NETWORKS) for the same reason volumeSourceChoice() below
+  // needs its own list — bridge/host/none are legitimate names to declare
+  // external, so netmode's own dropdown is not this one. A network already
+  // declared elsewhere in the file is left off, since it has a row of its
+  // own further down — except this row's own current name, which has to
+  // stay on the list or the box could not show it as selected. `f` may be
+  // undefined (the add-row button has no field yet), in which case only
+  // that one exclusion is skipped.
+  function netChoices(f) {
+    var ownName = f ? f.parts.name.value : null;
+    var declared = (MODEL && MODEL.declared && MODEL.declared.networks) || [];
+    var taken = {};
+    for (var d = 0; d < declared.length; d++) {
+      if (declared[d] !== ownName) taken[declared[d]] = true;
+    }
+
+    var bridge = [], others = [], host = [], none = [];
+    for (var i = 0; i < ALL_NETS.length; i++) {
+      var name = ALL_NETS[i][0];
+      if (taken[name]) continue;
+      if (name === 'bridge') bridge.push([name, name]);
+      else if (name === 'host') host.push([name, name]);
+      else if (name === 'none') none.push([name, name]);
+      else others.push([name, name]);
+    }
+    others.sort(function (a, b) { return a[0].localeCompare(b[0]); });
+
+    return bridge.concat(others, host, none);
+  }
+
   // Images already on this server (IMAGES, up near choiceFor()) and, per
   // repo, its tags from the registry — see imgLoad()/tagLoad() far below.
   var imgLoaded  = false;
@@ -1462,6 +1495,13 @@
   // collide with a real declaration — picking it writes nothing (see the
   // change handler) and instead hands the row over to the path box.
   var VOL_FOLDER_SENTINEL = ' folder-on-server';
+
+  // Same trick, for a declared network's own name dropdown — a leading
+  // space is never a legal network name either, so this can never collide
+  // with one a person or the server actually has. Picking it writes
+  // nothing; it swaps the row over to a plain text box instead (see
+  // swapNetworkToNew() and the change listener's sentinel guard).
+  var NET_NEW_SENTINEL = ' new-network';
 
   // A volume's host half is either a name Docker manages the storage for, or
   // a path on the server — never both, and only the file itself says which.
@@ -1669,14 +1709,23 @@
     }
 
     // A declared network's own name is that network on the server when the
-    // row is external, so it gets the same typeable-suggestion shape as the
-    // image box rather than declNameHtml()'s plain pencil — see fieldHtml()'s
-    // declared branch. ALL_NETS, not NETWORKS: bridge/host/none are real
-    // networks someone may legitimately declare as external, and this list
-    // is not netmode's dropdown.
+    // row is external, so it gets an ordinary dropdown (netChoices(), plus a
+    // sentinel standing in for "type a new name") rather than
+    // declNameHtml()'s plain pencil — see fieldHtml()'s declared branch.
+    // ALL_NETS feeds netChoices() rather than NETWORKS: bridge/host/none are
+    // real networks someone may legitimately declare as external, and that
+    // list is not netmode's dropdown. Only offered while the current name is
+    // one the server actually has (or the row is unnamed) — a name this file
+    // invented itself is not on that list to select, so it falls through to
+    // the plain text box below instead, with its own way back onto this
+    // dropdown (see boxHtml()'s X button, and unswapNetwork()).
     if (which === 'name' && f.binder === 'declared' && !f.fold && f.declKind === 'networks') {
+      var netVal = f.parts.name.value;
+      if (netVal && !netPresent[netVal]) return null;
+      var netOpts = netChoices(f);
+      netOpts.push([NET_NEW_SENTINEL, 'a new network this file creates…']);
       return { hint: 'a network on this server, or a name for one this file creates',
-               options: ALL_NETS, open: true };
+               options: netOpts };
     }
 
     // A short-form port's protocol, or a short-form volume's mode — static
@@ -1702,7 +1751,9 @@
 
     // Suggest, never refuse: image, cap_add/cap_drop and profiles all offer
     // what is known but accept anything typed — see the datalist branch in
-    // boxHtml() below, which `open: true` switches on.
+    // boxHtml() below, which `open: true` switches on. A declared network's
+    // name is deliberately not one of these: it is a closed dropdown of the
+    // server's own networks, with a sentinel for inventing a new name.
     if (which === 'value' && f.binder === 'setting' && f.target === 'image') {
       return { hint: 'an image already on this server, or a fresh one to pull', options: imageOptions(), open: true };
     }
@@ -1773,10 +1824,18 @@
     if (choice) hint = choice.hint;
 
     var boxTitle = hint;
-    var listId = 'staxx-dl-' + index + '-' + which;
-    // Computed even when unused (the input/datalist branches below ignore
-    // it) — cheaper than a second choice-shaped branch just to defer this.
+    // Computed even when unused (the plain-input branch below ignores it) —
+    // cheaper than a second choice-shaped branch just to defer this.
     var opts = choice ? optionsHtml(choice, p.value) : null;
+
+    // image, cap_add/cap_drop and profiles suggest without ever refusing: the
+    // list is a convenience, and a value the server has not seen yet is still
+    // legal, so those keep a text box with a <datalist> hung off it. A
+    // declared network's name is not one of them — it either names a network
+    // the server has (a real dropdown) or one this file invents (a plain box
+    // with the X back to the dropdown), which is why choiceFor() never
+    // answers `open` for it.
+    var listId = 'staxx-dl-' + index + '-' + which;
 
     var control = choice && choice.open
       ? '<input type="text" class="staxx-input" list="' + listId + '"' +
@@ -1788,32 +1847,54 @@
               (dead ? ' disabled' : '') + '>' +
           '<datalist id="' + listId + '">' + datalistOptionsHtml(choice.options) + '</datalist>'
       : choice
-        // staxx-choose--odd marks a value optionsHtml() had to keep on the
-        // list even though it is not one of the known ones — see the comment
-        // on optionsHtml() itself for why that value is never dropped.
-        // An empty box is not an odd value, it is no value — a setting left
-        // unset, or one inherited from a shared block, is blank here and must
-        // not be marked as though the file said something wrong.
-        ? '<select class="staxx-input staxx-choose' +
-                (opts.known || !p.value ? '' : ' staxx-choose--odd') + '"' +
-                ' data-row="' + index + '" data-part="' + which + '"' +
-                ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
-                ' title="' + esc(boxTitle) + '"' + NOFILL +
-                (dead ? ' disabled' : '') + '>' +
-            opts.html +
-          '</select>'
-        // `rename` rides on this branch too, not just the datalist one above:
-        // a rename box that lost its suggestions (an empty list, a choice
-        // that answered null) must still route to renameDeclared, never fall
-        // through to setPart, which rewrites the key and strands every
-        // reference to it.
-        : '<input type="text" class="staxx-input"' +
-                ' data-row="' + index + '" data-part="' + which + '"' + (rename || '') +
-                ' value="' + esc(p.value) + '"' +
-                ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
-                ' title="' + esc(boxTitle) + '"' +
-                ' spellcheck="false"' + NOFILL +
-                (dead ? ' disabled' : '') + '>';
+      // staxx-choose--odd marks a value optionsHtml() had to keep on the
+      // list even though it is not one of the known ones — see the comment
+      // on optionsHtml() itself for why that value is never dropped.
+      // An empty box is not an odd value, it is no value — a setting left
+      // unset, or one inherited from a shared block, is blank here and must
+      // not be marked as though the file said something wrong.
+      ? '<select class="staxx-input staxx-choose' +
+              (opts.known || !p.value ? '' : ' staxx-choose--odd') + '"' +
+              ' data-row="' + index + '" data-part="' + which + '"' +
+              ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
+              ' title="' + esc(boxTitle) + '"' + NOFILL +
+              (dead ? ' disabled' : '') + '>' +
+          opts.html +
+        '</select>'
+      // `rename` rides on this branch too, not just the datalist one above:
+      // an invented network name lands here, and so does a rename box that
+      // lost its choice (an empty list, a choice that answered null). Either
+      // must still route to renameDeclared, never fall through to setPart,
+      // which rewrites the key and strands every reference to it.
+      : '<input type="text" class="staxx-input"' +
+              ' data-row="' + index + '" data-part="' + which + '"' + (rename || '') +
+              ' value="' + esc(p.value) + '"' +
+              ' aria-label="' + esc(f.title + ' — ' + boxTitle) + '"' +
+              ' title="' + esc(boxTitle) + '"' +
+              ' spellcheck="false"' + NOFILL +
+              (dead ? ' disabled' : '') + '>';
+
+    // The X that hands a network's plain text box back to its dropdown —
+    // either because it now holds a name the server actually has (renaming
+    // it there first, through the same path the rename pencil uses, so
+    // every service reference moves with it), or because the row is fresh
+    // and there is simply somewhere to go back to. Only earns a place when
+    // going back is actually possible: with no server networks to offer,
+    // there is nothing to switch to. `rename` (not `noChoice`) is what marks
+    // this as the network name box specifically, since noChoice alone would
+    // also catch the volume box below.
+    var netXOpts = (rename && !choice) ? netChoices(f) : null;
+    var xHtml = '';
+    if (noChoice && f.binder === 'volume' && which === 'host') {
+      xHtml = '<button type="button" class="staxx-swap-x" data-unswap="vol" data-row="' + index + '"' +
+                   ' title="Use a named volume instead" aria-label="Use a named volume instead">' +
+                '<i class="fa fa-times" aria-hidden="true"></i></button>';
+    } else if (netXOpts && netXOpts.length) {
+      xHtml = '<button type="button" class="staxx-swap-x" data-unswap="net" data-row="' + index + '"' +
+                   ' title="Use a network already on this server instead"' +
+                   ' aria-label="Use a network already on this server instead">' +
+                '<i class="fa fa-times" aria-hidden="true"></i></button>';
+    }
 
     // A <div>, not a <label>, because the Browse button sits beside the input.
     // A label may not hold interactive content other than its own control, and
@@ -1829,9 +1910,10 @@
                control +
                // Never beside a real <select>: the tool mechanism reads and
                // writes a text box directly (pickerOpen sets .value on it),
-               // and a <select>'s value has to be one of its own options. A
-               // datalist box is still a text box underneath, so it keeps
-               // its picker (env_file's Browse button relies on this).
+               // and a <select>'s value has to be one of its own options. An
+               // open choice (image, env_file's picker) is still a plain
+               // text box underneath even though it offers suggestions, so
+               // it keeps its picker too.
                (t && !dead && (!choice || choice.open)
                  ? '<button type="button" class="staxx-browse"' +
                         ' data-tool="' + tool + '" data-row="' + index + '"' +
@@ -1840,6 +1922,7 @@
                      '<span class="staxx-sr">' + esc(t.label) + '</span>' +
                    '</button>'
                  : '') +
+               xHtml +
              '</div>' +
              '<span class="staxx-boxhint">' + esc(hint) + '</span>' +
            '</div>';
@@ -2392,6 +2475,7 @@
 
     bits.push('<div class="staxx-fieldrow' + (f.locked ? ' staxx-fieldrow--locked' : '') +
               (f.sensitive ? ' staxx-fieldrow--secret' : '') +
+              (firstPort ? ' staxx-portfirst' : '') +
               '" data-row="' + index + '" data-field-row="' + esc(f.id) + '"' +
               ' data-from="' + (f.range ? f.range.start : -1) + '"' +
               ' data-to="'   + (f.range ? f.range.end   : -1) + '"' +
@@ -2530,8 +2614,9 @@
     } else if (declared) {
       if (f.declKind === 'networks') {
         // A network's name IS the network on the server once it is external,
-        // so it gets a typeable box with suggestions instead of the pencil —
-        // see choiceFor()'s 'name'/'declared'/'networks' branch. The ⓘ and
+        // so it gets a dropdown of what the server has (or a plain box, once
+        // it names one this file invented) instead of the pencil — see
+        // choiceFor()'s 'name'/'declared'/'networks' branch. The ⓘ and
         // the "not found" tag ride in `head`, the same slot a device row's
         // heading uses, because declNameHtml() is not called here to carry
         // them itself.
@@ -2596,17 +2681,15 @@
     }
 
     // Last cell on a port row, after the ×, and a column that is ALWAYS there
-    // — an empty one when this is not the first port. Two reasons it holds its
-    // place rather than appearing only where it is needed: every port row then
-    // lines up with its neighbours, and reordering (PLAN_40) can move rows
-    // around without the chip's column appearing and disappearing under the
-    // drag.
+    // — hidden by CSS on every row but the first. It is emitted on every row
+    // (not just the first) so that a drag never has to add or remove the
+    // chip itself, only flip which row's copy is visible (see
+    // staxx-portfirst and markFirstPort) — rows never move mid-drag, so the
+    // chip would otherwise stay glued to the row that used to be first.
     if (f.binder === 'port') {
-      bits.push(firstPort
-        ? '<span class="staxx-webchip" title="' +
-          esc('The WebUI button on this container’s row opens this port. ' +
-              'Put a different port first to change which one.') + '">WebUI</span>'
-        : '<span class="staxx-webchip-gap" aria-hidden="true"></span>');
+      bits.push('<span class="staxx-webchip" title="' +
+        esc('The WebUI button on this container’s row opens this port. ' +
+            'Put a different port first to change which one.') + '">WebUI</span>');
     }
 
     // Everything full-width comes last, after every cell the row's column
@@ -3285,9 +3368,12 @@
                       : '.'));
 
       // structuralEdit() just redrew the whole form, which took focus with it
-      // — land back on the renamed row's own box, found by its new value the
-      // way the pencil re-finds its pencil by declKind/declName.
-      var freshBox = formHost.querySelector('[data-rename="1"][value="' + next.replace(/"/g, '\\"') + '"]');
+      // — land back on the renamed row's own box, found by its row. Not by
+      // its value: a rename leaves the field set alone so the row keeps its
+      // index, while the box itself may come back as a dropdown, and a
+      // <select> carries the name as a selected option rather than as a
+      // value attribute a selector could match.
+      var freshBox = formHost.querySelector('[data-rename][data-row="' + (el.dataset.row | 0) + '"]');
       if (freshBox) freshBox.focus();
       return;
     }
@@ -3315,20 +3401,77 @@
     refreshRanges();
   }
 
-  // The small button that hands a swapped-to-path volume row back to the
-  // dropdown — see swapVolumeToPath()/swapVolumeToChoice() below. Rendered
-  // above the boxline via boxHtml()'s `head` slot, same trick a device row's
-  // heading already uses to avoid ending the grid row early.
-  function volSwitchBackHtml(index) {
-    return '<button type="button" class="staxx-browse" data-vol-switch="1"' +
-                ' data-row="' + index + '" title="Use a named volume instead">' +
-             '<i class="fa fa-database" aria-hidden="true"></i> Use a named volume instead' +
-           '</button>';
+  // Single mechanism behind every box swap — the network name box's
+  // dropdown/plain-box exchange and both volume host-part swaps below all
+  // animate through this, so there is one place to get the direction right
+  // rather than three copies to keep in sync. `back` is truthy for the
+  // return trip: the outgoing box then leaves to the right and the incoming
+  // one enters from the left, the mirror of the forward direction — the
+  // stylesheet reads the `staxx-swap--back` modifier for that, this only
+  // has to set it. Reduced-motion skips the transition and cleans up at
+  // once; otherwise cleanup runs on `transitionend`. Either way it is
+  // guarded to run exactly once, and to do nothing if a redraw has already
+  // pulled the wrapper out of the document from under it. Returns the new
+  // box so the caller can focus into it.
+  function swapBox(going, arriving, back) {
+    var parent = arriving.parentNode;
+    if (!parent) return arriving;
+
+    // The ARRIVING box is the anchor, not the leaving one: after a rename the
+    // form is redrawn wholesale, so the only box still in the cell is the new
+    // one and the old is a clone kept back for the animation. Anchoring on
+    // what is already in place covers both that case and the free swaps, where
+    // nothing has been written and the old box is still sitting there.
+    var wrap = document.createElement('div');
+    wrap.className = 'staxx-swap' + (back ? ' staxx-swap--back' : '');
+    parent.insertBefore(wrap, arriving);
+    going.classList.add('staxx-swap-leave');
+    arriving.classList.add('staxx-swap-enter');
+    wrap.appendChild(going);
+    wrap.appendChild(arriving);
+
+    var cleaned = false;
+    function cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      if (!wrap.isConnected) return;
+      arriving.classList.remove('staxx-swap-enter');
+      wrap.parentNode.replaceChild(arriving, wrap);
+    }
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      cleanup();
+    } else {
+      wrap.addEventListener('transitionend', cleanup);
+      // Reading a layout property forces the start offsets to be painted
+      // before the end state is set. Without it the browser can coalesce both
+      // into one frame, which skips the transition — and with no transition
+      // there is no transitionend, so the wrapper would sit there forever
+      // holding two boxes. The timer is the same insurance for a transition
+      // that never fires for any other reason (a hidden pane, a stylesheet
+      // that failed to load); a swap that is over in 180ms has nothing to
+      // lose by being swept at 400.
+      void wrap.offsetWidth;
+      wrap.classList.add('staxx-swap--run');
+      setTimeout(cleanup, 400);
+    }
+
+    return arriving;
+  }
+
+  // The three free swaps all read the same: build the replacement, drop it in
+  // beside the box it replaces, slide the two past each other.
+  function swapBoxHtml(oldBox, newHtml, back) {
+    oldBox.insertAdjacentHTML('afterend', newHtml);
+    var arriving = oldBox.nextElementSibling;
+    return arriving ? swapBox(oldBox, arriving, back) : oldBox;
   }
 
   // Picking the sentinel writes nothing, so a redraw would just see the same
   // unwritten value and offer the dropdown straight back — the swap has to be
-  // done by hand instead. `noChoice` on boxHtml() is what stops it re-guessing.
+  // done by hand instead. `noChoice` on boxHtml() is what stops it
+  // re-guessing; boxHtml() renders the way back itself, as the X on this box
+  // (see its own `noChoice && f.binder === 'volume'` branch).
   function swapVolumeToPath(select) {
     var index = select.dataset.row | 0;
     var f = MODEL && MODEL.fields[index];
@@ -3337,10 +3480,9 @@
     if (!f || !box || !row) return;
 
     row.dataset.source = 'path';
-    box.outerHTML = boxHtml(f, index, 'host', 'path on the server', 'browse',
-                            volSwitchBackHtml(index), true);
+    var newBox = swapBoxHtml(box, boxHtml(f, index, 'host', 'path on the server', 'browse', '', true));
 
-    var input = row.querySelector('[data-part="host"]');
+    var input = newBox && newBox.querySelector('[data-part="host"]');
     if (input) { input.focus(); input.select(); }
   }
 
@@ -3355,11 +3497,82 @@
     if (!f || !box || !row) return;
 
     delete row.dataset.source;
-    box.outerHTML = boxHtml(f, index, 'host',
-                            'a named volume Docker manages, or a folder on the server', '');
+    var newBox = swapBoxHtml(box, boxHtml(f, index, 'host',
+                            'a named volume Docker manages, or a folder on the server', ''), true);
 
-    var sel = row.querySelector('[data-part="host"]');
+    var sel = newBox && newBox.querySelector('[data-part="host"]');
     if (sel) sel.focus();
+  }
+
+  // Picking the network name box's own sentinel, mirroring
+  // swapVolumeToPath() just above for the same reason — nothing was
+  // written, so the swap is done by hand. The rename marker rides along so
+  // the text box that appears still routes to renameDeclared rather than
+  // setPart, which would otherwise write a bare, un-keyed value.
+  function swapNetworkToNew(select) {
+    var index = select.dataset.row | 0;
+    var f = MODEL && MODEL.fields[index];
+    var box = select.closest('.staxx-box');
+    if (!f || !box) return;
+
+    var newBox = swapBoxHtml(box, boxHtml(f, index, 'name', 'network name', '', '', true, ' data-rename="1"'));
+
+    var input = newBox && newBox.querySelector('[data-part="name"]');
+    if (input) { input.focus(); input.select(); }
+  }
+
+  // The X on a network's plain text box: picking it is a real edit whenever
+  // the current name is not already the first entry netChoices() would
+  // offer — renamed through the same path the rename pencil uses
+  // (renameDeclared), so every service reference moves with it rather than
+  // being stranded. Nothing to rename when the value already matches that
+  // entry, so that case just swaps the box back by hand, mirroring
+  // swapVolumeToChoice()'s free way back.
+  function unswapNetwork(button) {
+    var index = button.dataset.row | 0;
+    var f = MODEL && MODEL.fields[index];
+    var box = button.closest('.staxx-box');
+    if (!f || !box) return;
+
+    var opts = netChoices(f);
+    if (!opts.length) return;
+    var first = opts[0][0];
+    var was = f.parts.name.value;
+
+    if (was === first) {
+      var backBox = swapBoxHtml(box, boxHtml(f, index, 'name', 'network name', '', '', false, ' data-rename="1"'), true);
+      var sel = backBox && backBox.querySelector('[data-part="name"]');
+      if (sel) sel.focus();
+      return;
+    }
+
+    clearError();
+    flushPending();
+    pushUndo('renaming the network "' + was + '" to "' + first + '"');
+    var renamed = YAML.renameDeclared(MODEL.doc, 'networks', was, first);
+    if (!renamed.ok) {
+      undoStack.pop();
+      updateUndo();
+      showError(renamed.error);
+      return;
+    }
+
+    // Kept back before the rename redraws the form, so the box that is on its
+    // way out can still be slid out afterwards — the redraw replaces the whole
+    // form, and without a copy there would be nothing left to animate and the
+    // dropdown would simply snap into place.
+    var going = box.cloneNode(true);
+
+    structuralEdit(-1, 'Renamed "' + was + '" to "' + first + '"' +
+                  (renamed.refs > 0
+                    ? '. ' + renamed.refs + (renamed.refs === 1 ? ' reference' : ' references') + ' updated.'
+                    : '.'));
+
+    // A rename leaves the field set as it was, so the row keeps its index.
+    var arriving = formHost.querySelector('[data-rename][data-row="' + index + '"]');
+    var arrivingBox = arriving && arriving.closest('.staxx-box');
+    if (arrivingBox) swapBox(going, arrivingBox, true);
+    if (arriving) arriving.focus();
   }
 
   var commitTimer = null;
@@ -3413,6 +3626,13 @@
     if (el.tagName === 'SELECT' && el.dataset.part === 'host' && el.value === VOL_FOLDER_SENTINEL) {
       var f = MODEL && MODEL.fields[el.dataset.row | 0];
       if (f && f.binder === 'volume') { swapVolumeToPath(el); return; }
+    }
+
+    // Same guard, for "a new network this file creates…" on a declared
+    // network's own name dropdown.
+    if (el.tagName === 'SELECT' && el.dataset.part === 'name' && el.value === NET_NEW_SENTINEL) {
+      var nf = MODEL && MODEL.fields[el.dataset.row | 0];
+      if (nf && nf.binder === 'declared' && nf.declKind === 'networks') { swapNetworkToNew(el); return; }
     }
 
     // A pick from a list is a decision, not a keystroke — commit it at once. A
@@ -3707,7 +3927,15 @@
         var declKind = add.dataset.add.slice(9);
         flushPending();
         pushUndo('adding that ' + addWord(add.dataset.add));
-        var declLine = YAML.addDeclared(MODEL.doc, declKind, DECL_WORD[declKind] || 'item');
+        // A fresh network is named after the server's own first choice
+        // (netChoices() has no field yet, so it skips only the own-name
+        // exclusion) rather than the generic "network" placeholder, so the
+        // row lands already on the server list instead of needing a rename
+        // straight away. Falls back to the placeholder when the server has
+        // not answered yet, or has nothing to offer.
+        var netFirst = declKind === 'networks' ? netChoices()[0] : null;
+        var declLine = YAML.addDeclared(MODEL.doc, declKind,
+                          (netFirst && netFirst[0]) || DECL_WORD[declKind] || 'item');
         if (declLine < 0) {
           undoStack.pop();
           updateUndo();
@@ -4034,6 +4262,26 @@
   var portSlot = null;
   var draggingPortFrom = -1;
 
+  // The top line of a service's port list always wears the WebUI chip —
+  // the drag gap included, since that is where the dragged row will land.
+  // Rows never move during a drag (only hide), so without this the chip
+  // stays with the row that was first and appears to slide down the list.
+  function markFirstPort(grp) {
+    if (!grp) return;
+    var kids = grp.children;
+    var first = null;
+    for (var i = 0; i < kids.length; i++) {
+      var kid = kids[i];
+      if (kid.classList.contains('staxx-portslot') ||
+          (kid.classList.contains('staxx-fieldrow') && !kid.classList.contains('staxx-portdrag'))) {
+        first = kid;
+        break;
+      }
+    }
+    for (var j = 0; j < kids.length; j++) kids[j].classList.remove('staxx-portfirst');
+    if (first) first.classList.add('staxx-portfirst');
+  }
+
   formHost.addEventListener('pointerdown', function (event) {
     var grip = event.target.closest('[data-port-grip]');
     if (!grip) return;
@@ -4053,11 +4301,14 @@
 
   function endPortDrag() {
     if (!draggingPortRow) return;
+    var grp = draggingPortRow.closest('.staxx-formgroup--ports');
     draggingPortRow.draggable = false;
     draggingPortRow.classList.remove('staxx-portdrag');
     if (portSlot && portSlot.parentNode) portSlot.parentNode.removeChild(portSlot);
     portSlot = null;
     draggingPortRow = null;
+    // An abandoned drag (no drop) still leaves the true first row correct.
+    markFirstPort(grp);
   }
   formHost.addEventListener('pointerup', endPortDrag);
   formHost.addEventListener('dragend', endPortDrag);
@@ -4081,9 +4332,14 @@
       if (draggingPortRow !== row) return;   // drag already over — a click with no drag
       portSlot = document.createElement('div');
       portSlot.className = 'staxx-portslot';
+      // Decorative echo of the chip a real row carries — no title, since a
+      // placeholder has nothing to explain — needed so the slot has a chip
+      // of its own for markFirstPort to reveal when the gap sits on top.
+      portSlot.innerHTML = '<span class="staxx-webchip" aria-hidden="true">WebUI</span>';
       portSlot.style.height = rowHeight + 'px';
       row.parentNode.insertBefore(portSlot, row);
       row.classList.add('staxx-portdrag');
+      markFirstPort(grp);
     }, 0);
   });
 
@@ -4103,6 +4359,7 @@
       // The row itself never moved, only hid — "home" is just beside it.
       if (portSlot.nextSibling !== draggingPortRow) {
         draggingPortRow.parentNode.insertBefore(portSlot, draggingPortRow);
+        markFirstPort(grp);
       }
       return;
     }
@@ -4120,7 +4377,10 @@
     // total height never changes as the gap moves — that is what stops the
     // classic gap-drag oscillation, where opening a gap shifts the row out
     // from under the pointer and the decision flips back and forth.
-    if (portSlot.nextSibling !== target) grp.insertBefore(portSlot, target);
+    if (portSlot.nextSibling !== target) {
+      grp.insertBefore(portSlot, target);
+      markFirstPort(grp);
+    }
   });
 
   formHost.addEventListener('drop', function (event) {
@@ -7586,8 +7846,8 @@
     });
   }
 
-  // Images already pulled onto this server — offered in the image datalist
-  // alongside whatever tagLoad() below finds for one repo at a time.
+  // Images already pulled onto this server — collected for imageOptions()
+  // above, alongside whatever tagLoad() below finds for one repo at a time.
   // Modelled on netLoad() just above: same first-reply-only redraw, guarded
   // the same way.
   function imgLoad() {
@@ -7615,11 +7875,12 @@
 
   // Unlike imgLoad()/netLoad(), this never redraws the form — a repo is
   // looked up while its box is being typed in, and a redraw would take the
-  // caret with it. The new tags are spliced straight into that one box's own
-  // <datalist> instead. Cached per repo for the session, a negative result
-  // (registry does not carry it, or was never going to be asked, see
-  // action.php's `tags` case) included, so a private registry is asked about
-  // once and a re-opened stack costs nothing.
+  // caret with it. mergeTags() below splices the tags straight into that one
+  // box's own suggestion list instead. Cached per repo for the session, a
+  // negative result (registry does not carry it, or was never going to be
+  // asked, see action.php's `tags` case) included, so a
+  // private registry is asked about once and a re-opened stack costs
+  // nothing.
   function tagLoad(box) {
     var repo = repoOf(box.value);
     if (!repo) return;
@@ -7894,8 +8155,14 @@
       return;
     }
 
-    var back = event.target.closest('[data-vol-switch]');
-    if (back) { if (!sanitised) swapVolumeToChoice(back); return; }
+    var unswap = event.target.closest('[data-unswap]');
+    if (unswap) {
+      if (!sanitised) {
+        if (unswap.dataset.unswap === 'net') unswapNetwork(unswap);
+        else if (unswap.dataset.unswap === 'vol') swapVolumeToChoice(unswap);
+      }
+      return;
+    }
 
     var btn = event.target.closest('[data-tool]');
     if (!btn || sanitised) return;
@@ -8049,8 +8316,9 @@
     // rather than showing a bare path. Not waited for — the form is usable at
     // once and devLoad() redraws it when the names arrive. netLoad() does the
     // same for this server's own docker networks, feeding the network_mode
-    // dropdown, and imgLoad() for the images already on this server, feeding
-    // the image datalist.
+    // dropdown and a declared network's own name dropdown, and imgLoad() for
+    // the images already on this server (see imgLoad()'s own comment on why
+    // that list is not currently shown anywhere).
     devLoad().catch(function () {});
     netLoad().catch(function () {});
     imgLoad().catch(function () {});

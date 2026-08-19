@@ -386,9 +386,9 @@
    start rather than created on demand: an icon can now be a picture, and there
    would be nothing to put back afterwards. */
 /* Sized explicitly to the tile (4.4rem, same as .staxx-icon) rather than
-   inset: 0 — .staxx-iconwrap now holds the two PLAN_39 row buttons under
-   the tile too, so filling the whole wrapper would dim them along with it
-   while a command runs, and this spinner is only ever about the tile. */
+   inset: 0 — .staxx-iconwrap holds the two PLAN_39 row buttons beside the
+   tile, so filling the whole wrapper would dim them along with it while a
+   command runs, and this spinner is only ever about the tile. */
 .staxx-spinner {
   position: absolute;
   top: 0;
@@ -430,37 +430,64 @@
 
 /* A small dot on the tile carries running state, so the eye picks it up from
    the icon column without crossing the table.
-   Column, not row: .staxx-rowactions (the web page and logs buttons,
-   PLAN_39) is one more flow child sitting under the tile now, and
-   align-items: center keeps the tile at its own fixed 4.4rem square
-   (.staxx-icon) rather than the default stretch pulling it to match
-   whichever child ends up wider. */
+   Row, not column: .staxx-rowactions (the web page and logs buttons, PLAN_39)
+   sits to the RIGHT of the tile, stacked internally. align-items: center is
+   what lines that pair up against the middle of the tile, and it also keeps
+   the tile at its own fixed square (.staxx-icon) rather than the default
+   stretch pulling it to whichever child is taller. */
 .staxx-iconwrap {
   position: relative;
   display: inline-flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.6rem;
   flex: 0 0 auto;
 }
 
-/* The web page and logs buttons, side by side under the tile. Bare circular
-   icons like .staxx-helpbtn, not bordered boxes — two more borders under an
-   already busy tile column would compete with it rather than sit quietly
-   beneath it. */
-/* Two equal columns rather than two intrinsically-sized buttons: "WebUI" and
-   "Logs" are different lengths, and letting each size to its own text puts the
-   divide between them in a different place on every row. A grid makes the pair
-   read as one control under the tile. */
-.staxx-rowactions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.2rem;
-  width: 100%;
+/* The tile alone opts out of that centring and stays pinned to the top of the
+   wrapper. .staxx-dot is positioned against the WRAPPER, at offsets written
+   for the tile's own known size — so the moment the button column beside it
+   runs taller than the tile, centring would carry the tile down and leave the
+   dot floating off its corner. A container row is exactly that case: its tile
+   is 3rem (.staxx-icon--child) and the stacked pair is taller. */
+.staxx-iconwrap > .staxx-icon {
+  align-self: flex-start;
 }
 
-.staxx-webbtn,
-.staxx-logsbtn {
+/* The web page and logs buttons, stacked one above the other to the right of
+   the tile.
+
+   One grid column rather than two intrinsically-sized buttons: "WebUI" and
+   "Logs" are different lengths, and letting each size to its own text would
+   give the pair a ragged right edge on every row. A single column is sized by
+   the wider of the two and both then fill it, so they come out identical
+   without either width being written down anywhere. Equal heights come free
+   from the shared font size and padding below.
+
+   No width: 100%% any more. That belonged to the old layout, where the pair sat
+   underneath and had to match the tile's width; beside the tile it has to size
+   to its own content instead, or it would stretch across the name column. */
+.staxx-rowactions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.2rem;
+  /* One stated width for every row, so the tile-plus-buttons block is the same
+     size everywhere and the names line up down the column. Wide enough for
+     "WebUI" at 1.1rem; min- rather than a flat width so a longer translation
+     grows the box instead of spilling out of it. */
+  min-width: 4.2rem;
+}
+
+/* Prefixed with .staxx-scaffold purely for specificity, and that is not
+   belt-and-braces. Unraid's own sheet carries `.unapi button { font: inherit }`,
+   and the page has a .unapi ancestor — one class plus one element type outranks
+   a single class, so an unprefixed rule here loses the font on the Logs button
+   only. That is what used to put "Logs" at the inherited 13px next to a 8.5px
+   "WebUI": one is an <a> and took our size, the other is a <button> and did
+   not. Both are now stated at the same specificity as everything that competes
+   for them, so the pair cannot drift apart again. */
+.staxx-scaffold .staxx-webbtn,
+.staxx-scaffold .staxx-logsbtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -469,10 +496,10 @@
   border-radius: 0.3rem;
   background: transparent;
   color: var(--sm-muted);
-  /* Small enough that the pair stays near the tile's own width. Wider than
-     that and the name column grows to fit them, which pushes the services
-     list into wrapping over three lines on a four-service stack. */
-  font-size: 0.85rem;
+  /* One size for both, matching .staxx-sub on the line below the name. Small
+     enough to sit quietly beside the tile without widening the name column
+     far enough to wrap a four-service stack's list over three lines. */
+  font-size: 1.1rem;
   line-height: 1.3;
   text-decoration: none;
   white-space: nowrap;
@@ -503,9 +530,11 @@
 }
 
 /* top/left against the tile's own known 4.4rem size, not right/bottom
-   against .staxx-iconwrap's — that wrapper now runs taller than the tile
-   (PLAN_39's row buttons sit under it), so anchoring off its far edges would
-   drop the dot below the tile entirely instead of on its corner. */
+   against .staxx-iconwrap's — that wrapper runs wider than the tile (PLAN_39's
+   row buttons sit beside it) and can run taller as well, so anchoring off its
+   far edges would strand the dot out in the buttons instead of on the tile's
+   corner. The tile's align-self: flex-start above is the other half of
+   keeping these offsets true. */
 .staxx-dot {
   position: absolute;
   top: 3.4rem;
@@ -836,6 +865,30 @@
 .staxx-num {
   white-space: nowrap;
   justify-self: end;
+}
+
+/* Make the figures line up down the column. A stat cell holds the number and
+   its sparkline side by side and is pushed to the right of its track, so on a
+   row that draws a graph the graph takes the right-hand space and the number
+   lands ~100px further left — while the column heading and the folder total,
+   which have no graph, sit hard right. Three positions for one column.
+
+   Reserving the graph's footprint on the cells that lack one fixes it. Flex is
+   what makes it land exactly: the markup puts whitespace between the number and
+   the sparkline, which is a real gap in normal flow but is discarded between
+   flex items, and padding alone therefore left the columns ~4px apart. */
+.staxx-stacks .staxx-num {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* Width and margin must track .staxx-spark's own — change one, change both. */
+.staxx-stacks .staxx-num:not(:has(.staxx-spark))::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 8.8rem;
+  margin-left: 0.8rem;
 }
 
 .staxx-stacks .staxx-cell.staxx-num {
@@ -1359,7 +1412,8 @@
  * above earn their keep on a row that also has real per-container graphs
  * right below it. The FIGURES stay in both states — expanded, the stack
  * total is still worth seeing at a glance without collapsing back — only the
- * .staxx-spark graphs are removed here.
+ * .staxx-spark graphs are hidden here, and they keep their slot so the figures
+ * stay in column (see the rule itself).
  *
  * Same :has() this file already uses to paint the expanded-stack band (see
  * .staxx-group--stack:has(...) above): the children wrapper's own
@@ -1386,7 +1440,12 @@
  * complete rather than starting over from a single point. */
 .staxx-group--stack:has(> .staxx-group--children:not([hidden]))
   > .staxx-stack-row .staxx-spark {
-  display: none;
+  /* Hidden rather than display: none so the graph keeps its slot. The figure
+     shares the cell with the graph and the cell is pushed right, so dropping
+     the box entirely would slide this row's total to the far edge, out of
+     line with the figures directly above and below it. Same reason
+     .staxx-webchip hides this way instead. */
+  visibility: hidden;
 }
 
 /* The guide line that connects a container row to its parent stack's icon.
@@ -1633,12 +1692,21 @@
   color: var(--sm-accent);
 }
 
-/* A stack imported with its run buttons locked. Outlined rather than filled,
-   so it reads as "check this" and not as an error — the accent colour it
-   shares with the warn pill is enough on its own. */
-.staxx-reviewbadge {
-  display: inline-block;
-  margin-left: 0.6rem;
+/* Two pills on the name's second line: a stack imported with its run buttons
+   locked, and a container waiting for its handover to be confirmed. Outlined
+   rather than filled, so they read as "check this" and not as an error — the
+   accent colour they share with the warn pill is enough on its own.
+
+   align-self is what keeps them pill-sized. Both are items of .staxx-nameinfo,
+   a column flex box, whose default cross-axis stretch would blow each pill out
+   to the width of the widest line beside it — the stack name. That put a
+   139px outline around two words needing 75px, and a full-row-width bar on the
+   narrow layout where the name cell spans every track. display and
+   vertical-align are deliberately absent: a flex item is blockified and never
+   baseline-aligned, so both would be inert here. */
+.staxx-reviewbadge,
+.staxx-handoverbadge {
+  align-self: flex-start;
   padding: 0.15rem 0.6rem;
   border: 0.1rem solid var(--sm-accent);
   border-radius: 1rem;
@@ -1646,30 +1714,23 @@
   font-size: 1rem;
   font-weight: 600;
   white-space: nowrap;
-  vertical-align: middle;
 }
 
-/* Marks the one port in a service's list the web page button opens
-   (PLAN_39's first-port rule) — sits in the "on the server" box's head slot,
-   the same spot a device row's .staxx-fieldtag warnings use. Filled rather
-   than outlined like .staxx-reviewbadge: this states a fact about the row,
-   it does not ask for anything to be checked. */
-/* The chip naming the port the row's WebUI button opens. Small on purpose —
-   it labels one row among several, so it only has to be legible. It sits in a
+/* Marks the one port in a service's list the web page button opens (PLAN_39's
+   first-port rule). Small on purpose — it labels one row among several, so it
+   only has to be legible. It sits in a
    track of its own that every port row keeps whether or not it has a chip (see
-   --ports below), so the column does not shift about when rows are reordered. */
-.staxx-webchip,
-.staxx-webchip-gap {
+   --ports below), so the column does not shift about when rows are reordered.
+   Emitted on every row but hidden by default: .staxx-portfirst (kept on
+   whichever row or drag-slot is currently first — see markFirstPort) is what
+   makes one visible, so a drag only ever has to move a class, never the chip
+   markup itself. */
+.staxx-webchip {
   /* Pinned to the last track rather than auto-placed into it. A row where the
      × is suppressed would otherwise slide the chip one column left, and the
      whole point of the column is that it does not move. Track 7, not 6, now
      that the leading grip column (PLAN_40) sits ahead of it. */
   grid-column: 7;
-}
-
-.staxx-webchip-gap { display: block; }
-
-.staxx-webchip {
   align-self: center;
   justify-self: start;
   padding: 0 0.35rem;
@@ -1679,7 +1740,10 @@
   font-size: 0.85rem;
   line-height: 1.5;
   white-space: nowrap;
+  visibility: hidden;
 }
+
+.staxx-portfirst > .staxx-webchip { visibility: visible; }
 
 /* ---- Panels: editor and output ------------------------------------------ */
 
@@ -2332,8 +2396,11 @@
 }
 
 /* A network's name is a box rather than text, so it takes the width the name
-   text used to and leaves the ⓘ beside it at its own size. */
-.staxx-declname > .staxx-box {
+   text used to and leaves the ⓘ beside it at its own size. The swap wrapper
+   (see .staxx-swap below) stands in for that box mid-swap, so it is sized
+   the same way rather than duplicating this rule. */
+.staxx-declname > .staxx-box,
+.staxx-declname > .staxx-swap {
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -2876,6 +2943,58 @@
   min-width: 0;
 }
 
+/* The dropdown <-> free-text swap (a network's own name box; a volume's host
+   box already did this unanimated). The wrapper takes the outgoing box's
+   place for the run of the animation — either a form grid cell or the name
+   cell inside .staxx-declname (see its rule above, which sizes this the
+   same way) — so nothing around it reflows while the swap runs. */
+.staxx-swap {
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.staxx-swap > .staxx-box {
+  width: 100%;
+}
+
+/* Absolute, so only the incoming box (still in flow) decides how tall the
+   wrapper is — the leaving one must never stretch it. Deaf to the pointer
+   while it slides: on the way back it is a copy of a box the file has already
+   moved past, and a click landing on its X would act on a name that is gone. */
+.staxx-swap-leave {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Starting position for the box sliding in: from the right going forward
+   (dropdown -> text), from the left coming back (text -> dropdown). The
+   leaving box starts at rest (transform: none from .staxx-box) and is
+   pushed out once .staxx-swap--run lands, a frame later, so the transition
+   has a start frame to animate from rather than jumping straight to the end. */
+.staxx-swap-enter { transform: translateX(100%); }
+.staxx-swap--back .staxx-swap-enter { transform: translateX(-100%); }
+
+.staxx-swap-leave,
+.staxx-swap-enter {
+  transition: transform 0.18s ease;
+}
+
+.staxx-swap--run .staxx-swap-leave { transform: translateX(-100%); }
+.staxx-swap--run.staxx-swap--back .staxx-swap-leave { transform: translateX(100%); }
+.staxx-swap--run .staxx-swap-enter { transform: none; }
+
+/* The script already skips waiting for transitionend in this case; dropping
+   the transition here is the belt to that braces, so a stray listener can
+   never leave the swap wrapper stranded on screen. */
+@media (prefers-reduced-motion: reduce) {
+  .staxx-swap-leave,
+  .staxx-swap-enter {
+    transition: none;
+  }
+}
+
 .staxx-scaffold .staxx-browse {
   flex: 0 0 auto;
   padding: 0 0.9rem;
@@ -2895,6 +3014,32 @@
 .staxx-scaffold .staxx-browse:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* The X that swaps a free-text box back to its dropdown, sat at the end of
+   the box line after any Browse button. Same size, colour and hover/focus
+   treatment as .staxx-browse above so the two read as one family of button
+   — .staxx-boxline's own flex gap is what keeps it clear of the input's
+   text, so no extra spacing is added here. */
+.staxx-scaffold .staxx-swap-x {
+  flex: 0 0 auto;
+  padding: 0 0.7rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background: var(--sm-fill);
+  color: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-swap-x:hover {
+  border-color: var(--sm-accent);
+}
+
+.staxx-scaffold .staxx-swap-x:focus-visible {
+  border-color: var(--sm-accent);
+  outline: none;
 }
 
 .staxx-boxhint {
@@ -3048,8 +3193,14 @@
    measured off the dragged row's offsetHeight — the sheet sets border-box
    nowhere globally, so content-box (the default) would make the slot taller
    than the row it stands in for. Same bottom margin as .staxx-fieldrow so
-   the rest of the list does not shift as the gap moves. */
+   the rest of the list does not shift as the gap moves. It is itself a grid
+   on the ports group's own column template, purely so the chip it carries
+   (see markFirstPort) lands in the same track as it would on a real row. */
 .staxx-scaffold .staxx-portslot {
+  display: grid;
+  grid-template-columns: var(--sm-fieldcols);
+  align-items: center;
+  padding: 0.45rem 1rem;
   box-sizing: border-box;
   margin: 0 0 0.2rem;
   border: 0.15rem dashed var(--sm-accent);
@@ -7045,6 +7196,18 @@
     min-width: 0;
     width: auto;
     height: 2.4rem;
+    margin-left: 0;
+  }
+
+  /* The stand-in for a missing graph has to copy whatever .staxx-spark does,
+     and here the graph is fluid rather than a fixed 8.8rem. Left at its
+     desktop width it would reserve far too little, putting the figures on the
+     rows that have no graph — the heading and the folder totals — about 86px
+     right of everyone else's. */
+  .staxx-stacks .staxx-num:not(:has(.staxx-spark))::after {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
     margin-left: 0;
   }
 

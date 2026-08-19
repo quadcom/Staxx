@@ -242,7 +242,9 @@ function staxx_row_actions_html(string $stack, string $service, string $url, boo
 
   // Named in words rather than by an icon, and the pair sized to match each
   // other by the stylesheet's grid — an external-link glyph and a document
-  // glyph are not something anybody reads at 11px under a container tile.
+  // glyph are not something anybody reads at 11px beside a container tile.
+  // Web button first: the pair is stacked, and the one that opens the app
+  // belongs above the one that explains why it will not.
   $webText  = _('WebUI');
   $logsWord = _('Logs');
 
@@ -695,16 +697,21 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                   <span class="staxx-dot<?= $s['running'] ? ' staxx-dot--up' : '' ?>"></span>
                 <? endif; ?>
                 <?
-                  // Not on a stack that breaks out into container rows: every
-                  // one of those has its own pair a few pixels below, and a
-                  // parent's would either duplicate a child's or have to pick
-                  // between them. A stack with a single service renders no
-                  // child row at all ($expandable above), so it IS the
-                  // container row and keeps them.
+                  // On every stack row without exception, disabled where it
+                  // cannot act rather than left out. The pair sits beside the
+                  // tile, so omitting it would pull this row's name ~44px left
+                  // of its neighbours' and leave the name column ragged.
+                  //
+                  // Both reasons it used to be dropped are already answered by
+                  // the disabled shape. A stack that breaks out into container
+                  // rows cannot say which child's page to open, and $webOffWhy
+                  // above carries exactly that sentence. A stack awaiting
+                  // review is not running, which is the other thing the off
+                  // state already says. Logs stays live in both cases: it
+                  // reads, it never starts anything, and on this row it means
+                  // the whole stack rather than any one service.
                 ?>
-                <? if (!$s['review'] && !$expandable): ?>
-                  <?= staxx_row_actions_html($s['name'], '', $webUrl, $webRunning, $webOffWhy) ?>
-                <? endif; ?>
+                <?= staxx_row_actions_html($s['name'], '', $webUrl, $webRunning, $webOffWhy) ?>
               </span>
 
               <span class="staxx-nameinfo">
@@ -883,10 +890,14 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                 <? if ($canRun): ?>
                   <span class="staxx-dot<?= $kid['state'] === 'running' ? ' staxx-dot--up' : '' ?>"></span>
                 <? endif; ?>
-                <? if (!$s['review']): ?>
-                  <?= staxx_row_actions_html($s['name'], $kid['service'], $kid['webui'],
-                        $kid['state'] === 'running', _('This container has no web page to open.')) ?>
-                <? endif; ?>
+                <?
+                  // Unconditional for the same reason as the stack row above:
+                  // a container row that dropped the pair would sit its name
+                  // out of line with its siblings'. Not running already reads
+                  // as the disabled web button.
+                ?>
+                <?= staxx_row_actions_html($s['name'], $kid['service'], $kid['webui'],
+                      $kid['state'] === 'running', _('This container has no web page to open.')) ?>
               </span>
 
               <span class="staxx-nameinfo">
