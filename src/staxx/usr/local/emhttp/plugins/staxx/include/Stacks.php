@@ -2708,6 +2708,136 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
   return $job;
 }
 
+/* ------------------------------------------------------------ takeover ----
+ *
+ * A Compose Manager import needs none of the handover's stopping, renaming
+ * and undo state, because it deliberately carries the SAME project name the
+ * running containers already have. Bringing the stack up is enough — Docker
+ * finds those containers under its own label and rebuilds them in place. See
+ * PLAN_46 Part D.
+ */
+
+/**
+ * The containers Docker already runs under this stack's own project name —
+ * what a takeover would rebuild. Read off staxx_container_index(), which
+ * already costs one `docker ps -a` per request; nothing here shells out
+ * again.
+ *
+ * @return array<int, array{name:string, running:bool}>
+ */
+function staxx_project_containers(string $rel): array {
+  if (!staxx_valid_path($rel)) return [];
+
+  $project = staxx_project_name(staxx_path_leaf($rel));
+  if ($project === '') return [];
+
+  $rows = staxx_container_index()['byProject'][$project] ?? [];
+  // Lower-cased on the way past, as every other reader of this index does:
+  // the state is whatever `docker ps` printed, and nothing here is worth
+  // betting on its capitalisation.
+  return array_map(fn($r) => [
+    'name'    => $r['name'],
+    'running' => strtolower($r['state']) === 'running',
+  ], $rows);
+}
+
+/**
+ * Start a takeover: bring the stack up so compose finds the containers a
+ * Compose Manager project already runs under this same project name, and
+ * rebuilds them in place. Returns a job id, or '' with a sentence explaining
+ * the refusal.
+ *
+ * No renames, no set-aside containers, no state file and no follow-up
+ * question — unlike a handover, nothing here is ever moved, so there is
+ * nothing to undo and nothing for a human to confirm afterwards.
+ */
+function staxx_start_takeover(string $rel, string &$error): string {
+  $error = '';
+
+  if (!staxx_valid_path($rel)) { $error = 'Invalid stack name.'; return ''; }
+
+  $dir = staxx_stack_dir($rel);
+  if (!is_dir($dir)) { $error = 'There is no stack called "'.$rel.'".'; return ''; }
+
+  // A handover already under way has containers renamed aside waiting on an
+  // answer. Bringing this stack up on top of that would create its own
+  // containers alongside them and leave the handover with nothing sane to
+  // roll back to, so it is refused rather than raced.
+  if (staxx_handover_active($rel)) {
+    $error = 'A handover is already under way on this stack. Answer whether that one '
+           . 'worked before starting anything else here.';
+    return '';
+  }
+
+  // Not an exception carved into the review lock — it REQUIRES one, exactly
+  // as a handover does. It is the only door through it.
+  if (!staxx_review_locked($rel)) {
+    $error = 'This stack is not awaiting review, so there is nothing for a takeover to start.';
+    return '';
+  }
+
+  $cmd = staxx_compose_cmd();
+  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
+  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
+
+  if (!staxx_project_containers($rel)) {
+    $error = 'Nothing on this server is running under this stack\'s project name, '
+           . 'so there is nothing to take over. Start the stack normally instead.';
+    return '';
+  }
+
+  $file = staxx_find_compose_file($dir);
+  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+  $files = staxx_compose_files($file);
+
+  $reviewName = staxx_review_file($dir);
+  if ($reviewName === '') {
+    // Cannot happen given the lock check above, but there is no safe way to
+    // hold a note that has already gone missing.
+    $error = 'The review note has gone missing, so this cannot be started safely.';
+    return '';
+  }
+  $heldPath   = $dir.'/.'.$reviewName;
+  $reviewPath = $dir.'/'.$reviewName;
+
+  // Held aside rather than deleted up front, the same as a handover, so the
+  // stack is never briefly unlocked while the job runs.
+  if (!@rename($reviewPath, $heldPath)) {
+    $error = 'Could not set the review note aside, so nothing was started.';
+    return '';
+  }
+
+  if (!is_dir(STAXX_JOB_DIR) && !@mkdir(STAXX_JOB_DIR, 0755, true)) {
+    @rename($heldPath, $reviewPath);
+    $error = 'Could not create '.STAXX_JOB_DIR;
+    return '';
+  }
+
+  $job = bin2hex(random_bytes(8));
+  $log = STAXX_JOB_DIR.'/'.$job.'.log';
+
+  // Built the same way staxx_start_job() builds its one 'up' step, so this is
+  // not a new verb with its own prefix — just the one line the job runner
+  // would already produce for `up`, run through the same detached machinery.
+  $fileArgs = staxx_compose_file_args($files);
+  $step     = $cmd.' '.$fileArgs.' up -d --remove-orphans 2>&1';
+
+  $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
+  @file_put_contents($log, '$ compose '.$shownFiles." up -d --remove-orphans\n\n");
+
+  // $? is captured into $ec straight after the one real step, before the
+  // rollback's own commands get a chance to overwrite it — the same reason
+  // staxx_start_job() puts its STAXX_JOB_END check right after the chain.
+  $script = 'cd '.escapeshellarg($dir).' && '.$step.'; ec=$?; '
+          . 'if [ "$ec" -eq 0 ]; then rm -f '.escapeshellarg($heldPath).' 2>&1; '
+          . 'else mv '.escapeshellarg($heldPath).' '.escapeshellarg($reviewPath).' 2>/dev/null; fi; '
+          . 'echo "'.STAXX_JOB_END.' $ec"';
+
+  @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
+
+  return $job;
+}
+
 /* ------------------------------------------------------- companion files --
  *
  * A stack folder may hold more than the compose file now: a .env, a

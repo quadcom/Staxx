@@ -11563,8 +11563,7 @@
         return;
       }
 
-      var targets = res.targets || [];
-      if (!targets.length) {
+      if (res.mode === 'none') {
         askConfirm({
           title: 'Nothing to take over',
           bodyHtml: '<p>Nothing on this server holds a container name "' + label + '" asks ' +
@@ -11578,6 +11577,16 @@
         return;
       }
 
+      // An imported Compose Manager project keeps the same project name
+      // Docker already knows its containers by, so taking it over rebuilds
+      // them in place rather than renaming anything aside — a different act
+      // with its own wording, handled entirely by this other function.
+      if (res.mode === 'rebuild') {
+        openRebuildTakeover(name, label, res);
+        return;
+      }
+
+      var targets = res.targets || [];
       var quoted = joinNames(targets.map(function (t) { return '"' + t.name + '"'; }));
 
       // An imported stack is usually named after the very container it is
@@ -11635,6 +11644,65 @@
 
       step();
     });
+  }
+
+  // Project variant of window 1. Nothing is renamed or set aside, so there is
+  // no undo and no follow-up question — a clean finish just means the stack
+  // is live, and the review lock is gone because the server only clears it on
+  // success. res comes straight from the handoverCheck already made by the
+  // caller, so this never has to ask again.
+  function openRebuildTakeover(name, label, res) {
+    var rebuild = res.rebuild || [];
+    var project = res.project || label;
+
+    var quoted = joinNames(rebuild.map(function (t) { return '"' + t.name + '"'; }));
+    var runningNow = rebuild.filter(function (t) { return t.running; })
+                            .map(function (t) { return '"' + t.name + '"'; });
+    var runningLine = runningNow.length
+      ? '<p>' + joinNames(runningNow) + (runningNow.length === 1 ? ' is' : ' are') +
+        ' running right now.</p>'
+      : '<p>None of them are running at the moment.</p>';
+
+    var bodyHtml =
+      '<p>This rebuilds ' + quoted + ' in place, from the files copied from the "' + project +
+      '" project in Compose Manager.</p>' +
+      runningLine +
+      '<p>The Compose Manager project itself is untouched, and can start these same ' +
+      'containers again at any time — so from now on, pick one place to run this stack ' +
+      'from. Starting it from both will fight over the same containers.</p>' +
+      '<p>There is no undo here, because nothing is renamed or set aside. If this fails, ' +
+      'the containers are left exactly as Docker left them, and the stack stays locked for ' +
+      'review.</p>';
+
+    function step() {
+      askConfirm({ title: 'Rebuild ' + quoted + '?', bodyHtml: bodyHtml,
+                   goLabel: 'Rebuild and start' }).then(function (go) {
+        if (!go) return;
+        confirmSetBusy(true);
+        confirmMsg.textContent = '';
+
+        call('takeover-start', { name: name }).then(function (r) {
+          if (!r.ok) {
+            confirmSetBusy(false);
+            confirmMsg.textContent = r.error || 'Could not start the rebuild.';
+            step();
+            return;
+          }
+          closeConfirm();
+
+          logPanel.hidden = false;
+          logTitle.textContent = 'Rebuild — ' + label;
+          logBox.textContent = 'Working…';
+          logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+          // No follow-up question on this path — a clean finish leaves the
+          // stack simply live, so refreshing the row is all that is left.
+          follow(r.job, function () { refreshRows(); }, true);
+        });
+      });
+    }
+
+    step();
   }
 
   // Window 2: did it work. `focusWorks` lands the initial focus on whichever

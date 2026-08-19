@@ -327,21 +327,46 @@ switch ($action) {
    * instead of assembling anything themselves. See PLAN_42.
    * ------------------------------------------------------------------- */
 
-  // ---- what a handover would replace, and whether one is already open ----
-  //
-  // Read-only: runs nothing beyond what staxx_handover_targets() and
-  // staxx_handover_active() already do, so it is safe to call just to draw
-  // the confirmation window.
+  /* ---- what taking this stack over would do, and whether one is open ----
+   *
+   * Read-only: runs nothing beyond what staxx_project_containers(),
+   * staxx_handover_targets() and staxx_handover_active() already do, so it is
+   * safe to call just to draw the confirmation window.
+   *
+   * `mode` says which of the two routes applies, so the browser does not
+   * have to guess from `targets` and `rebuild` itself:
+   *   - 'rebuild'  a Compose Manager project is already running under this
+   *                stack's own project name — bring it up in place.
+   *   - 'handover' no project match, but a container holds a name this
+   *                stack's file pins — stop it, rename it aside, start fresh.
+   *   - 'none'     neither applies; nothing here can be taken over.
+   *
+   * A project match wins over container-name targets: the imports that pin
+   * their own container_name would otherwise be refused by the handover's
+   * "already belongs to another compose project" check, when in fact compose
+   * will simply reuse those very containers.
+   */
   case 'handover-check':
+    $rebuild = staxx_project_containers($name);
+    $targets = staxx_handover_targets($name);
     staxx_reply([
       'ok'      => true,
-      'targets' => staxx_handover_targets($name),
+      'mode'    => $rebuild ? 'rebuild' : ($targets ? 'handover' : 'none'),
+      'targets' => $targets,
+      'rebuild' => $rebuild,
+      'project' => staxx_project_name(staxx_path_leaf($name)),
       'active'  => staxx_handover_active($name),
     ]);
 
   // ---- begin a handover: set the old container aside, start this one ----
   case 'handover-start':
     $job = staxx_start_handover($name, $error);
+    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'job' => $job]);
+
+  // ---- begin a takeover: bring the stack up in place of a running project ----
+  case 'takeover-start':
+    $job = staxx_start_takeover($name, $error);
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'job' => $job]);
 
