@@ -244,9 +244,17 @@ This plan assumes it exists only in that the override is one of the stack's own 
 **1. Prove the project name. — DONE 2026-08-19.** See the measurements above: names match only after
 hyphens become underscores, and Docker records both paths of a pair.
 
-**2. Two files per stack.** The capability, on its own, tested against a hand-made stack with an
-override before any importing is involved. This is the only part that touches existing behaviour, so
-it ships and gets proved separately.
+**2. Two files per stack. — BUILT 2026-08-19, deployed.** In its own two commits, as instructed, so
+it can be reverted without taking the import with it. Twenty-five server-side cases pass, including
+the one that is the whole point: a base file invalid on its own passes once its override is layered
+on. Two things the design missed and the build caught: creating an override through the editor's New
+file button was impossible, because that button creates a file by saving nothing to it and empty text
+is refused — empty is now allowed through and the live check goes red instead; and an override
+setting a value to nothing is *cancelled* by the base file when Docker merges, which is why the first
+test written for it wrongly passed.
+
+Still to prove in a browser: that the pair's own tab checks live, that Start's log names both files,
+and that a single-file stack looks and behaves exactly as before.
 
 **3. Reading and writing projects in.** Part A and Part B — the import panel's Compose Manager group
 becomes tickable, projects land needing review, nothing can start yet.
