@@ -596,6 +596,47 @@ function staxx_find_compose_file(string $dir): string {
 }
 
 /**
+ * The main file plus its override, if one sits beside it — Docker's own
+ * pairing rule, not a scan of the folder. $main is a FILE PATH, not a
+ * directory: staxx_find_compose_file() already answers "what is this
+ * stack's one compose file", and this only ever widens that single answer
+ * into a pair.
+ *
+ * Strict on purpose: compose.yaml pairs only with compose.override.*, never
+ * with docker-compose.override.* sitting in the same folder. A looser match
+ * — anything with "override" in its name — would run a file nobody
+ * connected to this stack on purpose.
+ *
+ * @return string[] [] for '', else [$main] or [$main, $override]
+ */
+function staxx_compose_files(string $main): array {
+  if ($main === '') return [];
+  $files = [$main];
+
+  $dot = strrpos($main, '.');
+  if ($dot !== false) {
+    $base = substr($main, 0, $dot);
+    foreach (['yaml', 'yml'] as $ext) {         // at most two is_file() calls
+      $candidate = $base.'.override.'.$ext;
+      if (is_file($candidate)) { $files[] = $candidate; break; }
+    }
+  }
+
+  return $files;   // order matters: the override wins only because it comes second
+}
+
+/**
+ * The `-f` sequence for a set of compose files, already shell-quoted.
+ *
+ * For one file this is character-for-character what every caller used to
+ * write inline as '-f '.escapeshellarg($file) — that identity is what keeps
+ * every existing command string unchanged for a single-file stack.
+ */
+function staxx_compose_file_args(array $files): string {
+  return implode(' ', array_map(fn($f) => '-f '.escapeshellarg($f), $files));
+}
+
+/**
  * Walk the stack root and say what everything in it is.
  *
  * THE ONE RULE: a directory at the top of the root holding a compose file is a
@@ -976,7 +1017,15 @@ function staxx_first_ports(string $yaml): array {
  */
 function staxx_compose_meta(string $file, ?string &$error = null): array {
   static $cache = [];
-  if (isset($cache[$file])) { $error = $cache[$file]['error']; return $cache[$file]; }
+
+  // Keyed on the whole pair, not just $file, so an override's settings are
+  // reflected in what this reports. Safe as a cache key: for a single file
+  // it IS the path, byte for byte, so every existing entry still resolves
+  // identically — and "\0" can never appear in a path, so a pair can never
+  // collide with a lone file's own key.
+  $files = staxx_compose_files($file);
+  $key   = implode("\0", $files);
+  if (isset($cache[$key])) { $error = $cache[$key]['error']; return $cache[$key]; }
 
   $meta = ['ok' => false, 'error' => null, 'x' => [], 'services' => []];
 
@@ -985,7 +1034,7 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
 
   if ($cmd !== '') {
     $code = 1;
-    $out  = staxx_sh($cmd.' -f '.escapeshellarg($file).' config 2>&1', 15, $code);
+    $out  = staxx_sh($cmd.' '.staxx_compose_file_args($files).' config 2>&1', 15, $code);
     if ($code !== 0) {
       // Compose is installed and it rejected the file. Report that rather than
       // falling through to the rough read below — guessing at a broken file
@@ -993,7 +1042,7 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
       // the file were fine.
       $meta['error'] = trim($out) !== '' ? trim($out) : 'Compose could not read this file.';
       $error = $meta['error'];
-      return $cache[$file] = $meta;
+      return $cache[$key] = $meta;
     }
     $yaml = $out;
     $meta['ok'] = true;
@@ -1049,7 +1098,7 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
   }
 
   $error = null;
-  return $cache[$file] = $meta;
+  return $cache[$key] = $meta;
 }
 
 /**
@@ -1620,11 +1669,19 @@ function staxx_read_stack(string $name, string &$error): ?string {
  * $warnings, if passed by reference, is filled with compose's own advisory
  * notes on a file that PASSES — e.g. an unset variable defaulting to blank.
  * These are informational only and never turn a pass into a failure.
+ *
+ * $before and $after are real, already-on-disk files placed before/after the
+ * text under test in the `-f` sequence — the companion half of a two-file
+ * stack. Neither half of a pair is ever validated alone, because the pair is
+ * what compose actually runs; the caller decides which slot the text under
+ * test belongs in (main file being checked -> its override, if any, goes in
+ * $after; an override being checked -> the real main file goes in $before).
  */
 // $warnings is ?array, not array: PHP 8.4 (which Unraid 7.2 ships) deprecates
 // implicitly nullable parameters, and a deprecation notice on every save would
 // land inside action.php's JSON reply.
-function staxx_validate_compose(string $yaml, string &$error, string $dir = '', ?array &$warnings = null): bool {
+function staxx_validate_compose(string $yaml, string &$error, string $dir = '', ?array &$warnings = null,
+                                 string $before = '', string $after = ''): bool {
   $error = '';
   $warnings = [];
 
@@ -1645,12 +1702,20 @@ function staxx_validate_compose(string $yaml, string &$error, string $dir = '', 
     ? '--project-directory '.escapeshellarg($dir).' '
     : '';
 
+  // The temp file's own place in the sequence is what makes it the main
+  // file or the override under test — with both empty this reproduces the
+  // exact command a single-file stack has always run.
+  $fileArgs = '';
+  if ($before !== '') $fileArgs .= '-f '.escapeshellarg($before).' ';
+  $fileArgs .= '-f '.escapeshellarg($tmpfile).' ';
+  if ($after !== '') $fileArgs .= '-f '.escapeshellarg($after).' ';
+
   // Judge this on the exit code, not on whether anything was printed. Compose
   // writes deprecation notices and other warnings to stderr for files that are
   // perfectly valid; treating any output as failure would reject them.
   $lines = [];
   $code  = 1;
-  @exec('timeout -k 2 20 '.$cmd.' '.$projectFlag.'-f '.escapeshellarg($tmpfile).' config -q </dev/null 2>&1', $lines, $code);
+  @exec('timeout -k 2 20 '.$cmd.' '.$projectFlag.$fileArgs.'config -q </dev/null 2>&1', $lines, $code);
 
   @unlink($tmpfile);
   @rmdir($tmpdir);
@@ -1674,7 +1739,13 @@ function staxx_validate_compose(string $yaml, string &$error, string $dir = '', 
   }
 
   // Strip the scratch path out of the message; it means nothing to the user.
-  $out = trim(str_replace([$tmpfile, $tmpdir], ['your compose file', ''], implode("\n", $lines)));
+  // When $before is set, the text under test IS the override, so the message
+  // has to say so rather than call it "your compose file".
+  $out = trim(str_replace(
+    [$tmpfile, $tmpdir],
+    [$before !== '' ? 'your override file' : 'your compose file', ''],
+    implode("\n", $lines)
+  ));
   $error = $out !== '' ? $out : 'Compose rejected this file (exit code '.$code.').';
   return false;
 }
@@ -1866,13 +1937,27 @@ function staxx_save_stack(string $name, string $yaml, string &$error): bool {
     $error = 'There is no folder called "'.$folder.'".';
     return false;
   }
+  $dir = staxx_stack_dir($name);
+
+  // The stack's existing override, if it has one, has to be checked
+  // alongside whatever is being saved here — a main file that is fine on
+  // its own can still be broken once the override on disk is layered over
+  // it. A brand new stack has neither a folder nor an override yet, so
+  // $after comes back '' and this is a no-op for it.
+  $after = staxx_compose_files(staxx_find_compose_file($dir))[1] ?? '';
+
   // Pass the stack's real folder so relative env_file: paths and a sibling
   // .env can resolve during validation — see staxx_validate_compose(). A
   // new stack's folder does not exist yet; that is fine, the flag is just
   // omitted for it.
-  if (!staxx_validate_compose($yaml, $error, staxx_stack_dir($name))) return false;
+  $warnings = null;
+  if (!staxx_validate_compose($yaml, $error, $dir, $warnings, '', $after)) {
+    if ($after !== '') {
+      $error .= "\n\nThis stack has an override file, and the two are checked together.";
+    }
+    return false;
+  }
 
-  $dir = staxx_stack_dir($name);
   if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
     $error = 'Could not create '.$dir;
     return false;
@@ -1907,10 +1992,16 @@ function staxx_stack_extras(string $rel, string &$error): ?array {
     return null;
   }
 
+  // Derived from what is actually paired to this stack, not a flat list of
+  // every name compose could ever read — otherwise a folder holding
+  // compose.yaml plus an unrelated docker-compose.override.yml would treat
+  // that unrelated file as though it belonged to the stack too.
+  $composeNames = array_map('basename', staxx_compose_files(staxx_find_compose_file($dir)));
+
   $out = [];
   foreach ((array)@scandir($dir) as $name) {
     if ($name === '.' || $name === '..') continue;
-    if (in_array($name, STAXX_COMPOSE_FILENAMES, true)) continue;
+    if (in_array($name, $composeNames, true)) continue;
 
     $path  = $dir.'/'.$name;
     $link  = is_link($path);
@@ -1974,11 +2065,19 @@ function staxx_delete_stack(string $name, string &$error, bool $confirmed = fals
     return false;
   }
 
+  // Derived from the stack's own pair, not a flat list of every name compose
+  // could ever read — see the same reasoning in staxx_stack_extras(). An
+  // unrelated override-shaped file sitting in the folder must be blocked
+  // like anything else the plugin does not recognise, not auto-removed.
+  $file  = staxx_find_compose_file($dir);
+  $files = staxx_compose_files($file);
+  $composeNames = array_map('basename', $files);
+
   $remove = [];
   $blocked = [];
   foreach ((array)@scandir($dir) as $entry) {
     if ($entry === '.' || $entry === '..') continue;
-    $isCompose = in_array($entry, STAXX_COMPOSE_FILENAMES, true);
+    $isCompose = in_array($entry, $composeNames, true);
     $isEnv     = $entry === '.env' || str_starts_with($entry, '.env.');
     // The review-lock file is ours too — StaXX writes it on import — so it
     // must not fall into $blocked and demand a by-hand removal, which would
@@ -1999,12 +2098,11 @@ function staxx_delete_stack(string $name, string &$error, bool $confirmed = fals
     return false;
   }
 
-  $file = staxx_find_compose_file($dir);
   $cmd  = staxx_compose_cmd();
   if (!$locked && $file !== '' && $cmd !== '' && staxx_docker_running()) {
     $code = 1;
     $out  = staxx_sh(
-      'cd '.escapeshellarg($dir).' && '.$cmd.' -f '.escapeshellarg($file).' down 2>&1',
+      'cd '.escapeshellarg($dir).' && '.$cmd.' '.staxx_compose_file_args($files).' down 2>&1',
       120,
       $code
     );
@@ -2330,13 +2428,16 @@ function staxx_handover_read(string $dir): ?array {
  * fail(), on the assumption that whatever reaches here might be hostile even
  * though every real caller only ever hands it a name Docker itself reported.
  *
+ * @param string[] $files main compose file, plus its override if it has one —
+ *                         see staxx_compose_files()
  * @param array<int,array{original:string,setaside:string,wasRunning:bool}> $targets
  */
 function staxx_handover_script(
-  string $composeCmd, string $file, string $dir, array $targets,
+  string $composeCmd, array $files, string $dir, array $targets,
   string $heldReviewPath, string $reviewPath, string $stateFilePath
 ): string {
-  $docker = escapeshellarg(staxx_docker_bin());
+  $docker    = escapeshellarg(staxx_docker_bin());
+  $fileArgs  = staxx_compose_file_args($files);
 
   // Every stage below is a rename, so undo is simply every stage reversed —
   // it attempts every reversal regardless of how far the run got, and
@@ -2349,7 +2450,7 @@ function staxx_handover_script(
   // so renaming it back and starting it without clearing them first fails on
   // whichever of ours got there. `down` is a no-op when nothing came up.
   $undo[] = '  cd '.escapeshellarg($dir).' 2>/dev/null && '
-          . $composeCmd.' -f '.escapeshellarg($file).' down 2>/dev/null || true';
+          . $composeCmd.' '.$fileArgs.' down 2>/dev/null || true';
   foreach ($targets as $t) {
     $orig  = escapeshellarg($t['original']);
     $aside = escapeshellarg($t['setaside']);
@@ -2392,7 +2493,7 @@ function staxx_handover_script(
   }
   $steps[] = 'cd '.escapeshellarg($dir).' 2>&1 || fail '
            . escapeshellarg('Could not reach the stack folder.');
-  $steps[] = $composeCmd.' -f '.escapeshellarg($file).' up -d --remove-orphans 2>&1 || fail '
+  $steps[] = $composeCmd.' '.$fileArgs.' up -d --remove-orphans 2>&1 || fail '
            . escapeshellarg('The stack could not be started.');
   $steps[] = 'rm -f '.escapeshellarg($heldReviewPath).' 2>&1';
   $steps[] = 'echo "Handed over. Check that the app works, then answer the question on the stack row." 2>&1';
@@ -2417,6 +2518,7 @@ function staxx_start_handover(string $rel, string &$error): string {
 
   $file = staxx_find_compose_file($dir);
   if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+  $files = staxx_compose_files($file);
 
   // Checked before the lock itself: starting a handover moves the review
   // note aside rather than deleting it, so a stack mid-handover no longer
@@ -2500,16 +2602,17 @@ function staxx_start_handover(string $rel, string &$error): string {
   }
 
   $script = staxx_handover_script(
-    $cmd, $file, $dir, $setasides, $heldPath, $reviewPath, $dir.'/'.STAXX_HANDOVER_FILE
+    $cmd, $files, $dir, $setasides, $heldPath, $reviewPath, $dir.'/'.STAXX_HANDOVER_FILE
   );
 
   $job = bin2hex(random_bytes(8));
   $log = STAXX_JOB_DIR.'/'.$job.'.log';
 
+  $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
   $shown = implode(' && ', array_merge(
     array_map(fn($t) => 'docker stop '.$t['original'], $setasides),
     array_map(fn($t) => 'docker rename '.$t['original'].' '.$t['setaside'], $setasides),
-    ['compose -f '.basename($file).' up -d --remove-orphans']
+    ['compose '.$shownFiles.' up -d --remove-orphans']
   ));
   @file_put_contents($log, '$ '.$shown."\n\n");
 
@@ -2568,11 +2671,12 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
 
     $composeCmd = staxx_compose_cmd();
     $file       = staxx_find_compose_file($dir);
+    $files      = staxx_compose_files($file);
 
     $steps = [];
     if ($composeCmd !== '' && $file !== '') {
       $steps[] = 'cd '.escapeshellarg($dir).' 2>&1';
-      $steps[] = $composeCmd.' -f '.escapeshellarg($file).' down 2>&1';
+      $steps[] = $composeCmd.' '.staxx_compose_file_args($files).' down 2>&1';
     }
     foreach ($state['targets'] as $t) {
       $steps[] = $docker.' rename '.escapeshellarg($t['setaside']).' '.escapeshellarg($t['original']).' 2>&1';
@@ -3042,6 +3146,7 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   $dir  = staxx_stack_dir($name);
   $file = staxx_find_compose_file($dir);
   if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+  $files = staxx_compose_files($file);
 
   // Pick the scope-appropriate argument string, and fail loudly rather than
   // silently falling back to the other scope — running the wrong one of
@@ -3113,7 +3218,7 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   // code, and the `STAXX_JOB_END $?` line below reports the real failure
   // instead of the exit code of a step that never ran.
   $invocations = array_map(
-    fn($step) => $cmd.' -f '.escapeshellarg($file).' '.$step.' 2>&1',
+    fn($step) => $cmd.' '.staxx_compose_file_args($files).' '.$step.' 2>&1',
     $steps
   );
   $chain = implode(' && ', $invocations);
@@ -3124,12 +3229,14 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
 
   // The log's first line is what the output panel shows above the command's
   // own output, so it has to say what actually ran — service name included,
-  // and every step of the chain for a multi-step verb, not just the
+  // every file in play (a two-file stack's override is otherwise invisible
+  // here), and every step of the chain for a multi-step verb, not just the
   // stack-scoped $verbs[$verb]['args']. Built from the same $steps that were
   // just turned into $invocations above, so the line shown and the command
   // run can never drift apart — e.g. for `update` on service "demo-cache":
-  // `$ compose pull 'demo-cache' && compose up -d 'demo-cache'`.
-  $shown = implode(' && ', array_map(fn($step) => 'compose '.$step, $steps));
+  // `$ compose -f compose.yaml pull 'demo-cache' && compose -f compose.yaml up -d 'demo-cache'`.
+  $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
+  $shown = implode(' && ', array_map(fn($step) => 'compose '.$shownFiles.' '.$step, $steps));
   @file_put_contents($log, '$ '.$shown."\n\n");
 
   // setsid detaches the command into its own session, and stdin/stdout/stderr

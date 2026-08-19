@@ -139,7 +139,7 @@ $hostile = [
   ['original' => "evil'name", 'setaside' => "evil'name-before-staxx", 'wasRunning' => false],
 ];
 $script = staxx_handover_script(
-  'docker compose', 'compose.yaml', '/tmp/zzd1script',
+  'docker compose', ['compose.yaml'], '/tmp/zzd1script',
   $hostile, '/tmp/zzd1script/.NEEDS-REVIEW.md', '/tmp/zzd1script/NEEDS-REVIEW.md',
   '/tmp/zzd1script/HANDOVER.md'
 );

@@ -144,11 +144,41 @@ switch ($action) {
    * failed. An unrecognised or missing name is not an error here, since
    * typing is exactly when the name may not exist yet or not resolve — the
    * check still runs, just without --project-directory.
+   *
+   * An optional `file` field says which of the stack's two files is being
+   * typed. Absent (or '') means the main file, checked with its own override
+   * (if it has one) layered after it. Anything else has to be exactly this
+   * stack's derived override basename — the only other file a two-file
+   * stack has — checked with the real main file placed before it; anything
+   * else is refused outright rather than silently checked as if it were the
+   * main file.
    */
   case 'check':
-    $body = (string)($_POST['body'] ?? '');
-    $dir  = staxx_valid_path($name) ? staxx_stack_dir($name) : '';
-    $ok   = staxx_validate_compose($body, $error, $dir, $warnings);
+    $body   = (string)($_POST['body'] ?? '');
+    $dir    = staxx_valid_path($name) ? staxx_stack_dir($name) : '';
+    $target = (string)($_POST['file'] ?? '');
+
+    $main = $dir !== '' ? staxx_find_compose_file($dir) : '';
+    $pair = staxx_compose_files($main);
+
+    $before = ''; $after = '';
+    if ($target !== '') {
+      $overrideName = isset($pair[1]) ? basename($pair[1]) : '';
+      if ($overrideName === '' || $target !== $overrideName) {
+        staxx_reply([
+          'ok'    => true,
+          'valid' => false,
+          'error' => 'Only this stack\'s own override file can be checked here, '
+                   . 'and this stack has none by that name.',
+          'warnings' => [],
+        ]);
+      }
+      $before = $main;          // checking the override: the real main file goes first
+    } else {
+      $after = $pair[1] ?? ''; // checking the main file: its override, if any, goes second
+    }
+
+    $ok = staxx_validate_compose($body, $error, $dir, $warnings, $before, $after);
     staxx_reply(['ok' => true, 'valid' => $ok, 'error' => $error, 'warnings' => $warnings]);
 
   /* ---- delete a stack ----
@@ -219,6 +249,28 @@ switch ($action) {
         ]);
       }
       $body = $decoded;
+    }
+
+    // The override is the one companion file this plugin actually runs, so
+    // a save that would break it is refused the same way a bad main file's
+    // save is — checked together with the real main file, never alone (see
+    // staxx_validate_compose()). There is no lockout risk here: deleting a
+    // companion file is always allowed, override included.
+    $dir  = staxx_valid_path($name) ? staxx_stack_dir($name) : '';
+    $main = $dir !== '' ? staxx_find_compose_file($dir) : '';
+    $pair = staxx_compose_files($main);
+    // An empty body is let through deliberately: the New file button creates
+    // a file by saving nothing to it, and the validator rejects empty text
+    // outright, so refusing this would leave no way to make an override at
+    // all — the button would fail every time it was pressed. The live
+    // check on its own tab says so immediately, and the stack's rows carry
+    // compose's complaint until something valid is typed or the file is
+    // deleted again — visible and reversible, which an impossible button is
+    // not.
+    if (isset($pair[1]) && basename($pair[1]) === $file && trim($body) !== '') {
+      if (!staxx_validate_compose($body, $error, $dir, $warnings, $main, '')) {
+        staxx_reply(['ok' => false, 'error' => $error]);
+      }
     }
 
     if (!staxx_write_file($name, $file, $body, $encoding !== 'base64', $error)) {
