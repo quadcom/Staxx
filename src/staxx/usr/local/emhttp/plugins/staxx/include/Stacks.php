@@ -1077,7 +1077,7 @@ function staxx_service_names(string $file, ?string &$error = null): array {
  * @return array<int, array{name:string, leaf:string, dir:string, file:string,
  *                          filename:string, services:string[], x:array<string,string>,
  *                          project:string, status:string, running:bool, hasFile:bool,
- *                          parses:bool, error:?string, review:bool}>
+ *                          parses:bool, error:?string, review:bool, handover:bool}>
  */
 function staxx_list_stacks(): array {
   $stacks = [];
@@ -1126,6 +1126,12 @@ function staxx_list_stacks(): array {
       'error'    => $parseError,
       // Imported and not yet reviewed — see the "review lock" section below.
       'review'   => $locked,
+      // Waiting to be confirmed after a handover — see the "handover"
+      // section below. Never true at the same time as 'review' in the
+      // steady state: starting a handover moves the review note aside, and
+      // only a failed undo writes a fresh one back, at which point the
+      // state file is what the job removes last.
+      'handover' => staxx_handover_file($dir) !== '',
     ];
   }
 
@@ -1956,6 +1962,18 @@ function staxx_delete_stack(string $name, string &$error, bool $confirmed = fals
   // the folder for one, below.
   $locked = staxx_review_file($dir) !== '';
 
+  // A handover has an old container set aside under another name, waiting for
+  // an answer that only this stack's row can give. Delete the stack now and
+  // that container is stranded with nothing left to say what it was called or
+  // how to put it back — so the answer has to come first.
+  if (staxx_handover_file($dir) !== '') {
+    $error = 'This stack has just taken over from another container, and that '
+           . 'container is set aside waiting for you to say whether the new one '
+           . 'works. Answer that first — nothing can be deleted until it is '
+           . 'either cleared away or put back.';
+    return false;
+  }
+
   $remove = [];
   $blocked = [];
   foreach ((array)@scandir($dir) as $entry) {
@@ -1965,7 +1983,10 @@ function staxx_delete_stack(string $name, string &$error, bool $confirmed = fals
     // The review-lock file is ours too — StaXX writes it on import — so it
     // must not fall into $blocked and demand a by-hand removal, which would
     // refuse to delete every imported stack that has not yet been reviewed.
-    $isReview  = strcasecmp($entry, STAXX_REVIEW_FILE) === 0;
+    // The same goes for the copy held aside during a handover, which is that
+    // same file under a leading dot.
+    $isReview  = strcasecmp($entry, STAXX_REVIEW_FILE) === 0
+              || strcasecmp($entry, '.'.STAXX_REVIEW_FILE) === 0;
     if (is_file($dir.'/'.$entry) && ($isCompose || $isEnv || $isReview)) $remove[] = $entry;
     else $blocked[] = $entry;
   }
@@ -2101,6 +2122,486 @@ function staxx_review_file(string $dir): string {
 function staxx_review_locked(string $rel): bool {
   if (!staxx_valid_path($rel)) return false;
   return staxx_review_file(staxx_stack_dir($rel)) !== '';
+}
+
+/* ------------------------------------------------------------ handover ----
+ *
+ * An imported stack can ask for a container name an existing, hand-made
+ * Unraid container already holds — that is exactly what the review lock is
+ * there to catch. The handover is the way through it: switch the old
+ * container off, rename it aside, bring the stack up under the original
+ * name, and wait for a human to say whether it actually worked before the
+ * old one is thrown away. See PLAN_42.
+ *
+ * Every stage is a rename, so every stage has an exact opposite — that is
+ * what makes the undo real rather than best-effort. Nothing here ever
+ * invents a name: the set-aside name is worked out on the server from a name
+ * Docker already accepts, so there is no free text anywhere in what reaches
+ * the shell.
+ */
+
+// The handover's own note, sitting beside the compose file the same way
+// STAXX_REVIEW_FILE does. Present means a handover is waiting to be
+// confirmed.
+define('STAXX_HANDOVER_FILE', 'HANDOVER.md');
+
+/**
+ * Every container Docker knows about, by name — including ones with no
+ * compose label at all. staxx_container_index() deliberately drops those,
+ * which is exactly what a template's own container has, so this is a
+ * separate read. (Import.php has a near-identical one; a later pass can
+ * dedupe rather than this file reaching into that one.)
+ *
+ * @return array<string, array{running:bool, project:string}>
+ */
+function staxx_docker_container_names(): array {
+  static $byName = null;
+  if ($byName !== null) return $byName;
+
+  $byName = [];
+  if (!staxx_docker_running()) return $byName;
+
+  $fmt = '{{.Names}}\t{{.State}}\t{{.Label "com.docker.compose.project"}}\tend';
+  $out = staxx_sh(
+    escapeshellarg(staxx_docker_bin()).' ps -a --no-trunc --format '.escapeshellarg($fmt), 15
+  );
+
+  foreach (explode("\n", $out) as $line) {
+    if (trim($line) === '') continue;
+    $c = explode("\t", $line);
+    if (count($c) < 3 || $c[0] === '') continue;
+    $byName[$c[0]] = ['running' => $c[1] === 'running', 'project' => $c[2]];
+  }
+  return $byName;
+}
+
+/**
+ * Which of this stack's own container names something on this server
+ * actually answers to today. A service with no container_name cannot clash —
+ * compose names it itself — so it is simply absent here, and Docker is never
+ * even asked when nothing in the file could clash with anything.
+ *
+ * $containers is staxx_docker_container_names()'s shape, injectable so the
+ * "nothing declared" path — and the matching logic once something is — can
+ * be proven with no Docker in the room; every real caller leaves it at null
+ * and gets the live list.
+ *
+ * @param array<string,array{running:bool,project:string}>|null $containers
+ * @return array<int, array{service:string, name:string, running:bool}>
+ */
+function staxx_handover_targets(string $rel, ?array $containers = null): array {
+  if (!staxx_valid_path($rel)) return [];
+  $file = staxx_find_compose_file(staxx_stack_dir($rel));
+  if ($file === '') return [];
+
+  $wanted = [];
+  foreach (staxx_compose_meta($file)['services'] as $service => $info) {
+    $name = trim((string)($info['container_name'] ?? ''));
+    if ($name !== '') $wanted[$service] = $name;
+  }
+  if (!$wanted) return [];
+
+  if ($containers === null) $containers = staxx_docker_container_names();
+
+  $targets = [];
+  foreach ($wanted as $service => $name) {
+    if (!isset($containers[$name])) continue;
+    $targets[] = [
+      'service' => $service,
+      'name'    => $name,
+      'running' => (bool)($containers[$name]['running'] ?? false),
+    ];
+  }
+  return $targets;
+}
+
+/**
+ * The name the old container is set aside under — worked out here, never
+ * sent from the browser, so there is no free text anywhere in what reaches
+ * the shell. Appending a fixed, safe suffix to a name Docker already
+ * accepted keeps the result inside Docker's own naming rule automatically;
+ * nothing here needs to re-validate the character set.
+ *
+ * $taken is every name already in use — staxx_docker_container_names()'s
+ * keys — passed in rather than fetched here so the collision walk to "-2",
+ * "-3" and so on can be tested with no Docker in the room.
+ *
+ * @param string[] $taken
+ */
+function staxx_handover_setaside_name(string $original, array $taken): string {
+  $candidate = $original.'-before-staxx';
+  if (!in_array($candidate, $taken, true)) return $candidate;
+
+  for ($n = 2; ; $n++) {
+    $try = $candidate.'-'.$n;
+    if (!in_array($try, $taken, true)) return $try;
+  }
+}
+
+/** The handover state file actually present in $dir, by its real name, or ''. */
+function staxx_handover_file(string $dir): string {
+  foreach ((array)@scandir($dir) as $entry) {
+    if (strcasecmp($entry, STAXX_HANDOVER_FILE) === 0 && is_file($dir.'/'.$entry)) {
+      return $entry;
+    }
+  }
+  return '';
+}
+
+/** Is a handover on this stack waiting to be confirmed right now? */
+function staxx_handover_active(string $rel): bool {
+  if (!staxx_valid_path($rel)) return false;
+  return staxx_handover_file(staxx_stack_dir($rel)) !== '';
+}
+
+/**
+ * Write the handover state file: prose for whoever opens it, then a short
+ * list of Key-N: value lines a tiny reader parses back — the same trick the
+ * review note uses. One target's original name, the name it was set aside
+ * under, and whether it had been running form a numbered triplet, so more
+ * than one clashing service is represented as plainly as one.
+ *
+ * @param array<int,array{original:string,setaside:string,wasRunning:bool}> $targets
+ */
+function staxx_handover_write(string $dir, array $targets, string $when): bool {
+  $names = implode(' and ', array_map(fn($t) => '"'.$t['original'].'"', $targets));
+
+  $body = "# Handover in progress\n\n"
+        . "This stack is now running in place of $names. The old container has "
+        . "been switched off and set aside under a new name — nothing has been "
+        . "deleted.\n\n"
+        . "Check that the app works, then answer the question on the stack's "
+        . "row:\n\n"
+        . "- **It works** — the old container is cleared away for good.\n"
+        . "- **It does not** — everything goes back exactly as it was, running "
+        . "again, within seconds.\n\n---\n";
+
+  foreach ($targets as $i => $t) {
+    $n = $i + 1;
+    $body .= "Original-$n: {$t['original']}\n";
+    $body .= "SetAside-$n: {$t['setaside']}\n";
+    $body .= 'WasRunning-'.$n.': '.($t['wasRunning'] ? 'yes' : 'no')."\n";
+  }
+  $body .= "When: $when\n";
+
+  return @file_put_contents($dir.'/'.STAXX_HANDOVER_FILE, $body) !== false;
+}
+
+/**
+ * Read the handover state file back into a plain array, or null if there is
+ * none. One regex over the lines is enough: every field line is a bare word
+ * immediately followed by ":", which none of the prose above it ever is.
+ *
+ * @return array{targets:array<int,array{original:string,setaside:string,wasRunning:bool}>, when:string}|null
+ */
+function staxx_handover_read(string $dir): ?array {
+  $name = staxx_handover_file($dir);
+  if ($name === '') return null;
+
+  $fields = [];
+  foreach (explode("\n", (string)@file_get_contents($dir.'/'.$name)) as $line) {
+    if (preg_match('/^([A-Za-z]+)(?:-(\d+))?:\s*(.*)$/', trim($line), $m)) {
+      $idx = $m[2] !== '' ? (int)$m[2] : 0;
+      $fields[$m[1]][$idx] = trim($m[3]);
+    }
+  }
+
+  $originals = $fields['Original'] ?? [];
+  ksort($originals);
+
+  $targets = [];
+  foreach ($originals as $idx => $original) {
+    $targets[] = [
+      'original'   => $original,
+      'setaside'   => $fields['SetAside'][$idx] ?? '',
+      'wasRunning' => ($fields['WasRunning'][$idx] ?? '') === 'yes',
+    ];
+  }
+
+  return ['targets' => $targets, 'when' => $fields['When'][0] ?? ''];
+}
+
+/**
+ * Build (but do not run) the shell script one handover executes.
+ *
+ * Kept apart from staxx_start_handover() so its exact text can be asserted
+ * on with no Docker anywhere near the test — see tests/server/handover.php.
+ * Every name goes through escapeshellarg(), including inside undo() and
+ * fail(), on the assumption that whatever reaches here might be hostile even
+ * though every real caller only ever hands it a name Docker itself reported.
+ *
+ * @param array<int,array{original:string,setaside:string,wasRunning:bool}> $targets
+ */
+function staxx_handover_script(
+  string $composeCmd, string $file, string $dir, array $targets,
+  string $heldReviewPath, string $reviewPath, string $stateFilePath
+): string {
+  $docker = escapeshellarg(staxx_docker_bin());
+
+  // Every stage below is a rename, so undo is simply every stage reversed —
+  // it attempts every reversal regardless of how far the run got, and
+  // ignores anything that has nothing to reverse. That is what lets it run
+  // safely no matter which step actually failed.
+  $undo = ['undo() {'];
+  // The exact opposite of the `up -d` below, and it has to come FIRST. A start
+  // that fails partway can still have created some of this stack's containers,
+  // and those hold the ports and the fixed address the old container needs —
+  // so renaming it back and starting it without clearing them first fails on
+  // whichever of ours got there. `down` is a no-op when nothing came up.
+  $undo[] = '  cd '.escapeshellarg($dir).' 2>/dev/null && '
+          . $composeCmd.' -f '.escapeshellarg($file).' down 2>/dev/null || true';
+  foreach ($targets as $t) {
+    $orig  = escapeshellarg($t['original']);
+    $aside = escapeshellarg($t['setaside']);
+    $undo[] = '  '.$docker.' rename '.$aside.' '.$orig.' 2>/dev/null || true';
+    if ($t['wasRunning']) {
+      $undo[] = '  '.$docker.' start '.$orig.' 2>/dev/null || true';
+    }
+  }
+  $undo[] = '  mv '.escapeshellarg($heldReviewPath).' '.escapeshellarg($reviewPath).' 2>/dev/null || true';
+  $undo[] = '  rm -f '.escapeshellarg($stateFilePath).' 2>/dev/null || true';
+  $undo[] = '  echo "Nothing was changed — the stack is back exactly as it was."';
+  $undo[] = '}';
+
+  // Every step's failure goes through here: say what broke, undo everything,
+  // then still print the sentinel so the page's poll ends instead of hanging
+  // on a job that looks like it is still running.
+  $fail = [
+    'fail() {',
+    '  echo "$1"',
+    '  undo',
+    '  echo "'.STAXX_JOB_END.' 1"',
+    '  exit 1',
+    '}',
+  ];
+
+  // Stop every target first, then rename every target aside, then bring the
+  // stack up — see PLAN_42's "the sequence" for why this order, not
+  // interleaved per-target, is what makes a partial failure's undo simple.
+  $steps = [];
+  foreach ($targets as $t) {
+    $orig = escapeshellarg($t['original']);
+    $steps[] = $docker.' stop '.$orig.' 2>&1 || fail '
+             . escapeshellarg('Could not switch off '.$t['original'].'.');
+  }
+  foreach ($targets as $t) {
+    $orig  = escapeshellarg($t['original']);
+    $aside = escapeshellarg($t['setaside']);
+    $steps[] = $docker.' rename '.$orig.' '.$aside.' 2>&1 || fail '
+             . escapeshellarg('Could not set '.$t['original'].' aside.');
+  }
+  $steps[] = 'cd '.escapeshellarg($dir).' 2>&1 || fail '
+           . escapeshellarg('Could not reach the stack folder.');
+  $steps[] = $composeCmd.' -f '.escapeshellarg($file).' up -d --remove-orphans 2>&1 || fail '
+           . escapeshellarg('The stack could not be started.');
+  $steps[] = 'rm -f '.escapeshellarg($heldReviewPath).' 2>&1';
+  $steps[] = 'echo "Handed over. Check that the app works, then answer the question on the stack row." 2>&1';
+  $steps[] = 'echo "'.STAXX_JOB_END.' 0"';
+
+  return implode("\n", $undo)."\n\n".implode("\n", $fail)."\n\n".implode("\n", $steps)."\n";
+}
+
+/**
+ * Start a handover: switch off, rename aside and start the new stack in its
+ * place. Returns a job id for the existing job poller, or '' with a sentence
+ * explaining the refusal — every one of these is checked before anything is
+ * written, so a refusal never leaves so much as the state file behind.
+ */
+function staxx_start_handover(string $rel, string &$error): string {
+  $error = '';
+
+  if (!staxx_valid_path($rel)) { $error = 'Invalid stack name.'; return ''; }
+
+  $dir = staxx_stack_dir($rel);
+  if (!is_dir($dir)) { $error = 'There is no stack called "'.$rel.'".'; return ''; }
+
+  $file = staxx_find_compose_file($dir);
+  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+
+  // Checked before the lock itself: starting a handover moves the review
+  // note aside rather than deleting it, so a stack mid-handover no longer
+  // carries the exact review-lock name — staxx_review_locked() would read it
+  // as "never was locked" and give a confusing answer. The state file is
+  // what actually distinguishes the two, so it is asked first.
+  if (staxx_handover_active($rel)) {
+    $error = 'A handover for this stack is already waiting to be confirmed. '
+           . 'Answer whether it worked before starting another.';
+    return '';
+  }
+
+  // The handover is not an exception carved into the review lock — it
+  // REQUIRES one. It is the only door through it, and refuses everything
+  // else. See PLAN_42's "no exception to the lock is needed".
+  if (!staxx_review_locked($rel)) {
+    $error = 'This stack is not awaiting review, so there is nothing for a handover to take over.';
+    return '';
+  }
+
+  $cmd = staxx_compose_cmd();
+  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
+  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
+
+  $targets = staxx_handover_targets($rel);
+  if (!$targets) {
+    $error = 'Nothing on this server answers to a container name this stack asks for. '
+           . 'Start the stack normally instead.';
+    return '';
+  }
+
+  $containers = staxx_docker_container_names();
+  foreach ($targets as $t) {
+    $project = $containers[$t['name']]['project'] ?? '';
+    if ($project !== '') {
+      $error = 'The container "'.$t['name'].'" already belongs to another compose '
+             . 'project ("'.$project.'"), so this is not a plain template container '
+             . 'and a handover would be guessing. Sort that out by hand first.';
+      return '';
+    }
+  }
+
+  $reviewName = staxx_review_file($dir);
+  if ($reviewName === '') {
+    // Cannot happen given the lock check above, but there is no safe way to
+    // hold a note that has already gone missing.
+    $error = 'The review note has gone missing, so this cannot be started safely.';
+    return '';
+  }
+  $heldPath   = $dir.'/.'.$reviewName;
+  $reviewPath = $dir.'/'.$reviewName;
+
+  $setasides = [];
+  foreach ($targets as $t) {
+    $setasides[] = [
+      'original'   => $t['name'],
+      'setaside'   => staxx_handover_setaside_name($t['name'], array_keys($containers)),
+      'wasRunning' => $t['running'],
+    ];
+  }
+
+  // Nothing has been written up to this point — every refusal above had to
+  // come first, not just happen to.
+  if (!staxx_handover_write($dir, $setasides, gmdate('c'))) {
+    $error = 'Could not write the handover note, so nothing was started.';
+    return '';
+  }
+
+  if (!@rename($reviewPath, $heldPath)) {
+    @unlink($dir.'/'.STAXX_HANDOVER_FILE);
+    $error = 'Could not set the review note aside, so nothing was started.';
+    return '';
+  }
+
+  if (!is_dir(STAXX_JOB_DIR) && !@mkdir(STAXX_JOB_DIR, 0755, true)) {
+    // Put both files back — nothing should look started when nothing was.
+    @rename($heldPath, $reviewPath);
+    @unlink($dir.'/'.STAXX_HANDOVER_FILE);
+    $error = 'Could not create '.STAXX_JOB_DIR;
+    return '';
+  }
+
+  $script = staxx_handover_script(
+    $cmd, $file, $dir, $setasides, $heldPath, $reviewPath, $dir.'/'.STAXX_HANDOVER_FILE
+  );
+
+  $job = bin2hex(random_bytes(8));
+  $log = STAXX_JOB_DIR.'/'.$job.'.log';
+
+  $shown = implode(' && ', array_merge(
+    array_map(fn($t) => 'docker stop '.$t['original'], $setasides),
+    array_map(fn($t) => 'docker rename '.$t['original'].' '.$t['setaside'], $setasides),
+    ['compose -f '.basename($file).' up -d --remove-orphans']
+  ));
+  @file_put_contents($log, '$ '.$shown."\n\n");
+
+  @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
+
+  return $job;
+}
+
+/**
+ * Finish a handover once a human has said whether it worked. Also a job id,
+ * same machinery as every other run — refuses outright if there is nothing
+ * to finish.
+ */
+function staxx_finish_handover(string $rel, bool $worked, string &$error): string {
+  $error = '';
+
+  if (!staxx_valid_path($rel) || !staxx_handover_active($rel)) {
+    $error = 'There is no handover in progress for this stack.';
+    return '';
+  }
+
+  $dir   = staxx_stack_dir($rel);
+  $state = staxx_handover_read($dir);
+  if ($state === null || !$state['targets']) {
+    $error = 'The handover record could not be read, so nothing was changed.';
+    return '';
+  }
+
+  $docker    = escapeshellarg(staxx_docker_bin());
+  $stateFile = escapeshellarg($dir.'/'.STAXX_HANDOVER_FILE);
+
+  if ($worked) {
+    $steps = [];
+    foreach ($state['targets'] as $t) {
+      $steps[] = $docker.' rm -f '.escapeshellarg($t['setaside']).' 2>&1';
+    }
+    $steps[] = 'rm -f '.$stateFile.' 2>&1';
+    $steps[] = 'echo "The old container has been cleared away." 2>&1';
+
+    $shown = implode(' && ', array_map(fn($t) => 'docker rm -f '.$t['setaside'], $state['targets']));
+  } else {
+    // The moment the answer is "no", the stack must stop being runnable — and
+    // that cannot wait for a background job, so the note goes back
+    // synchronously, in PHP, before the job that undoes the rest is even
+    // launched.
+    @file_put_contents($dir.'/'.STAXX_REVIEW_FILE,
+      "# Imported, handed over, and put back\n\n"
+      . "This stack was started in place of its original container and reported "
+      . "not to work, so everything was put back as it was: the original "
+      . "container has its own name again and is running, and this stack is "
+      . "stopped and locked.\n\n"
+      . "Nothing was lost. Look at the compose file, change whatever was wrong, "
+      . "then choose \"Take over and start\" from this stack's menu to try "
+      . "again.\n"
+    );
+
+    $composeCmd = staxx_compose_cmd();
+    $file       = staxx_find_compose_file($dir);
+
+    $steps = [];
+    if ($composeCmd !== '' && $file !== '') {
+      $steps[] = 'cd '.escapeshellarg($dir).' 2>&1';
+      $steps[] = $composeCmd.' -f '.escapeshellarg($file).' down 2>&1';
+    }
+    foreach ($state['targets'] as $t) {
+      $steps[] = $docker.' rename '.escapeshellarg($t['setaside']).' '.escapeshellarg($t['original']).' 2>&1';
+      if ($t['wasRunning']) {
+        $steps[] = $docker.' start '.escapeshellarg($t['original']).' 2>&1';
+      }
+    }
+    $steps[] = 'rm -f '.$stateFile.' 2>&1';
+    $steps[] = 'echo "Put back exactly as it was." 2>&1';
+
+    $shown = 'compose down && '.implode(' && ', array_map(
+      fn($t) => 'docker rename '.$t['setaside'].' '.$t['original'], $state['targets']
+    ));
+  }
+
+  $steps[] = 'echo "'.STAXX_JOB_END.' $?"';
+  $script  = implode("\n", $steps)."\n";
+
+  if (!is_dir(STAXX_JOB_DIR) && !@mkdir(STAXX_JOB_DIR, 0755, true)) {
+    $error = 'Could not create '.STAXX_JOB_DIR;
+    return '';
+  }
+
+  $job = bin2hex(random_bytes(8));
+  $log = STAXX_JOB_DIR.'/'.$job.'.log';
+  @file_put_contents($log, '$ '.$shown."\n\n");
+  @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
+
+  return $job;
 }
 
 /* ------------------------------------------------------- companion files --

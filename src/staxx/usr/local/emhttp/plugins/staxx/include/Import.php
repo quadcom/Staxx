@@ -24,6 +24,7 @@
 <?
 if (defined('STAXX_IMPORT_TEMPLATES_DIR')) return;
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
 
 /** Where Unraid keeps the templates behind every Docker container it made. */
 const STAXX_IMPORT_TEMPLATES_DIR = '/boot/config/plugins/dockerMan/templates-user';
@@ -68,6 +69,110 @@ function staxx_import_taken_names(): array {
     if ($s['folder'] === '') $names[] = $s['leaf'];
   }
   return $names;
+}
+
+/* ------------------------------------------------------------ FolderView3 -- */
+
+/** Where the FolderView3 plugin keeps its own folder-to-container mapping,
+ *  if that plugin is installed at all. */
+const STAXX_IMPORT_FOLDERVIEW3_FILE = '/boot/config/plugins/folder.view3/docker.json';
+
+/**
+ * FolderView3's own folders, reduced to what an import needs: which
+ * container belongs to which folder, and which folders had to be left out.
+ *
+ * The plugin not being installed is a normal, silent case — the file is
+ * simply absent and this returns empty, the same as a mapping that matched
+ * nothing. NEVER WRITTEN TO: this reads somebody else's settings, it does
+ * not take them over.
+ *
+ * A folder built on a REGEX decides membership by a pattern rather than a
+ * list, and evaluating that pattern here would mean re-implementing
+ * FolderView3's own matching rules with no way to be sure they still agree —
+ * mis-filing a container because a regex was read slightly wrong is worse
+ * than leaving it at the top level. Those folders are skipped and named in
+ * 'skipped' instead, so the caller can say so rather than staying quiet
+ * about it.
+ *
+ * $path is a parameter, not always the constant above, purely so a test can
+ * point this at a fixture without ever touching the real settings file.
+ *
+ * @return array{containers:array<string,string>, skipped:string[]}
+ */
+function staxx_import_folderview3(string $path = STAXX_IMPORT_FOLDERVIEW3_FILE): array {
+  static $cache = [];
+  if (isset($cache[$path])) return $cache[$path];
+
+  $out = ['containers' => [], 'skipped' => []];
+
+  $raw = @file_get_contents($path);
+  if ($raw === false) return $cache[$path] = $out;
+
+  $data = json_decode($raw, true);
+  if (!is_array($data)) return $cache[$path] = $out;
+
+  foreach ($data as $folder) {
+    if (!is_array($folder)) continue;
+    $name = trim((string)($folder['name'] ?? ''));
+    if ($name === '') continue;
+
+    if (trim((string)($folder['regex'] ?? '')) !== '') {
+      $out['skipped'][] = $name;
+      continue;
+    }
+
+    foreach ((array)($folder['containers'] ?? []) as $container) {
+      $container = trim((string)$container);
+      if ($container !== '') $out['containers'][$container] = $name;
+    }
+  }
+
+  return $cache[$path] = $out;
+}
+
+/* ---------------------------------------------------------------- icons -- */
+
+/**
+ * One row's icon: the app's own word for it, the picture Unraid already
+ * downloaded for that container, then the public collection matched on the
+ * image name. Every step reaches only staxx_icon_resolve()/
+ * staxx_icon_unraid(), so nothing here downloads anything.
+ *
+ * WHAT ALREADY-ON-DISK OUTRANKS. Nearly every template names its icon as a
+ * web address, which resolves to "nothing to show yet, fetch this later" —
+ * so taking the app's own word first and stopping there left a list of 85
+ * rows with 7 pictures on it and 77 downloads pending, on a panel whose
+ * whole justification was that this server already holds the pictures.
+ * Unraid downloaded one per container long ago, and it is the same picture
+ * from the same address.
+ *
+ * So a source that can be drawn RIGHT NOW beats one that has to be fetched,
+ * whoever named it. The pending address is kept as the fallback rather than
+ * discarded, which is what covers a container Unraid never downloaded one
+ * for.
+ *
+ * @return array{fa:string, ref:string, url:string, remote:string}
+ */
+function staxx_import_icon(string $iconField, string $dir, string $containerName, string $image): array {
+  $found = staxx_icon_resolve($iconField, $dir);
+
+  // Drawable now: a glyph, or a file already in the cache.
+  $ready = fn(array $i) => $i['fa'] !== '' || $i['url'] !== '';
+
+  if (!$ready($found) && $containerName !== '') {
+    $unraid = staxx_icon_unraid($containerName);
+    if ($ready($unraid)) return $unraid;
+    // Nothing of Unraid's either — keep whatever the app named, including a
+    // download still to come, rather than falling through to a worse guess.
+    if ($found['ref'] !== '') return $found;
+    if ($unraid['ref'] !== '') return $unraid;
+  }
+
+  if ($found['ref'] === '' && $found['fa'] === '' && $image !== '') {
+    $found = staxx_icon_resolve('', '', $image);
+  }
+
+  return $found;
 }
 
 /* -------------------------------------------------------------- containers -- */
@@ -201,6 +306,7 @@ function staxx_import_templates(): array {
 
   $containers = staxx_import_all_containers();
   $taken      = staxx_import_taken_names();
+  $fv3        = staxx_import_folderview3();
 
   foreach ((array)@scandir($dir) as $file) {
     // The folder also holds a .bak of whatever was last overwritten — it
@@ -244,16 +350,27 @@ function staxx_import_templates(): array {
     $takenNow = in_array($folder, $taken, true);
     if ($takenNow) $notes[] = 'A stack called "'.$folder.'" already exists.';
 
+    // An imported app is one container, so its Docker folder — if it has
+    // one — is exactly the folder its container is already filed in.
+    $dockerFolder  = $fv3['containers'][$name] ?? '';
+    $folderName    = $dockerFolder !== '' ? staxx_import_safe_name($dockerFolder) : '';
+    $folderRenamed = $folderName !== '' && $folderName !== $dockerFolder;
+
     $out[] = [
-      'source'  => 'template',
-      'id'      => $file,
-      'name'    => $name,
-      'folder'  => $folder,
-      'exists'  => $exists,
-      'running' => $running,
-      'taken'   => $takenNow,
-      'notes'   => $notes,
-      'app'     => $app,
+      'source'         => 'template',
+      'id'             => $file,
+      'name'           => $name,
+      'folder'         => $folder,
+      'exists'         => $exists,
+      'running'        => $running,
+      'taken'          => $takenNow,
+      'notes'          => $notes,
+      'app'            => $app,
+      'icon'           => staxx_import_icon((string)($app['Icon'] ?? ''), '', $name,
+                                               (string)($app['Repository'] ?? '')),
+      'dockerFolder'   => $dockerFolder,
+      'folderName'     => $folderName,
+      'folderRenamed'  => $folderRenamed,
     ];
   }
 
@@ -370,6 +487,18 @@ function staxx_import_projects(): array {
     $takenNow = in_array($folder, $taken, true);
     if ($takenNow) $notes[] = 'A stack called "'.$folder.'" already exists.';
 
+    // Whatever the compose file itself already says about its own icon —
+    // same 'x-unraid: icon:' key a stack's own tile reads — falling back to
+    // whichever service names an image first, so an unstarted project still
+    // gets a real logo instead of initials.
+    $meta = $file !== '' ? staxx_compose_meta($file) : ['x' => [], 'services' => []];
+    $image = '';
+    foreach ($meta['services'] as $svc) {
+      if (($svc['image'] ?? '') !== '') { $image = $svc['image']; break; }
+    }
+    $icon = staxx_import_icon((string)($meta['x']['icon'] ?? ''),
+                                 $file !== '' ? dirname($file) : '', '', $image);
+
     $out[] = [
       'source'   => 'project',
       'id'       => $entry,
@@ -383,6 +512,7 @@ function staxx_import_projects(): array {
       'via'      => $via,
       'override' => $override,
       'env'      => $env,
+      'icon'     => $icon,
     ];
   }
 
@@ -428,6 +558,9 @@ function staxx_import_loose(): array {
       'running' => strtolower($info['state']) === 'running',
       'taken'   => $takenNow,
       'notes'   => $notes,
+      // A loose row's only clue is its own container name, so that is the
+      // only source tried — Unraid's downloaded copy, or nothing.
+      'icon'    => staxx_import_icon('', '', $name, ''),
     ];
   }
 
@@ -436,12 +569,219 @@ function staxx_import_loose(): array {
 
 /* --------------------------------------------------------------------- all -- */
 
+/** A row's icon as the browser is allowed to see it: 'remote' is where the
+ *  server would fetch it from, which is nobody's business but the sweep's. */
+function staxx_import_icon_public(array $icon): array {
+  return ['fa' => $icon['fa'], 'url' => $icon['url'], 'ref' => $icon['ref']];
+}
+
 /** Everything the import panel shows, in one call. */
 function staxx_import_list(): array {
+  $strip = function (array $rows): array {
+    foreach ($rows as &$row) {
+      if (isset($row['icon'])) $row['icon'] = staxx_import_icon_public($row['icon']);
+    }
+    unset($row);
+    return $rows;
+  };
+
   return [
-    'templates' => staxx_import_templates(),
-    'projects'  => staxx_import_projects(),
-    'loose'     => staxx_import_loose(),
+    'templates'   => $strip(staxx_import_templates()),
+    'projects'    => $strip(staxx_import_projects()),
+    'loose'       => $strip(staxx_import_loose()),
+    // Folders FolderView3 could not be trusted to file by, named so the
+    // panel can say so rather than staying quiet about it.
+    'folderRules' => staxx_import_folderview3()['skipped'],
   ];
+}
+
+/**
+ * Every icon the import panel would like to show but does not have yet, in
+ * the same shape staxx_icon_wanted() already hands staxx_icon_sweep() for
+ * the main page — see action.php's 'icons' case, which is what asks for
+ * this under the import scope.
+ *
+ * @return array<int, array{ref:string, remote:string}>
+ */
+function staxx_import_icon_wanted(): array {
+  $wanted = [];
+
+  $add = function (array $icon) use (&$wanted) {
+    if ($icon['ref'] === '' || $icon['url'] !== '') return;
+    $wanted[$icon['ref']] = ['ref' => $icon['ref'], 'remote' => $icon['remote']];
+  };
+
+  foreach (array_merge(staxx_import_templates(), staxx_import_projects(), staxx_import_loose()) as $row) {
+    if (isset($row['icon'])) $add($row['icon']);
+  }
+
+  return array_values($wanted);
+}
+
+/* --------------------------------------------------------------------- write -- */
+
+/**
+ * The plain-text note written beside every imported stack's compose file.
+ *
+ * $about carries what it needs to say, keyed to match the shape the readers
+ * above already use where that overlaps:
+ *   'source'           — 'template', 'project' or 'loose', same values the
+ *                         list rows carry.
+ *   'id'                — the source's own identifier (a template's file name).
+ *   'name'              — its display name.
+ *   'container'         — the container name this stack's project will produce.
+ *   'containerExists'   — whether docker reports a container of that name now.
+ *   'containerRunning'  — whether that container is running now.
+ *   'warnings', 'notes' — the converter's own two lists: what it could not
+ *                         translate, and what it filled in instead. These are
+ *                         shown once today, in a dialog that then closes, so
+ *                         this file is the only place they end up written down.
+ */
+function staxx_import_note(array $about): string {
+  $kind = [
+    'template' => 'an Unraid template',
+    'project'  => 'a Compose Manager project',
+    'loose'    => 'an existing container',
+  ][(string)($about['source'] ?? '')] ?? 'an import';
+
+  $name = (string)($about['name'] ?? '');
+  $id   = (string)($about['id']   ?? '');
+
+  $lines = [];
+  $lines[] = '# This stack needs a look before it can run';
+  $lines[] = '';
+  $lines[] = 'Imported from '.$kind.' "'.$name.'"'
+           . ($id !== '' && $id !== $name ? ' ('.$id.')' : '')
+           . ' on '.date('Y-m-d').'.';
+  $lines[] = '';
+  $lines[] = 'This stack will not start while this file is here — StaXX refuses every '
+           . 'Start, Stop and Restart button on it.';
+  $lines[] = '';
+  $lines[] = 'When you have read this and want to go ahead, choose "Take over and start" from '
+           . 'this stack\'s own menu on the Stacks page. That switches the old container off, '
+           . 'sets it aside under another name, starts this stack in its place, and then asks '
+           . 'you whether it works — so there is a way back if it does not.';
+  $lines[] = '';
+  $lines[] = 'Deleting this file by hand only removes the lock. It does none of the above, so '
+           . 'the stack would then fail to start against whatever still holds its container '
+           . 'name. Use the menu.';
+  $lines[] = '';
+  $lines[] = '## The container this stack would use';
+  $lines[] = '';
+
+  $container = (string)($about['container'] ?? '');
+  if (!empty($about['containerExists'])) {
+    $state = !empty($about['containerRunning']) ? 'and is currently running' : 'but is currently stopped';
+    $lines[] = 'A container called "'.$container.'" already exists, '.$state.'. It has not '
+             . 'been touched by this import and is still exactly as it was. Starting this '
+             . 'stack before that container is dealt with would fail, because Docker will '
+             . 'not let two containers share one name — handing this stack over is what '
+             . 'deals with it.';
+  } else {
+    $lines[] = 'No container called "'.$container.'" exists on this server right now, so '
+             . 'there is nothing here for this stack to replace.';
+  }
+
+  $lines[] = '';
+  $lines[] = '## What could not be brought across';
+  $lines[] = '';
+  $warnings = array_values(array_filter(
+    (array)($about['warnings'] ?? []), fn($w) => trim((string)$w) !== ''
+  ));
+  if ($warnings) {
+    foreach ($warnings as $w) $lines[] = '- '.$w;
+  } else {
+    $lines[] = 'Nothing — everything in the original converted cleanly.';
+  }
+
+  $lines[] = '';
+  $lines[] = '## What was filled in for you';
+  $lines[] = '';
+  $notes = array_values(array_filter(
+    (array)($about['notes'] ?? []), fn($n) => trim((string)$n) !== ''
+  ));
+  if ($notes) {
+    foreach ($notes as $n) $lines[] = '- '.$n;
+  } else {
+    $lines[] = 'Nothing needed filling in.';
+  }
+
+  $lines[] = '';
+  return implode("\n", $lines);
+}
+
+/**
+ * Write one imported stack: the review note first, the compose file second.
+ *
+ * THE ORDER MATTERS. Between writing the compose file and writing the lock
+ * there is an instant where a folder holding a compose file — one whose
+ * project name happens to match containers someone else's template or
+ * project still runs — reads as an ordinary, unlocked stack. A page render
+ * landing in that instant shows a green row offering to stop them, which is
+ * the exact accident the review lock (see staxx_review_file() in Stacks.php)
+ * exists to prevent. Writing the note first closes that window rather than
+ * narrowing it.
+ *
+ * Refuses outright if anything already exists at the target. staxx_save_stack()
+ * alone will happily overwrite — the refusal on an ordinary save lives in
+ * action.php's own "save" case, which this path does not go through — so this
+ * function has to make that check itself or an import could silently destroy
+ * a hand-authored compose file.
+ *
+ * Any failure after the folder is created is rolled back: the note and the
+ * folder are removed, so a refused import leaves nothing behind. The folder
+ * removed is always the one this call just made — the refusal above already
+ * guarantees nothing existed at $rel beforehand.
+ */
+function staxx_import_write(string $rel, string $yaml, array $about, string &$error): bool {
+  $error = '';
+  if (!staxx_valid_path($rel)) {
+    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
+           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    return false;
+  }
+
+  // Same rule staxx_save_stack() applies: a stack may sit one folder down, but
+  // that folder has to be there already, chosen from the existing list — this
+  // import never invents one.
+  $folder = staxx_path_folder($rel);
+  if ($folder !== '' && !is_dir(staxx_stack_root().'/'.$folder)) {
+    $error = 'There is no folder called "'.$folder.'".';
+    return false;
+  }
+
+  $dir = staxx_stack_dir($rel);
+  if (file_exists($dir)) {
+    $error = 'A stack called "'.$rel.'" already exists. Pick a different name, or delete '
+           . 'the existing stack first.';
+    return false;
+  }
+
+  if (!@mkdir($dir, 0755, true)) {
+    $error = 'Could not create '.$dir;
+    return false;
+  }
+
+  // Resolved once, here, because staxx_rmtree() compares its containment
+  // root against a realpath()'d candidate — hand it an unresolved path and a
+  // single symlinked component anywhere above the stack root makes every
+  // rollback below silently refuse, leaving exactly the half-written folder
+  // they exist to clear away. Same pairing staxx_delete_stack() uses.
+  $real = (string)@realpath($dir);
+
+  $notePath = $dir.'/'.STAXX_REVIEW_FILE;
+  if (@file_put_contents($notePath, staxx_import_note($about)) === false) {
+    $error = 'Could not write the review note into '.$dir;
+    staxx_rmtree($real, $real);
+    return false;
+  }
+  @chmod($notePath, 0644);
+
+  if (!staxx_save_stack($rel, $yaml, $error)) {
+    staxx_rmtree($real, $real);
+    return false;
+  }
+
+  return true;
 }
 ?>

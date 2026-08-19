@@ -318,7 +318,10 @@ console.log('\nC. Mapping table — binhex-emby');
 var embyR = CA.convert(EMBY);
 var embyY = embyR.yaml;
 ok('image: comes from Repository', embyY.indexOf('image: ghcr.io/binhex/arch-emby') >= 0);
-ok('container_name: equals the name', embyY.indexOf('container_name: binhex-emby') >= 0);
+// binhex-emby's Name has no capitals, so this also happens to equal the
+// normalised name — the real proof that container_name is Name verbatim,
+// not the sanitised form, is section N below.
+ok('container_name: equals Name verbatim', embyY.indexOf('container_name: binhex-emby') >= 0);
 ok('bridge network emits no network_mode/networks', embyY.indexOf('network_mode') === -1 && embyY.indexOf('networks:') === -1);
 ok('ExtraParams --restart=unless-stopped becomes restart: unless-stopped', embyY.indexOf('restart: unless-stopped') >= 0);
 ok('the empty-valued Port falls back to Default 8096', embyY.indexOf('"8096:8096"') >= 0);
@@ -883,6 +886,107 @@ ok('the reordered output round-trips byte for byte', kBack === hostMatchY,
 ok('nothing is sealed in the reordered output', kDoc.sealed.length === 0, JSON.stringify(kDoc.sealed));
 var kForm = Y.buildForm(kDoc);
 ok('buildForm().ok is true for the reordered output', kForm.ok === true);
+
+/* =========================================================================
+ * L. opts.origin — the provenance line
+ *
+ * The Apps dialog never passes opts.origin, so its output must stay
+ * byte-identical to before this option existed; the importer (which runs
+ * this converter over the user's own Unraid templates, not the CA catalogue)
+ * passes 'template' to get a first line that is actually true.
+ * ========================================================================= */
+
+console.log('\nL. opts.origin — the provenance line');
+
+var CA_LINE = '# Converted from the Community Applications template for binhex-emby.';
+var TEMPLATE_LINE = '# Converted from the Unraid template for binhex-emby.';
+
+ok('no opts.origin produces the Community Applications wording',
+   CA.convert(EMBY).yaml.indexOf(CA_LINE) === 0);
+ok('opts.origin: "ca" produces the same Community Applications wording',
+   CA.convert(EMBY, { origin: 'ca' }).yaml.indexOf(CA_LINE) === 0);
+ok('opts.origin: "template" produces the Unraid template wording',
+   CA.convert(EMBY, { origin: 'template' }).yaml.indexOf(TEMPLATE_LINE) === 0);
+ok('an unrecognised opts.origin falls back to the Community Applications wording',
+   CA.convert(EMBY, { origin: 'bogus' }).yaml.indexOf(CA_LINE) === 0);
+
+/* =========================================================================
+ * M. A Path setting whose Target is not a container path at all
+ *
+ * MQTT Explorer (a real template on the box) has Path settings whose Target
+ * is a bare environment-variable-shaped word — SSL_KEY_PATH, SSL_CERT_PATH,
+ * INITIAL_CONFIG — with no value set. Before this rule that produced a
+ * volumes: entry naming a folder nobody meant, which Docker refuses at
+ * start-up without saying why. Checked before the placeholder-value rule
+ * even runs, so it never gets the chance to invent one.
+ * ========================================================================= */
+
+console.log('\nM. A Path setting with a non-path Target');
+
+var BAD_PATH_TARGET = {
+  Name: 'mqtt-explorer-test', Repository: 'example/mqtt-explorer-test', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'SSL_KEY_PATH', Target: 'SSL_KEY_PATH', Default: '', Description: 'Path to the SSL key',
+        Type: 'Path', Required: 'false', Mask: 'false' }, value: '' },
+    { '@attributes': { Name: 'Config', Target: '/config', Default: '', Description: 'Configuration folder',
+        Type: 'Path', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var badPathR = CA.convert(BAD_PATH_TARGET);
+ok('a bare-word Target produces no volumes: entry for it',
+   badPathR.yaml.indexOf('SSL_KEY_PATH:SSL_KEY_PATH') === -1);
+ok('...but the sibling Path with a proper Target still gets one',
+   badPathR.yaml.indexOf('/config:/config') >= 0 || badPathR.yaml.indexOf(':/config') >= 0);
+ok('a warning names the bad setting and its Target',
+   badPathR.warnings.some(function (w) { return /SSL_KEY_PATH/.test(w) && w.indexOf('not a folder path') >= 0; }));
+
+// A Path with a proper absolute Target and no value must be unaffected —
+// this guards against the new check over-matching a normal case.
+var GOOD_PATH_TARGET = {
+  Name: 'good-path-test', Repository: 'example/good-path-test', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'Config', Target: '/config', Default: '', Description: '',
+        Type: 'Path', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var goodPathR = CA.convert(GOOD_PATH_TARGET);
+ok('a proper absolute Target still gets its placeholder volume',
+   goodPathR.yaml.indexOf('/mnt/user/appdata/good-path-test/config:/config') >= 0);
+ok('...and produces no warning',
+   goodPathR.warnings.length === 0);
+
+/* =========================================================================
+ * N. container_name carries Name verbatim
+ *
+ * Docker names the running container from Name exactly — capitals and all —
+ * so the importer's handover (replace the old container by name) only finds
+ * something to replace if container_name matches it byte for byte. Measured
+ * against six real Unraid templates: five of six have a Name Docker itself
+ * would accept unchanged, so lowercasing it was always a divergence from
+ * what Unraid actually did.
+ * ========================================================================= */
+
+console.log('\nN. container_name carries Name verbatim');
+
+['Vert', 'Reubah', 'QRding', 'Excalidraw', 'StirlingPDF', 'it-tools'].forEach(function (nm) {
+  var y = CA.convert({ Name: nm, Repository: 'example/' + nm.toLowerCase(), Network: 'bridge' }).yaml;
+  ok('container_name for Name "' + nm + '" is written verbatim',
+     y.indexOf('container_name: ' + nm + '\n') >= 0, y.match(/container_name:.*/)[0]);
+});
+
+var spaceNameR = CA.convert({ Name: 'My Cool App', Repository: 'example/my-cool-app', Network: 'bridge' });
+ok('a Name with a space is not a legal Docker container name, so it falls back to the normalised form',
+   spaceNameR.yaml.indexOf('container_name: my-cool-app\n') >= 0);
+ok('the service key uses the same normalised, lowercase form',
+   spaceNameR.yaml.indexOf('  my-cool-app:\n') >= 0);
+
+var lowerNameR = CA.convert({ Name: 'already-lowercase', Repository: 'example/already-lowercase', Network: 'bridge' });
+ok('a Name already lowercase is unchanged', lowerNameR.yaml.indexOf('container_name: already-lowercase\n') >= 0);
+
+var capsNameR = CA.convert({ Name: 'Excalidraw', Repository: 'example/excalidraw', Network: 'bridge' });
+ok('a Name with capitals keeps them in container_name', capsNameR.yaml.indexOf('container_name: Excalidraw\n') >= 0);
+ok('...while the service key stays lowercase', capsNameR.yaml.indexOf('  excalidraw:\n') >= 0);
+ok('...and the stack name (used for the appdata placeholder etc.) stays lowercase too', capsNameR.name === 'excalidraw');
 
 /* ---- summary ------------------------------------------------------------ */
 

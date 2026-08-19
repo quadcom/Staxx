@@ -678,6 +678,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                         data-hasfile="<?= $s['hasFile'] ? '1' : '0' ?>"
                         data-running="<?= $s['running'] ? '1' : '0' ?>"
                         data-review="<?= $s['review'] ? '1' : '0' ?>"
+                        data-handover="<?= ($s['handover'] ?? false) ? '1' : '0' ?>"
                         data-folder="<?= htmlspecialchars($row['folder']) ?>"
                         title="<?= _('Stack actions') ?>">
                   <?= $s['parses']
@@ -712,7 +713,18 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                      (if it sits in one) is a different thing, carried by the
                      data attributes above rather than printed here. -->
                 <span class="staxx-name-text"><?= htmlspecialchars($s['leaf']) ?></span>
-                <? if ($s['review']): ?>
+                <? if ($s['handover'] ?? false): ?>
+                  <!-- A handover has switched the old container off and set it
+                       aside, and this stack is running in its place — see the
+                       "handover" section of Stacks.php. Distinct from the
+                       review badge below: unlike a locked import, this row
+                       genuinely owns its containers and shows their real
+                       state, so nothing about it is blanked. -->
+                  <span class="staxx-handoverbadge"
+                        title="<?= htmlspecialchars(_('Waiting to be confirmed after a handover. Check the app works, then answer the question in the stack menu.')) ?>">
+                    <?= _('waiting to confirm') ?>
+                  </span>
+                <? elseif ($s['review']): ?>
                   <!-- Imported and not yet reviewed — see the "review lock"
                        section of Stacks.php. Read-only marker; the menu item
                        that clears it lives in the stack actions button above. -->

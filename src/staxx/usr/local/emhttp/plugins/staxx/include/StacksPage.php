@@ -721,26 +721,46 @@ endif;
 
   <!-- ---------------------------------------------------------- import -- -->
 
-  <!-- The sixth dialog, opened from the Import button beside Apps. Read-only
-       throughout this phase — it lists everything on the server that could be
-       brought into StaXX and lets a row's would-be compose file be previewed,
-       but writes nothing and touches no container, so there is no import
-       button here yet. Sits outside the editor for the same reason the Apps
-       dialog immediately above does. -->
+  <!-- The sixth dialog, opened from the Import button beside Apps. Lists
+       everything on the server that could be brought into StaXX; only
+       Unraid template rows can be ticked and written in, as new stacks that
+       arrive locked (see NEEDS-REVIEW.md, written server-side) so nothing
+       runs and no existing container is touched until that lock is cleared
+       by hand later. Compose Manager projects and containers belonging to
+       neither template nor project stay read-only — that still needs
+       multi-file support this phase does not have. Sits outside the editor
+       for the same reason the Apps dialog immediately above does. -->
   <dialog class="staxx-import" id="staxx-import-dlg" aria-labelledby="staxx-import-title">
 
     <div class="staxx-import-head">
       <h3 class="staxx-import-title" id="staxx-import-title"><?= _('Import') ?></h3>
       <p class="staxx-import-hint">
-        <?= _('Everything below is read-only — nothing is imported yet, and nothing here changes anything on this server.') ?>
+        <?= _('Unraid templates can be ticked and imported below; each one is written as a new stack that starts out locked, so nothing runs and no existing container is touched until you choose to take it over later.') ?>
+        <?= _('Compose Manager projects and containers belonging to neither are shown for reference only — importing those is not built yet.') ?>
       </p>
     </div>
 
     <div class="staxx-import-list" id="staxx-import-list"></div>
 
     <div class="staxx-import-foot">
-      <p class="staxx-import-msg" id="staxx-import-msg" role="status" aria-live="polite"></p>
-      <button type="button" class="staxx-btn" id="staxx-import-close"><?= _('Close') ?></button>
+
+      <div class="staxx-import-dest" id="staxx-import-dest" hidden>
+        <label class="staxx-import-destlabel" for="staxx-import-folder"><?= _('Import into') ?></label>
+        <select id="staxx-import-folder"></select>
+        <p class="staxx-import-destpath" id="staxx-import-destpath"></p>
+        <p class="staxx-import-destnote" id="staxx-import-destnote" hidden></p>
+      </div>
+
+      <div class="staxx-import-summary" id="staxx-import-summary" hidden></div>
+
+      <div class="staxx-import-footrow">
+        <p class="staxx-import-msg" id="staxx-import-msg" role="status" aria-live="polite"></p>
+        <div class="staxx-import-footbtns">
+          <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-import-go" disabled><?= _('Import') ?></button>
+          <button type="button" class="staxx-btn" id="staxx-import-close"><?= _('Close') ?></button>
+        </div>
+      </div>
+
     </div>
 
   </dialog>

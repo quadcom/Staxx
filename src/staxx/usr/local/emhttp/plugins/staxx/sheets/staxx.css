@@ -5673,18 +5673,31 @@
   overflow-y: auto;
 }
 
+/* The margin that used to sit on the heading itself now sits on this
+   wrapper instead — the heading is no longer the list's direct child (the
+   select-all box / "not built yet" note beside it needs somewhere to live),
+   so ":first-child" on the heading would match every group's, not just the
+   very first one. */
+.staxx-import-grouphead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.6rem 0 0.8rem;
+}
+
+.staxx-import-grouphead:first-child {
+  margin-top: 0;
+}
+
 /* Scoped under .staxx-scaffold for the same specificity reason as
    .staxx-ca-group: Unraid's own sheet carries an element-plus-class rule
    for headings that otherwise wins over a bare class of ours. */
 .staxx-scaffold .staxx-import-group {
-  margin: 1.6rem 0 0.8rem;
+  margin: 0;
   color: var(--sm-fg);
   font-size: 2.5rem;
   font-weight: 600;
-}
-
-.staxx-import-group:first-child {
-  margin-top: 0;
 }
 
 .staxx-scaffold .staxx-import-count {
@@ -5719,6 +5732,8 @@
   align-items: center;
   gap: 0.9rem;
   width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
   box-sizing: border-box;
   margin: 0;
   padding: 0.7rem 0.9rem;
@@ -5736,6 +5751,40 @@
 .staxx-scaffold .staxx-import-rowhead:focus-visible {
   background: var(--sm-fill);
   outline: none;
+}
+
+/* Template rows only — the tick box sits beside the row's own button rather
+   than inside it, so ticking it can never also fire the button's click and
+   expand the row. */
+.staxx-import-rowline {
+  display: flex;
+  align-items: center;
+}
+
+.staxx-import-check {
+  flex: 0 0 auto;
+  margin: 0 0 0 0.9rem;
+  cursor: pointer;
+}
+
+.staxx-import-selectall {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--sm-muted);
+  font-size: 1.15rem;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.staxx-import-selectall input {
+  margin: 0;
+}
+
+.staxx-import-groupnote {
+  color: var(--sm-muted);
+  font-size: 1.15rem;
+  font-style: italic;
 }
 
 .staxx-import-rowname {
@@ -5793,11 +5842,88 @@
 
 .staxx-import-foot {
   display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: 1.2rem 1.4rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.staxx-import-dest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.8rem 1rem;
+}
+
+.staxx-import-destlabel {
+  flex: 0 0 auto;
+  font-size: 1.2rem;
+}
+
+.staxx-import-dest select {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  padding: 0.5rem 0.8rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.2rem;
+}
+
+.staxx-import-dest select:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}
+
+/* The full destination path, and the pattern-rule notice when there is one —
+   both wrap onto their own line under the picker rather than fighting it
+   for width. */
+.staxx-import-destpath,
+.staxx-import-destnote {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--sm-muted);
+  font-size: 1.15rem;
+}
+
+.staxx-import-destpath code {
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.2rem;
+  background: var(--sm-fill-2);
+  color: var(--sm-fg);
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.staxx-import-summary {
+  padding: 0.6rem 0.8rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background: var(--sm-fill);
+  font-size: 1.2rem;
+}
+
+.staxx-import-summarymsg {
+  margin: 0;
+}
+
+.staxx-import-summaryfails {
+  margin: 0.5rem 0 0;
+  padding-left: 1.6rem;
+  color: var(--sm-danger);
+}
+
+.staxx-import-footrow {
+  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1.2rem;
-  padding: 1.2rem 1.4rem;
-  border-top: 0.1rem solid var(--sm-line);
+}
+
+.staxx-import-footbtns {
+  display: flex;
+  gap: 0.6rem;
 }
 
 .staxx-import-msg {
@@ -5805,6 +5931,46 @@
   min-width: 0;
   color: var(--sm-muted);
   font-size: 1.2rem;
+}
+
+/* Dimmed while a run is in progress — everything inside is inert, not just
+   disabled, so this is the only visible sign short of the Close button
+   reading Stop. */
+.staxx-import-list[inert],
+.staxx-import-dest[inert] {
+  opacity: 0.6;
+}
+
+/* One row's own destination, shown only while "Match my Docker folders" is
+   the chosen option — the icon-carrying tile sits to the left of the name
+   in .staxx-import-rowhead, so this sits to the right of it instead. */
+.staxx-import-rowdest {
+  flex: 0 0 auto;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  white-space: nowrap;
+}
+
+.staxx-import-rowdest--renamed {
+  color: var(--sm-accent);
+}
+
+/* The row's own icon — a plain .staxx-icon wrapper sized down for a denser
+   list, same as .staxx-icon--child does for a container row nested under a
+   stack. Everything inside it (the <img>, the .staxx-tile fallback, the
+   data-icon-ref hook) is exactly what staxx_icon_tile() already writes for
+   the main table, so paintIcons() and the broken-image listener both work
+   here unmodified — nothing icon-related is reimplemented, just placed. */
+.staxx-scaffold .staxx-import-rowicon {
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 0.5rem;
+  font-size: 1.3rem;
+  cursor: default;
+}
+
+.staxx-import-rowicon .staxx-tile {
+  font-size: 1rem;
 }
 
 /* ---- The delete confirmation ---------------------------------------------- */

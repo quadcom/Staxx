@@ -555,6 +555,18 @@
         // emitters below, which only ever look at .content and .comment.
         ports.push({ content: '      - ' + dq(val + ':' + target + (udp ? '/udp' : '')), comment: comment, host: val, target: target });
       } else if (type === 'Path') {
+        // A Path setting's Target is meant to be where it lands inside the
+        // container. A handful of real templates (MQTT Explorer's SSL/config
+        // settings) instead put an environment-variable-shaped name there with
+        // no value — that produces a folder path that is not a path at all,
+        // and Docker refuses it at start-up without saying which setting was
+        // to blame. Caught here, before a placeholder value gets invented for it.
+        if (target.charAt(0) !== '/') {
+          warnings.push('The path setting "' + label + '" points at "' + target + '" inside the ' +
+            'container, which is not a folder path, so it was skipped. Add it by hand if the ' +
+            'container really needs it.');
+          return;
+        }
         if (val === '') {
           val = appdataRoot + name + target;
           notes.push('The path "' + label + '" had no value; used ' + val + ' as a placeholder — check it before starting the stack.');
@@ -621,6 +633,22 @@
     for (var i = 0; i < arr.length; i++) svc.push('      - ' + scalarOut(arr[i]));
   }
 
+  // Docker's own rule for a container name — unrelated to, and looser than,
+  // staxx_valid_name() (which governs the stack/service name and must stay
+  // lowercase because a Compose project name must).
+  var DOCKER_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+
+  // The container name is the one thing outside the stack can refer to — a
+  // reverse proxy, a script, another container — so it has to survive the
+  // conversion unchanged, capitals and all, or the handover that is meant to
+  // replace the old container finds nothing with that name to replace. Only
+  // a Name Docker would refuse outright (a space, for instance) falls back
+  // to the sanitised form used for the service/stack name.
+  function containerNameFor(app, fallback) {
+    var raw = typeof app.Name === 'string' ? app.Name : '';
+    return DOCKER_NAME_RE.test(raw) ? raw : fallback;
+  }
+
   function convert(app, opts) {
     app = app || {};
     opts = opts || {};
@@ -680,7 +708,7 @@
       notes.push('This template has no image name. Check "image:" before starting the stack.');
       svc.push('    image: ' + name);
     }
-    svc.push('    container_name: ' + name);
+    svc.push('    container_name: ' + scalarOut(containerNameFor(app, name)));
     // Always written, defaulting to unless-stopped when the template said
     // nothing. Compose's own default is `no`, which means the container does
     // not come back after a reboot — and a container from Community
@@ -775,8 +803,17 @@
 
     /* ---- whole file ------------------------------------------------------ */
 
+    // The importer runs this same converter on a user's own Unraid template,
+    // not just a Community Applications catalogue entry — and "Converted from
+    // the Community Applications template" is simply false there, since that
+    // template was never in the CA feed at all.
+    var subject = app.Name || name;
+    var firstLine = opts.origin === 'template'
+      ? '# Converted from the Unraid template for ' + subject + '.'
+      : '# Converted from the Community Applications template for ' + subject + '.';
+
     var lines = [];
-    lines.push('# Converted from the Community Applications template for ' + (app.Name || name) + '.');
+    lines.push(firstLine);
     lines.push('#');
     lines.push('# This is an ordinary compose file — delete every x-unraid block below and');
     lines.push('# it still runs with a plain `docker compose up`. Check the ports and paths');

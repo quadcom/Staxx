@@ -6626,13 +6626,40 @@
    * the initial fetch; a row's preview is generated once, from data already
    * in hand, the first time that row is opened. */
 
-  var importModal = document.getElementById('staxx-import-dlg');
-  var importList  = document.getElementById('staxx-import-list');
-  var importMsg   = document.getElementById('staxx-import-msg');
+  var importModal    = document.getElementById('staxx-import-dlg');
+  var importList     = document.getElementById('staxx-import-list');
+  var importMsg      = document.getElementById('staxx-import-msg');
+  var importDest     = document.getElementById('staxx-import-dest');
+  var importFolderSel = document.getElementById('staxx-import-folder');
+  var importDestPath = document.getElementById('staxx-import-destpath');
+  var importDestNote = document.getElementById('staxx-import-destnote');
+  var importSummary  = document.getElementById('staxx-import-summary');
+  var importGoBtn    = document.getElementById('staxx-import-go');
+  var importCloseBtn = document.getElementById('staxx-import-close');
 
   var importData    = null;  // the last import-list reply — {templates, projects, loose}
   var importEntries = [];    // every entry from that reply, flattened in the order rendered — data-import-toggle below is a position in this array
   var importOpenIdx = {};    // which rows are expanded this open, keyed by that position
+
+  /* ---- Writing templates in (PLAN_41 phase 2) ----
+   *
+   * Only template rows are ever selectable — Compose Manager projects and the
+   * "Neither" group stay read-only, so none of the state below applies to
+   * them. importSelected only ever holds idxs of AVAILABLE template rows;
+   * whatever marks a row unavailable (a folder switch that lands on a taken
+   * name, a write that just succeeded) also deletes it from here, so a plain
+   * count of this object's keys is always the right number for the button. */
+  var importRoot     = '';    // the stack root, for the "files land here" sentence
+  var importExisting = [];    // [{folder, leaf}] — every stack that exists, kept in sync as writes land
+  // A sentinel rather than a real folder id — no real one can start with an
+  // underscore (staxx_valid_name() requires alphanumeric first), so this can
+  // never collide with a folder someone actually made.
+  var IMPORT_MATCH   = '__match__';
+  var importFolder   = '';    // the chosen destination: '' (top level), a folder id, or IMPORT_MATCH
+  var importSelected = {};    // idx -> true, ticked template rows
+  var importWrittenIdx = {};  // idx -> true once this session's run has written it
+  var importBusy      = false;
+  var importStopFlag  = false; // Stop was pressed — finish the row in flight, then quit
 
   function importSourceLabel(entry) {
     if (entry.source === 'project') return 'Compose Manager project';
@@ -6643,6 +6670,88 @@
   function importStateLabel(entry) {
     if (!entry.exists) return 'Not installed';
     return entry.running ? 'Running' : 'Stopped';
+  }
+
+  // Every row has its own destination while "Match my Docker folders" is
+  // chosen — its own folderName, or the top level when it has none. Any
+  // other choice in the picker is one folder for every row alike.
+  function importRowFolder(entry) {
+    if (importFolder === IMPORT_MATCH) return entry.folderName || '';
+    return importFolder;
+  }
+
+  // A template row can be ticked only while its own name (entry.folder — the
+  // server's already-sanitised stack name) is free INSIDE ITS OWN DESTINATION
+  // FOLDER. Compared case-insensitively because the default stack root is the
+  // flash drive, which does not distinguish case, so "Vert" and "vert" are
+  // the same folder whichever of them typed a name first.
+  function importIsTaken(entry, folder) {
+    var leaf = String(entry.folder || '').toLowerCase();
+    var f    = String(folder || '').toLowerCase();
+    return importExisting.some(function (s) {
+      return String(s.folder || '').toLowerCase() === f &&
+             String(s.leaf   || '').toLowerCase() === leaf;
+    });
+  }
+
+  function importSelectedCount() {
+    var n = 0;
+    for (var k in importSelected) if (importSelected[k]) n++;
+    return n;
+  }
+
+  // Initials and a colour worked out from the name, the same shape as
+  // staxx_icon_initials() in Icons.php (split on non-alphanumeric runs, two
+  // letters either way, a deterministic colour 0-9 matching the ten
+  // .staxx-tile--N rules already in the stylesheet). Not the same hash —
+  // crc32 is not reachable from here — but this tile is only ever a stand-in
+  // until the sweep below fills in a real icon, or a permanent one for a row
+  // with no icon at all, so it only has to be stable and legible, not
+  // pixel-identical to the main table's.
+  function importInitials(name) {
+    var words = String(name || '').split(/[^A-Za-z0-9]+/).filter(function (w) { return w; });
+    var text;
+    if (words.length >= 2) text = (words[0].charAt(0) + words[1].charAt(0)).toUpperCase();
+    else if (words.length === 1) text = words[0].slice(0, 2).toUpperCase();
+    else text = '?';
+
+    var s = String(name || '').toLowerCase();
+    var hash = 0;
+    for (var i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+    return { text: text, colour: hash % 10 };
+  }
+
+  // Builds exactly what staxx_icon_tile() writes server-side for the main
+  // table, from the {fa, url, ref} the reply carries for every row — reusing
+  // the same classes and data-icon-ref hook rather than a second rendering
+  // path, so paintIcons() and the broken-image fallback listener (both
+  // already wired for the main table) work here unchanged.
+  function importIconHtml(entry) {
+    var icon = entry.icon || {};
+    var inner;
+    if (icon.fa) {
+      inner = '<i class="fa ' + esc(icon.fa) + '"></i>';
+    } else if (icon.url) {
+      inner = '<img src="' + esc(icon.url) + '" alt="">';
+    } else {
+      var tile = importInitials(entry.name);
+      var ref = icon.ref ? ' data-icon-ref="' + esc(icon.ref) + '"' : '';
+      inner = '<span class="staxx-tile staxx-tile--' + tile.colour + '"' + ref + '>' + esc(tile.text) + '</span>';
+    }
+    return '<span class="staxx-icon staxx-import-rowicon">' + inner + '</span>';
+  }
+
+  // The row's own destination, shown only while "Match my Docker folders" is
+  // chosen — so nothing lands anywhere without the row having said so first.
+  function importDestHtml(entry) {
+    if (importFolder !== IMPORT_MATCH) return '';
+    var folderName = entry.folderName || '';
+    if (!folderName) return '<span class="staxx-import-rowdest">Top level</span>';
+    if (entry.folderRenamed) {
+      return '<span class="staxx-import-rowdest staxx-import-rowdest--renamed">→ ' +
+        esc(folderName) + ' (Docker calls it “' + esc(entry.dockerFolder || '') + '”)</span>';
+    }
+    return '<span class="staxx-import-rowdest">→ ' + esc(folderName) + '</span>';
   }
 
   // A project's preview has no endpoint to read the file's contents yet
@@ -6677,7 +6786,10 @@
 
     var result;
     try {
-      result = window.StaxxCA.convert(entry.app, { appdataRoot: APPDATA });
+      // 'template' here, not the CA-catalogue default: what a row previews
+      // has to be byte-for-byte what pressing Import would write, and that
+      // depends on the first line the converter writes naming its source.
+      result = window.StaxxCA.convert(entry.app, { appdataRoot: APPDATA, origin: 'template' });
     } catch (e) {
       return '<p class="staxx-form-empty">This template could not be converted: ' +
              esc(e && e.message ? e.message : String(e)) + '</p>';
@@ -6715,17 +6827,49 @@
           entry.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
         '</ul>'
       : '';
-    var takenHtml = entry.taken
+
+    // A template whose own XML could not be read (entry.app is null) is
+    // never selectable — the notes above already say why, so no flag is
+    // needed on top of that.
+    var isTemplate  = entry.source === 'template';
+    var selectable  = isTemplate && !!entry.app;
+    // Once a row has been written this session it stays done regardless of
+    // which folder is chosen afterwards — it is not re-offered for a second
+    // folder just because that folder happens to be free of the name too.
+    var taken       = selectable && (importWrittenIdx[idx] || importIsTaken(entry, importRowFolder(entry)));
+    var takenHtml   = (!isTemplate && entry.taken)
       ? '<span class="staxx-import-flag staxx-import-flag--taken">Already in StaXX</span>' : '';
 
-    return '<div class="staxx-import-row' + (entry.taken ? ' staxx-import-row--taken' : '') + '">' +
-             '<button type="button" class="staxx-import-rowhead" data-import-toggle="' + idx + '" ' +
-               'aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="staxx-import-body-' + idx + '">' +
-               '<span class="staxx-import-rowname">' + esc(entry.name) + '</span>' +
-               '<span class="staxx-import-rowsrc">' + importSourceLabel(entry) + '</span>' +
-               '<span class="staxx-import-rowstate">' + importStateLabel(entry) + '</span>' +
-               takenHtml +
-             '</button>' +
+    var head = '<button type="button" class="staxx-import-rowhead" data-import-toggle="' + idx + '" ' +
+                 'aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="staxx-import-body-' + idx + '">' +
+                 importIconHtml(entry) +
+                 '<span class="staxx-import-rowname">' + esc(entry.name) + '</span>' +
+                 '<span class="staxx-import-rowsrc">' + importSourceLabel(entry) + '</span>' +
+                 '<span class="staxx-import-rowstate">' + importStateLabel(entry) + '</span>' +
+                 (isTemplate ? importDestHtml(entry) : '') +
+                 takenHtml +
+               '</button>';
+
+    var body;
+    if (selectable) {
+      // The tick box is a SIBLING of the row's button, never nested inside
+      // it — a button can't validly contain another control, and nesting it
+      // is what would make ticking the box also fire the button's own click
+      // and expand the row.
+      var mark = taken
+        ? '<span class="staxx-import-flag staxx-import-flag--taken">' +
+            (importWrittenIdx[idx] ? 'Now in StaXX' : 'Already in StaXX') + '</span>'
+        : '<input type="checkbox" class="staxx-import-check" id="staxx-import-check-' + idx + '" ' +
+            'data-import-check="' + idx + '" aria-label="' + esc('Import ' + entry.name) + '"' +
+            (importSelected[idx] ? ' checked' : '') + '>';
+      body = '<div class="staxx-import-rowline">' + mark + head + '</div>';
+    } else {
+      body = head;
+    }
+
+    var rowTaken = taken || (!isTemplate && entry.taken);
+    return '<div class="staxx-import-row' + (rowTaken ? ' staxx-import-row--taken' : '') + '">' +
+             body +
              notesHtml +
              '<div class="staxx-import-body" id="staxx-import-body-' + idx + '"' + (open ? '' : ' hidden') + '></div>' +
            '</div>';
@@ -6739,31 +6883,170 @@
     var data = importData;
     if (!data) return;
 
+    // The third element marks the one group that gets tick boxes. The other
+    // two get a plain sentence instead — Compose Manager import needs
+    // multi-file support this phase does not have (PLAN_35 phases 4a/4b).
     var groups = [
-      ['Unraid templates', data.templates || []],
-      ['Compose Manager projects', data.projects || []],
-      ['Neither', data.loose || []]
+      ['Unraid templates', data.templates || [], true],
+      ['Compose Manager projects', data.projects || [], false],
+      ['Neither', data.loose || [], false]
     ];
 
     importEntries = [];
     var blocks = [];
     groups.forEach(function (g) {
-      var label = g[0], list = g[1];
+      var label = g[0], list = g[1], selectableGroup = g[2];
       if (!list.length) return;
       var rowsHtml = list.map(function (entry) {
         var idx = importEntries.length;
         importEntries.push(entry);
         return importRowHtml(entry, idx);
       }).join('');
+      var extra = selectableGroup
+        ? '<label class="staxx-import-selectall">' +
+            '<input type="checkbox" data-import-allcheck aria-label="Select all templates">' +
+            '<span>Select all</span>' +
+          '</label>'
+        : '<span class="staxx-import-groupnote">Importing these is not built yet.</span>';
       blocks.push(
-        '<h4 class="staxx-import-group">' + label +
-        ' <span class="staxx-import-count">' + list.length + '</span></h4>' +
+        '<div class="staxx-import-grouphead">' +
+          '<h4 class="staxx-import-group">' + label +
+          ' <span class="staxx-import-count">' + list.length + '</span></h4>' +
+          extra +
+        '</div>' +
         '<div class="staxx-import-rows">' + rowsHtml + '</div>');
     });
 
     importList.innerHTML = blocks.length
       ? blocks.join('')
       : '<p class="staxx-form-empty">Nothing was found to import.</p>';
+
+    // The destination controls only matter when there is at least one
+    // template row to tick — no point asking where to put nothing.
+    importDest.hidden = !(data.templates && data.templates.length);
+  }
+
+  // A folder switch can turn an available row into a taken one — a name free
+  // at the top level need not be free inside a folder. Anything ticked that
+  // is no longer offerable is dropped, or the count and the run below would
+  // both still include it.
+  function importPruneSelected() {
+    for (var k in importSelected) {
+      var idx = Number(k);
+      var entry = importEntries[idx];
+      var selectable = !!entry && entry.source === 'template' && !!entry.app;
+      if (!selectable || importWrittenIdx[idx] || importIsTaken(entry, importRowFolder(entry))) delete importSelected[k];
+    }
+  }
+
+  // Rebuilds the whole list, then restores whatever a click had already
+  // expanded — importRenderAll() always starts every body empty, so a row
+  // left open across a repaint (the folder switch below) would otherwise go
+  // blank rather than just losing its scroll position.
+  function importPaint() {
+    importPruneSelected();
+    importRenderAll();
+    for (var k in importOpenIdx) {
+      if (!importOpenIdx[k]) continue;
+      var idx = Number(k);
+      var entry = importEntries[idx];
+      var body = document.getElementById('staxx-import-body-' + idx);
+      if (!entry || !body) continue;
+      body.innerHTML = importPreviewHtml(entry);
+      body.dataset.filled = '1';
+    }
+    importSyncSelectAll();
+    importFetchIcons();
+  }
+
+  // Sweeps whatever this repaint just left carrying a data-icon-ref — the
+  // same loop fetchIcons() below already runs for the main table, pointed at
+  // the import list instead via scope: 'import' (action.php reads
+  // $_POST['scope'] === 'import' to sweep staxx_import_icon_wanted() rather
+  // than the main table's own list). A full repaint (every open or folder
+  // switch) rebuilds every tile from scratch, so this has to run again each
+  // time rather than once per dialog open.
+  var importIconsBusy = false;
+  function importFetchIcons() {
+    if (importIconsBusy || !importModal.open) return;
+    if (!importList.querySelector('[data-icon-ref]')) return;
+    importIconsBusy = true;
+    call('icons', { scope: 'import' }, 60000).then(function (res) {
+      importIconsBusy = false;
+      if (!importModal.open) return;   // the dialog closed while this was in flight
+      if (!res || !res.ok) return;
+      paintIcons(res.icons || {});
+      if (res.done === false) setTimeout(importFetchIcons, 500);
+    });
+  }
+
+  // The header tick box reads as a tri-state summary of the rows below it,
+  // not a control with its own independent value — so its state is worked
+  // out fresh from theirs every time, rather than tracked separately.
+  function importSyncSelectAll() {
+    var all = importList.querySelector('[data-import-allcheck]');
+    if (!all) return;
+    var boxes = importList.querySelectorAll('[data-import-check]');
+    var checked = 0;
+    boxes.forEach(function (b) { if (b.checked) checked++; });
+    all.checked = boxes.length > 0 && checked === boxes.length;
+    all.indeterminate = checked > 0 && checked < boxes.length;
+  }
+
+  function importUpdateDestPath() {
+    var root = String(importRoot || '').replace(/\/+$/, '');
+
+    if (importFolder === IMPORT_MATCH) {
+      importDestPath.innerHTML = 'Each template you tick will be written into a folder named after ' +
+        'its own Docker folder, inside <code>' + esc(root) + '</code> — or at the top level for ' +
+        'anything with no Docker folder. Whatever a template already had filled in — passwords and ' +
+        'API keys included — is copied straight into that file.';
+    } else {
+      var path = root + (importFolder ? '/' + importFolder : '');
+      importDestPath.innerHTML = 'Templates you tick will be written to <code>' + esc(path) + '</code>. ' +
+        'Whatever a template already had filled in — passwords and API keys included — is copied ' +
+        'straight into that file.';
+    }
+
+    // The pattern-rule notice only matters while StaXX is trying to match
+    // folders at all — it would be noise once a single destination is chosen
+    // by hand.
+    var rules = (importFolder === IMPORT_MATCH && importData) ? (importData.folderRules || []) : [];
+    if (rules.length) {
+      var many = rules.length > 1;
+      importDestNote.textContent = 'Docker decides membership of ' +
+        (many ? 'these folders using a pattern rather than a plain list, so StaXX could not match them: ' + rules.join(', ') + '.'
+              : 'the folder “' + rules[0] + '” using a pattern rather than a plain list, so StaXX could not match it.') +
+        ' Anything from ' + (many ? 'them' : 'it') + ' lands at the top level instead.';
+      importDestNote.hidden = false;
+    } else {
+      importDestNote.hidden = true;
+      importDestNote.textContent = '';
+    }
+  }
+
+  function importUpdateGo() {
+    var n = importSelectedCount();
+    importGoBtn.textContent = n > 0 ? 'Import (' + n + ')' : 'Import';
+    importGoBtn.disabled = importBusy || n === 0;
+  }
+
+  function importBuildFolderOptions() {
+    var anyMatch = !!(importData && importData.templates &&
+      importData.templates.some(function (e) { return e.folderName; }));
+
+    var opts = [];
+    if (anyMatch) opts.push('<option value="' + IMPORT_MATCH + '">Match my Docker folders</option>');
+    opts.push('<option value="">(top level)</option>');
+    FOLDERS.forEach(function (f) {
+      opts.push('<option value="' + esc(f.id) + '">' + esc(f.name) + '</option>');
+    });
+    importFolderSel.innerHTML = opts.join('');
+
+    // Matching is the more useful default whenever it has anything to work
+    // with — picking a single folder by hand is still one click away.
+    importFolder = anyMatch ? IMPORT_MATCH : '';
+    importFolderSel.value = importFolder;
   }
 
   function importOpen() {
@@ -6771,22 +7054,36 @@
     importData = null;
     importEntries = [];
     importOpenIdx = {};
+    importSelected = {};
+    importWrittenIdx = {};
+    importRoot = '';
+    importFolder = '';
     importList.innerHTML = '';
+    importSummary.hidden = true;
+    importSummary.innerHTML = '';
+    importDest.hidden = true;
     importMsg.textContent = 'Reading the server…';
+    importUpdateGo();
     importModal.showModal();
 
     call('import-list', {}, 20000).then(function (res) {
       if (!importModal.open) return;   // the dialog closed while this was in flight
       if (!res.ok) { importMsg.textContent = res.error; return; }
       importData = res;
+      importRoot = res.root || '';
+      importExisting = res.existing || [];
       importMsg.textContent = '';
-      importRenderAll();
+      importBuildFolderOptions();
+      importUpdateDestPath();
+      importPaint();
     });
   }
 
   // One delegated listener for every row, the same shape as helpBtnHtml's
   // toggle (:3434) — the preview is built once, the first time a row opens,
-  // and left in the DOM rather than rebuilt on every click.
+  // and left in the DOM rather than rebuilt on every click. Ticking the box
+  // beside it fires no click here at all, since the box is a sibling of this
+  // button rather than nested inside it.
   importList.addEventListener('click', function (event) {
     var btn = event.target.closest('[data-import-toggle]');
     if (!btn) return;
@@ -6808,15 +7105,228 @@
     }
   });
 
-  document.getElementById('staxx-import-close').addEventListener('click', function () {
+  // The per-row box and the group's header box, both delegated the same way
+  // as the toggle above.
+  importList.addEventListener('change', function (event) {
+    var box = event.target.closest('[data-import-check]');
+    if (box) {
+      var idx = Number(box.dataset.importCheck);
+      if (box.checked) importSelected[idx] = true; else delete importSelected[idx];
+      importSyncSelectAll();
+      importUpdateGo();
+      return;
+    }
+
+    var all = event.target.closest('[data-import-allcheck]');
+    if (!all) return;
+    var checked = all.checked;
+    importList.querySelectorAll('[data-import-check]').forEach(function (b) {
+      b.checked = checked;
+      var i = Number(b.dataset.importCheck);
+      if (checked) importSelected[i] = true; else delete importSelected[i];
+    });
+    importUpdateGo();
+  });
+
+  importFolderSel.addEventListener('change', function () {
+    importFolder = importFolderSel.value;
+    // A name taken at the top level may be free inside a folder and the
+    // other way round, so every template row's availability is worked out
+    // fresh against the newly chosen folder rather than carried over.
+    importPaint();
+    importUpdateDestPath();
+    importUpdateGo();
+  });
+
+  // Marks one row as done in place, rather than repainting the whole list —
+  // during a run of eighty this runs once per row, and a full repaint each
+  // time would both flicker and reset whatever else was expanded.
+  function importMarkWritten(idx) {
+    importWrittenIdx[idx] = true;
+    delete importSelected[idx];
+    var box = document.getElementById('staxx-import-check-' + idx);
+    if (!box) return;
+    var flag = document.createElement('span');
+    flag.className = 'staxx-import-flag staxx-import-flag--taken';
+    flag.textContent = 'Now in StaXX';
+    box.replaceWith(flag);
+    var row = flag.closest('.staxx-import-row');
+    if (row) row.classList.add('staxx-import-row--taken');
+  }
+
+  function importSetBusyUI(busy) {
+    importList.toggleAttribute('inert', busy);
+    importDest.toggleAttribute('inert', busy);
+    importCloseBtn.textContent = busy ? 'Stop' : 'Close';
+    importCloseBtn.disabled = false;
+    importUpdateGo();
+  }
+
+  // Writes every ticked row one at a time. Sequential on purpose — each
+  // write runs compose's own validation on the server, and firing them all
+  // at once would bury the box rather than show progress.
+  function importRunSelected() {
+    var idxs = [];
+    for (var k in importSelected) if (importSelected[k]) idxs.push(Number(k));
+    if (!idxs.length) return;
+
+    importBusy = true;
+    importStopFlag = false;
+    importSummary.hidden = true;
+    importSetBusyUI(true);
+
+    var total = idxs.length;
+    var written = 0;
+    var failures = [];
+    var folderFailures = {};   // folderName -> error, filled in only in Match mode
+
+    // Every distinct folder a ticked row would land in, minus whatever
+    // already exists — checked against the folder list this dialog already
+    // has, since folder-create itself refuses rather than confirms a name is
+    // already there.
+    function neededFolders() {
+      if (importFolder !== IMPORT_MATCH) return [];
+      var seen = {}, out = [];
+      idxs.forEach(function (idx) {
+        var name = importEntries[idx].folderName;
+        if (!name || seen[name.toLowerCase()]) return;
+        seen[name.toLowerCase()] = true;
+        if (!FOLDERS.some(function (f) { return f.id.toLowerCase() === name.toLowerCase(); })) out.push(name);
+      });
+      return out;
+    }
+
+    // Made one at a time, before any writing starts — a row whose folder
+    // could not be made needs to know that before step() decides where it
+    // is going, not partway through.
+    function ensureFolders(names, cb) {
+      if (!names.length) { cb(); return; }
+      importMsg.textContent = 'Creating folders…';
+      var i = 0;
+      function next() {
+        if (i >= names.length) { cb(); return; }
+        var name = names[i++];
+        call('folder-create', { folderName: name }, 20000).then(function (res) {
+          if (res.ok) FOLDERS.push({ id: res.id || name, name: name });
+          else folderFailures[name] = res.error;
+          next();
+        });
+      }
+      next();
+    }
+
+    function step(i) {
+      if (i >= idxs.length || importStopFlag) { finish(); return; }
+      var idx = idxs[i];
+      var entry = importEntries[idx];
+      importMsg.textContent = 'Writing ' + (i + 1) + ' of ' + total + ' — ' + entry.name;
+
+      var result;
+      try {
+        result = window.StaxxCA.convert(entry.app, { appdataRoot: APPDATA, origin: 'template' });
+      } catch (e) {
+        // The converter runs against whatever template is actually on this
+        // server, which answers to no schema this plugin controls — one bad
+        // one must not take the rest of the run down with it.
+        failures.push({ name: entry.name, error: e && e.message ? e.message : String(e) });
+        step(i + 1);
+        return;
+      }
+
+      // A folder that could not be made falls this one row back to the top
+      // level rather than losing it — the summary below says which folders
+      // that happened to and why.
+      var destFolder = importRowFolder(entry);
+      if (destFolder && folderFailures[destFolder]) destFolder = '';
+      var stackName = destFolder ? destFolder + '/' + entry.folder : entry.folder;
+
+      var about = JSON.stringify({
+        source: 'template',
+        id: entry.id,
+        name: entry.name,
+        container: entry.name,
+        containerExists: entry.exists,
+        containerRunning: entry.running,
+        warnings: result.warnings,
+        notes: result.notes
+      });
+
+      call('import-write', { name: stackName, body: result.yaml, about: about }, 20000).then(function (res) {
+        if (res.ok) {
+          written++;
+          importExisting.push({ folder: destFolder, leaf: entry.folder });
+          importMarkWritten(idx);
+        } else {
+          failures.push({ name: entry.name, error: res.error });
+        }
+        step(i + 1);
+      });
+    }
+
+    function finish() {
+      importBusy = false;
+      importSetBusyUI(false);
+      importMsg.textContent = '';
+
+      var bits = ['<p class="staxx-import-summarymsg">Wrote ' + written + ' of ' + total + '.</p>'];
+
+      var badFolders = Object.keys(folderFailures);
+      if (badFolders.length) {
+        bits.push('<p class="staxx-import-summarymsg">Could not create ' +
+          (badFolders.length > 1 ? 'these folders' : 'this folder') + ', so anything meant for ' +
+          (badFolders.length > 1 ? 'them' : 'it') + ' went to the top level instead:</p>' +
+          '<ul class="staxx-import-summaryfails">' +
+          badFolders.map(function (name) {
+            return '<li><strong>' + esc(name) + '</strong> — ' + esc(folderFailures[name] || '(no detail given)') + '</li>';
+          }).join('') +
+          '</ul>');
+      }
+
+      if (failures.length) {
+        bits.push('<ul class="staxx-import-summaryfails">' +
+          failures.map(function (f) {
+            return '<li><strong>' + esc(f.name) + '</strong> — ' + esc(f.error || '(no detail given)') + '</li>';
+          }).join('') +
+        '</ul>');
+      }
+      importSummary.innerHTML = bits.join('');
+      importSummary.hidden = false;
+
+      if (written > 0) refreshRows();  // the new stacks belong on the page behind this dialog
+    }
+
+    ensureFolders(neededFolders(), function () { step(0); });
+  }
+
+  importGoBtn.addEventListener('click', function () {
+    if (importBusy || importGoBtn.disabled) return;
+    importRunSelected();
+  });
+
+  importCloseBtn.addEventListener('click', function () {
+    if (importBusy) {
+      // Stops after the row in flight finishes rather than mid-write, so a
+      // stack never ends up with half a compose file behind its lock note.
+      importStopFlag = true;
+      importCloseBtn.disabled = true;
+      importCloseBtn.textContent = 'Stopping…';
+      return;
+    }
     importModal.close();
   });
 
   importModal.addEventListener('click', function (event) {
+    if (importBusy) return;   // Close is Stop while a run is in flight; no backdrop escape either
     if (event.target !== importModal) return;
     var r = importModal.getBoundingClientRect();
     if (event.clientX < r.left || event.clientX > r.right ||
         event.clientY < r.top  || event.clientY > r.bottom) importModal.close();
+  });
+
+  // Escape fires 'cancel' before 'close' on a <dialog> — block it here for
+  // the same reason the backdrop click above is blocked while busy.
+  importModal.addEventListener('cancel', function (event) {
+    if (importBusy) event.preventDefault();
   });
 
   importModal.addEventListener('close', function () {
@@ -6824,7 +7334,17 @@
     importData = null;
     importEntries = [];
     importOpenIdx = {};
+    importSelected = {};
+    importWrittenIdx = {};
+    importExisting = [];
+    importRoot = '';
+    importFolder = '';
+    importBusy = false;
+    importStopFlag = false;
     importList.innerHTML = '';
+    importSummary.hidden = true;
+    importSummary.innerHTML = '';
+    importDest.hidden = true;
   });
 
   /* ---- the device picker ---- */
@@ -10363,11 +10883,214 @@
 
   // Unlocking is just deleting the lock file — the same companion-file
   // delete action the editor already uses, so there is nothing new on the
-  // endpoint to guard or test.
+  // endpoint to guard or test. This is the lesser option on a review-locked
+  // stack's menu (see buildStackMenu): it removes the lock and nothing
+  // else, so a container already using this stack's name is left exactly
+  // as it is and starting can still fail against it. "Take over and
+  // start", below, is the one that actually deals with that.
   function markReviewed(name, label) {
     call('file-delete', { name: name, file: 'NEEDS-REVIEW.md' }).then(function (r) {
       if (!r.ok) { failed('Could not mark ' + label + ' as reviewed', r.error); return; }
       refreshRows();
+    });
+  }
+
+  /* ---- handover (PLAN_42): taking over an imported stack's container name --
+   *
+   * Two windows. The first names what a takeover would replace and is built
+   * from handover-check, called fresh every time rather than from menu-time
+   * data, since a container clash can only be known by asking Docker right
+   * now. The second asks whether it worked, either straight after a
+   * successful takeover job or reached again later from the stack's own
+   * menu — the answer can wait, and nothing here forces it.
+   *
+   * Both windows run their command through call()+follow(), the same
+   * machinery run() uses, because a handover is exactly as slow and exactly
+   * as important to watch as any other compose command.
+   */
+
+  // Plain "a and b", never an Oxford comma — the same join the server's own
+  // handover note uses, so the wording here reads the same as the file a
+  // person might open by hand instead.
+  function joinNames(names) { return names.join(' and '); }
+
+  function handoverCheck(name) { return call('handover-check', { name: name }); }
+
+  // Window 1: what a takeover is about to do. Grammar below is written for
+  // one target, which is what every real case is — a stack from a single
+  // Unraid template — since bending every sentence to agree in number with
+  // a rare multi-service clash would cost more clarity than it returns.
+  function openTakeover(name, label) {
+    handoverCheck(name).then(function (res) {
+      if (!res.ok) { failed('Could not check what "' + label + '" would replace', res.error); return; }
+
+      if (res.active) {
+        askConfirm({
+          title: 'A handover for "' + label + '" is already waiting',
+          bodyHtml: '<p>It already replaced its old container and is waiting for you to say ' +
+                    'whether it works. Answer that first, from this stack\'s own menu.</p>',
+          goLabel: 'Answer now'
+        }).then(function (go) {
+          closeConfirm();
+          if (go) openHandoverAnswer(name, label, true);
+        });
+        return;
+      }
+
+      var targets = res.targets || [];
+      if (!targets.length) {
+        askConfirm({
+          title: 'Nothing to take over',
+          bodyHtml: '<p>Nothing on this server holds a container name "' + label + '" asks ' +
+                    'for, so there is nothing to replace. Clear the lock and it will start ' +
+                    'normally.</p>',
+          goLabel: 'Clear the lock'
+        }).then(function (go) {
+          closeConfirm();
+          if (go) markReviewed(name, label);
+        });
+        return;
+      }
+
+      var quoted = joinNames(targets.map(function (t) { return '"' + t.name + '"'; }));
+
+      // An imported stack is usually named after the very container it is
+      // replacing, so the obvious sentence comes out as 'starts "Vert" in
+      // place of "Vert"' — which reads like a mistake even though it is
+      // exactly right. Say it the other way round when they match.
+      var opening = targets.length === 1 && targets[0].name === label
+        ? '<p>This starts this stack in place of the container called ' + quoted + '.</p>'
+        : '<p>This starts "' + label + '" in place of ' + quoted + '.</p>';
+
+      var bodyHtml =
+        opening +
+        '<p>The Unraid template it came from is untouched, so it can be rebuilt from that ' +
+        'template at any time — it still shows on Unraid\'s own Docker page.</p>' +
+        '<p>This is a rebuild, not a move. Anything written inside the old container rather ' +
+        'than into one of its mapped folders will be lost; everything in appdata is ' +
+        'untouched.</p>' +
+        '<p>The new container keeps the same name, so anything that points at it by name — ' +
+        'including starting at boot — carries on working.</p>' +
+        '<p>' + quoted + ' is not deleted. It is switched off and set aside under another ' +
+        'name, and can be put straight back if this does not work out.</p>';
+
+      function step() {
+        askConfirm({ title: 'Take over ' + quoted + '?', bodyHtml: bodyHtml,
+                     goLabel: 'Take over and start' }).then(function (go) {
+          if (!go) return;
+          confirmSetBusy(true);
+          confirmMsg.textContent = '';
+
+          call('handover-start', { name: name }).then(function (r) {
+            if (!r.ok) {
+              confirmSetBusy(false);
+              confirmMsg.textContent = r.error || 'Could not start the handover.';
+              step();
+              return;
+            }
+            closeConfirm();
+
+            logPanel.hidden = false;
+            logTitle.textContent = 'Handover — ' + label;
+            logBox.textContent = 'Working…';
+            logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+            // A failed handover has already put itself back on the server —
+            // the job's own output says what went wrong, so there is
+            // nothing to ask here beyond refreshing the row's badge either
+            // way. Only a clean finish has anything left to confirm.
+            follow(r.job, function (job) {
+              refreshRows();
+              if (job.exit === 0) openHandoverAnswer(name, label, true);
+            }, true);
+          });
+        });
+      }
+
+      step();
+    });
+  }
+
+  // Window 2: did it work. `focusWorks` lands the initial focus on whichever
+  // answer the caller already expects — true straight after a takeover job,
+  // since that is the hoped-for outcome, and true again from the "It works"
+  // menu item; the "It does not work" item passes false.
+  function openHandoverAnswer(name, label, focusWorks) {
+    handoverCheck(name).then(function (res) {
+      if (!res.ok) { failed('Could not read the handover for "' + label + '"', res.error); return; }
+
+      if (!res.active) {
+        askConfirm({
+          title: 'Nothing waiting for an answer',
+          bodyHtml: '<p>"' + label + '" has no handover waiting to be confirmed — it may ' +
+                    'already have been answered.</p>',
+          goLabel: 'OK'
+        }).then(function () { closeConfirm(); });
+        refreshRows();
+        return;
+      }
+
+      var quoted   = joinNames((res.targets || []).map(function (t) { return '"' + t.name + '"'; }));
+      var replaced = quoted || 'the old container';
+
+      // The dialog's fixed Cancel/Go pair only carries two outcomes, and
+      // "decide later" has to be a genuine third one — dismissing this must
+      // never read as an answer. So "It works" is a plain button built into
+      // the body instead, resolving the promise with a string rather than
+      // true/false; Cancel, Escape and a backdrop click all still resolve
+      // false and do nothing, exactly as they do everywhere else this
+      // dialog is used.
+      var bodyHtml =
+        '<p>This replaced ' + replaced + '.</p>' +
+        '<p>Check that the app works, then answer: "It works" clears the old container away ' +
+        'for good; "It does not work" puts everything back exactly as it was, running again, ' +
+        'within seconds.</p>' +
+        '<div class="staxx-buttons"><button type="button" class="staxx-btn staxx-btn--primary" ' +
+        'id="staxx-handover-works">It works</button></div>';
+
+      function step() {
+        var p = askConfirm({ title: 'Does "' + label + '" work?', bodyHtml: bodyHtml,
+                              goLabel: 'It does not work' });
+
+        var worksBtn = confirmBody.querySelector('#staxx-handover-works');
+        if (worksBtn) {
+          worksBtn.addEventListener('click', function () {
+            if (confirmBusy) return;
+            settleConfirm('works');
+          });
+          if (focusWorks) worksBtn.focus({ preventScroll: true });
+        }
+
+        p.then(function (answer) {
+          if (answer === false) return;   // decide later — no side effect
+          var worked = answer === 'works';
+
+          if (worksBtn) worksBtn.disabled = true;
+          confirmSetBusy(true);
+          confirmMsg.textContent = '';
+
+          call('handover-finish', { name: name, worked: worked ? '1' : '0' }).then(function (r) {
+            if (!r.ok) {
+              confirmSetBusy(false);
+              if (worksBtn) worksBtn.disabled = false;
+              confirmMsg.textContent = r.error || 'Could not answer for "' + label + '".';
+              step();
+              return;
+            }
+            closeConfirm();
+
+            logPanel.hidden = false;
+            logTitle.textContent = (worked ? 'Clearing away the old container'
+                                            : 'Putting everything back') + ' — ' + label;
+            logBox.textContent = 'Working…';
+            logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+            follow(r.job, function () { refreshRows(); }, true);
+          });
+        });
+      }
+
+      step();
     });
   }
 
@@ -10718,18 +11441,32 @@
     var hasFile = d.hasfile === '1';
     var running = d.running === '1';
     var review  = d.review === '1';
+    var handover = d.handover === '1';
     var inFolder = d.folder || '';
 
     // An imported stack awaiting review has nothing runnable — its identity
     // may belong to containers someone else already runs, so the run verbs
     // are skipped outright rather than shown disabled, which would read as a
-    // fault instead of the deliberate refusal it is.
-    if (review) {
-      menuItem('Mark as reviewed', 'check', function () { markReviewed(name, label); });
+    // fault instead of the deliberate refusal it is. A stack waiting to be
+    // confirmed after a handover is in the same position, for the same
+    // reason it was locked in the first place.
+    if (handover) {
+      menuItem('It works', 'check', function () { openHandoverAnswer(name, label, true); });
+      menuItem('It does not work', 'undo', function () { openHandoverAnswer(name, label, false); });
+      menuSeparator();
+    } else if (review) {
+      menuItem('Take over and start', 'exchange', function () { openTakeover(name, label); });
+      // The lesser option, on purpose: it only removes the lock, so a
+      // container already using this name is left exactly as it is and
+      // starting can still fail against it. See NEEDS-REVIEW.md's own
+      // wording, which this menu has to agree with.
+      menuItem('Clear the lock only', 'unlock', function () { markReviewed(name, label); }, {
+        hint: 'Starts nothing, and does not deal with a container already using this name.'
+      });
       menuSeparator();
     }
 
-    if (parses && !review) {
+    if (parses && !review && !handover) {
       var why = CAN_RUN ? '' : 'Docker or compose unavailable';
       menuItem(running ? 'Restart' : 'Start', running ? 'refresh' : 'play',
                function () { run(name, running ? 'restart' : 'up', afterRun('up')); },

@@ -247,6 +247,51 @@ switch ($action) {
   case 'job':
     staxx_reply(['ok' => true] + staxx_job_log((string)($_POST['job'] ?? '')));
 
+  /* ---------------------------------------------------------------------
+   * The handover — taking over an imported stack's container name.
+   *
+   * Every command above is shaped as "compose, against this stack's own
+   * file, do X". A handover cannot be said that way: switching off,
+   * renaming and eventually deleting a container that belongs to no
+   * compose file at all — the one Unraid's template built — needs its own
+   * narrow route rather than a new entry on the run-verb list. Letting a
+   * verb bring its own opening command would turn the one place here with
+   * no path from typed input to an arbitrary command into a place with
+   * several, so the three cases below call Stacks.php's own fixed sequence
+   * instead of assembling anything themselves. See PLAN_42.
+   * ------------------------------------------------------------------- */
+
+  // ---- what a handover would replace, and whether one is already open ----
+  //
+  // Read-only: runs nothing beyond what staxx_handover_targets() and
+  // staxx_handover_active() already do, so it is safe to call just to draw
+  // the confirmation window.
+  case 'handover-check':
+    staxx_reply([
+      'ok'      => true,
+      'targets' => staxx_handover_targets($name),
+      'active'  => staxx_handover_active($name),
+    ]);
+
+  // ---- begin a handover: set the old container aside, start this one ----
+  case 'handover-start':
+    $job = staxx_start_handover($name, $error);
+    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'job' => $job]);
+
+  /* ---- answer whether the handover worked ----
+   *
+   * Read the same defensive way every other boolean here is read: anything
+   * other than exactly '1' is treated as "no". That is the safe direction —
+   * it is the branch that puts the old container back rather than the one
+   * that deletes it.
+   */
+  case 'handover-finish':
+    $worked = ($_POST['worked'] ?? '') === '1';
+    $job    = staxx_finish_handover($name, $worked, $error);
+    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'job' => $job]);
+
   // ---- the stack table, re-rendered as data ----
   case 'list':
     staxx_reply(['ok' => true, 'stacks' => staxx_list_stacks()]);
@@ -289,9 +334,16 @@ switch ($action) {
    * for after the page has drawn, never during. Answers with a map of
    * reference => URL for whatever it got; `done` is false if it ran out of time
    * with work left, and the browser asks again.
+   *
+   * `scope=import` is the one thing that changes here: it sweeps the import
+   * panel's rows instead of the main table's, for the panel to ask for on its
+   * own. Any other value — including none — is the main page's sweep exactly
+   * as it always was, so the main page never pays for the import list it may
+   * never have opened.
    */
   case 'icons':
-    staxx_reply(['ok' => true] + staxx_icon_sweep(staxx_icon_wanted()));
+    $wanted = ($_POST['scope'] ?? '') === 'import' ? staxx_import_icon_wanted() : staxx_icon_wanted();
+    staxx_reply(['ok' => true] + staxx_icon_sweep($wanted));
 
   // ---- self-test: pure PHP, runs no commands, cannot hang ----
   case 'ping':
@@ -740,10 +792,45 @@ switch ($action) {
    * per project. Fine for a panel somebody opened on purpose; the reason the
    * self-test counts these from the disk instead.
    *
-   * Nothing selects and nothing imports yet; this is only the list.
+   * 'root' is the full path stacks land in, so the panel can say so before it
+   * writes anything — copying somebody's template settings, API keys among
+   * them, into a named place is worth stating out loud rather than leaving
+   * implicit. 'existing' is every stack's folder+leaf, in the same shape
+   * staxx_scan_stacks() already uses, so the browser can tell whether a name
+   * is taken WITHIN THE FOLDER THE USER CHOSE — the per-entry 'taken' flag
+   * above only ever checked the top level, which is wrong once a destination
+   * folder is offered.
    */
   case 'import-list':
-    staxx_reply(['ok' => true] + staxx_import_list());
+    $existing = array_map(
+      fn($s) => ['folder' => $s['folder'], 'leaf' => $s['leaf']],
+      staxx_scan_stacks()['stacks']
+    );
+    staxx_reply([
+      'ok'       => true,
+      'root'     => staxx_stack_root(),
+      'existing' => $existing,
+    ] + staxx_import_list());
+
+  /* ---- write one imported stack ----
+   *
+   * One call per stack — the browser drives the loop over however many rows
+   * were ticked, because the converter that turns a template into a compose
+   * file runs in the browser and the server has no way to produce it itself.
+   * See staxx_import_write() for the refuse-don't-overwrite rule and the
+   * lock-before-file ordering; this case only shapes the request into what it
+   * expects. 'about' is a JSON object built by the browser — see Import.php's
+   * staxx_import_note() for the fields it reads out of it.
+   */
+  case 'import-write':
+    $body  = (string)($_POST['body']  ?? '');
+    $about = json_decode((string)($_POST['about'] ?? ''), true);
+    if (!is_array($about)) $about = [];
+
+    if (!staxx_import_write($name, $body, $about, $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true, 'name' => $name]);
 }
 
 staxx_reply(['ok' => false, 'error' => 'Unknown action "'.$action.'".'], 400);

@@ -64,6 +64,12 @@ const STAXX_ICON_INDEX_TTL = 7 * 86400;
 /** File extensions that may be written into the cache. */
 const STAXX_ICON_EXTS = ['svg', 'png', 'webp', 'jpg', 'jpeg', 'gif', 'ico'];
 
+/** Where Unraid keeps a picture per container it has already downloaded, on
+ *  the Docker vdisk rather than the flash device. Read-only from here — the
+ *  importer copies out of it, exactly as the relative-path branch below
+ *  copies out of a stack's own directory; nothing is ever written back. */
+const STAXX_ICON_UNRAID_DIR = '/var/lib/docker/unraid/images';
+
 /* ------------------------------------------------------------- settings -- */
 
 /** Whether the plugin is allowed to fetch icons from the internet. */
@@ -397,6 +403,59 @@ function staxx_icon_store(string $ref, string $ext, string $body): bool {
   return true;
 }
 
+/**
+ * Copy a picture already sitting on this server into the icon cache, or
+ * hand back the copy already made. Never fetches anything — every caller
+ * here starts from a path that is already local.
+ *
+ * The extension allow-list is what makes an arbitrary local path safe to
+ * accept: a template's `<Icon>` field is written by whoever built that
+ * template, not typed into this plugin, so it is trusted only as far as
+ * "reads as one of the picture formats this cache already stores" — the
+ * worst a hostile path can do is make StaXX copy some other file ending in
+ * .png (say) into its own icon store, which is no different from what the
+ * relative-path case below has always allowed for a stack's own directory.
+ *
+ * @return array{fa:string, ref:string, url:string, remote:string}
+ */
+function staxx_icon_from_path(string $path): array {
+  $none = ['fa' => '', 'ref' => '', 'url' => '', 'remote' => ''];
+  $ext  = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
+  if (!in_array($ext, STAXX_ICON_EXTS, true) || !is_file($path)) return $none;
+
+  // The modification time rides along in the reference, the same trick the
+  // relative-path case uses, so an icon that is replaced on disk is not
+  // served stale forever from the cache.
+  $ref = 'local-'.md5($path.'|'.(string)@filemtime($path));
+  $url = staxx_icon_url($ref);
+  if ($url === '') {
+    $body = @file_get_contents($path);
+    if ($body !== false && staxx_icon_store($ref, $ext, $body)) {
+      $url = STAXX_ICON_BASE.'/'.$ref.'.'.$ext;
+    }
+  }
+  return ['fa' => '', 'ref' => $ref, 'url' => $url, 'remote' => ''];
+}
+
+/**
+ * The picture Unraid already downloaded for a container, or none.
+ *
+ * Unraid keeps one of these per container it has ever run from a template,
+ * regardless of whether StaXX has heard of it — so this is nearly free for
+ * anything imported from one. No network involved: Unraid did that work
+ * already, this only copies the result.
+ */
+function staxx_icon_unraid(string $name): array {
+  $none = ['fa' => '', 'ref' => '', 'url' => '', 'remote' => ''];
+  // Defensive rather than load-bearing: docker container names cannot
+  // actually contain a slash or "..", but the cost of checking is one
+  // strpos() and it keeps this function honest even if that ever changes.
+  if ($name === '' || strpos($name, '/') !== false || strpos($name, '..') !== false) {
+    return $none;
+  }
+  return staxx_icon_from_path(STAXX_ICON_UNRAID_DIR.'/'.$name.'-icon.png');
+}
+
 /* --------------------------------------------------------------- fetching -- */
 
 /**
@@ -516,21 +575,16 @@ function staxx_icon_resolve(string $icon, string $dir = '', string $image = '',
     // served from where it sits: the stack directory is not inside the web
     // root, and putting it there would publish the whole directory.
     if ($dir !== '' && strpos($icon, '..') === false) {
-      $path = $dir.'/'.ltrim($icon, '/');
-      $ext  = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
-      if (in_array($ext, STAXX_ICON_EXTS, true) && is_file($path)) {
-        $ref = 'local-'.md5($path.'|'.(string)@filemtime($path));
-        $url = staxx_icon_url($ref);
-        if ($url === '') {
-          $body = @file_get_contents($path);
-          if ($body !== false && staxx_icon_store($ref, $ext, $body)) {
-            $url = STAXX_ICON_BASE.'/'.$ref.'.'.$ext;
-          }
-        }
-        // No remote: this one is copied from disk, never downloaded, so it is
-        // resolved here and there is nothing for the background fetch to do.
-        return ['fa' => '', 'ref' => $ref, 'url' => $url, 'remote' => ''];
-      }
+      $found = staxx_icon_from_path($dir.'/'.ltrim($icon, '/'));
+      if ($found['ref'] !== '') return $found;
+    }
+
+    // An absolute path on this server — some Unraid templates give one
+    // instead of a URL (Vert and Reubah both do). No stack directory is
+    // needed to make sense of it, so this does not depend on $dir.
+    if ($icon[0] === '/' && strpos($icon, '..') === false) {
+      $found = staxx_icon_from_path($icon);
+      if ($found['ref'] !== '') return $found;
     }
 
     // Anything else is taken as a collection name, so `icon: jellyfin` works.
