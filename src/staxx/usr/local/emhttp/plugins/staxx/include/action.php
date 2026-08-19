@@ -169,6 +169,19 @@ switch ($action) {
     if (!staxx_delete_stack($name, $error, $confirmed)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
+
+    // Nothing left on disk to keep a place for — drop the stack from the
+    // stored order and its own service/wait entries with it. Same layering
+    // reason as stack-rename above: this has to happen here, not inside
+    // staxx_delete_stack().
+    $folder = staxx_path_folder($name);
+    $data   = staxx_folders_load();
+    $start  = $data['start'];
+    $start['stacks'][$folder] = staxx_start_list_remove($start['stacks'][$folder] ?? [], staxx_path_leaf($name));
+    staxx_start_drop($start, $name);
+    $data['start'] = $start;
+    staxx_folders_save($data);
+
     staxx_reply(['ok' => true]);
 
   /* ------------------------------------------------------ companion files --
@@ -736,6 +749,24 @@ switch ($action) {
     }
     $renamed = staxx_rename_stack($name, (string)($_POST['stackName'] ?? ''), $error);
     if ($renamed === '') staxx_reply(['ok' => false, 'error' => $error]);
+
+    // staxx_rename_stack() lives in Stacks.php, which sits below Folders.php
+    // in the include order and must not depend on it — so the stored order
+    // is kept pointed at the new name here instead, or the drag position a
+    // rename inherits would silently be lost.
+    if ($renamed !== $name) {
+      $folder = staxx_path_folder($name);
+      $data   = staxx_folders_load();
+      $start  = $data['start'];
+      $list   = $start['stacks'][$folder] ?? [];
+      $pos    = array_search(staxx_path_leaf($name), $list, true);
+      if ($pos !== false) $list[$pos] = staxx_path_leaf($renamed);
+      $start['stacks'][$folder] = $list;
+      staxx_start_rekey($start, $name, $renamed);
+      $data['start'] = $start;
+      staxx_folders_save($data);
+    }
+
     staxx_reply(['ok' => true, 'name' => $renamed]);
 
   // Collapsing is saved on the server rather than in the browser, so the

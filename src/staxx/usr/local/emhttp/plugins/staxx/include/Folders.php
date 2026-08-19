@@ -41,6 +41,7 @@ define('STAXX_FOLDERS_FILE', STAXX_CFG_DIR.'/folders.json');
  * Shape:
  *   version    int
  *   collapsed  map of folder name => true
+ *   start      the boot/display order block — see staxx_start_defaults()
  *
  * Only the collapsed ones are listed, so a folder nobody has touched needs no
  * entry and deleting this file loses nothing but which folders were shut.
@@ -52,15 +53,27 @@ define('STAXX_FOLDERS_FILE', STAXX_CFG_DIR.'/folders.json');
  * function returns, they are dropped the next time anything saves. That is a
  * one-way door and is intended, but worth being able to find.
  *
- * @return array{version:int, collapsed:array<string,bool>}
+ * VERSION 3 adds `start`: the order things are shown and started in, plus
+ * their boot waits (see PLAN_43). A version 1 or 2 file simply has no `start`
+ * key, so staxx_start_normalise() fills in the defaults and everything looks
+ * and behaves exactly as it did before — nothing to migrate.
+ *
+ * @return array{version:int, collapsed:array<string,bool>, start:array}
  */
-function staxx_folders_load(): array {
-  $empty = ['version' => 2, 'collapsed' => []];
+function staxx_folders_load(bool $fresh = false): array {
+  // Cached for the request: staxx_stack_children() asks for the start order
+  // once per stack, and a 40-stack page has no business reading and decoding
+  // the same small file 40 times. $fresh re-reads, which is how
+  // staxx_folders_save() keeps the cache honest after a write.
+  static $cache = null;
+  if ($cache !== null && !$fresh) return $cache;
 
-  if (!is_file(STAXX_FOLDERS_FILE)) return $empty;
+  $empty = ['version' => 3, 'collapsed' => [], 'start' => staxx_start_defaults()];
+
+  if (!is_file(STAXX_FOLDERS_FILE)) return $cache = $empty;
 
   $data = json_decode((string)@file_get_contents(STAXX_FOLDERS_FILE), true);
-  if (!is_array($data)) return $empty;
+  if (!is_array($data)) return $cache = $empty;
 
   $collapsed = [];
 
@@ -77,7 +90,11 @@ function staxx_folders_load(): array {
     if (is_string($name) && $on) $collapsed[$name] = true;
   }
 
-  return ['version' => 2, 'collapsed' => $collapsed];
+  return $cache = [
+    'version'   => 3,
+    'collapsed' => $collapsed,
+    'start'     => staxx_start_normalise($data['start'] ?? []),
+  ];
 }
 
 function staxx_folders_save(array $data, ?string &$error = null): bool {
@@ -91,7 +108,226 @@ function staxx_folders_save(array $data, ?string &$error = null): bool {
     $error = 'Could not write '.STAXX_FOLDERS_FILE;
     return false;
   }
+  staxx_folders_load(true);   // the cached copy is now a lie
   return true;
+}
+
+/* --------------------------------------------------------- start order -- */
+
+/** The shape of the `start` block when nothing has ever touched it. */
+function staxx_start_defaults(): array {
+  return [
+    'folders'  => [],
+    'stacks'   => [],
+    'services' => [],
+    'delay'    => [],
+    'seen'     => '',
+    'pending'  => false,
+  ];
+}
+
+/**
+ * Coerce whatever was read back from disk into the exact shape above, every
+ * key present and of the right type. Anything foreign (a stray scalar where a
+ * list belongs, a non-numeric delay) is dropped rather than trusted — this is
+ * the one gate between a hand-edited or corrupted file and the rest of the
+ * plugin, so callers never have to guard against a missing key again.
+ */
+function staxx_start_normalise($raw): array {
+  $raw = is_array($raw) ? $raw : [];
+  $out = staxx_start_defaults();
+
+  if (is_array($raw['folders'] ?? null)) {
+    $out['folders'] = array_values(array_filter($raw['folders'], 'is_string'));
+  }
+
+  foreach (['stacks', 'services'] as $key) {
+    if (!is_array($raw[$key] ?? null)) continue;
+    foreach ($raw[$key] as $parent => $list) {
+      if (is_string($parent) && is_array($list)) {
+        $out[$key][$parent] = array_values(array_filter($list, 'is_string'));
+      }
+    }
+  }
+
+  if (is_array($raw['delay'] ?? null)) {
+    foreach ($raw['delay'] as $key => $secs) {
+      // Only non-zero values are kept — a zero-wait entry means nothing and
+      // would otherwise accumulate forever as rows are dragged around.
+      if (is_string($key) && is_numeric($secs) && (int)$secs !== 0) {
+        $out['delay'][$key] = (int)$secs;
+      }
+    }
+  }
+
+  if (is_string($raw['seen'] ?? null)) $out['seen'] = $raw['seen'];
+  $out['pending'] = !empty($raw['pending']);
+
+  return $out;
+}
+
+/** The `start` block alone, normalised — the common case for a reader. */
+function staxx_start_load(): array {
+  return staxx_folders_load()['start'];
+}
+
+/** Replace the `start` block and save, leaving `collapsed` untouched. */
+function staxx_start_store(array $start, ?string &$error = null): bool {
+  $data = staxx_folders_load();
+  $data['start'] = staxx_start_normalise($start);
+  return staxx_folders_save($data, $error);
+}
+
+/**
+ * Arrange $names by $order: everything $order mentions, in that order, then
+ * everything else in the order it already arrived in. A name in $order that
+ * is not in $names is simply skipped — a stack can vanish from view for a
+ * refresh (compose down, an import mid-flight) without losing its place once
+ * it is back, which is why nothing here prunes $order itself.
+ */
+function staxx_start_sort(array $names, array $order): array {
+  $remaining = array_flip($names);
+  $result    = [];
+
+  foreach ($order as $name) {
+    if (is_string($name) && isset($remaining[$name])) {
+      $result[] = $name;
+      unset($remaining[$name]);
+    }
+  }
+  foreach ($names as $name) {
+    if (isset($remaining[$name])) $result[] = $name;
+  }
+  return $result;
+}
+
+/** Is this a name compose would accept for a service? */
+function staxx_start_valid_service_name(string $name): bool {
+  return $name !== '' && strlen($name) <= 63 && (bool)preg_match('/^[A-Za-z0-9._-]+$/', $name);
+}
+
+/**
+ * Save one sibling group's order after a drag: every folder, every folder's
+ * stacks (or the ungrouped top level, $parent === ''), or one stack's
+ * services. Refuses the whole call on any bad name — never writes a partial
+ * list — because a partly-applied drag is worse than one that visibly failed.
+ */
+function staxx_start_order_set(string $scope, string $parent, array $names, string &$error): bool {
+  $error = '';
+
+  if (!in_array($scope, ['folders', 'stacks', 'services'], true)) {
+    $error = 'That is not something StaXX knows how to order.';
+    return false;
+  }
+  if ($scope === 'folders' && $parent !== '') {
+    $error = 'Folders have no parent to be ordered within.';
+    return false;
+  }
+  if ($scope === 'stacks' && $parent !== '' && !staxx_folder_valid_name($parent)) {
+    $error = 'No such folder.';
+    return false;
+  }
+  if ($scope === 'services' && !staxx_valid_path($parent)) {
+    $error = 'Invalid stack name.';
+    return false;
+  }
+
+  foreach ($names as $name) {
+    $valid = is_string($name) && (
+      $scope === 'services' ? staxx_start_valid_service_name($name) : staxx_valid_name($name)
+    );
+    if (!$valid) {
+      $error = $scope === 'services'
+        ? 'Service names may only contain letters, numbers, dots, dashes and underscores, '
+        . 'and must be 63 characters or fewer.'
+        : staxx_folder_name_rule();
+      return false;
+    }
+  }
+
+  $start = staxx_start_load();
+  $names = array_values($names);
+
+  if ($scope === 'folders')    $start['folders']            = $names;
+  elseif ($scope === 'stacks') $start['stacks'][$parent]     = $names;
+  else                         $start['services'][$parent]   = $names;
+
+  return staxx_start_store($start, $error);
+}
+
+/**
+ * Re-parent every start-block entry under one stack or folder path, when a
+ * rename or a move changes it. Matches a services-map key or a delay key's
+ * embedded path exactly (a single stack moving or being renamed) or as a
+ * "$from/" prefix (a whole folder moving, carrying every stack beneath it).
+ *
+ * $to === '' means "drop the prefix" rather than "delete" — used when a
+ * folder is dissolved and its stacks fold back to the top level, so
+ * "Services/npm" becomes "npm" rather than vanishing. Deleting a stack
+ * outright is staxx_start_drop()'s job, not this one, because unfolding a
+ * single stack's own services to the top level (rather than removing them)
+ * would collide with whatever is already down there.
+ *
+ * A folder-level delay key ("folder:NAME") only ever matches $from exactly,
+ * and is simply dropped when $to is '' — there is no top-level equivalent of
+ * a folder.
+ */
+function staxx_start_rekey(array &$start, string $from, string $to): void {
+  $rename = function (string $path) use ($from, $to): ?string {
+    if ($path === $from) return $to === '' ? null : $to;
+    if (str_starts_with($path, $from.'/')) {
+      $tail = substr($path, strlen($from) + 1);
+      return $to === '' ? $tail : $to.'/'.$tail;
+    }
+    return $path;
+  };
+
+  $services = [];
+  foreach ($start['services'] as $key => $order) {
+    $newKey = $rename($key);
+    if ($newKey !== null) $services[$newKey] = $order;
+  }
+  $start['services'] = $services;
+
+  $delay = [];
+  foreach ($start['delay'] as $key => $secs) {
+    $at = strpos($key, ':');
+    if ($at === false) { $delay[$key] = $secs; continue; }
+
+    $level = substr($key, 0, $at);
+    $path  = substr($key, $at + 1);
+
+    if ($level === 'folder') {
+      if ($path !== $from) $delay[$key] = $secs;
+      elseif ($to !== '') $delay['folder:'.$to] = $secs;
+      continue;
+    }
+
+    $newPath = $rename($path);
+    if ($newPath !== null) $delay[$level.':'.$newPath] = $secs;
+  }
+  $start['delay'] = $delay;
+}
+
+/** Drop every start-block entry that belongs to one stack, root and branch. */
+function staxx_start_drop(array &$start, string $stack): void {
+  unset($start['services'][$stack]);
+
+  foreach (array_keys($start['delay']) as $key) {
+    $at = strpos($key, ':');
+    if ($at === false) continue;
+    $level = substr($key, 0, $at);
+    $path  = substr($key, $at + 1);
+    if ($level === 'folder') continue;
+    if ($path === $stack || str_starts_with($path, $stack.'/')) unset($start['delay'][$key]);
+  }
+}
+
+/** Remove one leaf name from a stacks-order list, if it is there at all. */
+function staxx_start_list_remove(array $list, string $leaf): array {
+  $pos = array_search($leaf, $list, true);
+  if ($pos !== false) array_splice($list, $pos, 1);
+  return $list;
 }
 
 /**
@@ -174,8 +410,19 @@ function staxx_folder_rename(string $from, string $to, string &$error): bool {
   if (!empty($data['collapsed'][$from])) {
     unset($data['collapsed'][$from]);
     $data['collapsed'][$to] = true;
-    staxx_folders_save($data);
   }
+
+  $start = $data['start'];
+  $idx = array_search($from, $start['folders'], true);
+  if ($idx !== false) $start['folders'][$idx] = $to;
+  if (isset($start['stacks'][$from])) {
+    $start['stacks'][$to] = $start['stacks'][$from];
+    unset($start['stacks'][$from]);
+  }
+  staxx_start_rekey($start, $from, $to);
+  $data['start'] = $start;
+
+  staxx_folders_save($data);
   return true;
 }
 
@@ -233,6 +480,17 @@ function staxx_folder_delete(string $name, string &$error): bool {
 
   $data = staxx_folders_load();
   unset($data['collapsed'][$name]);
+
+  $start   = $data['start'];
+  $leaves  = array_map(fn($m) => $m['leaf'], $members);
+  $ordered = staxx_start_sort($leaves, $start['stacks'][$name] ?? []);
+  $start['stacks'][''] = array_values(array_merge($start['stacks'][''] ?? [], $ordered));
+  unset($start['stacks'][$name]);
+  $idx = array_search($name, $start['folders'], true);
+  if ($idx !== false) array_splice($start['folders'], $idx, 1);
+  staxx_start_rekey($start, $name, '');
+  $data['start'] = $start;
+
   staxx_folders_save($data);
   return true;
 }
@@ -275,6 +533,20 @@ function staxx_folder_assign(string $stack, string $folder, string &$error): str
   }
 
   if (!@rename($from, $to)) { $error = 'Could not move the stack on disk.'; return ''; }
+
+  $data = staxx_folders_load();
+  $start = $data['start'];
+
+  $oldFolder = staxx_path_folder($stack);
+  $start['stacks'][$oldFolder] = staxx_start_list_remove($start['stacks'][$oldFolder] ?? [], $leaf);
+  $newList = $start['stacks'][$folder] ?? [];
+  $newList[] = $leaf;
+  $start['stacks'][$folder] = $newList;
+
+  staxx_start_rekey($start, $stack, $rel);
+  $data['start'] = $start;
+  staxx_folders_save($data);
+
   return $rel;
 }
 
@@ -301,13 +573,23 @@ function staxx_folder_collapse(string $name, bool $collapsed, string &$error): b
  * @return array<int, array{type:string, ...}>
  */
 function staxx_folder_layout(array $stacks): array {
-  $data = staxx_folders_load();
-  $rows = [];
+  $data  = staxx_folders_load();
+  $start = $data['start'];
+  $rows  = [];
 
   // Every folder on disk, including the empty ones — an empty folder you just
-  // made must appear, or it looks as though the button did nothing.
-  foreach (staxx_folder_names() as $folder) {
+  // made must appear, or it looks as though the button did nothing. Ordered by
+  // the stored drag order, folders nobody has dragged falling back to
+  // whatever staxx_folder_names() already returns them in.
+  foreach (staxx_start_sort(staxx_folder_names(), $start['folders']) as $folder) {
     $members = array_values(array_filter($stacks, fn($s) => ($s['folder'] ?? '') === $folder));
+
+    // Sorted by leaf name — the folder's stored order — not by the whole
+    // stack record, which is why the map goes leaf => record and back.
+    $byLeaf = [];
+    foreach ($members as $m) $byLeaf[$m['leaf']] = $m;
+    $order = staxx_start_sort(array_keys($byLeaf), $start['stacks'][$folder] ?? []);
+    $members = array_map(fn($leaf) => $byLeaf[$leaf], $order);
 
     $running = 0;
     foreach ($members as $m) if ($m['running']) $running++;
@@ -333,11 +615,14 @@ function staxx_folder_layout(array $stacks): array {
     }
   }
 
-  foreach ($stacks as $s) {
-    if (($s['folder'] ?? '') === '') {
-      $rows[] = ['type' => 'stack', 'folder' => '', 'hidden' => false, 'stack' => $s,
-                 'expanded' => false];
-    }
+  $top = array_values(array_filter($stacks, fn($s) => ($s['folder'] ?? '') === ''));
+  $byLeaf = [];
+  foreach ($top as $s) $byLeaf[$s['leaf']] = $s;
+  $order = staxx_start_sort(array_keys($byLeaf), $start['stacks'][''] ?? []);
+
+  foreach ($order as $leaf) {
+    $rows[] = ['type' => 'stack', 'folder' => '', 'hidden' => false, 'stack' => $byLeaf[$leaf],
+               'expanded' => false];
   }
 
   return $rows;

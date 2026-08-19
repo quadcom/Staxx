@@ -298,7 +298,10 @@ function staxx_stack_children(array $s): array {
   $rows = [];
   $hostIp = staxx_host_ip();
 
-  foreach ($s['services'] as $service) {
+  // Falls back to compose document order (already $s['services']'s own order)
+  // for any service nobody has ever dragged.
+  $order = staxx_start_load()['services'][$s['name']] ?? [];
+  foreach (staxx_start_sort($s['services'], $order) as $service) {
     $rows[$service] = [
       'key' => $service, 'service' => $service, 'name' => '', 'id' => '',
       'image' => (string)($declared[$service]['image'] ?? ''),
