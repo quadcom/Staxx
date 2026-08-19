@@ -1638,11 +1638,14 @@
       // than unshifting onto it — driverChoice.options IS the shared vocab
       // resolveEntry() just handed back, and mutating it would grow the
       // dropdown by one "external" every time this row re-renders.
+      // Labelled with the compose key and nothing else, deliberately: a
+      // gloss here would read as part of the value, and a form that shows
+      // something other than what the file says is a form nobody can learn
+      // compose from. The explanation belongs in the help text.
       if (driverChoice && YAML && YAML.externalChoice) {
         driverChoice = {
           hint: driverChoice.hint,
-          options: [[YAML.externalChoice, 'external — already exists, not created by this file']]
-                      .concat(driverChoice.options)
+          options: [[YAML.externalChoice, 'external']].concat(driverChoice.options)
         };
       }
       return driverChoice;
