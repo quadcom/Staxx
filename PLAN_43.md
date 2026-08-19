@@ -23,9 +23,10 @@ you put it. Arrow keys on the grip do the same thing, for when a mouse is awkwar
 The order you see is the order things start in at boot — the list is now telling you that, rather
 than being alphabetical and silent about it.
 
-Each row's menu gains **Start at boot**, and **Wait after this…**, which asks for a number of
-seconds. A row that starts at boot carries a small marker; a stack where only some services start
-says so.
+Each row's menu gains **Autostart** — a switch whose own glyph shows which way it is set, rather than
+an instruction you have to read twice — and a **Delay** row with the seconds in it, typed straight
+into the menu rather than behind a dialog, since the value is the whole point of the row. A row that
+starts at boot carries a small marker; a stack where only some services start says so.
 
 Flip a switch on Unraid's own Docker page and StaXX shows it the next time the page loads, and the
 other way round. There is one list, not two.

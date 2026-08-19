@@ -1693,6 +1693,68 @@
   font-size: 1.1rem;
 }
 
+/* A menu row you type a number into, not a row you click (PLAN_43). Laid out
+   to the same measurements as .staxx-menu-item above so the two read as one
+   list — same padding, same gap, same glyph column — but it is a div, because a
+   menu item closes the menu when clicked and this one has to survive being
+   clicked in. */
+.staxx-scaffold .staxx-menu-field {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+  width: 100%;
+  padding: 0.7rem 1.4rem;
+  font-size: 1.3rem;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.staxx-scaffold .staxx-menu-field > .fa {
+  flex: 0 0 1.6rem;
+  color: var(--sm-muted);
+  text-align: center;
+}
+
+/* The label column takes the slack so the number always sits hard right,
+   lined up down the menu however long a label or hint runs. */
+.staxx-scaffold .staxx-menu-field > .staxx-menu-label {
+  flex: 1 1 auto;
+}
+
+.staxx-scaffold .staxx-menu-num {
+  flex: 0 0 auto;
+  width: 5.2rem;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.2rem 0.5rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.2rem;
+  text-align: right;
+}
+
+/* Same pair .staxx-input uses, rather than a ring of its own — this is the
+   only text box in the app that lives inside a menu, and it should not be the
+   only one that looks different when focused. */
+.staxx-scaffold .staxx-menu-num:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}
+
+.staxx-scaffold .staxx-menu-num:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.staxx-scaffold .staxx-menu-unit {
+  flex: 0 0 auto;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
 .staxx-menu-sep {
   margin: 0.4rem 0 0;
   padding: 0.6rem 1.4rem 0.2rem;

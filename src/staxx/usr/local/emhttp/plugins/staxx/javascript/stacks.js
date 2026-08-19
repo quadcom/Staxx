@@ -11857,57 +11857,124 @@
     menuItems.appendChild(d);
   }
 
-  /* ---- start-at-boot menu items (PLAN_43 phase 4) -------------------------
+  /* ---- autostart menu items (PLAN_43) -------------------------------------
    *
-   * Shared by the stack and container menus — a folder has no switch of its
-   * own, only the wait. `boot` is 'on' | 'some' | 'off'; the only decision a
-   * click ever makes is binary (see bootMenuLabel below), so 'some' and 'off'
-   * both move to fully on.
+   * The switch is on the stack and container menus; a folder has no switch of
+   * its own, only a delay. `boot` is 'on' | 'some' | 'off'.
+   *
+   * The label is just "Autostart", with the toggle glyph carrying the state,
+   * rather than an instruction like "turn off start at boot" — an instruction
+   * has to be read twice to work out which way the thing is set now, and a
+   * switch showing its own position does not.
    */
-  function bootMenuLabel(boot) {
-    if (boot === 'on')   return 'Turn off start at boot';
-    if (boot === 'some') return 'Turn on start at boot for every service';
-    return 'Turn on start at boot';
-  }
-
   function addBootMenuItem(d, name, service) {
     var boot      = d.boot || 'off';
     var available = d.bootAvailable !== '0';
-    menuItem(bootMenuLabel(boot), boot === 'on' ? 'toggle-on' : 'toggle-off', function () {
+    menuItem('Autostart', boot === 'on' ? 'toggle-on' : 'toggle-off', function () {
       call('autostart', { name: name, service: service || '', on: boot === 'on' ? '0' : '1' })
         .then(function (r) {
-          if (!r.ok) { failed('Could not change start at boot', r.error); return; }
+          if (!r.ok) { failed('Could not change autostart', r.error); return; }
           refreshRows();
         });
     }, {
       disabled: !available,
-      hint: available ? '' : 'Docker is not running, so what starts at boot cannot be changed.'
+      hint: !available ? 'Docker is not running, so autostart cannot be changed.'
+          : boot === 'some' ? 'Some services only — this turns on every one of them.'
+          : ''
     });
   }
 
-  // The wait dialog reuses askConfirm()'s own scaffolding — its body is
-  // arbitrary HTML and whatever is ticked or typed in it is still there to
-  // read from confirmBody once the promise resolves (see envPickAndWire()
-  // above for the same trick with checkboxes). Nothing simpler was needed.
-  function openWaitMenuItem(scope, key, wait, subject) {
-    return askConfirm({
-      title: 'Wait after ' + subject + '…',
-      bodyHtml: '<p>How long should Unraid wait after ' + esc(subject) + ' before starting ' +
-                'the next thing in the list? 0 to 600 seconds; 0 clears it.</p>' +
-                '<p><label>' +
-                '<input type="number" id="staxx-wait-input" min="0" max="600" step="1" value="' +
-                String(wait || 0) + '"> ' + 'seconds</label></p>',
-      goLabel: 'Save'
-    }).then(function (goAhead) {
-      var box = goAhead ? confirmBody.querySelector('#staxx-wait-input') : null;
-      var val = box ? Math.max(0, Math.min(600, parseInt(box.value, 10) || 0)) : null;
-      closeConfirm();
-      if (val === null) return;
-      call('autostart-wait', { scope: scope, key: key, wait: String(val) }).then(function (r) {
-        if (!r.ok) { failed('Could not save that wait', r.error); return; }
-        refreshRows();
-      });
+  /* A menu row holding a number you type into, rather than an item that opens a
+   * dialog to ask for one. Used for the boot delay, where the value IS the row:
+   * a dialog would hide the current setting behind a click, and there is
+   * nothing else to ask once it is open.
+   *
+   * Deliberately NOT a <button> the way menuItem() builds one, because every
+   * menu item closes the menu when clicked and this one must not. Only the
+   * outside-click handler closes it, and that already ignores anything the menu
+   * contains.
+   */
+  function menuNumberField(label, icon, hint, value, opts) {
+    opts = opts || {};
+    var max = opts.max || 600;
+
+    var row = document.createElement('div');
+    row.className = 'staxx-menu-field';
+    row.innerHTML = '<i class="fa fa-' + icon + '"></i>';
+
+    var col = document.createElement('span');
+    col.className = 'staxx-menu-label';
+    var text = document.createElement('span');
+    text.textContent = label;
+    col.appendChild(text);
+    if (hint) {
+      var h = document.createElement('span');
+      h.className = 'staxx-menu-hint';
+      h.textContent = hint;
+      col.appendChild(h);
+    }
+    row.appendChild(col);
+
+    var box = document.createElement('input');
+    box.type      = 'number';
+    box.className = 'staxx-menu-num';
+    box.min       = '0';
+    box.max       = String(max);
+    box.step      = '1';
+    box.value     = String(value || 0);
+    box.disabled  = !!opts.disabled;
+    box.setAttribute('aria-label', label + ' in seconds');
+    row.appendChild(box);
+
+    var unit = document.createElement('span');
+    unit.className = 'staxx-menu-unit';
+    unit.textContent = 's';
+    row.appendChild(unit);
+
+    var was = String(value || 0);
+    function commit(alsoClose) {
+      var val = Math.max(0, Math.min(max, parseInt(box.value, 10) || 0));
+      box.value = String(val);
+      // Typed back to what it already was: no request. Saving a delay
+      // rewrites Unraid's whole boot list, which is not a no-op worth doing.
+      if (String(val) === was) { if (alsoClose) closeMenu(); return; }
+      was = String(val);
+      if (alsoClose) closeMenu();
+      opts.onCommit(val);
+    }
+
+    // `change` covers blur and Enter both for a number input, but Enter is
+    // taken separately so it can also close the menu — an explicit gesture
+    // deserves to finish the job. Blur saves and leaves the menu open, because
+    // closing it there would delete whatever the person was reaching for
+    // before their click could land on it.
+    box.addEventListener('change', function () { commit(false); });
+    box.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') { event.preventDefault(); commit(true); }
     });
+
+    menuItems.appendChild(row);
+    return row;
+  }
+
+  // The delay row, on all three menus: how long Unraid waits after this thing
+  // before it starts the next one in the list.
+  function addBootWaitField(d, scope, key) {
+    var available = d.bootAvailable !== '0';
+    menuNumberField('Delay', 'clock-o',
+      available ? 'Seconds to wait before the next one starts'
+                : 'Docker is not running, so this cannot be changed',
+      parseInt(d.bootWait || '0', 10),
+      {
+        disabled: !available,
+        onCommit: function (val) {
+          call('autostart-wait', { scope: scope, key: key, wait: String(val) })
+            .then(function (r) {
+              if (!r.ok) { failed('Could not save that delay', r.error); return; }
+              refreshRows();
+            });
+        }
+      });
   }
 
   function buildStackMenu(d) {
@@ -11998,9 +12065,7 @@
       });
     }
     addBootMenuItem(d, name, '');
-    menuItem('Wait after this…', 'clock-o', function () {
-      openWaitMenuItem('stack', name, parseInt(d.bootWait || '0', 10), label);
-    });
+    addBootWaitField(d, 'stack', name);
 
     menuSeparator();
     menuItem('Delete stack', 'trash-o', function () { deleteStack(name, label); }, { danger: true });
@@ -12065,10 +12130,7 @@
     menuSeparator();
 
     addBootMenuItem(trigger.dataset, stack, service);
-    menuItem('Wait after this…', 'clock-o', function () {
-      openWaitMenuItem('service', stack + '/' + service,
-                        parseInt(trigger.dataset.bootWait || '0', 10), service);
-    });
+    addBootWaitField(trigger.dataset, 'service', stack + '/' + service);
 
     menuSeparator();
 
@@ -12123,9 +12185,7 @@
     });
     // No start-at-boot switch here — a folder has none of its own, only the
     // stacks and services inside it do.
-    menuItem('Wait after this…', 'clock-o', function () {
-      openWaitMenuItem('folder', id, parseInt(d.bootWait || '0', 10), name);
-    });
+    addBootWaitField(d, 'folder', id);
     menuSeparator();
     menuItem('Delete folder', 'trash-o', function () {
       if (!window.confirm(
