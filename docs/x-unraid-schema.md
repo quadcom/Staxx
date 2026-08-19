@@ -177,7 +177,10 @@ A stack is named after its directory — `Media/jellyfin` is called "jellyfin" i
 stop. There is no display-name override.
 
 Service display order is the order services appear in the compose file — the editor preserves
-document order, so no explicit ordering key is needed.
+document order, so no explicit ordering key is needed here. Dragging a service into a different
+position does not change the file: that order is also the order the services start in at boot,
+which is this server's own policy rather than the app's, so it is kept in StaXX's config with the
+rest of it. See the dividing line above.
 
 ### Sections
 

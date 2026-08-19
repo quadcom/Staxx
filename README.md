@@ -51,6 +51,14 @@ These are the constraints the project is built around, in priority order.
   running stack is matched back to its directory via `com.docker.compose.project`
 - Community Applications template → compose conversion, on demand — **built**; see
   [Importing from Community Applications](#importing-from-community-applications)
+- Autostart and start order — **built**. Unraid boots from one plain list of container names, walked
+  top to bottom, each optionally followed by seconds to wait before the next. A stack cannot be
+  named in that list, but each of its services is a container that can be, so a stack is a run of
+  consecutive lines in it: folders, stacks and services are dragged into the order they should start
+  in, and that tree flattens onto the list. Whether something starts at boot, and its wait, are read
+  back out of the same file, so a change made on Unraid's own Docker page is picked up rather than
+  overwritten. Only the order is StaXX's to keep — that file can order the things that start at
+  boot, but everything else still needs a place in the list. See `PLAN_43.md`.
 
 ## Importing from Community Applications
 
