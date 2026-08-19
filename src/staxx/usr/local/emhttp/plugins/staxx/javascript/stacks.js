@@ -1006,8 +1006,15 @@
     // A companion file has no compose lint to show, and the compose file's
     // line numbers mean nothing over its text — so the gutter is cleared
     // rather than left carrying the last file's marks. In Split those marks
-    // are on screen beside the file, not hidden with the pane.
-    if (fileOpen !== null) { if (yamlDots) yamlDots.textContent = ''; return; }
+    // are on screen beside the file, not hidden with the pane. The override
+    // is the one companion this does not hold for: its own text is what
+    // runCheck() below asks about, so its own line numbers mean exactly what
+    // they say — redrawDots() below is what keeps the list itself empty for
+    // every other companion.
+    if (fileOpen !== null && !isStackOverride(fileOpen)) {
+      if (yamlDots) yamlDots.textContent = '';
+      return;
+    }
     if (modalBody.dataset.view === 'form') return;   // nothing on screen to paint into
     if (!yamlDots) return;                            // markup not landed yet
     yamlDots.textContent = '';
@@ -1061,7 +1068,13 @@
   var yamlTimer = null;
 
   yamlPane.addEventListener('input', function () {
-    if (fileOpen !== null) return;   // a companion file has no compose model to reparse
+    if (fileOpen !== null) {
+      // The override has no form and no compose model of its own — reparse()
+      // itself still means nothing to it — but compose still has an opinion
+      // on the pair, so scheduleCheck() below is asked directly.
+      if (isStackOverride(fileOpen)) scheduleCheck();
+      return;
+    }
     if (yamlTimer) clearTimeout(yamlTimer);
     yamlTimer = setTimeout(function () { yamlTimer = null; reparse(); }, 400);
   });
@@ -3212,9 +3225,13 @@
   var checkDot     = null;
 
   function redrawDots() {
-    var list = lastLint.concat(varLint);
-    if (saveErrorDot) list = list.concat([saveErrorDot]);
-    if (checkDot)     list = list.concat([checkDot]);
+    // lastLint, varLint and saveErrorDot are all compose-file-only — a
+    // companion's own text (the override included) never fed any of them,
+    // so showing them over its lines would be showing someone else's dots.
+    var composeActive = fileOpen === null;
+    var list = composeActive ? lastLint.concat(varLint) : [];
+    if (composeActive && saveErrorDot) list = list.concat([saveErrorDot]);
+    if (checkDot) list = list.concat([checkDot]);
     paintDots(list);
   }
 
@@ -4923,10 +4940,16 @@
   // one — and without this the mark would vanish a second after it appeared
   // and never return, since the text never changed to trigger a new ask.
   function scheduleCheck() {
-    if (fileOpen !== null) return;   // a companion file is not the compose file
+    // The override is the one companion compose still has an opinion on —
+    // every other one is refused here, same as always.
+    var overrideOpen = fileOpen !== null && isStackOverride(fileOpen);
+    if (fileOpen !== null && !overrideOpen) return;
     if (checkTimer) clearTimeout(checkTimer);
 
-    var text = currentText();
+    // currentText() answers for the compose file specifically (it hands back
+    // fileStash while any companion is open) — the override's own text is
+    // just whatever the box holds while its tab is the one on screen.
+    var text = overrideOpen ? yamlPane.value : currentText();
     if (text === checkedText) {
       if (checkVerdict) { checkDot = checkVerdict; redrawDots(); }
       return;
@@ -4934,15 +4957,17 @@
 
     checkTimer = setTimeout(function () {
       checkTimer = null;
-      runCheck(text);
+      runCheck(text, overrideOpen ? fileOpen : null);
     }, 800);
   }
 
-  function runCheck(text) {
+  function runCheck(text, file) {
     checkedText  = text;
     checkVerdict = null;
     var mySeq = ++checkSeq;
-    call('check', { name: openedName, body: text }, 4000)
+    var payload = { name: openedName, body: text };
+    if (file) payload.file = file;   // the override — checked as a pair with the real main file
+    call('check', payload, 4000)
       .then(function (res) {
         // A reply for text an edit has since moved past — call() itself
         // never rejects (see its own comment), so a bad reply lands here as
@@ -8445,6 +8470,21 @@
     return 'compose.yaml';
   }
 
+  // The override's name, derived from the main compose file's the same way
+  // the server derives it — strip the extension, put .override back in front
+  // of it. Never a fixed list of the four usual names: a file that merely has
+  // "override" in it, sitting beside a main file it is not paired with, is
+  // just another companion file.
+  function stackOverrideName() {
+    var m = /^(.*)\.(ya?ml)$/i.exec(tabLabel());
+    return m ? m[1] + '.override.' + m[2] : null;
+  }
+
+  function isStackOverride(name) {
+    var ov = stackOverrideName();
+    return !!ov && name === ov;
+  }
+
   // filename -> 'pending' | 'bad', for whichever autosave has not landed (or
   // failed) yet. Kept apart from the DOM rather than read off it, because
   // renderTabs() below rebuilds the strip from scratch on every switch —
@@ -8714,6 +8754,13 @@
       var title  = f.name;
       if (used) {
         title = 'Used by ' + (used.length ? used.join(', ') : 'this stack');
+      } else if (isStackOverride(f.name)) {
+        // Nothing in the compose file names it — nothing needs to. Docker
+        // applies it on top the moment the stack runs, which is a different
+        // way of being used, not an absence of one; the orphan styling below
+        // is for a file nothing wants at all, so it does not belong here.
+        title = 'Docker layers this file over the compose file when the stack runs, ' +
+          'so its settings win. It is part of this stack, edited here as plain text.';
       } else {
         cls += ' staxx-tab--orphan';
         title = 'Nothing in the compose file uses this file.';
@@ -8993,6 +9040,10 @@
       paintGutter();
       paintInk();
       syncGutter();
+      // The override gets the same live check the compose tab gets on open —
+      // otherwise nothing is asked until the first keystroke, and a pair that
+      // already disagrees would sit there looking fine until then.
+      if (isStackOverride(name)) scheduleCheck();
     });
   }
 
@@ -9010,6 +9061,16 @@
     // the switch back to the compose tab to actually land before it writes
     // to MODEL.doc — this and that are the only callers that need to know.
     return flushFileSave().then(function () {
+      // Whatever runCheck() last answered named a line in whatever file was
+      // open a moment ago — meaningless the instant the tab moves on, and
+      // left alone it would flash back up the moment anything else (setView()
+      // among them) repaints the gutter before the next answer lands.
+      if (checkTimer) { clearTimeout(checkTimer); checkTimer = null; }
+      checkSeq++;
+      checkedText  = null;
+      checkVerdict = null;
+      checkDot     = null;
+
       if (name === '') {
         // Back to the compose tab: hand the box the real text and the view
         // back, and let reparse() rebuild everything that depends on it.
