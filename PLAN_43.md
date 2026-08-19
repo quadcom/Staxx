@@ -162,12 +162,17 @@ goes in the compose file) but its line saying service display order is document 
 
 Sonnet agents, one phase at a time, Opus reading each diff before the next starts.
 
-1. `Autostart.php` plus the `folders.json` store, the layout sorting and the rename/move/delete
-   upkeep. No UI. Verifiable on the server without a browser.
-2. The three endpoint cases.
-3. Markup and CSS: grip track, boot marker, menu items.
-4. The browser side: drag, keys, toggles, wait dialog.
-5. `tests/server/autostart.php` and the doc updates.
+1. **Done.** `Autostart.php` plus the `folders.json` store, the layout sorting and the
+   rename/move/delete upkeep.
+2. **Done.** The three endpoint cases, and the reconcile on every render.
+3. **Done.** Markup and CSS — the grip went inside the existing name box rather than into a new grid
+   track, which needed no change to the column tracks or the two header rows.
+4. **Done.** The browser side: drag, arrow keys, the switch, the wait dialog.
+5. **Done.** `tests/server/autostart.php` and the doc updates.
+
+Everything above is verified on the server against real data, and the boot list there is still
+byte-identical to the copy taken before any of it was written. What is **not** verified is the drag
+itself, which needs a browser: see Verification.
 
 ## Verification
 
