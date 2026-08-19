@@ -7404,6 +7404,10 @@
   // switch) rebuilds every tile from scratch, so this has to run again each
   // time rather than once per dialog open.
   var importIconsBusy = false;
+  // Its own counter, separate from fetchIcons()'s below — the two sweep
+  // different lists and must not share a ceiling. ICONS_MAX_ROUNDS is declared
+  // alongside fetchIcons() further down but applies to both sweeps.
+  var importIconsRounds = 0;
   function importFetchIcons() {
     if (importIconsBusy || !importModal.open) return;
     if (!importList.querySelector('[data-icon-ref]')) return;
@@ -7413,7 +7417,18 @@
       if (!importModal.open) return;   // the dialog closed while this was in flight
       if (!res || !res.ok) return;
       paintIcons(res.icons || {});
-      if (res.done === false) setTimeout(importFetchIcons, 500);
+      // Backstop against a runaway: if the wanted list never shrinks this would
+      // otherwise re-arm for ever, one Docker command per stack per round. The
+      // real fix is server-side (failed downloads are now remembered); this
+      // just makes a repeat of that regression impossible rather than unlikely.
+      if (res.done === false) {
+        if (importIconsRounds < ICONS_MAX_ROUNDS) {
+          importIconsRounds++;
+          setTimeout(importFetchIcons, 500);
+        }
+      } else {
+        importIconsRounds = 0;
+      }
     });
   }
 
@@ -11005,6 +11020,15 @@
    */
 
   var iconsBusy = false;
+  var iconsRounds = 0;
+  // Backstop against a runaway sweep: if the wanted list never shrinks, both
+  // fetchIcons() and importFetchIcons() would otherwise re-arm for ever, each
+  // round costing a Docker command per stack on the server. Twenty rounds is
+  // well over three minutes against the server's ten-second-per-round budget,
+  // so a genuine first load is never cut short — this only bites a regression.
+  // The real fix is server-side (failed downloads are now remembered); this
+  // just makes a repeat of that regression impossible rather than unlikely.
+  var ICONS_MAX_ROUNDS = 20;
 
   function paintIcons(map) {
     Object.keys(map).forEach(function (ref) {
@@ -11042,7 +11066,14 @@
       paintIcons(res.icons || {});
       // The sweep keeps a time budget. `done: false` means it stopped with work
       // still on the list rather than because there was nothing left.
-      if (res.done === false) setTimeout(fetchIcons, 500);
+      if (res.done === false) {
+        if (iconsRounds < ICONS_MAX_ROUNDS) {
+          iconsRounds++;
+          setTimeout(fetchIcons, 500);
+        }
+      } else {
+        iconsRounds = 0;
+      }
     });
   }
 
@@ -11050,6 +11081,14 @@
    * the page. It happens for a real reason: the copy the browser loads lives in
    * RAM and does not survive a reboot, so a page left open overnight asks for
    * files that are no longer there. Put the initials back instead.
+   *
+   * The replacement deliberately does NOT carry data-icon-ref forward. A tile
+   * that has tried and failed must not look identical to one that has never
+   * tried — carrying the reference over made paintIcons() treat it as still
+   * wanted, so the next sweep swapped the same broken picture straight back in
+   * and the two traded places for ever (visible flicker, a network request
+   * every cycle). One attempt, one fallback, and it stays initials until the
+   * next full page load.
    *
    * Listened for in the capture phase because `error` does not bubble. */
   document.addEventListener('error', function (e) {
@@ -11060,7 +11099,6 @@
     var span = document.createElement('span');
     span.className = 'staxx-tile staxx-tile--' + (img.dataset.fallbackColour || '0');
     span.textContent = img.dataset.fallback;
-    if (img.dataset.iconRef) span.dataset.iconRef = img.dataset.iconRef;
     if (img.parentNode) img.parentNode.replaceChild(span, img);
   }, true);
 
