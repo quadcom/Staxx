@@ -7078,11 +7078,11 @@
   var importEntries = [];    // every entry from that reply, flattened in the order rendered — data-import-toggle below is a position in this array
   var importOpenIdx = {};    // which rows are expanded this open, keyed by that position
 
-  /* ---- Writing templates in (PLAN_41 phase 2) ----
+  /* ---- Writing templates and projects in (PLAN_41 phase 2, PLAN_46 phase 3) ----
    *
-   * Only template rows are ever selectable — Compose Manager projects and the
-   * "Neither" group stay read-only, so none of the state below applies to
-   * them. importSelected only ever holds idxs of AVAILABLE template rows;
+   * Template rows and Compose Manager project rows are both selectable now —
+   * the "Neither" group alone stays read-only, so none of the state below
+   * applies to it. importSelected only ever holds idxs of AVAILABLE rows;
    * whatever marks a row unavailable (a folder switch that lands on a taken
    * name, a write that just succeeded) also deletes it from here, so a plain
    * count of this object's keys is always the right number for the button. */
@@ -7117,18 +7117,51 @@
     return importFolder;
   }
 
-  // A template row can be ticked only while its own name (entry.folder — the
-  // server's already-sanitised stack name) is free INSIDE ITS OWN DESTINATION
-  // FOLDER. Compared case-insensitively because the default stack root is the
-  // flash drive, which does not distinguish case, so "Vert" and "vert" are
-  // the same folder whichever of them typed a name first.
+  // A template picks its own leaf name; a Compose Manager project cannot —
+  // its folder is fixed to entry.dest, because that is the only name that
+  // makes Docker see the same project rather than a second one (PLAN_46
+  // Part C). Every place that used to read entry.folder reads this instead.
+  function importLeafName(entry) {
+    return entry.source === 'project' ? String(entry.dest || '') : String(entry.folder || '');
+  }
+
+  // A row can be ticked only while its own leaf name is free INSIDE ITS OWN
+  // DESTINATION FOLDER. Compared case-insensitively because the default
+  // stack root is the flash drive, which does not distinguish case, so
+  // "Vert" and "vert" are the same folder whichever of them typed a name first.
   function importIsTaken(entry, folder) {
-    var leaf = String(entry.folder || '').toLowerCase();
+    var leaf = importLeafName(entry).toLowerCase();
     var f    = String(folder || '').toLowerCase();
     return importExisting.some(function (s) {
       return String(s.folder || '').toLowerCase() === f &&
              String(s.leaf   || '').toLowerCase() === leaf;
     });
+  }
+
+  // The server decides this and says so outright, rather than the page
+  // re-deriving it by reading the sentences it also sent: a note is prose,
+  // and a row that became tickable because a wording changed would import
+  // something the list already knew it could not.
+  function importProjectSelectable(entry) {
+    return !!(entry && entry.ready);
+  }
+
+  // One place both importRowHtml and importPruneSelected ask, so the rule
+  // for what can be ticked lives in exactly one spot.
+  function importEntrySelectable(entry) {
+    if (!entry) return false;
+    if (entry.source === 'template') return !!entry.app;
+    if (entry.source === 'project') return importProjectSelectable(entry);
+    return false;
+  }
+
+  // Just the filename off a server-given path — previews name files, never
+  // paths, so a non-developer reads "compose.yaml" rather than a directory
+  // he has no reason to care about.
+  function importBasename(p) {
+    var s = String(p || '');
+    var i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+    return i >= 0 ? s.slice(i + 1) : s;
   }
 
   function importSelectedCount() {
@@ -7191,9 +7224,26 @@
     return '<span class="staxx-import-rowdest">→ ' + esc(folderName) + '</span>';
   }
 
-  // A project's preview has no endpoint to read the file's contents yet
-  // (phase 2) — it can only say where the file was found, which is the thing
-  // PLAN_38 itself says is most likely to be wrong.
+  // The Compose Manager group's own destination badge — its leaf name is
+  // fixed (PLAN_46 Part C), not chosen, so the row says so instead of
+  // offering a name to type. The picker above it still chooses which StaXX
+  // folder the fixed name sits inside.
+  function importProjectDestHtml(entry) {
+    if (!entry.dest) return '';
+    if (entry.dest === entry.name) {
+      return '<span class="staxx-import-rowdest">Imports as ' + esc(entry.dest) +
+             ', fixed so Docker sees the same project</span>';
+    }
+    return '<span class="staxx-import-rowdest staxx-import-rowdest--renamed">Imports as ' +
+           esc(entry.dest) + ' — fixed, because Docker calls this project that rather than “' +
+           esc(entry.name) + '”</span>';
+  }
+
+  // There is no endpoint to read a project's file contents, and none is
+  // wanted here — the byte-for-byte copy happens on the server, so the best
+  // this preview can do (and all PLAN_46 asks it to) is name what will
+  // travel across, what will not, where it was found, and whether Docker's
+  // own running project already disagrees with it.
   function importProjectPreviewHtml(entry) {
     var viaText = {
       indirect: 'an indirect file',
@@ -7205,10 +7255,27 @@
       return '<p class="staxx-form-empty">No compose file could be found for this project.</p>';
     }
 
-    return '<p class="staxx-import-via">' +
-             'Found via ' + esc(viaText || 'an unrecorded source') + '. This file would be copied:' +
-           '</p>' +
-           '<pre class="staxx-fieldraw">' + esc(entry.file) + '</pre>';
+    var copied = [importBasename(entry.file)];
+    if (entry.override) copied.push(importBasename(entry.override) + ' (its override file)');
+    if (entry.env) copied.push(importBasename(entry.env) + ' (its settings file)');
+
+    var bits = ['<p class="staxx-import-via">' +
+      'Found via ' + esc(viaText || 'an unrecorded source') + '. These files would be copied: ' +
+      esc(copied.join(', ')) + '.</p>'];
+
+    if (entry.extras && entry.extras.length) {
+      bits.push('<p class="staxx-import-via">Left behind, unchanged: ' +
+        esc(entry.extras.join(', ')) + '.</p>');
+    }
+
+    if (entry.matches === false) {
+      bits.push('<p class="staxx-import-warn">Docker currently calls the running project ' +
+        (entry.label ? '“' + esc(entry.label) + '”' : 'something other than this') +
+        ', not “' + esc(entry.project || entry.dest) + '”, so this import will not line up with ' +
+        'it — it would create a second, separate project instead of taking over the one running.</p>');
+    }
+
+    return bits.join('');
   }
 
   // A template's preview runs the same converter Add-an-app uses, on the
@@ -7257,7 +7324,7 @@
     return importTemplatePreviewHtml(entry);
   }
 
-  function importRowHtml(entry, idx) {
+  function importRowHtml(entry, idx, groupIdx) {
     var open = !!importOpenIdx[idx];
     var notesHtml = (entry.notes && entry.notes.length)
       ? '<ul class="staxx-import-notes">' +
@@ -7265,16 +7332,17 @@
         '</ul>'
       : '';
 
-    // A template whose own XML could not be read (entry.app is null) is
-    // never selectable — the notes above already say why, so no flag is
-    // needed on top of that.
     var isTemplate  = entry.source === 'template';
-    var selectable  = isTemplate && !!entry.app;
+    var isProject   = entry.source === 'project';
+    // A row that fails its own group's rule (a template whose XML could not
+    // be read; a project with no file or no services) is never selectable —
+    // the notes above already say why, so no separate flag is needed for it.
+    var selectable  = importEntrySelectable(entry);
     // Once a row has been written this session it stays done regardless of
     // which folder is chosen afterwards — it is not re-offered for a second
     // folder just because that folder happens to be free of the name too.
     var taken       = selectable && (importWrittenIdx[idx] || importIsTaken(entry, importRowFolder(entry)));
-    var takenHtml   = (!isTemplate && entry.taken)
+    var takenHtml   = (!selectable && entry.taken)
       ? '<span class="staxx-import-flag staxx-import-flag--taken">Already in StaXX</span>' : '';
 
     var head = '<button type="button" class="staxx-import-rowhead" data-import-toggle="' + idx + '" ' +
@@ -7284,6 +7352,7 @@
                  '<span class="staxx-import-rowsrc">' + importSourceLabel(entry) + '</span>' +
                  '<span class="staxx-import-rowstate">' + importStateLabel(entry) + '</span>' +
                  (isTemplate ? importDestHtml(entry) : '') +
+                 (isProject ? importProjectDestHtml(entry) : '') +
                  takenHtml +
                '</button>';
 
@@ -7292,19 +7361,21 @@
       // The tick box is a SIBLING of the row's button, never nested inside
       // it — a button can't validly contain another control, and nesting it
       // is what would make ticking the box also fire the button's own click
-      // and expand the row.
+      // and expand the row. data-import-group scopes this box to its own
+      // group's "Select all", so ticking one group never reaches into another.
       var mark = taken
         ? '<span class="staxx-import-flag staxx-import-flag--taken">' +
             (importWrittenIdx[idx] ? 'Now in StaXX' : 'Already in StaXX') + '</span>'
         : '<input type="checkbox" class="staxx-import-check" id="staxx-import-check-' + idx + '" ' +
-            'data-import-check="' + idx + '" aria-label="' + esc('Import ' + entry.name) + '"' +
+            'data-import-check="' + idx + '" data-import-group="' + groupIdx + '" ' +
+            'aria-label="' + esc('Import ' + entry.name) + '"' +
             (importSelected[idx] ? ' checked' : '') + '>';
       body = '<div class="staxx-import-rowline">' + mark + head + '</div>';
     } else {
       body = head;
     }
 
-    var rowTaken = taken || (!isTemplate && entry.taken);
+    var rowTaken = taken || (!selectable && entry.taken);
     return '<div class="staxx-import-row' + (rowTaken ? ' staxx-import-row--taken' : '') + '">' +
              body +
              notesHtml +
@@ -7320,28 +7391,32 @@
     var data = importData;
     if (!data) return;
 
-    // The third element marks the one group that gets tick boxes. The other
-    // two get a plain sentence instead — Compose Manager import needs
-    // multi-file support this phase does not have (PLAN_35 phases 4a/4b).
+    // The third element marks a group that gets tick boxes. "Neither" stays
+    // a plain sentence — a container with no compose file and no template
+    // behind it has nothing StaXX could import.
     var groups = [
       ['Unraid templates', data.templates || [], true],
-      ['Compose Manager projects', data.projects || [], false],
+      ['Compose Manager projects', data.projects || [], true],
       ['Neither', data.loose || [], false]
     ];
 
     importEntries = [];
     var blocks = [];
-    groups.forEach(function (g) {
+    groups.forEach(function (g, groupIdx) {
       var label = g[0], list = g[1], selectableGroup = g[2];
       if (!list.length) return;
       var rowsHtml = list.map(function (entry) {
         var idx = importEntries.length;
         importEntries.push(entry);
-        return importRowHtml(entry, idx);
+        return importRowHtml(entry, idx, groupIdx);
       }).join('');
+      // Each group's "Select all" only ever reaches its own rows —
+      // data-import-allcheck carries the same groupIdx the rows above were
+      // stamped with, so two selectable groups never cross-select each other.
       var extra = selectableGroup
         ? '<label class="staxx-import-selectall">' +
-            '<input type="checkbox" data-import-allcheck aria-label="Select all templates">' +
+            '<input type="checkbox" data-import-allcheck="' + groupIdx + '" ' +
+              'aria-label="' + esc('Select all ' + label.toLowerCase()) + '">' +
             '<span>Select all</span>' +
           '</label>'
         : '<span class="staxx-import-groupnote">Importing these is not built yet.</span>';
@@ -7359,8 +7434,8 @@
       : '<p class="staxx-form-empty">Nothing was found to import.</p>';
 
     // The destination controls only matter when there is at least one
-    // template row to tick — no point asking where to put nothing.
-    importDest.hidden = !(data.templates && data.templates.length);
+    // tickable row — no point asking where to put nothing.
+    importDest.hidden = !((data.templates && data.templates.length) || (data.projects && data.projects.length));
   }
 
   // A folder switch can turn an available row into a taken one — a name free
@@ -7371,7 +7446,7 @@
     for (var k in importSelected) {
       var idx = Number(k);
       var entry = importEntries[idx];
-      var selectable = !!entry && entry.source === 'template' && !!entry.app;
+      var selectable = importEntrySelectable(entry);
       if (!selectable || importWrittenIdx[idx] || importIsTaken(entry, importRowFolder(entry))) delete importSelected[k];
     }
   }
@@ -7432,17 +7507,20 @@
     });
   }
 
-  // The header tick box reads as a tri-state summary of the rows below it,
-  // not a control with its own independent value — so its state is worked
-  // out fresh from theirs every time, rather than tracked separately.
+  // Each group's header tick box reads as a tri-state summary of its OWN
+  // rows only (matched by the shared groupIdx), not a control with its own
+  // independent value — so its state is worked out fresh from theirs every
+  // time, rather than tracked separately. There can be more than one of
+  // these now templates and Compose Manager projects are both selectable.
   function importSyncSelectAll() {
-    var all = importList.querySelector('[data-import-allcheck]');
-    if (!all) return;
-    var boxes = importList.querySelectorAll('[data-import-check]');
-    var checked = 0;
-    boxes.forEach(function (b) { if (b.checked) checked++; });
-    all.checked = boxes.length > 0 && checked === boxes.length;
-    all.indeterminate = checked > 0 && checked < boxes.length;
+    importList.querySelectorAll('[data-import-allcheck]').forEach(function (all) {
+      var g = all.dataset.importAllcheck;
+      var boxes = importList.querySelectorAll('[data-import-check][data-import-group="' + g + '"]');
+      var checked = 0;
+      boxes.forEach(function (b) { if (b.checked) checked++; });
+      all.checked = boxes.length > 0 && checked === boxes.length;
+      all.indeterminate = checked > 0 && checked < boxes.length;
+    });
   }
 
   function importUpdateDestPath() {
@@ -7452,12 +7530,14 @@
       importDestPath.innerHTML = 'Each template you tick will be written into a folder named after ' +
         'its own Docker folder, inside <code>' + esc(root) + '</code> — or at the top level for ' +
         'anything with no Docker folder. Whatever a template already had filled in — passwords and ' +
-        'API keys included — is copied straight into that file.';
+        'API keys included — is copied straight into that file. A Compose Manager project always ' +
+        'lands at the top level here, since it has no Docker folder of its own to match.';
     } else {
       var path = root + (importFolder ? '/' + importFolder : '');
       importDestPath.innerHTML = 'Templates you tick will be written to <code>' + esc(path) + '</code>. ' +
         'Whatever a template already had filled in — passwords and API keys included — is copied ' +
-        'straight into that file.';
+        'straight into that file. A Compose Manager project you tick is written there too, in a ' +
+        'folder named after the project itself — see its own row for that name.';
     }
 
     // The pattern-rule notice only matters while StaXX is trying to match
@@ -7571,8 +7651,9 @@
 
     var all = event.target.closest('[data-import-allcheck]');
     if (!all) return;
+    var g = all.dataset.importAllcheck;
     var checked = all.checked;
-    importList.querySelectorAll('[data-import-check]').forEach(function (b) {
+    importList.querySelectorAll('[data-import-check][data-import-group="' + g + '"]').forEach(function (b) {
       b.checked = checked;
       var i = Number(b.dataset.importCheck);
       if (checked) importSelected[i] = true; else delete importSelected[i];
@@ -7673,6 +7754,34 @@
       var entry = importEntries[idx];
       importMsg.textContent = 'Writing ' + (i + 1) + ' of ' + total + ' — ' + entry.name;
 
+      // A folder that could not be made falls this one row back to the top
+      // level rather than losing it — the summary below says which folders
+      // that happened to and why.
+      var destFolder = importRowFolder(entry);
+      if (destFolder && folderFailures[destFolder]) destFolder = '';
+      var leaf = importLeafName(entry);
+      var stackName = destFolder ? destFolder + '/' + leaf : leaf;
+
+      // A Compose Manager project sends no YAML and runs no converter — the
+      // server does the byte-for-byte copy itself, from files already sitting
+      // on this machine, so the browser only has to name which project and
+      // where it is going. staxx_import_write_project() re-reads the project
+      // itself by id and overwrites every field of 'about' with its own
+      // trusted values, so there is nothing genuine to put in it here.
+      if (entry.source === 'project') {
+        call('import-project', { name: stackName, id: entry.id, about: '{}' }, 20000).then(function (res) {
+          if (res.ok) {
+            written++;
+            importExisting.push({ folder: destFolder, leaf: leaf });
+            importMarkWritten(idx);
+          } else {
+            failures.push({ name: entry.name, error: res.error });
+          }
+          step(i + 1);
+        });
+        return;
+      }
+
       var result;
       try {
         result = window.StaxxCA.convert(entry.app, { appdataRoot: APPDATA, origin: 'template' });
@@ -7684,13 +7793,6 @@
         step(i + 1);
         return;
       }
-
-      // A folder that could not be made falls this one row back to the top
-      // level rather than losing it — the summary below says which folders
-      // that happened to and why.
-      var destFolder = importRowFolder(entry);
-      if (destFolder && folderFailures[destFolder]) destFolder = '';
-      var stackName = destFolder ? destFolder + '/' + entry.folder : entry.folder;
 
       var about = JSON.stringify({
         source: 'template',
@@ -7706,7 +7808,7 @@
       call('import-write', { name: stackName, body: result.yaml, about: about }, 20000).then(function (res) {
         if (res.ok) {
           written++;
-          importExisting.push({ folder: destFolder, leaf: entry.folder });
+          importExisting.push({ folder: destFolder, leaf: leaf });
           importMarkWritten(idx);
         } else {
           failures.push({ name: entry.name, error: res.error });

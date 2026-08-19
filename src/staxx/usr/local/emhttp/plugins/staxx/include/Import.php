@@ -443,49 +443,127 @@ function staxx_import_projects(): array {
     $displayName = trim((string)@file_get_contents($dir.'/name'));
     if ($displayName === '') $displayName = $entry;
 
-    // Compose's own guess at the project name from the folder, the same
-    // fallback staxx_compose_state() uses to survive a stack being moved —
-    // see its note on byName. Good enough here for the same reason: it is
-    // what compose itself would have called this project unless something
-    // overrode it.
-    $project = staxx_project_name($entry);
+    // Compose Manager lowercases a project's name and turns hyphens into
+    // underscores when it starts one; StaXX keeps hyphens. So the folder
+    // this import writes has to make that same swap, or Docker would see
+    // two projects — the one Compose Manager already runs, and a second
+    // one under the hyphenated name this plugin would otherwise invent —
+    // instead of the one stack we mean it to become.
+    $dest    = staxx_import_safe_name(str_replace('-', '_', $entry));
+    $project = staxx_project_name($dest);
 
     [$file, $via] = staxx_import_resolve_project_file($dir, $project);
 
     $folder = staxx_import_safe_name($displayName);
     $notes  = [];
-    if ($folder !== $displayName) {
-      $notes[] = 'The name "'.$displayName.'" is not usable as a stack folder name; '
-               . 'StaXX would call it "'.$folder.'" instead.';
-    }
+    // Deliberately nothing here about the display name. The folder this lands
+    // in is decided by $dest above — Docker's own name for the project — and
+    // a note offering some tidied-up version of the display name instead
+    // would be describing something that does not happen.
+
+    // Said once, here, rather than left for the page to work out by reading
+    // the sentences below: a note is prose that may be reworded any day, and
+    // a row that becomes tickable because a wording changed would import
+    // something this list already knows it cannot.
+    $ready = true;
 
     if ($file === '') {
       $notes[] = 'No compose file could be found for this project.';
-    } elseif (count(staxx_service_names($file)) === 0) {
-      $notes[] = 'This project\'s compose file holds no services — importing it '
-               . 'would create an empty stack.';
+      $ready = false;
+    } else {
+      // Told apart on purpose: a file compose REJECTS and a file compose reads
+      // but finds nothing in are different problems with different fixes, and
+      // one of the projects on the development box is the first kind — a
+      // ten-byte file — which the softer wording described as merely empty.
+      $meta = staxx_compose_meta($file);
+      if (!empty($meta['error'])) {
+        $notes[] = 'Compose cannot read this project\'s file, so it cannot be imported. '
+                 . 'Compose says: '.$meta['error'];
+        $ready = false;
+      } elseif (count($meta['services']) === 0) {
+        $notes[] = 'This project\'s compose file holds no services — importing it '
+                 . 'would create an empty stack.';
+        $ready = false;
+      }
+    }
+    if ($dest === '') {
+      $notes[] = 'This project\'s name cannot be turned into a stack folder name, '
+               . 'so it cannot be imported.';
+      $ready = false;
     }
 
+    // Beside the compose file FIRST, and only then the project's own folder.
+    // Three projects on the development box run from a folder in appdata while
+    // an older copy of both files still sits on the flash drive — take the
+    // override from there and the import quietly runs settings the project
+    // itself stopped using. The flash folder is still worth looking in second,
+    // because one project keeps its compose file in appdata and its override
+    // on flash.
     $override = '';
-    foreach (STAXX_IMPORT_OVERRIDE_NAMES as $name) {
-      if (is_file($dir.'/'.$name)) { $override = $dir.'/'.$name; break; }
+    $lookIn   = $file !== '' ? [dirname($file), $dir] : [$dir];
+    foreach ($lookIn as $where) {
+      foreach (STAXX_IMPORT_OVERRIDE_NAMES as $name) {
+        if (is_file($where.'/'.$name)) { $override = $where.'/'.$name; break 2; }
+      }
     }
     if ($override !== '') {
-      $notes[] = 'This project has an override file that StaXX would not use — '
-               . 'importing and starting it would run the base file alone.';
+      $notes[] = 'This project has an override file, which will be copied and used.';
     }
 
-    $env = is_file($dir.'/.env') ? $dir.'/.env' : '';
+    // Same order, same reason: compose reads the settings file out of the
+    // folder it runs the project from, so the copy beside the compose file is
+    // the one actually in use and any copy left on flash may be older.
+    $env = '';
+    foreach ($lookIn as $where) {
+      if (is_file($where.'/.env')) { $env = $where.'/.env'; break; }
+    }
 
-    $rows    = $index['byProject'][$project] ?? [];
+    // Matched by the resolved FILE, not by the project name guessed above —
+    // a project Compose Manager was told to run under some other name would
+    // never show up under our guess, and that mismatch is exactly what
+    // 'label'/'matches' below exist to catch.
+    $rows    = $file !== '' ? ($index['byFile'][$file] ?? []) : ($index['byProject'][$project] ?? []);
     $exists  = count($rows) > 0;
     $running = false;
     foreach ($rows as $row) {
       if (strtolower($row['state']) === 'running') { $running = true; break; }
     }
 
-    $takenNow = in_array($folder, $taken, true);
-    if ($takenNow) $notes[] = 'A stack called "'.$folder.'" already exists.';
+    // The project name Docker itself reports for those containers, so it
+    // can be compared against the name this import would use. Empty when
+    // nothing is running to compare against.
+    $label   = $rows ? $rows[0]['project'] : '';
+    $matches = $label === '' || $label === $project;
+    if (!$matches) {
+      $notes[] = 'Docker is currently running this project as "'.$label.'", not "'.$project
+               . '" — importing it under this name would not line up with those containers.';
+    }
+
+    $takenNow = in_array($dest, $taken, true);
+    if ($takenNow) $notes[] = 'A stack called "'.$dest.'" already exists.';
+
+    // Everything else sitting in the project's own folder, so the review
+    // note can say what is being left behind. A project resolved through
+    // 'indirect' keeps its real files in an appdata folder that holds live
+    // data, not project bookkeeping — that folder is never scanned.
+    $extras = [];
+    if ($via !== 'indirect') {
+      $skip = array_merge(
+        ['name', 'indirect', 'autostart', 'description', '.env'],
+        $file     !== '' ? [basename($file)]     : [],
+        $override !== '' ? [basename($override)] : []
+      );
+      foreach ((array)@scandir($dir) as $extraEntry) {
+        if ($extraEntry === '.' || $extraEntry === '..') continue;
+        if (in_array($extraEntry, $skip, true)) continue;
+        $extras[] = $extraEntry;
+      }
+      sort($extras);
+    }
+    if ($extras) {
+      $notes[] = 'This project\'s folder also holds: '.implode(', ', $extras)
+               . ' — these will not be copied across.';
+    }
 
     // Whatever the compose file itself already says about its own icon —
     // same 'x-unraid: icon:' key a stack's own tile reads — falling back to
@@ -504,6 +582,12 @@ function staxx_import_projects(): array {
       'id'       => $entry,
       'name'     => $displayName,
       'folder'   => $folder,
+      'dest'     => $dest,
+      'ready'    => $ready,
+      'project'  => $project,
+      'label'    => $label,
+      'matches'  => $matches,
+      'extras'   => $extras,
       'exists'   => $exists,
       'running'  => $running,
       'taken'    => $takenNow,
@@ -627,7 +711,8 @@ function staxx_import_icon_wanted(): array {
  * above already use where that overlaps:
  *   'source'           — 'template', 'project' or 'loose', same values the
  *                         list rows carry.
- *   'id'                — the source's own identifier (a template's file name).
+ *   'id'                — the source's own identifier (a template's file name,
+ *                         or a project's directory entry).
  *   'name'              — its display name.
  *   'container'         — the container name this stack's project will produce.
  *   'containerExists'   — whether docker reports a container of that name now.
@@ -636,6 +721,22 @@ function staxx_import_icon_wanted(): array {
  *                         translate, and what it filled in instead. These are
  *                         shown once today, in a dialog that then closes, so
  *                         this file is the only place they end up written down.
+ *
+ * For 'source' === 'project', staxx_import_write_project() fills in its own
+ * set instead, all read from its own trusted lookup of the project rather
+ * than anything the browser sent:
+ *   'via'          — how the compose file was found: 'indirect', 'label' or
+ *                    'flash', matching staxx_import_resolve_project_file().
+ *   'file'         — the resolved compose file's path.
+ *   'settings'     — whether a .env was copied across.
+ *   'overrideSrc'  — the override's original path, or '' if it had none.
+ *   'overrideDest' — the filename it was copied under, renamed to pair with
+ *                    the compose file — see staxx_compose_files().
+ *   'extras'       — filenames left behind in the project's own folder.
+ *   'matches'      — whether Docker's own running project name agrees with
+ *                    the name this import gives it.
+ *   'label'        — Docker's own name for it, when 'matches' is false.
+ *   'project'      — the project name this import will produce.
  */
 function staxx_import_note(array $about): string {
   $kind = [
@@ -657,6 +758,74 @@ function staxx_import_note(array $about): string {
   $lines[] = 'This stack will not start while this file is here — StaXX refuses every '
            . 'Start, Stop and Restart button on it.';
   $lines[] = '';
+
+  // A project's containers are already running under the same name this
+  // import gave the stack, so what needs saying is entirely different from
+  // a template's or a loose container's single-container handover — the
+  // rest of that story (rename the old container aside, start in its
+  // place) does not apply, and describing the menu action itself is left
+  // to whoever built it.
+  if ((string)($about['source'] ?? '') === 'project') {
+    $via     = (string)($about['via'] ?? '');
+    $file    = (string)($about['file'] ?? '');
+    $foundBy = [
+      'indirect' => 'a file inside the project\'s own folder that points at where it actually lives',
+      'label'    => 'the label on its own running containers, because the copy on the flash drive '
+                  . 'was not the one actually in use',
+      'flash'    => 'the project\'s own folder on the flash drive',
+    ][$via] ?? 'the project\'s own folder on the flash drive';
+
+    $lines[] = 'Its compose file was found by '.$foundBy.($file !== '' ? ', at "'.$file.'"' : '').'.';
+    $lines[] = '';
+
+    $copied = ['its compose file'];
+    if (!empty($about['settings'])) $copied[] = 'its settings file (.env)';
+    $overrideSrc  = (string)($about['overrideSrc']  ?? '');
+    $overrideDest = (string)($about['overrideDest'] ?? '');
+    if ($overrideSrc !== '') {
+      $renamed = $overrideDest !== '' && basename($overrideSrc) !== $overrideDest
+        ? ', renamed to "'.$overrideDest.'" so Docker actually pairs it with the compose file '
+        . '(Compose Manager\'s own name for it would not)'
+        : '';
+      $copied[] = 'its override file'.$renamed;
+    }
+    $lines[] = 'Copied across: '.implode(', ', $copied).'.';
+    $lines[] = '';
+
+    $extras = array_values(array_filter((array)($about['extras'] ?? []), fn($e) => trim((string)$e) !== ''));
+    // Honest about what was looked at: for a project that runs from a folder
+    // elsewhere, only its own folder on the flash drive was listed. The other
+    // one holds live data, and reading a list of that back here would say
+    // nothing useful about the project.
+    $lines[] = $extras
+      ? 'Left behind in the project\'s own folder: '.implode(', ', $extras).'.'
+      : ($via === 'flash'
+          ? 'Nothing else was left behind — the project\'s folder held only its own bookkeeping.'
+          : 'Nothing else was copied from the project\'s own folder. The folder its compose '
+          . 'file actually lives in was not listed, because that is where its data lives.');
+    $lines[] = '';
+
+    if (empty($about['matches'])) {
+      $lines[] = 'Docker is currently running this project as "'.(string)($about['label'] ?? '')
+               . '", not "'.(string)($about['project'] ?? '').'" — this stack would not line up '
+               . 'with those containers.';
+      $lines[] = '';
+    }
+
+    $lines[] = 'This project is still listed in Compose Manager, and nothing about it has been '
+             . 'touched or removed. Starting it from there while this stack also exists means '
+             . 'two places can act on the same containers, so pick one.';
+    $lines[] = '';
+    $lines[] = 'This stack was given the exact same project name Docker already knows these '
+             . 'containers by, so taking it over rebuilds the containers already running in '
+             . 'place, rather than starting a second set alongside them.';
+    $lines[] = '';
+    $lines[] = 'Deleting this file by hand only removes the lock — it does not touch Compose '
+             . 'Manager, the running containers, or anything else here.';
+    $lines[] = '';
+    return implode("\n", $lines);
+  }
+
   $lines[] = 'When you have read this and want to go ahead, choose "Take over and start" from '
            . 'this stack\'s own menu on the Stacks page. That switches the old container off, '
            . 'sets it aside under another name, starts this stack in its place, and then asks '
@@ -711,6 +880,47 @@ function staxx_import_note(array $about): string {
 }
 
 /**
+ * The checks and the folder creation every import writer needs before it
+ * puts anything down: a usable path, a destination folder that already
+ * exists, and nothing already sitting at the target. Shared by
+ * staxx_import_write() and staxx_import_write_project() so the two guards
+ * can never drift apart.
+ *
+ * @return string the new stack directory, or '' with $error set on refusal.
+ */
+function staxx_import_prepare_dir(string $rel, string &$error): string {
+  $error = '';
+  if (!staxx_valid_path($rel)) {
+    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
+           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    return '';
+  }
+
+  // Same rule staxx_save_stack() applies: a stack may sit one folder down, but
+  // that folder has to be there already, chosen from the existing list — this
+  // import never invents one.
+  $folder = staxx_path_folder($rel);
+  if ($folder !== '' && !is_dir(staxx_stack_root().'/'.$folder)) {
+    $error = 'There is no folder called "'.$folder.'".';
+    return '';
+  }
+
+  $dir = staxx_stack_dir($rel);
+  if (file_exists($dir)) {
+    $error = 'A stack called "'.$rel.'" already exists. Pick a different name, or delete '
+           . 'the existing stack first.';
+    return '';
+  }
+
+  if (!@mkdir($dir, 0755, true)) {
+    $error = 'Could not create '.$dir;
+    return '';
+  }
+
+  return $dir;
+}
+
+/**
  * Write one imported stack: the review note first, the compose file second.
  *
  * THE ORDER MATTERS. Between writing the compose file and writing the lock
@@ -734,33 +944,8 @@ function staxx_import_note(array $about): string {
  * guarantees nothing existed at $rel beforehand.
  */
 function staxx_import_write(string $rel, string $yaml, array $about, string &$error): bool {
-  $error = '';
-  if (!staxx_valid_path($rel)) {
-    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
-           . 'must start with a letter or number, and must be 63 characters or fewer.';
-    return false;
-  }
-
-  // Same rule staxx_save_stack() applies: a stack may sit one folder down, but
-  // that folder has to be there already, chosen from the existing list — this
-  // import never invents one.
-  $folder = staxx_path_folder($rel);
-  if ($folder !== '' && !is_dir(staxx_stack_root().'/'.$folder)) {
-    $error = 'There is no folder called "'.$folder.'".';
-    return false;
-  }
-
-  $dir = staxx_stack_dir($rel);
-  if (file_exists($dir)) {
-    $error = 'A stack called "'.$rel.'" already exists. Pick a different name, or delete '
-           . 'the existing stack first.';
-    return false;
-  }
-
-  if (!@mkdir($dir, 0755, true)) {
-    $error = 'Could not create '.$dir;
-    return false;
-  }
+  $dir = staxx_import_prepare_dir($rel, $error);
+  if ($dir === '') return false;
 
   // Resolved once, here, because staxx_rmtree() compares its containment
   // root against a realpath()'d candidate — hand it an unresolved path and a
@@ -781,6 +966,145 @@ function staxx_import_write(string $rel, string $yaml, array $about, string &$er
     staxx_rmtree($real, $real);
     return false;
   }
+
+  return true;
+}
+
+/**
+ * Write a Compose Manager project in as a stack. Unlike staxx_import_write(),
+ * this never routes through staxx_save_stack() — that imposes its own
+ * filename and validates the text alone, and the whole point here is a byte
+ * copy validated as the pair it will actually run.
+ *
+ * $id is trusted only as far as it names one of staxx_import_projects()'s own
+ * rows, looked up fresh rather than accepting anything the browser calls a
+ * path — the one thing this function must never do is act on a location the
+ * client named itself.
+ *
+ * The order is PLAN_46 Part B's, and it is not optional: the folder, then the
+ * review note (closing the same unlocked-row window staxx_import_write()'s
+ * note does), then the settings file and the override — byte for byte, no
+ * validation — and only then the compose file, because a project that fills
+ * values in from its own .env cannot validate without the .env already being
+ * where compose would look for it. Any failure rolls the half-written folder
+ * back, same as staxx_import_write().
+ */
+function staxx_import_write_project(string $rel, string $id, array $about, string &$error): bool {
+  $error = '';
+
+  $project = null;
+  foreach (staxx_import_projects() as $row) {
+    if ($row['id'] === $id) { $project = $row; break; }
+  }
+  if ($project === null) {
+    $error = 'That Compose Manager project could not be found. Reopen the import panel and try again.';
+    return false;
+  }
+  if ($project['file'] === '') {
+    $error = 'No compose file could be found for this project, so there is nothing to import.';
+    return false;
+  }
+
+  $dir = staxx_import_prepare_dir($rel, $error);
+  if ($dir === '') return false;
+
+  // Same pairing staxx_import_write() and staxx_delete_stack() use — see the
+  // note there on why this must be resolved before any rollback below.
+  $real = (string)@realpath($dir);
+
+  $mainName = basename($project['file']);
+
+  // The override may not be named to pair with the main file the way
+  // Compose Manager left it — so it is written under the name that DOES
+  // pair, same extension as the main file, and staxx_compose_files() is
+  // asked to confirm the pairing once it is down rather than trusted blind.
+  $overrideDest = '';
+  if ($project['override'] !== '') {
+    $dot  = strrpos($mainName, '.');
+    $ext  = $dot !== false ? strtolower(substr($mainName, $dot + 1)) : 'yaml';
+    $base = $dot !== false ? substr($mainName, 0, $dot) : $mainName;
+    $overrideDest = $base.'.override.'.($ext === 'yml' ? 'yml' : 'yaml');
+  }
+
+  $about = array_merge($about, [
+    'source'       => 'project',
+    'id'           => $id,
+    'name'         => $project['name'],
+    'via'          => $project['via'],
+    'file'         => $project['file'],
+    'settings'     => $project['env'] !== '',
+    'overrideSrc'  => $project['override'],
+    'overrideDest' => $overrideDest,
+    'extras'       => $project['extras'],
+    'matches'      => $project['matches'],
+    'label'        => $project['label'],
+    'project'      => $project['project'],
+  ]);
+
+  $notePath = $dir.'/'.STAXX_REVIEW_FILE;
+  if (@file_put_contents($notePath, staxx_import_note($about)) === false) {
+    $error = 'Could not write the review note into '.$dir;
+    staxx_rmtree($real, $real);
+    return false;
+  }
+  @chmod($notePath, 0644);
+
+  // The settings file and the override, byte for byte — no validation, no
+  // reformatting, because Compose Manager's own copy is what the project
+  // already runs on and nothing here is entitled to change a character of it.
+  if ($project['env'] !== '') {
+    $envText = @file_get_contents($project['env']);
+    if ($envText === false || @file_put_contents($dir.'/.env', $envText) === false) {
+      $error = 'Could not copy the settings file into '.$dir;
+      staxx_rmtree($real, $real);
+      return false;
+    }
+    @chmod($dir.'/.env', 0644);
+  }
+
+  if ($overrideDest !== '') {
+    $overrideText = @file_get_contents($project['override']);
+    if ($overrideText === false || @file_put_contents($dir.'/'.$overrideDest, $overrideText) === false) {
+      $error = 'Could not copy the override file into '.$dir;
+      staxx_rmtree($real, $real);
+      return false;
+    }
+    @chmod($dir.'/'.$overrideDest, 0644);
+
+    if ((staxx_compose_files($dir.'/'.$mainName)[1] ?? '') === '') {
+      $error = 'The override file could not be paired with the compose file.';
+      staxx_rmtree($real, $real);
+      return false;
+    }
+  }
+
+  // The compose file itself, last: validated as the pair Docker will
+  // actually run — the real folder as the project directory, the override
+  // (now correctly named) laid over it — but written byte for byte
+  // regardless of what that check finds worth warning about.
+  $yaml = @file_get_contents($project['file']);
+  if ($yaml === false) {
+    $error = 'Could not read this project\'s compose file.';
+    staxx_rmtree($real, $real);
+    return false;
+  }
+
+  $overridePath = $overrideDest !== '' ? $dir.'/'.$overrideDest : '';
+  $warnings = null;
+  if (!staxx_validate_compose($yaml, $error, $dir, $warnings, '', $overridePath)) {
+    if ($overridePath !== '') {
+      $error .= "\n\nThis project has an override file, and the two are checked together.";
+    }
+    staxx_rmtree($real, $real);
+    return false;
+  }
+
+  if (@file_put_contents($dir.'/'.$mainName, $yaml) === false) {
+    $error = 'Could not write '.$dir.'/'.$mainName;
+    staxx_rmtree($real, $real);
+    return false;
+  }
+  @chmod($dir.'/'.$mainName, 0644);
 
   return true;
 }

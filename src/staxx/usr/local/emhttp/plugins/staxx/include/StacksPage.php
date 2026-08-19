@@ -739,8 +739,9 @@ endif;
     <div class="staxx-import-head">
       <h3 class="staxx-import-title" id="staxx-import-title"><?= _('Import') ?></h3>
       <p class="staxx-import-hint">
-        <?= _('Unraid templates can be ticked and imported below; each one is written as a new stack that starts out locked, so nothing runs and no existing container is touched until you choose to take it over later.') ?>
-        <?= _('Compose Manager projects and containers belonging to neither are shown for reference only — importing those is not built yet.') ?>
+        <?= _('Unraid templates and Compose Manager projects can be ticked and imported below; each one is written as a new stack that starts out locked, so nothing runs and no existing container is touched until you choose to take it over later.') ?>
+        <?= _('A Compose Manager project is copied exactly as you wrote it, and the project it came from is left where it is.') ?>
+        <?= _('Containers belonging to neither are shown for reference only — importing those is not built yet.') ?>
       </p>
     </div>
 

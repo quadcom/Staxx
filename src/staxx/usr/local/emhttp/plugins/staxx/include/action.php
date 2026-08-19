@@ -962,6 +962,24 @@ switch ($action) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
     staxx_reply(['ok' => true, 'name' => $name]);
+
+  /* ---- write one Compose Manager project in as a stack ----
+   *
+   * 'id' is the project's directory entry, never a path — see
+   * staxx_import_write_project(), which looks it up fresh in its own list
+   * rather than trusting anything the browser sent. 'about' is shaped the
+   * same way 'import-write' takes it; staxx_import_write_project() fills in
+   * the project-specific fields itself before staxx_import_note() reads them.
+   */
+  case 'import-project':
+    $id    = (string)($_POST['id'] ?? '');
+    $about = json_decode((string)($_POST['about'] ?? ''), true);
+    if (!is_array($about)) $about = [];
+
+    if (!staxx_import_write_project($name, $id, $about, $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true, 'name' => $name]);
 }
 
 staxx_reply(['ok' => false, 'error' => 'Unknown action "'.$action.'".'], 400);
