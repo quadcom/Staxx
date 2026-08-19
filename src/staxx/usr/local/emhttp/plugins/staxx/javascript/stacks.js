@@ -11905,13 +11905,40 @@
   try { FOLDERS = JSON.parse(scaffold.dataset.folders || '[]'); } catch (e) { FOLDERS = []; }
   var CAN_RUN = scaffold.dataset.canrun === '1';
 
+  /* A menu row can hold a value that is typed rather than clicked (the boot
+   * delay). Such a field registers its own save here, and closing the menu runs
+   * it — otherwise a number typed and not yet committed is destroyed along with
+   * the box that held it, silently. Every route out of the menu goes through
+   * closeMenu(), the table redraw included, so this one point covers them all.
+   */
+  var menuPending  = [];
+  var menuFlushing = false;
+
+  // A save made while the menu is open must not redraw the table, because the
+  // redraw closes the menu out from under whoever is still typing in it. The
+  // redraw waits here until the menu goes away on its own.
+  var menuRedraw = false;
+
+  function menuFlush() {
+    if (menuFlushing) return;   // a save must not trigger another flush
+    menuFlushing = true;
+    var list = menuPending;
+    menuPending = [];
+    for (var i = 0; i < list.length; i++) list[i]();
+    menuFlushing = false;
+  }
+
   function closeMenu() {
     // The scroll listener that calls this is registered in the CAPTURE phase,
     // so it fires for scrolling inside ANY element on the page — including the
     // editor's own panes, where it would otherwise run on every frame.
     if (menu.hidden) return;
+    menuFlush();
     menu.hidden = true;
     menuItems.textContent = '';
+    // Hidden first, so the refresh's own closeMenu() returns at the line above
+    // instead of coming back round through here.
+    if (menuRedraw) { menuRedraw = false; refreshRows(); }
   }
 
   function menuItem(label, icon, handler, opts) {
@@ -12039,17 +12066,40 @@
       if (String(val) === was) { if (alsoClose) closeMenu(); return; }
       was = String(val);
       if (alsoClose) closeMenu();
-      opts.onCommit(val);
+      opts.onCommit(val, box);
     }
 
-    // `change` covers blur and Enter both for a number input, but Enter is
-    // taken separately so it can also close the menu — an explicit gesture
-    // deserves to finish the job. Blur saves and leaves the menu open, because
-    // closing it there would delete whatever the person was reaching for
-    // before their click could land on it.
+    /* Four ways in, and they are not redundant.
+     *
+     * Typing pauses is the one that matters: `change` alone fires only when the
+     * box loses focus, so a number typed and then read back off the screen sits
+     * there unsaved until something unrelated steals focus — which looks exactly
+     * like a setting that did not take. The `was` guard above means whichever
+     * route fires first wins and the rest are no-ops, so nothing saves twice.
+     *
+     * Enter is taken separately from `change` so it can also close the menu; an
+     * explicit gesture deserves to finish the job. Blur leaves the menu open,
+     * because closing it there would delete whatever the person was reaching
+     * for before their click could land on it.
+     */
+    var idle = null;
+    box.addEventListener('input', function () {
+      if (idle) clearTimeout(idle);
+      // An empty box is mid-edit, not a zero: clearing 10 to type 30 would
+      // otherwise save a 0 on the way past.
+      if (box.value === '') { idle = null; return; }
+      idle = setTimeout(function () { idle = null; commit(false); }, 600);
+    });
+
     box.addEventListener('change', function () { commit(false); });
     box.addEventListener('keydown', function (event) {
       if (event.key === 'Enter') { event.preventDefault(); commit(true); }
+    });
+
+    // And the menu closing, however it closes.
+    menuPending.push(function () {
+      if (idle) { clearTimeout(idle); idle = null; }
+      commit(false);
     });
 
     menuItems.appendChild(row);
@@ -12068,11 +12118,20 @@
       parseInt(d.bootWait || '0', 10),
       {
         disabled: !available,
-        onCommit: function (val) {
+        onCommit: function (val, box) {
           call('autostart-wait', { scope: scope, key: key, wait: String(val) })
             .then(function (r) {
               if (!r.ok) { failed('Could not save that delay', r.error); return; }
-              refreshRows();
+              // The trigger's own attribute, so re-opening the menu shows what
+              // was saved rather than what the last table render knew.
+              d.bootWait = String(val);
+              // Saving is silent now that it happens on its own, and a box that
+              // gives no sign is a box you type into twice.
+              box.classList.add('staxx-menu-num--saved');
+              setTimeout(function () {
+                box.classList.remove('staxx-menu-num--saved');
+              }, 900);
+              if (menu.hidden) refreshRows(); else menuRedraw = true;
             });
         }
       });

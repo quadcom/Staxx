@@ -1744,6 +1744,14 @@
   outline: none;
 }
 
+/* Held for about a second after a save lands. After the focus rule above, and
+   at the same specificity, because the box is normally still focused when it
+   saves and the confirmation has to be the thing you see. */
+.staxx-scaffold .staxx-menu-num--saved {
+  border-color: var(--sm-good);
+  box-shadow: inset 0 0 0 10rem rgba(67, 160, 71, 0.14);
+}
+
 .staxx-scaffold .staxx-menu-num:disabled {
   opacity: 0.65;
   cursor: default;
