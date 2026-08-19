@@ -11961,9 +11961,11 @@
   // before it starts the next one in the list.
   function addBootWaitField(d, scope, key) {
     var available = d.bootAvailable !== '0';
+    // No hint on the working case: the box, the "s" beside it and the label say
+    // it already. The disabled one keeps its reason, since a dead box that says
+    // nothing is the one case a reader cannot work out for themselves.
     menuNumberField('Delay', 'clock-o',
-      available ? 'Seconds to wait before the next one starts'
-                : 'Docker is not running, so this cannot be changed',
+      available ? '' : 'Docker is not running, so this cannot be changed',
       parseInt(d.bootWait || '0', 10),
       {
         disabled: !available,
