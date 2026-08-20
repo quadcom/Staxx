@@ -1520,8 +1520,7 @@
   /* Hidden rather than display: none so the graph keeps its slot. The figure
      shares the cell with the graph and the cell is pushed right, so dropping
      the box entirely would slide this row's total to the far edge, out of
-     line with the figures directly above and below it. Same reason
-     .staxx-webchip hides this way instead. */
+     line with the figures directly above and below it. */
   visibility: hidden;
 }
 
@@ -1744,6 +1743,14 @@
   outline: none;
 }
 
+/* Held for about a second after a save lands. After the focus rule above, and
+   at the same specificity, because the box is normally still focused when it
+   saves and the confirmation has to be the thing you see. */
+.staxx-scaffold .staxx-menu-num--saved {
+  border-color: var(--sm-good);
+  box-shadow: inset 0 0 0 10rem rgba(67, 160, 71, 0.14);
+}
+
 .staxx-scaffold .staxx-menu-num:disabled {
   opacity: 0.65;
   cursor: default;
@@ -1855,6 +1862,17 @@
   white-space: nowrap;
 }
 
+/* The marker for a stack whose Compose Manager source has changed since it
+   was imported — icon-only, unlike the badges above, because it is rare and
+   the tooltip already carries the whole sentence (see staxx_import_drift()). */
+.staxx-driftmark {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  color: var(--sm-accent);
+  font-size: 1.1rem;
+}
+
 /* The boot marker (PLAN_43) — always in the markup (see staxx_boot_mark_html())
    but hidden by default, because "off" is the common case and a lightning
    bolt on every row would be noise, not information. Keyed off the ROW's own
@@ -1891,21 +1909,16 @@
   font-weight: 600;
 }
 
-/* Marks the one port in a service's list the web page button opens (PLAN_39's
-   first-port rule). Small on purpose — it labels one row among several, so it
-   only has to be legible. It sits in a
-   track of its own that every port row keeps whether or not it has a chip (see
-   --ports below), so the column does not shift about when rows are reordered.
-   Emitted on every row but hidden by default: .staxx-portfirst (kept on
-   whichever row or drag-slot is currently first — see markFirstPort) is what
-   makes one visible, so a drag only ever has to move a class, never the chip
-   markup itself. */
+/* Marks the web page port row in the Container group (PLAN_51) — filled in,
+   the WebUI button opens this port; cleared, the button turns off. Small on
+   purpose — it labels one row, so it only has to be legible. Always visible:
+   unlike the port list this rides beside, there is exactly one of these per
+   service, so there is no "which row is first" to track. */
 .staxx-webchip {
-  /* Pinned to the last track rather than auto-placed into it. A row where the
-     × is suppressed would otherwise slide the chip one column left, and the
-     whole point of the column is that it does not move. Track 7, not 6, now
-     that the leading grip column (PLAN_40) sits ahead of it. */
-  grid-column: 7;
+  /* Pinned to the Container group's fourth track rather than auto-placed
+     into it, so a row with nothing else in that column (Image, Container
+     name, Restart policy) never pulls it one column left. */
+  grid-column: 4;
   align-self: center;
   justify-self: start;
   padding: 0 0.35rem;
@@ -1915,10 +1928,7 @@
   font-size: 0.85rem;
   line-height: 1.5;
   white-space: nowrap;
-  visibility: hidden;
 }
-
-.staxx-portfirst > .staxx-webchip { visibility: visible; }
 
 /* ---- Panels: editor and output ------------------------------------------ */
 
@@ -2911,7 +2921,11 @@
  * (--container, --advanced, --device), note and box split what is left
  * evenly, same as the old single-box layout this replaces. */
 .staxx-formgroup--container {
-  --sm-fieldcols: 12rem minmax(0, 1fr) minmax(0, 1fr);
+  /* Fourth track for the WebUI chip beside the web page port row (PLAN_51) —
+     present on every Container row, same as --ports and --advanced hold a
+     track open for their own trailing cell whether or not a given row uses
+     it. */
+  --sm-fieldcols: 12rem minmax(0, 1fr) minmax(0, 1fr) 4.6rem;
 }
 
 .staxx-formgroup--advanced {
@@ -3012,14 +3026,13 @@
 
 /* A port is at most five digits, so the two halves do not need a share of the
    row the way a mount's two paths do — fixed and narrow, with the width handed
-   back to the note, which is the part that actually runs long. Two more
-   tracks bookend those: a leading one for the drag/reorder grip (PLAN_40) and
-   a trailing one for the WebUI chip — both held open on every port row
-   whether or not this particular row has anything to put in them, so the
-   columns line up and reordering cannot make one appear or disappear
-   mid-drag. */
+   back to the note, which is the part that actually runs long. One more
+   track bookends those, leading them: the drag/reorder grip (PLAN_40), held
+   open on every port row whether or not this particular row has anything to
+   put in it, so the columns line up and reordering cannot make one appear or
+   disappear mid-drag. */
 .staxx-formgroup--ports {
-  --sm-fieldcols: 2.4rem 7rem 7rem 9rem minmax(0, 1fr) 2.4rem 4.6rem;
+  --sm-fieldcols: 2.4rem 7rem 7rem 9rem minmax(0, 1fr) 2.4rem;
 }
 
 /* --single is a dynamic list group (networks, secrets, depends_on...) — one
@@ -3368,13 +3381,9 @@
    measured off the dragged row's offsetHeight — the sheet sets border-box
    nowhere globally, so content-box (the default) would make the slot taller
    than the row it stands in for. Same bottom margin as .staxx-fieldrow so
-   the rest of the list does not shift as the gap moves. It is itself a grid
-   on the ports group's own column template, purely so the chip it carries
-   (see markFirstPort) lands in the same track as it would on a real row. */
+   the rest of the list does not shift as the gap moves. It holds nothing —
+   it is a gap, not a row — so it needs no column template of its own. */
 .staxx-scaffold .staxx-portslot {
-  display: grid;
-  grid-template-columns: var(--sm-fieldcols);
-  align-items: center;
   padding: 0.45rem 1rem;
   box-sizing: border-box;
   margin: 0 0 0.2rem;

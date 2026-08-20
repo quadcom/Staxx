@@ -1,12 +1,17 @@
 # PLAN_35 — bringing containers you already run into StaXX
 
-**Status: approved and part-built.** Written 2026-08-18. v1 was corrected by a verification pass;
+**Status: COMPLETE 2026-08-19.** Every phase shipped; the importer is finished. Its five sub-plans
+are filed beside this one. Written 2026-08-18. v1 was corrected by a verification pass;
 v2 by three adversarial reviews; **this one by measurement on the server**, plus Adrian's four
 decisions. Two of v2's headline claims did not survive contact with the real box.
 
-**Phases 0 to 3 have shipped** — see `completed-plans/PLAN_37.md`, `PLAN_38.md`, `PLAN_41.md` and
-`PLAN_42.md`. Only Compose Manager (phase 4) is left, and it has no sub-plan yet. The phase list near
-the foot of this document carries the current state of each.
+**Every phase has shipped** — see `completed-plans/PLAN_37.md`, `PLAN_38.md`, `PLAN_41.md`,
+`PLAN_42.md` and `PLAN_46.md`. The phase list near the foot of this document says which is which.
+
+Two things this plan deliberately left out, recorded so they are not mistaken for oversights:
+containers belonging to neither an Unraid template nor a Compose Manager project are listed for
+reference and cannot be imported; and drift from an Unraid template is not detected, only drift from
+a Compose Manager project, because a template shares no name to follow back.
 
 ## What you would notice
 
@@ -520,11 +525,12 @@ raw-docker job behind them, and the collision check that feeds the first one. Th
 phase. Built with phase 2 as a single piece of work, because either half alone leaves stacks that
 cannot start.
 
-**4a. Compose Manager, projects with no override — NEXT.** No sub-plan written yet.
+**4a/4b. Compose Manager — SHIPPED, `completed-plans/PLAN_46.md`.** Built as one piece rather than
+the two this plan split it into: six of the seven projects on the development box carry an override,
+so the "no override" half would have covered one project. Two-file support was built first and kept
+separable, and the measurements that changed this plan's assumptions are recorded there.
 
-**4b. Compose Manager, projects with an override** — blocked on multi-file support in the job runner,
-the metadata reader and the validator. Split this way so the missing capability is visible rather
-than discovered.
+*(4b was folded into 4a above — the multi-file capability it was blocked on is built.)*
 
 **5. — folded into phase 3.** Taking over used to be a separate, optional act. Under Adrian's flow it
 is the only way a stack ever unlocks, so it is not optional and not last.

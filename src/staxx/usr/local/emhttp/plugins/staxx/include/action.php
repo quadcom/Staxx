@@ -144,11 +144,41 @@ switch ($action) {
    * failed. An unrecognised or missing name is not an error here, since
    * typing is exactly when the name may not exist yet or not resolve — the
    * check still runs, just without --project-directory.
+   *
+   * An optional `file` field says which of the stack's two files is being
+   * typed. Absent (or '') means the main file, checked with its own override
+   * (if it has one) layered after it. Anything else has to be exactly this
+   * stack's derived override basename — the only other file a two-file
+   * stack has — checked with the real main file placed before it; anything
+   * else is refused outright rather than silently checked as if it were the
+   * main file.
    */
   case 'check':
-    $body = (string)($_POST['body'] ?? '');
-    $dir  = staxx_valid_path($name) ? staxx_stack_dir($name) : '';
-    $ok   = staxx_validate_compose($body, $error, $dir, $warnings);
+    $body   = (string)($_POST['body'] ?? '');
+    $dir    = staxx_valid_path($name) ? staxx_stack_dir($name) : '';
+    $target = (string)($_POST['file'] ?? '');
+
+    $main = $dir !== '' ? staxx_find_compose_file($dir) : '';
+    $pair = staxx_compose_files($main);
+
+    $before = ''; $after = '';
+    if ($target !== '') {
+      $overrideName = isset($pair[1]) ? basename($pair[1]) : '';
+      if ($overrideName === '' || $target !== $overrideName) {
+        staxx_reply([
+          'ok'    => true,
+          'valid' => false,
+          'error' => 'Only this stack\'s own override file can be checked here, '
+                   . 'and this stack has none by that name.',
+          'warnings' => [],
+        ]);
+      }
+      $before = $main;          // checking the override: the real main file goes first
+    } else {
+      $after = $pair[1] ?? ''; // checking the main file: its override, if any, goes second
+    }
+
+    $ok = staxx_validate_compose($body, $error, $dir, $warnings, $before, $after);
     staxx_reply(['ok' => true, 'valid' => $ok, 'error' => $error, 'warnings' => $warnings]);
 
   /* ---- remove a stack: zip its folder, then take it out of the tree ----
@@ -233,6 +263,28 @@ switch ($action) {
       $body = $decoded;
     }
 
+    // The override is the one companion file this plugin actually runs, so
+    // a save that would break it is refused the same way a bad main file's
+    // save is — checked together with the real main file, never alone (see
+    // staxx_validate_compose()). There is no lockout risk here: deleting a
+    // companion file is always allowed, override included.
+    $dir  = staxx_valid_path($name) ? staxx_stack_dir($name) : '';
+    $main = $dir !== '' ? staxx_find_compose_file($dir) : '';
+    $pair = staxx_compose_files($main);
+    // An empty body is let through deliberately: the New file button creates
+    // a file by saving nothing to it, and the validator rejects empty text
+    // outright, so refusing this would leave no way to make an override at
+    // all — the button would fail every time it was pressed. The live
+    // check on its own tab says so immediately, and the stack's rows carry
+    // compose's complaint until something valid is typed or the file is
+    // deleted again — visible and reversible, which an impossible button is
+    // not.
+    if (isset($pair[1]) && basename($pair[1]) === $file && trim($body) !== '') {
+      if (!staxx_validate_compose($body, $error, $dir, $warnings, $main, '')) {
+        staxx_reply(['ok' => false, 'error' => $error]);
+      }
+    }
+
     if (!staxx_write_file($name, $file, $body, $encoding !== 'base64', $error)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
@@ -287,21 +339,46 @@ switch ($action) {
    * instead of assembling anything themselves. See PLAN_42.
    * ------------------------------------------------------------------- */
 
-  // ---- what a handover would replace, and whether one is already open ----
-  //
-  // Read-only: runs nothing beyond what staxx_handover_targets() and
-  // staxx_handover_active() already do, so it is safe to call just to draw
-  // the confirmation window.
+  /* ---- what taking this stack over would do, and whether one is open ----
+   *
+   * Read-only: runs nothing beyond what staxx_project_containers(),
+   * staxx_handover_targets() and staxx_handover_active() already do, so it is
+   * safe to call just to draw the confirmation window.
+   *
+   * `mode` says which of the two routes applies, so the browser does not
+   * have to guess from `targets` and `rebuild` itself:
+   *   - 'rebuild'  a Compose Manager project is already running under this
+   *                stack's own project name — bring it up in place.
+   *   - 'handover' no project match, but a container holds a name this
+   *                stack's file pins — stop it, rename it aside, start fresh.
+   *   - 'none'     neither applies; nothing here can be taken over.
+   *
+   * A project match wins over container-name targets: the imports that pin
+   * their own container_name would otherwise be refused by the handover's
+   * "already belongs to another compose project" check, when in fact compose
+   * will simply reuse those very containers.
+   */
   case 'handover-check':
+    $rebuild = staxx_project_containers($name);
+    $targets = staxx_handover_targets($name);
     staxx_reply([
       'ok'      => true,
-      'targets' => staxx_handover_targets($name),
+      'mode'    => $rebuild ? 'rebuild' : ($targets ? 'handover' : 'none'),
+      'targets' => $targets,
+      'rebuild' => $rebuild,
+      'project' => staxx_project_name(staxx_path_leaf($name)),
       'active'  => staxx_handover_active($name),
     ]);
 
   // ---- begin a handover: set the old container aside, start this one ----
   case 'handover-start':
     $job = staxx_start_handover($name, $error);
+    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'job' => $job]);
+
+  // ---- begin a takeover: bring the stack up in place of a running project ----
+  case 'takeover-start':
+    $job = staxx_start_takeover($name, $error);
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'job' => $job]);
 
@@ -715,6 +792,28 @@ switch ($action) {
   case 'probe':
     staxx_reply(['ok' => true, 'result' => staxx_run_probe((string)($_POST['probe'] ?? ''))]);
 
+  // ---- try one service's web address, exactly as its row's link would open it ----
+  case 'webui-test':
+    $url = staxx_webui_for($name, (string)($_POST['service'] ?? ''), $error);
+    if ($url === '') staxx_reply(['ok' => false, 'error' => $error]);
+
+    $answered = staxx_webui_try($url, $code);
+    if (!$answered) {
+      $message = 'Nothing answered at '.$url.' within four seconds. Check the port in '
+               . 'the ports section against the port the application is actually listening on.';
+    } elseif ($code < 400) {
+      $message = 'Something answered at '.$url.' — the web page opens.';
+    } elseif ($code < 500) {
+      $message = $url.' replied with status '.$code.'. Something is listening there, but that '
+               . 'is not the web page, so the port is probably right and the path in the web '
+               . 'address wrong.';
+    } else {
+      $message = $url.' replied with status '.$code.'. Something answered with an error of its '
+               . 'own, so the port is right and the application is unhappy.';
+    }
+
+    staxx_reply(['ok' => true, 'url' => $url, 'answered' => $answered, 'code' => $code, 'message' => $message]);
+
   /* ------------------------------------------------------------ folders -- */
 
   case 'folder-list':
@@ -919,6 +1018,24 @@ switch ($action) {
     if (!is_array($about)) $about = [];
 
     if (!staxx_import_write($name, $body, $about, $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true, 'name' => $name]);
+
+  /* ---- write one Compose Manager project in as a stack ----
+   *
+   * 'id' is the project's directory entry, never a path — see
+   * staxx_import_write_project(), which looks it up fresh in its own list
+   * rather than trusting anything the browser sent. 'about' is shaped the
+   * same way 'import-write' takes it; staxx_import_write_project() fills in
+   * the project-specific fields itself before staxx_import_note() reads them.
+   */
+  case 'import-project':
+    $id    = (string)($_POST['id'] ?? '');
+    $about = json_decode((string)($_POST['about'] ?? ''), true);
+    if (!is_array($about)) $about = [];
+
+    if (!staxx_import_write_project($name, $id, $about, $error)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
     staxx_reply(['ok' => true, 'name' => $name]);

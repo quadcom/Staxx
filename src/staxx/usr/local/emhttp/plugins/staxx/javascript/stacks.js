@@ -258,8 +258,8 @@
     // --ports rides alongside --mapped rather than replacing it: a port row is
     // the same five-cell shape as a mount, but its two halves hold numbers,
     // not paths, so they get much narrower tracks and give the width back to
-    // the note. It also adds two more tracks: a leading one for the
-    // drag/reorder grip (PLAN_40) and a trailing one the WebUI chip lives in.
+    // the note. It also adds a leading track for the drag/reorder grip
+    // (PLAN_40).
     { key: 'port',      heading: 'Ports',     cls: 'staxx-formgroup--mapped staxx-formgroup--ports', add: 'port',   flag: 'port' },
     // --volumes rides alongside --mapped the same way --ports does, and for
     // the same reason: it is what lets the two column shapes diverge without
@@ -368,6 +368,11 @@
   // plain setting, which is what Advanced otherwise holds.
   function groupFor(f) {
     if (f.fixed) return 'container';
+    // The web page port (PLAN_51) reaches inside x-unraid, so it is not one
+    // of the plain compose keys ALWAYS_KEYS lists and f.fixed is false for
+    // it — an explicit rule beside this one is what still lands it in the
+    // Container group, as the fourth row.
+    if (f.target === 'x-unraid.webui') return 'container';
     // A declaration belongs to no service, so it gets its own bucket per
     // kind rather than falling in with Advanced. A fold field carries this
     // same binder — it is bucketed here too if a caller does not filter it
@@ -1006,8 +1011,15 @@
     // A companion file has no compose lint to show, and the compose file's
     // line numbers mean nothing over its text — so the gutter is cleared
     // rather than left carrying the last file's marks. In Split those marks
-    // are on screen beside the file, not hidden with the pane.
-    if (fileOpen !== null) { if (yamlDots) yamlDots.textContent = ''; return; }
+    // are on screen beside the file, not hidden with the pane. The override
+    // is the one companion this does not hold for: its own text is what
+    // runCheck() below asks about, so its own line numbers mean exactly what
+    // they say — redrawDots() below is what keeps the list itself empty for
+    // every other companion.
+    if (fileOpen !== null && !isStackOverride(fileOpen)) {
+      if (yamlDots) yamlDots.textContent = '';
+      return;
+    }
     if (modalBody.dataset.view === 'form') return;   // nothing on screen to paint into
     if (!yamlDots) return;                            // markup not landed yet
     yamlDots.textContent = '';
@@ -1061,7 +1073,13 @@
   var yamlTimer = null;
 
   yamlPane.addEventListener('input', function () {
-    if (fileOpen !== null) return;   // a companion file has no compose model to reparse
+    if (fileOpen !== null) {
+      // The override has no form and no compose model of its own — reparse()
+      // itself still means nothing to it — but compose still has an opinion
+      // on the pair, so scheduleCheck() below is asked directly.
+      if (isStackOverride(fileOpen)) scheduleCheck();
+      return;
+    }
     if (yamlTimer) clearTimeout(yamlTimer);
     yamlTimer = setTimeout(function () { yamlTimer = null; reparse(); }, 400);
   });
@@ -1423,6 +1441,7 @@
   // mirrors devPresent's split between a naming list and a presence check.
   var ALL_NETS   = [];      // [name, name] pairs, every server network as-is
   var netPresent = {};      // name -> true
+  var netDriver  = {};      // name -> driver, for working out a service's network kind
 
   // Just the names, for YAML.lint()'s network_mode check. null — not [] —
   // until the server has answered, because "we do not know yet" and "there
@@ -1432,6 +1451,17 @@
     if (!netLoaded) return null;
     var out = [];
     for (var i = 0; i < NETWORKS.length; i++) out.push(NETWORKS[i][0]);
+    return out;
+  }
+
+  // name -> driver for every network this server reports. Same null-until-answered
+  // policy as netNames() above, and for the same reason: "not answered yet" must
+  // never be read as "definitely a macvlan" or every stack would flash the wrong
+  // sentence on the first render after loading.
+  function netDrivers() {
+    if (!netLoaded) return null;
+    var out = {};
+    for (var name in netDriver) if (netDriver.hasOwnProperty(name)) out[name] = netDriver[name];
     return out;
   }
 
@@ -2407,11 +2437,7 @@
              esc(info.description) + '</p>';
   }
 
-  // firstPort is true only for the first port row of a service, in file
-  // order — set by the one caller that knows a row's position within its
-  // group (renderForm). It draws the badge marking the port PLAN_39's web
-  // page button opens; every other row ignores the argument entirely.
-  function fieldHtml(f, index, firstPort) {
+  function fieldHtml(f, index) {
     var grp    = groupFor(f);
     var isContainer = grp === 'container';
     var declared = f.binder === 'declared';
@@ -2475,7 +2501,6 @@
 
     bits.push('<div class="staxx-fieldrow' + (f.locked ? ' staxx-fieldrow--locked' : '') +
               (f.sensitive ? ' staxx-fieldrow--secret' : '') +
-              (firstPort ? ' staxx-portfirst' : '') +
               '" data-row="' + index + '" data-field-row="' + esc(f.id) + '"' +
               ' data-from="' + (f.range ? f.range.start : -1) + '"' +
               ' data-to="'   + (f.range ? f.range.end   : -1) + '"' +
@@ -2501,6 +2526,15 @@
       bits.push('<span class="staxx-fieldlabel">' + esc(f.title) + helpBtnHtml(help, helpId) + '</span>');
       bits.push(boxHtml(f, index, 'value', 'value'));
       bits.push(noteBoxHtml(f, index));
+      // The web page port is the one Container row the WebUI button actually
+      // follows (PLAN_51) — filled in, the button opens this port; cleared,
+      // it turns off. Said here rather than left for the button to explain
+      // on its own, since this is the only place that changes it.
+      if (f.target === 'x-unraid.webui') {
+        bits.push('<span class="staxx-webchip" title="' +
+          esc('The WebUI button on this container’s row opens this port. Clear it and the button turns off.') +
+          '">WebUI</span>');
+      }
     } else if (dev) {
       // One box, not two. For nearly every device the two halves are the same
       // path, and where they differ the picker has already set both — a USB
@@ -2549,9 +2583,6 @@
             '</button>'
           : '<span class="staxx-boxgap" aria-hidden="true"></span>');
       }
-      // The rule the web page button follows (PLAN_39): the first port in
-      // the file is the one it opens. Said here, on that row's own host box,
-      // rather than left as a fact nobody but the button knows.
       // Only a volume gets the folder picker. A port is a number, so browsing
       // for one would be a button that never finds what you came for.
       bits.push(boxHtml(f, index, 'host',
@@ -2680,18 +2711,6 @@
                 '</button>');
     }
 
-    // Last cell on a port row, after the ×, and a column that is ALWAYS there
-    // — hidden by CSS on every row but the first. It is emitted on every row
-    // (not just the first) so that a drag never has to add or remove the
-    // chip itself, only flip which row's copy is visible (see
-    // staxx-portfirst and markFirstPort) — rows never move mid-drag, so the
-    // chip would otherwise stay glued to the row that used to be first.
-    if (f.binder === 'port') {
-      bits.push('<span class="staxx-webchip" title="' +
-        esc('The WebUI button on this container’s row opens this port. ' +
-            'Put a different port first to change which one.') + '">WebUI</span>');
-    }
-
     // Everything full-width comes last, after every cell the row's column
     // template names. A full-width child ends the grid row it lands on and
     // resets auto-placement to column 1 below it, so anything emitted after
@@ -2815,8 +2834,10 @@
     // it instead of sliding one column left of where it belongs.
     if (grp.key === 'port') bits.push('<span></span>');
     for (var i = 0; i < cols.length; i++) bits.push('<span>' + esc(cols[i]) + '</span>');
-    // Container is the only group with no × column to leave a blank for.
-    if (grp.key !== 'container') bits.push('<span></span>');
+    // Every group's last track is blank in the caption — a × on every group
+    // but Container, the WebUI chip beside the web page port row (PLAN_51)
+    // on Container itself — so this is unconditional now.
+    bits.push('<span></span>');
     bits.push('</div>');
     return bits.join('');
   }
@@ -2974,7 +2995,7 @@
           out.push(groupHeadHtml(grp, svc.name, grp.key === 'container' ? flags : null));
           if (rows.length) out.push(captionRow(grp));
           for (var r = 0; r < rows.length; r++) {
-            out.push(fieldHtml(form.fields[rows[r]], rows[r], grp.key === 'port' && r === 0));
+            out.push(fieldHtml(form.fields[rows[r]], rows[r]));
           }
           out.push('</div>');
         }
@@ -3212,9 +3233,13 @@
   var checkDot     = null;
 
   function redrawDots() {
-    var list = lastLint.concat(varLint);
-    if (saveErrorDot) list = list.concat([saveErrorDot]);
-    if (checkDot)     list = list.concat([checkDot]);
+    // lastLint, varLint and saveErrorDot are all compose-file-only — a
+    // companion's own text (the override included) never fed any of them,
+    // so showing them over its lines would be showing someone else's dots.
+    var composeActive = fileOpen === null;
+    var list = composeActive ? lastLint.concat(varLint) : [];
+    if (composeActive && saveErrorDot) list = list.concat([saveErrorDot]);
+    if (checkDot) list = list.concat([checkDot]);
     paintDots(list);
   }
 
@@ -3236,7 +3261,7 @@
     if (!YAML) { formHost.innerHTML = '<p class="staxx-form-empty">The form view could not load.</p>'; return; }
 
     var doc  = YAML.parse(currentText());
-    var form = YAML.buildForm(doc);
+    var form = YAML.buildForm(doc, netDrivers());
     form.doc = doc;
     MODEL = form;
 
@@ -3275,7 +3300,7 @@
 
   function refreshRanges() {
     var doc   = MODEL.doc;
-    var fresh = YAML.buildForm(doc);
+    var fresh = YAML.buildForm(doc, netDrivers());
     fresh.doc = doc;
     MODEL = fresh;
 
@@ -4198,7 +4223,7 @@
     // the file — an empty section is nothing to write down.
     var gk = (f.binder === 'depends' || f.listKey === 'depends_on') ? 'depends'
            : f.listKey ? 'list:' + f.listKey : '';
-    if (SECTIONS_BY_KEY[gk] && fileFlagCounts(YAML.buildForm(MODEL.doc), f.service)[gk] === 0) {
+    if (SECTIONS_BY_KEY[gk] && fileFlagCounts(YAML.buildForm(MODEL.doc, netDrivers()), f.service)[gk] === 0) {
       (sectionOn[f.service] = sectionOn[f.service] || {})[gk] = true;
     }
     structuralEdit(-1, say);
@@ -4262,26 +4287,6 @@
   var portSlot = null;
   var draggingPortFrom = -1;
 
-  // The top line of a service's port list always wears the WebUI chip —
-  // the drag gap included, since that is where the dragged row will land.
-  // Rows never move during a drag (only hide), so without this the chip
-  // stays with the row that was first and appears to slide down the list.
-  function markFirstPort(grp) {
-    if (!grp) return;
-    var kids = grp.children;
-    var first = null;
-    for (var i = 0; i < kids.length; i++) {
-      var kid = kids[i];
-      if (kid.classList.contains('staxx-portslot') ||
-          (kid.classList.contains('staxx-fieldrow') && !kid.classList.contains('staxx-portdrag'))) {
-        first = kid;
-        break;
-      }
-    }
-    for (var j = 0; j < kids.length; j++) kids[j].classList.remove('staxx-portfirst');
-    if (first) first.classList.add('staxx-portfirst');
-  }
-
   formHost.addEventListener('pointerdown', function (event) {
     var grip = event.target.closest('[data-port-grip]');
     if (!grip) return;
@@ -4301,14 +4306,11 @@
 
   function endPortDrag() {
     if (!draggingPortRow) return;
-    var grp = draggingPortRow.closest('.staxx-formgroup--ports');
     draggingPortRow.draggable = false;
     draggingPortRow.classList.remove('staxx-portdrag');
     if (portSlot && portSlot.parentNode) portSlot.parentNode.removeChild(portSlot);
     portSlot = null;
     draggingPortRow = null;
-    // An abandoned drag (no drop) still leaves the true first row correct.
-    markFirstPort(grp);
   }
   formHost.addEventListener('pointerup', endPortDrag);
   formHost.addEventListener('dragend', endPortDrag);
@@ -4332,14 +4334,9 @@
       if (draggingPortRow !== row) return;   // drag already over — a click with no drag
       portSlot = document.createElement('div');
       portSlot.className = 'staxx-portslot';
-      // Decorative echo of the chip a real row carries — no title, since a
-      // placeholder has nothing to explain — needed so the slot has a chip
-      // of its own for markFirstPort to reveal when the gap sits on top.
-      portSlot.innerHTML = '<span class="staxx-webchip" aria-hidden="true">WebUI</span>';
       portSlot.style.height = rowHeight + 'px';
       row.parentNode.insertBefore(portSlot, row);
       row.classList.add('staxx-portdrag');
-      markFirstPort(grp);
     }, 0);
   });
 
@@ -4359,7 +4356,6 @@
       // The row itself never moved, only hid — "home" is just beside it.
       if (portSlot.nextSibling !== draggingPortRow) {
         draggingPortRow.parentNode.insertBefore(portSlot, draggingPortRow);
-        markFirstPort(grp);
       }
       return;
     }
@@ -4379,7 +4375,6 @@
     // from under the pointer and the decision flips back and forth.
     if (portSlot.nextSibling !== target) {
       grp.insertBefore(portSlot, target);
-      markFirstPort(grp);
     }
   });
 
@@ -4923,10 +4918,16 @@
   // one — and without this the mark would vanish a second after it appeared
   // and never return, since the text never changed to trigger a new ask.
   function scheduleCheck() {
-    if (fileOpen !== null) return;   // a companion file is not the compose file
+    // The override is the one companion compose still has an opinion on —
+    // every other one is refused here, same as always.
+    var overrideOpen = fileOpen !== null && isStackOverride(fileOpen);
+    if (fileOpen !== null && !overrideOpen) return;
     if (checkTimer) clearTimeout(checkTimer);
 
-    var text = currentText();
+    // currentText() answers for the compose file specifically (it hands back
+    // fileStash while any companion is open) — the override's own text is
+    // just whatever the box holds while its tab is the one on screen.
+    var text = overrideOpen ? yamlPane.value : currentText();
     if (text === checkedText) {
       if (checkVerdict) { checkDot = checkVerdict; redrawDots(); }
       return;
@@ -4934,15 +4935,17 @@
 
     checkTimer = setTimeout(function () {
       checkTimer = null;
-      runCheck(text);
+      runCheck(text, overrideOpen ? fileOpen : null);
     }, 800);
   }
 
-  function runCheck(text) {
+  function runCheck(text, file) {
     checkedText  = text;
     checkVerdict = null;
     var mySeq = ++checkSeq;
-    call('check', { name: openedName, body: text }, 4000)
+    var payload = { name: openedName, body: text };
+    if (file) payload.file = file;   // the override — checked as a pair with the real main file
+    call('check', payload, 4000)
       .then(function (res) {
         // A reply for text an edit has since moved past — call() itself
         // never rejects (see its own comment), so a bad reply lands here as
@@ -7053,11 +7056,11 @@
   var importEntries = [];    // every entry from that reply, flattened in the order rendered — data-import-toggle below is a position in this array
   var importOpenIdx = {};    // which rows are expanded this open, keyed by that position
 
-  /* ---- Writing templates in (PLAN_41 phase 2) ----
+  /* ---- Writing templates and projects in (PLAN_41 phase 2, PLAN_46 phase 3) ----
    *
-   * Only template rows are ever selectable — Compose Manager projects and the
-   * "Neither" group stay read-only, so none of the state below applies to
-   * them. importSelected only ever holds idxs of AVAILABLE template rows;
+   * Template rows and Compose Manager project rows are both selectable now —
+   * the "Neither" group alone stays read-only, so none of the state below
+   * applies to it. importSelected only ever holds idxs of AVAILABLE rows;
    * whatever marks a row unavailable (a folder switch that lands on a taken
    * name, a write that just succeeded) also deletes it from here, so a plain
    * count of this object's keys is always the right number for the button. */
@@ -7092,18 +7095,51 @@
     return importFolder;
   }
 
-  // A template row can be ticked only while its own name (entry.folder — the
-  // server's already-sanitised stack name) is free INSIDE ITS OWN DESTINATION
-  // FOLDER. Compared case-insensitively because the default stack root is the
-  // flash drive, which does not distinguish case, so "Vert" and "vert" are
-  // the same folder whichever of them typed a name first.
+  // A template picks its own leaf name; a Compose Manager project cannot —
+  // its folder is fixed to entry.dest, because that is the only name that
+  // makes Docker see the same project rather than a second one (PLAN_46
+  // Part C). Every place that used to read entry.folder reads this instead.
+  function importLeafName(entry) {
+    return entry.source === 'project' ? String(entry.dest || '') : String(entry.folder || '');
+  }
+
+  // A row can be ticked only while its own leaf name is free INSIDE ITS OWN
+  // DESTINATION FOLDER. Compared case-insensitively because the default
+  // stack root is the flash drive, which does not distinguish case, so
+  // "Vert" and "vert" are the same folder whichever of them typed a name first.
   function importIsTaken(entry, folder) {
-    var leaf = String(entry.folder || '').toLowerCase();
+    var leaf = importLeafName(entry).toLowerCase();
     var f    = String(folder || '').toLowerCase();
     return importExisting.some(function (s) {
       return String(s.folder || '').toLowerCase() === f &&
              String(s.leaf   || '').toLowerCase() === leaf;
     });
+  }
+
+  // The server decides this and says so outright, rather than the page
+  // re-deriving it by reading the sentences it also sent: a note is prose,
+  // and a row that became tickable because a wording changed would import
+  // something the list already knew it could not.
+  function importProjectSelectable(entry) {
+    return !!(entry && entry.ready);
+  }
+
+  // One place both importRowHtml and importPruneSelected ask, so the rule
+  // for what can be ticked lives in exactly one spot.
+  function importEntrySelectable(entry) {
+    if (!entry) return false;
+    if (entry.source === 'template') return !!entry.app;
+    if (entry.source === 'project') return importProjectSelectable(entry);
+    return false;
+  }
+
+  // Just the filename off a server-given path — previews name files, never
+  // paths, so a non-developer reads "compose.yaml" rather than a directory
+  // he has no reason to care about.
+  function importBasename(p) {
+    var s = String(p || '');
+    var i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+    return i >= 0 ? s.slice(i + 1) : s;
   }
 
   function importSelectedCount() {
@@ -7166,13 +7202,34 @@
     return '<span class="staxx-import-rowdest">→ ' + esc(folderName) + '</span>';
   }
 
-  // A project's preview has no endpoint to read the file's contents yet
-  // (phase 2) — it can only say where the file was found, which is the thing
-  // PLAN_38 itself says is most likely to be wrong.
+  // The Compose Manager group's own destination badge — its leaf name is
+  // fixed (PLAN_46 Part C), not chosen, so the row says so instead of
+  // offering a name to type. The picker above it still chooses which StaXX
+  // folder the fixed name sits inside.
+  function importProjectDestHtml(entry) {
+    if (!entry.dest) return '';
+    if (entry.dest === entry.name) {
+      return '<span class="staxx-import-rowdest">Imports as ' + esc(entry.dest) +
+             ', fixed so Docker sees the same project</span>';
+    }
+    return '<span class="staxx-import-rowdest staxx-import-rowdest--renamed">Imports as ' +
+           esc(entry.dest) + ' — fixed, because Docker calls this project that rather than “' +
+           esc(entry.name) + '”</span>';
+  }
+
+  // There is no endpoint to read a project's file contents, and none is
+  // wanted here — the byte-for-byte copy happens on the server, so the best
+  // this preview can do (and all PLAN_46 asks it to) is name what will
+  // travel across, what will not, where it was found, and whether Docker's
+  // own running project already disagrees with it.
   function importProjectPreviewHtml(entry) {
+    // Said the way the review note says it. "An indirect file" is Compose
+    // Manager's own word for it and means nothing to anybody who has not read
+    // that plugin's source.
     var viaText = {
-      indirect: 'an indirect file',
-      label: "the container's own label",
+      indirect: "a note in the project's own folder pointing at where it really lives",
+      label: "the label on its own containers, because the copy on the flash drive "
+           + 'was not the one being used',
       flash: 'the project folder on the flash drive'
     }[entry.via];
 
@@ -7180,10 +7237,27 @@
       return '<p class="staxx-form-empty">No compose file could be found for this project.</p>';
     }
 
-    return '<p class="staxx-import-via">' +
-             'Found via ' + esc(viaText || 'an unrecorded source') + '. This file would be copied:' +
-           '</p>' +
-           '<pre class="staxx-fieldraw">' + esc(entry.file) + '</pre>';
+    var copied = [importBasename(entry.file)];
+    if (entry.override) copied.push(importBasename(entry.override) + ' (its override file)');
+    if (entry.env) copied.push(importBasename(entry.env) + ' (its settings file)');
+
+    var bits = ['<p class="staxx-import-via">' +
+      'Found via ' + esc(viaText || 'an unrecorded source') + '. These files would be copied: ' +
+      esc(copied.join(', ')) + '.</p>'];
+
+    if (entry.extras && entry.extras.length) {
+      bits.push('<p class="staxx-import-via">Left behind, unchanged: ' +
+        esc(entry.extras.join(', ')) + '.</p>');
+    }
+
+    if (entry.matches === false) {
+      bits.push('<p class="staxx-import-warn">Docker currently calls the running project ' +
+        (entry.label ? '“' + esc(entry.label) + '”' : 'something other than this') +
+        ', not “' + esc(entry.project || entry.dest) + '”, so this import will not line up with ' +
+        'it — it would create a second, separate project instead of taking over the one running.</p>');
+    }
+
+    return bits.join('');
   }
 
   // A template's preview runs the same converter Add-an-app uses, on the
@@ -7232,7 +7306,7 @@
     return importTemplatePreviewHtml(entry);
   }
 
-  function importRowHtml(entry, idx) {
+  function importRowHtml(entry, idx, groupIdx) {
     var open = !!importOpenIdx[idx];
     var notesHtml = (entry.notes && entry.notes.length)
       ? '<ul class="staxx-import-notes">' +
@@ -7240,16 +7314,17 @@
         '</ul>'
       : '';
 
-    // A template whose own XML could not be read (entry.app is null) is
-    // never selectable — the notes above already say why, so no flag is
-    // needed on top of that.
     var isTemplate  = entry.source === 'template';
-    var selectable  = isTemplate && !!entry.app;
+    var isProject   = entry.source === 'project';
+    // A row that fails its own group's rule (a template whose XML could not
+    // be read; a project with no file or no services) is never selectable —
+    // the notes above already say why, so no separate flag is needed for it.
+    var selectable  = importEntrySelectable(entry);
     // Once a row has been written this session it stays done regardless of
     // which folder is chosen afterwards — it is not re-offered for a second
     // folder just because that folder happens to be free of the name too.
     var taken       = selectable && (importWrittenIdx[idx] || importIsTaken(entry, importRowFolder(entry)));
-    var takenHtml   = (!isTemplate && entry.taken)
+    var takenHtml   = (!selectable && entry.taken)
       ? '<span class="staxx-import-flag staxx-import-flag--taken">Already in StaXX</span>' : '';
 
     var head = '<button type="button" class="staxx-import-rowhead" data-import-toggle="' + idx + '" ' +
@@ -7259,6 +7334,7 @@
                  '<span class="staxx-import-rowsrc">' + importSourceLabel(entry) + '</span>' +
                  '<span class="staxx-import-rowstate">' + importStateLabel(entry) + '</span>' +
                  (isTemplate ? importDestHtml(entry) : '') +
+                 (isProject ? importProjectDestHtml(entry) : '') +
                  takenHtml +
                '</button>';
 
@@ -7267,19 +7343,21 @@
       // The tick box is a SIBLING of the row's button, never nested inside
       // it — a button can't validly contain another control, and nesting it
       // is what would make ticking the box also fire the button's own click
-      // and expand the row.
+      // and expand the row. data-import-group scopes this box to its own
+      // group's "Select all", so ticking one group never reaches into another.
       var mark = taken
         ? '<span class="staxx-import-flag staxx-import-flag--taken">' +
             (importWrittenIdx[idx] ? 'Now in StaXX' : 'Already in StaXX') + '</span>'
         : '<input type="checkbox" class="staxx-import-check" id="staxx-import-check-' + idx + '" ' +
-            'data-import-check="' + idx + '" aria-label="' + esc('Import ' + entry.name) + '"' +
+            'data-import-check="' + idx + '" data-import-group="' + groupIdx + '" ' +
+            'aria-label="' + esc('Import ' + entry.name) + '"' +
             (importSelected[idx] ? ' checked' : '') + '>';
       body = '<div class="staxx-import-rowline">' + mark + head + '</div>';
     } else {
       body = head;
     }
 
-    var rowTaken = taken || (!isTemplate && entry.taken);
+    var rowTaken = taken || (!selectable && entry.taken);
     return '<div class="staxx-import-row' + (rowTaken ? ' staxx-import-row--taken' : '') + '">' +
              body +
              notesHtml +
@@ -7295,28 +7373,32 @@
     var data = importData;
     if (!data) return;
 
-    // The third element marks the one group that gets tick boxes. The other
-    // two get a plain sentence instead — Compose Manager import needs
-    // multi-file support this phase does not have (PLAN_35 phases 4a/4b).
+    // The third element marks a group that gets tick boxes. "Neither" stays
+    // a plain sentence — a container with no compose file and no template
+    // behind it has nothing StaXX could import.
     var groups = [
       ['Unraid templates', data.templates || [], true],
-      ['Compose Manager projects', data.projects || [], false],
+      ['Compose Manager projects', data.projects || [], true],
       ['Neither', data.loose || [], false]
     ];
 
     importEntries = [];
     var blocks = [];
-    groups.forEach(function (g) {
+    groups.forEach(function (g, groupIdx) {
       var label = g[0], list = g[1], selectableGroup = g[2];
       if (!list.length) return;
       var rowsHtml = list.map(function (entry) {
         var idx = importEntries.length;
         importEntries.push(entry);
-        return importRowHtml(entry, idx);
+        return importRowHtml(entry, idx, groupIdx);
       }).join('');
+      // Each group's "Select all" only ever reaches its own rows —
+      // data-import-allcheck carries the same groupIdx the rows above were
+      // stamped with, so two selectable groups never cross-select each other.
       var extra = selectableGroup
         ? '<label class="staxx-import-selectall">' +
-            '<input type="checkbox" data-import-allcheck aria-label="Select all templates">' +
+            '<input type="checkbox" data-import-allcheck="' + groupIdx + '" ' +
+              'aria-label="' + esc('Select all ' + label.toLowerCase()) + '">' +
             '<span>Select all</span>' +
           '</label>'
         : '<span class="staxx-import-groupnote">Importing these is not built yet.</span>';
@@ -7334,8 +7416,8 @@
       : '<p class="staxx-form-empty">Nothing was found to import.</p>';
 
     // The destination controls only matter when there is at least one
-    // template row to tick — no point asking where to put nothing.
-    importDest.hidden = !(data.templates && data.templates.length);
+    // tickable row — no point asking where to put nothing.
+    importDest.hidden = !((data.templates && data.templates.length) || (data.projects && data.projects.length));
   }
 
   // A folder switch can turn an available row into a taken one — a name free
@@ -7346,7 +7428,7 @@
     for (var k in importSelected) {
       var idx = Number(k);
       var entry = importEntries[idx];
-      var selectable = !!entry && entry.source === 'template' && !!entry.app;
+      var selectable = importEntrySelectable(entry);
       if (!selectable || importWrittenIdx[idx] || importIsTaken(entry, importRowFolder(entry))) delete importSelected[k];
     }
   }
@@ -7379,6 +7461,10 @@
   // switch) rebuilds every tile from scratch, so this has to run again each
   // time rather than once per dialog open.
   var importIconsBusy = false;
+  // Its own counter, separate from fetchIcons()'s below — the two sweep
+  // different lists and must not share a ceiling. ICONS_MAX_ROUNDS is declared
+  // alongside fetchIcons() further down but applies to both sweeps.
+  var importIconsRounds = 0;
   function importFetchIcons() {
     if (importIconsBusy || !importModal.open) return;
     if (!importList.querySelector('[data-icon-ref]')) return;
@@ -7388,21 +7474,35 @@
       if (!importModal.open) return;   // the dialog closed while this was in flight
       if (!res || !res.ok) return;
       paintIcons(res.icons || {});
-      if (res.done === false) setTimeout(importFetchIcons, 500);
+      // Backstop against a runaway: if the wanted list never shrinks this would
+      // otherwise re-arm for ever, one Docker command per stack per round. The
+      // real fix is server-side (failed downloads are now remembered); this
+      // just makes a repeat of that regression impossible rather than unlikely.
+      if (res.done === false) {
+        if (importIconsRounds < ICONS_MAX_ROUNDS) {
+          importIconsRounds++;
+          setTimeout(importFetchIcons, 500);
+        }
+      } else {
+        importIconsRounds = 0;
+      }
     });
   }
 
-  // The header tick box reads as a tri-state summary of the rows below it,
-  // not a control with its own independent value — so its state is worked
-  // out fresh from theirs every time, rather than tracked separately.
+  // Each group's header tick box reads as a tri-state summary of its OWN
+  // rows only (matched by the shared groupIdx), not a control with its own
+  // independent value — so its state is worked out fresh from theirs every
+  // time, rather than tracked separately. There can be more than one of
+  // these now templates and Compose Manager projects are both selectable.
   function importSyncSelectAll() {
-    var all = importList.querySelector('[data-import-allcheck]');
-    if (!all) return;
-    var boxes = importList.querySelectorAll('[data-import-check]');
-    var checked = 0;
-    boxes.forEach(function (b) { if (b.checked) checked++; });
-    all.checked = boxes.length > 0 && checked === boxes.length;
-    all.indeterminate = checked > 0 && checked < boxes.length;
+    importList.querySelectorAll('[data-import-allcheck]').forEach(function (all) {
+      var g = all.dataset.importAllcheck;
+      var boxes = importList.querySelectorAll('[data-import-check][data-import-group="' + g + '"]');
+      var checked = 0;
+      boxes.forEach(function (b) { if (b.checked) checked++; });
+      all.checked = boxes.length > 0 && checked === boxes.length;
+      all.indeterminate = checked > 0 && checked < boxes.length;
+    });
   }
 
   function importUpdateDestPath() {
@@ -7412,12 +7512,14 @@
       importDestPath.innerHTML = 'Each template you tick will be written into a folder named after ' +
         'its own Docker folder, inside <code>' + esc(root) + '</code> — or at the top level for ' +
         'anything with no Docker folder. Whatever a template already had filled in — passwords and ' +
-        'API keys included — is copied straight into that file.';
+        'API keys included — is copied straight into that file. A Compose Manager project always ' +
+        'lands at the top level here, since it has no Docker folder of its own to match.';
     } else {
       var path = root + (importFolder ? '/' + importFolder : '');
       importDestPath.innerHTML = 'Templates you tick will be written to <code>' + esc(path) + '</code>. ' +
         'Whatever a template already had filled in — passwords and API keys included — is copied ' +
-        'straight into that file.';
+        'straight into that file. A Compose Manager project you tick is written there too, in a ' +
+        'folder named after the project itself — see its own row for that name.';
     }
 
     // The pattern-rule notice only matters while StaXX is trying to match
@@ -7531,8 +7633,9 @@
 
     var all = event.target.closest('[data-import-allcheck]');
     if (!all) return;
+    var g = all.dataset.importAllcheck;
     var checked = all.checked;
-    importList.querySelectorAll('[data-import-check]').forEach(function (b) {
+    importList.querySelectorAll('[data-import-check][data-import-group="' + g + '"]').forEach(function (b) {
       b.checked = checked;
       var i = Number(b.dataset.importCheck);
       if (checked) importSelected[i] = true; else delete importSelected[i];
@@ -7633,6 +7736,34 @@
       var entry = importEntries[idx];
       importMsg.textContent = 'Writing ' + (i + 1) + ' of ' + total + ' — ' + entry.name;
 
+      // A folder that could not be made falls this one row back to the top
+      // level rather than losing it — the summary below says which folders
+      // that happened to and why.
+      var destFolder = importRowFolder(entry);
+      if (destFolder && folderFailures[destFolder]) destFolder = '';
+      var leaf = importLeafName(entry);
+      var stackName = destFolder ? destFolder + '/' + leaf : leaf;
+
+      // A Compose Manager project sends no YAML and runs no converter — the
+      // server does the byte-for-byte copy itself, from files already sitting
+      // on this machine, so the browser only has to name which project and
+      // where it is going. staxx_import_write_project() re-reads the project
+      // itself by id and overwrites every field of 'about' with its own
+      // trusted values, so there is nothing genuine to put in it here.
+      if (entry.source === 'project') {
+        call('import-project', { name: stackName, id: entry.id, about: '{}' }, 20000).then(function (res) {
+          if (res.ok) {
+            written++;
+            importExisting.push({ folder: destFolder, leaf: leaf });
+            importMarkWritten(idx);
+          } else {
+            failures.push({ name: entry.name, error: res.error });
+          }
+          step(i + 1);
+        });
+        return;
+      }
+
       var result;
       try {
         result = window.StaxxCA.convert(entry.app, { appdataRoot: APPDATA, origin: 'template' });
@@ -7644,13 +7775,6 @@
         step(i + 1);
         return;
       }
-
-      // A folder that could not be made falls this one row back to the top
-      // level rather than losing it — the summary below says which folders
-      // that happened to and why.
-      var destFolder = importRowFolder(entry);
-      if (destFolder && folderFailures[destFolder]) destFolder = '';
-      var stackName = destFolder ? destFolder + '/' + entry.folder : entry.folder;
 
       var about = JSON.stringify({
         source: 'template',
@@ -7666,7 +7790,7 @@
       call('import-write', { name: stackName, body: result.yaml, about: about }, 20000).then(function (res) {
         if (res.ok) {
           written++;
-          importExisting.push({ folder: destFolder, leaf: entry.folder });
+          importExisting.push({ folder: destFolder, leaf: leaf });
           importMarkWritten(idx);
         } else {
           failures.push({ name: entry.name, error: res.error });
@@ -7827,12 +7951,14 @@
       NETWORKS = [];
       ALL_NETS = [];
       netPresent = {};
+      netDriver = {};
       var nets = res.networks || [];
       for (var n = 0; n < nets.length; n++) {
         var name = nets[n].name, driver = nets[n].driver;
         if (!name) continue;
         ALL_NETS.push([name, name]);
         netPresent[name] = true;
+        netDriver[name] = driver;
         if (known[name]) continue;
         NETWORKS.push([name, name]);
         known[name] = true;
@@ -8092,7 +8218,7 @@
    *
    * Only ever written into an empty note, never over the user's own words. */
   function devNameLine(line, label) {
-    var fresh = YAML.buildForm(MODEL.doc);
+    var fresh = YAML.buildForm(MODEL.doc, netDrivers());
     var id    = YAML.fieldAtLine(fresh, line);
     if (!id) return;
 
@@ -8445,6 +8571,21 @@
     return 'compose.yaml';
   }
 
+  // The override's name, derived from the main compose file's the same way
+  // the server derives it — strip the extension, put .override back in front
+  // of it. Never a fixed list of the four usual names: a file that merely has
+  // "override" in it, sitting beside a main file it is not paired with, is
+  // just another companion file.
+  function stackOverrideName() {
+    var m = /^(.*)\.(ya?ml)$/i.exec(tabLabel());
+    return m ? m[1] + '.override.' + m[2] : null;
+  }
+
+  function isStackOverride(name) {
+    var ov = stackOverrideName();
+    return !!ov && name === ov;
+  }
+
   // filename -> 'pending' | 'bad', for whichever autosave has not landed (or
   // failed) yet. Kept apart from the DOM rather than read off it, because
   // renderTabs() below rebuilds the strip from scratch on every switch —
@@ -8714,6 +8855,13 @@
       var title  = f.name;
       if (used) {
         title = 'Used by ' + (used.length ? used.join(', ') : 'this stack');
+      } else if (isStackOverride(f.name)) {
+        // Nothing in the compose file names it — nothing needs to. Docker
+        // applies it on top the moment the stack runs, which is a different
+        // way of being used, not an absence of one; the orphan styling below
+        // is for a file nothing wants at all, so it does not belong here.
+        title = 'Docker layers this file over the compose file when the stack runs, ' +
+          'so its settings win. It is part of this stack, edited here as plain text.';
       } else {
         cls += ' staxx-tab--orphan';
         title = 'Nothing in the compose file uses this file.';
@@ -8993,6 +9141,10 @@
       paintGutter();
       paintInk();
       syncGutter();
+      // The override gets the same live check the compose tab gets on open —
+      // otherwise nothing is asked until the first keystroke, and a pair that
+      // already disagrees would sit there looking fine until then.
+      if (isStackOverride(name)) scheduleCheck();
     });
   }
 
@@ -9010,6 +9162,16 @@
     // the switch back to the compose tab to actually land before it writes
     // to MODEL.doc — this and that are the only callers that need to know.
     return flushFileSave().then(function () {
+      // Whatever runCheck() last answered named a line in whatever file was
+      // open a moment ago — meaningless the instant the tab moves on, and
+      // left alone it would flash back up the moment anything else (setView()
+      // among them) repaints the gutter before the next answer lands.
+      if (checkTimer) { clearTimeout(checkTimer); checkTimer = null; }
+      checkSeq++;
+      checkedText  = null;
+      checkVerdict = null;
+      checkDot     = null;
+
       if (name === '') {
         // Back to the compose tab: hand the box the real text and the view
         // back, and let reparse() rebuild everything that depends on it.
@@ -10866,6 +11028,28 @@
     setTimeout(refreshState, 5000);
   }
 
+  /* There are exactly TWO refresh sizes, and adding a third needs a
+   * measurement rather than an opinion — see PLAN_48.
+   *
+   *   refreshState()  one `compose ls` for the whole machine, ~90ms. Use it
+   *                   when only a state pill can have changed.
+   *   refreshRows()   re-renders every row. Use it when the SET of rows, or
+   *                   anything printed into a row, has changed.
+   *
+   * The full one is the expensive one — it was four seconds on a server with
+   * sixty-four stacks until compose's answers started being remembered between
+   * loads; it is a few hundred milliseconds now, and it grows with the number
+   * of stacks either way.
+   *
+   * Which is why: A CONTROL SHOWS ITS OWN NEW POSITION THE MOMENT THE SAVE IS
+   * ACKNOWLEDGED, rather than waiting for the redraw to deliver it. The boot
+   * delay and the autostart switch both write straight back onto the row's own
+   * record before calling in here. The autostart switch not doing that was a
+   * real bug: re-opening the menu inside the gap showed the old position, so
+   * pressing it again sent the opposite of what was meant — a loop you cannot
+   * get out of by pressing harder. The redraw still follows and still has the
+   * last word.
+   */
   function refreshRows(done) {
     call('rows', {}, 60000).then(function (res) {
       if (!res.ok) { failed('Could not refresh the stack list', res.error); return; }
@@ -10944,6 +11128,15 @@
    */
 
   var iconsBusy = false;
+  var iconsRounds = 0;
+  // Backstop against a runaway sweep: if the wanted list never shrinks, both
+  // fetchIcons() and importFetchIcons() would otherwise re-arm for ever, each
+  // round costing a Docker command per stack on the server. Twenty rounds is
+  // well over three minutes against the server's ten-second-per-round budget,
+  // so a genuine first load is never cut short — this only bites a regression.
+  // The real fix is server-side (failed downloads are now remembered); this
+  // just makes a repeat of that regression impossible rather than unlikely.
+  var ICONS_MAX_ROUNDS = 20;
 
   function paintIcons(map) {
     Object.keys(map).forEach(function (ref) {
@@ -10981,7 +11174,14 @@
       paintIcons(res.icons || {});
       // The sweep keeps a time budget. `done: false` means it stopped with work
       // still on the list rather than because there was nothing left.
-      if (res.done === false) setTimeout(fetchIcons, 500);
+      if (res.done === false) {
+        if (iconsRounds < ICONS_MAX_ROUNDS) {
+          iconsRounds++;
+          setTimeout(fetchIcons, 500);
+        }
+      } else {
+        iconsRounds = 0;
+      }
     });
   }
 
@@ -10989,6 +11189,14 @@
    * the page. It happens for a real reason: the copy the browser loads lives in
    * RAM and does not survive a reboot, so a page left open overnight asks for
    * files that are no longer there. Put the initials back instead.
+   *
+   * The replacement deliberately does NOT carry data-icon-ref forward. A tile
+   * that has tried and failed must not look identical to one that has never
+   * tried — carrying the reference over made paintIcons() treat it as still
+   * wanted, so the next sweep swapped the same broken picture straight back in
+   * and the two traded places for ever (visible flicker, a network request
+   * every cycle). One attempt, one fallback, and it stays initials until the
+   * next full page load.
    *
    * Listened for in the capture phase because `error` does not bubble. */
   document.addEventListener('error', function (e) {
@@ -10999,7 +11207,6 @@
     var span = document.createElement('span');
     span.className = 'staxx-tile staxx-tile--' + (img.dataset.fallbackColour || '0');
     span.textContent = img.dataset.fallback;
-    if (img.dataset.iconRef) span.dataset.iconRef = img.dataset.iconRef;
     if (img.parentNode) img.parentNode.replaceChild(span, img);
   }, true);
 
@@ -11384,8 +11591,7 @@
         return;
       }
 
-      var targets = res.targets || [];
-      if (!targets.length) {
+      if (res.mode === 'none') {
         askConfirm({
           title: 'Nothing to take over',
           bodyHtml: '<p>Nothing on this server holds a container name "' + label + '" asks ' +
@@ -11399,6 +11605,16 @@
         return;
       }
 
+      // An imported Compose Manager project keeps the same project name
+      // Docker already knows its containers by, so taking it over rebuilds
+      // them in place rather than renaming anything aside — a different act
+      // with its own wording, handled entirely by this other function.
+      if (res.mode === 'rebuild') {
+        openRebuildTakeover(name, label, res);
+        return;
+      }
+
+      var targets = res.targets || [];
       var quoted = joinNames(targets.map(function (t) { return '"' + t.name + '"'; }));
 
       // An imported stack is usually named after the very container it is
@@ -11456,6 +11672,65 @@
 
       step();
     });
+  }
+
+  // Project variant of window 1. Nothing is renamed or set aside, so there is
+  // no undo and no follow-up question — a clean finish just means the stack
+  // is live, and the review lock is gone because the server only clears it on
+  // success. res comes straight from the handoverCheck already made by the
+  // caller, so this never has to ask again.
+  function openRebuildTakeover(name, label, res) {
+    var rebuild = res.rebuild || [];
+    var project = res.project || label;
+
+    var quoted = joinNames(rebuild.map(function (t) { return '"' + t.name + '"'; }));
+    var runningNow = rebuild.filter(function (t) { return t.running; })
+                            .map(function (t) { return '"' + t.name + '"'; });
+    var runningLine = runningNow.length
+      ? '<p>' + joinNames(runningNow) + (runningNow.length === 1 ? ' is' : ' are') +
+        ' running right now.</p>'
+      : '<p>None of them are running at the moment.</p>';
+
+    var bodyHtml =
+      '<p>This rebuilds ' + quoted + ' in place, from the files copied from the "' + project +
+      '" project in Compose Manager.</p>' +
+      runningLine +
+      '<p>The Compose Manager project itself is untouched, and can start these same ' +
+      'containers again at any time — so from now on, pick one place to run this stack ' +
+      'from. Starting it from both will fight over the same containers.</p>' +
+      '<p>There is no undo here, because nothing is renamed or set aside. If this fails, ' +
+      'the containers are left exactly as Docker left them, and the stack stays locked for ' +
+      'review.</p>';
+
+    function step() {
+      askConfirm({ title: 'Rebuild ' + quoted + '?', bodyHtml: bodyHtml,
+                   goLabel: 'Rebuild and start' }).then(function (go) {
+        if (!go) return;
+        confirmSetBusy(true);
+        confirmMsg.textContent = '';
+
+        call('takeover-start', { name: name }).then(function (r) {
+          if (!r.ok) {
+            confirmSetBusy(false);
+            confirmMsg.textContent = r.error || 'Could not start the rebuild.';
+            step();
+            return;
+          }
+          closeConfirm();
+
+          logPanel.hidden = false;
+          logTitle.textContent = 'Rebuild — ' + label;
+          logBox.textContent = 'Working…';
+          logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+          // No follow-up question on this path — a clean finish leaves the
+          // stack simply live, so refreshing the row is all that is left.
+          follow(r.job, function () { refreshRows(); }, true);
+        });
+      });
+    }
+
+    step();
   }
 
   // Window 2: did it work. `focusWorks` lands the initial focus on whichever
@@ -11874,13 +12149,40 @@
   try { FOLDERS = JSON.parse(scaffold.dataset.folders || '[]'); } catch (e) { FOLDERS = []; }
   var CAN_RUN = scaffold.dataset.canrun === '1';
 
+  /* A menu row can hold a value that is typed rather than clicked (the boot
+   * delay). Such a field registers its own save here, and closing the menu runs
+   * it — otherwise a number typed and not yet committed is destroyed along with
+   * the box that held it, silently. Every route out of the menu goes through
+   * closeMenu(), the table redraw included, so this one point covers them all.
+   */
+  var menuPending  = [];
+  var menuFlushing = false;
+
+  // A save made while the menu is open must not redraw the table, because the
+  // redraw closes the menu out from under whoever is still typing in it. The
+  // redraw waits here until the menu goes away on its own.
+  var menuRedraw = false;
+
+  function menuFlush() {
+    if (menuFlushing) return;   // a save must not trigger another flush
+    menuFlushing = true;
+    var list = menuPending;
+    menuPending = [];
+    for (var i = 0; i < list.length; i++) list[i]();
+    menuFlushing = false;
+  }
+
   function closeMenu() {
     // The scroll listener that calls this is registered in the CAPTURE phase,
     // so it fires for scrolling inside ANY element on the page — including the
     // editor's own panes, where it would otherwise run on every frame.
     if (menu.hidden) return;
+    menuFlush();
     menu.hidden = true;
     menuItems.textContent = '';
+    // Hidden first, so the refresh's own closeMenu() returns at the line above
+    // instead of coming back round through here.
+    if (menuRedraw) { menuRedraw = false; refreshRows(); }
   }
 
   function menuItem(label, icon, handler, opts) {
@@ -11939,9 +12241,18 @@
     var boot      = d.boot || 'off';
     var available = d.bootAvailable !== '0';
     menuItem('Autostart', boot === 'on' ? 'toggle-on' : 'toggle-off', function () {
-      call('autostart', { name: name, service: service || '', on: boot === 'on' ? '0' : '1' })
+      var want = boot === 'on' ? '0' : '1';
+      call('autostart', { name: name, service: service || '', on: want })
         .then(function (r) {
           if (!r.ok) { failed('Could not change autostart', r.error); return; }
+          // Written back onto the row itself, not left for the table redraw to
+          // deliver: this switch is BUILT from that attribute, so re-opening
+          // the menu before the redraw landed showed the old position — and
+          // pressing it again then sent the opposite of what was meant, which
+          // is a loop you cannot get out of by pressing harder. The redraw
+          // still comes and still has the last word; this only stops the gap
+          // in between from lying about which way the switch is set.
+          d.boot = want === '1' ? 'on' : 'off';
           refreshRows();
         });
     }, {
@@ -12008,17 +12319,40 @@
       if (String(val) === was) { if (alsoClose) closeMenu(); return; }
       was = String(val);
       if (alsoClose) closeMenu();
-      opts.onCommit(val);
+      opts.onCommit(val, box);
     }
 
-    // `change` covers blur and Enter both for a number input, but Enter is
-    // taken separately so it can also close the menu — an explicit gesture
-    // deserves to finish the job. Blur saves and leaves the menu open, because
-    // closing it there would delete whatever the person was reaching for
-    // before their click could land on it.
+    /* Four ways in, and they are not redundant.
+     *
+     * Typing pauses is the one that matters: `change` alone fires only when the
+     * box loses focus, so a number typed and then read back off the screen sits
+     * there unsaved until something unrelated steals focus — which looks exactly
+     * like a setting that did not take. The `was` guard above means whichever
+     * route fires first wins and the rest are no-ops, so nothing saves twice.
+     *
+     * Enter is taken separately from `change` so it can also close the menu; an
+     * explicit gesture deserves to finish the job. Blur leaves the menu open,
+     * because closing it there would delete whatever the person was reaching
+     * for before their click could land on it.
+     */
+    var idle = null;
+    box.addEventListener('input', function () {
+      if (idle) clearTimeout(idle);
+      // An empty box is mid-edit, not a zero: clearing 10 to type 30 would
+      // otherwise save a 0 on the way past.
+      if (box.value === '') { idle = null; return; }
+      idle = setTimeout(function () { idle = null; commit(false); }, 600);
+    });
+
     box.addEventListener('change', function () { commit(false); });
     box.addEventListener('keydown', function (event) {
       if (event.key === 'Enter') { event.preventDefault(); commit(true); }
+    });
+
+    // And the menu closing, however it closes.
+    menuPending.push(function () {
+      if (idle) { clearTimeout(idle); idle = null; }
+      commit(false);
     });
 
     menuItems.appendChild(row);
@@ -12037,11 +12371,20 @@
       parseInt(d.bootWait || '0', 10),
       {
         disabled: !available,
-        onCommit: function (val) {
+        onCommit: function (val, box) {
           call('autostart-wait', { scope: scope, key: key, wait: String(val) })
             .then(function (r) {
               if (!r.ok) { failed('Could not save that delay', r.error); return; }
-              refreshRows();
+              // The trigger's own attribute, so re-opening the menu shows what
+              // was saved rather than what the last table render knew.
+              d.bootWait = String(val);
+              // Saving is silent now that it happens on its own, and a box that
+              // gives no sign is a box you type into twice.
+              box.classList.add('staxx-menu-num--saved');
+              setTimeout(function () {
+                box.classList.remove('staxx-menu-num--saved');
+              }, 900);
+              if (menu.hidden) refreshRows(); else menuRedraw = true;
             });
         }
       });
@@ -12194,6 +12537,27 @@
       // is worth explaining on its own, separately from the ordinary
       // "docker unavailable" hint above, which is why this checks !exists
       // specifically rather than reusing `why`.
+      hint: !exists ? 'This container has not been created yet' : ''
+    });
+
+    // PLAN_50. Same !exists judgement as Logs just above, not !up: a stopped
+    // container still has a compose file to resolve an address from, and the
+    // server's own refusal ("Start the container first.") says more than a
+    // greyed-out item would — so only "never created at all" is disabled here.
+    menuItem('Test web page', 'external-link', function () {
+      logPanel.hidden = false;
+      logTitle.textContent = 'Test web page';
+      logBox.textContent = 'Checking…';
+      logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      // 15s: comfortably above the server's own four-second attempt, so a
+      // slow reply still lands rather than reading as our own timeout.
+      call('webui-test', { name: stack, service: service }, 15000).then(function (r) {
+        // The server writes the sentence; this only ever displays it.
+        logBox.textContent = r.ok ? r.message : (r.error || 'That request returned nothing usable.');
+      });
+    }, {
+      disabled: !CAN_RUN || !exists,
       hint: !exists ? 'This container has not been created yet' : ''
     });
 

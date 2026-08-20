@@ -243,33 +243,28 @@ there is no display-name override. `display: advanced` is accepted and stored, a
 fold a sidecar such as a database away behind a toggle — but nothing acts on it yet, so setting it
 today changes nothing you can see.
 
-`webui` uses Unraid's existing substitution convention for the scheme and the address:
+`webui` uses Unraid's existing `[IP]` substitution for the address, and states the port plainly:
 
 | Token        | Replaced with                                                        |
 |--------------|-----------------------------------------------------------------------|
 | `[IP]`       | The server's address, or a service's own fixed address when it has one |
-| `[PORT:…]`   | The port StaXX opens — see below. The number written inside the token is not read. |
 
-The number inside `[PORT:8096]` was meant to be the **container** port, with the host port
-substituted in its place. Checked against 64 real templates, it agrees with that reading 15 times,
-means the **host** port instead 10 times, and matches neither 3 times — template authors do not
-agree with each other, and the disagreement is silent: a link to the wrong port on a page that looks
-fine. So **StaXX ignores the number and opens the first port in the service's `ports:` list
-instead** — a rule that is always true and visible in the file itself, rather than a token that is
-only right four times out of five. `webui` still supplies the scheme and any path, `https://` or a
-trailing `/admin`; StaXX fills in only the address and the port. A `webui` with no tokens at all is
-honoured verbatim.
+**The port written in the address is the port the web button opens.** The form's "Web page port"
+box is that number — type 80 in the box and the button opens port 80. Leave the box empty and the
+button turns off, because there is nothing to open. `webui` still supplies the scheme and any path
+too, `https://` or a trailing `/admin`; the box only ever changes the port.
 
-Which port is first is yours to choose: the form gives every port row a handle you can drag, or
-focus and move with the arrow keys, and the row that ends up at the top is marked **WebUI**. The
-order is written back to `ports:` in the compose file, so the choice is visible in the file rather
-than kept in a setting somewhere. A service with no published ports has no web page button.
+An older file may still carry a `[PORT:…]` marker instead of a plain number, e.g.
+`http://[IP]:[PORT:8096]/` — that was the previous shape, and StaXX still honours it: it works the
+port out from the service's `ports:` list rather than trusting the number inside the marker, because
+checked against 64 real templates that number agreed with the container side 15 times, the host
+side 10 times, and neither 3 times. Such a file keeps working exactly as before. The first time you
+type a number into the Web page port box, the marker is replaced with that plain number and the
+guessing is no longer needed for that file.
 
-**Known gap.** `webui` itself cannot be edited in the form — nothing renders any of `x-unraid` as
-form fields yet, which is the piece this whole project is still missing. So a service whose file
-carries no `webui` shows the button greyed out with no way inside the app to give it one; the
-Compose view is the only route today. Every hand-written file is in that position, as is every
-Compose Manager import and, measured across the catalogue, 19 templates in 85.
+**Known gap.** The port is now the one part of `webui` the form can edit; the rest of the block —
+the scheme, the path, `icon`, `overview`, `display` — still cannot be, because nothing yet renders
+the whole of `x-unraid` as form fields. Changing those still means opening the Compose view.
 
 ---
 

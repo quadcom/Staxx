@@ -64,6 +64,17 @@ const STAXX_ICON_INDEX_TTL = 7 * 86400;
 /** File extensions that may be written into the cache. */
 const STAXX_ICON_EXTS = ['svg', 'png', 'webp', 'jpg', 'jpeg', 'gif', 'ico'];
 
+/**
+ * Where a failed download is remembered, so a broken source is not retried on
+ * every sweep. Under /tmp, like STAXX_JOB_DIR and STAXX_STATS_DIR: this costs
+ * no flash writes and clears itself at the next reboot, which is fine because
+ * a reboot is exactly when it is safe to try again.
+ */
+const STAXX_ICON_MISS_DIR = '/tmp/staxx/icon-miss';
+
+/** How long a failed download is remembered before it is tried again. */
+const STAXX_ICON_MISS_TTL = 6 * 3600;
+
 /** Where Unraid keeps a picture per container it has already downloaded, on
  *  the Docker vdisk rather than the flash device. Read-only from here — the
  *  importer copies out of it, exactly as the relative-path branch below
@@ -393,10 +404,42 @@ function staxx_icon_url(string $ref): string {
   return '';
 }
 
+/**
+ * Does the body actually look like the picture format $ext claims?
+ *
+ * HTTP saying 2xx only means a server answered, not that it answered with a
+ * picture — a GitHub error page saved as icon.png is exactly the failure this
+ * catches. Checked by magic bytes rather than GD, which is one dependency
+ * fewer and is exactly what tells a real PNG from HTML wearing a .png name.
+ */
+function staxx_icon_is_picture(string $ext, string $body): bool {
+  switch ($ext) {
+    case 'png':
+      return substr($body, 0, 8) === "\x89PNG\r\n\x1a\n";
+    case 'jpg':
+    case 'jpeg':
+      return substr($body, 0, 3) === "\xFF\xD8\xFF";
+    case 'gif':
+      return substr($body, 0, 6) === 'GIF87a' || substr($body, 0, 6) === 'GIF89a';
+    case 'webp':
+      return substr($body, 0, 4) === 'RIFF' && substr($body, 8, 4) === 'WEBP';
+    case 'ico':
+      return substr($body, 0, 4) === "\x00\x00\x01\x00";
+    case 'svg':
+      // Text, not magic bytes: an XML prolog, a comment or a DOCTYPE may
+      // legitimately precede the <svg> tag itself.
+      $head = strtolower(substr($body, 0, 1024));
+      return strpos($head, '<svg') !== false && strpos($head, '<html') === false;
+    default:
+      return false;
+  }
+}
+
 /** Store one icon under $ref, in both places. */
 function staxx_icon_store(string $ref, string $ext, string $body): bool {
   if (!staxx_icon_safe_ref($ref)) return false;
   if (!in_array($ext, STAXX_ICON_EXTS, true)) return false;
+  if (!staxx_icon_is_picture($ext, $body)) return false;
 
   if (!staxx_icon_write(STAXX_ICON_STORE.'/'.$ref.'.'.$ext, $body)) return false;
   staxx_icon_write(STAXX_ICON_SERVE.'/'.$ref.'.'.$ext, $body);
@@ -459,6 +502,24 @@ function staxx_icon_unraid(string $name): array {
 /* --------------------------------------------------------------- fetching -- */
 
 /**
+ * Was this ref tried recently and found not to work?
+ *
+ * The marker file is named after the ref with no extension. That is safe
+ * because a ref only ever reaches here after staxx_icon_safe_ref() has
+ * already restricted it to lower-case letters, digits and hyphens.
+ */
+function staxx_icon_missed(string $ref): bool {
+  $when = @filemtime(STAXX_ICON_MISS_DIR.'/'.$ref);
+  return $when !== false && (time() - $when) <= STAXX_ICON_MISS_TTL;
+}
+
+/** Record that a download for $ref failed, so the next sweep skips it. */
+function staxx_icon_mark_missed(string $ref): void {
+  if (!is_dir(STAXX_ICON_MISS_DIR)) @mkdir(STAXX_ICON_MISS_DIR, 0755, true);
+  @touch(STAXX_ICON_MISS_DIR.'/'.$ref);
+}
+
+/**
  * Download one icon and cache it. Returns the URL to load it from, or ''.
  *
  * $remote is where to get it: for a collection icon the caller does not supply
@@ -471,6 +532,7 @@ function staxx_icon_fetch(string $ref, string $remote = ''): string {
 
   $cached = staxx_icon_url($ref);
   if ($cached !== '') return $cached;
+  if (staxx_icon_missed($ref)) return '';
 
   $sources = [];
   if ($remote !== '') {
@@ -489,6 +551,12 @@ function staxx_icon_fetch(string $ref, string $remote = ''): string {
     if ($body === null) continue;
     if (staxx_icon_store($ref, $ext, $body)) return STAXX_ICON_BASE.'/'.$ref.'.'.$ext;
   }
+
+  // A network attempt genuinely happened and none of it worked, so remembering
+  // this is what lets the wanted list actually empty: the sweep then reports
+  // itself finished instead of tripping its budget and making the browser ask
+  // again 500ms later, forever.
+  staxx_icon_mark_missed($ref);
   return '';
 }
 

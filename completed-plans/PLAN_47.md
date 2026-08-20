@@ -180,3 +180,8 @@ anything this changed — it expects 70 templates with a container present and f
 and names the archive folder; that Remove and archive shows the finished zip's path with Done as the
 only thing left; and that the settings panel's archive folder field, its Browse button and the list
 of archives below it all render and save.
+
+Merged with `main`, which had meanwhile grown two-file stacks. The one conflict was the file scan
+this plan deletes; resolving it kept the deletion, and the teardown now names both halves of a pair
+so an override's services cannot be left running. Proved on the server: a stack whose main file is
+only valid *with* its override is torn down and archived as a pair, with both files in the zip.

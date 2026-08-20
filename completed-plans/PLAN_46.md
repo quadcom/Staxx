@@ -1,6 +1,6 @@
 # PLAN_46 — bringing Compose Manager projects in
 
-**Status: APPROVED 2026-08-19, being built on branch `compose-manager-import`.** Sub-plan of
+**Status: BUILT 2026-08-19 on branch `compose-manager-import`. Every phase is in; what is left is a browser pass, listed at the foot.** Sub-plan of
 PLAN_35, whose phase 4 this is — the last one.
 
 **Override support is kept separable on Adrian's instruction.** He may pull it back out if handling
@@ -126,9 +126,11 @@ Docker takes a project's name from its folder, lowercased and stripped. So the i
 makes no difference. Two consequences worth stating plainly:
 
 - **A name already in use is refused**, as it is now. There is no renaming an import to fit.
-- **The row will show the stack as running before it has ever been started**, because the containers
-  carrying that project name are running. That is truthful, not a bug — but the review lock still
-  holds every run verb, so nothing can act on them until you have looked.
+- **The row shows it as stopped until it is taken over**, even though containers under that project
+  name are running. This plan originally said the opposite, and was wrong: a stack held for review
+  reports no state at all, deliberately, because a green row on an import nobody has checked invites
+  someone to act on it. Confirmed in the browser 2026-08-19 — the earlier decision stands and this
+  plan was corrected to match it.
 
 **Proven on the server, and the answer was "not quite".** Compose Manager does not let the folder
 decide — it lowercases the name and turns hyphens into underscores. StaXX keeps hyphens. So matching
@@ -246,18 +248,101 @@ shared "which files belong to a stack" list this plan once needed is therefore n
 **1. Prove the project name. — DONE 2026-08-19.** See the measurements above: names match only after
 hyphens become underscores, and Docker records both paths of a pair.
 
-**2. Two files per stack.** The capability, on its own, tested against a hand-made stack with an
-override before any importing is involved. This is the only part that touches existing behaviour, so
-it ships and gets proved separately.
+**2. Two files per stack. — BUILT 2026-08-19, deployed.** In its own two commits, as instructed, so
+it can be reverted without taking the import with it. Twenty-five server-side cases pass, including
+the one that is the whole point: a base file invalid on its own passes once its override is layered
+on. Two things the design missed and the build caught: creating an override through the editor's New
+file button was impossible, because that button creates a file by saving nothing to it and empty text
+is refused — empty is now allowed through and the live check goes red instead; and an override
+setting a value to nothing is *cancelled* by the base file when Docker merges, which is why the first
+test written for it wrongly passed.
 
-**3. Reading and writing projects in.** Part A and Part B — the import panel's Compose Manager group
-becomes tickable, projects land needing review, nothing can start yet.
+Still to prove in a browser: that the pair's own tab checks live, that Start's log names both files,
+and that a single-file stack looks and behaves exactly as before.
 
-**4. The takeover.** Part D — the one button, its warning, and clearing the note on success.
+**3. Reading and writing projects in. — BUILT 2026-08-19, deployed.** Part A and Part B. Proved
+against all seven real projects: six import, and Wazuh is refused because Docker rejects its
+ten-byte file. Copies come out byte-identical, the pair is recognised, the review lock holds, and the
+project name matches what Docker already calls it in every case.
 
-**5. The loose ends PLAN_35 flags.** The self-test's project count learning to say how many resolve
-and how many do not; the plain-English docs finally mentioning imports at all; and a row that says
-when the file it was copied from has changed since.
+Three things this plan had wrong, found by running it against the real projects:
+
+- **A project's files can live in appdata while an older copy sits on flash**, and for one of yours
+  those copies differ — the compose file *and* the settings file. The override and settings file are
+  now taken from beside the file actually in use, falling back to the project's own folder, which is
+  where one project genuinely keeps its override. Left as written, the import would have quietly
+  carried settings the project itself stopped using.
+- **A file Docker rejects is not a file with nothing in it.** The refusal now quotes Docker rather
+  than calling a broken file empty.
+- **Whether a project can be imported is stated by the server**, not worked out in the browser by
+  pattern-matching the sentences it also sent.
+
+Still to prove in a browser: ticking a project, the fixed destination name, and the preview's
+account of what will and will not be copied.
+
+**4. The takeover. — BUILT 2026-08-19, deployed.** Part D, as designed: one bring-up, no renames, no
+undo state, no follow-up question, and the review lock still the only door in. Which of the two acts
+a stack gets is decided by the server, and a project match wins over a pinned container name — the
+four projects that name their own containers would otherwise hit the handover's refusal, when compose
+will simply reuse those very containers. That refusal was not loosened.
+
+Two doors the design had left open: a takeover cannot start while a handover is waiting on an answer,
+and the running check no longer assumes how Docker capitalises a state.
+
+Proved on the server by refusals only — the one thing this does when it is *not* refused is rebuild
+containers that are really running, which no test may do here. Of the six importable projects, four
+take the rebuild route and two — never brought up, so nothing exists to rebuild — take the plain
+"clear the lock and start it yourself" route.
+
+**Still to prove in a browser, and it is the last real risk in this plan:** one actual takeover, on
+one project, watched. Everything up to the bring-up is proved; the bring-up itself is not.
+
+**5. The loose ends PLAN_35 flags. — BUILT 2026-08-19, deployed.** All three.
+
+- **The row says when the source has changed.** Worked out live by following the shared project name
+  and comparing the files, with nothing recorded — a stored source would be the second copy that can
+  disagree, which is the problem being reported. The first attempt cost 799ms on every table render
+  because it reached for the full import reader; it now costs under a millisecond by resolving each
+  project's real file from what the page has already worked out.
+- **The self-test** says how many projects resolve to a readable compose file and how many do not,
+  and admits that a project only findable by asking Docker counts as "do not" — its no-external-
+  command promise is worth more than the extra precision.
+- **The docs** cover imports at all, for the first time, including the part most worth getting right:
+  taking over means something different depending on the source.
+
+One bug found by importing a real project rather than a fixture: factoring the override lookup into a
+shared helper left the settings-file lookup borrowing a list that no longer existed, so a project
+that fills its values in from one could not be imported at all.
+
+---
+
+## What is left
+
+Nothing in this plan is unbuilt, and **the browser pass was done on 2026-08-19** against the real
+server. What it proved, in order:
+
+1. **The panel.** All seven projects listed, six tickable, Wazuh refused with Docker's own complaint
+   quoted. Fixed destination names shown, with the reason spelled out where the name differs.
+2. **An import.** `Tesla_Tools` written in, arriving held for review; both files byte-identical to the
+   project on disk afterwards.
+3. **The pair, checked live.** Typing a bad line into the override produced *"cannot override
+   services.tesla_http_proxy.ports"* — a merge complaint, which can only come from checking the
+   override together with the main file. Nothing was saved; the files on disk stayed identical.
+4. **The drift mark.** Appeared on the row when the copy was deliberately changed, and cleared when
+   it was put back.
+5. **A real takeover**, on `supstack-dev`, whose two containers were running. The job's first line
+   was `compose -f docker-compose.yml -f docker-compose.override.yml up -d --remove-orphans` — both
+   files named, in a real run. Both containers came back up, still two of them and not four, the
+   review lock cleared on success, and the Compose Manager project was left exactly as it was.
+
+Two things found by looking rather than testing: the import preview called a file by Compose
+Manager's internal name for it, now fixed; and this plan's claim about a locked row showing as
+running was wrong, corrected above.
+
+Two things deliberately left out of scope, both recorded rather than forgotten: **containers
+belonging to neither source** remain reference-only, as PLAN_35 decided; and **drift from an Unraid
+template** is not detected, only drift from a Compose Manager project — a template has no shared name
+to follow, so it would need the stored record this design refuses to keep.
 
 ---
 

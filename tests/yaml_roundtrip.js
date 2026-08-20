@@ -1263,23 +1263,28 @@ console.log('\nJ. The always-present Container settings');
 
 (function () {
   // The field count is what refreshRanges() indexes by, so it must never
-  // move when an absent slot gains a line. Nineteen, not twenty: PLAN_34
+  // move when an absent slot gains a line. Twenty, not nineteen: PLAN_34
   // phase 4 dropped network_mode out of the fixed Container pass, so the
-  // fixed count fell from four to three (image, container_name, restart),
-  // plus the same sixteen blank health-check/resource-limit/logging/build
-  // leaves as before — harvestLeaves() (PLAN_8 phase 2) offers those whether
-  // or not the file has healthcheck:/deploy:/logging:/build: at all,
-  // healthcheck.test counts as two of them (PLAN_8 phase 4 — the mode and the
-  // command, see harvestHealthTest()), and build (PLAN_21) added its three
-  // scalars (context, dockerfile, target) at the end of the fixed pass.
+  // fixed count fell from four to three (image, container_name, restart);
+  // PLAN_51 then added a fourth Container row, the web page port, straight
+  // after them — absent and creatable rather than fixed, since it reaches
+  // inside x-unraid rather than being one of the plain ALWAYS_KEYS, and it
+  // carries no path (see harvestWebui()), unlike the sixteen blank health-
+  // check/resource-limit/logging/build leaves that follow it — harvestLeaves()
+  // (PLAN_8 phase 2) offers those whether or not the file has healthcheck:/
+  // deploy:/logging:/build: at all, healthcheck.test counts as two of them
+  // (PLAN_8 phase 4 — the mode and the command, see harvestHealthTest()), and
+  // build (PLAN_21) added its three scalars (context, dockerfile, target) at
+  // the end of the fixed pass.
   var src = 'services:\n  a:\n    image: alpine\n';
   var doc = Y.parse(src), form = Y.buildForm(doc);
   var svcFields = form.fields.filter(function (f) { return f.service === 'a'; });
 
-  ok('a service with no other settings yields three fixed fields plus sixteen blank leaves',
-     svcFields.length === 19 &&
+  ok('a service with no other settings yields three fixed fields, a web page port, and sixteen blank leaves',
+     svcFields.length === 20 &&
      svcFields.slice(0, 3).every(function (f) { return f.fixed; }) &&
-     svcFields.slice(3).every(function (f) { return f.absent && f.path; }),
+     svcFields[3].target === 'x-unraid.webui' && svcFields[3].absent && !svcFields[3].path &&
+     svcFields.slice(4).every(function (f) { return f.absent && f.path; }),
      svcFields.map(function (f) { return f.target; }).join(', '));
 
   var before = form.fields.length;
@@ -1503,8 +1508,11 @@ var FIXTURE_10_ADVANCED = [
   // confidence, so it surfaces right there with its siblings rather than
   // later as a locked catch-all field. web's depends_on is long form
   // (PLAN_8 phase 5) — one field for "db" plus its restart/required fold, in
-  // place of the single locked block earlier phases left it as. So the count
-  // is twenty-six, not the ten keys the original file has at the top of
+  // place of the single locked block earlier phases left it as. PLAN_51
+  // then added the web page port as a fourth Container field, straight
+  // after restart — web has no x-unraid: block at all, so it reads back
+  // blank, the same as an absent Container row. So the count is
+  // twenty-seven, not the ten keys the original file has at the top of
   // web:. Pinning f.id rather than binder/target is deliberate — a list
   // field's id carries its list key and index
   // (web/list.networks#0/frontend_net), which is what stops the same name
@@ -1517,6 +1525,7 @@ var FIXTURE_10_ADVANCED = [
     'web/setting/image',
     'web/setting/container_name',
     'web/setting/restart',
+    'web/setting/x-unraid.webui',
     'web/setting/healthcheck.test.mode',
     'web/setting/healthcheck.test.command',
     'web/setting/healthcheck.interval',
@@ -1541,8 +1550,188 @@ var FIXTURE_10_ADVANCED = [
     'web/depends/depends_on.db.restart',
     'web/depends/depends_on.db.required'
   ];
-  ok('web yields exactly these twenty-six fields, in file order',
+  ok('web yields exactly these twenty-seven fields, in file order',
      JSON.stringify(got) === JSON.stringify(want), got.join(', '));
+})();
+
+/* ---- 3b. Web page port (PLAN_51) — the one field that reaches inside
+ *          x-unraid: reading each of the four address shapes in Adrian's
+ *          files, writing a literal port over a token or a bare number,
+ *          clearing one without losing the line, and creating the address
+ *          from nothing --------------------------------------------------- */
+
+(function () {
+  // The token form — 40 of Adrian's 42 files. The field shows the number
+  // inside "[PORT:…]", not the token itself.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      webui: "http://[IP]:[PORT:8181]/"\n';
+  var f = Y.fieldById(Y.buildForm(Y.parse(src)), 'a/setting/x-unraid.webui');
+  ok('a [PORT:…] token reads as its own number', f.parts.value.value === '8181');
+
+  // A literal port with a trailing path.
+  var src2 = 'services:\n  a:\n    image: alpine\n' +
+             '    x-unraid:\n      webui: "http://[IP]:80/"\n';
+  var f2 = Y.fieldById(Y.buildForm(Y.parse(src2)), 'a/setting/x-unraid.webui');
+  ok('a literal port ahead of a path reads as itself', f2.parts.value.value === '80');
+
+  // A literal port with no scheme host token and no trailing path.
+  var src3 = 'services:\n  a:\n    image: alpine\n' +
+             '    x-unraid:\n      webui: "http://192.168.200.88:5000"\n';
+  var f3 = Y.fieldById(Y.buildForm(Y.parse(src3)), 'a/setting/x-unraid.webui');
+  ok('a literal port with no path reads as itself', f3.parts.value.value === '5000');
+
+  // No port at all — a path straight after the host.
+  var src4 = 'services:\n  a:\n    image: alpine\n' +
+             '    x-unraid:\n      webui: "http://[IP]/admin"\n';
+  var f4 = Y.fieldById(Y.buildForm(Y.parse(src4)), 'a/setting/x-unraid.webui');
+  ok('an address with no port at all reads as an empty field', f4.parts.value.value === '');
+})();
+
+(function () {
+  // Writing a port over a [PORT:…] token replaces the whole token, so the
+  // address stops asking the plugin to guess and simply says what it is.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      webui: "http://[IP]:[PORT:8181]/"\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('writing a port over a token succeeds',
+     Y.setPart(doc, form, 'a/setting/x-unraid.webui', 'value', '9000'));
+  var out = Y.serialise(doc);
+  ok('the token is gone and the line carries a literal port instead',
+     out.indexOf('webui: "http://[IP]:9000/"') >= 0, out);
+})();
+
+(function () {
+  // Clearing a port that already has one leaves the line — scheme and path
+  // both survive — with nothing between the colon and the path. Deleting
+  // the whole address is the × button's job, not a blank box's.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      webui: "http://[IP]:80/admin"\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('clearing the port succeeds',
+     Y.setPart(doc, form, 'a/setting/x-unraid.webui', 'value', ''));
+  var out = Y.serialise(doc);
+  ok('the address survives with its path, but no port',
+     out.indexOf('webui: "http://[IP]:/admin"') >= 0, out);
+})();
+
+(function () {
+  // No x-unraid block at all — filling the box in has to build the whole
+  // thing, in the [IP] shape a macvlan container needs to resolve its own
+  // address rather than the server's.
+  var src = 'services:\n  a:\n    image: alpine\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('writing a port into an absent field succeeds',
+     Y.setPart(doc, form, 'a/setting/x-unraid.webui', 'value', '8080'));
+  var out = Y.serialise(doc);
+  ok('a whole address is created, in the [IP] form',
+     out.indexOf('x-unraid:') >= 0 && out.indexOf('webui: http://[IP]:8080/') >= 0, out);
+
+  // Rebuilding the form off that output reads the same port straight back.
+  var reread = Y.fieldById(Y.buildForm(Y.parse(out)), 'a/setting/x-unraid.webui');
+  ok('the created address reads its own port back', reread.parts.value.value === '8080');
+})();
+
+(function () {
+  // Round-trip safety: parsing a file with a webui: line and writing it
+  // straight back out, untouched, must reproduce it byte for byte — the
+  // field must never fire on its own just because the form read it.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      webui: "http://[IP]:[PORT:8181]/"\n';
+  var doc = Y.parse(src);
+  Y.buildForm(doc);
+  ok('reading the field alone leaves the file untouched',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- 3c. Web page port: a [PORT:…] token shows the number the button
+ *          ACTUALLY opens, not the token's own number, which is measured
+ *          unreliable — the server ignores it and reads the service's own
+ *          ports: list instead. A literal port is untouched. ------------- */
+
+(function () {
+  // Bridge, two-sided mapping: the token names the container side (80), but
+  // the button opens the published side (8686) — the field must show that,
+  // not the token's own number, or saving would write the wrong port in.
+  var src = 'services:\n  a:\n    image: alpine\n    ports:\n      - "8686:80"\n' +
+            '    x-unraid:\n      webui: "http://[IP]:[PORT:80]/"\n';
+  var f = Y.fieldById(Y.buildForm(Y.parse(src)), 'a/setting/x-unraid.webui');
+  ok('bridge + two-sided mapping: shows the published port, not the token',
+     f.parts.value.value === '8686', f.parts.value.value);
+})();
+
+(function () {
+  // Same file, but network_mode: host — now the button opens the port
+  // INSIDE the container, the same number the token already named.
+  var src = 'services:\n  a:\n    image: alpine\n    network_mode: host\n' +
+            '    ports:\n      - "8686:80"\n' +
+            '    x-unraid:\n      webui: "http://[IP]:[PORT:80]/"\n';
+  var f = Y.fieldById(Y.buildForm(Y.parse(src)), 'a/setting/x-unraid.webui');
+  ok('host networking: shows the container-side port', f.parts.value.value === '80', f.parts.value.value);
+})();
+
+(function () {
+  // A macvlan service — its own address, so the container-side port is what
+  // the button opens, exactly as with host networking above.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    networks:\n      - lan\n    ports:\n      - "80:8080"\n' +
+            '    x-unraid:\n      webui: "http://[IP]:[PORT:80]/"\n' +
+            'networks:\n  lan:\n    driver: macvlan\n';
+  var f = Y.fieldById(Y.buildForm(Y.parse(src)), 'a/setting/x-unraid.webui');
+  ok('macvlan: shows the container-side port', f.parts.value.value === '8080', f.parts.value.value);
+})();
+
+(function () {
+  // No ports: list at all — nothing to read the true port from, so the
+  // token's own number is the best available and stays showing.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      webui: "http://[IP]:[PORT:8181]/"\n';
+  var f = Y.fieldById(Y.buildForm(Y.parse(src)), 'a/setting/x-unraid.webui');
+  ok('no ports: list: falls back to the token\'s own number', f.parts.value.value === '8181', f.parts.value.value);
+})();
+
+(function () {
+  // A one-sided port entry ("- \"8096\"") on a bridge service has no
+  // published half at all — nothing to show, so this falls back to the
+  // token's own number too, same as having no ports: list.
+  var src = 'services:\n  a:\n    image: alpine\n    ports:\n      - "8096"\n' +
+            '    x-unraid:\n      webui: "http://[IP]:[PORT:8096]/"\n';
+  var f = Y.fieldById(Y.buildForm(Y.parse(src)), 'a/setting/x-unraid.webui');
+  ok('bridge + one-sided port entry: falls back to the token\'s own number',
+     f.parts.value.value === '8096', f.parts.value.value);
+})();
+
+(function () {
+  // A literal port is already the truth — a ports: list saying something
+  // different must not disturb it.
+  var src = 'services:\n  a:\n    image: alpine\n    ports:\n      - "9999:80"\n' +
+            '    x-unraid:\n      webui: "http://[IP]:1234/"\n';
+  var f = Y.fieldById(Y.buildForm(Y.parse(src)), 'a/setting/x-unraid.webui');
+  ok('a literal port is left exactly as written, regardless of ports:',
+     f.parts.value.value === '1234', f.parts.value.value);
+})();
+
+(function () {
+  // The box shows the corrected number (8686), not the token's own (80) — and
+  // saving it UNCHANGED must not rewrite the line: setPart's own no-op guard
+  // compares against that same corrected value, so an untouched box leaves
+  // the marker in the file exactly as it was, matching current behaviour.
+  var src = 'services:\n  a:\n    image: alpine\n    ports:\n      - "8686:80"\n' +
+            '    x-unraid:\n      webui: "http://[IP]:[PORT:80]/"\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var f = Y.fieldById(form, 'a/setting/x-unraid.webui');
+  ok('the corrected value is what the box shows before any save', f.parts.value.value === '8686');
+  ok('"saving" the box untouched is a no-op',
+     Y.setPart(doc, form, 'a/setting/x-unraid.webui', 'value', f.parts.value.value));
+  ok('...and really did leave the file untouched — the marker survives',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+
+  // Editing the box to a genuinely different port still writes a literal in
+  // its place, with the scheme and path either side untouched.
+  ok('writing a new value over the token succeeds',
+     Y.setPart(doc, form, 'a/setting/x-unraid.webui', 'value', '9191'));
+  var out = Y.serialise(doc);
+  ok('the token is gone, replaced by a literal port, scheme and path intact',
+     out.indexOf('webui: "http://[IP]:9191/"') >= 0, out);
 })();
 
 /* ---- 4. healthcheck and deploy split into per-value fields; depends_on's
@@ -8617,8 +8806,9 @@ console.log('\nAH. PLAN_40 — dragging a port (moveItem)');
   });
 })();
 
-/* ---- 9. After a move, buildForm reports the ports in the new order, and
-            the field now first is the one PLAN_39's WebUI chip marks ------ */
+/* ---- 9. After a move, buildForm reports the ports in the new order — the
+            web button no longer cares which one that is (PLAN_51), but
+            dragging still reorders the file ------------------------------ */
 
 (function () {
   var src = [
@@ -8635,8 +8825,7 @@ console.log('\nAH. PLAN_40 — dragging a port (moveItem)');
   Y.moveItem(doc, form, 'a', 'ports', 0, 1);
 
   var ports = Y.buildForm(doc).fields.filter(function (f) { return f.service === 'a' && f.binder === 'port'; });
-  ok('both ports still appear, in the new order — the first one is what PLAN_39\'s rule ' +
-     'hands the WebUI button, so this is the field the chip would now mark',
+  ok('both ports still appear, in the new order',
      ports.length === 2 &&
      ports[0].parts.host.value === '9090' && ports[0].parts.container.value === '90' &&
      ports[1].parts.host.value === '8080' && ports[1].parts.container.value === '80',
