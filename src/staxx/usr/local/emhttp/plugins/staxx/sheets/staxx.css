@@ -1729,21 +1729,25 @@
 
 /* ---- Context menu ------------------------------------------------------- */
 
-/* Fixed, so it is measured against the viewport, and a child of the page
-   rather than of a table cell — inside the table's scroll container it would
-   be clipped the moment it opened.
+/* Positioned in the PAGE, and a child of the page rather than of a table cell
+   — inside the table's scroll container it would be clipped the moment it
+   opened.
+
+   `absolute` rather than `fixed`, which is what it used to be. A stack's menu
+   carries one line per folder on the server, so on a real box it is taller
+   than the window. Pinned to the viewport that made the rest of it
+   unreachable: it could not overhang, because a viewport-pinned element does
+   not extend the page's scrollable area, and it could not scroll inside
+   itself without a scrollbar nobody wanted. Positioned in the page it simply
+   overhangs, the page grows to take it, and scrolling down reaches the rest
+   while the menu travels with the row it belongs to. openMenu() is written to
+   need no help from here in working out where "the page" is.
 
    background-color uses --background-color, which is a real colour in every
    shipped theme. It must never be --background: see trap 1 at the top. */
 .staxx-menu {
-  position: fixed;
+  position: absolute;
   z-index: 9999;
-  /* A column flexbox so the heading naming the row stays put while a long
-     list of items scrolls under it — see .staxx-menu-list. The [hidden] rule
-     below still wins over this display, being the later of two author rules
-     on the same property. */
-  display: flex;
-  flex-direction: column;
   min-width: 24rem;
   max-width: 34rem;
   padding: 0.4rem 0;
@@ -1775,7 +1779,6 @@
 
 .staxx-menu-head {
   display: flex;
-  flex: 0 0 auto;
   align-items: center;
   gap: 0.8rem;
   padding: 0.8rem 1.2rem;
@@ -1785,24 +1788,6 @@
   overflow-wrap: anywhere;
 }
 
-/* The items, and the only part that scrolls.
- *
- * A stack's menu carries one line per folder on the server, so it outgrew the
- * window and simply ran off the bottom: the placement code can flip a menu
- * above its icon or pin it to an edge, but neither helps once the menu is
- * taller than the viewport. No max-height here — how much room there is
- * depends on where the menu opened, so openMenu() measures and sets it.
- *
- * overscroll-behavior stops reaching the end of the list from handing the
- * scroll on to the page behind it, which would close the menu: the window
- * scroll listener that does that is registered in the capture phase and
- * cannot tell whose scroll it is looking at without being told. */
-.staxx-menu-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
 
 .staxx-scaffold .staxx-menu-item {
   display: flex;

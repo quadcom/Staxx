@@ -13842,9 +13842,9 @@
   }
 
   function closeMenu() {
-    // The scroll listener that calls this is registered in the CAPTURE phase,
-    // so it fires for scrolling inside ANY element on the page — including the
-    // editor's own panes, where it would otherwise run on every frame.
+    // Called from a dozen places, most of them not knowing or caring whether
+    // a menu is even open — every click on the page goes through here. Doing
+    // nothing when there is nothing to close is what makes that safe.
     if (menu.hidden) return;
     menuFlush();
     // Read before anything below moves it: only when the menu itself still
@@ -14550,52 +14550,53 @@
     else buildStackMenu(d);
 
     // Show it before measuring — a hidden element has no size.
+    // Parked at 0,0 first, which is also the measurement that makes the rest
+    // of this coordinate-system agnostic: `origin` is where left:0/top:0
+    // actually landed on screen, so a target expressed in viewport
+    // coordinates converts to an inline left/top by subtracting it. Nothing
+    // below has to know whether the menu's containing block is the page, the
+    // scaffold, or something Unraid positioned three levels up.
     menu.hidden = false;
     menu.style.left = '0px';
     menu.style.top  = '0px';
-    // Clear any cap left over from a previous open, so the height measured
-    // below is the menu's natural, uncapped height.
-    menuItems.style.maxHeight = '';
 
-    var at   = point ? { left: point.x, top: point.y, bottom: point.y }
-                     : trigger.getBoundingClientRect();
-    var size = menu.getBoundingClientRect();
-    var pad  = 8;
-
-    // How much room there is depends on where the menu opened, so that is
-    // worked out here rather than in the stylesheet (deliberately no
-    // max-height there). Cap only when the menu's natural height fits
-    // neither above nor below, and then use whichever side has more room —
-    // the clamping below still decides which side it actually opens on.
-    var MIN_LIST_HEIGHT = 192; // a few items' worth (12rem @ 16px), never go below this
-    var spaceBelow = window.innerHeight - at.bottom - 4 - pad;
-    var spaceAbove = at.top - 4 - pad;
-    if (size.height > spaceBelow && size.height > spaceAbove) {
-      // Chrome = everything in the menu that isn't the scrollable list
-      // (the head, plus the menu's own padding/borders) — found by
-      // subtracting the list's height from the menu's, not by hard-coding
-      // figures that belong to staxx.css.
-      var chrome = size.height - menuItems.getBoundingClientRect().height;
-      var room   = Math.max(spaceBelow, spaceAbove) - chrome;
-      menuItems.style.maxHeight = Math.max(MIN_LIST_HEIGHT, room) + 'px';
-      size = menu.getBoundingClientRect();
-    }
+    var at     = point ? { left: point.x, top: point.y, bottom: point.y }
+                       : trigger.getBoundingClientRect();
+    var origin = menu.getBoundingClientRect();
+    var size   = origin;   // the same rect carries the menu's width and height
+    var pad    = 8;
 
     var left = at.left;
     var top  = at.bottom + 4;
 
-    // Keep it on screen: flip above the icon if it would run off the bottom,
-    // and pull it left if it would run off the right.
+    // Sideways it must stay on screen: there is nothing to scroll to reach a
+    // menu that has run off the right, and pulling it left costs nothing.
     if (left + size.width + pad > window.innerWidth) {
       left = Math.max(pad, window.innerWidth - size.width - pad);
     }
+
+    /* Downwards is different, and deliberately so.
+     *
+     * The menu is positioned in the PAGE, not against the viewport (see
+     * .staxx-menu in staxx.css), so scrolling moves it along with the row it
+     * belongs to instead of leaving it stranded — which is what lets a menu
+     * taller than the window be read at all: you scroll the page to it. That
+     * is why there is no height cap and no scrollbar inside the menu. It also
+     * means a menu that overhangs the bottom is not a problem to solve, so it
+     * is left alone: an absolutely positioned element extends the page's own
+     * scrollable area, so there is always somewhere to scroll to.
+     *
+     * Flipping above the icon is still worth doing when the whole menu fits
+     * there, because reading it without scrolling at all is better again. Only
+     * when it fits neither way does it hang below.
+     */
     if (top + size.height + pad > window.innerHeight) {
       var above = at.top - size.height - 4;
-      top = above >= pad ? above : Math.max(pad, window.innerHeight - size.height - pad);
+      if (above >= pad) top = above;
     }
 
-    menu.style.left = Math.round(left) + 'px';
-    menu.style.top  = Math.round(top) + 'px';
+    menu.style.left = Math.round(left - origin.left) + 'px';
+    menu.style.top  = Math.round(top - origin.top) + 'px';
 
     // PLAN_44 A3b: focus moves to the first enabled item on open — a menu
     // shown by right-click has never had a chance to receive focus any other
@@ -15200,23 +15201,23 @@
     }
   });
 
-  // A menu positioned against the viewport has to go away when the viewport
-  // moves under it, or it detaches from the icon it belongs to.
+  /* A resize reflows the page under the menu, so where it was pinned no
+   * longer means what it meant. Closing is the honest answer there.
+   *
+   * SCROLLING IS NOT, AND THERE IS DELIBERATELY NO SCROLL LISTENER HERE.
+   * There used to be one, closing the menu on any scroll anywhere, which is
+   * correct for a menu pinned to the viewport and was what made a menu too
+   * tall for the window unreadable: scrolling towards the rest of it was the
+   * one gesture guaranteed to destroy it. The menu is positioned in the page
+   * now (see .staxx-menu in staxx.css), so a scroll carries it along with the
+   * row it belongs to and there is nothing to close.
+   *
+   * The one thing this gives up: the table scrolls sideways in its own box on
+   * a narrow window, and that moves the icon without moving the menu. The
+   * menu's heading names the row it is acting on, so it still cannot act on
+   * the wrong thing — and closing every menu on every scroll to tidy up that
+   * one case is the trade that was just undone. */
   window.addEventListener('resize', closeMenu);
-  // Capture phase is right, per closeMenu()'s own comment above: a
-  // viewport-positioned menu has to go away when anything on the page
-  // scrolls under it, and that can only be caught by listening on window in
-  // capture. But capture on window also sees the menu's own list scrolling
-  // itself, now that a menu too tall for the window can scroll — so a scroll
-  // that came from inside the menu is exempted rather than closing the very
-  // thing being scrolled. This is why the menu could not be scrolled at all
-  // before: trying to made it vanish.
-  // A document scroll's target is the document, not an element, hence the
-  // Node check before asking menu.contains().
-  window.addEventListener('scroll', function (event) {
-    if (event.target instanceof Node && menu.contains(event.target)) return;
-    closeMenu();
-  }, true);
 
   /* -------------------------------------------------------- keyboard nav -- */
 
