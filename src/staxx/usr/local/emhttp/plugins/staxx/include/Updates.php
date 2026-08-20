@@ -315,9 +315,14 @@ function staxx_tag_suggestions(string $missing, array $tags): array {
  * later" — checked on plain text, since a 429 reply is never JSON.
  *
  * On a plain 'notfound', and only when $image is given, one extra request
- * asks the registry for the repository's whole tag list — this is the only
- * place that request happens, and it must stay that way: an image that
- * answered normally must never trigger it. Tags returned and ours absent
+ * asks the registry for the repository's whole tag list — an image that
+ * answered normally must never trigger it. Two callers ask for a tag list:
+ * this one, and the `image:` field's own lookup as it is typed in. The
+ * second is affordable because the browser debounces it by 400ms and
+ * caches the answer per repository for the session, so a repository is
+ * asked about once however long someone spends editing.
+ *
+ * Tags returned and ours absent
  * means the tag itself was withdrawn ('tagmissing'), with the list handed
  * back through $tags so the caller does not have to ask again to store it.
  * Tags returned and ours still among them means something stranger is
@@ -1043,7 +1048,7 @@ function staxx_updates_aggregate(array $pills): array {
   if (!$pills) {
     return [
       'state' => 'unknown', 'label' => 'never checked', 'count' => 0,
-      'image' => '', 'source' => '',
+      'image' => '', 'source' => '', 'suggest' => '',
       'tip' => 'There is nothing here to check for updates.',
       'due' => 0, 'hold' => false, 'why' => '',
     ];
@@ -1054,7 +1059,8 @@ function staxx_updates_aggregate(array $pills): array {
 
   $best      = null;
   $bestRank  = 99;
-  $updateCount = 0;
+  $updateCount     = 0;
+  $tagMissingCount = 0;
   $source    = '';
   // The soonest clock among the children, and the first non-empty reason one
   // of them will not fire automatically — a folder or stack row speaks for
@@ -1066,6 +1072,7 @@ function staxx_updates_aggregate(array $pills): array {
   foreach ($pills as $p) {
     $state = $p['state'] ?? 'unknown';
     if ($state === 'update') $updateCount++;
+    if ($state === 'tagmissing') $tagMissingCount++;
     $r = $rank[$state] ?? 99;
     if ($r < $bestRank) { $bestRank = $r; $best = $p; }
     if ($source === '' && ($p['source'] ?? '') !== '') $source = $p['source'];
@@ -1093,8 +1100,10 @@ function staxx_updates_aggregate(array $pills): array {
       break;
     case 'tagmissing':
       $label = 'tag withdrawn';
-      $tip   = 'One or more services here are using a tag the registry no longer publishes. '
-             . 'Open the stack to fix it.';
+      $tip   = $tagMissingCount === 1
+        ? $best['tip']
+        : $tagMissingCount.' of '.$total.' services here are using a tag the registry no '
+        . 'longer publishes. Use this row\'s menu to fix them.';
       break;
     case 'rebuild':
       $label = 'rebuild ready';
@@ -1128,6 +1137,11 @@ function staxx_updates_aggregate(array $pills): array {
     // A row speaking for several services cannot name one image; a row speaking
     // for exactly one can and does, which is what the menu's image-keyed items need.
     'image'  => $total === 1 ? (string)($pills[0]['image'] ?? '') : '',
+    // Only meaningful when the row's own state is the withdrawn tag and it
+    // speaks for exactly one such service — folding several together cannot
+    // offer one replacement tag for all of them.
+    'suggest' => ($state === 'tagmissing' && $tagMissingCount === 1)
+      ? (string)($best['suggest'] ?? '') : '',
     'source' => $source,
     'tip'    => $tip,
     'due'    => $due,

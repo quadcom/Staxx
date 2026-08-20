@@ -1714,27 +1714,35 @@
 }
 
 /* Image names run long — ghcr.io/some-org/some-app:version-1.2.3 — and must
-   not be allowed to stretch the column. */
+   not be allowed to stretch the column. A flex row rather than plain text:
+   the mismatch marker (.staxx-imgmismatch below) sits beside the name and
+   must never be the thing an ellipsis eats, so truncation lives on the name
+   span alone (.staxx-image-text) and the marker is a flex-shrink:0 sibling. */
 .staxx-image {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   max-width: 28rem;
-  overflow: hidden;
   color: var(--sm-muted);
   font-size: 1.2rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-/* On a container row, .staxx-image IS the grid cell — a grid item, which
-   the browser blockifies automatically, which is the only reason max-width,
-   overflow and text-overflow above have any effect there at all. The image
-   line under a single-service stack's name is not a cell, though; it is an
-   ordinary inline <span> sitting inside one, and an inline box ignores
-   max-width and overflow outright — so without forcing it to display: block
-   here, the truncation above would silently do nothing on this element and a
-   long registry path would stretch the row's whole column instead. */
-.staxx-image--sub {
-  display: block;
+.staxx-image-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* A flex item's minimum width defaults to its content's, which is exactly
+     what would stop the ellipsis above ever doing anything. */
+  min-width: 0;
 }
+
+/* On a container row, .staxx-image IS the grid cell — a grid item, which the
+   browser blockifies automatically. The image line under a single-service
+   stack's name is not a cell, though; it is an ordinary <span> sitting
+   inside one — .staxx-image--sub carries no rules of its own any more,
+   because display: flex above already makes it block-level, but the class
+   stays on the element so a future rule has somewhere to attach without
+   reaching for the bare .staxx-image everything else shares. */
 
 /* ---- Context menu ------------------------------------------------------- */
 
@@ -2184,6 +2192,25 @@
    the tooltip already carries the whole sentence (see staxx_import_drift()). */
 .staxx-driftmark {
   align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  color: var(--sm-accent);
+  font-size: 1.1rem;
+}
+
+/* The marker for a container running a different image from the one its
+   compose file currently declares — a save that has not yet been followed by
+   a start or restart. Same icon-only shape as .staxx-driftmark just above,
+   for the same reason (rare, and the tooltip already carries the whole
+   sentence — see staxx_image_mismatch_html()), but its own class: that marker
+   means an Unraid template moved on since import, an unrelated fact, and
+   sharing a class would blur the two together on the row.
+   flex-shrink: 0 keeps it from being squeezed away by the image name's own
+   ellipsis in the flex row the two share — see .staxx-image. Checked against
+   Unraid's own `.unapi button` overrides, the trap noted throughout this
+   file: this is a <span>, not a <button>, so none of them reach it. */
+.staxx-imgmismatch {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   color: var(--sm-accent);

@@ -1072,16 +1072,17 @@ switch ($action) {
   case 'images':
     staxx_reply(['ok' => true, 'images' => staxx_docker_images()]);
 
-  /* ---- tags Docker Hub has published for a repository ----
+  /* ---- tags a registry has published for a repository ----
    *
    * Asked for as the `image:` field's repository half settles, so the tag
    * half can offer real values instead of a guess. Takes `repo` (the
-   * repository name typed so far); an unrecognised or host-qualified shape
-   * returns an empty list rather than an error, and the field falls back to
-   * a plain text box.
+   * repository name typed so far); staxx_registry_tags() handles both a
+   * bare Docker Hub name and a host-qualified one (ghcr.io and the like), so
+   * only a shape neither can parse returns an empty list, and the field
+   * falls back to a plain text box.
    */
   case 'tags':
-    staxx_reply(['ok' => true, 'tags' => staxx_image_tags((string)($_POST['repo'] ?? ''))]);
+    staxx_reply(['ok' => true, 'tags' => staxx_registry_tags((string)($_POST['repo'] ?? ''))]);
 
   /* ---- Docker Hub's own search, the Apps dialog's second source ----
    *

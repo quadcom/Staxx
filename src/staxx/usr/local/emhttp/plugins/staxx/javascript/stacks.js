@@ -1565,6 +1565,7 @@
   var imgLoaded  = false;
   var tagCache   = {};      // repo -> tags[], including [] for "nothing found"
   var tagTimer   = null;
+  var yamlTagTimer = null;  // debounces the YAML pane's own use of tagCache — see scheduleYamlTagLoad()
 
   // Compose also accepts forms a vocab list does not carry — restart's
   // "on-failure:3" is one such value, kept in compose-model.js's own comment
@@ -8248,6 +8249,92 @@
     tagTimer = setTimeout(function () { tagTimer = null; tagLoad(box); }, 400);
   }
 
+  // Same filtering vocabSuggestionList() applies to a fixed vocabulary in
+  // compose-model.js — prefix matches first, then values that merely contain
+  // the typed text — kept as a small copy here rather than exported, since
+  // that engine must never gain a reason to know about the registry.
+  function repoTagMatches(repo, tags, prefix) {
+    var pl = prefix.toLowerCase(), starts = [], contains = [];
+    for (var i = 0; i < tags.length; i++) {
+      var full = repo + ':' + tags[i];
+      var at = full.toLowerCase().indexOf(pl);
+      if (at === 0) starts.push({ key: full, title: '' });
+      else if (at > 0) contains.push({ key: full, title: '' });
+    }
+    var matches = starts.concat(contains);
+    // What is already typed, in full, is not a suggestion.
+    if (matches.length === 1 && matches[0].key.toLowerCase() === prefix.toLowerCase()) return [];
+    return matches;
+  }
+
+  // The YAML pane's own recognition of an `image:` value position.
+  // YAML.valueSuggestions() never learns this key — it is in neither
+  // VOCAB_AT nor REF_AT there, deliberately, because a real tag list needs
+  // the registry and that engine must never touch the network (see the
+  // comment above tagLoad()). This mirrors its shape ({start, end, prefix,
+  // keys, value}) closely enough that runSuggest()/showSuggest() need no
+  // branch to know which produced it, plus a `repo` the caller uses to kick
+  // and then re-check the lookup. Returns null off the value position
+  // entirely; `keys` comes back empty (not null) when nothing is cached yet
+  // — the caller schedules the fetch either way.
+  function imageValueHit(text, offset) {
+    var lb = selectedLines(text, offset, offset);
+    var line = text.slice(lb.start, lb.end);
+    var m = /^(\s*)image:([ \t])/.exec(line);
+    if (!m) return null;
+
+    var vs = m[0].length;
+    while (line.charAt(vs) === ' ' || line.charAt(vs) === '\t') vs++;
+    var end = line.length;
+    var hash = line.indexOf('#', vs);
+    if (hash >= 0) end = hash;
+    while (end > vs && line.charAt(end - 1) === ' ') end--;
+
+    var col = offset - lb.start;
+    if (col < vs || col > end) return null;   // before the value, or past a trailing comment
+
+    var s = col; while (s > vs && line.charAt(s - 1) !== ' ' && line.charAt(s - 1) !== '\t') s--;
+    var e = col; while (e < end && line.charAt(e) !== ' ' && line.charAt(e) !== '\t') e++;
+    var prefix = line.slice(s, e);
+    var repo = repoOf(prefix);
+    if (!repo) return null;
+
+    return {
+      start: lb.start + s, end: lb.start + e, prefix: prefix, value: true, repo: repo,
+      keys: repoTagMatches(repo, tagCache[repo] || [], prefix)
+    };
+  }
+
+  // Kicks the registry lookup tagLoad() also uses, sharing tagCache so a
+  // repo already looked up for the Form pane's image box (or vice versa)
+  // costs nothing here. Debounced the same 400ms as scheduleTagLoad(), since
+  // every keystroke before the colon changes the repo and would otherwise
+  // fire a request per character.
+  function scheduleYamlTagLoad(repo) {
+    if (yamlTagTimer) clearTimeout(yamlTagTimer);
+    yamlTagTimer = setTimeout(function () {
+      yamlTagTimer = null;
+      if (tagCache.hasOwnProperty(repo)) { refreshImageSuggest(repo); return; }
+      call('tags', { repo: repo }, 15000).then(function (res) {
+        if (!res.ok) return;
+        tagCache[repo] = res.tags || [];
+        refreshImageSuggest(repo);
+      }).catch(function () {});
+    }, 400);
+  }
+
+  // Re-renders the suggestion panel once a tag lookup lands — never before
+  // it, and never by moving anything else. Guarded exactly the way
+  // tagLoad()'s own late arrival is: the caret may have left the textarea,
+  // moved to a different line, or moved on to a different repo by the time
+  // this runs, and any of those means leaving the panel exactly as it is.
+  function refreshImageSuggest(repo) {
+    if (document.activeElement !== yamlPane) return;
+    var hit = imageValueHit(yamlPane.value, yamlPane.selectionStart);
+    if (!hit || hit.repo !== repo || !hit.keys.length) return;
+    showSuggest(hit);
+  }
+
   // Typing in the image box, or landing on it, is what makes its repo worth
   // asking the registry about — delegated, since the box is redrawn whenever
   // the form is (adding a service, undo, reparse...).
@@ -10288,6 +10375,16 @@
       if (typeof YAML.valueSuggestions === 'function') {
         hit = YAML.valueSuggestions(yamlPane.value, yamlPane.selectionStart);
       }
+      if (!hit || !hit.keys || !hit.keys.length) {
+        // The pure engine does not know `image:` at all (see
+        // imageValueHit()'s own comment) — this is stacks.js's one place
+        // that fills the gap with a registry lookup. The lookup is kicked
+        // whenever the caret sits on an image value, whether or not
+        // anything is cached yet, so the panel picks up tags that land
+        // later even though it opens on nothing this time round.
+        hit = imageValueHit(yamlPane.value, yamlPane.selectionStart);
+        if (hit) scheduleYamlTagLoad(hit.repo);
+      }
       if (!hit || !hit.keys || !hit.keys.length) { hideSuggest(); return; }
     }
     showSuggest(hit);
@@ -11090,6 +11187,23 @@
     return out;
   }
 
+  // A one-service stack draws no container rows at all, so
+  // stackTagMissingServices() (which reads them) can never see it — this
+  // reads the stack row's own services cell instead. That cell prints the
+  // service name as plain text with the running image's sub-line, if any, as
+  // a sibling span rather than folded into the same text — so cloning the
+  // cell and dropping that span leaves exactly the declared service list.
+  // Returns the one service name, or '' when the stack does not declare
+  // exactly one.
+   // The one service a single-service stack declares, straight off the row.
+  // Read as an attribute rather than scraped out of the services cell's text:
+  // that cell is display copy — it also carries "none declared" and the parse
+  // errors — and a service name is what compose is handed, so it has to come
+  // from the same place every other command's arguments do.
+  function stackSoleService(row) {
+    return (row && row.dataset.soleService) || '';
+  }
+
   // The identity a failure marker (and the map below) is filed under: a
   // stack row's own name, or a container row's stack-plus-service — see the
   // containerRows() comment above for why the service half has to be the
@@ -11423,6 +11537,52 @@
     return up + ' of ' + total + ' running';
   }
 
+  // The row's icon is worked out from this same image and lags behind it for
+  // the same reason — it is not repainted here. Unlike the text above, it
+  // needs the server's own icon-matching pass, not a value already in hand,
+  // and a tag change almost never changes which icon is right anyway.
+  //
+  // Mirrors staxx_image_mismatch_html() in StacksTable.php exactly, so the
+  // marker a poll paints in is identical to the one the server renders at
+  // page load — same class, same wording. Kept as its own class rather than
+  // reusing .staxx-driftmark: that one means an Unraid template moved on
+  // since import, an unrelated fact.
+  function imageMismatchHtml(declared, running) {
+    if (!declared || !running || declared === running) return '';
+    return '<span class="staxx-imgmismatch" title="' +
+      esc('The compose file asks for ' + declared + '. This container is running ' +
+          running + '. Restart it to apply the change.') +
+      '"><i class="fa fa-exclamation-triangle"></i></span>';
+  }
+
+  // Repaints a container row's image cell — the wrapper toggles between the
+  // running image and "not created yet", so its whole innerHTML is owned here
+  // rather than just a text node (see the comment on the cell's markup).
+  // Skipped when the value hasn't moved, the same guard every other cell here
+  // uses, so an unchanged poll touches no DOM.
+  function paintContainerImage(kid, image, notCreatedText) {
+    var cell = kid.querySelector('[data-cell="image"]');
+    if (!cell || image === undefined || cell.staxxImg === image) return;
+    cell.staxxImg = image;
+    cell.innerHTML = image === ''
+      ? '<span class="staxx-sub">' + esc(notCreatedText || '') + '</span>'
+      : '<span class="staxx-image-text" title="' + esc(image) + '">' + esc(image) + '</span>' +
+        imageMismatchHtml(kid.dataset.imageDeclared || '', image);
+  }
+
+  // Repaints the single-service stack row's image sub-line. Unlike the
+  // container cell above this one is skipped entirely when the poll has
+  // nothing to say (an empty string means "more or fewer than one container",
+  // not "no image") — overwriting a correct value with blank would be worse
+  // than leaving the page-load value in place.
+  function paintStackImage(row, image) {
+    var cell = row.querySelector('[data-cell="image"]');
+    if (!cell || !image || cell.staxxImg === image) return;
+    cell.staxxImg = image;
+    cell.innerHTML = '<span class="staxx-image-text" title="' + esc(image) + '">' + esc(image) + '</span>' +
+      imageMismatchHtml(row.dataset.imageDeclared || '', image);
+  }
+
   // PLAN_44 C1. manage.js's setSnapshot() replaces state.snapshot wholesale,
   // not merged with what came before — so passing it the state poll's reply
   // one tick and the stats poll's reply the next would blank out whichever
@@ -11520,6 +11680,7 @@
           setData(kid, 'container', '');
           setData(kid, 'state', '');
           paintState(kid, res.notCreated || '', false, res.noAddress || '');
+          paintContainerImage(kid, '', res.notCreatedImage);
           return;
         }
 
@@ -11530,6 +11691,7 @@
         setData(kid, 'state', c.state);
         if (c.state === 'running') up++;
         paintState(kid, c.html, c.state === 'running', c.address);
+        paintContainerImage(kid, c.image, res.notCreatedImage);
       });
 
       var sub = row.querySelector('[data-cell="stack-sub"]');
@@ -11537,6 +11699,10 @@
         var line = stackSub(kids.length, up);
         if (sub.textContent !== line) sub.textContent = line;
       }
+
+      // Only meaningful for a single-service stack — see staxx_state_snapshot(),
+      // which sends '' for anything else and is skipped by paintStackImage().
+      paintStackImage(row, s.image);
     });
 
     var folders = res.folders || {};
@@ -11663,6 +11829,10 @@
       due:    parseInt(pill.dataset.updateDue || '0', 10) || 0,
       hold:   pill.dataset.updateHold === '1',
       why:    pill.dataset.updateWhy || '',
+      // The replacement tag staxx_tag_suggestions() already worked out, when
+      // there is one — so a withdrawn-tag menu item can name it up front
+      // instead of sending the reader in blind.
+      suggest: pill.dataset.updateSuggest || '',
       // Whether an earlier version of this service's image is still kept, so
       // the row menu can leave roll back out altogether rather than offering
       // something that can only refuse.
@@ -14267,9 +14437,18 @@
       // that guessing which one to open is worse than leaving this off the
       // stack menu — the same item is still on each container's own menu.
       var tagMissingServices = stackTagMissingServices(name);
-      if (tagMissingServices.length === 1) {
+      // A one-service stack has no container rows for the above to read, so
+      // fall back to the stack row's own pill plus its services cell — the
+      // only other place that single service's name is on screen.
+      var soleTagMissing = (!tagMissingServices.length &&
+                             updateEntry && updateEntry.state === 'tagmissing')
+        ? stackSoleService(rowFor(name)) : '';
+      var tagMissingService = tagMissingServices.length === 1 ? tagMissingServices[0] : soleTagMissing;
+      if (tagMissingService) {
         menuItem('Fix the tag…', 'wrench', function () {
-          editStack(name, label, tagMissingServices[0], undefined, 'image');
+          editStack(name, label, tagMissingService, undefined, 'image');
+        }, {
+          hint: (updateEntry && updateEntry.suggest) ? ('Suggested replacement: ' + updateEntry.suggest) : ''
         });
       }
 
@@ -14428,6 +14607,8 @@
     if (updateEntry && updateEntry.state === 'tagmissing') {
       menuItem('Fix the tag…', 'wrench', function () {
         editStack(stack, stackLabel(stack), service, undefined, 'image');
+      }, {
+        hint: updateEntry.suggest ? ('Suggested replacement: ' + updateEntry.suggest) : ''
       });
     }
 

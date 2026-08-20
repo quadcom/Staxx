@@ -301,6 +301,7 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
        . ' data-update-hold="'.(!empty($u['hold']) ? '1' : '0').'"'
        . ' data-update-back="'.(!empty($u['back']) ? '1' : '0').'"'
        . ' data-update-why="'.htmlspecialchars((string)($u['why'] ?? '')).'"'
+       . ' data-update-suggest="'.htmlspecialchars((string)($u['suggest'] ?? '')).'"'
        . $titleAttr.'>'.$label.'</'.$tag.'>';
 }
 
@@ -456,6 +457,9 @@ function staxx_stack_children(array $s): array {
     $rows[$service] = [
       'key' => $service, 'service' => $service, 'name' => '', 'id' => '',
       'image' => (string)($declared[$service]['image'] ?? ''),
+      // What the file asks for, kept alongside docker's answer below so a
+      // reader can be told the two disagree — never re-read here.
+      'declared' => (string)($declared[$service]['image'] ?? ''),
       'icon'  => (string)($declared[$service]['x']['icon'] ?? ''),
       // Read here rather than only where it is drawn, so a service that has
       // never run still has one — declared[$service] is the compose file's
@@ -495,6 +499,9 @@ function staxx_stack_children(array $s): array {
       // Docker's image, because that is the one actually running — a compose
       // file edited since the container was created says something else.
       'image'   => $c['image'] !== '' ? $c['image'] : (string)($declared[$service]['image'] ?? ''),
+      // What the file asks for right now, so the browser can flag it against
+      // the running image above when the two no longer match.
+      'declared' => (string)($declared[$service]['image'] ?? ''),
       'icon'    => (string)($declared[$service]['x']['icon'] ?? ''),
       'webui'   => staxx_webui_url(
                      $declared[$service] ?? [], $hostIp,
@@ -746,6 +753,28 @@ function staxx_drift_mark_html(string $title): string {
 }
 
 /**
+ * The small marker beside the image column when the compose file asks for one
+ * image and the running container is another — a save that has not yet been
+ * followed by a start or restart. Deliberately its own class rather than
+ * staxx_drift_mark_html()'s: that one means an Unraid template moved on since
+ * import, an unrelated fact, and sharing a class would blur the two together.
+ *
+ * Rendered here AND repainted by applyState() in stacks.js on every state
+ * poll, so the marker is right on the very first paint and stays right
+ * afterwards without a page reload — see the comment on applyState() for how
+ * the two stay in step.
+ */
+function staxx_image_mismatch_html(string $declared, string $running): string {
+  if ($declared === '' || $running === '' || $declared === $running) return '';
+  $title = sprintf(
+    _('The compose file asks for %s. This container is running %s. Restart it to apply the change.'),
+    $declared, $running
+  );
+  return '<span class="staxx-imgmismatch" title="'.htmlspecialchars($title).'">'
+       . '<i class="fa fa-exclamation-triangle"></i></span>';
+}
+
+/**
  * Every row of the table body, as HTML.
  *
  * Divs standing in for a table, arranged as CSS grid / subgrid so the columns
@@ -972,6 +1001,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
         ? _('More than one container here has its own project page — open one from the container row below.')
         : '';
 
+      // What the compose file asks for, for the row's mismatch marker — only
+      // meaningful for a single-service stack, which is the only case the row
+      // ever prints an image at all.
+      $declaredImg = count($kids) === 1 ? (string)($kids[0]['declared'] ?? '') : '';
+
       // A stack with one service has nothing to break down: the row already
       // names it and gives its state, and a chevron that reveals a single line
       // repeating what is above it is a click that buys nothing. Only stacks
@@ -1041,6 +1075,13 @@ function staxx_render_rows(array $rows, bool $canRun): string {
              data-boot="<?= $sMode ?>"
              <?= $sWait > 0 ? 'data-boot-wait="'.$sWait.'"' : '' ?>
              <?= $sInterleaved ? 'data-interleaved="1"' : '' ?>
+             data-image-declared="<?= htmlspecialchars($declaredImg) ?>"
+             <?php /* The one service this stack declares, or absent. A stack with a
+                      single service renders no container row, so its own row is the
+                      only place a per-service action (fixing a withdrawn tag) can be
+                      offered from — and that action needs the service NAME, which
+                      compose takes, not the label a reader sees. */ ?>
+             <?= count($s['services']) === 1 ? 'data-sole-service="'.htmlspecialchars($s['services'][0]).'"' : '' ?>
              <?= $row['hidden'] ? 'hidden' : '' ?>>
 
           <span class="staxx-cell staxx-cell--name staxx-stack-name" role="gridcell">
@@ -1167,8 +1208,14 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                      expanded child rows anyway. -->
                 <? $image = (string)($kids[0]['image'] ?? ''); ?>
                 <? if ($image !== ''): ?>
-                  <span class="staxx-image staxx-image--sub"
-                    title="<?= htmlspecialchars($image) ?>"><?= htmlspecialchars($image) ?></span>
+                  <!-- The inner span carries the running image's own text and
+                       title; the outer one is the repaint target so a mismatch
+                       marker (see javascript/stacks.js applyState()) can sit
+                       beside it as a sibling rather than inside the tooltip. -->
+                  <span class="staxx-image staxx-image--sub" data-cell="image">
+                    <span class="staxx-image-text" title="<?= htmlspecialchars($image) ?>"><?= htmlspecialchars($image) ?></span>
+                    <?= staxx_image_mismatch_html($declaredImg, $image) ?>
+                  </span>
                 <? endif; ?>
               <? endif; ?>
             <? endif; ?>
@@ -1260,7 +1307,8 @@ function staxx_render_rows(array $rows, bool $canRun): string {
              data-project="<?= htmlspecialchars($project) ?>"
              data-state="<?= htmlspecialchars($kid['state']) ?>"
              data-boot="<?= $cMode ?>"
-             <?= $cWait > 0 ? 'data-boot-wait="'.$cWait.'"' : '' ?>>
+             <?= $cWait > 0 ? 'data-boot-wait="'.$cWait.'"' : '' ?>
+             data-image-declared="<?= htmlspecialchars((string)($kid['declared'] ?? '')) ?>">
 
           <span class="staxx-cell staxx-cell--name staxx-stack-name" role="gridcell">
             <div class="staxx-namebox staxx-namebox--child">
@@ -1337,10 +1385,15 @@ function staxx_render_rows(array $rows, bool $canRun): string {
           </span>
 
           <!-- The parent row lists the service names, so this one has room for
-               the thing you actually cannot see from up there. -->
-          <span class="staxx-cell staxx-cell--services staxx-image" role="gridcell">
+               the thing you actually cannot see from up there. data-cell is on
+               the wrapper rather than either inner span, because the browser
+               has to be able to swap between "not created yet" and a real
+               image (and back) — see applyState() in stacks.js, which owns
+               this cell's whole innerHTML rather than just its text. -->
+          <span class="staxx-cell staxx-cell--services staxx-image" role="gridcell" data-cell="image">
             <? if ($kid['image'] !== ''): ?>
-              <span title="<?= htmlspecialchars($kid['image']) ?>"><?= htmlspecialchars($kid['image']) ?></span>
+              <span class="staxx-image-text" title="<?= htmlspecialchars($kid['image']) ?>"><?= htmlspecialchars($kid['image']) ?></span>
+              <?= staxx_image_mismatch_html((string)($kid['declared'] ?? ''), $kid['image']) ?>
             <? else: ?>
               <span class="staxx-sub"><?= _('not created yet') ?></span>
             <? endif; ?>
@@ -1483,6 +1536,10 @@ function staxx_state_snapshot(): array {
           $rec['addresses'] ?? [], $rec['published'] ?? false, $webui, $rec['exposed'] ?? []
         )),
         'exposed'   => $rec['exposed'] ?? [],
+        // Docker's own image, already in hand on every row $mine carries — this
+        // is what keeps the image column live after a recreate without a second
+        // compose-file read.
+        'image'     => $c['image'],
       ];
     }
 
@@ -1500,6 +1557,10 @@ function staxx_state_snapshot(): array {
       'html'       => staxx_state_pill($s, $canRun),
       'address'    => staxx_address_html(staxx_merged_addresses($mine, $webuiById)),
       'containers' => $containers,
+      // The row's own sub-line only ever prints an image for a stack with
+      // exactly one container — anything else and the containers array above
+      // is what the browser reads instead.
+      'image'      => count($mine) === 1 ? $mine[0]['image'] : '',
     ];
   }
 
@@ -1528,6 +1589,10 @@ function staxx_state_snapshot(): array {
     'notCreated' => staxx_container_pill(['exists' => false]),
     // Likewise for the address cell of a container that no longer exists.
     'noAddress'  => staxx_address_html([]),
+    // Plain text, not a pill — the image cell builds its own small markup
+    // around this rather than swallowing server HTML whole, so it can still
+    // attach the mismatch marker beside it.
+    'notCreatedImage' => _('not created yet'),
   ];
 }
 ?>
