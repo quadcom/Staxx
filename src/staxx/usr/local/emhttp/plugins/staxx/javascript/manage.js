@@ -334,8 +334,6 @@
 
       var logPane = pane('log', 'Log');
       buildLogBody(logPane.body);
-      var mid = document.createElement('div');
-      mid.className = 'staxx-manage-buttons';
       var right = document.createElement('div');
       right.className = 'staxx-manage-right';
       var shell = pane('shell', 'Shell');
@@ -347,14 +345,12 @@
       right.appendChild(files.el);
 
       body.appendChild(logPane.el);
-      body.appendChild(mid);
       body.appendChild(right);
 
       els.log = logPane;
       els.shell = shell;
       els.files = files;
 
-      buildButtons(mid);
       buildHeadActions();
       updateNarrowPanes();
 
@@ -2027,6 +2023,7 @@
       status.appendChild(extra);
 
       wrap.appendChild(status);
+      buildButtons(wrap);
 
       els.statusUI = { status: status, pill: pill, extra: extra };
       return wrap;
@@ -2280,18 +2277,35 @@
       updateNarrowPanes();
     }
 
-    function buildButtons(mid) {
-      var scope = document.createElement('div');
-      scope.className = 'staxx-manage-scope';
-      scope.setAttribute('role', 'group');
-      scope.setAttribute('aria-label', 'Scope');
+    // The switch and the five buttons as one group, sat on the status row.
+    //
+    // They used to be a 9rem column of their own down the middle of the
+    // layout, which took width from all three panes for five short words —
+    // and left the status row holding nothing but a chip, so selecting All
+    // emptied it and everything below jumped up. Here, the row cannot
+    // collapse and the panes get the width back.
+    //
+    // The switch sits left of the buttons and the wording right of them, with
+    // the wording OUTSIDE the group so the whole-stack border can wrap the
+    // control without enclosing its caption.
+    function buildButtons(wrap) {
+      var group = document.createElement('div');
+      group.className = 'staxx-manage-controls';
 
-      var bContainer = scopeBtn('container', 'This container');
-      var bStack = scopeBtn('stack', 'Whole stack');
-      scope.appendChild(bContainer);
-      scope.appendChild(bStack);
-      els.scopeContainer = bContainer;
-      els.scopeStack = bStack;
+      // The same Font Awesome glyph the Autostart menu item uses, rather than
+      // a switch built out of CSS — Unraid already ships it, and matching that
+      // control was the point. The glyph carries the position; the label to
+      // the right of the group names the mode it is in.
+      var toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'staxx-manage-scopetoggle';
+      toggle.innerHTML = '<i class="fa fa-toggle-off"></i>';
+      toggle.addEventListener('click', function () {
+        if (state.selected === 'all') return; // forced to stack scope, nothing to choose
+        state.scope = state.scope === 'stack' ? 'container' : 'stack';
+        render();
+      });
+      group.appendChild(toggle);
 
       var btns = document.createElement('div');
       btns.className = 'staxx-manage-verbs';
@@ -2317,21 +2331,17 @@
         btns.appendChild(b);
       });
 
-      mid.appendChild(scope);
-      mid.appendChild(btns);
-    }
+      group.appendChild(btns);
 
-    function scopeBtn(value, label) {
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'staxx-manage-scope-btn';
-      b.textContent = label;
-      b.addEventListener('click', function () {
-        if (state.selected === 'all') return; // forced to stack scope, nothing to choose
-        state.scope = value;
-        render();
-      });
-      return b;
+      var label = document.createElement('span');
+      label.className = 'staxx-manage-scopelabel';
+
+      wrap.appendChild(group);
+      wrap.appendChild(label);
+
+      els.scopeGroup = group;
+      els.scopeToggle = toggle;
+      els.scopeLabel = label;
     }
 
     // The service name to pass for a run when a single container tab is
@@ -2439,12 +2449,6 @@
 
     function renderButtons() {
       var isAll = state.selected === 'all';
-      els.scopeContainer.classList.toggle('staxx-manage-scope-btn--armed', !isAll && state.scope === 'container');
-      els.scopeStack.classList.toggle('staxx-manage-scope-btn--armed', isAll || state.scope === 'stack');
-      els.scopeContainer.disabled = isAll;
-      // Stack scope stays clickable even on "All", since it is the only
-      // honest choice there — disabling it would look broken rather than
-      // forced.
 
       // What a button would actually act on, which is not the same thing as
       // which tab is selected: with a container selected but the scope set to
@@ -2465,6 +2469,21 @@
       els.verbBtns.recreate.disabled = !created;
       els.verbBtns.up.disabled = false;
       els.verbBtns.update.disabled = false;
+
+      // The switch, its caption and the border all read the SAME expression
+      // the disables above just used, so none of the three can disagree with
+      // what pressing a button would do.
+      els.scopeToggle.innerHTML = '<i class="fa fa-toggle-' + (wholeStack ? 'on' : 'off') + '"></i>';
+      els.scopeToggle.setAttribute('aria-pressed', wholeStack ? 'true' : 'false');
+      els.scopeToggle.title = isAll
+        ? 'The whole stack — there is no single container selected to narrow this to.'
+        : (wholeStack ? 'Acting on the whole stack. Press to act on this container only.'
+                      : 'Acting on this container. Press to act on the whole stack.');
+      // Locked, not merely unhelpful: with All selected the whole stack is the
+      // only honest reading, so there is nothing to choose.
+      els.scopeToggle.disabled = isAll;
+      els.scopeLabel.textContent = wholeStack ? 'Whole stack' : 'This container';
+      els.scopeGroup.classList.toggle('staxx-manage-controls--stack', wholeStack);
     }
 
     // ---- public surface --------------------------------------------------

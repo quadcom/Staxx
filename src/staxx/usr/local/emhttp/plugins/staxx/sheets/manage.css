@@ -129,19 +129,35 @@
 
 /* ---- D6: the line above the panes, and the one-press jobs ---------------- */
 
+/* Three tracks: the status chip, the controls, the caption. An `auto` middle
+   between two equal `1fr`s is what puts the controls in the centre of the row
+   and keeps them there — "Up 8 hours (healthy) · 2 restarts · health: healthy"
+   is a great deal wider than "stopped", and packed in a flex row the buttons
+   moved every time the status did.
+   The caption sits in its own track rather than inside the group, so the
+   whole-stack border can wrap the control without enclosing its own label. */
 .staxx-manage-above {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   gap: 0.5rem;
 }
+
+/* Each item names its own column. Left to auto-placement the controls landed
+   in track 1 the moment the status was hidden for the whole-stack view — a
+   display:none item is not placed at all, so everything after it moves up a
+   track and the "centred" group sat at 399px in a row centred on 794px. */
+.staxx-manage-status   { grid-column: 1; }
+.staxx-manage-controls { grid-column: 2; }
+.staxx-manage-scopelabel { grid-column: 3; justify-self: start; }
 
 .staxx-manage-status {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   font-size: 0.85em;
+  justify-self: start;
+  min-width: 0;
 }
 
 .staxx-manage-status--hidden { display: none; }
@@ -302,13 +318,6 @@
   cursor: row-resize;
 }
 
-.staxx-manage-buttons {
-  flex: 0 0 auto;
-  width: 9rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
 
 .staxx-manage-pane {
   display: flex;
@@ -379,45 +388,74 @@
 
 /* ---- D2: scope switch and verb buttons ------------------------------------ */
 
-.staxx-manage-scope {
+/* The switch and the buttons, bordered as one thing when they act on the
+   whole stack. The border is declared transparent in the ordinary state and
+   only recoloured here — added rather than recoloured, every button in the row
+   would shift a pixel the moment the switch was flipped. */
+.staxx-manage-controls {
   display: flex;
-  border: 1px solid var(--sm-line);
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid transparent;
   border-radius: var(--sm-radius);
-  overflow: hidden;
 }
 
-.staxx-scaffold .staxx-manage-scope-btn {
-  flex: 1 1 50%;
-  padding: 0.35rem 0.3rem;
-  text-align: center;
-  font-size: 0.8em;
-  background-color: transparent;
+.staxx-manage-controls--stack {
+  border-color: var(--sm-accent);
+}
+
+/* Font Awesome's own toggle glyph, the one the Autostart menu item uses. Sized
+   a little above the buttons beside it because a glyph at their size reads as
+   a full stop rather than a switch. */
+.staxx-scaffold .staxx-manage-scopetoggle {
+  padding: 0 0.2rem;
+  font-size: 1.5rem;
+  line-height: 1;
   color: var(--sm-muted);
 }
 
-.staxx-scaffold .staxx-manage-scope-btn--armed {
-  background-color: var(--sm-fill-2);
-  color: inherit;
-  font-weight: 600;
+.staxx-scaffold .staxx-manage-scopetoggle[aria-pressed="true"] {
+  color: var(--sm-accent);
 }
 
-.staxx-scaffold .staxx-manage-scope-btn:disabled {
-  opacity: 0.4;
+.staxx-scaffold .staxx-manage-scopetoggle:hover:not(:disabled),
+.staxx-scaffold .staxx-manage-scopetoggle:focus-visible {
+  color: inherit;
+}
+
+.staxx-scaffold .staxx-manage-scopetoggle:disabled {
+  opacity: 0.5;
   cursor: default;
+}
+
+/* Names the mode the switch is in, not both modes at once — see the Autostart
+   menu item's own comment on why a switch showing its position beats a label
+   that has to be read twice. */
+.staxx-manage-scopelabel {
+  font-size: 0.85em;
+  color: var(--sm-muted);
+  white-space: nowrap;
 }
 
 .staxx-manage-verbs {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 0.4rem;
 }
 
+/* 1.1rem is what .staxx-pill in staxx.css sets — the status chip sharing this
+   row — so the row reads as one row rather than two things that happen to be
+   level with each other. */
 .staxx-scaffold .staxx-manage-verb {
-  padding: 0.45rem 0.5rem;
+  padding: 0.3rem 0.7rem;
   border: 1px solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-fill-0, var(--sm-fill));
   text-align: center;
+  font-size: 1.1rem;
+  white-space: nowrap;
 }
 
 .staxx-scaffold .staxx-manage-verb:hover:not(:disabled),
@@ -1057,16 +1095,21 @@
 
   .staxx-manage-body { flex-direction: column; }
 
-  .staxx-manage-buttons {
-    order: -1;
-    width: auto;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
+  /* One column: three tracks do not fit, so the status, the controls and the
+     caption stack instead of overflowing. */
+  .staxx-manage-above {
+    grid-template-columns: 1fr;
+    justify-items: center;
   }
 
-  .staxx-manage-scope { flex: 1 1 100%; }
-  .staxx-manage-verbs { flex-direction: row; flex-wrap: wrap; flex: 1 1 100%; }
+  /* One track, so the pinning above would stack everything into column 1
+     anyway — said explicitly rather than relied upon. */
+  .staxx-manage-status,
+  .staxx-manage-controls,
+  .staxx-manage-scopelabel { grid-column: 1; }
+
+  .staxx-manage-status { justify-self: center; }
+  .staxx-manage-scopelabel { justify-self: center; }
 
   .staxx-manage-right { display: contents; }
 
