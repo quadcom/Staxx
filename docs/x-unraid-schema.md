@@ -67,7 +67,7 @@ see [Inference](#inference-when-metadata-is-absent).
 anyone's server.
 
 It does **not** describe *this server's* operational policy — autostart, start order delays, CPU
-pinning. Those live in Stack Manager's own config, because they are facts about one machine, not
+pinning. Those live in StaXX's own config, because they are facts about one machine, not
 about the app. Putting them in the compose file would make a portable artefact quietly
 machine-specific.
 
@@ -177,7 +177,10 @@ A stack is named after its directory — `Media/jellyfin` is called "jellyfin" i
 stop. There is no display-name override.
 
 Service display order is the order services appear in the compose file — the editor preserves
-document order, so no explicit ordering key is needed.
+document order, so no explicit ordering key is needed here. Dragging a service into a different
+position does not change the file: that order is also the order the services start in at boot,
+which is this server's own policy rather than the app's, so it is kept in StaXX's config with the
+rest of it. See the dividing line above.
 
 ### Sections
 
@@ -240,15 +243,33 @@ there is no display-name override. `display: advanced` is accepted and stored, a
 fold a sidecar such as a database away behind a toggle — but nothing acts on it yet, so setting it
 today changes nothing you can see.
 
-`webui` uses Unraid's existing substitution convention, so it behaves the way users already expect:
+`webui` uses Unraid's existing substitution convention for the scheme and the address:
 
-| Token        | Replaced with                                                   |
-|--------------|-----------------------------------------------------------------|
-| `[IP]`       | The server's address                                             |
-| `[PORT:8096]`| The **host** port currently mapped to container port 8096        |
+| Token        | Replaced with                                                        |
+|--------------|-----------------------------------------------------------------------|
+| `[IP]`       | The server's address, or a service's own fixed address when it has one |
+| `[PORT:…]`   | The port StaXX opens — see below. The number written inside the token is not read. |
 
-Using `[PORT:…]` rather than a literal means the link keeps working after someone changes the host
-port in the form.
+The number inside `[PORT:8096]` was meant to be the **container** port, with the host port
+substituted in its place. Checked against 64 real templates, it agrees with that reading 15 times,
+means the **host** port instead 10 times, and matches neither 3 times — template authors do not
+agree with each other, and the disagreement is silent: a link to the wrong port on a page that looks
+fine. So **StaXX ignores the number and opens the first port in the service's `ports:` list
+instead** — a rule that is always true and visible in the file itself, rather than a token that is
+only right four times out of five. `webui` still supplies the scheme and any path, `https://` or a
+trailing `/admin`; StaXX fills in only the address and the port. A `webui` with no tokens at all is
+honoured verbatim.
+
+Which port is first is yours to choose: the form gives every port row a handle you can drag, or
+focus and move with the arrow keys, and the row that ends up at the top is marked **WebUI**. The
+order is written back to `ports:` in the compose file, so the choice is visible in the file rather
+than kept in a setting somewhere. A service with no published ports has no web page button.
+
+**Known gap.** `webui` itself cannot be edited in the form — nothing renders any of `x-unraid` as
+form fields yet, which is the piece this whole project is still missing. So a service whose file
+carries no `webui` shows the button greyed out with no way inside the app to give it one; the
+Compose view is the only route today. Every hand-written file is in that position, as is every
+Compose Manager import and, measured across the catalogue, 19 templates in 85.
 
 ---
 
@@ -280,7 +301,7 @@ the icons of the containers inside it, shrunk and tiled together, up to four; be
 cell counts what did not fit.
 
 Downloaded icons are cached on the flash device and never fetched twice. The whole thing can be
-turned off under **Settings → Stack Manager**, in which case icons already saved keep working.
+turned off under **Settings → StaXX**, in which case icons already saved keep working.
 
 ---
 
@@ -381,7 +402,7 @@ parser will not touch — is shown read-only with the reason on it, rather than 
 ### Reading rules
 
 1. **Unknown keys in an `x-unraid` block are ignored.** A file written for a later version still
-   renders on an older Stack Manager, minus the parts it does not understand.
+   renders on an older StaXX, minus the parts it does not understand.
 2. **A higher major `version` degrades, it does not fail.** If `version` is higher than the
    implementation knows, it falls back to working everything out from the file and says why, rather
    than reading metadata under rules it may have misunderstood.

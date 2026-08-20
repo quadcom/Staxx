@@ -27,7 +27,7 @@ will not be. Five phases, each deployable and visible on its own.
 
 ## The one idea the whole thing rests on
 
-`#stackman-yamlmarks` (`StacksPage.php:273`) already proves an absolutely-positioned layer lines up
+`#staxx-yamlmarks` (`StacksPage.php:273`) already proves an absolutely-positioned layer lines up
 exactly with the textarea's text: the box never wraps (`wrap="off"`, `white-space: pre`) and the line
 height is a fixed number, so line N sits at exactly `(N-1) × lineHeight`. That is how the orange
 highlight band finds its row.
@@ -41,14 +41,14 @@ stay native, which is the whole point — those are what hand-rolled editors get
 
 ### The ink layer
 
-A new `<pre class="stackman-yamlink" id="stackman-yamlink" aria-hidden="true">` inside
-`.stackman-yamlwrap`, between `#stackman-yamlmarks` and the textarea, so the highlight bands stay
+A new `<pre class="staxx-yamlink" id="staxx-yamlink" aria-hidden="true">` inside
+`.staxx-yamlwrap`, between `#staxx-yamlmarks` and the textarea, so the highlight bands stay
 behind the letters. `aria-hidden` because a screen reader should read the textarea, not a decorative
 copy of it.
 
 Three things must match exactly or the letters drift apart from the caret:
 
-- font family and size — the same `font` shorthand as `.stackman-yaml`
+- font family and size — the same `font` shorthand as `.staxx-yaml`
 - `line-height` — the fixed `1.45` the band maths already depends on (`css:3074-3078`)
 - padding, **including** the dynamic `padding-left` that `paintGutter()` measures back from the
   gutter's real width (`stacks.js:652-654`). The ink layer is set in the same place, from the same
@@ -79,7 +79,7 @@ New export:
 API.highlight(line, carry) -> { html, carry }
 ```
 
-One line in, escaped HTML with `<span class="stackman-tok stackman-tok--key">`-style wrappers out,
+One line in, escaped HTML with `<span class="staxx-tok staxx-tok--key">`-style wrappers out,
 plus a carry value for the next line. The carry exists because two things in YAML are not line-local:
 
 - a **block scalar** (`|` or `>`) — every more-indented line below it is literal text, not YAML, and
@@ -135,7 +135,7 @@ the guide comes out fainter than its colour asked for and blurred with it.
 
 ### Colours
 
-CSS custom properties on `.stackman-yamlink`, one set per theme, following how the sheet already
+CSS custom properties on `.staxx-yamlink`, one set per theme, following how the sheet already
 handles Unraid's light and dark. They must clear WCAG AA against the pane background in both, since
 this is body text and not decoration.
 
@@ -191,7 +191,7 @@ A bar at the top of the compose pane. Ctrl-F find, Ctrl-H replace, Escape closes
 not close the dialog, so the `cancel` handler (`stacks.js:4019`) has to learn about it. Enter and
 Shift-Enter step, with a "3 of 17" count, wrap-around, a case tick and a regex tick.
 
-Matches draw into `#stackman-yamlmarks` — `repaintMark()` was extended to draw them after the band,
+Matches draw into `#staxx-yamlmarks` — `repaintMark()` was extended to draw them after the band,
 so every place that already refreshed the overlay (scroll, view switch, resize, caret move) keeps the
 hits right for free rather than needing a second layer and a second set of call sites. Only the hits
 in the visible line range are drawn, plus always the current one; the counter still reflects all of
@@ -256,10 +256,10 @@ part of it, and it can never block a save.
 **Images are deliberately not marked.** An image absent from the server is the normal state of any
 stack that has not been started yet, and telling that apart from a typo needs a registry lookup —
 slow, and offline half the time. Any marker would therefore cry wolf on every new stack. The
-`stackman_docker_images()` data is there if a use is ever found for it as neutral information.
+`staxx_docker_images()` data is there if a use is ever found for it as neutral information.
 
 **The endpoint is the security-sensitive part**, because the paths are arbitrary text out of a file
-someone is typing. `stackman_check_paths()` does `realpath`/`is_dir` only — no shell, no listing, no
+someone is typing. `staxx_check_paths()` does `realpath`/`is_dir` only — no shell, no listing, no
 recursion — caps the batch at 200, and answers `skipped`, never `missing`, for anything outside its
 allowed roots. That distinction is the whole point: `missing` is itself an answer, so returning it
 for `/etc/shadow` would turn this into a way to probe the filesystem.

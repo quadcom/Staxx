@@ -1,4 +1,4 @@
-# Stack Manager — compose-native Docker management for Unraid
+# StaXX — compose-native Docker management for Unraid
 
 **Status: pre-alpha. Nothing here is installable yet.**
 
@@ -12,7 +12,7 @@ container, you build one by hand in the Unraid UI, field by field. Templates are
 artefact — they don't come from upstream projects, they don't work anywhere else, and the ~2000
 that exist are community-maintained.
 
-Stack Manager inverts that. **Standard [Compose](https://compose-spec.io/) files are the underlying
+StaXX inverts that. **Standard [Compose](https://compose-spec.io/) files are the underlying
 representation for every container.** Any compose file — from a project's README, from a blog post,
 from another machine — can be dropped in and run, unmodified.
 
@@ -25,7 +25,7 @@ portable compose file that runs under plain `docker compose up` anywhere.
 
 These are the constraints the project is built around, in priority order.
 
-1. **Never require non-standard syntax.** A file authored by Stack Manager must run unmodified on
+1. **Never require non-standard syntax.** A file authored by StaXX must run unmodified on
    any machine with Docker Compose. What a stack and its containers *are* — icon, overview, and (per
    container) its web interface address — lives in optional `x-unraid:` extension fields, which the
    compose spec permits and ignores. What an individual setting is *for* lives in the ordinary
@@ -43,11 +43,22 @@ These are the constraints the project is built around, in priority order.
 
 - Compose engine — install the compose CLI, manage stacks as ordinary directories of ordinary files
 - Compose → form UI, with comment-preserving write-back
-- Container and stack lifecycle control (start / stop / restart / logs / console)
+- Container and stack lifecycle control (start / stop / restart / logs / console). Restart means
+  what Apply means on an Unraid template: a container's settings are fixed when it is built, so
+  restarting one that already exists could never apply an edit. It rebuilds whatever the file no
+  longer matches, and restarts the rest — leaving those containers, and their logs, alone.
 - Collapsible stack grouping — stacks can be placed one level deep into user-created folders, and a
   running stack is matched back to its directory via `com.docker.compose.project`
 - Community Applications template → compose conversion, on demand — **built**; see
   [Importing from Community Applications](#importing-from-community-applications)
+- Autostart and start order — **built**. Unraid boots from one plain list of container names, walked
+  top to bottom, each optionally followed by seconds to wait before the next. A stack cannot be
+  named in that list, but each of its services is a container that can be, so a stack is a run of
+  consecutive lines in it: folders, stacks and services are dragged into the order they should start
+  in, and that tree flattens onto the list. Whether something starts at boot, and its wait, are read
+  back out of the same file, so a change made on Unraid's own Docker page is picked up rather than
+  overwritten. Only the order is StaXX's to keep — that file can order the things that start at
+  boot, but everything else still needs a place in the list. See `PLAN_43.md`.
 
 ## Importing from Community Applications
 
@@ -79,7 +90,7 @@ value becomes `/mnt/user/appdata/<name><target>`, a port with no value takes the
 a device with no value is skipped entirely, because there is no sane guess for a device node.
 
 **The catalogue.** CA publishes one 24 MB JSON file and offers no search API — the file is the whole
-interface, and CA's own plugin downloads exactly the same thing. Stack Manager fetches it once, on
+interface, and CA's own plugin downloads exactly the same thing. StaXX fetches it once, on
 first use of the Apps button, and splits it into a small search index plus one line per app. That
 lives in `/tmp`, so **nothing is written to the flash drive** and it costs nothing at reboot.
 Refreshes are cheap: CA also publishes a 37-byte file saying when the catalogue last changed, so a
@@ -107,8 +118,8 @@ docs/x-unraid-schema.md     Format of the extra info that makes the form friendl
 schema/x-unraid.schema.json Machine-readable definition of that format
 examples/                   Worked compose files carrying x-unraid metadata
 tests/validate_schema.py    Schema self-test — checks what it rejects, not just what it accepts
-src/stack.manager/          Slackware-style tree, mirrors install paths on the server
-  usr/local/emhttp/plugins/stack.manager/
+src/staxx/          Slackware-style tree, mirrors install paths on the server
+  usr/local/emhttp/plugins/staxx/
     *.page                  WebGUI pages (Docker sub-tab, header button, settings)
     include/                PHP — compose engine, parsing, form model
     javascript/             Client-side — YAML round-trip, form rendering
@@ -116,7 +127,7 @@ src/stack.manager/          Slackware-style tree, mirrors install paths on the s
     sheets/                 CSS
     event/                  Unraid event hooks (array start, docker start/stop)
     langs/                  Translations
-stack.manager.plg           Plugin installer manifest
+staxx.plg           Plugin installer manifest
 pkg_build.sh                Builds the .txz package from src/
 dev-install.sh              Copies src/ straight onto a server for testing
 ```
@@ -127,15 +138,15 @@ dev-install.sh              Copies src/ straight onto a server for testing
 visible on a browser refresh. Copy it and the plugin folder to the flash drive, then run it there:
 
 ```
-/boot/stack.manager-dev/
+/boot/staxx-dev/
     dev-install.sh
-    stack.manager/          <- src/stack.manager/usr/local/emhttp/plugins/stack.manager/
+    staxx/          <- src/staxx/usr/local/emhttp/plugins/staxx/
 ```
 
 ```sh
-bash /boot/stack.manager-dev/dev-install.sh            # install or update
-bash /boot/stack.manager-dev/dev-install.sh --remove   # remove, keep settings
-bash /boot/stack.manager-dev/dev-install.sh --purge    # remove settings too
+bash /boot/staxx-dev/dev-install.sh            # install or update
+bash /boot/staxx-dev/dev-install.sh --remove   # remove, keep settings
+bash /boot/staxx-dev/dev-install.sh --purge    # remove settings too
 ```
 
 Nothing installed this way survives a reboot — `/usr/local/emhttp` is rebuilt at boot. Settings do

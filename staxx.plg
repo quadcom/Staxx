@@ -1,0 +1,149 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+<!ENTITY name                 "staxx">
+<!ENTITY author               "TODO-AUTHOR">
+<!ENTITY version              "2026.08.09">
+<!ENTITY launch               "Settings/&name;.settings">
+
+<!-- TODO: point at the real repository before the first release. Left as an
+     obvious placeholder so a premature publish fails loudly rather than
+     silently fetching from somewhere unintended. -->
+<!ENTITY github               "TODO-OWNER/TODO-REPO">
+<!ENTITY branch               "main">
+
+<!ENTITY pkgARCH              "noarch">
+<!ENTITY pkgBUILD             "1">
+<!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
+<!ENTITY packageFile          "&packageName;.txz">
+<!ENTITY packageMD5           "TODO-MD5">
+
+<!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
+<!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
+
+<!ENTITY pluginsPATH          "/boot/config/plugins">
+<!ENTITY pluginLOC            "&pluginsPATH;/&name;">
+<!ENTITY emhttpPATH           "/usr/local/emhttp/plugins">
+<!ENTITY emhttpLOC            "&emhttpPATH;/&name;">
+]>
+
+<PLUGIN  name="&name;"
+         author="&author;"
+         version="&version;"
+         launch="&launch;"
+         pluginURL="&pluginURL;"
+         icon="cubes"
+         min="7.2.0"
+         support="TODO-SUPPORT-THREAD"
+         project="https://github.com/&github;"
+         readme="https://github.com/&github;#readme"
+>
+
+<CHANGES>
+###2026.08.09
+- Pre-alpha scaffold. Installs the Stacks page and reports environment readiness.
+- No stack management yet.
+</CHANGES>
+
+<!--
+  Minimum Unraid version is 7.2.0: the responsive WebGUI landed there and this
+  plugin's markup targets it. Older releases are deliberately unsupported.
+-->
+
+<!--
+  The package itself.
+-->
+<FILE Name="&pluginLOC;/&packageFile;" Run="upgradepkg --install-new --reinstall">
+<URL>&packageURL;</URL>
+<MD5>&packageMD5;</MD5>
+</FILE>
+
+<!--
+  Post-install. Seeds the persistent config from the shipped defaults without
+  clobbering an existing one, then projects it onto the marker files the .page
+  Cond expressions read.
+-->
+<FILE Run="/bin/bash">
+<INLINE>
+<![CDATA[
+set -euo pipefail
+
+# Carry a pre-rename install across. The app was called stack.manager until
+# 2026-08-18 and kept its settings, folder layout and stacks under that name.
+# mv rather than cp: two config folders that both look valid is worse than one,
+# and flash writes are the thing worth being stingy with on Unraid. The
+# "new does not exist" guard is what makes a second install a no-op instead of
+# a clobber. STACK_ROOT holds an absolute path, so it has to be rewritten or it
+# points at a folder that no longer exists — and that folder is where the
+# user's stacks are.
+if [[ -d "/boot/config/plugins/stack.manager" && ! -d "/boot/config/plugins/staxx" ]]; then
+  mv "/boot/config/plugins/stack.manager" "/boot/config/plugins/staxx"
+  if [[ -f "/boot/config/plugins/staxx/stack.manager.cfg" ]]; then
+    mv "/boot/config/plugins/staxx/stack.manager.cfg" "/boot/config/plugins/staxx/staxx.cfg"
+  fi
+  sed -i 's#/boot/config/plugins/stack\.manager#/boot/config/plugins/staxx#g' \
+    "/boot/config/plugins/staxx/staxx.cfg" 2>/dev/null || true
+fi
+rm -rf "/usr/local/emhttp/plugins/stack.manager"   # stale tree; rebuilt at boot anyway
+rm -rf "/tmp/stack.manager"                        # a cache, regenerates
+
+mkdir -p "/boot/config/plugins/staxx"
+
+# First install only — never overwrite a config the user has edited. New keys
+# added in later versions are picked up from default.cfg at read time.
+if [[ ! -f "/boot/config/plugins/staxx/staxx.cfg" ]]; then
+  cp "/usr/local/emhttp/plugins/staxx/default.cfg" \
+     "/boot/config/plugins/staxx/staxx.cfg"
+fi
+
+chmod +x /usr/local/emhttp/plugins/staxx/scripts/* 2>/dev/null || true
+
+/usr/local/emhttp/plugins/staxx/scripts/apply_settings
+
+echo ""
+echo "-----------------------------------------------------------"
+echo " StaXX has been installed."
+echo " This is a pre-alpha scaffold — no stack management yet."
+echo "-----------------------------------------------------------"
+echo ""
+]]>
+</INLINE>
+</FILE>
+
+<!--
+  Housekeeping: drop older package files left on the flash device.
+-->
+<FILE Run="/bin/bash">
+<INLINE>
+<![CDATA[
+find /boot/config/plugins/staxx -name 'staxx-*.txz' \
+  ! -name "staxx-2026.08.09-noarch-1.txz" -delete 2>/dev/null || true
+find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
+]]>
+</INLINE>
+</FILE>
+
+<!--
+  Removal. The user's config and stacks are left alone on purpose: uninstalling
+  a manager should not delete the things it managed. Removing them is a manual,
+  deliberate act.
+-->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+<![CDATA[
+removepkg "staxx-"* 2>/dev/null || true
+removepkg "stack.manager-"* 2>/dev/null || true   # a pre-rename install
+rm -rf "/usr/local/emhttp/plugins/staxx"
+rm -f  "/boot/config/plugins/staxx/"*.txz
+
+echo ""
+echo "-----------------------------------------------------------"
+echo " StaXX has been removed."
+echo " Your configuration and stack definitions were kept at:"
+echo "   /boot/config/plugins/staxx"
+echo "-----------------------------------------------------------"
+echo ""
+]]>
+</INLINE>
+</FILE>
+
+</PLUGIN>

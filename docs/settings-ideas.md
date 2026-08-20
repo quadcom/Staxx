@@ -1,11 +1,11 @@
 # Settings page — ideas, not commitments
 
-A running list of things that might one day belong on the Stack Manager settings page. Nothing here
+A running list of things that might one day belong on the StaXX settings page. Nothing here
 is agreed or scheduled. An entry gets promoted to its own numbered plan when it is picked up, and
 deleted from here when it ships or is ruled out.
 
 Sibling to `feature-ideas.md`, which holds the same kind of list for everything that would *not* be
-a setting. An entry belongs here only if it needs a switch on the settings page.
+a setting. An entry belongs here only if it needs a switch in the settings panel.
 
 Started 2026-08-17.
 
@@ -13,26 +13,39 @@ Started 2026-08-17.
 
 ## How a setting works here
 
-Every entry below depends on this, and it is currently only discoverable by reading four files.
+Every entry below depends on this.
 
-- **Adding a control named `FOO` to the settings form is all it takes to persist `FOO`.**
-  `/update.php` writes every non-`#` field into `/boot/config/plugins/stack.manager/stack.manager.cfg`.
-  There is no server-side allowlist. The form lives in `stack.manager.settings.page`.
-- **The key also goes in `default.cfg`, whose comments must start with `;`, never `#`.** A `#` line
-  is parsed as content, and one syntax error makes PHP reject the entire file and return `false` —
-  silently. The damage only shows the day a new key is added, because existing user configs already
-  hold every older key. The file's own header explains this at length; read it before editing.
-- **`stackman_cfg()` (`include/Defines.php:34`) merges the shipped defaults under the user's file**,
-  so a config that predates a new key still gets its default. `stackman_cfg_bool()` sits beside it
-  and currently has no callers — a new true/false setting should be its first.
-- **A setting read by a `.page` `Cond` must be projected onto a marker file** by
-  `scripts/apply_settings`, the way `HEADER_MENU` is. `Cond` runs on every render of every page, so
-  parsing an ini file there would be wasteful. An ordinary PHP-read setting must not be projected —
-  `ICON_FETCH` is the model for that one, read in a single place in `Icons.php`.
-- **No setting reaches the browser today.** If one ever needs to, the route is a `data-*` attribute
-  on `.stackman-scaffold` in `include/StacksPage.php`, read once near the top of `stacks.js` — the
-  same handoff the CSRF token and the folder list already use. Note that this only changes on a page
-  reload, since the settings form posts to an iframe rather than to `action.php`.
+- **There is a server-side allowlist now.** `staxx_settings_keys()` in `include/Settings.php`
+  names every setting a control is allowed to touch — its type, its default and, for a choice, the
+  values it may hold. A key not on that list cannot be read or written, whatever gets posted. Adding
+  a matching field to a form is no longer enough by itself; the one exception is the stack-folder
+  field still left on Unraid's own settings page, which posts straight to `/update.php` with no
+  allowlist at all — deliberately, so it still works as a way back in if the panel is ever broken.
+- **Settings do reach the browser, and live.** The panel calls the `settings` action on
+  `include/action.php`, which reads the current values fresh each time it opens — not a value baked
+  into the page when it was last loaded.
+- **A setting is two entries, not one.** One in `staxx_settings_keys()` on the server; one in the
+  ordered `SETTINGS_ROWS` table in `stacks.js`, which carries the label, the kind of control, its
+  choices and the explanation shown underneath. Adding a setting means adding one row to each table.
+- **Saving goes through `staxx_settings_save()`.** It checks every value before writing any of
+  them, so one bad entry can't leave the file half-changed; writes the whole config to a temporary
+  file and swaps it into place, so a crash mid-write can't corrupt it; and keeps any key it does not
+  recognise, so a config from a newer version of the plugin survives being saved by an older one. It
+  then runs `scripts/apply_settings` to make the change take effect.
+- **`default.cfg`'s comments must start with `;`, not `#`.** Still true, still load-bearing — a `#`
+  line is read as ordinary content, and one such mistake makes PHP throw away the *entire* file and
+  quietly fall back to nothing. The damage only shows the day a new key is added, because an existing
+  user's config already holds every older one. The file's own header explains this at length.
+- **`staxx_cfg()` merges the shipped defaults under the user's own file**, so a config saved before
+  a new key existed still gets that key's default. `staxx_cfg_bool()` sits beside it and still has
+  no callers — don't reach for it for a new true/false setting: it treats a missing value as false,
+  which is wrong for two of the five settings that default to true. Defaults now live in the
+  allowlist instead.
+- **A setting a `.page` file's `Cond` needs to read must be projected onto a marker file**, the way
+  `HEADER_MENU` always has been — `Cond` runs on every render of every page, so parsing the config
+  there would be wasteful. `TAKEOVER_DOCKER_TAB` now does the same job a different way: instead of a
+  marker, `apply_settings` installs or removes a whole shadow page file when it changes. `ICON_FETCH`
+  is the counter-example — it is read normally from PHP in one place and must never be projected.
 
 ---
 
@@ -58,7 +71,7 @@ absent is not zero.
 The other honest caveat: a stable app that needs no changes looks identical to an abandoned one.
 That is why this is a switch somebody turns on, not a default.
 
-**Where the filter goes: at search time**, in the loop in `stackman_ca_search()`
+**Where the filter goes: at search time**, in the loop in `staxx_ca_search()`
 (`include/CA.php:207`), beside the existing category test. It reads the config per request, so
 toggling takes effect immediately. The alternative — dropping entries at index build time, which is
 what already happens for the 83 blacklisted and 10 hidden apps (`ca-index.php:226-230`) — bakes the
@@ -72,18 +85,7 @@ Note that `dep` is *absent* rather than `0` on a healthy app, so any test must u
 
 ---
 
-## 2. Remove or wire up the dead setting
-
-`TAKEOVER_DOCKER_TAB` is declared in `default.cfg:32` and read by nothing anywhere in the tree. It
-has no control on the settings page. Either wire it up or delete it — a key that looks like a switch
-and does nothing is worse than either.
-
-Not really an idea so much as a tidy-up, but it belongs on this list because it is the settings file
-it lives in.
-
----
-
-## 3. Whether to offer a switch for the catalogue download at all
+## 2. Whether to offer a switch for the catalogue download at all
 
 Recorded in `CA-IMPORT-RESULTS.md` as an open question and still open. The catalogue is fetched
 without asking, now on page load rather than on first search (`PLAN_23`). The argument against a

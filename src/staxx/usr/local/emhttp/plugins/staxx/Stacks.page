@@ -1,0 +1,28 @@
+Menu="Docker:0"
+Title="StaXX"
+Tag="cubes"
+Markdown="false"
+Cond="is_file('/var/run/dockerd.pid') && !file_exists('/boot/config/plugins/staxx/header_menu')"
+---
+<?PHP
+/* StaXX — the app's tab under the existing Docker menu.
+ * Copyright 2026, StaXX contributors.
+ *
+ * Rank 0 places this ahead of the stock Docker Containers tab (Docker:1), so it
+ * becomes the default landing tab under the Docker button. Nothing is replaced:
+ * the stock tab is still there, one click away.
+ *
+ * Mutually exclusive with StaXX.page, which puts the same view in the top
+ * navigation bar instead. The header_menu marker file decides which is live.
+ *
+ * The filename is the URL — PageBuilder names a page by its basename — so this
+ * is /Docker/Stacks. It cannot also be StaXX.page, because the top-nav page
+ * already is, and the two live in one folder. Only one of them is ever active,
+ * so the mismatch is never visible: whichever is live is labelled StaXX.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version 2,
+ * as published by the Free Software Foundation.
+ */
+?>
+<? include '/usr/local/emhttp/plugins/staxx/include/StacksPage.php'; ?>

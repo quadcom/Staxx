@@ -5,7 +5,7 @@
 Two things came out differently from the plan. The device row's `<details>` fold is emitted at the
 very end of `fieldHtml()`, after the Remove button, not straight after the note box — a device is
 a list entry, so it has a `×`, and the fold would have displaced it by exactly the trap the fold
-was being moved to avoid. And `stackman_docker_networks()` leaves out the networks compose made
+was being moved to avoid. And `staxx_docker_networks()` leaves out the networks compose made
 for a stack of its own, told apart by their `com.docker.compose.project` label; on the test box
 that is the difference between six useful names and ten.
 
@@ -28,7 +28,7 @@ looking at it:
 ## 2 is the real bug, and it is a grid auto-placement trap
 
 A field row is a CSS grid and **its children are its cells**. The device row emits, in order:
-tick, tick, `.stackman-fieldhead` (the hardware name, `grid-column: 1 / -1`), the device box, a
+tick, tick, `.staxx-fieldhead` (the hardware name, `grid-column: 1 / -1`), the device box, a
 `<details>` fold (`1 / -1` again), then the note box.
 
 A full-width child ends the row it is on, and auto-placement resumes **at column 1** below it. So
@@ -45,17 +45,17 @@ lives, and the `<details>` fold moves to the end of the row.
 ### `javascript/stacks.js`
 
 - **Tick labels.** The two `<span>required</span>` / `<span>sensitive</span>` at :672 and :677
-  become `<span class="stackman-sr">` — visually gone, still read aloud, and the `title` on each
+  become `<span class="staxx-sr">` — visually gone, still read aloud, and the `title` on each
   label still gives the tooltip. Deleting them outright would leave the checkbox nameless.
 - **`boxHtml()`'s sixth parameter changes from `tag` to `head`** (:547): raw HTML rendered inside
   the box *above* the input rather than a text badge below it. The one existing caller passes the
   same `read-only mount` span it builds already, so a volume is unchanged bar the badge sitting
   above its path instead of under it.
 - **Device row** (:696) — `headHtml(kit ? kit.label : f.title, [roTag, lostTag])` is passed to
-  `boxHtml` as `head` instead of pushed as its own cell, and the `<details class="stackman-devmore">`
+  `boxHtml` as `head` instead of pushed as its own cell, and the `<details class="staxx-devmore">`
   block moves to after the note box. The row is then exactly tick · tick · box · note · ×, which is
   the `--device` template.
-- **`.stackman-fieldnote`** for a partly-restricted row (:756) moves below the `showKill` block,
+- **`.staxx-fieldnote`** for a partly-restricted row (:756) moves below the `showKill` block,
   for the same reason — it spans, so anything after it is displaced.
 - **Network mode** joins `CHOICES` (:496):
   ```js
@@ -97,8 +97,8 @@ about the write path changes, so the file is untouched.
 
 ### `include/Defines.php` and `include/action.php`
 
-New `stackman_docker_networks(): array` beside the other docker helpers — `stackman_docker_running()`
-guard, then `stackman_sh()` over
+New `staxx_docker_networks(): array` beside the other docker helpers — `staxx_docker_running()`
+guard, then `staxx_sh()` over
 `docker network ls --format '{{.Name}}|{{.Driver}}'`, split into `[['name' => …, 'driver' => …], …]`.
 An empty list when Docker is down is the right answer, not an error: the three built-in choices
 still work.
@@ -106,17 +106,17 @@ still work.
 `case 'networks':` in the one `switch`, answering `['ok' => true, 'networks' => …]`. It takes no
 parameters, same as `devices`.
 
-### `sheets/stack.manager.css`
+### `sheets/staxx.css`
 
-- `.stackman-fieldgroup` (:2061) — `color: var(--sm-fg)`, the theme's ordinary text colour, which
-  is white on a dark theme and stays legible on a light one. `.stackman-groupnote` stays muted, so
+- `.staxx-fieldgroup` (:2061) — `color: var(--sm-fg)`, the theme's ordinary text colour, which
+  is white on a dark theme and stays legible on a light one. `.staxx-groupnote` stays muted, so
   `(required)` is still grey beside a white **CONTAINER**.
-- `.stackman-formgroup` (:2040) — drop `border-bottom`; add it back on `:last-child` only. Each
+- `.staxx-formgroup` (:2040) — drop `border-bottom`; add it back on `:last-child` only. Each
   group's own top rule is then the single line between it and the one above.
-- `.stackman-fieldhead` (:2172) is now inside a box rather than a direct child of the row, so
+- `.staxx-fieldhead` (:2172) is now inside a box rather than a direct child of the row, so
   the `grid-column: 1 / -1` entry for it at :2157 applies only to a locked row's heading, which is
   where it is still needed.
-- New: `.stackman-fieldrow--locked > .stackman-kill { grid-column: -2 / -1; }` — a locked row is
+- New: `.staxx-fieldrow--locked > .staxx-kill { grid-column: -2 / -1; }` — a locked row is
   all full-width children, so its Remove button would otherwise be displaced into the tick gutter
   by exactly the same trap. The narrow-screen rule already overrides this and stays as it is.
 
@@ -128,8 +128,8 @@ holds every one of those lines, and the file round-trips byte-for-byte with no e
 ## Verification
 
 ```sh
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node tests/js_undeclared.js
 node tests/yaml_roundtrip.js
 python tests/validate_schema.py

@@ -13,7 +13,7 @@ it as the installer. `jellyfin/jellyfin:10.10.3` is an image.
 **Container** — a running copy of an image, with your settings applied. The image is the installer;
 the container is the installed, running program. One image can run as many containers. A
 container's name is whatever `container_name:` says in the compose file, or one Docker makes up if
-that key is absent — an ordinary compose field, not something Stack Manager renames.
+that key is absent — an ordinary compose field, not something StaXX renames.
 
 **Compose file** — a text file listing the containers you want and how they should be set up. Its
 filename is usually `compose.yaml`. It is the standard way to describe containers, understood by
@@ -138,6 +138,37 @@ Relevant because anything stored there cannot be read at boot time.
 
 ---
 
+## Bringing containers in
+
+**Import** — turning a container you already run into a stack, by copying its setup into a compose
+file. The source is one of three things: an Unraid template, a Compose Manager project, or neither.
+Only the first two can be imported; a container matching neither has nothing to convert it from.
+
+*Why it matters here:* it means starting from what you already have rather than from nothing.
+
+**Needs review** — the state an imported stack arrives in. Every start and stop button is refused,
+and the row says plainly that it is waiting to be checked. Nothing runs and nothing of yours is
+touched until you look it over and clear the mark.
+
+*Why it matters here:* it is what makes bringing a container in safe — the copy exists, but it cannot
+do anything until you have said so.
+
+**Taking over** — the one button that clears a "needs review" mark and puts the new stack in charge.
+What it actually does depends on where the container came from:
+
+- From a **template**, the running container is stopped and set aside under another name, and the
+  new stack starts in its place. Reversible — nothing is deleted, and a failed start puts the
+  original back.
+- From a **Compose Manager project**, the new stack is given the same name Docker already knows
+  those containers by, so taking over rebuilds the containers you already run, in place, rather than
+  starting a second copy. There is no going back to a stopped original — going back means starting
+  the project from Compose Manager again.
+
+*Why it matters here:* the two sources look the same in the list but taking over behaves
+differently, and that difference is the one thing worth knowing before pressing the button.
+
+---
+
 ## Terms used about this project
 
 **Prior art** — existing projects that already solve part of the same problem. Studied so we do not
@@ -149,7 +180,7 @@ name. Unraid loads plugin folders in alphabetical order and the last one wins, s
 folder sorts later can take over a screen without modifying any Unraid file.
 
 *Why it matters here:* it is how the optional Docker tab takeover works, and it is why the plugin
-folder is named `stack.manager` — the name has to sort after `dynamix.docker.manager`.
+folder is named `staxx` — the name has to sort after `dynamix.docker.manager`.
 
 **DOM injection** — reaching into a page that another program built and inserting your own bits into
 it. It works, but it breaks every time the other program changes its page.

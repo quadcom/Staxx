@@ -200,7 +200,7 @@ appear or disappear without a redraw.
 **Changed from the approved plan.** Both were to ride on `lockReason`, but that is a single string
 already carrying `hostNote` for volumes and ports — a dangling named volume would need to say two
 things at once. So notes become **`advice`, an array of strings**, carried by `target()` and
-`fieldsFor()` and rendered as one `.stackman-fieldnote` each. `lockReason` keeps its one job: the
+`fieldsFor()` and rendered as one `.staxx-fieldnote` each. `lockReason` keeps its one job: the
 "not editable here" sentence. `advice` is additive and composable, and blocks nothing.
 
 **1e — dangling references.** A service naming a network, volume, secret or service the file never
@@ -256,7 +256,7 @@ editable, and 1f's note appears on it — which is the outcome 1f was for.
 
 **Not doing yet:** showing what a variable resolves to, or listing an env file's contents as
 read-only Variables rows. Both need a server round-trip. Recorded decision for when they arrive —
-ask `docker compose config`, which `stackman_compose_meta()` (`Stacks.php:569`) already shells, and
+ask `docker compose config`, which `staxx_compose_meta()` (`Stacks.php:569`) already shells, and
 do **not** hand-parse `.env`: compose gets `${VAR:-default}`, shell-versus-`.env` precedence and
 `env_file` merge order right because it is the same code that runs the stack, and a hand-written
 parser that disagrees with the container fails silently. So a service using `env_file:` still shows
@@ -329,8 +329,8 @@ first declared name not already used, which `freeName()` already expresses; othe
 ## Verification
 
 ```sh
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node tests/js_undeclared.js
 node tests/yaml_roundtrip.js
 python tests/validate_schema.py

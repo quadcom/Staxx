@@ -9,14 +9,14 @@
  *
  * Runs ON THE SERVER, and the caller must restore the config whatever happens:
  *
- *     CFG=/boot/config/plugins/stack.manager/stack.manager.cfg
+ *     CFG=/boot/config/plugins/staxx/staxx.cfg
  *     cp $CFG /tmp/cfg.bak
  *     sed -i 's#^STACK_ROOT=.*#STACK_ROOT="/tmp/b1-root"#' $CFG
  *     php /tmp/links.php; RC=$?
  *     cp /tmp/cfg.bak $CFG
  *     exit $RC
  *
- * What it is really guarding is stackman_rmtree(): a symlink in a stack folder
+ * What it is really guarding is staxx_rmtree(): a symlink in a stack folder
  * must be unlinked, never followed, or deleting a stack could delete a share.
  */
 
@@ -27,9 +27,9 @@ function ok(string $what, bool $pass, string $note = ''): void {
   printf("%-6s %s%s\n", $pass ? 'ok' : 'FAIL', $what, $note !== '' ? '  ('.$note.')' : '');
 }
 
-require_once '/usr/local/emhttp/plugins/stack.manager/include/Stacks.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
-$root = stackman_stack_root();
+$root = staxx_stack_root();
 if ($root !== '/tmp/b1-root') {
   echo "FAIL   the temporary stack root is not in place (got $root)\n";
   exit(1);
@@ -51,25 +51,25 @@ ok('and one to a file', symlink('/tmp/b1-outside/target.txt', $dir.'/filelink'))
 
 /* Reading, writing and deleting all refuse to follow one. */
 
-ok('will not read through a link',  stackman_read_file($rel, 'filelink', $err) === null, $err);
+ok('will not read through a link',  staxx_read_file($rel, 'filelink', $err) === null, $err);
 ok('and says why',                  strpos($err, 'link') !== false, $err);
-ok('will not write through a link', !stackman_write_file($rel, 'filelink', 'clobbered', true, $err), $err);
+ok('will not write through a link', !staxx_write_file($rel, 'filelink', 'clobbered', true, $err), $err);
 ok('the target is untouched', file_get_contents('/tmp/b1-outside/target.txt') === 'the link points here');
 
-ok('deletes the link itself',       stackman_delete_file($rel, 'filelink', $err), $err);
+ok('deletes the link itself',       staxx_delete_file($rel, 'filelink', $err), $err);
 ok('the link is gone',              !is_link($dir.'/filelink'));
 ok('its target survives',           file_exists('/tmp/b1-outside/target.txt'));
 
 /* Listing flags one rather than hiding it. */
 
-$list  = stackman_list_files($rel, $err);
+$list  = staxx_list_files($rel, $err);
 $found = null;
 foreach ((array)$list as $e) if ($e['name'] === 'dirlink') $found = $e;
 ok('a link is listed',              is_array($found));
 ok('and flagged as a link',         ($found['link'] ?? false) === true);
 ok('and never offered as text',     ($found['text'] ?? true) === false);
 
-$extras = stackman_stack_extras($rel, $err);
+$extras = staxx_stack_extras($rel, $err);
 $found  = null;
 foreach ((array)$extras as $e) if ($e['name'] === 'dirlink') $found = $e;
 ok('the delete list flags it too',  ($found['link'] ?? false) === true);
@@ -77,7 +77,7 @@ ok('and does not count through it', ($found['count'] ?? -1) === 0 && ($found['di
 
 /* And the whole-stack delete removes the link without walking through it. */
 
-ok('confirmed delete succeeds',     stackman_delete_stack($rel, $err, true), $err);
+ok('confirmed delete succeeds',     staxx_delete_stack($rel, $err, true), $err);
 ok('the stack folder is gone',      !is_dir($dir));
 ok('the link did not take the folder it pointed at',
    is_dir('/tmp/b1-outside') && file_exists('/tmp/b1-outside/keep.txt'));

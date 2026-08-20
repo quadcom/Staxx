@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stack Manager — development install. RUN THIS ON THE UNRAID SERVER.
+# StaXX — development install. RUN THIS ON THE UNRAID SERVER.
 #
 # This is not the real installer. It copies the plugin files straight into
 # place so you can see them in the web interface within seconds, skipping the
@@ -11,27 +11,46 @@
 #   * NOTHING SURVIVES A REBOOT. /usr/local/emhttp is rebuilt from scratch at
 #     boot. If something goes badly wrong, reboot and it is gone.
 #   * Your settings DO survive, because they live on the flash drive at
-#     /boot/config/plugins/stack.manager/. Use --purge to clear those too.
+#     /boot/config/plugins/staxx/. Use --purge to clear those too.
 #
 # Expected layout on the flash drive:
 #
-#   /boot/stack.manager-dev/
+#   /boot/staxx-dev/
 #     dev-install.sh        <- this file
-#     stack.manager/        <- copy of the plugin folder from the repo
+#     staxx/        <- copy of the plugin folder from the repo
 #
 # Usage:
-#   bash /boot/stack.manager-dev/dev-install.sh            install or update
-#   bash /boot/stack.manager-dev/dev-install.sh --remove   remove, keep settings
-#   bash /boot/stack.manager-dev/dev-install.sh --purge    remove settings too
+#   bash /boot/staxx-dev/dev-install.sh            install or update
+#   bash /boot/staxx-dev/dev-install.sh --remove   remove, keep settings
+#   bash /boot/staxx-dev/dev-install.sh --purge    remove settings too
 
 set -euo pipefail
 
-PLUGIN="stack.manager"
+PLUGIN="staxx"
 DEST="/usr/local/emhttp/plugins/${PLUGIN}"
 CFG_DIR="/boot/config/plugins/${PLUGIN}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="${HERE}/${PLUGIN}"
 MODE="${1:-install}"
+
+# The app was called stack.manager until 2026-08-18. Carry a pre-rename install
+# across before anything else touches either path. mv rather than cp: two config
+# folders that both look valid is worse than one. The "new does not exist" guard
+# makes a re-run a no-op rather than a clobber. STACK_ROOT holds an absolute
+# path — rewrite it or it points at the folder the stacks just moved out of.
+OLD_CFG_DIR="/boot/config/plugins/stack.manager"
+if [[ -d "${OLD_CFG_DIR}" && ! -d "${CFG_DIR}" ]]; then
+  echo "==> Migrating settings from ${OLD_CFG_DIR} to ${CFG_DIR}"
+  mv "${OLD_CFG_DIR}" "${CFG_DIR}"
+  if [[ -f "${CFG_DIR}/stack.manager.cfg" ]]; then
+    mv "${CFG_DIR}/stack.manager.cfg" "${CFG_DIR}/${PLUGIN}.cfg"
+  fi
+  sed -i 's#/boot/config/plugins/stack\.manager#/boot/config/plugins/staxx#g' \
+    "${CFG_DIR}/${PLUGIN}.cfg" 2>/dev/null || true
+  echo "    stacks now at $(grep -o '"[^"]*"' <<<"$(grep '^STACK_ROOT' "${CFG_DIR}/${PLUGIN}.cfg")" | tr -d '"')"
+fi
+rm -rf "/usr/local/emhttp/plugins/stack.manager"   # stale tree; rebuilt at boot anyway
+rm -rf "/tmp/stack.manager"                        # a cache, regenerates
 
 case "${MODE}" in
   --remove|--purge)
@@ -44,14 +63,14 @@ case "${MODE}" in
       echo "    Settings kept at ${CFG_DIR} (use --purge to remove them)"
     fi
     echo
-    echo "Done. Refresh the web interface — the Stacks pages should be gone."
+    echo "Done. Refresh the web interface — the StaXX pages should be gone."
     exit 0
     ;;
 esac
 
 [[ -d "${SRC}" ]] || {
   echo "error: no plugin folder found at ${SRC}" >&2
-  echo "       Copy src/stack.manager/usr/local/emhttp/plugins/stack.manager/" >&2
+  echo "       Copy src/staxx/usr/local/emhttp/plugins/staxx/" >&2
   echo "       from the repo into $(dirname "${SRC}")/ and try again." >&2
   exit 1
 }
@@ -107,8 +126,8 @@ printf '    Array state      : %s\n' \
 echo
 echo "Installed. Now:"
 echo "  1. Hard-refresh the web interface (Ctrl-F5)."
-echo "  2. Look under the Docker tab for a 'Stacks' sub-tab."
-echo "  3. Look under Settings for 'Stack Manager'."
+echo "  2. Look under the Docker tab for a 'StaXX' sub-tab."
+echo "  3. Look under Settings for 'StaXX'."
 echo
 echo "If a page is blank or missing, watch the log while you load it:"
 echo "  tail -f /var/log/syslog"

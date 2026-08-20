@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stack Manager — build the installable Slackware package from src/.
+# StaXX — build the installable Slackware package from src/.
 #
 # Produces build/<name>-<version>-noarch-<build>.txz, which is what the .plg
 # fetches and hands to upgradepkg.
@@ -12,11 +12,11 @@
 #   ./pkg_build.sh 2026.08.09          build a specific version
 #   ./pkg_build.sh 2026.08.09 --update-plg   ...and stamp it into the .plg
 #
-# Copyright 2026, Stack Manager contributors. GPL-2.0.
+# Copyright 2026, StaXX contributors. GPL-2.0.
 
 set -euo pipefail
 
-NAME="stack.manager"
+NAME="staxx"
 ARCH="noarch"
 BUILD="1"
 

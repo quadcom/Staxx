@@ -1,0 +1,74 @@
+Menu="Utilities"
+Type="xmenu"
+Title="StaXX"
+Tag="cubes"
+Icon="cubes"
+---
+<?PHP
+/* StaXX — settings.
+ * Copyright 2026, StaXX contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version 2,
+ * as published by the Free Software Foundation.
+ */
+$plugin = 'staxx';
+$cfg    = parse_plugin_cfg($plugin);
+
+// Settings now live on the Stacks page itself, in a panel with an explanation
+// beside every control. This page is a signpost to it — except for the stack
+// directory below, which stays here on purpose; see the comment on that field.
+// Both halves are the page's FILE BASENAME, not its Title: PageBuilder keys
+// every page by basename ($page['name'] = basename($entry, '.page')) and that
+// is what the URL segment is. The header button is StaXX.page, so /StaXX; the
+// Docker sub-tab is Stacks.page, so /Docker/Stacks. The two cannot share a
+// basename, which is why only one of them is spelt the way the app is.
+$stacksUrl = ($cfg['HEADER_MENU'] ?? 'false') === 'true' ? '/StaXX#settings' : '/Docker/Stacks#settings';
+
+// A lone text box inside a form reads to a password manager like a username,
+// and autocomplete="off" does not stop one — that attribute only speaks to the
+// browser's own autofill. There is no standard way to say "not a login field",
+// so each manager's own opt-out is set: 1Password, LastPass, Bitwarden,
+// Dashlane, Proton Pass. The Stacks page carries the same list.
+$nofill = 'autocomplete="off" data-1p-ignore data-lpignore="true" '
+        . 'data-bwignore data-form-type="other" data-protonpass-ignore="true"';
+
+// Both fields below stay on this /update.php form rather than moving to our
+// own action.php endpoint, deliberately. It is the way back if the Stacks
+// page, its JavaScript or our endpoint are ever broken: /update.php writes
+// whatever it is given, with no validation at all, whereas the panel
+// validates before saving. That asymmetry is the point — a recovery route
+// that can refuse to save is not much of a recovery route. The Docker menu
+// field matters for the same reason: taking that menu over can hide every
+// other way into StaXX, so this page needs to be able to put it back.
+?>
+
+<p>_(StaXX's settings are in the app now.)_
+<a href="<?=$stacksUrl?>">_(Open the settings panel)_</a>.</p>
+
+<form markdown="1" method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#file" value="<?=$plugin?>/<?=$plugin?>.cfg">
+<input type="hidden" name="#command" value="/usr/local/emhttp/plugins/<?=$plugin?>/scripts/apply_settings">
+
+_(Docker menu)_:
+: <select name="TAKEOVER_DOCKER_TAB" size="1">
+    <?=mk_option($cfg['TAKEOVER_DOCKER_TAB'] ?? 'false', 'false', _('Leave it alone'))?>
+    <?=mk_option($cfg['TAKEOVER_DOCKER_TAB'] ?? 'false', 'true',  _('Replace it with StaXX'))?>
+  </select>
+
+> Only change this here if you cannot reach the settings panel in the app and need to put the
+> Docker menu back.
+
+_(Stack directory)_:
+: <input type="text" name="STACK_ROOT" value="<?=htmlspecialchars($cfg['STACK_ROOT'])?>" spellcheck="false" <?=$nofill?>>
+
+> Only set this here if you have moved where stacks are stored by hand and the StaXX page can no
+> longer find them. The normal way to change it is the settings panel in the app.
+
+&nbsp;
+: <span class="buttons-spaced">
+    <input type="submit" name="#apply" value="_(Apply)_" disabled>
+    <input type="button" value="_(Done)_" onclick="done()">
+  </span>
+
+</form>

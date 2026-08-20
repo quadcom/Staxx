@@ -50,7 +50,7 @@ Decisions taken with Adrian (2026-08-17):
   with its address/priority behind the same toggle — not a locked row.
 
 Everything is in the two browser files:
-`src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js` and
+`src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js` and
 `.../stacks.js`. Copy this file to `PLAN_30.md` in the repo at the start of the build, and mark
 `PLAN_16.md` complete pointing at it when finished.
 
@@ -171,8 +171,8 @@ own, one level of nesting allowed so `bind.propagation` and `tmpfs.size` are rea
 — nothing absent is offered, nothing is ever created.
 
 Render, in stacks.js: a `<details>` under the row's boxes, built by looping an ordered table of
-extra part names. `stackman-devmore` (stacks.js:2132) is the existing precedent for a disclosure
-inside a row; give this one its own `stackman-` class rather than borrowing that one.
+extra part names. `staxx-devmore` (stacks.js:2132) is the existing precedent for a disclosure
+inside a row; give this one its own `staxx-` class rather than borrowing that one.
 
 Covered by this one mechanism: a port's `mode`; a volume's `type`, `read_only`, `consistency`,
 `subpath`, `bind.propagation`, `bind.selinux`, `bind.create_host_path`, `volume.nocopy`,
@@ -214,8 +214,8 @@ After every step, all five checks, and the deploy loop from `local/dev-server.md
 ```sh
 node tests/yaml_roundtrip.js
 node tests/js_undeclared.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 python tests/validate_schema.py
 ```
 

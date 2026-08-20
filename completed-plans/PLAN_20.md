@@ -11,7 +11,7 @@ Three things turned up during the build that the plan above did not predict:
   documents, so the old message was simply false. Both reworded.
 - **A whole class of PHP 8.4 deprecation.** `array &$x = null` is now deprecated, and the
   notice lands *inside* action.php's JSON reply. One was introduced here and three were
-  already present (`stackman_rename_stack`, `stackman_folders_save`, `stackman_folder_taken`).
+  already present (`staxx_rename_stack`, `staxx_folders_save`, `staxx_folder_taken`).
   All four fixed.
 - **Compose names a path, not a line, for schema errors.** `services.web.pull_policy 'alwyas'
   does not match …` has no line number, so those complaints could only reach the status bar.
@@ -101,7 +101,7 @@ real folder>` returns exit 0, resolves `.env`, and silences the spurious
 
 ## The build
 
-### 1. `Stacks.php` — `stackman_validate_compose()`
+### 1. `Stacks.php` — `staxx_validate_compose()`
 
 Signature gains the stack's real directory. Three changes:
 
@@ -113,7 +113,7 @@ Signature gains the stack's real directory. Three changes:
   `$code === 0`, throwing away exactly the advisory notes worth showing. Parse
   `msg="…"` out of compose's logfmt warnings; ignore anything that does not match.
 
-Callers: `stackman_save_stack()` (`:1467`) passes `stackman_stack_dir($name)`.
+Callers: `staxx_save_stack()` (`:1467`) passes `staxx_stack_dir($name)`.
 
 ### 2. `action.php` — a `check` action
 
@@ -154,7 +154,7 @@ and directive files are ones the **form** cannot read, not ones compose rejects.
 
 `optionsHtml()` (`:1318`) already computes `known` and deliberately keeps an unrecognised
 value as a self-labelled option. Keep that exactly — a dropdown that could not show the
-current value would change the file just by being opened. Add `stackman-choose--odd` when
+current value would change the file just by being opened. Add `staxx-choose--odd` when
 `known` is false, and a caution rule matching the host-path treatment.
 
 ### 6. Tests

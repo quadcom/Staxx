@@ -322,7 +322,7 @@ Unraid's own Docker settings, which is what Community Applications reads, fallin
 | `include/action.php` | two new cases, `ca-search` and `ca-app` |
 | `include/StacksPage.php` | the Apps button and the dialog |
 | `javascript/stacks.js` | the Apps browser section |
-| `sheets/stack.manager.css` | `stackman-ca-*` rules |
+| `sheets/staxx.css` | `staxx-ca-*` rules |
 
 ## One loose end
 

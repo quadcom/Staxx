@@ -14,7 +14,7 @@ A stack is currently only a compose file. Real stacks need companions — a `.en
 snippet — and there is no way to get one onto the server through the plugin, no way to edit one, and
 no way for the compose file and those files to know about each other.
 
-There is also a trap waiting. `stackman_delete_stack()` (`Stacks.php:1333`) refuses to delete any
+There is also a trap waiting. `staxx_delete_stack()` (`Stacks.php:1333`) refuses to delete any
 stack whose folder holds anything beyond the compose file and a `.env`. That guard is right today and
 becomes a wall the moment companion files exist, so it is dealt with in the first phase, before
 anything can create one.
@@ -23,25 +23,25 @@ anything can create one.
 
 ### A filename validator, separate from the stack one
 
-`stackman_valid_name()` (`Stacks.php:53`) requires a name to start with a letter or digit, so it
+`staxx_valid_name()` (`Stacks.php:53`) requires a name to start with a letter or digit, so it
 rejects `.env` outright — correct for a directory name, wrong for a file. Companion files get
-`stackman_valid_filename()`: an optional leading dot, then the same safe set (`A-Za-z0-9._-`), no
-slash, no `..` anywhere, 1–63 characters, and **not** one of `STACKMAN_COMPOSE_FILENAMES`
+`staxx_valid_filename()`: an optional leading dot, then the same safe set (`A-Za-z0-9._-`), no
+slash, no `..` anywhere, 1–63 characters, and **not** one of `STAXX_COMPOSE_FILENAMES`
 (`Stacks.php:33`) — a second compose file in the folder would silently change which one the stack
 runs.
 
 ### Five helpers in `Stacks.php`
 
-Each takes the stack's relative path, runs it through the existing `stackman_valid_path()`, then
-confines the result with `realpath()` the way `stackman_browse_dirs()` already does (`:143`).
+Each takes the stack's relative path, runs it through the existing `staxx_valid_path()`, then
+confines the result with `realpath()` the way `staxx_browse_dirs()` already does (`:143`).
 
 | Helper | Does |
 |---|---|
-| `stackman_list_files($rel)` | Every entry: name, size, mtime, is-compose, looks-like-text, is-directory |
-| `stackman_read_file($rel, $file)` | Text as-is, or base64 for a binary |
-| `stackman_write_file($rel, $file, $body)` | CRLF→LF for text, `chmod 0644`, temp file + `rename()` so a reader never sees half a file |
-| `stackman_delete_file($rel, $file)` | One file |
-| `stackman_rename_file($rel, $from, $to)` | Within the folder only |
+| `staxx_list_files($rel)` | Every entry: name, size, mtime, is-compose, looks-like-text, is-directory |
+| `staxx_read_file($rel, $file)` | Text as-is, or base64 for a binary |
+| `staxx_write_file($rel, $file, $body)` | CRLF→LF for text, `chmod 0644`, temp file + `rename()` so a reader never sees half a file |
+| `staxx_delete_file($rel, $file)` | One file |
+| `staxx_rename_file($rel, $from, $to)` | Within the folder only |
 
 "Looks like text" is the first 8 KB holding no NUL byte — what `git` does, and right often enough.
 
@@ -66,8 +66,8 @@ is the only protection left once the old guard is gone.
 
 ## Phase B2 — The tab strip
 
-A row of tabs along the top edge of the compose pane, inside `.stackman-pane--yaml`, above
-`.stackman-yamlwrap`.
+A row of tabs along the top edge of the compose pane, inside `.staxx-pane--yaml`, above
+`.staxx-yamlwrap`.
 
 - The compose file is pinned leftmost and cannot be closed or renamed. The rest follow in filename
   order.
@@ -163,7 +163,7 @@ for the length of one run. It earned its keep immediately: see below.
 
 ## What was built differently
 
-1. **`stackman_rmtree()` had a real bug, found by that symlink test.** It resolved the path with
+1. **`staxx_rmtree()` had a real bug, found by that symlink test.** It resolved the path with
    `realpath()` before testing `is_link()`, and a link's target is outside the tree by definition —
    so one symlink anywhere made the whole delete refuse, with nothing removed. The link check now
    happens on the path as given, before anything resolves it.

@@ -1,5 +1,5 @@
-/* Stack Manager — tests for the image-import builder (PLAN_31 step 3).
- * Copyright 2026, Stack Manager contributors. GPL-2.0.
+/* StaXX — tests for the image-import builder (PLAN_31 step 3).
+ * Copyright 2026, StaXX contributors. GPL-2.0.
  *
  *   node tests/image_import.js
  *
@@ -15,8 +15,8 @@
 
 'use strict';
 
-var IM = require('../src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/image-import.js');
-var CM = require('../src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js');
+var IM = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/image-import.js');
+var CM = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 
 var pass = 0, fail = 0;
 

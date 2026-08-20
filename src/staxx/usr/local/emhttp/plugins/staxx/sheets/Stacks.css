@@ -1,0 +1,16 @@
+/* StaXX — styles for the top-navigation variant of the Stacks view.
+ *
+ * Deliberately empty.
+ *
+ * PageBuilder auto-loads sheets/<page name>.css, and this file exists only so
+ * that auto-load finds something under the "Stacks" page name. The real styles
+ * are pulled in by StacksPage.php with a ?v=<file mtime> on the URL, so an
+ * edited stylesheet reaches the browser without a hard refresh.
+ *
+ * This used to `@import url("staxx.css")`. An @import inherits the
+ * cache behaviour of the file that contains it, so an unversioned import of an
+ * unversioned stylesheet meant edits were invisible until the user knew to
+ * press Ctrl-F5 — which is not something a plugin should require.
+ *
+ * Copyright 2026, StaXX contributors. GPL-2.0.
+ */

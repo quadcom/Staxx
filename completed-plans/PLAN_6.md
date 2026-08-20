@@ -108,7 +108,7 @@ macvlan, ipvlan, host, none); volumes → `driver`; secrets and configs → `fil
 existing `browse` tool.
 
 **Anything else on a declaration goes in a `<details>` fold** — `backend_net` also has
-`internal: true`. That is the pattern device rows already established (`.stackman-devmore`), and its
+`internal: true`. That is the pattern device rows already established (`.staxx-devmore`), and its
 contents are `PLAN_5.md`'s mechanism reused: one field per nested scalar leaf. So `internal`,
 `external`, `name` and `driver_opts` children each get a box in the fold without new machinery.
 
@@ -167,8 +167,8 @@ once you can declare one.
 ## Verification
 
 ```sh
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node tests/js_undeclared.js
 node tests/yaml_roundtrip.js
 ```

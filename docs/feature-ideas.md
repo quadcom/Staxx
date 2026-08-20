@@ -5,7 +5,7 @@ An entry gets promoted to its own numbered plan when it is picked up, and delete
 ships or is ruled out.
 
 Sibling to `settings-ideas.md`, which holds the same kind of list for things that would be a
-*setting*. An entry belongs there if it needs a switch on the settings page and here if it does not.
+*setting*. An entry belongs there if it needs a switch in the settings panel and here if it does not.
 
 Started 2026-08-17.
 
@@ -85,7 +85,7 @@ generator for things like encryption keys as the item he wanted on it.
 **Four things were measured before writing this, and each one changed what should be on the menu.**
 
 1. **The menu already exists.** The stylesheet's own section is headed "Context menu", and
-   `#stackman-menu` is a finished component: each item carries a glyph, a label, **and an explanation
+   `#staxx-menu` is a finished component: each item carries a glyph, a label, **and an explanation
    line underneath**, plus separators, a disabled state and a red variant for destructive things. It
    serves stacks, containers and folders today — Start, Stop, Update images, Logs, Edit, Delete, move
    to a folder. Editor items would be a second caller, not a new component. Two small gaps: it

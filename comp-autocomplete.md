@@ -234,7 +234,7 @@ carries short control names and is always duplicated somewhere reachable.
 
 ### Where it attaches — the part needing care
 
-Only `binder === 'setting'` rows have a visible label (`stacks.js:1933`, `.stackman-fieldlabel`).
+Only `binder === 'setting'` rows have a visible label (`stacks.js:1933`, `.staxx-fieldlabel`).
 Ports, volumes, variables and the other list groups have **no label at all** — their meaning comes
 from the group's caption row.
 
@@ -252,8 +252,8 @@ group would want it.
   lands on and resets auto-placement to column 1 below it, so anything emitted after one is stranded
   in the label column."* The help paragraph is pushed in the tail block beside `adviceBlock` and
   `commandSay`, after the `×`.
-- **Reuse `.stackman-fieldhint`, not `.stackman-fieldnote`.** Both are already in the full-width
-  selector list (`css:2535-2547`), but `.stackman-fieldnote` is accent-coloured and means *something
+- **Reuse `.staxx-fieldhint`, not `.staxx-fieldnote`.** Both are already in the full-width
+  selector list (`css:2535-2547`), but `.staxx-fieldnote` is accent-coloured and means *something
   is wrong here*. Help is ordinary grey prose.
 
 The phone layout needs no new rule — every template already collapses to `1fr auto` and forces
@@ -283,8 +283,8 @@ Locally, before every deploy:
 ```sh
 node tests/yaml_roundtrip.js
 node tests/js_undeclared.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 python tests/validate_schema.py
 ```
 

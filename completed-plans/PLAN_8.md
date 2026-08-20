@@ -66,7 +66,7 @@ Advanced
 
 ## Phase 1 — order and the Stack fold
 
-Files: `javascript/stacks.js`, `sheets/stack.manager.css`
+Files: `javascript/stacks.js`, `sheets/staxx.css`
 
 1. **Reorder `GROUPS`** (stacks.js:110). Move `env` above `device`, move `label` below the three new
    entries, and add `depends`. `groupsForService()` (stacks.js:177) needs no change: it already
@@ -74,16 +74,16 @@ Files: `javascript/stacks.js`, `sheets/stack.manager.css`
    land between Labels and Advanced.
 2. **`CAPTIONS`** (stacks.js:128) gains a `depends` row: `['service', 'wait until', 'note, kept in the file']`.
 3. **Fold the Stack section.** In `stackSectionHtml()` (stacks.js:1399), wrap the four groups in a
-   `<details class="stackman-stackfold">` whose `<summary class="stackman-svchead">` is the "Stack"
-   heading. The `<section class="stackman-svc stackman-svc--stack">` wrapper stays, so no existing
+   `<details class="staxx-stackfold">` whose `<summary class="staxx-svchead">` is the "Stack"
+   heading. The `<section class="staxx-svc staxx-svc--stack">` wrapper stays, so no existing
    rule changes.
    - `renderForm()` rebuilds the whole form on every structural edit, so the open/shut state cannot
      live in the DOM. Add a module-level `stackOpen = false` beside `listGroups`, write it as the
      `open` attribute at render, and update it from one `toggle` listener. Shut on every fresh open of
      the editor — no server-side memory, unlike the stacks table's folders.
-4. **CSS.** Copy the disclosure treatment from `.stackman-details` (stack.manager.css:3301) — it
-   already gives a real triangle via `list-style: revert` — onto `.stackman-stackfold > summary`,
-   keeping `.stackman-svchead`'s own type scale.
+4. **CSS.** Copy the disclosure treatment from `.staxx-details` (staxx.css:3301) — it
+   already gives a real triangle via `list-style: revert` — onto `.staxx-stackfold > summary`,
+   keeping `.staxx-svchead`'s own type scale.
 
 ## Phase 2 — a blank box for a setting the file does not have yet
 
@@ -147,7 +147,7 @@ can be shown with empty boxes.
 
 ## Phase 3 — the tick boxes
 
-Files: `javascript/stacks.js`, `javascript/compose-model.js`, `sheets/stack.manager.css`
+Files: `javascript/stacks.js`, `javascript/compose-model.js`, `sheets/staxx.css`
 
 1. **`removeKey(doc, form, service, path)`** in compose-model.js, exported. Removes the pair at a
    path and then every parent the removal left empty — a bare `deploy:` is null and compose refuses
@@ -167,15 +167,15 @@ Files: `javascript/stacks.js`, `javascript/compose-model.js`, `sheets/stack.mana
    after the `<h5>`:
 
    ```html
-   <div class="stackman-groupflags">
-     <label class="stackman-flag">
+   <div class="staxx-groupflags">
+     <label class="staxx-flag">
        <input type="checkbox" data-flag="health" data-service="web" checked> Health check</label>
      …resources, depends…
    </div>
    ```
 
-   `.stackman-grouphead` is already `display:flex; justify-content:space-between` (CSS:2071), so this
-   right-aligns with no new layout — only type and spacing rules for `.stackman-groupflags`/`.stackman-flag`.
+   `.staxx-grouphead` is already `display:flex; justify-content:space-between` (CSS:2071), so this
+   right-aligns with no new layout — only type and spacing rules for `.staxx-groupflags`/`.staxx-flag`.
 
 4. **Showing and hiding.** The three `GROUPS` entries gain `flag: 'health' | 'resources' | 'depends'`.
    The render loop (stacks.js:1465) skips a flagged group whose flag is off, and keeps one whose flag
@@ -270,8 +270,8 @@ depends_on:                      # long — carries a condition
 Local, after every phase — all four are cheap and catch different things:
 
 ```sh
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 node tests/js_undeclared.js
 node tests/yaml_roundtrip.js
 ```
@@ -293,7 +293,7 @@ node tests/yaml_roundtrip.js
   untouched by anything the long-form code does.
 
 On the test server, per `local/dev-server.md` — `pscp` the plugin folder up, then
-`plink -ssh -batch` `bash /boot/stack.manager-dev/dev-install.sh`, and `php -l` over `include/*.php`.
+`plink -ssh -batch` `bash /boot/staxx-dev/dev-install.sh`, and `php -l` over `include/*.php`.
 Nothing here is server-side, so the real check is in the browser:
 
 1. A stack with no `healthcheck:` — tick Health check, fill only "Check every", confirm the Compose

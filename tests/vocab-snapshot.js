@@ -1,5 +1,5 @@
-/* Stack Manager — the value lists exactly as stacks.js held them before
- * PLAN_15 phase 1 moved them into the model. Copyright 2026, Stack Manager
+/* StaXX — the value lists exactly as stacks.js held them before
+ * PLAN_15 phase 1 moved them into the model. Copyright 2026, StaXX
  * contributors. GPL-2.0.
  *
  * NOT a second home for this data and never read by the plugin. It is a

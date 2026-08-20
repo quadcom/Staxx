@@ -1,5 +1,5 @@
-/* Stack Manager — names assigned but never declared.
- * Copyright 2026, Stack Manager contributors. GPL-2.0.
+/* StaXX — names assigned but never declared.
+ * Copyright 2026, StaXX contributors. GPL-2.0.
  *
  *   node tests/js_undeclared.js
  *
@@ -21,8 +21,8 @@
 var fs = require('fs');
 
 var FILES = [
-  'src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js',
-  'src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js'
+  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js',
+  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js'
 ];
 
 var KEYWORD = /^(?:if|for|while|do|else|return|case|switch|try|catch|typeof|new|delete|void|in|of|instanceof|null|true|false|this|function|var|let|const)$/;

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Stack Manager is an Unraid 7.2+ webGUI plugin that replaces Unraid's proprietary XML Docker
+StaXX is an Unraid 7.2+ webGUI plugin that replaces Unraid's proprietary XML Docker
 templates with standard Compose files, and renders those compose files as a form so non-technical
 users can configure containers without touching YAML. Pre-alpha; see `README.md` for the design
 commitments and `docs/README.md` for the plain-English overview.
@@ -33,8 +33,8 @@ Anything beyond a syntax check has to happen on the server.
 python tests/validate_schema.py     # x-unraid schema self-test (needs pyyaml, jsonschema)
 node tests/yaml_roundtrip.js        # the compose model — parse, edit, write back
 node tests/js_undeclared.js         # names assigned but declared nowhere
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 ```
 
 `stacks.js` is one big IIFE, so a single typo kills the whole page's behaviour silently —
@@ -46,11 +46,12 @@ mode, where assigning to a name nothing declared throws instead of quietly makin
 `node --check` cannot see that, since the file parses perfectly and the error only exists at run
 time. One such line inside a function every render calls kills the whole page.
 
-`tests/server/` holds two PHP checks that can only run **on the server** — copy them up and run
-them there. `files.php` covers the companion-file helpers and the delete confirmation;
-`links.php` covers what happens when a stack folder holds a symlink, and needs `STACK_ROOT`
-pointed at `/tmp/b1-root` for the run because /boot is vfat and cannot hold one. Each file's
-header gives the exact commands.
+`tests/server/` holds PHP checks that can only run **on the server** — copy them up and run them
+there. `files.php` covers the companion-file helpers and the delete confirmation; `links.php` covers
+what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
+for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's
+boot-start list, and points `STAXX_AUTOSTART_FILE` at `/tmp` so the real one is never touched. Each
+file's header gives the exact commands.
 
 `validate_schema.py` has no runner or framework. It prints one line per case and exits non-zero on
 failure; its negative cases (what the schema must *reject*) matter more than the positive ones.
@@ -63,19 +64,19 @@ Credentials for the test box live in `local/dev-server.md`, which is gitignored 
 `plink` and `pscp` are present and can — use `plink -ssh -batch` (the `-batch` flag is what stops
 it hanging forever on a host-key prompt).
 
-`dev-install.sh` runs **on the server**, from `/boot/stack.manager-dev/`, with a copy of the plugin
+`dev-install.sh` runs **on the server**, from `/boot/staxx-dev/`, with a copy of the plugin
 folder staged beside it. So a deploy is always two steps: `pscp` the plugin folder up, then `plink`
 the script. Delete the staged copy first or stale files survive the upload.
 
 ```sh
-bash /boot/stack.manager-dev/dev-install.sh            # install or update
-bash /boot/stack.manager-dev/dev-install.sh --remove   # remove, keep settings
-bash /boot/stack.manager-dev/dev-install.sh --purge    # remove settings too
+bash /boot/staxx-dev/dev-install.sh            # install or update
+bash /boot/staxx-dev/dev-install.sh --remove   # remove, keep settings
+bash /boot/staxx-dev/dev-install.sh --purge    # remove settings too
 ```
 
 Nothing under `/usr/local/emhttp` survives a reboot — that tree is rebuilt at boot, so a reboot is
 the panic button if a change breaks the webGUI. Settings do survive; they live on the flash drive
-at `/boot/config/plugins/stack.manager/`.
+at `/boot/config/plugins/staxx/`.
 
 `pkg_build.sh` builds the real `.txz` package and is only needed for a release. It must run on
 Linux, since the package carries Unix permissions and ownership.
@@ -83,11 +84,11 @@ Linux, since the package carries Unix permissions and ownership.
 ## Verifying a change with no browser
 
 For server-side logic, calling plugin functions from a throwaway PHP script beats driving the UI.
-`stackman_start_job()` returns `''` plus an error string for every refusal, so guard and allowlist
+`staxx_start_job()` returns `''` plus an error string for every refusal, so guard and allowlist
 behaviour can be tested exhaustively — and safely, since a refusal never reaches the shell.
 
 To check row markup, data attributes and tag balance, call
-`stackman_render_rows(stackman_folder_layout(stackman_list_stacks()), true)` with a stub `_()`
+`staxx_render_rows(staxx_folder_layout(staxx_list_stacks()), true)` with a stub `_()`
 defined first and dump the HTML to a file. Strip HTML comments before counting tags — the markup is
 full of explanatory comments that mention `<span>` and throw off a naive balance check.
 
@@ -95,11 +96,11 @@ full of explanatory comments that mention `<span>` and throw off a naive balance
 
 ### Source tree mirrors install paths
 
-`src/stack.manager/` is a Slackware-style tree: `src/stack.manager/usr/local/emhttp/plugins/stack.manager/`
-lands at `/usr/local/emhttp/plugins/stack.manager/` on the server. The nesting is not decorative —
+`src/staxx/` is a Slackware-style tree: `src/staxx/usr/local/emhttp/plugins/staxx/`
+lands at `/usr/local/emhttp/plugins/staxx/` on the server. The nesting is not decorative —
 both the packager and the dev installer copy it verbatim.
 
-The directory name `stack.manager` is load-bearing: it must sort alphabetically after
+The directory name `staxx` is load-bearing: it must sort alphabetically after
 `dynamix.docker.manager`, which is what makes shadowing stock pages possible.
 
 ### How pages get mounted
@@ -110,12 +111,12 @@ render of every page.
 
 Three pages, two of them mutually exclusive:
 
-- `stack.manager.page` — `Menu="Docker:0"`, a tab ahead of the stock Docker Containers tab
-- `Stacks.page` — `Menu="Tasks:59"`, its own top-nav button just left of stock Docker (`Tasks:60`)
-- `stack.manager.settings.page` — Settings → Utilities
+- `Stacks.page` — `Menu="Docker:0"`, a tab ahead of the stock Docker Containers tab (`/Docker/Stacks`)
+- `StaXX.page` — `Menu="Tasks:59"`, its own top-nav button just left of stock Docker (`Tasks:60`), at `/StaXX`
+- `staxx.settings.page` — Settings → Utilities
 
 Both view pages `include` the same `include/StacksPage.php`, and their `Cond` expressions test for
-`/boot/config/plugins/stack.manager/header_menu` in opposite directions, so exactly one is ever
+`/boot/config/plugins/staxx/header_menu` in opposite directions, so exactly one is ever
 live. That marker file is a **projection of the `HEADER_MENU` config key**, written by
 `scripts/apply_settings` (run by `/update.php` after a settings save). The indirection exists
 because `Cond` runs constantly and parsing an ini file there — or quoting a config lookup inside an
@@ -126,7 +127,7 @@ ini header — would be wasteful and fragile.
 A stack is **a directory containing a compose file, and nothing else**. No database, no index, no
 metadata sidecar. Drop a compose file in a folder and it is a stack; delete the folder and it is
 gone. The compose file is the source of truth, so anything kept alongside it is a second copy that
-can disagree with it. Root defaults to `/boot/config/plugins/stack.manager/stacks`, overridable via
+can disagree with it. Root defaults to `/boot/config/plugins/staxx/stacks`, overridable via
 `STACK_ROOT`.
 
 Stacks self-group by `com.docker.compose.project`, the label compose stamps on every container it
@@ -135,15 +136,15 @@ creates. Containers without it (Unraid templates, hand-created) collect under `'
 *Folders are directories.* A stack at `<root>/Media/jellyfin/` is in the folder "Media" because
 that is where it is — there is no index and no membership file. A directory at the top of the root
 holding a compose file is a stack; one that does not is a folder. One level only. A stack's identity
-is its path under the root, `jellyfin` or `Media/jellyfin`, and `stackman_valid_path()` gates it by
-splitting on `/` and handing every segment to `stackman_valid_name()` — never by a regex that
+is its path under the root, `jellyfin` or `Media/jellyfin`, and `staxx_valid_path()` gates it by
+splitting on `/` and handing every segment to `staxx_valid_name()` — never by a regex that
 permits a slash, which is the obvious way to write it and also the way out of the stack root.
 
 `include/Folders.php` now holds only which folders are shown collapsed, because an empty folder has
 nowhere else to keep it.
 
 Moving a stack is a directory move, which does not change its compose project name — but Docker
-recorded the old config path, so `stackman_compose_state()` indexes what compose reports three ways:
+recorded the old config path, so `staxx_compose_state()` indexes what compose reports three ways:
 by full path, by the tail (`jellyfin/compose.yaml`, which a move does not change), and by project
 name. Without the tail index a moved stack reads as stopped until it is recreated.
 
@@ -152,21 +153,21 @@ display-name override.
 
 ### PHP layer
 
-Everything is prefixed `stackman_`. Files are guarded against double-inclusion by a `defined()`
+Everything is prefixed `staxx_`. Files are guarded against double-inclusion by a `defined()`
 early return, and each `require_once`s by absolute path.
 
 | File | Role |
 |---|---|
-| `Defines.php` | Config, `stackman_sh()`, docker/compose discovery, project grouping |
+| `Defines.php` | Config, `staxx_sh()`, docker/compose discovery, project grouping |
 | `Stacks.php` | The stack model — list, read, save, delete, validate, self-test, the job runner |
 | `Folders.php` | The presentational folder layer |
-| `StacksTable.php` | Renders table rows; `stackman_state_snapshot()` for cheap refreshes |
+| `StacksTable.php` | Renders table rows; `staxx_state_snapshot()` for cheap refreshes |
 | `StacksPage.php` | Page shell, asset tags, CSRF handoff to the client |
 | `Icons.php` | Icon resolution — selfh.st index, caching, initials fallback |
 | `Stats.php` | Reads what the background collector wrote; GPU/CPU/mem/net |
 | `action.php` | The single JSON endpoint |
 
-`stackman_sh()` wraps every external command in `timeout -k 2 N sh -c '<cmd>' </dev/null`. Nothing
+`staxx_sh()` wraps every external command in `timeout -k 2 N sh -c '<cmd>' </dev/null`. Nothing
 may hang: a page that waits forever on `docker` is worse than one that fails visibly. The command
 goes to `sh -c` as one argument rather than trailing `timeout` directly — written the other way,
 `timeout 120 cd /x && foo` time-limits the `cd`, which fails, short-circuits the `&&`, and reports
@@ -190,11 +191,11 @@ compose file, so it is only for changes to the *set* of rows.
 
 ### Long-running commands
 
-Compose commands can take minutes, so `stackman_start_job()` detaches them with `setsid`, writes
-output to `/tmp/stack.manager/jobs/<id>.log`, and returns a job id the page polls via the `job`
-action. Completion is signalled by a `STACKMAN_JOB_END <exit-code>` sentinel appended to the log.
+Compose commands can take minutes, so `staxx_start_job()` detaches them with `setsid`, writes
+output to `/tmp/staxx/jobs/<id>.log`, and returns a job id the page polls via the `job`
+action. Completion is signalled by a `STAXX_JOB_END <exit-code>` sentinel appended to the log.
 
-Verbs are an allowlist (`stackman_job_verbs()`) with separate whole-stack and single-service forms;
+Verbs are an allowlist (`staxx_job_verbs()`) with separate whole-stack and single-service forms;
 a verb missing a form for a given scope is refused rather than falling back to the other. A service
 name is checked for *membership in the compose file's services*, not just shape, and is
 `escapeshellarg`'d on top of that. Multi-step verbs join with `&&` (not `;`) and attach `2>&1` to
@@ -212,7 +213,7 @@ file and moved into place, so a reader never sees half of one. Locking is an ato
 
 `schema/x-unraid.schema.json` (JSON Schema Draft 2020-12) with prose in `docs/x-unraid-schema.md`.
 Metadata lives *inside* the compose file — comment blocks and a companion file were both considered
-and rejected. `stackman_compose_meta()` already parses `x-unraid` blocks; **nothing renders them as
+and rejected. `staxx_compose_meta()` already parses `x-unraid` blocks; **nothing renders them as
 a form yet**, and that renderer is the whole point of the project.
 
 ## Constraints that bite
@@ -228,8 +229,8 @@ a form yet**, and that renderer is the whole point of the project.
 - **Asset URLs carry `filemtime()`.** Without it an edited stylesheet or script sits in the browser
   cache and looks exactly like a change that did not work.
 - **Own the render.** Stock Unraid CSS classes are not borrowed for layout — their rules are
-  invisible to us and change between releases. Every class used is `stackman-`-prefixed.
-- `stack.manager.plg` still carries `TODO-` placeholders for author, repo and MD5. That is
+  invisible to us and change between releases. Every class used is `staxx-`-prefixed.
+- `staxx.plg` still carries `TODO-` placeholders for author, repo and MD5. That is
   deliberate, so a premature publish fails loudly.
 
 ## Writing code

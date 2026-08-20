@@ -1,5 +1,5 @@
-/* Stack Manager — tests for the Community Applications template converter.
- * Copyright 2026, Stack Manager contributors. GPL-2.0.
+/* StaXX — tests for the Community Applications template converter.
+ * Copyright 2026, StaXX contributors. GPL-2.0.
  *
  *   node tests/ca_convert.js
  *
@@ -20,8 +20,8 @@
 var fs = require('fs');
 var path = require('path');
 
-var CA = require('../src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/ca-convert.js');
-var Y  = require('../src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js');
+var CA = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/ca-convert.js');
+var Y  = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 
 var pass = 0, fail = 0;
 
@@ -298,7 +298,7 @@ console.log('\nB. Name normalisation');
 var VALID_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 FIXTURES.forEach(function (pair) {
   var r = CA.convert(pair[1]);
-  ok(pair[0] + ': name matches stackman_valid_name()', VALID_NAME.test(r.name), r.name);
+  ok(pair[0] + ': name matches staxx_valid_name()', VALID_NAME.test(r.name), r.name);
   ok(pair[0] + ': name is 63 characters or fewer', r.name.length <= 63);
   ok(pair[0] + ': name has no ".."', r.name.indexOf('..') === -1);
   ok(pair[0] + ': service key equals the name', r.service === r.name);
@@ -318,7 +318,10 @@ console.log('\nC. Mapping table — binhex-emby');
 var embyR = CA.convert(EMBY);
 var embyY = embyR.yaml;
 ok('image: comes from Repository', embyY.indexOf('image: ghcr.io/binhex/arch-emby') >= 0);
-ok('container_name: equals the name', embyY.indexOf('container_name: binhex-emby') >= 0);
+// binhex-emby's Name has no capitals, so this also happens to equal the
+// normalised name — the real proof that container_name is Name verbatim,
+// not the sanitised form, is section N below.
+ok('container_name: equals Name verbatim', embyY.indexOf('container_name: binhex-emby') >= 0);
 ok('bridge network emits no network_mode/networks', embyY.indexOf('network_mode') === -1 && embyY.indexOf('networks:') === -1);
 ok('ExtraParams --restart=unless-stopped becomes restart: unless-stopped', embyY.indexOf('restart: unless-stopped') >= 0);
 ok('the empty-valued Port falls back to Default 8096', embyY.indexOf('"8096:8096"') >= 0);
@@ -564,6 +567,46 @@ ok('a root with no trailing slash is normalised to exactly one',
    noSlashRootR.yaml.indexOf('/mnt/cache/appdata/path-only-test/config') >= 0);
 
 /* =========================================================================
+ * H4. A PHP-shaped template — empty XML elements decode as arrays
+ *
+ * simplexml_load_file() plus json_decode(json_encode(...)) — how Import.php
+ * reads a template — turns an empty element written <WebUI/> into an empty
+ * ARRAY, not an empty string. PHP treats that as falsy; JavaScript treats an
+ * empty array as truthy. Left unguarded that writes command: "" into most
+ * real templates, silently overriding the image's own start-up command —
+ * proven against the 85 templates on the box, not inferred. Import.php
+ * coerces this away before a template ever reaches the browser, but this is
+ * the assertion that would have caught the bug in the first place, so it
+ * belongs in the suite that owns the converter, not only the one that owns
+ * the PHP fix.
+ * ========================================================================= */
+
+console.log('\nH4. A PHP-shaped template — empty elements decode as arrays');
+var PHP_EMPTY_ELEMENTS = {
+  Name: 'php-shaped-test',
+  Repository: 'example/php-shaped-test',
+  Network: 'bridge',
+  WebUI: [],
+  Icon: [],
+  Overview: [],
+  Support: [],
+  ReadMe: [],
+  Project: [],
+  PostArgs: [],
+  ExtraParams: [],
+  Category: [],
+  Config: [
+    { '@attributes': { Name: 'PUID', Target: 'PUID', Default: '99', Description: 'User ID',
+        Type: 'Variable', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var phpShapedR = CA.convert(PHP_EMPTY_ELEMENTS);
+ok('an empty PostArgs array produces no command: line', phpShapedR.yaml.indexOf('command:') === -1);
+ok('an empty WebUI array produces no webui: line', phpShapedR.yaml.indexOf('webui:') === -1);
+ok('an empty Icon array produces no empty icon: line', phpShapedR.yaml.indexOf('icon: ""') === -1);
+ok('an empty Category array produces no empty category: line', phpShapedR.yaml.indexOf('category: ""') === -1);
+
+/* =========================================================================
  * I. Bulk sanity — every app in the live feed, if it is on disk
  *
  * Skipped entirely when the feed is not present, so the checked-in suite
@@ -599,6 +642,351 @@ if (fs.existsSync(FEED)) {
 } else {
   console.log('  (skipped — feed not found at ' + FEED + ')');
 }
+
+/* =========================================================================
+ * J. Fixed address and hardware address carried across on import
+ *
+ * MyIP/MyMAC pin a container's address on a named network. Only a named
+ * network has an interface to hang an address on, so host/none/bridge drop
+ * it with a warning rather than write it somewhere compose cannot use it;
+ * a malformed value is refused the same way rather than written half-baked.
+ * ========================================================================= */
+
+console.log('\nJ. Fixed address and hardware address on import');
+
+// 1. A fixed IP on a named network writes the map form.
+var FIXEDIP_ONLY = {
+  Name: 'fixedip-only-test', Repository: 'example/fixedip-only-test',
+  Network: 'br0.2', MyIP: '192.168.202.66'
+};
+var fixedIpOnlyY = CA.convert(FIXEDIP_ONLY).yaml;
+ok('a fixed IP on a named network writes the map form',
+   fixedIpOnlyY.indexOf('    networks:\n      br0.2:\n        ipv4_address: 192.168.202.66\n') >= 0);
+ok('the stack-level declaration is unchanged',
+   /\nnetworks:\n {2}br0\.2:\n {4}external: true\n?$/.test(fixedIpOnlyY));
+
+// 2. MyIP and MyMAC together write both keys, in that order, and no
+// service-level mac_address line duplicates the one in the map.
+var FIXEDIP_AND_MAC = {
+  Name: 'fixedip-and-mac-test', Repository: 'example/fixedip-and-mac-test',
+  Network: 'br0.2', MyIP: '192.168.202.66', MyMAC: '02:42:ac:11:00:02'
+};
+var fixedIpMacY = CA.convert(FIXEDIP_AND_MAC).yaml;
+ok('MyIP and MyMAC together write both keys, ipv4_address then mac_address',
+   fixedIpMacY.indexOf('    networks:\n      br0.2:\n        ipv4_address: 192.168.202.66\n        mac_address: 02:42:ac:11:00:02\n') >= 0);
+ok('no service-level mac_address line duplicates the one already in the map',
+   fixedIpMacY.indexOf('\n    mac_address:') === -1);
+
+// 3. A named network with neither address still keeps the plain list form —
+// the regression that would otherwise hit 53 of the 85 measured templates.
+var FIXEDIP_NEITHER = {
+  Name: 'fixedip-neither-test', Repository: 'example/fixedip-neither-test',
+  Network: 'br0.2'
+};
+var fixedIpNeitherY = CA.convert(FIXEDIP_NEITHER).yaml;
+ok('a named network with neither address still writes the plain list form',
+   fixedIpNeitherY.indexOf('    networks:\n      - br0.2\n') >= 0);
+ok('...and never the map form',
+   fixedIpNeitherY.indexOf('ipv4_address') === -1 && fixedIpNeitherY.indexOf('mac_address') === -1);
+
+// 4. MyIP on network_mode: host has no interface to hang it on, so it is
+// dropped, warned about by name, and never written — not even the digits,
+// since naming the value would not help here the way it does for a typo.
+var FIXEDIP_HOST = {
+  Name: 'fixedip-host-test', Repository: 'example/fixedip-host-test',
+  Network: 'host', MyIP: '192.168.202.66'
+};
+var fixedIpHostR = CA.convert(FIXEDIP_HOST);
+var fixedIpHostY = fixedIpHostR.yaml;
+ok('MyIP on network_mode: host is dropped with a warning naming it',
+   fixedIpHostR.warnings.some(function (w) { return /fixed ip|MyIP/i.test(w) && /host/i.test(w); }));
+ok('network_mode: host is still written', fixedIpHostY.indexOf('network_mode: host') >= 0);
+// "No address anywhere in the output" means never written as a field a
+// compose parser would read — not that the warning comment above may not
+// name the value. Naming it there is the point: it lets the user see which
+// address it was, same as the malformed-value warning does.
+ok('the dropped address is never written as a field, only named in the warning comment',
+   fixedIpHostY.indexOf('ipv4_address') === -1 && fixedIpHostY.indexOf('networks:') === -1);
+
+// 5. A malformed address is refused, not written — and the network still
+// comes out in the plain list form rather than a half-written map.
+var FIXEDIP_BAD_IP = {
+  Name: 'fixedip-bad-ip-test', Repository: 'example/fixedip-bad-ip-test',
+  Network: 'br0.2', MyIP: 'not-an-ip'
+};
+var badIpR = CA.convert(FIXEDIP_BAD_IP);
+ok('a malformed MyIP is refused with a warning naming the value',
+   badIpR.warnings.some(function (w) { return w.indexOf('not-an-ip') >= 0; }));
+ok('...and the network still comes out in the plain list form, not a half-written map',
+   badIpR.yaml.indexOf('    networks:\n      - br0.2\n') >= 0 && badIpR.yaml.indexOf('ipv4_address') === -1);
+
+var FIXEDIP_BAD_MAC = {
+  Name: 'fixedip-bad-mac-test', Repository: 'example/fixedip-bad-mac-test',
+  Network: 'br0.2', MyMAC: 'not-a-mac'
+};
+var badMacR = CA.convert(FIXEDIP_BAD_MAC);
+ok('a malformed MyMAC is refused with a warning naming the value',
+   badMacR.warnings.some(function (w) { return w.indexOf('not-a-mac') >= 0; }));
+ok('...and the network still comes out in the plain list form, not a half-written map',
+   badMacR.yaml.indexOf('    networks:\n      - br0.2\n') >= 0 && badMacR.yaml.indexOf('mac_address') === -1);
+
+// 6. MyMAC with no named network falls back to the service-level
+// mac_address line — a MAC can be pinned even on the default bridge network,
+// unlike an IP, which that network hands out itself.
+var FIXEDIP_MAC_NO_NETWORK = {
+  Name: 'fixedip-mac-no-network-test', Repository: 'example/fixedip-mac-no-network-test',
+  Network: 'bridge', MyMAC: '02:42:ac:11:00:02'
+};
+var macNoNetY = CA.convert(FIXEDIP_MAC_NO_NETWORK).yaml;
+ok('MyMAC with no named network falls back to the service-level mac_address line',
+   macNoNetY.indexOf('\n    mac_address: 02:42:ac:11:00:02\n') >= 0);
+
+// 7. MyMAC and --mac-address in ExtraParams disagree: the explicit
+// ExtraParams instruction wins, is written once (into the map, not also as
+// the service-level fallback), and a warning says the two disagreed.
+var FIXEDIP_MAC_CONFLICT = {
+  Name: 'fixedip-mac-conflict-test', Repository: 'example/fixedip-mac-conflict-test',
+  Network: 'br0.2', MyMAC: '02:42:ac:11:00:02', ExtraParams: '--mac-address=02:42:ac:99:99:99'
+};
+var conflictR = CA.convert(FIXEDIP_MAC_CONFLICT);
+var conflictY = conflictR.yaml;
+ok('ExtraParams --mac-address wins over MyMAC and is written into the map form',
+   conflictY.indexOf('      br0.2:\n        mac_address: 02:42:ac:99:99:99') >= 0);
+ok('no service-level mac_address line duplicates it',
+   conflictY.indexOf('\n    mac_address:') === -1);
+ok('a warning says the two disagreed',
+   conflictR.warnings.some(function (w) { return w.indexOf('02:42:ac:11:00:02') >= 0 && w.indexOf('02:42:ac:99:99:99') >= 0; }));
+
+// 8. The output still round-trips — this file's standing contract — and
+// buildForm() finds the address and hardware address as editable fields on
+// the network row, same as any other value a hand-written file could carry.
+var rtR = CA.convert(FIXEDIP_AND_MAC);
+var rtDoc = Y.parse(rtR.yaml);
+var rtBack = Y.serialise(rtDoc);
+ok('the fixed-address conversion round-trips byte for byte', rtBack === rtR.yaml,
+   rtBack !== rtR.yaml ? 'first mismatch near: ' + JSON.stringify(rtBack.slice(0, 200)) : null);
+ok('nothing is sealed', rtDoc.sealed.length === 0, JSON.stringify(rtDoc.sealed));
+var rtForm = Y.buildForm(rtDoc);
+ok('buildForm().ok is true', rtForm.ok === true);
+var rtRow = rtForm.fields.filter(function (f) {
+  return f.service === rtR.service && f.listKey === 'networks' && f.parts.value && f.parts.value.value === 'br0.2';
+})[0];
+ok('the br0.2 network row exists in the built form', !!rtRow);
+ok('ipv4_address is an editable field on the network row',
+   !!rtRow && rtRow.parts.ipv4_address && rtRow.parts.ipv4_address.value === '192.168.202.66');
+ok('mac_address is an editable field on the network row',
+   !!rtRow && rtRow.parts.mac_address && rtRow.parts.mac_address.value === '02:42:ac:11:00:02');
+
+/* =========================================================================
+ * K. Import puts the web port first (PLAN_39)
+ *
+ * The web-page button always opens the FIRST port in a service's list, so
+ * import orders the port the template's own address named to the front —
+ * the one place the unreliable [PORT:nnn] token is still read, checked
+ * against the host port first, then the container port (see
+ * reorderPortsForWebUI()'s own comment for the measurement behind that
+ * order). A miss leaves the order alone and says so in a note, because a
+ * guess there would be worse than the honest default of "the first one".
+ * ========================================================================= */
+
+console.log('\nK. Import puts the web port first');
+
+// Two ports: host 9000/container 8080, then host 8081/container 80. The
+// address names 8081 — the HOST port of the second entry — which must move
+// to the front, carrying its own comment with it.
+var HOST_MATCH = {
+  Name: 'host-match-test', Repository: 'example/host-match-test', Network: 'bridge',
+  WebUI: 'http://[IP]:[PORT:8081]',
+  Config: [
+    { '@attributes': { Name: 'First port', Target: '8080', Default: '9000', Mode: 'tcp',
+        Description: 'First port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' },
+    { '@attributes': { Name: 'Second port', Target: '80', Default: '8081', Mode: 'tcp',
+        Description: 'Second port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var hostMatchY = CA.convert(HOST_MATCH).yaml;
+ok('a web address naming a later entry\'s HOST port moves that entry first',
+   hostMatchY.indexOf('"8081:80"') >= 0 && hostMatchY.indexOf('"8081:80"') < hostMatchY.indexOf('"9000:8080"'));
+ok('the moved entry keeps its own comment',
+   /"8081:80"\s+# Second port/.test(hostMatchY));
+ok('no reordering note is added when a match is found',
+   !CA.convert(HOST_MATCH).notes.some(function (w) { return /web address names port/.test(w); }));
+
+// Same two ports; the address instead names 80 — the CONTAINER port of the
+// second entry — which must also move to the front.
+var CONTAINER_MATCH = {
+  Name: 'container-match-test', Repository: 'example/container-match-test', Network: 'bridge',
+  WebUI: 'http://[IP]:[PORT:80]',
+  Config: [
+    { '@attributes': { Name: 'First port', Target: '8080', Default: '9000', Mode: 'tcp',
+        Description: 'First port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' },
+    { '@attributes': { Name: 'Second port', Target: '80', Default: '8081', Mode: 'tcp',
+        Description: 'Second port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var containerMatchY = CA.convert(CONTAINER_MATCH).yaml;
+ok('a web address naming a later entry\'s CONTAINER port moves that entry first',
+   containerMatchY.indexOf('"8081:80"') >= 0 && containerMatchY.indexOf('"8081:80"') < containerMatchY.indexOf('"9000:8080"'));
+
+// Same shape again; the address names a port neither entry declares. Order
+// stays as written, and a note names the port and explains the fallback.
+var NO_MATCH = {
+  Name: 'no-match-test', Repository: 'example/no-match-test', Network: 'bridge',
+  WebUI: 'http://[IP]:[PORT:1234]',
+  Config: [
+    { '@attributes': { Name: 'First port', Target: '8080', Default: '9000', Mode: 'tcp',
+        Description: 'First port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' },
+    { '@attributes': { Name: 'Second port', Target: '80', Default: '8081', Mode: 'tcp',
+        Description: 'Second port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var noMatchR = CA.convert(NO_MATCH);
+ok('a web address matching neither port leaves the order unchanged',
+   noMatchR.yaml.indexOf('"9000:8080"') >= 0 && noMatchR.yaml.indexOf('"9000:8080"') < noMatchR.yaml.indexOf('"8081:80"'));
+ok('...and a note names the port that could not be matched',
+   noMatchR.notes.some(function (w) { return /web address names port 1234/.test(w); }));
+
+// A single port: nothing to reorder, so no note either way, even though the
+// address names a port that entry does not have.
+var SINGLE_PORT_MISMATCH = {
+  Name: 'single-port-mismatch-test', Repository: 'example/single-port-mismatch-test', Network: 'bridge',
+  WebUI: 'http://[IP]:[PORT:9999]',
+  Config: [
+    { '@attributes': { Name: 'Only port', Target: '8080', Default: '9000', Mode: 'tcp',
+        Description: 'Only port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var singlePortR = CA.convert(SINGLE_PORT_MISMATCH);
+ok('a single port is left alone with no note and no crash',
+   singlePortR.yaml.indexOf('"9000:8080"') >= 0 &&
+   !singlePortR.notes.some(function (w) { return /web address names port/.test(w); }));
+
+// Two ports, no WebUI at all: nothing to key the reorder on, order untouched.
+var NO_WEBUI = {
+  Name: 'no-webui-test', Repository: 'example/no-webui-test', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'First port', Target: '8080', Default: '9000', Mode: 'tcp',
+        Description: 'First port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' },
+    { '@attributes': { Name: 'Second port', Target: '80', Default: '8081', Mode: 'tcp',
+        Description: 'Second port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var noWebuiR = CA.convert(NO_WEBUI);
+ok('no webui at all leaves the order unchanged',
+   noWebuiR.yaml.indexOf('"9000:8080"') >= 0 && noWebuiR.yaml.indexOf('"9000:8080"') < noWebuiR.yaml.indexOf('"8081:80"'));
+ok('...and adds no note', !noWebuiR.notes.some(function (w) { return /web address names port/.test(w); }));
+
+// The reordered output still round-trips through compose-model.js unsealed —
+// same pattern as section A and J-8, proving the reorder produced an
+// ordinary list a hand-written file could equally contain.
+var kDoc = Y.parse(hostMatchY);
+var kBack = Y.serialise(kDoc);
+ok('the reordered output round-trips byte for byte', kBack === hostMatchY,
+   kBack !== hostMatchY ? 'first mismatch near: ' + JSON.stringify(kBack.slice(0, 200)) : null);
+ok('nothing is sealed in the reordered output', kDoc.sealed.length === 0, JSON.stringify(kDoc.sealed));
+var kForm = Y.buildForm(kDoc);
+ok('buildForm().ok is true for the reordered output', kForm.ok === true);
+
+/* =========================================================================
+ * L. opts.origin — the provenance line
+ *
+ * The Apps dialog never passes opts.origin, so its output must stay
+ * byte-identical to before this option existed; the importer (which runs
+ * this converter over the user's own Unraid templates, not the CA catalogue)
+ * passes 'template' to get a first line that is actually true.
+ * ========================================================================= */
+
+console.log('\nL. opts.origin — the provenance line');
+
+var CA_LINE = '# Converted from the Community Applications template for binhex-emby.';
+var TEMPLATE_LINE = '# Converted from the Unraid template for binhex-emby.';
+
+ok('no opts.origin produces the Community Applications wording',
+   CA.convert(EMBY).yaml.indexOf(CA_LINE) === 0);
+ok('opts.origin: "ca" produces the same Community Applications wording',
+   CA.convert(EMBY, { origin: 'ca' }).yaml.indexOf(CA_LINE) === 0);
+ok('opts.origin: "template" produces the Unraid template wording',
+   CA.convert(EMBY, { origin: 'template' }).yaml.indexOf(TEMPLATE_LINE) === 0);
+ok('an unrecognised opts.origin falls back to the Community Applications wording',
+   CA.convert(EMBY, { origin: 'bogus' }).yaml.indexOf(CA_LINE) === 0);
+
+/* =========================================================================
+ * M. A Path setting whose Target is not a container path at all
+ *
+ * MQTT Explorer (a real template on the box) has Path settings whose Target
+ * is a bare environment-variable-shaped word — SSL_KEY_PATH, SSL_CERT_PATH,
+ * INITIAL_CONFIG — with no value set. Before this rule that produced a
+ * volumes: entry naming a folder nobody meant, which Docker refuses at
+ * start-up without saying why. Checked before the placeholder-value rule
+ * even runs, so it never gets the chance to invent one.
+ * ========================================================================= */
+
+console.log('\nM. A Path setting with a non-path Target');
+
+var BAD_PATH_TARGET = {
+  Name: 'mqtt-explorer-test', Repository: 'example/mqtt-explorer-test', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'SSL_KEY_PATH', Target: 'SSL_KEY_PATH', Default: '', Description: 'Path to the SSL key',
+        Type: 'Path', Required: 'false', Mask: 'false' }, value: '' },
+    { '@attributes': { Name: 'Config', Target: '/config', Default: '', Description: 'Configuration folder',
+        Type: 'Path', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var badPathR = CA.convert(BAD_PATH_TARGET);
+ok('a bare-word Target produces no volumes: entry for it',
+   badPathR.yaml.indexOf('SSL_KEY_PATH:SSL_KEY_PATH') === -1);
+ok('...but the sibling Path with a proper Target still gets one',
+   badPathR.yaml.indexOf('/config:/config') >= 0 || badPathR.yaml.indexOf(':/config') >= 0);
+ok('a warning names the bad setting and its Target',
+   badPathR.warnings.some(function (w) { return /SSL_KEY_PATH/.test(w) && w.indexOf('not a folder path') >= 0; }));
+
+// A Path with a proper absolute Target and no value must be unaffected —
+// this guards against the new check over-matching a normal case.
+var GOOD_PATH_TARGET = {
+  Name: 'good-path-test', Repository: 'example/good-path-test', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'Config', Target: '/config', Default: '', Description: '',
+        Type: 'Path', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var goodPathR = CA.convert(GOOD_PATH_TARGET);
+ok('a proper absolute Target still gets its placeholder volume',
+   goodPathR.yaml.indexOf('/mnt/user/appdata/good-path-test/config:/config') >= 0);
+ok('...and produces no warning',
+   goodPathR.warnings.length === 0);
+
+/* =========================================================================
+ * N. container_name carries Name verbatim
+ *
+ * Docker names the running container from Name exactly — capitals and all —
+ * so the importer's handover (replace the old container by name) only finds
+ * something to replace if container_name matches it byte for byte. Measured
+ * against six real Unraid templates: five of six have a Name Docker itself
+ * would accept unchanged, so lowercasing it was always a divergence from
+ * what Unraid actually did.
+ * ========================================================================= */
+
+console.log('\nN. container_name carries Name verbatim');
+
+['Vert', 'Reubah', 'QRding', 'Excalidraw', 'StirlingPDF', 'it-tools'].forEach(function (nm) {
+  var y = CA.convert({ Name: nm, Repository: 'example/' + nm.toLowerCase(), Network: 'bridge' }).yaml;
+  ok('container_name for Name "' + nm + '" is written verbatim',
+     y.indexOf('container_name: ' + nm + '\n') >= 0, y.match(/container_name:.*/)[0]);
+});
+
+var spaceNameR = CA.convert({ Name: 'My Cool App', Repository: 'example/my-cool-app', Network: 'bridge' });
+ok('a Name with a space is not a legal Docker container name, so it falls back to the normalised form',
+   spaceNameR.yaml.indexOf('container_name: my-cool-app\n') >= 0);
+ok('the service key uses the same normalised, lowercase form',
+   spaceNameR.yaml.indexOf('  my-cool-app:\n') >= 0);
+
+var lowerNameR = CA.convert({ Name: 'already-lowercase', Repository: 'example/already-lowercase', Network: 'bridge' });
+ok('a Name already lowercase is unchanged', lowerNameR.yaml.indexOf('container_name: already-lowercase\n') >= 0);
+
+var capsNameR = CA.convert({ Name: 'Excalidraw', Repository: 'example/excalidraw', Network: 'bridge' });
+ok('a Name with capitals keeps them in container_name', capsNameR.yaml.indexOf('container_name: Excalidraw\n') >= 0);
+ok('...while the service key stays lowercase', capsNameR.yaml.indexOf('  excalidraw:\n') >= 0);
+ok('...and the stack name (used for the appdata placeholder etc.) stays lowercase too', capsNameR.name === 'excalidraw');
 
 /* ---- summary ------------------------------------------------------------ */
 

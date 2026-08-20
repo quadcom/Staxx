@@ -9,7 +9,7 @@ Six things came out of the build that the plan did not predict:
 1. **Unraid's own stylesheet outranked ours.** `.unapi img { height: auto }` is two selectors and
    beat the card icon's single class, so every icon stretched to its natural aspect ratio and
    pushed the description out of the card. Every image rule of ours is now scoped
-   `.stackman-scaffold .thing`, which is exactly the "own the render" hazard `CLAUDE.md` warns
+   `.staxx-scaffold .thing`, which is exactly the "own the render" hazard `CLAUDE.md` warns
    about, met in the wild.
 2. **A fixed card height was the wrong idea, twice.** First it squashed the text lines into each
    other — a flex column shrinks its items rather than overflowing. Then, sized to fit, it padded
@@ -71,7 +71,7 @@ Apps the work is normally already done, and on a freshly booted server (where `/
 cache is simply gone) the first build starts while they are still reading the stack list. See A2.
 
 **Everything the details window needs is already on disk**, screenshots included.
-`stackman_ca_app()` returns the whole unstripped feed record, and `caChoose()` already fetches it.
+`staxx_ca_app()` returns the whole unstripped feed record, and `caChoose()` already fetches it.
 `Screenshot`/`Screenshots` are deliberately kept at build time (`ca-index.php:232-241`) — a handful
 of URLs per app costs nothing next to the trend arrays and moderator comments the strip list exists
 to remove, and the details window needs them.
@@ -97,12 +97,12 @@ URLs per app costs nothing next to what the strip list removes, and the details 
 upstream stamp equals the one stored in our index. So an existing cache would keep its old shape —
 no screenshots — until CA republishes, with nothing to explain why. Add a schema version:
 
-- a constant in `include/CA.php` beside the TTL, `STACKMAN_CA_INDEX_VERSION = 2`
+- a constant in `include/CA.php` beside the TTL, `STAXX_CA_INDEX_VERSION = 2`
 - written into `index.json` at `ca-index.php:412-421` as `'v'`
 - read back at `ca-index.php:444-463`: the stamp shortcut applies **only** when the stored `v`
   matches. A mismatch always downloads.
-- `stackman_ca_status()` (`CA.php:83-141`) treats a version mismatch as **stale but usable** —
-  `$stale = $stale || (int)(index['v'] ?? 0) !== STACKMAN_CA_INDEX_VERSION`. `action.php:420` then
+- `staxx_ca_status()` (`CA.php:83-141`) treats a version mismatch as **stale but usable** —
+  `$stale = $stale || (int)(index['v'] ?? 0) !== STAXX_CA_INDEX_VERSION`. `action.php:420` then
   refreshes behind the user while the old cards still show, which is the existing and correct
   behaviour for a stale cache. Do not make a mismatch unusable; that would replace 3,600 working
   apps with a progress message.
@@ -116,8 +116,8 @@ Today the only two things that can start a refresh are the two `ca-search` call 
 the first person to do so after a reboot waits for a 24 MB download while looking at a progress
 message.
 
-A new action, `ca-refresh`, in `action.php` beside `ca-search`. It calls `stackman_ca_status()` and,
-if the cache is missing or stale, `stackman_ca_refresh_start()`. It returns `{ok:true}` and nothing
+A new action, `ca-refresh`, in `action.php` beside `ca-search`. It calls `staxx_ca_status()` and,
+if the cache is missing or stale, `staxx_ca_refresh_start()`. It returns `{ok:true}` and nothing
 else — **no results, no polling, no message, no UI of any kind.** Failure is silent here: a server
 with no route to the internet must not gain a warning on the Stacks page for a dialog nobody opened.
 The existing failure reporting inside the Apps dialog is the right and only place for that.
@@ -156,14 +156,14 @@ One card, in order:
 | Description | `ov` | clamped to 3 lines with `-webkit-line-clamp` |
 | Add button | — | small, bottom-right, `data-add="<i>"` |
 
-The card is a `<div class="stackman-ca-card" data-i="…">`, **not** a `<button>` — it now contains a
+The card is a `<div class="staxx-ca-card" data-i="…">`, **not** a `<button>` — it now contains a
 button, and a button inside a button is invalid and behaves unpredictably. Keyboard access comes
 from `tabindex="0"` plus `role="button"` and an Enter/Space handler, or from making the *name* the
 focusable element; either is acceptable, but it must be reachable by keyboard and it must show a
 focus ring, because the current row gets both free from being a `<button>`.
 
 Grid: `display: grid; grid-template-columns: repeat(auto-fill, minmax(23rem, 1fr)); gap: 1rem` on
-`.stackman-ca-list`, which is 84rem wide, so three across. Fixed card height so the grid stays
+`.staxx-ca-list`, which is 84rem wide, so three across. Fixed card height so the grid stays
 tidy; CA's own tile is 24rem × 20rem.
 
 The click handler at `stacks.js:4708-4711` splits: a hit inside `[data-add]` calls the existing
@@ -171,12 +171,12 @@ import path, anything else on the card opens the details window.
 
 ### A4. The details window
 
-A fifth `<dialog id="stackman-ca-app">` in `StacksPage.php`, **sibling** of `stackman-ca` inside
-`.stackman-scaffold` — the reason is written out at `StacksPage.php:455-462` and applies unchanged:
+A fifth `<dialog id="staxx-ca-app">` in `StacksPage.php`, **sibling** of `staxx-ca` inside
+`.staxx-scaffold` — the reason is written out at `StacksPage.php:455-462` and applies unchanged:
 nested inside, closing the parent with Escape takes the child with it while the child holds focus.
 Dialogs stack in the top layer in open order, so no z-index (`CSS:1677-1679`).
 
-Sizing, "centred and slightly smaller than the searcher": `.stackman-ca` is
+Sizing, "centred and slightly smaller than the searcher": `.staxx-ca` is
 `min(84rem, 94vw) × min(80vh, 76rem)` (`CSS:4443-4460`). Use `min(68rem, 90vw) × min(74vh, 68rem)`,
 same border, radius, backdrop and `@starting-style` fade — copy the block, do not invent a new
 treatment. Three grid rows: head / scrolling body / foot.
@@ -241,8 +241,8 @@ values are already in there.
 
 ### B1. Docker Hub search
 
-`stackman_hub_search(string $q): array` in `include/Defines.php`, directly modelled on
-`stackman_image_tags()` (`Defines.php:262-300`) — same `curl` through `stackman_sh()`, same
+`staxx_hub_search(string $q): array` in `include/Defines.php`, directly modelled on
+`staxx_image_tags()` (`Defines.php:262-300`) — same `curl` through `staxx_sh()`, same
 `--max-time 8` inside a 12 s outer timeout, same "return an empty array for every failure" contract,
 and the same reasoning: this runs while someone is typing.
 
@@ -304,7 +304,7 @@ on is discarded — stamp each request and ignore any whose stamp is not the cur
 Both new groups produce the same thing: the six-line skeleton `openEditor` already uses for a new
 stack (`stacks.js:689-690`, `my-app` / `alpine:3.20`) with the image substituted and the service and
 stack named from the last path segment of the image (`linuxserver/jellyfin` → `jellyfin`), lowercased
-and stripped to what `stackman_valid_name()` accepts. No converter is involved — there is no
+and stripped to what `staxx_valid_name()` accepts. No converter is involved — there is no
 template to convert. Say so in the dialog: the footer message for these groups should make clear
 that a Docker Hub image arrives bare, with no ports, paths or variables, unlike a CA app.
 
@@ -323,11 +323,11 @@ arrive fully configured while the other two arrive as a bare image. The footer c
 |---|---|
 | `scripts/ca-index.php` | keep screenshots; write the index version; version-aware download shortcut |
 | `include/CA.php` | version constant; version mismatch counts as stale |
-| `include/Defines.php` | `stackman_hub_search()` |
+| `include/Defines.php` | `staxx_hub_search()` |
 | `include/action.php` | `ca-refresh` and `hub-search` cases |
 | `include/StacksPage.php` | details dialog markup; retitle the search dialog |
 | `javascript/stacks.js` | the start-up `ca-refresh` call, card renderer, group rendering, details window, hub + local search, split `caChoose` |
-| `sheets/stack.manager.css` | `stackman-ca-card*`, group headings, compact rows, the details dialog |
+| `sheets/staxx.css` | `staxx-ca-card*`, group headings, compact rows, the details dialog |
 
 ## Verification
 
@@ -335,27 +335,27 @@ Local, all four green — none of them can see any of this, which is worth stati
 browser pass is the test:
 
 ```sh
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/stacks.js
-node --check src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
+node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 node tests/yaml_roundtrip.js
 node tests/js_undeclared.js
 ```
 
 On the server, `php -l` over `include/*.php` and `scripts/ca-index.php`, then a throwaway script
-calling `stackman_hub_search('jellyfin')`, `stackman_hub_search('')` and
-`stackman_hub_search('../../etc')` — the first returns rows, the other two return an empty array and
+calling `staxx_hub_search('jellyfin')`, `staxx_hub_search('')` and
+`staxx_hub_search('../../etc')` — the first returns rows, the other two return an empty array and
 touch the network for neither.
 
 Then in the browser, after `pscp` + `dev-install.sh` + Ctrl-F5:
 
 1. **The rebuild happens by itself, without opening the dialog.** With an old-shape cache in place,
-   load the Stacks page and touch nothing. Within a few seconds `/tmp/stack.manager/ca/index.json`
+   load the Stacks page and touch nothing. Within a few seconds `/tmp/staxx/ca/index.json`
    carries `"v":2` and an app with screenshots has them. The page shows nothing about it at any
    point, and one page load makes exactly one `ca-refresh` request.
-2. **Nothing waits on it.** Delete `/tmp/stack.manager/ca` entirely, load the page, and confirm the
+2. **Nothing waits on it.** Delete `/tmp/staxx/ca` entirely, load the page, and confirm the
    table, states and icons all appear at their normal speed while the catalogue builds behind them.
    Then open Apps: cards, not a progress message.
-3. **A stale-but-usable cache is never replaced by a message.** With `/tmp/stack.manager/ca` present
+3. **A stale-but-usable cache is never replaced by a message.** With `/tmp/staxx/ca` present
    but old, load the page and open Apps immediately — the old catalogue must stay on screen
    throughout the refresh.
 4. `jellyfin` — CA cards on top, a Docker Hub section under them, and any local jellyfin image under

@@ -62,6 +62,63 @@ everywhere; ours knows how to draw a decent form from it.
 None of it is required. With no notes and no `x-unraid` section you still get a form — just a plainer
 one, with the names worked out from the file itself.
 
+## Bringing in what you already run
+
+You do not have to start from nothing. StaXX can look at what is already running on your server and
+turn it into a stack, without touching the original.
+
+It recognises three kinds of container:
+
+- One set up through an Unraid **template**.
+- One that belongs to a project in the **Compose Manager** plugin, if you use it.
+- Everything else — listed so you can see it, but there is nothing to convert it from, so it cannot
+  be brought in.
+
+Ticking one and bringing it in only ever *copies*. Nothing at the source is deleted or changed — an
+Unraid template stays exactly where it was, and a Compose Manager project stays listed in Compose
+Manager exactly as before. A Compose Manager project's compose file is copied exactly as written —
+comments, layout, everything — and so is its second "override" file, if it has one, since Docker
+treats the two together as one project. What StaXX writes always arrives **held still**: marked as
+needing a look, with every start and stop button refused, so nothing runs and nothing of yours is
+touched until you have reviewed it and said so.
+
+What "taking it over" then does depends on where it came from, because the two are genuinely
+different in what they touch:
+
+- **From a template**, the running container is stopped and set aside under another name, and the
+  new stack starts in its place. This can be undone: nothing is deleted, and if starting the new one
+  fails, the old one is put straight back.
+- **From a Compose Manager project**, the new stack is given exactly the name Docker already knows
+  those containers by. So taking it over does not create a second copy — it rebuilds the very
+  containers you are already running, in their place. There is no going back to a stopped original;
+  going back means starting the project from Compose Manager again.
+
+That difference has one consequence worth knowing: once you have taken over a Compose Manager
+project, both StaXX and Compose Manager are capable of acting on the same containers. Pick one to
+use from then on.
+
+A couple of honest limits. A copy can drift out of step with whatever it was copied from, if that
+original is later edited — so the row says so when it happens, worked out by comparing the two files
+there and then rather than by keeping a record that could itself go stale. And a Compose Manager
+project whose file Docker itself refuses to run cannot be brought in at all; there is nothing to
+convert.
+
+## Starting up with the server
+
+Unraid already keeps a list of which containers should start when the server boots, and in what
+order, with an optional pause after any of them. StaXX does not build a second one of those — it
+writes to the same list, and reads it back, so the two can never disagree.
+
+What that buys is an order you can see. Folders, the stacks inside them, and the services inside a
+stack are all dragged into position, and the order you end up looking at is the order things start
+in. A database can be made to come up before the thing that needs it, with a pause in between if it
+needs a moment to settle.
+
+One thing worth knowing: Unraid starts a container at boot, it does not build one. So a stack has to
+have been started once, by hand, before it can start on its own — after that it is automatic.
+
+---
+
 ## Where it is going
 
 Ship as an add-on first, prove it, then propose it to Unraid's makers as the built-in way Docker

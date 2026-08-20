@@ -152,8 +152,8 @@ The usual suite before every deploy, and each part deployed to the test box as i
 ```sh
 node tests/yaml_roundtrip.js
 node tests/js_undeclared.js
-node --check src/stack.manager/.../stacks.js
-node --check src/stack.manager/.../compose-model.js
+node --check src/staxx/.../stacks.js
+node --check src/staxx/.../compose-model.js
 python tests/validate_schema.py
 ```
 

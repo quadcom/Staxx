@@ -32,7 +32,7 @@ Two gaps in the form editor.
   - `booleanTail()` so an **absent** `healthcheck.disable`, dependency `required` and declaration
     `external` report `type: 'boolean'`. Without it they render as text boxes and write quoted.
 - [x] **Server** — `include/Defines.php`, `include/action.php`
-  - `stackman_docker_images()`, `stackman_image_tags()`; `case 'images'`, `case 'tags'`.
+  - `staxx_docker_images()`, `staxx_image_tags()`; `case 'images'`, `case 'tags'`.
   - Repo validated by shape **and** `escapeshellarg`'d before it reaches a URL. Docker Hub only;
     `lscr.io`/`ghcr.io` + `linuxserver` map to Hub; every other registry returns empty rather than
     guessing. Every failure returns `[]` — this runs mid-keystroke, so it degrades in silence.

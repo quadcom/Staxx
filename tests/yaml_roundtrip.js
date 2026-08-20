@@ -1,5 +1,5 @@
-/* Stack Manager — round-trip tests for the compose model.
- * Copyright 2026, Stack Manager contributors. GPL-2.0.
+/* StaXX — round-trip tests for the compose model.
+ * Copyright 2026, StaXX contributors. GPL-2.0.
  *
  *   node tests/yaml_roundtrip.js
  *
@@ -22,7 +22,7 @@
 var fs   = require('fs');
 var path = require('path');
 
-var Y = require('../src/stack.manager/usr/local/emhttp/plugins/stack.manager/javascript/compose-model.js');
+var Y = require('../src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js');
 // A photograph of the CHOICES/BOOL_CHOICES/CAP_OPTIONS data exactly as
 // stacks.js held it before PLAN_15 phase 1 moved twelve of the lists into
 // compose-model.js's VOCAB — see the file's own header comment. Never edited
@@ -180,7 +180,7 @@ FILES.forEach(function (file) {
 
   var b = all[0];
   var before = text.split('\n')[b.field.parts[b.part].spot.line];
-  Y.setPart(doc, form, b.id, b.part, 'STACKMANTESTVALUE');
+  Y.setPart(doc, form, b.id, b.part, 'STAXXTESTVALUE');
   var after = Y.serialise(doc);
 
   var moved = diffLines(text, after);
@@ -1219,10 +1219,13 @@ console.log('\nI. Renaming a service');
 /* =========================================================================
  * J. The always-present Container settings
  *
- * image, container_name, restart and network_mode are always in the model,
- * whether or not the file has them, so refreshRanges() can index fields by
- * array position without a redraw. See harvest() and setPart() for the
- * absent-slot handling this exercises.
+ * image, container_name and restart are always in the model, whether or not
+ * the file has them, so refreshRanges() can index fields by array position
+ * without a redraw. network_mode was a fourth always-present key until
+ * PLAN_34 phase 4 dropped it: a file that already sets one still shows it,
+ * editable, in Advanced, but nothing offers a blank one any more, so the
+ * Container group's fixed slot count fell from four to three. See harvest()
+ * and setPart() for the absent-slot handling this exercises.
  * ========================================================================= */
 
 console.log('\nJ. The always-present Container settings');
@@ -1260,10 +1263,12 @@ console.log('\nJ. The always-present Container settings');
 
 (function () {
   // The field count is what refreshRanges() indexes by, so it must never
-  // move when an absent slot gains a line. Twenty, not four: the four
-  // fixed Container fields, plus sixteen blank health-check/resource-limit/
-  // logging/build leaves — harvestLeaves() (PLAN_8 phase 2) offers those
-  // whether or not the file has healthcheck:/deploy:/logging:/build: at all,
+  // move when an absent slot gains a line. Nineteen, not twenty: PLAN_34
+  // phase 4 dropped network_mode out of the fixed Container pass, so the
+  // fixed count fell from four to three (image, container_name, restart),
+  // plus the same sixteen blank health-check/resource-limit/logging/build
+  // leaves as before — harvestLeaves() (PLAN_8 phase 2) offers those whether
+  // or not the file has healthcheck:/deploy:/logging:/build: at all,
   // healthcheck.test counts as two of them (PLAN_8 phase 4 — the mode and the
   // command, see harvestHealthTest()), and build (PLAN_21) added its three
   // scalars (context, dockerfile, target) at the end of the fixed pass.
@@ -1271,10 +1276,10 @@ console.log('\nJ. The always-present Container settings');
   var doc = Y.parse(src), form = Y.buildForm(doc);
   var svcFields = form.fields.filter(function (f) { return f.service === 'a'; });
 
-  ok('a service with no other settings yields four fixed fields plus sixteen blank leaves',
-     svcFields.length === 20 &&
-     svcFields.slice(0, 4).every(function (f) { return f.fixed; }) &&
-     svcFields.slice(4).every(function (f) { return f.absent && f.path; }),
+  ok('a service with no other settings yields three fixed fields plus sixteen blank leaves',
+     svcFields.length === 19 &&
+     svcFields.slice(0, 3).every(function (f) { return f.fixed; }) &&
+     svcFields.slice(3).every(function (f) { return f.absent && f.path; }),
      svcFields.map(function (f) { return f.target; }).join(', '));
 
   var before = form.fields.length;
@@ -1479,7 +1484,7 @@ var FIXTURE_10_ADVANCED = [
      JSON.stringify(noServices.declared) === JSON.stringify(EMPTY), JSON.stringify(noServices.declared));
 })();
 
-/* ---- 3. web accounts for all nine of its keys, plus network_mode ------- */
+/* ---- 3. web accounts for all nine of its keys --------------------------- */
 
 (function () {
   // networks: is two editable list fields rather than one locked block, and
@@ -1488,20 +1493,23 @@ var FIXTURE_10_ADVANCED = [
   // leaves (test counts as two — the mode and the command, PLAN_8 phase 4)
   // plus all four deploy ones plus logging's one (driver) plus build's three
   // (context, dockerfile, target — PLAN_21), as a fixed pass right after the
-  // four Container fields, same as those. The two healthcheck leaves this
-  // file does not set (start_interval, disable), logging.driver (this file
-  // has no logging: at all) and all three build leaves (web has no build: at
-  // all) still appear, blank. web's own test: is a flow list (["CMD", "curl",
-  // ...]) which readTest() reads with confidence, so it surfaces right there
-  // with its siblings rather than later as a locked catch-all field. web's
-  // depends_on is long form (PLAN_8 phase 5) — one field for "db" plus its
-  // restart/required fold, in place of the single locked block earlier
-  // phases left it as. So the count is twenty-seven, not the ten keys the
-  // original file has at the top of web:. Pinning f.id rather than
-  // binder/target is deliberate — a list field's id carries its list key and
-  // index (web/list.networks#0/frontend_net), which is what stops the same
-  // name colliding across two different list keys (see the ids-cannot-
-  // collide case below).
+  // three Container fields (PLAN_34 phase 4 dropped network_mode out of that
+  // fixed pass — web sets no network_mode: at all, so there is now nothing
+  // here standing for it, not even a blocked placeholder). The two
+  // healthcheck leaves this file does not set (start_interval, disable),
+  // logging.driver (this file has no logging: at all) and all three build
+  // leaves (web has no build: at all) still appear, blank. web's own test:
+  // is a flow list (["CMD", "curl", ...]) which readTest() reads with
+  // confidence, so it surfaces right there with its siblings rather than
+  // later as a locked catch-all field. web's depends_on is long form
+  // (PLAN_8 phase 5) — one field for "db" plus its restart/required fold, in
+  // place of the single locked block earlier phases left it as. So the count
+  // is twenty-six, not the ten keys the original file has at the top of
+  // web:. Pinning f.id rather than binder/target is deliberate — a list
+  // field's id carries its list key and index
+  // (web/list.networks#0/frontend_net), which is what stops the same name
+  // colliding across two different list keys (see the ids-cannot-collide
+  // case below).
   var form = Y.buildForm(Y.parse(FIXTURE_10_ADVANCED));
   var web  = form.fields.filter(function (f) { return f.service === 'web'; });
   var got  = web.map(function (f) { return f.id; });
@@ -1509,7 +1517,6 @@ var FIXTURE_10_ADVANCED = [
     'web/setting/image',
     'web/setting/container_name',
     'web/setting/restart',
-    'web/setting/network_mode',
     'web/setting/healthcheck.test.mode',
     'web/setting/healthcheck.test.command',
     'web/setting/healthcheck.interval',
@@ -1534,7 +1541,7 @@ var FIXTURE_10_ADVANCED = [
     'web/depends/depends_on.db.restart',
     'web/depends/depends_on.db.required'
   ];
-  ok('web yields exactly these twenty-seven fields, in file order',
+  ok('web yields exactly these twenty-six fields, in file order',
      JSON.stringify(got) === JSON.stringify(want), got.join(', '));
 })();
 
@@ -1605,38 +1612,48 @@ var FIXTURE_10_ADVANCED = [
      as && JSON.stringify({ locked: as.locked, lockReason: as.lockReason }));
 })();
 
-/* ---- 5. network_mode is blocked, not locked, once networks: is present - */
+/* ---- 5. network_mode, when the file has one, is an ordinary editable
+ *        Advanced row (PLAN_34 phase 4) --------------------------------
+ * Until phase 4, network_mode was always in the model and got blocked (not
+ * locked) once networks: was also present, since compose refuses a service
+ * with both. That whole always-offered slot — and the exclusion check that
+ * lived beside it — is gone: a service that already writes network_mode: now
+ * reads as an ordinary setting row, editable like any other, in file order.
+ * The shared fixture never sets network_mode:, so this uses its own small
+ * one built specifically to have it. */
 
 (function () {
-  var text = FIXTURE_10_ADVANCED;
-  var doc  = Y.parse(text), form = Y.buildForm(doc);
-  var nm   = Y.fieldById(form, 'web/setting/network_mode');
+  var src = 'services:\n  a:\n    image: alpine\n    network_mode: host\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var nm  = Y.fieldById(form, 'a/setting/network_mode');
 
-  ok('web\u2019s network_mode is blocked rather than locked',
-     !!nm && nm.blocked === true && nm.locked === false,
-     nm && JSON.stringify({ blocked: nm.blocked, locked: nm.locked }));
-  ok('and carries the advice that networks: is how this is done instead',
-     !!nm && nm.advice.indexOf('this service joins the networks listed below instead') >= 0,
-     nm && JSON.stringify(nm.advice));
-  ok('setPart on a blocked field is refused',
-     Y.setPart(doc, form, 'web/setting/network_mode', 'value', 'bridge') === false);
-  ok('and the refusal writes nothing', Y.serialise(doc) === text);
+  ok('a service with network_mode: host gets an ordinary editable Advanced row',
+     !!nm && nm.binder === 'setting' && !nm.blocked && !nm.locked && !nm.absent,
+     nm && JSON.stringify({ binder: nm.binder, blocked: nm.blocked, locked: nm.locked, absent: nm.absent }));
+  ok('its value reads back exactly as written',
+     !!nm && nm.parts.value.value === 'host', nm && nm.parts.value.value);
+  ok('the null edit on it leaves the file untouched',
+     !!nm && Y.setPart(doc, form, 'a/setting/network_mode', 'value', nm.parts.value.value) &&
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
 })();
 
-/* ---- 6. no networks: key still gives a normal absent network_mode slot - */
+/* ---- 6. no network_mode: line means no network_mode field at all ------- */
 
 (function () {
+  // PLAN_34 phase 4 dropped network_mode out of ALWAYS_KEYS, so unlike every
+  // other Container field it is no longer offered as a blank slot when the
+  // file lacks it — the row simply does not exist, the way any ordinary
+  // (non-`always`) service key already worked before Container had one at
+  // all. There is nothing left to create it with either: this was the one
+  // capability PLAN_34 deliberately removed.
   var src  = 'services:\n  c:\n    image: alpine\n';
   var doc  = Y.parse(src), form = Y.buildForm(doc);
   var nm   = Y.fieldById(form, 'c/setting/network_mode');
 
-  ok('a service with no networks: key has an absent, unblocked network_mode slot',
-     !!nm && nm.absent === true && !nm.blocked,
-     nm && JSON.stringify({ absent: nm.absent, blocked: nm.blocked }));
-  ok('setPart on it succeeds', Y.setPart(doc, form, 'c/setting/network_mode', 'value', 'bridge'));
-  ok('and writes network_mode: bridge at the service\u2019s own indent',
-     Y.serialise(doc) === 'services:\n  c:\n    image: alpine\n    network_mode: bridge\n',
-     JSON.stringify(Y.serialise(doc)));
+  ok('a service with no network_mode: line has no network_mode field at all', !nm, nm);
+  ok('and there is nothing to write into',
+     Y.setPart(doc, form, 'c/setting/network_mode', 'value', 'bridge') === false);
+  ok('so the file is untouched', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
 })();
 
 /* ---- 7. titles: the KEYS table overrides only where it needs to -------- */
@@ -1887,9 +1904,12 @@ console.log('\nM. 10-advanced-compose-test (PLAN_4 phase 2)');
   var nm = Y.fieldById(f4, 'web/setting/network_mode');
   ok('removing the last entry leaves the service with no networks: fields at all',
      f4.fields.filter(function (f) { return f.service === 'web' && f.listKey === 'networks'; }).length === 0);
-  ok('and network_mode reverts to an ordinary absent, unblocked slot',
-     !!nm && nm.absent === true && nm.blocked === false,
-     nm && JSON.stringify({ absent: nm.absent, blocked: nm.blocked }));
+  // PLAN_34 phase 4: network_mode is no longer an always-present slot, so
+  // there is no blocked placeholder to revert here any more — before and
+  // after networks: is removed, web (which never wrote network_mode: itself)
+  // has no field for it at all.
+  ok('and there is still no network_mode field, since web never wrote one',
+     !nm, nm);
 })();
 
 /* ---- 3. depends_on written as a block of conditions reads as one field
@@ -2416,15 +2436,56 @@ console.log('\nO. The Stack section — declarations as fields');
 
   var got = decl.map(function (f) { return { target: f.target, declKind: f.declKind, fold: f.fold }; })
                 .sort(function (a, b) { return a.target < b.target ? -1 : 1; });
+  // PLAN_34 phase 3b: a declaration's own settings are now offered as blank
+  // fold rows when the file has none, so this set grew from five to sixteen —
+  // one row per declaration plus every DECL_LEAVES key for its kind, minus the
+  // primary (driver/file, which IS the row's own box) and minus ipam, which is
+  // a block and stays locked. The point of this assertion is unchanged: the
+  // exact set, so an unexpected extra or missing declaration field is caught.
+  //
+  // A later change folded external into the row's own box for networks and
+  // volumes (their box is a driver dropdown, so "created outside this file"
+  // is just another answer to it) — dropping the count for those two kinds'
+  // absent external from sixteen to thirteen. Secrets keeps its own external
+  // as an ordinary fold field, since its row box is a file path and cannot
+  // represent the choice.
   var want = [
-    { target: 'networks.backend_net',          declKind: 'networks', fold: false },
-    { target: 'networks.backend_net.internal', declKind: 'networks', fold: true  },
-    { target: 'networks.frontend_net',         declKind: 'networks', fold: false },
-    { target: 'secrets.db_password',           declKind: 'secrets',  fold: false },
-    { target: 'volumes.db_data',               declKind: 'volumes',  fold: false }
+    { target: 'networks.backend_net',            declKind: 'networks', fold: false },
+    { target: 'networks.backend_net.attachable',  declKind: 'networks', fold: true  },
+    { target: 'networks.backend_net.internal',    declKind: 'networks', fold: true  },
+    { target: 'networks.backend_net.name',        declKind: 'networks', fold: true  },
+    { target: 'networks.frontend_net',            declKind: 'networks', fold: false },
+    { target: 'networks.frontend_net.attachable', declKind: 'networks', fold: true  },
+    { target: 'networks.frontend_net.internal',   declKind: 'networks', fold: true  },
+    { target: 'networks.frontend_net.name',       declKind: 'networks', fold: true  },
+    { target: 'secrets.db_password',              declKind: 'secrets',  fold: false },
+    { target: 'secrets.db_password.environment',  declKind: 'secrets',  fold: true  },
+    { target: 'secrets.db_password.external',     declKind: 'secrets',  fold: true  },
+    { target: 'volumes.db_data',                  declKind: 'volumes',  fold: false },
+    { target: 'volumes.db_data.name',             declKind: 'volumes',  fold: true  }
   ];
-  ok('the fixture yields exactly these five declared fields, with the right declKind',
+  ok('the fixture yields exactly these thirteen declared fields, with the right declKind',
      JSON.stringify(got) === JSON.stringify(want), JSON.stringify(got));
+  // The two kinds of fold row must not be confused with each other. A row the
+  // file HAS carries its value and needs no path — backend_net's internal: true
+  // is the one in this fixture. A row the file LACKS is the phase 3b blank:
+  // absent, empty, and carrying the path setPart writes through. Asserting both
+  // halves is what would catch a blank that claims the file says something, or
+  // a real value quietly turned into an empty box.
+  var folds = decl.filter(function (f) { return f.fold; });
+  ok('a fold row the file has keeps its value and needs no path',
+     folds.filter(function (f) { return !f.absent; }).every(function (f) {
+       return f.parts.value.value !== '' && !f.path;
+     }),
+     JSON.stringify(folds.filter(function (f) { return !f.absent; })
+                         .map(function (f) { return [f.target, f.parts.value.value, !!f.path]; })));
+  ok('every other fold row is a blank carrying a path to write through',
+     folds.filter(function (f) { return f.absent; }).length === 8 &&
+     folds.filter(function (f) { return f.absent; }).every(function (f) {
+       return f.parts.value.value === '' && !!f.path;
+     }),
+     JSON.stringify(folds.filter(function (f) { return f.absent; })
+                         .map(function (f) { return [f.target, f.parts.value.value, !!f.path]; })));
 })();
 
 /* ---- 2. a row is name + value, nothing else; value is the primary setting */
@@ -2669,6 +2730,77 @@ console.log('\nP. The Stack section, editable');
   var r3 = Y.renameDeclared(d3, 'networks', 'frontend_net', 'frontend_net');
   ok('renaming to the same name is a no-op success, and writes nothing',
      r3.ok === true && r3.refs === 0 && Y.serialise(d3) === before3, JSON.stringify(r3));
+})();
+
+/* ---- 10b. renameDeclared accounts for the map-form network reference ---- */
+
+(function () {
+  // The literal reproduction from the bug report: a fixed IP address forces
+  // a service's networks: into the long form, a map keyed by network name
+  // rather than a sequence of names — that key is a reference too, and the
+  // collector used to miss it, so a rename left the file unable to start.
+  var repro = 'services:\n  a:\n    image: x\n    networks:\n      br0.2:\n' +
+    '        ipv4_address: 1.2.3.4\n  b:\n    image: y\n    networks:\n' +
+    '      - br0.2\nnetworks:\n  br0.2:\n    external: true\n';
+  var rd = Y.parse(repro);
+  var rres = Y.renameDeclared(rd, 'networks', 'br0.2', 'br0.9');
+  ok('renaming a network rewrites a service\u2019s map-form reference, not just a sequence one',
+     rres.ok === true && rres.refs === 2 && Y.serialise(rd) === repro.replace(/br0\.2/g, 'br0.9'),
+     JSON.stringify(rres) + '\n' + firstDiff(repro.replace(/br0\.2/g, 'br0.9'), Y.serialise(rd)));
+
+  // The fuller matrix: the same network named in both forms across
+  // different services, a fixed hardware address alongside the IP address,
+  // and a second network that must stay untouched throughout.
+  var src = 'services:\n' +
+    '  a:\n' +
+    '    image: x\n' +
+    '    networks:\n' +
+    '      br0.2:\n' +
+    '        ipv4_address: 1.2.3.4\n' +
+    '        mac_address: "02:42:ac:11:00:02"\n' +
+    '  b:\n' +
+    '    image: y\n' +
+    '    networks:\n' +
+    '      - br0.2\n' +
+    '  c:\n' +
+    '    image: z\n' +
+    '    networks:\n' +
+    '      other:\n' +
+    '        ipv4_address: 9.9.9.9\n' +
+    'networks:\n' +
+    '  br0.2:\n' +
+    '    external: true\n' +
+    '  other:\n' +
+    '    external: true\n';
+
+  var doc = Y.parse(src);
+  var res = Y.renameDeclared(doc, 'networks', 'br0.2', 'br0.9');
+  var out = Y.serialise(doc);
+
+  ok('renaming a network named in both forms across services rewrites every one of them',
+     res.ok === true && res.refs === 2 && out === src.replace(/br0\.2/g, 'br0.9'),
+     JSON.stringify(res) + '\n' + firstDiff(src.replace(/br0\.2/g, 'br0.9'), out));
+
+  ok('the fixed IPv4 and hardware address lines survive untouched, indentation and all',
+     out.indexOf('      br0.9:\n        ipv4_address: 1.2.3.4\n        mac_address: "02:42:ac:11:00:02"\n') >= 0,
+     out);
+
+  ok('a service naming a different network in map form is untouched',
+     out.indexOf('      other:\n        ipv4_address: 9.9.9.9\n') >= 0, out);
+
+  var d2 = Y.parse(src), before2 = Y.serialise(d2);
+  var r2 = Y.renameDeclared(d2, 'networks', 'br0.2', 'other');
+  ok('renaming to a name that collides with an existing declaration is refused, and the file is unchanged',
+     r2.ok === false && typeof r2.error === 'string' && r2.error.length > 0 && Y.serialise(d2) === before2,
+     JSON.stringify(r2));
+
+  // removeDeclared does not check usage (case 9) — that contract holds for
+  // a map-form reference too: the declaration goes, the dead reference stays.
+  var d3 = Y.parse(src);
+  var removed = Y.removeDeclared(d3, 'networks', 'br0.2');
+  ok('removing a declaration still referenced in map form does not refuse, and leaves the reference behind',
+     removed === true && Y.serialise(d3) === src.replace('  br0.2:\n    external: true\n', ''),
+     firstDiff(src.replace('  br0.2:\n    external: true\n', ''), Y.serialise(d3)));
 })();
 
 /* ---- 11. filling an empty declaration's primary setting ----------------- */
@@ -3807,7 +3939,7 @@ function decodeHl(html) {
 // The ordered {kind, text} spans in one line's html, decoded — so a test can
 // assert "there is a key span reading X" without caring what surrounds it.
 function spans(html) {
-  var re = /<span class="stackman-t--([a-z]+)">([\s\S]*?)<\/span>/g, out = [], m;
+  var re = /<span class="staxx-t--([a-z]+)">([\s\S]*?)<\/span>/g, out = [], m;
   while ((m = re.exec(html))) out.push({ kind: m[1], text: decodeEntities(m[2]) });
   return out;
 }
@@ -5038,9 +5170,27 @@ console.log('\nO. Field help (Form pane)');
  * P1 asserts two things instead of exact equality: nothing the snapshot held
  * was lost, and the full list is exactly the snapshot plus the named
  * additions, nothing more.
+ *
+ * A later decision stripped every label back to its bare value (no more
+ * " — gloss" suffix, so a dropdown shows exactly what lands in the file).
+ * The snapshot still carries the old glossed wording — it is a photograph of
+ * stacks.js as it was, not of current policy — so stripGloss() below is
+ * applied to every expected label before comparing it against vocab()'s
+ * output, rather than editing the snapshot to match.
  * ========================================================================= */
 
 console.log('\nP. The VOCAB registry (PLAN_15 phase 1)');
+
+// The snapshot predates the no-gloss-labels decision; strip " — ..." from its
+// labels before comparing, so this test tracks values and order, not wording
+// that was deliberately retired.
+function stripGloss(label) {
+  var i = label.indexOf(' — ');
+  return i === -1 ? label : label.slice(0, i);
+}
+function degloss(list) {
+  return list.map(function (pair) { return [pair[0], stripGloss(pair[1])]; });
+}
 
 // Pair-by-pair equality with a diff that names the entry and shows both
 // sides — "not equal" alone would leave whoever reads a failure re-deriving
@@ -5114,6 +5264,12 @@ var VOCAB_SOURCES = {
   boolean:          [['true', 'true'], ['false', 'false']]
 };
 
+// The snapshot's own labels still carry the old gloss wording — degloss every
+// list here rather than the snapshot itself, per the note above.
+Object.keys(VOCAB_SOURCES).forEach(function (id) {
+  VOCAB_SOURCES[id] = degloss(VOCAB_SOURCES[id]);
+});
+
 /* ---- P1. the three ids phase 3 corrected: snapshot plus the named ------- */
 /* ---- additions, nothing lost and nothing arrived by accident ------------ */
 
@@ -5122,15 +5278,15 @@ var VOCAB_SOURCES = {
 // side shows up as a failure rather than agreeing with itself.
 var CORRECTED = {
   pullpolicy: insertAfter(VOCAB_SOURCES.pullpolicy, 'missing', [
-    ['if_not_present', 'if_not_present — the same as missing, compose’s other name for it'],
-    ['refresh',        'refresh — pull again once the image on this server looks stale'],
-    ['daily',          'daily — check for a newer image once a day'],
-    ['weekly',         'weekly — check for a newer image once a week']
+    ['if_not_present', 'if_not_present'],
+    ['refresh',        'refresh'],
+    ['daily',          'daily'],
+    ['weekly',         'weekly']
   ]),
   networkdriver: VOCAB_SOURCES.networkdriver.concat([
-    ['overlay', 'overlay — connects containers across several Docker hosts in a swarm']
+    ['overlay', 'overlay']
   ]),
-  capability: [['ALL', 'ALL — every capability at once']].concat(VOCAB_SOURCES.capability)
+  capability: [['ALL', 'ALL']].concat(VOCAB_SOURCES.capability)
 };
 
 Object.keys(CORRECTED).forEach(function (id) {
@@ -5828,7 +5984,7 @@ function isAllCRLF(s) {
  *
  * The requirement compose-model.js used to hardcode — image and
  * container_name are both fixedRequired — is gone. Compose itself refuses a
- * service with neither image: nor build:, and stackman_save_stack() enforces
+ * service with neither image: nor build:, and staxx_save_stack() enforces
  * that server-side; the form only explains, through f.advice, and never
  * blocks Save. Negatives first, as always: the case that started this is a
  * service that IS valid compose and must not be flagged as broken.
@@ -6636,8 +6792,8 @@ var X6_SRC = 'services:\n  a:\n    image: alpine\n    volumes:\n' +
      firstDiff(X6_SRC, Y.serialise(doc)));
 })();
 
-/* ---- X10. A doubly-nested key and a list-valued child add the advice
-             sentence exactly once, and don't disturb the row's other
+/* ---- X10. A doubly-nested key and a list-valued child become locked,
+             named parts in file order, and don't disturb the row's other
              extras ------------------------------------------------------- */
 
 (function () {
@@ -6654,17 +6810,39 @@ var X6_SRC = 'services:\n  a:\n    image: alpine\n    volumes:\n' +
   var form = Y.buildForm(Y.parse(src));
   var vol = form.fields.filter(function (f) { return f.binder === 'volume'; })[0];
   var msg = 'this entry has settings only the Compose view can show';
-  var count = 0;
-  (vol ? vol.advice : []).forEach(function (a) { if (a === msg) count++; });
 
-  ok('a nested map two levels down and a list-valued child are not shown as boxes',
-     !!vol && vol.longExtras.indexOf('bind.options') < 0 && vol.longExtras.indexOf('aliases') < 0,
+  // INVERTED DELIBERATELY by PLAN_34 phase 6, not deleted — this is the only
+  // guard on this shape. A nested map two levels down and a list-valued
+  // child used to fold into one generic "ask the Compose view" sentence,
+  // which said something was there without ever showing what. Both are now
+  // locked parts in their own right, named after their key, carrying the
+  // file's own text and a plain reason — and the generic sentence is gone.
+  ok('the nested map and the list-valued child are locked parts, not boxes',
+     !!vol && !!vol.parts['bind.options'] && vol.parts['bind.options'].locked === true &&
+     !!vol.parts.aliases && vol.parts.aliases.locked === true,
+     vol && JSON.stringify({ 'bind.options': vol.parts['bind.options'], aliases: vol.parts.aliases }));
+  ok('...each showing the file\'s own text, dedented, and why it can\'t be a box',
+     !!vol &&
+     vol.parts['bind.options'].raw === 'options:\n  ro: true' &&
+     vol.parts['bind.options'].reason === 'this is written as a block of its own' &&
+     vol.parts.aliases.raw === 'aliases:\n  - foo' &&
+     vol.parts.aliases.reason === 'this is written as a list of separate items',
+     vol && JSON.stringify({ 'bind.options': vol.parts['bind.options'], aliases: vol.parts.aliases }));
+  ok('...both locked with no spot and not creatable',
+     !!vol &&
+     vol.parts['bind.options'].spot === null && !vol.parts['bind.options'].creatable &&
+     vol.parts.aliases.spot === null && !vol.parts.aliases.creatable,
+     vol && JSON.stringify({ 'bind.options': vol.parts['bind.options'], aliases: vol.parts.aliases }));
+  ok('longExtras carries all four names in file order, locked ones included',
+     !!vol && vol.longExtras.join(',') === 'type,bind.propagation,bind.options,aliases',
      vol && JSON.stringify(vol.longExtras));
-  ok('...but the row\'s other extras still come through',
-     !!vol && vol.longExtras.indexOf('type') >= 0 && vol.longExtras.indexOf('bind.propagation') >= 0,
-     vol && JSON.stringify(vol.longExtras));
-  ok('...and the advice sentence appears exactly once, however many things it covers',
-     count === 1, JSON.stringify(vol && vol.advice));
+  ok('...and the row\'s ordinary extras are still ordinary, editable parts',
+     !!vol &&
+     vol.parts.type.value === 'bind' && !vol.parts.type.locked &&
+     vol.parts['bind.propagation'].value === 'rslave' && !vol.parts['bind.propagation'].locked,
+     vol && JSON.stringify(vol.parts));
+  ok('the generic advice sentence is gone entirely',
+     !!vol && vol.advice.indexOf(msg) < 0, vol && JSON.stringify(vol.advice));
 })();
 
 /* ---- X11. A compose key the label table has never heard of is still
@@ -6711,13 +6889,31 @@ var X12_SRC = 'services:\n  a:\n    image: alpine\n    networks:\n' +
      !!front && front.longForm === true && front.longExtras.indexOf('ipv4_address') >= 0 &&
      front.parts.ipv4_address.value === '10.0.1.20',
      front && JSON.stringify({ longForm: front.longForm, extras: front.longExtras }));
-  ok('the aliases list produces the advice sentence once',
-     !!front && front.advice.filter(function (a) {
-       return a === 'this entry has settings only the Compose view can show';
-     }).length === 1,
-     front && JSON.stringify(front.advice));
-  ok('a bare name with nothing under it is not longForm — just a name row',
-     !!back && back.longForm !== true && back.longExtras.length === 0,
+  // INVERTED DELIBERATELY by PLAN_34 phase 6, not deleted — this is the only
+  // guard on this shape. aliases: used to fold into the generic "ask the
+  // Compose view" sentence; it is now a locked part named 'aliases', showing
+  // the file's own two lines dedented and a reason that names it as a list.
+  ok('the aliases list is now a locked part, not the generic advice sentence',
+     !!front && !!front.parts.aliases && front.parts.aliases.locked === true &&
+     front.advice.indexOf('this entry has settings only the Compose view can show') < 0,
+     front && JSON.stringify({ aliases: front.parts.aliases, advice: front.advice }));
+  ok('...its raw text is exactly the file\'s own two lines, dedented',
+     !!front && front.parts.aliases.raw === 'aliases:\n  - web',
+     front && JSON.stringify(front.parts.aliases));
+  ok('...and its reason names it as a list',
+     !!front && front.parts.aliases.reason === 'this is written as a list of separate items',
+     front && JSON.stringify(front.parts.aliases));
+  // INVERTED DELIBERATELY by PLAN_34 phase 3c, not deleted — it is the only
+  // guard on this shape. A bare `backend:` used to be "just a name row" with
+  // no fold at all, which is exactly why a fixed address could not be added
+  // to it. It is now longForm with two blank creatable extras and nothing
+  // else, so the address can be created where before there was nowhere to
+  // put it. Section AE-3 asserts the same two from the other direction.
+  ok('a bare name is now longForm, offering exactly the two creatable blanks',
+     !!back && back.longForm === true &&
+     back.longExtras.slice().sort().join(',') === 'ipv4_address,mac_address' &&
+     back.parts.ipv4_address.value === '' && back.parts.ipv4_address.creatable === true &&
+     back.parts.mac_address.value === ''  && back.parts.mac_address.creatable === true,
      back && JSON.stringify({ longForm: back.longForm, extras: back.longExtras }));
 })();
 
@@ -7059,6 +7255,1678 @@ console.log('\nZ. A stashed section reads as hidden, not shown, so ticking it ba
   ok('restoring puts it back, byte-identical markers and all',
      Y.restoreSection(doc, form, 'a', 'environment') && Y.serialise(doc) === src,
      firstDiff(src, Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * AA. Uncovered service-level keys carry their written title (PLAN_36)
+ *
+ * DESCRIPTIONS.service already has a proper written name for every one of
+ * the compose spec's service-level keys — it is what the (i) help bubble
+ * beside a row reads from. Until now the label on that same row came from
+ * mechanically humanising the raw key instead, so it disagreed with its own
+ * help ("Mac Address" beside help text that says "MAC address"). This is
+ * built as an inline document, not read from
+ * scratch/test-stacks/17-uncovered-keys/, because that folder is gitignored
+ * — the same reason section L's fixture is copied out verbatim rather than
+ * read from disk.
+ * ========================================================================= */
+
+console.log('\nAA. Uncovered service-level keys carry their written title (PLAN_36)');
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    mac_address: "02:42:ac:11:00:02"',
+    "    cpus: '1.5'",
+    '    oom_kill_disable: true',
+    '    sysctls:',
+    '      net.core.somaxconn: "1024"',
+    '    dns_search:',
+    '      - example.com',
+    '    memswap_limit: 512M',
+    '    ulimits:',
+    '      nofile: 1024',
+    '    isolation: default',
+    '    runtime: runc',
+    '    attach: false',
+    '    platform: linux/amd64',
+    '    scale: 1',
+    '    links:',
+    '      - b',
+    '    extends:',
+    '      service: b',
+    '    annotations:',
+    '      com.example.note: hi',
+    '    provider:',
+    '      type: foo',
+    // Profile names are arbitrary strings, so this is still a legal file —
+    // "gpus" is chosen because it happens to spell another compose key whose
+    // written title is a jarring acronym, the sharpest case for AA3 below.
+    '    profiles:',
+    '      - gpus',
+    '  b:',
+    '    image: alpine',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  function title(id) { var f = Y.fieldById(form, id); return f && f.title; }
+
+  // AA1. Each of these went from a mechanically humanised label to the
+  // written one in DESCRIPTIONS.service — checked against the table itself
+  // rather than taken on trust from the plan.
+  ok("mac_address titles as 'MAC address'",
+     title('a/setting/mac_address') === 'MAC address', title('a/setting/mac_address'));
+  ok("cpus titles as 'CPU limit'",
+     title('a/setting/cpus') === 'CPU limit', title('a/setting/cpus'));
+  ok("oom_kill_disable titles as 'Disable OOM kill'",
+     title('a/setting/oom_kill_disable') === 'Disable OOM kill', title('a/setting/oom_kill_disable'));
+  ok("sysctls titles as 'Kernel settings'",
+     title('a/setting/sysctls') === 'Kernel settings', title('a/setting/sysctls'));
+  ok("dns_search titles as 'DNS search domains'",
+     title('a/setting/dns_search') === 'DNS search domains', title('a/setting/dns_search'));
+  ok("memswap_limit titles as 'Memory + swap limit'",
+     title('a/setting/memswap_limit') === 'Memory + swap limit', title('a/setting/memswap_limit'));
+  // The bucket-bleed case: ulimits also exists under build:, titled 'Build
+  // ulimits' there. A service-level ulimits has to read the service
+  // bucket's 'Resource ulimits', not fall through to the build one.
+  ok("ulimits titles as 'Resource ulimits', not the build bucket's title",
+     title('a/setting/ulimits') === 'Resource ulimits', title('a/setting/ulimits'));
+
+  // AA2. The nine keys whose written title already reads identically to the
+  // humanised key — asserted so a future change to either side cannot drift
+  // one away from the other without this section noticing.
+  ok("isolation still titles as 'Isolation'", title('a/setting/isolation') === 'Isolation');
+  ok("runtime still titles as 'Runtime'", title('a/setting/runtime') === 'Runtime');
+  ok("attach still titles as 'Attach'", title('a/setting/attach') === 'Attach');
+  ok("platform still titles as 'Platform'", title('a/setting/platform') === 'Platform');
+  ok("scale still titles as 'Scale'", title('a/setting/scale') === 'Scale');
+  ok("links still titles as 'Links'", title('a/setting/links') === 'Links');
+  ok("extends still titles as 'Extends'", title('a/setting/extends') === 'Extends');
+  ok("annotations still titles as 'Annotations'", title('a/setting/annotations') === 'Annotations');
+  ok("provider still titles as 'Provider'", title('a/setting/provider') === 'Provider');
+
+  // AA3. The trap the fix is gated against: a list entry's target is its own
+  // VALUE, not a setting name, so an entry that happens to spell a compose
+  // key ("gpus", inside profiles: here) must not be titled as that key.
+  var gpuEntry = title('a/list.profiles#0/gpus');
+  ok("a profile entry named 'gpus' titles as the humanised value, not the GPUs setting",
+     gpuEntry === 'Gpus' && gpuEntry !== 'GPUs', gpuEntry);
+
+  // AA4. Reading titles for a form is not an edit — the document must still
+  // round-trip byte-identical.
+  ok('the inline document round-trips untouched with no edit applied',
+     Y.serialise(Y.parse(src)) === src, firstDiff(src, Y.serialise(Y.parse(src))));
+})();
+
+/* =========================================================================
+ * AB. A network declaration written as a flow map, an anchor or an alias
+ *     must lock rather than corrupt the file (PLAN_34 Phase 0)
+ *
+ * declaredFields() used to skip the locked/usable computation fieldsFor()
+ * already did, so a flow-map, anchored or aliased network showed as an
+ * ordinary unlocked row with an empty driver box — indistinguishable from a
+ * bare declaration, even though the file said something. Choosing a driver
+ * for one appended an indented child under a node that cannot take one, and
+ * real compose then refused the file outright:
+ *
+ *   $ docker compose -f bad-flow.yaml config -q
+ *   yaml: line 4: did not find expected key
+ *
+ * Built as an inline document, not read from
+ * scratch/test-stacks/18-declaration-shapes/, because that folder is
+ * gitignored — the same reason section AA's fixture is copied out verbatim
+ * rather than read from disk. The lock reasons are hardcoded from
+ * LOCK_WORDS rather than looked up through it, the same way section L's
+ * alias assertions do, since the table is not exported.
+ * ========================================================================= */
+
+console.log('\nAB. Flow-map, anchor and alias network declarations lock instead of corrupting the file');
+
+(function () {
+  var src = [
+    'services:',
+    '  app:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    '      - hft',
+    '      - internal_net',
+    '      - shared_net',
+    'networks:',
+    '  backend:',
+    '  hft: {name: br0.2, external: true}',
+    '  internal_net: &net_defaults',
+    '    driver: bridge',
+    '  shared_net: *net_defaults',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+
+  var flow   = Y.fieldById(form, '/declared/networks.hft');
+  var anchor = Y.fieldById(form, '/declared/networks.internal_net');
+  var alias  = Y.fieldById(form, '/declared/networks.shared_net');
+  var bare   = Y.fieldById(form, '/declared/networks.backend');
+
+  // 1 & 2. Each unreadable shape locks, carries the specific reason for its
+  // own shape (not the generic "cannot read" fallback), and shows its raw
+  // text — so the data is visible instead of hidden behind an empty box.
+  ok('a flow map (hft) locks with the flow-specific reason',
+     !!flow && flow.locked && flow.lockReason === 'this is written as a list on one line',
+     flow && JSON.stringify({ locked: flow.locked, lockReason: flow.lockReason }));
+  ok('the flow map’s raw text is on the row, not hidden',
+     !!flow && flow.raw.indexOf('br0.2') >= 0, flow && flow.raw);
+
+  ok('an anchored declaration (internal_net) locks with the anchor-specific reason',
+     !!anchor && anchor.locked && anchor.lockReason === 'this is a shared block other parts of the file reuse',
+     anchor && JSON.stringify({ locked: anchor.locked, lockReason: anchor.lockReason }));
+  ok('the anchor’s raw text is on the row, not hidden',
+     !!anchor && anchor.raw.indexOf('driver: bridge') >= 0, anchor && anchor.raw);
+
+  ok('an alias (shared_net) locks with the alias-specific reason',
+     !!alias && alias.locked && alias.lockReason === 'this points at a shared block higher up the file',
+     alias && JSON.stringify({ locked: alias.locked, lockReason: alias.lockReason }));
+  ok('the alias’s raw text is on the row, not hidden',
+     !!alias && alias.raw.indexOf('*net_defaults') >= 0, alias && alias.raw);
+
+  // 3 & 4. setPart refuses on all three, and the document comes back
+  // byte-identical — the assertion that actually guards against corruption.
+  ok('setPart refuses on the flow map',
+     !Y.setPart(doc, form, '/declared/networks.hft', 'value', 'bridge'));
+  ok('the document is untouched after the refused flow-map edit',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+
+  ok('setPart refuses on the anchored declaration',
+     !Y.setPart(doc, form, '/declared/networks.internal_net', 'value', 'overlay'));
+  ok('the document is untouched after the refused anchor edit',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+
+  ok('setPart refuses on the alias',
+     !Y.setPart(doc, form, '/declared/networks.shared_net', 'value', 'overlay'));
+  ok('the document is untouched after the refused alias edit',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+
+  // 5. The control: a bare declaration is not locked, setPart succeeds, and
+  // the write lands as driver: at the right indent — pinned here beside the
+  // three shapes above that must not, so the two behaviours sit side by side.
+  // (An existing, differently-shaped case of this is section O11, "filling
+  // an empty declaration's primary setting" — this is not a duplicate of it.)
+  ok('the bare declaration (backend) is not locked',
+     !!bare && !bare.locked, bare && JSON.stringify({ locked: bare.locked, lockReason: bare.lockReason }));
+  ok('setPart succeeds on the bare declaration and inserts driver: at the right indent',
+     Y.setPart(doc, form, '/declared/networks.backend', 'value', 'bridge') &&
+     Y.serialise(doc) === src.replace('  backend:\n', '  backend:\n    driver: bridge\n'),
+     firstDiff(src.replace('  backend:\n', '  backend:\n    driver: bridge\n'), Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * AC. Network names title verbatim; the bare-declaration contract Phase 1
+ *     keys off; humanise() untouched for ordinary keys (PLAN_34 Phase 2)
+ *
+ * A network name is a proper noun, not a setting key — 'br0.2' is what
+ * Unraid calls the VLAN, and humanising it into 'Br0 2' is not a nicer
+ * spelling, it is a wrong one. This section pins that both places a network
+ * name becomes a row title (a service's own networks: list, and the
+ * top-level declaration) show the name as written, while confirming
+ * ordinary dotted/underscored settings still go through humanise() as
+ * before — the fix has to be narrow, not a global change to titling.
+ * Built as inline documents, not read from
+ * scratch/test-stacks/18-declaration-shapes/, for the same reason sections
+ * AA and AB are.
+ * ========================================================================= */
+
+console.log('\nAC. Network names title verbatim; humanise() unchanged elsewhere (PLAN_34 Phase 2)');
+
+(function () {
+  var src = [
+    'services:',
+    '  web:',
+    '    image: alpine',
+    '    mac_address: "02:42:ac:11:00:02"',
+    '    memswap_limit: 512M',
+    '    deploy:',
+    '      replicas: 2',
+    '    networks:',
+    '      - br0.2',
+    '      - eth0.2',
+    '      - frontend_net',
+    '      - backend',
+    'networks:',
+    '  br0.2:',
+    '    ipam:',
+    '      driver: default',
+    '  eth0.2:',
+    '  frontend_net:',
+    '  backend:',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  function title(id) { var f = Y.fieldById(form, id); return f && f.title; }
+
+  // AC1. A service's own networks: list — each row titles as the name
+  // exactly as written, not mechanically humanised ('br0.2' stayed 'br0.2',
+  // not 'Br0 2'; 'frontend_net' stayed 'frontend_net', not 'Frontend Net').
+  ok("web's br0.2 network row titles verbatim, not 'Br0 2'",
+     title('web/list.networks#0/br0.2') === 'br0.2', title('web/list.networks#0/br0.2'));
+  ok("web's eth0.2 network row titles verbatim, not 'Eth0 2'",
+     title('web/list.networks#1/eth0.2') === 'eth0.2', title('web/list.networks#1/eth0.2'));
+  ok("web's frontend_net network row titles verbatim, not 'Frontend Net'",
+     title('web/list.networks#2/frontend_net') === 'frontend_net', title('web/list.networks#2/frontend_net'));
+  ok("web's backend network row titles verbatim",
+     title('web/list.networks#3/backend') === 'backend', title('web/list.networks#3/backend'));
+
+  // AC1 (declarations). The same four names as top-level declaration rows —
+  // a second, independent path that must agree with the list rows above.
+  ok("the br0.2 declaration titles verbatim, not 'Br0 2'",
+     title('/declared/networks.br0.2') === 'br0.2', title('/declared/networks.br0.2'));
+  ok("the eth0.2 declaration titles verbatim, not 'Eth0 2'",
+     title('/declared/networks.eth0.2') === 'eth0.2', title('/declared/networks.eth0.2'));
+  ok("the frontend_net declaration titles verbatim, not 'Frontend Net'",
+     title('/declared/networks.frontend_net') === 'frontend_net', title('/declared/networks.frontend_net'));
+  ok('the backend declaration titles verbatim',
+     title('/declared/networks.backend') === 'backend', title('/declared/networks.backend'));
+
+  // AC3. The regression guard that matters most: ordinary settings must
+  // still go through humanise() normally. mac_address and memswap_limit
+  // re-check PLAN_36's written-title table still holds (the fix must not
+  // have reached back and broken that lookup), and deploy.replicas — an
+  // uncovered dotted leaf with a real written title of its own — confirms
+  // an ordinary setting is not being left verbatim as raw text either. If a
+  // future change makes the network fix bleed into humanise() itself
+  // (rather than staying scoped to network name titling), one of these three
+  // trips.
+  ok("mac_address still titles as 'MAC address' (PLAN_36)",
+     title('web/setting/mac_address') === 'MAC address', title('web/setting/mac_address'));
+  ok("memswap_limit still titles as 'Memory + swap limit' (PLAN_36)",
+     title('web/setting/memswap_limit') === 'Memory + swap limit', title('web/setting/memswap_limit'));
+  ok("deploy.replicas still titles as an ordinary written setting, not a verbatim key",
+     title('web/setting/deploy.replicas') === 'Number of copies', title('web/setting/deploy.replicas'));
+
+  // AC5. `ipam` used to title as 'Ipam' — the mechanically humanised key,
+  // because DECL_LEAVES.networks named it nowhere. Checked against the
+  // written title the source actually gives it (DESCRIPTIONS.declared.ipam)
+  // rather than a value invented here, per PLAN_34's own instruction not to
+  // assert a title the other agent hasn't chosen yet.
+  var ipamTitle = title('/declared/networks.br0.2.ipam');
+  if (ipamTitle === 'Ipam') {
+    console.log('  ....  ipam still titles as the raw humanised key — PLAN_34 Phase 2\'s ' +
+                'label fix has not landed yet, so this assertion is withheld rather than pinned to the old value');
+  } else {
+    ok("ipam titles as '" + ipamTitle + "', not the mechanically humanised 'Ipam'",
+       !!ipamTitle && ipamTitle !== 'Ipam');
+  }
+
+  // AC6. Reading titles is not an edit — the document must still round-trip
+  // byte-identical.
+  ok('the inline document round-trips untouched with no edit applied',
+     Y.serialise(Y.parse(src)) === src, firstDiff(src, Y.serialise(Y.parse(src))));
+})();
+
+/* =========================================================================
+ * AD. The bare-declaration contract Phase 1's dead-dropdown fix keys off
+ *     (PLAN_34 Phase 1), contrasted with a locked shape
+ *
+ * Phase 1 exempts a bare declaration from stacks.js's dead-control check by
+ * narrowing it to exactly `!spot && !absent && !locked` on the row's own
+ * value part. That line lives in stacks.js and is not reachable from here —
+ * this pins the three model-side facts it depends on being true together for
+ * a bare declaration, and false (on the locked leg) for a shape that must
+ * stay refused, so a future change to any of the three trips this rather
+ * than the failure surfacing as a dead dropdown nobody connects back here.
+ * ========================================================================= */
+
+console.log('\nAD. The bare-declaration contract Phase 1\'s exemption depends on (PLAN_34 Phase 1)');
+
+(function () {
+  var src = [
+    'services:',
+    '  app:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    '      - hft',
+    '      - internal_net',
+    '      - shared_net',
+    'networks:',
+    '  backend:',
+    '  hft: {name: br0.2, external: true}',
+    '  internal_net: &net_defaults',
+    '    driver: bridge',
+    '  shared_net: *net_defaults',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var bare = Y.fieldById(form, '/declared/networks.backend');
+  var flow = Y.fieldById(form, '/declared/networks.hft');
+
+  // The bare declaration's own row: no spot yet (nothing follows the colon),
+  // not marked absent (the row itself is present, unlike a wholly-missing
+  // leaf), and not locked — the exact three-way combination
+  // `!spot && !absent && !locked` that Phase 1's exemption keys off.
+  ok('the bare declaration has no spot on its value part',
+     !bare.parts.value.spot, bare.parts.value.spot);
+  ok('the bare declaration is not marked absent',
+     !bare.absent, bare.absent);
+  ok('the bare declaration is not locked',
+     !bare.locked, bare.locked);
+  ok('the bare declaration is the specific combination Phase 1 exempts: !spot && !absent && !locked',
+     !bare.parts.value.spot && !bare.absent && !bare.locked);
+
+  // The contrast: a flow-map declaration fails the same combination on its
+  // locked leg alone — spot and absent do not save it, because Phase 0 (not
+  // Phase 1) is what must keep this one refused.
+  ok('a flow-map declaration is locked, so it fails the combination Phase 1 exempts',
+     flow.locked && !(!(flow.parts.value && flow.parts.value.spot) && !flow.absent && !flow.locked));
+
+  // setPart agrees with the contract: succeeds on the bare declaration,
+  // writing driver: at the right indent; refuses on the locked one, leaving
+  // the file untouched. (An existing, differently-shaped case of the bare
+  // side is section O11, "filling an empty declaration's primary setting" —
+  // this is not a duplicate of it; it is pinned here beside the locked
+  // contrast so the two behaviours sit side by side under the combination
+  // Phase 1 actually reads.)
+  ok('setPart succeeds on the bare declaration and inserts driver: at the right indent',
+     Y.setPart(doc, form, '/declared/networks.backend', 'value', 'bridge') &&
+     Y.serialise(doc) === src.replace('  backend:\n', '  backend:\n    driver: bridge\n'),
+     firstDiff(src.replace('  backend:\n', '  backend:\n    driver: bridge\n'), Y.serialise(doc)));
+  ok('setPart still refuses on the flow-map declaration',
+     !Y.setPart(doc, form, '/declared/networks.hft', 'value', 'bridge'));
+})();
+
+/* =========================================================================
+ * AE. PLAN_34 Phase 3 — three Add paths, and the no-clutter guards around
+ *     them
+ *
+ * Phase 3 makes four DECL_LEAVES keys (external, name, internal, attachable)
+ * addable on a network declaration via an always-offered blank-fold pass —
+ * the same shape harvestLeaves() already gives healthcheck/deploy — and
+ * makes a fixed IPv4 address plus a hardware address addable on a network
+ * map entry, offered as exactly two blank extras rather than the full set a
+ * network entry can carry. `ipam` sits in DECL_LEAVES only for its title; it
+ * is a map, and must stay a locked, read-only row throughout — the easiest
+ * property for the always-offered pass to break by treating every
+ * DECL_LEAVES key alike, so it is pinned directly rather than left to fall
+ * out of the other assertions here.
+ * ========================================================================= */
+
+console.log('\nAE. PLAN_34 Phase 3 — the three new Add paths');
+
+/* ---- 1. a declaration's own settings can be created --------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    ''
+  ].join('\n');
+
+  var doc  = Y.parse(src), form = Y.buildForm(doc);
+  // A later change folded external into the row's own value box for networks
+  // and volumes, so it is no longer offered here as a separate blank leaf —
+  // see section BC below for the row-based path this replaced it with.
+  var ext  = Y.fieldById(form, '/declared/networks.backend.external');
+  var name = Y.fieldById(form, '/declared/networks.backend.name');
+  var intl = Y.fieldById(form, '/declared/networks.backend.internal');
+  var att  = Y.fieldById(form, '/declared/networks.backend.attachable');
+
+  ok('external is no longer offered as its own fold field on a network; name, internal and attachable still are',
+     !ext &&
+     !!name && name.absent && !name.locked && name.fold &&
+     !!intl && intl.absent && !intl.locked && intl.fold &&
+     !!att && att.absent && !att.locked && att.fold,
+     JSON.stringify({
+       external:   ext,
+       name:       name && { absent: name.absent, locked: name.locked, fold: name.fold },
+       internal:   intl && { absent: intl.absent, locked: intl.locked, fold: intl.fold },
+       attachable: att  && { absent: att.absent,  locked: att.locked,  fold: att.fold }
+     }));
+})();
+
+/* ---- 2. ipam must never get a blank box, present or absent -------------- */
+
+(function () {
+  // Absent case: the same bare declaration as above never had an ipam:
+  // block, so nothing should offer one to create — DECL_LEAVES names it only
+  // for its title, not as something the always-offered pass may create.
+  var bareSrc = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    ''
+  ].join('\n');
+  var bareForm = Y.buildForm(Y.parse(bareSrc));
+  ok('a declaration without ipam: is never offered a blank ipam field',
+     !Y.fieldById(bareForm, '/declared/networks.backend.ipam'));
+
+  // Present case: an existing ipam: block stays exactly as locked and
+  // read-only as it is today — Phase 3 must not loosen this while making the
+  // other four DECL_LEAVES keys editable.
+  var mapSrc = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0',
+    'networks:',
+    '  br0:',
+    '    ipam:',
+    '      driver: default',
+    ''
+  ].join('\n');
+  var doc  = Y.parse(mapSrc), form = Y.buildForm(doc);
+  var ipam = Y.fieldById(form, '/declared/networks.br0.ipam');
+
+  ok('a declaration with an ipam: block keeps it locked, not editable',
+     !!ipam && ipam.locked, ipam && JSON.stringify({ locked: ipam.locked }));
+  ok('and still shows its raw text rather than hiding it',
+     !!ipam && ipam.raw && ipam.raw.indexOf('driver: default') >= 0, ipam && ipam.raw);
+  ok('setPart refuses on the locked ipam row, leaving the file untouched',
+     !Y.setPart(doc, form, '/declared/networks.br0.ipam', 'value', 'x') &&
+     Y.serialise(doc) === mapSrc, firstDiff(mapSrc, Y.serialise(doc)));
+})();
+
+/* ---- 3. exactly two blank extras on a network map entry, not eight ----- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    ''
+  ].join('\n');
+  var form = Y.buildForm(Y.parse(src));
+  var row  = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  var extras = (row && row.longExtras || []).slice().sort();
+
+  ok('a network map entry with nothing set offers precisely ipv4_address and mac_address blank',
+     extras.length === 2 && extras[0] === 'ipv4_address' && extras[1] === 'mac_address',
+     JSON.stringify(extras));
+
+  ['priority', 'gw_priority', 'interface_name', 'aliases'].forEach(function (k) {
+    ok('and does not offer a blank ' + k + ' box',
+       !row || !row.parts[k], row && JSON.stringify(Object.keys(row.parts)));
+  });
+})();
+
+/* ---- 4. creating a fixed address and a hardware address works ---------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+
+  ok('setPart creates a fixed IPv4 address line under the entry',
+     !!row && Y.setPart(doc, form, row.id, 'ipv4_address', '10.0.0.5'));
+
+  var form2 = Y.buildForm(doc);
+  var row2  = form2.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+  ok('setPart creates a hardware address line alongside it',
+     !!row2 && Y.setPart(doc, form2, row2.id, 'mac_address', '02:42:ac:11:00:02'));
+
+  var want = src.replace('      backend:\n',
+    '      backend:\n        ipv4_address: 10.0.0.5\n        mac_address: 02:42:ac:11:00:02\n');
+  ok('both lines land at the entry’s own indent and nothing else in the file moves',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 5. scope guard: ports and secrets gained no blank extras ---------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"',
+    '    secrets:',
+    '      - source: db_password',
+    '        target: db_pw',
+    ''
+  ].join('\n');
+  var form = Y.buildForm(Y.parse(src));
+  var port = form.fields.filter(function (f) { return f.service === 'a' && f.binder === 'port'; })[0];
+  var sec  = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'secrets'; })[0];
+
+  ok('a short-form port offers no blank host_ip box',
+     !!port && !port.parts.host_ip, port && JSON.stringify(Object.keys(port.parts)));
+  ok('a long-form secret offers no blank uid box',
+     !!sec && !sec.parts.uid, sec && JSON.stringify(Object.keys(sec.parts)));
+})();
+
+/* =========================================================================
+ * AF. PLAN_34 Phase 5 — the promote control (promoteNetworksList)
+ *
+ * A plain `- backend` has nowhere to hang a fixed address, so it has to be
+ * promotable to a bare `backend:` map entry — but only as a whole block,
+ * since YAML cannot mix a sequence and a mapping under one key. The risk
+ * that matters most is comment loss: a list item's trailing "# ..." binds to
+ * that item, and the naive way to rebuild the block as a map (this file's
+ * own writeTest() is the precedent — it knowingly keeps only the LAST
+ * item's comment when it rewrites healthcheck.test) drops every note but
+ * one. These assertions demand every note survive, on its own line, with
+ * its own original spacing before the '#' — a strict string comparison
+ * throughout, not a substring check, so a partial fix cannot pass by luck.
+ * ========================================================================= */
+
+console.log('\nAF. PLAN_34 Phase 5 — the promote control');
+
+/* ---- 1/2. Both notes survive; nothing else in the file moves ------------ */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    # keep this network first',
+    '    networks:',
+    '      - backend        # a note someone typed',
+    '      - frontend   # another note',
+    '    # do not touch this',
+    '    restart: unless-stopped',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src);
+  var res = Y.promoteNetworksList(doc, 'a');
+  ok('promoting a two-entry list reports ok: true — the model\'s own report of a structural edit, same as addItem/removeItem',
+     !!res && res.ok === true, JSON.stringify(res));
+
+  var out = Y.serialise(doc);
+  var want = src
+    .replace('      - backend        # a note someone typed\n', '      backend:        # a note someone typed\n')
+    .replace('      - frontend   # another note\n', '      frontend:   # another note\n');
+
+  ok('both trailing notes survive, on their own new key lines, with their original spacing before the #',
+     out === want, firstDiff(want, out));
+  ok('nothing else moves: only the two entry lines differ from the original — the comment above the block, ' +
+     'the comment below it and the sibling key after it are all untouched',
+     diffLines(src, out).length === 2, JSON.stringify(diffLines(src, out)));
+})();
+
+/* ---- 3. An anchor, an alias or a flow sequence is refused, whole-block or
+            per-entry, and refusing leaves the file byte-identical -------- */
+
+(function () {
+  // Whole-block shapes: the entire networks: value is sealed as one opaque
+  // node, so promoteNetworksList never reaches a single entry — it reads as
+  // "there is no list here" rather than naming which shape sealed it, which
+  // is the truth: v.kind isn't 'seq' at all in these three cases.
+  var whole = {
+    'a flow sequence':  'services:\n  a:\n    image: alpine\n    networks: [frontend, backend]\n',
+    'an anchor':        'services:\n  a:\n    image: alpine\n    networks: &shared\n      - backend\n',
+    'an alias':         'x-net: &shared\n  - frontend\nservices:\n  a:\n    image: alpine\n    networks: *shared\n'
+  };
+  Object.keys(whole).forEach(function (label) {
+    var src = whole[label];
+    var doc = Y.parse(src);
+    var res = Y.promoteNetworksList(doc, 'a');
+    ok('a networks: list sealed whole by ' + label + ' is refused',
+       !!res && res.ok === false && res.error === 'There is no list of networks here to change.',
+       JSON.stringify(res));
+    ok('...and refusing leaves the file byte-identical (' + label + ')',
+       Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+  });
+
+  // Per-entry shapes: the list itself parses fine, but one entry is sealed —
+  // this is the path that actually calls lockReason(), so the real LOCK_WORDS
+  // text (read from the source, not invented) has to appear in the message.
+  var perEntry = {
+    'an anchored entry': {
+      src: 'services:\n  a:\n    image: alpine\n    networks:\n      - &netref backend\n      - frontend\n',
+      reason: 'this is a shared block other parts of the file reuse'
+    },
+    'an aliased entry': {
+      src: 'x-net: &nn frontend\nservices:\n  a:\n    image: alpine\n    networks:\n      - *nn\n      - backend\n',
+      reason: 'this points at a shared block higher up the file'
+    },
+    'a flow-sequence entry': {
+      src: 'services:\n  a:\n    image: alpine\n    networks:\n      - [x, y]\n      - backend\n',
+      reason: 'this is written as a list on one line'
+    }
+  };
+  Object.keys(perEntry).forEach(function (label) {
+    var c = perEntry[label], doc = Y.parse(c.src);
+    var res = Y.promoteNetworksList(doc, 'a');
+    ok(label + ' refuses the whole block, naming the real LOCK_WORDS reason',
+       !!res && res.ok === false &&
+       res.error === 'One of these entries cannot be changed here, because ' + c.reason + '.',
+       JSON.stringify(res));
+    ok('...and refusing leaves the file byte-identical (' + label + ')',
+       Y.serialise(doc) === c.src, firstDiff(c.src, Y.serialise(doc)));
+  });
+
+  // A dash with no name at all — the function's own doc comment names this
+  // case alongside anchor/alias/flow, and it costs nothing extra to pin.
+  var blankSrc = 'services:\n  a:\n    image: alpine\n    networks:\n      -\n      - backend\n';
+  var blankDoc = Y.parse(blankSrc);
+  var blankRes = Y.promoteNetworksList(blankDoc, 'a');
+  ok('an entry with no name yet is refused rather than promoted as an empty key',
+     !!blankRes && blankRes.ok === false &&
+     blankRes.error === 'One of these entries has no name yet, so it cannot become a setting.',
+     JSON.stringify(blankRes));
+  ok('...and refusing leaves the file byte-identical',
+     Y.serialise(blankDoc) === blankSrc, firstDiff(blankSrc, Y.serialise(blankDoc)));
+})();
+
+/* ---- 4. A single-entry block promotes the same way ----------------------- */
+
+(function () {
+  var src  = 'services:\n  a:\n    image: alpine\n    networks:\n      - backend\n';
+  var want = 'services:\n  a:\n    image: alpine\n    networks:\n      backend:\n';
+  var doc = Y.parse(src);
+  var res = Y.promoteNetworksList(doc, 'a');
+  ok('a single-entry list promotes', !!res && res.ok === true, JSON.stringify(res));
+  ok('...to a single bare map key', Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 5. An already-map block is refused, not silently accepted as a no-op
+            (the other agent's choice — promoteNetworksList requires the
+            value to be a seq and refuses everything else, an already-map
+            block included, with the same generic message as the sealed-
+            whole-block shapes above) ----------------------------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    networks:\n      backend:\n';
+  var doc = Y.parse(src);
+  var res = Y.promoteNetworksList(doc, 'a');
+  ok('an already-map networks: block is refused rather than treated as a no-op',
+     !!res && res.ok === false && res.error === 'There is no list of networks here to change.',
+     JSON.stringify(res));
+  ok('...and the file is untouched', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- 6. Phase 5 chains into Phase 3: a promoted entry offers exactly the
+            two blank boxes, and nothing else -------------------------- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    networks:\n      - backend\n      - frontend\n';
+  var doc = Y.parse(src);
+  Y.promoteNetworksList(doc, 'a');
+  var form = Y.buildForm(doc);
+  var rows = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; });
+
+  ok('both promoted entries are longForm, offering exactly ipv4_address and mac_address blank',
+     rows.length === 2 && rows.every(function (f) {
+       return f.longForm === true &&
+         f.longExtras.slice().sort().join(',') === 'ipv4_address,mac_address' &&
+         f.parts.ipv4_address.value === '' && f.parts.ipv4_address.creatable === true &&
+         f.parts.mac_address.value === ''  && f.parts.mac_address.creatable === true;
+     }),
+     JSON.stringify(rows.map(function (f) { return { name: f.parts.value.value, extras: f.longExtras }; })));
+
+  ['priority', 'gw_priority', 'interface_name', 'aliases'].forEach(function (k) {
+    ok('a promoted entry does not also offer a blank ' + k + ' box',
+       rows.every(function (f) { return !f.parts[k]; }),
+       JSON.stringify(rows.map(function (f) { return Object.keys(f.parts); })));
+  });
+})();
+
+/* ---- 7. The whole journey: plain entry, promote, set a fixed address ---- */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    networks:\n' +
+    '      - backend        # a note someone typed\n' +
+    '      - frontend\n';
+  var want = 'services:\n  a:\n    image: alpine\n    networks:\n' +
+    '      backend:        # a note someone typed\n' +
+    '        ipv4_address: 10.0.0.5\n' +
+    '      frontend:\n';
+
+  var doc = Y.parse(src);
+  ok('the promotion succeeds', Y.promoteNetworksList(doc, 'a').ok === true);
+
+  var form = Y.buildForm(doc);
+  var backend = form.fields.filter(function (f) {
+    return f.service === 'a' && f.listKey === 'networks' && f.parts.value.value === 'backend';
+  })[0];
+  ok('setPart writes the fixed address onto the promoted entry',
+     !!backend && Y.setPart(doc, form, backend.id, 'ipv4_address', '10.0.0.5') === true);
+  ok('the final text is exactly: plain entry promoted, note kept, address added, sibling entry untouched',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 8. Indentation is inherited from the file, not assumed -------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '    a:',
+    '        image: alpine',
+    '        networks:',
+    '            - backend        # note',
+    '            - frontend',
+    ''
+  ].join('\n');
+  var want = [
+    'services:',
+    '    a:',
+    '        image: alpine',
+    '        networks:',
+    '            backend:        # note',
+    '            frontend:',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src);
+  var res = Y.promoteNetworksList(doc, 'a');
+  ok('a four-space-indented block promotes', !!res && res.ok === true, JSON.stringify(res));
+  ok('...with the new keys lined up at the file\'s own depth (12 spaces), not a hardcoded one',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * AG. PLAN_34 Phase 6 — locked long extras, and declaring a missing network
+ *     from the row
+ *
+ * Part one makes an unreadable child of a long-form entry (aliases:,
+ * link_local_ips:, or a network-entry extra written as a block rather than a
+ * scalar) a locked part in its own right — named, showing the file's own
+ * text and why, exactly like every other unreadable node in the form —
+ * rather than the one generic "ask the Compose view" sentence this shape
+ * used to fall back on. setPart() must refuse writing to one whether or not
+ * its name also happens to be an ordinary network-entry extra, because a
+ * locked part has no spot to write through.
+ *
+ * Part two turns "no network called X is defined in this file" into a
+ * one-click fix: declareNetwork() writes the whole `name:\n  external:
+ * true` declaration in one go, refusing rather than guessing wherever the
+ * networks: block cannot safely take it.
+ * ========================================================================= */
+
+console.log('\nAG. PLAN_34 Phase 6 — locked long extras, and declareNetwork');
+
+/* ---- 1/2. A locked long extra is genuinely locked, whether or not its name
+             is also an ordinary network-entry extra ---------------------- */
+
+var AG12_SRC = [
+  'services:',
+  '  a:',
+  '    image: alpine',
+  '    networks:',
+  '      backend:',
+  '        priority:',
+  '          - 1',
+  '        aliases:',
+  '          - web',
+  '          - api',
+  ''
+].join('\n');
+
+(function () {
+  var doc = Y.parse(AG12_SRC), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+
+  ok('a networks: map entry\'s aliases: is a genuinely locked part',
+     !!row && !!row.parts.aliases &&
+     row.parts.aliases.locked === true && row.parts.aliases.spot === null &&
+     !row.parts.aliases.creatable &&
+     row.parts.aliases.raw === 'aliases:\n  - web\n  - api' &&
+     typeof row.parts.aliases.reason === 'string' && row.parts.aliases.reason.length > 0,
+     row && JSON.stringify(row.parts.aliases));
+
+  ok('setPart refuses to write it, and the file is untouched',
+     !!row && Y.setPart(doc, form, row.id, 'aliases', 'anything') === false &&
+     Y.serialise(doc) === AG12_SRC, firstDiff(AG12_SRC, Y.serialise(doc)));
+
+  // priority: is one of NETWORK_ENTRY_EXTRAS — the names setPart's own
+  // phase-3c branch is willing to create a bare line for when it finds no
+  // spot. Written here as a block rather than a scalar, so it is locked
+  // exactly like aliases: — this pins the guard sitting BEFORE that creation
+  // branch, since without it a locked, in-the-extras-list name would fall
+  // through and get a second, colliding line written under it.
+  ok('...and the same holds for a locked part whose name IS a network-entry extra (priority)',
+     !!row && !!row.parts.priority && row.parts.priority.locked === true &&
+     row.parts.priority.raw === 'priority:\n  - 1' &&
+     Y.setPart(doc, form, row.id, 'priority', '5') === false &&
+     Y.serialise(doc) === AG12_SRC, firstDiff(AG12_SRC, Y.serialise(doc)));
+})();
+
+/* ---- 3. link_local_ips gets the same treatment — the fix is about shape,
+            not two hard-coded key names ------------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      backend:',
+    '        link_local_ips:',
+    '          - 169.254.1.1',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; })[0];
+
+  ok('link_local_ips: is locked the same way aliases: is',
+     !!row && !!row.parts.link_local_ips && row.parts.link_local_ips.locked === true &&
+     row.parts.link_local_ips.spot === null && !row.parts.link_local_ips.creatable &&
+     row.parts.link_local_ips.raw === 'link_local_ips:\n  - 169.254.1.1' &&
+     row.parts.link_local_ips.reason === 'this is written as a list of separate items',
+     row && JSON.stringify(row.parts.link_local_ips));
+  ok('...and setPart refuses it too, leaving the file untouched',
+     !!row && Y.setPart(doc, form, row.id, 'link_local_ips', 'x') === false &&
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- 4. f.declareMissing is set only for a dangling network, never for a
+            dangling volume or secret ---------------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0.2',
+    '      - back',
+    '    volumes:',
+    '      - myvol:/data',
+    '    secrets:',
+    '      - db_password',
+    'networks:',
+    '  back:',
+    '    external: true',
+    ''
+  ].join('\n');
+  var form = Y.buildForm(Y.parse(src));
+  var nets = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'networks'; });
+  var missingNet = nets.filter(function (f) { return f.parts.value.value === 'br0.2'; })[0];
+  var declaredNet = nets.filter(function (f) { return f.parts.value.value === 'back'; })[0];
+  var vol = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'volumes'; })[0];
+  var sec = form.fields.filter(function (f) { return f.service === 'a' && f.listKey === 'secrets'; })[0];
+
+  ok('a service joining a network the file never declares gets declareMissing set to that name',
+     !!missingNet && missingNet.declareMissing === 'br0.2' &&
+     missingNet.advice.indexOf('no network called br0.2 is defined in this file') >= 0,
+     missingNet && JSON.stringify({ declareMissing: missingNet.declareMissing, advice: missingNet.advice }));
+  ok('a service joining a network the file DOES declare has no declareMissing',
+     !!declaredNet && !declaredNet.declareMissing,
+     declaredNet && JSON.stringify({ declareMissing: declaredNet.declareMissing, advice: declaredNet.advice }));
+  ok('a dangling volume reference gets the advice, but never declareMissing — the fix is networks-only',
+     !!vol && !vol.declareMissing &&
+     vol.advice.indexOf('no volume called myvol is defined in this file') >= 0,
+     vol && JSON.stringify({ declareMissing: vol.declareMissing, advice: vol.advice }));
+  ok('a dangling secret reference gets the advice, but never declareMissing either',
+     !!sec && !sec.declareMissing &&
+     sec.advice.indexOf('no secret called db_password is defined in this file') >= 0,
+     sec && JSON.stringify({ declareMissing: sec.declareMissing, advice: sec.advice }));
+})();
+
+/* ---- 5. declareNetwork writes the whole declaration, from a file with no
+            networks: block at all ------------------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0.2',
+    ''
+  ].join('\n');
+  var want = src + 'networks:\n  br0.2:\n    external: true\n';
+
+  var doc = Y.parse(src);
+  var line = Y.declareNetwork(doc, 'br0.2');
+  ok('declareNetwork returns a real line number', line >= 0, line);
+
+  var out = Y.serialise(doc);
+  ok('...and the file now holds a networks: block with br0.2: and external: true under it, indented correctly',
+     out === want, firstDiff(want, out));
+
+  var form2 = Y.buildForm(Y.parse(out));
+  var row2 = form2.fields.filter(function (f) {
+    return f.service === 'a' && f.listKey === 'networks' && f.parts.value.value === 'br0.2';
+  })[0];
+  ok('re-parsed, buildForm no longer reports the dangling-network advice for that row',
+     !!row2 && row2.advice.indexOf('no network called br0.2 is defined in this file') < 0 && !row2.declareMissing,
+     row2 && JSON.stringify(row2.advice));
+})();
+
+/* ---- 6. From a file that already has a networks: block: the new
+            declaration is added alongside, and every comment and blank
+            line already there survives ------------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0.2',
+    '      - frontend',
+    'networks:',
+    '  frontend:',
+    '    # a note on frontend\'s driver',
+    '    driver: bridge',
+    '# a note after the whole networks: block',
+    ''
+  ].join('\n');
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0.2',
+    '      - frontend',
+    'networks:',
+    '  frontend:',
+    '    # a note on frontend\'s driver',
+    '    driver: bridge',
+    '  br0.2:',
+    '    external: true',
+    '# a note after the whole networks: block',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src);
+  ok('the fixture itself round-trips byte for byte before any edit',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+
+  var line = Y.declareNetwork(doc, 'br0.2');
+  ok('declareNetwork succeeds alongside an existing entry', line >= 0, line);
+
+  var out = Y.serialise(doc);
+  ok('the existing entry, its comment and the comment after the block all survive untouched',
+     out === want, firstDiff(want, out));
+})();
+
+/* ---- 7. Refusals write nothing: already declared, an alias, a flow map -- */
+
+(function () {
+  var already = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0.2',
+    'networks:',
+    '  br0.2:',
+    '    external: true',
+    ''
+  ].join('\n');
+  var doc1 = Y.parse(already);
+  ok('a name already declared is refused, writing nothing',
+     Y.declareNetwork(doc1, 'br0.2') === -1 && Y.serialise(doc1) === already,
+     firstDiff(already, Y.serialise(doc1)));
+
+  var aliasSrc = 'x-net: &shared\n  frontend:\n\nservices:\n  a:\n    image: alpine\nnetworks: *shared\n';
+  var doc2 = Y.parse(aliasSrc);
+  ok('a top-level networks: block written as an alias is refused, writing nothing',
+     Y.declareNetwork(doc2, 'frontend') === -1 && Y.serialise(doc2) === aliasSrc,
+     firstDiff(aliasSrc, Y.serialise(doc2)));
+
+  var flowSrc = 'services:\n  a:\n    image: alpine\nnetworks: {a: {}}\n';
+  var doc3 = Y.parse(flowSrc);
+  ok('a top-level networks: block written as a flow map is refused, writing nothing',
+     Y.declareNetwork(doc3, 'a') === -1 && Y.serialise(doc3) === flowSrc,
+     firstDiff(flowSrc, Y.serialise(doc3)));
+})();
+
+/* ---- 8. A name that genuinely needs quoting as a YAML key -------------- */
+
+(function () {
+  // "br0.2" (a real Unraid VLAN name) is fine bare — a colon is not: written
+  // bare, "vlan: 2:" reads back as key "vlan" with value "2:", not the
+  // single key "vlan: 2" that was asked for. Either quoting it correctly or
+  // refusing outright keeps the file honest; writing it bare and unquoted
+  // does not, and is a silently corrupt file even though it round-trips
+  // through THIS parser (which treats every key as a literal string).
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - br0.2',
+    ''
+  ].join('\n');
+  // declareNetwork itself has no documented failure mode beyond returning
+  // -1, so a crash here is as much a finding as a wrong value — caught
+  // rather than left to take the whole suite down, so every other section
+  // still gets to report.
+  var doc = Y.parse(src), line, out, crashed = null;
+  try {
+    line = Y.declareNetwork(doc, 'vlan: 2');
+    out = Y.serialise(doc);
+  } catch (e) { crashed = e; }
+
+  var refused = !crashed && line === -1 && out === src;
+  var quotedSafely = false;
+  if (!crashed && line >= 0) {
+    try {
+      var reparsed = Y.parse(out);
+      var net = reparsed.root.pairs.networks && reparsed.root.pairs.networks.value;
+      quotedSafely = /^\s*["']vlan: 2["']\s*:/m.test(out) && !!net && net.pairs.hasOwnProperty('vlan: 2');
+    } catch (e) { quotedSafely = false; }
+  }
+
+  ok('a network name needing YAML quoting is either quoted safely (and reparses to the same name) or refused outright — never written bare and corrupted, and never a crash',
+     refused || quotedSafely,
+     crashed ? ('declareNetwork threw: ' + crashed) : ('declareNetwork returned ' + line + '\n' + out));
+})();
+
+/* =========================================================================
+ * AH. PLAN_40 — dragging a port into a different place in the list
+ *
+ * moveItem() lifts a whole entry — leadStart..end, comments and all — the
+ * same span removeItem already trusts to be "the whole entry" — and drops
+ * it elsewhere. Two failure modes have actually happened in this codebase
+ * before: a comment left behind when a block gets rebuilt (PLAN_34 phase 5
+ * kept only the last comment of a networks block), and a multi-line entry
+ * only half-moved. Every assertion below is byte-for-byte, so a comment
+ * dropped, a blank line dragged along, or an off-by-one on the insertion
+ * point cannot pass by luck.
+ * ========================================================================= */
+
+console.log('\nAH. PLAN_40 — dragging a port (moveItem)');
+
+/* ---- 1. Two short-form ports swap, byte-identical to the same file
+            written the other way round by hand ------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"',
+    '      - "9090:90"',
+    ''
+  ].join('\n');
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "9090:90"',
+    '      - "8080:80"',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var res = Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+  ok('swapping the two entries reports ok: true', !!res && res.ok === true, JSON.stringify(res));
+  ok('...and the file matches the same two lines written in the other order',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 2. Each entry's own trailing comment travels with it — the one that
+            would have been silently wrong -------------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"   # web',
+    '      - "9090:90"   # admin',
+    ''
+  ].join('\n');
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "9090:90"   # admin',
+    '      - "8080:80"   # web',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+  ok('each entry keeps its own trailing comment after the swap',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 3. A standalone comment line above an entry travels with it; one
+            above the ports: key itself does not move ---------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    # do not touch this',
+    '    ports:',
+    '      # note about web',
+    '      - "8080:80"',
+    '      - "9090:90"',
+    ''
+  ].join('\n');
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    # do not touch this',
+    '    ports:',
+    '      - "9090:90"',
+    '      # note about web',
+    '      - "8080:80"',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+  ok('the comment above the entry moves with it, and the comment above ports: itself stays put',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 4. A long-form entry (four lines) moves as a whole block, its inner
+            lines keeping their original order ----------------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - target: 80',
+    '        published: 8080',
+    '        protocol: tcp',
+    '        host_ip: 0.0.0.0',
+    '      - target: 90',
+    '        published: 9090',
+    ''
+  ].join('\n');
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - target: 90',
+    '        published: 9090',
+    '      - target: 80',
+    '        published: 8080',
+    '        protocol: tcp',
+    '        host_ip: 0.0.0.0',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+  ok('the four-line entry moves as one block, its own lines in their original order, nothing split off',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 5. A blank line between two entries stays where it was rather than
+            travelling with either one ------------------------------------ */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"',
+    '',
+    '      - "9090:90"',
+    ''
+  ].join('\n');
+  // The blank sits outside both items' spans, so it stays at its own line —
+  // the second line of the block — rather than following either entry. Once
+  // the swap makes "9090:90" the first entry, the blank ends up ahead of it
+  // instead of between the two entries as it was before the move.
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '',
+    '      - "9090:90"',
+    '      - "8080:80"',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+  ok('the blank line stays at its own line rather than travelling with either entry',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 6. Last-to-first and first-to-last, the two off-by-one cases -------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"',
+    '      - "9090:90"',
+    '      - "7070:70"',
+    ''
+  ].join('\n');
+
+  var wantLastToFirst = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "7070:70"',
+    '      - "8080:80"',
+    '      - "9090:90"',
+    ''
+  ].join('\n');
+  var doc1 = Y.parse(src), form1 = Y.buildForm(doc1);
+  Y.moveItem(doc1, form1, 'a', 'ports', 2, 0);
+  ok('moving the last entry to the front lands it there and shifts the rest down',
+     Y.serialise(doc1) === wantLastToFirst, firstDiff(wantLastToFirst, Y.serialise(doc1)));
+
+  var wantFirstToLast = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "9090:90"',
+    '      - "7070:70"',
+    '      - "8080:80"',
+    ''
+  ].join('\n');
+  var doc2 = Y.parse(src), form2 = Y.buildForm(doc2);
+  Y.moveItem(doc2, form2, 'a', 'ports', 0, 2);
+  ok('moving the first entry to the back lands it there and shifts the rest up',
+     Y.serialise(doc2) === wantFirstToLast, firstDiff(wantFirstToLast, Y.serialise(doc2)));
+})();
+
+/* ---- 7. from === to writes nothing, byte-identical ----------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"',
+    '      - "9090:90"',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var res = Y.moveItem(doc, form, 'a', 'ports', 1, 1);
+  ok('moving an entry onto its own position reports ok: true and writes nothing',
+     !!res && res.ok === true && Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* ---- 8. Refusals leave the file byte-identical: a flow sequence, an
+            anchored entry, an aliased entry and a tagged entry — the last
+            three sitting where they are NOT touched by the move, since the
+            rule is "anywhere in the list", not just the two entries being
+            swapped ------------------------------------------------------- */
+
+(function () {
+  var flowSrc = 'services:\n  a:\n    image: alpine\n    ports: ["80:80", "81:81"]\n';
+  var flowDoc = Y.parse(flowSrc), flowForm = Y.buildForm(flowDoc);
+  var flowRes = Y.moveItem(flowDoc, flowForm, 'a', 'ports', 0, 1);
+  ok('a flow sequence is refused, naming there being no list here to reorder',
+     !!flowRes && flowRes.ok === false && flowRes.error === 'There is no list here to reorder.',
+     JSON.stringify(flowRes));
+  ok('...and refusing leaves the file byte-identical',
+     Y.serialise(flowDoc) === flowSrc, firstDiff(flowSrc, Y.serialise(flowDoc)));
+
+  var perEntry = {
+    'an anchored entry': {
+      src: 'services:\n  a:\n    image: alpine\n    ports:\n      - "8080:80"\n      - &p1 "9090:90"\n      - "7070:70"\n',
+      reason: 'this is a shared block other parts of the file reuse'
+    },
+    'an aliased entry': {
+      src: 'x-ports: &pp "9090:90"\nservices:\n  a:\n    image: alpine\n    ports:\n      - "8080:80"\n      - *pp\n      - "7070:70"\n',
+      reason: 'this points at a shared block higher up the file'
+    },
+    'a tagged entry': {
+      src: 'services:\n  a:\n    image: alpine\n    ports:\n      - "8080:80"\n      - !!str "9090:90"\n      - "7070:70"\n',
+      reason: 'this carries a YAML tag'
+    }
+  };
+  Object.keys(perEntry).forEach(function (label) {
+    var c = perEntry[label], doc = Y.parse(c.src), form = Y.buildForm(doc);
+    // Neither index 0 nor index 2 is the sealed entry at index 1 — moving
+    // around it must still be refused, because it sits inside the span
+    // [leadStart of the moved entry .. leadStart of the target] either way.
+    var res = Y.moveItem(doc, form, 'a', 'ports', 0, 2);
+    ok(label + ' anywhere in the list is refused, even though it is not one of the two entries being moved',
+       !!res && res.ok === false &&
+       res.error === 'One of these entries cannot be moved, because ' + c.reason + '.',
+       JSON.stringify(res));
+    ok('...and refusing leaves the file byte-identical (' + label + ')',
+       Y.serialise(doc) === c.src, firstDiff(c.src, Y.serialise(doc)));
+  });
+})();
+
+/* ---- 9. After a move, buildForm reports the ports in the new order, and
+            the field now first is the one PLAN_39's WebUI chip marks ------ */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - "8080:80"',
+    '      - "9090:90"',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+
+  var ports = Y.buildForm(doc).fields.filter(function (f) { return f.service === 'a' && f.binder === 'port'; });
+  ok('both ports still appear, in the new order — the first one is what PLAN_39\'s rule ' +
+     'hands the WebUI button, so this is the field the chip would now mark',
+     ports.length === 2 &&
+     ports[0].parts.host.value === '9090' && ports[0].parts.container.value === '90' &&
+     ports[1].parts.host.value === '8080' && ports[1].parts.container.value === '80',
+     JSON.stringify(ports.map(function (f) { return { host: f.parts.host.value, container: f.parts.container.value }; })));
+})();
+
+/* ---- 10. The moved file still round-trips unsealed ----------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    ports:',
+    '      - target: 80',
+    '        published: 8080',
+    '        protocol: tcp',
+    '      - target: 90',
+    '        published: 9090',
+    ''
+  ].join('\n');
+
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  Y.moveItem(doc, form, 'a', 'ports', 0, 1);
+  var out = Y.serialise(doc);
+
+  ok('the moved file is itself well-formed: parsing it again and serialising it back matches exactly',
+     Y.serialise(Y.parse(out)) === out, firstDiff(out, Y.serialise(Y.parse(out))));
+})();
+
+/* =========================================================================
+ * AI. Driver and external share one box on a network/volume row
+ *
+ * A network or volume declared `external: true` with no driver used to read
+ * back as a row with an empty box — indistinguishable from an unconfigured
+ * one, even though the file said something. `external: true` alongside a
+ * driver: is also a file real compose refuses outright. The fix folds the
+ * two into the row's single value box: EXTERNAL_CHOICE is one more answer a
+ * driver dropdown can hold, so the row can never show both or neither.
+ * Secrets and configs are unaffected — their row box is a file path, and the
+ * same merge there would misrepresent it — so external stays an ordinary
+ * fold field for those two kinds.
+ * ========================================================================= */
+
+console.log('\nAI. Driver and external share one box on a network/volume row');
+
+/* ---- 1. external: true, no driver, reads as the sentinel ---------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    external: true',
+    ''
+  ].join('\n');
+  var f = Y.fieldById(Y.buildForm(Y.parse(src)), '/declared/networks.backend');
+
+  ok('a network declared external: true with no driver reads back as the external sentinel',
+     !!f && f.parts.value.value === Y.externalChoice,
+     f && JSON.stringify(f.parts.value));
+})();
+
+/* ---- 2. that row set to a driver name drops external -------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    external: true',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, '/declared/networks.backend', 'value', 'bridge');
+
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    driver: bridge',
+    ''
+  ].join('\n');
+  ok('setting that row to a driver name writes driver: bridge and removes the external line',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 3. an existing driver, set to external, drops the driver line ------ */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    driver: bridge',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, '/declared/networks.backend', 'value', Y.externalChoice);
+
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    external: true',
+    ''
+  ].join('\n');
+  ok('setting a driver:-bearing row to "external" writes external: true (unquoted, bare) and removes the driver line',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 4. that row cleared to blank leaves a bare, valid declaration ------ */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    external: true',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var wrote = Y.setPart(doc, form, '/declared/networks.backend', 'value', '');
+
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    ''
+  ].join('\n');
+  ok('clearing that row to blank leaves the declaration bare — no driver, no external, name line intact',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 5. external: false never takes over the row ------------------------ */
+
+(function () {
+  var withDriver = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    driver: bridge',
+    '    external: false',
+    ''
+  ].join('\n');
+  var fWithDriver = Y.fieldById(Y.buildForm(Y.parse(withDriver)), '/declared/networks.backend');
+  ok('external: false alongside a driver leaves the row showing the driver, not the sentinel',
+     !!fWithDriver && fWithDriver.parts.value.value === 'bridge',
+     fWithDriver && JSON.stringify(fWithDriver.parts.value));
+
+  var noDriver = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    external: false',
+    ''
+  ].join('\n');
+  var fNoDriver = Y.fieldById(Y.buildForm(Y.parse(noDriver)), '/declared/networks.backend');
+  ok('external: false with no driver leaves the row blank, not the sentinel',
+     !!fNoDriver && fNoDriver.parts.value.value === '',
+     fNoDriver && JSON.stringify(fNoDriver.parts.value));
+})();
+
+/* ---- 6. a map-shaped external cannot be shown on the row, so it keeps its
+ *        own fold field and leaves the driver box alone ------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    networks:',
+    '      - backend',
+    'networks:',
+    '  backend:',
+    '    driver: bridge',
+    '    external:',
+    '      name: real_net',
+    ''
+  ].join('\n');
+  var form = Y.buildForm(Y.parse(src));
+  var row  = Y.fieldById(form, '/declared/networks.backend');
+  var leaf = Y.fieldById(form, '/declared/networks.backend.external');
+
+  ok('the deprecated long-form external (a map) leaves the row showing the driver, and keeps its own fold field',
+     !!row && row.parts.value.value === 'bridge' && !!leaf && leaf.fold,
+     JSON.stringify({ row: row && row.parts.value.value, leaf: leaf && { fold: leaf.fold, locked: leaf.locked } }));
+})();
+
+/* ---- 7. a volumes: declaration behaves the same way ---------------------- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    volumes:',
+    '      - data:/var/lib/data',
+    'volumes:',
+    '  data:',
+    '    external: true',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var f = Y.fieldById(form, '/declared/volumes.data');
+  ok('a volume declared external: true with no driver reads back as the sentinel too',
+     !!f && f.parts.value.value === Y.externalChoice,
+     f && JSON.stringify(f.parts.value));
+
+  var wrote = Y.setPart(doc, form, '/declared/volumes.data', 'value', 'local');
+  var want = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    volumes:',
+    '      - data:/var/lib/data',
+    'volumes:',
+    '  data:',
+    '    driver: local',
+    ''
+  ].join('\n');
+  ok('setting a volume row from external to a driver writes driver: local and drops external',
+     wrote && Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+/* ---- 8. secrets are unaffected: external stays an ordinary fold field --- */
+
+(function () {
+  var src = [
+    'services:',
+    '  a:',
+    '    image: alpine',
+    '    secrets:',
+    '      - creds',
+    'secrets:',
+    '  creds:',
+    '    file: ./creds.txt',
+    '    external: true',
+    ''
+  ].join('\n');
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var row  = Y.fieldById(form, '/declared/secrets.creds');
+  var leaf = Y.fieldById(form, '/declared/secrets.creds.external');
+
+  ok('a secret\'s row box still shows the file path, and external stays an ordinary, unlocked fold field',
+     !!row && row.parts.value.value === './creds.txt' &&
+     !!leaf && leaf.fold && !leaf.locked && leaf.parts.value.value === 'true',
+     JSON.stringify({
+       row:  row  && row.parts.value.value,
+       leaf: leaf && { fold: leaf.fold, locked: leaf.locked, value: leaf.parts.value.value }
+     }));
+
+  ok('...and the file round-trips untouched — this section only reads',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
 })();
 
 /* ---- result ------------------------------------------------------------- */

@@ -28,9 +28,9 @@ cards per row, eight per section**; **render** the markup properly rather than s
 
 ---
 
-## 1. Size — `sheets/stack.manager.css`
+## 1. Size — `sheets/staxx.css`
 
-**`.stackman-ca` (line 4443)** — two values, copied from `.stackman-modal` (1687-1688):
+**`.staxx-ca` (line 4443)** — two values, copied from `.staxx-modal` (1687-1688):
 
 ```css
 width: min(168rem, 96vw);    /* was min(84rem, 94vw)  */
@@ -39,14 +39,14 @@ height: min(94vh, 108rem);   /* was min(80vh, 76rem)  */
 
 Leave `grid-template-rows: auto auto auto 1fr auto` alone — the five children are unchanged.
 
-**Phone breakpoint.** `.stackman-ca` appears **nowhere** inside the `@media (max-width: 45rem)`
+**Phone breakpoint.** `.staxx-ca` appears **nowhere** inside the `@media (max-width: 45rem)`
 block (opens at 5678), so today it stays a centred 94vw box on a phone while the editor goes
-edge-to-edge. Now that they are meant to match, add `.stackman-ca` (and `.stackman-ca-app`, if it is
-likewise absent — check) to that block using `.stackman-modal`'s own override at 6252-6261 verbatim:
+edge-to-edge. Now that they are meant to match, add `.staxx-ca` (and `.staxx-ca-app`, if it is
+likewise absent — check) to that block using `.staxx-modal`'s own override at 6252-6261 verbatim:
 `inset: 0; margin: 0; width: 100%; height: 100dvh; max-width: none; max-height: none; border: 0;
 border-radius: 0;`.
 
-**`.stackman-ca-app` (the details window, 4964)** — a judgement call, not something asked for:
+**`.staxx-ca-app` (the details window, 4964)** — a judgement call, not something asked for:
 at `min(68rem, 90vw)` it will look lost opening on top of a 1680px parent. Grow it to
 `width: min(104rem, 92vw); height: min(88vh, 96rem);` — deliberately still smaller than its parent,
 so it reads as a panel over the list rather than a replacement for it. Its screenshot strip stays a
@@ -54,15 +54,15 @@ sideways-scrolling row; it just fits more thumbnails now.
 
 ## 2. Four across, eight per section
 
-`.stackman-ca-cards` (4563) is `repeat(auto-fill, minmax(23rem, 1fr))` and is shared by both views.
+`.staxx-ca-cards` (4563) is `repeat(auto-fill, minmax(23rem, 1fr))` and is shared by both views.
 **Search results keep it** — filling the width is right there. The homepage needs a fixed count, so
 add a modifier used only by `caRenderHome()`:
 
 ```css
-.stackman-ca-cards--home { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-@media (max-width: 100rem) { .stackman-ca-cards--home { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width:  72rem) { .stackman-ca-cards--home { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width:  45rem) { .stackman-ca-cards--home { grid-template-columns: minmax(0, 1fr); } }
+.staxx-ca-cards--home { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 100rem) { .staxx-ca-cards--home { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width:  72rem) { .staxx-ca-cards--home { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width:  45rem) { .staxx-ca-cards--home { grid-template-columns: minmax(0, 1fr); } }
 ```
 
 Keying on the viewport rather than the dialog is correct here **because the dialog width tracks the
@@ -73,7 +73,7 @@ to shrink below its content and a long repo name would push the grid sideways.
 
 - `caShown` initialiser and the `caOpen()` reset: `{spot: 6, new: 6, trend: 6}` → **8s**.
 - The `[data-more]` click branch: `+= 6` → **`+= 8`**.
-- `caRenderHome()` emits `class="stackman-ca-cards stackman-ca-cards--home"` on each section grid.
+- `caRenderHome()` emits `class="staxx-ca-cards staxx-ca-cards--home"` on each section grid.
 
 **`scripts/ca-index.php`** — each home list is sliced to 30, which is not a multiple of four, so the
 final Show more would leave a two-card row. Change the three slices to **32**. This does *not* need

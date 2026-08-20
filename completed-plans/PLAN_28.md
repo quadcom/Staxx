@@ -48,16 +48,16 @@ Heading, a **deck** that clips, a **track** that slides, one grid holding **all*
 cards, and a pager:
 
 ```html
-<h4 class="stackman-ca-group">Spotlight Apps</h4>
-<div class="stackman-ca-deck" data-deck="spot">
-  <div class="stackman-ca-track">
-    <div class="stackman-ca-cards stackman-ca-cards--home">…all 32 cards…</div>
+<h4 class="staxx-ca-group">Spotlight Apps</h4>
+<div class="staxx-ca-deck" data-deck="spot">
+  <div class="staxx-ca-track">
+    <div class="staxx-ca-cards staxx-ca-cards--home">…all 32 cards…</div>
   </div>
 </div>
-<div class="stackman-ca-pager">
-  <button type="button" class="stackman-ca-step" data-page="spot" data-dir="-1"
+<div class="staxx-ca-pager">
+  <button type="button" class="staxx-ca-step" data-page="spot" data-dir="-1"
           aria-label="Previous two rows" title="Previous">▴</button>
-  <button type="button" class="stackman-ca-step" data-page="spot" data-dir="1"
+  <button type="button" class="staxx-ca-step" data-page="spot" data-dir="1"
           aria-label="Next two rows" title="Next">▾</button>
 </div>
 ```
@@ -65,7 +65,7 @@ cards, and a pager:
 Cards are `caCardHtml()` unchanged. **Omit the pager when the section fits in two rows** — there is
 nothing to step through, which is also the state a short list or a v3 cache produces.
 
-**Do not wrap each section in a container.** `.stackman-ca-group:first-child` (`css:4752`) kills the
+**Do not wrap each section in a container.** `.staxx-ca-group:first-child` (`css:4752`) kills the
 top margin on the first heading and depends on the heading being a direct child of the list. Keep
 heading, deck and pager as three flat siblings.
 
@@ -73,9 +73,9 @@ heading, deck and pager as three flat siblings.
 same order as the search view's 60 and no more than paging to the end reaches today; card icons carry
 `loading="lazy"` already. Worth knowing, not worth avoiding.
 
-## 3. Breakpoints — `sheets/stack.manager.css`
+## 3. Breakpoints — `sheets/staxx.css`
 
-Replace the current 4 / 3 / 2 / 1 steps on `.stackman-ca-cards--home` (`css:4627-4647`) with:
+Replace the current 4 / 3 / 2 / 1 steps on `.staxx-ca-cards--home` (`css:4627-4647`) with:
 
 | Viewport | Columns | Cards per page | Typical device |
 |---|---:|---:|---|
@@ -133,7 +133,7 @@ carousel should do anyway.
 
 Delegation stays on `caList`, so the existing card-click, keydown and capture-phase icon-error
 handlers keep working untouched. The pager buttons are real `<button>`s, so Enter and Space reach the
-click handler for free, exactly as `.stackman-ca-more` does now.
+click handler for free, exactly as `.staxx-ca-more` does now.
 
 **Resize.** Changing the window changes the column count, which changes the rows, which changes both
 measurements. Add a debounced `resize` listener, active only while the dialog is open and the home
@@ -147,10 +147,10 @@ paints, or all 32 cards flash on screen before the clip applies.
 ## 6. CSS for the deck
 
 ```css
-.stackman-ca-deck  { overflow: hidden; transition: height    var(--sm-motion-height) var(--sm-ease-height); }
-.stackman-ca-track { transition:       transform var(--sm-motion-height) var(--sm-ease-height); }
-.stackman-ca-track--still, .stackman-ca-deck--still { transition: none; }
-.stackman-ca-pager { display: flex; justify-content: center; gap: 0.6rem; margin-top: 0.6rem; }
+.staxx-ca-deck  { overflow: hidden; transition: height    var(--sm-motion-height) var(--sm-ease-height); }
+.staxx-ca-track { transition:       transform var(--sm-motion-height) var(--sm-ease-height); }
+.staxx-ca-track--still, .staxx-ca-deck--still { transition: none; }
+.staxx-ca-pager { display: flex; justify-content: center; gap: 0.6rem; margin-top: 0.6rem; }
 ```
 
 The `--still` classes are what `caDeckFit(key, false)` uses for the initial fit and for a resize, so
@@ -162,17 +162,17 @@ comment above them was written for the folder accordion and argues this exact ca
 hundreds of pixels 180ms reads as a blink rather than a movement, and `ease-out` spends its time
 decelerating so the eye misses the part that says "this is sliding". 260ms on a curve that starts
 fast and settles is precisely "noticeable but not painful". (These tokens live on
-`.stackman-scaffold`, not `:root`; the dialog inherits them as a DOM descendant, which the existing
-`.stackman-ca` transition already relies on.)
+`.staxx-scaffold`, not `:root`; the dialog inherits them as a DOM descendant, which the existing
+`.staxx-ca` transition already relies on.)
 
-`.stackman-ca-step` styles on `.stackman-ca-more` — quiet, borderless, `--sm-muted`, coming forward to
-`--sm-accent` on hover and focus — scoped under `.stackman-scaffold`, because Unraid's own sheet
+`.staxx-ca-step` styles on `.staxx-ca-more` — quiet, borderless, `--sm-muted`, coming forward to
+`--sm-accent` on hover and focus — scoped under `.staxx-scaffold`, because Unraid's own sheet
 carries `.unapi button { color: inherit }` at a specificity that beats a bare class. **Delete the
-`.stackman-ca-more` rules** (`css:5175-5198`) once nothing emits that class; not
-`.stackman-ca-app-more`, which is the separate control in the details window.
+`.staxx-ca-more` rules** (`css:5175-5198`) once nothing emits that class; not
+`.staxx-ca-app-more`, which is the separate control in the details window.
 
 **Why a CSS transition and not a JS-driven scroll.** The reduced-motion block already wildcards
-`.stackman-scaffold *` to 1ms, so a CSS transition is covered with no new rule — whereas
+`.staxx-scaffold *` to 1ms, so a CSS transition is covered with no new rule — whereas
 `scroll-behavior: smooth` and a JS `behavior: 'smooth'` are covered by nothing in this sheet. The
 codebase never branches on `prefers-reduced-motion` from JavaScript and this should not be the first
 thing to.
