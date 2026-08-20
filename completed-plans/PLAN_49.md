@@ -1,6 +1,9 @@
 # PLAN_49 — the WebUI port on networks that are not a bridge
 
-**Status: APPROVED, building.**
+**Status: BUILT and proved on the server.** The four macvlan containers now link to their own
+addresses and inside ports; every bridge container is unchanged; the form writes a single
+container-side number and says something true. Only the wording polish in Part B step 5 is left,
+and it was always meant to come after this.
 
 ## Context
 
