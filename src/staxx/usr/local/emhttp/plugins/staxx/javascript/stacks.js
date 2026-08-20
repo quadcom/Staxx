@@ -11523,7 +11523,12 @@
   /* ------------------------------------------------------------ wiring -- */
 
   var settingsBtn = document.getElementById('staxx-settings-btn');
-  if (settingsBtn) settingsBtn.addEventListener('click', openSettings);
+  if (settingsBtn) settingsBtn.addEventListener('click', function () { openSettings(); });
+
+  var hubSettingsBtn = document.getElementById('staxx-open-hub-settings');
+  if (hubSettingsBtn) hubSettingsBtn.addEventListener('click', function () {
+    openSettings('staxx-setting-hub-user');
+  });
 
   document.getElementById('staxx-add').addEventListener('click', function () {
     openEditor('', '', true);
@@ -12514,14 +12519,16 @@
       group: 'Docker Hub sign-in',
       groupHelp: 'Used when checking your containers\' images for updates. Without signing in, ' +
             'Docker Hub only allows about ten of those checks an hour from this server; signing in ' +
-            'raises that to about a hundred. This is a Docker Hub account — the access token below ' +
-            'is safer to use here than your password, because it can be revoked on its own without ' +
-            'changing your sign-in anywhere else.',
+            'raises that to about a hundred.',
       help: 'The Docker Hub account name to sign in with. Leave blank to stay signed out.'
     },
     {
       key: 'HUB_TOKEN', control: 'password', label: 'Docker Hub access token',
-      help: 'Create one from Docker Hub\'s Account Settings → Security → Personal access tokens. ' +
+      help: "Create one from Docker Hub's Account Settings → Security → Personal access tokens, " +
+            'and choose the read-only, public repositories permission. That is all this feature ' +
+            "needs, since checking an image's current version is the only thing it ever does — so a " +
+            'token that leaked could look, but never change or delete anything. It is kept in this ' +
+            "plugin's settings file on the flash drive, readable only by the administrator account. " +
             'Leave both fields blank to sign out.'
     }
   ];
@@ -12626,7 +12633,7 @@
     if (settingsSave) settingsSave.disabled = !settingsDirty();
   }
 
-  function openSettings() {
+  function openSettings(focusId) {
     if (!settingsModal) return;
     call('settings', {}).then(function (res) {
       if (!res.ok || !res.settings) {
@@ -12652,9 +12659,14 @@
       settingsModal.showModal();
       // Explicit, and after showModal(), for the same reason every dialog in
       // this file sets focus by hand: the browser's own "first focusable
-      // descendant" choice is never where anyone wants to land.
-      var first = document.getElementById(SETTINGS_ROWS[0].id);
-      if (first) first.focus({ preventScroll: true });
+      // descendant" choice is never where anyone wants to land. A caller
+      // asking for a specific field (e.g. the Docker Hub notice's link)
+      // wins over the usual "first row" default.
+      var first = focusId ? document.getElementById(focusId) : document.getElementById(SETTINGS_ROWS[0].id);
+      if (first) {
+        first.focus({ preventScroll: true });
+        if (focusId) first.scrollIntoView({ block: 'center' });
+      }
       loadArchiveList();
     });
   }
@@ -14905,10 +14917,4 @@
   // The signpost page (Settings → StaXX) links here to open the
   // panel directly, for whoever followed it from the Plugins list.
   if (location.hash === '#settings') openSettings();
-  // A click on the notice's in-page link only changes the address, since
-  // the page it "navigates to" is the one already showing — this is what
-  // actually opens the panel for that click.
-  window.addEventListener('hashchange', function () {
-    if (location.hash === '#settings' && !(settingsModal && settingsModal.open)) openSettings();
-  });
 })();

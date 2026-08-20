@@ -143,7 +143,7 @@ endif;
       <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
       <div>
         <strong><?= _('Docker Hub has stopped answering questions about images from this server for now.') ?></strong>
-        <?= _('Signing in to a Docker Hub account in the') ?> <a href="#settings"><?= _('settings panel') ?></a> <?= _('raises the limit, or you can just leave it to try again later.') ?>
+        <?= _('Signing in to a Docker Hub account in the') ?> <button type="button" id="staxx-open-hub-settings" class="staxx-link-btn"><?= _('settings panel') ?></button> <?= _('raises the limit, or you can just leave it to try again later.') ?>
       </div>
     </div>
   <? endif; ?>
