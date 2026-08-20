@@ -1820,8 +1820,38 @@ function staxx_selftest(): array {
   $templatesReport = is_dir($tplDir)
     ? (string)count((array)@glob($tplDir.'/*.xml'))
     : 'none — no Unraid template folder on this server';
+
+  // Resolved the same two disk-only ways staxx_import_resolve_project_file()
+  // tries first — an 'indirect' file naming the real folder, or the
+  // project's own folder — but never its third way, which asks Docker which
+  // running container's label points at the file. That means a project only
+  // findable through a running container's label counts as unresolved here,
+  // which is an honest gap rather than a wrong answer: it is what "no
+  // external command" costs.
+  $projectsResolved   = 0;
+  $projectsUnresolved = 0;
+  if (is_dir($projDir)) {
+    foreach ((array)@scandir($projDir) as $entry) {
+      if ($entry === '.' || $entry === '..') continue;
+      $dir = $projDir.'/'.$entry;
+      if (!is_dir($dir)) continue;
+
+      $indirect = $dir.'/indirect';
+      $file     = '';
+      if (is_file($indirect)) {
+        $target = rtrim(trim((string)@file_get_contents($indirect)), '/');
+        if ($target !== '') $file = staxx_find_compose_file($target);
+      } else {
+        $file = staxx_find_compose_file($dir);
+      }
+
+      if ($file !== '' && is_readable($file)) $projectsResolved++;
+      else $projectsUnresolved++;
+    }
+  }
   $projectsReport = is_dir($projDir)
-    ? (string)count((array)@glob($projDir.'/*', GLOB_ONLYDIR))
+    ? $projectsResolved.' resolve to a readable compose file, '.$projectsUnresolved.' do not '
+      . '(a project only found by asking Docker counts as "do not" here, since this check never does)'
     : 'none — Compose Manager is not installed';
 
   return [

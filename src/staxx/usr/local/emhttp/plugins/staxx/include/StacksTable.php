@@ -27,6 +27,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Folders.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Autostart.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
 
 // NO "already loaded?" guard here, deliberately.
 //
@@ -538,6 +539,17 @@ function staxx_boot_mark_html(int $wait, string $title): string {
 }
 
 /**
+ * The small marker on a stack row whose Compose Manager source has changed
+ * since it was imported — see staxx_import_drift(). Icon-only with a
+ * tooltip, the same shape as staxx_boot_mark_html(), because this is rare
+ * enough that spelling it out in a badge on every row would be noise.
+ */
+function staxx_drift_mark_html(string $title): string {
+  return '<span class="staxx-driftmark" title="'.htmlspecialchars($title).'">'
+       . '<i class="fa fa-exclamation-triangle"></i></span>';
+}
+
+/**
  * Every row of the table body, as HTML.
  *
  * Divs standing in for a table, arranged as CSS grid / subgrid so the columns
@@ -567,6 +579,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
     $groupCounts[$r['folder']] = ($groupCounts[$r['folder']] ?? 0) + 1;
   }
   $autostart = staxx_autostart_state($stackList);
+
+  // Gathered once for the same reason as $autostart above: this walks at
+  // most a handful of Compose Manager projects, not once per stack, so it
+  // costs nothing per row even though every row consults it.
+  $drift = staxx_import_drift();
 
   ob_start();
 
@@ -868,6 +885,9 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                         title="<?= htmlspecialchars(_('Imported and not yet reviewed. Open the stack and choose Mark as reviewed once checked.')) ?>">
                     <?= _('needs review') ?>
                   </span>
+                <? endif; ?>
+                <? if (isset($drift[$s['name']])): ?>
+                  <?= staxx_drift_mark_html($drift[$s['name']]) ?>
                 <? endif; ?>
                 <!-- The count is only worth printing for a stack that has more
                      than one container; for a single one the State column

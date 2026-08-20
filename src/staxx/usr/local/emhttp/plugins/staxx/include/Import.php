@@ -380,6 +380,30 @@ function staxx_import_templates(): array {
 /* ----------------------------------------------------------------- projects -- */
 
 /**
+ * The override file paired with a Compose Manager project's resolved compose
+ * file, if it has one. Looked for beside the resolved file first, and only
+ * then the project's own folder on the flash drive — three projects on the
+ * development box run from a folder in appdata while an older copy of both
+ * files still sits on flash, and taking the override from there would quietly
+ * carry settings the project itself stopped using. The flash folder is still
+ * worth trying second, because one project keeps its compose file in appdata
+ * and its override on flash.
+ *
+ * Shared by staxx_import_projects() and staxx_import_drift() so the two can
+ * never drift apart on where they look — pure disk checks, nothing here
+ * shells out.
+ */
+function staxx_import_find_override(string $file, string $dir): string {
+  $lookIn = $file !== '' ? [dirname($file), $dir] : [$dir];
+  foreach ($lookIn as $where) {
+    foreach (STAXX_IMPORT_OVERRIDE_NAMES as $name) {
+      if (is_file($where.'/'.$name)) return $where.'/'.$name;
+    }
+  }
+  return '';
+}
+
+/**
  * Where a Compose Manager project's compose file actually lives, and how
  * that was worked out — the tier that answered matters more than the path
  * itself, since it is the thing most likely to be wrong.
@@ -492,29 +516,21 @@ function staxx_import_projects(): array {
       $ready = false;
     }
 
-    // Beside the compose file FIRST, and only then the project's own folder.
-    // Three projects on the development box run from a folder in appdata while
-    // an older copy of both files still sits on the flash drive — take the
-    // override from there and the import quietly runs settings the project
-    // itself stopped using. The flash folder is still worth looking in second,
-    // because one project keeps its compose file in appdata and its override
-    // on flash.
-    $override = '';
-    $lookIn   = $file !== '' ? [dirname($file), $dir] : [$dir];
-    foreach ($lookIn as $where) {
-      foreach (STAXX_IMPORT_OVERRIDE_NAMES as $name) {
-        if (is_file($where.'/'.$name)) { $override = $where.'/'.$name; break 2; }
-      }
-    }
+    // Beside the compose file FIRST, and only then the project's own folder —
+    // see staxx_import_find_override() for why that order matters.
+    $override = staxx_import_find_override($file, $dir);
     if ($override !== '') {
       $notes[] = 'This project has an override file, which will be copied and used.';
     }
 
-    // Same order, same reason: compose reads the settings file out of the
-    // folder it runs the project from, so the copy beside the compose file is
-    // the one actually in use and any copy left on flash may be older.
+    // Same order and the same reason as the override above: compose reads the
+    // settings file out of the folder it runs the project from, so the copy
+    // beside the compose file is the one in use and a copy left behind on
+    // flash may be older. Its own list, deliberately — borrowing the
+    // override helper's would tie two lookups together that only happen to
+    // agree today.
     $env = '';
-    foreach ($lookIn as $where) {
+    foreach (($file !== '' ? [dirname($file), $dir] : [$dir]) as $where) {
       if (is_file($where.'/.env')) { $env = $where.'/.env'; break; }
     }
 
@@ -700,6 +716,124 @@ function staxx_import_icon_wanted(): array {
   }
 
   return array_values($wanted);
+}
+
+/* -------------------------------------------------------------------- drift -- */
+
+/**
+ * Whether two files differ — sizes first, since these are always small
+ * files but there is never a reason to read one twice when its size alone
+ * already answers the question. Missing on either side counts as "differs",
+ * which only happens here for a project file that has since been removed.
+ */
+function staxx_import_file_differs(string $a, string $b): bool {
+  $sizeA = @filesize($a);
+  $sizeB = @filesize($b);
+  if ($sizeA === false || $sizeB === false || $sizeA !== $sizeB) return true;
+  return @file_get_contents($a) !== @file_get_contents($b);
+}
+
+/**
+ * Where a Compose Manager project's real compose file is, without asking
+ * Docker or compose anything new — unlike staxx_import_resolve_project_file(),
+ * which this deliberately does NOT call, because its label tier shells out to
+ * `docker ps` on every miss.
+ *
+ * Same three tiers, cheapest first:
+ *
+ *   1. An `indirect` file, disk only — see staxx_import_resolve_project_file().
+ *   2. staxx_compose_state(), which the rows render has already built and
+ *      cached for the whole request — reading it again costs nothing. This is
+ *      what catches a project whose real files sit in appdata while a stale
+ *      copy is left on flash: three of the seven projects here do exactly
+ *      that, and skipping this tier would report drift that is not real.
+ *   3. The project's own folder on the flash drive.
+ */
+function staxx_import_project_file(string $dir, string $project): string {
+  $indirect = $dir.'/indirect';
+  if (is_file($indirect)) {
+    $target = rtrim(trim((string)@file_get_contents($indirect)), '/');
+    if ($target !== '') return staxx_find_compose_file($target);
+  }
+
+  // byFile lists each project's config files in the order compose reported
+  // them — main file first, override second — so the first match found here
+  // is the main file, not whichever happens to sort first.
+  foreach (staxx_compose_state()['byFile'] as $file => $entry) {
+    if (strtolower((string)($entry['name'] ?? '')) === $project && is_file($file)) return $file;
+  }
+
+  return staxx_find_compose_file($dir);
+}
+
+/**
+ * Whether an imported stack's copy still matches the Compose Manager project
+ * it was copied from — worked out live, every time, because storing that
+ * fact would be exactly the second copy this plugin's whole design refuses
+ * to keep (see the module comment in Stacks.php on the stack model).
+ *
+ * Matched by project name alone: an imported project deliberately keeps the
+ * same one, which is the only thing tying a stack back to where it came from.
+ *
+ * Deliberately its own, cheap resolution rather than staxx_import_projects() —
+ * that also validates every project's compose file and resolves an icon for
+ * it, which between them cost the better part of a second measured on the
+ * server. This row marker cannot afford that on every table render, so it
+ * calls neither staxx_import_projects() nor staxx_compose_meta().
+ *
+ * @return array<string,string> stack rel path => a sentence saying what has
+ *                               changed, for every stack whose source has
+ *                               drifted. Silent for a match, and silent for
+ *                               a project that no longer exists.
+ */
+function staxx_import_drift(): array {
+  $out  = [];
+  $root = STAXX_IMPORT_PROJECTS_DIR;
+  if (!is_dir($root)) return $out;
+
+  $stacksByProject = [];
+  foreach (staxx_scan_stacks()['stacks'] as $found) {
+    $stacksByProject[staxx_project_name($found['leaf'])] = $found;
+  }
+  if (!$stacksByProject) return $out;
+
+  foreach ((array)@scandir($root) as $entry) {
+    if ($entry === '.' || $entry === '..') continue;
+    $dir = $root.'/'.$entry;
+    if (!is_dir($dir)) continue;
+
+    // Same normalisation staxx_import_projects() gives the folder it would
+    // write to — Compose Manager's own hyphen-to-underscore swap included.
+    $dest    = staxx_import_safe_name(str_replace('-', '_', $entry));
+    $project = staxx_project_name($dest);
+
+    $stack = $stacksByProject[$project] ?? null;
+    if ($stack === null) continue;   // no stack carries this project's name
+
+    $file = staxx_import_project_file($dir, $project);
+    if ($file === '') continue;      // nothing on the project's side to compare
+
+    $ownFile = staxx_find_compose_file($stack['dir']);
+    if ($ownFile === '') continue;
+
+    $changed = [];
+    if (staxx_import_file_differs($ownFile, $file)) $changed[] = 'its compose file';
+
+    $override    = staxx_import_find_override($file, $dir);
+    $ownOverride = staxx_compose_files($ownFile)[1] ?? '';
+    if ($ownOverride !== '' && $override !== ''
+        && staxx_import_file_differs($ownOverride, $override)) {
+      $changed[] = 'its override file';
+    }
+
+    if (!$changed) continue;
+
+    $out[$stack['rel']] = 'The Compose Manager project this stack was copied from has changed '
+      . 'since — '.implode(' and ', $changed).' here no longer '
+      . (count($changed) === 1 ? 'matches' : 'match').' what that project holds.';
+  }
+
+  return $out;
 }
 
 /* --------------------------------------------------------------------- write -- */

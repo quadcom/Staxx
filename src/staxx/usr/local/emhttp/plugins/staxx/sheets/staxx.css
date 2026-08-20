@@ -1863,6 +1863,17 @@
   white-space: nowrap;
 }
 
+/* The marker for a stack whose Compose Manager source has changed since it
+   was imported — icon-only, unlike the badges above, because it is rare and
+   the tooltip already carries the whole sentence (see staxx_import_drift()). */
+.staxx-driftmark {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  color: var(--sm-accent);
+  font-size: 1.1rem;
+}
+
 /* The boot marker (PLAN_43) — always in the markup (see staxx_boot_mark_html())
    but hidden by default, because "off" is the common case and a lightning
    bolt on every row would be noise, not information. Keyed off the ROW's own
