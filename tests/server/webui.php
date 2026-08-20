@@ -11,6 +11,13 @@
  * refusals, which are what matter and what can be asserted safely on a live
  * server. staxx_webui_try() is asserted properly: it never touches disk.
  *
+ * Also staxx_address_webui_override() — the Address column's own correction
+ * for the case the two functions above cannot see: a container that
+ * publishes nothing, where the image's declared ports and the web button's
+ * own resolved port disagree (it-tools: declares 8080, the app actually
+ * listens on 80 because of a PORT environment variable). Exhaustive, since
+ * it is a pure function of its arguments and touches neither disk nor Docker.
+ *
  * Runs ON THE SERVER — there is no PHP on the dev machine:
  *
  *     pscp tests/server/webui.php root@<box>:/tmp/
@@ -85,9 +92,51 @@ ok('a webui with https:// keeps the scheme',
 
 /* --------------------------------------------------------- no tokens ---- */
 
-ok('a webui with no tokens at all is returned verbatim',
-   staxx_webui_url(svc('http://example.com/admin', '', $port), $hostIp)
-     === 'http://example.com/admin');
+// Behaviour change from before the literal-port rule: a webui with no
+// [PORT:…] token used to be honoured verbatim regardless of whether it named
+// a port. Now the address is the whole truth, so one with no port anywhere
+// resolves to '' — there is nothing for the button to open.
+ok('a webui with a literal port and no tokens is returned verbatim',
+   staxx_webui_url(svc('http://example.com:9000/admin', '', $port), $hostIp)
+     === 'http://example.com:9000/admin');
+
+/* -------------------------------------------------- literal port wins --- */
+
+ok('literal port in the address wins outright — the mapping is not consulted (StirlingPDF case)',
+   staxx_webui_url(svc('http://[IP]:80/', '', ['target' => '8080', 'published' => '80']), $hostIp)
+     === 'http://10.0.0.5:80/');
+
+ok('literal port with a hard-coded host: unchanged, no mapping consulted',
+   staxx_webui_url(svc('http://192.168.200.88:5000', '', $port), $hostIp)
+     === 'http://192.168.200.88:5000');
+
+ok('literal port on a macvlan service with a live address: address substituted, port taken as written',
+   staxx_webui_url(svc('http://[IP]:80/', '', ['target' => '8080', 'published' => '']), $hostIp,
+                    '10.77.0.20', 'my_net', 'macvlan')
+     === 'http://10.77.0.20:80/');
+
+ok('https:// with a literal port: the scheme\'s own // is not mistaken for a port separator',
+   staxx_webui_url(svc('https://[IP]:8443/', '', $port), $hostIp)
+     === 'https://10.0.0.5:8443/');
+
+ok('a path holding a colon and digits does not fool the port detection',
+   staxx_webui_url(svc('http://[IP]:80/admin:1/8080', '', $port), $hostIp)
+     === 'http://10.0.0.5:80/admin:1/8080');
+
+/* ------------------------------------------------------- no port at all -- */
+
+ok('an address with no port anywhere => empty, even with a mapping to hand',
+   staxx_webui_url(svc('http://[IP]/admin', '', $port), $hostIp) === '');
+
+/* ------------------------------------------- [PORT:…] token still works --- */
+
+// mazanoke: address says [PORT:80], mapping is 8686:80 — the token's own
+// number would be wrong, so the published half of the mapping is what the
+// link must use. This is the migration path that keeps an unedited file
+// working; see staxx_webui_url()'s doc comment.
+ok('token on a bridge service resolves to the published half of the mapping (mazanoke)',
+   staxx_webui_url(svc('http://[IP]:[PORT:80]/', '', ['target' => '80', 'published' => '8686']), $hostIp)
+     === 'http://10.0.0.5:8686/');
 
 /* ------------------------------------------------------------- absent --- */
 
@@ -195,6 +244,58 @@ $ms    = round((microtime(true) - $start) * 1000);
 ok("nothing listening on that port => false, code 0, and it did not hang ({$ms}ms)",
    $tried === false && $code === 0);
 
+/* ------------------------------------------ staxx_address_webui_override() -- */
+
+// The Address column's own correction: the image's declared (EXPOSE'd) ports
+// are only a fallback for when nothing is published, and a PORT-style
+// environment variable can move the running application off that declared
+// port without Docker ever noticing. See the function's own doc comment.
+
+function addrs(string $port): array {
+  return [['ip' => '192.168.202.64', 'label' => '192.168.202.64', 'ports' => [$port]]];
+}
+
+ok('nothing published, declared 8080, button opens 80 => the list becomes 80 (it-tools)',
+   staxx_address_webui_override(addrs('8080'), false, 'http://192.168.202.64:80/', ['8080'])
+     === [['ip' => '192.168.202.64', 'label' => '192.168.202.64', 'ports' => ['80']]]);
+
+ok('nothing published, declared 61208+61209, button opens 61208 => unchanged, both stay (glances)',
+   staxx_address_webui_override(
+     [['ip' => '10.0.0.5', 'label' => 'host', 'ports' => ['61208', '61209']]],
+     false, 'http://10.0.0.5:61208/', ['61208', '61209']
+   ) === [['ip' => '10.0.0.5', 'label' => 'host', 'ports' => ['61208', '61209']]]);
+
+ok('something published => unchanged regardless of what the web address says',
+   staxx_address_webui_override(addrs('8080'), true, 'http://192.168.202.64:80/', ['8080'])
+     === addrs('8080'));
+
+ok('no web address at all => unchanged',
+   staxx_address_webui_override(addrs('8080'), false, '', ['8080']) === addrs('8080'));
+
+ok('a web address with no port => unchanged',
+   staxx_address_webui_override(addrs('8080'), false, 'http://192.168.202.64/admin', ['8080'])
+     === addrs('8080'));
+
+ok('declared list empty, web port known => the web port shows',
+   staxx_address_webui_override(addrs('8080'), false, 'http://192.168.202.64:80/', [])
+     === [['ip' => '192.168.202.64', 'label' => '192.168.202.64', 'ports' => ['80']]]);
+
+$multi = [
+  ['ip' => '192.168.202.64', 'label' => '192.168.202.64', 'ports' => ['8080']],
+  ['ip' => '192.168.202.65', 'label' => '192.168.202.65', 'ports' => ['8080']],
+];
+ok('more than one address entry: each one gets the port swapped',
+   staxx_address_webui_override($multi, false, 'http://[IP]:80/', ['8080']) === [
+     ['ip' => '192.168.202.64', 'label' => '192.168.202.64', 'ports' => ['80']],
+     ['ip' => '192.168.202.65', 'label' => '192.168.202.65', 'ports' => ['80']],
+   ]);
+
+ok('the web port matches one of several declared ports => unchanged',
+   staxx_address_webui_override(
+     [['ip' => '10.0.0.5', 'label' => 'host', 'ports' => ['8080', '9000']]],
+     false, 'http://10.0.0.5:9000/', ['8080', '9000']
+   ) === [['ip' => '10.0.0.5', 'label' => 'host', 'ports' => ['8080', '9000']]]);
+
 /* ---------------------------------------- the route each service would take -- */
 
 echo "\n       staxx_webui_for(), for reading — no outbound requests made:\n";
@@ -204,6 +305,26 @@ foreach ($stacks as $s) {
     $url = staxx_webui_for($s['name'], $service, $err);
     if ($url === '') continue;
     printf("       %-30s %s\n", $s['name'].'/'.$service, $url);
+  }
+}
+
+echo "\n       Address column, for reading — what each running service's row now prints:\n";
+foreach ($stacks as $s) {
+  if (empty($s['running'])) continue;
+  foreach (staxx_stack_containers($s) as $c) {
+    $service = $c['service'] !== '' ? $c['service'] : $c['name'];
+    $err     = '';
+    $url     = staxx_webui_for($s['name'], $service, $err);
+    $rec     = staxx_container_net()[$c['id']] ?? [];
+
+    $addresses = staxx_address_webui_override(
+      $rec['addresses'] ?? [], $rec['published'] ?? false, $url, $rec['exposed'] ?? []
+    );
+    $shown = implode(' | ', array_map(
+      fn($a) => ($a['label'] ?? $a['ip']).':'.implode(',', $a['ports'] ?? []),
+      $addresses
+    ));
+    printf("       %-30s %s\n", $s['name'].'/'.$service, $shown !== '' ? $shown : '(no address)');
   }
 }
 

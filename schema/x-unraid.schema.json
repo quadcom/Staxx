@@ -71,7 +71,7 @@
         "overview": { "type": "string", "description": "Markdown." },
         "webui": {
           "type": "string",
-          "description": "Link to the container's web interface. Supports Unraid's [IP] and [PORT:nnnn] substitution; the number written inside [PORT:nnnn] is not read. StaXX always substitutes the service's first port entry instead, taking whichever side of it actually answers: the host-facing side on a bridge network, or the container's own side on host networking or macvlan/ipvlan, where nothing is published."
+          "description": "Link to the container's web interface. Supports Unraid's [IP] substitution. A literal port written in the address, e.g. http://[IP]:80/, is used as-is. A [PORT:nnnn] token is an older shape kept for files written before the port was typed in directly; its own number is not read, and StaXX instead works the port out from the service's first ports entry, taking whichever side of it actually answers: the host-facing side on a bridge network, or the container's own side on host networking or macvlan/ipvlan, where nothing is published."
         },
         "display": {
           "$ref": "#/$defs/display",

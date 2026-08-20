@@ -592,10 +592,12 @@
     return { ports: ports, volumes: volumes, devices: devices, environment: environment, labels: labels };
   }
 
-  // PLAN_39's rule is that the web-page button always opens the FIRST port
-  // in a service's list, so import puts the port the template's own address
-  // named at the front — the one place the unreliable [PORT:nnn] token is
-  // still read, and only under human review here, never at button-press time.
+  // Import puts the port the template's own web address named at the front of
+  // the list, because that is the port a reader most likely cares about and a
+  // list is easier to read with it first. Nothing depends on the order any
+  // more — the web-page button follows the port written in the address itself
+  // (PLAN_51), not the list — so this is a readability tidy at import time and
+  // nothing else, done under human review and never at button-press time.
   //
   // Measured across 85 real templates the number inside the token matches
   // the host port 10 times, the container port 15 times, both 36 times

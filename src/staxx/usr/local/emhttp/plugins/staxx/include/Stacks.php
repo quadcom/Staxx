@@ -1439,29 +1439,60 @@ function staxx_service_net_kind(array $service, string $liveMode = '', string $l
 }
 
 /**
+ * Pull the port out of a web address's authority part (the bit between
+ * `scheme://` and the first `/`), or '' when that part has no port.
+ *
+ * The scheme's own `://` must never be mistaken for a port separator, so it
+ * is stripped first. Anything after the first `/` is a path, not part of the
+ * host, so a colon or digits inside it (e.g. a path ending `/8080`, or one
+ * containing a colon) must never be read as a port — that slash is cut off
+ * before the colon search ever runs.
+ *
+ * @param string $address a webui address with `[IP]` already substituted
+ */
+function staxx_webui_literal_port(string $address): string {
+  $rest      = preg_replace('#^https?://#i', '', $address);
+  $authority = strstr($rest, '/', true);
+  if ($authority === false) $authority = $rest;
+
+  // The LAST colon, not the first. An IPv6 address is written in brackets and
+  // is full of colons of its own — `[::1]:80` — so searching forwards would
+  // find one inside the brackets and read the rest as a port.
+  $pos = strrpos($authority, ':');
+  if ($pos === false) return '';
+
+  $port = substr($authority, $pos + 1);
+  return ctype_digit($port) ? $port : '';
+}
+
+/**
  * The address that opens a service's own web page, or '' when there is none
  * to open.
  *
- * `x-unraid.webui` supplies the scheme and any path — `https://`, a trailing
- * `/admin` — but its `[PORT:nnn]` number cannot be trusted: checked against 64
- * real templates it names the host port 10 times, the container port 15
- * times, and neither 3 times. Template authors do not agree with each other,
- * so the number inside the token is ignored outright and StaXX works out the
- * address and port itself instead.
+ * `x-unraid.webui` supplies the scheme, address and port, and any path —
+ * `https://`, a trailing `/admin`. A literal port written in the address —
+ * `http://[IP]:80/` — is taken exactly as written; no mapping is consulted,
+ * because the address is now the whole truth. This is what the compose
+ * editor's web-page-port field writes, and what fixes a container whose port
+ * mapping is left over from a different network and no longer means anything.
  *
- * The address: a running container's own address, but only on a macvlan or
- * ipvlan network, which is the only case where the container has one worth
- * having — and only the live container can supply it, since DHCP means the
- * file may not even mention one. Failing that, the fixed address written into
- * the file, if any. Failing that, this server's address.
+ * A `[PORT:nnn]` token is the older shape, from before that field existed,
+ * and still means "work it out" rather than "here is the number" — checked
+ * against 64 real templates the number inside it names the host port 10
+ * times, the container port 15 times, and neither 3 times, so it cannot be
+ * trusted and is ignored outright. This path only exists to keep a file
+ * nobody has edited yet working until it is: mazanoke's address still says
+ * `[PORT:80]` while its mapping is `8686:80`, and its link needs 8686, so
+ * reading the token's own number would break it.
  *
- * The port depends on what kind of network answers (see
- * staxx_service_net_kind()): on a bridge, the server-side port a mapping
- * publishes — nothing else can work, because the container's own port is
- * behind a private address nobody outside can reach. On host networking or
- * macvlan/ipvlan, nothing is published at all, so the container-side port is
- * the only one that can ever answer. This depends only on the network, never
- * on whether the service happens to have a fixed address written down.
+ * An address with no port anywhere — literal or token — has nothing for the
+ * button to open, so it resolves to ''.
+ *
+ * The address itself: a running container's own address, but only on a
+ * macvlan or ipvlan network, which is the only case where the container has
+ * one worth having — and only the live container can supply it, since DHCP
+ * means the file may not even mention one. Failing that, the fixed address
+ * written into the file, if any. Failing that, this server's address.
  *
  * @param array  $service    one entry of staxx_compose_meta()['services']
  * @param string $hostIp     staxx_host_ip()
@@ -1493,6 +1524,8 @@ function staxx_webui_url(
   }
 
   if (strpos($raw, '[PORT:') !== false) {
+    // Migration path for a file nobody has edited yet — see the doc comment
+    // above for why the token's own number cannot be trusted.
     $firstPort = $service['firstPort'] ?? [];
     // Bridge reads the server-side half of the mapping; host and macvlan/ipvlan
     // publish nothing, so only the container-side half can ever answer there.
@@ -1501,12 +1534,58 @@ function staxx_webui_url(
       : (string)($firstPort['target'] ?? '');
     if ($port === '') return '';
     $raw = preg_replace('/\[PORT:[^\]]*\]/', $port, $raw);
+  } elseif (staxx_webui_literal_port($raw) === '') {
+    // No token and no literal port either — nothing for the button to open.
+    return '';
   }
 
   // Whatever came out has to actually be a web address. Without this check a
   // webui typed by hand — or one left with a stray token nothing replaced —
   // could turn a row button into something other than a link.
   return preg_match('/^https?:\/\//i', $raw) ? $raw : '';
+}
+
+/**
+ * Correct the Address column when it would show a port the application does
+ * not actually listen on.
+ *
+ * The image's declared (EXPOSE'd) ports are only ever a fallback, used when
+ * nothing is published — and they can simply be wrong: a `PORT`-style
+ * environment variable can move the running application onto a different
+ * port than the one baked into the image, and Docker has no way to notice,
+ * because EXPOSE is a label on the image, not a fact about what is running.
+ * The compose file's own web address (resolved by staxx_webui_url()) is an
+ * explicit statement of a port that answers, so when the two disagree here,
+ * the web address wins.
+ *
+ * Deliberately narrow. Both conditions must hold, or the addresses pass
+ * through untouched:
+ *
+ *   - nothing published   a real binding is hard fact about where the server
+ *                          forwards traffic, and is never second-guessed.
+ *   - the web port is NOT among the declared ones   when it IS declared,
+ *                          nothing is wrong — replacing the list would only
+ *                          throw away other real, declared ports (glances
+ *                          exposes two; its web button opens one of them).
+ *
+ * @param array<int,array{ip:string,label:string,ports:string[]}> $addresses
+ * @param bool     $published whether staxx_container_net()[id]['published'] found a real binding
+ * @param string   $webuiUrl  staxx_webui_url()'s result for this container, or '' when none
+ * @param string[] $exposed   staxx_container_net()[id]['exposed']
+ * @return array<int,array{ip:string,label:string,ports:string[]}>
+ */
+function staxx_address_webui_override(array $addresses, bool $published, string $webuiUrl, array $exposed): array {
+  if ($published || $webuiUrl === '') return $addresses;
+
+  $port = staxx_webui_literal_port($webuiUrl);
+  if ($port === '' || in_array($port, $exposed, true)) return $addresses;
+
+  foreach ($addresses as &$a) {
+    $a['ports'] = [$port];
+  }
+  unset($a);
+
+  return $addresses;
 }
 
 /**
@@ -1562,7 +1641,7 @@ function staxx_webui_for(string $rel, string $service, string &$error): string {
   );
 
   if ($url === '') {
-    $error = 'This file has no web address, or none it could work out a port for.';
+    $error = 'This file has no web address, or its address names no port — add one in the web page port field.';
     return '';
   }
   return $url;
@@ -1653,7 +1732,12 @@ function staxx_network_drivers(): array {
  * over on the state snapshot), so it has to survive even when a published
  * binding already exists.
  *
- * @return array<string, array{mode:string, driver:string, exposed:string[], addresses:array<int,array{ip:string, ports:string[]}>}>
+ * `published` records which of the two situations above actually happened —
+ * true only when a real binding was found — so a caller can tell "nothing
+ * was published, this is a guess from the image's declared ports" apart from
+ * "this is a real forwarded port", without re-deriving it from the addresses.
+ *
+ * @return array<string, array{mode:string, driver:string, exposed:string[], published:bool, addresses:array<int,array{ip:string, ports:string[]}>}>
  */
 function staxx_container_net(): array {
   static $net = null;
@@ -1741,6 +1825,11 @@ function staxx_container_net(): array {
       $exposedPorts[strtok($p, '/')] = true;      // "8083/tcp" -> "8083"
     }
 
+    // Recorded before the fallback below can fill $byIp in from the exposed
+    // list — otherwise a container with nothing published would look exactly
+    // like one with a real binding, and the two are told apart nowhere else.
+    $published = (bool)$byIp;
+
     // ---- or the container's own address ----
     if (!$byIp) {
       $ports = $exposedPorts;
@@ -1807,6 +1896,7 @@ function staxx_container_net(): array {
       'mode'      => $mode,
       'driver'    => $driver,
       'exposed'   => array_map('strval', $exposedList),
+      'published' => $published,
       'addresses' => $addresses,
     ];
   }

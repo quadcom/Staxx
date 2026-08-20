@@ -1830,6 +1830,11 @@
       out.push(akeyTarget);
     }
 
+    // Web page port (PLAN_51) — fourth, straight after the three ALWAYS_KEYS
+    // rows, so it lands in the Container group in the same fixed-order,
+    // whether-or-not-the-file-has-it way those three do.
+    out.push(harvestWebui(serviceMap, lines));
+
     harvestLeaves(out, serviceMap, lines);
 
     for (i = 0; i < serviceMap.keys.length; i++) {
@@ -1984,6 +1989,10 @@
     // LEAVES only names the whole leaf ('test'), not its two halves.
     if (t.testPart === 'mode') return 'How the check runs';
     if (t.testPart === 'command') return 'The check itself';
+    // x-unraid.webui has a dot, so without this it would fall to the
+    // dotted-path branch below, find no 'x-unraid' entry in LEAVES, and
+    // humanise its way to 'Webui' (PLAN_51).
+    if (t.target === 'x-unraid.webui') return 'Web page port';
     if (t.binder === 'setting' && KEYS[t.target] && KEYS[t.target].title) return KEYS[t.target].title;
     if (t.binder === 'port') return 'Port ' + t.target.split('/')[0];
     // depends_on's long form: 'depends_on.<name>' titles as the dependency's
@@ -2059,6 +2068,7 @@
 
   function inferType(t) {
     if (t.binder === 'port') return 'port';
+    if (t.target === 'x-unraid.webui') return 'port';
     if (t.binder === 'volume' || t.binder === 'device') return 'path';
     if (t.binder === 'setting' && KEYS[t.target] && KEYS[t.target].type) return KEYS[t.target].type;
     if (t.binder === 'list') return (KEYS[t.listKey] && KEYS[t.listKey].type) || 'text';
@@ -2155,6 +2165,10 @@
         fixedRequired: false,
         path: t.path || null,
         testPart: t.testPart || null,
+        // Set only on the x-unraid.webui field (PLAN_51 follow-up) — true
+        // when the address held a "[PORT:…]" marker, read by buildForm()'s
+        // post-pass below to correct the displayed port once netKind is known.
+        webuiToken: !!t.webuiToken,
         // A long-form port/volume entry (spelled-out target:/source: lines)
         // vs. the short "host:container" scalar — read by choiceFor() in
         // stacks.js, since the two forms need different handling for an
@@ -2386,42 +2400,117 @@
     return null;
   }
 
-  // The token inside a webui address's "[PORT:nnn]" marker, e.g. the "80" in
-  // "http://[IP]:[PORT:80]/". This is the SAME expression ca-convert.js's
-  // reorderPortsForWebUI() uses to read the same marker — kept identical by
-  // comment rather than shared code, since each file runs in its own IIFE
-  // scope. Returns '' rather than a number: PLAN_50's candidate list only
-  // ever compares this against other port keys as text.
+  // The "[PORT:nnn]" marker a webui address can carry in place of a literal
+  // port, e.g. the "80" in "http://[IP]:[PORT:80]/". This is the SAME
+  // expression ca-convert.js's reorderPortsForWebUI() uses to read the same
+  // marker — kept identical by comment rather than shared code, since each
+  // file runs in its own IIFE scope. Held as one constant rather than
+  // written inline twice, so webuiPortToken() and splitWebuiPort() below
+  // (PLAN_51) can never drift apart.
+  var WEBUI_PORT_TOKEN_RE = /\[PORT:([^\]]*)\]/i;
+
+  // The token's own value as text, e.g. "80" out of "[PORT:80]". Returns ''
+  // rather than a number: every caller only ever compares this against other
+  // port keys as text.
   function webuiPortToken(webui) {
-    var m = /\[PORT:([^\]]*)\]/i.exec(String(webui || ''));
+    var m = WEBUI_PORT_TOKEN_RE.exec(String(webui || ''));
     return m ? m[1].trim() : '';
   }
 
-  // PLAN_50: joins a list of exposed ports into a sentence fragment —
-  // "8080", "80 and 8443", "80, 8443 and 9000" — for the disagreement advice
-  // below. Only ever called with a non-empty list.
-  function joinPorts(list) {
-    if (list.length === 1) return list[0];
-    return list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1];
+  // Splits a webui address into the port substring and what surrounds it, so
+  // the Web page port field (PLAN_51) can rewrite just the port and leave the
+  // scheme, host and any path untouched — the same pre/value/post shape
+  // splitPortShort() uses for a port row's own host/container halves. Every
+  // shape seen in a real file:
+  //
+  //   http://[IP]:[PORT:8181]/     -> pre "http://[IP]:"        value "8181" post "/"
+  //   http://[IP]:80/              -> pre "http://[IP]:"        value "80"   post "/"
+  //   http://192.168.200.88:5000   -> pre "http://192.168.200.88:" value "5000" post ""
+  //   http://[IP]/admin            -> pre "http://[IP]:"        value ""     post "/admin"
+  //
+  // The whole "[PORT:…]" token counts as the port when one is there — writing
+  // over it is what turns a guessed address into a literal one, for good.
+  // Failing that, the port is whatever sits after the LAST colon inside the
+  // authority (after the scheme's own "://" and before any path) — a scheme
+  // colon or one inside a hostname never qualifies, since neither is where a
+  // port could be written. No colon at all means no port yet: pre ends with
+  // one ready for a value, and post is everything from the authority's end
+  // onward (the path, if any).
+  function splitWebuiPort(text) {
+    var s = String(text || '');
+    var scheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.exec(s);
+    var afterScheme = scheme ? scheme[0].length : 0;
+    var slash = s.indexOf('/', afterScheme);
+    var authorityEnd = slash < 0 ? s.length : slash;
+
+    // webuiPortToken() itself only answers "what is the value", not "where is
+    // it" — this needs both, so the token is located again here rather than
+    // returned from there. Located ahead of the plain-colon branch below:
+    // "[PORT:80]" holds a colon of its own that is not the one to split on.
+    var tokenValue = webuiPortToken(s);
+    if (tokenValue !== '') {
+      var token = WEBUI_PORT_TOKEN_RE.exec(s);
+      if (token.index >= afterScheme && token.index < authorityEnd) {
+        return { pre: s.slice(0, token.index), value: tokenValue,
+                  post: s.slice(token.index + token[0].length), token: true };
+      }
+    }
+
+    var colon = s.lastIndexOf(':', authorityEnd - 1);
+    if (colon >= afterScheme) {
+      return { pre: s.slice(0, colon + 1), value: s.slice(colon + 1, authorityEnd),
+                post: s.slice(authorityEnd), token: false };
+    }
+
+    return { pre: s.slice(0, authorityEnd) + ':', value: '', post: s.slice(authorityEnd), token: false };
   }
 
-  // PLAN_50: the +port button's suggestion for a one-sided (host/macvlan)
-  // service, tried in order — the number in the service's own web address,
-  // then a port the running container exposes, then today's 8080 counted up.
-  // A candidate is skipped if it is not a plain run of digits, or if the file
-  // already has a row for it. Never called for a bridge service, which keeps
-  // its unrelated 8080-counting-up untouched (see newEntry's port branch).
-  function suggestedPort(taken, webuiToken, exposed) {
-    var candidates = webuiToken ? [webuiToken] : [];
-    if (exposed) candidates = candidates.concat(exposed);
-    for (var i = 0; i < candidates.length; i++) {
-      var c = candidates[i];
-      if (!/^[0-9]+$/.test(c)) continue;
-      if (taken.indexOf(portKey(c)) < 0) return c;
+  // The one thing inside x-unraid the form can edit (PLAN_51) — a single
+  // named exception, not a general x-unraid renderer. The port lives inside
+  // the web address as a substring, so it uses the same part() shape a port
+  // row's own halves do: one part rebuilds the whole scalar around the piece
+  // it owns.
+  //
+  // No `path` on this target, on purpose — setPart()'s f.path branches
+  // delete the whole key when the box is cleared and create a bare scalar
+  // when it is filled in, and both are wrong for a single port inside an
+  // address. setPart() recognises this field by its target string instead
+  // and handles both the write and the from-nothing create itself.
+  function harvestWebui(serviceMap, lines) {
+    var xu = serviceMap.pairs['x-unraid'];
+    var xmap = xu && xu.value && xu.value.kind === 'map' ? xu.value : null;
+    var wu = xmap ? xmap.pairs['webui'] : null;
+    var scalar = wu && wu.value && wu.value.kind === 'scalar' ? wu.value : null;
+
+    if (!scalar) {
+      // No x-unraid block, no webui key, or one written in a shape this
+      // parser cannot read as plain text — renders as an empty, writable
+      // box, the same as an absent Container row (`absent: true` is what
+      // fieldsFor() reads to count a spotless part as usable rather than
+      // locked; `creatable` on the part itself is boxHtml()'s own,
+      // independent read of the same fact). Writing it has to build the
+      // whole address from scratch, not a bare scalar, so setPart() routes
+      // this field by its target string rather than through the ordinary
+      // absent-Container path that would otherwise do that.
+      return target('setting', 'x-unraid.webui', {
+        parts: { value: part('', null, '', '', true) },
+        absent: true
+      });
     }
-    var n = 8080;
-    while (taken.indexOf(portKey(n)) >= 0) n++;
-    return String(n);
+
+    var bits = splitWebuiPort(scalar.value);
+    var wt = target('setting', 'x-unraid.webui', {
+      parts: { value: part(bits.value, scalarSpot(scalar), bits.pre, bits.post) },
+      range: { start: wu.leadStart, end: wu.end },
+      comment: readComment(scalar.comment),
+      commentSpot: commentSpot(scalar, lines)
+    });
+    // Recorded here rather than re-parsed later: buildForm()'s post-pass needs
+    // to know whether the displayed number came from a "[PORT:…]" marker
+    // (measured-unreliable — see the pass below) or is a literal the address
+    // already carried, and the displayed value alone cannot tell those apart.
+    wt.webuiToken = !!bits.token;
+    return wt;
   }
 
   // netDrivers: name -> driver for this server's own docker networks, from
@@ -2429,13 +2518,7 @@
   // this treats exactly like "no networks", so every one of the ~25 existing
   // callers (and tests/yaml_roundtrip.js) that omit it keep seeing bridge
   // everywhere, unchanged.
-  //
-  // exposedByService (PLAN_50): service name -> array of bare container-side
-  // port numbers the running container publishes, from stacks.js's own copy
-  // of the last state reply. Optional and defaults to nothing, so every
-  // existing caller keeps seeing an empty list here — same convention as
-  // netDrivers above.
-  function buildForm(doc, netDrivers, exposedByService) {
+  function buildForm(doc, netDrivers) {
     // `declared` is seeded here rather than where it is filled in, because both
     // early returns below happen first — a caller reading declared.networks on
     // an unreadable file must find an empty list, not undefined.
@@ -2524,12 +2607,6 @@
         name: name,
         overview: mx.overview || '',
         icon: mx.icon || '',
-        webui: mx.webui || '',
-        // PLAN_50: what the running container exposes, keyed by this same
-        // service name in stacks.js's copy of the last state reply — empty
-        // for a stack that has never run. Read by newEntry()'s port branch
-        // and by the disagreement advice just below in this function.
-        exposed: (exposedByService && exposedByService[name]) || [],
         display: mx.display === 'advanced' ? 'advanced' : 'basic',
         range: { start: p.leadStart, end: p.end },
         shared: shared,
@@ -2649,27 +2726,44 @@
           ? 'This container shares the server\'s network, so the port inside the container is the port on the server.'
           : 'This container has its own address, so only the port inside the container matters.');
       }
+    }
 
-      // PLAN_50: say when the web address and the running container name
-      // different ports — silence when they agree, and silence when either
-      // side has nothing to say, since a note that fires every time stops
-      // being read.
-      //
-      // Silent too once this row already holds what the web address says: the
-      // choice has been made and matches the likelier source, so repeating the
-      // warning is nagging about something already settled.
-      var pfSvc = null;
-      for (var svi = 0; svi < out.services.length; svi++) {
-        if (out.services[svi].name === pf.service) { pfSvc = out.services[svi]; break; }
+    // The Web page port field (PLAN_51) started out just showing whatever a
+    // "[PORT:nnn]" marker said, but that number is the one thing measured as
+    // unreliable on real files — the server ignores it outright and works the
+    // port out from the service's own ports: list instead (see
+    // staxx_webui_url()'s doc comment). Showing nnn as-is would let a save
+    // write it in literally and silently turn a working link into a broken
+    // one, so once netKind is known (just above) the field is corrected to
+    // the number the button opens right now: the published (outside) half of
+    // the FIRST ports: entry on a bridge service, the target (inside) half on
+    // host/macvlan/ipvlan, and the marker's own number whenever there is no
+    // half to read it from — no ports: at all, or a one-sided entry with
+    // nothing on the side that kind needs. A literal address (webuiToken
+    // false) is left exactly as harvestWebui() built it.
+    for (var wsi = 0; wsi < out.services.length; wsi++) {
+      var wsName = out.services[wsi].name;
+      var webuiField = null, firstPortField = null;
+      for (var wfi = 0; wfi < out.fields.length; wfi++) {
+        var wf = out.fields[wfi];
+        if (wf.service !== wsName) continue;
+        if (!webuiField && wf.binder === 'setting' && wf.target === 'x-unraid.webui') webuiField = wf;
+        if (!firstPortField && wf.binder === 'port' && wf.listKey === 'ports') firstPortField = wf;
       }
-      var pfAddrToken = pfSvc ? webuiPortToken(pfSvc.webui) : '';
-      var pfExposed = (pfSvc && pfSvc.exposed) || [];
-      if (pfAddrToken && /^[0-9]+$/.test(pfAddrToken) && pfExposed.length &&
-          pfExposed.indexOf(pfAddrToken) < 0 && pfContainer !== pfAddrToken) {
-        pf.advice.push('The web address in this file says port ' + pfAddrToken + '. The container ' +
-          'declares ' + joinPorts(pfExposed) + '. Only one of them can be right, so check which one ' +
-          'the application is actually listening on.');
+      if (!webuiField || !webuiField.webuiToken || !webuiField.parts.value) continue;
+
+      var wsKind = netKindOf[wsName] || 'bridge';
+      if (firstPortField) {
+        var fpHost = firstPortField.parts.host ? firstPortField.parts.host.value : '';
+        var fpContainer = firstPortField.parts.container ? firstPortField.parts.container.value : '';
+        if (wsKind === 'bridge') {
+          if (fpHost) webuiField.parts.value.value = fpHost;
+        } else if (fpContainer) {
+          webuiField.parts.value.value = fpContainer;
+        }
       }
+      // else: no ports: entry at all — leave the marker's own number showing,
+      // already what parts.value.value holds.
     }
 
     // service_healthy only ever comes true if the named service really has a
@@ -2827,6 +2921,27 @@
       return insertChild(doc, netEntry, which, value, null, false) >= 0;
     }
     if (!p) return false;
+
+    // The web-address port (PLAN_51) — the one field that reaches inside
+    // x-unraid. Named explicitly rather than routed through the path-based
+    // branches below: f.path is deliberately left unset (see harvestWebui()),
+    // since both of those branches are wrong here — one deletes the whole
+    // key when the box is cleared, the other creates a bare scalar when it
+    // is filled in, and this field must do neither. A spot already there is
+    // rewritten in place with a real address around it (a bare colon with no
+    // digits after it counts as clearing the port, not deleting the line); no
+    // spot means there is no webui: line yet, so filling it in has to build
+    // one from scratch instead.
+    if (f.target === 'x-unraid.webui' && which === 'value') {
+      if (p.spot) {
+        if (String(value) === String(p.value)) return true;
+        return writeScalar(doc, p.spot, p.pre + value + p.post, p.spot.style);
+      }
+      if (!String(value).trim()) return true;
+      // [IP] is what lets the plugin resolve a macvlan container's own
+      // address rather than the server's — see staxx_webui_url() (PHP).
+      return addNested(doc, form, f.service, ['x-unraid', 'webui'], 'http://[IP]:' + value + '/') >= 0;
+    }
 
     // healthcheck.test is one file line shown as two fields (see
     // harvestHealthTest() in compose-model.js), so editing either one has to
@@ -3142,7 +3257,7 @@
   // produce a path to hardware that does not exist. Whether it duplicates
   // something already in the file is the caller's question, since only the
   // caller knows what to say about it.
-  function newEntry(binder, taken, service, shape, value, listKey, declared, netKind, webui, exposed) {
+  function newEntry(binder, taken, service, shape, value, listKey, declared, netKind) {
     if (typeof value === 'string' && value !== '') return value;
 
     if (binder === 'port') {
@@ -3152,17 +3267,16 @@
       //
       // On a CONFIRMED host/macvlan/ipvlan service (PLAN_49) there is nowhere
       // for a mapping to go — nothing is mapped on those networks — so a
-      // single container-side number is written instead, and PLAN_50 gives it
-      // a real candidate list (the file's own web address, then what the
-      // running container exposes) rather than always guessing 8080. Gated on
-      // a confirmed kind only: while the network list has not answered yet,
-      // every service reads as 'bridge' (see buildForm's post-pass) and this
-      // keeps writing today's two-sided shape, byte-for-byte unchanged.
-      if (netKind === 'host' || netKind === 'other') {
-        return '"' + suggestedPort(taken, webuiPortToken(webui), exposed) + '"';
-      }
+      // single container-side number is written instead of a two-sided
+      // mapping; the number itself is plain 8080 counted up, same as the
+      // two-sided branch below (PLAN_51 dropped the guess this used to make
+      // from the file's own web address). Gated on a confirmed kind only:
+      // while the network list has not answered yet, every service reads as
+      // 'bridge' (see buildForm's post-pass) and this keeps writing today's
+      // two-sided shape, byte-for-byte unchanged.
       var n = 8080;
       while (taken.indexOf(n + '/tcp') >= 0) n++;
+      if (netKind === 'host' || netKind === 'other') return '"' + n + '"';
       return '"' + n + ':' + n + '"';
     }
     if (binder === 'volume') {
@@ -3255,12 +3369,10 @@
     // Read off the model rather than adding a new parameter to every DOM-side
     // caller — buildForm() already worked this out and stamped it on the
     // service (PLAN_49). Only newEntry()'s port branch looks at it.
-    var netKind = 'bridge', webui = '', exposed = [];
+    var netKind = 'bridge';
     for (var si = 0; si < form.services.length; si++) {
       if (form.services[si].name === service) {
         netKind = form.services[si].netKind || 'bridge';
-        webui = form.services[si].webui || '';
-        exposed = form.services[si].exposed || [];
         break;
       }
     }
@@ -3292,19 +3404,19 @@
         gap = pad(Math.max(1, last.contentCol - last.indent - 1));
       }
       splice(doc, v.end, 0,
-             [pad(v.indent) + '-' + gap + newEntry(binder, taken, service, 'seq', value, key, declared, netKind, webui, exposed)]);
+             [pad(v.indent) + '-' + gap + newEntry(binder, taken, service, 'seq', value, key, declared, netKind)]);
       return v.end;
     }
 
     if (v && v.kind === 'map') {
-      splice(doc, v.end, 0, [pad(v.indent) + newEntry(binder, taken, service, 'map', value, key, declared, netKind, webui, exposed)]);
+      splice(doc, v.end, 0, [pad(v.indent) + newEntry(binder, taken, service, 'map', value, key, declared, netKind)]);
       return v.end;
     }
 
     if (pair) {                       // "ports:" with nothing under it
       var at = pair.end;
       splice(doc, at, 0,
-             [pad(pair.indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared, netKind, webui, exposed)]);
+             [pad(pair.indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared, netKind)]);
       return at;
     }
 
@@ -3333,8 +3445,8 @@
 
     lines.push(pad(indent) + key + ':');
     lines.push(binder === 'env' || binder === 'label'
-      ? pad(indent + 2) + newEntry(binder, taken, service, 'map', value, key, declared, netKind, webui, exposed)
-      : pad(indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared, netKind, webui, exposed));
+      ? pad(indent + 2) + newEntry(binder, taken, service, 'map', value, key, declared, netKind)
+      : pad(indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared, netKind));
 
     splice(doc, to, 0, lines);
     return to + lines.length - 1;

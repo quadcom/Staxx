@@ -258,8 +258,8 @@
     // --ports rides alongside --mapped rather than replacing it: a port row is
     // the same five-cell shape as a mount, but its two halves hold numbers,
     // not paths, so they get much narrower tracks and give the width back to
-    // the note. It also adds two more tracks: a leading one for the
-    // drag/reorder grip (PLAN_40) and a trailing one the WebUI chip lives in.
+    // the note. It also adds a leading track for the drag/reorder grip
+    // (PLAN_40).
     { key: 'port',      heading: 'Ports',     cls: 'staxx-formgroup--mapped staxx-formgroup--ports', add: 'port',   flag: 'port' },
     // --volumes rides alongside --mapped the same way --ports does, and for
     // the same reason: it is what lets the two column shapes diverge without
@@ -368,6 +368,11 @@
   // plain setting, which is what Advanced otherwise holds.
   function groupFor(f) {
     if (f.fixed) return 'container';
+    // The web page port (PLAN_51) reaches inside x-unraid, so it is not one
+    // of the plain compose keys ALWAYS_KEYS lists and f.fixed is false for
+    // it — an explicit rule beside this one is what still lands it in the
+    // Container group, as the fourth row.
+    if (f.target === 'x-unraid.webui') return 'container';
     // A declaration belongs to no service, so it gets its own bucket per
     // kind rather than falling in with Advanced. A fold field carries this
     // same binder — it is bucketed here too if a caller does not filter it
@@ -1144,21 +1149,6 @@
 
   var MODEL = null;      // the last form that parsed
   var activeField = null;
-
-  // PLAN_50: what the most recent state poll said each stack's services
-  // expose, stack name -> { service name -> [bare port numbers as strings] }.
-  // Fed into YAML.buildForm() so the +port button's suggestion (and the
-  // disagreement note) can compare the web address against something real —
-  // see applyState() below, where a service missing here (never run) reads
-  // as an empty list rather than "not answered yet".
-  var lastExposed = {};
-
-  // The exposed-port map for whichever stack the editor has open, or {} if
-  // the state poll has not covered it (or has none to report). openedName is
-  // set by openEditor() and is '' for a brand-new stack, which never has one.
-  function exposedFor() {
-    return (openedName && lastExposed[openedName]) || {};
-  }
 
   // Whether the Stack section's <details> is open. renderForm() rebuilds the
   // whole form from scratch on every structural edit, so nothing the DOM
@@ -2447,11 +2437,7 @@
              esc(info.description) + '</p>';
   }
 
-  // firstPort is true only for the first port row of a service, in file
-  // order — set by the one caller that knows a row's position within its
-  // group (renderForm). It draws the badge marking the port PLAN_39's web
-  // page button opens; every other row ignores the argument entirely.
-  function fieldHtml(f, index, firstPort) {
+  function fieldHtml(f, index) {
     var grp    = groupFor(f);
     var isContainer = grp === 'container';
     var declared = f.binder === 'declared';
@@ -2515,7 +2501,6 @@
 
     bits.push('<div class="staxx-fieldrow' + (f.locked ? ' staxx-fieldrow--locked' : '') +
               (f.sensitive ? ' staxx-fieldrow--secret' : '') +
-              (firstPort ? ' staxx-portfirst' : '') +
               '" data-row="' + index + '" data-field-row="' + esc(f.id) + '"' +
               ' data-from="' + (f.range ? f.range.start : -1) + '"' +
               ' data-to="'   + (f.range ? f.range.end   : -1) + '"' +
@@ -2541,6 +2526,15 @@
       bits.push('<span class="staxx-fieldlabel">' + esc(f.title) + helpBtnHtml(help, helpId) + '</span>');
       bits.push(boxHtml(f, index, 'value', 'value'));
       bits.push(noteBoxHtml(f, index));
+      // The web page port is the one Container row the WebUI button actually
+      // follows (PLAN_51) — filled in, the button opens this port; cleared,
+      // it turns off. Said here rather than left for the button to explain
+      // on its own, since this is the only place that changes it.
+      if (f.target === 'x-unraid.webui') {
+        bits.push('<span class="staxx-webchip" title="' +
+          esc('The WebUI button on this container’s row opens this port. Clear it and the button turns off.') +
+          '">WebUI</span>');
+      }
     } else if (dev) {
       // One box, not two. For nearly every device the two halves are the same
       // path, and where they differ the picker has already set both — a USB
@@ -2589,9 +2583,6 @@
             '</button>'
           : '<span class="staxx-boxgap" aria-hidden="true"></span>');
       }
-      // The rule the web page button follows (PLAN_39): the first port in
-      // the file is the one it opens. Said here, on that row's own host box,
-      // rather than left as a fact nobody but the button knows.
       // Only a volume gets the folder picker. A port is a number, so browsing
       // for one would be a button that never finds what you came for.
       bits.push(boxHtml(f, index, 'host',
@@ -2720,18 +2711,6 @@
                 '</button>');
     }
 
-    // Last cell on a port row, after the ×, and a column that is ALWAYS there
-    // — hidden by CSS on every row but the first. It is emitted on every row
-    // (not just the first) so that a drag never has to add or remove the
-    // chip itself, only flip which row's copy is visible (see
-    // staxx-portfirst and markFirstPort) — rows never move mid-drag, so the
-    // chip would otherwise stay glued to the row that used to be first.
-    if (f.binder === 'port') {
-      bits.push('<span class="staxx-webchip" title="' +
-        esc('The WebUI button on this container’s row opens this port. ' +
-            'Put a different port first to change which one.') + '">WebUI</span>');
-    }
-
     // Everything full-width comes last, after every cell the row's column
     // template names. A full-width child ends the grid row it lands on and
     // resets auto-placement to column 1 below it, so anything emitted after
@@ -2855,8 +2834,10 @@
     // it instead of sliding one column left of where it belongs.
     if (grp.key === 'port') bits.push('<span></span>');
     for (var i = 0; i < cols.length; i++) bits.push('<span>' + esc(cols[i]) + '</span>');
-    // Container is the only group with no × column to leave a blank for.
-    if (grp.key !== 'container') bits.push('<span></span>');
+    // Every group's last track is blank in the caption — a × on every group
+    // but Container, the WebUI chip beside the web page port row (PLAN_51)
+    // on Container itself — so this is unconditional now.
+    bits.push('<span></span>');
     bits.push('</div>');
     return bits.join('');
   }
@@ -3014,7 +2995,7 @@
           out.push(groupHeadHtml(grp, svc.name, grp.key === 'container' ? flags : null));
           if (rows.length) out.push(captionRow(grp));
           for (var r = 0; r < rows.length; r++) {
-            out.push(fieldHtml(form.fields[rows[r]], rows[r], grp.key === 'port' && r === 0));
+            out.push(fieldHtml(form.fields[rows[r]], rows[r]));
           }
           out.push('</div>');
         }
@@ -3280,7 +3261,7 @@
     if (!YAML) { formHost.innerHTML = '<p class="staxx-form-empty">The form view could not load.</p>'; return; }
 
     var doc  = YAML.parse(currentText());
-    var form = YAML.buildForm(doc, netDrivers(), exposedFor());
+    var form = YAML.buildForm(doc, netDrivers());
     form.doc = doc;
     MODEL = form;
 
@@ -3319,7 +3300,7 @@
 
   function refreshRanges() {
     var doc   = MODEL.doc;
-    var fresh = YAML.buildForm(doc, netDrivers(), exposedFor());
+    var fresh = YAML.buildForm(doc, netDrivers());
     fresh.doc = doc;
     MODEL = fresh;
 
@@ -4242,7 +4223,7 @@
     // the file — an empty section is nothing to write down.
     var gk = (f.binder === 'depends' || f.listKey === 'depends_on') ? 'depends'
            : f.listKey ? 'list:' + f.listKey : '';
-    if (SECTIONS_BY_KEY[gk] && fileFlagCounts(YAML.buildForm(MODEL.doc, netDrivers(), exposedFor()), f.service)[gk] === 0) {
+    if (SECTIONS_BY_KEY[gk] && fileFlagCounts(YAML.buildForm(MODEL.doc, netDrivers()), f.service)[gk] === 0) {
       (sectionOn[f.service] = sectionOn[f.service] || {})[gk] = true;
     }
     structuralEdit(-1, say);
@@ -4306,26 +4287,6 @@
   var portSlot = null;
   var draggingPortFrom = -1;
 
-  // The top line of a service's port list always wears the WebUI chip —
-  // the drag gap included, since that is where the dragged row will land.
-  // Rows never move during a drag (only hide), so without this the chip
-  // stays with the row that was first and appears to slide down the list.
-  function markFirstPort(grp) {
-    if (!grp) return;
-    var kids = grp.children;
-    var first = null;
-    for (var i = 0; i < kids.length; i++) {
-      var kid = kids[i];
-      if (kid.classList.contains('staxx-portslot') ||
-          (kid.classList.contains('staxx-fieldrow') && !kid.classList.contains('staxx-portdrag'))) {
-        first = kid;
-        break;
-      }
-    }
-    for (var j = 0; j < kids.length; j++) kids[j].classList.remove('staxx-portfirst');
-    if (first) first.classList.add('staxx-portfirst');
-  }
-
   formHost.addEventListener('pointerdown', function (event) {
     var grip = event.target.closest('[data-port-grip]');
     if (!grip) return;
@@ -4345,14 +4306,11 @@
 
   function endPortDrag() {
     if (!draggingPortRow) return;
-    var grp = draggingPortRow.closest('.staxx-formgroup--ports');
     draggingPortRow.draggable = false;
     draggingPortRow.classList.remove('staxx-portdrag');
     if (portSlot && portSlot.parentNode) portSlot.parentNode.removeChild(portSlot);
     portSlot = null;
     draggingPortRow = null;
-    // An abandoned drag (no drop) still leaves the true first row correct.
-    markFirstPort(grp);
   }
   formHost.addEventListener('pointerup', endPortDrag);
   formHost.addEventListener('dragend', endPortDrag);
@@ -4376,14 +4334,9 @@
       if (draggingPortRow !== row) return;   // drag already over — a click with no drag
       portSlot = document.createElement('div');
       portSlot.className = 'staxx-portslot';
-      // Decorative echo of the chip a real row carries — no title, since a
-      // placeholder has nothing to explain — needed so the slot has a chip
-      // of its own for markFirstPort to reveal when the gap sits on top.
-      portSlot.innerHTML = '<span class="staxx-webchip" aria-hidden="true">WebUI</span>';
       portSlot.style.height = rowHeight + 'px';
       row.parentNode.insertBefore(portSlot, row);
       row.classList.add('staxx-portdrag');
-      markFirstPort(grp);
     }, 0);
   });
 
@@ -4403,7 +4356,6 @@
       // The row itself never moved, only hid — "home" is just beside it.
       if (portSlot.nextSibling !== draggingPortRow) {
         draggingPortRow.parentNode.insertBefore(portSlot, draggingPortRow);
-        markFirstPort(grp);
       }
       return;
     }
@@ -4423,7 +4375,6 @@
     // from under the pointer and the decision flips back and forth.
     if (portSlot.nextSibling !== target) {
       grp.insertBefore(portSlot, target);
-      markFirstPort(grp);
     }
   });
 
@@ -8267,7 +8218,7 @@
    *
    * Only ever written into an empty note, never over the user's own words. */
   function devNameLine(line, label) {
-    var fresh = YAML.buildForm(MODEL.doc, netDrivers(), exposedFor());
+    var fresh = YAML.buildForm(MODEL.doc, netDrivers());
     var id    = YAML.fieldAtLine(fresh, line);
     if (!id) return;
 
@@ -8497,13 +8448,6 @@
     devLoad().catch(function () {});
     netLoad().catch(function () {});
     imgLoad().catch(function () {});
-    // And what each container currently exposes, which the port-row suggestion
-    // compares against the web address. Asked for here because nothing else
-    // asks on its own: the state refresh is driven by starting and stopping,
-    // never by a clock, so on a freshly loaded page there is no answer yet.
-    // One `compose ls` for the whole machine, and applyState() redraws the
-    // form once if it changes anything.
-    if (!isNew) refreshState();
     // A new stack has no folder on disk yet, so there is nothing to list —
     // draw the bare, uncloseable compose tab and stop there.
     if (isNew) renderTabs(); else filesLoad();
@@ -11019,17 +10963,6 @@
       var up    = 0;
       var known = s.containers || {};
 
-      // PLAN_50: taken from the reply, NOT from the rows below — a stack that
-      // has not been expanded has no container rows in the page at all, so
-      // reading them would leave the port-row suggestion with nothing for
-      // every stack the user had not already opened up. Rebuilt fresh each
-      // time rather than merged, so a service whose container was removed
-      // loses its stale list instead of keeping it forever.
-      var exposedThisStack = {};
-      Object.keys(known).forEach(function (svc) {
-        exposedThisStack[svc] = known[svc].exposed || [];
-      });
-
       kids.forEach(function (kid) {
         var c = known[kid.dataset.service];
 
@@ -11051,20 +10984,6 @@
         if (c.state === 'running') up++;
         paintState(kid, c.html, c.state === 'running', c.address);
       });
-      // Compared before storing, because the redraw below must happen when
-      // this list CHANGES and at no other time. A state poll lands every few
-      // seconds; rebuilding the form on each one would throw away the caret,
-      // the scroll position and any half-typed value, which is exactly the
-      // kind of redraw PLAN_48 went to some trouble to stop doing.
-      var exposedChanged = JSON.stringify(lastExposed[name] || {}) !== JSON.stringify(exposedThisStack);
-      lastExposed[name] = exposedThisStack;
-
-      // The list can land after the editor is already open — the first poll
-      // for a container that has only just started. Nothing else re-reads it,
-      // so redraw once when it arrives, and never while a field has focus:
-      // the next commit rebuilds the form anyway and will pick it up then.
-      if (exposedChanged && openedName === name && modal.open && MODEL
-          && !activeField && !commitTimer && !devPanel) reparse();
 
       var sub = row.querySelector('[data-cell="stack-sub"]');
       if (sub && kids.length) {

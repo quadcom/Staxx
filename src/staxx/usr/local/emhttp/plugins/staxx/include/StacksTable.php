@@ -112,9 +112,16 @@ function staxx_address_html(array $addresses): string {
  * publishing three ports on the same server is one address with three ports,
  * not three separate entries repeating it.
  *
+ * The same "declared port is only a fallback" correction staxx_address_html()
+ * gets for a single container (see staxx_address_webui_override()) is applied
+ * here too, per container before its addresses are folded together — so the
+ * stack row never shows a different port than the container row underneath it.
+ *
  * @param array $containers rows from staxx_container_index()
+ * @param array<string,string> $webuiById container id => staxx_webui_url() result,
+ *                                        e.g. from staxx_stack_children()
  */
-function staxx_merged_addresses(array $containers): array {
+function staxx_merged_addresses(array $containers, array $webuiById = []): array {
   $net = staxx_container_net();
 
   // Grouped by the label, not by the address behind it. Three containers of one
@@ -123,7 +130,12 @@ function staxx_merged_addresses(array $containers): array {
   // repeats the same name on three lines.
   $groups = [];
   foreach ($containers as $c) {
-    foreach ($net[$c['id']]['addresses'] ?? [] as $a) {
+    $rec = $net[$c['id']] ?? [];
+    $addresses = staxx_address_webui_override(
+      $rec['addresses'] ?? [], $rec['published'] ?? false,
+      $webuiById[$c['id']] ?? '', $rec['exposed'] ?? []
+    );
+    foreach ($addresses as $a) {
       $key = (string)($a['label'] ?? $a['ip'] ?? '');
       if ($key === '') continue;
       if (!isset($groups[$key])) $groups[$key] = ['ip' => $a['ip'], 'ports' => []];
@@ -944,7 +956,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                replaces just these cells rather than the whole row. -->
           <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_state_pill($s, $canRun) ?></span>
           <span class="staxx-cell staxx-cell--address staxx-addrcell" role="gridcell" data-cell="address"><?=
-            staxx_address_html(staxx_merged_addresses(staxx_stack_containers($s)))
+            staxx_address_html(staxx_merged_addresses(staxx_stack_containers($s), array_column($kids, 'webui', 'id')))
           ?></span>
 
           <!-- Filled in by the browser from the stats endpoint, and left as an
@@ -1111,7 +1123,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
           <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_container_pill($kid) ?></span>
           <span class="staxx-cell staxx-cell--address staxx-addrcell" role="gridcell" data-cell="address"><?=
             staxx_address_html($kid['id'] !== ''
-              ? (staxx_container_net()[$kid['id']]['addresses'] ?? [])
+              ? staxx_address_webui_override(
+                  staxx_container_net()[$kid['id']]['addresses'] ?? [],
+                  staxx_container_net()[$kid['id']]['published'] ?? false,
+                  $kid['webui'], staxx_container_net()[$kid['id']]['exposed'] ?? []
+                )
               : [])
           ?></span>
 
@@ -1182,19 +1198,47 @@ function staxx_state_snapshot(): array {
   $canRun = staxx_can_run();
   $states = staxx_stack_states();
 
+  $hostIp = staxx_host_ip();
+
   $stacks = [];
   foreach ($states as $name => $s) {
+    // The compose file's own declared services, needed to resolve each
+    // container's web address so this cheap refresh and the full render never
+    // disagree about which port the Address column shows.
+    //
+    // Read ONLY when some container here publishes nothing, because that is
+    // the only case staxx_address_webui_override() can change anything in —
+    // and reading it for every stack is not cheap at all. staxx_compose_meta()
+    // keys its stored answer on a hash of the file's own contents, so asking
+    // costs a read of that file off the flash drive: measured at 316ms across
+    // 64 stacks, against 90ms for this whole refresh before it. Gating it here
+    // takes that to a handful of files. See PLAN_48 on why this particular
+    // function has to stay fast.
+    $needWebui = false;
+    foreach (staxx_stack_containers($s) as $c) {
+      if (!(staxx_container_net()[$c['id']]['published'] ?? false)) { $needWebui = true; break; }
+    }
+    $declared = ($needWebui && $s['file'] !== '') ? staxx_compose_meta($s['file'])['services'] : [];
+
     // Keyed by service, which is what the container rows carry, so the browser
     // can find each row without knowing the container names in advance. That
     // matters the first time a stack is started: those rows were rendered from
     // the compose file and have no container name on them yet.
     $mine       = staxx_stack_containers($s);
     $containers = [];
+    $webuiById  = [];
     $seen       = [];
     foreach ($mine as $c) {
       $service = $c['service'] !== '' ? $c['service'] : $c['name'];
       $key     = isset($seen[$service]) ? $service.'/'.$c['name'] : $service;
       $seen[$service] = true;
+
+      $rec   = staxx_container_net()[$c['id']] ?? [];
+      $webui = staxx_webui_url(
+        $declared[$service] ?? [], $hostIp,
+        (string)($rec['addresses'][0]['ip'] ?? ''), (string)($rec['mode'] ?? ''), (string)($rec['driver'] ?? '')
+      );
+      $webuiById[$c['id']] = $webui;
 
       $containers[$key] = [
         'container' => $c['name'],
@@ -1203,8 +1247,10 @@ function staxx_state_snapshot(): array {
         // Ports move when a container is recreated with a changed compose
         // file, so this travels with the state rather than being fixed at
         // render time.
-        'address'   => staxx_address_html(staxx_container_net()[$c['id']]['addresses'] ?? []),
-        'exposed'   => staxx_container_net()[$c['id']]['exposed'] ?? [],
+        'address'   => staxx_address_html(staxx_address_webui_override(
+          $rec['addresses'] ?? [], $rec['published'] ?? false, $webui, $rec['exposed'] ?? []
+        )),
+        'exposed'   => $rec['exposed'] ?? [],
       ];
     }
 
@@ -1218,7 +1264,7 @@ function staxx_state_snapshot(): array {
       // moment compose reveals the real one.
       'project'    => $s['project'] !== '' ? $s['project'] : staxx_project_name($s['leaf']),
       'html'       => staxx_state_pill($s, $canRun),
-      'address'    => staxx_address_html(staxx_merged_addresses($mine)),
+      'address'    => staxx_address_html(staxx_merged_addresses($mine, $webuiById)),
       'containers' => $containers,
     ];
   }
