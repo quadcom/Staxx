@@ -490,6 +490,23 @@ switch ($action) {
     if ($home === '' && $error !== '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'home' => $home]);
 
+  /* ---- PLAN_44 D6: the line above the panes, and "show the environment" -
+   * See the "PLAN_44 D6 jobs" section of Stacks.php — both share the file
+   * manager's own container-resolution and SHELL_ENABLED gate. The third D6
+   * job, "fix ownership", never reaches the server at all; it only builds a
+   * command string in the browser and leaves it unrun in the shell. */
+  case 'cstat':
+    $service = (string)($_POST['service'] ?? '');
+    $stat    = staxx_cstat($name, $service, $error);
+    if ($stat === null) staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true] + $stat);
+
+  case 'cenv':
+    $service = (string)($_POST['service'] ?? '');
+    $text    = staxx_cenv($name, $service, $error);
+    if ($text === null) staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'text' => $text]);
+
   /* ---------------------------------------------------------------------
    * The handover — taking over an imported stack's container name.
    *

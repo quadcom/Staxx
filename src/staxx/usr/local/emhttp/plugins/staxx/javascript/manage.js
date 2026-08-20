@@ -40,6 +40,15 @@
   // watching, so there is deliberately no separate ping.
   var POLL_MS = 1000;
 
+  // PLAN_44 D7. The same 45rem the stylesheet uses, and deliberately the
+  // same string — stacks.js's own NARROW carries the reasoning (a rem inside
+  // a media query is the browser's default font size, not the 62.5% Unraid
+  // sets on the root, so writing this any other way would put the two
+  // thresholds in different places). Kept as this file's own copy rather
+  // than reading stacks.js's: the two files are deliberately independent, so
+  // a typo in one cannot take the other down.
+  var NARROW = window.matchMedia('(max-width: 45rem)');
+
   // PLAN_44 D4, the shell.
   //
   // Completed lines kept per session - smaller than LOG_CAP because a shell
@@ -279,7 +288,11 @@
       // wired this through yet, or a service with no mounts at all — either
       // way the file pane marks nothing and says nothing, rather than
       // guessing at paths it was never told about.
-      mounts:     {}
+      mounts:     {},
+      // PLAN_44 D7 — which of the three panes a narrow screen is currently
+      // showing. Meaningless, and ignored, above the breakpoint, where all
+      // three are visible at once.
+      narrowPane: 'log'
     };
 
     var els = {};
@@ -300,6 +313,9 @@
       tabs.setAttribute('role', 'tablist');
       host.appendChild(tabs);
       els.tabs = tabs;
+
+      host.appendChild(buildAbove());       // PLAN_44 D6
+      host.appendChild(buildNarrowTabs());  // PLAN_44 D7
 
       var body = document.createElement('div');
       body.className = 'staxx-manage-body';
@@ -327,6 +343,7 @@
       els.files = files;
 
       buildButtons(mid);
+      updateNarrowPanes();
 
       // Repaints whatever the follower already holds onto the fresh DOM —
       // a no-op the first time (log.lines is still empty then), but the
@@ -347,6 +364,11 @@
       h.textContent = title;
       h.setAttribute('aria-expanded', 'true');
       h.addEventListener('click', function () {
+        // Below the breakpoint the narrow tab row (PLAN_44 D7) is what
+        // chooses which pane shows, not a per-pane collapse — collapsing the
+        // one pane a narrow screen has room for would just leave the screen
+        // empty until someone thought to click the header a second time.
+        if (NARROW.matches) return;
         var collapsed = el.classList.toggle('staxx-manage-pane--collapsed');
         h.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
       });
@@ -905,6 +927,7 @@
         sess.id = res.id;
         renderShellIfActive(service);
         resumeShellPoll(service);
+        flushPendingShellCommand(service); // PLAN_44 D6 — a job's command may have been waiting on this
       });
     }
 
@@ -1727,6 +1750,276 @@
       renderFileList(service);
     }
 
+    // ---- D6: the line above the panes, and the one-press jobs -------------
+
+    // Restart count and health, for whichever container is currently
+    // selected. Fetched once per visit to a container's tab, not on every
+    // one-second poll — a poll-per-container asking `docker inspect` for a
+    // figure nobody is watching tick would be wasted work. Cleared whenever
+    // the selection leaves a container (including to "All"), so coming back
+    // to it later re-asks rather than showing a stale number forever.
+    var stat = { service: null, loading: false, error: '', restarts: null, health: null };
+
+    function mkJobBtn(label, cls) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'staxx-manage-jobbtn ' + cls;
+      b.textContent = label;
+      return b;
+    }
+
+    function buildAbove() {
+      var wrap = document.createElement('div');
+      wrap.className = 'staxx-manage-above';
+
+      var status = document.createElement('div');
+      status.className = 'staxx-manage-status staxx-manage-status--hidden';
+      var pill = document.createElement('span');
+      pill.className = 'staxx-manage-status-pill';
+      var extra = document.createElement('span');
+      extra.className = 'staxx-manage-status-extra';
+      status.appendChild(pill);
+      status.appendChild(extra);
+
+      var jobs = document.createElement('div');
+      jobs.className = 'staxx-manage-jobs';
+
+      var cfgBtn = mkJobBtn('Config folder', 'staxx-manage-job-cfg');
+      cfgBtn.title = 'Point the Files pane at this container’s first mounted folder.';
+      cfgBtn.addEventListener('click', function () { openConfigFolder(state.selected); });
+
+      var envBtn = mkJobBtn('Show environment', 'staxx-manage-job-env');
+      envBtn.title = 'Runs "env" inside the container and prints the result into the log pane.';
+      envBtn.addEventListener('click', function () { showEnvironment(state.selected); });
+
+      var chownBtn = mkJobBtn('Fix ownership', 'staxx-manage-job-chown');
+      chownBtn.title = 'Prepares a chown command in the shell — it does not run it. Check the ' +
+        'owner this image actually expects before pressing Enter.';
+      chownBtn.addEventListener('click', function () { prepareChownCommand(state.selected); });
+
+      jobs.appendChild(cfgBtn);
+      jobs.appendChild(envBtn);
+      jobs.appendChild(chownBtn);
+
+      wrap.appendChild(status);
+      wrap.appendChild(jobs);
+
+      els.statusUI = { status: status, pill: pill, extra: extra };
+      els.jobsUI = { cfgBtn: cfgBtn, envBtn: envBtn, chownBtn: chownBtn };
+      return wrap;
+    }
+
+    // Called at the end of every render(), same place the other three panes'
+    // own sync functions sit.
+    function syncStatusLine() {
+      var service = state.selected;
+
+      if (service === 'all' || !service) {
+        stat.service = null; // leaving a container's context — the next visit re-asks
+        els.statusUI.status.classList.add('staxx-manage-status--hidden');
+        renderJobsBar();
+        return;
+      }
+
+      els.statusUI.status.classList.remove('staxx-manage-status--hidden');
+
+      if (stat.service !== service) {
+        stat.service = service;
+        stat.loading = true; stat.error = ''; stat.restarts = null; stat.health = null;
+        renderStatusLine();
+        call('cstat', { name: state.stack, service: service }).then(function (res) {
+          if (stat.service !== service) return; // superseded by another tab switch
+          stat.loading = false;
+          if (!res.ok) {
+            stat.error = res.error || 'Could not read this container’s restarts and health.';
+            renderStatusLine();
+            return;
+          }
+          stat.restarts = res.restarts;
+          stat.health = res.health;
+          renderStatusLine();
+        });
+      }
+
+      renderStatusLine();
+      renderJobsBar();
+    }
+
+    // Uptime and health-check wording come straight from the row's own pill
+    // markup (docker's own words, already resolved by the state poll) —
+    // reused as-is rather than re-parsed, since it is more honest than
+    // anything built here and it costs nothing extra to ask for.
+    function renderStatusLine() {
+      var ui = els.statusUI;
+      var live = liveFor(state.snapshot, state.selected);
+      ui.pill.innerHTML = (live && live.html) ? live.html : '';
+
+      var bits = [];
+      if (stat.loading) {
+        bits.push('Checking restarts and health…');
+      } else if (stat.error) {
+        bits.push(stat.error);
+      } else {
+        if (stat.restarts !== null) {
+          bits.push(stat.restarts + (stat.restarts === 1 ? ' restart' : ' restarts'));
+        }
+        if (stat.health && stat.health !== 'none') bits.push('health: ' + stat.health);
+      }
+      ui.extra.textContent = bits.join(' · ');
+      // A container restarting in a loop is the single most useful thing
+      // this line can say — flagged rather than left to blend in with a
+      // container that simply restarted once, on purpose, ages ago.
+      ui.extra.classList.toggle('staxx-manage-status-warn', !!(stat.restarts !== null && stat.restarts > 1));
+    }
+
+    function renderJobsBar() {
+      var ui = els.jobsUI;
+      var service = state.selected;
+      var isAll = service === 'all' || !service;
+      var mounts = isAll ? null : mountsFor(service);
+
+      // "Leave it out rather than offering a button that cannot work" — the
+      // plan's own rule for the config-folder job, applied to ownership too,
+      // since chowning a container with no mounts has nothing to act on.
+      ui.cfgBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll || !mounts);
+      ui.chownBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll || !mounts);
+      ui.envBtn.disabled = isAll;
+    }
+
+    function openConfigFolder(service) {
+      if (service === 'all' || !service) return;
+      var mounts = mountsFor(service);
+      if (!mounts) return;
+      revealPane('files');
+      navigateTo(service, mounts[0]);
+    }
+
+    function showEnvironment(service) {
+      if (service === 'all' || !service) return;
+      noteLine('reading the environment inside "' + service + '"…');
+      call('cenv', { name: state.stack, service: service }).then(function (res) {
+        if (!res.ok) {
+          noteLine('could not read the environment: ' + (res.error || 'unknown error.'));
+          return;
+        }
+        var text = (res.text || '').replace(/\n$/, '');
+        if (!text) { noteLine('this container reports no environment variables.'); return; }
+        text.split('\n').forEach(function (line) { noteLine(line); });
+      });
+    }
+
+    // Text typed into a session before it has actually opened — the warning
+    // has not been accepted yet, or exec-open is still in flight — waiting
+    // here until ensureShellSession()'s own callback flushes it. Keyed by
+    // service, same as shellState.sessions, so a stack with more than one
+    // pending command never mixes them up.
+    var pendingShellCmd = {};
+
+    function flushPendingShellCommand(service) {
+      var cmd = pendingShellCmd[service];
+      var sess = shellState.sessions[service];
+      if (!cmd || !sess || !sess.id) return;
+      delete pendingShellCmd[service];
+      sendShellChunk(service, cmd);
+    }
+
+    // Builds a chown command and leaves it sitting, unsent, in the shell —
+    // never runs it. The right owner is whatever the image's own PUID/PGID
+    // (or similar) convention expects, which this file has no way to know,
+    // and guessing wrong on a recursive chown over someone's appdata folder
+    // is a worse mistake than making them type the owner in themselves.
+    function prepareChownCommand(service) {
+      if (service === 'all' || !service) return;
+      var mounts = mountsFor(service);
+      if (!mounts) return;
+
+      var quoted = mounts.map(function (m) {
+        return "'" + m.replace(/'/g, "'\\''") + "'";
+      }).join(' ');
+      // "<uid>:<gid>", not "PUID:PGID". Both are blanks to fill in, but the
+      // second reads like a variable that might expand into something — and it
+      // does not, so running it as it stands gets "invalid user". A pair of
+      // angle brackets is unmistakably a gap. The numbers are not guessed
+      // because guessing them wrong on a recursive chown over somebody's
+      // appdata folder is worse than making them look them up: the note below
+      // says where they are, which is the same image environment the button
+      // beside this one prints.
+      var cmd = 'chown -R <uid>:<gid> -- ' + quoted;
+
+      revealPane('shell');
+      noteLine('Ready to run once you fill in the owner. "Show environment" lists ' +
+               'this image\'s own PUID and PGID, which are usually the numbers it wants.');
+      pendingShellCmd[service] = cmd;
+      // Drives the shell's own warning/open flow exactly as switching to its
+      // tab would — see syncShellPane(). flushPendingShellCommand() is also
+      // called from ensureShellSession()'s own callback, for the case where
+      // the session was still opening when this ran.
+      render();
+      flushPendingShellCommand(service);
+    }
+
+    // ---- D7: narrow screens -------------------------------------------------
+    //
+    // Below the breakpoint the log/shell/files panes become a small tab row,
+    // one shown at a time, instead of the fixed three-way split — see the
+    // plan's own "Under the existing 45rem breakpoint" requirement and the
+    // NARROW constant's comment for why the literal is duplicated rather
+    // than shared with the stylesheet.
+
+    function buildNarrowTabs() {
+      var el = document.createElement('div');
+      el.className = 'staxx-manage-narrowtabs';
+      el.setAttribute('role', 'tablist');
+
+      var defs = [['log', 'Log'], ['shell', 'Shell'], ['files', 'Files']];
+      els.narrowTabBtns = {};
+      defs.forEach(function (d) {
+        var key = d[0], label = d[1];
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'staxx-manage-narrowtab';
+        b.setAttribute('role', 'tab');
+        b.textContent = label;
+        b.addEventListener('click', function () {
+          state.narrowPane = key;
+          updateNarrowPanes();
+        });
+        els.narrowTabBtns[key] = b;
+        el.appendChild(b);
+      });
+      return el;
+    }
+
+    // Applied unconditionally, wide screens included — the CSS class this
+    // toggles only does anything inside the narrow media query, so this is
+    // cheap to call from everywhere a pane's visibility might need to change
+    // rather than gating every call site on NARROW.matches itself.
+    function updateNarrowPanes() {
+      ['log', 'shell', 'files'].forEach(function (key) {
+        var active = state.narrowPane === key;
+        els[key].el.classList.toggle('staxx-manage-pane--narrowhidden', !active);
+        var btn = els.narrowTabBtns && els.narrowTabBtns[key];
+        if (btn) {
+          btn.classList.toggle('staxx-manage-narrowtab--selected', active);
+          btn.setAttribute('aria-selected', active ? 'true' : 'false');
+        }
+      });
+    }
+
+    // Un-collapses a pane on a wide screen and switches the narrow tab row
+    // to it on a narrow one — used when a D6 job needs to show its result
+    // somewhere the person might currently have hidden or switched away
+    // from. Safe to call regardless of width: whichever half does nothing
+    // this screen is at is genuinely a no-op, not a wrong guess.
+    function revealPane(key) {
+      var p = els[key];
+      if (!p) return;
+      p.el.classList.remove('staxx-manage-pane--collapsed');
+      p.head.setAttribute('aria-expanded', 'true');
+      state.narrowPane = key;
+      updateNarrowPanes();
+    }
+
     function buildButtons(mid) {
       var scope = document.createElement('div');
       scope.className = 'staxx-manage-scope';
@@ -1933,6 +2226,7 @@
       syncLogFollower();
       syncShellPane();
       syncFilesPane();
+      syncStatusLine();
     }
 
     build();
@@ -1958,6 +2252,13 @@
         // plan's default. It is what a container tab will show; All overrides
         // it while All is selected, without overwriting it.
         state.scope = 'container';
+        // A different stack means an entirely different set of restart
+        // counts and health checks, and no command was ever left waiting in
+        // a shell that no longer exists.
+        state.narrowPane = 'log';
+        stat.service = null; stat.loading = false; stat.error = '';
+        stat.restarts = null; stat.health = null;
+        pendingShellCmd = {};
         render();
       },
       setSnapshot: function (snapshot) {

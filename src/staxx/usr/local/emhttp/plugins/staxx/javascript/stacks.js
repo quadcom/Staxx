@@ -8532,6 +8532,9 @@
   // it. Calling it twice is harmless: unmount() clears what it finds and the
   // flag stops the second call doing anything.
   function stopManage() {
+    // Declared below setTab(); hoisting is what makes this reachable from here,
+    // the same way this file already reaches bytes() from extraLine().
+    manageStatePoll(false);
     if (manageInst && manageMounted) { manageInst.unmount(); manageMounted = false; }
   }
 
@@ -12308,10 +12311,39 @@
     return manageInst;
   }
 
+  // While Manage is showing it is the only thing asking after state, so it has
+  // to ask for itself.
+  //
+  // Nothing polls state on a clock: it is refreshed after a command and when
+  // the table is redrawn, which is exactly right for a page of rows that only
+  // change when something is run. An editor sitting open is neither of those,
+  // so Manage's own tab lights, figures and status line arrived blank and
+  // stayed blank — there was no second state reply for as long as it was open.
+  // One `compose ls` for the whole machine is about 90ms (see refreshState's
+  // own note), and this stops the moment Manage is not what is on screen.
+  var manageStateTimer = null;
+
+  function manageStatePoll(on) {
+    if (on) {
+      if (manageStateTimer) return;
+      refreshState();                                   // do not wait for the first tick
+      pollStats(true);                                  // and its own figures, see pollStats
+      manageStateTimer = setInterval(function () {
+        // Belt and braces against a timer outliving what it was feeding.
+        if (!modal.open || modal.dataset.tab !== 'manage') { manageStatePoll(false); return; }
+        refreshState();
+        pollStats(true);
+      }, 5000);
+      return;
+    }
+    if (manageStateTimer) { clearInterval(manageStateTimer); manageStateTimer = null; }
+  }
+
   function setTab(tab) {
     modal.dataset.tab = tab;
     if (tabConfigureBtn) tabConfigureBtn.setAttribute('aria-selected', tab === 'configure' ? 'true' : 'false');
     if (tabManageBtn) tabManageBtn.setAttribute('aria-selected', tab === 'manage' ? 'true' : 'false');
+    manageStatePoll(tab === 'manage');
   }
 
   if (tabConfigureBtn) tabConfigureBtn.addEventListener('click', function () { setTab('configure'); });
@@ -14800,13 +14832,18 @@
     });
   }
 
-  function pollStats() {
+  // `force` is for Manage, which wants figures for the container it is showing
+  // even when the table behind it has no stat row asking for any — which is the
+  // usual case, since the rows it would have come from are the collapsed ones
+  // inside a stack. Without it Manage's container tabs showed a dash for
+  // processor and memory for as long as the editor was open.
+  function pollStats(force) {
     // A hidden tab does not need updating, and stopping the asking is also
     // what lets the server-side collector shut itself down.
     if (document.hidden) return;
     // Nothing to fill in. Asking anyway would keep the collector sampling 60
     // containers on behalf of an empty table.
-    if (!statRows.length) return;
+    if (!force && !statRows.length) return;
     call('stats', {}, 10000).then(applyStats);
   }
 

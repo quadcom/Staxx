@@ -4919,4 +4919,79 @@ function staxx_cfile_home(string $stack, string $service, string &$error): strin
   ));
   return $out !== '' ? $out : '/';
 }
+
+/* ==================================================== PLAN_44 D6 jobs === *
+ *
+ * The one line above the panes (restart count and health), and the "show
+ * the environment" one-press job. Both share staxx_cfile_container()'s gate
+ * — the same SHELL_ENABLED switch, review lock and service-membership rule
+ * the shell and file manager already stand behind — because this is that
+ * same reach into a running container answering two more small questions,
+ * not a capability of its own. The third D6 job, "fix ownership", never
+ * reaches here at all: it only builds a command string client-side and
+ * leaves it unrun in the shell, so there is nothing for the server to do.
+ */
+
+/**
+ * The command a restart-count/health check actually runs, kept as its own
+ * function so a test can assert on the string without a real container to
+ * point it at — see tests/server/console.php.
+ *
+ * The format flag MUST sit before the `--`: written the other way round, the
+ * `--` swallows it and the whole JSON document comes back instead of the two
+ * values asked for. Measured on the server, the hard way.
+ */
+function staxx_cstat_cmd(string $container): string {
+  $fmt = '{{.RestartCount}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}';
+  return escapeshellarg(staxx_docker_bin()).' inspect --format '.escapeshellarg($fmt)
+       . ' -- '.escapeshellarg($container);
+}
+
+/**
+ * Restart count and health status for the container behind one service —
+ * the "how long has it been up" half of D6's line comes free out of the
+ * state snapshot the browser already holds (docker's own status text), so
+ * this is only the one figure that snapshot does not carry.
+ *
+ * @return array{restarts:int, health:string}|null
+ */
+function staxx_cstat(string $stack, string $service, string &$error): ?array {
+  $error = '';
+  $container = staxx_cfile_container($stack, $service, $error);
+  if ($container === '') return null;
+
+  $code = 1;
+  $out  = staxx_sh(staxx_cstat_cmd($container), 10, $code);
+  if ($code !== 0) {
+    $error = trim($out) !== '' ? trim($out) : 'Could not read this container\'s restart count.';
+    return null;
+  }
+
+  [$restarts, $health] = array_pad(explode('|', trim($out), 2), 2, '');
+  return ['restarts' => (int)$restarts, 'health' => $health !== '' ? $health : 'none'];
+}
+
+/** See staxx_cstat_cmd()'s own reasoning for keeping the builder separate. */
+function staxx_cenv_cmd(string $container): string {
+  return escapeshellarg(staxx_docker_bin()).' exec '.escapeshellarg($container).' env';
+}
+
+/**
+ * `env` inside the running container behind one service — read-only, and the
+ * browser never names the container itself, same as every other exec-based
+ * action in this file.
+ */
+function staxx_cenv(string $stack, string $service, string &$error): ?string {
+  $error = '';
+  $container = staxx_cfile_container($stack, $service, $error);
+  if ($container === '') return null;
+
+  $code = 1;
+  $out  = staxx_sh(staxx_cenv_cmd($container), 10, $code);
+  if ($code !== 0) {
+    $error = trim($out) !== '' ? trim($out) : 'Could not read the environment inside this container.';
+    return null;
+  }
+  return $out;
+}
 ?>

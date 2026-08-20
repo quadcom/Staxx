@@ -10,9 +10,12 @@
  * inventing colours — those are already mapped to Unraid's own theme
  * variables and verified to hold actual colours across themes.
  *
- * The narrow-screen breakpoint literal (45rem) is not used here yet —
- * phase 6 owns the pane-becomes-tabs behaviour, but the pane markup below
- * is already shaped so that phase does not have to restructure anything.
+ * The narrow-screen breakpoint literal (45rem) appears once below, in the
+ * media query at the foot of this file, and must read identically to
+ * manage.js's own NARROW constant — per stacks.js's own comment on why (a
+ * rem inside a media query is the browser's default font size, not the
+ * 62.5% Unraid sets on the root, so writing it any other way puts the two
+ * thresholds in different places).
  */
 
 /* ---- Button trap, restated here — see staxx.css's own note on this ------
@@ -114,6 +117,89 @@
   font-size: 0.8em;
   color: var(--sm-muted);
   white-space: nowrap;
+}
+
+/* ---- D6: the line above the panes, and the one-press jobs ---------------- */
+
+.staxx-manage-above {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.staxx-manage-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85em;
+}
+
+.staxx-manage-status--hidden { display: none; }
+
+.staxx-manage-status-extra { color: var(--sm-muted); }
+
+/* A container restarting in a loop is the one thing this line most needs
+   to say out loud — see renderStatusLine()'s own comment. */
+.staxx-manage-status-warn {
+  color: var(--sm-danger);
+  font-weight: 600;
+}
+
+.staxx-manage-jobs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.staxx-scaffold .staxx-manage-jobbtn {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-fill-0, var(--sm-fill));
+  color: inherit;
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+
+.staxx-scaffold .staxx-manage-jobbtn:hover:not(:disabled),
+.staxx-scaffold .staxx-manage-jobbtn:focus-visible {
+  border-color: var(--sm-accent);
+}
+
+.staxx-scaffold .staxx-manage-jobbtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.staxx-manage-jobbtn--hidden { display: none; }
+
+/* ---- D7: narrow screens — a small tab row instead of the three-way split -
+ * Hidden above the breakpoint, where the fixed three-pane split (below)
+ * already shows everything at once. Below it, see the media query at the
+ * foot of this file for how the split collapses down to one pane at a time.
+ * ------------------------------------------------------------------------- */
+
+.staxx-manage-narrowtabs {
+  display: none;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--sm-line);
+  padding-bottom: 0.25rem;
+}
+
+.staxx-scaffold .staxx-manage-narrowtab {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: var(--sm-radius);
+  background-color: transparent;
+  color: inherit;
+  font-weight: 500;
+}
+
+.staxx-scaffold .staxx-manage-narrowtab--selected {
+  border-color: var(--sm-accent);
+  background-color: var(--sm-fill-2);
 }
 
 /* ---- Body layout: log | buttons | (shell over files) --------------------- */
@@ -770,3 +856,33 @@
 .staxx-sh-fg-c { color: #39c5cf; }
 .staxx-sh-fg-w { color: inherit; }
 .staxx-sh-b    { font-weight: 700; }
+
+/* ---- D7: the narrow layout itself ----------------------------------------
+ * Collapses the fixed log | buttons | (shell over files) split into a single
+ * column: the narrow tab row picks one of log/shell/files to show, the
+ * buttons column stays pinned above it — "the thing you came to press" —
+ * and `.staxx-manage-right`'s own box disappears via `display: contents` so
+ * its two children (shell, files) sit as plain siblings of the log pane,
+ * each one individually hidden or shown by manage.js's own narrowhidden
+ * class rather than by the wide layout's collapse-to-header behaviour.
+ * ------------------------------------------------------------------------- */
+@media (max-width: 45rem) {
+  .staxx-manage-narrowtabs { display: flex; }
+
+  .staxx-manage-body { flex-direction: column; }
+
+  .staxx-manage-buttons {
+    order: -1;
+    width: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .staxx-manage-scope { flex: 1 1 100%; }
+  .staxx-manage-verbs { flex-direction: row; flex-wrap: wrap; flex: 1 1 100%; }
+
+  .staxx-manage-right { display: contents; }
+
+  .staxx-manage-pane--narrowhidden { display: none; }
+}

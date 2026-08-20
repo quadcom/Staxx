@@ -30,6 +30,13 @@
  * never executed, which is what proves the `--`-before-path and
  * escapeshellarg() rules without touching a container at all.
  *
+ * PLAN_44 phase 6 adds staxx_cstat() and staxx_cenv() — the restart-count/
+ * health line above the panes and the "show the environment" job, covered
+ * further down under "PLAN_44 D6". Both call staxx_cfile_container() first,
+ * so the same never-really-runs-docker guarantee applies to every case below
+ * except the "not running" one, which only asks read-only docker/compose
+ * questions about a stack deliberately never started.
+ *
  * Runs ON THE SERVER — there is no PHP on the dev machine.
  *
  *     pscp tests/server/console.php root@<box>:/tmp/
@@ -695,6 +702,102 @@ ok('staxx_looks_text() — the same test staxx_cfile_read() defers to — says t
 file_put_contents($sample, "hello\0world");
 ok('...and binary is binary', staxx_looks_text($sample) === false);
 @unlink($sample);
+
+/* ======================================================== PLAN_44 D6 === *
+ *
+ * staxx_cstat() and staxx_cenv() — the restart-count/health line and the
+ * "show the environment" job. Both call staxx_cfile_container() first, so
+ * they share the never-really-runs-docker guarantee that section's own
+ * header already argues for: each case below is refused at path validation
+ * or at that shared chain before either ever builds a real command. Only the
+ * "not running" case goes as far as a read-only `docker ps`/`compose ls`,
+ * for the same reason the exec and cfile sections above each need one too —
+ * there is no way to prove "not running" any earlier.
+ */
+
+$root = staxx_stack_root();
+
+$err = '';
+$r = staxx_cstat('a/b/c', 'a', $err);
+ok('cstat refuses an invalid stack path', $r === null && stripos($err, 'invalid') !== false, $err);
+
+$err = '';
+$r = staxx_cenv('a/b/c', 'a', $err);
+ok('cenv refuses an invalid stack path', $r === null && stripos($err, 'invalid') !== false, $err);
+
+$err = '';
+$r = staxx_cstat($none, 'a', $err);
+if (staxx_cfg_bool('SHELL_ENABLED')) {
+  ok('cstat: SHELL_ENABLED=true lets a request through to the next check',
+     $r === null && stripos($err, 'turned off') === false, $err);
+} else {
+  ok('cstat: SHELL_ENABLED=false refuses, and says so in words',
+     $r === null && stripos($err, 'turned off') !== false, $err);
+}
+
+$dLockedRel = 'zzc2dlocked';
+$dLockedDir = $root.'/'.$dLockedRel;
+@exec('rm -rf '.escapeshellarg($dLockedDir));
+mkdir($dLockedDir, 0755, true);
+file_put_contents($dLockedDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+file_put_contents($dLockedDir.'/'.STAXX_REVIEW_FILE, "imported\n");
+
+$err = '';
+$r = staxx_cstat($dLockedRel, 'a', $err);
+ok('cstat: a review-locked stack is refused', $r === null && stripos($err, 'review') !== false, $err);
+
+$err = '';
+$r = staxx_cenv($dLockedRel, 'a', $err);
+ok('cenv: a review-locked stack is refused', $r === null && stripos($err, 'review') !== false, $err);
+
+$dPlainRel = 'zzc2dplain';
+$dPlainDir = $root.'/'.$dPlainRel;
+@exec('rm -rf '.escapeshellarg($dPlainDir));
+mkdir($dPlainDir, 0755, true);
+file_put_contents($dPlainDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+
+$err = '';
+$r = staxx_cstat($dPlainRel, 'nosuchservice', $err);
+ok('cstat: a service not in the compose file is refused',
+   $r === null && stripos($err, 'no service called') !== false, $err);
+
+$err = '';
+$r = staxx_cenv($dPlainRel, 'nosuchservice', $err);
+ok('cenv: a service not in the compose file is refused',
+   $r === null && stripos($err, 'no service called') !== false, $err);
+
+// The same read-only "not running" proof the exec and cfile sections above
+// rely on — nothing here starts, stops or execs anything either.
+if (staxx_cfg_bool('SHELL_ENABLED')) {
+  $err = '';
+  $r = staxx_cstat($dPlainRel, 'a', $err);
+  ok('cstat: a stack whose containers are not running is refused',
+     $r === null && stripos($err, 'does not appear to be running') !== false, $err);
+
+  $err = '';
+  $r = staxx_cenv($dPlainRel, 'a', $err);
+  ok('cenv: a stack whose containers are not running is refused',
+     $r === null && stripos($err, 'does not appear to be running') !== false, $err);
+}
+
+@exec('rm -rf '.escapeshellarg($dLockedDir));
+@exec('rm -rf '.escapeshellarg($dPlainDir));
+
+/* --------------------------------------------------- command builders ---- */
+//
+// Asserted as plain strings, never run — same proof as staxx_cfile_ls_cmd()
+// and friends above. The one trap worth naming twice: the format flag has
+// to sit before the `--`, or the `--` swallows it and docker hands back the
+// whole JSON document instead of the two values asked for.
+
+ok('cstat command puts the format flag before --',
+   staxx_cstat_cmd('my-c')
+     === $dq.' inspect --format '
+       . escapeshellarg('{{.RestartCount}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
+       . ' -- '.escapeshellarg('my-c'));
+
+ok('cenv command names the container after exec',
+   staxx_cenv_cmd('my-c') === $dq.' exec '.escapeshellarg('my-c').' env');
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);
