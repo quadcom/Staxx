@@ -1,6 +1,6 @@
 # PLAN_46 — bringing Compose Manager projects in
 
-**Status: APPROVED 2026-08-19, being built on branch `compose-manager-import`.** Sub-plan of
+**Status: BUILT 2026-08-19 on branch `compose-manager-import`. Every phase is in; what is left is a browser pass, listed at the foot.** Sub-plan of
 PLAN_35, whose phase 4 this is — the last one.
 
 **Override support is kept separable on Adrian's instruction.** He may pull it back out if handling
@@ -293,9 +293,39 @@ take the rebuild route and two — never brought up, so nothing exists to rebuil
 **Still to prove in a browser, and it is the last real risk in this plan:** one actual takeover, on
 one project, watched. Everything up to the bring-up is proved; the bring-up itself is not.
 
-**5. The loose ends PLAN_35 flags.** The self-test's project count learning to say how many resolve
-and how many do not; the plain-English docs finally mentioning imports at all; and a row that says
-when the file it was copied from has changed since.
+**5. The loose ends PLAN_35 flags. — BUILT 2026-08-19, deployed.** All three.
+
+- **The row says when the source has changed.** Worked out live by following the shared project name
+  and comparing the files, with nothing recorded — a stored source would be the second copy that can
+  disagree, which is the problem being reported. The first attempt cost 799ms on every table render
+  because it reached for the full import reader; it now costs under a millisecond by resolving each
+  project's real file from what the page has already worked out.
+- **The self-test** says how many projects resolve to a readable compose file and how many do not,
+  and admits that a project only findable by asking Docker counts as "do not" — its no-external-
+  command promise is worth more than the extra precision.
+- **The docs** cover imports at all, for the first time, including the part most worth getting right:
+  taking over means something different depending on the source.
+
+One bug found by importing a real project rather than a fixture: factoring the override lookup into a
+shared helper left the settings-file lookup borrowing a list that no longer existed, so a project
+that fills its values in from one could not be imported at all.
+
+---
+
+## What is left
+
+Nothing in this plan is unbuilt. What remains is **browser work, on a real server, by a human**:
+
+1. **One actual takeover, watched.** The bring-up itself is the only step no test here may run.
+2. Ticking a project in the import panel, the fixed destination name, and the preview's account of
+   what will and will not be copied.
+3. The override's own tab checking live as it is typed, Start's log naming both files, and a
+   single-file stack looking exactly as it did before any of this.
+
+Two things deliberately left out of scope, both recorded rather than forgotten: **containers
+belonging to neither source** remain reference-only, as PLAN_35 decided; and **drift from an Unraid
+template** is not detected, only drift from a Compose Manager project — a template has no shared name
+to follow, so it would need the stored record this design refuses to keep.
 
 ---
 
