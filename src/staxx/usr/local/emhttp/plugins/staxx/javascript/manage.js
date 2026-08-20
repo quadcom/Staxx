@@ -99,7 +99,10 @@
   // next byte is rendered. One of these lives inside every shell session for
   // as long as that session does - see Instance's shell.sessions.
   function newShellTerm() {
-    return { lines: [], cur: [], curCls: '', bold: false, fg: null, altScreen: false, pending: '' };
+    return {
+      lines: [], cur: [], curCls: '', bold: false, fg: null, altScreen: false, pending: '',
+      dropped: 0 // lines ever evicted by SHELL_LINE_CAP, so a renderer can keep its own count in step
+    };
   }
 
   // Finds one complete escape sequence starting at text[i] (text[i] is
@@ -178,7 +181,7 @@
     if (term.altScreen) return;
     term.lines.push(term.cur);
     term.cur = [];
-    if (term.lines.length > SHELL_LINE_CAP) term.lines.shift();
+    if (term.lines.length > SHELL_LINE_CAP) { term.lines.shift(); term.dropped++; }
   }
 
   function shellBackspace(term) {
@@ -526,6 +529,8 @@
       showTs:   true,
       wrap:     true,
       capped:   false,  // true once LOG_CAP has been hit, so the notice is said once
+      dropped:  0,      // total lines ever evicted by the LOG_CAP shift
+      domDropped: 0,    // how much of `dropped` the DOM has already trimmed for — see appendNewLines()
       pollTimer: null,
       pollSeq:  0,      // bumped on every start/stop; a stale reply checks this before landing
       downloadText: null
@@ -653,7 +658,10 @@
     // on its own. That is the behaviour anyone expects from a log view.
     function onScroll() {
       var el = els.logUI.linesEl;
-      var atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 6;
+      // 6px sat inside the rounding error of this pane's own line height at
+      // some browser zoom levels, so a genuinely-at-bottom scroll could read
+      // as "not at the bottom" and silently latch the pane into paused.
+      var atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
       setPaused(!atBottom);
     }
 
@@ -672,15 +680,25 @@
       var parsed = kind === 'note' ? { raw: raw, hidden: raw } : parseLine(raw);
       log.lines.push({ kind: kind, raw: parsed.raw, hidden: parsed.hidden });
       log.everArrived = true;
-      if (log.lines.length > LOG_CAP) {
-        log.lines.shift();
+      // The notice below is pinned at the front once said, so the cap allows
+      // one extra entry for it and evictions take the oldest real line rather
+      // than index 0 — written the obvious way, the very next line to arrive
+      // threw the notice away again.
+      var pinned = log.capped ? 1 : 0;
+      if (log.lines.length > LOG_CAP + pinned) {
+        log.lines.splice(pinned, 1);
+        log.dropped++;
         if (!log.capped) {
           log.capped = true;
-          log.lines.push({
+          // A header on what survived, not a live event that scrolls away.
+          // The full rebuild is what puts it there: the incremental appender
+          // only ever adds to the tail, and this fires once per follower.
+          log.lines.unshift({
             kind: 'note',
             raw: NOTE_PREFIX + 'older lines were dropped — only the most recent ' + LOG_CAP + ' are kept.',
             hidden: '…'
           });
+          renderLines();
         }
       }
     }
@@ -709,14 +727,29 @@
       var linesEl = els.logUI.linesEl;
       linesEl.innerHTML = '';
       log.lines.forEach(function (line) { linesEl.appendChild(makeLineEl(line)); });
+      log.domDropped = log.dropped; // the DOM now mirrors log.lines exactly, drops included
       updateEmptyState();
       if (!log.paused) scrollToBottom();
     }
 
-    function appendNewLines(fromIndex) {
+    // Appends only what changed. Trusts the DOM's own child count, not an
+    // index handed in by the caller: lines evicted by LOG_CAP since the last
+    // call have already vanished from log.lines, so the DOM's leading
+    // children for them are trimmed first, and only then is the true "how
+    // much is new" worked out from what is actually left on screen.
+    function appendNewLines() {
       if (!els.logUI) return;
       var linesEl = els.logUI.linesEl;
-      for (var i = fromIndex; i < log.lines.length; i++) linesEl.appendChild(makeLineEl(log.lines[i]));
+      var drop = log.dropped - (log.domDropped || 0);
+      var pinned = log.capped ? 1 : 0;   // the cap notice at the front stays where it is
+      for (var d = 0; d < drop; d++) {
+        var victim = linesEl.children[pinned];
+        if (!victim) break;
+        linesEl.removeChild(victim);
+      }
+      log.domDropped = log.dropped;
+      var have = linesEl.childElementCount;
+      log.lines.slice(have).forEach(function (line) { linesEl.appendChild(makeLineEl(line)); });
       updateEmptyState();
       if (!log.paused) scrollToBottom();
     }
@@ -768,6 +801,8 @@
       log.pending = '';
       log.everArrived = false;
       log.capped = false;
+      log.dropped = 0;
+      log.domDropped = 0;
       log.alive = false;
       log.error = '';
       renderLines();
@@ -827,9 +862,8 @@
       if (endsWithNl) { parts.pop(); log.pending = ''; }
       else { log.pending = parts.pop(); }
       if (!parts.length) return;
-      var startIdx = log.lines.length;
       parts.forEach(function (raw) { pushLine('log', raw); });
-      appendNewLines(startIdx);
+      appendNewLines();
     }
 
     // ---- controls: copy, download, StaXX's own notes --------------------
@@ -894,9 +928,8 @@
     }
 
     function noteLine(text) {
-      var startIdx = log.lines.length;
       pushLine('note', NOTE_PREFIX + text);
-      appendNewLines(startIdx);
+      appendNewLines();
     }
 
     // ---- D4: the shell -----------------------------------------------------
@@ -912,7 +945,11 @@
       warned:  null,   // null = not yet asked the server; true/false once known — see checkShellWarned()
       warning: false,  // an settings-save for SHELL_WARNED is in flight
       sessions: {},
-      active:   null   // the service whose session currently owns the screen and the poll loop
+      active:   null,  // the service whose session currently owns the screen and the poll loop
+      // Whether the pane should follow new output to the bottom. One flag
+      // for the whole pane, not per session, because the pane only ever
+      // shows one session at a time.
+      stick: true
     };
 
     function buildShellBody(bodyEl) {
@@ -960,6 +997,11 @@
       lines.title = 'Click here, then type — this is a real shell inside the container.';
       lines.addEventListener('keydown', shellKeydown);
       lines.addEventListener('paste', shellPaste);
+      // Same shape as the log pane's own onScroll — scrolling away from the
+      // bottom pauses following, and coming back to it resumes.
+      lines.addEventListener('scroll', function () {
+        shellState.stick = lines.scrollHeight - lines.scrollTop - lines.clientHeight < 24;
+      });
 
       screenWrap.appendChild(alt);
       screenWrap.appendChild(lines);
@@ -1030,7 +1072,8 @@
       if (shellState.sessions[service]) return;
       var sess = {
         id: null, offset: 0, pollTimer: null, pollSeq: 0,
-        opening: true, error: '', ended: false, term: newShellTerm(), rendered: 0
+        opening: true, error: '', ended: false, term: newShellTerm(), rendered: 0,
+        dropped: 0 // how much of term.dropped this session's DOM has already trimmed for
       };
       shellState.sessions[service] = sess;
       call('exec-open', { name: state.stack, service: service }).then(function (res) {
@@ -1078,7 +1121,13 @@
         if (res.ok) {
           if (res.text) feedShellTerm(live.term, res.text);
           if (typeof res.offset === 'number') live.offset = res.offset;
-          if (service === shellState.active) appendShellRender(service);
+          // Gated on there being new bytes: appendShellRender() ends by
+          // replacing the cursor element, which collapses any text selection
+          // touching the last line — an idle prompt must not do that once a
+          // second forever. The other redraw paths (session ended, a write
+          // error, entering the alt screen) all have their own call to
+          // fullShellRender()/appendShellRender() and are unaffected.
+          if (res.text && service === shellState.active) appendShellRender(service);
         }
         // alive:false means the session ended on its own — the container
         // stopped, or the shell process exited — so polling stops rather
@@ -1123,6 +1172,7 @@
     }
 
     function scrollShellBottom() {
+      if (!shellState.stick) return; // the reader has scrolled up on purpose — leave them where they are
       var el = els.shellUI.lines;
       el.scrollTop = el.scrollHeight;
     }
@@ -1138,9 +1188,13 @@
       shellPanel('screen');
       ui.alt.classList.add('staxx-manage-shell-alt--hidden');
       ui.lines.innerHTML = '';
-      if (sess.opening) { ui.lines.appendChild(shellNoteEl('Opening a shell…')); sess.rendered = 0; return; }
-      if (sess.error) { ui.lines.appendChild(shellNoteEl(sess.error)); sess.rendered = 0; return; }
-      if (sess.term.altScreen) { ui.alt.classList.remove('staxx-manage-shell-alt--hidden'); sess.rendered = sess.term.lines.length; return; }
+      if (sess.opening) { ui.lines.appendChild(shellNoteEl('Opening a shell…')); sess.rendered = 0; sess.dropped = sess.term.dropped; return; }
+      if (sess.error) { ui.lines.appendChild(shellNoteEl(sess.error)); sess.rendered = 0; sess.dropped = sess.term.dropped; return; }
+      if (sess.term.altScreen) {
+        ui.alt.classList.remove('staxx-manage-shell-alt--hidden');
+        sess.rendered = sess.term.lines.length; sess.dropped = sess.term.dropped;
+        return;
+      }
       sess.term.lines.forEach(function (line) { ui.lines.appendChild(shellLineEl(line)); });
       // No cursor line on a session that has ended — a blinking prompt that
       // takes no keystrokes is the thing that read as "dead with no way back".
@@ -1150,6 +1204,8 @@
         ui.lines.appendChild(shellCurEl(sess.term));
       }
       sess.rendered = sess.term.lines.length;
+      sess.dropped = sess.term.dropped;
+      shellState.stick = true; // a rebuild here means a tab/session switch — the reader wants the bottom
       scrollShellBottom();
     }
 
@@ -1167,6 +1223,17 @@
       if (!curEl || !curEl.classList || !curEl.classList.contains('staxx-manage-shell-cur')) {
         fullShellRender(service); return; // nothing rendered yet for this session — e.g. resuming after "All"
       }
+      // Lines evicted by SHELL_LINE_CAP since the last render are already
+      // gone from sess.term.lines — trim the same count of stale leading
+      // elements from the DOM (never the cursor line itself) and pull
+      // sess.rendered back in step, or the index below drifts and new
+      // output stops appearing once the cap is ever reached.
+      var dropNow = sess.term.dropped - (sess.dropped || 0);
+      for (var d = 0; d < dropNow && ui.lines.firstChild !== curEl; d++) {
+        ui.lines.removeChild(ui.lines.firstChild);
+      }
+      sess.rendered = Math.max(0, sess.rendered - dropNow);
+      sess.dropped = sess.term.dropped;
       for (var i = sess.rendered; i < sess.term.lines.length; i++) {
         ui.lines.insertBefore(shellLineEl(sess.term.lines[i]), curEl);
       }
@@ -1193,6 +1260,9 @@
       if (!sess || !sess.id || !text) return;
       sess.outbox = (sess.outbox || '') + text;
       flushShellOutbox(service);
+      // Typing or pasting means the reader is watching what they type —
+      // pull the pane back to the bottom even if they had scrolled away.
+      if (service === shellState.active) { shellState.stick = true; scrollShellBottom(); }
     }
 
     function flushShellOutbox(service) {

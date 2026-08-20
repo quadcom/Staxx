@@ -11241,9 +11241,16 @@
         entry.text  += part.text || '';
         entry.offset = part.offset;
 
+        // Reassigning the whole of the pane's text destroys and recreates its
+        // text node, which collapses any selection the reader has made inside
+        // it. A tick that brought no new output must therefore write nothing.
         if (entry.show) {
-          logBox.textContent = entry.text || 'Working…';
-          if (entry.atBottom) logBox.scrollTop = logBox.scrollHeight;
+          var want = entry.text || 'Working…';
+          if (want !== entry.shown) {
+            entry.shown = want;
+            logBox.textContent = want;
+            if (entry.atBottom) logBox.scrollTop = logBox.scrollHeight;
+          }
         }
 
         if (part.done) {
@@ -11276,6 +11283,7 @@
       atBottom: true,
       offset:   0,
       text:     '',
+      shown:    '',   // what the output pane already holds, so an idle tick can skip writing it
       done:     opts.done
     };
     if (opts.show) {
