@@ -1,9 +1,7 @@
 # PLAN_43 — autostart and start order
 
-**Status: BUILT 2026-08-19.** All five phases done and verified on the server. **One thing is still
-unverified and needs a person with a browser:** the drag itself — reordering a folder, a stack and a
-service, and confirming the order held and that Unraid's own Docker page agrees. Everything a test
-can reach is covered.
+**Status: COMPLETE 2026-08-19.** All five phases done and verified on the server, and the last
+outstanding item — the drag, which no test can reach — confirmed in a browser by Adrian.
 
 ## Context
 
@@ -175,8 +173,8 @@ Sonnet agents, one phase at a time, Opus reading each diff before the next start
 5. **Done.** `tests/server/autostart.php` and the doc updates.
 
 Everything above is verified on the server against real data, and the boot list there is still
-byte-identical to the copy taken before any of it was written. What is **not** verified is the drag
-itself, which needs a browser: see Verification.
+byte-identical to the copy taken before any of it was written. The drag itself, the one thing needing
+a browser, was confirmed by Adrian on 2026-08-19.
 
 ## Verification
 
