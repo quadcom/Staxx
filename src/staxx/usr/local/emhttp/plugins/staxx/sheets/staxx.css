@@ -6326,6 +6326,16 @@
   margin-top: 0;
 }
 
+/* Holds the collapse chevron and the heading together, so
+   justify-content: space-between above only ever splits this pair from the
+   "Select all"/note beside it, not the chevron from its own heading. */
+.staxx-import-grouptitle {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
 /* Scoped under .staxx-scaffold for the same specificity reason as
    .staxx-ca-group: Unraid's own sheet carries an element-plus-class rule
    for headings that otherwise wins over a bare class of ours. */
@@ -6341,6 +6351,17 @@
   color: var(--sm-muted);
   font-size: 1.3rem;
   font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+/* A collapsed group's own count of ticks still waiting inside it — a
+   selection may be folded away, but it must never be invisible. */
+.staxx-scaffold .staxx-import-groupticked {
+  margin-left: 0.6rem;
+  color: var(--sm-accent);
+  font-size: 1.3rem;
+  font-weight: 600;
   letter-spacing: normal;
   text-transform: none;
 }

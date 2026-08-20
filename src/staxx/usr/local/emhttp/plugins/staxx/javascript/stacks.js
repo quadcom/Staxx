@@ -7073,6 +7073,23 @@
   var importEntries = [];    // every entry from that reply, flattened in the order rendered — data-import-toggle below is a position in this array
   var importOpenIdx = {};    // which rows are expanded this open, keyed by that position
 
+  // The five buckets a row can land in. The three that need a decision
+  // render first, expanded; the two that do not ("Already imported" and
+  // "No container installed") are reference only, so they start collapsed
+  // every time the panel opens (decision 5 in the plan — browser memory,
+  // never sent to the server) and never offer a "Select all" (bulk-ticking
+  // a list that is folded away is exactly the mistake worth designing out).
+  var IMPORT_G_TEMPLATES = 0, IMPORT_G_PROJECTS = 1, IMPORT_G_LOOSE = 2,
+      IMPORT_G_DONE = 3, IMPORT_G_STALE = 4;
+  var IMPORT_GROUPS = [
+    { label: 'Unraid templates',                   selectAll: true,  note: '' },
+    { label: 'Compose Manager projects',           selectAll: true,  note: '' },
+    { label: 'Containers with nothing behind them', selectAll: false, note: 'Importing these is not built yet.' },
+    { label: 'Already imported',                   selectAll: false, note: '' },
+    { label: 'No container installed',              selectAll: false, note: '' }
+  ];
+  var importGroupCollapsed = {};  // groupIdx -> bool, this open only
+
   /* ---- Writing templates and projects in (PLAN_41 phase 2, PLAN_46 phase 3) ----
    *
    * Template rows and Compose Manager project rows are both selectable now —
@@ -7382,59 +7399,133 @@
            '</div>';
   }
 
-  // Three groups, each only written when it has something to show — same
+  // Five groups, each only written when it has something to show — same
   // rule caRenderAll() uses above. importEntries is rebuilt here rather than
   // kept from the fetch, because it has to hold exactly the entries in the
   // order they were rendered for the toggle handler's index to mean anything.
+  //
+  // Which bucket a row falls into can change between renders — switching the
+  // destination folder changes what importIsTaken() answers, so a template
+  // can move between "Unraid templates" and "Already imported" when the
+  // folder switch below repaints. That is the feature working, not a
+  // glitch: a name free at the top level need not be free inside a folder,
+  // and the other way round. Because a row's idx moves with it when that
+  // happens, whatever the previous render had open, ticked or marked written
+  // is carried forward by matching entries themselves, not their old idx,
+  // before the new idx are handed out.
   function importRenderAll() {
     var data = importData;
     if (!data) return;
 
-    // The third element marks a group that gets tick boxes. "Neither" stays
-    // a plain sentence — a container with no compose file and no template
-    // behind it has nothing StaXX could import.
-    var groups = [
-      ['Unraid templates', data.templates || [], true],
-      ['Compose Manager projects', data.projects || [], true],
-      ['Neither', data.loose || [], false]
-    ];
+    var prevEntries = importEntries, prevOpen = importOpenIdx,
+        prevWritten = importWrittenIdx, prevSelected = importSelected;
+    importOpenIdx = {};
+    importWrittenIdx = {};
+    importSelected = {};
+    function carryState(entry, idx) {
+      var was = prevEntries.indexOf(entry);
+      if (was < 0) return;
+      if (prevOpen[was])     importOpenIdx[idx] = true;
+      if (prevWritten[was])  importWrittenIdx[idx] = true;
+      if (prevSelected[was]) importSelected[idx] = true;
+    }
+
+    // Rows written earlier this session, by entry rather than by index: a row
+    // that has been written stays done however the destination folder is
+    // changed afterwards, which importRowHtml() below relies on too. Read off
+    // the previous render, because the bucketing loop runs before this
+    // render's indices exist — and without it a written row would be filed as
+    // still available while its own row still read "Now in StaXX".
+    var prevWrittenEntries = [];
+    for (var wk in prevWritten) {
+      if (prevWritten[wk]) prevWrittenEntries.push(prevEntries[Number(wk)]);
+    }
+
+    // Bucket every row, walking the three source lists in the order they
+    // arrived. Decision 1: "done" is tested before anything else, so a
+    // stale template that has also been imported counts as done and
+    // nowhere else — the same test importRowHtml() already runs to draw its
+    // own "Already in StaXX" flag, so the group and the flag can never
+    // disagree. Decision 2: only a template can be "stale" — a Compose
+    // Manager project or a bare container has no container record to be
+    // missing in the first place.
+    var buckets = [[], [], [], [], []];
+    var anyTickable = false;
+    (data.templates || []).concat(data.projects || [], data.loose || []).forEach(function (entry) {
+      var selectable = importEntrySelectable(entry);
+      var done = selectable
+        ? (prevWrittenEntries.indexOf(entry) >= 0 || importIsTaken(entry, importRowFolder(entry)))
+        : !!entry.taken;
+      if (done) { buckets[IMPORT_G_DONE].push(entry); return; }
+      if (selectable) anyTickable = true;
+      if (entry.source === 'template' && !entry.exists) { buckets[IMPORT_G_STALE].push(entry); return; }
+      if (entry.source === 'template') buckets[IMPORT_G_TEMPLATES].push(entry);
+      else if (entry.source === 'project') buckets[IMPORT_G_PROJECTS].push(entry);
+      else buckets[IMPORT_G_LOOSE].push(entry);
+    });
 
     importEntries = [];
     var blocks = [];
-    groups.forEach(function (g, groupIdx) {
-      var label = g[0], list = g[1], selectableGroup = g[2];
+    buckets.forEach(function (list, groupIdx) {
       if (!list.length) return;
+      var g = IMPORT_GROUPS[groupIdx];
+      var tickedInGroup = 0;
       var rowsHtml = list.map(function (entry) {
         var idx = importEntries.length;
+        carryState(entry, idx);
         importEntries.push(entry);
+        if (importSelected[idx]) tickedInGroup++;
         return importRowHtml(entry, idx, groupIdx);
       }).join('');
+
+      var collapsed = !!importGroupCollapsed[groupIdx];
+      var rowsId = 'staxx-import-rows-' + groupIdx;
+      var chevron = '<button type="button" class="staxx-chevron" data-import-collapse="' + groupIdx + '" ' +
+        'aria-expanded="' + (collapsed ? 'false' : 'true') + '" aria-controls="' + rowsId + '" ' +
+        'title="' + (collapsed ? 'Expand' : 'Collapse') + '">' +
+        '<i class="fa fa-chevron-' + (collapsed ? 'right' : 'down') + '"></i></button>';
+
+      // A selection must never be invisible — folded away is fine, unseen is
+      // not, so a collapsed group holding ticks says so right beside its count.
+      var tickedNote = (collapsed && tickedInGroup > 0)
+        ? ' <span class="staxx-import-groupticked">' + tickedInGroup + ' ticked</span>'
+        : '';
+
       // Each group's "Select all" only ever reaches its own rows —
       // data-import-allcheck carries the same groupIdx the rows above were
-      // stamped with, so two selectable groups never cross-select each other.
-      var extra = selectableGroup
+      // stamped with, so two selectable groups never cross-select each
+      // other. Neither collapsed group offers one, even "No container
+      // installed" whose rows can still be ticked one at a time.
+      var extra = g.selectAll
         ? '<label class="staxx-import-selectall">' +
             '<input type="checkbox" data-import-allcheck="' + groupIdx + '" ' +
-              'aria-label="' + esc('Select all ' + label.toLowerCase()) + '">' +
+              'aria-label="' + esc('Select all ' + g.label.toLowerCase()) + '">' +
             '<span>Select all</span>' +
           '</label>'
-        : '<span class="staxx-import-groupnote">Importing these is not built yet.</span>';
+        : (g.note ? '<span class="staxx-import-groupnote">' + esc(g.note) + '</span>' : '');
+
       blocks.push(
         '<div class="staxx-import-grouphead">' +
-          '<h4 class="staxx-import-group">' + label +
-          ' <span class="staxx-import-count">' + list.length + '</span></h4>' +
+          '<div class="staxx-import-grouptitle">' +
+            chevron +
+            '<h4 class="staxx-import-group">' + g.label +
+              ' <span class="staxx-import-count">' + list.length + '</span>' + tickedNote + '</h4>' +
+          '</div>' +
           extra +
         '</div>' +
-        '<div class="staxx-import-rows">' + rowsHtml + '</div>');
+        '<div class="staxx-import-rows" id="' + rowsId + '"' + (collapsed ? ' hidden' : '') + '>' + rowsHtml + '</div>');
     });
 
     importList.innerHTML = blocks.length
       ? blocks.join('')
       : '<p class="staxx-form-empty">Nothing was found to import.</p>';
 
-    // The destination controls only matter when there is at least one
-    // tickable row — no point asking where to put nothing.
-    importDest.hidden = !((data.templates && data.templates.length) || (data.projects && data.projects.length));
+    // The destination controls only matter when at least one row that
+    // rendered still has a tick box — a template with no container behind
+    // it can still be one, so this can't just read the templates/projects
+    // lists' lengths any more; an already-imported row never counts, since
+    // it never gets a tick box.
+    importDest.hidden = !anyTickable;
   }
 
   // A folder switch can turn an available row into a taken one — a name free
@@ -7587,6 +7678,10 @@
     importOpenIdx = {};
     importSelected = {};
     importWrittenIdx = {};
+    // Decision 5: the two reference groups always start folded, every open.
+    importGroupCollapsed = {};
+    importGroupCollapsed[IMPORT_G_DONE] = true;
+    importGroupCollapsed[IMPORT_G_STALE] = true;
     importRoot = '';
     importFolder = '';
     importList.innerHTML = '';
@@ -7616,6 +7711,42 @@
   // beside it fires no click here at all, since the box is a sibling of this
   // button rather than nested inside it.
   importList.addEventListener('click', function (event) {
+    // A group's own chevron — collapses or expands its row list. Browser
+    // memory only (decision 5): nothing is sent to the server, and it goes
+    // back to collapsed the next time the panel opens. Same vocabulary as
+    // the grid's own toggleFolder(): the .staxx-chevron class, the
+    // fa-chevron-right/down swap, aria-expanded — but not its
+    // applyVisibility() or its folder-collapse call, which are the grid's.
+    var collapseBtn = event.target.closest('[data-import-collapse]');
+    if (collapseBtn) {
+      var g = Number(collapseBtn.dataset.importCollapse);
+      var willOpen = collapseBtn.getAttribute('aria-expanded') !== 'true';
+      importGroupCollapsed[g] = !willOpen;
+      collapseBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      collapseBtn.querySelector('i').className = 'fa fa-chevron-' + (willOpen ? 'down' : 'right');
+      var rows = document.getElementById('staxx-import-rows-' + g);
+      if (rows) rows.hidden = !willOpen;
+      // The "N ticked" note only matters while the group is folded away, and
+      // it has to appear and vanish with the fold itself rather than wait for
+      // a repaint — folding a group with ticks in it and being told nothing
+      // is the exact case this note exists for.
+      var head = collapseBtn.closest('.staxx-import-grouphead');
+      var note = head.querySelector('.staxx-import-groupticked');
+      if (willOpen) {
+        if (note) note.remove();
+      } else if (!note) {
+        var ticked = rows
+          ? rows.querySelectorAll('[data-import-check]:checked').length : 0;
+        if (ticked) {
+          note = document.createElement('span');
+          note.className = 'staxx-import-groupticked';
+          note.textContent = ticked + ' ticked';
+          head.querySelector('.staxx-import-count').insertAdjacentElement('afterend', note);
+        }
+      }
+      return;
+    }
+
     var btn = event.target.closest('[data-import-toggle]');
     if (!btn) return;
 
@@ -7889,6 +8020,7 @@
     importOpenIdx = {};
     importSelected = {};
     importWrittenIdx = {};
+    importGroupCollapsed = {};
     importExisting = [];
     importRoot = '';
     importFolder = '';

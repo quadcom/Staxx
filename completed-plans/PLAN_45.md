@@ -1,12 +1,15 @@
 # PLAN_45 — image updates, a countdown, and one button to do the lot
 
-**Status: drafted 2026-08-19, awaiting approval.** Nothing here is built. Every decision in the table
-below is Adrian's answer to a direct question asked on 2026-08-19; nothing is inferred.
+**Status: BUILT 2026-08-20.** All eight phases shipped, each one deployed to the server and its
+refusals proved there rather than only read — `tests/server/updates.php` and
+`tests/server/updaterun.php` both pass. Every decision in the table below was Adrian's answer to a
+direct question asked on 2026-08-19; nothing is inferred.
 
-> **Its dependencies are now all built** — PLAN_41/42/43 and PLAN_44 (`completed-plans/`) have all
-> shipped, so nothing is holding this one up but approval. Worth knowing before it starts: PLAN_44
-> put the Manage tab in the editor and moved every running command's reporting into the row's own
-> state column, which is where a countdown pill would live too.
+> **What the phases actually landed as**, since the build order differed from the table at the
+> bottom: 1-3 as planned (detection, settings and schedule, the grid). Phases 4-8 landed together —
+> the queue, the countdown and every refusal around it, roll back and clean-up, Rebuild for a
+> locally built image, and notifications — because each needed the others' state to be worth
+> building. Read **Found while building** at the end first: it is where this plan was wrong.
 
 ## Context
 
@@ -356,3 +359,35 @@ and not *up to date*, and an unresolvable `FROM` refuses rather than guessing.
   least-recently-asked first, so each one resumes where the last stopped. Signed in, about a hundred
   an hour, the whole set fits in one nightly pass; this is the number that makes the sign-in
   non-optional rather than a nicety.
+
+### Phases 4-8, built 2026-08-20
+
+- **The plan's C2 was wrong about the timezone too, and this one nearly shipped silently.** Unraid's
+  web pages set the server's real timezone from `/etc/localtime` before any plugin code runs, but a
+  cron pass is plain CLI, where PHP falls back to UTC. So the quiet window — the one setting whose
+  value only means anything locally — was read as 03:00 in Greenwich, four hours out on this box.
+  `UpdateRun.php` now reads the same source Unraid reads, so both paths agree. Nothing else in the
+  plugin cared, because nothing else compares a stored clock time against now.
+- **`docker ps -a --format '{{.Image}}'` cannot tell you what is in use.** It prints the reference a
+  container was started with, normally `repo:tag`, so looking that up as `repo@digest` or as an image
+  id never matches and the clean-up pass's in-use guard was doing nothing at all. It asks for the
+  image **id** now and compares on the leading twelve characters, since `image ls` prints the short
+  form and `ps` may print the long one. A function that deletes images has to fail closed: anything
+  it cannot positively account for is kept.
+- **Roll back does not need to touch the compose file, and must not.** Re-pointing the tag at the
+  kept digest and running the existing recreate verb does the whole job — no new job verb, no write
+  to a hand-authored file. It also records the version it backed out of as that image's skip
+  fingerprint, or the clock would reinstall the very update just undone.
+- **A finished job whose log has been pruned is not a failed update.** The job reader reports
+  `done` with a null exit code for both a missing log and a malformed id, and reading that as failure
+  would blame the queue for its own housekeeping. It says what actually happened instead.
+- **Phase 7 was dead code until wired to the check pass.** `staxx_rebuild_due()` asks a registry, so
+  it can never run while a page is being drawn; it runs in the check pass, for exactly those services
+  whose image has no local digest, and stores its answer in the state file for the row to read. The
+  same rule as everything else here: the page reads, the pass asks.
+- **A rate-limited box makes registry-dependent tests flap.** A probe can succeed and the very next
+  request be refused, so guarding a case on a probe taken moments earlier proves nothing. The two
+  rebuild cases are gated on the reason *their own* call handed back.
+- **Nested `x-unraid` needed the reader widened by one level**, as this plan predicted, and
+  `STAXX_META_VERSION` bumped with it — every stack already cached on disk would otherwise have kept
+  answering without the new keys until its file happened to change.
