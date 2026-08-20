@@ -749,6 +749,38 @@
     return '';
   }
 
+  /* Asks for a name and creates the folder.
+   *
+   * The naming box is always the toolbar's own New folder button, wherever the
+   * asking was started from. It is the one place on the page that already
+   * means "name a new folder", and a stack's context menu cannot hold the box
+   * itself: closing the menu empties it out, and an item's own click closes
+   * the menu before its handler runs.
+   *
+   * `then(id)` is for a caller with something to do with the new folder — a
+   * stack's menu files that stack into it. Without one this is exactly what
+   * the toolbar button has always done.
+   */
+  function askNewFolder(then) {
+    var host = document.getElementById('staxx-add-folder');
+    if (!host) return;
+
+    inlineName(host, '', {
+      placeholder: 'Media',
+      say: function (message) { failed('Could not create the folder', message); },
+      save: function (value) {
+        var why = badFolderName(value);
+        if (why) return why;
+
+        call('folder-create', { folderName: value }).then(function (r) {
+          if (!r.ok) { failed('Could not create the folder', r.error); return; }
+          if (then) then(r.id || value, value);
+          else refreshRows();
+        });
+      }
+    });
+  }
+
   /* ------------------------------------------------------------- editor -- */
 
   /* The editor is a <dialog> opened with showModal(), which is doing more work
@@ -14190,24 +14222,41 @@
 
     if (hasFile) menuItem('Edit compose file', 'pencil', function () { editStack(name, label); });
 
-    if (FOLDERS.length) {
-      menuSeparator('Move to folder');
-      FOLDERS.forEach(function (f) {
-        menuItem(f.name, f.id === inFolder ? 'check-square-o' : 'folder-o', function () {
-          call('folder-assign', { name: name, folder: f.id }).then(function (r) {
-            if (!r.ok) { failed('Could not move ' + label, r.error); return; }
-            refreshRows();
-          });
-        }, { disabled: f.id === inFolder });
-      });
-      if (inFolder) {
-        menuItem('Remove from folder', 'level-up', function () {
-          call('folder-assign', { name: name, folder: '' }).then(function (r) {
-            if (!r.ok) { failed('Could not move ' + label, r.error); return; }
-            refreshRows();
-          });
+    // The section shows even with no folders yet — "New folder" is what it is
+    // for at that point, and it was the one moment it used to be missing.
+    menuSeparator('Move to folder');
+    FOLDERS.forEach(function (f) {
+      menuItem(f.name, f.id === inFolder ? 'check-square-o' : 'folder-o', function () {
+        call('folder-assign', { name: name, folder: f.id }).then(function (r) {
+          if (!r.ok) { failed('Could not move ' + label, r.error); return; }
+          refreshRows();
         });
-      }
+      }, { disabled: f.id === inFolder });
+    });
+
+    // Creating a folder and filing this stack into it as one gesture, which is
+    // the whole reason for asking from here rather than pressing New folder on
+    // the toolbar and then coming back to move the stack.
+    menuItem('New folder…', 'plus', function () {
+      askNewFolder(function (id, shown) {
+        // Redrawn either way: the folder exists from here on, so it belongs on
+        // the page whether or not the stack made it inside.
+        call('folder-assign', { name: name, folder: id }).then(function (r) {
+          if (!r.ok) {
+            failed('"' + shown + '" was created, but ' + label + ' could not be moved into it', r.error);
+          }
+          refreshRows();
+        });
+      });
+    });
+
+    if (inFolder) {
+      menuItem('Remove from folder', 'level-up', function () {
+        call('folder-assign', { name: name, folder: '' }).then(function (r) {
+          if (!r.ok) { failed('Could not move ' + label, r.error); return; }
+          refreshRows();
+        });
+      });
     }
 
     menuSeparator();
@@ -15050,22 +15099,10 @@
     applyVisibility();
   }
 
+  // Shares askNewFolder() with the New folder item on a stack's own menu — see
+  // there for why the naming box is always this button's.
   var addFolderBtn = document.getElementById('staxx-add-folder');
-  addFolderBtn.addEventListener('click', function () {
-    inlineName(addFolderBtn, '', {
-      placeholder: 'Media',
-      say: function (message) { failed('Could not create the folder', message); },
-      save: function (value) {
-        var why = badFolderName(value);
-        if (why) return why;
-
-        call('folder-create', { folderName: value }).then(function (r) {
-          if (!r.ok) { failed('Could not create the folder', r.error); return; }
-          refreshRows();
-        });
-      }
-    });
-  });
+  addFolderBtn.addEventListener('click', function () { askNewFolder(); });
 
   /* -------------------------------------------------------------- wiring -- */
 
