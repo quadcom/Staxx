@@ -4392,15 +4392,25 @@ function staxx_exec_start(string $stack, string $service, string &$error): strin
   // timestamp rather than reading as stale.
   @file_put_contents($hb, (string)time());
 
-  // Root inside the container, with a fallback shell for an image that has
-  // no bash: `|| exec sh` only runs if bash is not on the PATH. If neither
-  // exists, docker exec itself fails and its own error text lands in $out —
-  // staxx_exec_read() then reports alive:false with that text already in
-  // it, which is the honest answer for an image with no shell at all, not
-  // an empty session that looks broken.
+  // Root inside the container, falling back to sh for an image with no bash.
+  //
+  // Written `exec bash || exec sh` this never fell back and every bash-less
+  // image — which is most Alpine ones — got a session that died the instant
+  // it started, showing "bash: not found" and then refusing every keystroke
+  // as a session that had ended. A failed `exec` TERMINATES a
+  // non-interactive shell, so the `||` branch is unreachable; measured on
+  // the server, `sh -c 'exec nosuchcmd || exec echo ran'` prints the error
+  // and exits 127 without ever running the echo. Asking first, with
+  // `command -v`, is what makes the choice instead of hoping a failure is
+  // recoverable.
+  //
+  // If neither shell exists, docker exec itself fails and its own error text
+  // lands in $out — staxx_exec_read() then reports alive:false with that
+  // text already in it, which is the honest answer for an image with no
+  // shell at all, not an empty session that looks broken.
   $execCmd = escapeshellarg(staxx_docker_bin())
            . ' exec -u 0 -it '.escapeshellarg($container)
-           . ' sh -c '.escapeshellarg('exec bash || exec sh');
+           . ' sh -c '.escapeshellarg('command -v bash >/dev/null 2>&1 && exec bash; exec sh');
 
   // `echo $$` runs in the outer shell before anything else, capturing the
   // session leader's own pid — and because setsid below makes this shell the
@@ -4629,6 +4639,27 @@ function staxx_cfile_rm_cmd(string $container, string $path, bool $recurse): str
   // stat call first to tell a file from a folder, rm already knows how.
   return escapeshellarg(staxx_docker_bin()).' exec '.escapeshellarg($container)
        . ' rm '.($recurse ? '-rf' : '-f').' -- '.escapeshellarg($path);
+}
+
+/**
+ * Ownership, always recursive. On a single file -R means nothing; on a folder
+ * it is what "fix the ownership" asks for, so there is no flag to get wrong.
+ * The owner is validated as digits by staxx_cfile_chown() before it reaches
+ * here, and escaped on top of that.
+ */
+function staxx_cfile_chown_cmd(string $container, string $owner, string $path): string {
+  return escapeshellarg(staxx_docker_bin()).' exec '.escapeshellarg($container)
+       . ' chown -R '.escapeshellarg($owner).' -- '.escapeshellarg($path);
+}
+
+/**
+ * Permissions, recursive for the same reason ownership is. The mode is
+ * validated as three or four octal digits by staxx_cfile_chmod() before it
+ * reaches here, and escaped on top of that.
+ */
+function staxx_cfile_chmod_cmd(string $container, string $mode, string $path): string {
+  return escapeshellarg(staxx_docker_bin()).' exec '.escapeshellarg($container)
+       . ' chmod -R '.escapeshellarg($mode).' -- '.escapeshellarg($path);
 }
 
 function staxx_cfile_mkdir_cmd(string $container, string $path): string {
@@ -4879,6 +4910,86 @@ function staxx_cfile_delete(string $stack, string $service, string $path, bool $
   $out  = staxx_sh(staxx_cfile_rm_cmd($container, $path, $recurse), 15, $code);
   if ($code !== 0) {
     $error = trim($out) !== '' ? trim($out) : 'Could not delete "'.$path.'".';
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Is this a usable owner? Numeric, "99" or "99:100".
+ *
+ * Split out from staxx_cfile_chown() so the endpoint can check the owner AND
+ * the permissions before running either command. Checked inside the change
+ * itself it was still a valid refusal, but a bad mode alongside a good owner
+ * had already changed the owner by the time it was reported — a refused
+ * action that changed something is worse than either outcome on its own.
+ */
+function staxx_cfile_valid_owner(string $owner): bool {
+  return (bool)preg_match('/^[0-9]+(:[0-9]+)?$/', $owner);
+}
+
+/** Is this a usable mode? Three or four octal digits. */
+function staxx_cfile_valid_mode(string $mode): bool {
+  return (bool)preg_match('/^[0-7]{3,4}$/', $mode);
+}
+
+/**
+ * Change who owns a path inside a running container, right through a folder.
+ *
+ * The owner must be numeric — "99" or "99:100". A name is refused rather than
+ * passed through, because the numbers are what the listing shows in the first
+ * place and a name that exists on the host need not exist inside the
+ * container, where the failure would read as a mystery. Numeric-only also
+ * means there is nothing in the value a shell could find interesting, which
+ * escapeshellarg then guarantees a second time.
+ */
+function staxx_cfile_chown(string $stack, string $service, string $path, string $owner, string &$error): bool {
+  $error = '';
+  if (!staxx_cfile_valid_path($path)) { $error = 'That is not a valid absolute path.'; return false; }
+  if ($path === '/') { $error = 'Refusing to change the owner of the container\'s whole filesystem.'; return false; }
+  if (!staxx_cfile_valid_owner($owner)) {
+    $error = 'The owner has to be a number, or a pair like 99:100 — not a name.';
+    return false;
+  }
+
+  $container = staxx_cfile_container($stack, $service, $error);
+  if ($container === '') return false;
+
+  $code = 1;
+  $out  = staxx_sh(staxx_cfile_chown_cmd($container, $owner, $path), 30, $code);
+  if ($code !== 0) {
+    $error = trim($out) !== '' ? trim($out) : 'Could not change the owner of "'.$path.'".';
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Change the permissions on a path inside a running container, right through
+ * a folder.
+ *
+ * Octal only — "755", or four digits with a leading special bit. A symbolic
+ * mode like "u+x" is refused rather than passed through: the listing shows
+ * permissions in neither notation, so accepting both would mean guessing
+ * which one somebody meant, and octal is the one that says exactly what the
+ * result will be.
+ */
+function staxx_cfile_chmod(string $stack, string $service, string $path, string $mode, string &$error): bool {
+  $error = '';
+  if (!staxx_cfile_valid_path($path)) { $error = 'That is not a valid absolute path.'; return false; }
+  if ($path === '/') { $error = 'Refusing to change the permissions of the container\'s whole filesystem.'; return false; }
+  if (!staxx_cfile_valid_mode($mode)) {
+    $error = 'Permissions have to be three or four digits from 0 to 7, like 755 — not u+x.';
+    return false;
+  }
+
+  $container = staxx_cfile_container($stack, $service, $error);
+  if ($container === '') return false;
+
+  $code = 1;
+  $out  = staxx_sh(staxx_cfile_chmod_cmd($container, $mode, $path), 30, $code);
+  if ($code !== 0) {
+    $error = trim($out) !== '' ? trim($out) : 'Could not change the permissions of "'.$path.'".';
     return false;
   }
   return true;

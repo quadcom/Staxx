@@ -477,6 +477,36 @@ switch ($action) {
     }
     staxx_reply(['ok' => true]);
 
+  /* Owner and permissions in one action, because the button that asks for
+   * them asks for both and either may be left alone. Two docker calls rather
+   * than one combined command: each helper stays one job, and a chmod that
+   * fails after a chown succeeded reports exactly that rather than hiding
+   * behind a single exit code. */
+  case 'cfile-chown':
+    $service = (string)($_POST['service'] ?? '');
+    $path    = (string)($_POST['path'] ?? '');
+    $owner   = (string)($_POST['owner'] ?? '');
+    $mode    = (string)($_POST['mode'] ?? '');
+    if ($owner === '' && $mode === '') {
+      staxx_reply(['ok' => false, 'error' => 'Nothing to change — give an owner, permissions, or both.']);
+    }
+    // Both answers are checked before either command runs. Left to the two
+    // helpers' own checks, a bad mode alongside a good owner reported a
+    // refusal that had already changed the owner.
+    if ($owner !== '' && !staxx_cfile_valid_owner($owner)) {
+      staxx_reply(['ok' => false, 'error' => 'The owner has to be a number, or a pair like 99:100 — not a name.']);
+    }
+    if ($mode !== '' && !staxx_cfile_valid_mode($mode)) {
+      staxx_reply(['ok' => false, 'error' => 'Permissions have to be three or four digits from 0 to 7, like 755 — not u+x.']);
+    }
+    if ($owner !== '' && !staxx_cfile_chown($name, $service, $path, $owner, $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    if ($mode !== '' && !staxx_cfile_chmod($name, $service, $path, $mode, $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
+
   case 'cfile-mkdir':
     $service = (string)($_POST['service'] ?? '');
     if (!staxx_cfile_mkdir($name, $service, (string)($_POST['path'] ?? ''), $error)) {

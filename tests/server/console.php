@@ -799,5 +799,76 @@ ok('cstat command puts the format flag before --',
 ok('cenv command names the container after exec',
    staxx_cenv_cmd('my-c') === $dq.' exec '.escapeshellarg('my-c').' env');
 
+/* ------------------------------------- PLAN_53: owner and permissions ---- */
+//
+// The validators matter more than the commands they guard. They are called
+// from the endpoint BEFORE either command runs, because checking inside each
+// change meant a bad mode alongside a good owner reported a refusal that had
+// already changed the owner.
+
+ok('chown command is recursive, with -- before the path',
+   staxx_cfile_chown_cmd('my-c', '99:100', '/app/data')
+     === $dq.' exec '.escapeshellarg('my-c').' chown -R '
+       . escapeshellarg('99:100').' -- '.escapeshellarg('/app/data'));
+
+ok('chmod command is recursive, with -- before the path',
+   staxx_cfile_chmod_cmd('my-c', '755', '/app/data')
+     === $dq.' exec '.escapeshellarg('my-c').' chmod -R '
+       . escapeshellarg('755').' -- '.escapeshellarg('/app/data'));
+
+ok('owner: a bare uid is accepted',        staxx_cfile_valid_owner('99'));
+ok('owner: a uid:gid pair is accepted',    staxx_cfile_valid_owner('99:100'));
+ok('owner: a name is refused',            !staxx_cfile_valid_owner('nobody'));
+ok('owner: a name pair is refused',       !staxx_cfile_valid_owner('nobody:users'));
+ok('owner: empty is refused',             !staxx_cfile_valid_owner(''));
+ok('owner: a trailing colon is refused',  !staxx_cfile_valid_owner('99:'));
+// Nothing a shell could find interesting ever reaches the command line, but
+// the refusal is what proves it rather than escapeshellarg alone.
+ok('owner: a shell metacharacter is refused', !staxx_cfile_valid_owner('99;id'));
+
+ok('mode: three digits accepted',          staxx_cfile_valid_mode('755'));
+ok('mode: four digits accepted',           staxx_cfile_valid_mode('2775'));
+ok('mode: symbolic is refused',           !staxx_cfile_valid_mode('u+x'));
+ok('mode: an eight is refused',           !staxx_cfile_valid_mode('758'));
+ok('mode: two digits refused',            !staxx_cfile_valid_mode('75'));
+ok('mode: five digits refused',           !staxx_cfile_valid_mode('07555'));
+ok('mode: empty is refused',              !staxx_cfile_valid_mode(''));
+
+// These pass a stack name that was never created, on purpose: every refusal
+// below lands on the path or the value, before the stack is looked at or a
+// container resolved, which is exactly what makes them safe to assert here —
+// after the scratch stacks above have been cleaned up, and without docker
+// being asked anything.
+$noStack = 'zz-p53-nosuchstack';
+
+// Both refuse the container's whole filesystem outright, the same way delete
+// already does — a recursive chown of / is not a thing to offer by accident.
+$err = '';
+ok('chown: the whole filesystem is refused',
+   !staxx_cfile_chown($noStack, 'a', '/', '99:100', $err)
+   && stripos($err, 'whole filesystem') !== false, $err);
+
+$err = '';
+ok('chmod: the whole filesystem is refused',
+   !staxx_cfile_chmod($noStack, 'a', '/', '755', $err)
+   && stripos($err, 'whole filesystem') !== false, $err);
+
+// A bad value is refused before the container is even resolved, so these
+// never reach docker.
+$err = '';
+ok('chown: a name is refused before anything runs',
+   !staxx_cfile_chown($noStack, 'a', '/app', 'nobody', $err)
+   && stripos($err, 'not a name') !== false, $err);
+
+$err = '';
+ok('chmod: a symbolic mode is refused before anything runs',
+   !staxx_cfile_chmod($noStack, 'a', '/app', 'u+x', $err)
+   && stripos($err, 'not u+x') !== false, $err);
+
+$err = '';
+ok('chown: a relative path is refused',
+   !staxx_cfile_chown($noStack, 'a', 'app/data', '99:100', $err)
+   && stripos($err, 'absolute path') !== false, $err);
+
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

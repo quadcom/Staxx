@@ -355,6 +355,7 @@
       els.files = files;
 
       buildButtons(mid);
+      buildHeadActions();
       updateNarrowPanes();
 
       // Repaints whatever the follower already holds onto the fresh DOM —
@@ -372,9 +373,16 @@
       var el = document.createElement('section');
       el.className = 'staxx-manage-pane staxx-manage-pane--' + key;
 
+      // The heading is a row, not a button. It used to BE the button, which
+      // left nowhere to put the pane's own action — a button inside a button
+      // is not markup a browser honours. The collapse toggle is the title
+      // alone now, so clicking an action beside it cannot fold the pane.
+      var head = document.createElement('div');
+      head.className = 'staxx-manage-pane-head';
+
       var h = document.createElement('button');
       h.type = 'button';
-      h.className = 'staxx-manage-pane-head';
+      h.className = 'staxx-manage-pane-title';
       h.textContent = title;
       h.setAttribute('aria-expanded', 'true');
       h.addEventListener('click', function () {
@@ -392,9 +400,18 @@
       body.innerHTML = '<p class="staxx-manage-placeholder">Not built yet — this is where the ' +
         title.toLowerCase() + ' will be.</p>';
 
-      el.appendChild(h);
+      // Where this pane's own button goes — see buildHeadActions(). Left
+      // empty for a pane with none, which keeps every heading the same shape.
+      var actions = document.createElement('div');
+      actions.className = 'staxx-manage-pane-actions';
+
+      head.appendChild(h);
+      head.appendChild(actions);
+      el.appendChild(head);
       el.appendChild(body);
-      return { el: el, head: h, body: body };
+      // `head` stays the title button rather than the row around it, because
+      // that is what carries aria-expanded and what revealPane() reaches for.
+      return { el: el, head: h, actions: actions, body: body };
     }
 
     // The handle between the shell and the file panes. It writes one custom
@@ -1017,7 +1034,7 @@
       if (shellState.sessions[service]) return;
       var sess = {
         id: null, offset: 0, pollTimer: null, pollSeq: 0,
-        opening: true, error: '', term: newShellTerm(), rendered: 0
+        opening: true, error: '', ended: false, term: newShellTerm(), rendered: 0
       };
       shellState.sessions[service] = sess;
       call('exec-open', { name: state.stack, service: service }).then(function (res) {
@@ -1034,7 +1051,6 @@
         sess.id = res.id;
         renderShellIfActive(service);
         resumeShellPoll(service);
-        flushPendingShellCommand(service); // PLAN_44 D6 — a job's command may have been waiting on this
       });
     }
 
@@ -1064,8 +1080,13 @@
         }
         // alive:false means the session ended on its own — the container
         // stopped, or the shell process exited — so polling stops rather
-        // than spinning against a session that will never answer again.
-        if (res.ok && res.alive !== false && service === shellState.active) {
+        // than spinning against a session that will never answer again. It is
+        // also recorded, because a pane that simply stops updating looks
+        // broken: the note below and the heading's Reconnect both read this.
+        if (res.ok && res.alive === false) {
+          live.ended = true;
+          if (service === shellState.active) { fullShellRender(service); renderJobsBar(); }
+        } else if (res.ok && service === shellState.active) {
           live.pollTimer = setTimeout(function () { pollShell(service, mySeq); }, POLL_MS);
         }
       });
@@ -1119,7 +1140,13 @@
       if (sess.error) { ui.lines.appendChild(shellNoteEl(sess.error)); sess.rendered = 0; return; }
       if (sess.term.altScreen) { ui.alt.classList.remove('staxx-manage-shell-alt--hidden'); sess.rendered = sess.term.lines.length; return; }
       sess.term.lines.forEach(function (line) { ui.lines.appendChild(shellLineEl(line)); });
-      ui.lines.appendChild(shellCurEl(sess.term));
+      // No cursor line on a session that has ended — a blinking prompt that
+      // takes no keystrokes is the thing that read as "dead with no way back".
+      if (sess.ended) {
+        ui.lines.appendChild(shellNoteEl('That session has ended. Press Reconnect above for a new one.'));
+      } else {
+        ui.lines.appendChild(shellCurEl(sess.term));
+      }
       sess.rendered = sess.term.lines.length;
       scrollShellBottom();
     }
@@ -1132,7 +1159,7 @@
       if (service !== shellState.active) return;
       var sess = shellState.sessions[service];
       var ui = els.shellUI;
-      if (!sess || sess.opening || sess.error) { fullShellRender(service); return; }
+      if (!sess || sess.opening || sess.error || sess.ended) { fullShellRender(service); return; }
       if (sess.term.altScreen) { fullShellRender(service); return; }
       var curEl = ui.lines.lastChild;
       if (!curEl || !curEl.classList || !curEl.classList.contains('staxx-manage-shell-cur')) {
@@ -1705,6 +1732,10 @@
         actTd.appendChild(openBtn);
         actTd.appendChild(dlBtn);
       }
+      var ownBtn = mkFileBtn('O/P', 'staxx-manage-files-owner');
+      ownBtn.title = 'Owner and permissions — change either or both, right through a folder.';
+      ownBtn.addEventListener('click', function () { ownPermEntry(service, path, entry); });
+      actTd.appendChild(ownBtn);
       var renBtn = mkFileBtn('Rename', 'staxx-manage-files-rename');
       renBtn.addEventListener('click', function () { renameEntry(service, sess.dir, entry); });
       var delBtn = mkFileBtn('Delete', 'staxx-manage-files-delete');
@@ -1847,6 +1878,57 @@
         });
     }
 
+    // Owner and permissions, asked for and then done — not prepared in a
+    // shell for someone to finish. Both are typed rather than guessed: the
+    // right numbers are whatever this particular image expects, and nothing
+    // in here can know them. The listing's own owner column is where to look.
+    //
+    // Two questions, each skippable by clearing the box, because wanting one
+    // without the other is the common case — a folder whose owner is right
+    // but which nothing can write to, or the reverse. 99:100 and 755 are
+    // offered as starting points, being Unraid's own nobody:users and the
+    // ordinary answer for a folder; the confirmation is what stops either
+    // becoming a careless Enter.
+    function ownPermEntry(service, path, entry) {
+      var sess = fileSession(service);
+      var owner = window.prompt('Who should own "' + entry.name + '"? A number, or a pair ' +
+        'like 99:100 — Unraid\'s own default. Leave it empty to keep the current owner.', '99:100');
+      if (owner === null) return;
+      owner = owner.trim();
+
+      var mode = window.prompt('What permissions for "' + entry.name + '"? Three or four ' +
+        'digits, like 755 for a folder or 644 for a file. Leave it empty to keep them as ' +
+        'they are.', entry.dir ? '755' : '644');
+      if (mode === null) return;
+      mode = mode.trim();
+
+      if (owner === '' && mode === '') return;
+
+      var what = [];
+      if (owner !== '') what.push('owner ' + owner);
+      if (mode !== '') what.push('permissions ' + mode);
+      var msg = 'Set ' + what.join(' and ') + ' on "' + entry.name + '"?' +
+        (entry.dir ? ' This reaches everything inside it.' : '');
+      // The client only ever knows the container side of a mount — the paths
+      // come from the compose file's own volume fields — so this can say the
+      // change leaves the container but not where it lands.
+      if (isMountPath(service, path)) {
+        msg += ' This comes from your server, so it changes those files on your server too, ' +
+               'not just inside the container.';
+      }
+      if (!window.confirm(msg)) return;
+
+      call('cfile-chown', { name: state.stack, service: service, path: path, owner: owner, mode: mode })
+        .then(function (res) {
+          if (!res.ok) {
+            sess.error = res.error || 'Could not change "' + entry.name + '".';
+            renderFileList(service);
+            return;
+          }
+          navigateTo(service, sess.dir);
+        });
+    }
+
     function uploadFile(service, file) {
       var sess = fileSession(service);
       if (sess.dir === null) return;
@@ -1938,32 +2020,37 @@
       status.appendChild(pill);
       status.appendChild(extra);
 
-      var jobs = document.createElement('div');
-      jobs.className = 'staxx-manage-jobs';
-
-      var cfgBtn = mkJobBtn('Config folder', 'staxx-manage-job-cfg');
-      cfgBtn.title = 'Point the Files pane at this container’s first mounted folder.';
-      cfgBtn.addEventListener('click', function () { openConfigFolder(state.selected); });
-
-      var envBtn = mkJobBtn('Show environment', 'staxx-manage-job-env');
-      envBtn.title = 'Runs "env" inside the container and prints the result into the log pane.';
-      envBtn.addEventListener('click', function () { showEnvironment(state.selected); });
-
-      var chownBtn = mkJobBtn('Fix ownership', 'staxx-manage-job-chown');
-      chownBtn.title = 'Prepares a chown command in the shell — it does not run it. Check the ' +
-        'owner this image actually expects before pressing Enter.';
-      chownBtn.addEventListener('click', function () { prepareChownCommand(state.selected); });
-
-      jobs.appendChild(cfgBtn);
-      jobs.appendChild(envBtn);
-      jobs.appendChild(chownBtn);
-
       wrap.appendChild(status);
-      wrap.appendChild(jobs);
 
       els.statusUI = { status: status, pill: pill, extra: extra };
-      els.jobsUI = { cfgBtn: cfgBtn, envBtn: envBtn, chownBtn: chownBtn };
       return wrap;
+    }
+
+    // Each button belongs in the heading of the pane it acts on. Grouped in a
+    // row of their own above all three they were buttons with no visible tie
+    // to what they changed, and the row moved across the window as buttons
+    // came and went — leaving one of them stranded alone on the left, greyed
+    // out, whenever the whole stack was selected.
+    //
+    // Runs after build() has made the panes, since it needs their headings.
+    function buildHeadActions() {
+      var envBtn = mkJobBtn('Show environment', 'staxx-manage-job-env');
+      envBtn.title = 'Runs "env" inside the container and prints the result into this pane.';
+      envBtn.addEventListener('click', function () { showEnvironment(state.selected); });
+      els.log.actions.appendChild(envBtn);
+
+      var reconnectBtn = mkJobBtn('Reconnect', 'staxx-manage-job-reconnect');
+      reconnectBtn.title = 'Start a new shell session in this container.';
+      reconnectBtn.addEventListener('click', function () { reconnectShell(state.selected); });
+      els.shell.actions.appendChild(reconnectBtn);
+
+      var cfgBtn = mkJobBtn('Config folder', 'staxx-manage-job-cfg');
+      cfgBtn.title = 'Point this pane at the container’s first mounted folder.';
+      cfgBtn.addEventListener('click', function () { openConfigFolder(state.selected); });
+      els.files.actions.appendChild(cfgBtn);
+
+      els.jobsUI = { cfgBtn: cfgBtn, envBtn: envBtn, reconnectBtn: reconnectBtn };
+      renderJobsBar();
     }
 
     // Called at the end of every render(), same place the other three panes'
@@ -2029,18 +2116,23 @@
       ui.extra.classList.toggle('staxx-manage-status-warn', !!(stat.restarts !== null && stat.restarts > 1));
     }
 
+    // "Leave it out rather than offering a button that cannot work" now
+    // applies to all three. Show environment used to be merely disabled for
+    // the whole-stack view, which is what left one greyed-out button sitting
+    // where the other two had been.
     function renderJobsBar() {
       var ui = els.jobsUI;
+      if (!ui) return;   // syncStatusLine() can reach here before buildHeadActions() has run
       var service = state.selected;
       var isAll = service === 'all' || !service;
       var mounts = isAll ? null : mountsFor(service);
+      var sess = isAll ? null : shellState.sessions[service];
 
-      // "Leave it out rather than offering a button that cannot work" — the
-      // plan's own rule for the config-folder job, applied to ownership too,
-      // since chowning a container with no mounts has nothing to act on.
       ui.cfgBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll || !mounts);
-      ui.chownBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll || !mounts);
-      ui.envBtn.disabled = isAll;
+      ui.envBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll);
+      // Only worth offering once there is something to reconnect from.
+      ui.reconnectBtn.classList.toggle('staxx-manage-jobbtn--hidden',
+        isAll || !sess || !(sess.ended || sess.error));
     }
 
     function openConfigFolder(service) {
@@ -2065,54 +2157,28 @@
       });
     }
 
-    // Text typed into a session before it has actually opened — the warning
-    // has not been accepted yet, or exec-open is still in flight — waiting
-    // here until ensureShellSession()'s own callback flushes it. Keyed by
-    // service, same as shellState.sessions, so a stack with more than one
-    // pending command never mixes them up.
-    var pendingShellCmd = {};
-
-    function flushPendingShellCommand(service) {
-      var cmd = pendingShellCmd[service];
-      var sess = shellState.sessions[service];
-      if (!cmd || !sess || !sess.id) return;
-      delete pendingShellCmd[service];
-      sendShellChunk(service, cmd);
-    }
-
-    // Builds a chown command and leaves it sitting, unsent, in the shell —
-    // never runs it. The right owner is whatever the image's own PUID/PGID
-    // (or similar) convention expects, which this file has no way to know,
-    // and guessing wrong on a recursive chown over someone's appdata folder
-    // is a worse mistake than making them type the owner in themselves.
-    function prepareChownCommand(service) {
+    // Throws away a finished session and opens another. The one-time shell
+    // warning is not asked again — it was accepted for this editor already,
+    // and a session ending is not a new decision to take.
+    //
+    // This replaced a "Fix ownership" button that typed a half-finished chown
+    // into the shell for someone to complete by hand. It put its own
+    // explanation into the LOG pane, being written through the log's note
+    // function, and it needed a working shell to show anything at all — so on
+    // a bash-less image it produced a log line about a command that was
+    // nowhere to be seen. The file listing's own Owner button does that job
+    // properly now.
+    function reconnectShell(service) {
       if (service === 'all' || !service) return;
-      var mounts = mountsFor(service);
-      if (!mounts) return;
-
-      var quoted = mounts.map(function (m) {
-        return "'" + m.replace(/'/g, "'\\''") + "'";
-      }).join(' ');
-      // "<uid>:<gid>", not "PUID:PGID". Both are blanks to fill in, but the
-      // second reads like a variable that might expand into something — and it
-      // does not, so running it as it stands gets "invalid user". A pair of
-      // angle brackets is unmistakably a gap. The numbers are not guessed
-      // because guessing them wrong on a recursive chown over somebody's
-      // appdata folder is worse than making them look them up: the note below
-      // says where they are, which is the same image environment the button
-      // beside this one prints.
-      var cmd = 'chown -R <uid>:<gid> -- ' + quoted;
-
-      revealPane('shell');
-      noteLine('Ready to run once you fill in the owner. "Show environment" lists ' +
-               'this image\'s own PUID and PGID, which are usually the numbers it wants.');
-      pendingShellCmd[service] = cmd;
-      // Drives the shell's own warning/open flow exactly as switching to its
-      // tab would — see syncShellPane(). flushPendingShellCommand() is also
-      // called from ensureShellSession()'s own callback, for the case where
-      // the session was still opening when this ran.
+      var sess = shellState.sessions[service];
+      if (sess && sess.id) call('exec-close', { id: sess.id });
+      pauseShellPoll();
+      delete shellState.sessions[service];
+      // syncShellPane() returns early while this still names the service, so
+      // clearing it is what makes the next render open a session instead of
+      // deciding one is already showing.
+      shellState.active = null;
       render();
-      flushPendingShellCommand(service);
     }
 
     // ---- D7: narrow screens -------------------------------------------------
@@ -2410,12 +2476,10 @@
         // it while All is selected, without overwriting it.
         state.scope = 'container';
         // A different stack means an entirely different set of restart
-        // counts and health checks, and no command was ever left waiting in
-        // a shell that no longer exists.
+        // counts and health checks.
         state.narrowPane = 'log';
         stat.service = null; stat.loading = false; stat.error = '';
         stat.restarts = null; stat.health = null;
-        pendingShellCmd = {};
         render();
       },
       setSnapshot: function (snapshot) {

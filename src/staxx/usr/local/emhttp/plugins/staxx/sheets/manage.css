@@ -147,12 +147,9 @@
   font-weight: 600;
 }
 
-.staxx-manage-jobs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
+/* Kept as the style for a pane heading's own button — see the heading rules
+   further down. The row this used to sit in above all three panes is gone:
+   grouped there, a button had no visible tie to the pane it changed. */
 .staxx-scaffold .staxx-manage-jobbtn {
   padding: 0.3rem 0.6rem;
   border: 1px solid var(--sm-line);
@@ -299,12 +296,34 @@
   display: none;
 }
 
-.staxx-scaffold .staxx-manage-pane-head {
-  text-align: left;
-  padding: 0.4rem 0.6rem;
+/* A row, not a button: the title collapses the pane, and the pane's own
+   action sits at the far end of the same line. Written as a plain class and
+   not `.staxx-scaffold ...` because this is a div now — the scaffold prefix
+   above exists only to outrank Unraid's own rule on <button>. */
+.staxx-manage-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem;
   background-color: var(--sm-fill-0, var(--sm-fill));
   border-bottom: 1px solid var(--sm-line);
+}
+
+.staxx-scaffold .staxx-manage-pane-title {
+  flex: 1 1 auto;
+  text-align: left;
+  padding: 0.1rem 0;
+  color: inherit;
   font-weight: 600;
+}
+
+.staxx-manage-pane-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
 }
 
 .staxx-manage-pane--collapsed .staxx-manage-pane-head {
