@@ -5,14 +5,21 @@
  * can be known: a live container's driver, a live container's mode, the
  * file's own network_mode, or none of the above.
  *
+ * Also staxx_webui_for() and staxx_webui_try() — resolving one service's
+ * address the same way "Test web page" does, and trying it over the network.
+ * staxx_webui_for() reads the real stack root, so its cases here are kept to
+ * refusals, which are what matter and what can be asserted safely on a live
+ * server. staxx_webui_try() is asserted properly: it never touches disk.
+ *
  * Runs ON THE SERVER — there is no PHP on the dev machine:
  *
  *     pscp tests/server/webui.php root@<box>:/tmp/
  *     plink … "php /tmp/webui.php"
  *
- * Prints one line per case and exits non-zero on any failure. Both functions
- * are pure, so every case here builds a $service array by hand — nothing is
- * written to disk, nothing calls Docker, and no real stack is touched. */
+ * Prints one line per case and exits non-zero on any failure. Most cases
+ * build a $service array by hand and touch neither disk nor Docker; the
+ * staxx_webui_for() refusals and the closing "for reading" listing are the
+ * exceptions, and neither writes anything or makes an outbound request. */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
@@ -160,6 +167,45 @@ ok('an unknown live mode reads as bridge, never as other',
 
 ok('an unrecognised live driver reads as bridge',
    staxx_service_net_kind(svc('', '', [], ''), '', 'overlay') === 'bridge');
+
+/* ------------------------------------------------------ staxx_webui_for() -- */
+
+$err = '';
+ok('a stack that does not exist is refused',
+   staxx_webui_for('zzt1nosuchstack', 'web', $err) === '' && $err !== '', $err);
+
+$stacks = staxx_list_stacks();
+if (!$stacks) {
+  echo "       (no stacks on this server — skipping the real-stack staxx_webui_for() case)\n";
+} else {
+  $one = $stacks[0];
+  $err = '';
+  ok('a service the compose file does not declare is refused',
+     staxx_webui_for($one['name'], 'zzt1nosuchservice', $err) === '' && $err !== '', $err);
+}
+
+/* ------------------------------------------------------ staxx_webui_try() -- */
+
+ok('a non-http string is refused without running anything',
+   staxx_webui_try('not-a-url', $code) === false && $code === 0);
+
+$start = microtime(true);
+$tried = staxx_webui_try('http://127.0.0.1:1', $code);
+$ms    = round((microtime(true) - $start) * 1000);
+ok("nothing listening on that port => false, code 0, and it did not hang ({$ms}ms)",
+   $tried === false && $code === 0);
+
+/* ---------------------------------------- the route each service would take -- */
+
+echo "\n       staxx_webui_for(), for reading — no outbound requests made:\n";
+foreach ($stacks as $s) {
+  foreach ($s['services'] as $service) {
+    $err = '';
+    $url = staxx_webui_for($s['name'], $service, $err);
+    if ($url === '') continue;
+    printf("       %-30s %s\n", $s['name'].'/'.$service, $url);
+  }
+}
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

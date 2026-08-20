@@ -2386,12 +2386,56 @@
     return null;
   }
 
+  // The token inside a webui address's "[PORT:nnn]" marker, e.g. the "80" in
+  // "http://[IP]:[PORT:80]/". This is the SAME expression ca-convert.js's
+  // reorderPortsForWebUI() uses to read the same marker — kept identical by
+  // comment rather than shared code, since each file runs in its own IIFE
+  // scope. Returns '' rather than a number: PLAN_50's candidate list only
+  // ever compares this against other port keys as text.
+  function webuiPortToken(webui) {
+    var m = /\[PORT:([^\]]*)\]/i.exec(String(webui || ''));
+    return m ? m[1].trim() : '';
+  }
+
+  // PLAN_50: joins a list of exposed ports into a sentence fragment —
+  // "8080", "80 and 8443", "80, 8443 and 9000" — for the disagreement advice
+  // below. Only ever called with a non-empty list.
+  function joinPorts(list) {
+    if (list.length === 1) return list[0];
+    return list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1];
+  }
+
+  // PLAN_50: the +port button's suggestion for a one-sided (host/macvlan)
+  // service, tried in order — the number in the service's own web address,
+  // then a port the running container exposes, then today's 8080 counted up.
+  // A candidate is skipped if it is not a plain run of digits, or if the file
+  // already has a row for it. Never called for a bridge service, which keeps
+  // its unrelated 8080-counting-up untouched (see newEntry's port branch).
+  function suggestedPort(taken, webuiToken, exposed) {
+    var candidates = webuiToken ? [webuiToken] : [];
+    if (exposed) candidates = candidates.concat(exposed);
+    for (var i = 0; i < candidates.length; i++) {
+      var c = candidates[i];
+      if (!/^[0-9]+$/.test(c)) continue;
+      if (taken.indexOf(portKey(c)) < 0) return c;
+    }
+    var n = 8080;
+    while (taken.indexOf(portKey(n)) >= 0) n++;
+    return String(n);
+  }
+
   // netDrivers: name -> driver for this server's own docker networks, from
   // stacks.js's netDrivers() — null/omitted means "not answered yet", which
   // this treats exactly like "no networks", so every one of the ~25 existing
   // callers (and tests/yaml_roundtrip.js) that omit it keep seeing bridge
   // everywhere, unchanged.
-  function buildForm(doc, netDrivers) {
+  //
+  // exposedByService (PLAN_50): service name -> array of bare container-side
+  // port numbers the running container publishes, from stacks.js's own copy
+  // of the last state reply. Optional and defaults to nothing, so every
+  // existing caller keeps seeing an empty list here — same convention as
+  // netDrivers above.
+  function buildForm(doc, netDrivers, exposedByService) {
     // `declared` is seeded here rather than where it is filled in, because both
     // early returns below happen first — a caller reading declared.networks on
     // an unreadable file must find an empty list, not undefined.
@@ -2481,6 +2525,11 @@
         overview: mx.overview || '',
         icon: mx.icon || '',
         webui: mx.webui || '',
+        // PLAN_50: what the running container exposes, keyed by this same
+        // service name in stacks.js's copy of the last state reply — empty
+        // for a stack that has never run. Read by newEntry()'s port branch
+        // and by the disagreement advice just below in this function.
+        exposed: (exposedByService && exposedByService[name]) || [],
         display: mx.display === 'advanced' ? 'advanced' : 'basic',
         range: { start: p.leadStart, end: p.end },
         shared: shared,
@@ -2599,6 +2648,27 @@
         pf.advice.push(pf.netKind === 'host'
           ? 'This container shares the server\'s network, so the port inside the container is the port on the server.'
           : 'This container has its own address, so only the port inside the container matters.');
+      }
+
+      // PLAN_50: say when the web address and the running container name
+      // different ports — silence when they agree, and silence when either
+      // side has nothing to say, since a note that fires every time stops
+      // being read.
+      //
+      // Silent too once this row already holds what the web address says: the
+      // choice has been made and matches the likelier source, so repeating the
+      // warning is nagging about something already settled.
+      var pfSvc = null;
+      for (var svi = 0; svi < out.services.length; svi++) {
+        if (out.services[svi].name === pf.service) { pfSvc = out.services[svi]; break; }
+      }
+      var pfAddrToken = pfSvc ? webuiPortToken(pfSvc.webui) : '';
+      var pfExposed = (pfSvc && pfSvc.exposed) || [];
+      if (pfAddrToken && /^[0-9]+$/.test(pfAddrToken) && pfExposed.length &&
+          pfExposed.indexOf(pfAddrToken) < 0 && pfContainer !== pfAddrToken) {
+        pf.advice.push('The web address in this file says port ' + pfAddrToken + '. The container ' +
+          'declares ' + joinPorts(pfExposed) + '. Only one of them can be right, so check which one ' +
+          'the application is actually listening on.');
       }
     }
 
@@ -3072,23 +3142,27 @@
   // produce a path to hardware that does not exist. Whether it duplicates
   // something already in the file is the caller's question, since only the
   // caller knows what to say about it.
-  function newEntry(binder, taken, service, shape, value, listKey, declared, netKind) {
+  function newEntry(binder, taken, service, shape, value, listKey, declared, netKind, webui, exposed) {
     if (typeof value === 'string' && value !== '') return value;
 
     if (binder === 'port') {
-      var n = 8080;
-      while (taken.indexOf(n + '/tcp') >= 0) n++;
       // Always quoted. Unquoted, YAML 1.1 reads 22:22 as a sexagesimal number
       // and compose is handed 1342 — the classic way a hand-written compose
       // file goes wrong, and not one to reintroduce from this side.
       //
       // On a CONFIRMED host/macvlan/ipvlan service (PLAN_49) there is nowhere
       // for a mapping to go — nothing is mapped on those networks — so a
-      // single container-side number is written instead. Gated on a confirmed
-      // kind only: while the network list has not answered yet, every service
-      // reads as 'bridge' (see buildForm's post-pass) and this keeps writing
-      // today's two-sided shape.
-      if (netKind === 'host' || netKind === 'other') return '"' + n + '"';
+      // single container-side number is written instead, and PLAN_50 gives it
+      // a real candidate list (the file's own web address, then what the
+      // running container exposes) rather than always guessing 8080. Gated on
+      // a confirmed kind only: while the network list has not answered yet,
+      // every service reads as 'bridge' (see buildForm's post-pass) and this
+      // keeps writing today's two-sided shape, byte-for-byte unchanged.
+      if (netKind === 'host' || netKind === 'other') {
+        return '"' + suggestedPort(taken, webuiPortToken(webui), exposed) + '"';
+      }
+      var n = 8080;
+      while (taken.indexOf(n + '/tcp') >= 0) n++;
       return '"' + n + ':' + n + '"';
     }
     if (binder === 'volume') {
@@ -3181,9 +3255,14 @@
     // Read off the model rather than adding a new parameter to every DOM-side
     // caller — buildForm() already worked this out and stamped it on the
     // service (PLAN_49). Only newEntry()'s port branch looks at it.
-    var netKind = 'bridge';
+    var netKind = 'bridge', webui = '', exposed = [];
     for (var si = 0; si < form.services.length; si++) {
-      if (form.services[si].name === service) { netKind = form.services[si].netKind || 'bridge'; break; }
+      if (form.services[si].name === service) {
+        netKind = form.services[si].netKind || 'bridge';
+        webui = form.services[si].webui || '';
+        exposed = form.services[si].exposed || [];
+        break;
+      }
     }
 
     var taken = [], i;
@@ -3213,19 +3292,19 @@
         gap = pad(Math.max(1, last.contentCol - last.indent - 1));
       }
       splice(doc, v.end, 0,
-             [pad(v.indent) + '-' + gap + newEntry(binder, taken, service, 'seq', value, key, declared, netKind)]);
+             [pad(v.indent) + '-' + gap + newEntry(binder, taken, service, 'seq', value, key, declared, netKind, webui, exposed)]);
       return v.end;
     }
 
     if (v && v.kind === 'map') {
-      splice(doc, v.end, 0, [pad(v.indent) + newEntry(binder, taken, service, 'map', value, key, declared, netKind)]);
+      splice(doc, v.end, 0, [pad(v.indent) + newEntry(binder, taken, service, 'map', value, key, declared, netKind, webui, exposed)]);
       return v.end;
     }
 
     if (pair) {                       // "ports:" with nothing under it
       var at = pair.end;
       splice(doc, at, 0,
-             [pad(pair.indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared, netKind)]);
+             [pad(pair.indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared, netKind, webui, exposed)]);
       return at;
     }
 
@@ -3254,8 +3333,8 @@
 
     lines.push(pad(indent) + key + ':');
     lines.push(binder === 'env' || binder === 'label'
-      ? pad(indent + 2) + newEntry(binder, taken, service, 'map', value, key, declared, netKind)
-      : pad(indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared, netKind));
+      ? pad(indent + 2) + newEntry(binder, taken, service, 'map', value, key, declared, netKind, webui, exposed)
+      : pad(indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared, netKind, webui, exposed));
 
     splice(doc, to, 0, lines);
     return to + lines.length - 1;

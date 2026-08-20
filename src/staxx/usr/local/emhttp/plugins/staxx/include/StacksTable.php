@@ -1171,6 +1171,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
  * its compose file parses — only whether it is up, and what compose decided to
  * call the project.
  *
+ * `exposed` rides along per service so the compose form's port-row suggestion
+ * has a second source to fall back on while the editor is open — see
+ * staxx_container_net() for where that list comes from. If this snapshot is
+ * ever trimmed for speed, that suggestion quietly loses its second source.
+ *
  * @return array{stacks:array, folders:array}
  */
 function staxx_state_snapshot(): array {
@@ -1199,6 +1204,7 @@ function staxx_state_snapshot(): array {
         // file, so this travels with the state rather than being fixed at
         // render time.
         'address'   => staxx_address_html(staxx_container_net()[$c['id']]['addresses'] ?? []),
+        'exposed'   => staxx_container_net()[$c['id']]['exposed'] ?? [],
       ];
     }
 

@@ -1145,6 +1145,21 @@
   var MODEL = null;      // the last form that parsed
   var activeField = null;
 
+  // PLAN_50: what the most recent state poll said each stack's services
+  // expose, stack name -> { service name -> [bare port numbers as strings] }.
+  // Fed into YAML.buildForm() so the +port button's suggestion (and the
+  // disagreement note) can compare the web address against something real —
+  // see applyState() below, where a service missing here (never run) reads
+  // as an empty list rather than "not answered yet".
+  var lastExposed = {};
+
+  // The exposed-port map for whichever stack the editor has open, or {} if
+  // the state poll has not covered it (or has none to report). openedName is
+  // set by openEditor() and is '' for a brand-new stack, which never has one.
+  function exposedFor() {
+    return (openedName && lastExposed[openedName]) || {};
+  }
+
   // Whether the Stack section's <details> is open. renderForm() rebuilds the
   // whole form from scratch on every structural edit, so nothing the DOM
   // itself remembers survives an add, remove or undo — this is the session's
@@ -3265,7 +3280,7 @@
     if (!YAML) { formHost.innerHTML = '<p class="staxx-form-empty">The form view could not load.</p>'; return; }
 
     var doc  = YAML.parse(currentText());
-    var form = YAML.buildForm(doc, netDrivers());
+    var form = YAML.buildForm(doc, netDrivers(), exposedFor());
     form.doc = doc;
     MODEL = form;
 
@@ -3304,7 +3319,7 @@
 
   function refreshRanges() {
     var doc   = MODEL.doc;
-    var fresh = YAML.buildForm(doc, netDrivers());
+    var fresh = YAML.buildForm(doc, netDrivers(), exposedFor());
     fresh.doc = doc;
     MODEL = fresh;
 
@@ -4227,7 +4242,7 @@
     // the file — an empty section is nothing to write down.
     var gk = (f.binder === 'depends' || f.listKey === 'depends_on') ? 'depends'
            : f.listKey ? 'list:' + f.listKey : '';
-    if (SECTIONS_BY_KEY[gk] && fileFlagCounts(YAML.buildForm(MODEL.doc, netDrivers()), f.service)[gk] === 0) {
+    if (SECTIONS_BY_KEY[gk] && fileFlagCounts(YAML.buildForm(MODEL.doc, netDrivers(), exposedFor()), f.service)[gk] === 0) {
       (sectionOn[f.service] = sectionOn[f.service] || {})[gk] = true;
     }
     structuralEdit(-1, say);
@@ -8252,7 +8267,7 @@
    *
    * Only ever written into an empty note, never over the user's own words. */
   function devNameLine(line, label) {
-    var fresh = YAML.buildForm(MODEL.doc, netDrivers());
+    var fresh = YAML.buildForm(MODEL.doc, netDrivers(), exposedFor());
     var id    = YAML.fieldAtLine(fresh, line);
     if (!id) return;
 
@@ -8482,6 +8497,13 @@
     devLoad().catch(function () {});
     netLoad().catch(function () {});
     imgLoad().catch(function () {});
+    // And what each container currently exposes, which the port-row suggestion
+    // compares against the web address. Asked for here because nothing else
+    // asks on its own: the state refresh is driven by starting and stopping,
+    // never by a clock, so on a freshly loaded page there is no answer yet.
+    // One `compose ls` for the whole machine, and applyState() redraws the
+    // form once if it changes anything.
+    if (!isNew) refreshState();
     // A new stack has no folder on disk yet, so there is nothing to list —
     // draw the bare, uncloseable compose tab and stop there.
     if (isNew) renderTabs(); else filesLoad();
@@ -10997,6 +11019,17 @@
       var up    = 0;
       var known = s.containers || {};
 
+      // PLAN_50: taken from the reply, NOT from the rows below — a stack that
+      // has not been expanded has no container rows in the page at all, so
+      // reading them would leave the port-row suggestion with nothing for
+      // every stack the user had not already opened up. Rebuilt fresh each
+      // time rather than merged, so a service whose container was removed
+      // loses its stale list instead of keeping it forever.
+      var exposedThisStack = {};
+      Object.keys(known).forEach(function (svc) {
+        exposedThisStack[svc] = known[svc].exposed || [];
+      });
+
       kids.forEach(function (kid) {
         var c = known[kid.dataset.service];
 
@@ -11018,6 +11051,20 @@
         if (c.state === 'running') up++;
         paintState(kid, c.html, c.state === 'running', c.address);
       });
+      // Compared before storing, because the redraw below must happen when
+      // this list CHANGES and at no other time. A state poll lands every few
+      // seconds; rebuilding the form on each one would throw away the caret,
+      // the scroll position and any half-typed value, which is exactly the
+      // kind of redraw PLAN_48 went to some trouble to stop doing.
+      var exposedChanged = JSON.stringify(lastExposed[name] || {}) !== JSON.stringify(exposedThisStack);
+      lastExposed[name] = exposedThisStack;
+
+      // The list can land after the editor is already open — the first poll
+      // for a container that has only just started. Nothing else re-reads it,
+      // so redraw once when it arrives, and never while a field has focus:
+      // the next commit rebuilds the form anyway and will pick it up then.
+      if (exposedChanged && openedName === name && modal.open && MODEL
+          && !activeField && !commitTimer && !devPanel) reparse();
 
       var sub = row.querySelector('[data-cell="stack-sub"]');
       if (sub && kids.length) {
@@ -12503,6 +12550,27 @@
       // is worth explaining on its own, separately from the ordinary
       // "docker unavailable" hint above, which is why this checks !exists
       // specifically rather than reusing `why`.
+      hint: !exists ? 'This container has not been created yet' : ''
+    });
+
+    // PLAN_50. Same !exists judgement as Logs just above, not !up: a stopped
+    // container still has a compose file to resolve an address from, and the
+    // server's own refusal ("Start the container first.") says more than a
+    // greyed-out item would — so only "never created at all" is disabled here.
+    menuItem('Test web page', 'external-link', function () {
+      logPanel.hidden = false;
+      logTitle.textContent = 'Test web page';
+      logBox.textContent = 'Checking…';
+      logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      // 15s: comfortably above the server's own four-second attempt, so a
+      // slow reply still lands rather than reading as our own timeout.
+      call('webui-test', { name: stack, service: service }, 15000).then(function (r) {
+        // The server writes the sentence; this only ever displays it.
+        logBox.textContent = r.ok ? r.message : (r.error || 'That request returned nothing usable.');
+      });
+    }, {
+      disabled: !CAN_RUN || !exists,
       hint: !exists ? 'This container has not been created yet' : ''
     });
 

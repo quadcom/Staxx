@@ -1510,6 +1510,90 @@ function staxx_webui_url(
 }
 
 /**
+ * Resolve one running service's web address, exactly as its row's link does —
+ * so "Test web page" and the row button can never disagree about where a
+ * click would go.
+ *
+ * @param string $rel     stack path, e.g. "jellyfin" or "Media/jellyfin"
+ * @param string $service the compose service name
+ * @param string $error   set to a full-sentence refusal when '' comes back
+ */
+function staxx_webui_for(string $rel, string $service, string &$error): string {
+  if (!staxx_valid_path($rel)) {
+    $error = 'That stack name is not valid.';
+    return '';
+  }
+
+  $dir  = staxx_stack_dir($rel);
+  $file = staxx_find_compose_file($dir);
+  if ($file === '') {
+    $error = 'No compose file was found for that stack.';
+    return '';
+  }
+
+  $meta = staxx_compose_meta($file);
+  if (!isset($meta['services'][$service])) {
+    $error = 'That service is not declared in this stack\'s compose file.';
+    return '';
+  }
+
+  $s = [
+    'name' => $rel, 'file' => $file, 'leaf' => staxx_path_leaf($rel), 'project' => '',
+  ];
+  $container = null;
+  foreach (staxx_stack_containers($s) as $c) {
+    $matched = $c['service'] !== '' ? $c['service'] : $c['name'];
+    if ($matched === $service) { $container = $c; break; }
+  }
+
+  if ($container === null) {
+    $error = 'That service has no container yet — start it first.';
+    return '';
+  }
+  if ($container['state'] !== 'running') {
+    $error = 'That container is not running, so it has nothing to answer with.';
+    return '';
+  }
+
+  $net  = staxx_container_net()[$container['id']] ?? [];
+  $url  = staxx_webui_url(
+    $meta['services'][$service], staxx_host_ip(),
+    (string)($net['addresses'][0]['ip'] ?? ''), (string)($net['mode'] ?? ''), (string)($net['driver'] ?? '')
+  );
+
+  if ($url === '') {
+    $error = 'This file has no web address, or none it could work out a port for.';
+    return '';
+  }
+  return $url;
+}
+
+/**
+ * Ask whether a resolved web address answers at all, without following where
+ * it might redirect to — a redirect answering is itself proof something is
+ * there, and chasing it could send this server somewhere unintended.
+ *
+ * Modelled on staxx_hub_json(): curl's own --max-time is set below the
+ * staxx_sh() budget so curl reports the failure itself rather than being
+ * killed mid-flight.
+ *
+ * @param int|null $code set to the HTTP status curl reported, or 0 when
+ *                       nothing answered within the time limit
+ */
+function staxx_webui_try(string $url, ?int &$code = null): bool {
+  $code = 0;
+  // Belt and braces on top of staxx_webui_url()'s own guard — this is the
+  // function that hands the string to a shell.
+  if (!preg_match('~^https?://~i', $url)) return false;
+
+  $cmd = 'curl -s -o /dev/null -w \'%{http_code}\' --max-time 4 '.escapeshellarg($url);
+  $out = trim(staxx_sh($cmd, 7));
+
+  $code = ctype_digit($out) ? (int)$out : 0;
+  return $code >= 100;
+}
+
+/**
  * What kind of network each docker network is, by name.
  *
  * The distinction that matters is bridge or not. A bridge keeps its containers
@@ -1564,7 +1648,12 @@ function staxx_network_drivers(): array {
  * Reporting only the first would leave every br0.x container looking like it
  * has no way in, which is the opposite of the truth.
  *
- * @return array<string, array{mode:string, addresses:array<int,array{ip:string, ports:string[]}>}>
+ * `exposed` is kept for every container, not only ones with no published
+ * binding — the port-row suggestion in the compose form reads it (carried
+ * over on the state snapshot), so it has to survive even when a published
+ * binding already exists.
+ *
+ * @return array<string, array{mode:string, driver:string, exposed:string[], addresses:array<int,array{ip:string, ports:string[]}>}>
  */
 function staxx_container_net(): array {
   static $net = null;
@@ -1643,14 +1732,18 @@ function staxx_container_net(): array {
       $byIp[$ip][$port] = true;
     }
 
+    // Parsed once, used two ways: the fallback below (when nothing is
+    // published) and the per-container `exposed` list kept regardless.
+    $exposedPorts = [];
+    foreach (explode(',', $exposed) as $p) {
+      $p = trim($p);
+      if ($p === '') continue;
+      $exposedPorts[strtok($p, '/')] = true;      // "8083/tcp" -> "8083"
+    }
+
     // ---- or the container's own address ----
     if (!$byIp) {
-      $ports = [];
-      foreach (explode(',', $exposed) as $p) {
-        $p = trim($p);
-        if ($p === '') continue;
-        $ports[strtok($p, '/')] = true;      // "8083/tcp" -> "8083"
-      }
+      $ports = $exposedPorts;
 
       if ($mode === 'host') {
         if ($hostIp !== '') $byIp[$hostIp] = $ports;
@@ -1707,7 +1800,15 @@ function staxx_container_net(): array {
       return $rank($a) <=> $rank($b) ?: strcmp($a['label'], $b['label']);
     });
 
-    $net[$id] = ['mode' => $mode, 'driver' => $driver, 'addresses' => $addresses];
+    $exposedList = array_keys($exposedPorts);
+    sort($exposedList, SORT_NUMERIC);
+
+    $net[$id] = [
+      'mode'      => $mode,
+      'driver'    => $driver,
+      'exposed'   => array_map('strval', $exposedList),
+      'addresses' => $addresses,
+    ];
   }
 
   return $net;
