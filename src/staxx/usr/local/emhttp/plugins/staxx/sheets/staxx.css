@@ -520,9 +520,19 @@
    absolute offsets (both above, both anchored on the TILE, not this column)
    keep meaning what their own comments say regardless of how many chips a
    service happens to have. min-width grows to fit a pair of short labels
-   ("Repo", "CA") side by side rather than the one long "WebUI" column. */
+   ("Repo", "CA") side by side rather than the one long "WebUI" column.
+
+   Filled column by column rather than row by row, which is what puts WebUI
+   above Logs on the left and Repo above CA on their right. The markup order
+   is WebUI, Logs, Repo, CA — the order a screen reader should hear, the app
+   first and its two reference links last — and a grid's default row-major
+   fill would lay that out as WebUI beside Logs. Stating the rows and turning
+   the flow on its side gets the wanted layout without reordering the markup
+   against the reading order. */
 .staxx-rowactions--wide {
   grid-template-columns: repeat(2, minmax(3.2rem, 1fr));
+  grid-template-rows: repeat(2, auto);
+  grid-auto-flow: column;
   min-width: 7rem;
 }
 
