@@ -126,9 +126,11 @@ Docker takes a project's name from its folder, lowercased and stripped. So the i
 makes no difference. Two consequences worth stating plainly:
 
 - **A name already in use is refused**, as it is now. There is no renaming an import to fit.
-- **The row will show the stack as running before it has ever been started**, because the containers
-  carrying that project name are running. That is truthful, not a bug — but the review lock still
-  holds every run verb, so nothing can act on them until you have looked.
+- **The row shows it as stopped until it is taken over**, even though containers under that project
+  name are running. This plan originally said the opposite, and was wrong: a stack held for review
+  reports no state at all, deliberately, because a green row on an import nobody has checked invites
+  someone to act on it. Confirmed in the browser 2026-08-19 — the earlier decision stands and this
+  plan was corrected to match it.
 
 **Proven on the server, and the answer was "not quite".** Compose Manager does not let the folder
 decide — it lowercases the name and turns hyphens into underscores. StaXX keeps hyphens. So matching
@@ -314,13 +316,26 @@ that fills its values in from one could not be imported at all.
 
 ## What is left
 
-Nothing in this plan is unbuilt. What remains is **browser work, on a real server, by a human**:
+Nothing in this plan is unbuilt, and **the browser pass was done on 2026-08-19** against the real
+server. What it proved, in order:
 
-1. **One actual takeover, watched.** The bring-up itself is the only step no test here may run.
-2. Ticking a project in the import panel, the fixed destination name, and the preview's account of
-   what will and will not be copied.
-3. The override's own tab checking live as it is typed, Start's log naming both files, and a
-   single-file stack looking exactly as it did before any of this.
+1. **The panel.** All seven projects listed, six tickable, Wazuh refused with Docker's own complaint
+   quoted. Fixed destination names shown, with the reason spelled out where the name differs.
+2. **An import.** `Tesla_Tools` written in, arriving held for review; both files byte-identical to the
+   project on disk afterwards.
+3. **The pair, checked live.** Typing a bad line into the override produced *"cannot override
+   services.tesla_http_proxy.ports"* — a merge complaint, which can only come from checking the
+   override together with the main file. Nothing was saved; the files on disk stayed identical.
+4. **The drift mark.** Appeared on the row when the copy was deliberately changed, and cleared when
+   it was put back.
+5. **A real takeover**, on `supstack-dev`, whose two containers were running. The job's first line
+   was `compose -f docker-compose.yml -f docker-compose.override.yml up -d --remove-orphans` — both
+   files named, in a real run. Both containers came back up, still two of them and not four, the
+   review lock cleared on success, and the Compose Manager project was left exactly as it was.
+
+Two things found by looking rather than testing: the import preview called a file by Compose
+Manager's internal name for it, now fixed; and this plan's claim about a locked row showing as
+running was wrong, corrected above.
 
 Two things deliberately left out of scope, both recorded rather than forgotten: **containers
 belonging to neither source** remain reference-only, as PLAN_35 decided; and **drift from an Unraid
