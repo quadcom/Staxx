@@ -33,6 +33,21 @@ define('STAXX_JOB_END', '###staxx-finished###');
 // the same reasons as the job logs above. See staxx_compose_meta().
 define('STAXX_META_DIR', '/tmp/staxx/meta');
 
+// A log follower's own directory — separate from STAXX_JOB_DIR because a
+// follower's lifetime works differently: a job ends on its own and is only
+// ever pruned by age, while a follower is meant to keep running and has to be
+// reaped on a heartbeat instead. See staxx_log_start().
+define('STAXX_LOG_DIR', '/tmp/staxx/logs');
+
+// Same stale figure scripts/stats-collector.sh uses for the same reason: give
+// up on a follower once nobody has asked it for output in this many seconds.
+define('STAXX_LOG_STALE', 45);
+
+// Cap on what a single "download the whole log" reply carries — the browser
+// posts everything in one page load, so this is chosen to sit well under
+// PHP's post_max_size the same way STAXX_FILE_MAX does for a companion file.
+define('STAXX_LOG_DOWNLOAD_MAX', 2097152); // 2 MiB
+
 // Compose reads whichever of these it finds first, in this order.
 const STAXX_COMPOSE_FILENAMES = [
   'compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
@@ -3924,5 +3939,275 @@ function staxx_prune_jobs(): void {
   foreach ((array)@glob(STAXX_JOB_DIR.'/*.log') as $log) {
     if (@filemtime($log) < time() - 3600) @unlink($log);
   }
+}
+
+/* --------------------------------------------------------------- logs ----
+ *
+ * The log pane's server side: a detached `compose logs --follow` per
+ * container-or-whole-stack, the same detach-and-poll-by-offset shape as a
+ * job, but with a different lifetime. A job ends on its own; a follower does
+ * not, so something has to end it instead — the heartbeat rule
+ * scripts/stats-collector.sh already proved: the page touches a timestamp
+ * every time it asks for more output, and the follower is reaped once that
+ * goes stale. Close the tab and it stops on its own within STAXX_LOG_STALE
+ * seconds, without anybody having to remember to clean it up.
+ *
+ * Three files per follower id, all under STAXX_LOG_DIR:
+ *   <id>.log  the accumulated output, read by offset like a job's log
+ *   <id>.pid  the process group id of the detached `compose logs`, so it can
+ *             be found again and killed
+ *   <id>.hb   the epoch second of the last poll — the heartbeat itself
+ */
+
+/**
+ * Start a `compose logs --follow` for one stack, either scoped to a single
+ * service or, with $service === '', interleaved across the whole stack.
+ *
+ * `compose logs`, not `docker logs`: compose already prefixes each line with
+ * the service that said it, which is exactly what the *All* tab wants, and
+ * it means one code path for both cases — a single service is the same
+ * command with --no-log-prefix and the service named.
+ */
+function staxx_log_start(string $stack, string $service, string &$error): string {
+  $error = '';
+
+  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
+
+  // Checked before anything about the environment or the service, exactly as
+  // staxx_start_job() orders it: a locked stack is refused for the right
+  // reason even when compose or docker also happen to be unavailable.
+  if (staxx_review_locked($stack)) {
+    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
+           . STAXX_REVIEW_FILE . ', then choose "Mark as reviewed" before viewing its logs.';
+    return '';
+  }
+
+  $cmd = staxx_compose_cmd();
+  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
+  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
+
+  $dir  = staxx_stack_dir($stack);
+  $file = staxx_find_compose_file($dir);
+  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+  $files = staxx_compose_files($file);
+
+  $tail = 'logs --follow --tail 200 --timestamps';
+  if ($service !== '') {
+    // Membership against the compose file's own services, the same rule and
+    // the same reason staxx_start_job() checks a service name against —
+    // a regex on shape would accept a name this stack does not have.
+    // escapeshellarg() on top of that, belt and braces, same as there.
+    $services = staxx_compose_meta($file)['services'];
+    if (!isset($services[$service])) {
+      $error = 'No service called "'.$service.'" in this stack.';
+      return '';
+    }
+    $tail .= ' --no-log-prefix '.escapeshellarg($service);
+  }
+
+  // A crashed browser cannot leave a follower running forever: every action
+  // that touches a follower reaps stale ones first, this one included, so a
+  // stack of them cannot build up under someone who never closes a tab.
+  staxx_log_reap();
+
+  if (!is_dir(STAXX_LOG_DIR) && !@mkdir(STAXX_LOG_DIR, 0755, true)) {
+    $error = 'Could not create '.STAXX_LOG_DIR;
+    return '';
+  }
+
+  $id      = bin2hex(random_bytes(8));
+  $log     = STAXX_LOG_DIR.'/'.$id.'.log';
+  $pidfile = STAXX_LOG_DIR.'/'.$id.'.pid';
+  $hbfile  = STAXX_LOG_DIR.'/'.$id.'.hb';
+
+  // The heartbeat is written before the follower even starts, so a poll that
+  // lands in the gap between this call returning and the process actually
+  // existing still sees a fresh timestamp rather than reading as stale.
+  @file_put_contents($hbfile, (string)time());
+
+  // `echo $$` runs inside the detached shell BEFORE `exec` replaces it with
+  // compose, so it captures compose's own pid — and because setsid made this
+  // shell the leader of a new session, that pid is also the process group id
+  // the whole thing can later be killed by.
+  $inner = 'cd '.escapeshellarg($dir).' && echo $$ > '.escapeshellarg($pidfile)
+         . ' && exec '.$cmd.' '.staxx_compose_file_args($files).' '.$tail;
+
+  // Deliberately NOT run through staxx_sh(): that helper wraps everything in
+  // `timeout` on purpose, because a page that waits forever on Docker is
+  // worse than one that fails. A follower is the opposite case — it is
+  // MEANT to keep running for as long as somebody is watching — so its
+  // lifetime is governed by the heartbeat above and staxx_log_reap() below,
+  // never by a fixed clock. Do not "fix" this by adding a timeout.
+  @exec(
+    'setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &'
+  );
+
+  return $id;
+}
+
+/**
+ * Read the bytes a follower's log has gained since $offset — the same
+ * offset contract as staxx_job_log(): only the new bytes, and the new offset
+ * measured on the raw chunk. There is no sentinel and no exit code here — a
+ * follower ends when the containers stop or when it is reaped, not on its
+ * own schedule.
+ *
+ * Asking for more output IS the keep-alive signal, so this is the only place
+ * the heartbeat file gets touched — there is no separate keep-alive action.
+ *
+ * @return array{text:string, offset:int, alive:bool}
+ */
+function staxx_log_read(string $id, int $offset): array {
+  // Reaping runs on every read, not just on start, so a follower whose tab
+  // was closed stops within one stale interval regardless of which other tab
+  // happens to poll next.
+  staxx_log_reap();
+
+  if (!preg_match('/^[0-9a-f]{16}$/', $id)) {
+    return ['text' => '', 'offset' => 0, 'alive' => false];
+  }
+
+  $log = STAXX_LOG_DIR.'/'.$id.'.log';
+  if (!is_file($log)) return ['text' => '', 'offset' => 0, 'alive' => false];
+
+  // Same clamp as staxx_job_log(): a negative offset would seek backward from
+  // the end of the file instead of being refused outright.
+  if ($offset < 0) $offset = 0;
+
+  $chunk = @file_get_contents($log, false, null, $offset);
+  if ($chunk === false) $chunk = '';
+  $newOffset = $offset + strlen($chunk);
+
+  // The touch that keeps this follower alive. Written after the read, not
+  // before, so a request that fails partway through never claims a poll that
+  // did not actually happen.
+  @file_put_contents(STAXX_LOG_DIR.'/'.$id.'.hb', (string)time());
+
+  // The pid file can briefly not exist yet — staxx_log_start() writes it from
+  // inside the detached shell, after this call has already returned an id —
+  // so its absence reads as "still starting" rather than "gone", and only a
+  // pid file naming a process that is no longer there means the follower
+  // itself has ended.
+  $pidfile = STAXX_LOG_DIR.'/'.$id.'.pid';
+  if (!is_file($pidfile)) {
+    $alive = true;
+  } else {
+    $pid = (int)trim((string)@file_get_contents($pidfile));
+    $alive = $pid > 0 && is_dir('/proc/'.$pid);
+  }
+
+  return ['text' => $chunk, 'offset' => $newOffset, 'alive' => $alive];
+}
+
+/**
+ * Stop one follower outright — the page closed the tab or switched to a
+ * different container. Kills the process (if it is still going) and removes
+ * all three of its files so staxx_log_reap() has nothing left to find.
+ */
+function staxx_log_stop(string $id): void {
+  if (!preg_match('/^[0-9a-f]{16}$/', $id)) return;
+  staxx_log_kill($id);
+  foreach (['log', 'pid', 'hb'] as $ext) @unlink(STAXX_LOG_DIR.'/'.$id.'.'.$ext);
+}
+
+/**
+ * Kill the follower named by $id, if its pid file names a process that is
+ * still plausibly ours.
+ *
+ * Pid reuse on a long-running Linux box is a real, if narrow, risk — the
+ * process this pid once named could in principle have exited and the number
+ * been handed to something unrelated before this runs. So this is
+ * deliberately defensive rather than trusting the pid file outright: it only
+ * signals a pid whose own command line still contains both "compose" and
+ * "logs", which is what every follower this function ever started looks
+ * like. Even in the unlikely case a recycled pid still passes that check, it
+ * can only belong to some OTHER `compose … logs` invocation — stopping a log
+ * stream is not a destructive action, so the worst case of a false match is
+ * harmless.
+ */
+function staxx_log_kill(string $id): void {
+  $pid = (int)trim((string)@file_get_contents(STAXX_LOG_DIR.'/'.$id.'.pid'));
+  if ($pid <= 0 || !is_dir('/proc/'.$pid)) return;
+
+  $cmdline = str_replace("\0", ' ', (string)@file_get_contents('/proc/'.$pid.'/cmdline'));
+  if (strpos($cmdline, 'compose') === false || strpos($cmdline, 'logs') === false) return;
+
+  // setsid made this pid the leader of its own process group when the
+  // follower started, so signalling the NEGATIVE pid reaches the whole
+  // group — compose and anything it spawned — not just this one process.
+  @exec('kill -TERM -'.$pid.' 2>/dev/null');
+}
+
+/**
+ * Kill and remove every follower whose heartbeat has gone stale, and clear
+ * out any log file left over from one already gone. Called at the top of
+ * every log action, so a crashed browser can never leave a follower running
+ * — nobody has to remember to close it.
+ */
+function staxx_log_reap(): void {
+  if (!is_dir(STAXX_LOG_DIR)) return;
+
+  foreach ((array)@glob(STAXX_LOG_DIR.'/*.hb') as $hb) {
+    $id   = basename($hb, '.hb');
+    $seen = (int)trim((string)@file_get_contents($hb));
+    if (time() - $seen > STAXX_LOG_STALE) {
+      staxx_log_kill($id);
+      foreach (['log', 'pid', 'hb'] as $ext) @unlink(STAXX_LOG_DIR.'/'.$id.'.'.$ext);
+    }
+  }
+
+  // Belt and braces, the same way staxx_prune_jobs() clears job logs: a log
+  // file whose heartbeat is already gone (staxx_log_stop() already ran, or a
+  // previous reap already caught it) but is simply old is cleared out too.
+  foreach ((array)@glob(STAXX_LOG_DIR.'/*.log') as $log) {
+    if (@filemtime($log) < time() - 3600) @unlink($log);
+  }
+}
+
+/**
+ * The whole current log as one string, for the "download all" control —
+ * answered inline in the JSON reply rather than as a file download, since
+ * this endpoint only ever answers JSON. Not detached: this runs once and
+ * returns, so the ordinary time-limited runner is the right tool here,
+ * unlike the live follower above.
+ */
+function staxx_log_download(string $stack, string $service, string &$error): string {
+  $error = '';
+
+  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
+
+  if (staxx_review_locked($stack)) {
+    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
+           . STAXX_REVIEW_FILE . ', then choose "Mark as reviewed" before viewing its logs.';
+    return '';
+  }
+
+  $cmd = staxx_compose_cmd();
+  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
+  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
+
+  $dir  = staxx_stack_dir($stack);
+  $file = staxx_find_compose_file($dir);
+  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+  $files = staxx_compose_files($file);
+
+  $args = 'logs --tail 2000 --timestamps';
+  if ($service !== '') {
+    $services = staxx_compose_meta($file)['services'];
+    if (!isset($services[$service])) {
+      $error = 'No service called "'.$service.'" in this stack.';
+      return '';
+    }
+    $args .= ' --no-log-prefix '.escapeshellarg($service);
+  }
+
+  $text = staxx_sh($cmd.' '.staxx_compose_file_args($files).' '.$args, 30);
+
+  if (strlen($text) > STAXX_LOG_DOWNLOAD_MAX) {
+    $text = substr($text, -STAXX_LOG_DOWNLOAD_MAX)
+          . "\n\n[... truncated to the last ".number_format(STAXX_LOG_DOWNLOAD_MAX)." bytes ...]";
+  }
+
+  return $text;
 }
 ?>

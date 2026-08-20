@@ -361,6 +361,29 @@ switch ($action) {
 
     staxx_reply(['ok' => true] + staxx_job_log(''));
 
+  /* ---- the log pane: start, poll, stop and download a `compose logs` -----
+   * follower. See staxx_log_start() in Stacks.php for the shape and why it
+   * is not run through the usual timeout-wrapped helper. */
+  case 'log-start':
+    $service = (string)($_POST['service'] ?? '');
+    $id      = staxx_log_start($name, $service, $error);
+    if ($id === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'id' => $id]);
+
+  case 'log-read':
+    staxx_reply(['ok' => true]
+      + staxx_log_read((string)($_POST['id'] ?? ''), (int)($_POST['offset'] ?? 0)));
+
+  case 'log-stop':
+    staxx_log_stop((string)($_POST['id'] ?? ''));
+    staxx_reply(['ok' => true]);
+
+  case 'log-download':
+    $service = (string)($_POST['service'] ?? '');
+    $text    = staxx_log_download($name, $service, $error);
+    if ($text === '' && $error !== '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'text' => $text]);
+
   /* ---------------------------------------------------------------------
    * The handover — taking over an imported stack's container name.
    *
