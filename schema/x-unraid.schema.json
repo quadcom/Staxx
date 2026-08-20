@@ -36,6 +36,7 @@
         "support":  { "type": "string", "format": "uri" },
         "readme":   { "type": "string", "format": "uri" },
         "author":   { "type": "string" },
+        "update":   { "$ref": "#/$defs/update" },
         "sections": {
           "type": "object",
           "description": "Form sections a service has switched off, keyed by service name then by compose key (healthcheck, ports, deploy.resources, cap_add…). Each entry is either the boolean false — hidden, holding nothing — or a string holding JSON ({\"after\":…,\"lines\":[…]}), the section's own lines kept verbatim so re-enabling it restores them byte for byte. The JSON inside that string is deliberately not validated here: it is not YAML, so it is one opaque line to this schema, not a second copy of the compose structure. If the compose file itself still has the block, the file wins and a leftover entry here is ignored.",
@@ -78,6 +79,10 @@
         "display": {
           "$ref": "#/$defs/display",
           "description": "Stored, but nothing acts on it yet. The intent is that 'advanced' will fold a sidecar such as a database behind the form's advanced toggle."
+        },
+        "update": {
+          "$ref": "#/$defs/update",
+          "description": "Overrides the stack-level update block for this service alone; falls back to it, then to the global setting, when absent."
         }
       }
     },
@@ -86,6 +91,25 @@
       "type": "string",
       "enum": ["basic", "advanced"],
       "default": "basic"
+    },
+
+    "update": {
+      "type": "object",
+      "description": "How this stack (or one service in it) should be kept up to date. Every key optional; an absent key inherits from the level below it — service, then stack, then the plugin's global setting.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["off", "notify", "auto"],
+          "description": "off = never apply on its own. notify = show that an update was found but never apply it automatically. auto = apply it once the delay below has passed."
+        },
+        "delay": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 720,
+          "description": "Hours to wait, after an update is first seen, before an 'auto' mode applies it."
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

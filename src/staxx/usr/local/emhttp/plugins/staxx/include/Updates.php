@@ -40,6 +40,7 @@ function staxx_update_state_defaults(): array {
     'images'    => [],
     'history'   => [],
     'bases'     => [],
+    'rebuilds'  => [],
   ];
 }
 
@@ -641,8 +642,10 @@ function staxx_update_check(string $scope, bool $force): array {
 
   $state  = staxx_update_state();
   $images = (array)$state['images'];
+  $rebuilds = (array)$state['rebuilds'];
   $now    = time();
   $failedNames = [];
+  $newlyFound = 0; // images whose 'seen' clock started fresh THIS pass, for the "found" notification
 
   $refs = staxx_update_images($scope);
   $total = count($refs);
@@ -746,6 +749,24 @@ function staxx_update_check(string $scope, bool $force): array {
       $images[$image] = $existing;
       $result['built']++;
       echo $image." — built here, not compared\n";
+
+      // Phase 7: a locally-built image cannot be compared against a
+      // registry itself, but the base its Dockerfile builds FROM can be —
+      // staxx_rebuild_due() lives in UpdateRun.php, which this file must
+      // never require (that would be circular), so it is only called when
+      // present. $rows is already this image's list of "<stack>::<service>"
+      // holders from staxx_update_images() above.
+      if (function_exists('staxx_rebuild_due')) {
+        foreach ($rows as $holder) {
+          [$hStack, $hService] = array_pad(explode('::', $holder, 2), 2, '');
+          if ($hStack === '' || $hService === '') continue;
+          $rebuildWhy = '';
+          $rebuilds[$holder] = [
+            'due' => staxx_rebuild_due($hStack, $hService, $rebuildWhy),
+            'why' => $rebuildWhy,
+          ];
+        }
+      }
       continue;
     }
 
@@ -787,7 +808,12 @@ function staxx_update_check(string $scope, bool $force): array {
         $existing['was']        = $images[$image]['version'] ?? ($existing['was'] ?? '');
         $existing['seen']       = $now;
         $existing['seenDigest'] = $existing['remote'];
+        // A genuinely newer version has turned up — someone cancelling the
+        // last one they saw must not be silently opted out of every version
+        // that comes after it.
+        unset($existing['hold']);
         $result['updates']++;
+        $newlyFound++;
         echo $image.' — update available'
            . (($existing['was'] ?? '') !== '' && isset($existing['version'])
                ? ' ('.$existing['was'].' → '.$existing['version'].')' : '')
@@ -813,14 +839,34 @@ function staxx_update_check(string $scope, bool $force): array {
     : ($result['failed'] > 0 ? 'Could not check: '.implode(', ', $failedNames) : '');
 
   staxx_update_state_save([
-    'checked' => $now,
-    'ok'      => $result['ok'],
-    'error'   => $result['error'],
-    'limited' => $limited,
-    'images'  => $images,
+    'checked'  => $now,
+    'ok'       => $result['ok'],
+    'error'    => $result['error'],
+    'limited'  => $limited,
+    'images'   => $images,
+    'rebuilds' => $rebuilds,
   ]);
 
   staxx_update_unlock();
+
+  // One notification for the whole pass, never one per image — see the
+  // matching reasoning on staxx_update_notify() itself. staxx_update_settings()
+  // and staxx_update_notify() both live in UpdateRun.php, which this file
+  // must never require (that would be circular), so both calls are guarded.
+  if ($newlyFound > 0 && function_exists('staxx_update_notify') && function_exists('staxx_update_settings')) {
+    $notify = staxx_update_settings()['notify'];
+    if ($notify === 'found' || $notify === 'applied') {
+      $waiting = 0;
+      foreach (array_keys($images) as $img) {
+        if (staxx_updates_pill_for_image($img, $images)['state'] === 'update') $waiting++;
+      }
+      staxx_update_notify(
+        'StaXX image updates found',
+        $waiting.' image'.($waiting === 1 ? '' : 's').' '.($waiting === 1 ? 'has' : 'have').' an update waiting.'
+      );
+    }
+  }
+
   return $result;
 }
 
@@ -998,21 +1044,34 @@ function staxx_updates_aggregate(array $pills): array {
       'state' => 'unknown', 'label' => 'never checked', 'count' => 0,
       'image' => '', 'source' => '',
       'tip' => 'There is nothing here to check for updates.',
+      'due' => 0, 'hold' => false, 'why' => '',
     ];
   }
 
-  $rank = ['update' => 0, 'error' => 1, 'tagmissing' => 1, 'built' => 2, 'missing' => 2, 'unknown' => 3, 'current' => 4];
+  $rank = ['update' => 0, 'error' => 1, 'tagmissing' => 1, 'rebuild' => 2,
+           'built' => 3, 'missing' => 3, 'unknown' => 4, 'current' => 5];
 
   $best      = null;
   $bestRank  = 99;
   $updateCount = 0;
   $source    = '';
+  // The soonest clock among the children, and the first non-empty reason one
+  // of them will not fire automatically — a folder or stack row speaks for
+  // whichever service is closest to actually doing something, not for all
+  // of them at once.
+  $due  = 0;
+  $hold = false;
+  $why  = '';
   foreach ($pills as $p) {
     $state = $p['state'] ?? 'unknown';
     if ($state === 'update') $updateCount++;
     $r = $rank[$state] ?? 99;
     if ($r < $bestRank) { $bestRank = $r; $best = $p; }
     if ($source === '' && ($p['source'] ?? '') !== '') $source = $p['source'];
+
+    $childDue = (int)($p['due'] ?? 0);
+    if ($childDue > 0 && ($due === 0 || $childDue < $due)) { $due = $childDue; $hold = !empty($p['hold']); }
+    if ($why === '' && ($p['why'] ?? '') !== '') $why = $p['why'];
   }
 
   $total = count($pills);
@@ -1035,6 +1094,11 @@ function staxx_updates_aggregate(array $pills): array {
       $label = 'tag withdrawn';
       $tip   = 'One or more services here are using a tag the registry no longer publishes. '
              . 'Open the stack to fix it.';
+      break;
+    case 'rebuild':
+      $label = 'rebuild ready';
+      $tip   = 'One or more services here were built on this server, and the base image they '
+             . 'build from has moved on. Rebuild to pick it up.';
       break;
     case 'built':
       $label = 'built here';
@@ -1063,6 +1127,9 @@ function staxx_updates_aggregate(array $pills): array {
     'image'  => '', // a summed-up row speaks for more than one image
     'source' => $source,
     'tip'    => $tip,
+    'due'    => $due,
+    'hold'   => $hold,
+    'why'    => $why,
   ];
 }
 
@@ -1090,16 +1157,58 @@ function staxx_updates_for_row(string $stack, string $service = ''): array {
     $pill = staxx_updates_pill_for_image($image, $images);
     $pill['image'] = $image;
     $pill['count'] = $pill['state'] === 'update' ? 1 : 0;
+    staxx_updates_apply_service_state($pill, $stack, $service, $image);
     return $pill;
   }
 
   $pills = [];
-  foreach ($meta['services'] as $svcMeta) {
+  foreach ($meta['services'] as $svc => $svcMeta) {
     $image = trim((string)($svcMeta['image'] ?? ''));
     if ($image === '') continue;
-    $pills[] = staxx_updates_pill_for_image($image, $images);
+    $pill = staxx_updates_pill_for_image($image, $images);
+    staxx_updates_apply_service_state($pill, $stack, $svc, $image);
+    $pills[] = $pill;
   }
   return staxx_updates_aggregate($pills);
+}
+
+/**
+ * Fill in a service pill's due/hold/why (uniform on every pill, whatever its
+ * state, so the browser never has to guard for a missing key) and, for a
+ * locally-built image, override 'built' with 'rebuild' when Phase 7's check
+ * pass has already recorded that this service's base image has moved on.
+ * $pill is modified in place.
+ */
+function staxx_updates_apply_service_state(array &$pill, string $stack, string $service, string $image): void {
+  $pill['due']  = $pill['due']  ?? 0;
+  $pill['hold'] = $pill['hold'] ?? false;
+  $pill['why']  = $pill['why']  ?? '';
+  // Whether roll back has anything to offer at all. A plain state read, so it
+  // is cheap enough for every row — and without it the row menu has to offer
+  // roll back on every service and let the refusal explain itself, which is a
+  // menu item that usually does nothing.
+  $pill['back'] = !empty(staxx_update_state()['history'][$stack.'::'.$service]);
+
+  if ($pill['state'] === 'built') {
+    $rebuilds = (array)staxx_update_state()['rebuilds'];
+    $recorded = $rebuilds[$stack.'::'.$service] ?? null;
+    if (is_array($recorded) && !empty($recorded['due'])) {
+      $pill['state'] = 'rebuild';
+      $pill['label'] = 'rebuild ready';
+      $pill['why']   = (string)($recorded['why'] ?? '');
+    }
+    return;
+  }
+
+  // The clock only has anything to say about a service actually offering an
+  // update — asking for any other state would just report "no clock" for
+  // reasons that have nothing to do with a countdown.
+  if ($pill['state'] === 'update' && function_exists('staxx_update_clock')) {
+    $clock = staxx_update_clock($stack, $service, $image);
+    $pill['due']  = $clock['due'];
+    $pill['hold'] = $clock['hold'];
+    $pill['why']  = $clock['why'];
+  }
 }
 
 /**

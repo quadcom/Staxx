@@ -426,8 +426,17 @@ if ($withdrawnRef === null) {
   staxx_update_state_save($state);
 
   $checked = staxx_update_check('all', false);
-  ok('asked stamp: a tagmissing image is not re-asked within six hours',
-     is_array($checked) && ($checked['skipped'] ?? 0) >= 1, json_encode($checked));
+  if (is_array($checked) && ($checked['limited'] ?? false)) {
+    // Docker Hub is rate-limiting this box right now, so the pass never got
+    // as far as asking anything — there is nothing left for this case to
+    // observe. Same condition, same treatment as the two neighbouring SKIPs
+    // above.
+    skip('asked stamp: a tagmissing image is not re-asked within six hours',
+         'this pass came back rate-limited, so nothing was actually asked');
+  } else {
+    ok('asked stamp: a tagmissing image is not re-asked within six hours',
+       is_array($checked) && ($checked['skipped'] ?? 0) >= 1, json_encode($checked));
+  }
 
   $after = staxx_update_state()['images'][$withdrawnRef] ?? [];
   ok('asked stamp: it is still recorded as "tag withdrawn" after the skip',

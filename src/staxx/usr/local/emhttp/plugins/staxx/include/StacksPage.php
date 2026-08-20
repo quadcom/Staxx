@@ -178,12 +178,26 @@ endif;
       <button type="button" class="staxx-btn" id="staxx-check-updates">
         <i class="fa fa-refresh"></i> <?= _('Check for updates') ?>
       </button>
+      <button type="button" class="staxx-btn" id="staxx-update-all">
+        <i class="fa fa-download"></i> <?= _('Update all') ?>
+      </button>
+      <!-- Icon and label are repainted by paintPauseButton() from the
+           `paused` key the updates poll carries — this is state, not a
+           setting, so nothing here has to guess which way it starts. -->
+      <button type="button" class="staxx-btn" id="staxx-update-pause">
+        <i class="fa fa-pause"></i> <?= _('Pause updates') ?>
+      </button>
     </div>
   </div>
 
   <!-- Filled in by refreshUpdates() the moment the page runs — there is
        nothing to say about update checking before that first reply lands. -->
   <p class="staxx-hint" id="staxx-updates-line"></p>
+
+  <!-- PLAN_45 phase 4-8. Hidden until update-queue-start begins one, and
+       painted entirely by paintUpdateQueue() in stacks.js — a queue's own
+       progress is polled from the browser, not part of the page's render. -->
+  <div class="staxx-updatequeue" id="staxx-update-queue" hidden></div>
 
   <p class="staxx-hint">
     <?= sprintf(_('Each stack is a folder holding one compose file, kept in %s.'), htmlspecialchars($root)) ?>

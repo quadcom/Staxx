@@ -125,17 +125,32 @@ fi
 # only gets rewritten when its content actually changes.
 update_check="daily"
 update_check_time="04:00"
+update_cleanup="off"
 if [[ -f "${CFG}" ]]; then
   update_check=$(sed -n 's/^[[:space:]]*UPDATE_CHECK[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
   update_check="${update_check:-daily}"
   update_check_time=$(sed -n 's/^[[:space:]]*UPDATE_CHECK_TIME[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
   update_check_time="${update_check_time:-04:00}"
+  update_cleanup=$(sed -n 's/^[[:space:]]*UPDATE_CLEANUP[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+  update_cleanup="${update_cleanup:-off}"
 fi
 
 CRON_FILE="${CFG_DIR}/${PLUGIN}.cron"
 
+# No "root" user field on any line here — *.cron files are concatenated
+# straight into a user crontab by update_cron, not read as /etc/cron.d-style
+# system crontabs, so a leading user field would be read as part of the
+# command.
+#
+# The apply pass is always present, check on or off: it is what presses the
+# button on a clock that reaches zero while nobody has the page open, and it
+# costs no network, so there is nothing to gate it on.
+cron_lines=(
+  "# StaXX — image-update passes, written by apply_settings. Do not edit; it is rewritten on every settings save and every boot."
+  "*/15 * * * * ${PLUGIN_DIR}/scripts/update-check apply &> /dev/null"
+)
+
 if [[ "${update_check}" == "off" ]]; then
-  [[ -f "${CRON_FILE}" ]] && rm -f "${CRON_FILE}"
   echo "Image-update checking is off."
 else
   # HH:MM, split on the colon. A value that does not match falls back to the
@@ -164,21 +179,23 @@ else
     when="daily at ${update_check_time}"
   fi
 
-  # No "root" user field here — *.cron files are concatenated straight into
-  # a user crontab by update_cron, not read as /etc/cron.d-style system
-  # crontabs, so a leading user field would be read as part of the command.
-  cron_content=$(
-    echo "# StaXX — image-update check, written by apply_settings. Do not edit; it is rewritten on every settings save and every boot."
-    echo "${cron_minute} ${cron_hour} * * ${cron_dow} ${PLUGIN_DIR}/scripts/update-check check &> /dev/null"
-  )
-
-  # Compare before writing: the flash drive has finite write cycles, and this
-  # script runs on every settings save and every boot.
-  if [[ ! -f "${CRON_FILE}" ]] || [[ "$(cat "${CRON_FILE}")" != "${cron_content}" ]]; then
-    printf '%s\n' "${cron_content}" > "${CRON_FILE}"
-  fi
-
+  cron_lines+=("${cron_minute} ${cron_hour} * * ${cron_dow} ${PLUGIN_DIR}/scripts/update-check check &> /dev/null")
   echo "Image-update checking will run ${when}."
+fi
+
+if [[ "${update_cleanup}" == "weekly" ]]; then
+  # A fixed, quiet time — this is not user-configurable the way the check
+  # time is, so there is no value to read and validate here.
+  cron_lines+=("30 3 * * 0 ${PLUGIN_DIR}/scripts/update-check cleanup &> /dev/null")
+  echo "Image cleanup will run weekly, Sunday at 03:30."
+fi
+
+cron_content=$(printf '%s\n' "${cron_lines[@]}")
+
+# Compare before writing: the flash drive has finite write cycles, and this
+# script runs on every settings save and every boot.
+if [[ ! -f "${CRON_FILE}" ]] || [[ "$(cat "${CRON_FILE}")" != "${cron_content}" ]]; then
+  printf '%s\n' "${cron_content}" > "${CRON_FILE}"
 fi
 
 # Collects every plugin's *.cron file (ours included) into root's crontab —

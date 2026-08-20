@@ -256,6 +256,9 @@ function staxx_update_pill_html(array $u): string {
   // yet) falls through to showing nothing rather than guessing at a colour.
   $cls = [
     'update'     => 'staxx-updatepill--update',
+    // A locally built image whose base has moved on. Worth acting on, like
+    // an update, so it shares that colour rather than built's quiet one.
+    'rebuild'    => 'staxx-updatepill--rebuild',
     'built'      => 'staxx-updatepill--built',
     'missing'    => 'staxx-updatepill--missing',
     'error'      => 'staxx-updatepill--error',
@@ -272,10 +275,19 @@ function staxx_update_pill_html(array $u): string {
   $title  = (string)($u['tip'] ?? '');
   $titleAttr = $title !== '' ? ' title="'.htmlspecialchars($title).'"' : '';
 
+  // The clock's own three values, written here as well as by the browser so a
+  // countdown is right in the very first render rather than only once the
+  // updates poll has been round. paintPillClock() in stacks.js reads exactly
+  // these, and `back` is what lets the row menu hide roll back when there is
+  // nothing kept to roll back to.
   return '<span class="staxx-updatepill '.$cls.'"'
        . ' data-update-state="'.htmlspecialchars($state).'"'
        . ' data-update-image="'.$image.'"'
        . ' data-update-source="'.$source.'"'
+       . ' data-update-due="'.(int)($u['due'] ?? 0).'"'
+       . ' data-update-hold="'.(!empty($u['hold']) ? '1' : '0').'"'
+       . ' data-update-back="'.(!empty($u['back']) ? '1' : '0').'"'
+       . ' data-update-why="'.htmlspecialchars((string)($u['why'] ?? '')).'"'
        . $titleAttr.'>'.$label.'</span>';
 }
 

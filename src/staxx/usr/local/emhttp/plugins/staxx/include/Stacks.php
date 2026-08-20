@@ -1041,7 +1041,7 @@ function staxx_first_ports(string $yaml): array {
 // key, so a plugin update cannot serve an answer the old parser computed —
 // without this a stale shape would sit there looking valid forever, since
 // nothing else about the compose file need have changed.
-const STAXX_META_VERSION = 2;
+const STAXX_META_VERSION = 3;
 
 /**
  * A hash of everything that can change what compose would report for a
@@ -1177,6 +1177,12 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
       $meta['x'][$parts[1]] = $value;
       continue;
     }
+    // One level deeper than a flat key — a block such as `update: {mode, delay}`
+    // — arrives dotted rather than being silently dropped, e.g. `update.mode`.
+    if ($parts[0] === 'x-unraid' && count($parts) === 3) {
+      $meta['x'][$parts[1].'.'.$parts[2]] = $value;
+      continue;
+    }
 
     if ($parts[0] !== 'services' || count($parts) < 3) continue;
     $service = $parts[1];
@@ -1194,6 +1200,10 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
       $meta['services'][$service]['container_name'] = $value;
     } elseif ($parts[2] === 'x-unraid' && count($parts) === 4) {
       $meta['services'][$service]['x'][$parts[3]] = $value;
+    } elseif ($parts[2] === 'x-unraid' && count($parts) === 5) {
+      // Same one-level widening as the stack-scope block above, e.g.
+      // services.<name>.x-unraid.update.mode arrives as x['update.mode'].
+      $meta['services'][$service]['x'][$parts[3].'.'.$parts[4]] = $value;
     } elseif ($parts[2] === 'networks' && count($parts) === 5 && $parts[4] === 'ipv4_address') {
       // A service on more than one network with more than one fixed address
       // is not a case worth ranking — the first one found wins.
@@ -3756,6 +3766,8 @@ function staxx_job_verbs(): array {
     'remove'   => [                                    'svc' => 'rm --stop --force', 'label' => 'Remove container'],
     'update'   => ['args' => ['pull', 'up -d --remove-orphans'],
                    'svc'  => ['pull', 'up -d'],                                      'label' => 'Update image'],
+    'rebuild'  => ['args' => ['build --pull', 'up -d --remove-orphans'],
+                   'svc'  => ['build --pull', 'up -d'],                              'label' => 'Rebuild'],
   ];
 }
 

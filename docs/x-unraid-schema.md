@@ -223,6 +223,25 @@ editor until something is actually put in the section. One already sitting in a 
 file wins outright and any `sections` entry naming the same key is ignored. An entry naming a
 service that no longer exists is ignored too, never quietly deleted.
 
+### Update
+
+```yaml
+x-unraid:
+  update:
+    mode: auto      # off | notify | auto
+    delay: 6        # hours to wait before applying; omit to inherit
+```
+
+Says how this stack should be kept up to date, overriding the plugin's global setting for it alone.
+`mode: off` means never apply an update on its own — it is still shown as found. `notify` shows an
+update without ever applying it. `auto` applies it once `delay` hours have passed since it was
+first seen. Leaving `update` out entirely means "use the global setting", and leaving `delay` out
+while setting `mode` means "use the global delay with this mode".
+
+A **service** can carry the same block (see below) to override this for one container in the stack.
+The order a value is looked up in is: the service's own `update` block, then the stack's, then the
+plugin's global setting — the first one that actually sets the key wins.
+
 ---
 
 ## Service level
@@ -238,6 +257,9 @@ services:
       support: https://forum.jellyfin.org
       webui: "http://[IP]:[PORT:8096]/"
       display: basic               # basic | advanced — reserved; see below
+      update:
+        mode: notify                # off | notify | auto; overrides the stack's own setting
+        delay: 12                   # hours; omit to inherit
 ```
 
 All keys optional. A service's heading in the form is its key in the compose file — full stop;
@@ -250,6 +272,10 @@ home page, and where to ask for help — and the stack-level keys still work and
 fallback when a service does not set its own. A service-level pair exists because a repository
 belongs to one image, and a stack can hold several: a media server and its database sit in the
 same file but come from different projects, so one stack-level link cannot speak for both.
+
+`update` means the same thing here as it does at stack level (see [Update](#update) above), and
+wins over it: a database sidecar that should never auto-update while the rest of the stack does
+can say `mode: off` here without touching the stack's own setting.
 
 `webui` uses Unraid's existing `[IP]` substitution for the address, and states the port plainly:
 

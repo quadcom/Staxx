@@ -107,6 +107,34 @@ NEGATIVE = [
         "a sections entry given as a nested object instead of a JSON string",
         {"x-unraid": {"sections": {"web": {"healthcheck": {"after": "image", "lines": []}}}}},
     ),
+    (
+        "stack update mode not one of off/notify/auto",
+        {"x-unraid": {"update": {"mode": "always"}}},
+    ),
+    (
+        "stack update delay given as a string",
+        {"x-unraid": {"update": {"delay": "6"}}},
+    ),
+    (
+        "stack update delay above the 720-hour ceiling",
+        {"x-unraid": {"update": {"delay": 721}}},
+    ),
+    (
+        "stack update delay below zero",
+        {"x-unraid": {"update": {"delay": -1}}},
+    ),
+    (
+        "unknown key inside a stack update block",
+        {"x-unraid": {"update": {"mode": "auto", "schedule": "nightly"}}},
+    ),
+    (
+        "service update mode not one of off/notify/auto",
+        service_doc(update={"mode": "hourly"}),
+    ),
+    (
+        "unknown key inside a service update block",
+        service_doc(update={"mode": "off", "reason": "manual only"}),
+    ),
 ]
 
 # (description, document) — each must PASS validation.
@@ -123,6 +151,7 @@ POSITIVE = [
         "support": "https://forum.jellyfin.org",
         "readme": "https://github.com/jellyfin/jellyfin#readme",
         "author": "jellyfin",
+        "update": {"mode": "auto", "delay": 6},
     }}),
     ("every service key at once", service_doc(
         icon="./icon.png",
@@ -131,7 +160,9 @@ POSITIVE = [
         support="https://forum.jellyfin.org",
         webui="http://[IP]:[PORT:8096]/",
         display="advanced",
+        update={"mode": "notify", "delay": 12},
     )),
+    ("stack update block with mode but no delay", {"x-unraid": {"update": {"mode": "off"}}}),
     # `name` was a display-name override at both levels; a stack is now named after its
     # directory and a service after its key, full stop, so the key has nothing left to do.
     # Neither def sets additionalProperties: false, so a leftover `name:` from an older file

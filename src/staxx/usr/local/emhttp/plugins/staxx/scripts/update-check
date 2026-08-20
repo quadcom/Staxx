@@ -14,14 +14,17 @@ set -euo pipefail
 PLUGIN_DIR="/usr/local/emhttp/plugins/staxx"
 CFG="/boot/config/plugins/staxx/staxx.cfg"
 LOG_DIR="/tmp/staxx/updates"
-LOG="${LOG_DIR}/update-check.log"
+# One log per pass, not one shared file: the apply pass now runs every 15
+# minutes, and a single log truncated on every run would wipe out a daily
+# check pass's own output within the same quarter hour.
+LOG="${LOG_DIR}/update-${1:-check}.log"
 
 mkdir -p "${LOG_DIR}"
 chmod 0755 "${LOG_DIR}"
 
-# Overwrite rather than append: this runs unattended for a year at a time, and
-# only the most recent pass is ever worth reading — see the job logs and the
-# stats snapshots for the same call.
+# Overwrite rather than append: each pass runs unattended for a long time, and
+# only its own most recent run is ever worth reading — see the job logs and
+# the stats snapshots for the same call.
 : > "${LOG}"
 
 log() {
@@ -69,9 +72,42 @@ run_check() {
 }
 
 run_apply() {
-  # Lands in PLAN_45 phase 5. Accepted now, rather than rejected, so the cron
-  # line this script installs to does not need editing again when it lands.
-  log "apply pass is not built yet."
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    # A cron job firing before Docker is up on boot is not an error.
+    log "Docker is not available; skipping this pass."
+    exit 0
+  fi
+
+  log "starting apply pass."
+  # staxx_update_apply_pass() ticks a running queue along, or starts a fresh
+  # one over whatever staxx_update_due() has found — either way it costs no
+  # network, which is why this runs every 15 minutes rather than daily.
+  "${php_bin}" -r "
+    require '${PLUGIN_DIR}/include/UpdateRun.php';
+    \$r = staxx_update_apply_pass();
+    \$n = count(\$r['items'] ?? []);
+    echo \$n.' item'.(\$n === 1 ? '' : 's').' in the queue.'.PHP_EOL;
+  " >> "${LOG}" 2>&1
+  log "apply pass finished."
+}
+
+run_cleanup() {
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    log "Docker is not available; skipping this pass."
+    exit 0
+  fi
+
+  log "starting cleanup pass."
+  "${php_bin}" -r "
+    require '${PLUGIN_DIR}/include/UpdateRun.php';
+    \$err = '';
+    \$r = staxx_update_cleanup(false, \$err);
+    if (\$err !== '') echo 'cleanup refused: '.\$err.PHP_EOL;
+    echo count(\$r['removed']).' image'.(count(\$r['removed']) === 1 ? '' : 's').' removed, '
+       . \$r['kept'].' kept.'.PHP_EOL;
+    foreach (\$r['removed'] as \$ref) echo '  removed '.\$ref.PHP_EOL;
+  " >> "${LOG}" 2>&1
+  log "cleanup pass finished."
 }
 
 case "${1:-}" in
@@ -81,8 +117,11 @@ case "${1:-}" in
   apply)
     run_apply
     ;;
+  cleanup)
+    run_cleanup
+    ;;
   *)
-    echo "Usage: update-check {check|apply}" >&2
+    echo "Usage: update-check {check|apply|cleanup}" >&2
     exit 1
     ;;
 esac

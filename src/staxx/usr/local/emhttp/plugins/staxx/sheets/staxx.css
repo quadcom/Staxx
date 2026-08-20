@@ -261,6 +261,23 @@
   color: var(--sm-danger);
 }
 
+/* The pause switch, once pressed (PLAN_45 phase 4-8) — filled in like
+   .staxx-btn--primary rather than a second colour, since "paused" is a
+   state to notice, not a warning. */
+.staxx-scaffold .staxx-btn--active {
+  border-color: var(--sm-accent);
+  background: var(--sm-accent);
+  color: #000;
+}
+
+/* The queue's own Stop button, sat inside a hint-sized strip rather than the
+   button row above the grid — smaller so it does not outweigh the sentence
+   beside it. */
+.staxx-scaffold .staxx-btn--small {
+  padding: 0.3rem 0.8rem;
+  font-size: 1.1rem;
+}
+
 .staxx-buttons {
   display: flex;
   flex-wrap: wrap;
@@ -1956,7 +1973,12 @@
    colour every other "look at this" marker on a row already uses (the
    review badge, the boot mark, the drift mark), so it reads as one visual
    language rather than inventing a second. */
-.staxx-updatepill--update {
+/* A locally built image whose base has moved on is the same kind of fact as
+   an update waiting — something to act on — so it shares that fill rather
+   than sitting in the quiet group below with the plain "built here" state
+   it replaces. */
+.staxx-updatepill--update,
+.staxx-updatepill--rebuild {
   background: var(--sm-accent);
   color: #000;
 }
@@ -1973,6 +1995,59 @@
   background: var(--sm-fill-2);
   color: var(--sm-muted);
   font-weight: 400;
+}
+
+/* The clock chip inside an "update" pill (PLAN_45 phase 4-8) — a counting-
+   down figure, or the server's own sentence for why nothing is going to
+   happen right now, painted by the page's one shared clock rather than a
+   timer of its own. Dimmer than the pill's own text so the version numbers
+   stay the thing the eye lands on first. */
+.staxx-updatepill-clock {
+  margin-left: 0.5rem;
+  padding-left: 0.5rem;
+  border-left: 0.1rem solid rgba(0, 0, 0, 0.3);
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+/* Everything but "update" keeps the plain translucent fill above, so its
+   own clock chip needs a border that shows up against that instead of the
+   accent fill's dark one. */
+.staxx-updatepill--built .staxx-updatepill-clock,
+.staxx-updatepill--missing .staxx-updatepill-clock,
+.staxx-updatepill--error .staxx-updatepill-clock,
+.staxx-updatepill--tagmissing .staxx-updatepill-clock {
+  border-left-color: var(--sm-line);
+}
+
+/* The progress bar above the grid while "Update all" (or a folder's own
+   "Update this folder") is running — painted entirely by
+   paintUpdateQueue(), hidden the rest of the time. */
+.staxx-updatequeue {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0 0 1.2rem;
+  padding: 0.6rem 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: var(--sm-fill);
+}
+
+.staxx-updatequeue-text {
+  font-size: 1.2rem;
+}
+
+/* A checkbox row inside a confirm dialog (PLAN_45 phase 4-8's "include
+   stopped stacks" tick box) — a plain label wraps the box and its own
+   words, the same way every other checkbox on this page reads. */
+.staxx-checkline {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 0.8rem;
+  font-size: 1.2rem;
 }
 
 /* The marker for a stack whose Compose Manager source has changed since it

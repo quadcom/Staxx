@@ -10800,6 +10800,7 @@
     // Same word as `pull` on purpose: to whoever is watching the spinner,
     // pull-then-up-d IS the update, not two things happening.
     update:   'Updating…',
+    rebuild:  'Rebuilding…',
     recreate: 'Recreating…'
   };
 
@@ -10814,6 +10815,7 @@
     pull:     'Update failed',
     remove:   'Removal failed',
     update:   'Update failed',
+    rebuild:  'Rebuild failed',
     recreate: 'Recreate failed'
   };
 
@@ -10826,6 +10828,7 @@
     pull:     'updated',
     remove:   'removed',
     update:   'updated',
+    rebuild:  'rebuilt',
     recreate: 'recreated'
   };
 
@@ -11410,6 +11413,9 @@
   //   data-update-source  a "what changed" link, or '' when there is none
   var UPDATE_PILL_CLASS = {
     update:     'staxx-updatepill--update',
+    // A locally built image whose base moved on — worth acting on, so it
+    // shares the update colour rather than built's quiet one.
+    rebuild:    'staxx-updatepill--rebuild',
     built:      'staxx-updatepill--built',
     missing:    'staxx-updatepill--missing',
     error:      'staxx-updatepill--error',
@@ -11447,7 +11453,18 @@
     return {
       state:  pill.dataset.updateState,
       image:  pill.dataset.updateImage || '',
-      source: pill.dataset.updateSource || ''
+      source: pill.dataset.updateSource || '',
+      // PLAN_45 phase 4-8: the clock. due is a timestamp or 0 (no clock);
+      // hold is Cancel having been pressed on this find; why, when set, is
+      // the full sentence explaining why nothing is going to happen right
+      // now — see staxx_update_clock() in include/UpdateRun.php.
+      due:    parseInt(pill.dataset.updateDue || '0', 10) || 0,
+      hold:   pill.dataset.updateHold === '1',
+      why:    pill.dataset.updateWhy || '',
+      // Whether an earlier version of this service's image is still kept, so
+      // the row menu can leave roll back out altogether rather than offering
+      // something that can only refuse.
+      back:   pill.dataset.updateBack === '1'
     };
   }
 
@@ -11481,11 +11498,83 @@
     setData(pill, 'updateState', state);
     setData(pill, 'updateImage', entry.image || '');
     setData(pill, 'updateSource', safeUpdateSource(entry.source));
+    // Only a service row's own 'update' pill carries a clock — see
+    // staxx_updates_for_row() — but the attributes are written unconditionally
+    // so a stale clock left over from a state that no longer has one is
+    // cleared rather than kept.
+    setData(pill, 'updateDue', entry.due || 0);
+    setData(pill, 'updateHold', entry.hold ? '1' : '0');
+    setData(pill, 'updateBack', entry.back ? '1' : '0');
+    setData(pill, 'updateWhy', entry.why || '');
 
     var text = entry.label || state;
     if (entry.count > 1) text += ' (' + entry.count + ')';
+    // Rebuilding the label wipes out any clock chip appended below, which is
+    // fine: paintPillClock() puts one straight back when there is still
+    // something to say. Skipped when the label has not changed so a clock
+    // ticking away between polls is not torn down and rebuilt every time.
     if (pill.staxxTxt !== text) { pill.textContent = text; pill.staxxTxt = text; }
     if (entry.tip) pill.title = entry.tip; else pill.removeAttribute('title');
+
+    paintPillClock(pill);
+  }
+
+  // "1h 42m", "42m", "due now" — the countdown chip's own vocabulary,
+  // deliberately terser than timeAgoWords() above: that one reads "3 hours
+  // ago" in a sentence, this one has to fit beside a pill on a crowded row.
+  function clockWords(seconds) {
+    if (seconds < 60) return 'under a minute';
+    var mins = Math.floor(seconds / 60);
+    if (mins < 60) return mins + 'm';
+    var hours = Math.floor(mins / 60), remMins = mins % 60;
+    if (hours < 24) return hours + 'h' + (remMins ? ' ' + remMins + 'm' : '');
+    var days = Math.floor(hours / 24);
+    return days + (days === 1 ? ' day' : ' days');
+  }
+
+  // The one clock for the whole page (PLAN_45 phase 4-8, decision 9): reads
+  // due/hold/why straight off whichever pills are on screen right now rather
+  // than keeping a timer per row — there can be ninety of them. `why`, when
+  // the server has one, always wins over a ticking number: "waiting for
+  // 03:00" is more use to look at than a clock that is not going to fire.
+  function paintPillClock(pill) {
+    if (!pill) return;
+    var why  = pill.dataset.updateWhy || '';
+    var due  = parseInt(pill.dataset.updateDue || '0', 10) || 0;
+    var text = '';
+    if (why) {
+      text = why;
+    } else if (due > 0) {
+      var left = due - Math.floor(Date.now() / 1000);
+      text = left > 0 ? clockWords(left) : 'due now';
+    }
+
+    var chip = pill.querySelector('.staxx-updatepill-clock');
+    if (!text) {
+      if (chip) chip.parentNode.removeChild(chip);
+      return;
+    }
+    if (!chip) {
+      chip = document.createElement('span');
+      chip.className = 'staxx-updatepill-clock';
+      pill.appendChild(chip);
+    }
+    if (chip.textContent !== text) chip.textContent = text;
+  }
+
+  var pageClockTimer = null;
+
+  // Every visible clock, re-rendered from the timestamp already in hand —
+  // no request of its own, so running this often is free.
+  function tickPageClocks() {
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.staxx-updatepill'),
+      paintPillClock
+    );
+  }
+
+  function startPageClock() {
+    if (!pageClockTimer) pageClockTimer = setInterval(tickPageClocks, 30000);
   }
 
   // "less than a minute", "20 minutes", "3 hours" — never "ago" on its own,
@@ -11570,6 +11659,284 @@
     });
   }
 
+  /* ---- pause switch (PLAN_45 phase 4-8) ---------------------------------
+   *
+   * State, not a setting — see the contract: a switch on the grid must not
+   * need a settings save. The button's own wording is repainted from
+   * whatever the server last said, never assumed, because another tab (or
+   * the settings panel's own Docker Hub notice) could have changed it.
+   */
+  var pauseBtn      = document.getElementById('staxx-update-pause');
+  var updatesPaused = false;
+
+  function paintPauseButton() {
+    if (!pauseBtn) return;
+    pauseBtn.innerHTML = updatesPaused
+      ? '<i class="fa fa-play"></i> ' + esc('Resume updates')
+      : '<i class="fa fa-pause"></i> ' + esc('Pause updates');
+    setClass(pauseBtn, 'staxx-btn--active', updatesPaused);
+    pauseBtn.title = updatesPaused
+      ? 'Every update clock on this page is frozen. Press to let them count down again.'
+      : 'Freezes every update clock on this page at once — nothing installs itself while this is on.';
+  }
+
+  if (pauseBtn) {
+    pauseBtn.addEventListener('click', function () {
+      var next = !updatesPaused;
+      pauseBtn.disabled = true;
+      call('update-pause', { on: next ? '1' : '0' }).then(function (res) {
+        pauseBtn.disabled = false;
+        if (!res.ok) { failed('Could not change the pause switch', res.error); return; }
+        updatesPaused = !!res.paused;
+        paintPauseButton();
+        // Every clock's "why" may now read differently, so the pills have to
+        // be repainted rather than just the button.
+        refreshUpdates();
+      });
+    });
+  }
+
+  /* ---- update queue (PLAN_45 phase 4-8) ---------------------------------
+   *
+   * `update-queue` ticks the queue on the server before answering, so
+   * polling it while one is live is what advances it — the browser drives
+   * it while the page is open, the 15-minute cron pass drives it when
+   * nobody is watching, and there is no third thing. Polling stops the
+   * moment nothing is running or waiting, so a tab left open afterwards
+   * carries no timer for a queue that has already finished.
+   */
+  var queueBar        = document.getElementById('staxx-update-queue');
+  var updateQueueTimer = null;
+  var queueWasLive     = false;
+
+  function queueIsLive(queue) {
+    return !!(queue && queue.items && queue.items.some(function (item) {
+      return item.state === 'running' || item.state === 'waiting';
+    }));
+  }
+
+  function paintUpdateQueue(queue) {
+    if (!queueBar) return;
+    if (!queue || !queue.items || !queue.items.length) {
+      queueBar.hidden = true;
+      queueBar.innerHTML = '';
+      return;
+    }
+
+    var done = 0, runningItem = null, waiting = 0, failedCount = 0;
+    queue.items.forEach(function (item) {
+      if (item.state === 'running') { runningItem = item; return; }
+      if (item.state === 'waiting') { waiting++; return; }
+      done++;
+      if (item.state === 'failed') failedCount++;
+    });
+
+    var text = done + ' of ' + queue.items.length + ' updated';
+    if (failedCount) text += ' (' + failedCount + ' failed)';
+    if (runningItem) text += ' — updating "' + stackLabel(runningItem.stack) + '" now';
+    if (waiting) text += ', ' + waiting + ' waiting';
+    if (queue.stopped) text += '. Finishing the current stack, then stopping.';
+
+    queueBar.hidden = false;
+    queueBar.innerHTML =
+      '<span class="staxx-updatequeue-text">' + esc(text) + '</span>' +
+      (queue.stopped ? '' :
+        '<button type="button" class="staxx-btn staxx-btn--small" id="staxx-update-queue-stop">' +
+          esc('Stop') + '</button>');
+  }
+
+  function stopQueuePoll() {
+    if (updateQueueTimer) { clearInterval(updateQueueTimer); updateQueueTimer = null; }
+  }
+
+  function startQueuePoll() {
+    if (!updateQueueTimer) updateQueueTimer = setInterval(pollQueueOnce, 2000);
+  }
+
+  // The one place a queue reply is applied, whichever action fetched it —
+  // starting, stopping, or the poll itself.
+  function applyQueue(queue) {
+    paintUpdateQueue(queue);
+    if (queueIsLive(queue)) {
+      queueWasLive = true;
+      startQueuePoll();
+    } else {
+      stopQueuePoll();
+      // A queue that just finished may have changed which rows carry an
+      // update pill and what state their containers are in — but only on
+      // the transition, not on every poll while it was already settled.
+      if (queueWasLive) { queueWasLive = false; refreshStateSoon(); }
+    }
+  }
+
+  function pollQueueOnce() {
+    var wasLive = queueWasLive;
+    call('update-queue', {}).then(function (res) {
+      if (!res.ok) return;
+      applyQueue(res.queue);
+      if (wasLive && !queueIsLive(res.queue)) refreshUpdates();
+    });
+  }
+
+  if (queueBar) {
+    queueBar.addEventListener('click', function (event) {
+      if (!event.target.closest('#staxx-update-queue-stop')) return;
+      call('update-queue-stop', {}).then(function (res) {
+        if (!res.ok) { failed('Could not stop updating', res.error); return; }
+        applyQueue(res.queue);
+      });
+    });
+  }
+
+  // Stack rows on screen right now whose pill says an update (or a rebuild)
+  // is waiting — read off the same pills the row menus already trust,
+  // rather than a second source that could disagree with what is on
+  // screen. `folderId` narrows this to one folder's own stack rows; '' (or
+  // omitted) means every stack on the page. Used only to word the "Update
+  // all" confirmation — staxx_update_queue_start() decides the real list.
+  function stacksAwaitingUpdate(includeStopped, folderId) {
+    var sel = '.staxx-stack-row' + (folderId ? '[data-in-folder="' + folderId + '"]' : '');
+    var names = [];
+    Array.prototype.forEach.call(document.querySelectorAll(sel), function (row) {
+      var entry = updatePillEntry(updatePillEl(row));
+      // 'built' is deliberately not here: a locally built image cannot be
+      // pulled, so counting one would promise an update the queue will not
+      // find. 'rebuild' is a real thing to act on, so it counts.
+      if (!entry || (entry.state !== 'update' && entry.state !== 'rebuild')) return;
+      var btn = row.querySelector('[data-menu="stack"]');
+      if (btn && btn.dataset.running !== '1' && !includeStopped) return;
+      names.push(row.dataset.stackRow);
+    });
+    return names;
+  }
+
+  // Shared by the header's "Update all" button and a folder menu's "Update
+  // this folder" — `scope` is 'all' or a folder id, exactly what
+  // update-queue-start's own `scope` field takes.
+  function openUpdateQueueConfirm(scope, label) {
+    var folderId = scope === 'all' ? '' : scope;
+
+    function countLine(includeStopped) {
+      var n = stacksAwaitingUpdate(includeStopped, folderId).length;
+      return n ? (n + (n === 1 ? ' stack will be updated.' : ' stacks will be updated.'))
+               : 'Nothing here needs updating right now.';
+    }
+
+    var bodyHtml =
+      '<p id="staxx-updateall-count">' + esc(countLine(false)) + '</p>' +
+      '<label class="staxx-checkline">' +
+        '<input type="checkbox" id="staxx-updateall-stopped"> ' +
+        esc('Include stacks that are currently stopped') +
+      '</label>' +
+      '<p class="staxx-hint">' +
+        esc('Off by default, so a stack you stopped on purpose is never started up again ' +
+            'just to update it.') +
+      '</p>';
+
+    askConfirm({
+      title: scope === 'all' ? 'Update all?' : 'Update "' + label + '"?',
+      bodyHtml: bodyHtml,
+      goLabel: 'Update'
+    }).then(function (go) {
+      if (!go) return;
+      var includeStopped = !!document.getElementById('staxx-updateall-stopped').checked;
+      closeConfirm();
+      call('update-queue-start', { scope: scope, stopped: includeStopped ? '1' : '0' }).then(function (res) {
+        if (!res.ok) { failed('Could not start updating', res.error); return; }
+        applyQueue(res.queue);
+      });
+    });
+
+    var chk  = document.getElementById('staxx-updateall-stopped');
+    var line = document.getElementById('staxx-updateall-count');
+    if (chk && line) {
+      chk.addEventListener('change', function () { line.textContent = countLine(chk.checked); });
+    }
+  }
+
+  var updateAllBtn = document.getElementById('staxx-update-all');
+  if (updateAllBtn) {
+    updateAllBtn.addEventListener('click', function () { openUpdateQueueConfirm('all', ''); });
+  }
+
+  // Cancels or resumes one image's own countdown — the row menu's "Cancel
+  // the countdown"/"Resume the countdown" item.
+  function holdUpdate(image, on, label) {
+    call('update-hold', { image: image, on: on ? '1' : '0' }).then(function (res) {
+      if (!res.ok) {
+        failed('Could not ' + (on ? 'cancel' : 'resume') + ' the countdown for ' + label, res.error);
+        return;
+      }
+      refreshUpdates();
+    });
+  }
+
+  // "Update now" — runs the update straight away instead of waiting for its
+  // clock. Scoped to one service when `service` is given, the whole stack
+  // otherwise, the same split run() already makes.
+  function updateNow(name, service, label) {
+    var rows = service ? containerRows(name, service) : stackRows(name);
+    if (rows.length) setBusy(rows, 'Updating…');
+    var fields = { name: name };
+    if (service) fields.service = service;
+    call('update-apply', fields).then(function (res) {
+      if (!res.ok) { clearBusy(rows); failed('Could not update ' + label, res.error); return; }
+      track(res.job, {
+        rows: rows, verb: 'update',
+        done: function (job) {
+          clearBusy(rows);
+          if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'update', res.job);
+          refreshUpdates();
+          refreshStateSoon();
+        }
+      });
+    });
+  }
+
+  // Rolls a service back to the previous version history remembers. Offered
+  // on every service row rather than only when a history entry is known to
+  // exist on the client — nothing in the `updates` reply says so, and
+  // staxx_update_rollback() already refuses cleanly, in a full sentence,
+  // when there is nothing to roll back to.
+  function rollbackUpdate(name, service, label) {
+    call('update-rollback', { name: name, service: service }).then(function (res) {
+      if (!res.ok) { failed('Could not roll back ' + label, res.error); return; }
+      var rows = containerRows(name, service);
+      if (rows.length) setBusy(rows, 'Rolling back…');
+      track(res.job, {
+        rows: rows, verb: 'recreate',
+        done: function (job) {
+          clearBusy(rows);
+          if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'recreate', res.job);
+          refreshUpdates();
+          refreshStateSoon();
+        }
+      });
+    });
+  }
+
+  // Builds a locally built image again from a base that has moved on. A
+  // different verb from Update on purpose: there is nothing to download, and
+  // pulling would find nothing new. The server records the base it is
+  // building against before it starts, so the row stops asking for a rebuild
+  // it has just been given.
+  function rebuildService(name, service, label) {
+    var rows = containerRows(name, service);
+    if (rows.length) setBusy(rows, 'Rebuilding…');
+    call('update-rebuild', { name: name, service: service }).then(function (res) {
+      if (!res.ok) { clearBusy(rows); failed('Could not rebuild ' + label, res.error); return; }
+      track(res.job, {
+        rows: rows, verb: 'rebuild',
+        done: function (job) {
+          clearBusy(rows);
+          if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'rebuild', res.job);
+          refreshUpdates();
+          refreshStateSoon();
+        }
+      });
+    });
+  }
+
   // The one place both the row menus' pills and the header line come from.
   // Called after anything that might have changed the answer — never on a
   // clock, see the note above.
@@ -11581,6 +11948,10 @@
       lastUpdateRows    = res.rows    || {};
       lastUpdateFolders = res.folders || {};
       reapplyUpdatePills();
+
+      updatesPaused = !!res.paused;
+      paintPauseButton();
+      applyQueue(res.queue);
     });
   }
 
@@ -11727,8 +12098,11 @@
 
   // Paints whatever the last check (nightly, weekly, or someone's own press)
   // already found — see the no-timer note above for why this asks once and
-  // nothing here asks again on its own.
+  // nothing here asks again on its own. Also picks up a queue already in
+  // progress (started by the cron pass, or left running from a previous
+  // visit) and resumes polling it.
   refreshUpdates();
+  startPageClock();
 
   /* There are exactly TWO refresh sizes, and adding a third needs a
    * measurement rather than an opinion — see PLAN_48.
@@ -12614,7 +12988,8 @@
   // "-ing…", the wrong tense for a button).
   var VERB_LABEL = {
     up: 'Start', down: 'Stop', restart: 'Restart',
-    recreate: 'Recreate', update: 'Update', pull: 'Update'
+    recreate: 'Recreate', update: 'Update', pull: 'Update',
+    rebuild: 'Rebuild'
   };
 
   function verbLabel(verb) {
@@ -12935,6 +13310,64 @@
             'effort even though it is cheap. Enter a 24-hour time, such as 04:00.'
     },
     {
+      key: 'UPDATE_MODE', control: 'choice', label: 'What to do with what is found',
+      choices: [
+        ['off',    'Nothing — just show it on the row'],
+        ['notify', 'Wait for you to press Update'],
+        ['auto',   'Install it by itself once the delay below has passed']
+      ],
+      help: 'The default for every stack. A stack or a service can set its own in its compose ' +
+            'file, and that wins over this.'
+    },
+    {
+      key: 'UPDATE_DELAY_HOURS', control: 'number', min: 0, max: 720, label: 'Delay before installing',
+      help: 'Only used when the setting above is "Install it by itself". How long an update ' +
+            'sits on its row, counting down, before it installs itself. In hours, 0 to 720 ' +
+            '(30 days).'
+    },
+    {
+      key: 'UPDATE_WINDOW', control: 'choice', label: 'Only install during a quiet time',
+      choices: [
+        ['true',  'Yes'],
+        ['false', 'No — install the moment the delay is up']
+      ],
+      help: 'On by default. An update whose delay runs out outside the quiet hours below ' +
+            'waits for them to open rather than installing itself in the middle of anything.'
+    },
+    {
+      key: 'UPDATE_WINDOW_START', control: 'time', label: 'Quiet time starts',
+      help: 'A 24-hour time, such as 03:00. The quiet time is allowed to run past midnight ' +
+            'into the next day.'
+    },
+    {
+      key: 'UPDATE_WINDOW_END', control: 'time', label: 'Quiet time ends',
+      help: 'A 24-hour time, such as 05:00.'
+    },
+    {
+      key: 'UPDATE_NOTIFY', control: 'choice', label: 'Notify me',
+      choices: [
+        ['off',     'Never'],
+        ['found',   'When a check finds something waiting'],
+        ['applied', 'That, and again once it has actually been installed']
+      ],
+      help: 'Sent through Unraid\'s own notification system — one message per check or per ' +
+            'queue finishing, never one per container.'
+    },
+    {
+      key: 'UPDATE_RETAIN', control: 'number', min: 0, max: 5, label: 'Previous versions to keep',
+      help: 'How many older versions of each image this server keeps on disk so an update can ' +
+            'be rolled back afterwards. 0 to 5.'
+    },
+    {
+      key: 'UPDATE_CLEANUP', control: 'choice', label: 'Remove old images automatically',
+      choices: [
+        ['off',    'No — leave old images where they are'],
+        ['weekly', 'Yes, once a week']
+      ],
+      help: 'Only ever removes an image that nothing is running and that no roll-back needs ' +
+            'any more — never a general clean-up of everything unused.'
+    },
+    {
       key: 'HUB_USER', control: 'text', label: 'Docker Hub username',
       group: 'Docker Hub sign-in',
       groupHelp: 'Used when checking your containers\' images for updates. Without signing in, ' +
@@ -12971,15 +13404,20 @@
                '>' + esc(o[1]) + '</option>';
       }).join('');
       control = '<select id="' + row.id + '" aria-label="' + esc(row.label) + '">' + opts + '</select>';
-    } else if (row.control === 'text' || row.control === 'password' || row.control === 'time') {
+    } else if (row.control === 'text' || row.control === 'password' || row.control === 'time' ||
+               row.control === 'number') {
       // Docker Hub username/token — an ordinary box, and a masked one. Wears
       // the same password-manager opt-out as every other credential-shaped
       // box in this file, since a browser or a password manager would
       // otherwise offer to save a Docker Hub login here. The time control
       // reuses this branch because a browser's own time picker already
       // posts the "HH:MM" shape the server demands, leading zero included.
+      // The number control's min/max are only a nudge — staxx_update_settings()
+      // is what actually rejects anything that is not a whole number in range.
+      var numAttrs = row.control === 'number'
+        ? ' min="' + row.min + '" max="' + row.max + '" step="1"' : '';
       control = '<input type="' + row.control + '" class="staxx-input" id="' + row.id + '" ' +
-                     'aria-label="' + esc(row.label) + '" spellcheck="false"' + NOFILL +
+                     'aria-label="' + esc(row.label) + '" spellcheck="false"' + NOFILL + numAttrs +
                      ' value="' + esc(value) + '">';
     } else {
       // A plain <div>, not a <label>, for the same reason boxHtml() above
@@ -13543,6 +13981,23 @@
 
       var updateEntry = updatePillEntry(updatePillEl(rowFor(name)));
       if (updateEntry && updateEntry.state === 'update' && updateEntry.image) {
+        // PLAN_45 phase 4-8. Runs it now rather than waiting for its clock —
+        // every service in the stack, the same scope "Update images" above
+        // already uses.
+        menuItem('Update now', 'download', function () {
+          updateNow(name, undefined, label);
+        }, { disabled: !CAN_RUN });
+
+        if (updateEntry.hold) {
+          menuItem('Resume the countdown', 'play', function () {
+            holdUpdate(updateEntry.image, false, label);
+          });
+        } else if (updateEntry.due > 0) {
+          menuItem('Cancel the countdown', 'pause', function () {
+            holdUpdate(updateEntry.image, true, label);
+          });
+        }
+
         menuItem('Skip this version', 'step-forward', function () {
           skipUpdate(updateEntry.image, label);
         });
@@ -13668,8 +14123,25 @@
 
     var updateEntry = updatePillEntry(updatePillEl(row));
     if (updateEntry && updateEntry.state === 'update' && updateEntry.image) {
+      var svcLabel = stackLabel(stack) + ' / ' + service;
+
+      // PLAN_45 phase 4-8. Runs it now rather than waiting for its clock.
+      menuItem('Update now', 'download', function () {
+        updateNow(stack, service, svcLabel);
+      }, { disabled: !CAN_RUN });
+
+      if (updateEntry.hold) {
+        menuItem('Resume the countdown', 'play', function () {
+          holdUpdate(updateEntry.image, false, svcLabel);
+        });
+      } else if (updateEntry.due > 0) {
+        menuItem('Cancel the countdown', 'pause', function () {
+          holdUpdate(updateEntry.image, true, svcLabel);
+        });
+      }
+
       menuItem('Skip this version', 'step-forward', function () {
-        skipUpdate(updateEntry.image, stackLabel(stack) + ' / ' + service);
+        skipUpdate(updateEntry.image, svcLabel);
       });
     }
     if (updateEntry && updateEntry.source) {
@@ -13687,6 +14159,24 @@
       menuItem('Fix the tag…', 'wrench', function () {
         editStack(stack, stackLabel(stack), service, undefined, 'image');
       });
+    }
+
+    // PLAN_45 phase 4-8. Only when an earlier version is actually still kept
+    // — the pill's own `back` flag says so, which is a plain state read on
+    // the server. staxx_update_rollback() refuses in a full sentence anyway,
+    // but a menu item that can only ever refuse is worse than no item.
+    if (updateEntry && updateEntry.back) {
+      menuItem('Roll back', 'undo', function () {
+        rollbackUpdate(stack, service, stackLabel(stack) + ' / ' + service);
+      }, { disabled: !CAN_RUN });
+    }
+
+    // A locally built image whose base has moved on cannot be pulled — it has
+    // to be built again, which is a different verb, so it is a different item.
+    if (updateEntry && updateEntry.state === 'rebuild') {
+      menuItem('Rebuild', 'wrench', function () {
+        rebuildService(stack, service, stackLabel(stack) + ' / ' + service);
+      }, { disabled: !CAN_RUN });
     }
 
     // PLAN_44 A4: opens on Manage with this container selected. Falls back to
@@ -13756,6 +14246,17 @@
              { disabled: !CAN_RUN });
     menuItem('Stop everything', 'stop', function () { folderRun(id, 'down', name); },
              { disabled: !CAN_RUN });
+    menuSeparator();
+
+    // PLAN_45 phase 4-8. `id` is the folder's own path segment — exactly the
+    // scope shape staxx_update_images() already takes for a folder, the same
+    // one runUpdateCheck() elsewhere passes a stack's full path.
+    menuItem('Check this folder', 'refresh', function () {
+      runUpdateCheck(id, name);
+    }, { disabled: !CAN_RUN });
+    menuItem('Update this folder', 'download', function () {
+      openUpdateQueueConfirm(id, name);
+    }, { disabled: !CAN_RUN });
     menuSeparator();
     menuItem('Rename folder', 'pencil', function () {
       var row  = document.querySelector('[data-folder-row="' + id + '"]');

@@ -52,6 +52,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/CA.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
@@ -679,6 +680,14 @@ switch ($action) {
       'summary' => staxx_updates_summary(),
       'rows'    => $rows,
       'folders' => $folders,
+      // The three additions from PLAN_45 phases 4-8: the pause switch, the
+      // queue's current state (ticked here so a page left open still drives
+      // it forward), and every clock that has already run out. staxx_update_due()
+      // reads every stack's compose metadata, which is exactly what the loop
+      // above already pays for, so nothing here costs a second sweep.
+      'paused'  => (bool)(staxx_update_state()['paused'] ?? false),
+      'queue'   => staxx_update_queue_tick(),
+      'due'     => staxx_update_due(),
     ]);
 
   // ---- start a check pass; the page follows it with the existing 'job' action ----
@@ -731,6 +740,147 @@ switch ($action) {
     if (!staxx_update_skip((string)($_POST['image'] ?? ''), $error)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
+    staxx_reply(['ok' => true]);
+
+  // ---- the grid-wide switch: stop every clock without touching a single one ----
+  case 'update-pause':
+    $on = ($_POST['on'] ?? '') === '1';
+    staxx_update_pause($on);
+    staxx_reply(['ok' => true, 'paused' => $on]);
+
+  /* ---- cancel, or un-cancel, the clock for one image ----
+   *
+   * Refuses an image the state file has never heard of, so a typo in the
+   * reference cannot quietly create a new entry for nothing to ever match.
+   */
+  case 'update-hold':
+    if (!staxx_update_hold((string)($_POST['image'] ?? ''), ($_POST['on'] ?? '') === '1', $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
+
+  /* ---- "update it now" — the same 'update' verb the clock would run itself --
+   *
+   * A whole stack when service is left out, one service when it is given.
+   * staxx_start_job() is what actually checks the service name against this
+   * stack's own compose services; nothing here needs to repeat that check.
+   */
+  case 'update-apply':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $job = staxx_start_job($name, 'update', $error, (string)($_POST['service'] ?? ''));
+    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_prune_jobs();
+    staxx_reply(['ok' => true, 'job' => $job]);
+
+  /* ---- "rebuild ready" — build fresh from the (moved-on) base, then come up --
+   *
+   * Records the base's current registry digest as the new baseline for
+   * every affected service BEFORE the job starts, not after — otherwise this
+   * exact rebuild would keep reporting itself as due for ever once it runs,
+   * since nothing else ever clears staxx_rebuild_due()'s recorded answer.
+   * Whole-stack when service is left out, one service when it is given, the
+   * same shape every other verb here takes.
+   */
+  case 'update-rebuild':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $service = (string)($_POST['service'] ?? '');
+    $dir  = staxx_stack_dir($name);
+    $file = staxx_find_compose_file($dir);
+    if ($file === '') {
+      staxx_reply(['ok' => false, 'error' => 'No compose file found in this stack.']);
+    }
+    $meta = staxx_compose_meta($file);
+    if (!$meta['ok']) {
+      staxx_reply(['ok' => false, 'error' => 'This stack\'s compose file could not be read.']);
+    }
+    if ($service !== '' && !isset($meta['services'][$service])) {
+      staxx_reply(['ok' => false, 'error' => 'No service called "'.$service.'" in this stack.']);
+    }
+    foreach (($service !== '' ? [$service] : array_keys($meta['services'])) as $svc) {
+      staxx_rebuild_baseline_reset($name, $svc);
+    }
+    $job = staxx_start_job($name, 'rebuild', $error, $service);
+    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_prune_jobs();
+    staxx_reply(['ok' => true, 'job' => $job]);
+
+  /* ---- put the previous image back, from this service's own history ----
+   *
+   * staxx_update_rollback() refuses outright when the digest history points
+   * to has already been removed locally, rather than guessing at a pull.
+   */
+  case 'update-rollback':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $job = staxx_update_rollback($name, (string)($_POST['service'] ?? ''), $error);
+    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'job' => $job]);
+
+  /* ---- start a queue over every stack in scope that actually has an update --
+   *
+   * $scope takes the same three shapes 'update-check' already accepts —
+   * 'all', a folder name, or one stack's path — checked the same way.
+   * staxx_update_queue_start() itself refuses a second queue on top of one
+   * already running.
+   */
+  case 'update-queue-start':
+    $scope = (string)($_POST['scope'] ?? 'all');
+    if ($scope !== 'all' && !staxx_valid_path($scope)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid scope.']);
+    }
+    $qid = staxx_update_queue_start($scope, ($_POST['stopped'] ?? '') === '1', $error);
+    if ($qid === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'queue' => staxx_update_queue_state()]);
+
+  // ---- advance the queue one step, and say where it now stands ----
+  //
+  // There is no daemon behind this: a page watching a running queue is what
+  // moves it forward between cron passes, exactly like the check pass this
+  // mirrors, so this is the one place that has to call tick() rather than
+  // just reading the state back.
+  case 'update-queue':
+    staxx_reply(['ok' => true, 'queue' => staxx_update_queue_tick()]);
+
+  // ---- let the running stack finish, then mark the rest skipped ----
+  case 'update-queue-stop':
+    staxx_update_queue_stop();
+    staxx_reply(['ok' => true, 'queue' => staxx_update_queue_state()]);
+
+  /* ---- remove images nothing is using and no history still points to ----
+   *
+   * This one deletes things, so a dry run is the form the page can call
+   * freely — it is refused only when it would actually remove something and
+   * the cleanup setting is still off. Turning that setting on is the only
+   * way past this, never a flag on the request.
+   */
+  case 'update-cleanup':
+    $dry = ($_POST['dry'] ?? '') === '1';
+    if (!$dry && staxx_update_settings()['cleanup'] === 'off') {
+      staxx_reply([
+        'ok'    => false,
+        'error' => 'Turn on image cleanup in the update settings first. A dry run can '
+                 . 'still be checked at any time without changing that.',
+      ]);
+    }
+    $result = staxx_update_cleanup($dry, $error);
+    if ($error !== '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'removed' => $result['removed'] ?? [], 'kept' => $result['kept'] ?? 0]);
+
+  // ---- the browser saying an editor on this stack still has unsaved changes --
+  //
+  // Touched on a timer while the editor is open; a browser that vanished
+  // simply stops touching it, and the mark goes stale on its own after 15
+  // minutes rather than freezing the stack's clock for ever.
+  case 'update-editing':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    staxx_update_editing_mark($name);
     staxx_reply(['ok' => true]);
 
   /* ---- download the icons the table is still missing ----

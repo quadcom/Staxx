@@ -28,19 +28,20 @@ const STAXX_HUB_TOKEN_MASK = '********';
 /**
  * The allowlist, and the single source of truth for what a setting is.
  *
- * key => ['type' => 'choice'|'path'|'text'|'time', 'default' => string, 'choices' => [...]].
- * `choices` is absent for a path, text or time field, since their range is not
- * a fixed list. `text` is a free string, gated only by the shared character
+ * key => ['type' => 'choice'|'path'|'text'|'time'|'number', 'default' => string, 'choices' => [...]].
+ * `choices` is absent for a path, text, time or number field, since their range is
+ * not a fixed list. `text` is a free string, gated only by the shared character
  * rule (staxx_settings_char_rule()) and a 255-character length cap; an empty
  * value is always accepted, which is what HUB_USER/HUB_TOKEN use to mean
  * "signed out". `time` is a 24-hour "HH:MM" clock time, leading zero required.
+ * `number` is a whole number, its range given by `min` and `max` in the spec.
  * Keep the defaults here matching default.cfg — they are not read from that
  * file, because the whole point is a value the browser can trust even if a
  * user's cfg predates a key or default.cfg itself failed to parse. The one
  * exception is ARCHIVE_ROOT: its default is computed, not a literal, because
  * the right answer depends on where this box's appdata actually lives.
  *
- * @return array<string, array{type:string, default:string, choices?:string[]}>
+ * @return array<string, array{type:string, default:string, choices?:string[], min?:int, max?:int}>
  */
 function staxx_settings_keys(): array {
   return [
@@ -67,6 +68,18 @@ function staxx_settings_keys(): array {
     // just closes on save.
     'UPDATE_CHECK'        => ['type' => 'choice', 'default' => 'daily', 'choices' => ['off', 'daily', 'weekly']],
     'UPDATE_CHECK_TIME'   => ['type' => 'time',   'default' => '04:00'],
+    // What happens once an update is found (global default; a stack or
+    // service can override it — PLAN_45 Part G), and the rest of the update
+    // pipeline's settings. None of these are read at page load either, so
+    // none belong in $reload — the panel just closes on save.
+    'UPDATE_MODE'         => ['type' => 'choice', 'default' => 'notify', 'choices' => ['off', 'notify', 'auto']],
+    'UPDATE_DELAY_HOURS'  => ['type' => 'number', 'default' => '24', 'min' => 0, 'max' => 720],
+    'UPDATE_WINDOW'       => ['type' => 'choice', 'default' => 'true', 'choices' => ['true', 'false']],
+    'UPDATE_WINDOW_START' => ['type' => 'time',   'default' => '03:00'],
+    'UPDATE_WINDOW_END'   => ['type' => 'time',   'default' => '05:00'],
+    'UPDATE_NOTIFY'       => ['type' => 'choice', 'default' => 'off', 'choices' => ['off', 'found', 'applied']],
+    'UPDATE_RETAIN'       => ['type' => 'number', 'default' => '2', 'min' => 0, 'max' => 5],
+    'UPDATE_CLEANUP'      => ['type' => 'choice', 'default' => 'off', 'choices' => ['off', 'weekly']],
   ];
 }
 
@@ -195,6 +208,16 @@ function staxx_settings_validate(string $key, array $spec, string $v, string &$e
     // trailing junk (a stray space, a shell operator) cannot ride along.
     if (!preg_match('/^([01][0-9]|2[0-3]):[0-5][0-9]$/', $v)) {
       $error = 'Enter the time for "'.$key.'" as a 24-hour clock time, such as 04:00.';
+      return '';
+    }
+    return $v;
+  }
+
+  if ($spec['type'] === 'number') {
+    // A bare whole number only — no sign, no decimal point, no leading zero
+    // padding tricks — then checked against the range the spec declares.
+    if (!preg_match('/^[0-9]+$/', $v) || (int)$v < $spec['min'] || (int)$v > $spec['max']) {
+      $error = 'Enter a whole number between '.$spec['min'].' and '.$spec['max'].' for "'.$key.'".';
       return '';
     }
     return $v;
