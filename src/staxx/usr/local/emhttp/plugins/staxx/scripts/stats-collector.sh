@@ -28,11 +28,10 @@ DIR="$1"
 STALE=45          # give up if nobody has asked for stats in this many seconds
 INTERVAL=1        # pause between sampling rounds
 
-# Measured on a 62-container server: docker stats 1.5s, intel_gpu_top 2s (it
-# streams forever, so it is stopped by the timeout rather than exiting), and
-# radeontop 1.1s. With the pause that is a round every five or six seconds,
-# which is what the graphs advance at. Lowering the pause further would not
-# help much — the sampling itself is the cost, not the wait.
+# Measured on a 62-container server: docker stats 1.5s and radeontop 1.1s.
+# The Intel reading is now a handful of file reads and costs next to nothing.
+# With the pause that is a round every two or three seconds, which is what the
+# graphs advance at.
 
 WATCH="$DIR/watch"
 LOCK="$DIR/collector.pid"
@@ -200,21 +199,67 @@ sample_gpu_clients() {
   mv "$out" "$DIR/gpuclients.raw"
 }
 
-# Sample the Intel GPU. intel_gpu_top streams JSON objects forever, so it is
-# run under a timeout and the caller keeps the last complete object. The
-# `clients` block it emits carries a PID per GPU user, which is what lets a
-# figure be attributed to a container rather than just to the machine.
+# Sample the Intel GPU from sysfs — read-only, nothing attached to the card
+# and nothing to kill.
+#
+# WHY THIS REPLACED intel_gpu_top: that tool attaches to the i915 perf/PMU
+# interface, and it was being started and then SIGTERMed/SIGKILLed under a
+# timeout every few seconds, for as long as any StaXX page stayed open —
+# indefinitely, on a server that never closes its Docker tab. On this
+# hardware the card doing that is a discrete Intel Arc that also does the
+# Plex hardware transcode, and the user has seen GPU crashes and freezes.
+# Never proven as the cause, but repeatedly attaching a performance monitor
+# to a card and killing it hard is a credible one, and there is no need to
+# carry that risk for a number plain file reads already give.
+#
+# The idle-residency counter counts upward in milliseconds, so busy% is the
+# inverse of how much of the elapsed wall time it grew by — see
+# staxx_gpu_busy_percent() in Stats.php for the exact sum, and gpu.php for
+# the proof it is right (verified on the box: 2002ms idle of 2004ms elapsed
+# -> 0% busy, with the clock reading 0 while idle).
+#
+# Not every i915 generation exposes the same path. Newer ones publish
+# gt/gt0/rc6_residency_ms; older ones publish it under power/ instead — both
+# are tried, in that order, and the first that exists wins for that card.
+#
+# Follows the same "keep the previous reading so the caller can take a
+# difference" idiom as sample_gpu_procs() above, so there is one shape for
+# this kind of counter rather than two: the old reading moves to *.prev
+# before the new one is written.
 sample_intel() {
-  command -v intel_gpu_top >/dev/null 2>&1 || return 1
-  # Two seconds yields two complete samples at this interval, which is one more
-  # than needed — the caller keeps the last whole one.
-  timeout -k 1 2 intel_gpu_top -J -s 900 > "$DIR/intel.raw.tmp" 2>/dev/null
-  # timeout kills it, so a non-zero exit is expected and not an error.
-  if [ -s "$DIR/intel.raw.tmp" ]; then
-    mv "$DIR/intel.raw.tmp" "$DIR/intel.raw"
-  else
-    rm -f "$DIR/intel.raw.tmp"
-  fi
+  out="$DIR/intel.raw.tmp"
+  # First line is the timestamp, exactly like gpuproc.raw above: a millisecond
+  # clock read at the same moment as the residency counters below it, so the
+  # reader has a real elapsed time to divide by rather than assuming the
+  # collector's cycle length.
+  date +%s%3N > "$out"
+
+  for card in /sys/class/drm/card*; do
+    [ -d "$card/device" ] || continue
+    vendor=$(cat "$card/device/vendor" 2>/dev/null)
+    [ "$vendor" = "0x8086" ] || continue
+
+    node=$(basename "$card")
+
+    residency=""
+    for base in "$card/gt/gt0" "$card/power"; do
+      if [ -r "$base/rc6_residency_ms" ]; then
+        residency=$(cat "$base/rc6_residency_ms" 2>/dev/null)
+        break
+      fi
+    done
+    [ -n "$residency" ] || continue
+
+    freq=$(cat "$card/gt/gt0/rps_act_freq_mhz" 2>/dev/null)
+    max=$(cat "$card/gt/gt0/rps_max_freq_mhz" 2>/dev/null)
+
+    echo "i $node $residency ${freq:-0} ${max:-0}" >> "$out"
+  done
+
+  # Keep the previous sample: the busy figure is a rate, and a rate needs two
+  # readings and the time between them.
+  [ -f "$DIR/intel.raw" ] && mv "$DIR/intel.raw" "$DIR/intel.prev"
+  mv "$out" "$DIR/intel.raw"
 }
 
 # The AMD card's own metrics table, sampled repeatedly.
