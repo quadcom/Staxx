@@ -51,6 +51,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Devices.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/CA.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -646,6 +647,60 @@ switch ($action) {
         staxx_folder_names()
       ),
     ]);
+
+  /* ---- PLAN_45 phase 3: every row's update pill, plus the summary line ----
+   *
+   * Cheap on purpose, so the page can ask on every poll: one read of the
+   * update state file, plus the compose metadata staxx_compose_meta() already
+   * caches to disk for the table itself. No docker call happens here at all —
+   * that only ever happens in the detached check pass 'update-check' starts.
+   * `rows` is keyed both by stack path ("Media/jellyfin") and by
+   * "path::service" ("Media/jellyfin::jellyfin"), matching how the table
+   * already addresses a service row; `folders` is keyed by folder name.
+   */
+  case 'updates':
+    $rows = [];
+    foreach (staxx_list_stacks() as $s) {
+      $rows[$s['name']] = staxx_updates_for_row($s['name']);
+      if ($s['file'] === '') continue;
+      $meta = staxx_compose_meta($s['file']);
+      if (!$meta['ok']) continue;
+      foreach (array_keys($meta['services']) as $svc) {
+        $rows[$s['name'].'::'.$svc] = staxx_updates_for_row($s['name'], $svc);
+      }
+    }
+    $folders = [];
+    foreach (staxx_folder_names() as $f) {
+      $folders[$f] = staxx_updates_for_folder($f);
+    }
+    staxx_reply([
+      'ok'      => true,
+      'summary' => staxx_updates_summary(),
+      'rows'    => $rows,
+      'folders' => $folders,
+    ]);
+
+  // ---- start a check pass; the page follows it with the existing 'job' action ----
+  //
+  // Always forced: a person pressing this button means "ask now", which is
+  // the whole difference between this and the nightly pass — the remembered
+  // six-hour answers exist to protect the registry's rate limit from an
+  // automatic sweep, not from someone who deliberately asked again.
+  case 'update-check':
+    $scope = (string)($_POST['scope'] ?? 'all');
+    if ($scope !== 'all' && !staxx_valid_path($scope)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid scope.']);
+    }
+    $job = staxx_update_check_start($scope, true, $error);
+    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'job' => $job]);
+
+  // ---- dismiss the version currently on offer for one image ----
+  case 'update-skip':
+    if (!staxx_update_skip((string)($_POST['image'] ?? ''), $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
 
   /* ---- download the icons the table is still missing ----
    *

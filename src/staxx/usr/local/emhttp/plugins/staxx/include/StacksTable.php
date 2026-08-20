@@ -28,6 +28,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Folders.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Autostart.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 
 // NO "already loaded?" guard here, deliberately.
 //
@@ -224,6 +225,54 @@ function staxx_container_pill(array $c): string {
     default:                                   // exited, created
       return '<span class="staxx-pill staxx-pill--down">'.$status.'</span>';
   }
+}
+
+/**
+ * The update pill for one row, drawn beside the state pill it already sits
+ * next to (folder, stack and service) rather than in a column of its own —
+ * a column would cost every row the same sliver of width for something most
+ * rows have nothing to say about.
+ *
+ * `current` (checked, and it matches) and `unknown` (never checked at all)
+ * both render nothing — a page that has never run a check must not shout
+ * "up to date" on every row, and once it has, "up to date" on forty rows is
+ * noise that buries the three that matter. The two are told apart by
+ * $u['state'] itself, which already distinguishes them; nothing here needs
+ * to guess.
+ *
+ * label/tip/image/source all come out of a registry — a stranger's text —
+ * and are escaped exactly like every other value this file prints. source
+ * is the "what changed" link, carried as a data attribute rather than a
+ * tooltip here so the row menu can read it straight off the pill instead of
+ * asking the server again for something this same reply already knew.
+ *
+ * @param array $u from staxx_updates_for_row() / staxx_updates_for_folder()
+ */
+function staxx_update_pill_html(array $u): string {
+  $state = (string)($u['state'] ?? 'unknown');
+
+  // Only the states with something worth flagging get a modifier class; an
+  // unrecognised value (a future state this file has not been taught about
+  // yet) falls through to showing nothing rather than guessing at a colour.
+  $cls = [
+    'update'  => 'staxx-updatepill--update',
+    'built'   => 'staxx-updatepill--built',
+    'missing' => 'staxx-updatepill--missing',
+    'error'   => 'staxx-updatepill--error',
+  ][$state] ?? '';
+  if ($cls === '') return '';
+
+  $label  = htmlspecialchars((string)($u['label'] ?? ''));
+  $image  = htmlspecialchars((string)($u['image'] ?? ''));
+  $source = htmlspecialchars((string)($u['source'] ?? ''));
+  $title  = (string)($u['tip'] ?? '');
+  $titleAttr = $title !== '' ? ' title="'.htmlspecialchars($title).'"' : '';
+
+  return '<span class="staxx-updatepill '.$cls.'"'
+       . ' data-update-state="'.htmlspecialchars($state).'"'
+       . ' data-update-image="'.$image.'"'
+       . ' data-update-source="'.$source.'"'
+       . $titleAttr.'>'.$label.'</span>';
 }
 
 /**
@@ -658,6 +707,9 @@ function staxx_render_rows(array $rows, bool $canRun): string {
       $fGripWhy = $row['count'] < 2
         ? _('This folder holds fewer than two stacks, so there is nothing to reorder.')
         : _('There is only one folder, so there is nothing to reorder it against.');
+      // Sums its stacks' own pills (see PLAN_45 Part H) — a folder has no
+      // image of its own to check.
+      $fUpdate = staxx_updates_for_folder($row['id']);
 ?>
       <div class="staxx-group staxx-group--folder" role="presentation" data-folder-group="<?= htmlspecialchars($row['id']) ?>">
         <div class="staxx-row staxx-folder-row" role="row" aria-level="1"
@@ -699,6 +751,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
               <span class="staxx-nameinfo">
                 <span class="staxx-folder-name"><?= htmlspecialchars($row['name']) ?></span>
                 <?= staxx_boot_mark_html($fWait, $fTitle) ?>
+                <?= staxx_update_pill_html($fUpdate) ?>
                 <span class="staxx-sub" data-cell="folder-sub"><?= staxx_folder_sub($row['count'], $row['running']) ?></span>
               </span>
             </div>
@@ -780,6 +833,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
       // for an unfiled stack, the only one at the top level).
       $sGripOff = ($groupCounts[$row['folder']] ?? 0) < 2;
       $sGripWhy = _('This stack is alone in its group, so there is nothing to reorder it against.');
+
+      // Whole-stack pill (see PLAN_45 Part H) — one image, or several rolled
+      // up, depending what staxx_updates_for_row() decides for a multi-service
+      // stack.
+      $sUpdate = staxx_updates_for_row($s['name']);
 
       $expanded = $expandable && !empty($row['expanded']);
       $kidsUp   = count(array_filter($kids, fn($k) => $k['state'] === 'running'));
@@ -956,7 +1014,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 
           <!-- data-cell names these for the browser: after a start or a stop it
                replaces just these cells rather than the whole row. -->
-          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_state_pill($s, $canRun) ?></span>
+          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_state_pill($s, $canRun).staxx_update_pill_html($sUpdate) ?></span>
           <span class="staxx-cell staxx-cell--address staxx-addrcell" role="gridcell" data-cell="address"><?=
             staxx_address_html(staxx_merged_addresses(staxx_stack_containers($s), array_column($kids, 'webui', 'id')))
           ?></span>
@@ -1012,6 +1070,8 @@ function staxx_render_rows(array $rows, bool $canRun): string {
         // check stays honest rather than assuming the caller never changes.
         $cGripOff = count($kids) < 2;
         $cGripWhy = _('This is the only service here, so there is nothing to reorder it against.');
+        // One image, this row's own — see PLAN_45 Part H.
+        $kUpdate  = staxx_updates_for_row($s['name'], $kid['service']);
 ?>
         <!-- data-state below is read by the container menu (buildContainerMenu()
              in stacks.js) straight off the row, so it has to be right on the
@@ -1123,7 +1183,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
             <? endif; ?>
           </span>
 
-          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_container_pill($kid) ?></span>
+          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_container_pill($kid).staxx_update_pill_html($kUpdate) ?></span>
           <span class="staxx-cell staxx-cell--address staxx-addrcell" role="gridcell" data-cell="address"><?=
             staxx_address_html($kid['id'] !== ''
               ? staxx_address_webui_override(
@@ -1246,6 +1306,12 @@ function staxx_state_snapshot(): array {
       $containers[$key] = [
         'container' => $c['name'],
         'state'     => $c['state'],
+        // No update pill here, deliberately — staxx_updates_for_row() needs
+        // this stack's compose metadata, and reading that for every stack on
+        // every poll is the same 316ms-across-64-stacks cost the comment on
+        // this function already measured and ruled out. The browser keeps
+        // its own copy of the last `updates` reply and re-applies it after
+        // painting this html, so the pill still survives a poll.
         'html'      => staxx_container_pill(['exists' => true] + $c),
         // Ports move when a container is recreated with a changed compose
         // file, so this travels with the state rather than being fixed at
@@ -1266,6 +1332,8 @@ function staxx_state_snapshot(): array {
       // Same fallback the table uses, so the row's project is corrected the
       // moment compose reveals the real one.
       'project'    => $s['project'] !== '' ? $s['project'] : staxx_project_name($s['leaf']),
+      // No update pill here either — same reasoning as the container html
+      // just above.
       'html'       => staxx_state_pill($s, $canRun),
       'address'    => staxx_address_html(staxx_merged_addresses($mine, $webuiById)),
       'containers' => $containers,

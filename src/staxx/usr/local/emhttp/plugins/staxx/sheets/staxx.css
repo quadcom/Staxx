@@ -1909,6 +1909,45 @@
   white-space: nowrap;
 }
 
+/* The update pill (PLAN_45 Part H) — sits beside the state pill in the same
+   status area, not a column of its own. Copies .staxx-pill's own radius,
+   padding and font-size rather than sharing its selector, because the
+   mobile reflow rule further down turns .staxx-pill into an icon-only
+   circle, and two overlapping circles in the same cell is not what this
+   pill should become there. margin-left only takes effect when a state
+   pill actually precedes it — an empty string plus this pill has nothing
+   to be pushed away from. */
+.staxx-updatepill {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.25rem 0.8rem;
+  border-radius: 1rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* The one state worth drawing the eye to — filled with the same accent
+   colour every other "look at this" marker on a row already uses (the
+   review badge, the boot mark, the drift mark), so it reads as one visual
+   language rather than inventing a second. */
+.staxx-updatepill--update {
+  background: var(--sm-accent);
+  color: #000;
+}
+
+/* Built here, could not be checked, or the image itself has gone missing —
+   three different facts, but none of them is an alarm, so all three get the
+   same quiet treatment: the translucent fill .staxx-pill itself uses for a
+   plain stopped state, and the same muted text colour. */
+.staxx-updatepill--built,
+.staxx-updatepill--missing,
+.staxx-updatepill--error {
+  background: var(--sm-fill-2);
+  color: var(--sm-muted);
+  font-weight: 400;
+}
+
 /* The marker for a stack whose Compose Manager source has changed since it
    was imported — icon-only, unlike the badges above, because it is rare and
    the tooltip already carries the whole sentence (see staxx_import_drift()). */

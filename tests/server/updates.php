@@ -212,6 +212,81 @@ if ($anyStack === null) {
   }
 }
 
+/* ------------------------------------------- 11. the pill, PLAN_45 phase 3 */
+
+$neverAsked = staxx_updates_pill_for_image('staxx-never-asked/nope:latest', []);
+ok('pill: no entry at all reports unknown, never current',
+   $neverAsked['state'] === 'unknown', $neverAsked['state']);
+ok('pill: unknown label says "never checked"', $neverAsked['label'] === 'never checked');
+
+/* A stack where one service has an update and another is fine — the same
+ * fold staxx_updates_for_row() runs over a compose file's services, just fed
+ * two hand-built pills instead of a real stack. */
+$updatePill  = ['state' => 'update', 'label' => '1.0 → 1.1', 'source' => '', 'tip' => 't'];
+$currentPill = ['state' => 'current', 'label' => 'up to date', 'source' => '', 'tip' => 't'];
+$mixed = staxx_updates_aggregate([$updatePill, $currentPill]);
+ok('aggregate: one updatable service among fine ones reports "update"',
+   $mixed['state'] === 'update', json_encode($mixed));
+ok('aggregate: count is 1, not the total number of services', $mixed['count'] === 1, (string)$mixed['count']);
+
+/* A stack where one service could not be checked must never read as fully
+ * up to date — that is the failure this whole feature exists to avoid. */
+$errorPill = ['state' => 'error', 'label' => 'could not check', 'source' => '', 'tip' => 't'];
+$partialFailure = staxx_updates_aggregate([$currentPill, $errorPill]);
+ok('aggregate: an unchecked service beats "up to date"',
+   $partialFailure['state'] !== 'current', $partialFailure['state']);
+ok('aggregate: label is not "up to date" when something failed to check',
+   $partialFailure['label'] !== 'up to date', $partialFailure['label']);
+
+/* --------------------------------------------------- 12. update-skip refusals */
+
+$state = staxx_update_state();
+$state['images'] = [];
+staxx_update_state_save($state);
+
+$err = '';
+ok('skip: refuses an image with no state-file entry at all',
+   staxx_update_skip('staxx-not-tracked/nope:latest', $err) === false && $err !== '', $err);
+
+$state = staxx_update_state();
+$state['images']['staxx-test/no-remote:latest'] = ['local' => 'sha256:aaa'];
+staxx_update_state_save($state);
+
+$err = '';
+ok('skip: refuses an image with no remote digest recorded',
+   staxx_update_skip('staxx-test/no-remote:latest', $err) === false && $err !== '', $err);
+
+/* -------------------------------------------- 13. skip, then a newer digest */
+
+$image = 'staxx-test/skip-cycle:latest';
+$state = staxx_update_state();
+$state['images'][$image] = [
+  'local' => 'sha256:aaa', 'remote' => 'sha256:bbb', 'was' => '1.0', 'version' => '1.1',
+];
+staxx_update_state_save($state);
+
+$before = staxx_updates_pill_for_image($image, staxx_update_state()['images']);
+ok('skip cycle: before skipping, an update is reported', $before['state'] === 'update', $before['state']);
+
+$err = '';
+ok('skip: succeeds against a tracked image with a remote digest',
+   staxx_update_skip($image, $err) === true, $err);
+
+$afterSkip = staxx_updates_pill_for_image($image, staxx_update_state()['images']);
+ok('skip cycle: after skipping this version, it reports current',
+   $afterSkip['state'] === 'current', $afterSkip['state']);
+
+// A newer digest replaces the one that was skipped — the dismissal must not
+// silence a real update that shows up afterwards.
+$state = staxx_update_state();
+$state['images'][$image]['remote']  = 'sha256:ccc';
+$state['images'][$image]['version'] = '1.2';
+staxx_update_state_save($state);
+
+$afterNewer = staxx_updates_pill_for_image($image, staxx_update_state()['images']);
+ok('skip cycle: a newer remote digest reports "update" again',
+   $afterNewer['state'] === 'update', $afterNewer['state']);
+
 printf("\n%s — %d failure%s, %d skipped\n",
        $fails ? 'FAILED' : 'passed', $fails, $fails === 1 ? '' : 's', $skips);
 exit($fails ? 1 : 0);

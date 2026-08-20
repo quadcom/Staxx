@@ -11308,6 +11308,13 @@
       }
       setClass(tr.querySelector('.staxx-dot'), 'staxx-dot--up', folders[id].running > 0);
     });
+
+    // paintState() above just replaced a batch of state cells' innerHTML,
+    // which throws away any pill living inside them — put back the ones
+    // already in hand from the last `updates` reply. Declared after
+    // reapplyUpdatePills() is defined further down, but called only once
+    // the page is running, by which time it exists.
+    reapplyUpdatePills();
   }
 
   function refreshState() {
@@ -11332,6 +11339,252 @@
     setTimeout(refreshState, 1500);
     setTimeout(refreshState, 5000);
   }
+
+  /* ---- image updates (PLAN_45 phase 3) ----------------------------------
+   *
+   * This is deliberately not a third size for the rule just below — it does
+   * not touch the state cell or the set of rows at all, so it cannot race
+   * either of them. `updates` is one file read on the server, no docker
+   * involved, so asking for it again after anything that might have changed
+   * its answer — a check finishing, a skip — is cheap enough not to think
+   * twice about.
+   *
+   * There is no timer polling this on a clock. Nothing here changes on its
+   * own between an explicit check and the once-a-day/week pass the server
+   * already runs unattended — so a tab left open for a few minutes showing
+   * a slightly stale line is not worth a second interval running in every
+   * open tab. If that stops being true, add the timer then, not now.
+   */
+
+  // The pill itself is a <span class="staxx-updatepill ...">, sitting inside
+  // whichever status area the row already has — the state cell for a stack
+  // or container row, the name area for a folder row (a folder has no state
+  // cell of its own). include/StacksTable.php's staxx_update_pill_html()
+  // draws the same element on first render; this has to match it exactly; a
+  // row that was up to date at render time has no pill yet, so this creates
+  // one on demand rather than assuming it is already there.
+  //   data-update-state   current / update / built / missing / error / unknown
+  //   data-update-image   the image reference this pill is about
+  //   data-update-source  a "what changed" link, or '' when there is none
+  var UPDATE_PILL_CLASS = {
+    update:  'staxx-updatepill--update',
+    built:   'staxx-updatepill--built',
+    missing: 'staxx-updatepill--missing',
+    error:   'staxx-updatepill--error'
+    // current and unknown get no colour of their own — nothing here is
+    // worth a badge, which is the whole point of leaving them plain.
+  };
+
+  // `source` is a stranger's text, off a registry label — opened only when
+  // it looks like a genuine link, never handed to window.open() on trust.
+  function safeUpdateSource(url) {
+    return (typeof url === 'string' && url.slice(0, 8) === 'https://') ? url : '';
+  }
+
+  // The status area a pill belongs inside — see the comment above.
+  function updatePillHost(row) {
+    if (!row) return null;
+    return row.querySelector('[data-cell="state"]') || row.querySelector('.staxx-nameinfo');
+  }
+
+  function updatePillEl(row) {
+    var host = updatePillHost(row);
+    return host ? host.querySelector('.staxx-updatepill') : null;
+  }
+
+  // What a row's menu needs to decide which of its own items apply, read
+  // back off the pill rather than kept anywhere else — the same reason
+  // buildContainerMenu reads a container's state off its row instead of a
+  // separate map: one copy, and it is always what is on screen right now.
+  function updatePillEntry(pill) {
+    if (!pill || !pill.dataset.updateState) return null;
+    return {
+      state:  pill.dataset.updateState,
+      image:  pill.dataset.updateImage || '',
+      source: pill.dataset.updateSource || ''
+    };
+  }
+
+  // Repaints one row's pill from the plain facts the `updates` action hands
+  // back — state/label/count/image/source/tip is data, not markup, so this
+  // builds the element itself rather than dropping in ready-made HTML the
+  // way paintState() does. 'current' and 'unknown' remove the pill outright
+  // (a row that just became up to date must lose it, not show it empty);
+  // anything else creates it in the row's status area the first time it is
+  // needed. The element built here must come out byte-for-byte the same as
+  // staxx_update_pill_html() — same class, same three data attributes — so a
+  // pill born in the browser is indistinguishable from one the server drew.
+  function paintUpdatePill(row, entry) {
+    var host = updatePillHost(row);
+    if (!host) return;
+    var state = entry ? (entry.state || '') : '';
+    var show  = !!(entry && state && state !== 'current' && state !== 'unknown');
+
+    var pill = host.querySelector('.staxx-updatepill');
+    if (!show) {
+      if (pill) pill.parentNode.removeChild(pill);
+      return;
+    }
+    if (!pill) {
+      pill = document.createElement('span');
+      host.appendChild(pill);
+    }
+
+    var cls = UPDATE_PILL_CLASS[state] || '';
+    pill.className = 'staxx-updatepill' + (cls ? ' ' + cls : '');
+    setData(pill, 'updateState', state);
+    setData(pill, 'updateImage', entry.image || '');
+    setData(pill, 'updateSource', safeUpdateSource(entry.source));
+
+    var text = entry.label || state;
+    if (entry.count > 1) text += ' (' + entry.count + ')';
+    if (pill.staxxTxt !== text) { pill.textContent = text; pill.staxxTxt = text; }
+    if (entry.tip) pill.title = entry.tip; else pill.removeAttribute('title');
+  }
+
+  // "less than a minute", "20 minutes", "3 hours" — never "ago" on its own,
+  // since every caller says that itself once, around whichever sentence it
+  // is building.
+  function timeAgoWords(unixSeconds) {
+    var diff = Math.max(0, Math.floor(Date.now() / 1000) - unixSeconds);
+    if (diff < 60) return 'less than a minute';
+    var mins = Math.floor(diff / 60);
+    if (mins < 60) return mins + (mins === 1 ? ' minute' : ' minutes');
+    var hours = Math.floor(mins / 60);
+    if (hours < 24) return hours + (hours === 1 ? ' hour' : ' hours');
+    var days = Math.floor(hours / 24);
+    return days + (days === 1 ? ' day' : ' days');
+  }
+
+  // Decision 18: a week of silent failures must never read as "nothing to
+  // update" — so a check that never ran, or one that broke, says so plainly
+  // rather than being folded into the same wording as "all good".
+  function updatesLineText(summary) {
+    if (!summary || !summary.checked) return 'Never checked.';
+    var when = 'Checked ' + timeAgoWords(summary.checked) + ' ago';
+    if (!summary.ok) return when + ', but it could not finish.';
+    var n = summary.updates || 0;
+    if (!n) return when + ', nothing needs updating.';
+    return when + ', ' + n + (n === 1 ? ' update waiting.' : ' updates waiting.');
+  }
+
+  // The button and its line are the server's own markup now, like every
+  // other control on this page — this just finds them by id and binds.
+  // Guarded rather than assumed, so an older cached page (or a markup
+  // change that drops the id) fails quietly instead of throwing.
+  var checkUpdatesBtn = document.getElementById('staxx-check-updates');
+  var updatesLine     = document.getElementById('staxx-updates-line');
+
+  var updatesChecking = false;
+
+  function paintUpdatesLine(summary) {
+    if (!updatesLine) return;
+    updatesLine.textContent = updatesLineText(summary);
+    // Worth a second look — no updates found is not, silence or a broken
+    // check is.
+    setClass(updatesLine, 'staxx-hint--warn',
+      !!(summary && summary.checked && (!summary.ok || summary.updates)));
+  }
+
+  // The last `updates` reply's per-row answers, kept so paintState() wiping
+  // a state cell's innerHTML (see applyState() below) can be repaired for
+  // free — repainting from what is already in hand costs nothing and needs
+  // no extra request, where asking `updates` again on every state poll
+  // would just trade one cost for another.
+  var lastUpdateRows    = {};
+  var lastUpdateFolders = {};
+
+  function paintUpdateRow(key, entry) {
+    var sep = key.indexOf('::');
+    if (sep === -1) {
+      paintUpdatePill(rowFor(key), entry);
+      return;
+    }
+    var stack = key.slice(0, sep), service = key.slice(sep + 2);
+    // Every replica of a service shares one answer — same reason
+    // containerRows() above answers a service with more than one row.
+    Array.prototype.forEach.call(
+      document.querySelectorAll(
+        '.staxx-container-row[data-in-stack="' + stack + '"][data-service="' + service + '"]'
+      ),
+      function (row) { paintUpdatePill(row, entry); }
+    );
+  }
+
+  // Re-applies the pills already in hand, with no request of its own —
+  // called after paintState() has repainted a batch of state cells and may
+  // have carried their pills away with them.
+  function reapplyUpdatePills() {
+    Object.keys(lastUpdateRows).forEach(function (key) {
+      paintUpdateRow(key, lastUpdateRows[key]);
+    });
+    Object.keys(lastUpdateFolders).forEach(function (id) {
+      var tr = document.querySelector('[data-folder-row="' + id + '"]');
+      if (tr) paintUpdatePill(tr, lastUpdateFolders[id]);
+    });
+  }
+
+  // The one place both the row menus' pills and the header line come from.
+  // Called after anything that might have changed the answer — never on a
+  // clock, see the note above.
+  function refreshUpdates() {
+    call('updates', {}).then(function (res) {
+      if (!res.ok) return;
+      paintUpdatesLine(res.summary);
+
+      lastUpdateRows    = res.rows    || {};
+      lastUpdateFolders = res.folders || {};
+      reapplyUpdatePills();
+    });
+  }
+
+  // `scope` is 'all' or one stack path, exactly what update-check's own
+  // `scope` field takes — the header button and a row's own "check again"
+  // share this, differing only in what they pass.
+  function runUpdateCheck(scope, label, onDone) {
+    call('update-check', { scope: scope }).then(function (res) {
+      if (!res.ok) {
+        failed('Could not check ' + (label || 'for updates'), res.error);
+        if (onDone) onDone();
+        return;
+      }
+      track(res.job, {
+        done: function () {
+          refreshUpdates();
+          if (onDone) onDone();
+        }
+      });
+    });
+  }
+
+  function skipUpdate(image, label) {
+    call('update-skip', { image: image }).then(function (res) {
+      if (!res.ok) { failed('Could not skip that version for ' + label, res.error); return; }
+      refreshUpdates();
+    });
+  }
+
+  if (checkUpdatesBtn) {
+    checkUpdatesBtn.addEventListener('click', function () {
+      // Refuses a second press outright rather than queuing one — a check
+      // already in flight will answer the question this press was asking too.
+      if (updatesChecking) return;
+      updatesChecking = true;
+      checkUpdatesBtn.disabled = true;
+      checkUpdatesBtn.innerHTML = '<i class="fa fa-refresh fa-spin"></i> Checking…';
+
+      runUpdateCheck('all', 'everything', function () {
+        updatesChecking = false;
+        checkUpdatesBtn.disabled = false;
+        checkUpdatesBtn.innerHTML = '<i class="fa fa-refresh"></i> Check for updates';
+      });
+    });
+  }
+
+  // Paints whatever the last check (nightly, weekly, or someone's own press)
+  // already found — see the no-timer note above for why this asks once and
+  // nothing here asks again on its own.
+  refreshUpdates();
 
   /* There are exactly TWO refresh sizes, and adding a third needs a
    * measurement rather than an opinion — see PLAN_48.
@@ -13133,6 +13386,25 @@
       // taking it down as a side effect.
       menuItem('Update images', 'download', function () { run(name, 'pull', afterRun('pull')); },
                { disabled: !CAN_RUN });
+
+      // PLAN_45 phase 3. Scoped to the whole stack — the check itself has
+      // no per-service form, see update-check's own `scope` field.
+      menuItem('Check this image again', 'refresh', function () {
+        runUpdateCheck(name, label);
+      }, { disabled: !CAN_RUN });
+
+      var updateEntry = updatePillEntry(updatePillEl(rowFor(name)));
+      if (updateEntry && updateEntry.state === 'update' && updateEntry.image) {
+        menuItem('Skip this version', 'step-forward', function () {
+          skipUpdate(updateEntry.image, label);
+        });
+      }
+      if (updateEntry && updateEntry.source) {
+        menuItem('What changed', 'external-link', function () {
+          window.open(updateEntry.source, '_blank', 'noopener');
+        });
+      }
+
       // PLAN_44 A4: opens on Manage's All tab. Falls back to Configure on its
       // own (editStack() -> openEditor() only switches tabs when manage.js
       // has loaded) — reading a file needs neither Docker nor compose, so
@@ -13224,6 +13496,25 @@
     menuItem('Update image', 'download', function () {
       run(stack, up ? 'update' : 'pull', afterRun('update'), service);
     }, { disabled: !CAN_RUN });
+
+    // PLAN_45 phase 3. There is no per-service form of the check itself —
+    // this asks about the whole stack the container belongs to, same as the
+    // stack menu's own version of this item.
+    menuItem('Check this image again', 'refresh', function () {
+      runUpdateCheck(stack, stackLabel(stack));
+    }, { disabled: !CAN_RUN });
+
+    var updateEntry = updatePillEntry(updatePillEl(row));
+    if (updateEntry && updateEntry.state === 'update' && updateEntry.image) {
+      menuItem('Skip this version', 'step-forward', function () {
+        skipUpdate(updateEntry.image, stackLabel(stack) + ' / ' + service);
+      });
+    }
+    if (updateEntry && updateEntry.source) {
+      menuItem('What changed', 'external-link', function () {
+        window.open(updateEntry.source, '_blank', 'noopener');
+      });
+    }
 
     // PLAN_44 A4: opens on Manage with this container selected. Falls back to
     // Configure on its own if manage.js never loaded — reading a file needs

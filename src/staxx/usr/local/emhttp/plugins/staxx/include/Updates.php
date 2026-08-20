@@ -568,7 +568,13 @@ function staxx_update_check(string $scope, bool $force): array {
     $localDigest = $local['digest'] ?? '';
     $changed = $localDigest !== '' && $existing['remote'] !== '' && $localDigest !== $existing['remote'];
 
-    if ($changed) {
+    // A dismissed version stays quiet until something NEWER than it turns
+    // up — 'skip' has to match the remote digest just asked about, not
+    // merely be set, or a later real update would be silenced by an old
+    // skip that no longer describes what is actually on offer.
+    $skipped = $changed && ($existing['skip'] ?? '') !== '' && $existing['skip'] === $existing['remote'];
+
+    if ($changed && !$skipped) {
       // 'seen' starts the countdown and must never be touched again once
       // set for THIS remote digest — a re-check that kept restarting the
       // clock would mean an update never actually arrives. Only a fresh
@@ -588,7 +594,7 @@ function staxx_update_check(string $scope, bool $force): array {
       }
     } else {
       unset($existing['seen'], $existing['was'], $existing['seenDigest']);
-      echo $image." — up to date\n";
+      echo $image.($skipped ? ' — update skipped, staying quiet' : ' — up to date')."\n";
     }
 
     $images[$image] = $existing;
@@ -655,5 +661,296 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
   );
 
   return $job;
+}
+
+/* ------------------------------------------------------------- Part H: the grid --
+ *
+ * Everything below answers "what does this row's pill say", from the state
+ * file alone — no docker call, so the page can ask on every poll. The clock,
+ * the pause switch, automatic updating and roll back are later phases; this
+ * only reports what is already known.
+ */
+
+/**
+ * Classify one image reference against the state file — the one place that
+ * turns a raw state-file entry into the six words a pill is allowed to say.
+ * No key for this image at all is 'unknown', which must never be confused
+ * with 'current': one means "never asked", the other means "asked, and
+ * nothing has moved" — the whole reason this feature exists is to keep
+ * those apart.
+ *
+ * @return array{state:string, label:string, source:string, tip:string,
+ *               version?:string, was?:string}
+ */
+function staxx_updates_pill_for_image(string $image, array $images): array {
+  $entry = $images[$image] ?? null;
+
+  if ($entry === null) {
+    return [
+      'state'  => 'unknown',
+      'label'  => 'never checked',
+      'source' => '',
+      'tip'    => 'This image has not been checked yet. Press Check to ask the registry.',
+    ];
+  }
+
+  $source = (string)($entry['source'] ?? '');
+
+  if (!empty($entry['built'])) {
+    return [
+      'state'  => 'built',
+      'label'  => 'built here',
+      'source' => $source,
+      'tip'    => 'This image was built on this server rather than pulled, so it cannot yet '
+                . 'be compared against a registry.',
+    ];
+  }
+
+  $error = (string)($entry['error'] ?? '');
+  if ($error === 'not installed') {
+    return [
+      'state'  => 'missing',
+      'label'  => 'not installed',
+      'source' => $source,
+      'tip'    => 'This image has not been installed on this server yet, so there is nothing '
+                . 'to compare it against.',
+    ];
+  }
+  if ($error !== '') {
+    $tip = $error === 'rate limited'
+      ? 'Checking was refused because too many questions were asked recently. Wait a while '
+      . 'and check again, or sign in to Docker Hub under Settings to raise the limit.'
+      : ($error === 'not found in the registry'
+        ? 'The registry no longer has this image, so it cannot be compared. Check the image '
+        . 'name is still correct.'
+        : 'This image could not be checked last time. Try checking again.');
+    return ['state' => 'error', 'label' => 'could not check', 'source' => $source, 'tip' => $tip];
+  }
+
+  $local  = (string)($entry['local']  ?? '');
+  $remote = (string)($entry['remote'] ?? '');
+  // Present in the state file but with no digest either side — a check pass
+  // that has not reached this image yet. Same "never checked" answer as no
+  // entry at all, for the same reason: nothing has actually been compared.
+  if ($local === '' || $remote === '') {
+    return [
+      'state'  => 'unknown',
+      'label'  => 'never checked',
+      'source' => $source,
+      'tip'    => 'This image has not been checked yet. Press Check to ask the registry.',
+    ];
+  }
+
+  // A dismissed version stays quiet only while it is still the newest thing
+  // on offer — see the matching comment in staxx_update_check().
+  $skipped = ($entry['skip'] ?? '') !== '' && $entry['skip'] === $remote;
+
+  if ($local !== $remote && !$skipped) {
+    $was = (string)($entry['was'] ?? '');
+    $ver = (string)($entry['version'] ?? '');
+    $label = ($was !== '' && $ver !== '') ? $was.' → '.$ver : 'update ready';
+    $tip = ($was !== '' && $ver !== '')
+      ? 'A newer version, '.$ver.', is available; this is currently running '.$was.'. '
+      . 'Update the stack when you are ready.'
+      : 'A newer version of this image is available. Update the stack when you are ready.';
+    return ['state' => 'update', 'label' => $label, 'source' => $source, 'tip' => $tip,
+             'version' => $ver, 'was' => $was];
+  }
+
+  return [
+    'state'  => 'current',
+    'label'  => 'up to date',
+    'source' => $source,
+    'tip'    => 'This is running the version currently published in the registry.',
+  ];
+}
+
+/**
+ * Fold a list of rows' pills into one — used for a whole-stack row (its
+ * services) and a folder row (its stacks). The most actionable answer wins:
+ * an update to act on beats a check that failed, which beats an image this
+ * cannot compare at all, which beats one never asked about, which beats
+ * everything actually being fine — because "up to date" must never be shown
+ * over the top of something that could not be checked.
+ */
+function staxx_updates_aggregate(array $pills): array {
+  if (!$pills) {
+    return [
+      'state' => 'unknown', 'label' => 'never checked', 'count' => 0,
+      'image' => '', 'source' => '',
+      'tip' => 'There is nothing here to check for updates.',
+    ];
+  }
+
+  $rank = ['update' => 0, 'error' => 1, 'built' => 2, 'missing' => 2, 'unknown' => 3, 'current' => 4];
+
+  $best      = null;
+  $bestRank  = 99;
+  $updateCount = 0;
+  $source    = '';
+  foreach ($pills as $p) {
+    $state = $p['state'] ?? 'unknown';
+    if ($state === 'update') $updateCount++;
+    $r = $rank[$state] ?? 99;
+    if ($r < $bestRank) { $bestRank = $r; $best = $p; }
+    if ($source === '' && ($p['source'] ?? '') !== '') $source = $p['source'];
+  }
+
+  $total = count($pills);
+  $state = $best['state'] ?? 'current';
+
+  switch ($state) {
+    case 'update':
+      $label = $updateCount === 1 ? $best['label'] : $updateCount.' updates ready';
+      $tip   = $updateCount === 1
+        ? $best['tip']
+        : $updateCount.' of '.$total.' services here have an update available. Open the '
+        . 'stack to update them.';
+      break;
+    case 'error':
+      $label = 'could not check';
+      $tip   = 'One or more services here could not be checked, so this is not shown as up '
+             . 'to date. Try checking again.';
+      break;
+    case 'built':
+      $label = 'built here';
+      $tip   = 'One or more services here were built on this server, so they cannot be '
+             . 'compared against a registry.';
+      break;
+    case 'missing':
+      $label = 'not installed';
+      $tip   = 'One or more services here have not been installed on this server yet, so '
+             . 'there is nothing to compare.';
+      break;
+    case 'unknown':
+      $label = 'never checked';
+      $tip   = 'This has not been checked yet. Press Check to ask the registry.';
+      break;
+    default:
+      $state = 'current';
+      $label = 'up to date';
+      $tip   = 'Every service here is running the version currently published in the registry.';
+  }
+
+  return [
+    'state'  => $state,
+    'label'  => $label,
+    'count'  => $updateCount,
+    'image'  => '', // a summed-up row speaks for more than one image
+    'source' => $source,
+    'tip'    => $tip,
+  ];
+}
+
+/**
+ * One row's pill — a service (image looked up from the compose file), or a
+ * whole stack (every service folded together by staxx_updates_aggregate()).
+ * Reads the compose metadata staxx_compose_meta() already caches to disk and
+ * the update state file; runs no command of its own.
+ */
+function staxx_updates_for_row(string $stack, string $service = ''): array {
+  $file = '';
+  foreach (staxx_list_stacks() as $s) {
+    if ($s['name'] === $stack) { $file = $s['file']; break; }
+  }
+
+  $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false, 'services' => []];
+  if (!$meta['ok']) return staxx_updates_aggregate([]);
+
+  $images = (array)staxx_update_state()['images'];
+
+  if ($service !== '') {
+    $image = trim((string)($meta['services'][$service]['image'] ?? ''));
+    if ($image === '') return staxx_updates_aggregate([]);
+
+    $pill = staxx_updates_pill_for_image($image, $images);
+    $pill['image'] = $image;
+    $pill['count'] = $pill['state'] === 'update' ? 1 : 0;
+    return $pill;
+  }
+
+  $pills = [];
+  foreach ($meta['services'] as $svcMeta) {
+    $image = trim((string)($svcMeta['image'] ?? ''));
+    if ($image === '') continue;
+    $pills[] = staxx_updates_pill_for_image($image, $images);
+  }
+  return staxx_updates_aggregate($pills);
+}
+
+/**
+ * The same shape, summed over every stack whose path sits under one folder
+ * — one level of nesting, the same shape the rest of the plugin uses for a
+ * folder scope.
+ */
+function staxx_updates_for_folder(string $folder): array {
+  $pills = [];
+  foreach (staxx_list_stacks() as $s) {
+    if (strpos($s['name'], $folder.'/') !== 0) continue;
+    $pills[] = staxx_updates_for_row($s['name']);
+  }
+  return staxx_updates_aggregate($pills);
+}
+
+/**
+ * The grid's last-checked line: when the last pass ran, whether it worked,
+ * and how many distinct images have an answer at all versus an update
+ * actually waiting. Reads the state file only.
+ */
+function staxx_updates_summary(): array {
+  $state  = staxx_update_state();
+  $images = (array)$state['images'];
+
+  $known   = 0;
+  $updates = 0;
+  foreach (array_keys($images) as $image) {
+    $pillState = staxx_updates_pill_for_image($image, $images)['state'];
+    if ($pillState === 'unknown') continue;
+    $known++;
+    if ($pillState === 'update') $updates++;
+  }
+
+  return [
+    'checked' => (int)$state['checked'],
+    'ok'      => (bool)$state['ok'],
+    'error'   => (string)$state['error'],
+    'limited' => (bool)$state['limited'],
+    'updates' => $updates,
+    'known'   => $known,
+  ];
+}
+
+/**
+ * Dismiss the version currently on offer for one image: remember its
+ * current remote digest under 'skip', so staxx_updates_pill_for_image() (and
+ * the check pass's own comparison) reports it as current until something
+ * newer replaces that digest. The image has to already be a key in the state
+ * file — that is the allowlist, since accepting any string here would let a
+ * request invent entries in a file nothing else writes to freely. Refused
+ * the same way when there is no remote digest recorded yet: skipping
+ * "nothing in particular" is not a real action.
+ */
+function staxx_update_skip(string $image, string &$error): bool {
+  $error = '';
+  $state  = staxx_update_state();
+  $images = (array)$state['images'];
+
+  if (!array_key_exists($image, $images)) {
+    $error = 'This image has not been checked yet, so there is nothing to skip.';
+    return false;
+  }
+
+  $entry  = $images[$image];
+  $remote = (string)($entry['remote'] ?? '');
+  if ($remote === '') {
+    $error = 'There is no newer version recorded for this image, so there is nothing to skip.';
+    return false;
+  }
+
+  $entry['skip']   = $remote;
+  $images[$image]  = $entry;
+
+  staxx_update_state_save(['images' => $images]);
+  return true;
 }
 ?>

@@ -175,8 +175,15 @@ endif;
       <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-add">
         <i class="fa fa-plus"></i> <?= _('Add stack') ?>
       </button>
+      <button type="button" class="staxx-btn" id="staxx-check-updates">
+        <i class="fa fa-refresh"></i> <?= _('Check for updates') ?>
+      </button>
     </div>
   </div>
+
+  <!-- Filled in by refreshUpdates() the moment the page runs — there is
+       nothing to say about update checking before that first reply lands. -->
+  <p class="staxx-hint" id="staxx-updates-line"></p>
 
   <p class="staxx-hint">
     <?= sprintf(_('Each stack is a folder holding one compose file, kept in %s.'), htmlspecialchars($root)) ?>
