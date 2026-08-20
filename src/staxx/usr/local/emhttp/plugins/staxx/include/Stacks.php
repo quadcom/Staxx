@@ -29,6 +29,10 @@ define('STAXX_JOB_DIR', '/tmp/staxx/jobs');
 // Deliberately unlikely to appear in compose output.
 define('STAXX_JOB_END', '###staxx-finished###');
 
+// Remembered `docker compose config` answers, one file per stack, in /tmp for
+// the same reasons as the job logs above. See staxx_compose_meta().
+define('STAXX_META_DIR', '/tmp/staxx/meta');
+
 // Compose reads whichever of these it finds first, in this order.
 const STAXX_COMPOSE_FILENAMES = [
   'compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
@@ -998,6 +1002,62 @@ function staxx_first_ports(string $yaml): array {
   return $out;
 }
 
+// Bumped whenever the parsing below changes shape. Folded into every cache
+// key, so a plugin update cannot serve an answer the old parser computed —
+// without this a stale shape would sit there looking valid forever, since
+// nothing else about the compose file need have changed.
+const STAXX_META_VERSION = 1;
+
+/**
+ * A hash of everything that can change what compose would report for a
+ * stack: the main file's contents, the override's if there is one, its
+ * .env if there is one, and STAXX_META_VERSION.
+ *
+ * Contents, not size-and-mtime. Stacks live on the flash drive's vfat
+ * filesystem, which only records a modified time to the nearest two
+ * seconds — an edit inside that window that happened to keep the same
+ * length would be invisible to a timestamp check. Every file here is a few
+ * kilobytes at most, so reading them costs nothing next to the `docker
+ * compose` call this cache exists to avoid.
+ *
+ * Returns null to mean "never cache this stack": when any file mentions
+ * `include:` or `extends:`, the answer depends on a file this key cannot
+ * see, because compose does not report what it read in.
+ */
+function staxx_meta_cache_key(array $files): ?string {
+  $parts = [(string)STAXX_META_VERSION];
+
+  foreach ($files as $f) {
+    $text = @file_get_contents($f);
+    if ($text === false) return null;
+    if (preg_match('/(?:^|\n)\s*(?:include|extends)\s*:/', $text)) return null;
+    $parts[] = md5($text);
+  }
+
+  $envFile = dirname($files[0]).'/.env';
+  $envText = is_file($envFile) ? @file_get_contents($envFile) : '';
+  $parts[] = md5((string)$envText);
+
+  return md5(implode("\0", $parts));
+}
+
+/**
+ * Write a stack's remembered answer, temp-then-rename so a reader never
+ * sees half a file — same pattern the stats snapshots use. Every step is
+ * guarded: a cache that cannot be written must fall back to asking compose
+ * again, silently, never fail the page.
+ */
+function staxx_meta_cache_write(string $path, string $key, array $meta): void {
+  if (!is_dir(STAXX_META_DIR) && !@mkdir(STAXX_META_DIR, 0755, true)) return;
+
+  $json = json_encode(['key' => $key, 'meta' => $meta]);
+  if ($json === false) return;
+
+  $tmp = $path.'.'.getmypid().'.tmp';
+  if (@file_put_contents($tmp, $json) === false) return;
+  @rename($tmp, $path);
+}
+
 /**
  * Everything this plugin needs to know from a compose file.
  *
@@ -1009,6 +1069,11 @@ function staxx_first_ports(string $yaml): array {
  * started has no container, so `docker ps` knows nothing about it — reading it
  * from the compose file is the only way such a row can have an icon before it
  * has ever run.
+ *
+ * Answers are also remembered on disk between page loads (see
+ * STAXX_META_DIR) — one file per stack, so the cache cannot grow past the
+ * number of stacks and never needs pruning. A content hash decides whether
+ * the remembered answer still applies; see staxx_meta_cache_key().
  *
  * @return array{ok:bool, error:?string, x:array<string,string>,
  *                services:array<string,array{image:string, container_name:string,
@@ -1027,6 +1092,20 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
   $key   = implode("\0", $files);
   if (isset($cache[$key])) { $error = $cache[$key]['error']; return $cache[$key]; }
 
+  // The remembered-on-disk answer, checked before shelling out at all.
+  // $diskPath is named after the MAIN file, so a stack always has exactly
+  // one entry regardless of how many times its override comes and goes.
+  $diskPath = $files !== [] ? STAXX_META_DIR.'/'.md5($files[0]).'.json' : '';
+  $metaKey  = $files !== [] ? staxx_meta_cache_key($files) : null;
+
+  if ($diskPath !== '' && $metaKey !== null) {
+    $stored = @json_decode((string)@file_get_contents($diskPath), true);
+    if (is_array($stored) && ($stored['key'] ?? null) === $metaKey && isset($stored['meta'])) {
+      $error = $stored['meta']['error'];
+      return $cache[$key] = $stored['meta'];
+    }
+  }
+
   $meta = ['ok' => false, 'error' => null, 'x' => [], 'services' => []];
 
   $cmd  = staxx_compose_cmd();
@@ -1039,7 +1118,8 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
       // Compose is installed and it rejected the file. Report that rather than
       // falling through to the rough read below — guessing at a broken file
       // produces a list of things that are not services, which reads as though
-      // the file were fine.
+      // the file were fine. Never written to disk: only an answer compose
+      // actually produced is worth remembering.
       $meta['error'] = trim($out) !== '' ? trim($out) : 'Compose could not read this file.';
       $error = $meta['error'];
       return $cache[$key] = $meta;
@@ -1095,6 +1175,13 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
                                       'fixedIp' => '', 'firstPort' => []];
     }
     $meta['services'][$service]['firstPort'] = $port;
+  }
+
+  // Only a real, compose-produced answer is remembered — never the
+  // file_get_contents fallback above, which is a guess for when compose
+  // itself is missing.
+  if ($diskPath !== '' && $metaKey !== null && $cmd !== '') {
+    staxx_meta_cache_write($diskPath, $metaKey, $meta);
   }
 
   $error = null;
