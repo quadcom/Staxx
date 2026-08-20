@@ -62,6 +62,8 @@ case "${MODE}" in
     else
       echo "    Settings kept at ${CFG_DIR} (use --purge to remove them)"
     fi
+    # Undo the registration marker below, so nothing of a dev install lingers.
+    rm -f "/var/log/plugins/${PLUGIN}.plg"
     echo
     echo "Done. Refresh the web interface — the StaXX pages should be gone."
     exit 0
@@ -100,6 +102,13 @@ find "${DEST}" -type d -exec chmod 0755 {} +
 find "${DEST}" -type f -exec chmod 0644 {} +
 chmod 0755 "${DEST}/scripts/"* 2>/dev/null || true
 chmod 0755 "${DEST}/event/"*   2>/dev/null || true
+
+# Unraid's cron builder only gathers *.cron files from plugins it can see
+# registered here — a real .plg install creates this marker, but a dev
+# install skips packaging entirely, so without it the schedule would look
+# broken for a reason that has nothing to do with the cron file itself.
+mkdir -p /var/log/plugins
+[[ -f "/var/log/plugins/${PLUGIN}.plg" ]] || touch "/var/log/plugins/${PLUGIN}.plg"
 
 echo "==> Seeding settings"
 mkdir -p "${CFG_DIR}"

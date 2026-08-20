@@ -12515,6 +12515,25 @@
             'it from the page.'
     },
     {
+      key: 'UPDATE_CHECK', control: 'choice', label: 'Check for image updates',
+      group: 'Image updates',
+      groupHelp: 'Checking asks each image\'s registry whether a newer version of the same tag ' +
+            'exists. It only ever tells you — nothing is downloaded and nothing is restarted. ' +
+            'A check across many images can take a few minutes, but it runs quietly in the ' +
+            'background rather than holding up the page.',
+      choices: [
+        ['off',    'Never'],
+        ['daily',  'Every day'],
+        ['weekly', 'Once a week']
+      ],
+      help: 'How often to check. Leaving this off means nothing is ever looked up.'
+    },
+    {
+      key: 'UPDATE_CHECK_TIME', control: 'time', label: 'Time of day to check',
+      help: 'The middle of the night is a sensible time, since a check costs a little server ' +
+            'effort even though it is cheap. Enter a 24-hour time, such as 04:00.'
+    },
+    {
       key: 'HUB_USER', control: 'text', label: 'Docker Hub username',
       group: 'Docker Hub sign-in',
       groupHelp: 'Used when checking your containers\' images for updates. Without signing in, ' +
@@ -12551,11 +12570,13 @@
                '>' + esc(o[1]) + '</option>';
       }).join('');
       control = '<select id="' + row.id + '" aria-label="' + esc(row.label) + '">' + opts + '</select>';
-    } else if (row.control === 'text' || row.control === 'password') {
+    } else if (row.control === 'text' || row.control === 'password' || row.control === 'time') {
       // Docker Hub username/token — an ordinary box, and a masked one. Wears
       // the same password-manager opt-out as every other credential-shaped
       // box in this file, since a browser or a password manager would
-      // otherwise offer to save a Docker Hub login here.
+      // otherwise offer to save a Docker Hub login here. The time control
+      // reuses this branch because a browser's own time picker already
+      // posts the "HH:MM" shape the server demands, leading zero included.
       control = '<input type="' + row.control + '" class="staxx-input" id="' + row.id + '" ' +
                      'aria-label="' + esc(row.label) + '" spellcheck="false"' + NOFILL +
                      ' value="' + esc(value) + '">';

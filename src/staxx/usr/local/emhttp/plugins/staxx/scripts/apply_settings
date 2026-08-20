@@ -116,4 +116,75 @@ elif [[ -f "${HUB_LOGIN_MARKER}" ]]; then
   echo "Signed out of Docker Hub."
 fi
 
+# Image-update check schedule. Unraid's cron builder (update_cron) only reads
+# *.cron files out of each installed plugin's own folder under
+# /boot/config/plugins/ and concatenates them into root's single crontab —
+# /etc/cron.d/staxx is never read, and gets clobbered by that rewrite anyway.
+# So the file has to live on the flash drive, and — because that has finite
+# write cycles and this script runs on every settings save AND every boot —
+# only gets rewritten when its content actually changes.
+update_check="daily"
+update_check_time="04:00"
+if [[ -f "${CFG}" ]]; then
+  update_check=$(sed -n 's/^[[:space:]]*UPDATE_CHECK[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+  update_check="${update_check:-daily}"
+  update_check_time=$(sed -n 's/^[[:space:]]*UPDATE_CHECK_TIME[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+  update_check_time="${update_check_time:-04:00}"
+fi
+
+CRON_FILE="${CFG_DIR}/${PLUGIN}.cron"
+
+if [[ "${update_check}" == "off" ]]; then
+  [[ -f "${CRON_FILE}" ]] && rm -f "${CRON_FILE}"
+  echo "Image-update checking is off."
+else
+  # HH:MM, split on the colon. A value that does not match falls back to the
+  # default rather than writing a malformed line — one bad line can make cron
+  # reject the whole file, taking every other job on the box down with it.
+  if [[ "${update_check_time}" =~ ^([0-9]{1,2}):([0-9]{1,2})$ ]]; then
+    cron_hour="${BASH_REMATCH[1]}"
+    cron_minute="${BASH_REMATCH[2]}"
+  else
+    cron_hour="04"
+    cron_minute="00"
+  fi
+  # cron takes "4", not "04" — a leading zero on the minute in particular has
+  # bitten people, so both are stripped explicitly rather than trusted to
+  # whichever cron happens to be running this.
+  cron_hour="${cron_hour#0}"
+  cron_minute="${cron_minute#0}"
+  cron_hour="${cron_hour:-0}"
+  cron_minute="${cron_minute:-0}"
+
+  if [[ "${update_check}" == "weekly" ]]; then
+    cron_dow="0"       # Sunday
+    when="weekly, Sunday at ${update_check_time}"
+  else
+    cron_dow="*"
+    when="daily at ${update_check_time}"
+  fi
+
+  # No "root" user field here — *.cron files are concatenated straight into
+  # a user crontab by update_cron, not read as /etc/cron.d-style system
+  # crontabs, so a leading user field would be read as part of the command.
+  cron_content=$(
+    echo "# StaXX — image-update check, written by apply_settings. Do not edit; it is rewritten on every settings save and every boot."
+    echo "${cron_minute} ${cron_hour} * * ${cron_dow} ${PLUGIN_DIR}/scripts/update-check check &> /dev/null"
+  )
+
+  # Compare before writing: the flash drive has finite write cycles, and this
+  # script runs on every settings save and every boot.
+  if [[ ! -f "${CRON_FILE}" ]] || [[ "$(cat "${CRON_FILE}")" != "${cron_content}" ]]; then
+    printf '%s\n' "${cron_content}" > "${CRON_FILE}"
+  fi
+
+  echo "Image-update checking will run ${when}."
+fi
+
+# Collects every plugin's *.cron file (ours included) into root's crontab —
+# guarded, because a settings save must succeed even if this is missing or fails.
+if [[ -x /usr/local/sbin/update_cron ]]; then
+  /usr/local/sbin/update_cron || true
+fi
+
 echo "StaXX settings applied."

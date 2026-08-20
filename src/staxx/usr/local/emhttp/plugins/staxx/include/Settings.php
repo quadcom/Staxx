@@ -28,12 +28,12 @@ const STAXX_HUB_TOKEN_MASK = '********';
 /**
  * The allowlist, and the single source of truth for what a setting is.
  *
- * key => ['type' => 'choice'|'path'|'text', 'default' => string, 'choices' => [...]].
- * `choices` is absent for a path or a text field, since their range is not a
- * fixed list. `text` is a free string, gated only by the shared character
+ * key => ['type' => 'choice'|'path'|'text'|'time', 'default' => string, 'choices' => [...]].
+ * `choices` is absent for a path, text or time field, since their range is not
+ * a fixed list. `text` is a free string, gated only by the shared character
  * rule (staxx_settings_char_rule()) and a 255-character length cap; an empty
  * value is always accepted, which is what HUB_USER/HUB_TOKEN use to mean
- * "signed out".
+ * "signed out". `time` is a 24-hour "HH:MM" clock time, leading zero required.
  * Keep the defaults here matching default.cfg — they are not read from that
  * file, because the whole point is a value the browser can trust even if a
  * user's cfg predates a key or default.cfg itself failed to parse. The one
@@ -62,6 +62,11 @@ function staxx_settings_keys(): array {
     // is read here for reload purposes — see the $reload list further down.
     'HUB_USER'            => ['type' => 'text', 'default' => ''],
     'HUB_TOKEN'           => ['type' => 'text', 'default' => ''],
+    // When to check images for updates (PLAN_45 Part F). Neither key is read
+    // at page load, so neither belongs in the $reload list below — the panel
+    // just closes on save.
+    'UPDATE_CHECK'        => ['type' => 'choice', 'default' => 'daily', 'choices' => ['off', 'daily', 'weekly']],
+    'UPDATE_CHECK_TIME'   => ['type' => 'time',   'default' => '04:00'],
   ];
 }
 
@@ -180,6 +185,16 @@ function staxx_settings_validate(string $key, array $spec, string $v, string &$e
     // Empty is always accepted — HUB_USER/HUB_TOKEN use it to mean signed out.
     if (strlen($v) > 255) {
       $error = 'The value for "'.$key.'" is too long — keep it to 255 characters or fewer.';
+      return '';
+    }
+    return $v;
+  }
+
+  if ($spec['type'] === 'time') {
+    // Exactly HH:MM, 24-hour, leading zero required — anchored both ends so
+    // trailing junk (a stray space, a shell operator) cannot ride along.
+    if (!preg_match('/^([01][0-9]|2[0-3]):[0-5][0-9]$/', $v)) {
+      $error = 'Enter the time for "'.$key.'" as a 24-hour clock time, such as 04:00.';
       return '';
     }
     return $v;

@@ -1,0 +1,88 @@
+#!/bin/bash
+# StaXX — scheduled image-update passes, run from the cron entry apply_settings
+# writes to /boot/config/plugins/staxx/staxx.cron.
+#
+# cron's environment is barer than a web request's: no PATH worth trusting, no
+# working directory, nobody watching stderr. Everything here is written for
+# that — explicit paths, a log instead of a terminal, and a guard for Docker
+# not being up yet.
+#
+# Copyright 2026, StaXX contributors. GPL-2.0.
+
+set -euo pipefail
+
+PLUGIN_DIR="/usr/local/emhttp/plugins/staxx"
+CFG="/boot/config/plugins/staxx/staxx.cfg"
+LOG_DIR="/tmp/staxx/updates"
+LOG="${LOG_DIR}/update-check.log"
+
+mkdir -p "${LOG_DIR}"
+chmod 0755 "${LOG_DIR}"
+
+# Overwrite rather than append: this runs unattended for a year at a time, and
+# only the most recent pass is ever worth reading — see the job logs and the
+# stats snapshots for the same call.
+: > "${LOG}"
+
+log() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "${LOG}"
+}
+
+# Resolved explicitly rather than trusted from PATH — cron's PATH is often
+# just /usr/bin:/bin, but is not guaranteed to hold php at all.
+php_bin=""
+for candidate in /usr/bin/php /usr/local/bin/php; do
+  if [[ -x "${candidate}" ]]; then
+    php_bin="${candidate}"
+    break
+  fi
+done
+php_bin="${php_bin:-php}"
+
+run_check() {
+  # Belt and braces: the cron entry should not exist at all when checking is
+  # off, but a stale entry surviving a failed rewrite must not then run a pass
+  # the user turned off.
+  update_check="daily"
+  if [[ -f "${CFG}" ]]; then
+    update_check=$(sed -n 's/^[[:space:]]*UPDATE_CHECK[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+    update_check="${update_check:-daily}"
+  fi
+
+  if [[ "${update_check}" == "off" ]]; then
+    log "update check is off; nothing to do."
+    exit 0
+  fi
+
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    # A cron job firing before Docker is up on boot is not an error.
+    log "Docker is not available; skipping this pass."
+    exit 0
+  fi
+
+  log "starting check pass (UPDATE_CHECK=${update_check})."
+  # false = a scheduled pass respects the remembered six-hour answers; only a
+  # person pressing the button in the browser forces every image to be asked
+  # again.
+  "${php_bin}" -r "require '${PLUGIN_DIR}/include/Updates.php'; staxx_update_check('all', false);" >> "${LOG}" 2>&1
+  log "check pass finished."
+}
+
+run_apply() {
+  # Lands in PLAN_45 phase 5. Accepted now, rather than rejected, so the cron
+  # line this script installs to does not need editing again when it lands.
+  log "apply pass is not built yet."
+}
+
+case "${1:-}" in
+  check)
+    run_check
+    ;;
+  apply)
+    run_apply
+    ;;
+  *)
+    echo "Usage: update-check {check|apply}" >&2
+    exit 1
+    ;;
+esac

@@ -27,14 +27,15 @@ function ok(string $what, bool $pass, string $note = ''): void {
 /* ------------------------------------------------------------- keys ---- */
 
 $keys = staxx_settings_keys();
-ok('exactly eight keys', count($keys) === 8, implode(',', array_keys($keys)));
+ok('exactly twelve keys', count($keys) === 12, implode(',', array_keys($keys)));
 foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STACK_ROOT', 'ARCHIVE_ROOT',
-          'ICON_FETCH', 'IMAGE_LOOKUP', 'SHELL_ENABLED', 'SHELL_WARNED'] as $k) {
+          'ICON_FETCH', 'IMAGE_LOOKUP', 'SHELL_ENABLED', 'SHELL_WARNED',
+          'HUB_USER', 'HUB_TOKEN', 'UPDATE_CHECK', 'UPDATE_CHECK_TIME'] as $k) {
   ok('has '.$k, array_key_exists($k, $keys));
 }
 
 $read = staxx_settings_read();
-ok('read returns exactly eight keys', count($read) === 8);
+ok('read returns exactly twelve keys', count($read) === 12);
 foreach (array_keys($keys) as $k) ok('read has '.$k, array_key_exists($k, $read));
 
 /* --------------------------------------------------------- validator ---- */
@@ -88,6 +89,28 @@ foreach ($keys as $k => $spec) {
     $v = staxx_settings_validate($k, $spec, $choice, $err);
     ok('accepts '.$k.'='.$choice, $v === $choice, $err);
   }
+}
+
+$err = '';
+$v = staxx_settings_validate('UPDATE_CHECK', $keys['UPDATE_CHECK'], 'hourly', $err);
+ok('rejects UPDATE_CHECK "hourly"', $v === '' && $err !== '', $err);
+$err = '';
+$v = staxx_settings_validate('UPDATE_CHECK', $keys['UPDATE_CHECK'], '', $err);
+ok('rejects UPDATE_CHECK ""', $v === '' && $err !== '', $err);
+
+// UPDATE_CHECK_TIME — weighted towards refusals, since the shape (HH:MM,
+// leading zero, 24-hour) has far more ways to be wrong than right.
+$goodTimes = ['04:00', '23:59'];
+foreach ($goodTimes as $good) {
+  $err = '';
+  $v = staxx_settings_validate('UPDATE_CHECK_TIME', $keys['UPDATE_CHECK_TIME'], $good, $err);
+  ok('accepts UPDATE_CHECK_TIME '.var_export($good, true), $v === $good, $err);
+}
+$badTimes = ['4:00', '24:00', '04:60', '0400', '04:00 ', '', '04:00; rm -rf /'];
+foreach ($badTimes as $bad) {
+  $err = '';
+  $v = staxx_settings_validate('UPDATE_CHECK_TIME', $keys['UPDATE_CHECK_TIME'], $bad, $err);
+  ok('rejects UPDATE_CHECK_TIME '.var_export($bad, true), $v === '' && $err !== '', $err);
 }
 
 /* --------------------------------------------------- writer, guarded ---- */

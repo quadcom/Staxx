@@ -340,3 +340,19 @@ and not *up to date*, and an unresolvable `FROM` refuses rather than guessing.
   only; another registry still wants a look when one is to hand.
 - **A re-check does not restart the clock** — verified on the box: the "first seen" stamp held while
   the last-checked time moved on.
+- **Phase 2 landed only two of its ten settings** (2026-08-20): when checking runs, and at what time.
+  The other eight — automatic mode, delay, quiet window, notifications, retention, cleanup — are read
+  only by phases that do not exist, and a control that does nothing is worse than a missing one. Each
+  arrives with the behaviour behind it.
+- **Unraid does not read `/etc/cron.d`, and the plan's C2 is wrong about it.** Its own `update_cron`
+  gathers `*.cron` files from each *registered* plugin's folder on the flash drive and merges them
+  into root's single crontab. So the schedule is written as `staxx.cron` beside the settings, with no
+  user field on the line, and only when its content actually changed — it lives on flash now. The
+  registration part bites on a development install too, which is why `dev-install.sh` now leaves the
+  marker a real install would.
+- **This box has 67 distinct images, which breaks a fixed asking order.** Ten questions an hour
+  against 67 images means a pass is always cut off — and asked in disk order, it is always cut off at
+  the *same* point, so everything past it would never be checked at all. The pass now asks the
+  least-recently-asked first, so each one resumes where the last stopped. Signed in, about a hundred
+  an hour, the whole set fits in one nightly pass; this is the number that makes the sign-in
+  non-optional rather than a nicety.

@@ -473,6 +473,20 @@ function staxx_update_check(string $scope, bool $force): array {
   $failedNames = [];
 
   $refs = staxx_update_images($scope);
+  $total = count($refs);
+
+  // Ask the least recently asked first. staxx_update_images() returns the
+  // same order every time (disk order), and the rate ceiling always cuts
+  // the pass off at the same point in that order — so without this, the
+  // images past the cut are never asked at all, no matter how many passes
+  // run. An image with no 'asked' yet counts as older than any that has
+  // been asked, so brand-new images are not left behind either.
+  uksort($refs, function ($a, $b) use ($images) {
+    $aAsked = (int)($images[$a]['asked'] ?? 0);
+    $bAsked = (int)($images[$b]['asked'] ?? 0);
+    return $aAsked <=> $bAsked;
+  });
+
   $first = true;
   $limited = false;
   foreach ($refs as $image => $rows) {
@@ -502,6 +516,8 @@ function staxx_update_check(string $scope, bool $force): array {
       $images[$image] = $existing;
       $limited = true;
       echo $image." — rate limited, stopping this pass\n";
+      $left = $total - $result['asked'] - $result['skipped'];
+      if ($left > 0) echo $left.' image'.($left === 1 ? '' : 's')." left unchecked this pass\n";
       break;
     }
 
