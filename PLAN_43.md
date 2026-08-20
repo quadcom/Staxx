@@ -1,6 +1,9 @@
 # PLAN_43 — autostart and start order
 
-**Status: approved 2026-08-19.** Outstanding. Phases below are the work list; tick them off here as they land.
+**Status: BUILT 2026-08-19.** All five phases done and verified on the server. **One thing is still
+unverified and needs a person with a browser:** the drag itself — reordering a folder, a stack and a
+service, and confirming the order held and that Unraid's own Docker page agrees. Everything a test
+can reach is covered.
 
 ## Context
 
