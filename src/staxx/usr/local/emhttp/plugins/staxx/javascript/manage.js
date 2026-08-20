@@ -1449,7 +1449,13 @@
       browse.appendChild(errorEl);
       browse.appendChild(capEl);
       browse.appendChild(listWrap);
-      browse.appendChild(emptyEl);
+      // Inside the scrolling listing, not beside it. This is absolutely
+      // positioned, so its parent decides what it covers: as a sibling of the
+      // listing its nearest positioned ancestor was the dialog itself, and it
+      // spread over the whole editor — 1522x854 against the pane's 709x285 —
+      // swallowing every click behind a message about an empty folder. The log
+      // pane's own empty message has always been nested this way.
+      listWrap.appendChild(emptyEl);
 
       // ---- the viewer/editor: one file at a time, replacing the listing ---
       //

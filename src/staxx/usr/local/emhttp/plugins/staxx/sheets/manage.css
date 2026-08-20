@@ -476,6 +476,7 @@
 .staxx-manage-log-empty {
   position: absolute;
   inset: 0;
+  pointer-events: none;   /* same reasoning as the file pane's own message */
   padding: 0.7rem;
   color: var(--sm-muted);
   font-style: italic;
@@ -884,6 +885,10 @@
 .staxx-manage-files-empty {
   position: absolute;
   inset: 2.4rem 0 0 0;
+  /* A message, never something to click. Belt and braces against the fault
+     that put this over the whole editor once: even mispositioned, it cannot
+     take a click meant for something underneath it. */
+  pointer-events: none;
   padding: 0.7rem;
   color: var(--sm-muted);
   font-style: italic;
