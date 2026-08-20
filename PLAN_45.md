@@ -3,8 +3,10 @@
 **Status: drafted 2026-08-19, awaiting approval.** Nothing here is built. Every decision in the table
 below is Adrian's answer to a direct question asked on 2026-08-19; nothing is inferred.
 
-> **Depends on PLAN_41/42/43/44.** This plan touches `stacks.js`, `StacksTable.php`, `action.php`,
-> `default.cfg`, `staxx.settings.page` and the schema — the same files those plans are editing.
+> **Its dependencies are now all built** — PLAN_41/42/43 and PLAN_44 (`completed-plans/`) have all
+> shipped, so nothing is holding this one up but approval. Worth knowing before it starts: PLAN_44
+> put the Manage tab in the editor and moved every running command's reporting into the row's own
+> state column, which is where a countdown pill would live too.
 
 ## Context
 

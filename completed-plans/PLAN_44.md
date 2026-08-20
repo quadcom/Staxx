@@ -1,10 +1,8 @@
 # PLAN_44 — one click to open, and a Manage tab that runs the thing
 
-**Status: APPROVED 2026-08-19.** Outstanding. Every decision below was Adrian's answer to a direct
-question; nothing here is inferred. Tick phases off in the table near the foot as they land.
-
-> **No work starts until the agents on PLAN_41/42/43 have finished** — this plan touches `stacks.js`,
-> `StacksTable.php` and `action.php`, which those are editing now.
+**Status: BUILT 2026-08-20.** All seven phases shipped and verified on the server, each one
+deployed and used rather than only read. Every decision below was Adrian's answer to a direct
+question; nothing here is inferred.
 
 ## Context
 
@@ -326,3 +324,38 @@ Nothing here can run on Windows. Per phase:
   before counting tags.
 - The three panes need a browser. Deploy and look — one stopped container, one running, one
   multi-container stack, and one image with no shell.
+
+---
+
+## Built — what landed, and what only a browser could show
+
+Seven commits, one per phase, each deployed to the test box and exercised there before the next
+began. All fourteen server suites pass, plus `node --check`, the undeclared-name scan, the wording
+snapshot and the compose round-trip.
+
+| # | Phase | Proved by |
+|---|---|---|
+| 0 | Foundations | A failing command leaves a red marker in its own row that survives a table redraw and clears when clicked; a folder run reported "2 of 2 started, 2 failed"; the page-bottom panel is gone and nothing scrolls |
+| 1 | Clicks | A stack's icon opens the editor, a container's opens it at that service, right-click opens the menu at the pointer and leaves the page's own menu alone, and the menu answers to arrows and Escape |
+| 2 | Editor shell | The Manage tab at full width, container tabs, scope switch, five buttons, and the three-way "save and stop / stop anyway / cancel" guard |
+| 3 | Log pane | A running two-container stack streaming interleaved, prefixed lines; timestamps and filter toggles; a single container without the prefix |
+| 4 | Shell | A root bash prompt inside a real container, with tab completion and backspace both working |
+| 5 | Files | A real listing with owner, group, permissions and symlinks; a mounted folder marked from the compose file; a file opened and read back |
+| 6 | Trim | "Up 2 hours (healthy) · 0 restarts · health: healthy"; the three shortcuts; and the panes collapsing to a Log/Shell/Files tab row on a narrow window |
+
+Faults found by running it rather than reading it, all fixed: keystrokes arriving out of order in the
+shell; a shell and a log follower outliving the editor; a log pane that stayed blank after switching
+container because it kept the previous follower's byte offset; a scope switch that remembered a
+choice nobody made; buttons greying themselves out against the wrong target; Manage getting no state
+at all while the editor sat open; and a test elsewhere in the project still calling the function
+archiving had renamed.
+
+**What only a person at a real screen can confirm:** processor and memory on the container tabs. The
+figures poll declines to ask while the page reports itself hidden — on purpose, so the server's
+collector can stop sampling — and an automated browser reports exactly that. Handed the real replies
+the tabs read "0.01% · 130.0 MiB", so the chain is whole; it just cannot be seen from a window
+nobody is looking at.
+
+**Deliberately narrowed:** "fix ownership on the mounted folders" prepares the command in the shell
+rather than running it, with the owner left blank. Guessing a uid wrong on a recursive chown over an
+appdata folder is not worth one saved keypress.
