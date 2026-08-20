@@ -172,6 +172,33 @@
 
 .staxx-manage-jobbtn--hidden { display: none; }
 
+/* The shell heading's connection reading. Sized and spaced to match the
+   button that replaces it when the session drops, so the heading does not
+   change height as one gives way to the other. */
+.staxx-manage-shell-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8em;
+  color: var(--sm-muted);
+  white-space: nowrap;
+}
+
+.staxx-manage-shell-status--hidden { display: none; }
+
+/* The dot inside the Reconnect button, aligned the way the file listing's own
+   buttons align their contents — deliberately NOT by making the button a flex
+   container. Written `.staxx-scaffold .staxx-manage-job-reconnect { display:
+   inline-flex }` it was two classes against one, so it outranked
+   .staxx-manage-jobbtn--hidden above and the button stayed on screen beside
+   "Connected" with both states showing at once. Setting no display here means
+   there is nothing for the hide to fight. */
+.staxx-manage-job-reconnect .staxx-manage-light {
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
 /* ---- D7: narrow screens — a small tab row instead of the three-way split -
  * Hidden above the breakpoint, where the fixed three-pane split (below)
  * already shows everything at once. Below it, see the media query at the

@@ -1047,9 +1047,15 @@
           return;
         }
         sess.opening = false;
-        if (!res.ok) { sess.error = res.error || 'Could not open a shell in this container.'; renderShellIfActive(service); return; }
+        if (!res.ok) {
+          sess.error = res.error || 'Could not open a shell in this container.';
+          renderShellIfActive(service);
+          renderJobsBar();
+          return;
+        }
         sess.id = res.id;
         renderShellIfActive(service);
+        renderJobsBar();
         resumeShellPoll(service);
       });
     }
@@ -2039,8 +2045,27 @@
       envBtn.addEventListener('click', function () { showEnvironment(state.selected); });
       els.log.actions.appendChild(envBtn);
 
-      var reconnectBtn = mkJobBtn('Reconnect', 'staxx-manage-job-reconnect');
+      // The shell heading says whether there is a session, not merely whether
+      // there is something to press. A button that only appears once the
+      // connection has dropped leaves the ordinary state — connected —
+      // saying nothing at all, so a silent pane and a dead one look alike.
+      // Two elements, one shown at a time: a plain reading while it is fine,
+      // a button when it is not.
+      var shellStatus = document.createElement('span');
+      shellStatus.className = 'staxx-manage-shell-status';
+      var statusDot = document.createElement('span');
+      statusDot.className = 'staxx-manage-light';
+      var statusText = document.createElement('span');
+      shellStatus.appendChild(statusDot);
+      shellStatus.appendChild(statusText);
+      els.shell.actions.appendChild(shellStatus);
+
+      var reconnectBtn = mkJobBtn('', 'staxx-manage-job-reconnect');
       reconnectBtn.title = 'Start a new shell session in this container.';
+      var deadDot = document.createElement('span');
+      deadDot.className = 'staxx-manage-light staxx-manage-light--dead';
+      reconnectBtn.appendChild(deadDot);
+      reconnectBtn.appendChild(document.createTextNode('Reconnect'));
       reconnectBtn.addEventListener('click', function () { reconnectShell(state.selected); });
       els.shell.actions.appendChild(reconnectBtn);
 
@@ -2049,7 +2074,10 @@
       cfgBtn.addEventListener('click', function () { openConfigFolder(state.selected); });
       els.files.actions.appendChild(cfgBtn);
 
-      els.jobsUI = { cfgBtn: cfgBtn, envBtn: envBtn, reconnectBtn: reconnectBtn };
+      els.jobsUI = {
+        cfgBtn: cfgBtn, envBtn: envBtn, reconnectBtn: reconnectBtn,
+        shellStatus: shellStatus, statusDot: statusDot, statusText: statusText
+      };
       renderJobsBar();
     }
 
@@ -2130,9 +2158,18 @@
 
       ui.cfgBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll || !mounts);
       ui.envBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll);
-      // Only worth offering once there is something to reconnect from.
-      ui.reconnectBtn.classList.toggle('staxx-manage-jobbtn--hidden',
-        isAll || !sess || !(sess.ended || sess.error));
+
+      // Three states, not two: "opening" is neither connected nor dropped,
+      // and saying either of those while a session is still being set up
+      // would be untrue for the second or so that it takes.
+      var dead = !!sess && (sess.ended || !!sess.error);
+      var opening = !!sess && !dead && !sess.id;
+      ui.reconnectBtn.classList.toggle('staxx-manage-jobbtn--hidden', isAll || !dead);
+      ui.shellStatus.classList.toggle('staxx-manage-shell-status--hidden', isAll || !sess || dead);
+      if (sess && !dead) {
+        ui.statusText.textContent = opening ? 'Connecting…' : 'Connected';
+        ui.statusDot.classList.toggle('staxx-manage-light--running', !opening);
+      }
     }
 
     function openConfigFolder(service) {
