@@ -16,6 +16,7 @@ CFG_DIR="/boot/config/plugins/${PLUGIN}"
 CFG="${CFG_DIR}/${PLUGIN}.cfg"
 MARKER="${CFG_DIR}/header_menu"
 TAKEOVER_MARKER="${CFG_DIR}/takeover_docker_tab"
+HUB_LOGIN_MARKER="${CFG_DIR}/hub_login"
 PLUGIN_DIR="/usr/local/emhttp/plugins/${PLUGIN}"
 
 mkdir -p "${CFG_DIR}"
@@ -75,6 +76,44 @@ fi
 stack_root=$(sed -n 's/^[[:space:]]*STACK_ROOT[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" 2>/dev/null | tail -n1 || true)
 if [[ -n "${stack_root}" ]]; then
   mkdir -p "${stack_root}"
+fi
+
+# Docker Hub sign-in, so image-update checking does not run into Docker Hub's
+# rate limit (roughly ten questions an hour signed out, a hundred signed in).
+# Runs on every settings save AND on every boot (install re-runs this), so it
+# has to survive Docker not being up yet: nothing here may abort the script,
+# because a settings save must succeed even while Docker is still starting.
+hub_user=""
+hub_token=""
+if [[ -f "${CFG}" ]]; then
+  hub_user=$(sed -n 's/^[[:space:]]*HUB_USER[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+  hub_token=$(sed -n 's/^[[:space:]]*HUB_TOKEN[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+fi
+
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  # Docker not up yet: leave the marker exactly as it is, so nothing is lost
+  # and the next save (or the boot's own retry) picks up where this left off.
+  # Only worth saying to someone who actually configured a sign-in; on every
+  # other box this branch is the normal case and a line here would be noise.
+  if [[ -n "${hub_user}" && -n "${hub_token}" ]]; then
+    echo "Docker is not available yet, so the Docker Hub sign-in will be applied the next time settings are saved."
+  fi
+elif [[ -n "${hub_user}" && -n "${hub_token}" ]]; then
+  # The token goes in on stdin, never as an argument — an argument sits in
+  # plain view of every user on the box via "ps". "|| true" so a bad token
+  # or a network hiccup does not fail the whole settings save.
+  if printf '%s' "${hub_token}" | docker login --username "${hub_user}" --password-stdin >/dev/null 2>&1; then
+    touch "${HUB_LOGIN_MARKER}"
+    echo "Signed in to Docker Hub as ${hub_user}."
+  else
+    echo "Docker Hub sign-in was refused; check the username and token in Settings."
+  fi
+elif [[ -f "${HUB_LOGIN_MARKER}" ]]; then
+  # Only ever sign out a sign-in this plugin itself performed — never an
+  # administrator's own Docker Hub session from outside StaXX.
+  docker logout >/dev/null 2>&1 || true
+  rm -f "${HUB_LOGIN_MARKER}"
+  echo "Signed out of Docker Hub."
 fi
 
 echo "StaXX settings applied."

@@ -12508,6 +12508,21 @@
             'recreate, an update, or the image being pulled again all start it fresh. Turning this ' +
             'off refuses every shell on the server, not just hides the tab — there is no way around ' +
             'it from the page.'
+    },
+    {
+      key: 'HUB_USER', control: 'text', label: 'Docker Hub username',
+      group: 'Docker Hub sign-in',
+      groupHelp: 'Used when checking your containers\' images for updates. Without signing in, ' +
+            'Docker Hub only allows about ten of those checks an hour from this server; signing in ' +
+            'raises that to about a hundred. This is a Docker Hub account — the access token below ' +
+            'is safer to use here than your password, because it can be revoked on its own without ' +
+            'changing your sign-in anywhere else.',
+      help: 'The Docker Hub account name to sign in with. Leave blank to stay signed out.'
+    },
+    {
+      key: 'HUB_TOKEN', control: 'password', label: 'Docker Hub access token',
+      help: 'Create one from Docker Hub\'s Account Settings → Security → Personal access tokens. ' +
+            'Leave both fields blank to sign out.'
     }
   ];
   SETTINGS_ROWS.forEach(function (row) {
@@ -12529,6 +12544,14 @@
                '>' + esc(o[1]) + '</option>';
       }).join('');
       control = '<select id="' + row.id + '" aria-label="' + esc(row.label) + '">' + opts + '</select>';
+    } else if (row.control === 'text' || row.control === 'password') {
+      // Docker Hub username/token — an ordinary box, and a masked one. Wears
+      // the same password-manager opt-out as every other credential-shaped
+      // box in this file, since a browser or a password manager would
+      // otherwise offer to save a Docker Hub login here.
+      control = '<input type="' + row.control + '" class="staxx-input" id="' + row.id + '" ' +
+                     'aria-label="' + esc(row.label) + '" spellcheck="false"' + NOFILL +
+                     ' value="' + esc(value) + '">';
     } else {
       // A plain <div>, not a <label>, for the same reason boxHtml() above
       // uses one: a label may not hold interactive content besides its own
@@ -12543,7 +12566,15 @@
                   '</button>' +
                 '</div>';
     }
-    return '<div class="staxx-field">' +
+    // A row can open a labelled group (Docker Hub sign-in, so far the only
+    // one) — the heading and its explanation sit above the first field in
+    // that group rather than being a field of their own.
+    var head = row.group ?
+      '<div class="staxx-settings-group">' +
+        '<h4 class="staxx-settings-group-title">' + esc(row.group) + '</h4>' +
+        (row.groupHelp ? '<p class="staxx-hint">' + row.groupHelp + '</p>' : '') +
+      '</div>' : '';
+    return head + '<div class="staxx-field">' +
              '<span>' + esc(row.label) + '</span>' +
              control +
              '<span class="staxx-hint">' + row.help + '</span>' +
@@ -14874,4 +14905,10 @@
   // The signpost page (Settings → StaXX) links here to open the
   // panel directly, for whoever followed it from the Plugins list.
   if (location.hash === '#settings') openSettings();
+  // A click on the notice's in-page link only changes the address, since
+  // the page it "navigates to" is the one already showing — this is what
+  // actually opens the panel for that click.
+  window.addEventListener('hashchange', function () {
+    if (location.hash === '#settings' && !(settingsModal && settingsModal.open)) openSettings();
+  });
 })();

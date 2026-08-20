@@ -310,3 +310,33 @@ and not *up to date*, and an unresolvable `FROM` refuses rather than guessing.
   updates. This is the one thing that needs proving on the server before phase 3 is worth building.
 - **An update that breaks a container at 4am.** Roll back is the answer, and it is why retention is
   two deep rather than none.
+
+---
+
+## Found while building
+
+- **Phase 1 in progress** (started 2026-08-20): `include/Updates.php` and `tests/server/updates.php`.
+- **Part G needs a parser change first.** The compose reader only keeps *flat* `x-unraid` values —
+  one level at stack scope, one at service scope. A nested `update: { mode, delay }` block would be
+  read and silently dropped, so whichever phase lands Part G has to widen that reader (or store the
+  two keys flat as `update-mode` / `update-delay`) before the metadata can be resolved at all.
+- **`manifest inspect` cannot answer a multi-architecture tag.** Its reply carries no digest for the
+  index itself, only for each architecture, and comparing one of those against what Docker recorded
+  when it pulled would report an update that does not exist. That route therefore declines rather
+  than guesses, and such a box falls through to the Docker Hub path — which is why the inspector
+  probe order puts `buildx imagetools` first.
+- **Docker Hub's ceiling is far lower than decision 4 assumed, and this is proven on the box.** Asking
+  about seven images twice inside two minutes was enough to be refused with *429 Too Many Requests*:
+  an unsigned-in server gets roughly ten questions an hour, not a hundred. Two consequences. The
+  pass now **stops** the moment it is refused, leaving every remaining image untouched, because a
+  question we know will be turned away only makes the next hour worse. And the optional Hub sign-in
+  of Part F is not really optional on any server with more than a handful of Hub images — it should
+  be presented as the thing that makes checking work, not a nicety. A server whose images come from
+  elsewhere (ghcr.io, lscr.io, a private registry) is unaffected.
+- **Digest comparability is proven** — the risk PLAN_45 said had to be settled before Phase 3.
+  Over seven real images, four matched their registry fingerprint exactly and three genuinely
+  differed. A phantom-update bug would have shown all seven as different, so the two sides are
+  comparing the same kind of thing. Verified for the `buildx imagetools` route against Docker Hub
+  only; another registry still wants a look when one is to hand.
+- **A re-check does not restart the clock** — verified on the box: the "first seen" stamp held while
+  the last-checked time moved on.

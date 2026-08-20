@@ -20,9 +20,11 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Folders.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Autostart.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 
 $compose       = staxx_compose();
 $dockerRunning = staxx_docker_running();
+$updateState   = staxx_update_state();
 $projects      = staxx_containers_by_project();
 $stacks        = staxx_list_stacks();
 // Reconcile with Unraid's boot list before the layout is worked out, since
@@ -125,6 +127,23 @@ endif;
       <div>
         <strong><?= _('The Docker service is not running.') ?></strong>
         <?= _('Start it under Settings → Docker before running anything here.') ?>
+      </div>
+    </div>
+  <? endif; ?>
+
+  <!-- A warning, not a failure: Docker Hub answering "no more for now" is a
+       temporary limit with a clear fix, and it clears itself the moment a
+       later check succeeds. Deliberately plain .staxx-notice, without --bad
+       — the unmodified class already borders and tints its icon with the
+       accent colour, which is what --hint--warn below also uses for "worth
+       a look, not broken"; --bad exists precisely to override that to red for
+       the two "act now" conditions above, which this is not. -->
+  <? if (!empty($updateState['limited'])): ?>
+    <div class="staxx-notice">
+      <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+      <div>
+        <strong><?= _('Docker Hub has stopped answering questions about images from this server for now.') ?></strong>
+        <?= _('Signing in to a Docker Hub account in the') ?> <a href="#settings"><?= _('settings panel') ?></a> <?= _('raises the limit, or you can just leave it to try again later.') ?>
       </div>
     </div>
   <? endif; ?>

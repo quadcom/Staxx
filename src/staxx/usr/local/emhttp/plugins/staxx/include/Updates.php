@@ -1,0 +1,643 @@
+<?PHP
+/* StaXX — image update detection: asking the registry, remembering the answer.
+ * Copyright 2026, StaXX contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version 2,
+ * as published by the Free Software Foundation.
+ */
+?>
+<?
+require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
+
+if (defined('STAXX_UPDATE_STATE')) return;
+
+// Same env-override trick as STAXX_AUTOSTART_FILE, so a server test can point
+// this at /tmp without ever touching the real flash file.
+$staxx_update_state_env = getenv('STAXX_UPDATE_STATE');
+define('STAXX_UPDATE_STATE', $staxx_update_state_env !== false && $staxx_update_state_env !== ''
+  ? $staxx_update_state_env
+  : STAXX_CFG_DIR.'/updates.json');
+
+// The check pass's lock lives here, not on flash — it is only ever meaningful
+// for as long as the pass itself runs, and is worthless after a reboot.
+define('STAXX_UPDATE_DIR', '/tmp/staxx/updates');
+
+// How long a remembered answer is trusted before it is asked again — six
+// hours, so three stacks sharing an image cost the registry one question a
+// day and not sixty.
+define('STAXX_UPDATE_ASK_TTL', 21600);
+
+/** The defaults every state array is filled against — never a partial array. */
+function staxx_update_state_defaults(): array {
+  return [
+    'checked'   => 0,
+    'ok'        => true,
+    'error'     => '',
+    'inspector' => '',
+    'paused'    => false,
+    'limited'   => false, // drives the page's rate-limited notice; cleared by the next pass that isn't refused
+    'images'    => [],
+    'history'   => [],
+    'bases'     => [],
+  ];
+}
+
+/**
+ * The single cache slot shared by staxx_update_state() and
+ * staxx_update_state_save(), by reference, so a save this request is
+ * immediately visible to the next read without going back to disk.
+ * $set is null to just read the slot, or a value to overwrite it.
+ */
+function &staxx_update_state_cache(?array $set = null) {
+  static $slot = null;
+  if ($set !== null) $slot = $set;
+  return $slot;
+}
+
+/**
+ * The state file, decoded and always complete — a missing, unreadable or
+ * corrupt file returns the same defaults a fresh install would, never a
+ * partial array and never an exception.
+ */
+function staxx_update_state(): array {
+  $cached = staxx_update_state_cache();
+  if ($cached !== null) return $cached;
+
+  $defaults = staxx_update_state_defaults();
+  $raw      = @file_get_contents(STAXX_UPDATE_STATE);
+  $data     = $raw === false ? null : json_decode($raw, true);
+  $result   = is_array($data) ? array_merge($defaults, $data) : $defaults;
+
+  staxx_update_state_cache($result);
+  return $result;
+}
+
+/**
+ * Write the state file, merged over the defaults so a save that only touches
+ * one key can never drop the rest. Written temp-then-rename, same as
+ * staxx_autostart_write(), and skipped entirely when the encoded content is
+ * byte-identical to what is already there — flash has finite writes, and this
+ * runs after every single image on every check.
+ */
+function staxx_update_state_save(array $state): bool {
+  $merged  = array_merge(staxx_update_state_defaults(), staxx_update_state(), $state);
+  $encoded = json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+  if ($encoded === false) return false;
+
+  $current = @file_get_contents(STAXX_UPDATE_STATE);
+  if ($current !== false && $current === $encoded) {
+    staxx_update_state_cache($merged);
+    return true;
+  }
+
+  $dir = dirname(STAXX_UPDATE_STATE);
+  if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
+
+  $tmp = $dir.'/.'.basename(STAXX_UPDATE_STATE).'.'.getmypid().'.tmp';
+  if (@file_put_contents($tmp, $encoded) === false) return false;
+  if (!@rename($tmp, STAXX_UPDATE_STATE)) { @unlink($tmp); return false; }
+  @chmod(STAXX_UPDATE_STATE, 0600);
+
+  staxx_update_state_cache($merged);
+  return true;
+}
+
+/**
+ * Which way this box can ask a registry about an image it does not already
+ * have credentials baked in for by name — probed once, because trying each
+ * route per image would be sixty pointless processes on a busy server.
+ * The answer is remembered in the state file so the next request (a fresh
+ * PHP process, no static survives that) does not have to probe again, and
+ * short-circuits on any non-empty stored value.
+ */
+function staxx_docker_inspector(): string {
+  static $cached = '';
+  if ($cached !== '') return $cached;
+
+  $stored = (string)(staxx_update_state()['inspector'] ?? '');
+  if ($stored !== '') return $cached = $stored;
+
+  $bin = staxx_docker_bin();
+  $code = 1;
+
+  staxx_sh($bin.' buildx imagetools --help', 8, $code);
+  $found = $code === 0 ? 'imagetools' : null;
+
+  if ($found === null) {
+    staxx_sh($bin.' manifest inspect --help', 8, $code);
+    $found = $code === 0 ? 'manifest' : 'hub';
+  }
+
+  staxx_update_state_save(['inspector' => $found]);
+  return $cached = $found;
+}
+
+/**
+ * Version/source/created out of a config's OCI-ish labels — shared by every
+ * route in staxx_image_remote(), since the label names are the same
+ * regardless of how the config was fetched.
+ */
+function staxx_update_labels_meta(array $labels): array {
+  $out = [];
+
+  $version = $labels['org.opencontainers.image.version']
+    ?? $labels['build_version']
+    ?? $labels['org.label-schema.version']
+    ?? '';
+  if ($version !== '') $out['version'] = (string)$version;
+
+  $source = (string)($labels['org.opencontainers.image.source'] ?? '');
+  if (strpos($source, 'https://') === 0) $out['source'] = $source;
+
+  $created = (string)($labels['org.opencontainers.image.created'] ?? '');
+  if ($created !== '') {
+    $ts = strtotime($created);
+    if ($ts !== false) $out['created'] = $ts;
+  }
+
+  return $out;
+}
+
+/**
+ * Classify a route's raw output so the caller can tell "the registry said no
+ * for a reason that will still be true in five minutes" from "ask again
+ * later" — checked on plain text, since a 429 reply is never JSON.
+ */
+function staxx_remote_failure_reason(string $out): string {
+  if (preg_match('/429/', $out) && stripos($out, 'Too Many Requests') !== false) return 'limited';
+  if (stripos($out, 'toomanyrequests') !== false) return 'limited';
+  if (stripos($out, 'not found') !== false
+    || stripos($out, 'manifest unknown') !== false
+    || stripos($out, 'no such') !== false) return 'notfound';
+  return 'failed';
+}
+
+/**
+ * What the registry currently has for one image reference — digest, version,
+ * source and creation time, every key present only when actually known.
+ * Returns [] on any failure at all: a failure must never be mistaken for
+ * "up to date", so the caller records "could not check" instead of comparing
+ * against nothing. $why is set to why, one of 'limited', 'unsupported',
+ * 'notfound', 'failed', or '' on success — so a caller hitting Docker Hub's
+ * hourly ceiling can stop asking instead of burning the rest of it.
+ */
+function staxx_image_remote(string $image, string &$why = null): array {
+  $why   = '';
+  $ref   = escapeshellarg($image);
+  $route = staxx_docker_inspector();
+
+  if ($route === 'imagetools') {
+    // Docker prints a 429 refusal to stderr, and staxx_sh() throws stderr away
+    // (2>/dev/null on the outer shell) — merge it into what staxx_sh() returns
+    // so staxx_remote_failure_reason() actually sees the words "Too Many
+    // Requests" instead of an empty string. This inner redirect lands on the
+    // inner shell's own stdout, so the outer discard never touches it.
+    $out = staxx_sh(
+      staxx_docker_bin().' buildx imagetools inspect '.$ref
+        .' --format '.escapeshellarg('{"manifest":{{json .Manifest}},"image":{{json .Image}}}')
+        .' 2>&1',
+      20
+    );
+    $data = json_decode($out, true);
+    if (!is_array($data)) { $why = staxx_remote_failure_reason($out); return []; }
+
+    $digest = (string)($data['manifest']['digest'] ?? '');
+    if ($digest === '') { $why = staxx_remote_failure_reason($out); return []; }
+
+    $imageObj = $data['image'] ?? null;
+    $config   = [];
+    if (is_array($imageObj)) {
+      // A multi-platform reference answers with a map keyed by platform
+      // string ("linux/amd64" => {...}) rather than one config object —
+      // prefer linux/amd64, since that is what every other route here reports
+      // against, and fall back to whatever is first when it is missing.
+      if (isset($imageObj['config']) || isset($imageObj['Labels'])) {
+        $config = $imageObj;
+      } elseif (isset($imageObj['linux/amd64']) && is_array($imageObj['linux/amd64'])) {
+        $config = $imageObj['linux/amd64'];
+      } else {
+        $first = reset($imageObj);
+        if (is_array($first)) $config = $first;
+      }
+    }
+
+    $labels = $config['config']['Labels'] ?? ($config['Labels'] ?? []);
+    $labels = is_array($labels) ? $labels : [];
+
+    return ['digest' => $digest] + staxx_update_labels_meta($labels);
+  }
+
+  if ($route === 'manifest') {
+    // 2>&1 here for the same reason as the imagetools route above.
+    $out  = staxx_sh(staxx_docker_bin().' manifest inspect --verbose '.$ref.' 2>&1', 20);
+    $data = json_decode($out, true);
+    if (!is_array($data)) { $why = staxx_remote_failure_reason($out); return []; }
+
+    // A multi-architecture index decodes to a JSON list, not an object — that
+    // reply has no index digest in it at all, only one Descriptor per
+    // architecture, and reporting one of those as THE digest would compare a
+    // single-arch fingerprint against a multi-arch RepoDigests entry and
+    // invent a phantom update. So a list is refused outright rather than
+    // guessed at — see PLAN_45's digest-comparison risk. Permanent for this
+    // image on this route, so it is 'unsupported' rather than a transient fail.
+    if (staxx_array_is_list($data)) { $why = 'unsupported'; return []; }
+
+    $digest = (string)($data['Descriptor']['digest'] ?? '');
+    if ($digest === '') { $why = staxx_remote_failure_reason($out); return []; }
+
+    // No labels available on this route.
+    return ['digest' => $digest];
+  }
+
+  // hub: only for images staxx_hub_repo_path() accepts — a reference it
+  // rejects can never be answered by this route, on this box or any other.
+  $repo = staxx_hub_repo_path($image);
+  if ($repo === '') { $why = 'unsupported'; return []; }
+
+  $tag = 'latest';
+  $trimmed = trim($image);
+  $slash = strrpos($trimmed, '/');
+  $colon = strrpos($trimmed, ':');
+  if ($colon !== false && ($slash === false || $colon > $slash)) $tag = substr($trimmed, $colon + 1);
+
+  $token = staxx_hub_json(
+    'https://auth.docker.io/token?service=registry.docker.io&scope=repository:'.$repo.':pull',
+    [], 6, 8
+  );
+  if ($token === null || (string)($token['token'] ?? '') === '') { $why = 'failed'; return []; }
+  $bearer = 'Authorization: Bearer '.$token['token'];
+
+  // The same Accept list staxx_registry_config() sends for the manifest
+  // request, so the digest header matches whichever shape the registry
+  // actually served.
+  $accept = 'Accept: application/vnd.oci.image.index.v1+json,'
+          . 'application/vnd.docker.distribution.manifest.list.v2+json,'
+          . 'application/vnd.docker.distribution.manifest.v2+json';
+
+  $url = 'https://registry-1.docker.io/v2/'.$repo.'/manifests/'.rawurlencode($tag);
+  $cmd = 'curl -sS --max-time 8 -D /dev/stdout -o /dev/null -X GET'
+       . ' -H '.escapeshellarg($bearer)
+       . ' -H '.escapeshellarg($accept)
+       . ' '.escapeshellarg($url);
+  $headers = staxx_sh($cmd, 12);
+
+  $digest = '';
+  foreach (explode("\n", $headers) as $line) {
+    if (preg_match('/^docker-content-digest:\s*(sha256:[0-9a-f]{64})/i', trim($line), $m)) {
+      $digest = $m[1];
+      break;
+    }
+  }
+  // The status line is the same headers reply the digest search above just
+  // walked — a 429 there never carries a docker-content-digest, so checking
+  // it only on failure is enough.
+  if ($digest === '') { $why = staxx_remote_failure_reason($headers); return []; }
+
+  // Labels come from the config blob path already built for the form editor —
+  // no point re-walking index/manifest/blob a second time just to get them.
+  $labels = staxx_registry_config($image)['labels'] ?? [];
+  $labels = is_array($labels) ? $labels : [];
+
+  return ['digest' => $digest] + staxx_update_labels_meta($labels);
+}
+
+/**
+ * array_is_list() needs PHP 8.1; Unraid 7.2 ships 8.x but this keeps the
+ * check working even a minor version earlier than that promises.
+ */
+function staxx_array_is_list(array $arr): bool {
+  return function_exists('array_is_list') ? array_is_list($arr) : $arr === array_values($arr);
+}
+
+/**
+ * What is actually sitting on disk for one image reference — the digest
+ * Docker recorded when it pulled it, comparable to staxx_image_remote()'s
+ * digest with no conversion either side.
+ *
+ * Not present locally → []. Present but with no RepoDigests (built here or
+ * side-loaded, never pulled) → ['built' => true] with no digest, so the
+ * caller does not mistake a locally-built image for one that is up to date.
+ */
+function staxx_image_local(string $image): array {
+  // 2>&1 here for the same reason as the imagetools route above.
+  $out = staxx_sh(
+    staxx_docker_bin().' image inspect '.escapeshellarg($image).' --format '.escapeshellarg('{{json .}}').' 2>&1',
+    15
+  );
+  $data = json_decode($out, true);
+  if (!is_array($data)) return [];
+
+  $repo = staxx_hub_repo_path($image);
+  // The reference's own repository half, used to pick the matching
+  // RepoDigests entry — a locally cached image can hold digests from more
+  // than one tag/repo alias.
+  $wantRepo = $repo !== '' ? $repo : preg_replace('/:[^\/]*$/', '', trim($image));
+
+  $digest = '';
+  foreach ((array)($data['RepoDigests'] ?? []) as $entry) {
+    $at = strrpos((string)$entry, '@');
+    if ($at === false) continue;
+    $entryRepo = substr((string)$entry, 0, $at);
+    if ($entryRepo === $wantRepo || staxx_hub_repo_path($entryRepo) === $wantRepo) {
+      $digest = substr((string)$entry, $at + 1);
+      break;
+    }
+  }
+
+  if ($digest === '') {
+    if (empty($data['RepoDigests'])) return ['built' => true];
+    return [];
+  }
+
+  $labels = $data['Config']['Labels'] ?? [];
+  $labels = is_array($labels) ? $labels : [];
+
+  $result = ['digest' => $digest] + staxx_update_labels_meta($labels);
+  // staxx_update_labels_meta() reads 'created' from a label; fall back to the
+  // image's own Created field when no label supplied one.
+  if (!isset($result['created']) && !empty($data['Created'])) {
+    $ts = strtotime((string)$data['Created']);
+    if ($ts !== false) $result['created'] = $ts;
+  }
+  return $result;
+}
+
+/**
+ * Every distinct image reference in scope, mapped to the stack::service rows
+ * that use it. Collecting distinct images first is the point of decision 4 —
+ * three stacks sharing an image must cost one registry question, not three.
+ *
+ * @param string $scope 'all', a folder name, or one stack's path
+ * @return array<string, string[]>
+ */
+function staxx_update_images(string $scope): array {
+  $images = [];
+
+  foreach (staxx_list_stacks() as $stack) {
+    if ($scope === 'all') {
+      // every stack
+    } elseif ($stack['name'] === $scope) {
+      // exact stack match
+    } elseif (strpos($stack['name'], $scope.'/') === 0) {
+      // folder match
+    } else {
+      continue;
+    }
+
+    if ($stack['file'] === '') continue;
+    $meta = staxx_compose_meta($stack['file']);
+    if (!$meta['ok']) continue;
+
+    foreach ($meta['services'] as $svc => $svcMeta) {
+      $image = trim((string)($svcMeta['image'] ?? ''));
+      if ($image === '') continue;
+      $images[$image][] = $stack['name'].'::'.$svc;
+    }
+  }
+
+  return $images;
+}
+
+/**
+ * Take the check pass's lock. An atomic mkdir either succeeds or fails
+ * outright — no race window either way, the same trick the stats collector
+ * uses. A lock directory older than 30 minutes is treated as abandoned by a
+ * pass that was killed rather than one that finished cleanly, and may be
+ * taken over.
+ */
+function staxx_update_lock(string &$error): bool {
+  $error = '';
+  if (!is_dir(STAXX_UPDATE_DIR) && !@mkdir(STAXX_UPDATE_DIR, 0755, true)) {
+    $error = 'Could not create '.STAXX_UPDATE_DIR;
+    return false;
+  }
+
+  $lock = STAXX_UPDATE_DIR.'/lock';
+  if (@mkdir($lock, 0755)) return true;
+
+  $age = is_dir($lock) ? (time() - (int)@filemtime($lock)) : 0;
+  if ($age > 1800) {
+    @rmdir($lock);
+    if (@mkdir($lock, 0755)) return true;
+  }
+
+  $error = 'An update check is already running.';
+  return false;
+}
+
+function staxx_update_unlock(): void {
+  @rmdir(STAXX_UPDATE_DIR.'/lock');
+}
+
+/**
+ * Absolute path to the php binary, same reasoning as staxx_docker_bin(): PHP's
+ * environment is not a login shell, so PATH cannot be relied on.
+ */
+function staxx_php_bin(): string {
+  static $bin = null;
+  if ($bin !== null) return $bin;
+  foreach (['/usr/bin/php', '/usr/local/bin/php'] as $path) {
+    if (is_file($path) && is_executable($path)) return $bin = $path;
+  }
+  return $bin = 'php';
+}
+
+/**
+ * The whole check pass: ask the registry about every distinct image in
+ * scope, one at a time, and fold the answers into the state file.
+ *
+ * @return array{asked:int, skipped:int, updates:int, failed:int, built:int, missing:int, ok:bool, error:string, limited:bool}
+ */
+function staxx_update_check(string $scope, bool $force): array {
+  $result = ['asked' => 0, 'skipped' => 0, 'updates' => 0, 'failed' => 0, 'built' => 0, 'missing' => 0, 'ok' => true, 'error' => '', 'limited' => false];
+
+  $lockError = '';
+  if (!staxx_update_lock($lockError)) {
+    $result['ok'] = false;
+    $result['error'] = $lockError;
+    return $result;
+  }
+  // Backstop only, for a pass that is killed outright — the normal path is
+  // the explicit staxx_update_unlock() call before every successful return
+  // below. Registered once per process; the same handler twice is pointless.
+  static $registered = false;
+  if (!$registered) {
+    register_shutdown_function('staxx_update_unlock');
+    $registered = true;
+  }
+
+  $state  = staxx_update_state();
+  $images = (array)$state['images'];
+  $now    = time();
+  $failedNames = [];
+
+  $refs = staxx_update_images($scope);
+  $first = true;
+  $limited = false;
+  foreach ($refs as $image => $rows) {
+    $existing = $images[$image] ?? [];
+
+    if (!$force && ($existing['asked'] ?? 0) > 0 && ($now - (int)$existing['asked']) < STAXX_UPDATE_ASK_TTL) {
+      $result['skipped']++;
+      continue;
+    }
+
+    // The gap only softens bursts — Docker Hub's ceiling is per hour, not per
+    // second, so it is the remembered answer and the stop-below that actually
+    // protect the allowance, not this pause.
+    if (!$first) usleep(1500000);
+    $first = false;
+
+    $why    = '';
+    $remote = staxx_image_remote($image, $why);
+    $local  = staxx_image_local($image);
+    $result['asked']++;
+
+    if ($remote === [] && $why === 'limited') {
+      // The ceiling is already hit — every remaining image is left entirely
+      // alone (no state written) rather than spending more of an allowance
+      // that will just be refused again.
+      $existing['error'] = 'rate limited';
+      $images[$image] = $existing;
+      $limited = true;
+      echo $image." — rate limited, stopping this pass\n";
+      break;
+    }
+
+    if ($remote === []) {
+      $message = $why === 'unsupported' ? 'cannot be checked here'
+        : ($why === 'notfound' ? 'not found in the registry' : 'could not check');
+      $existing['error'] = $message;
+      $images[$image] = $existing;
+      $result['failed']++;
+      $failedNames[] = $image;
+      echo $image.' — '.$message."\n";
+      continue;
+    }
+
+    // A locally-built or side-loaded image has no pulled digest to compare —
+    // saying "up to date" would be a lie. Phase 7 of PLAN_45 will read the
+    // build recipe's base image properly; for now just say so, honestly.
+    if (!empty($local['built'])) {
+      $existing['built'] = true;
+      $existing['error'] = 'built here — cannot be compared';
+      unset($existing['local']);
+      $images[$image] = $existing;
+      $result['built']++;
+      echo $image." — built here, not compared\n";
+      continue;
+    }
+
+    // Not on this box at all — a service that has never been started. Leave
+    // any previously-remembered seen/was/seenDigest alone; there is simply
+    // nothing new to say this pass.
+    if ($local === []) {
+      $existing['error'] = 'not installed';
+      unset($existing['local']);
+      $images[$image] = $existing;
+      $result['missing']++;
+      echo $image." — not installed here\n";
+      continue;
+    }
+
+    unset($existing['error'], $existing['built']);
+    $existing['local']   = $local['digest'];
+    $existing['remote']  = $remote['digest'] ?? '';
+    if (isset($remote['version'])) $existing['version'] = $remote['version'];
+    if (isset($remote['source']))  $existing['source']  = $remote['source'];
+    if (isset($remote['created'])) $existing['created'] = $remote['created'];
+    $existing['asked'] = $now;
+
+    $localDigest = $local['digest'] ?? '';
+    $changed = $localDigest !== '' && $existing['remote'] !== '' && $localDigest !== $existing['remote'];
+
+    if ($changed) {
+      // 'seen' starts the countdown and must never be touched again once
+      // set for THIS remote digest — a re-check that kept restarting the
+      // clock would mean an update never actually arrives. Only a fresh
+      // digest (one 'seen' has not already been recorded against) resets it.
+      if (($existing['seenDigest'] ?? '') !== $existing['remote']) {
+        $existing['was']        = $images[$image]['version'] ?? ($existing['was'] ?? '');
+        $existing['seen']       = $now;
+        $existing['seenDigest'] = $existing['remote'];
+        $result['updates']++;
+        echo $image.' — update available'
+           . (($existing['was'] ?? '') !== '' && isset($existing['version'])
+               ? ' ('.$existing['was'].' → '.$existing['version'].')' : '')
+           . "\n";
+      } else {
+        $result['updates']++;
+        echo $image." — update still pending\n";
+      }
+    } else {
+      unset($existing['seen'], $existing['was'], $existing['seenDigest']);
+      echo $image." — up to date\n";
+    }
+
+    $images[$image] = $existing;
+  }
+
+  $result['limited'] = $limited;
+  $result['ok'] = $result['failed'] === 0 && !$limited;
+  // The rate-limited sentence takes precedence over the failed-images summary
+  // when both apply, and is what the grid's last-checked line will show.
+  $result['error'] = $limited
+    ? 'Docker Hub is limiting how often this server may ask about images. Sign in under Settings to raise the limit, or try again in an hour.'
+    : ($result['failed'] > 0 ? 'Could not check: '.implode(', ', $failedNames) : '');
+
+  staxx_update_state_save([
+    'checked' => $now,
+    'ok'      => $result['ok'],
+    'error'   => $result['error'],
+    'limited' => $limited,
+    'images'  => $images,
+  ]);
+
+  staxx_update_unlock();
+  return $result;
+}
+
+/**
+ * Run staxx_update_check() as a detached job, mirroring
+ * staxx_start_job()'s own setsid/log/sentinel pattern so the existing `job`
+ * action on the page can follow this one exactly the same way.
+ */
+function staxx_update_check_start(string $scope, bool $force, string &$error): string {
+  $error = '';
+
+  if ($scope !== 'all' && !staxx_valid_path($scope)) {
+    $error = 'Invalid scope.';
+    return '';
+  }
+  if (!staxx_docker_running()) {
+    $error = 'The Docker service is not running.';
+    return '';
+  }
+
+  if (!is_dir(STAXX_JOB_DIR) && !@mkdir(STAXX_JOB_DIR, 0755, true)) {
+    $error = 'Could not create '.STAXX_JOB_DIR;
+    return '';
+  }
+
+  $job = bin2hex(random_bytes(8));
+  $log = STAXX_JOB_DIR.'/'.$job.'.log';
+
+  @file_put_contents($log, '$ checking updates for '.$scope."\n\n");
+
+  $php = staxx_php_bin().' -r '.escapeshellarg(
+    'require '.var_export(__FILE__, true).'; '
+    .'$r = staxx_update_check('.var_export($scope, true).', '.($force ? 'true' : 'false').'); '
+    .'echo "\nchecked ".$r["asked"]." asked, ".$r["skipped"]." skipped, "'
+    .'.$r["updates"]." updates, ".$r["failed"]." failed\n";'
+  );
+
+  $inner = $php.' 2>&1; echo "'.STAXX_JOB_END.' $?"';
+
+  @exec(
+    'setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &'
+  );
+
+  return $job;
+}
+?>

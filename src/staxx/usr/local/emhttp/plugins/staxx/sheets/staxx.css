@@ -1982,6 +1982,7 @@
 /* The scaffold is marked `unapi`, so Unraid's input, select and textarea
    styling does not reach these. They are styled here in full, on purpose. */
 .staxx-field input[type="text"],
+.staxx-field input[type="password"],
 .staxx-field select,
 .staxx-field textarea {
   display: block;
@@ -1998,6 +1999,7 @@
 }
 
 .staxx-field input[type="text"]:focus,
+.staxx-field input[type="password"]:focus,
 .staxx-field select:focus,
 .staxx-field textarea:focus {
   border-color: var(--sm-accent);
@@ -6667,6 +6669,33 @@
   flex: 1 1 auto;
   padding: 0 1.4rem 1.2rem;
   overflow-y: auto;
+}
+
+/* Labels a run of fields inside the settings panel — so far only the Docker
+   Hub sign-in pair — without inventing a second field style: same weight and
+   size as a field's own label (.staxx-field > span:first-child), just with a
+   rule above it to separate it from whatever setting came before. */
+.staxx-settings-group {
+  margin: 1.8rem 0 1rem;
+  padding-top: 1.6rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.staxx-settings-group:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.staxx-settings-group-title {
+  margin: 0 0 0.4rem;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.staxx-settings-group .staxx-hint {
+  display: block;
+  margin: 0;
 }
 
 .staxx-settings-foot {

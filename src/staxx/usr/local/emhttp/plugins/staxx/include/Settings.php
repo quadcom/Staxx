@@ -20,11 +20,20 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 if (defined('STAXX_SETTINGS_LOADED')) return;
 define('STAXX_SETTINGS_LOADED', true);
 
+// Shown to the browser in place of a saved Docker Hub token, and understood
+// on save to mean "leave the stored token alone" — see the note in
+// staxx_settings_save() below for why that second half matters.
+const STAXX_HUB_TOKEN_MASK = '********';
+
 /**
  * The allowlist, and the single source of truth for what a setting is.
  *
- * key => ['type' => 'choice'|'path', 'default' => string, 'choices' => [...]].
- * `choices` is absent for a path, since a path's range is not a fixed list.
+ * key => ['type' => 'choice'|'path'|'text', 'default' => string, 'choices' => [...]].
+ * `choices` is absent for a path or a text field, since their range is not a
+ * fixed list. `text` is a free string, gated only by the shared character
+ * rule (staxx_settings_char_rule()) and a 255-character length cap; an empty
+ * value is always accepted, which is what HUB_USER/HUB_TOKEN use to mean
+ * "signed out".
  * Keep the defaults here matching default.cfg — they are not read from that
  * file, because the whole point is a value the browser can trust even if a
  * user's cfg predates a key or default.cfg itself failed to parse. The one
@@ -49,6 +58,10 @@ function staxx_settings_keys(): array {
     // server rather than once per browser. Not in $reload below: nothing
     // that reads this needs the page itself to reload.
     'SHELL_WARNED'        => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
+    // Docker Hub sign-in for image update checking (PLAN_45 Part F). Neither
+    // is read here for reload purposes — see the $reload list further down.
+    'HUB_USER'            => ['type' => 'text', 'default' => ''],
+    'HUB_TOKEN'           => ['type' => 'text', 'default' => ''],
   ];
 }
 
@@ -64,7 +77,11 @@ function staxx_settings_read(): array {
   $out = [];
   foreach (staxx_settings_keys() as $key => $spec) {
     $v = trim((string)($cfg[$key] ?? ''));
-    $out[$key] = $v !== '' ? $v : $spec['default'];
+    $v = $v !== '' ? $v : $spec['default'];
+    // The token itself never leaves the server once saved — the panel only
+    // needs to know whether one is set, not what it is.
+    if ($key === 'HUB_TOKEN') $v = $v !== '' ? STAXX_HUB_TOKEN_MASK : '';
+    $out[$key] = $v;
   }
   return $out;
 }
@@ -159,6 +176,15 @@ function staxx_settings_validate(string $key, array $spec, string $v, string &$e
     return staxx_settings_validate_path($key, $v, $error);
   }
 
+  if ($spec['type'] === 'text') {
+    // Empty is always accepted — HUB_USER/HUB_TOKEN use it to mean signed out.
+    if (strlen($v) > 255) {
+      $error = 'The value for "'.$key.'" is too long — keep it to 255 characters or fewer.';
+      return '';
+    }
+    return $v;
+  }
+
   if (!in_array($v, $spec['choices'], true)) {
     $error = '"'.$v.'" is not a valid value for "'.$key.'". Choose one of the options offered.';
     return '';
@@ -201,6 +227,12 @@ function staxx_settings_save(
     $raw = $posted[$key];
     if (!is_string($raw)) { $error = 'The value for "'.$key.'" must be plain text.'; return false; }
 
+    // The browser only ever sees the placeholder for a saved token, never the
+    // token itself (staxx_settings_read() above). A form that posts it back
+    // unchanged must not overwrite the real one with eight literal asterisks
+    // — so this is read as "leave HUB_TOKEN alone", not as a value to store.
+    if ($key === 'HUB_TOKEN' && $raw === STAXX_HUB_TOKEN_MASK) continue;
+
     // Not trimmed first: a leading or trailing newline is exactly the kind of
     // thing the character check below exists to catch, and trimming it away
     // beforehand would let it slip through unnoticed.
@@ -241,6 +273,10 @@ function staxx_settings_save(
 
   $saved = $before;
   foreach ($overlay as $key => $value) $saved[$key] = $value;
+  // $overlay['HUB_TOKEN'], when present, is the real new token in the clear —
+  // it has to be, to be written above. It must not reach the browser that
+  // way, so mask it again here exactly as staxx_settings_read() does.
+  if (isset($saved['HUB_TOKEN'])) $saved['HUB_TOKEN'] = $saved['HUB_TOKEN'] !== '' ? STAXX_HUB_TOKEN_MASK : '';
 
   foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STACK_ROOT'] as $key) {
     if ($saved[$key] !== $before[$key]) { $reload = true; break; }
