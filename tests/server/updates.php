@@ -287,6 +287,223 @@ $afterNewer = staxx_updates_pill_for_image($image, staxx_update_state()['images'
 ok('skip cycle: a newer remote digest reports "update" again',
    $afterNewer['state'] === 'update', $afterNewer['state']);
 
+/* ------------------------------------------------- 14. tag suggestions */
+
+$suggest = staxx_tag_suggestions('latest', ['stable', 'canary', '0.9', '0.30', 'nightly']);
+ok('suggest: never offers a test build', !in_array('canary', $suggest, true) && !in_array('nightly', $suggest, true), json_encode($suggest));
+ok('suggest: a rolling tag outranks a higher version number', ($suggest[0] ?? '') === 'stable', json_encode($suggest));
+
+$versionOnly = staxx_tag_suggestions('latest', ['0.9', '0.30', '0.29.1']);
+ok('suggest: 0.30 outranks 0.9 numerically, not lexically', ($versionOnly[0] ?? '') === '0.30', json_encode($versionOnly));
+
+$rcExcluded = staxx_tag_suggestions('latest', ['0.30.0-rc.1', '0.29']);
+ok('suggest: an rc build is never suggested', !in_array('0.30.0-rc.1', $rcExcluded, true), json_encode($rcExcluded));
+
+$noMissing = staxx_tag_suggestions('latest', ['latest', 'stable']);
+ok('suggest: the withdrawn tag itself is never offered back', !in_array('latest', $noMissing, true), json_encode($noMissing));
+
+ok('suggest: empty tag list suggests nothing', staxx_tag_suggestions('latest', []) === []);
+
+/* ---------------------------------------------- 15. tagmissing classification */
+
+// staxx_remote_failure_reason() only takes the tag-list detour when handed an
+// image — the two-argument form (used by every other 'notfound' caller in
+// this codebase before this feature existed) must behave exactly as before.
+$plain = staxx_remote_failure_reason('Error: manifest unknown');
+ok('reason: notfound with no image given stays notfound (old two-arg behaviour)', $plain === 'notfound', $plain);
+
+// A repository this box can genuinely resolve tags for, on the live server,
+// is needed to exercise the real tagmissing path — skip cleanly where there
+// isn't one, since this is a server test with no fixture registry to hit.
+$knownRepo = 'library/alpine'; // Hub's own base image; always has many tags
+$aliveTags = staxx_registry_tags($knownRepo);
+if ($aliveTags === []) {
+  skip('reason: tags returned, ours absent -> tagmissing', 'could not reach the registry from this box');
+  skip('reason: tags returned, ours present -> stays notfound', 'could not reach the registry from this box');
+} else {
+  $missingTag = 'staxx-definitely-not-a-real-tag-'.getmypid();
+  $tagsOut = null;
+  $reason = staxx_remote_failure_reason('Error: manifest unknown', $knownRepo.':'.$missingTag, $tagsOut);
+  ok('reason: tags returned, ours absent -> tagmissing', $reason === 'tagmissing', $reason);
+  ok('reason: tagmissing hands back the tag list it fetched', is_array($tagsOut) && count($tagsOut) > 0);
+
+  $realTag = $aliveTags[0];
+  $tagsOut2 = null;
+  $reason2 = staxx_remote_failure_reason('Error: manifest unknown', $knownRepo.':'.$realTag, $tagsOut2);
+  ok('reason: tags returned, ours present -> stays notfound, no guess invented',
+     $reason2 === 'notfound', $reason2);
+}
+
+// A repository that cannot be resolved at all (bad host) must stay notfound —
+// a failed tag lookup is never itself evidence of a withdrawn tag.
+$deadHost = 'staxx-no-such-registry-'.getmypid().'.invalid/some/repo:latest';
+$tagsOut3 = null;
+$reason3 = staxx_remote_failure_reason('Error: manifest unknown', $deadHost, $tagsOut3);
+ok('reason: a tag list that cannot be fetched at all stays notfound', $reason3 === 'notfound', $reason3);
+ok('reason: no tags handed back when the lookup itself failed', $tagsOut3 === null);
+
+/* ------------------------------------------- 16. the tagmissing pill, never "could not check" */
+
+// The fixture's "tags" is built the same way staxx_update_check() must build
+// it: run the registry's raw list (including a test build) through
+// staxx_tag_suggestions() and store only what comes back — never the raw
+// list itself. That is the contract this whole case exists to pin down.
+$rawTags   = ['canary', 'stable', '0.30', '0.30.0-rc.2', '0.29'];
+$shortlist = staxx_tag_suggestions('latest', $rawTags);
+
+$state = staxx_update_state();
+$state['images']['staxx-test/withdrawn:latest'] = [
+  'error' => 'tag withdrawn', 'suggest' => $shortlist[0] ?? '', 'tags' => $shortlist,
+];
+staxx_update_state_save($state);
+
+$pill = staxx_updates_pill_for_image('staxx-test/withdrawn:latest', staxx_update_state()['images']);
+ok('pill: a withdrawn tag reports state "tagmissing", not "error"', $pill['state'] === 'tagmissing', $pill['state']);
+ok('pill: label is "tag withdrawn"', $pill['label'] === 'tag withdrawn', $pill['label']);
+ok('pill: never falls into the "could not check" catch-all', $pill['label'] !== 'could not check', $pill['label']);
+ok('pill: the tip names what is offered instead', strpos($pill['tip'], 'stable') !== false, $pill['tip']);
+ok('pill: suggest is read back as a string, never an array',
+   is_string($pill['suggest'] ?? null), gettype($pill['suggest'] ?? null));
+ok('pill: suggest equals the first entry of the stored tags shortlist',
+   ($pill['suggest'] ?? null) === $state['images']['staxx-test/withdrawn:latest']['tags'][0]);
+ok('pill: the stored tags shortlist is at most three long',
+   count($state['images']['staxx-test/withdrawn:latest']['tags']) <= 3);
+ok('pill: no test-build tag anywhere in the stored shortlist',
+   !in_array('canary', $state['images']['staxx-test/withdrawn:latest']['tags'], true)
+   && !in_array('0.30.0-rc.2', $state['images']['staxx-test/withdrawn:latest']['tags'], true),
+   json_encode($state['images']['staxx-test/withdrawn:latest']['tags']));
+
+// The aggregate fold must not let a withdrawn tag disappear behind "up to
+// date" either — the same invariant case 11 already checks for "error".
+$tagmissingPill = ['state' => 'tagmissing', 'label' => 'tag withdrawn', 'source' => '', 'tip' => 't'];
+$foldedWithCurrent = staxx_updates_aggregate([$currentPill, $tagmissingPill]);
+ok('aggregate: a withdrawn tag beats "up to date" in the fold',
+   $foldedWithCurrent['state'] !== 'current', $foldedWithCurrent['state']);
+
+/* --------------------------------------- 17. the 'asked' stamp on permanent failures */
+
+// Rather than fabricating a withdrawn-tag image, discover a real one: the
+// live state file already holds every image staxx_update_check() has ever
+// classified, so read it directly and read-only — never through
+// STAXX_UPDATE_STATE, which this test has pointed at scratch, and never
+// written back to — and walk it for one whose recorded state is currently
+// 'tagmissing'. Not every server will have hit one, hence the SKIPs below.
+$realRaw    = @file_get_contents(STAXX_CFG_DIR.'/updates.json');
+$realData   = $realRaw !== false ? json_decode($realRaw, true) : null;
+$realImages = is_array($realData) && is_array($realData['images'] ?? null) ? $realData['images'] : [];
+
+$withdrawnRef   = null;
+$withdrawnEntry = null;
+foreach ($realImages as $ref => $entry) {
+  if (!is_array($entry)) continue;
+  if (staxx_updates_pill_for_image($ref, $realImages)['state'] === 'tagmissing') {
+    $withdrawnRef = $ref;
+    $withdrawnEntry = $entry;
+    break;
+  }
+}
+
+if ($withdrawnRef === null) {
+  skip('asked stamp: a withdrawn-tag image has its asked stamp set and a usable suggestion',
+       'no image on this box is currently classified tagmissing');
+  skip('asked stamp: a tagmissing image is not re-asked within six hours',
+       'no image on this box is currently classified tagmissing');
+} else {
+  ok('asked stamp: the withdrawn-tag image has an asked timestamp',
+     isset($withdrawnEntry['asked']) && is_int($withdrawnEntry['asked']) && $withdrawnEntry['asked'] > 0,
+     $withdrawnRef);
+  ok('asked stamp: its suggest is a non-empty string present in its tags',
+     is_string($withdrawnEntry['suggest'] ?? null) && $withdrawnEntry['suggest'] !== ''
+     && in_array($withdrawnEntry['suggest'], (array)($withdrawnEntry['tags'] ?? []), true),
+     json_encode($withdrawnEntry));
+
+  // Seed the scratch state with the same entry, freshly asked, and run a
+  // real pass across everything on the box — the six-hour memory must skip
+  // it rather than asking the registry again, and its recorded reason must
+  // stay exactly what it was, proving it was skipped and not re-classified.
+  $state = staxx_update_state();
+  $state['images'] = [$withdrawnRef => array_merge($withdrawnEntry, ['asked' => time()])];
+  staxx_update_state_save($state);
+
+  $checked = staxx_update_check('all', false);
+  ok('asked stamp: a tagmissing image is not re-asked within six hours',
+     is_array($checked) && ($checked['skipped'] ?? 0) >= 1, json_encode($checked));
+
+  $after = staxx_update_state()['images'][$withdrawnRef] ?? [];
+  ok('asked stamp: it is still recorded as "tag withdrawn" after the skip',
+     ($after['error'] ?? '') === 'tag withdrawn', json_encode($after));
+}
+
+/* -------------------------------------------------- 18. the cost guard */
+
+// staxx_registry_tags() must never be called for an image that answered
+// normally — it is one extra network request per notfound failure, and the
+// whole point of A2 is that a healthy image costs nothing extra. There is no
+// seam to inject a call counter into staxx_remote_failure_reason() from here,
+// so this instead proves the same thing the function's own contract promises:
+// passing an $out string that is NOT a "not found" style failure never
+// reaches the tag-list branch at all, regardless of what image is given —
+// exercised against a $tags output that would otherwise get filled.
+$noLookupTags = null;
+$noLookupReason = staxx_remote_failure_reason('Error: connection reset', $knownRepo, $noLookupTags);
+ok('cost guard: a non-notfound failure never asks for tags at all',
+   $noLookupReason === 'failed' && $noLookupTags === null, $noLookupReason);
+
+/* --------------------------------------- 19. a withdrawn tag is not a failure */
+
+// Reuses whichever real, single-image stack the box already has (same search
+// as case 10) — probed first with the exact same real registry call
+// staxx_update_check() itself makes, purely to know which of the two
+// contracts below currently applies. Never fabricates a stack of its own.
+$singleImageStack = null;
+$singleImageRef   = '';
+foreach ($stacks as $s) {
+  if (!($s['parses'] ?? false)) continue;
+  $imgs = staxx_update_images($s['name']);
+  if (count($imgs) === 1) { $singleImageStack = $s; $singleImageRef = array_key_first($imgs); break; }
+}
+
+if ($singleImageStack === null) {
+  skip('check: a withdrawn-tag-only pass reports ok true with its own count', 'no single-image stack found on this box');
+  skip('check: a pass with a genuine failure still reports ok false, naming the image', 'no single-image stack found on this box');
+} else {
+  $probeWhy  = '';
+  $probeTags = null;
+  staxx_image_remote($singleImageRef, $probeWhy, $probeTags);
+
+  if ($probeWhy === 'tagmissing') {
+    $checked = staxx_update_check($singleImageStack['name'], true);
+    ok('check: a withdrawn-tag-only pass reports ok true',
+       $checked['ok'] === true, json_encode($checked));
+    ok('check: a withdrawn-tag-only pass counts 0 failed',
+       $checked['failed'] === 0, json_encode($checked));
+    ok('check: a withdrawn-tag-only pass counts its own tagmissing separately',
+       $checked['tagmissing'] === 1, json_encode($checked));
+    ok('check: a withdrawn-tag-only pass reports an empty error sentence',
+       $checked['error'] === '', $checked['error']);
+
+    $entry = staxx_update_state()['images'][$singleImageRef] ?? [];
+    ok('check: the stored suggest is a string, never an array',
+       is_string($entry['suggest'] ?? null), gettype($entry['suggest'] ?? null));
+    ok('check: the stored suggest equals the first entry of the stored tags',
+       ($entry['suggest'] ?? null) === ($entry['tags'][0] ?? null), json_encode($entry));
+  } else {
+    skip('check: a withdrawn-tag-only pass reports ok true with its own count',
+         'this box\'s single-image stack is not currently tagmissing (why: '.$probeWhy.')');
+  }
+
+  if ($probeWhy !== '' && $probeWhy !== 'tagmissing' && $probeWhy !== 'limited') {
+    $checked2 = staxx_update_check($singleImageStack['name'], true);
+    ok('check: a pass with a genuine failure still reports ok false',
+       $checked2['ok'] === false, json_encode($checked2));
+    ok('check: a genuine failure names the image in the error sentence',
+       strpos($checked2['error'], $singleImageRef) !== false, $checked2['error']);
+  } else {
+    skip('check: a pass with a genuine failure still reports ok false, naming the image',
+         'this box\'s single-image stack is not currently a genuine failure (why: '.$probeWhy.')');
+  }
+}
+
 printf("\n%s — %d failure%s, %d skipped\n",
        $fails ? 'FAILED' : 'passed', $fails, $fails === 1 ? '' : 's', $skips);
 exit($fails ? 1 : 0);

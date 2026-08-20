@@ -234,6 +234,8 @@ services:
       icon: jellyfin               # see "Icons" below
       overview: |                  # markdown
         …
+      project: https://jellyfin.org
+      support: https://forum.jellyfin.org
       webui: "http://[IP]:[PORT:8096]/"
       display: basic               # basic | advanced — reserved; see below
 ```
@@ -242,6 +244,12 @@ All keys optional. A service's heading in the form is its key in the compose fil
 there is no display-name override. `display: advanced` is accepted and stored, and is intended to
 fold a sidecar such as a database away behind a toggle — but nothing acts on it yet, so setting it
 today changes nothing you can see.
+
+`project` and `support` mean the same thing here as they do at stack level — the project's own
+home page, and where to ask for help — and the stack-level keys still work and act as the
+fallback when a service does not set its own. A service-level pair exists because a repository
+belongs to one image, and a stack can hold several: a media server and its database sit in the
+same file but come from different projects, so one stack-level link cannot speak for both.
 
 `webui` uses Unraid's existing `[IP]` substitution for the address, and states the port plainly:
 

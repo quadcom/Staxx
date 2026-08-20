@@ -52,6 +52,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/CA.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -694,6 +695,36 @@ switch ($action) {
     $job = staxx_update_check_start($scope, true, $error);
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'job' => $job]);
+
+  /* ---- resolve one service's project and support links, for the row menu --
+   *
+   * Read-only and cheap: staxx_project_links() reads the compose metadata
+   * already cached to disk, the update-check state file, and the Community
+   * Applications index — no docker call and no network request happen here.
+   * The service name is checked for membership in the compose file's own
+   * services, the same real check staxx_start_job() runs, not just a shape
+   * check on the string.
+   */
+  case 'links':
+    $service = (string)($_POST['service'] ?? '');
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $dir  = staxx_stack_dir($name);
+    $file = staxx_find_compose_file($dir);
+    if ($file === '') {
+      staxx_reply(['ok' => false, 'error' => 'No compose file found in this stack.']);
+    }
+    $meta = staxx_compose_meta($file);
+    if (!$meta['ok']) {
+      staxx_reply(['ok' => false, 'error' => 'This stack\'s compose file could not be read.']);
+    }
+    if (!isset($meta['services'][$service])) {
+      staxx_reply(['ok' => false, 'error' => 'No service called "'.$service.'" in this stack.']);
+    }
+    $image = (string)$meta['services'][$service]['image'];
+    $links = staxx_project_links($image, $meta['x'], $meta['services'][$service]['x']);
+    staxx_reply(['ok' => true, 'name' => $name, 'service' => $service] + $links);
 
   // ---- dismiss the version currently on offer for one image ----
   case 'update-skip':

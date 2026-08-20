@@ -255,10 +255,14 @@ function staxx_update_pill_html(array $u): string {
   // unrecognised value (a future state this file has not been taught about
   // yet) falls through to showing nothing rather than guessing at a colour.
   $cls = [
-    'update'  => 'staxx-updatepill--update',
-    'built'   => 'staxx-updatepill--built',
-    'missing' => 'staxx-updatepill--missing',
-    'error'   => 'staxx-updatepill--error',
+    'update'     => 'staxx-updatepill--update',
+    'built'      => 'staxx-updatepill--built',
+    'missing'    => 'staxx-updatepill--missing',
+    'error'      => 'staxx-updatepill--error',
+    // A withdrawn tag is factual, not alarming — nothing is broken right
+    // now — so it gets the same quiet treatment as built/missing rather
+    // than error's louder colour.
+    'tagmissing' => 'staxx-updatepill--tagmissing',
   ][$state] ?? '';
   if ($cls === '') return '';
 
@@ -291,8 +295,15 @@ function staxx_update_pill_html(array $u): string {
  * @param bool   $running whether that service's own container is running
  * @param string $offWhy  why the web button is off when $url is ''; ignored
  *                         when $url is set (then it is always "not running")
+ * @param string $project the service's resolved project-page URL, or '' —
+ *                         Repo and CA are only ever passed by the service-row
+ *                         call site, which always gets both chips (disabled
+ *                         when there is nothing to link to); the stack row
+ *                         leaves both at their default and so never grows
+ *                         the two extra chips at all
+ * @param string $support the service's resolved support/forum-thread URL, or ''
  */
-function staxx_row_actions_html(string $stack, string $service, string $url, bool $running, string $offWhy): string {
+function staxx_row_actions_html(string $stack, string $service, string $url, bool $running, string $offWhy, string $project = '', string $support = ''): string {
   $label = _('Open web page');
 
   // Checked here as well as in staxx_webui_url(), which is the only caller
@@ -332,7 +343,46 @@ function staxx_row_actions_html(string $stack, string $service, string $url, boo
         . ' title="'.htmlspecialchars($logsText).'">'
         . htmlspecialchars($logsWord).'</button>';
 
-  return '<span class="staxx-rowactions">'.$web.$logs.'</span>';
+  // Repo and CA: the same href gate as WebUI above (a `javascript:` URL has
+  // nothing to escape and would still run on click). Greyed and inert rather
+  // than omitted when there is nothing to link to, same as WebUI's own
+  // disabled shape above — so the icon column never reflows depending on
+  // whether this image happens to carry a project page or a support thread.
+  // Only the service-row call site ever reaches here with $service set;
+  // the stack row's $service is always '', and that is what keeps it at
+  // WebUI+Logs only.
+  // Both link values come out of a registry label or a third-party feed, so
+  // they are escaped exactly like every other stranger's text this file
+  // prints.
+  $repo = '';
+  $ca   = '';
+  if ($service !== '') {
+    if ($project !== '' && preg_match('~^https?://~i', $project)) {
+      $repo = '<a class="staxx-webbtn" href="'.htmlspecialchars($project).'"'
+            . ' target="_blank" rel="noopener" title="'.htmlspecialchars(_('Open the project page')).'">'
+            . htmlspecialchars(_('Repo')).'</a>';
+    } else {
+      $repo = '<span class="staxx-webbtn staxx-webbtn--off" title="'.htmlspecialchars(_('This image has no project page to open.')).'">'
+            . htmlspecialchars(_('Repo')).'</span>';
+    }
+
+    if ($support !== '' && preg_match('~^https?://~i', $support)) {
+      $ca = '<a class="staxx-webbtn" href="'.htmlspecialchars($support).'"'
+          . ' target="_blank" rel="noopener" title="'.htmlspecialchars(_('Open the support thread')).'">'
+          . htmlspecialchars(_('CA')).'</a>';
+    } else {
+      $ca = '<span class="staxx-webbtn staxx-webbtn--off" title="'.htmlspecialchars(_('This image has no support thread to open.')).'">'
+          . htmlspecialchars(_('CA')).'</span>';
+    }
+  }
+
+  // Two columns whenever Repo/CA exist at all — which, now that both are
+  // always rendered (enabled or disabled) for the service-row call site, is
+  // every service row rather than only some of them. See
+  // .staxx-rowactions--wide in sheets/staxx.css.
+  $wideCls = $service !== '' ? ' staxx-rowactions--wide' : '';
+
+  return '<span class="staxx-rowactions'.$wideCls.'">'.$web.$logs.$repo.$ca.'</span>';
 }
 
 /**
@@ -347,8 +397,8 @@ function staxx_row_actions_html(string $stack, string $service, string $url, boo
  * anything docker knows about is then merged onto it.
  *
  * @return array<int, array{key:string, service:string, name:string, id:string,
- *                          image:string, icon:string, webui:string, state:string,
- *                          status:string, exists:bool}>
+ *                          image:string, icon:string, webui:string, project:string,
+ *                          support:string, state:string, status:string, exists:bool}>
  */
 function staxx_stack_children(array $s): array {
   $containers = staxx_stack_containers($s);
@@ -356,7 +406,15 @@ function staxx_stack_children(array $s): array {
   // What the compose file declares, which is the only source for a service that
   // has never been started: no container means docker has no image name for it,
   // and no image name means no icon until the first time it runs.
-  $declared = $s['file'] !== '' ? staxx_compose_meta($s['file'])['services'] : [];
+  //
+  // $stackX rides along for project/support: those keys are the older,
+  // stack-level form of the metadata and have to keep working for a service
+  // that never got its own copy. $declared is already in hand for icon and
+  // webui, so reading it costs nothing extra — staxx_compose_meta() is the
+  // one call every row here already relies on, cached on disk.
+  $meta     = $s['file'] !== '' ? staxx_compose_meta($s['file']) : ['services' => [], 'x' => []];
+  $declared = $meta['services'];
+  $stackX   = $meta['x'];
 
   $rows = [];
   $hostIp = staxx_host_ip();
@@ -373,6 +431,8 @@ function staxx_stack_children(array $s): array {
       // never run still has one — declared[$service] is the compose file's
       // own view, nothing docker knows.
       'webui' => staxx_webui_url($declared[$service] ?? [], $hostIp),
+      'project' => (string)($declared[$service]['x']['project'] ?? $stackX['project'] ?? ''),
+      'support' => (string)($declared[$service]['x']['support'] ?? $stackX['support'] ?? ''),
       'state' => '', 'status' => '', 'exists' => false,
     ];
   }
@@ -410,6 +470,8 @@ function staxx_stack_children(array $s): array {
                      $declared[$service] ?? [], $hostIp,
                      $addr, (string)($net[$c['id']]['mode'] ?? ''), (string)($net[$c['id']]['driver'] ?? '')
                    ),
+      'project' => (string)($declared[$service]['x']['project'] ?? $stackX['project'] ?? ''),
+      'support' => (string)($declared[$service]['x']['support'] ?? $stackX['support'] ?? ''),
       'state'   => $c['state'],
       'status'  => $c['status'],
       'exists'  => true,
@@ -1160,7 +1222,8 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                   // as the disabled web button.
                 ?>
                 <?= staxx_row_actions_html($s['name'], $kid['service'], $kid['webui'],
-                      $kid['state'] === 'running', _('This container has no web page to open.')) ?>
+                      $kid['state'] === 'running', _('This container has no web page to open.'),
+                      $kid['project'], $kid['support']) ?>
               </span>
 
               <span class="staxx-nameinfo">

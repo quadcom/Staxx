@@ -20,7 +20,7 @@ import pathlib
 import sys
 
 import yaml
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, FormatChecker
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCHEMA_PATH = ROOT / "schema" / "x-unraid.schema.json"
@@ -76,6 +76,22 @@ NEGATIVE = [
         service_doc(overview=3),
     ),
     (
+        "service project given as a number",
+        service_doc(project=3),
+    ),
+    (
+        "service project that is not a URI",
+        service_doc(project="jellyfin.org"),
+    ),
+    (
+        "service support given as a number",
+        service_doc(support=3),
+    ),
+    (
+        "service support that is not a URI",
+        service_doc(support="not a link"),
+    ),
+    (
         "sections given as a list rather than a mapping",
         {"x-unraid": {"sections": [{"web": {"ports": False}}]}},
     ),
@@ -111,6 +127,8 @@ POSITIVE = [
     ("every service key at once", service_doc(
         icon="./icon.png",
         overview="Open the web interface to finish setup.",
+        project="https://jellyfin.org",
+        support="https://forum.jellyfin.org",
         webui="http://[IP]:[PORT:8096]/",
         display="advanced",
     )),
@@ -152,7 +170,10 @@ POSITIVE = [
 def main() -> int:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
-    validator = Draft202012Validator(schema)
+    # format_checker turned on deliberately: draft 2020-12 treats "format" as
+    # an annotation only unless something asks it to be enforced, and the new
+    # service-level project/support keys need "not a link" to actually fail.
+    validator = Draft202012Validator(schema, format_checker=FormatChecker())
     print(f"schema is valid Draft 2020-12 ({SCHEMA_PATH.relative_to(ROOT)})\n")
 
     failures = 0

@@ -8349,7 +8349,7 @@
   // the whole stack's own All tab, a service name for one container's — and
   // it is what switches straight to Manage further down, once the model this
   // stack's Manage view is built from (MODEL, from reparse() above) exists.
-  function openEditor(name, body, isNew, focusService, manageSelect) {
+  function openEditor(name, body, isNew, focusService, manageSelect, focusField) {
     closeMenu();
     clearError();
 
@@ -8489,14 +8489,35 @@
       if (svcSection) svcSection.scrollIntoView({ block: 'start' });
     }
 
+    // focusField (e.g. 'image') names one setting inside that service, found
+    // the same way the form's own input handlers find a box: by walking
+    // MODEL.fields, which reparse() above has already built. Landing here
+    // instead of the Form button is what puts the cursor straight into the
+    // withdrawn-tag box "Fix the tag…" opens this editor for, so the real
+    // tag list (tagLoad()) is already loading by the time anyone looks.
+    var focusFieldEl = null;
+    if (svcSection && focusField && MODEL) {
+      focusFieldEl = Array.prototype.filter.call(
+        svcSection.querySelectorAll('[data-part="value"][data-row]'),
+        function (el) {
+          var f = MODEL.fields[el.dataset.row | 0];
+          return !!f && f.binder === 'setting' && f.target === focusField;
+        }
+      )[0] || null;
+    }
+
     // Explicit, and after showModal(). The dialog's own "first focusable
     // descendant" rule would land on the view selector, which is nobody's
     // starting point. A service section is not itself focusable, so this
-    // lands on the Form button instead — visible, and next to what it opened.
-    var afterFocus = svcSection
+    // lands on the Form button instead — visible, and next to what it opened
+    // — unless a specific field was asked for, which wins over both.
+    var afterFocus = focusFieldEl
+      ? focusFieldEl
+      : svcSection
       ? modal.querySelector('.staxx-viewbtn[aria-pressed="true"]')
       : yamlPane;
     (isNew ? nameInput : afterFocus).focus({ preventScroll: true });
+    if (focusFieldEl) focusFieldEl.scrollIntoView({ block: 'center' });
 
     // PLAN_44 C1. Configure is where every stack opens, even one left on
     // Manage last time — a freshly read compose file is the whole reason the
@@ -10863,6 +10884,27 @@
     return out;
   }
 
+  // Which of a stack's own services, if any, currently show a withdrawn-tag
+  // pill — read off the container rows themselves, the same source
+  // updatePillEntry() already trusts, rather than kept anywhere else. Used
+  // only to decide whether the stack menu's "Fix the tag…" item can name an
+  // unambiguous service; a replicated service's several rows share one
+  // answer, so it is only counted once.
+  function stackTagMissingServices(stack) {
+    var seen = {}, out = [];
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.staxx-container-row[data-in-stack="' + stack + '"]'),
+      function (row) {
+        var entry = updatePillEntry(updatePillEl(row));
+        if (!entry || entry.state !== 'tagmissing') return;
+        var btn = row.querySelector('[data-menu="container"]');
+        var svc = btn && btn.dataset.service;
+        if (svc && !seen[svc]) { seen[svc] = true; out.push(svc); }
+      }
+    );
+    return out;
+  }
+
   // The identity a failure marker (and the map below) is filed under: a
   // stack row's own name, or a container row's stack-plus-service — see the
   // containerRows() comment above for why the service half has to be the
@@ -11363,14 +11405,18 @@
   // draws the same element on first render; this has to match it exactly; a
   // row that was up to date at render time has no pill yet, so this creates
   // one on demand rather than assuming it is already there.
-  //   data-update-state   current / update / built / missing / error / unknown
+  //   data-update-state   current / update / built / missing / error / tagmissing / unknown
   //   data-update-image   the image reference this pill is about
   //   data-update-source  a "what changed" link, or '' when there is none
   var UPDATE_PILL_CLASS = {
-    update:  'staxx-updatepill--update',
-    built:   'staxx-updatepill--built',
-    missing: 'staxx-updatepill--missing',
-    error:   'staxx-updatepill--error'
+    update:     'staxx-updatepill--update',
+    built:      'staxx-updatepill--built',
+    missing:    'staxx-updatepill--missing',
+    error:      'staxx-updatepill--error',
+    // A withdrawn tag is factual, not alarming, so it gets the same quiet
+    // treatment as built/missing rather than error's louder colour — see
+    // staxx_update_pill_html() in StacksTable.php, which this must match.
+    tagmissing: 'staxx-updatepill--tagmissing'
     // current and unknown get no colour of their own — nothing here is
     // worth a badge, which is the whole point of leaving them plain.
   };
@@ -11561,6 +11607,104 @@
     call('update-skip', { image: image }).then(function (res) {
       if (!res.ok) { failed('Could not skip that version for ' + label, res.error); return; }
       refreshUpdates();
+    });
+  }
+
+  // Why a link was believed, in the words that belong in front of someone —
+  // 'derived' is the one case that is a guess rather than something anyone
+  // actually stated, and the wording has to say so rather than presenting it
+  // as fact. Keyed on staxx_project_links()'s own 'from' values.
+  var LINK_FROM_SENTENCE = {
+    label:    'This was found in the image’s own published details.',
+    catalog:  'This was found in the Community Applications listing for this container.',
+    derived:  'This was worked out from the image’s own address, which is a reasonable ' +
+              'guess rather than something its publisher actually stated.',
+    registry: 'This points at the registry page for the image, since it is one of the ' +
+              'well-known base images whose registry page is its home.'
+  };
+
+  // Row-menu action, service rows only (PLAN_55 part B3): asks the server to
+  // work out where this container's software comes from, then previews the
+  // exact lines that would be added before writing anything. `from` is what
+  // picks the sentence above, and 'stored' — already sitting in the file —
+  // is answered without ever reaching the write step, since writing it again
+  // would duplicate the key rather than change anything.
+  function findProjectLink(stack, service, label) {
+    call('links', { name: stack, service: service }).then(function (res) {
+      if (!res.ok) { failed('Could not look up a project link', res.error); return; }
+
+      // A stranger's text, off a label or a community listing — never opened
+      // or written unless it looks like a genuine link, the same guard the
+      // update pill's own "what changed" link uses.
+      var project = safeUpdateSource(res.project);
+      var support = safeUpdateSource(res.support);
+
+      if (!project && !support) {
+        failed('No project link found',
+               'Nothing here says where "' + service + '" comes from — not this file, the ' +
+               'image itself, or the Community Applications listing — so there is nothing ' +
+               'to add.');
+        return;
+      }
+
+      if (res.from === 'stored') {
+        failed('Already recorded',
+               'This service already has a project link saved in its compose file, so there ' +
+               'is nothing new to add.');
+        return;
+      }
+
+      var lines = [];
+      if (project) lines.push('project: ' + project);
+      if (support) lines.push('support: ' + support);
+
+      var sentence = LINK_FROM_SENTENCE[res.from] || 'This was found for this container.';
+      var bodyHtml = '<p>' + esc(sentence) + '</p>' +
+        '<p>These lines would be added to this service’s own settings:</p>' +
+        '<p><code>' + lines.map(esc).join('<br>') + '</code></p>';
+
+      askConfirm({ title: 'Add a project link to "' + label + '"?', bodyHtml: bodyHtml,
+                   goLabel: 'Add link' })
+        .then(function (go) {
+          if (!go) return;
+          writeProjectLink(stack, service, project, support, label);
+        });
+    });
+  }
+
+  // The write half of findProjectLink() above: reads the file fresh (never
+  // the editor's own copy, which may not even be open), adds the two
+  // settings through the compose model — the one editor that can insert a
+  // line without disturbing anything else already in the file — and saves
+  // through the same 'save' action every ordinary edit uses, so a hand-
+  // authored file's comments, ordering and anchors survive exactly as the
+  // round-trip promise requires.
+  function writeProjectLink(stack, service, project, support, label) {
+    if (!YAML || typeof YAML.parse !== 'function') {
+      failed('Could not save the link', 'The part of the page that edits compose files safely did not load.');
+      return;
+    }
+    call('read', { name: stack }).then(function (res) {
+      if (!res.ok) { failed('Could not save the link', res.error); return; }
+
+      var doc = YAML.parse(res.body);
+      var ok = true;
+      if (project) ok = YAML.addNested(doc, null, service, ['x-unraid', 'project'], project) >= 0;
+      if (ok && support) ok = YAML.addNested(doc, null, service, ['x-unraid', 'support'], support) >= 0;
+
+      if (!ok) {
+        // Never falls back to rebuilding the file — an insert that cannot be
+        // done safely is refused outright, the same rule every other model
+        // write in this file already follows.
+        failed('Could not save the link',
+               'This service’s settings could not be added to safely, so nothing was changed.');
+        return;
+      }
+
+      call('save', { name: res.name, body: YAML.serialise(doc), 'new': '0' }).then(function (r) {
+        if (!r.ok) { failed('Could not save the link', r.error); return; }
+        refreshRows();
+      });
     });
   }
 
@@ -11924,10 +12068,14 @@
   // manageSelect (PLAN_44 A4/C1): also passed straight through — it is what
   // makes the Logs button and the two Logs menu items open on Manage,
   // already pointed at the container asked for, instead of on Configure.
-  function editStack(name, label, focusService, manageSelect) {
+  //
+  // focusField: also passed straight through, to openEditor()'s own field
+  // lookup — "Fix the tag…" is the one caller that sets it, naming the
+  // service's image box so the cursor lands there directly.
+  function editStack(name, label, focusService, manageSelect, focusField) {
     call('read', { name: name }).then(function (res) {
       if (!res.ok) { failed('Could not open ' + label, res.error); return; }
-      openEditor(res.name, res.body, false, focusService, manageSelect);
+      openEditor(res.name, res.body, false, focusService, manageSelect, focusField);
     });
   }
 
@@ -13405,6 +13553,20 @@
         });
       }
 
+      // The rollup pill knows only the worst state among this stack's
+      // services, not which one it belongs to — so this reads the container
+      // rows underneath it instead, the same way containerRows() reaches a
+      // service's own rows from the stack. Offered only when that comes back
+      // unambiguous: a stack with two withdrawn tags at once is rare enough
+      // that guessing which one to open is worse than leaving this off the
+      // stack menu — the same item is still on each container's own menu.
+      var tagMissingServices = stackTagMissingServices(name);
+      if (tagMissingServices.length === 1) {
+        menuItem('Fix the tag…', 'wrench', function () {
+          editStack(name, label, tagMissingServices[0], undefined, 'image');
+        });
+      }
+
       // PLAN_44 A4: opens on Manage's All tab. Falls back to Configure on its
       // own (editStack() -> openEditor() only switches tabs when manage.js
       // has loaded) — reading a file needs neither Docker nor compose, so
@@ -13516,6 +13678,17 @@
       });
     }
 
+    // Only shown once the pill itself has said the tag this service asks for
+    // has gone — see updatePillEntry()'s own comment for why the state is
+    // read back off the pill rather than kept anywhere else. Opens the editor
+    // on this service's image box with the real tag list already loading, so
+    // the choice of what to run next is made there and not guessed here.
+    if (updateEntry && updateEntry.state === 'tagmissing') {
+      menuItem('Fix the tag…', 'wrench', function () {
+        editStack(stack, stackLabel(stack), service, undefined, 'image');
+      });
+    }
+
     // PLAN_44 A4: opens on Manage with this container selected. Falls back to
     // Configure on its own if manage.js never loaded — reading a file needs
     // neither Docker nor an existing container, so neither of the hints
@@ -13540,6 +13713,12 @@
     }, {
       disabled: !CAN_RUN || !exists,
       hint: !exists ? 'This container has not been created yet' : ''
+    });
+
+    // Service rows only — a project link belongs to one image, and images
+    // are per service. Read-only until the confirmation below is answered.
+    menuItem('Find the project link…', 'link', function () {
+      findProjectLink(stack, service, stackLabel(stack));
     });
 
     menuSeparator();

@@ -496,6 +496,20 @@
   min-width: 4.2rem;
 }
 
+/* Added by PHP for every service row, which always carries all four chips
+   (staxx_row_actions_html()) — the stack row has only WebUI and Logs and
+   never gets this class. Two columns rather than one turns the four-chip
+   stack into a 2x2 block that is exactly as tall as the WebUI/Logs pair
+   already is, so .staxx-icon's align-self: flex-start and .staxx-dot's
+   absolute offsets (both above, both anchored on the TILE, not this column)
+   keep meaning what their own comments say regardless of how many chips a
+   service happens to have. min-width grows to fit a pair of short labels
+   ("Repo", "CA") side by side rather than the one long "WebUI" column. */
+.staxx-rowactions--wide {
+  grid-template-columns: repeat(2, minmax(3.2rem, 1fr));
+  min-width: 7rem;
+}
+
 /* Prefixed with .staxx-scaffold purely for specificity, and that is not
    belt-and-braces. Unraid's own sheet carries `.unapi button { font: inherit }`,
    and the page has a .unapi ancestor — one class plus one element type outranks
@@ -513,7 +527,11 @@
   border: 0.1rem solid var(--sm-line);
   border-radius: 0.3rem;
   background: transparent;
-  color: var(--sm-muted);
+  /* As bright as a service's name — an enabled chip is something you can
+     click, and sitting it at the muted tone made it read too much like the
+     disabled chips beside it. .staxx-webbtn--off below overrides this back
+     to muted for the disabled case. */
+  color: var(--sm-fg);
   /* One size for both, matching .staxx-sub on the line below the name. Small
      enough to sit quietly beside the tile without widening the name column
      far enough to wrap a four-service stack's list over three lines. */
@@ -524,9 +542,12 @@
   cursor: pointer;
 }
 
+/* Resting colour moved to --sm-fg above, so hover needs its own colour to
+   still read as a change — --sm-accent is what the rest of this sheet
+   already uses for "this is active/focused". */
 .staxx-webbtn:hover,
 .staxx-logsbtn:hover:not(:disabled) {
-  color: var(--sm-fg);
+  color: var(--sm-accent);
   background: var(--sm-fill);
 }
 
@@ -536,12 +557,16 @@
   outline-offset: 0.1rem;
 }
 
-/* Not running, or nothing to open — greyed and inert rather than removed,
-   so the icon column never reflows depending on state. The title on the
-   element itself says which of the two reasons applies (PLAN_39). Logs has
-   no equivalent: it is never disabled, since a stopped container's log is
+/* Not running, or nothing to open (no web page, project page, or support
+   thread known for this image) — greyed and inert rather than removed, so
+   the icon column never reflows depending on state. The title on the
+   element itself says which reason applies (PLAN_39). Logs has no
+   equivalent: it is never disabled, since a stopped container's log is
    still worth reading. */
 .staxx-webbtn--off {
+  /* Stays at the muted tone rather than the brighter resting colour above —
+     that colour means "you can open this", and a disabled chip cannot. */
+  color: var(--sm-muted);
   opacity: 0.4;
   cursor: default;
   pointer-events: none;
@@ -1936,13 +1961,15 @@
   color: #000;
 }
 
-/* Built here, could not be checked, or the image itself has gone missing —
-   three different facts, but none of them is an alarm, so all three get the
+/* Built here, could not be checked, the image itself has gone missing, or a
+   tag has been withdrawn — four different facts, but none of them is an
+   alarm (a withdrawn tag is not a broken container), so all four get the
    same quiet treatment: the translucent fill .staxx-pill itself uses for a
    plain stopped state, and the same muted text colour. */
 .staxx-updatepill--built,
 .staxx-updatepill--missing,
-.staxx-updatepill--error {
+.staxx-updatepill--error,
+.staxx-updatepill--tagmissing {
   background: var(--sm-fill-2);
   color: var(--sm-muted);
   font-weight: 400;

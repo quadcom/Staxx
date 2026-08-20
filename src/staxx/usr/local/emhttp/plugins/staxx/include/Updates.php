@@ -160,16 +160,186 @@ function staxx_update_labels_meta(array $labels): array {
 }
 
 /**
+ * The tag half of an image reference, 'latest' when none is written — the
+ * same default Docker itself applies.
+ */
+function staxx_image_tag_part(string $image): string {
+  $trimmed = trim($image);
+  $slash = strrpos($trimmed, '/');
+  $colon = strrpos($trimmed, ':');
+  if ($colon !== false && ($slash === false || $colon > $slash)) return substr($trimmed, $colon + 1);
+  return 'latest';
+}
+
+/**
+ * Tags a repository has published, from any registry — bare tag names, []
+ * on any failure, the same contract as staxx_image_tags() this delegates to
+ * for Docker Hub and its two linuxserver mirrors.
+ *
+ * For everything else, the standard registry conversation: ask the host's
+ * /v2/ root, read the WWW-Authenticate challenge it answers with for the
+ * token realm and service, fetch a pull-scoped token from that realm (many
+ * public hosts need none at all — a host with no challenge is already
+ * anonymous), then list the repository's tags. Registry v2 answers in
+ * lexical order with no dates, unlike Hub's "most recently pushed" — so
+ * nothing here or downstream may assume recency for this route.
+ *
+ * @return string[]
+ */
+function staxx_registry_tags(string $image): array {
+  if (staxx_hub_repo_path($image) !== '') return staxx_image_tags($image);
+
+  $ref = trim($image);
+  $ref = preg_replace('/@sha256:[0-9a-f]+$/', '', $ref);
+  $slash = strrpos($ref, '/');
+  $colon = strrpos($ref, ':');
+  if ($colon !== false && ($slash === false || $colon > $slash)) $ref = substr($ref, 0, $colon);
+
+  $slash = strpos($ref, '/');
+  if ($slash === false) return []; // no host and not Hub-eligible — nothing to ask
+  $host = substr($ref, 0, $slash);
+  $repo = substr($ref, $slash + 1);
+  if ($host === '' || $repo === '') return [];
+
+  // Same shape a Hub repository name is held to, just without the one-slash
+  // limit — a generic registry allows deeper paths (ghcr.io/org/team/name).
+  if (!preg_match('#^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$#D', $repo)) {
+    return [];
+  }
+
+  // The ping needs the response headers, not the body, so it goes through
+  // curl directly rather than staxx_hub_json() (which is -f and throws the
+  // body away on anything but 2xx). A host with no challenge at all is
+  // already anonymous, so an empty realm below is not itself a failure.
+  $headers = staxx_sh(
+    'curl -sS --max-time 6 -D /dev/stdout -o /dev/null '.escapeshellarg('https://'.$host.'/v2/'), 8
+  );
+
+  $realm = '';
+  $service = '';
+  foreach (explode("\n", $headers) as $line) {
+    if (preg_match('/^www-authenticate:\s*(.+)$/i', trim($line), $m)) {
+      if (preg_match('/realm="([^"]+)"/i', $m[1], $rm)) $realm = $rm[1];
+      if (preg_match('/service="([^"]+)"/i', $m[1], $sm)) $service = $sm[1];
+      break;
+    }
+  }
+
+  $bearer = [];
+  if ($realm !== '') {
+    $tokenUrl = $realm.'?scope='.rawurlencode('repository:'.$repo.':pull');
+    if ($service !== '') $tokenUrl .= '&service='.rawurlencode($service);
+    $token = staxx_hub_json($tokenUrl, [], 6, 8);
+    $bearerToken = (string)($token['token'] ?? ($token['access_token'] ?? ''));
+    if ($bearerToken !== '') $bearer = ['Authorization: Bearer '.$bearerToken];
+  }
+
+  $data = staxx_hub_json('https://'.$host.'/v2/'.$repo.'/tags/list', $bearer, 6, 8);
+  if ($data === null || !isset($data['tags']) || !is_array($data['tags'])) return [];
+
+  $tags = [];
+  foreach ($data['tags'] as $t) {
+    if (is_string($t)) $tags[] = $t;
+  }
+  return $tags;
+}
+
+/**
+ * A replacement to offer for a tag the registry no longer has, at most three
+ * and best first. A guess is still advice, not an instruction — decision 1
+ * of the memos plan leaves the actual change to the editor, where the real
+ * tag list is in view.
+ *
+ * 1. a conventional rolling tag that still exists, preferred over any
+ *    version number — "stable" outranks a higher number on the theory that
+ *    someone who followed a rolling tag before probably still wants one;
+ * 2. otherwise the highest version-looking tag, compared numerically —
+ *    version_compare() treats "30" as text against "9" and gets 0.30 vs 0.9
+ *    backwards, so segments are compared as integers by hand instead;
+ * 3. never a tag that reads as a test build — those are worse than no
+ *    suggestion at all.
+ *
+ * @return string[] at most three
+ */
+function staxx_tag_suggestions(string $missing, array $tags): array {
+  $missing = trim($missing);
+  $testish = ['rc', 'alpha', 'beta', 'canary', 'nightly', 'dev', 'edge'];
+
+  $candidates = [];
+  foreach ($tags as $tag) {
+    $tag = trim((string)$tag);
+    if ($tag === '' || $tag === $missing) continue;
+    $isTestBuild = false;
+    foreach ($testish as $word) {
+      if (stripos($tag, $word) !== false) { $isTestBuild = true; break; }
+    }
+    if ($isTestBuild) continue;
+    $candidates[] = $tag;
+  }
+
+  $suggestions = [];
+
+  foreach (['stable', 'release', 'main', 'latest'] as $rolling) {
+    if (in_array($rolling, $candidates, true)) { $suggestions[] = $rolling; break; }
+  }
+
+  $versionish = array_values(array_filter($candidates, function (string $tag): bool {
+    return preg_match('/^v?\d+(\.\d+)*$/', $tag) === 1;
+  }));
+  if ($versionish) {
+    usort($versionish, function (string $a, string $b): int {
+      $na = array_map('intval', explode('.', ltrim($a, 'vV')));
+      $nb = array_map('intval', explode('.', ltrim($b, 'vV')));
+      $len = max(count($na), count($nb));
+      for ($i = 0; $i < $len; $i++) {
+        $cmp = ($na[$i] ?? 0) <=> ($nb[$i] ?? 0);
+        if ($cmp !== 0) return -$cmp; // highest first
+      }
+      return 0;
+    });
+    if (!in_array($versionish[0], $suggestions, true)) $suggestions[] = $versionish[0];
+  }
+
+  foreach ($candidates as $tag) {
+    if (count($suggestions) >= 3) break;
+    if (!in_array($tag, $suggestions, true)) $suggestions[] = $tag;
+  }
+
+  return array_slice($suggestions, 0, 3);
+}
+
+/**
  * Classify a route's raw output so the caller can tell "the registry said no
  * for a reason that will still be true in five minutes" from "ask again
  * later" — checked on plain text, since a 429 reply is never JSON.
+ *
+ * On a plain 'notfound', and only when $image is given, one extra request
+ * asks the registry for the repository's whole tag list — this is the only
+ * place that request happens, and it must stay that way: an image that
+ * answered normally must never trigger it. Tags returned and ours absent
+ * means the tag itself was withdrawn ('tagmissing'), with the list handed
+ * back through $tags so the caller does not have to ask again to store it.
+ * Tags returned and ours still among them means something stranger is
+ * going on than a withdrawn tag, and a guess there would be worse than
+ * silence — stays 'notfound'. No tags, or the lookup itself failing, also
+ * stays 'notfound': a private registry answering nothing is correct, not
+ * evidence of anything.
  */
-function staxx_remote_failure_reason(string $out): string {
+function staxx_remote_failure_reason(string $out, string $image = '', ?array &$tags = null): string {
   if (preg_match('/429/', $out) && stripos($out, 'Too Many Requests') !== false) return 'limited';
   if (stripos($out, 'toomanyrequests') !== false) return 'limited';
   if (stripos($out, 'not found') !== false
     || stripos($out, 'manifest unknown') !== false
-    || stripos($out, 'no such') !== false) return 'notfound';
+    || stripos($out, 'no such') !== false) {
+    if ($image !== '') {
+      $registryTags = staxx_registry_tags($image);
+      if ($registryTags !== [] && !in_array(staxx_image_tag_part($image), $registryTags, true)) {
+        $tags = $registryTags;
+        return 'tagmissing';
+      }
+    }
+    return 'notfound';
+  }
   return 'failed';
 }
 
@@ -179,10 +349,12 @@ function staxx_remote_failure_reason(string $out): string {
  * Returns [] on any failure at all: a failure must never be mistaken for
  * "up to date", so the caller records "could not check" instead of comparing
  * against nothing. $why is set to why, one of 'limited', 'unsupported',
- * 'notfound', 'failed', or '' on success — so a caller hitting Docker Hub's
- * hourly ceiling can stop asking instead of burning the rest of it.
+ * 'notfound', 'tagmissing', 'failed', or '' on success — so a caller hitting
+ * Docker Hub's hourly ceiling can stop asking instead of burning the rest of
+ * it. $tags is filled with the repository's tag list only when $why comes
+ * back 'tagmissing', so the caller can store it without asking again.
  */
-function staxx_image_remote(string $image, string &$why = null): array {
+function staxx_image_remote(string $image, string &$why = null, ?array &$tags = null): array {
   $why   = '';
   $ref   = escapeshellarg($image);
   $route = staxx_docker_inspector();
@@ -200,10 +372,10 @@ function staxx_image_remote(string $image, string &$why = null): array {
       20
     );
     $data = json_decode($out, true);
-    if (!is_array($data)) { $why = staxx_remote_failure_reason($out); return []; }
+    if (!is_array($data)) { $why = staxx_remote_failure_reason($out, $image, $tags); return []; }
 
     $digest = (string)($data['manifest']['digest'] ?? '');
-    if ($digest === '') { $why = staxx_remote_failure_reason($out); return []; }
+    if ($digest === '') { $why = staxx_remote_failure_reason($out, $image, $tags); return []; }
 
     $imageObj = $data['image'] ?? null;
     $config   = [];
@@ -232,7 +404,7 @@ function staxx_image_remote(string $image, string &$why = null): array {
     // 2>&1 here for the same reason as the imagetools route above.
     $out  = staxx_sh(staxx_docker_bin().' manifest inspect --verbose '.$ref.' 2>&1', 20);
     $data = json_decode($out, true);
-    if (!is_array($data)) { $why = staxx_remote_failure_reason($out); return []; }
+    if (!is_array($data)) { $why = staxx_remote_failure_reason($out, $image, $tags); return []; }
 
     // A multi-architecture index decodes to a JSON list, not an object — that
     // reply has no index digest in it at all, only one Descriptor per
@@ -244,7 +416,7 @@ function staxx_image_remote(string $image, string &$why = null): array {
     if (staxx_array_is_list($data)) { $why = 'unsupported'; return []; }
 
     $digest = (string)($data['Descriptor']['digest'] ?? '');
-    if ($digest === '') { $why = staxx_remote_failure_reason($out); return []; }
+    if ($digest === '') { $why = staxx_remote_failure_reason($out, $image, $tags); return []; }
 
     // No labels available on this route.
     return ['digest' => $digest];
@@ -292,7 +464,7 @@ function staxx_image_remote(string $image, string &$why = null): array {
   // The status line is the same headers reply the digest search above just
   // walked — a 429 there never carries a docker-content-digest, so checking
   // it only on failure is enough.
-  if ($digest === '') { $why = staxx_remote_failure_reason($headers); return []; }
+  if ($digest === '') { $why = staxx_remote_failure_reason($headers, $image, $tags); return []; }
 
   // Labels come from the config blob path already built for the form editor —
   // no point re-walking index/manifest/blob a second time just to get them.
@@ -447,10 +619,10 @@ function staxx_php_bin(): string {
  * The whole check pass: ask the registry about every distinct image in
  * scope, one at a time, and fold the answers into the state file.
  *
- * @return array{asked:int, skipped:int, updates:int, failed:int, built:int, missing:int, ok:bool, error:string, limited:bool}
+ * @return array{asked:int, skipped:int, updates:int, failed:int, built:int, missing:int, tagmissing:int, ok:bool, error:string, limited:bool}
  */
 function staxx_update_check(string $scope, bool $force): array {
-  $result = ['asked' => 0, 'skipped' => 0, 'updates' => 0, 'failed' => 0, 'built' => 0, 'missing' => 0, 'ok' => true, 'error' => '', 'limited' => false];
+  $result = ['asked' => 0, 'skipped' => 0, 'updates' => 0, 'failed' => 0, 'built' => 0, 'missing' => 0, 'tagmissing' => 0, 'ok' => true, 'error' => '', 'limited' => false];
 
   $lockError = '';
   if (!staxx_update_lock($lockError)) {
@@ -504,7 +676,8 @@ function staxx_update_check(string $scope, bool $force): array {
     $first = false;
 
     $why    = '';
-    $remote = staxx_image_remote($image, $why);
+    $tags   = null;
+    $remote = staxx_image_remote($image, $why, $tags);
     $local  = staxx_image_local($image);
     $result['asked']++;
 
@@ -523,11 +696,42 @@ function staxx_update_check(string $scope, bool $force): array {
 
     if ($remote === []) {
       $message = $why === 'unsupported' ? 'cannot be checked here'
-        : ($why === 'notfound' ? 'not found in the registry' : 'could not check');
+        : ($why === 'tagmissing' ? 'tag withdrawn'
+        : ($why === 'notfound' ? 'not found in the registry' : 'could not check'));
       $existing['error'] = $message;
+
+      if ($why === 'tagmissing') {
+        // Store the filtered shortlist, not the registry's raw tag list: that
+        // list can run to fifty entries, gets written to the flash drive
+        // every pass, and would include the very test-build tags
+        // staxx_tag_suggestions() exists to exclude — never something a menu
+        // should offer back. 'suggest' is always this list's first entry.
+        $suggestions = staxx_tag_suggestions(staxx_image_tag_part($image), (array)$tags);
+        $existing['tags']    = $suggestions;
+        $existing['suggest'] = $suggestions[0] ?? '';
+      } else {
+        unset($existing['tags'], $existing['suggest']);
+      }
+
+      // A withdrawn tag or a missing repository will not fix itself between
+      // now and the next pass — stamp 'asked' so it honours the same
+      // six-hour memory a successful check gets, instead of being re-asked
+      // every single pass for ever. 'failed' and 'limited' are transient and
+      // must keep retrying promptly, so they are left unstamped.
+      if ($why === 'notfound' || $why === 'tagmissing') $existing['asked'] = $now;
+
       $images[$image] = $existing;
-      $result['failed']++;
-      $failedNames[] = $image;
+
+      // A withdrawn tag is a definite, permanent answer — the check itself
+      // succeeded and learned something real, the same way 'built' and
+      // 'missing' are not failures either. It gets its own counter so it
+      // never inflates 'failed' and never poisons the pass's own $result['ok'].
+      if ($why === 'tagmissing') {
+        $result['tagmissing']++;
+      } else {
+        $result['failed']++;
+        $failedNames[] = $image;
+      }
       echo $image.' — '.$message."\n";
       continue;
     }
@@ -557,7 +761,7 @@ function staxx_update_check(string $scope, bool $force): array {
       continue;
     }
 
-    unset($existing['error'], $existing['built']);
+    unset($existing['error'], $existing['built'], $existing['tags'], $existing['suggest']);
     $existing['local']   = $local['digest'];
     $existing['remote']  = $remote['digest'] ?? '';
     if (isset($remote['version'])) $existing['version'] = $remote['version'];
@@ -716,6 +920,21 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
                 . 'to compare it against.',
     ];
   }
+  // Checked ahead of the catch-all below on purpose: a withdrawn tag is a
+  // permanent, specific answer, not a passing glitch, and must never be
+  // flattened into the same "could not check" words a network failure gets.
+  if ($error === 'tag withdrawn') {
+    $tag     = staxx_image_tag_part($image);
+    $suggest = (string)($entry['suggest'] ?? '');
+    $tip = $suggest !== ''
+      ? 'The tag "'.$tag.'" is no longer published for this image. "'.$suggest.'" is offered '
+      . 'instead — open the row menu to change it.'
+      : 'The tag "'.$tag.'" is no longer published for this image. Open the row menu to pick a '
+      . 'different one.';
+    return ['state' => 'tagmissing', 'label' => 'tag withdrawn', 'source' => $source, 'tip' => $tip,
+             'suggest' => $suggest];
+  }
+
   if ($error !== '') {
     $tip = $error === 'rate limited'
       ? 'Checking was refused because too many questions were asked recently. Wait a while '
@@ -782,7 +1001,7 @@ function staxx_updates_aggregate(array $pills): array {
     ];
   }
 
-  $rank = ['update' => 0, 'error' => 1, 'built' => 2, 'missing' => 2, 'unknown' => 3, 'current' => 4];
+  $rank = ['update' => 0, 'error' => 1, 'tagmissing' => 1, 'built' => 2, 'missing' => 2, 'unknown' => 3, 'current' => 4];
 
   $best      = null;
   $bestRank  = 99;
@@ -811,6 +1030,11 @@ function staxx_updates_aggregate(array $pills): array {
       $label = 'could not check';
       $tip   = 'One or more services here could not be checked, so this is not shown as up '
              . 'to date. Try checking again.';
+      break;
+    case 'tagmissing':
+      $label = 'tag withdrawn';
+      $tip   = 'One or more services here are using a tag the registry no longer publishes. '
+             . 'Open the stack to fix it.';
       break;
     case 'built':
       $label = 'built here';
@@ -901,22 +1125,28 @@ function staxx_updates_summary(): array {
   $state  = staxx_update_state();
   $images = (array)$state['images'];
 
-  $known   = 0;
-  $updates = 0;
+  $known      = 0;
+  $updates    = 0;
+  $tagmissing = 0;
   foreach (array_keys($images) as $image) {
     $pillState = staxx_updates_pill_for_image($image, $images)['state'];
     if ($pillState === 'unknown') continue;
     $known++;
     if ($pillState === 'update') $updates++;
+    // Reported on its own, same reasoning as staxx_update_check(): a
+    // withdrawn tag is a definite answer, not a failure, so the grid can say
+    // "3 updates waiting, 1 tag withdrawn" instead of folding it into either.
+    if ($pillState === 'tagmissing') $tagmissing++;
   }
 
   return [
-    'checked' => (int)$state['checked'],
-    'ok'      => (bool)$state['ok'],
-    'error'   => (string)$state['error'],
-    'limited' => (bool)$state['limited'],
-    'updates' => $updates,
-    'known'   => $known,
+    'checked'    => (int)$state['checked'],
+    'ok'         => (bool)$state['ok'],
+    'error'      => (string)$state['error'],
+    'limited'    => (bool)$state['limited'],
+    'updates'    => $updates,
+    'tagmissing' => $tagmissing,
+    'known'      => $known,
   ];
 }
 
