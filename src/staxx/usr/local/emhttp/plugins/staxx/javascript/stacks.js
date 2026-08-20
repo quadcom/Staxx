@@ -11048,6 +11048,28 @@
     setTimeout(refreshState, 5000);
   }
 
+  /* There are exactly TWO refresh sizes, and adding a third needs a
+   * measurement rather than an opinion — see PLAN_48.
+   *
+   *   refreshState()  one `compose ls` for the whole machine, ~90ms. Use it
+   *                   when only a state pill can have changed.
+   *   refreshRows()   re-renders every row. Use it when the SET of rows, or
+   *                   anything printed into a row, has changed.
+   *
+   * The full one is the expensive one — it was four seconds on a server with
+   * sixty-four stacks until compose's answers started being remembered between
+   * loads; it is a few hundred milliseconds now, and it grows with the number
+   * of stacks either way.
+   *
+   * Which is why: A CONTROL SHOWS ITS OWN NEW POSITION THE MOMENT THE SAVE IS
+   * ACKNOWLEDGED, rather than waiting for the redraw to deliver it. The boot
+   * delay and the autostart switch both write straight back onto the row's own
+   * record before calling in here. The autostart switch not doing that was a
+   * real bug: re-opening the menu inside the gap showed the old position, so
+   * pressing it again sent the opposite of what was meant — a loop you cannot
+   * get out of by pressing harder. The redraw still follows and still has the
+   * last word.
+   */
   function refreshRows(done) {
     call('rows', {}, 60000).then(function (res) {
       if (!res.ok) { failed('Could not refresh the stack list', res.error); return; }

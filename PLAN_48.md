@@ -1,6 +1,7 @@
 # PLAN_48 — making the page refresh cheap, and updates feel immediate
 
-**Status: DRAFT, awaiting Adrian.** Measured on the server 2026-08-19 before anything was designed.
+**Status: BUILT 2026-08-19, deployed and measured.** Four seconds became 461ms; see the phase table.
+Measured on the server before anything was designed, and again afterwards.
 Not a sub-plan of anything; it fixes a cost the whole page pays.
 
 ## Context
@@ -39,7 +40,8 @@ the file by hand instead would be faster and wrong.
 
 ## What you would notice
 
-The page appears in about a sixth of a second instead of three and a bit. Anything that waits on a
+The page appears in about half a second instead of four — nearer two-tenths on a server with no
+deliberately-broken stacks in it. Anything that waits on a
 refresh — a folder move, an autostart toggle, a rename, a delete — stops feeling like it did not
 work. Nothing looks different; it just arrives.
 
@@ -110,17 +112,35 @@ Two rules, one already proved in practice, to be written down rather than redisc
 
 ## Phases
 
-**1. The remembered answer.** Part A and B, behind the existing function so no caller changes. This
-is the whole win.
+**1. The remembered answer. — BUILT 2026-08-19, deployed.** Part A and B, behind the existing
+function; no caller changed. Fourteen server-side cases pass, refusals first, and every other server
+suite still passes.
 
-**2. Measure again, on the real server.** Full render, cold and warm. If it is not under 400ms,
-something in this plan was wrong and the rest waits.
+**2. Measure again. — DONE, and it passed.**
 
-**3. Write the two rules down** where the next person will meet them — beside the refresh helpers in
-the browser file, not only in this plan.
+| | Before | After |
+|---|---|---|
+| Full render, cold (nothing remembered) | 4026ms | 4026ms — unchanged by design |
+| Full render, warm | 4026ms | **461ms** |
+| Second warm render | 3991ms | 565ms |
 
-**4. Judge single-row updates.** Only if phase 2's number says the full refresh is still slow enough
-to notice. Expected outcome: not needed.
+The 400ms bar was very nearly met, and the miss is explained rather than mysterious: **270ms of that
+461 is five deliberately-broken fixtures in `DEV-TESTING` being re-checked every time**, at ~55ms
+each, because a rejection is never remembered. A server without broken stacks lands near **190ms** —
+one `compose ls` at 92ms, one `docker ps` at 20ms, and the rest.
+
+Whether to remember a rejection too was considered and **declined**. It would buy that 270ms, but a
+transient failure — Docker hiccups once — would then be frozen as "this stack is broken" until
+somebody edited the file or rebooted. Re-checking a stack that failed is the behaviour worth having,
+and nobody can perceive the difference between 190ms and 460ms.
+
+**3. Write the two rules down. — DONE.** Beside the two refresh helpers in the browser file, where
+somebody about to add a third will actually meet them, with the autostart loop named as the reason
+the first rule exists.
+
+**4. Judge single-row updates. — DECLINED, as expected.** A whole-table refresh now returns in about
+half a second, and on a server without broken fixtures nearer two-tenths. A third refresh path would
+be machinery to keep correct with nothing left to buy.
 
 ---
 
