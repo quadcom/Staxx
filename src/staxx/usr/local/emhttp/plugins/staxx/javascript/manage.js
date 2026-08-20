@@ -49,6 +49,17 @@
   // a typo in one cannot take the other down.
   var NARROW = window.matchMedia('(max-width: 45rem)');
 
+  // PLAN_52, the handle between the shell and the file panes.
+  //
+  // The shell's share of the right-hand column, as a flex-grow figure the
+  // file pane subtracts from 2 — so 1 is an even split, and 1.4 gives the
+  // shell 70%. Kept at module scope on purpose: "remembered until the page
+  // reloads" is exactly what that means, so a new editor, another stack, or
+  // a rebuilt instance all read the same number, and a reload starts even.
+  var splitRatio = 1;
+  var SPLIT_MIN_PX = 60;   // neither pane can be dragged below this
+  var SPLIT_STEP = 0.1;    // one arrow-key nudge
+
   // PLAN_44 D4, the shell.
   //
   // Completed lines kept per session - smaller than LOG_CAP because a shell
@@ -332,6 +343,7 @@
       var files = pane('files', 'Files');
       buildFilesBody(files.body);
       right.appendChild(shell.el);
+      right.appendChild(splitter(right, shell.el, files.el));
       right.appendChild(files.el);
 
       body.appendChild(logPane.el);
@@ -351,9 +363,11 @@
       renderLines();
     }
 
-    // A collapsible pane: a heading that toggles a body. Fixed proportions
-    // come from CSS flex-basis, not from anything measured here — the plan
-    // rules out draggable splits, so there is nothing to remember.
+    // A collapsible pane: a heading that toggles a body. Proportions come
+    // from CSS: the right-hand column's two panes read the --sm-split custom
+    // property that the handle below writes, and collapsing still beats any
+    // split, because the collapsed rule is declared later at the same
+    // specificity. Nothing here measures anything.
     function pane(key, title) {
       var el = document.createElement('section');
       el.className = 'staxx-manage-pane staxx-manage-pane--' + key;
@@ -381,6 +395,99 @@
       el.appendChild(h);
       el.appendChild(body);
       return { el: el, head: h, body: body };
+    }
+
+    // The handle between the shell and the file panes. It writes one custom
+    // property on the column and the two panes' own flex rules read it —
+    // never an inline style on a pane, because an inline flex would outrank
+    // the collapsed rule and a collapsed pane would keep its height.
+    function splitter(column, shellEl, filesEl) {
+      var el = document.createElement('div');
+      el.className = 'staxx-manage-split';
+      el.setAttribute('role', 'separator');
+      el.setAttribute('tabindex', '0');
+      el.setAttribute('aria-orientation', 'horizontal');
+      el.title = 'Drag to share the room between the shell and the files. ' +
+        'Double-click for an even split.';
+
+      function collapsed() {
+        return shellEl.classList.contains('staxx-manage-pane--collapsed') ||
+          filesEl.classList.contains('staxx-manage-pane--collapsed');
+      }
+
+      function apply() {
+        column.style.setProperty('--sm-split', String(splitRatio));
+        el.setAttribute('aria-valuenow', String(Math.round(splitRatio * 50)));
+      }
+
+      // The floor is in pixels but what is stored is a ratio, so the split
+      // holds its proportions across a window resize instead of pinning one
+      // pane to a height that only made sense at one size.
+      function set(r) {
+        var total = column.clientHeight - el.offsetHeight;
+        var lo = total > SPLIT_MIN_PX * 2 ? (2 * SPLIT_MIN_PX) / total : 0.5;
+        splitRatio = Math.max(lo, Math.min(2 - lo, r));
+        apply();
+      }
+
+      // The moving and the letting go are listened for on the window, not on
+      // the handle, and pointer capture is not used at all. Capture looked
+      // like the tidier answer and was tried first: the release arrived as a
+      // retargeted event the handle never saw, so the drag flag — and with it
+      // the whole page's "do not select text" — stayed on after the mouse came
+      // up. Listeners added for the length of the drag and removed at the end
+      // of it cannot get stuck that way.
+      var dragging = false;
+
+      function onMove(ev) {
+        var box = column.getBoundingClientRect();
+        var total = column.clientHeight - el.offsetHeight;
+        if (total <= 0) return;
+        set((2 * (ev.clientY - box.top - el.offsetHeight / 2)) / total);
+      }
+
+      function endDrag() {
+        if (!dragging) return;
+        dragging = false;
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', endDrag);
+        window.removeEventListener('pointercancel', endDrag);
+        el.classList.remove('staxx-manage-split--dragging');
+        document.body.classList.remove('staxx-manage-dragging');
+      }
+
+      el.addEventListener('pointerdown', function (ev) {
+        // A drag while a pane is collapsed would appear to do nothing, since
+        // the collapsed rule wins by design. Refusing it is the honest answer.
+        if (dragging || collapsed() || NARROW.matches) return;
+        ev.preventDefault();
+        dragging = true;
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', endDrag);
+        window.addEventListener('pointercancel', endDrag);
+        el.classList.add('staxx-manage-split--dragging');
+        document.body.classList.add('staxx-manage-dragging');
+      });
+
+      // Preventing the default on pointerdown does not stop the mouse event
+      // that follows it from starting a text selection, so the sweep down the
+      // page came up highlighted. This is what actually stops that; the
+      // do-not-select class above covers the pointer leaving the handle.
+      el.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+
+      el.addEventListener('dblclick', function () { set(1); });
+
+      el.addEventListener('keydown', function (ev) {
+        if (collapsed()) return;
+        if (ev.key === 'ArrowUp') set(splitRatio - SPLIT_STEP);
+        else if (ev.key === 'ArrowDown') set(splitRatio + SPLIT_STEP);
+        else if (ev.key === 'Home') set(1);
+        else return;
+        ev.preventDefault();
+      });
+
+      apply();   // whatever the last drag left, onto a freshly built column
+      return el;
     }
 
     // ---- D3: the log pane --------------------------------------------------
@@ -1284,6 +1391,7 @@
 
       var pathEl = document.createElement('span');
       pathEl.className = 'staxx-manage-files-path';
+      pathEl.setAttribute('aria-label', 'Folder path');
 
       var refreshBtn = mkFileBtn('Refresh', 'staxx-manage-files-refresh');
       refreshBtn.addEventListener('click', function () {
@@ -1461,7 +1569,7 @@
       var ui = els.filesUI;
       filesPanel('browse');
 
-      ui.pathEl.textContent = sess.dir || '…';
+      renderCrumbs(ui.pathEl, sess.dir);
       ui.upBtn.disabled = !sess.dir || sess.dir === '/';
 
       ui.errorEl.textContent = sess.error;
@@ -1485,6 +1593,49 @@
       var showEmpty = !sess.loading && !sess.error && sess.entries.length === 0;
       ui.emptyEl.textContent = sess.loading ? 'Loading…' : (showEmpty ? 'This folder is empty.' : '');
       ui.emptyEl.classList.toggle('staxx-manage-files-empty--hidden', !sess.loading && !showEmpty);
+    }
+
+    // The path as somewhere to click rather than something to read. Every
+    // part but the last navigates, built from the parts to its left, so there
+    // is no second idea in here of what a path is. The last part is where you
+    // already are, so it is plain text: a button that does nothing is worse
+    // than no button.
+    function renderCrumbs(el, dir) {
+      el.innerHTML = '';
+      if (!dir) { el.textContent = '…'; return; }
+
+      var parts = dir.split('/').filter(function (p) { return p !== ''; });
+
+      function crumb(label, path, last) {
+        if (last) {
+          var here = document.createElement('span');
+          here.className = 'staxx-manage-files-crumb-here';
+          here.textContent = label;
+          el.appendChild(here);
+          return;
+        }
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'staxx-manage-files-crumb';
+        b.textContent = label;
+        b.title = 'Go to ' + path;
+        b.addEventListener('click', function () { navigateTo(state.selected, path); });
+        el.appendChild(b);
+      }
+
+      crumb('/', '/', parts.length === 0);
+
+      var walked = '';
+      parts.forEach(function (part, i) {
+        if (i > 0) {
+          var sep = document.createElement('span');
+          sep.className = 'staxx-manage-files-crumb-sep';
+          sep.textContent = '/';
+          el.appendChild(sep);
+        }
+        walked += '/' + part;
+        crumb(part, walked, i === parts.length - 1);
+      });
     }
 
     function fileRow(service, sess, entry) {

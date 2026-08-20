@@ -202,7 +202,13 @@
   background-color: var(--sm-fill-2);
 }
 
-/* ---- Body layout: log | buttons | (shell over files) --------------------- */
+/* ---- Body layout: log | buttons | (shell / handle / files) ---------------
+ * --sm-split is the shell's flex-grow and the file pane takes what is left
+ * of 2, so 1 is an even split. PLAN_52's handle writes it on the column, not
+ * on the panes: an inline flex on a pane would outrank
+ * .staxx-manage-pane--collapsed below and a collapsed pane would keep its
+ * height.
+ * ------------------------------------------------------------------------- */
 
 .staxx-manage-body {
   display: flex;
@@ -212,9 +218,57 @@
 }
 
 .staxx-manage-pane--log  { flex: 3 1 0; }
-.staxx-manage-right      { flex: 3 1 0; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
-.staxx-manage-pane--shell,
-.staxx-manage-pane--files { flex: 1 1 0; }
+.staxx-manage-right      { flex: 3 1 0; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; --sm-split: 1; }
+.staxx-manage-pane--shell { flex: var(--sm-split, 1) 1 0; }
+.staxx-manage-pane--files { flex: calc(2 - var(--sm-split, 1)) 1 0; }
+
+.staxx-manage-split {
+  flex: 0 0 auto;
+  height: 1rem;
+  /* Taller than the gap it sits in, so it is easy to grab, but pulled back
+     by margin so it takes almost no room in the column and never overlaps a
+     pane's own edge. */
+  margin: -0.35rem 0;
+  border-radius: var(--sm-radius);
+  cursor: row-resize;
+  touch-action: none;          /* or a touch drag scrolls the page instead */
+  position: relative;
+}
+
+/* A short centred grip rather than a full-width hairline. Drawn edge to edge
+   in the same colour as a pane's border it read as one more pane edge, which
+   is exactly the thing nobody thinks to drag. */
+.staxx-manage-split::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3rem;
+  height: 4px;
+  transform: translate(-50%, -50%);
+  background-color: var(--sm-line);
+  border-radius: 4px;
+}
+
+.staxx-manage-split:hover::before,
+.staxx-manage-split:focus-visible::before,
+.staxx-manage-split--dragging::before {
+  background-color: var(--sm-accent);
+  width: 4rem;
+}
+
+.staxx-manage-split:focus-visible {
+  outline: 1px solid var(--sm-accent);
+  outline-offset: 1px;
+}
+
+/* Held on <body> for the length of a drag: without it the pointer sweeping
+   over a log line or a file name selects text as it goes, which looks like
+   the drag has gone wrong. */
+.staxx-manage-dragging {
+  user-select: none;
+  cursor: row-resize;
+}
 
 .staxx-manage-buttons {
   flex: 0 0 auto;
@@ -234,8 +288,9 @@
 }
 
 /* A collapsed pane keeps its heading and gives up everything else, so the
-   siblings sharing the same flex row get the room — a click, not a drag,
-   per the plan's explicit "not draggable" rule. */
+   siblings sharing the same flex row get the room. All or nothing, next to
+   the handle's in-between; declared after the --sm-split rules above so it
+   wins over any split. */
 .staxx-manage-pane--collapsed {
   flex: 0 0 auto;
 }
@@ -658,6 +713,31 @@
   font-size: 0.85em;
 }
 
+/* Every part of the path but the last is somewhere to go. Kept looking like
+   text rather than a button — a toolbar of five buttons plus one per folder
+   deep would be a wall of boxes. */
+.staxx-scaffold .staxx-manage-files-crumb {
+  padding: 0 0.1rem;
+  color: inherit;
+  font: inherit;
+}
+
+.staxx-scaffold .staxx-manage-files-crumb:hover,
+.staxx-scaffold .staxx-manage-files-crumb:focus-visible {
+  color: var(--sm-accent);
+  text-decoration: underline;
+}
+
+.staxx-manage-files-crumb-sep {
+  padding: 0 0.1rem;
+  color: var(--sm-muted);
+}
+
+.staxx-manage-files-crumb-here {
+  padding: 0 0.1rem;
+  font-weight: 600;
+}
+
 /* The file input behind the Upload button is never shown itself — clicking
    the button opens the browser's own file picker via uploadInput.click(). */
 .staxx-manage-files-uploadinput {
@@ -932,4 +1012,7 @@
   .staxx-manage-right { display: contents; }
 
   .staxx-manage-pane--narrowhidden { display: none; }
+
+  /* One pane shows at a time down here, so there is no split to share out. */
+  .staxx-manage-split { display: none; }
 }
