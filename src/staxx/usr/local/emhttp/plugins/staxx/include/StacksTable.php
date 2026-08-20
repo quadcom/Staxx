@@ -688,6 +688,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                         data-boot="<?= $fMode ?>"
                         data-boot-wait="<?= $fWait ?>"
                         data-boot-available="<?= $autostart['available'] ? '1' : '0' ?>"
+                        aria-haspopup="menu" aria-expanded="false"
                         title="<?= _('Folder actions') ?>">
                   <i class="fa fa-folder<?= $row['collapsed'] ? '' : '-open' ?>"></i>
                 </button>
@@ -853,6 +854,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                         data-boot-wait="<?= $sWait ?>"
                         data-interleaved="<?= $sInterleaved ? '1' : '0' ?>"
                         data-boot-available="<?= $autostart['available'] ? '1' : '0' ?>"
+                        aria-haspopup="menu" aria-expanded="false"
                         title="<?= _('Stack actions') ?>">
                   <?= $s['parses']
                         ? staxx_stack_tile($s, $kids)
@@ -1076,6 +1078,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                         data-boot="<?= $cMode ?>"
                         data-boot-wait="<?= $cWait ?>"
                         data-boot-available="<?= $autostart['available'] ? '1' : '0' ?>"
+                        aria-haspopup="menu" aria-expanded="false"
                         title="<?= _('Container actions') ?>">
                   <?= staxx_icon_tile(
                         staxx_icon_resolve($kid['icon'], $s['dir'], $kid['image'],

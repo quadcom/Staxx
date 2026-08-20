@@ -8331,7 +8331,9 @@
     if (first) devPick(first.dataset.dev);
   });
 
-  function openEditor(name, body, isNew) {
+  // focusService (PLAN_44 A2): a container icon opens straight at its own
+  // section of the form, rather than at the top of the file.
+  function openEditor(name, body, isNew, focusService) {
     closeMenu();
     clearError();
 
@@ -8459,10 +8461,26 @@
     // draw the bare, uncloseable compose tab and stop there.
     if (isNew) renderTabs(); else filesLoad();
 
+    // A container's icon opens straight at its own section of the form.
+    // Scrolling only works now the dialog is showing (same reason as
+    // measure()/paintGutter() above) — a service the file no longer has is
+    // left at the top, which is information, not a fault.
+    var svcSection = null;
+    if (focusService) {
+      setView('form');
+      svcSection = formHost.querySelector(
+        '.staxx-svc[data-service="' + focusService.replace(/"/g, '\\"') + '"]');
+      if (svcSection) svcSection.scrollIntoView({ block: 'start' });
+    }
+
     // Explicit, and after showModal(). The dialog's own "first focusable
     // descendant" rule would land on the view selector, which is nobody's
-    // starting point.
-    (isNew ? nameInput : yamlPane).focus({ preventScroll: true });
+    // starting point. A service section is not itself focusable, so this
+    // lands on the Form button instead — visible, and next to what it opened.
+    var afterFocus = svcSection
+      ? modal.querySelector('.staxx-viewbtn[aria-pressed="true"]')
+      : yamlPane;
+    (isNew ? nameInput : afterFocus).focus({ preventScroll: true });
   }
 
   function closeEditor() {
@@ -11533,10 +11551,13 @@
     return !!(btn && btn.dataset.running === '1');
   }
 
-  function editStack(name, label) {
+  // focusService (PLAN_44 A2/A4): passed straight through to openEditor(),
+  // which scrolls the form to that service once the dialog is up. Left
+  // undefined for every caller that just wants the editor at the top.
+  function editStack(name, label, focusService) {
     call('read', { name: name }).then(function (res) {
       if (!res.ok) { failed('Could not open ' + label, res.error); return; }
-      openEditor(res.name, res.body, false);
+      openEditor(res.name, res.body, false, focusService);
     });
   }
 
@@ -12367,6 +12388,12 @@
   // redraw waits here until the menu goes away on its own.
   var menuRedraw = false;
 
+  // PLAN_44 A3b: the trigger that opened the menu currently showing, so
+  // closeMenu() knows whose aria-expanded to drop and whose focus to give
+  // back — a folder, stack or container icon, or a row's menu button reached
+  // by right-click.
+  var menuTrigger = null;
+
   function menuFlush() {
     if (menuFlushing) return;   // a save must not trigger another flush
     menuFlushing = true;
@@ -12382,11 +12409,31 @@
     // editor's own panes, where it would otherwise run on every frame.
     if (menu.hidden) return;
     menuFlush();
+    // Read before anything below moves it: only when the menu itself still
+    // held focus does closing it give focus back to the trigger — otherwise
+    // this would yank the caret out of whatever the person moved on to (a
+    // click into the compose editor, say) while the menu was still fading.
+    var reclaim = menu.contains(document.activeElement);
+    var trigger = menuTrigger;
     menu.hidden = true;
     menuItems.textContent = '';
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    menuTrigger = null;
+    if (reclaim && trigger) trigger.focus({ preventScroll: true });
     // Hidden first, so the refresh's own closeMenu() returns at the line above
     // instead of coming back round through here.
     if (menuRedraw) { menuRedraw = false; refreshRows(); }
+  }
+
+  // Every enabled item currently in the menu, in DOM order — what the arrow
+  // keys and the on-open focus move between. A disabled <button> cannot take
+  // focus at all, so filtering here is enough to keep the arrows from ever
+  // landing on one.
+  function menuEnabledItems() {
+    return Array.prototype.filter.call(
+      menuItems.querySelectorAll('.staxx-menu-item'),
+      function (b) { return !b.disabled; }
+    );
   }
 
   function menuItem(label, icon, handler, opts) {
@@ -12394,6 +12441,7 @@
     var b = document.createElement('button');
     b.type = 'button';
     b.className = 'staxx-menu-item' + (opts.danger ? ' staxx-menu-item--danger' : '');
+    b.setAttribute('role', 'menuitem');
     b.disabled = !!opts.disabled;
     // The item is a flex row: glyph, then a column holding the label and its
     // explanation. A bare text node would become an anonymous flex item and
@@ -12644,8 +12692,10 @@
       // taking it down as a side effect.
       menuItem('Update images', 'download', function () { run(name, 'pull', afterRun('pull')); },
                { disabled: !CAN_RUN });
-      menuItem('Logs', 'file-text-o', function () { run(name, 'logs', afterRun('logs')); },
-               { disabled: !CAN_RUN });
+      // PLAN_44 A4: re-points at Manage in phase 2. Until that tab exists this
+      // opens the editor instead — reading a file needs neither Docker nor
+      // compose, so it is not gated on CAN_RUN the way the run verbs above are.
+      menuItem('Logs', 'file-text-o', function () { editStack(name, label); });
       menuSeparator();
     }
 
@@ -12733,15 +12783,12 @@
       run(stack, up ? 'update' : 'pull', afterRun('update'), service);
     }, { disabled: !CAN_RUN });
 
+    // PLAN_44 A4: re-points at Manage in phase 2. Until that tab exists this
+    // opens the editor instead, at this service's own section — reading a
+    // file needs neither Docker nor an existing container, so neither of the
+    // hints above (CAN_RUN, !exists) applies here any more.
     menuItem('Logs', 'file-text-o', function () {
-      run(stack, 'logs', afterRun('logs'), service);
-    }, {
-      disabled: !CAN_RUN || !exists,
-      // A container that has never been created has no log to show — that
-      // is worth explaining on its own, separately from the ordinary
-      // "docker unavailable" hint above, which is why this checks !exists
-      // specifically rather than reusing `why`.
-      hint: !exists ? 'This container has not been created yet' : ''
+      editStack(stack, stackLabel(stack), service);
     });
 
     // PLAN_50. Same !exists judgement as Logs just above, not !up: a stopped
@@ -12915,9 +12962,16 @@
     });
   }
 
-  function openMenu(trigger) {
+  // point (PLAN_44 A3): {x, y} in viewport coordinates, for a right-click
+  // opening the menu at the pointer instead of against the trigger's own
+  // rectangle. The flip-above/pull-left logic below treats the two the same
+  // way, working from `at` either way — one geometry, not two.
+  function openMenu(trigger, point) {
     closeMenu();
     var d = trigger.dataset;
+
+    menuTrigger = trigger;
+    trigger.setAttribute('aria-expanded', 'true');
 
     menuHead.textContent = d.label || '';
     if (d.menu === 'folder') buildFolderMenu(d);
@@ -12929,7 +12983,8 @@
     menu.style.left = '0px';
     menu.style.top  = '0px';
 
-    var at   = trigger.getBoundingClientRect();
+    var at   = point ? { left: point.x, top: point.y, bottom: point.y }
+                     : trigger.getBoundingClientRect();
     var size = menu.getBoundingClientRect();
     var pad  = 8;
 
@@ -12948,6 +13003,12 @@
 
     menu.style.left = Math.round(left) + 'px';
     menu.style.top  = Math.round(top) + 'px';
+
+    // PLAN_44 A3b: focus moves to the first enabled item on open — a menu
+    // shown by right-click has never had a chance to receive focus any other
+    // way, and it is the same courtesy a left-click open deserves too.
+    var items = menuEnabledItems();
+    if (items.length) items[0].focus({ preventScroll: true });
   }
 
   /* What actually identifies a menu trigger, for deciding whether a second
@@ -13436,18 +13497,39 @@
 
     if (el.dataset.toggleFolder) { toggleFolder(el.dataset.toggleFolder, el); return; }
     if (el.dataset.toggleStack)  { toggleStack(el.dataset.toggleStack, el);  return; }
-    // Same call shape as the stack menu's and the container menu's own Logs
-    // item (buildStackMenu/buildContainerMenu above) — undefined service
-    // scopes it to the whole stack, exactly as those two call sites rely on.
-    // The stack name is in data-logs itself, the way data-toggle-stack above
-    // carries its own subject — the button has no separate data-stack, and
-    // reading one gave every click an empty stack name and "no compose file
-    // found in this stack".
+    // PLAN_44 A4: Logs re-points at Manage in phase 2. Until that tab exists
+    // this opens the editor instead — undefined service scopes it to the
+    // whole stack, same as the two menu Logs items this mirrors. The stack
+    // name is in data-logs itself, the way data-toggle-stack above carries
+    // its own subject — the button has no separate data-stack, and reading
+    // one gave every click an empty stack name and "no compose file found in
+    // this stack".
     if (el.dataset.logs) {
-      run(el.dataset.logs, 'logs', afterRun('logs'), el.dataset.service);
+      editStack(el.dataset.logs, stackLabel(el.dataset.logs), el.dataset.service);
       return;
     }
     if (el.dataset.menu) {
+      // PLAN_44 A1/A2: the icon is the biggest target on the row, and used to
+      // spend that on opening the menu just to reach Edit. A stack routes
+      // straight to the editor now, under the same refusal the menu's own
+      // Edit compose file item uses (buildStackMenu above) — only whether a
+      // compose file exists gates it, review/handover included, since editing
+      // is exactly how either of those gets fixed. A container always has
+      // one (a container row only exists under a stack that has a file), so
+      // it routes straight there too, scrolled to its own section.
+      //
+      // A stack with no file has no Edit item to route to — falling through
+      // to the menu keeps the icon from being a dead click rather than
+      // inventing a refusal of its own.
+      if (el.dataset.menu === 'stack' && el.dataset.hasfile === '1') {
+        editStack(el.dataset.stack, el.dataset.label);
+        return;
+      }
+      if (el.dataset.menu === 'container') {
+        editStack(el.dataset.stack, stackLabel(el.dataset.stack), el.dataset.service);
+        return;
+      }
+
       event.stopPropagation();
       var ownerKey = menuOwnerKey(el);
       if (!menu.hidden && menu.dataset.owner === ownerKey) {
@@ -13459,6 +13541,30 @@
     }
   });
 
+  // PLAN_44 A3: right-click anywhere on a row opens that row's menu, at the
+  // pointer — the touch/discoverable route stays the menu button on every
+  // row; this is the fast route for a mouse. preventDefault() only once a
+  // row (and its menu trigger) is actually found, so the background and any
+  // text field still get the browser's own menu — cut/copy/paste inside a
+  // field would otherwise be lost the moment this listener fires.
+  scaffold.addEventListener('contextmenu', function (event) {
+    var tag = event.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || event.target.isContentEditable) return;
+
+    var row = event.target.closest('.staxx-row');
+    if (!row) return;
+    var trigger = row.querySelector('[data-menu]');
+    if (!trigger) return;
+
+    event.preventDefault();
+    // Reopens at the new pointer position even if this row's menu is already
+    // open — openMenu() closes whatever is open before it builds the new
+    // one, so this never reads as the same-icon-closes-it toggle, which is
+    // deliberately a left-click-on-the-icon-only behaviour.
+    menu.dataset.owner = menuOwnerKey(trigger);
+    openMenu(trigger, { x: event.clientX, y: event.clientY });
+  });
+
   document.addEventListener('click', function (event) {
     if (menu.hidden) return;
     if (!menu.contains(event.target)) closeMenu();
@@ -13466,6 +13572,39 @@
 
   document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape' && !menu.hidden) closeMenu();
+  });
+
+  // PLAN_44 A3b: Up/Down/Home/End move between the menu's own enabled items.
+  // The boot-delay row holds a real number input, not a menu item, and its
+  // arrow keys belong to it — event.target.closest() here is what tells the
+  // two apart, since both live inside the same menu and this listener sees
+  // every keydown that bubbles up through it.
+  menu.addEventListener('keydown', function (event) {
+    var onItem = event.target.closest('.staxx-menu-item');
+    if (!onItem) return;
+
+    var items = menuEnabledItems();
+    if (!items.length) return;
+    var idx = items.indexOf(onItem);
+
+    switch (event.key) {
+      case 'ArrowDown':
+        event.preventDefault();
+        items[(idx + 1) % items.length].focus();
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        items[(idx - 1 + items.length) % items.length].focus();
+        break;
+      case 'Home':
+        event.preventDefault();
+        items[0].focus();
+        break;
+      case 'End':
+        event.preventDefault();
+        items[items.length - 1].focus();
+        break;
+    }
   });
 
   // A menu positioned against the viewport has to go away when the viewport
