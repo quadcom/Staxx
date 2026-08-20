@@ -12195,6 +12195,23 @@
     return VERB_LABEL[verb] || 'Run';
   }
 
+  // Wraps run() with a start/finish line in Manage's own log pane (PLAN_44
+  // D3), so a command started from there is visible in the pane already in
+  // front of the person who started it. The row's state column stays the
+  // only place progress is actually reported — this is just two short lines,
+  // not a second one.
+  function noteRun(name, verb, service) {
+    var label = verbLabel(verb);
+    if (manageInst) manageInst.note(label + ' started.');
+    run(name, verb, function (job) {
+      if (manageInst) {
+        var ok = job && job.exit === 0;
+        manageInst.note(ok ? label + ' finished.' : label + ' finished — exit ' + (job ? job.exit : '?') + '.');
+      }
+      afterRun(verb)(job);
+    }, service);
+  }
+
   // The icon already resolved for a row's container button, read straight
   // off it rather than asked for again — see the brief's own reasoning: "no
   // second resolution path". Scoped by BOTH data-stack and data-service,
@@ -12283,7 +12300,7 @@
           return;
         }
         textAtOpen = body;
-        run(name, verb, afterRun(verb), service);
+        noteRun(name, verb, service);
       });
   }
 
@@ -12292,7 +12309,7 @@
   // — so this agrees with the unsaved-changes guard on closing the dialog.
   function manageOnRun(verb, service) {
     var stack = openedName;
-    if (!isDirty()) { run(stack, verb, afterRun(verb), service); return; }
+    if (!isDirty()) { noteRun(stack, verb, service); return; }
 
     var label = verbLabel(verb);
     askConfirm({
@@ -12307,13 +12324,13 @@
       if (answer === false) return;   // Cancel
       closeConfirm();
       if (answer === 'extra') { manageSaveThenRun(verb, service); return; }
-      // "Start anyway": runs the file on disk, not what is on screen. Belongs
-      // in Manage's own log pane once it exists (PLAN_44 D3) — until then
-      // this is the only place on the page that would be seen.
-      openLogDialog(label + ' — used the saved file',
-        'Configure had unsaved changes. They were not used: ' + label + ' ran against the ' +
-        'compose file already on disk, not what was on screen.');
-      run(stack, verb, afterRun(verb), service);
+      // "Start anyway": runs the file on disk, not what is on screen. Said in
+      // Manage's own log pane (PLAN_44 D3), which is what the person is
+      // already looking at, rather than a dialog stealing the screen.
+      if (manageInst) {
+        manageInst.note(label + ' used the saved file — Configure’s unsaved changes were not included.');
+      }
+      noteRun(stack, verb, service);
     });
   }
 

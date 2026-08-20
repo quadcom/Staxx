@@ -234,3 +234,135 @@
   opacity: 0.4;
   cursor: default;
 }
+
+/* ---- D3: the log pane ---------------------------------------------------
+ * The pane body is given a column layout of its own (toolbar, then the
+ * scrolling lines) rather than relying on staxx-manage-pane-body's own
+ * padding/overflow, which is right for the plain placeholder text the
+ * shell and files panes still show but wrong once there is a toolbar that
+ * must stay put while only the lines beneath it scroll.
+ * ------------------------------------------------------------------------- */
+
+.staxx-manage-pane--log .staxx-manage-pane-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.staxx-manage-log-bar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--sm-line);
+}
+
+.staxx-scaffold .staxx-manage-log-btn {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-fill-0, var(--sm-fill));
+  color: inherit;
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+
+.staxx-scaffold .staxx-manage-log-btn:hover:not(:disabled),
+.staxx-scaffold .staxx-manage-log-btn:focus-visible {
+  border-color: var(--sm-accent);
+}
+
+.staxx-scaffold .staxx-manage-log-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Pressed state for the pause, filter, timestamp and wrap buttons — these
+   are toggles, not one-shot actions, so they need a visibly different rest
+   state from the buttons beside them. */
+.staxx-scaffold .staxx-manage-log-toggle--on {
+  background-color: var(--sm-fill-2);
+  border-color: var(--sm-accent);
+  font-weight: 600;
+}
+
+.staxx-manage-log-search {
+  flex: 1 1 8rem;
+  min-width: 5rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-fill-0, var(--sm-fill));
+  color: inherit;
+}
+
+.staxx-manage-log-lineswrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Font stack copied from .staxx-logdlg-body in staxx.css — a monospace pane
+   needs its own explicit stack, since nothing above it sets one. */
+.staxx-manage-log-lines {
+  height: 100%;
+  overflow: auto;
+  padding: 0.5rem 0.7rem;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.staxx-manage-log-lines--nowrap {
+  white-space: pre;
+}
+
+.staxx-manage-log-line--note {
+  color: var(--sm-accent);
+  font-style: italic;
+}
+
+.staxx-manage-log-line--hidden {
+  display: none;
+}
+
+.staxx-manage-log-empty {
+  position: absolute;
+  inset: 0;
+  padding: 0.7rem;
+  color: var(--sm-muted);
+  font-style: italic;
+}
+
+.staxx-manage-log-empty--hidden {
+  display: none;
+}
+
+.staxx-manage-log-download-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  padding: 0.5rem;
+}
+
+.staxx-manage-log-download-wrap--hidden {
+  display: none;
+}
+
+.staxx-manage-log-download-area {
+  flex: 1 1 auto;
+  resize: none;
+  border: 1px solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-fill-0, var(--sm-fill));
+  color: inherit;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.8rem;
+  padding: 0.5rem;
+}

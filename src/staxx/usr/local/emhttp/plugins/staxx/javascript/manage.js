@@ -27,6 +27,31 @@
   // than the state snapshot gives here.
   var OK_STATE = { running: true, exited: true };
 
+  // PLAN_44 D3, the log pane.
+  //
+  // Lines kept per follower. A follower left running for an hour must not
+  // grow without limit, so the oldest lines are dropped past this and one
+  // note line says so the first time it happens — not every time, or the
+  // notice itself would scroll the real content away.
+  var LOG_CAP = 4000;
+
+  // How often log-read is polled. This IS the keep-alive the server's
+  // heartbeat rule expects — reading is what tells it someone is still
+  // watching, so there is deliberately no separate ping.
+  var POLL_MS = 1000;
+
+  // A line compose printed carries a timestamp because the follower always
+  // asks for one; the "prefix" a multi-container "All" tab adds (the
+  // service name compose stamps in front) sits before it. Hiding timestamps
+  // is a client-side choice, so this is parsed once per line and cached
+  // rather than re-parsed every time the toggle changes.
+  var LOG_TS_RE = /^([^\s|]+\s*\|\s*)?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) ?/;
+
+  // Unmistakable marker for a line StaXX itself wrote, rather than something
+  // a container said — see Instance.note() and the plan's "clearly marked
+  // as StaXX's" requirement.
+  var NOTE_PREFIX = 'StaXX » ';
+
   // The fallback used only when the host does not hand one in. It really
   // escapes, rather than just stringifying: everything this file interpolates
   // — service names above all — comes out of somebody's compose file, so a
@@ -78,6 +103,13 @@
 
     var els = {};
 
+    // unmount() clears the host's DOM (PLAN_44 C1 — whatever Manage was
+    // showing dies with its editor), but this Instance is never recreated;
+    // the same one mounts the next stack too. Without this, mount() after an
+    // unmount would render into DOM nodes no longer attached to anything —
+    // invisible, not merely stale. See mount() below.
+    var torndown = false;
+
     function build() {
       host.innerHTML = '';
       host.classList.add('staxx-manage');
@@ -92,7 +124,8 @@
       body.className = 'staxx-manage-body';
       host.appendChild(body);
 
-      var log = pane('log', 'Log');
+      var logPane = pane('log', 'Log');
+      buildLogBody(logPane.body);
       var mid = document.createElement('div');
       mid.className = 'staxx-manage-buttons';
       var right = document.createElement('div');
@@ -102,15 +135,20 @@
       right.appendChild(shell.el);
       right.appendChild(files.el);
 
-      body.appendChild(log.el);
+      body.appendChild(logPane.el);
       body.appendChild(mid);
       body.appendChild(right);
 
-      els.log = log;
+      els.log = logPane;
       els.shell = shell;
       els.files = files;
 
       buildButtons(mid);
+
+      // Repaints whatever the follower already holds onto the fresh DOM —
+      // a no-op the first time (log.lines is still empty then), but the
+      // reason a rebuild after unmount() does not open on a blank pane.
+      renderLines();
     }
 
     // A collapsible pane: a heading that toggles a body. Fixed proportions
@@ -138,6 +176,402 @@
       el.appendChild(h);
       el.appendChild(body);
       return { el: el, head: h, body: body };
+    }
+
+    // ---- D3: the log pane --------------------------------------------------
+    //
+    // One follower at a time for this whole instance, not one per tab —
+    // switching container is meant to stop what you were watching. `log`
+    // below holds it and everything the pane displays; `els.logUI` holds the
+    // DOM it is displayed through. Kept as an array of parsed lines rather
+    // than one growing string, so filtering and the timestamp toggle only
+    // ever touch what changed, not the whole pane, on every one-second poll.
+    var log = {
+      id:       null,   // current follower id, or null while none is running
+      target:   null,   // stack+selected this follower belongs to
+      offset:   0,
+      pending:  '',     // a line split across two reads, held until its \n arrives
+      lines:    [],     // { kind: 'log'|'note', raw, hidden }
+      everArrived: false,
+      alive:    false,
+      error:    '',
+      paused:   false,
+      filter:   false,
+      search:   '',
+      showTs:   true,
+      wrap:     true,
+      capped:   false,  // true once LOG_CAP has been hit, so the notice is said once
+      pollTimer: null,
+      pollSeq:  0,      // bumped on every start/stop; a stale reply checks this before landing
+      downloadText: null
+    };
+
+    function mkLogBtn(label, cls) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'staxx-manage-log-btn ' + cls;
+      b.textContent = label;
+      return b;
+    }
+
+    function buildLogBody(bodyEl) {
+      bodyEl.innerHTML = '';
+      bodyEl.classList.add('staxx-manage-log-body');
+
+      var bar = document.createElement('div');
+      bar.className = 'staxx-manage-log-bar';
+
+      var pauseBtn = mkLogBtn('Live', 'staxx-manage-log-pause');
+      pauseBtn.title = 'Pause following new lines, or resume. Scrolling up does this on its own.';
+      pauseBtn.addEventListener('click', function () {
+        setPaused(!log.paused);
+        if (!log.paused) scrollToBottom();
+      });
+
+      var jumpBtn = mkLogBtn('Jump to latest', 'staxx-manage-log-jump');
+      jumpBtn.title = 'Scroll to the newest line and resume following.';
+      jumpBtn.addEventListener('click', function () { setPaused(false); scrollToBottom(); });
+
+      var searchInput = document.createElement('input');
+      searchInput.type = 'search';
+      searchInput.className = 'staxx-manage-log-search';
+      searchInput.placeholder = 'Search…';
+      searchInput.addEventListener('input', function () {
+        log.search = searchInput.value.toLowerCase();
+        renderLines();
+      });
+
+      var filterBtn = mkLogBtn('Filter', 'staxx-manage-log-filter');
+      filterBtn.title = 'Hide every line that does not match the search box, instead of just showing it.';
+      filterBtn.setAttribute('aria-pressed', 'false');
+      filterBtn.addEventListener('click', function () {
+        setToggle(filterBtn, 'filter', !log.filter);
+        renderLines();
+      });
+
+      var tsBtn = mkLogBtn('Timestamps', 'staxx-manage-log-ts');
+      tsBtn.title = 'Every line already carries one from compose — this only hides it.';
+      tsBtn.setAttribute('aria-pressed', 'true');
+      tsBtn.classList.add('staxx-manage-log-toggle--on');
+      tsBtn.addEventListener('click', function () {
+        setToggle(tsBtn, 'showTs', !log.showTs);
+        renderLines();
+      });
+
+      var wrapBtn = mkLogBtn('Wrap', 'staxx-manage-log-wrap');
+      wrapBtn.setAttribute('aria-pressed', 'true');
+      wrapBtn.classList.add('staxx-manage-log-toggle--on');
+      wrapBtn.addEventListener('click', function () {
+        setToggle(wrapBtn, 'wrap', !log.wrap);
+        els.logUI.linesEl.classList.toggle('staxx-manage-log-lines--nowrap', !log.wrap);
+      });
+
+      var copyBtn = mkLogBtn('Copy visible', 'staxx-manage-log-copy');
+      copyBtn.title = 'Copies exactly what the pane shows right now, with the same filter and timestamp settings.';
+      copyBtn.addEventListener('click', copyVisible);
+
+      var downloadBtn = mkLogBtn('Download all', 'staxx-manage-log-download');
+      downloadBtn.title = 'This plugin cannot hand the browser a file directly — this loads the ' +
+        'whole log into a box below so it can be selected and copied.';
+      downloadBtn.addEventListener('click', toggleDownload);
+
+      [pauseBtn, jumpBtn, searchInput, filterBtn, tsBtn, wrapBtn, copyBtn, downloadBtn]
+        .forEach(function (el) { bar.appendChild(el); });
+
+      var linesWrap = document.createElement('div');
+      linesWrap.className = 'staxx-manage-log-lineswrap';
+
+      var linesEl = document.createElement('div');
+      linesEl.className = 'staxx-manage-log-lines';
+      linesEl.tabIndex = 0;
+      linesEl.addEventListener('scroll', onScroll);
+
+      var emptyEl = document.createElement('div');
+      emptyEl.className = 'staxx-manage-log-empty staxx-manage-log-empty--hidden';
+
+      linesWrap.appendChild(linesEl);
+      linesWrap.appendChild(emptyEl);
+
+      var downloadWrap = document.createElement('div');
+      downloadWrap.className = 'staxx-manage-log-download-wrap staxx-manage-log-download-wrap--hidden';
+      var downloadArea = document.createElement('textarea');
+      downloadArea.className = 'staxx-manage-log-download-area';
+      downloadArea.readOnly = true;
+      downloadWrap.appendChild(downloadArea);
+
+      bodyEl.appendChild(bar);
+      bodyEl.appendChild(linesWrap);
+      bodyEl.appendChild(downloadWrap);
+
+      els.logUI = {
+        linesEl: linesEl, emptyEl: emptyEl,
+        pauseBtn: pauseBtn, filterBtn: filterBtn, tsBtn: tsBtn, wrapBtn: wrapBtn,
+        downloadBtn: downloadBtn, downloadWrap: downloadWrap, downloadArea: downloadArea
+      };
+    }
+
+    function setToggle(btn, key, value) {
+      log[key] = value;
+      btn.setAttribute('aria-pressed', value ? 'true' : 'false');
+      btn.classList.toggle('staxx-manage-log-toggle--on', value);
+    }
+
+    function setPaused(v) {
+      if (log.paused === v) return;
+      log.paused = v;
+      var ui = els.logUI;
+      ui.pauseBtn.textContent = v ? 'Paused' : 'Live';
+      ui.pauseBtn.classList.toggle('staxx-manage-log-toggle--on', !v);
+    }
+
+    // Reaching the bottom resumes on its own; scrolling away from it pauses
+    // on its own. That is the behaviour anyone expects from a log view.
+    function onScroll() {
+      var el = els.logUI.linesEl;
+      var atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 6;
+      setPaused(!atBottom);
+    }
+
+    function scrollToBottom() {
+      var el = els.logUI.linesEl;
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function parseLine(raw) {
+      var m = raw.match(LOG_TS_RE);
+      if (!m) return { raw: raw, hidden: raw };
+      return { raw: raw, hidden: (m[1] || '') + raw.slice(m[0].length) };
+    }
+
+    function pushLine(kind, raw) {
+      var parsed = kind === 'note' ? { raw: raw, hidden: raw } : parseLine(raw);
+      log.lines.push({ kind: kind, raw: parsed.raw, hidden: parsed.hidden });
+      log.everArrived = true;
+      if (log.lines.length > LOG_CAP) {
+        log.lines.shift();
+        if (!log.capped) {
+          log.capped = true;
+          log.lines.push({
+            kind: 'note',
+            raw: NOTE_PREFIX + 'older lines were dropped — only the most recent ' + LOG_CAP + ' are kept.',
+            hidden: '…'
+          });
+        }
+      }
+    }
+
+    function lineText(line) { return log.showTs ? line.raw : line.hidden; }
+
+    function lineMatches(line) {
+      if (!log.filter || !log.search) return true;
+      return line.raw.toLowerCase().indexOf(log.search) !== -1;
+    }
+
+    function makeLineEl(line) {
+      var d = document.createElement('div');
+      d.className = 'staxx-manage-log-line' + (line.kind === 'note' ? ' staxx-manage-log-line--note' : '');
+      d.textContent = lineText(line);
+      if (!lineMatches(line)) d.classList.add('staxx-manage-log-line--hidden');
+      return d;
+    }
+
+    // Full rebuild — used only when a toggle changes what every existing
+    // line should show, or when a new follower starts. The one-second poll
+    // below never calls this; it only appends, which is the whole reason the
+    // line store is an array rather than a single string.
+    function renderLines() {
+      if (!els.logUI) return;
+      var linesEl = els.logUI.linesEl;
+      linesEl.innerHTML = '';
+      log.lines.forEach(function (line) { linesEl.appendChild(makeLineEl(line)); });
+      updateEmptyState();
+      if (!log.paused) scrollToBottom();
+    }
+
+    function appendNewLines(fromIndex) {
+      if (!els.logUI) return;
+      var linesEl = els.logUI.linesEl;
+      for (var i = fromIndex; i < log.lines.length; i++) linesEl.appendChild(makeLineEl(log.lines[i]));
+      updateEmptyState();
+      if (!log.paused) scrollToBottom();
+    }
+
+    function updateEmptyState() {
+      var ui = els.logUI;
+      if (!ui) return;
+      var msg = '';
+      if (log.lines.length === 0) {
+        if (log.error) msg = log.error;
+        else if (!log.alive && !log.everArrived) {
+          msg = state.selected === 'all'
+            ? 'Nothing to show — these containers have never been created.'
+            : 'Nothing to show — this container has never been created.';
+        }
+      }
+      ui.emptyEl.textContent = msg;
+      ui.emptyEl.classList.toggle('staxx-manage-log-empty--hidden', !msg);
+    }
+
+    // ---- following -----------------------------------------------------
+
+    function logTargetKey() {
+      // Escaped, not a raw NUL byte: a literal one makes every text tool
+      // treat this file as binary, which has already happened once here.
+      return state.stack + '\u0000' + state.selected;
+    }
+
+    // Called at the end of every render() — cheap even on a poll tick that
+    // changed nothing, since it is only a string compare, and it is the one
+    // place that notices the selected tab or stack has moved on.
+    function syncLogFollower() {
+      if (log.downloadText !== null) return; // showing the download box; leave the live view as it was
+      var key = logTargetKey();
+      if (key === log.target) return;
+      restartFollower();
+    }
+
+    function restartFollower() {
+      stopFollower();
+      log.target = logTargetKey();
+      // The offset belongs to the follower being replaced, not to the new one,
+      // which starts its own log at zero. Carrying it over asks the server for
+      // bytes past the end of a file that has only just been created, so every
+      // read comes back empty and the pane stays blank for ever — which is
+      // exactly what switching from All to a single container used to do.
+      log.offset = 0;
+      log.lines = [];
+      log.pending = '';
+      log.everArrived = false;
+      log.capped = false;
+      log.alive = false;
+      log.error = '';
+      renderLines();
+      if (!state.stack) return; // nothing open yet to follow
+      var mySeq = ++log.pollSeq;
+      var service = state.selected === 'all' ? '' : state.selected;
+      call('log-start', { name: state.stack, service: service }).then(function (res) {
+        if (mySeq !== log.pollSeq) return; // superseded by another switch while this was in flight
+        if (!res.ok) {
+          log.error = res.error || 'Could not start following this log.';
+          updateEmptyState();
+          return;
+        }
+        log.id = res.id;
+        log.alive = true;
+        schedulePoll(mySeq, 0);
+      });
+    }
+
+    function stopFollower() {
+      log.pollSeq++; // invalidates any poll already in flight for the old id
+      if (log.pollTimer) { clearTimeout(log.pollTimer); log.pollTimer = null; }
+      if (log.id) call('log-stop', { id: log.id });
+      log.id = null;
+    }
+
+    function schedulePoll(mySeq, delay) {
+      log.pollTimer = setTimeout(function () { doPoll(mySeq); }, delay);
+    }
+
+    function doPoll(mySeq) {
+      if (mySeq !== log.pollSeq || !log.id) return;
+      var id = log.id;
+      call('log-read', { id: id, offset: log.offset }).then(function (res) {
+        if (mySeq !== log.pollSeq || log.id !== id) return; // this follower was replaced meanwhile
+        if (res.ok) {
+          log.alive = !!res.alive;
+          if (res.text) appendChunk(res.text);
+          if (typeof res.offset === 'number') log.offset = res.offset;
+          updateEmptyState();
+        }
+        // alive:false means the follower ended on its own (nothing left to
+        // tail, or the container was removed) — the pane already shows
+        // everything there was, so polling stops rather than spinning.
+        if (log.alive) schedulePoll(mySeq, POLL_MS);
+      });
+    }
+
+    // text is only the new bytes since the last offset — append, never
+    // replace. A line can arrive split across two reads, so the trailing
+    // partial (anything after the last \n) is held in `pending` rather than
+    // pushed, until the read that completes it.
+    function appendChunk(text) {
+      var full = log.pending + text;
+      var endsWithNl = /\n$/.test(full);
+      var parts = full.split('\n');
+      if (endsWithNl) { parts.pop(); log.pending = ''; }
+      else { log.pending = parts.pop(); }
+      if (!parts.length) return;
+      var startIdx = log.lines.length;
+      parts.forEach(function (raw) { pushLine('log', raw); });
+      appendNewLines(startIdx);
+    }
+
+    // ---- controls: copy, download, StaXX's own notes --------------------
+
+    function copyVisible() {
+      var visible = log.lines.filter(lineMatches).map(lineText).join('\n');
+      copyText(visible);
+    }
+
+    function copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(function () { fallbackCopy(text); });
+      } else {
+        fallbackCopy(text);
+      }
+    }
+
+    // navigator.clipboard needs a secure context, which Unraid's webGUI often
+    // is not on a LAN. This works regardless.
+    function fallbackCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try { document.execCommand('copy'); } catch (e) { /* nothing more to do */ }
+      document.body.removeChild(ta);
+    }
+
+    // "Download" here cannot mean a file — action.php answers JSON, always,
+    // and a sandboxed page cannot hand the browser one either. This loads the
+    // whole capped log into a selectable box instead, and says so honestly in
+    // the button's own title rather than promising something it cannot do.
+    function toggleDownload() {
+      var ui = els.logUI;
+      if (log.downloadText !== null) {
+        log.downloadText = null;
+        ui.downloadWrap.classList.add('staxx-manage-log-download-wrap--hidden');
+        ui.downloadBtn.textContent = 'Download all';
+        syncLogFollower(); // resume following if the tab moved on while this was open
+        return;
+      }
+      var service = state.selected === 'all' ? '' : state.selected;
+      ui.downloadBtn.disabled = true;
+      ui.downloadBtn.textContent = 'Loading…';
+      call('log-download', { name: state.stack, service: service }).then(function (res) {
+        ui.downloadBtn.disabled = false;
+        if (!res.ok) {
+          noteLine('could not load the full log: ' + (res.error || 'unknown error.'));
+          ui.downloadBtn.textContent = 'Download all';
+          return;
+        }
+        log.downloadText = res.text || '';
+        ui.downloadArea.value = log.downloadText;
+        ui.downloadWrap.classList.remove('staxx-manage-log-download-wrap--hidden');
+        ui.downloadBtn.textContent = 'Back to live log';
+        ui.downloadArea.focus();
+        ui.downloadArea.select();
+      });
+    }
+
+    function noteLine(text) {
+      var startIdx = log.lines.length;
+      pushLine('note', NOTE_PREFIX + text);
+      appendNewLines(startIdx);
     }
 
     function buildButtons(mid) {
@@ -343,12 +777,14 @@
     function render() {
       renderTabs();
       renderButtons();
+      syncLogFollower();
     }
 
     build();
 
     return {
       mount: function (spec) {
+        if (torndown) { build(); torndown = false; }
         spec = spec || {};
         state.stack = spec.stack || '';
         state.services = Array.isArray(spec.services) ? spec.services.slice() : [];
@@ -377,9 +813,16 @@
       },
       selected: function () { return state.selected; },
       scope: function () { return state.selected === 'all' ? 'stack' : state.scope; },
+      // Appends a StaXX-marked line to whichever view is current, so a
+      // command run from Manage — or a guard answer decided elsewhere in the
+      // editor — lands where the person is already looking. See PLAN_44 D3.
+      note: function (text) { noteLine(String(text == null ? '' : text)); },
       unmount: function () {
+        stopFollower();
+        log.downloadText = null;
         host.innerHTML = '';
         host.classList.remove('staxx-manage');
+        torndown = true;
       }
     };
   }
