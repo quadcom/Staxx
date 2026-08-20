@@ -154,8 +154,14 @@ be machinery to keep correct with nothing left to buy.
 - **The number that decides it:** time a full render cold, then warm, then after touching one stack's
   compose file. Cold should look like today, warm should be a fraction of it, and touching one stack
   should cost one parse and no more.
-- **The correctness check that matters most:** edit a compose file by hand over the network, refresh,
-  and confirm the row shows the new services. That is the case a timestamp-based key would fail.
+- **The correctness check that matters most — DONE 2026-08-19.** A compose file on the flash drive
+  edited by hand, with no help from StaXX, and read back in a fresh process: the new service appeared
+  immediately, and reverting the file brought the old answer back. That is the case a
+  timestamp-based key would have failed, and it is the reason the key reads contents.
+
+  Worth knowing for the next person who tests this: within ONE request the answer is deliberately
+  frozen, by the in-process cache that has always been there. Proving anything about the on-disk
+  memory needs separate processes, which is why the test suite shells out for each read.
 
 ## Risks
 
