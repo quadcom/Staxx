@@ -7075,7 +7075,7 @@
 
   // The five buckets a row can land in. The three that need a decision
   // render first, expanded; the two that do not ("Already imported" and
-  // "No container installed") are reference only, so they start collapsed
+  // "Left over from a removed container") are reference only, so they start collapsed
   // every time the panel opens (decision 5 in the plan — browser memory,
   // never sent to the server) and never offer a "Select all" (bulk-ticking
   // a list that is folded away is exactly the mistake worth designing out).
@@ -7086,7 +7086,12 @@
     { label: 'Compose Manager projects',           selectAll: true,  note: '' },
     { label: 'Containers with nothing behind them', selectAll: false, note: 'Importing these is not built yet.' },
     { label: 'Already imported',                   selectAll: false, note: '' },
-    { label: 'No container installed',              selectAll: false, note: '' }
+    // Named for what it almost always turns out to be: Unraid keeps a
+    // template behind after its container is removed, so these are leftovers
+    // rather than things never set up. All that was actually observed is that
+    // nothing answers to the name now, which is why nothing here is deleted
+    // or refused on the strength of it.
+    { label: 'Left over from a removed container',  selectAll: false, note: '' }
   ];
   var importGroupCollapsed = {};  // groupIdx -> bool, this open only
 
@@ -7116,8 +7121,12 @@
     return 'Unraid template';
   }
 
+  // What the container behind a row is doing. "No container" rather than
+  // "not installed": all that was checked is whether anything answers to that
+  // name now, and on a long-lived server the usual reason it does not is a
+  // container removed years ago whose template Unraid kept.
   function importStateLabel(entry) {
-    if (!entry.exists) return 'Not installed';
+    if (!entry.exists) return 'No container';
     return entry.running ? 'Running' : 'Stopped';
   }
 
@@ -12724,8 +12733,11 @@
       '<p>The container’s own data in appdata is not part of the stack folder, so it is ' +
       'untouched and stays exactly where it is.</p>';
     if (entries && entries.length) {
-      html += '<p>Everything below is kept in the zip:</p>' +
+      html += '<p>The whole folder goes into the zip, including the compose file. ' +
+        'Besides that, it also holds:</p>' +
         '<ul class="staxx-confirm-list">' + entries.map(extraLine).join('') + '</ul>';
+    } else {
+      html += '<p>The folder holds just the compose file, and that goes into the zip too.</p>';
     }
     return html;
   }

@@ -27,16 +27,27 @@ function ok(string $what, bool $pass, string $note = ''): void {
 /* ------------------------------------------------------------- keys ---- */
 
 $keys = staxx_settings_keys();
-ok('exactly twelve keys', count($keys) === 12, implode(',', array_keys($keys)));
+// Named rather than counted. A count has to be edited every time a setting is
+// added, which means it fails for the one reason that is never interesting
+// while proving nothing about WHICH keys are there — this list is the thing
+// worth asserting, and a key disappearing from it is a real regression.
 foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STACK_ROOT', 'ARCHIVE_ROOT',
           'ICON_FETCH', 'IMAGE_LOOKUP', 'SHELL_ENABLED', 'SHELL_WARNED',
-          'HUB_USER', 'HUB_TOKEN', 'UPDATE_CHECK', 'UPDATE_CHECK_TIME'] as $k) {
+          'HUB_USER', 'HUB_TOKEN', 'UPDATE_CHECK', 'UPDATE_CHECK_TIME',
+          'UPDATE_MODE', 'UPDATE_DELAY_HOURS', 'UPDATE_WINDOW',
+          'UPDATE_WINDOW_START', 'UPDATE_WINDOW_END', 'UPDATE_NOTIFY',
+          'UPDATE_RETAIN', 'UPDATE_CLEANUP'] as $k) {
   ok('has '.$k, array_key_exists($k, $keys));
 }
 
+// The invariant that matters about read(): exactly the allowlist, no more and
+// no fewer. A key the panel can see but the allowlist does not know about
+// would be one nothing validates on the way back in.
 $read = staxx_settings_read();
-ok('read returns exactly twelve keys', count($read) === 12);
-foreach (array_keys($keys) as $k) ok('read has '.$k, array_key_exists($k, $read));
+ok('read returns exactly the allowlisted keys',
+   array_keys($read) === array_keys($keys),
+   implode(',', array_diff(array_keys($read), array_keys($keys)))
+   . '|' . implode(',', array_diff(array_keys($keys), array_keys($read))));
 
 /* --------------------------------------------------------- validator ---- */
 
@@ -62,11 +73,34 @@ $err = '';
 $v = staxx_settings_validate('ICON_FETCH', $keys['ICON_FETCH'], '', $err);
 ok('rejects ICON_FETCH ""', $v === '' && $err !== '', $err);
 
-// A good root under /mnt/ whose parent exists — /mnt itself always does.
+// A good root under a real share whose parent exists. Deliberately NOT
+// directly under /mnt any more, which this case used to use: /mnt is a tmpfs
+// holding nothing but mount points, so a folder made there is gone at the
+// next reboot, and the validator now refuses it — see the cases below.
 $err  = '';
-$good = '/mnt/zzb1-settings-test-'.getmypid();
+$good = '/mnt/user/appdata/zzb1-settings-test-'.getmypid();
 $v    = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], $good, $err);
-ok('accepts a STACK_ROOT under /mnt/ with an existing parent', $v === $good, $err);
+ok('accepts a STACK_ROOT under a real share whose parent exists', $v === $good, $err);
+
+// The refusal staxx_path_in_memory() exists for. Such a path looks entirely
+// normal and is writable right now, which is exactly why nothing else in the
+// validator can catch it: the loss happens at the next reboot.
+$err = '';
+$v = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], '/mnt/zzb1-notashare', $err);
+ok('refuses a STACK_ROOT that would land on a filesystem living in memory',
+   $v === '' && strpos($err, 'lives in memory') !== false, $err);
+
+ok('/mnt itself is reported as living in memory', staxx_path_in_memory('/mnt'));
+ok('a real user share is not', !staxx_path_in_memory('/mnt/user'));
+// The case a plain "is anything mounted here?" test gets wrong: /mnt/disks
+// IS a mount, and is still a one-megabyte tmpfs holding mount points for
+// drives that come and go. SKIPped where Unassigned Devices is not installed.
+if (is_dir('/mnt/disks')) {
+  ok('a tmpfs that exists only to hold mount points is not a home for stacks',
+     staxx_path_in_memory('/mnt/disks'));
+} else {
+  echo "SKIP   /mnt/disks case — Unassigned Devices is not installed on this box\n";
+}
 
 // The archive folder shares every rule above, plus one of its own: a zip
 // inside the stacks tree would be read back as a stack or a folder.
@@ -78,7 +112,8 @@ $v = staxx_settings_validate('ARCHIVE_ROOT', $keys['ARCHIVE_ROOT'],
                              staxx_stack_root().'/archives', $err);
 ok('rejects an ARCHIVE_ROOT inside the stacks folder', $v === '' && $err !== '', $err);
 $err  = '';
-$good = '/mnt/zzb1-archive-test-'.getmypid();
+// Under a real share, not directly under /mnt: see the STACK_ROOT cases above.
+$good = '/mnt/user/appdata/zzb1-archive-test-'.getmypid();
 $v = staxx_settings_validate('ARCHIVE_ROOT', $keys['ARCHIVE_ROOT'], $good, $err);
 ok('accepts an ARCHIVE_ROOT outside it', $v === $good, $err);
 

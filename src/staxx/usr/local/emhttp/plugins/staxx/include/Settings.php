@@ -124,6 +124,41 @@ function staxx_settings_char_rule(string $key): string {
  *
  * @return string the normalised value to store, or '' when $error is set
  */
+/**
+ * Does this path sit on a filesystem that lives in memory, and therefore
+ * loses everything in it at the next reboot? True for Unraid's own root
+ * filesystem, and for the small tmpfs mounts under /mnt that exist only to
+ * hold mount points (/mnt/disks, /mnt/remotes, /mnt/addons).
+ *
+ * Answered by finding the longest mount point in /proc/mounts that this path
+ * sits under, which is by definition the filesystem it lands on, and reading
+ * that mount's type. Fails OPEN: an unreadable /proc means no opinion, and
+ * refusing every path because a kernel file could not be read would be a
+ * worse outcome than the one this guards against.
+ */
+function staxx_path_in_memory(string $path): bool {
+  $lines = @file('/proc/mounts', FILE_IGNORE_NEW_LINES);
+  if ($lines === false) return false;
+
+  $bestLen = -1;
+  $type    = '';
+  foreach ($lines as $line) {
+    $cols = preg_split('/\s+/', trim($line));
+    if (count($cols) < 3) continue;
+    // /proc/mounts escapes a space in a mount point as \040, and octal
+    // escapes are exactly what stripcslashes() undoes.
+    $mount = stripcslashes($cols[1]);
+    $under = $mount === '/' || $path === $mount
+             || strpos($path, rtrim($mount, '/').'/') === 0;
+    if (!$under) continue;
+    // Longest match wins: /mnt/disks must beat /mnt, and a drive mounted
+    // under /mnt/disks must in turn beat /mnt/disks itself.
+    if (strlen($mount) > $bestLen) { $bestLen = strlen($mount); $type = $cols[2]; }
+  }
+
+  return in_array($type, ['tmpfs', 'ramfs', 'rootfs', 'devtmpfs'], true);
+}
+
 function staxx_settings_validate_path(string $key, string $v, string &$error): string {
   $label = ['STACK_ROOT' => 'stacks folder', 'ARCHIVE_ROOT' => 'archive folder'][$key] ?? 'folder';
 
@@ -168,6 +203,37 @@ function staxx_settings_validate_path(string $key, string $v, string &$error): s
     $error = 'That folder does not exist, and neither does its parent, so it could not be '
            . 'created. Check the path, or use the folder browser to pick one that exists.';
     return '';
+  }
+
+  // /mnt itself is not storage — it is where the shares and disks are
+  // mounted. A path that only LOOKS like one of them, "/mnt/appdata" with
+  // the "user/" left out or "/mnt/disks/mydrive" while that drive is not
+  // mounted, lands on Unraid's root filesystem instead. That is a RAM disk:
+  // everything written there is gone at the next reboot, having quietly
+  // eaten memory until then. Nothing else in this validator can catch it,
+  // because such a path exists, is writable, and behaves normally right up
+  // to the reboot.
+  //
+  // The test asks what kind of filesystem the path would actually land on,
+  // rather than whether something is mounted along it — because on Unraid the
+  // two are not the same question. /mnt/disks and /mnt/remotes are each a
+  // one-megabyte tmpfs holding nothing but mount points for drives and shares
+  // that come and go, so "something is mounted here" is true of them and
+  // still the wrong answer. Asking about the filesystem accepts a real share
+  // or a genuinely mounted drive at any depth, and refuses /mnt itself, a
+  // share name with a typo in it, and an Unassigned Devices path whose drive
+  // is not currently mounted.
+  if ($underMnt) {
+    $deepest = $norm;
+    while ($deepest !== '/mnt' && !is_dir($deepest)) $deepest = dirname($deepest);
+
+    if (staxx_path_in_memory($deepest)) {
+      $error = 'The '.$label.' would be created on a filesystem that lives in memory '
+             . '("'.$deepest.'" is the deepest part of that path that exists), so everything '
+             . 'in it would be lost at the next reboot. Put it under a share such as '
+             . '/mnt/user/appdata, or on a drive that is actually mounted.';
+      return '';
+    }
   }
 
   return $norm;

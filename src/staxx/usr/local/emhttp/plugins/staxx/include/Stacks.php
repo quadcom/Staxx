@@ -2465,6 +2465,37 @@ function staxx_archive_name(string $name): string {
 }
 
 /**
+ * Match the Unraid user-share convention (nobody:users, 0777 for a
+ * directory, 0666 for a file) so a path written under /mnt/ can be read,
+ * written to or deleted by anything else on that share. Left to the web
+ * server's own umask, a freshly created folder or file there comes out
+ * root:root — fine for the process that made it, unreachable for everyone
+ * and everything else that treats a user share as nobody:users.
+ *
+ * A no-op for anything not under /mnt/: the archive folder and the stack
+ * root can both live on /boot instead, which is vfat and has no concept of
+ * an owner, so chown there either fails outright or silently does nothing.
+ * The check resolves the path first, because a path can reach /mnt/ by
+ * symlink without its own text saying so.
+ *
+ * Every failure here is swallowed. A backup that was written but ended up
+ * awkwardly owned is far better than a removal refused because a chown
+ * failed on the way — this must never block an otherwise-good archive.
+ */
+function staxx_share_perms(string $path, bool $isDir): void {
+  $real = @realpath($path);
+  if ($real === false) return;
+  // Strictly *under* /mnt, never /mnt itself: that is the mount root every
+  // share hangs off, and handing it 0777 because an archive folder setting
+  // resolved oddly would be a far worse bug than the one this fixes.
+  if (strpos($real, '/mnt/') !== 0) return;
+
+  @chown($real, 'nobody');
+  @chgrp($real, 'users');
+  @chmod($real, $isDir ? 0777 : 0666);
+}
+
+/**
  * Archive a stack's directory and take it out of the stacks tree.
  *
  * Removing a stack used to delete its folder outright, refusing outright if
@@ -2523,13 +2554,30 @@ function staxx_archive_stack(
 
   // Where the zip goes. Nothing has been touched yet, so a folder that
   // cannot be created or written refuses the whole thing up front.
+  //
+  // Built one level at a time rather than mkdir(..., true) in one call, so
+  // every level this creates can be handed to staxx_share_perms() below —
+  // otherwise a fresh /mnt/user/appdata/staxx/archives comes out root:root
+  // and nothing on the network share can read or delete what lands in it.
   $root = staxx_archive_root();
-  if (!is_dir($root)) @mkdir($root, 0755, true);
+  if (!is_dir($root)) {
+    $built = '';
+    foreach (explode('/', trim($root, '/')) as $part) {
+      $built .= '/'.$part;
+      if (is_dir($built)) continue;
+      if (!@mkdir($built, 0755)) break;
+      staxx_share_perms($built, true);
+    }
+  }
   if (!is_dir($root) || !is_writable($root)) {
     $error = 'The archive folder '.$root.' does not exist or cannot be written to. '
            . 'Check the archive folder setting and try again.';
     return false;
   }
+  // Correct a folder made by an earlier version of this code, which left it
+  // root:root — otherwise the fix looks like it did nothing on a box that
+  // already has one of these lying around.
+  staxx_share_perms($root, true);
 
   // Size guard. A stack folder is normally a few kilobytes; this page waits
   // while the zip is built, and the plugin caps anything it runs at two
@@ -2618,6 +2666,9 @@ function staxx_archive_stack(
     $error = 'The archive could not be put in place, so nothing was removed.';
     return false;
   }
+  // Only the finished zip, never the ".tmp-" name — chown-ing that would be
+  // wasted work on a file about to be renamed away from under it anyway.
+  staxx_share_perms($final, false);
 
   $real = @realpath($dir);
   if ($real === false || !staxx_rmtree($real, $real)) {

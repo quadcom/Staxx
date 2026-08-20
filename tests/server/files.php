@@ -145,6 +145,21 @@ foreach ((array)$extras as $e) {
 }
 ok('extras refuses a missing stack', staxx_stack_extras('nosuchstack', $err) === null, $err);
 
+/* ---------------------------------------------------------- share-perms -- */
+// ARCHIVE_ROOT is pinned at /tmp for this whole file, so every archive case
+// below exercises staxx_share_perms() as a no-op by construction — a test
+// asserting nobody:users ownership here would never be able to fail. What
+// IS meaningful without touching /mnt is the guard itself: a path outside
+// /mnt/ must come back untouched.
+$permFile = $dir.'/permguard.txt';
+file_put_contents($permFile, 'x');
+chmod($permFile, 0644);
+$before = fileperms($permFile) & 0777;
+staxx_share_perms($permFile, false);
+ok('share-perms leaves a /tmp path untouched',
+   (fileperms($permFile) & 0777) === $before);
+unlink($permFile);
+
 /* -------------------------------------------------------------- archive -- */
 // $rel/$dir here are still "zzb1test" from the top of the file, which by now
 // holds extras (.env, lf.env, cert2.der, huge.bin) and the "sub" subfolder

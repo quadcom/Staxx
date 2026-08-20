@@ -6971,9 +6971,17 @@
 
 /* Carried over from the old .staxx-log rule this replaces: same monospace
    pane, same dark fill, just inside a dialog body now instead of a page
-   panel. */
+   panel.
+
+   Unraid's own default-base.css has a bare `pre { width: 100%; box-sizing:
+   border-box; }`, which fights our side margins below — 100% of the content
+   box plus 2.8rem of margin is 2.8rem wider than the space available, and
+   the dialog's overflow:hidden then clips the right edge. width: auto here
+   is not redundant with the border-box further up; it is what undoes that
+   stock rule for this element specifically, since we do not own <pre>. */
 .staxx-logdlg-body {
   flex: 1 1 auto;
+  width: auto;
   margin: 0 1.4rem 1.2rem;
   padding: 1rem 1.2rem;
   overflow: auto;
