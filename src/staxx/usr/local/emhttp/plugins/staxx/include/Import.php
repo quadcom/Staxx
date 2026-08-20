@@ -1142,7 +1142,7 @@ function staxx_import_write_project(string $rel, string $id, array $about, strin
   $dir = staxx_import_prepare_dir($rel, $error);
   if ($dir === '') return false;
 
-  // Same pairing staxx_import_write() and staxx_delete_stack() use — see the
+  // Same pairing staxx_import_write() and staxx_archive_stack() use — see the
   // note there on why this must be resolved before any rollback below.
   $real = (string)@realpath($dir);
 

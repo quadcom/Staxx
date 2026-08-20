@@ -1,7 +1,7 @@
 <?php
 /* The two-file (main + override) compose support: staxx_compose_files(),
  * staxx_compose_file_args(), the strict pairing rule, and how it feeds
- * staxx_stack_extras(), staxx_delete_stack() and staxx_validate_compose().
+ * staxx_stack_extras(), staxx_archive_stack() and staxx_validate_compose().
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. Stacks live on
  * /boot by default, so this run needs STACK_ROOT pointed at /tmp instead —
@@ -131,14 +131,21 @@ ok('the paired override is NOT listed as an extra file',
 ok('the unrelated override-shaped file IS listed as an extra file',
    in_array('docker-compose.override.yml', $extraNames, true), implode(', ', $extraNames));
 
-/* ------------------------------------------------- staxx_delete_stack -- */
+/* ------------------------------------------------ staxx_archive_stack -- */
+//
+// Removing a stack archives it now rather than deleting it, so extras are no
+// longer a reason to refuse — they are kept along with everything else. What
+// this file still cares about is the pairing above: whether the override
+// counts as one of the stack's own files. That is asserted on the extras list
+// itself, which is where the answer actually lives; all that is left to check
+// here is the refusal an unconfirmed call gives.
 
 $err = '';
-$deleted = staxx_delete_stack($rel, $err, false);
-ok('an unconfirmed delete refuses, because of the unrelated file',
-   $deleted === false, $err);
-ok('...naming the unrelated file', strpos($err, 'docker-compose.override.yml') !== false, $err);
-ok('...and NOT naming the paired override', strpos($err, 'compose.override.yaml') === false, $err);
+$archived = staxx_archive_stack($rel, $err, false);
+ok('an unconfirmed archive refuses', $archived === false, $err);
+ok('...with no error text, because the endpoint asks the question', $err === '');
+ok('...and nothing was removed', is_file($dir.'/compose.override.yaml')
+   && is_file($dir.'/docker-compose.override.yml'));
 
 @unlink($dir.'/docker-compose.override.yml');
 @exec('rm -rf '.escapeshellarg($dir));
