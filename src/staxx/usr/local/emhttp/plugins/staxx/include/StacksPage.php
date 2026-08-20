@@ -248,7 +248,9 @@ endif;
        clipped by it the moment it opened. -->
   <div class="staxx-menu" id="staxx-menu" role="menu" hidden>
     <div class="staxx-menu-head" id="staxx-menu-head"></div>
-    <div id="staxx-menu-items"></div>
+    <!-- The scrolling part. The heading above stays put, so a menu too tall
+         for the window still says which row it belongs to. -->
+    <div class="staxx-menu-list" id="staxx-menu-items"></div>
   </div>
 
   <!-- ---------------------------------------------------------- editor -- -->

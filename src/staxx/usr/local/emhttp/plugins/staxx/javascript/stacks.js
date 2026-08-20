@@ -11193,12 +11193,13 @@
   }
 
   function tickJobs() {
+    if (document.hidden) return;
     var ids = Object.keys(jobs);
     if (!ids.length) return;
     var offsets = ids.map(function (id) { return jobs[id].offset; });
 
     call('job', { jobs: ids.join(','), offsets: offsets.join(',') }).then(function (res) {
-      if (!res.ok || !res.jobs) return;
+      if (!res.ok || !res.jobs) { stopTickerIfIdle(); return; }
 
       ids.forEach(function (id) {
         var entry = jobs[id];
@@ -11421,9 +11422,20 @@
     manageUpdateContainers(res);
     var stacks = res.stacks || {};
     Object.keys(stacks).forEach(function (name) {
+      var s = stacks[name];
+
+      // The folder-row icon strip is decoration on the folder above, not on
+      // this stack's own row, so it is kept in step even on a poll whose row
+      // is missing (below) — a folder can be open with a stack row not yet
+      // rendered underneath it, and the strip icon is what a collapsed
+      // folder shows instead of any row at all.
+      var stripItem = rowsHost
+        ? rowsHost.querySelector('.staxx-fstrip-item[data-fstrip-stack="' + name + '"]')
+        : null;
+      if (stripItem) setData(stripItem, 'running', s.running ? '1' : '0');
+
       var row = rowFor(name);
       if (!row) return;                 // added since this table was rendered
-      var s = stacks[name];
 
       // The cell's contents come from the server already rendered, so a pill
       // that appears without a page load is identical to one that came with
@@ -11911,6 +11923,7 @@
   }
 
   function pollQueueOnce() {
+    if (document.hidden) return;
     var wasLive = queueWasLive;
     call('update-queue', {}).then(function (res) {
       if (!res.ok) return;
@@ -12424,7 +12437,7 @@
   document.addEventListener('error', function (e) {
     var img = e.target;
     if (!img || img.tagName !== 'IMG' || !img.dataset || !img.dataset.fallback) return;
-    if (!img.closest || !img.closest('.staxx-icon')) return;
+    if (!img.closest || !(img.closest('.staxx-icon') || img.closest('.staxx-fstrip-item'))) return;
 
     var span = document.createElement('span');
     span.className = 'staxx-tile staxx-tile--' + (img.dataset.fallbackColour || '0');
@@ -13256,6 +13269,7 @@
       manageStateTimer = setInterval(function () {
         // Belt and braces against a timer outliving what it was feeding.
         if (!modal.open || modal.dataset.tab !== 'manage') { manageStatePoll(false); return; }
+        if (document.hidden) return;
         refreshState();
         pollStats(true);
       }, 5000);
@@ -14539,11 +14553,33 @@
     menu.hidden = false;
     menu.style.left = '0px';
     menu.style.top  = '0px';
+    // Clear any cap left over from a previous open, so the height measured
+    // below is the menu's natural, uncapped height.
+    menuItems.style.maxHeight = '';
 
     var at   = point ? { left: point.x, top: point.y, bottom: point.y }
                      : trigger.getBoundingClientRect();
     var size = menu.getBoundingClientRect();
     var pad  = 8;
+
+    // How much room there is depends on where the menu opened, so that is
+    // worked out here rather than in the stylesheet (deliberately no
+    // max-height there). Cap only when the menu's natural height fits
+    // neither above nor below, and then use whichever side has more room —
+    // the clamping below still decides which side it actually opens on.
+    var MIN_LIST_HEIGHT = 192; // a few items' worth (12rem @ 16px), never go below this
+    var spaceBelow = window.innerHeight - at.bottom - 4 - pad;
+    var spaceAbove = at.top - 4 - pad;
+    if (size.height > spaceBelow && size.height > spaceAbove) {
+      // Chrome = everything in the menu that isn't the scrollable list
+      // (the head, plus the menu's own padding/borders) — found by
+      // subtracting the list's height from the menu's, not by hard-coding
+      // figures that belong to staxx.css.
+      var chrome = size.height - menuItems.getBoundingClientRect().height;
+      var room   = Math.max(spaceBelow, spaceAbove) - chrome;
+      menuItems.style.maxHeight = Math.max(MIN_LIST_HEIGHT, room) + 'px';
+      size = menu.getBoundingClientRect();
+    }
 
     var left = at.left;
     var top  = at.bottom + 4;
@@ -15167,7 +15203,20 @@
   // A menu positioned against the viewport has to go away when the viewport
   // moves under it, or it detaches from the icon it belongs to.
   window.addEventListener('resize', closeMenu);
-  window.addEventListener('scroll', closeMenu, true);
+  // Capture phase is right, per closeMenu()'s own comment above: a
+  // viewport-positioned menu has to go away when anything on the page
+  // scrolls under it, and that can only be caught by listening on window in
+  // capture. But capture on window also sees the menu's own list scrolling
+  // itself, now that a menu too tall for the window can scroll — so a scroll
+  // that came from inside the menu is exempted rather than closing the very
+  // thing being scrolled. This is why the menu could not be scrolled at all
+  // before: trying to made it vanish.
+  // A document scroll's target is the document, not an element, hence the
+  // Node check before asking menu.contains().
+  window.addEventListener('scroll', function (event) {
+    if (event.target instanceof Node && menu.contains(event.target)) return;
+    closeMenu();
+  }, true);
 
   /* -------------------------------------------------------- keyboard nav -- */
 
@@ -15565,12 +15614,44 @@
   var STATS_POLL   = 3000;   // how often to ask
   var STATS_POINTS = 60;     // roughly three minutes of history per graph
 
+  // Asking every 3s makes sense while someone is looking; it does not while
+  // the tab is just sitting open. STATS_IDLE_POLL has to stay well under the
+  // collector's own 45s patience (see scripts/stats-collector.sh), or the
+  // idle page's own asking would be what keeps a nobody's-looking collector
+  // alive for no reason.
+  var STATS_IDLE_AFTER = 120000;   // two minutes of no interaction counts as idle
+  var STATS_IDLE_POLL  = 15000;    // how often an idle page still asks
+
+  // Updated by the passive listeners below; read by pollStats() to decide
+  // whether the page is idle. Anything that indicates a person is still
+  // there counts, not just clicks — scrolling and reading count too.
+  var lastTouch = Date.now();
+
+  function noteTouch() {
+    var wasIdle = (Date.now() - lastTouch) > STATS_IDLE_AFTER;
+    lastTouch = Date.now();
+    // Coming back from idle should not wait for the next slow tick.
+    if (wasIdle) pollStats();
+  }
+
+  document.addEventListener('pointerdown', noteTouch, { passive: true });
+  document.addEventListener('keydown', noteTouch, { passive: true });
+  document.addEventListener('wheel', noteTouch, { passive: true });
+  document.addEventListener('scroll', noteTouch, { capture: true, passive: true });
+  document.addEventListener('pointermove', noteTouch, { passive: true });
+
   // Re-collected whenever the table body is replaced, and whenever a row's
   // project name is corrected — the rows held here are the actual elements, so
   // a stale list would keep painting figures into a row that is no longer on
   // the page.
   var statRows = [];
   var kidRows  = {};        // stack name -> its container rows, in order
+
+  // Same reasoning as statRows/kidRows above, for updateFolderTotals() —
+  // it used to re-search the whole page for every folder on every tick,
+  // which is thousands of selector matches every 3s on a big server.
+  var folderRows      = {}; // folder id -> its own row
+  var folderStackRows = {}; // folder id -> that folder's stack rows (never container rows)
 
   function rebindStatRows() {
     statRows = Array.prototype.slice.call(
@@ -15583,6 +15664,21 @@
         var key = r.dataset.inStack;
         (kidRows[key] = kidRows[key] || []).push(r);
       });
+
+    folderRows = {};
+    Array.prototype.forEach.call(
+      document.querySelectorAll('[data-folder-row]'), function (tr) {
+        folderRows[tr.dataset.folderRow] = tr;
+      });
+
+    // Stack rows only. Container rows also carry data-in-folder, and adding
+    // those in would count every stack twice — once whole, once in pieces.
+    folderStackRows = {};
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.staxx-stack-row[data-in-folder]'), function (r) {
+        var key = r.dataset.inFolder;
+        (folderStackRows[key] = folderStackRows[key] || []).push(r);
+      });
   }
   rebindStatRows();
 
@@ -15594,6 +15690,13 @@
   var previous = {};    // project -> last cumulative counters
   var lastAt   = 0;     // server timestamp of the last snapshot we counted
   var statsTimer = null;
+
+  // Same shape as refreshState()'s stateBusy/stateAgain: at most one `stats`
+  // request in flight, with a poll asked for while one is out remembered and
+  // fired exactly once when it returns, rather than queuing up behind it.
+  var statsBusy   = false;
+  var statsAgain  = false;
+  var lastStatsAt = 0;    // when a poll last actually went out, for the idle backoff
 
   function bucket(project) {
     if (!history[project]) {
@@ -15970,16 +16073,14 @@
   // A folder shows the sum of what is filed in it, including rows currently
   // hidden by a collapsed folder — that is the point of collapsing it.
   function updateFolderTotals() {
-    document.querySelectorAll('[data-folder-row]').forEach(function (tr) {
-      var id = tr.dataset.folderRow;
+    Object.keys(folderRows).forEach(function (id) {
+      var tr = folderRows[id];
       var sum = { cpu: 0, mem: 0, net: 0, gpu: 0 };
       var any = false;
       var anyGpu = false;
 
-      // Stack rows only. Container rows also carry data-in-folder, and adding
-      // those in would count every stack twice — once whole, once in pieces.
-      document.querySelectorAll('.staxx-stack-row[data-in-folder="' + id + '"]')
-              .forEach(function (row) {
+      // Stack rows only — see the note beside folderStackRows above.
+      (folderStackRows[id] || []).forEach(function (row) {
         if (!row.dataset.statCpu) return;
         any = true;
         sum.cpu += parseFloat(row.dataset.statCpu) || 0;
@@ -16018,12 +16119,36 @@
   // processor and memory for as long as the editor was open.
   function pollStats(force) {
     // A hidden tab does not need updating, and stopping the asking is also
-    // what lets the server-side collector shut itself down.
+    // what lets the server-side collector shut itself down (it gives up
+    // after 45s and gets re-exec'd on return — see the visibilitychange
+    // handler below, which is what keeps a long-hidden tab from looking
+    // stale the moment it is shown again).
     if (document.hidden) return;
+    // Nothing can be running, so there are no figures to collect — and the
+    // two paths that ask without going through the 3s timer (returning from
+    // idle, and returning to the tab) both reach here, so the guard belongs
+    // on this side rather than at each of them.
+    if (!CAN_RUN) return;
     // Nothing to fill in. Asking anyway would keep the collector sampling 60
     // containers on behalf of an empty table.
     if (!force && !statRows.length) return;
-    call('stats', {}, 10000).then(applyStats);
+    // Nobody has touched the page in a while — ask far less often. force
+    // (Manage's own figures) always goes through regardless.
+    if (!force && (Date.now() - lastTouch) > STATS_IDLE_AFTER &&
+        (Date.now() - lastStatsAt) < STATS_IDLE_POLL) {
+      return;
+    }
+
+    // Two of these in flight at once would race, and the slower reply would
+    // paint over the newer one — same reasoning as refreshState().
+    if (statsBusy) { statsAgain = true; return; }
+    statsBusy = true;
+    lastStatsAt = Date.now();
+    call('stats', {}, 10000).then(function (res) {
+      statsBusy = false;
+      applyStats(res);
+      if (statsAgain) { statsAgain = false; pollStats(); }
+    });
   }
 
   // Started on whether anything CAN run, not on whether there is a row right
@@ -16045,10 +16170,22 @@
   if (CAN_RUN) {
     pollStats();
     statsTimer = setInterval(pollStats, STATS_POLL);
-    document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) pollStats();
-    });
   }
+
+  // A hidden tab stops all four pollers on this page — each checks
+  // document.hidden itself — so returning to it can leave figures, jobs and
+  // the update queue looking stale until their own next tick, up to 5s for
+  // Manage. Poll every
+  // one of them once, immediately, rather than waiting. Only the ones with a
+  // timer actually running are worth asking; a poller that stopped itself for
+  // its own reason (no jobs, no queue, Manage closed) should stay stopped.
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) return;
+    pollStats();
+    if (jobTicker) tickJobs();
+    if (updateQueueTimer) pollQueueOnce();
+    if (manageStateTimer) { refreshState(); pollStats(true); }
+  });
 
   // The signpost page (Settings → StaXX) links here to open the
   // panel directly, for whoever followed it from the Plugins list.

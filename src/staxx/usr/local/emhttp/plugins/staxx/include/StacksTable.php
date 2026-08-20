@@ -413,6 +413,13 @@ function staxx_row_actions_html(string $stack, string $service, string $url, boo
  *                          support:string, state:string, status:string, exists:bool}>
  */
 function staxx_stack_children(array $s): array {
+  // Memoised on the stack's name: the folder strip and the stack row both ask
+  // for the same stack's children within one request, and nothing here can
+  // change under a stack mid-request, so the second call is free rather than
+  // re-reading the compose file and re-merging docker's view of it again.
+  static $memo = [];
+  if (isset($memo[$s['name']])) return $memo[$s['name']];
+
   $containers = staxx_stack_containers($s);
 
   // What the compose file declares, which is the only source for a service that
@@ -490,7 +497,7 @@ function staxx_stack_children(array $s): array {
     ];
   }
 
-  return array_values($rows);
+  return $memo[$s['name']] = array_values($rows);
 }
 
 /**
@@ -581,6 +588,35 @@ function staxx_stack_tile(array $s, array $kids): string {
   }
 
   return '<span class="staxx-mosaic">'.implode('', $tiles).'</span>';
+}
+
+/**
+ * A stack's icon at strip size: one tile, never the mosaic.
+ *
+ * Used for the folder-row strip, where four tiny smudges are less legible
+ * than one. Same precedence as staxx_stack_tile(), just stopping after the
+ * first picture instead of tiling every child: the stack's own x-unraid icon
+ * first, then its first child's, then the generic cube. Resolved through the
+ * same staxx_icon_resolve()/staxx_icon_tile() pair with the same arguments so
+ * this can never pick a different picture than the stack's own row does.
+ *
+ * @param array $kids from staxx_stack_children()
+ */
+function staxx_stack_strip_tile(array $s, array $kids): string {
+  $own = (string)($s['x']['icon'] ?? '');
+  if ($own !== '') {
+    return staxx_icon_tile(staxx_icon_resolve($own, $s['dir']), $s['leaf']);
+  }
+
+  if (!$kids) {
+    return '<i class="fa fa-cubes"></i>';
+  }
+
+  $kid = $kids[0];
+  return staxx_icon_tile(
+    staxx_icon_resolve($kid['icon'], $s['dir'], $kid['image'], $kid['service'], $s['name']),
+    $kid['service'] !== '' ? $kid['service'] : $kid['name']
+  );
 }
 
 /**
@@ -721,11 +757,13 @@ function staxx_render_rows(array $rows, bool $canRun): string {
   // does not carry the stack list itself — only each stack row does.
   $stackList   = [];
   $groupCounts = [];   // folder (or '' for unfiled) => how many stacks sit in it
+  $folderStacks = [];  // folder => its member stack records, in display order
   $folderCount = 0;
   foreach ($rows as $r) {
     if ($r['type'] === 'folder') { $folderCount++; continue; }
     $stackList[] = $r['stack'];
     $groupCounts[$r['folder']] = ($groupCounts[$r['folder']] ?? 0) + 1;
+    if ($r['folder'] !== '') $folderStacks[$r['folder']][] = $r['stack'];
   }
   $autostart = staxx_autostart_state($stackList);
 
@@ -795,6 +833,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                none of those of its own, only the four figures on the right. -->
           <span class="staxx-cell staxx-cell--span4" role="gridcell">
             <!-- Flex lives on a div, never on the cell itself. -->
+            <div class="staxx-folder-head">
             <div class="staxx-namebox">
               <?= staxx_grip_html('folder', $row['name'] !== '' ? $row['name'] : _('this folder'), $fGripOff, $fGripWhy) ?>
               <button type="button" class="staxx-chevron"
@@ -828,6 +867,31 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                 <?= staxx_update_pill_html($fUpdate) ?>
                 <span class="staxx-sub" data-cell="folder-sub"><?= staxx_folder_sub($row['count'], $row['running']) ?></span>
               </span>
+            </div>
+            <?
+              // One small icon per stack, so a collapsed folder still shows
+              // what is inside it. Deliberately outside data-cell="folder-sub"
+              // above — the state poll replaces that element wholesale, and
+              // rewriting the strip along with it would fight the dimming the
+              // browser does to data-fstrip-stack items on its own. No
+              // .staxx-dot in here either: the browser takes the first one in
+              // a folder row as the folder's own status light.
+              $fMembers = $folderStacks[$row['id']] ?? [];
+              if ($fMembers):
+            ?>
+            <div class="staxx-fstrip" aria-hidden="true">
+              <? foreach ($fMembers as $fs): ?>
+                <span class="staxx-fstrip-item"
+                      data-fstrip-stack="<?= htmlspecialchars($fs['name']) ?>"
+                      data-running="<?= $fs['running'] ? '1' : '0' ?>"
+                      title="<?= htmlspecialchars($fs['leaf']) ?>">
+                  <?= $fs['parses']
+                        ? staxx_stack_strip_tile($fs, staxx_stack_children($fs))
+                        : '<i class="fa fa-exclamation-triangle"></i>' ?>
+                </span>
+              <? endforeach; ?>
+            </div>
+            <? endif; ?>
             </div>
           </span>
 
