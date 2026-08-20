@@ -27,14 +27,14 @@ function ok(string $what, bool $pass, string $note = ''): void {
 /* ------------------------------------------------------------- keys ---- */
 
 $keys = staxx_settings_keys();
-ok('exactly six keys', count($keys) === 6, implode(',', array_keys($keys)));
+ok('exactly eight keys', count($keys) === 8, implode(',', array_keys($keys)));
 foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STACK_ROOT', 'ARCHIVE_ROOT',
-          'ICON_FETCH', 'IMAGE_LOOKUP'] as $k) {
+          'ICON_FETCH', 'IMAGE_LOOKUP', 'SHELL_ENABLED', 'SHELL_WARNED'] as $k) {
   ok('has '.$k, array_key_exists($k, $keys));
 }
 
 $read = staxx_settings_read();
-ok('read returns exactly six keys', count($read) === 6);
+ok('read returns exactly eight keys', count($read) === 8);
 foreach (array_keys($keys) as $k) ok('read has '.$k, array_key_exists($k, $read));
 
 /* --------------------------------------------------------- validator ---- */

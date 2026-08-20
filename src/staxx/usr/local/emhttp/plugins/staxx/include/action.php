@@ -384,6 +384,31 @@ switch ($action) {
     if ($text === '' && $error !== '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'text' => $text]);
 
+  /* ---- the shell: open, write to, read from and close a session in a
+   * running container. See the "exec" section of Stacks.php for the
+   * mechanism and the security rules this depends on — the container name is
+   * resolved server-side; only the stack path and service name ever arrive
+   * from the browser, and neither reaches a shell unchecked. */
+  case 'exec-open':
+    $service = (string)($_POST['service'] ?? '');
+    $id      = staxx_exec_start($name, $service, $error);
+    if ($id === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'id' => $id]);
+
+  case 'exec-write':
+    if (!staxx_exec_write((string)($_POST['id'] ?? ''), (string)($_POST['bytes'] ?? ''), $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
+
+  case 'exec-read':
+    staxx_reply(['ok' => true]
+      + staxx_exec_read((string)($_POST['id'] ?? ''), (int)($_POST['offset'] ?? 0)));
+
+  case 'exec-close':
+    staxx_exec_stop((string)($_POST['id'] ?? ''));
+    staxx_reply(['ok' => true]);
+
   /* ---------------------------------------------------------------------
    * The handover — taking over an imported stack's container name.
    *

@@ -41,6 +41,14 @@ function staxx_settings_keys(): array {
     'ARCHIVE_ROOT'        => ['type' => 'path',   'default' => staxx_archive_root()],
     'ICON_FETCH'          => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     'IMAGE_LOOKUP'        => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // Gates staxx_exec_start() on the server, not only the button in the
+    // browser — see PLAN_44 section D4.
+    'SHELL_ENABLED'       => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // Set once, by the same settings-save path, the first time a shell is
+    // opened — so the "changes vanish on rebuild" warning is shown once per
+    // server rather than once per browser. Not in $reload below: nothing
+    // that reads this needs the page itself to reload.
+    'SHELL_WARNED'        => ['type' => 'choice', 'default' => 'false', 'choices' => ['true', 'false']],
   ];
 }
 

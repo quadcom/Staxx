@@ -48,6 +48,16 @@ define('STAXX_LOG_STALE', 45);
 // PHP's post_max_size the same way STAXX_FILE_MAX does for a companion file.
 define('STAXX_LOG_DOWNLOAD_MAX', 2097152); // 2 MiB
 
+// A shell session's own directory — see the "exec" section near the foot of
+// this file. Under /tmp for the same reason job logs and followers are:
+// worthless after a reboot, and noisy.
+define('STAXX_EXEC_DIR', '/tmp/staxx/exec');
+
+// A single write down a session's pipe is a keystroke or a short pasted
+// line, never a file. This is what stops the input box being used to
+// smuggle something much larger through a pipe meant for typing.
+define('STAXX_EXEC_WRITE_MAX', 4096);
+
 // Compose reads whichever of these it finds first, in this order.
 const STAXX_COMPOSE_FILENAMES = [
   'compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
@@ -4209,5 +4219,349 @@ function staxx_log_download(string $stack, string $service, string &$error): str
   }
 
   return $text;
+}
+
+/* ========================================================== exec (D4) =====
+ *
+ * A real shell inside a running container. See PLAN_44 section D4. This is
+ * the one place in the plugin where user input reaches a shell with no verb
+ * allowlist standing in front of it — docker exec runs whatever the person
+ * inside the session types. Every guard below exists because of that.
+ *
+ * The mechanism, proved by hand on the real server before any of this was
+ * written (socat is not installed there; script, mkfifo and setsid are):
+ *
+ *   echo $$ > pid; exec 9<> fifo; script -qfc "<docker exec …>" /dev/null \
+ *     <&9 >>out 2>&1
+ *
+ * `script -qfc` is what allocates a pseudo-terminal — without one there is
+ * no prompt, no tab completion and no Ctrl-C, because `docker exec -it`
+ * refuses outright when its stdin is a plain pipe rather than a terminal.
+ * `exec 9<>` opens the fifo READ-WRITE in the session's own shell, so that
+ * shell is always a second writer holding the pipe open on top of whatever
+ * PHP does. That is what lets a web request fopen() the fifo, write one
+ * keystroke, and close it again — once per request — without the far end
+ * ever seeing end-of-input. Proved the failure case too: a writer that only
+ * opens and closes per keystroke, with nobody else holding the pipe open,
+ * kills the shell immediately. Do not "simplify" this by dropping the
+ * `exec 9<>` line — it is not decorative.
+ *
+ * Four files per session, all under STAXX_EXEC_DIR/<id>/, the same shape a
+ * log follower already uses:
+ *   fifo  the named pipe PHP writes keystrokes into
+ *   out   the accumulated output, read by offset like a job's log
+ *   pid   the pid of the detached session leader (the outer `sh -c`), so it
+ *         can be found again and killed
+ *   hb    the epoch second of the last poll — the same heartbeat rule
+ *         staxx_log_reap() already proved; STAXX_LOG_STALE is reused rather
+ *         than inventing a second number for the same idea
+ */
+
+/**
+ * The one real container behind a stack's service, resolved entirely from
+ * what compose and docker themselves report — never from a name the browser
+ * sent. staxx_state_for() recovers the project's current identity the same
+ * way the row's own status column does (by file, then by tail, then by
+ * project name, so a stack that has been moved is still found); docker's
+ * own project/service labels then pick out the one container that actually
+ * belongs to it. This is the difference between an allowlist and a hope: the
+ * client sends a stack path and a service name, and nothing else it sends is
+ * ever capable of naming a container.
+ */
+function staxx_exec_resolve_container(string $file, string $leaf, string $service, string &$error): string {
+  $state   = staxx_state_for($file, $leaf);
+  $project = $state['name'] ?? '';
+  if ($project === '') {
+    $error = 'This stack does not appear to be running.';
+    return '';
+  }
+
+  // `.Label "key"` looks up one label by name — the same trick
+  // staxx_containers_by_project() uses, because the obvious-looking
+  // `index .Labels "key"` fails the whole command instead of the one lookup.
+  $fmt = '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t'
+       . '{{.Label "com.docker.compose.service"}}\t{{.State}}';
+  $out = staxx_sh(escapeshellarg(staxx_docker_bin()).' ps -a --format '.escapeshellarg($fmt), 10);
+
+  foreach (explode("\n", trim($out)) as $line) {
+    if ($line === '') continue;
+    [$cname, $proj, $svc, $state2] = array_pad(explode("\t", $line, 4), 4, '');
+    if ($proj !== $project || $svc !== $service) continue;
+    if ($state2 !== 'running') {
+      $error = 'That container is not running, so there is nothing to open a shell into.';
+      return '';
+    }
+    return $cname;
+  }
+
+  $error = 'No running container for service "'.$service.'" in this stack.';
+  return '';
+}
+
+/**
+ * Open a shell session in the running container behind one service of one
+ * stack, and return its session id, or '' with $error set.
+ *
+ * Guarded, in order: a valid stack path; the SHELL_ENABLED setting, checked
+ * here and not only hidden away in the browser, so a hand-built request is
+ * refused exactly as a click would be; the review lock, same reason and same
+ * order staxx_start_job() and staxx_log_start() use it; compose and docker
+ * actually being available; the service being a real member of this stack's
+ * own compose file, the same membership rule every other verb checks a
+ * service name against; and finally a container that is both resolved
+ * server-side (see staxx_exec_resolve_container()) and actually running.
+ */
+function staxx_exec_start(string $stack, string $service, string &$error): string {
+  $error = '';
+
+  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
+
+  if (!staxx_cfg_bool('SHELL_ENABLED')) {
+    $error = 'Shell access to containers is turned off in Settings.';
+    return '';
+  }
+
+  if (staxx_review_locked($stack)) {
+    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
+           . STAXX_REVIEW_FILE . ', then choose "Mark as reviewed" before opening a shell.';
+    return '';
+  }
+
+  $cmd = staxx_compose_cmd();
+  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
+  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
+
+  $dir  = staxx_stack_dir($stack);
+  $file = staxx_find_compose_file($dir);
+  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+
+  $services = staxx_compose_meta($file)['services'];
+  if (!isset($services[$service])) {
+    $error = 'No service called "'.$service.'" in this stack.';
+    return '';
+  }
+
+  $container = staxx_exec_resolve_container($file, staxx_path_leaf($stack), $service, $error);
+  if ($container === '') return ''; // $error already set
+
+  // A crashed browser cannot leave a session running forever: every action
+  // that touches one reaps stale sessions first, this one included.
+  staxx_exec_reap();
+
+  if (!is_dir(STAXX_EXEC_DIR) && !@mkdir(STAXX_EXEC_DIR, 0755, true)) {
+    $error = 'Could not create '.STAXX_EXEC_DIR;
+    return '';
+  }
+
+  $id      = bin2hex(random_bytes(8));
+  $sessDir = STAXX_EXEC_DIR.'/'.$id;
+  if (!@mkdir($sessDir, 0700, true)) {
+    $error = 'Could not create a session folder.';
+    return '';
+  }
+
+  $fifo = $sessDir.'/fifo';
+  $out  = $sessDir.'/out';
+  $pid  = $sessDir.'/pid';
+  $hb   = $sessDir.'/hb';
+
+  // mkfifo, not touch — a plain file here would let the write below succeed
+  // by simply appending to it, with nothing on the other end ever reading a
+  // byte, and the session would look open while going nowhere.
+  @exec('mkfifo -m 600 '.escapeshellarg($fifo));
+  if (!file_exists($fifo)) {
+    @exec('rm -rf '.escapeshellarg($sessDir));
+    $error = 'Could not create the input pipe.';
+    return '';
+  }
+  @touch($out);
+
+  // Written before the session even starts, exactly as staxx_log_start()
+  // writes its heartbeat first — a poll landing in the gap between this call
+  // returning and the process actually existing still sees a fresh
+  // timestamp rather than reading as stale.
+  @file_put_contents($hb, (string)time());
+
+  // Root inside the container, with a fallback shell for an image that has
+  // no bash: `|| exec sh` only runs if bash is not on the PATH. If neither
+  // exists, docker exec itself fails and its own error text lands in $out —
+  // staxx_exec_read() then reports alive:false with that text already in
+  // it, which is the honest answer for an image with no shell at all, not
+  // an empty session that looks broken.
+  $execCmd = escapeshellarg(staxx_docker_bin())
+           . ' exec -u 0 -it '.escapeshellarg($container)
+           . ' sh -c '.escapeshellarg('exec bash || exec sh');
+
+  // `echo $$` runs in the outer shell before anything else, capturing the
+  // session leader's own pid — and because setsid below makes this shell the
+  // leader of a new session, that pid is also the process group id the
+  // whole session can later be killed by, the same trick staxx_log_start()
+  // uses for its follower.
+  $inner = 'echo $$ > '.escapeshellarg($pid).'; '
+         . 'exec 9<> '.escapeshellarg($fifo).'; '
+         . 'script -qfc '.escapeshellarg($execCmd).' /dev/null <&9 >> '.escapeshellarg($out).' 2>&1';
+
+  // NOT wrapped in staxx_sh()'s timeout, deliberately — a session is meant
+  // to live for as long as the editor tab stays open, not for a fixed number
+  // of seconds. Its lifetime is the heartbeat above and staxx_exec_reap()
+  // below, exactly as staxx_log_start() already argues for its own
+  // follower. Do not "fix" this by adding a timeout.
+  @exec('setsid sh -c '.escapeshellarg($inner).' </dev/null >/dev/null 2>&1 &');
+
+  return $id;
+}
+
+/**
+ * Is this session's leader still running? A missing pid file reads as
+ * alive — staxx_exec_start() writes it from inside the detached shell, a
+ * moment after this call already returned an id, the same timing gap
+ * staxx_log_read() already tolerates for a follower's pid file.
+ */
+function staxx_exec_alive(string $id): bool {
+  $pidfile = STAXX_EXEC_DIR.'/'.$id.'/pid';
+  if (!is_file($pidfile)) return true;
+  $pid = (int)trim((string)@file_get_contents($pidfile));
+  return $pid > 0 && is_dir('/proc/'.$pid);
+}
+
+/**
+ * Write one keystroke or short paste into a session's input pipe.
+ *
+ * The bytes go in through fopen(), fwrite() and fclose() only — never
+ * assembled into a shell command line. That is the single most important
+ * line in this whole file: there is no quoting to get wrong if no shell ever
+ * sees these bytes as anything other than raw input.
+ *
+ * The alive check narrows, but cannot fully close, the gap between "the
+ * session leader just exited" and this write actually happening — a fifo's
+ * write side blocks until a reader is present, so writing into one with
+ * nobody left to read it would hang this request rather than fail it. The
+ * residual race (the leader dying in the instant between the check and the
+ * fopen()) is accepted rather than engineered around, the same way
+ * staxx_log_kill() accepts a narrow pid-reuse window: the worst case here is
+ * one request blocking briefly, not a wrong container being touched.
+ */
+function staxx_exec_write(string $id, string $bytes, string &$error): bool {
+  $error = '';
+
+  if (!preg_match('/^[0-9a-f]{16}$/', $id)) { $error = 'Invalid session id.'; return false; }
+
+  staxx_exec_reap();
+
+  if (strlen($bytes) > STAXX_EXEC_WRITE_MAX) {
+    $error = 'That is too much to send at once — paste it in smaller pieces.';
+    return false;
+  }
+
+  $fifo = STAXX_EXEC_DIR.'/'.$id.'/fifo';
+  if (!file_exists($fifo) || !staxx_exec_alive($id)) {
+    $error = 'That session has ended.';
+    return false;
+  }
+
+  // 'r+', not 'a'. Opening a pipe for writing alone BLOCKS until something
+  // opens the other end, and if the session has just died nothing ever will —
+  // so a keystroke arriving in that gap would hang this request for ever, with
+  // no timeout to save it. Opening read-write never blocks, which is the same
+  // trick the session's own launcher uses (`exec 9<>`) to keep the pipe from
+  // seeing end-of-input. Measured on the server: with no reader, 'a' was still
+  // blocked after two seconds and 'r+' returned in a tenth of one.
+  //
+  // The bytes never touch a shell command line — this is a file write, not a
+  // command — which is what makes a shell session safe to expose at all: there
+  // is no quoting to get wrong, whatever somebody types.
+  $fh = @fopen($fifo, 'r+');
+  if ($fh === false) { $error = 'Could not write to that session.'; return false; }
+  fwrite($fh, $bytes);
+  fclose($fh);
+  return true;
+}
+
+/**
+ * Read the bytes a session's output has gained since $offset — the same
+ * offset contract as staxx_job_log() and staxx_log_read(): only the new
+ * bytes since the caller's last poll, measured on the raw chunk, leading
+ * whitespace left intact rather than trimmed away.
+ *
+ * Asking for output IS the keep-alive signal, exactly as it is for a log
+ * follower — this is the only place a session's heartbeat gets touched.
+ *
+ * @return array{text:string, offset:int, alive:bool}
+ */
+function staxx_exec_read(string $id, int $offset): array {
+  if (!preg_match('/^[0-9a-f]{16}$/', $id)) {
+    return ['text' => '', 'offset' => 0, 'alive' => false];
+  }
+
+  staxx_exec_reap();
+
+  $out = STAXX_EXEC_DIR.'/'.$id.'/out';
+  if (!is_file($out)) return ['text' => '', 'offset' => 0, 'alive' => false];
+
+  // Same clamp staxx_job_log() and staxx_log_read() use: a negative offset
+  // would otherwise seek backward from the end of the file instead of being
+  // refused outright.
+  if ($offset < 0) $offset = 0;
+
+  $chunk = @file_get_contents($out, false, null, $offset);
+  if ($chunk === false) $chunk = '';
+  $newOffset = $offset + strlen($chunk);
+
+  // Written after the read, not before, so a request that fails partway
+  // through never claims a poll that did not actually happen.
+  @file_put_contents(STAXX_EXEC_DIR.'/'.$id.'/hb', (string)time());
+
+  return ['text' => $chunk, 'offset' => $newOffset, 'alive' => staxx_exec_alive($id)];
+}
+
+/**
+ * Kill the session named by $id, if its pid file names a process that is
+ * still plausibly ours — the same pid-reuse defence staxx_log_kill() uses,
+ * checked here against "script", the one program every session this
+ * function ever started is running inside its detached shell.
+ */
+function staxx_exec_kill(string $id): void {
+  $pid = (int)trim((string)@file_get_contents(STAXX_EXEC_DIR.'/'.$id.'/pid'));
+  if ($pid <= 0 || !is_dir('/proc/'.$pid)) return;
+
+  $cmdline = str_replace("\0", ' ', (string)@file_get_contents('/proc/'.$pid.'/cmdline'));
+  if (strpos($cmdline, 'script') === false) return;
+
+  // setsid made this pid the leader of its own process group when the
+  // session started, so signalling the NEGATIVE pid reaches the whole
+  // group — the shell, script, and docker exec itself — not just this one
+  // process.
+  @exec('kill -TERM -'.$pid.' 2>/dev/null');
+}
+
+/**
+ * Stop one session outright — the editor closed, or the container tab
+ * switched away and its shell is being ended for good, not merely left to
+ * time out. Kills the process group if it is still going, then removes the
+ * whole session directory so staxx_exec_reap() has nothing left to find.
+ */
+function staxx_exec_stop(string $id): void {
+  if (!preg_match('/^[0-9a-f]{16}$/', $id)) return;
+  staxx_exec_kill($id);
+  @exec('rm -rf '.escapeshellarg(STAXX_EXEC_DIR.'/'.$id));
+}
+
+/**
+ * Kill and remove every session whose heartbeat has gone stale, reusing
+ * STAXX_LOG_STALE rather than a second number for the same idea. Called at
+ * the top of every exec action, so a crashed browser can never leave a shell
+ * running in somebody's container — nobody has to remember to close it.
+ */
+function staxx_exec_reap(): void {
+  if (!is_dir(STAXX_EXEC_DIR)) return;
+
+  foreach ((array)@glob(STAXX_EXEC_DIR.'/*/hb') as $hb) {
+    $seen = (int)trim((string)@file_get_contents($hb));
+    if (time() - $seen > STAXX_LOG_STALE) {
+      $sessDir = dirname($hb);
+      staxx_exec_kill(basename($sessDir));
+      @exec('rm -rf '.escapeshellarg($sessDir));
+    }
+  }
 }
 ?>

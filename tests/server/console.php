@@ -7,6 +7,17 @@
  * staxx_log_read(), staxx_log_stop() and staxx_log_reap() — covered further
  * down under "log follower".
  *
+ * PLAN_44 phase 4 adds the shell — staxx_exec_start(), staxx_exec_write(),
+ * staxx_exec_read(), staxx_exec_stop() and staxx_exec_reap() — covered
+ * further down under "exec". Nothing there ever opens a real session either:
+ * every staxx_exec_start() call below is refused before it ever calls
+ * exec(), and the offset/heartbeat/reap cases only ever touch fake session
+ * files this script writes by hand under STAXX_EXEC_DIR, with a pid that is
+ * never a real process. The one exception, by design, is the "does not
+ * appear to be running" case, which asks real docker/compose read-only
+ * questions about a stack that was deliberately never started — see the
+ * comment beside it.
+ *
  * Runs ON THE SERVER — there is no PHP on the dev machine.
  *
  *     pscp tests/server/console.php root@<box>:/tmp/
@@ -296,6 +307,211 @@ ok('…and its heartbeat is left alone', is_file($freshHb));
 @unlink($staleLog);
 @unlink($stalePid);
 @unlink($staleHb);
+
+/* ================================================================ exec === */
+
+$root = staxx_stack_root();
+
+/* --------------------------------------------------- staxx_exec_start refusals -- */
+
+$err = '';
+$r = staxx_exec_start('a/b/c', 'a', $err);
+ok('an invalid stack path is refused', $r === '' && stripos($err, 'invalid') !== false, $err);
+
+// staxx_cfg() caches its answer for the life of this one PHP process, so the
+// off state cannot be flipped and re-checked within this same run — the same
+// reason links.php/override.php/takeover.php each need their own dedicated
+// invocation with STACK_ROOT sed-replaced beforehand. Whichever way this box
+// is currently configured, the assertion below matches it; to prove the
+// *other* branch, edit the real cfg first:
+//
+//     sed -i 's#^SHELL_ENABLED=.*#SHELL_ENABLED="false"#' $CFG
+//     php console.php
+//     sed -i 's#^SHELL_ENABLED=.*#SHELL_ENABLED="true"#'  $CFG
+$err = '';
+$r = staxx_exec_start($none, 'a', $err);
+if (staxx_cfg_bool('SHELL_ENABLED')) {
+  ok('SHELL_ENABLED=true lets a request through to the next check',
+     $r === '' && stripos($err, 'turned off') === false, $err);
+} else {
+  ok('SHELL_ENABLED=false refuses, and says so in words',
+     $r === '' && stripos($err, 'turned off') !== false, $err);
+}
+
+// A locked stack, the same fixture shape review.php and the log follower
+// tests above use: a real folder with a compose file and the review-lock
+// marker beside it, never started — the lock refuses before compose or
+// docker is even asked about, so this never reaches exec() either.
+$xLockedRel = 'zzc2xlocked';
+$xLockedDir = $root.'/'.$xLockedRel;
+@exec('rm -rf '.escapeshellarg($xLockedDir));
+mkdir($xLockedDir, 0755, true);
+file_put_contents($xLockedDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+file_put_contents($xLockedDir.'/'.STAXX_REVIEW_FILE, "imported\n");
+
+$err = '';
+$r = staxx_exec_start($xLockedRel, 'a', $err);
+ok('a review-locked stack is refused', $r === '' && stripos($err, 'review') !== false, $err);
+
+// An unlocked stack whose compose file really exists but names no such
+// service — has to get past the review, compose and docker checks to prove
+// the membership rule itself, but a refused service name means
+// staxx_exec_start() returns before ever resolving a container, so nothing
+// here is exec()'d.
+$xPlainRel = 'zzc2xplain';
+$xPlainDir = $root.'/'.$xPlainRel;
+@exec('rm -rf '.escapeshellarg($xPlainDir));
+mkdir($xPlainDir, 0755, true);
+file_put_contents($xPlainDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+
+$err = '';
+$r = staxx_exec_start($xPlainRel, 'nosuchservice', $err);
+ok('a service not in the compose file is refused',
+   $r === '' && stripos($err, 'no service called') !== false, $err);
+
+// The same stack, a real member service, but never started — this is the
+// one case above that goes as far as a real (read-only) `docker ps` and
+// `compose ls`, because there is no way to prove "not running" any earlier.
+// Nothing here starts, stops or execs anything. Skipped when SHELL_ENABLED
+// is off on this box, since the gate above fires first and the point of
+// this case is the *next* refusal down the chain, not that one again.
+if (staxx_cfg_bool('SHELL_ENABLED')) {
+  $err = '';
+  $r = staxx_exec_start($xPlainRel, 'a', $err);
+  ok('a stack whose containers are not running is refused',
+     $r === '' && stripos($err, 'does not appear to be running') !== false, $err);
+}
+
+@exec('rm -rf '.escapeshellarg($xLockedDir));
+@exec('rm -rf '.escapeshellarg($xPlainDir));
+
+/* ------------------------------------------------------- session id shape -- */
+
+$badExecIds = [
+  '15 characters'  => str_repeat('a', 15),
+  '17 characters'  => str_repeat('a', 17),
+  'uppercase hex'  => str_repeat('A', 16),
+  'path traversal' => '../../etc/passwd',
+];
+foreach ($badExecIds as $label => $id) {
+  $err = '';
+  $rw = staxx_exec_write($id, 'x', $err);
+  ok("a malformed session id ($label) is refused by write before any path is built",
+     $rw === false && stripos($err, 'invalid') !== false, $err);
+
+  $rr = staxx_exec_read($id, 0);
+  ok("a malformed session id ($label) is refused by read before any path is built",
+     $rr === ['text' => '', 'offset' => 0, 'alive' => false], json_encode($rr));
+}
+
+$err = '';
+$rw = staxx_exec_write(bin2hex(random_bytes(8)), 'x', $err);
+ok('write refuses an unknown but well-shaped session id',
+   $rw === false && stripos($err, 'ended') !== false, $err);
+
+$rr = staxx_exec_read(bin2hex(random_bytes(8)), 0);
+ok('read refuses an unknown but well-shaped session id the same way',
+   $rr === ['text' => '', 'offset' => 0, 'alive' => false], json_encode($rr));
+
+/* -------------------------------------------------------- the write cap -- */
+
+if (!is_dir(STAXX_EXEC_DIR)) mkdir(STAXX_EXEC_DIR, 0755, true);
+
+$capId  = bin2hex(random_bytes(8));
+$capDir = STAXX_EXEC_DIR.'/'.$capId;
+mkdir($capDir, 0700, true);
+// A plain file stands in for the fifo — fopen()'s append mode does not care
+// which it is, and it is far easier to assert against than a real pipe. No
+// pid file is written, so staxx_exec_alive() reads this session as alive —
+// see its own doc comment for why a missing pid file means "still starting"
+// rather than "gone".
+file_put_contents($capDir.'/fifo', '');
+
+$err = '';
+$rw = staxx_exec_write($capId, str_repeat('x', STAXX_EXEC_WRITE_MAX + 1), $err);
+ok('a write over the cap is refused', $rw === false && stripos($err, 'smaller') !== false, $err);
+ok('...and nothing was written', filesize($capDir.'/fifo') === 0);
+
+/* --------------------------------------------- bytes reach the pipe as-is -- */
+//
+// The one case that matters most: nothing here is ever handed to a shell, so
+// a payload full of shell metacharacters must land byte for byte, proving
+// nothing interpolated it.
+
+$mischief = "hello `whoami` \$(id) ; rm -rf / \n it's \"quoted\"\n";
+$err = '';
+$rw = staxx_exec_write($capId, $mischief, $err);
+ok('a write within the cap succeeds', $rw === true, $err);
+ok('...and the exact bytes reach the pipe, untouched',
+   file_get_contents($capDir.'/fifo') === $mischief);
+
+@exec('rm -rf '.escapeshellarg($capDir));
+
+/* --------------------------------------------------- offset reader (fake) -- */
+
+$fid  = bin2hex(random_bytes(8));
+$fDir = STAXX_EXEC_DIR.'/'.$fid;
+mkdir($fDir, 0700, true);
+$fOut = $fDir.'/out';
+$fHb  = $fDir.'/hb';
+
+file_put_contents($fOut, "line one\n");
+$size1 = filesize($fOut);
+
+$hbBefore = time() - 30; // deliberately stale-ish, so the touch below is provable
+file_put_contents($fHb, (string)$hbBefore);
+
+$fr1 = staxx_exec_read($fid, 0);
+ok('reading from 0 returns everything', $fr1['text'] === "line one\n");
+ok('…and the new offset is the file size', $fr1['offset'] === $size1);
+ok('…and a session with no pid file yet reads as alive', $fr1['alive'] === true);
+
+$hbAfterFirstRead = (int)trim((string)file_get_contents($fHb));
+ok('reading touched the heartbeat', $hbAfterFirstRead > $hbBefore);
+
+$fr2 = staxx_exec_read($fid, $fr1['offset']);
+ok('reading again from that offset returns nothing new',
+   $fr2['text'] === '' && $fr2['offset'] === $size1);
+
+file_put_contents($fOut, " line two\n", FILE_APPEND);
+$size2 = filesize($fOut);
+
+$fr3 = staxx_exec_read($fid, $fr1['offset']);
+ok('reading from the remembered offset returns only the new bytes', $fr3['text'] === " line two\n");
+ok('…with its leading whitespace intact', $fr3['text'][0] === ' ');
+ok('…and the offset now matches the new file size', $fr3['offset'] === $size2);
+
+@exec('rm -rf '.escapeshellarg($fDir));
+
+/* --------------------------------------------------------- staxx_exec_reap -- */
+
+// A "stale" fixture: heartbeat older than STAXX_LOG_STALE, and a pid that is
+// never a real process — /proc/<pid> will not exist for it, so
+// staxx_exec_kill() returns at its very first check and no kill() is ever
+// attempted. This is what makes it safe to reap without going near Docker.
+$staleId  = bin2hex(random_bytes(8));
+$staleDir = STAXX_EXEC_DIR.'/'.$staleId;
+mkdir($staleDir, 0700, true);
+file_put_contents($staleDir.'/out', "old output\n");
+file_put_contents($staleDir.'/pid', '999999999'); // not a real pid on any Linux box
+file_put_contents($staleDir.'/hb',  (string)(time() - STAXX_LOG_STALE - 5));
+
+// A "fresh" fixture, heartbeat well within the stale window, that a reap
+// must leave alone.
+$freshId  = bin2hex(random_bytes(8));
+$freshDir = STAXX_EXEC_DIR.'/'.$freshId;
+mkdir($freshDir, 0700, true);
+file_put_contents($freshDir.'/out', "still going\n");
+file_put_contents($freshDir.'/hb',  (string)time());
+
+staxx_exec_reap();
+
+ok('a stale session\'s whole folder is removed', !is_dir($staleDir));
+ok('a fresh session\'s folder is left alone', is_dir($freshDir));
+ok('…and its heartbeat is left alone', is_file($freshDir.'/hb'));
+
+@exec('rm -rf '.escapeshellarg($staleDir));
+@exec('rm -rf '.escapeshellarg($freshDir));
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);
