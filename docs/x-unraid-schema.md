@@ -265,6 +265,12 @@ focus and move with the arrow keys, and the row that ends up at the top is marke
 order is written back to `ports:` in the compose file, so the choice is visible in the file rather
 than kept in a setting somewhere. A service with no published ports has no web page button.
 
+A container that shares the server's own network, or sits on a macvlan network with its own address
+on the LAN, never gets a port mapping at all — there is nothing to publish, because nothing stands
+between the container and the network. For those, write only the number the application listens on
+inside the container, with no host-side number beside it. StaXX reads that single number and uses it
+as-is, because it is the only number that was ever going to answer.
+
 **Known gap.** `webui` itself cannot be edited in the form — nothing renders any of `x-unraid` as
 form fields yet, which is the piece this whole project is still missing. So a service whose file
 carries no `webui` shows the button greyed out with no way inside the app to give it one; the

@@ -1006,7 +1006,7 @@ function staxx_first_ports(string $yaml): array {
 // key, so a plugin update cannot serve an answer the old parser computed —
 // without this a stale shape would sit there looking valid forever, since
 // nothing else about the compose file need have changed.
-const STAXX_META_VERSION = 1;
+const STAXX_META_VERSION = 2;
 
 /**
  * A hash of everything that can change what compose would report for a
@@ -1078,7 +1078,8 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
  * @return array{ok:bool, error:?string, x:array<string,string>,
  *                services:array<string,array{image:string, container_name:string,
  *                                            x:array<string,string>, fixedIp:string,
- *                                            firstPort:array{target?:string,published?:string}}>}
+ *                                            firstPort:array{target?:string,published?:string},
+ *                                            netMode:string}>}
  */
 function staxx_compose_meta(string $file, ?string &$error = null): array {
   static $cache = [];
@@ -1146,7 +1147,7 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
     $service = $parts[1];
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
-                                      'fixedIp' => '', 'firstPort' => []];
+                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => ''];
     }
 
     if ($parts[2] === 'image' && count($parts) === 3) {
@@ -1164,6 +1165,11 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
       if ($meta['services'][$service]['fixedIp'] === '') {
         $meta['services'][$service]['fixedIp'] = $value;
       }
+    } elseif ($parts[2] === 'network_mode' && count($parts) === 3) {
+      // The file's only word on which kind of network a never-started service
+      // is on — staxx_service_net_kind() falls back to this when there is no
+      // running container to ask instead.
+      $meta['services'][$service]['netMode'] = $value;
     }
   }
 
@@ -1172,7 +1178,7 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
   foreach (staxx_first_ports($yaml) as $service => $port) {
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
-                                      'fixedIp' => '', 'firstPort' => []];
+                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => ''];
     }
     $meta['services'][$service]['firstPort'] = $port;
   }
@@ -1388,6 +1394,51 @@ function staxx_host_ip(): string {
 }
 
 /**
+ * What kind of network a service is reachable on: 'bridge', 'host' or
+ * 'other' (macvlan/ipvlan — a real address of its own, same as host for the
+ * purpose of which port answers).
+ *
+ * Best evidence first. A running container's own driver settles it outright;
+ * failing that, `network_mode` from the compose file is the next best thing;
+ * failing that — a service that has never been started and declares no mode
+ * — bridge, compose's own default. The unknown case always falls to bridge,
+ * never to "other": guessing "other" for what is actually a bridge sends the
+ * link to the container's own port, which is behind a private address nobody
+ * outside the container can reach and so simply does not work.
+ *
+ * Deliberately NOT consulted: the service's own `networks:` list. Resolving
+ * a network name to a driver needs staxx_network_drivers(), which is keyed
+ * by the DOCKER network name — compose prefixes a project name onto
+ * whatever the file calls it, so the file's name is not a safe lookup key.
+ * The browser has the full live list and can do this properly; server-side,
+ * only a container that has actually run can answer, and a macvlan service
+ * that has never started is the one case this leaves imperfect.
+ *
+ * @param array  $service     one entry of staxx_compose_meta()['services']
+ * @param string $liveMode    staxx_container_net()[id]['mode'], or '' when none
+ * @param string $liveDriver  staxx_container_net()[id]['driver'], or '' when none
+ */
+function staxx_service_net_kind(array $service, string $liveMode = '', string $liveDriver = ''): string {
+  if ($liveDriver !== '') {
+    if ($liveDriver === 'host') return 'host';
+    if ($liveDriver === 'macvlan' || $liveDriver === 'ipvlan') return 'other';
+    return 'bridge';
+  }
+
+  if ($liveMode !== '') {
+    if ($liveMode === 'host') return 'host';
+    // A mode this cannot resolve a driver for (a custom network name, most
+    // often) must not be guessed as anything other than bridge — guessing
+    // "other" here would send a working bridge link to the wrong port.
+    return 'bridge';
+  }
+
+  $netMode = (string)($service['netMode'] ?? '');
+  if ($netMode === 'host') return 'host';
+  return 'bridge';   // covers 'none' too — no link either way, so it does not matter
+}
+
+/**
  * The address that opens a service's own web page, or '' when there is none
  * to open.
  *
@@ -1395,18 +1446,46 @@ function staxx_host_ip(): string {
  * `/admin` — but its `[PORT:nnn]` number cannot be trusted: checked against 64
  * real templates it names the host port 10 times, the container port 15
  * times, and neither 3 times. Template authors do not agree with each other,
- * so the number inside the token is ignored outright (see PLAN_39) and StaXX
- * always substitutes the service's own first published port instead.
+ * so the number inside the token is ignored outright and StaXX works out the
+ * address and port itself instead.
  *
- * @param array  $service one entry of staxx_compose_meta()['services']
- * @param string $hostIp  staxx_host_ip()
+ * The address: a running container's own address, but only on a macvlan or
+ * ipvlan network, which is the only case where the container has one worth
+ * having — and only the live container can supply it, since DHCP means the
+ * file may not even mention one. Failing that, the fixed address written into
+ * the file, if any. Failing that, this server's address.
+ *
+ * The port depends on what kind of network answers (see
+ * staxx_service_net_kind()): on a bridge, the server-side port a mapping
+ * publishes — nothing else can work, because the container's own port is
+ * behind a private address nobody outside can reach. On host networking or
+ * macvlan/ipvlan, nothing is published at all, so the container-side port is
+ * the only one that can ever answer. This depends only on the network, never
+ * on whether the service happens to have a fixed address written down.
+ *
+ * @param array  $service    one entry of staxx_compose_meta()['services']
+ * @param string $hostIp     staxx_host_ip()
+ * @param string $liveIp     staxx_container_net()[id]['addresses'][0]['ip'], or '' when none
+ * @param string $liveMode   staxx_container_net()[id]['mode'], or '' when none
+ * @param string $liveDriver staxx_container_net()[id]['driver'], or '' when none
  */
-function staxx_webui_url(array $service, string $hostIp): string {
+function staxx_webui_url(
+  array $service, string $hostIp,
+  string $liveIp = '', string $liveMode = '', string $liveDriver = ''
+): string {
   $raw = trim((string)($service['x']['webui'] ?? ''));
   if ($raw === '') return '';
 
   $fixedIp = (string)($service['fixedIp'] ?? '');
-  $address = $fixedIp !== '' ? $fixedIp : $hostIp;
+  $kind    = staxx_service_net_kind($service, $liveMode, $liveDriver);
+
+  // The live address is only ever worth taking on a network that gives the
+  // container an address of its own. A bridge container's live address is a
+  // published binding, which is this server — and if that binding names one
+  // interface rather than all of them, it can be 127.0.0.1, which would send
+  // the link to a loopback that answers nowhere but the server itself.
+  $address = ($kind === 'other' && $liveIp !== '' && $liveIp !== $hostIp) ? $liveIp
+           : ($fixedIp !== '' ? $fixedIp : $hostIp);
 
   if (strpos($raw, '[IP]') !== false) {
     if ($address === '') return '';
@@ -1415,12 +1494,11 @@ function staxx_webui_url(array $service, string $hostIp): string {
 
   if (strpos($raw, '[PORT:') !== false) {
     $firstPort = $service['firstPort'] ?? [];
-    // A service with its own fixed address publishes nothing to the host —
-    // Docker ignores the host half of the mapping entirely for it — so the
-    // container port is the only one that can ever answer there.
-    $port = $fixedIp !== ''
-      ? (string)($firstPort['target'] ?? '')
-      : (string)($firstPort['published'] ?? '');
+    // Bridge reads the server-side half of the mapping; host and macvlan/ipvlan
+    // publish nothing, so only the container-side half can ever answer there.
+    $port = $kind === 'bridge'
+      ? (string)($firstPort['published'] ?? '')
+      : (string)($firstPort['target'] ?? '');
     if ($port === '') return '';
     $raw = preg_replace('/\[PORT:[^\]]*\]/', $port, $raw);
   }

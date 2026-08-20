@@ -316,6 +316,11 @@ function staxx_stack_children(array $s): array {
     ];
   }
 
+  // Hoisted rather than called per row: it inspects every container on the
+  // server once and is statically cached, so this costs nothing extra — the
+  // ports column elsewhere in this render already forces the same call.
+  $net = staxx_container_net();
+
   foreach ($containers as $c) {
     $service = $c['service'] !== '' ? $c['service'] : $c['name'];
     $key     = $service;
@@ -324,6 +329,12 @@ function staxx_stack_children(array $s): array {
     // otherwise overwrite itself and report one container where there are
     // several. Each gets its own row, told apart by container name.
     if (isset($rows[$key]) && $rows[$key]['exists']) $key = $service.'/'.$c['name'];
+
+    // The list is already sorted with this server's own address first (see
+    // staxx_container_net()), so the first entry is the one worth trying —
+    // taking any other would prefer a macvlan address over one that is
+    // actually reachable from wherever this page is being read.
+    $addr = $net[$c['id']]['addresses'][0]['ip'] ?? '';
 
     $rows[$key] = [
       'key'     => $key,
@@ -334,7 +345,10 @@ function staxx_stack_children(array $s): array {
       // file edited since the container was created says something else.
       'image'   => $c['image'] !== '' ? $c['image'] : (string)($declared[$service]['image'] ?? ''),
       'icon'    => (string)($declared[$service]['x']['icon'] ?? ''),
-      'webui'   => staxx_webui_url($declared[$service] ?? [], $hostIp),
+      'webui'   => staxx_webui_url(
+                     $declared[$service] ?? [], $hostIp,
+                     $addr, (string)($net[$c['id']]['mode'] ?? ''), (string)($net[$c['id']]['driver'] ?? '')
+                   ),
       'state'   => $c['state'],
       'status'  => $c['status'],
       'exists'  => true,

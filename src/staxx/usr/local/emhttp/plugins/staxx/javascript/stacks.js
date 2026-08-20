@@ -1436,6 +1436,7 @@
   // mirrors devPresent's split between a naming list and a presence check.
   var ALL_NETS   = [];      // [name, name] pairs, every server network as-is
   var netPresent = {};      // name -> true
+  var netDriver  = {};      // name -> driver, for working out a service's network kind
 
   // Just the names, for YAML.lint()'s network_mode check. null — not [] —
   // until the server has answered, because "we do not know yet" and "there
@@ -1445,6 +1446,17 @@
     if (!netLoaded) return null;
     var out = [];
     for (var i = 0; i < NETWORKS.length; i++) out.push(NETWORKS[i][0]);
+    return out;
+  }
+
+  // name -> driver for every network this server reports. Same null-until-answered
+  // policy as netNames() above, and for the same reason: "not answered yet" must
+  // never be read as "definitely a macvlan" or every stack would flash the wrong
+  // sentence on the first render after loading.
+  function netDrivers() {
+    if (!netLoaded) return null;
+    var out = {};
+    for (var name in netDriver) if (netDriver.hasOwnProperty(name)) out[name] = netDriver[name];
     return out;
   }
 
@@ -3253,7 +3265,7 @@
     if (!YAML) { formHost.innerHTML = '<p class="staxx-form-empty">The form view could not load.</p>'; return; }
 
     var doc  = YAML.parse(currentText());
-    var form = YAML.buildForm(doc);
+    var form = YAML.buildForm(doc, netDrivers());
     form.doc = doc;
     MODEL = form;
 
@@ -3292,7 +3304,7 @@
 
   function refreshRanges() {
     var doc   = MODEL.doc;
-    var fresh = YAML.buildForm(doc);
+    var fresh = YAML.buildForm(doc, netDrivers());
     fresh.doc = doc;
     MODEL = fresh;
 
@@ -4215,7 +4227,7 @@
     // the file — an empty section is nothing to write down.
     var gk = (f.binder === 'depends' || f.listKey === 'depends_on') ? 'depends'
            : f.listKey ? 'list:' + f.listKey : '';
-    if (SECTIONS_BY_KEY[gk] && fileFlagCounts(YAML.buildForm(MODEL.doc), f.service)[gk] === 0) {
+    if (SECTIONS_BY_KEY[gk] && fileFlagCounts(YAML.buildForm(MODEL.doc, netDrivers()), f.service)[gk] === 0) {
       (sectionOn[f.service] = sectionOn[f.service] || {})[gk] = true;
     }
     structuralEdit(-1, say);
@@ -7973,12 +7985,14 @@
       NETWORKS = [];
       ALL_NETS = [];
       netPresent = {};
+      netDriver = {};
       var nets = res.networks || [];
       for (var n = 0; n < nets.length; n++) {
         var name = nets[n].name, driver = nets[n].driver;
         if (!name) continue;
         ALL_NETS.push([name, name]);
         netPresent[name] = true;
+        netDriver[name] = driver;
         if (known[name]) continue;
         NETWORKS.push([name, name]);
         known[name] = true;
@@ -8238,7 +8252,7 @@
    *
    * Only ever written into an empty note, never over the user's own words. */
   function devNameLine(line, label) {
-    var fresh = YAML.buildForm(MODEL.doc);
+    var fresh = YAML.buildForm(MODEL.doc, netDrivers());
     var id    = YAML.fieldAtLine(fresh, line);
     if (!id) return;
 

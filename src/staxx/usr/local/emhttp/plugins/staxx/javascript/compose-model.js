@@ -891,6 +891,9 @@
         key: portKey(bits[0] + proto),
         host: hostPart1, container: containerPart1, proto: protoPart1,
         parts: { host: hostPart1, container: containerPart1, proto: protoPart1 },
+        // Matched by its exact text in buildForm's network-kind pass, which
+        // clears it on a host or macvlan service where it is untrue. Reword
+        // it there too.
         hostNote: 'compose picks the host port for this one'
       };
     }
@@ -1149,6 +1152,8 @@
           proto:     part(proto ? proto.value : '', proto ? scalarSpot(proto) : null)
         },
         range: range, comment: note.comment, commentSpot: note.spot,
+        // Matched by its exact text in buildForm's network-kind pass — see
+        // the note beside the short-form wording above.
         lockReason: pub ? '' : 'no host port is set here',
         listKey: listKey
       });
@@ -2360,7 +2365,33 @@
     return fields;
   }
 
-  function buildForm(doc) {
+  // The driver behind one network name, for working out a service's network
+  // kind (see the buildForm post-pass below). A network this file declares
+  // itself always wins — its own driver line is the truth regardless of what
+  // this server happens to be running today. EXTERNAL_CHOICE means the
+  // declaration only says "this exists elsewhere", so it tells us nothing and
+  // falls through to what the server actually reports. Returns null, not '',
+  // when nothing resolves it at all, so the caller can tell "definitely not
+  // macvlan/ipvlan" from "no idea".
+  function resolveNetDriver(out, name, netDrivers) {
+    for (var i = 0; i < out.fields.length; i++) {
+      var f = out.fields[i];
+      if (f.binder === 'declared' && f.declKind === 'networks' && f.target === 'networks.' + name) {
+        var v = f.parts.value ? f.parts.value.value : '';
+        if (v !== EXTERNAL_CHOICE) return v || '';
+        break;
+      }
+    }
+    if (netDrivers && netDrivers.hasOwnProperty(name)) return netDrivers[name];
+    return null;
+  }
+
+  // netDrivers: name -> driver for this server's own docker networks, from
+  // stacks.js's netDrivers() — null/omitted means "not answered yet", which
+  // this treats exactly like "no networks", so every one of the ~25 existing
+  // callers (and tests/yaml_roundtrip.js) that omit it keep seeing bridge
+  // everywhere, unchanged.
+  function buildForm(doc, netDrivers) {
     // `declared` is seeded here rather than where it is filled in, because both
     // early returns below happen first — a caller reading declared.networks on
     // an unreadable file must find an empty list, not undefined.
@@ -2497,6 +2528,77 @@
         // (see declareNetwork()) — volumes/secrets/configs/services have no
         // such single obvious fix, so they keep the plain sentence.
         if (f.from === 'networks') f.declareMissing = val;
+      }
+    }
+
+    // PLAN_49: the kind of network each service is actually on — host,
+    // something addressed on its own (macvlan/ipvlan), or bridge. Read ONLY
+    // by the port-row sentences just below and by newEntry()'s Add button;
+    // never by boxHtml()'s greying, which stays driven purely by whether the
+    // file has somewhere to write a value. Bridge is what every unresolved
+    // case becomes, on purpose — guessing "other" from missing information
+    // would show the wrong sentence on every stack for the moment before the
+    // network list arrives.
+    var netKindOf = {};
+    for (var ski = 0; ski < out.services.length; ski++) {
+      var skName = out.services[ski].name;
+      var skKind = 'bridge';
+
+      var modeVal = '';
+      for (var mfi = 0; mfi < out.fields.length; mfi++) {
+        var mf = out.fields[mfi];
+        if (mf.service === skName && mf.binder === 'setting' && mf.target === 'network_mode') {
+          modeVal = mf.parts.value ? String(mf.parts.value.value).trim() : '';
+          break;
+        }
+      }
+
+      if (modeVal === 'host' || modeVal.indexOf('container:') === 0 || modeVal.indexOf('service:') === 0) {
+        skKind = 'host';
+      } else {
+        for (var nfi = 0; nfi < out.fields.length; nfi++) {
+          var nf = out.fields[nfi];
+          if (nf.service !== skName || nf.binder !== 'list' || nf.listKey !== 'networks') continue;
+          var attachedName = nf.parts.value ? nf.parts.value.value : '';
+          if (!attachedName) continue;
+          var attachedDriver = resolveNetDriver(out, attachedName, netDrivers);
+          if (attachedDriver === 'macvlan' || attachedDriver === 'ipvlan') { skKind = 'other'; break; }
+        }
+      }
+
+      netKindOf[skName] = skKind;
+      out.services[ski].netKind = skKind;
+    }
+
+    // The sentence under a port row on a host/macvlan/ipvlan service. Written
+    // as advice, not lockReason: advice is rebuilt by refreshRanges() on every
+    // commit, so a live edit to network_mode updates the sentence at once,
+    // where a lockReason (stamped once here) would go stale until the next
+    // full reparse. The old lockReason describes a bridge container and is
+    // simply wrong on these two kinds, so it is cleared here too — otherwise
+    // the row would show its false line AND the true one together.
+    for (var pfi = 0; pfi < out.fields.length; pfi++) {
+      var pf = out.fields[pfi];
+      if (pf.binder !== 'port') continue;
+      pf.netKind = netKindOf[pf.service] || 'bridge';
+      if (pf.netKind !== 'host' && pf.netKind !== 'other') continue;
+
+      if (pf.lockReason === 'compose picks the host port for this one' ||
+          pf.lockReason === 'no host port is set here') {
+        pf.lockReason = '';
+      }
+
+      var pfHost = pf.parts.host ? pf.parts.host.value : '';
+      var pfContainer = pf.parts.container ? pf.parts.container.value : '';
+
+      if (pfHost && pfContainer) {
+        pf.advice.push(pf.netKind === 'host'
+          ? 'This container shares the server\'s network, so the outer number here is ignored — the port inside the container is the one the web button opens.'
+          : 'This container has its own address, so the outer number here is ignored — the port inside the container is the one the web button opens.');
+      } else {
+        pf.advice.push(pf.netKind === 'host'
+          ? 'This container shares the server\'s network, so the port inside the container is the port on the server.'
+          : 'This container has its own address, so only the port inside the container matters.');
       }
     }
 
@@ -2970,7 +3072,7 @@
   // produce a path to hardware that does not exist. Whether it duplicates
   // something already in the file is the caller's question, since only the
   // caller knows what to say about it.
-  function newEntry(binder, taken, service, shape, value, listKey, declared) {
+  function newEntry(binder, taken, service, shape, value, listKey, declared, netKind) {
     if (typeof value === 'string' && value !== '') return value;
 
     if (binder === 'port') {
@@ -2979,6 +3081,14 @@
       // Always quoted. Unquoted, YAML 1.1 reads 22:22 as a sexagesimal number
       // and compose is handed 1342 — the classic way a hand-written compose
       // file goes wrong, and not one to reintroduce from this side.
+      //
+      // On a CONFIRMED host/macvlan/ipvlan service (PLAN_49) there is nowhere
+      // for a mapping to go — nothing is mapped on those networks — so a
+      // single container-side number is written instead. Gated on a confirmed
+      // kind only: while the network list has not answered yet, every service
+      // reads as 'bridge' (see buildForm's post-pass) and this keeps writing
+      // today's two-sided shape.
+      if (netKind === 'host' || netKind === 'other') return '"' + n + '"';
       return '"' + n + ':' + n + '"';
     }
     if (binder === 'volume') {
@@ -3068,6 +3178,14 @@
     var spec = KEYS[key] || {};
     var declared = spec.from ? form.declared[spec.from] : null;
 
+    // Read off the model rather than adding a new parameter to every DOM-side
+    // caller — buildForm() already worked this out and stamped it on the
+    // service (PLAN_49). Only newEntry()'s port branch looks at it.
+    var netKind = 'bridge';
+    for (var si = 0; si < form.services.length; si++) {
+      if (form.services[si].name === service) { netKind = form.services[si].netKind || 'bridge'; break; }
+    }
+
     var taken = [], i;
     for (i = 0; i < form.fields.length; i++) {
       var ff = form.fields[i];
@@ -3095,19 +3213,19 @@
         gap = pad(Math.max(1, last.contentCol - last.indent - 1));
       }
       splice(doc, v.end, 0,
-             [pad(v.indent) + '-' + gap + newEntry(binder, taken, service, 'seq', value, key, declared)]);
+             [pad(v.indent) + '-' + gap + newEntry(binder, taken, service, 'seq', value, key, declared, netKind)]);
       return v.end;
     }
 
     if (v && v.kind === 'map') {
-      splice(doc, v.end, 0, [pad(v.indent) + newEntry(binder, taken, service, 'map', value, key, declared)]);
+      splice(doc, v.end, 0, [pad(v.indent) + newEntry(binder, taken, service, 'map', value, key, declared, netKind)]);
       return v.end;
     }
 
     if (pair) {                       // "ports:" with nothing under it
       var at = pair.end;
       splice(doc, at, 0,
-             [pad(pair.indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared)]);
+             [pad(pair.indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared, netKind)]);
       return at;
     }
 
@@ -3136,8 +3254,8 @@
 
     lines.push(pad(indent) + key + ':');
     lines.push(binder === 'env' || binder === 'label'
-      ? pad(indent + 2) + newEntry(binder, taken, service, 'map', value, key, declared)
-      : pad(indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared));
+      ? pad(indent + 2) + newEntry(binder, taken, service, 'map', value, key, declared, netKind)
+      : pad(indent + 2) + '- ' + newEntry(binder, taken, service, 'seq', value, key, declared, netKind));
 
     splice(doc, to, 0, lines);
     return to + lines.length - 1;

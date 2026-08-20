@@ -71,7 +71,7 @@
         "overview": { "type": "string", "description": "Markdown." },
         "webui": {
           "type": "string",
-          "description": "Link to the container's web interface. Supports Unraid's [IP] and [PORT:nnnn] substitution; [PORT:nnnn] resolves the HOST port currently mapped to container port nnnn, so the link survives a port change."
+          "description": "Link to the container's web interface. Supports Unraid's [IP] and [PORT:nnnn] substitution; the number written inside [PORT:nnnn] is not read. StaXX always substitutes the service's first port entry instead, taking whichever side of it actually answers: the host-facing side on a bridge network, or the container's own side on host networking or macvlan/ipvlan, where nothing is published."
         },
         "display": {
           "$ref": "#/$defs/display",
