@@ -238,8 +238,10 @@ only the filename changes, and the review note says so.
 
 ## Phases
 
-**0. Not this plan: archiving instead of deleting.** Written and built first, as a separate plan.
-This plan assumes it exists only in that the override is one of the stack's own files.
+**0. Not this plan: archiving instead of deleting. — DONE 2026-08-20**, as
+`completed-plans/PLAN_47.md`. It archives the whole stack folder at disk level, which means the
+override needs no special handling here at all: it is simply one of the files in the folder. The
+shared "which files belong to a stack" list this plan once needed is therefore no longer needed.
 
 **1. Prove the project name. — DONE 2026-08-19.** See the measurements above: names match only after
 hyphens become underscores, and Docker records both paths of a pair.

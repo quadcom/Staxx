@@ -1,13 +1,27 @@
 <?php
 /* The companion-file helpers, checked against the real installed Stacks.php.
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine:
+ * Runs ON THE SERVER — there is no PHP on the dev machine. The archive cases
+ * near the end need ARCHIVE_ROOT pointed at /tmp/b1-archives, or the archives
+ * would land wherever the box's real appdata is — the caller sets that and
+ * puts the config back, the same way tests/server/links.php does for
+ * STACK_ROOT:
  *
  *     pscp tests/server/files.php root@<box>:/tmp/
- *     plink … "php /tmp/files.php"
+ *     plink … '
+ *       CFG=/boot/config/plugins/staxx/staxx.cfg
+ *       cp $CFG /tmp/cfg.bak
+ *       grep -q "^ARCHIVE_ROOT=" $CFG \
+ *         && sed -i "s#^ARCHIVE_ROOT=.*#ARCHIVE_ROOT=\"/tmp/b1-archives\"#" $CFG \
+ *         || echo "ARCHIVE_ROOT=\"/tmp/b1-archives\"" >> $CFG
+ *       php /tmp/files.php; RC=$?
+ *       cp /tmp/cfg.bak $CFG
+ *       exit $RC
+ *     '
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
- * removes its own stack, "zzb1test", under whatever the stack root is. */
+ * removes its own stacks, "zzb1test" and a handful of "zz…" siblings, under
+ * whatever the stack root is. */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
@@ -131,16 +145,142 @@ foreach ((array)$extras as $e) {
 }
 ok('extras refuses a missing stack', staxx_stack_extras('nosuchstack', $err) === null, $err);
 
-/* -------------------------------------------------------------- delete -- */
+/* -------------------------------------------------------------- archive -- */
+// $rel/$dir here are still "zzb1test" from the top of the file, which by now
+// holds extras (.env, lf.env, cert2.der, huge.bin) and the "sub" subfolder
+// from the tests above — exactly the "extras plus a subfolder" shape the
+// first case needs, so there is no reason to build a second fixture for it.
 
-ok('unconfirmed delete refuses', !staxx_delete_stack($rel, $err, false), $err);
-ok('and says what is in the way', strpos($err, 'also contains') !== false, $err);
-ok('nothing was removed', is_dir($dir) && file_exists($dir.'/sub/one.txt'));
+$archiveRoot = staxx_archive_root();
+if ($archiveRoot !== '/tmp/b1-archives') {
+  echo "FAIL   the temporary archive root is not in place (got $archiveRoot)\n";
+  exit(1);
+}
+@exec('rm -rf '.escapeshellarg($archiveRoot));
+mkdir($archiveRoot, 0755, true);
 
-ok('confirmed delete removes the lot', staxx_delete_stack($rel, $err, true), $err);
+$archive = null;
+ok('unconfirmed archive refuses', !staxx_archive_stack($rel, $err, false, $archive), $err);
+ok('and leaves no error text — the endpoint asks the question', $err === '');
+ok('nothing was touched', is_dir($dir) && file_exists($dir.'/sub/one.txt'));
+
+// A pending handover is refused before anything is stopped or zipped, even
+// once confirmed — stranding that set-aside container would leave nothing
+// able to say what it was called or how to put it back.
+$hRel = 'zzhandover';
+$hDir = $root.'/'.$hRel;
+@exec('rm -rf '.escapeshellarg($hDir));
+mkdir($hDir, 0755, true);
+file_put_contents($hDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+file_put_contents($hDir.'/HANDOVER.md', 'waiting for an answer');
+$hArchive = null;
+ok('a pending handover refuses the archive',
+   !staxx_archive_stack($hRel, $err, true, $hArchive), $err);
+ok('and says why', strpos($err, 'set aside') !== false, $err);
+ok('nothing was stopped or zipped', is_dir($hDir) && file_exists($hDir.'/HANDOVER.md'));
+ok('and nothing landed in the archive folder', count(glob($archiveRoot.'/*.zip')) === 0);
+@exec('rm -rf '.escapeshellarg($hDir));
+
+// The confirmed archive: extras and the subfolder all end up in the zip,
+// under the stack's own folder name — and the folder itself is gone after.
+ok('confirmed archive succeeds', staxx_archive_stack($rel, $err, true, $archive), $err);
 ok('the stack folder is gone', !is_dir($dir));
+ok('$archive names a file that exists', is_string($archive) && is_file($archive));
+ok('it landed in the archive folder', dirname($archive) === $archiveRoot);
 
-@exec('rm -rf '.escapeshellarg($dir));
+$listing = staxx_sh('unzip -l '.escapeshellarg($archive));
+foreach (['zzb1test/compose.yaml', 'zzb1test/.env', 'zzb1test/lf.env',
+          'zzb1test/cert2.der', 'zzb1test/huge.bin', 'zzb1test/sub/one.txt'] as $want) {
+  ok('zip lists '.$want, strpos($listing, $want) !== false);
+}
+
+/* Two stacks with the same leaf name in different folders must not collide —
+ * the "/" in a stack's path becomes "-" in the archive name, so their
+ * archives differ even though both stacks are called "zzleaf". */
+
+foreach (['zzarcA', 'zzarcB'] as $folder) {
+  $d = $root.'/'.$folder.'/zzleaf';
+  @exec('rm -rf '.escapeshellarg($root.'/'.$folder));
+  mkdir($d, 0755, true);
+  file_put_contents($d.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+}
+$archiveA = null; $archiveB = null;
+ok('folder A\'s zzleaf archives', staxx_archive_stack('zzarcA/zzleaf', $err, true, $archiveA), $err);
+ok('folder B\'s zzleaf archives', staxx_archive_stack('zzarcB/zzleaf', $err, true, $archiveB), $err);
+ok('the two archives have different names', $archiveA !== $archiveB);
+ok('both files exist', is_file($archiveA) && is_file($archiveB));
+ok('both stack folders are gone',
+   !is_dir($root.'/zzarcA/zzleaf') && !is_dir($root.'/zzarcB/zzleaf'));
+@exec('rm -rf '.escapeshellarg($root.'/zzarcA').' '.escapeshellarg($root.'/zzarcB'));
+
+/* A name collision within the same second bumps to "-2" rather than
+ * overwriting — forced by pre-creating the exact name the archive would
+ * otherwise get. */
+
+$collRel = 'zzcoll';
+$collDir = $root.'/'.$collRel;
+@exec('rm -rf '.escapeshellarg($collDir));
+mkdir($collDir, 0755, true);
+file_put_contents($collDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+
+$claimed = $archiveRoot.'/'.staxx_archive_name($collRel);
+file_put_contents($claimed, 'not a real archive — just claiming the name');
+
+$collArchive = null;
+ok('archiving onto a claimed name still succeeds',
+   staxx_archive_stack($collRel, $err, true, $collArchive), $err);
+ok('it did not overwrite the claimed name',
+   file_get_contents($claimed) === 'not a real archive — just claiming the name');
+// Asserted as "not the claimed name" rather than "-2" outright: if the run
+// crosses a second boundary between claiming the name and archiving, the
+// timestamp differs and no bump is needed. Either way it must not be the
+// file already sitting there.
+ok('it did not reuse the claimed name', $collArchive !== $claimed);
+if (basename($collArchive) !== basename($claimed)
+    && strpos(basename($collArchive), substr(basename($claimed), 0, -4)) === 0) {
+  ok('it bumped to -2 instead', substr($collArchive, -6) === '-2.zip');
+}
+ok('the stack folder is gone', !is_dir($collDir));
+
+/* An archive folder that cannot even be created refuses, leaving the stack
+ * exactly as it was. staxx_archive_root() is fixed to /tmp/b1-archives for
+ * this whole run (see the header), so the folder itself is swapped out for a
+ * plain file to make that path uncreatable, then put back afterwards. */
+
+$unwriteRel = 'zzunwrite';
+$unwriteDir = $root.'/'.$unwriteRel;
+@exec('rm -rf '.escapeshellarg($unwriteDir));
+mkdir($unwriteDir, 0755, true);
+file_put_contents($unwriteDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+file_put_contents($unwriteDir.'/.env', 'A=1');
+
+// Renamed aside rather than deleted — the earlier archives already written
+// this run (archiveA, archiveB, collArchive…) must still be there afterwards
+// for the archive-list check below.
+rename($archiveRoot, $archiveRoot.'.bak');
+file_put_contents($archiveRoot, 'a file sitting where the archive folder should be');
+
+$unwriteArchive = null;
+ok('an uncreatable archive folder refuses',
+   !staxx_archive_stack($unwriteRel, $err, true, $unwriteArchive), $err);
+ok('and says so', $err !== '');
+ok('the stack folder is untouched',
+   is_dir($unwriteDir) && file_exists($unwriteDir.'/.env') && file_exists($unwriteDir.'/compose.yaml'));
+
+@unlink($archiveRoot);
+rename($archiveRoot.'.bak', $archiveRoot);
+@exec('rm -rf '.escapeshellarg($unwriteDir));
+
+/* -------------------------------------------------------------- archive-list -- */
+
+$list = staxx_archive_list();
+ok('archive-list returns an array', is_array($list));
+$names = array_column($list, 'name');
+ok('it only lists zips', count(array_filter($names, fn($n) => !str_ends_with($n, '.zip'))) === 0);
+ok('it includes what this run wrote', in_array(basename($archiveA), $names, true));
+ok('newest first', ($list[0]['mtime'] ?? 0) >= ($list[count($list) - 1]['mtime'] ?? PHP_INT_MAX));
+
+@exec('rm -rf '.escapeshellarg($dir).' '.escapeshellarg($archiveRoot));
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

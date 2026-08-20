@@ -86,9 +86,9 @@
   var pickerMsg   = document.getElementById('staxx-picker-msg');
   var pickerNew   = document.getElementById('staxx-picker-newname');
 
-  // The delete confirmation. May be null while the markup has not landed yet
+  // The removal confirmation. May be null while the markup has not landed yet
   // on a stale page — guarded the same way suggestBox and findBar are above;
-  // deleteStack() falls back to window.confirm() when it is missing.
+  // removeStack() falls back to window.confirm() when it is missing.
   var confirmModal  = document.getElementById('staxx-confirm');
   var confirmTitle  = document.getElementById('staxx-confirm-title');
   var confirmBody   = document.getElementById('staxx-confirm-body');
@@ -11123,10 +11123,11 @@
     });
   }
 
-  // One row of the delete confirmation's file list: a plain file shows its
+  // One row of the removal confirmation's file list: a plain file shows its
   // size, a subdirectory shows how many entries it holds one level down, and
-  // a symlink is called out on its own — staxx_rmtree() unlinks a symlink
-  // rather than following it, so whatever one points at is never touched.
+  // a symlink is called out on its own — the archive stores a symlink as a
+  // link rather than following it, so whatever one points at is never
+  // touched, packed into the zip, or removed.
   //
   // bytes() is the stats table's formatter, declared further down and reached
   // by hoisting. A second one here would shadow it for the whole IIFE and
@@ -11172,11 +11173,12 @@
   // false (Cancel, Escape, a backdrop click, or the dialog closing any other
   // way). Callable again while the dialog is already open — it updates the
   // title, body and button label in place rather than closing and
-  // reopening — so a multi-stage question (deleteStack()'s needsConfirm flow
-  // below) can grow the same dialog instead of flickering through a second
-  // one. Leaves confirmMsg alone: that is a status line for the request a
-  // question leads to, not part of the question itself, and clearing it here
-  // would erase an error the moment a caller re-asks to offer a retry.
+  // reopening — so removeStack() below can re-ask after a failed attempt, or
+  // turn the same dialog into "Removed" once one has succeeded, without ever
+  // flickering through a second one. Leaves confirmMsg alone: that is a
+  // status line for the request a question leads to, not part of the question
+  // itself, and clearing it here would erase an error the moment a caller
+  // re-asks to offer a retry.
   function askConfirm(opts) {
     confirmSetBusy(false);
     confirmTitle.textContent = opts.title;
@@ -11226,37 +11228,41 @@
     });
   }
 
-  // Stage one's body: the same warning window.confirm() used to show, as
-  // paragraphs instead of a string with blank lines baked into it.
-  function confirmStageOneHtml(name, label) {
-    var where = label === name ? '' : ' Its folder, "' + name + '", goes with it.';
-    return '<p>Its containers are stopped and removed, and the compose file is deleted.' + where + '</p>' +
-           '<p>Data stored outside the stack folder is left alone.</p>';
+  // The one dialog's body. Nothing is destroyed any more, so there is no
+  // escalating second step — just what is about to happen, spelt out, plus
+  // the file list once the server has answered with one (entries is null
+  // until then). where's wording matches the old delete warning's reason for
+  // naming the folder: the label on screen is a container's name, not the
+  // folder's, so a message about the folder has to say so or it names
+  // something the person cannot see anywhere on the page.
+  function confirmRemoveHtml(name, label, dir, entries) {
+    var where = label === name ? '' : ' Its folder, "' + name + '", is what leaves the stacks list.';
+    var html = '<p>Its containers are stopped and removed.' + where + '</p>' +
+      '<p>Nothing is deleted: the whole folder is zipped up and kept in <code>' + esc(dir) +
+      '</code>, named after the stack and the time it was archived.</p>' +
+      '<p>The container’s own data in appdata is not part of the stack folder, so it is ' +
+      'untouched and stays exactly where it is.</p>';
+    if (entries && entries.length) {
+      html += '<p>Everything below is kept in the zip:</p>' +
+        '<ul class="staxx-confirm-list">' + entries.map(extraLine).join('') + '</ul>';
+    }
+    return html;
   }
 
-  // Stage two's addendum: the folder held more than the compose file, so
-  // the dialog grows in place — naming what else would go with it — rather
-  // than the person finding out only after they have already clicked
-  // through.
-  function confirmStageTwoHtml(entries) {
-    return '<p>This folder also holds files that are not part of the compose file. ' +
-           'Deleting the stack deletes these too:</p>' +
-           '<ul class="staxx-confirm-list">' + entries.map(extraLine).join('') + '</ul>';
-  }
-
-  function deleteStack(name, label) {
+  function removeStack(name, label) {
     if (!confirmModal) {
-      // Markup from before this dialog existed. Same wording as stage one,
-      // so deleting still works rather than silently doing nothing.
-      var where = label === name ? '' : ' Its folder, "' + name + '", goes with it.';
+      // Markup from before this dialog existed. It has no plan to list, so
+      // it just states what removal now does before asking once.
+      var where = label === name ? '' : ' Its folder, "' + name + '", is what leaves the stacks list.';
       if (!window.confirm(
-            'Delete "' + label + '"?\n\n' +
-            'Its containers are stopped and removed, and the compose file is deleted.' + where + '\n\n' +
-            'Data stored outside the stack folder is left alone.')) {
+            'Remove "' + label + '"?\n\n' +
+            'Its containers are stopped and removed.' + where + '\n\n' +
+            'Nothing is deleted — the whole folder is zipped up and kept for you.\n\n' +
+            'The container’s own data in appdata is untouched.')) {
         return;
       }
-      call('delete', { name: name }).then(function (res) {
-        if (!res.ok) { failed('Could not delete ' + label, res.error); return; }
+      call('archive', { name: name, confirm: '1' }, 120000).then(function (res) {
+        if (!res.ok) { failed('Could not remove ' + label, res.error); return; }
         var row = rowFor(name);
         if (row) row.classList.add('staxx-row--leave');
         setTimeout(refreshRows, 140);
@@ -11266,44 +11272,60 @@
 
     confirmMsg.textContent = '';
 
-    // Asks one question, then either finishes or asks again in place: a
-    // plain failure re-asks the same question so Go still works as a retry,
-    // and needsConfirm re-asks with the dialog grown into stage two — both
-    // without ever closing and reopening it.
-    function step(fields, bodyHtml, goLabel) {
-      askConfirm({ title: 'Delete "' + label + '"?', bodyHtml: bodyHtml, goLabel: goLabel })
-        .then(function (go) {
-          if (!go) return;
-          confirmSetBusy(true);
-          confirmMsg.textContent = '';
+    call('archive', { name: name }).then(function (plan) {
+      if (!plan.ok && !plan.needsConfirm) {
+        failed('Could not remove ' + label, plan.error);
+        return;
+      }
 
-          call('delete', fields).then(function (res) {
-            confirmSetBusy(false);
+      var dir = plan.dir || '';
+      var entries = plan.entries || [];
+      var bodyHtml = confirmRemoveHtml(name, label, dir, entries);
 
-            if (res.ok) {
-              closeConfirm();
+      // Asks the one question, retrying in place on a failure so Go still
+      // works as a retry — the same shape the old two-stage delete used,
+      // just with nothing left to escalate to.
+      function ask() {
+        askConfirm({ title: 'Remove "' + label + '"?', bodyHtml: bodyHtml, goLabel: 'Remove and archive' })
+          .then(function (go) {
+            if (!go) return;
+            confirmSetBusy(true);
+            confirmMsg.textContent = '';
+
+            // Generous timeout: the containers are stopped synchronously
+            // before anything is zipped, and that alone can take up to the
+            // two minutes staxx_sh() itself allows any single command.
+            call('archive', { name: name, confirm: '1' }, 120000).then(function (res) {
+              confirmSetBusy(false);
+
+              if (!res.ok) {
+                confirmMsg.textContent = res.error || ('Could not remove ' + label + '.');
+                ask();
+                return;
+              }
+
               // Fade the row before the table re-renders wholesale, rather
               // than having it just vanish when the replacement HTML
               // arrives without it.
               var row = rowFor(name);
               if (row) row.classList.add('staxx-row--leave');
               setTimeout(refreshRows, 140);
-              return;
-            }
 
-            if (res.needsConfirm) {
-              step({ name: name, confirm: '1' }, bodyHtml + confirmStageTwoHtml(res.entries || []),
-                   'Delete everything');
-              return;
-            }
-
-            confirmMsg.textContent = res.error || ('Could not delete ' + label + '.');
-            step(fields, bodyHtml, goLabel);
+              // The dialog stays open rather than closing: there is nothing
+              // left to confirm, but naming where the archive landed is
+              // worth a beat before Done is the only thing left to press.
+              askConfirm({
+                title: 'Removed "' + label + '"',
+                bodyHtml: '<p>Its folder is now kept as <code>' + esc(res.archive) + '</code>.</p>' +
+                  '<p>Unzipping it back into the stacks folder puts the stack back.</p>',
+                goLabel: 'Done'
+              }).then(function () { closeConfirm(); });
+            });
           });
-        });
-    }
+      }
 
-    step({ name: name }, confirmStageOneHtml(name, label), 'Delete stack');
+      ask();
+    });
   }
 
   // Unlocking is just deleting the lock file — the same companion-file
@@ -11557,6 +11579,13 @@
             'the array is up.'
     },
     {
+      key: 'ARCHIVE_ROOT', control: 'path', label: 'Archive folder',
+      help: 'Removing a stack never deletes it — its whole folder is zipped up and kept here ' +
+            'instead. It must not be inside the stack directory above, or the zip itself would be ' +
+            'read back as a stack. Flash is a poor place for a growing pile of zip files, which is ' +
+            'why this defaults to a folder under appdata.'
+    },
+    {
       key: 'TAKEOVER_DOCKER_TAB', control: 'choice', label: 'Docker menu',
       choices: [
         ['false', 'Leave the Docker menu alone'],
@@ -11649,6 +11678,35 @@
     return el ? el.value : '';
   }
 
+  // One row of the archived-stacks list: name, when it was written, and its
+  // size — the same shape extraLine() gives the removal dialog's file list,
+  // reusing its markup class rather than inventing a second one.
+  function archiveFileLine(f) {
+    var when = new Date(f.mtime * 1000).toLocaleString();
+    return '<li><code>' + esc(f.name) + '</code><span class="staxx-confirm-meta">' +
+           esc(when) + ' — ' + bytes(f.size) + '</span></li>';
+  }
+
+  // A read-only view of what removeStack() has archived so far. Fetched
+  // fresh every time the panel opens, alongside the settings themselves —
+  // there is nothing to save here, only to show, so it hangs below the
+  // rows rather than being one of them. Hidden until it has something
+  // definite to say: a failed fetch simply leaves it out, never the panel.
+  function loadArchiveList() {
+    var box = document.getElementById('staxx-archive-list');
+    if (!box) return;
+    call('archive-list', {}).then(function (res) {
+      if (!res.ok) return;
+      box.hidden = false;
+      var hint = document.getElementById('staxx-archive-hint');
+      if (hint) hint.textContent = 'Kept in ' + res.dir + '.';
+      var list = document.getElementById('staxx-archive-files');
+      if (!list) return;
+      list.innerHTML = res.files.length ? res.files.map(archiveFileLine).join('') :
+        '<li>Nothing has been archived yet.</li>';
+    });
+  }
+
   function settingsDirty() {
     if (!settingsOpenValues) return false;
     return SETTINGS_ROWS.some(function (row) {
@@ -11672,7 +11730,16 @@
       settingsMsg.classList.remove('staxx-settings-msg--bad');
       settingsBody.innerHTML = SETTINGS_ROWS.map(function (row) {
         return settingsFieldHtml(row, res.settings[row.key] || '');
-      }).join('');
+      }).join('') +
+        // Hidden until loadArchiveList() below hears back with something
+        // definite to show — a folder holding nothing archived yet still
+        // shows the folder, but a failed fetch must not leave a half-drawn
+        // section sitting under the settings rows.
+        '<div class="staxx-field" id="staxx-archive-list" hidden>' +
+          '<span>Archived stacks</span>' +
+          '<span class="staxx-hint" id="staxx-archive-hint"></span>' +
+          '<ul class="staxx-confirm-list" id="staxx-archive-files"></ul>' +
+        '</div>';
       settingsSave.disabled = true;
       settingsModal.showModal();
       // Explicit, and after showModal(), for the same reason every dialog in
@@ -11680,12 +11747,13 @@
       // descendant" choice is never where anyone wants to land.
       var first = document.getElementById(SETTINGS_ROWS[0].id);
       if (first) first.focus({ preventScroll: true });
+      loadArchiveList();
     });
   }
 
   // Closing with something unsaved asks first, through the project's own
   // yes/no dialog rather than window.confirm() — askConfirm() is guarded the
-  // same way deleteStack() guards it, falling back to window.confirm() on a
+  // same way removeStack() guards it, falling back to window.confirm() on a
   // stale page with no #staxx-confirm markup.
   function closeSettingsAsk() {
     if (!settingsModal || !settingsModal.open || settingsBusy) return;
@@ -12070,7 +12138,7 @@
     addBootWaitField(d, 'stack', name);
 
     menuSeparator();
-    menuItem('Delete stack', 'trash-o', function () { deleteStack(name, label); }, { danger: true });
+    menuItem('Remove stack', 'trash-o', function () { removeStack(name, label); }, { danger: true });
   }
 
   /* The container menu takes the trigger ELEMENT, not just its dataset, the

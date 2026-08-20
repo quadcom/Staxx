@@ -14,6 +14,8 @@
 ?>
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+// For staxx_stack_root(), which the ARCHIVE_ROOT validator checks against.
+require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
 if (defined('STAXX_SETTINGS_LOADED')) return;
 define('STAXX_SETTINGS_LOADED', true);
@@ -25,7 +27,9 @@ define('STAXX_SETTINGS_LOADED', true);
  * `choices` is absent for a path, since a path's range is not a fixed list.
  * Keep the defaults here matching default.cfg — they are not read from that
  * file, because the whole point is a value the browser can trust even if a
- * user's cfg predates a key or default.cfg itself failed to parse.
+ * user's cfg predates a key or default.cfg itself failed to parse. The one
+ * exception is ARCHIVE_ROOT: its default is computed, not a literal, because
+ * the right answer depends on where this box's appdata actually lives.
  *
  * @return array<string, array{type:string, default:string, choices?:string[]}>
  */
@@ -34,6 +38,7 @@ function staxx_settings_keys(): array {
     'HEADER_MENU'         => ['type' => 'choice', 'default' => 'false', 'choices' => ['false', 'true']],
     'TAKEOVER_DOCKER_TAB' => ['type' => 'choice', 'default' => 'false', 'choices' => ['false', 'true']],
     'STACK_ROOT'          => ['type' => 'path',   'default' => '/boot/config/plugins/staxx/stacks'],
+    'ARCHIVE_ROOT'        => ['type' => 'path',   'default' => staxx_archive_root()],
     'ICON_FETCH'          => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     'IMAGE_LOOKUP'        => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
   ];
@@ -63,7 +68,10 @@ function staxx_settings_char_rule(string $key): string {
 }
 
 /**
- * Is this STACK_ROOT acceptable, and if so what should actually be stored?
+ * Is this path setting acceptable, and if so what should actually be stored?
+ * Shared by STACK_ROOT and ARCHIVE_ROOT — the rules are identical bar one
+ * extra check that only makes sense for the archive folder (below), and the
+ * wording, which names the field in plain words rather than its cfg key.
  *
  * Checked against the value as submitted, before any trimming, so that "/"
  * is judged on what it actually is rather than on what rtrim() would turn it
@@ -73,25 +81,27 @@ function staxx_settings_char_rule(string $key): string {
  *
  * @return string the normalised value to store, or '' when $error is set
  */
-function staxx_settings_validate_stack_root(string $v, string &$error): string {
+function staxx_settings_validate_path(string $key, string $v, string &$error): string {
+  $label = ['STACK_ROOT' => 'stacks folder', 'ARCHIVE_ROOT' => 'archive folder'][$key] ?? 'folder';
+
   if ($v === '') {
-    $error = 'Enter a path for the stacks folder — it cannot be left blank.';
+    $error = 'Enter a path for the '.$label.' — it cannot be left blank.';
     return '';
   }
   if ($v[0] !== '/') {
-    $error = 'The stacks folder must be a full path starting with a forward slash, '
+    $error = 'The '.$label.' must be a full path starting with a forward slash, '
            . 'such as /mnt/user/appdata/stacks.';
     return '';
   }
   if (strpos($v, '..') !== false) {
-    $error = 'The stacks folder path must not contain ".." — enter the real path, not a relative one.';
+    $error = 'The '.$label.' path must not contain ".." — enter the real path, not a relative one.';
     return '';
   }
 
   $underMnt = strpos($v, '/mnt/') === 0;
   $underCfg = $v === STAXX_CFG_DIR || strpos($v, STAXX_CFG_DIR.'/') === 0;
   if (!$underMnt && !$underCfg) {
-    $error = 'The stacks folder must be somewhere under /mnt/ (a share or disk) or under '
+    $error = 'The '.$label.' must be somewhere under /mnt/ (a share or disk) or under '
            . STAXX_CFG_DIR.' — choose a location there instead.';
     return '';
   }
@@ -99,6 +109,17 @@ function staxx_settings_validate_stack_root(string $v, string &$error): string {
   // Safe to trim trailing slashes now: everything that passed the check above
   // has real content left afterwards ("/mnt/" -> "/mnt", never "").
   $norm = rtrim($v, '/');
+
+  // An archive sitting inside the stacks tree would be read back as a stack
+  // or a folder — the model has no way to tell a zip apart from either.
+  if ($key === 'ARCHIVE_ROOT') {
+    $stackRoot = staxx_stack_root();
+    if ($norm === $stackRoot || strpos($norm, $stackRoot.'/') === 0) {
+      $error = 'The archive folder cannot be the stacks folder, or sit inside it — '
+             . 'a zip file there would be mistaken for a stack. Choose a location outside it.';
+      return '';
+    }
+  }
 
   if (!is_dir($norm) && !is_dir(dirname($norm))) {
     $error = 'That folder does not exist, and neither does its parent, so it could not be '
@@ -127,7 +148,7 @@ function staxx_settings_validate(string $key, array $spec, string $v, string &$e
   }
 
   if ($spec['type'] === 'path') {
-    return staxx_settings_validate_stack_root($v, $error);
+    return staxx_settings_validate_path($key, $v, $error);
   }
 
   if (!in_array($v, $spec['choices'], true)) {
@@ -141,14 +162,16 @@ function staxx_settings_validate(string $key, array $spec, string $v, string &$e
  * Validate a posted settings form and, if everything in it is acceptable,
  * write it — atomically, and without disturbing any key this plugin does not
  * know about. Nothing is written unless everything submitted validates,
- * because saving four settings and refusing the fifth would leave the cfg in
+ * because saving most settings and refusing one would leave the cfg in
  * a state nobody chose.
  *
  * $reload is set true when HEADER_MENU, TAKEOVER_DOCKER_TAB or STACK_ROOT
  * actually changed value — those three are read only at page load, so only
  * they need the browser to reload rather than just close the panel.
+ * ARCHIVE_ROOT is deliberately not in that list: it is read fresh on every
+ * removal, not cached at page load.
  *
- * $saved gets the full five-key settings map as it now stands on disk. The
+ * $saved gets the full settings map as it now stands on disk. The
  * obvious way to get that back — call staxx_settings_read() again — does
  * NOT work: staxx_cfg() caches in a per-request static, so a second call
  * in the same request still returns what was on disk before this write. This

@@ -766,7 +766,7 @@ function staxx_import_write(string $rel, string $yaml, array $about, string &$er
   // root against a realpath()'d candidate — hand it an unresolved path and a
   // single symlinked component anywhere above the stack root makes every
   // rollback below silently refuse, leaving exactly the half-written folder
-  // they exist to clear away. Same pairing staxx_delete_stack() uses.
+  // they exist to clear away. Same pairing staxx_archive_stack() uses.
   $real = (string)@realpath($dir);
 
   $notePath = $dir.'/'.STAXX_REVIEW_FILE;

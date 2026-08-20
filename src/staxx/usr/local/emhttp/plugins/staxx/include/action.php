@@ -151,30 +151,38 @@ switch ($action) {
     $ok   = staxx_validate_compose($body, $error, $dir, $warnings);
     staxx_reply(['ok' => true, 'valid' => $ok, 'error' => $error, 'warnings' => $warnings]);
 
-  /* ---- delete a stack ----
+  /* ---- remove a stack: zip its folder, then take it out of the tree ----
    *
-   * The confirmation is asked for here, not inside staxx_delete_stack().
-   * What is about to be destroyed has to reach the user BEFORE anything is
-   * removed, and a function that both asks and acts cannot do that — so this
-   * case looks first, replies with the list if the folder holds more than
-   * the compose file, and only calls the delete once the browser sends the
-   * same request back with confirm=1.
+   * The confirmation is asked for here, not inside staxx_archive_stack().
+   * What is about to be zipped and where it is going has to reach the user
+   * BEFORE anything happens, and a function that both asks and acts cannot
+   * do that — so this case looks first, always replies with the file list
+   * and the planned archive folder, and only calls the archive once the
+   * browser sends the same request back with confirm=1. Unlike the delete
+   * this replaces, an empty file list still needs asking: there is no longer
+   * a "nothing to lose" fast path, because containers always get stopped and
+   * a zip always gets written.
    */
-  case 'delete':
+  case 'archive':
     $confirmed = ($_POST['confirm'] ?? '') === '1';
     if (!$confirmed) {
       $extras = staxx_stack_extras($name, $error);
       if ($extras === null) staxx_reply(['ok' => false, 'error' => $error]);
-      if ($extras) staxx_reply(['ok' => false, 'needsConfirm' => true, 'entries' => $extras]);
+      staxx_reply([
+        'ok'           => false,
+        'needsConfirm' => true,
+        'entries'      => $extras,
+        'dir'          => staxx_archive_root(),
+      ]);
     }
-    if (!staxx_delete_stack($name, $error, $confirmed)) {
+    if (!staxx_archive_stack($name, $error, $confirmed, $archive)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
 
     // Nothing left on disk to keep a place for — drop the stack from the
     // stored order and its own service/wait entries with it. Same layering
     // reason as stack-rename above: this has to happen here, not inside
-    // staxx_delete_stack().
+    // staxx_archive_stack().
     $folder = staxx_path_folder($name);
     $data   = staxx_folders_load();
     $start  = $data['start'];
@@ -183,7 +191,11 @@ switch ($action) {
     $data['start'] = $start;
     staxx_folders_save($data);
 
-    staxx_reply(['ok' => true]);
+    staxx_reply(['ok' => true, 'archive' => $archive]);
+
+  // ---- what has been archived, for the settings panel ----
+  case 'archive-list':
+    staxx_reply(['ok' => true, 'dir' => staxx_archive_root(), 'files' => staxx_archive_list()]);
 
   /* ------------------------------------------------------ companion files --
    *

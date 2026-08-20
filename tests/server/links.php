@@ -3,21 +3,28 @@
  *
  * Stacks live on /boot by default, which is vfat and cannot hold a symlink at
  * all — symlink() there simply fails, so every link case would pass for the
- * wrong reason. This run needs STACK_ROOT pointed at /tmp/b1-root instead,
- * which the CALLER sets and puts back; the script only reads the config and
- * refuses to run if the temporary root is not in place.
+ * wrong reason. This run needs STACK_ROOT pointed at /tmp/b1-root instead, and
+ * ARCHIVE_ROOT at /tmp/b1-archives so the archive case has somewhere to write
+ * that isn't the box's real appdata; the CALLER sets both and puts them back,
+ * which the script only reads and refuses to run if either is not in place.
  *
  * Runs ON THE SERVER, and the caller must restore the config whatever happens:
  *
  *     CFG=/boot/config/plugins/staxx/staxx.cfg
  *     cp $CFG /tmp/cfg.bak
  *     sed -i 's#^STACK_ROOT=.*#STACK_ROOT="/tmp/b1-root"#' $CFG
+ *     grep -q '^ARCHIVE_ROOT=' $CFG \
+ *       && sed -i 's#^ARCHIVE_ROOT=.*#ARCHIVE_ROOT="/tmp/b1-archives"#' $CFG \
+ *       || echo 'ARCHIVE_ROOT="/tmp/b1-archives"' >> $CFG
  *     php /tmp/links.php; RC=$?
  *     cp /tmp/cfg.bak $CFG
  *     exit $RC
  *
  * What it is really guarding is staxx_rmtree(): a symlink in a stack folder
- * must be unlinked, never followed, or deleting a stack could delete a share.
+ * must be unlinked, never followed, or archiving a stack could delete a share.
+ * The one thing only this file (ext4, not vfat) can check on top of that is
+ * that the symlink survives into the zip AS a link, not as whatever it points
+ * at — a followed link into a share could make the archive enormous, or loop.
  */
 
 $fails = 0;
@@ -34,6 +41,13 @@ if ($root !== '/tmp/b1-root') {
   echo "FAIL   the temporary stack root is not in place (got $root)\n";
   exit(1);
 }
+$archiveRoot = staxx_archive_root();
+if ($archiveRoot !== '/tmp/b1-archives') {
+  echo "FAIL   the temporary archive root is not in place (got $archiveRoot)\n";
+  exit(1);
+}
+@exec('rm -rf '.escapeshellarg($archiveRoot));
+mkdir($archiveRoot, 0755, true);
 
 $rel = 'linky';
 $dir = $root.'/'.$rel;
@@ -75,14 +89,36 @@ foreach ((array)$extras as $e) if ($e['name'] === 'dirlink') $found = $e;
 ok('the delete list flags it too',  ($found['link'] ?? false) === true);
 ok('and does not count through it', ($found['count'] ?? -1) === 0 && ($found['dir'] ?? true) === false);
 
-/* And the whole-stack delete removes the link without walking through it. */
+/* And the whole-stack archive removes the link without walking through it —
+ * and stores it as a link in the zip rather than following it in. Following
+ * it would either pull the whole of /tmp/b1-outside into the archive under
+ * "dirlink", or loop back on the stack folder itself were the target
+ * inside it; storing it as a link keeps the zip to the size of the stack
+ * folder, whatever the link points at. */
 
-ok('confirmed delete succeeds',     staxx_delete_stack($rel, $err, true), $err);
+$archive = null;
+ok('confirmed archive succeeds',    staxx_archive_stack($rel, $err, true, $archive), $err);
 ok('the stack folder is gone',      !is_dir($dir));
 ok('the link did not take the folder it pointed at',
    is_dir('/tmp/b1-outside') && file_exists('/tmp/b1-outside/keep.txt'));
 
-@exec('rm -rf /tmp/b1-root /tmp/b1-outside');
+$listing = staxx_sh('unzip -Z1 '.escapeshellarg($archive));
+$lines   = explode("\n", trim($listing));
+$link    = null;
+foreach ($lines as $line) if (trim($line) === 'linky/dirlink') $link = $line;
+ok('the archive lists the link by name', $link !== null);
+
+// zipinfo's default listing leads with the Unix permission string — a stored
+// symlink's starts with "l", exactly like `ls -l` would show for one on disk.
+$info  = staxx_sh('zipinfo '.escapeshellarg($archive).' linky/dirlink');
+$entry = '';
+foreach (explode("\n", $info) as $line) if (strpos($line, 'dirlink') !== false) $entry = $line;
+ok('and stores it as a symlink, not what it points at',
+   preg_match('/^l/', trim($entry)) === 1, $entry);
+ok('the link\'s target still holds its own files untouched',
+   is_dir('/tmp/b1-outside') && file_exists('/tmp/b1-outside/target.txt'));
+
+@exec('rm -rf /tmp/b1-root /tmp/b1-outside '.escapeshellarg($archiveRoot));
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

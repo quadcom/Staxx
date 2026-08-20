@@ -1,11 +1,22 @@
 <?php
 /* The review lock: staxx_review_file(), staxx_review_locked(), the job-runner
- * refusal, the delete fix, and that a rename or a folder move keeps the lock.
+ * refusal, archiving a locked stack, and that a rename or a folder move keeps
+ * the lock.
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine:
+ * Runs ON THE SERVER — there is no PHP on the dev machine. The archive cases
+ * need ARCHIVE_ROOT pointed at /tmp/b1-archives, or the zips would land in the
+ * box's real appdata; the CALLER sets that and puts the config back, the same
+ * way tests/server/files.php does:
  *
  *     pscp tests/server/review.php root@<box>:/tmp/
- *     plink … "php /tmp/review.php"
+ *     plink … '
+ *       CFG=/boot/config/plugins/staxx/staxx.cfg
+ *       cp $CFG /tmp/cfg.bak
+ *       grep -q "^ARCHIVE_ROOT=" $CFG  *         && sed -i "s#^ARCHIVE_ROOT=.*#ARCHIVE_ROOT=\"/tmp/b1-archives\"#" $CFG  *         || echo "ARCHIVE_ROOT=\"/tmp/b1-archives\"" >> $CFG
+ *       php /tmp/review.php; RC=$?
+ *       cp /tmp/cfg.bak $CFG
+ *       exit $RC
+ *     '
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, all named "zzc1…" so they cannot collide with
@@ -201,31 +212,47 @@ foreach ((array)$list as $e) $byName[$e['name']] = $e;
 ok('the lock file is flagged review => true', ($byName[STAXX_REVIEW_FILE]['review'] ?? null) === true);
 ok('an ordinary file is flagged review => false', ($byName['aardvark.txt']['review'] ?? null) === false);
 
-/* ---------------------------------------------------------- delete fix --- */
+/* ----------------------------------------------------- archiving a lock --- */
 
-// Drop the file added for the sort check above — this stack is about to be
-// used to prove the lock file ALONE does not block a delete, which only
-// holds if nothing else is sitting in the folder.
-@unlink($lockedDir.'/aardvark.txt');
+// A locked stack's containers belong to whatever it was imported from, so
+// archiving one must never tear them down — the lock is what skips the
+// compose "down" entirely. Nothing here can reach Docker for that reason.
+$archiveRoot = staxx_archive_root();
+if ($archiveRoot !== '/tmp/b1-archives') {
+  echo "FAIL   the temporary archive root is not in place (got $archiveRoot)
+";
+  exit(1);
+}
+@exec('rm -rf '.escapeshellarg($archiveRoot));
+mkdir($archiveRoot, 0755, true);
 
-// A locked stack holding nothing but the compose file and the lock file: the
-// unconfirmed delete must succeed outright, because both count as "ours to
-// remove" now — proving the lock file alone never blocks a delete.
 $err = '';
-ok('a locked stack with nothing extra deletes unconfirmed', staxx_delete_stack($lockedRel, $err, false), $err);
+$archive = null;
+ok('an unconfirmed archive refuses whatever is in the folder',
+   !staxx_archive_stack($lockedRel, $err, false, $archive), $err);
+ok('and leaves the lock file where it was', file_exists($lockedDir.'/'.STAXX_REVIEW_FILE));
+
+$err = '';
+ok('a locked stack archives once confirmed',
+   staxx_archive_stack($lockedRel, $err, true, $archive), $err);
 ok('its folder is gone', !is_dir($lockedDir));
+ok('and the lock file went into the zip',
+   strpos(staxx_sh('unzip -l '.escapeshellarg((string)$archive)),
+          STAXX_REVIEW_FILE) !== false);
 
-// A genuine stranger's file must still block it, and naming the lock file is
-// not enough to make it go away.
+// A file nobody here wrote used to block removal outright, because it was
+// about to be destroyed. It is kept now, so it blocks nothing — it just
+// travels into the zip with everything else.
 $err = '';
-ok('a stranger file still blocks the delete', !staxx_delete_stack($strangerRel, $err, false), $err);
-ok('the refusal names the stranger file', strpos($err, 'stranger.txt') !== false, $err);
-ok('nothing was removed yet', is_dir($strangerDir) && file_exists($strangerDir.'/stranger.txt'));
-
-@unlink($strangerDir.'/stranger.txt');
-$err = '';
-ok('once the stranger file is gone the delete succeeds', staxx_delete_stack($strangerRel, $err, false), $err);
+$strangerArchive = null;
+ok('a stranger file no longer blocks anything',
+   staxx_archive_stack($strangerRel, $err, true, $strangerArchive), $err);
 ok('the stranger stack folder is gone', !is_dir($strangerDir));
+ok('and the stranger file is in the archive',
+   strpos(staxx_sh('unzip -l '.escapeshellarg((string)$strangerArchive)),
+          'stranger.txt') !== false);
+
+@exec('rm -rf '.escapeshellarg($archiveRoot));
 
 /* ------------------------------------------------ rename and folder move -- */
 

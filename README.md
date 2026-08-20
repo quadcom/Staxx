@@ -47,6 +47,10 @@ These are the constraints the project is built around, in priority order.
   what Apply means on an Unraid template: a container's settings are fixed when it is built, so
   restarting one that already exists could never apply an edit. It rebuilds whatever the file no
   longer matches, and restarts the rest — leaving those containers, and their logs, alone.
+- Removing a stack — **built**. It stops and removes the containers, then zips the whole folder —
+  compose file, notes, certificates, anything else living beside it — to a settings-configurable
+  archive folder outside the stacks tree before taking the folder itself away. Nothing is deleted
+  outright; getting a stack back is unzipping its archive into the stacks tree by hand.
 - Collapsible stack grouping — stacks can be placed one level deep into user-created folders, and a
   running stack is matched back to its directory via `com.docker.compose.project`
 - Community Applications template → compose conversion, on demand — **built**; see

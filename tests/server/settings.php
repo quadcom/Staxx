@@ -27,19 +27,20 @@ function ok(string $what, bool $pass, string $note = ''): void {
 /* ------------------------------------------------------------- keys ---- */
 
 $keys = staxx_settings_keys();
-ok('exactly five keys', count($keys) === 5, implode(',', array_keys($keys)));
-foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STACK_ROOT', 'ICON_FETCH', 'IMAGE_LOOKUP'] as $k) {
+ok('exactly six keys', count($keys) === 6, implode(',', array_keys($keys)));
+foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STACK_ROOT', 'ARCHIVE_ROOT',
+          'ICON_FETCH', 'IMAGE_LOOKUP'] as $k) {
   ok('has '.$k, array_key_exists($k, $keys));
 }
 
 $read = staxx_settings_read();
-ok('read returns exactly five keys', count($read) === 5);
+ok('read returns exactly six keys', count($read) === 6);
 foreach (array_keys($keys) as $k) ok('read has '.$k, array_key_exists($k, $read));
 
 /* --------------------------------------------------------- validator ---- */
 
 // Validated directly, with no write involved — staxx_settings_validate()
-// and staxx_settings_validate_stack_root() are pure functions.
+// and staxx_settings_validate_path() are pure functions.
 
 $err = '';
 $badRoots = ['', '..', 'relative/path', '/', '/etc', '/mnt/../etc'];
@@ -65,6 +66,20 @@ $err  = '';
 $good = '/mnt/zzb1-settings-test-'.getmypid();
 $v    = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], $good, $err);
 ok('accepts a STACK_ROOT under /mnt/ with an existing parent', $v === $good, $err);
+
+// The archive folder shares every rule above, plus one of its own: a zip
+// inside the stacks tree would be read back as a stack or a folder.
+$err = '';
+$v = staxx_settings_validate('ARCHIVE_ROOT', $keys['ARCHIVE_ROOT'], staxx_stack_root(), $err);
+ok('rejects an ARCHIVE_ROOT that IS the stacks folder', $v === '' && $err !== '', $err);
+$err = '';
+$v = staxx_settings_validate('ARCHIVE_ROOT', $keys['ARCHIVE_ROOT'],
+                             staxx_stack_root().'/archives', $err);
+ok('rejects an ARCHIVE_ROOT inside the stacks folder', $v === '' && $err !== '', $err);
+$err  = '';
+$good = '/mnt/zzb1-archive-test-'.getmypid();
+$v = staxx_settings_validate('ARCHIVE_ROOT', $keys['ARCHIVE_ROOT'], $good, $err);
+ok('accepts an ARCHIVE_ROOT outside it', $v === $good, $err);
 
 foreach ($keys as $k => $spec) {
   if ($spec['type'] !== 'choice') continue;

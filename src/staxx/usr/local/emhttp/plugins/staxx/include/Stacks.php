@@ -1891,10 +1891,10 @@ function staxx_save_stack(string $name, string $yaml, string &$error): bool {
 }
 
 /**
- * Everything in a stack's folder except its compose file, for the delete
- * confirmation. A subdirectory's count is how many entries it holds one
- * level down, so the confirmation can say "3 files" rather than just
- * "a folder"; a plain file's count is always 0.
+ * Everything in a stack's folder except its compose file, for the removal
+ * confirmation — what is about to be archived. A subdirectory's count is how
+ * many entries it holds one level down, so the confirmation can say "3
+ * files" rather than just "a folder"; a plain file's count is always 0.
  *
  * @return array<int, array{name:string, size:int, dir:bool, count:int, link:bool}>|null
  */
@@ -1932,24 +1932,44 @@ function staxx_stack_extras(string $rel, string &$error): ?array {
 }
 
 /**
- * Delete a stack's directory.
- *
- * Unconfirmed, the guard is what it has always been: a stack folder is
- * allowed to hold a compose file and .env files, and anything else means the
- * user put something there we do not understand — refuse and say what is in
- * the way, rather than delete half of it and then complain.
- *
- * Confirmed, that guard is skipped and the whole tree is removed by
- * staxx_rmtree() below. The function itself never asks; the list of what
- * is about to be destroyed has to reach the user BEFORE anything is removed,
- * and a function that both asks and acts cannot do that — see the "delete"
- * case in action.php, which is what shows the list and sets $confirmed.
- *
- * The containers are stopped first either way. Deleting the file while the
- * stack is up would leave containers running that nothing on this page can
- * reach.
+ * The archive's own filename: the stack's path with slashes turned into
+ * dashes (so "Media/jellyfin" and "jellyfin" can never collide) plus the
+ * moment it was written, to a second — good enough that two archives of the
+ * same stack cannot land on the same name without staxx_archive_stack()'s own
+ * "-2" fallback ever being needed in practice.
  */
-function staxx_delete_stack(string $name, string &$error, bool $confirmed = false): bool {
+function staxx_archive_name(string $name): string {
+  return str_replace('/', '-', $name).'-'.date('Ymd-His').'.zip';
+}
+
+/**
+ * Archive a stack's directory and take it out of the stacks tree.
+ *
+ * Removing a stack used to delete its folder outright, refusing outright if
+ * it held anything beyond a compose file, a .env or the review lock — that
+ * guard existed because everything else in the folder was about to be lost
+ * for good. It no longer is: the whole folder, extras included, is zipped
+ * into the archive folder first, and only removed from the stacks tree once
+ * that zip is verified to have every file in it. Nothing here can end with
+ * files gone and no archive to show for it — every failure path below
+ * refuses before anything is touched, except the very last step, which only
+ * removes the (now archived) folder.
+ *
+ * Unconfirmed, this only runs far enough to find out whether the folder holds
+ * anything beyond the compose file — the caller (action.php's "archive" case)
+ * uses that to show what is about to be zipped before asking for a "yes".
+ * That is why $error is left empty on an unconfirmed return: there is nothing
+ * wrong, the question just has not been answered yet.
+ *
+ * The containers are stopped first either way (once confirmed). Archiving
+ * the folder while the stack is up would leave containers running that
+ * nothing on this page can reach.
+ *
+ * @param string|null $archive set to the full path of the written zip on success
+ */
+function staxx_archive_stack(
+  string $name, string &$error, bool $confirmed = false, ?string &$archive = null
+): bool {
   $error = '';
   if (!staxx_valid_path($name)) { $error = 'Invalid stack name.'; return false; }
 
@@ -1958,45 +1978,52 @@ function staxx_delete_stack(string $name, string &$error, bool $confirmed = fals
 
   // A locked stack's containers, if anything answers to its name, belong to
   // whatever it was imported from — tearing them down is the exact accident
-  // the review lock exists to prevent, so this skips straight to removing
+  // the review lock exists to prevent, so this skips straight to archiving
   // the folder for one, below.
   $locked = staxx_review_file($dir) !== '';
 
   // A handover has an old container set aside under another name, waiting for
-  // an answer that only this stack's row can give. Delete the stack now and
+  // an answer that only this stack's row can give. Archive the stack now and
   // that container is stranded with nothing left to say what it was called or
   // how to put it back — so the answer has to come first.
   if (staxx_handover_file($dir) !== '') {
     $error = 'This stack has just taken over from another container, and that '
            . 'container is set aside waiting for you to say whether the new one '
-           . 'works. Answer that first — nothing can be deleted until it is '
+           . 'works. Answer that first — nothing can be removed until it is '
            . 'either cleared away or put back.';
     return false;
   }
 
-  $remove = [];
-  $blocked = [];
-  foreach ((array)@scandir($dir) as $entry) {
-    if ($entry === '.' || $entry === '..') continue;
-    $isCompose = in_array($entry, STAXX_COMPOSE_FILENAMES, true);
-    $isEnv     = $entry === '.env' || str_starts_with($entry, '.env.');
-    // The review-lock file is ours too — StaXX writes it on import — so it
-    // must not fall into $blocked and demand a by-hand removal, which would
-    // refuse to delete every imported stack that has not yet been reviewed.
-    // The same goes for the copy held aside during a handover, which is that
-    // same file under a leading dot.
-    $isReview  = strcasecmp($entry, STAXX_REVIEW_FILE) === 0
-              || strcasecmp($entry, '.'.STAXX_REVIEW_FILE) === 0;
-    if (is_file($dir.'/'.$entry) && ($isCompose || $isEnv || $isReview)) $remove[] = $entry;
-    else $blocked[] = $entry;
+  // The confirmation dialog needs to know what is in the folder before the
+  // user says yes, but nothing below this point may run before that "yes" —
+  // see the docblock above.
+  if (!$confirmed) return false;
+
+  // Where the zip goes. Nothing has been touched yet, so a folder that
+  // cannot be created or written refuses the whole thing up front.
+  $root = staxx_archive_root();
+  if (!is_dir($root)) @mkdir($root, 0755, true);
+  if (!is_dir($root) || !is_writable($root)) {
+    $error = 'The archive folder '.$root.' does not exist or cannot be written to. '
+           . 'Check the archive folder setting and try again.';
+    return false;
   }
 
-  if ($blocked && !$confirmed) {
-    $error = 'Nothing was deleted. This folder also contains: '
-           . implode(', ', array_slice($blocked, 0, 6))
-           . (count($blocked) > 6 ? ', …' : '')
-           . '. Remove it by hand if you are sure.';
-    return false;
+  // Size guard. A stack folder is normally a few kilobytes; this page waits
+  // while the zip is built, and the plugin caps anything it runs at two
+  // minutes, so a folder holding, say, a disk image needs moving by hand
+  // instead. A `du` that fails or times out is treated as "small enough" —
+  // silence here must never block an otherwise-good removal.
+  $duCode = 0;
+  $duOut  = staxx_sh('du -sk '.escapeshellarg($dir), 20, $duCode);
+  if ($duCode === 0 && preg_match('/^(\d+)/', trim($duOut), $m)) {
+    $kib = (int)$m[1];
+    if ($kib > 256000) {
+      $error = 'This stack folder is '.round($kib / 1024).' MB. A stack folder is normally '
+             . 'a few kilobytes, and this page waits while it is zipped — move the folder '
+             . 'by hand instead.';
+      return false;
+    }
   }
 
   $file = staxx_find_compose_file($dir);
@@ -2008,33 +2035,99 @@ function staxx_delete_stack(string $name, string &$error, bool $confirmed = fals
       120,
       $code
     );
-    // Refuse to delete the file if the containers are still up. Losing the
-    // compose file while its containers run leaves them orphaned, with nothing
-    // in this UI able to reach them again.
+    // Refuse if the containers are still up. Archiving the folder while its
+    // containers run leaves them orphaned, with nothing in this UI able to
+    // reach them again.
     if ($code !== 0) {
-      $error = 'The containers could not be stopped, so nothing was deleted. '
+      $error = 'The containers could not be stopped, so nothing was archived or removed. '
              . 'Stop the stack first, then try again.'
              . ($out !== '' ? "\n\n".trim($out) : '');
       return false;
     }
   }
 
-  if ($confirmed) {
-    $real = @realpath($dir);
-    if ($real === false || !staxx_rmtree($real, $real)) {
-      $error = 'Could not remove the folder '.$dir;
+  // Build the final zip name, bumping past a collision rather than
+  // overwriting an earlier archive of the same stack.
+  $base = staxx_archive_name($name);
+  $final = $root.'/'.$base;
+  if (file_exists($final)) {
+    $stem = substr($base, 0, -4); // strip ".zip"
+    $n = 2;
+    do {
+      $final = $root.'/'.$stem.'-'.$n.'.zip';
+      $n++;
+    } while (file_exists($final) && $n <= 99);
+    if (file_exists($final)) {
+      $error = 'Could not find a free archive filename for "'.$name.'". Try again in a moment.';
       return false;
     }
-    return true;
   }
 
-  foreach ($remove as $entry) @unlink($dir.'/'.$entry);
+  $tmp = $root.'/.'.basename($final).'.tmp-'.getmypid();
 
-  if (!@rmdir($dir)) {
-    $error = 'Removed the files, but could not remove the folder '.$dir;
+  // -y stores a symlink as a link rather than following it — a link inside
+  // the folder must not be able to make the zip enormous or loop. The
+  // integrity test runs in the same command so a failure never leaves a zip
+  // that looks fine but silently isn't.
+  $zipCode = 1;
+  $zipOut  = staxx_sh(
+    'cd '.escapeshellarg(dirname($dir)).' && '
+    . 'zip -r -y -q '.escapeshellarg($tmp).' '.escapeshellarg(basename($dir)).' 2>&1 && '
+    . 'unzip -tqq '.escapeshellarg($tmp).' 2>&1',
+    100,
+    $zipCode
+  );
+  if ($zipCode !== 0) {
+    @unlink($tmp);
+    $error = 'Could not write the archive, so nothing was removed.'
+           . ($zipOut !== '' ? "\n\n".trim($zipOut) : '');
     return false;
   }
+
+  if (!@rename($tmp, $final)) {
+    @unlink($tmp);
+    $error = 'The archive could not be put in place, so nothing was removed.';
+    return false;
+  }
+
+  $real = @realpath($dir);
+  if ($real === false || !staxx_rmtree($real, $real)) {
+    $error = 'The stack was archived to '.$final.', but its folder could not be removed. '
+           . 'The archive is safe; remove the folder by hand.';
+    return false;
+  }
+
+  $archive = $final;
   return true;
+}
+
+/**
+ * What is in the archive folder, newest first, for the settings panel.
+ * Only the finished zips — a ".tmp-" one is still being written. A missing
+ * folder is not an error here: it just means nothing has been archived yet.
+ *
+ * @return array<int, array{name:string, size:int, mtime:int}>
+ */
+function staxx_archive_list(): array {
+  $root = staxx_archive_root();
+  if (!is_dir($root)) return [];
+
+  $out = [];
+  foreach ((array)@scandir($root) as $name) {
+    if ($name === '.' || $name === '..') continue;
+    if (!str_ends_with($name, '.zip')) continue;
+    $path = $root.'/'.$name;
+    if (!is_file($path)) continue;
+    $st = @stat($path) ?: [];
+    $out[] = [
+      'name'  => $name,
+      'size'  => (int)($st['size'] ?? 0),
+      'mtime' => (int)($st['mtime'] ?? 0),
+    ];
+  }
+
+  usort($out, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
+  return array_slice($out, 0, 100);
 }
 
 /**

@@ -76,6 +76,14 @@ needs a moment to settle.
 One thing worth knowing: Unraid starts a container at boot, it does not build one. So a stack has to
 have been started once, by hand, before it can start on its own — after that it is automatic.
 
+## Removing a stack
+
+Removing a stack does not delete anything. It stops the containers and takes them away, then zips
+the whole folder — the compose file, and anything else sitting beside it — into a single file kept
+in an archive folder outside the stacks list. Where that folder is can be changed in Settings, and
+what has already been archived is listed there too. Getting a stack back is unzipping its archive
+into the stacks folder by hand; there is no undo button for that yet.
+
 ---
 
 ## Where it is going

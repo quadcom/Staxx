@@ -49,6 +49,18 @@ function staxx_appdata_root(): string {
 }
 
 /**
+ * Where a removed stack's zip goes. The setting if one is configured,
+ * otherwise a fixed folder under wherever Unraid keeps appdata — so a blank
+ * ARCHIVE_ROOT still lands somewhere sensible on any box, rather than
+ * inventing a path that might not exist there.
+ */
+function staxx_archive_root(): string {
+  $v = trim((string)(staxx_cfg()['ARCHIVE_ROOT'] ?? ''));
+  if ($v !== '') return rtrim($v, '/');
+  return rtrim(staxx_appdata_root().'staxx/archives', '/');
+}
+
+/**
  * Read the plugin config, falling back to the shipped defaults for any key the
  * user's config predates. Returns a flat key => string map.
  */

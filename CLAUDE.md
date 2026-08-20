@@ -47,11 +47,12 @@ mode, where assigning to a name nothing declared throws instead of quietly makin
 time. One such line inside a function every render calls kills the whole page.
 
 `tests/server/` holds PHP checks that can only run **on the server** — copy them up and run them
-there. `files.php` covers the companion-file helpers and the delete confirmation; `links.php` covers
+there. `files.php` covers the companion-file helpers and the archive confirmation; `links.php` covers
 what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
 for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's
 boot-start list, and points `STAXX_AUTOSTART_FILE` at `/tmp` so the real one is never touched. Each
-file's header gives the exact commands.
+file's header gives the exact commands. Both `files.php` and `links.php` also point `ARCHIVE_ROOT`
+(the config key for where a removed stack's zip goes) at a `/tmp` folder, the same way.
 
 `validate_schema.py` has no runner or framework. It prints one line per case and exits non-zero on
 failure; its negative cases (what the schema must *reject*) matter more than the positive ones.
