@@ -1,6 +1,8 @@
 # PLAN_51 — one field says which port the web button opens
 
-**Status: APPROVED, building.**
+**Status: BUILT 2026-08-20.** Shipped on `main` and verified on the server — the port field edits
+only the number inside the address, older files carrying a marker still work, and four containers
+that pointed at the wrong place now open.
 
 ## Context
 

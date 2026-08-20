@@ -1,6 +1,8 @@
 # PLAN_50 — a better guess at the port, and a way to stop guessing
 
-**Status: APPROVED, building.**
+**Status: BUILT 2026-08-20.** Shipped on `main` and verified on the server — the suggestion, the
+exposed-port evidence and the test-web-page action all landed with the web-button work.
+
 Follows PLAN_49 (`completed-plans/PLAN_49.md`), which made the web link follow the network.
 
 ## Context
