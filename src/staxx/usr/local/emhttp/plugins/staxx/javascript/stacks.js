@@ -12247,6 +12247,34 @@
   // parsed model — the only source that exists for a stack that has never
   // been started (PLAN_44 D1) — rather than from the table, which knows
   // nothing about a service with no container yet.
+  // Which paths inside each container come from somewhere that outlives the
+  // container, for the Files pane to mark (PLAN_44 D5).
+  //
+  // Read off the parsed model rather than asked of Docker, because the editor
+  // has already parsed the file and Docker would only know about a container
+  // that exists — and the point of marking these is to say what survives the
+  // container being rebuilt.
+  //
+  // A volume field's id is "<service>/volume/<path inside the container>", so
+  // the container-side half is whatever follows that prefix. A host folder and
+  // a named volume are both marked: the note this feeds is about what survives
+  // a rebuild, and both do — only the container's own filesystem does not.
+  function manageMountsFor(services) {
+    var out = {};
+    if (!MODEL || !MODEL.fields) return out;
+    services.forEach(function (svc) {
+      var prefix = svc + '/volume/';
+      var paths = [];
+      MODEL.fields.forEach(function (f) {
+        if (f.service !== svc || !f.id || f.id.indexOf(prefix) !== 0) return;
+        var path = f.id.slice(prefix.length);
+        if (path.charAt(0) === '/' && paths.indexOf(path) === -1) paths.push(path);
+      });
+      if (paths.length) out[svc] = paths;
+    });
+    return out;
+  }
+
   function mountManageForCurrentStack() {
     if (!manageInst) return;
     // Yesterday's stack's figures are meaningless against today's — mount()
@@ -12258,7 +12286,8 @@
     manageInst.mount({
       stack: openedName,
       services: services,
-      icons: manageIconsFor(openedName, services)
+      icons: manageIconsFor(openedName, services),
+      mounts: manageMountsFor(services)
     });
     manageMounted = true;
   }

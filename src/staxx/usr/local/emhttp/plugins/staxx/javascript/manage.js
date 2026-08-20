@@ -1,9 +1,9 @@
 /* StaXX — the Manage tab's own contents.
  * Copyright 2026, StaXX contributors. GPL-2.0.
  *
- * PLAN_44 phase 2: the container tab row (D1) and the buttons column (D2),
- * plus an honest skeleton for the three panes that later phases fill in
- * (log D3, shell D4, files D5).
+ * The container tab row (D1), the buttons column (D2), and the three
+ * panes: the log follower (D3), the shell (D4), and the file browser
+ * inside a running container (D5).
  *
  * Separate from stacks.js on purpose, same reasoning as compose-model.js:
  * that file is one 14,000-line IIFE where a single typo kills every
@@ -253,13 +253,15 @@
 
   function Instance(opts) {
     var host   = opts.host;
-    // Not called yet — this phase never talks to the server, only onRun().
-    // Held for phases 3-5 (log tailing, shell sessions, file listings).
+    // The one path to the server this whole file uses: the log follower,
+    // the shell sessions and the file browser all go through it. onRun() is
+    // the separate path the verb buttons use instead — see buildButtons().
     var call   = opts.call;
-    // Not used by this phase's own rendering — everything here goes through
+    // Not used anywhere in this file — every value interpolated into markup
+    // here (service names, file names, paths) is inserted through
     // textContent, which needs no escaping. Kept and validated anyway,
-    // because phases 3-5 (log, shell, file listings) render raw text into
-    // markup and will need it.
+    // since a fallback that silently stringified instead of escaping would
+    // be a trap the moment some future render stops using textContent.
     var escFn  = typeof opts.esc === 'function' ? opts.esc : esc;
     var bytes  = typeof opts.bytes === 'function' ? opts.bytes : function (n) { return String(n); };
     var onRun  = typeof opts.onRun === 'function' ? opts.onRun : function () {};
@@ -270,7 +272,14 @@
       icons:      {},
       snapshot:   null,
       selected:   'all',
-      scope:      'container'   // 'container' | 'stack' — meaningless (and forced to stack) when selected === 'all'
+      scope:      'container',  // 'container' | 'stack' — meaningless (and forced to stack) when selected === 'all'
+      // Service name -> list of container-side paths that are mounts, read
+      // straight from the compose model the host already parsed (PLAN_44
+      // D5's mounted-folder marking). Absent for a caller that has not
+      // wired this through yet, or a service with no mounts at all — either
+      // way the file pane marks nothing and says nothing, rather than
+      // guessing at paths it was never told about.
+      mounts:     {}
     };
 
     var els = {};
@@ -305,6 +314,7 @@
       var shell = pane('shell', 'Shell');
       buildShellBody(shell.body);
       var files = pane('files', 'Files');
+      buildFilesBody(files.body);
       right.appendChild(shell.el);
       right.appendChild(files.el);
 
@@ -1153,6 +1163,570 @@
       resumeShellPoll(service);
     }
 
+    // ---- D5: the file pane -------------------------------------------------
+    //
+    // Unlike the shell, none of cfile-list/read/save/rename/delete/mkdir is a
+    // session — each is one request, answered and done. So there is nothing
+    // here to poll and nothing to close on unmount; the only state worth
+    // keeping is what the browser itself remembers per container, keyed by
+    // service name the same way shellState.sessions is, so switching tabs
+    // and back returns to the folder last looked at rather than starting
+    // over at the container's own working directory every time.
+    var fileState = {
+      sessions: {},
+      active:   null   // the service whose listing currently owns the pane
+    };
+
+    // Matches STAXX_FILE_MAX in Stacks.php. Not fetched from the server —
+    // this only needs to be close enough to warn before sending something
+    // too big, and the refusal that follows if it ever drifts is still a
+    // plain sentence, not a broken upload.
+    var CFILE_MAX = 262144;
+
+    function fileSession(service) {
+      var sess = fileState.sessions[service];
+      if (!sess) {
+        sess = { dir: null, home: null, entries: [], more: false, loading: false, error: '', view: null };
+        fileState.sessions[service] = sess;
+      }
+      return sess;
+    }
+
+    // Called from mount() — a different stack means an entirely different
+    // set of containers, so a remembered folder in one of them means
+    // nothing against the next. Nothing server-side to close first, unlike
+    // closeAllShellSessions(), since there is no open session to leak.
+    function resetFileSessions() {
+      fileState.sessions = {};
+      fileState.active = null;
+    }
+
+    function joinPath(dir, name) {
+      return dir === '/' ? '/' + name : dir + '/' + name;
+    }
+
+    function parentPath(dir) {
+      if (!dir || dir === '/') return '/';
+      var i = dir.lastIndexOf('/');
+      return i <= 0 ? '/' : dir.slice(0, i);
+    }
+
+    // Service -> mount list, exactly as mount() was handed it, or null when
+    // the host never passed one. See the state.mounts comment above: an
+    // absent list means "say nothing", not "assume nothing is mounted".
+    function mountsFor(service) {
+      var m = state.mounts && state.mounts[service];
+      return (m && m.length) ? m : null;
+    }
+
+    function isMountPath(service, path) {
+      var mounts = mountsFor(service);
+      if (!mounts) return false;
+      for (var i = 0; i < mounts.length; i++) {
+        var m = mounts[i];
+        if (path === m || (m !== '/' && path.indexOf(m + '/') === 0) || m === '/') return true;
+      }
+      return false;
+    }
+
+    function mkFileBtn(label, cls) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'staxx-manage-files-btn ' + cls;
+      b.textContent = label;
+      return b;
+    }
+
+    function buildFilesBody(bodyEl) {
+      bodyEl.innerHTML = '';
+      bodyEl.classList.add('staxx-manage-files-body');
+
+      var msg = document.createElement('p');
+      msg.className = 'staxx-manage-files-msg staxx-manage-files-msg--hidden';
+
+      // ---- the browser: toolbar, mounted-folder note, the listing itself --
+
+      var browse = document.createElement('div');
+      browse.className = 'staxx-manage-files-browse staxx-manage-files-browse--hidden';
+
+      var toolbar = document.createElement('div');
+      toolbar.className = 'staxx-manage-files-toolbar';
+
+      var upBtn = mkFileBtn('Up', 'staxx-manage-files-up');
+      upBtn.title = 'Go to the parent folder.';
+      upBtn.addEventListener('click', function () {
+        var sess = fileSession(state.selected);
+        navigateTo(state.selected, parentPath(sess.dir));
+      });
+
+      var pathEl = document.createElement('span');
+      pathEl.className = 'staxx-manage-files-path';
+
+      var refreshBtn = mkFileBtn('Refresh', 'staxx-manage-files-refresh');
+      refreshBtn.addEventListener('click', function () {
+        var sess = fileSession(state.selected);
+        navigateTo(state.selected, sess.dir);
+      });
+
+      var mkdirBtn = mkFileBtn('New folder', 'staxx-manage-files-mkdir');
+      mkdirBtn.addEventListener('click', function () { makeFolder(state.selected); });
+
+      var uploadBtn = mkFileBtn('Upload', 'staxx-manage-files-uploadbtn');
+      uploadBtn.title = 'Read a file from this computer and copy it in here — capped at ' +
+        bytes(CFILE_MAX) + '.';
+      var uploadInput = document.createElement('input');
+      uploadInput.type = 'file';
+      uploadInput.className = 'staxx-manage-files-uploadinput';
+      uploadInput.addEventListener('change', function () {
+        var f = uploadInput.files && uploadInput.files[0];
+        uploadInput.value = ''; // so choosing the same file twice fires change() again
+        if (f) uploadFile(state.selected, f);
+      });
+      uploadBtn.addEventListener('click', function () { uploadInput.click(); });
+
+      [upBtn, pathEl, refreshBtn, mkdirBtn, uploadBtn, uploadInput]
+        .forEach(function (el) { toolbar.appendChild(el); });
+
+      var note = document.createElement('p');
+      note.className = 'staxx-manage-files-note staxx-manage-files-note--hidden';
+      note.textContent = 'Folders marked ⌂ come from your server — anything outside a marked ' +
+        'folder is gone the next time this container is rebuilt.';
+
+      var errorEl = document.createElement('p');
+      errorEl.className = 'staxx-manage-files-error staxx-manage-files-error--hidden';
+
+      var capEl = document.createElement('p');
+      capEl.className = 'staxx-manage-files-cap staxx-manage-files-cap--hidden';
+      capEl.textContent = 'This folder holds more than can be listed here — open a subfolder to see fewer at once.';
+
+      var listWrap = document.createElement('div');
+      listWrap.className = 'staxx-manage-files-listwrap';
+      var table = document.createElement('table');
+      table.className = 'staxx-manage-files-table';
+      var thead = document.createElement('thead');
+      thead.innerHTML = '<tr><th>Name</th><th>Size</th><th>Owner / permissions</th><th></th></tr>';
+      var tbody = document.createElement('tbody');
+      table.appendChild(thead);
+      table.appendChild(tbody);
+      listWrap.appendChild(table);
+
+      var emptyEl = document.createElement('p');
+      emptyEl.className = 'staxx-manage-files-empty staxx-manage-files-empty--hidden';
+
+      browse.appendChild(toolbar);
+      browse.appendChild(note);
+      browse.appendChild(errorEl);
+      browse.appendChild(capEl);
+      browse.appendChild(listWrap);
+      browse.appendChild(emptyEl);
+
+      // ---- the viewer/editor: one file at a time, replacing the listing ---
+      //
+      // The plan's own first choice — open a text file in the editor on the
+      // Configure tab — would mean Configure editing a file that is not this
+      // stack's compose file at all, which is a different piece of plumbing
+      // than it sounds. This is the honest smaller version: a plain text box
+      // right here, with Save and Cancel.
+
+      var view = document.createElement('div');
+      view.className = 'staxx-manage-files-view staxx-manage-files-view--hidden';
+
+      var viewHead = document.createElement('div');
+      viewHead.className = 'staxx-manage-files-view-head';
+      var backBtn = mkFileBtn('Back', 'staxx-manage-files-viewback');
+      backBtn.addEventListener('click', function () { closeView(state.selected); });
+      var viewPath = document.createElement('span');
+      viewPath.className = 'staxx-manage-files-view-path';
+      viewHead.appendChild(backBtn);
+      viewHead.appendChild(viewPath);
+
+      var viewNote = document.createElement('p');
+      viewNote.className = 'staxx-manage-files-view-note staxx-manage-files-view-note--hidden';
+
+      var viewArea = document.createElement('textarea');
+      viewArea.className = 'staxx-manage-files-view-area';
+      viewArea.addEventListener('input', function () {
+        var sess = fileSession(state.selected);
+        if (sess.view && sess.view.editable) sess.view.text = viewArea.value;
+      });
+
+      var viewBar = document.createElement('div');
+      viewBar.className = 'staxx-manage-files-view-bar staxx-manage-files-view-bar--hidden';
+      var saveBtn = mkFileBtn('Save', 'staxx-manage-files-viewsave');
+      saveBtn.addEventListener('click', function () { saveView(state.selected); });
+      var cancelBtn = mkFileBtn('Cancel', 'staxx-manage-files-viewcancel');
+      cancelBtn.addEventListener('click', function () { closeView(state.selected); });
+      viewBar.appendChild(saveBtn);
+      viewBar.appendChild(cancelBtn);
+
+      view.appendChild(viewHead);
+      view.appendChild(viewNote);
+      view.appendChild(viewArea);
+      view.appendChild(viewBar);
+
+      bodyEl.appendChild(msg);
+      bodyEl.appendChild(browse);
+      bodyEl.appendChild(view);
+
+      els.filesUI = {
+        msg: msg, browse: browse, view: view,
+        upBtn: upBtn, pathEl: pathEl, note: note, errorEl: errorEl, capEl: capEl,
+        tbody: tbody, emptyEl: emptyEl,
+        backBtn: backBtn, viewPath: viewPath, viewNote: viewNote, viewArea: viewArea,
+        viewBar: viewBar, saveBtn: saveBtn
+      };
+    }
+
+    function filesPanel(which) {
+      var ui = els.filesUI;
+      ui.msg.classList.toggle('staxx-manage-files-msg--hidden', which !== 'msg');
+      ui.browse.classList.toggle('staxx-manage-files-browse--hidden', which !== 'browse');
+      ui.view.classList.toggle('staxx-manage-files-view--hidden', which !== 'view');
+    }
+
+    function showFilesMessage(text) {
+      els.filesUI.msg.textContent = text;
+      filesPanel('msg');
+    }
+
+    // ---- listing ---------------------------------------------------------
+
+    function openHome(service) {
+      var sess = fileSession(service);
+      sess.loading = true;
+      sess.error = '';
+      renderFileList(service);
+      call('cfile-home', { name: state.stack, service: service }).then(function (res) {
+        if (fileState.sessions[service] !== sess) return; // superseded by a fresh mount() meanwhile
+        if (!res.ok) {
+          sess.loading = false;
+          sess.error = res.error || 'Could not find a starting folder in this container.';
+          renderFileList(service);
+          return;
+        }
+        navigateTo(service, res.home || '/');
+      });
+    }
+
+    function navigateTo(service, dir) {
+      var sess = fileSession(service);
+      sess.loading = true;
+      sess.error = '';
+      if (service === fileState.active) renderFileList(service);
+      call('cfile-list', { name: state.stack, service: service, dir: dir }).then(function (res) {
+        if (fileState.sessions[service] !== sess) return;
+        sess.loading = false;
+        if (!res.ok) {
+          sess.error = res.error || 'Could not list that folder.';
+          renderFileList(service);
+          return;
+        }
+        sess.dir = res.dir;
+        sess.entries = res.entries || [];
+        sess.more = !!res.more;
+        renderFileList(service);
+      });
+    }
+
+    // Full rebuild of the listing — there is no partial-update path here the
+    // way the log and shell panes have, because every action that changes
+    // what a folder holds (rename, delete, mkdir, upload) re-lists it from
+    // scratch anyway, and a directory listing is cheap next to a log tail.
+    function renderFileList(service) {
+      if (service !== fileState.active) return;
+      var sess = fileSession(service);
+      var ui = els.filesUI;
+      filesPanel('browse');
+
+      ui.pathEl.textContent = sess.dir || '…';
+      ui.upBtn.disabled = !sess.dir || sess.dir === '/';
+
+      ui.errorEl.textContent = sess.error;
+      ui.errorEl.classList.toggle('staxx-manage-files-error--hidden', !sess.error);
+      ui.capEl.classList.toggle('staxx-manage-files-cap--hidden', !sess.more);
+
+      ui.tbody.innerHTML = '';
+      var anyMarked = false;
+      sess.entries.forEach(function (entry) {
+        if (isMountPath(service, joinPath(sess.dir, entry.name))) anyMarked = true;
+        ui.tbody.appendChild(fileRow(service, sess, entry));
+      });
+
+      // Explains a symbol, so it only appears where the symbol does. Shown
+      // whenever the stack has any mount at all, it was a legend for a mark
+      // nothing on screen was wearing — at the top of the container's own
+      // filesystem, where none of it is mounted, that reads as a warning about
+      // nothing.
+      ui.note.classList.toggle('staxx-manage-files-note--hidden', !anyMarked);
+
+      var showEmpty = !sess.loading && !sess.error && sess.entries.length === 0;
+      ui.emptyEl.textContent = sess.loading ? 'Loading…' : (showEmpty ? 'This folder is empty.' : '');
+      ui.emptyEl.classList.toggle('staxx-manage-files-empty--hidden', !sess.loading && !showEmpty);
+    }
+
+    function fileRow(service, sess, entry) {
+      var path = joinPath(sess.dir, entry.name);
+      var mounted = isMountPath(service, path);
+
+      var tr = document.createElement('tr');
+      if (mounted) tr.classList.add('staxx-manage-files-row--mounted');
+
+      var nameTd = document.createElement('td');
+      nameTd.className = 'staxx-manage-files-name';
+      if (mounted) {
+        var badge = document.createElement('span');
+        badge.className = 'staxx-manage-files-badge-mount';
+        badge.title = 'From your server — anything outside a marked folder is gone on the next rebuild.';
+        badge.textContent = '⌂';
+        nameTd.appendChild(badge);
+      }
+      if (entry.dir) {
+        var dirBtn = document.createElement('button');
+        dirBtn.type = 'button';
+        dirBtn.className = 'staxx-manage-files-namebtn';
+        dirBtn.textContent = entry.name + '/';
+        dirBtn.addEventListener('click', function () { navigateTo(service, path); });
+        nameTd.appendChild(dirBtn);
+      } else {
+        var nameSpan = document.createElement('span');
+        nameSpan.textContent = entry.name;
+        nameTd.appendChild(nameSpan);
+      }
+      if (entry.link) {
+        var linkBadge = document.createElement('span');
+        linkBadge.className = 'staxx-manage-files-badge-link';
+        // The server's own entry shape carries no target field today; this
+        // reads one anyway, so a future listing that adds one is picked up
+        // without another round of changes here.
+        var target = entry.target || '';
+        linkBadge.title = target ? ('Symlink → ' + target) : 'Symlink';
+        linkBadge.textContent = '→';
+        nameTd.appendChild(linkBadge);
+      }
+
+      var sizeTd = document.createElement('td');
+      sizeTd.className = 'staxx-manage-files-size';
+      sizeTd.textContent = entry.dir ? '—' : bytes(entry.size || 0);
+
+      var permTd = document.createElement('td');
+      permTd.className = 'staxx-manage-files-perms';
+      permTd.textContent = entry.perms + ' ' + entry.uid + ':' + entry.gid;
+
+      var actTd = document.createElement('td');
+      actTd.className = 'staxx-manage-files-actions';
+      if (!entry.dir) {
+        var openBtn = mkFileBtn('Open', 'staxx-manage-files-open');
+        openBtn.title = 'Open a text file here to edit and save it back.';
+        openBtn.addEventListener('click', function () { openEntry(service, path, entry.name, true); });
+        var dlBtn = mkFileBtn('Download', 'staxx-manage-files-download');
+        dlBtn.title = 'This plugin cannot hand the browser a file directly — this shows the ' +
+          'contents so they can be selected and copied.';
+        dlBtn.addEventListener('click', function () { openEntry(service, path, entry.name, false); });
+        actTd.appendChild(openBtn);
+        actTd.appendChild(dlBtn);
+      }
+      var renBtn = mkFileBtn('Rename', 'staxx-manage-files-rename');
+      renBtn.addEventListener('click', function () { renameEntry(service, sess.dir, entry); });
+      var delBtn = mkFileBtn('Delete', 'staxx-manage-files-delete');
+      delBtn.addEventListener('click', function () { deleteEntry(service, path, entry); });
+      actTd.appendChild(renBtn);
+      actTd.appendChild(delBtn);
+
+      tr.appendChild(nameTd);
+      tr.appendChild(sizeTd);
+      tr.appendChild(permTd);
+      tr.appendChild(actTd);
+      return tr;
+    }
+
+    // ---- opening a file: editable for a text file via Open, read-only via
+    // Download, and read-only regardless for a binary file, since there is
+    // nothing here that could save one back correctly. Both buttons read the
+    // same way — the server decides text-or-binary and the size cap either
+    // way, so there is nothing left for the client to branch on beforehand.
+
+    function openEntry(service, path, name, wantEdit) {
+      var sess = fileSession(service);
+      sess.view = { path: path, name: name, editable: false, loading: true, saving: false,
+                    error: '', note: '', text: '', original: '' };
+      renderFileView(service);
+      call('cfile-read', { name: state.stack, service: service, path: path }).then(function (res) {
+        if (fileState.sessions[service] !== sess || sess.view === null) return;
+        var view = sess.view;
+        view.loading = false;
+        if (!res.ok) { view.error = res.error || 'Could not read that file.'; renderFileView(service); return; }
+        if (res.binary) {
+          view.text = res.b64 || '';
+          view.editable = false;
+          view.note = 'This is a binary file and cannot be edited here — the box below holds its ' +
+            'content base64-encoded, which can still be selected and copied.';
+        } else {
+          view.text = res.text || '';
+          view.original = view.text;
+          view.editable = wantEdit;
+        }
+        renderFileView(service);
+      });
+    }
+
+    function renderFileView(service) {
+      if (service !== fileState.active) return;
+      var sess = fileSession(service);
+      var view = sess.view;
+      var ui = els.filesUI;
+      filesPanel('view');
+      if (!view) return;
+      ui.viewPath.textContent = view.name;
+      ui.viewNote.textContent = view.loading ? 'Loading…' : (view.error || view.note);
+      ui.viewNote.classList.toggle('staxx-manage-files-view-note--hidden', !ui.viewNote.textContent);
+      ui.viewArea.value = view.loading ? '' : view.text;
+      ui.viewArea.readOnly = !view.editable;
+      ui.viewArea.classList.toggle('staxx-manage-files-view-area--readonly', !view.editable);
+      ui.viewBar.classList.toggle('staxx-manage-files-view-bar--hidden', !view.editable);
+      ui.saveBtn.disabled = !!view.saving;
+    }
+
+    function closeView(service) {
+      var sess = fileSession(service);
+      var view = sess.view;
+      if (view && view.editable && view.text !== view.original) {
+        if (!window.confirm('Discard the changes made to "' + view.name + '"?')) return;
+      }
+      sess.view = null;
+      renderFileList(service);
+    }
+
+    function saveView(service) {
+      var sess = fileSession(service);
+      var view = sess.view;
+      if (!view || !view.editable || view.saving) return;
+      view.saving = true;
+      renderFileView(service);
+      call('cfile-save', { name: state.stack, service: service, path: view.path, body: view.text })
+        .then(function (res) {
+          if (fileState.sessions[service] !== sess || sess.view !== view) return;
+          view.saving = false;
+          if (!res.ok) { view.error = res.error || 'Could not save that file.'; renderFileView(service); return; }
+          view.original = view.text;
+          closeView(service);
+        });
+    }
+
+    // ---- folder actions: mkdir, rename, delete, upload --------------------
+    //
+    // window.prompt/window.confirm, not a dialog — stacks.js already uses
+    // both for one-line questions exactly like these, and a dialog would be
+    // more furniture than "what should this be called?" needs.
+
+    function makeFolder(service) {
+      var sess = fileSession(service);
+      if (sess.dir === null) return;
+      var name = window.prompt('New folder name:');
+      if (name === null) return;
+      name = name.trim();
+      if (!name || name.indexOf('/') !== -1) {
+        sess.error = 'That is not a valid folder name.';
+        renderFileList(service);
+        return;
+      }
+      call('cfile-mkdir', { name: state.stack, service: service, path: joinPath(sess.dir, name) })
+        .then(function (res) {
+          if (!res.ok) { sess.error = res.error || 'Could not create that folder.'; renderFileList(service); return; }
+          navigateTo(service, sess.dir);
+        });
+    }
+
+    function renameEntry(service, dir, entry) {
+      var sess = fileSession(service);
+      var to = window.prompt('Rename "' + entry.name + '" to:', entry.name);
+      if (to === null) return;
+      to = to.trim();
+      if (to === '' || to === entry.name || to.indexOf('/') !== -1) return;
+      call('cfile-rename', { name: state.stack, service: service, path: joinPath(dir, entry.name), to: joinPath(dir, to) })
+        .then(function (res) {
+          if (!res.ok) { sess.error = res.error || 'Could not rename "' + entry.name + '".'; renderFileList(service); return; }
+          navigateTo(service, sess.dir);
+        });
+    }
+
+    // Delete always asks first, and always says the same thing the mounted
+    // note above says: this container gets rebuilt from its image sooner or
+    // later regardless, so nothing here is truly permanent EXCEPT the delete
+    // itself, which happens right now and cannot be waited out.
+    function deleteEntry(service, path, entry) {
+      var sess = fileSession(service);
+      var msg = 'Delete "' + entry.name + '"? ' +
+        (entry.dir ? 'This removes the whole folder and everything in it. ' : '') +
+        'This happens right now and cannot be undone — the same as anything else outside a ' +
+        'folder marked as coming from your server, which vanishes on the next rebuild anyway.';
+      if (!window.confirm(msg)) return;
+      call('cfile-delete', { name: state.stack, service: service, path: path, recurse: entry.dir ? '1' : '0' })
+        .then(function (res) {
+          if (!res.ok) { sess.error = res.error || 'Could not delete "' + entry.name + '".'; renderFileList(service); return; }
+          navigateTo(service, sess.dir);
+        });
+    }
+
+    function uploadFile(service, file) {
+      var sess = fileSession(service);
+      if (sess.dir === null) return;
+      if (file.size > CFILE_MAX) {
+        sess.error = '"' + file.name + '" is ' + bytes(file.size) + ', over the ' +
+          bytes(CFILE_MAX) + ' limit accepted here.';
+        renderFileList(service);
+        return;
+      }
+      var existing = sess.entries.some(function (e) { return e.name === file.name; });
+      if (existing && !window.confirm('"' + file.name + '" is already in this folder. Replace it?')) return;
+
+      var reader = new FileReader();
+      reader.onload = function () {
+        // btoa needs a binary string, one character per byte — the standard
+        // way to get one out of an ArrayBuffer without pulling in a library,
+        // which the plan already rules out for this whole file.
+        var raw = new Uint8Array(reader.result);
+        var binary = '';
+        for (var i = 0; i < raw.length; i++) binary += String.fromCharCode(raw[i]);
+        var b64 = btoa(binary);
+        call('cfile-save', {
+          name: state.stack, service: service, path: joinPath(sess.dir, file.name),
+          body: b64, encoding: 'base64'
+        }).then(function (res) {
+          if (!res.ok) { sess.error = res.error || 'Could not upload "' + file.name + '".'; renderFileList(service); return; }
+          navigateTo(service, sess.dir);
+        });
+      };
+      reader.onerror = function () {
+        sess.error = 'Could not read "' + file.name + '" from this computer.';
+        renderFileList(service);
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    // ---- switching tabs ----------------------------------------------------
+    //
+    // Called at the end of every render(), same place syncLogFollower() and
+    // syncShellPane() sit. Unlike the log pane, a folder listing is not
+    // restarted on a return visit — see fileSession()'s own comment — so
+    // this only fetches when there is genuinely nothing shown yet.
+    function syncFilesPane() {
+      var service = state.selected;
+
+      if (service === 'all') {
+        fileState.active = null;
+        showFilesMessage('Pick a container above — there is no shared file listing for the whole stack.');
+        return;
+      }
+
+      if (fileState.active === service) return; // already showing and current for this one
+
+      fileState.active = service;
+      var sess = fileSession(service);
+      if (sess.view) { renderFileView(service); return; }
+      if (sess.dir === null) { openHome(service); return; }
+      renderFileList(service);
+    }
+
     function buildButtons(mid) {
       var scope = document.createElement('div');
       scope.className = 'staxx-manage-scope';
@@ -1358,6 +1932,7 @@
       renderButtons();
       syncLogFollower();
       syncShellPane();
+      syncFilesPane();
     }
 
     build();
@@ -1368,10 +1943,15 @@
         // A different stack means an entirely different set of containers —
         // nothing an already-open shell session was talking to still exists.
         closeAllShellSessions();
+        resetFileSessions();
         spec = spec || {};
         state.stack = spec.stack || '';
         state.services = Array.isArray(spec.services) ? spec.services.slice() : [];
         state.icons = spec.icons || {};
+        // Service name -> list of container-side mount paths. Left as {}
+        // (mark nothing) when the host does not pass one — see the field's
+        // own comment on state above.
+        state.mounts = spec.mounts || {};
         state.snapshot = null;
         state.selected = 'all';
         // The remembered choice starts at "this container", which is the

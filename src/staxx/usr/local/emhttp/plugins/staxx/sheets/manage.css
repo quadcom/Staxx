@@ -496,6 +496,267 @@
   opacity: 0.6;
 }
 
+/* ---- D5: the file pane ----------------------------------------------------
+ * Own column layout again, same reasoning as the log and shell panes above:
+ * a toolbar (or a viewer's head/bar) has to stay put while only the listing
+ * or the text box beneath it scrolls.
+ * ------------------------------------------------------------------------- */
+
+.staxx-manage-pane--files .staxx-manage-pane-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.staxx-manage-files-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.staxx-manage-files-msg {
+  padding: 0.6rem;
+  margin: 0;
+  color: var(--sm-muted);
+  font-style: italic;
+}
+
+.staxx-manage-files-msg--hidden { display: none; }
+
+.staxx-manage-files-browse {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.staxx-manage-files-browse--hidden { display: none; }
+
+.staxx-manage-files-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--sm-line);
+}
+
+.staxx-scaffold .staxx-manage-files-btn {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-fill-0, var(--sm-fill));
+  color: inherit;
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+
+.staxx-scaffold .staxx-manage-files-btn:hover:not(:disabled),
+.staxx-scaffold .staxx-manage-files-btn:focus-visible {
+  border-color: var(--sm-accent);
+}
+
+.staxx-scaffold .staxx-manage-files-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.staxx-manage-files-path {
+  flex: 1 1 auto;
+  min-width: 4rem;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85em;
+}
+
+/* The file input behind the Upload button is never shown itself — clicking
+   the button opens the browser's own file picker via uploadInput.click(). */
+.staxx-manage-files-uploadinput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.staxx-manage-files-note,
+.staxx-manage-files-cap {
+  padding: 0.4rem 0.5rem;
+  margin: 0;
+  font-size: 0.85em;
+  color: var(--sm-muted);
+  border-bottom: 1px solid var(--sm-line);
+}
+
+.staxx-manage-files-note--hidden,
+.staxx-manage-files-cap--hidden { display: none; }
+
+.staxx-manage-files-error {
+  padding: 0.4rem 0.5rem;
+  margin: 0;
+  color: var(--sm-danger);
+  border-bottom: 1px solid var(--sm-line);
+}
+
+.staxx-manage-files-error--hidden { display: none; }
+
+.staxx-manage-files-listwrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+
+.staxx-manage-files-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85em;
+}
+
+.staxx-manage-files-table th,
+.staxx-manage-files-table td {
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--sm-line);
+}
+
+.staxx-manage-files-row--mounted {
+  background-color: var(--sm-fill-2);
+}
+
+.staxx-manage-files-name {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  word-break: break-word;
+}
+
+.staxx-scaffold .staxx-manage-files-namebtn {
+  color: inherit;
+  font-weight: 600;
+  background-color: transparent;
+  border: none;
+  padding: 0;
+}
+
+.staxx-scaffold .staxx-manage-files-namebtn:hover,
+.staxx-scaffold .staxx-manage-files-namebtn:focus-visible {
+  text-decoration: underline;
+}
+
+.staxx-manage-files-badge-mount,
+.staxx-manage-files-badge-link {
+  color: var(--sm-accent);
+  line-height: 1;
+}
+
+.staxx-manage-files-size,
+.staxx-manage-files-perms {
+  white-space: nowrap;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--sm-muted);
+}
+
+.staxx-manage-files-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
+.staxx-manage-files-empty {
+  position: absolute;
+  inset: 0;
+  padding: 0.7rem;
+  color: var(--sm-muted);
+  font-style: italic;
+}
+
+.staxx-manage-files-empty--hidden { display: none; }
+
+/* ---- the file viewer/editor, replacing the listing while one is open ---- */
+
+.staxx-manage-files-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.staxx-manage-files-view--hidden { display: none; }
+
+.staxx-manage-files-view-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--sm-line);
+}
+
+.staxx-manage-files-view-path {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85em;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.staxx-manage-files-view-note {
+  padding: 0.4rem 0.5rem;
+  margin: 0;
+  font-size: 0.85em;
+  color: var(--sm-muted);
+  border-bottom: 1px solid var(--sm-line);
+}
+
+.staxx-manage-files-view-note--hidden { display: none; }
+
+.staxx-manage-files-view-area {
+  flex: 1 1 auto;
+  min-height: 0;
+  resize: none;
+  border: none;
+  background-color: var(--sm-fill-0, var(--sm-fill));
+  color: inherit;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85rem;
+  padding: 0.5rem 0.7rem;
+}
+
+/* A read-only view (Download, or any binary file) still looks like the same
+   box rather than a disabled control — the greyed-out look belongs to a
+   button you cannot press, not to text that is simply not editable here. */
+.staxx-manage-files-view-area--readonly {
+  background-color: var(--sm-fill-0, var(--sm-fill));
+}
+
+.staxx-manage-files-view-bar {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  border-top: 1px solid var(--sm-line);
+}
+
+.staxx-manage-files-view-bar--hidden { display: none; }
+
+.staxx-scaffold .staxx-manage-files-viewsave {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--sm-accent);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-fill-2);
+  font-weight: 600;
+}
+
+.staxx-scaffold .staxx-manage-files-viewsave:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* The eight ANSI foreground colours plus bold (PLAN_44 D4's own floor —
    "at minimum the eight foreground colours, bold, and reset"). Fixed
    values, not theme tokens: these carry their own meaning independent of
