@@ -206,8 +206,8 @@ ok('...and touches nothing in its folder', $snapshot($noFileDir) === $before);
 
 $before = $snapshot($plainDir);
 $err = '';
-ok('refuses an ordinary, unlocked stack — a handover needs a review lock',
-   staxx_start_handover($plainRel, $err) === '' && stripos($err, 'review') !== false, $err);
+ok('refuses an ordinary, unlocked stack with nothing to hand over',
+   staxx_start_handover($plainRel, $err) === '' && stripos($err, 'Nothing on this server') !== false, $err);
 ok('...and touches nothing in its folder', $snapshot($plainDir) === $before);
 
 $before = $snapshot($activeDir);

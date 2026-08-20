@@ -44,15 +44,17 @@ $err = '';
 ok('a stack that does not exist is refused',
    staxx_start_takeover('nosuchstack', $err) === '' && stripos($err, 'no stack') !== false, $err);
 
-// The review lock is the only door in — a stack nobody has imported must not
-// be startable this way, since this path exists to clear that lock.
+// A review lock is no longer the door in — staxx_start_takeover() judges by
+// whether anything is really running under this project's name, locked or
+// not. An unlocked stack with nothing running under its name is refused the
+// same way a locked one with nothing running is, below.
 $plain = 'zzt1plain';
 @mkdir(staxx_stack_dir($plain), 0755, true);
 file_put_contents(staxx_stack_dir($plain).'/compose.yaml',
   "services:\n  a:\n    image: alpine:3.20\n");
 $err = '';
-ok('a stack not awaiting review is refused',
-   staxx_start_takeover($plain, $err) === '' && stripos($err, 'awaiting review') !== false, $err);
+ok('an unlocked stack with nothing running under its name is refused',
+   staxx_start_takeover($plain, $err) === '' && stripos($err, 'nothing to take over') !== false, $err);
 
 file_put_contents(staxx_stack_dir($plain).'/'.STAXX_REVIEW_FILE, "held\n");
 ok('the lock is seen', staxx_review_locked($plain));

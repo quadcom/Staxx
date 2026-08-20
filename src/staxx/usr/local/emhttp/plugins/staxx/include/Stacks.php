@@ -1264,7 +1264,8 @@ function staxx_service_names(string $file, ?string &$error = null): array {
  * @return array<int, array{name:string, leaf:string, dir:string, file:string,
  *                          filename:string, services:string[], x:array<string,string>,
  *                          project:string, status:string, running:bool, hasFile:bool,
- *                          parses:bool, error:?string, review:bool, handover:bool}>
+ *                          parses:bool, error:?string, review:bool, handover:bool,
+ *                          takeover:bool}>
  */
 function staxx_list_stacks(): array {
   $stacks = [];
@@ -1319,6 +1320,10 @@ function staxx_list_stacks(): array {
       // only a failed undo writes a fresh one back, at which point the
       // state file is what the job removes last.
       'handover' => staxx_handover_file($dir) !== '',
+      // What the browser's menu uses to decide whether to offer "Take over
+      // and start" — cheap for the same reason staxx_foreign_holders()'s own
+      // docblock gives: both reads behind it are statically cached.
+      'takeover' => staxx_foreign_holders($found['rel']) !== [],
     ];
   }
 
@@ -2889,6 +2894,26 @@ function staxx_handover_targets(string $rel, ?array $containers = null): array {
 }
 
 /**
+ * Which of this stack's handover targets a handover will actually accept —
+ * the subset of staxx_handover_targets() whose container carries no
+ * `com.docker.compose.project` label. Three callers need this exact question
+ * answered (whether a takeover is on offer, and whether starting the stack
+ * normally would collide with a template's own container) and must not drift
+ * from what staxx_start_handover() itself allows further down. Both reads
+ * behind it are statically cached, so this costs array lookups and no extra
+ * shelling out.
+ *
+ * @return array<int, array{service:string, name:string, running:bool}>
+ */
+function staxx_foreign_holders(string $rel): array {
+  $containers = staxx_docker_container_names();
+  return array_values(array_filter(
+    staxx_handover_targets($rel, $containers),
+    fn($t) => ($containers[$t['name']]['project'] ?? '') === ''
+  ));
+}
+
+/**
  * The name the old container is set aside under — worked out here, never
  * sent from the browser, so there is no free text anywhere in what reaches
  * the shell. Appending a fixed, safe suffix to a name Docker already
@@ -3034,7 +3059,11 @@ function staxx_handover_script(
       $undo[] = '  '.$docker.' start '.$orig.' 2>/dev/null || true';
     }
   }
-  $undo[] = '  mv '.escapeshellarg($heldReviewPath).' '.escapeshellarg($reviewPath).' 2>/dev/null || true';
+  // Nothing to put back when there was no review note to begin with, which
+  // is the common case: a handover started from an unlocked stack.
+  if ($heldReviewPath !== '') {
+    $undo[] = '  mv '.escapeshellarg($heldReviewPath).' '.escapeshellarg($reviewPath).' 2>/dev/null || true';
+  }
   $undo[] = '  rm -f '.escapeshellarg($stateFilePath).' 2>/dev/null || true';
   $undo[] = '  echo "Nothing was changed — the stack is back exactly as it was."';
   $undo[] = '}';
@@ -3070,7 +3099,9 @@ function staxx_handover_script(
            . escapeshellarg('Could not reach the stack folder.');
   $steps[] = $composeCmd.' '.$fileArgs.' up -d --remove-orphans 2>&1 || fail '
            . escapeshellarg('The stack could not be started.');
-  $steps[] = 'rm -f '.escapeshellarg($heldReviewPath).' 2>&1';
+  if ($heldReviewPath !== '') {
+    $steps[] = 'rm -f '.escapeshellarg($heldReviewPath).' 2>&1';
+  }
   $steps[] = 'echo "Handed over. Check that the app works, then answer the question on the stack row." 2>&1';
   $steps[] = 'echo "'.STAXX_JOB_END.' 0"';
 
@@ -3106,14 +3137,12 @@ function staxx_start_handover(string $rel, string &$error): string {
     return '';
   }
 
-  // The handover is not an exception carved into the review lock — it
-  // REQUIRES one. It is the only door through it, and refuses everything
-  // else. See PLAN_42's "no exception to the lock is needed".
-  if (!staxx_review_locked($rel)) {
-    $error = 'This stack is not awaiting review, so there is nothing for a handover to take over.';
-    return '';
-  }
-
+  // The review lock is deliberately not consulted. What decides whether a
+  // handover is safe is the foreign-project refusal below: only a container
+  // belonging to no compose project can be taken over, which is exactly a
+  // template's own. Requiring the lock on top of that would make this the
+  // one way out of a state the lock itself can be cleared from, since
+  // clearing it does nothing about the container holding the name.
   $cmd = staxx_compose_cmd();
   if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
   if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
@@ -3136,15 +3165,12 @@ function staxx_start_handover(string $rel, string &$error): string {
     }
   }
 
+  // A stack with no review note is the common case. $heldPath and
+  // $reviewPath stay '' and every rename below skips itself, so the note is
+  // held aside and restored only when there is one.
   $reviewName = staxx_review_file($dir);
-  if ($reviewName === '') {
-    // Cannot happen given the lock check above, but there is no safe way to
-    // hold a note that has already gone missing.
-    $error = 'The review note has gone missing, so this cannot be started safely.';
-    return '';
-  }
-  $heldPath   = $dir.'/.'.$reviewName;
-  $reviewPath = $dir.'/'.$reviewName;
+  $heldPath   = $reviewName !== '' ? $dir.'/.'.$reviewName : '';
+  $reviewPath = $reviewName !== '' ? $dir.'/'.$reviewName : '';
 
   $setasides = [];
   foreach ($targets as $t) {
@@ -3162,7 +3188,7 @@ function staxx_start_handover(string $rel, string &$error): string {
     return '';
   }
 
-  if (!@rename($reviewPath, $heldPath)) {
+  if ($reviewPath !== '' && !@rename($reviewPath, $heldPath)) {
     @unlink($dir.'/'.STAXX_HANDOVER_FILE);
     $error = 'Could not set the review note aside, so nothing was started.';
     return '';
@@ -3170,7 +3196,7 @@ function staxx_start_handover(string $rel, string &$error): string {
 
   if (!is_dir(STAXX_JOB_DIR) && !@mkdir(STAXX_JOB_DIR, 0755, true)) {
     // Put both files back — nothing should look started when nothing was.
-    @rename($heldPath, $reviewPath);
+    if ($reviewPath !== '') @rename($heldPath, $reviewPath);
     @unlink($dir.'/'.STAXX_HANDOVER_FILE);
     $error = 'Could not create '.STAXX_JOB_DIR;
     return '';
@@ -3344,13 +3370,10 @@ function staxx_start_takeover(string $rel, string &$error): string {
     return '';
   }
 
-  // Not an exception carved into the review lock — it REQUIRES one, exactly
-  // as a handover does. It is the only door through it.
-  if (!staxx_review_locked($rel)) {
-    $error = 'This stack is not awaiting review, so there is nothing for a takeover to start.';
-    return '';
-  }
-
+  // The review lock is not consulted here either, for the same reason a
+  // handover does not consult it: the gate is staxx_project_containers()
+  // below being non-empty, and requiring the lock as well would put this
+  // route out of reach the moment someone cleared it.
   $cmd = staxx_compose_cmd();
   if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
   if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
@@ -3365,25 +3388,22 @@ function staxx_start_takeover(string $rel, string &$error): string {
   if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
   $files = staxx_compose_files($file);
 
+  // A stack with no review note is the common case. $heldPath and
+  // $reviewPath stay '' and both the rename and its rollback skip
+  // themselves.
   $reviewName = staxx_review_file($dir);
-  if ($reviewName === '') {
-    // Cannot happen given the lock check above, but there is no safe way to
-    // hold a note that has already gone missing.
-    $error = 'The review note has gone missing, so this cannot be started safely.';
-    return '';
-  }
-  $heldPath   = $dir.'/.'.$reviewName;
-  $reviewPath = $dir.'/'.$reviewName;
+  $heldPath   = $reviewName !== '' ? $dir.'/.'.$reviewName : '';
+  $reviewPath = $reviewName !== '' ? $dir.'/'.$reviewName : '';
 
   // Held aside rather than deleted up front, the same as a handover, so the
   // stack is never briefly unlocked while the job runs.
-  if (!@rename($reviewPath, $heldPath)) {
+  if ($reviewPath !== '' && !@rename($reviewPath, $heldPath)) {
     $error = 'Could not set the review note aside, so nothing was started.';
     return '';
   }
 
   if (!is_dir(STAXX_JOB_DIR) && !@mkdir(STAXX_JOB_DIR, 0755, true)) {
-    @rename($heldPath, $reviewPath);
+    if ($reviewPath !== '') @rename($heldPath, $reviewPath);
     $error = 'Could not create '.STAXX_JOB_DIR;
     return '';
   }
@@ -3403,9 +3423,15 @@ function staxx_start_takeover(string $rel, string &$error): string {
   // $? is captured into $ec straight after the one real step, before the
   // rollback's own commands get a chance to overwrite it — the same reason
   // staxx_start_job() puts its STAXX_JOB_END check right after the chain.
+  // The rm/mv pair only makes sense when there was a note to hold aside —
+  // with none, both branches would act on an empty path, so the whole
+  // if/else is left out rather than guarded step by step.
+  $restoreNote = $heldPath !== ''
+    ? 'if [ "$ec" -eq 0 ]; then rm -f '.escapeshellarg($heldPath).' 2>&1; '
+    . 'else mv '.escapeshellarg($heldPath).' '.escapeshellarg($reviewPath).' 2>/dev/null; fi; '
+    : '';
   $script = 'cd '.escapeshellarg($dir).' && '.$step.'; ec=$?; '
-          . 'if [ "$ec" -eq 0 ]; then rm -f '.escapeshellarg($heldPath).' 2>&1; '
-          . 'else mv '.escapeshellarg($heldPath).' '.escapeshellarg($reviewPath).' 2>/dev/null; fi; '
+          . $restoreNote
           . 'echo "'.STAXX_JOB_END.' $ec"';
 
   @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
@@ -3845,8 +3871,37 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   // also happen to be unavailable.
   if (staxx_review_locked($name)) {
     $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Mark as reviewed" before starting it.';
+           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
+           . ' before starting it.';
     return '';
+  }
+
+  // A container Docker knows under a name this stack pins, and belonging to
+  // no compose project, is a template's own container: compose cannot create
+  // ours beside it, so `up` fails on Docker's raw "name already in use" and
+  // says nothing about the way out. Read off the verb table rather than a
+  // list of verb names, so a verb added later that brings containers up is
+  // covered without anyone remembering to come back here.
+  //
+  // Whole-stack scope only. A single service can only ever collide with this
+  // stack's own container, which carries this project's compose label and so
+  // is never among the holders below.
+  $brings = $verbs[$verb]['args'] ?? '';
+  $brings = is_array($brings) ? $brings : [$brings];
+  $startsSomething = false;
+  foreach ($brings as $step) if (strpos($step, 'up ') === 0) $startsSomething = true;
+
+  if ($service === '' && $startsSomething) {
+    $holders = array_map(fn($t) => $t['name'], staxx_foreign_holders($name));
+    if ($holders) {
+      $error = (count($holders) === 1
+                 ? 'The container '.$holders[0].' is'
+                 : 'The containers '.implode(' and ', $holders).' are')
+             . ' already using a name this stack needs, so starting it would fail. '
+             . 'Choose "Take over and start" from this stack\'s menu instead — it sets '
+             . 'that container aside and starts this stack in its place.';
+      return '';
+    }
   }
 
   $cmd = staxx_compose_cmd();
@@ -4061,7 +4116,8 @@ function staxx_log_start(string $stack, string $service, string &$error): string
   // reason even when compose or docker also happen to be unavailable.
   if (staxx_review_locked($stack)) {
     $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Mark as reviewed" before viewing its logs.';
+           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
+           . ' before viewing its logs.';
     return '';
   }
 
@@ -4261,7 +4317,8 @@ function staxx_log_download(string $stack, string $service, string &$error): str
 
   if (staxx_review_locked($stack)) {
     $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Mark as reviewed" before viewing its logs.';
+           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
+           . ' before viewing its logs.';
     return '';
   }
 
@@ -4396,7 +4453,8 @@ function staxx_exec_start(string $stack, string $service, string &$error): strin
 
   if (staxx_review_locked($stack)) {
     $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Mark as reviewed" before opening a shell.';
+           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
+           . ' before opening a shell.';
     return '';
   }
 
@@ -4759,7 +4817,8 @@ function staxx_cfile_container(string $stack, string $service, string &$error): 
 
   if (staxx_review_locked($stack)) {
     $error = 'This stack was imported and has not been reviewed yet. Open it, read '
-           . STAXX_REVIEW_FILE . ', then choose "Mark as reviewed" before browsing files inside a container.';
+           . STAXX_REVIEW_FILE . ', then choose "Take over and start" or "Clear the lock only"'
+           . ' before browsing files inside a container.';
     return '';
   }
 

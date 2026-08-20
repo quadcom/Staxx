@@ -1055,6 +1055,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                         data-running="<?= $s['running'] ? '1' : '0' ?>"
                         data-review="<?= $s['review'] ? '1' : '0' ?>"
                         data-handover="<?= ($s['handover'] ?? false) ? '1' : '0' ?>"
+                        data-takeover="<?= ($s['takeover'] ?? false) ? '1' : '0' ?>"
                         data-folder="<?= htmlspecialchars($row['folder']) ?>"
                         data-boot="<?= $sMode ?>"
                         data-boot-wait="<?= $sWait ?>"
@@ -1116,7 +1117,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                        section of Stacks.php. Read-only marker; the menu item
                        that clears it lives in the stack actions button above. -->
                   <span class="staxx-reviewbadge"
-                        title="<?= htmlspecialchars(_('Imported and not yet reviewed. Open the stack and choose Mark as reviewed once checked.')) ?>">
+                        title="<?= htmlspecialchars(_('Imported and not yet reviewed. Check it over, then choose "Take over and start" from the stack menu, or "Clear the lock only" if nothing else holds its container name.')) ?>">
                     <?= _('needs review') ?>
                   </span>
                 <? endif; ?>

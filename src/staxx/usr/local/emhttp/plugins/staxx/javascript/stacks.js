@@ -12922,7 +12922,7 @@
   // one target, which is what every real case is — a stack from a single
   // Unraid template — since bending every sentence to agree in number with
   // a rare multi-service clash would cost more clarity than it returns.
-  function openTakeover(name, label) {
+  function openTakeover(name, label, locked) {
     handoverCheck(name).then(function (res) {
       if (!res.ok) { failed('Could not check what "' + label + '" would replace', res.error); return; }
 
@@ -12940,16 +12940,33 @@
       }
 
       if (res.mode === 'none') {
-        askConfirm({
-          title: 'Nothing to take over',
-          bodyHtml: '<p>Nothing on this server holds a container name "' + label + '" asks ' +
-                    'for, so there is nothing to replace. Clear the lock and it will start ' +
-                    'normally.</p>',
-          goLabel: 'Clear the lock'
-        }).then(function (go) {
-          closeConfirm();
-          if (go) markReviewed(name, label);
-        });
+        // Locked and unlocked stacks land here for different reasons — a
+        // locked one still needs its review lock cleared before it can
+        // start, so the dialog offers that; an unlocked one has nothing left
+        // to do, so offering "Clear the lock" would name an action that does
+        // not apply and imply a lock that is not there. askConfirm always
+        // renders one button, so the unlocked case gets a plain dismissing
+        // one rather than a wired-up action, the same shape used above for
+        // "nothing waiting for an answer".
+        if (locked) {
+          askConfirm({
+            title: 'Nothing to take over',
+            bodyHtml: '<p>Nothing on this server holds a container name "' + label + '" asks ' +
+                      'for, so there is nothing to replace. Clear the lock and it will start ' +
+                      'normally.</p>',
+            goLabel: 'Clear the lock'
+          }).then(function (go) {
+            closeConfirm();
+            if (go) markReviewed(name, label);
+          });
+        } else {
+          askConfirm({
+            title: 'Nothing to take over',
+            bodyHtml: '<p>Nothing on this server holds a container name "' + label + '" asks ' +
+                      'for, so it will start normally.</p>',
+            goLabel: 'OK'
+          }).then(function () { closeConfirm(); });
+        }
         return;
       }
 
@@ -14139,6 +14156,7 @@
     var running = d.running === '1';
     var review  = d.review === '1';
     var handover = d.handover === '1';
+    var takeover = d.takeover === '1';
     var inFolder = d.folder || '';
 
     // An imported stack awaiting review has nothing runnable — its identity
@@ -14152,7 +14170,7 @@
       menuItem('It does not work', 'undo', function () { openHandoverAnswer(name, label, false); });
       menuSeparator();
     } else if (review) {
-      menuItem('Take over and start', 'exchange', function () { openTakeover(name, label); });
+      menuItem('Take over and start', 'exchange', function () { openTakeover(name, label, true); });
       // The lesser option, on purpose: it only removes the lock, so a
       // container already using this name is left exactly as it is and
       // starting can still fail against it. See NEEDS-REVIEW.md's own
@@ -14165,6 +14183,18 @@
 
     if (parses && !review && !handover) {
       var why = CAN_RUN ? '' : 'Docker or compose unavailable';
+      // Offered here as well as on a review-locked stack, because a plain
+      // Start cannot free a container name something outside StaXX is
+      // holding — compose simply fails against it. Gating this on the review
+      // lock alone would mean "Clear the lock only" threw the key away
+      // before the name was ever freed, and data-takeover is set by the
+      // server precisely when a container belonging to no compose project
+      // holds one of this stack's names.
+      if (takeover) {
+        menuItem('Take over and start', 'exchange', function () { openTakeover(name, label, false); }, {
+          hint: 'A container outside StaXX already holds this stack\'s container name, so starting normally cannot work.'
+        });
+      }
       menuItem(running ? 'Restart' : 'Start', running ? 'refresh' : 'play',
                function () { run(name, running ? 'restart' : 'up', afterRun('up')); },
                { disabled: !CAN_RUN, hint: why });
