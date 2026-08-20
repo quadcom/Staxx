@@ -1838,6 +1838,35 @@
   color: var(--sm-accent);
 }
 
+/* The sticky failure marker (PLAN_44 Part B4): coloured like --bad, since a
+   failure IS the bad state, but a real <button> underneath rather than a
+   styled span — the whole point of this pill is that clicking it does
+   something, so it has to be reachable and operable like any other control. */
+/* Prefixed with .staxx-scaffold purely for specificity, and — as with the
+   Logs button above — that is not belt-and-braces. This is the only pill that
+   is a <button>, and Unraid's own sheet carries
+   `.unapi button { background-color: transparent; border-radius: 0 }`. One
+   class plus an element type outranks a single class, so an unprefixed rule
+   here loses both the fill and the rounded ends and the marker renders as bare
+   text in the state column. border-radius is restated rather than inherited
+   from .staxx-pill for exactly the same reason: that rule is a single class
+   too, so it loses the same fight. background-color, not the background
+   shorthand, so it is plain which declaration is being contested. */
+.staxx-scaffold .staxx-pill--fail {
+  cursor: pointer;
+  border: none;
+  border-radius: 1rem;
+  font: inherit;
+  background-color: var(--sm-danger);
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-pill--fail:hover,
+.staxx-scaffold .staxx-pill--fail:focus-visible {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.1rem;
+}
+
 /* Two pills on the name's second line: a stack imported with its run buttons
    locked, and a container waiting for its handover to be confirmed. Outlined
    rather than filled, so they read as "check this" and not as an error — the
@@ -1930,24 +1959,9 @@
   white-space: nowrap;
 }
 
-/* ---- Panels: editor and output ------------------------------------------ */
-
-.staxx-panel {
-  margin: 2rem 0;
-  padding: 1.4rem;
-  border: 0.1rem solid var(--sm-line);
-  border-radius: var(--sm-radius);
-}
-
-.staxx-panel[hidden] {
-  display: none;
-  opacity: 0;
-  translate: 0 -0.4rem;
-}
-
-@starting-style {
-  .staxx-panel { opacity: 0; translate: 0 -0.4rem; }
-}
+/* ---- Panels: the editor ---------------------------------------------------
+   Output moved into its own dialog (.staxx-logdlg, further down) so it can
+   never scroll the page underneath it — see that block for why. */
 
 .staxx-field {
   display: block;
@@ -2007,14 +2021,10 @@
 }
 
 /* One shared fade-and-lift for every status message the page shows and
-   hides with `hidden`, rather than four copies of the same three lines.
-   .staxx-panel, not .staxx-log: .staxx-log is the text pane INSIDE
-   the log panel, and the element that actually carries `hidden` is its
-   wrapper, #staxx-log-panel, which is a .staxx-panel (see
-   StacksPage.php). translate, not transform, so nothing a component wants
-   transform for later has to fight this. */
+   hides with `hidden`, rather than three copies of the same two lines.
+   translate, not transform, so nothing a component wants transform for
+   later has to fight this. */
 .staxx-error,
-.staxx-panel,
 .staxx-modal-banner,
 .staxx-strip {
   opacity: 1;
@@ -2043,20 +2053,6 @@
 
 @starting-style {
   .staxx-error { opacity: 0; translate: 0 -0.4rem; }
-}
-
-.staxx-log {
-  max-height: 46rem;
-  margin: 0;
-  padding: 1rem 1.2rem;
-  overflow: auto;
-  border-radius: 0.3rem;
-  background: rgba(0, 0, 0, 0.28);
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 1.2rem;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 /* ---- Compose editor modal ------------------------------------------------ */
@@ -6640,6 +6636,96 @@
   font-weight: 700;
 }
 
+/* ---- Output dialog --------------------------------------------------------
+ *
+ * The ninth dialog, replacing the page-bottom panel that used to slide up and
+ * scroll the whole page down to reach it (PLAN_44 Part B — Adrian's word for
+ * that was "annoying"). Same recipe as .staxx-settings: own class, own
+ * :not([open]), ::backdrop and @starting-style, and no z-index needed because
+ * showModal() already promotes it above everything including the context
+ * menu's 9999.
+ */
+.staxx-logdlg {
+  width: min(90rem, 94vw);
+  max-height: 80vh;
+  margin: auto;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+
+  display: flex;
+  flex-direction: column;
+
+  opacity: 1;
+  transition:
+    opacity var(--sm-motion) var(--sm-ease),
+    display var(--sm-motion) allow-discrete,
+    overlay var(--sm-motion) allow-discrete;
+}
+
+.staxx-logdlg:not([open]) {
+  display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .staxx-logdlg[open] { opacity: 0; }
+}
+
+.staxx-logdlg::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 1;
+  transition: opacity var(--sm-motion) var(--sm-ease),
+              display var(--sm-motion) allow-discrete,
+              overlay var(--sm-motion) allow-discrete;
+}
+
+.staxx-logdlg:not([open])::backdrop {
+  opacity: 0;
+}
+
+@starting-style {
+  .staxx-logdlg[open]::backdrop { opacity: 0; }
+}
+
+.staxx-logdlg-head {
+  flex: 0 0 auto;
+  padding: 1.2rem 1.4rem 0.8rem;
+}
+
+.staxx-logdlg-title {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+/* Carried over from the old .staxx-log rule this replaces: same monospace
+   pane, same dark fill, just inside a dialog body now instead of a page
+   panel. */
+.staxx-logdlg-body {
+  flex: 1 1 auto;
+  margin: 0 1.4rem 1.2rem;
+  padding: 1rem 1.2rem;
+  overflow: auto;
+  border-radius: 0.3rem;
+  background: rgba(0, 0, 0, 0.28);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.2rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.staxx-logdlg-foot {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  padding: 1.2rem 1.4rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
 /* ---- Collapsible environment section ------------------------------------ */
 
 .staxx-details {
@@ -7244,6 +7330,13 @@
     content: "‼";
   }
 
+  /* No colour override: --fail already sets white text on the danger-red
+     background above, and ::before inherits it. Same mark as --bad — both
+     read as "something is wrong here", which is true of both. */
+  .staxx-pill--fail::before {
+    content: "‼";
+  }
+
   /* No colour override: --busy already sets the accent colour as its text
      colour above, and ::before inherits it; the dashed border it also sets
      stays, so the chip keeps reading as in-progress rather than a settled
@@ -7725,7 +7818,8 @@
   .staxx-ca::backdrop,
   .staxx-ca-app::backdrop,
   .staxx-confirm::backdrop,
-  .staxx-settings::backdrop {
+  .staxx-settings::backdrop,
+  .staxx-logdlg::backdrop {
     transition-duration: 1ms !important;
     animation-duration: 1ms !important;
   }

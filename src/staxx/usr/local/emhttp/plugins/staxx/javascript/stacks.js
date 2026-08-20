@@ -528,25 +528,32 @@
     return out;
   }
 
-  var logPanel = document.getElementById('staxx-log-panel');
+  var logDlg   = document.getElementById('staxx-log-dlg');
   var logTitle = document.getElementById('staxx-log-title');
-  var logBox   = document.getElementById('staxx-log');
+  var logBox   = document.getElementById('staxx-log-body');
+
+  // Opens the output dialog with one message in it. showModal() throws if
+  // called on a dialog that is already open, so this — not a bare
+  // showModal() at each call site — is what every opener goes through:
+  // failed(), Logs, the self-test, and a clicked failure marker.
+  function openLogDialog(title, text) {
+    if (!logDlg) return;
+    logTitle.textContent = title || 'Output';
+    logBox.textContent = text || '';
+    if (!logDlg.open) logDlg.showModal();
+  }
 
   // "Save and start" is disabled server-side when compose or Docker is
   // missing. Remember that, so re-enabling after a save does not quietly
   // switch it back on.
   var startBtnWasDisabled = startBtn.disabled;
 
-  var poller = null;
-
   // A JavaScript error anywhere in here used to end with the page frozen on
   // whatever it last said. Put it on screen instead.
   window.addEventListener('unhandledrejection', function (event) {
-    if (!logPanel) return;
-    logPanel.hidden = false;
-    logTitle.textContent = 'Script error';
-    logBox.textContent = 'Something in the page failed:\n\n' +
-      (event.reason && event.reason.stack ? event.reason.stack : String(event.reason));
+    if (!logDlg) return;
+    openLogDialog('Script error', 'Something in the page failed:\n\n' +
+      (event.reason && event.reason.stack ? event.reason.stack : String(event.reason)));
   });
 
   /* ---------------------------------------------------------------- net -- */
@@ -10666,31 +10673,58 @@
 
   /* ---------------------------------------------------------------- run -- */
 
-  /* Running a command shows a spinner on the row, not a panel.
+  /* Running a command shows a spinner on the row, not a dialog.
    *
-   * A box of command output appearing under the table for every start and stop
-   * is a lot of furniture for something you already know the answer to, and it
-   * pushes the list around while you are looking at it. Unraid's own Docker
-   * page spins the app icon instead, and this does the same.
+   * A box of command output popping up for every start and stop is a lot of
+   * furniture for something you already know the answer to. Unraid's own
+   * Docker page spins the app icon instead, and this does the same.
    *
-   * The output is still collected and still followed — it is just not shown
+   * The output is still collected and still tracked — it is just not shown
    * unless it turns out to be worth reading:
    *
-   *   Logs, Resolved settings   the output IS the point, so the panel opens.
-   *   anything that fails       the panel opens with what compose said. An
-   *                             error you cannot see is worse than a box.
+   *   Logs, Resolved settings   the output IS the point, so the dialog opens.
+   *   anything that fails       the row keeps a sticky marker until it is
+   *                             clicked — see markFailed() below. Nothing
+   *                             pops up over whatever else is on screen.
    *   everything else           spinner, then the row updates itself.
    */
 
   var BUSY_LABEL = {
-    up:      'Starting…',
-    down:    'Stopping…',
-    restart: 'Restarting…',
-    pull:    'Updating…',
-    remove:  'Removing…',
+    up:       'Starting…',
+    down:     'Stopping…',
+    restart:  'Restarting…',
+    pull:     'Updating…',
+    remove:   'Removing…',
     // Same word as `pull` on purpose: to whoever is watching the spinner,
     // pull-then-up-d IS the update, not two things happening.
-    update:  'Updating…'
+    update:   'Updating…',
+    recreate: 'Recreating…'
+  };
+
+  // Same wording as BUSY_LABEL, past tense: "Starting…" failing is a "Start
+  // failed", not a different word for the same attempt. Kept as its own map
+  // rather than derived from BUSY_LABEL, because "Removing…" -> "Removal"
+  // is not a mechanical trim of the ellipsis the others are.
+  var FAIL_LABEL = {
+    up:       'Start failed',
+    down:     'Stop failed',
+    restart:  'Restart failed',
+    pull:     'Update failed',
+    remove:   'Removal failed',
+    update:   'Update failed',
+    recreate: 'Recreate failed'
+  };
+
+  // Past tense for the folder summary line ("6 of 9 started, 1 failed") —
+  // same vocabulary again, third form.
+  var VERB_PAST = {
+    up:       'started',
+    down:     'stopped',
+    restart:  'restarted',
+    pull:     'updated',
+    remove:   'removed',
+    update:   'updated',
+    recreate: 'recreated'
   };
 
   // Verbs whose whole purpose is to show you something.
@@ -10748,8 +10782,93 @@
     return out;
   }
 
+  // The identity a failure marker (and the map below) is filed under: a
+  // stack row's own name, or a container row's stack-plus-service — see the
+  // containerRows() comment above for why the service half has to be the
+  // row's OWN data-service (kid.key) rather than the bare compose name a
+  // replica shares with its siblings.
+  function rowKey(row) {
+    if (row.dataset.stackRow) return row.dataset.stackRow;
+    if (row.classList.contains('staxx-container-row')) {
+      // Joined on an escaped NUL, written as an escape rather than a raw
+      // byte: a literal one in the source makes every text tool treat this
+      // file as binary. It is the separator because it is the one character
+      // neither a stack path nor a service name can ever contain.
+      return row.dataset.inStack + '\u0000' + row.dataset.service;
+    }
+    return null;
+  }
+
+  // Sticky failure markers, keyed by rowKey() rather than left on the row's
+  // own dataset. refreshRows() replaces the whole table body wholesale (see
+  // restoreExpandedStacks for the same problem solved the same way), so
+  // anything that has to survive it cannot live only on the DOM node.
+  var rowFailures = {};
+
+  function paintFailure(rows, verb) {
+    var label = FAIL_LABEL[verb] || 'Failed';
+    rows.forEach(function (row) {
+      row.dataset.failed = '1';
+      var td = row.querySelector('[data-cell="state"]');
+      if (td) {
+        td.innerHTML = '<button type="button" class="staxx-pill staxx-pill--fail" ' +
+          'title="Click to see what happened">' + esc(label) + '</button>';
+        // See setBusy: paintState skips a cell whose HTML matches what it
+        // wrote last, so this record has to go or the next poll — once the
+        // busy/failed suppression is lifted by a click — paints nothing.
+        td.staxxTxt = '';
+      }
+    });
+  }
+
+  // Records a failure and paints it. `job` is kept so the marker can fetch
+  // the output later (openJobOutput()) even though the job itself has long
+  // since left the jobs map below.
+  function markFailed(rows, verb, job) {
+    rows.forEach(function (row) {
+      var key = rowKey(row);
+      if (key) rowFailures[key] = { verb: verb, job: job };
+    });
+    paintFailure(rows, verb);
+  }
+
+  // Clears a row's marker, on screen and in the map — called both when a new
+  // run starts on the row (setBusy, below: trying again answers the old
+  // failure) and when the marker itself is clicked (acknowledged).
+  function clearFailure(row) {
+    var key = rowKey(row);
+    if (key) delete rowFailures[key];
+    delete row.dataset.failed;
+  }
+
+  // Re-applies every marker still on record after refreshRows() has thrown
+  // the old rows away — see restoreExpandedStacks, called alongside this for
+  // the same reason.
+  function restoreFailures() {
+    Object.keys(rowFailures).forEach(function (key) {
+      var sep = key.indexOf('\u0000');
+      var rows;
+      if (sep === -1) {
+        rows = stackRows(key);
+      } else {
+        var stack = key.slice(0, sep), service = key.slice(sep + 1);
+        rows = [];
+        Array.prototype.forEach.call(
+          document.querySelectorAll(
+            '.staxx-container-row[data-in-stack="' + stack + '"][data-service="' + service + '"]'
+          ),
+          function (r) { rows.push(r); }
+        );
+      }
+      if (rows.length) paintFailure(rows, rowFailures[key].verb);
+    });
+  }
+
   function setBusy(rows, label) {
     rows.forEach(function (row) {
+      // A new attempt answers any previous failure on this row.
+      if (row.dataset.failed) clearFailure(row);
+
       // Marked on the row so a state refresh arriving mid-command does not
       // paint the old state over the top of "Starting…".
       row.dataset.busy = '1';
@@ -10774,6 +10893,100 @@
       delete row.dataset.busy;
       spin(row, false);
     });
+  }
+
+  /* ---- per-row job tracking --------------------------------------------
+   *
+   * Compose commands are slow — pulling an image can take minutes — so the
+   * server detaches every one of them and this is what polls for the result.
+   * A single global poller used to do that; a second command starting while
+   * the first was still running silently cancelled the first one's polling,
+   * which was fine while only one row at a time ever showed progress. With
+   * every row reporting itself that is no longer acceptable, so each job in
+   * flight gets its own entry here and one shared ticker asks after every one
+   * of them in a single request — see the `jobs`/`offsets` batch form of the
+   * `job` action.
+   */
+
+  var jobs      = {};    // job id -> { rows, verb, show, atBottom, offset, text, done }
+  var jobTicker = null;
+
+  function startTicker() {
+    if (!jobTicker) jobTicker = setInterval(tickJobs, 1000);
+  }
+
+  // Stopped rather than left running empty, the same reason the stats
+  // collector stops sampling when nothing asks for a while — there is no
+  // point polling for jobs that do not exist.
+  function stopTickerIfIdle() {
+    if (jobTicker && !Object.keys(jobs).length) {
+      clearInterval(jobTicker);
+      jobTicker = null;
+    }
+  }
+
+  function tickJobs() {
+    var ids = Object.keys(jobs);
+    if (!ids.length) return;
+    var offsets = ids.map(function (id) { return jobs[id].offset; });
+
+    call('job', { jobs: ids.join(','), offsets: offsets.join(',') }).then(function (res) {
+      if (!res.ok || !res.jobs) return;
+
+      ids.forEach(function (id) {
+        var entry = jobs[id];
+        var part  = res.jobs[id];
+        if (!entry || !part) return;   // answered for an id already removed below
+
+        entry.text  += part.text || '';
+        entry.offset = part.offset;
+
+        if (entry.show) {
+          logBox.textContent = entry.text || 'Working…';
+          if (entry.atBottom) logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        if (part.done) {
+          delete jobs[id];
+          if (entry.show) {
+            logTitle.textContent += (part.exit !== 0 && part.exit !== null)
+              ? ' — failed (exit ' + part.exit + ')'
+              : ' — done';
+          }
+          if (entry.done) entry.done({ text: entry.text, exit: part.exit, done: true });
+        }
+      });
+
+      stopTickerIfIdle();
+    });
+  }
+
+  // Registers a job with the shared ticker and returns nothing — callers that
+  // used to get everything through follow()'s own callback now get it through
+  // opts.done instead, once this job's entry is removed above.
+  //
+  // opts: rows (spun/marked together), verb (for the busy/fail wording),
+  // show (stream into the output dialog as it grows), done(job).
+  function track(job, opts) {
+    opts = opts || {};
+    jobs[job] = {
+      rows:     opts.rows || [],
+      verb:     opts.verb || '',
+      show:     !!opts.show,
+      atBottom: true,
+      offset:   0,
+      text:     '',
+      done:     opts.done
+    };
+    if (opts.show) {
+      logBox.onscroll = function () {
+        var entry = jobs[job];
+        if (entry) {
+          entry.atBottom = logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 30;
+        }
+      };
+    }
+    startTicker();
   }
 
   function run(name, verb, done, service) {
@@ -10802,64 +11015,22 @@
         return;
       }
 
-      if (show) {
-        logPanel.hidden = false;
-        logTitle.textContent = res.title || 'Output';
-        logBox.textContent = 'Working…';
-        logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
+      if (show) openLogDialog(res.title || 'Output', 'Working…');
 
-      follow(res.job, function (job) {
-        clearBusy(rows);
+      track(res.job, {
+        rows: rows, verb: verb, show: show,
+        done: function (job) {
+          clearBusy(rows);
 
-        // Silent while it works, loud when it breaks.
-        if (!show && job.exit !== 0 && job.exit !== null) {
-          failed((res.title || 'Command') + ' — failed (exit ' + job.exit + ')',
-                 job.text || '(no output)');
-        }
-        if (done) done(job);
-      }, show);
-    });
-  }
-
-  // Compose commands are slow — pulling an image can take minutes — so the
-  // server detaches the command and its output is collected as it accumulates.
-  // `show` decides whether any of that reaches the screen while it runs; the
-  // polling happens either way, because the finish is what the row waits for.
-  function follow(job, done, show) {
-    if (poller) { clearInterval(poller); poller = null; }
-
-    var atBottom = true;
-    if (show) {
-      logBox.onscroll = function () {
-        atBottom = logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 30;
-      };
-    }
-
-    var tick = function () {
-      call('job', { job: job }).then(function (res) {
-        if (!res.ok) return;
-
-        if (show) {
-          logBox.textContent = res.text || 'Working…';
-          if (atBottom) logBox.scrollTop = logBox.scrollHeight;
-        }
-
-        if (res.done) {
-          clearInterval(poller);
-          poller = null;
-          if (show) {
-            logTitle.textContent += (res.exit !== 0 && res.exit !== null)
-              ? ' — failed (exit ' + res.exit + ')'
-              : ' — done';
+          // Silent while it works, loud when it breaks — and loud now means
+          // a sticky marker on the row, not a dialog stealing the screen.
+          if (!show && job.exit !== 0 && job.exit !== null) {
+            markFailed(rows, verb, res.job);
           }
-          if (done) done(res);
+          if (done) done(job);
         }
       });
-    };
-
-    poller = setInterval(tick, 1000);
-    tick();
+    });
   }
 
   /* ------------------------------------------------------------ refresh -- */
@@ -10909,7 +11080,10 @@
   // skipped the same way a figure is. See setCell for why the comparison is
   // against what we were handed rather than against innerHTML.
   function paintState(row, html, isUp, address) {
-    if (row.dataset.busy) return;
+    // Suppressed the same way a busy row is: a real state landing here would
+    // otherwise paint the sticky failure marker away one poll after it
+    // appeared. See markFailed()/clearFailure() for how it comes and goes.
+    if (row.dataset.busy || row.dataset.failed) return;
     var td = row.querySelector('[data-cell="state"]');
     if (td && td.staxxTxt !== html) {
       td.innerHTML = html;
@@ -10996,6 +11170,11 @@
     Object.keys(folders).forEach(function (id) {
       var tr = document.querySelector('[data-folder-row="' + id + '"]');
       if (!tr) return;
+      // A folder-run is writing its own summary into this cell — see
+      // folderRun() — and a state poll must not paint over it: `busy` while
+      // it runs, and `failed` afterwards for a run that did not all succeed,
+      // so "1 failed" cannot vanish a second after it appeared.
+      if (tr.dataset.busy || tr.dataset.failed) return;
       var sub = tr.querySelector('[data-cell="folder-sub"]');
       if (sub && sub.staxxTxt !== folders[id].html) {
         sub.innerHTML = folders[id].html;
@@ -11087,6 +11266,11 @@
       // The server just rendered every stack collapsed — put back whatever
       // this session had open before the swap. See expandedStacks above.
       restoreExpandedStacks();
+
+      // Same problem, same fix: a failure marker lives on a row's dataset,
+      // and every row was just thrown away. rowFailures is the record that
+      // survives the swap; this puts the markers back on the new rows.
+      restoreFailures();
 
       // Every row in the fresh markup starts with no tabindex at all, the
       // same situation the very first page load was in — rebuild the
@@ -11224,10 +11408,7 @@
   document.getElementById('staxx-import').addEventListener('click', importOpen);
 
   document.getElementById('staxx-diagnose').addEventListener('click', function () {
-    logPanel.hidden = false;
-    logTitle.textContent = 'Self-test';
-    logBox.textContent = 'Checking…';
-    logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    openLogDialog('Self-test', 'Checking…');
 
     // Stage one is pure PHP and runs no commands, so it cannot hang. Stage two
     // runs the external commands one at a time, appending each result as it
@@ -11285,15 +11466,44 @@
   startBtn.addEventListener('click', function () { save(true); });
 
   document.getElementById('staxx-log-close').addEventListener('click', function () {
-    if (poller) { clearInterval(poller); poller = null; }
-    logPanel.hidden = true;
+    if (logDlg) logDlg.close();
   });
 
+  // Same hit-test every dialog here uses: <dialog> fires no backdrop click of
+  // its own, because a click on the backdrop targets the dialog element.
+  if (logDlg) {
+    logDlg.addEventListener('click', function (event) {
+      if (event.target !== logDlg) return;
+      var r = logDlg.getBoundingClientRect();
+      if (event.clientX < r.left || event.clientX > r.right ||
+          event.clientY < r.top  || event.clientY > r.bottom) logDlg.close();
+    });
+  }
+
   function failed(title, message) {
-    logPanel.hidden = false;
-    logTitle.textContent = title;
-    logBox.textContent = message || '(no detail given)';
-    logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    openLogDialog(title, message || '(no detail given)');
+  }
+
+  // Shows a failed job's output after the fact, from a clicked marker —
+  // `record` is what markFailed() put in rowFailures, or null if the row had
+  // none. Job logs are pruned after an hour (staxx_prune_jobs()), so a job id
+  // that no longer resolves to anything has to say that plainly rather than
+  // opening on an empty box.
+  function openJobOutput(record) {
+    var title = record ? (FAIL_LABEL[record.verb] || 'Output') : 'Output';
+    if (!record || !record.job) {
+      openLogDialog(title, 'There is nothing more to show for this.');
+      return;
+    }
+    openLogDialog(title, 'Loading…');
+    call('job', { job: record.job, offset: 0 }).then(function (res) {
+      if (!res.ok) { logBox.textContent = res.error || 'Could not read the output.'; return; }
+      if (res.done && res.exit === null && !res.text) {
+        logBox.textContent = 'This job\'s output is no longer on the server — it is only kept for an hour.';
+        return;
+      }
+      logBox.textContent = res.text || '(no output)';
+    });
   }
 
   /* ------------------------------------------------------------- actions -- */
@@ -11558,7 +11768,7 @@
    * successful takeover job or reached again later from the stack's own
    * menu — the answer can wait, and nothing here forces it.
    *
-   * Both windows run their command through call()+follow(), the same
+   * Both windows run their command through call()+track(), the same
    * machinery run() uses, because a handover is exactly as slow and exactly
    * as important to watch as any other compose command.
    */
@@ -11653,19 +11863,19 @@
             }
             closeConfirm();
 
-            logPanel.hidden = false;
-            logTitle.textContent = 'Handover — ' + label;
-            logBox.textContent = 'Working…';
-            logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            openLogDialog('Handover — ' + label, 'Working…');
 
             // A failed handover has already put itself back on the server —
             // the job's own output says what went wrong, so there is
             // nothing to ask here beyond refreshing the row's badge either
             // way. Only a clean finish has anything left to confirm.
-            follow(r.job, function (job) {
-              refreshRows();
-              if (job.exit === 0) openHandoverAnswer(name, label, true);
-            }, true);
+            track(r.job, {
+              show: true,
+              done: function (job) {
+                refreshRows();
+                if (job.exit === 0) openHandoverAnswer(name, label, true);
+              }
+            });
           });
         });
       }
@@ -11718,14 +11928,11 @@
           }
           closeConfirm();
 
-          logPanel.hidden = false;
-          logTitle.textContent = 'Rebuild — ' + label;
-          logBox.textContent = 'Working…';
-          logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          openLogDialog('Rebuild — ' + label, 'Working…');
 
           // No follow-up question on this path — a clean finish leaves the
           // stack simply live, so refreshing the row is all that is left.
-          follow(r.job, function () { refreshRows(); }, true);
+          track(r.job, { show: true, done: function () { refreshRows(); } });
         });
       });
     }
@@ -11801,13 +12008,10 @@
             }
             closeConfirm();
 
-            logPanel.hidden = false;
-            logTitle.textContent = (worked ? 'Clearing away the old container'
-                                            : 'Putting everything back') + ' — ' + label;
-            logBox.textContent = 'Working…';
-            logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            openLogDialog((worked ? 'Clearing away the old container'
+                                   : 'Putting everything back') + ' — ' + label, 'Working…');
 
-            follow(r.job, function () { refreshRows(); }, true);
+            track(r.job, { show: true, done: function () { refreshRows(); } });
           });
         });
       }
@@ -12545,10 +12749,7 @@
     // server's own refusal ("Start the container first.") says more than a
     // greyed-out item would — so only "never created at all" is disabled here.
     menuItem('Test web page', 'external-link', function () {
-      logPanel.hidden = false;
-      logTitle.textContent = 'Test web page';
-      logBox.textContent = 'Checking…';
-      logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      openLogDialog('Test web page', 'Checking…');
 
       // 15s: comfortably above the server's own four-second attempt, so a
       // slow reply still lands rather than reading as our own timeout.
@@ -12645,19 +12846,72 @@
     );
     setBusy(rows, BUSY_LABEL[verb] || 'Working…');
 
-    call('folder-run', { folder: id, verb: verb }).then(function (res) {
-      if (!res.ok) { clearBusy(rows); failed(label, res.error); return; }
+    var folderRow = document.querySelector('[data-folder-row="' + id + '"]');
+    var sub = folderRow && folderRow.querySelector('[data-cell="folder-sub"]');
+    // Running again answers whatever the last run's summary said, the same
+    // way setBusy() clears a row's own failure marker.
+    if (folderRow) {
+      delete folderRow.dataset.failed;
+      folderRow.dataset.busy = '1';   // see applyState's folder loop
+    }
 
-      // Follow the last one; they all run at once, and every row is refreshed
-      // together once it finishes.
-      follow(res.jobs[res.jobs.length - 1].job, function (job) {
+    call('folder-run', { folder: id, verb: verb }).then(function (res) {
+      if (!res.ok) {
         clearBusy(rows);
-        if (job.exit !== 0 && job.exit !== null) {
-          failed(label + ' — something failed (exit ' + job.exit + ')',
-                 job.text || '(no output)');
-        }
-        refreshStateSoon();
-      }, false);
+        if (folderRow) delete folderRow.dataset.busy;
+        failed(label, res.error);
+        return;
+      }
+
+      // Each stack in the folder runs and reports on its OWN row now, rather
+      // than the whole folder waiting on whichever job happened to start
+      // last — that used to mean a folder run showed one exit code for
+      // stacks that each really succeeded or failed independently.
+      var jobsList  = res.jobs || [];
+      var total     = jobsList.length;
+      var doneCount = 0;
+      var failCount = 0;
+      var verbWord  = VERB_PAST[verb] || 'run';
+
+      function paintSummary() {
+        if (!sub) return;
+        var text = doneCount + ' of ' + total + ' ' + verbWord +
+          (failCount ? ', ' + failCount + ' failed' : '');
+        sub.innerHTML = esc(text);
+        // Cleared, not left holding whatever the server last rendered: that
+        // cache is a claim about what this cell currently shows, and leaving a
+        // stale one there means the next server render compares equal, skips,
+        // and the folder keeps claiming a summary for ever. Same rule, same
+        // reason, as setBusy(). What keeps the summary on screen is the
+        // busy/failed guard in applyState, not a lie in the cache.
+      }
+      paintSummary();
+
+      jobsList.forEach(function (item) {
+        var itemRows = stackRows(item.name);
+        track(item.job, {
+          rows: itemRows, verb: verb,
+          done: function (job) {
+            clearBusy(itemRows);
+            doneCount++;
+            if (job.exit !== 0 && job.exit !== null) {
+              failCount++;
+              markFailed(itemRows, verb, item.job);
+            }
+            paintSummary();
+            if (doneCount === total && folderRow) {
+              delete folderRow.dataset.busy;
+              // A clean run has nothing left to say, so the folder goes back
+              // to its real sub-line on the next poll. A run with a failure in
+              // it holds the count instead — the stacks that failed each carry
+              // their own marker to click, and this is the line that says how
+              // many there are to look for.
+              if (failCount) folderRow.dataset.failed = '1';
+              refreshStateSoon();
+            }
+          }
+        });
+      });
     });
   }
 
@@ -13163,6 +13417,22 @@
   scaffold.addEventListener('click', function (event) {
     var el = event.target.closest('button');
     if (!el) return;
+
+    // Clicking the sticky failure marker is its own acknowledgement: it
+    // shows what happened and clears itself, on this row only.
+    if (el.classList.contains('staxx-pill--fail')) {
+      var failRow = el.closest('[data-stack-row], .staxx-container-row');
+      if (failRow) {
+        var key    = rowKey(failRow);
+        var record = key ? rowFailures[key] : null;
+        clearFailure(failRow);
+        var td = failRow.querySelector('[data-cell="state"]');
+        if (td) { td.innerHTML = ''; td.staxxTxt = ''; }
+        openJobOutput(record);
+        refreshStateSoon();   // repaint the real state now the marker is gone
+      }
+      return;
+    }
 
     if (el.dataset.toggleFolder) { toggleFolder(el.dataset.toggleFolder, el); return; }
     if (el.dataset.toggleStack)  { toggleStack(el.dataset.toggleStack, el);  return; }

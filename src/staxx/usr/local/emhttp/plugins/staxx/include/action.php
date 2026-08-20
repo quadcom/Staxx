@@ -322,8 +322,44 @@ switch ($action) {
     ]);
 
   // ---- follow a running command's output ----
+  //
+  // Two shapes share this one action. `job`/`offset` is a single poll, kept
+  // for anywhere only one job is ever in flight. `jobs`/`offsets` is a batch:
+  // a folder can start one job per stack, and the page now follows every one
+  // of them rather than only the last, so nine stacks would otherwise mean
+  // nine requests a second where one now does.
   case 'job':
-    staxx_reply(['ok' => true] + staxx_job_log((string)($_POST['job'] ?? '')));
+    if (isset($_POST['job'])) {
+      staxx_reply(['ok' => true]
+        + staxx_job_log((string)$_POST['job'], (int)($_POST['offset'] ?? 0)));
+    }
+
+    if (isset($_POST['jobs'])) {
+      // Matched against the RAW, unfiltered lists so a blank or duplicate
+      // entry earlier in `jobs` cannot shift every later id onto the wrong
+      // offset — dropping and de-duplicating happens after the pairing, not
+      // before it.
+      $rawIds     = explode(',', (string)$_POST['jobs']);
+      $rawOffsets = explode(',', (string)($_POST['offsets'] ?? ''));
+
+      $jobs = [];
+      $seen = [];
+      foreach ($rawIds as $i => $id) {
+        if ($id === '' || isset($seen[$id])) continue; // blank, or a duplicate already answered
+        if (count($jobs) >= 64) break; // a crafted request cannot make this open thousands of logs
+        $seen[$id] = true;
+        // A missing or unparseable offset for this position reads as 0.
+        // staxx_job_log() refuses an unknown or malformed id with its own
+        // finished-with-null-exit answer rather than an error — every id
+        // asked about gets an entry here for the same reason: the page is
+        // waiting on an answer for each one, and a missing entry would leave
+        // that one row polling for ever.
+        $jobs[$id] = staxx_job_log($id, (int)($rawOffsets[$i] ?? 0));
+      }
+      staxx_reply(['ok' => true, 'jobs' => $jobs]);
+    }
+
+    staxx_reply(['ok' => true] + staxx_job_log(''));
 
   /* ---------------------------------------------------------------------
    * The handover — taking over an imported stack's container name.
@@ -948,6 +984,9 @@ switch ($action) {
       $job = staxx_start_job($s['name'], $verb, $error);
       if ($job !== '') $jobs[] = ['name' => $s['name'], 'job' => $job];
     }
+    // 'run' prunes after starting; this case can start just as many jobs
+    // (one per stack in the folder) and was missing the same housekeeping.
+    staxx_prune_jobs();
     if (!$jobs) {
       staxx_reply(['ok' => false, 'error' => $error ?: 'Nothing in this folder can be run.']);
     }

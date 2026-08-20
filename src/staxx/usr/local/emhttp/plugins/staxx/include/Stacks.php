@@ -3630,7 +3630,7 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
  * Compose commands this plugin is willing to run, and how.
  *
  * An allowlist rather than anything assembled from user input: the verb comes
- * from a button, and only these eight exist.
+ * from a button, and only these nine exist.
  *
  * Most verbs carry two argument strings: `args` for the whole stack and `svc`
  * for a single service. Either one can instead be an array of command
@@ -3685,39 +3685,42 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
  *             again by the restart — wasted, but only for the ones that
  *             changed, and cheaper than the alternative for all the rest.
  *
+ *   recreate  is the separate, honest verb for when the rebuild IS what you
+ *             want, at either scope: `up -d --force-recreate`. It exists so
+ *             the choice above is never quietly overridden — Restart keeps
+ *             every guarantee described above, and this is the button you
+ *             press instead when you actually want the logs gone.
+ *
  *   remove    exists only at service scope; `down` already IS the stack-scope
  *             version of removing containers, so a second stack-scope entry
  *             would just be `down` under another name.
  *
- *   update    also exists only at service scope, and its `svc` is not one
- *             command but two, run in sequence: `pull` then `up -d`. A pull
- *             only fetches the new image onto disk — it does not touch the
- *             running container, which keeps using whatever image ID it
- *             already started with. `up -d` is the step that notices the
- *             service's tag now resolves to a different image ID and
- *             recreates the container on it, which is the only reason it is
- *             here at all: without it, "update" would just be `pull` wearing
- *             a more promising name. There is deliberately no stack-scope
- *             `update`: at stack scope the two halves are separate buttons,
- *             "Update images" to fetch and Restart to rebuild onto what was
- *             fetched, so a pull can be left to finish on a busy stack
- *             without taking it down as a side effect. See the note beside
- *             that item in stacks.js.
+ *   update    is two commands run in sequence, `pull` then `up -d`, at both
+ *             scopes. A pull only fetches the new image onto disk — it does
+ *             not touch the running container, which keeps using whatever
+ *             image ID it already started with. `up -d` is the step that
+ *             notices the service's tag now resolves to a different image ID
+ *             and recreates the container on it, which is the only reason it
+ *             is here at all: without it, "update" would just be `pull`
+ *             wearing a more promising name.
  *
  * `config` has no service form because nothing in the menu ever asks for one
  * — "resolved settings" is a whole-file question.
  */
 function staxx_job_verbs(): array {
   return [
-    'up'      => ['args' => 'up -d --remove-orphans', 'svc' => 'up -d',             'label' => 'Start'],
-    'down'    => ['args' => 'down',                   'svc' => 'stop',              'label' => 'Stop'],
-    'restart' => ['args' => ['up -d --remove-orphans', 'restart'],
-                  'svc'  => ['up -d', 'restart'],                                    'label' => 'Restart'],
-    'pull'    => ['args' => 'pull',                   'svc' => 'pull',              'label' => 'Update images'],
-    'logs'    => ['args' => 'logs --tail 200',        'svc' => 'logs --tail 200',   'label' => 'Logs'],
-    'config'  => ['args' => 'config',                                               'label' => 'Resolved settings'],
-    'remove'  => [                                    'svc' => 'rm --stop --force', 'label' => 'Remove container'],
-    'update'  => [                                    'svc' => ['pull', 'up -d'],   'label' => 'Update image'],
+    'up'       => ['args' => 'up -d --remove-orphans', 'svc' => 'up -d',             'label' => 'Start'],
+    'down'     => ['args' => 'down',                   'svc' => 'stop',              'label' => 'Stop'],
+    'restart'  => ['args' => ['up -d --remove-orphans', 'restart'],
+                   'svc'  => ['up -d', 'restart'],                                   'label' => 'Restart'],
+    'recreate' => ['args' => 'up -d --force-recreate --remove-orphans',
+                   'svc'  => 'up -d --force-recreate',                              'label' => 'Recreate'],
+    'pull'     => ['args' => 'pull',                   'svc' => 'pull',              'label' => 'Update images'],
+    'logs'     => ['args' => 'logs --tail 200',        'svc' => 'logs --tail 200',   'label' => 'Logs'],
+    'config'   => ['args' => 'config',                                               'label' => 'Resolved settings'],
+    'remove'   => [                                    'svc' => 'rm --stop --force', 'label' => 'Remove container'],
+    'update'   => ['args' => ['pull', 'up -d --remove-orphans'],
+                   'svc'  => ['pull', 'up -d'],                                      'label' => 'Update image'],
   ];
 }
 
@@ -3752,19 +3755,19 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
   if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
 
-  $dir  = staxx_stack_dir($name);
-  $file = staxx_find_compose_file($dir);
-  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
-  $files = staxx_compose_files($file);
-
   // Pick the scope-appropriate argument string, and fail loudly rather than
   // silently falling back to the other scope — running the wrong one of
   // these against the wrong target is exactly the kind of mistake this
-  // allowlist exists to make impossible.
+  // allowlist exists to make impossible. Deliberately ahead of the compose
+  // file lookup below: it depends on nothing but the verb table itself, so a
+  // request for the wrong scope is refused for that reason even when the
+  // stack does not exist on disk either — which is what lets
+  // tests/server/console.php prove the scope rule with a made-up stack name
+  // and never go anywhere near a real compose file.
   $args = $service !== '' ? ($verbs[$verb]['svc'] ?? '') : ($verbs[$verb]['args'] ?? '');
-  // A verb with no form for a given scope simply has no key for it — `update`
-  // and `remove` carry no `args` at all — so the `?? ''` above is what
-  // actually catches those, in both scopes. The `[]` test alongside it is
+  // A verb with no form for a given scope simply has no key for it — `remove`
+  // carries no `args` at all, `config` no `svc` — so the `?? ''` above is what
+  // actually catches those. The `[]` test alongside it is
   // belt and braces for a verb that one day declares an explicitly empty
   // list of steps rather than omitting the key: an empty chain would
   // otherwise build a command that runs nothing and then reports success.
@@ -3778,6 +3781,11 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   // becomes a one-element list here and behaves exactly as it always has;
   // `restart` and `update` supply their pair of steps already.
   $steps = is_array($args) ? $args : [$args];
+
+  $dir  = staxx_stack_dir($name);
+  $file = staxx_find_compose_file($dir);
+  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+  $files = staxx_compose_files($file);
 
   if ($service !== '') {
     // The allowlist for a service name: it must be a key of the services the
@@ -3861,25 +3869,53 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
 }
 
 /**
- * Read a job's output so far.
+ * Read the bytes a job's log has gained since $offset — not the whole file,
+ * so a poll every second or two on a busy folder is one small read rather
+ * than re-sending everything already shown.
  *
- * @return array{text:string, done:bool, exit:?int}
+ * @return array{text:string, offset:int, done:bool, exit:?int}
  */
-function staxx_job_log(string $job): array {
-  if (!preg_match('/^[0-9a-f]{16}$/', $job)) return ['text' => '', 'done' => true, 'exit' => null];
+function staxx_job_log(string $job, int $offset = 0): array {
+  // An unknown or malformed id is reported as finished-with-no-exit-code
+  // rather than as an error: the browser treats a null exit as a silent
+  // finish, which is what stops a stale id (log already pruned, or a typo)
+  // spinning its row for ever waiting on a reply that can never arrive.
+  if (!preg_match('/^[0-9a-f]{16}$/', $job)) {
+    return ['text' => '', 'offset' => 0, 'done' => true, 'exit' => null];
+  }
 
-  $log  = STAXX_JOB_DIR.'/'.$job.'.log';
-  $text = is_file($log) ? (string)@file_get_contents($log) : '';
+  $log = STAXX_JOB_DIR.'/'.$job.'.log';
+  if (!is_file($log)) return ['text' => '', 'offset' => 0, 'done' => true, 'exit' => null];
+
+  // A negative offset is clamped to 0 rather than trusted — file_get_contents()
+  // seeks backward from the end of the file for a negative one, which would
+  // hand back an arbitrary tail instead of refusing outright. An offset past
+  // the end of the file is left alone: that is simply "nothing new since the
+  // last poll" and must read as an empty chunk, not be reset to 0 — resetting
+  // it would re-send everything already shown on every poll after a job ends.
+  if ($offset < 0) $offset = 0;
+
+  $chunk = @file_get_contents($log, false, null, $offset);
+  if ($chunk === false) $chunk = '';
+  // Measured on the raw chunk, before the sentinel below is stripped out of
+  // $text — otherwise the offset would undercount by the sentinel's own
+  // length and the next poll would re-read (and re-detect) it for ever.
+  $newOffset = $offset + strlen($chunk);
 
   $done = false;
   $exit = null;
-  if (preg_match('/^'.preg_quote(STAXX_JOB_END, '/').' (\d+)\s*$/m', $text, $m)) {
+  $text = $chunk;
+  if (preg_match('/^'.preg_quote(STAXX_JOB_END, '/').' (\d+)\s*$/m', $chunk, $m)) {
     $done = true;
     $exit = (int)$m[1];
-    $text = trim(preg_replace('/^'.preg_quote(STAXX_JOB_END, '/').' \d+\s*$/m', '', $text));
+    $text = preg_replace('/^'.preg_quote(STAXX_JOB_END, '/').' \d+\s*$/m', '', $chunk);
   }
 
-  return ['text' => $text, 'done' => $done, 'exit' => $exit];
+  // Deliberately not trim()'d: this is only the new bytes since the caller's
+  // last poll, appended to what it already has, so leading whitespace here is
+  // not noise to tidy away — it can be the start of a new line and trimming
+  // it would glue two lines together on the page.
+  return ['text' => $text, 'offset' => $newOffset, 'done' => $done, 'exit' => $exit];
 }
 
 /** Remove job logs older than an hour, so /tmp does not fill up over time. */

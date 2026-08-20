@@ -827,13 +827,26 @@ endif;
 
   <!-- ------------------------------------------------------------- log -- -->
 
-  <div class="staxx-panel" id="staxx-log-panel" hidden>
-    <div class="staxx-bar">
-      <h3 id="staxx-log-title"><?= _('Output') ?></h3>
+  <!-- The ninth dialog: a job's output on demand — a failed command, Logs,
+       the self-test. It never opens on its own; every call site in stacks.js
+       chooses to open it. A <dialog> cannot scroll the page behind it, which
+       is the whole reason the old page-bottom panel this replaced is gone —
+       Adrian's word for that panel was "annoying". Same recipe as
+       .staxx-settings: own class, own :not([open]), ::backdrop and
+       @starting-style. -->
+  <dialog class="staxx-logdlg" id="staxx-log-dlg" aria-labelledby="staxx-log-title">
+
+    <div class="staxx-logdlg-head">
+      <h3 class="staxx-logdlg-title" id="staxx-log-title"><?= _('Output') ?></h3>
+    </div>
+
+    <pre class="staxx-logdlg-body" id="staxx-log-body"></pre>
+
+    <div class="staxx-logdlg-foot">
       <button type="button" class="staxx-btn" id="staxx-log-close"><?= _('Close') ?></button>
     </div>
-    <pre class="staxx-log" id="staxx-log"></pre>
-  </div>
+
+  </dialog>
 
   <!-- ---------------------------------------------------- environment -- -->
 
