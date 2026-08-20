@@ -12171,9 +12171,18 @@
     var boot      = d.boot || 'off';
     var available = d.bootAvailable !== '0';
     menuItem('Autostart', boot === 'on' ? 'toggle-on' : 'toggle-off', function () {
-      call('autostart', { name: name, service: service || '', on: boot === 'on' ? '0' : '1' })
+      var want = boot === 'on' ? '0' : '1';
+      call('autostart', { name: name, service: service || '', on: want })
         .then(function (r) {
           if (!r.ok) { failed('Could not change autostart', r.error); return; }
+          // Written back onto the row itself, not left for the table redraw to
+          // deliver: this switch is BUILT from that attribute, so re-opening
+          // the menu before the redraw landed showed the old position — and
+          // pressing it again then sent the opposite of what was meant, which
+          // is a loop you cannot get out of by pressing harder. The redraw
+          // still comes and still has the last word; this only stops the gap
+          // in between from lying about which way the switch is set.
+          d.boot = want === '1' ? 'on' : 'off';
           refreshRows();
         });
     }, {
