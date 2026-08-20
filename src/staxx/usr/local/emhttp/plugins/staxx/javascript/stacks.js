@@ -8522,7 +8522,21 @@
     }
   }
 
+  // Everything Manage was running stops here, not only in the dialog's own
+  // `close` listener. Both, deliberately: this is the function every closing
+  // path funnels through, and the event is the backstop for the paths that do
+  // not (Escape, and a browser that closes the dialog itself). Tying it to
+  // only the event turned out to leave a root shell and a log follower alive
+  // after the editor had visibly gone — measured on the server, twice — so the
+  // cleanup now hangs off the act of closing rather than off being told about
+  // it. Calling it twice is harmless: unmount() clears what it finds and the
+  // flag stops the second call doing anything.
+  function stopManage() {
+    if (manageInst && manageMounted) { manageInst.unmount(); manageMounted = false; }
+  }
+
   function closeEditor() {
+    stopManage();
     if (modal.open) modal.close();
   }
 
@@ -8558,6 +8572,13 @@
   });
 
   modal.addEventListener('close', function () {
+    // FIRST, ahead of everything else in here: it is the only thing in this
+    // listener that costs anything on the server if it is skipped, and anything
+    // below that threw would have taken it down with it. Usually already done
+    // by closeEditor() above — this catches the paths that never went through
+    // it, Escape among them.
+    stopManage();
+
     lockScroll(false);
     clearError();
     // The dialog is already closing, synchronously, so this cannot be
@@ -8597,10 +8618,6 @@
     hideHover();
     closeOutline();
     closeTabmenu();
-    // PLAN_44 C1: whatever Manage was showing (a shell, a follower) belongs
-    // to this stack and dies with its editor — see instance.unmount() in the
-    // manage.js contract. A no-op if Manage was never opened this session.
-    if (manageInst) { manageInst.unmount(); manageMounted = false; }
   });
 
   // <dialog> fires no event for the backdrop, because the backdrop is a
@@ -12417,6 +12434,19 @@
             'only thing sent out is the name of the image being added, nothing else. Turning it ' +
             'off gives you the four-line starting file only, instantly, and nothing leaves the ' +
             'server.'
+    },
+    {
+      key: 'SHELL_ENABLED', control: 'choice', label: 'Container shells',
+      choices: [
+        ['true',  'Allow opening a shell'],
+        ['false', 'Do not allow shells']
+      ],
+      help: 'Manage\'s Shell tab gives a root command line inside a running container — the same ' +
+            'reach as signing into the machine itself, but scoped to whatever that one container ' +
+            'can see. Anything changed this way is gone the next time the container is rebuilt: a ' +
+            'recreate, an update, or the image being pulled again all start it fresh. Turning this ' +
+            'off refuses every shell on the server, not just hides the tab — there is no way around ' +
+            'it from the page.'
     }
   ];
   SETTINGS_ROWS.forEach(function (row) {

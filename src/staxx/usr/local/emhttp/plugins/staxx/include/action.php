@@ -101,6 +101,18 @@ $action = (string)($_POST['action'] ?? '');
 $name   = (string)($_POST['name']   ?? '');
 $error  = '';
 
+// Clear away abandoned log followers and shell sessions on EVERY request, not
+// only on the log and exec actions that create them. Both die by heartbeat —
+// asking for their output is what says somebody is still watching — but that
+// only collects them when something asks, and a browser that crashed or was
+// closed mid-session asks for nothing ever again. Any StaXX page open anywhere
+// polls for state every few seconds, so putting this here means a stale
+// session is collected within seconds rather than waiting for the next person
+// to open a log. Both are a directory glob over a handful of files, which is
+// far cheaper than one root shell left attached to a container.
+staxx_log_reap();
+staxx_exec_reap();
+
 switch ($action) {
 
   // ---- read one stack's compose file, for the editor ----

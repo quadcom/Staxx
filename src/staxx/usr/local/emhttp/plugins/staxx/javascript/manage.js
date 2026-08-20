@@ -40,6 +40,178 @@
   // watching, so there is deliberately no separate ping.
   var POLL_MS = 1000;
 
+  // PLAN_44 D4, the shell.
+  //
+  // Completed lines kept per session - smaller than LOG_CAP because a shell
+  // is a conversation someone is watching live, not a record kept for later,
+  // and a session outlives the tab it started on so this bounds every one of
+  // them at once, not just the visible one.
+  var SHELL_LINE_CAP = 2000;
+
+  // Control bytes built at runtime rather than written as escape literals in
+  // this file - see the header note on grepping for raw control bytes: a
+  // literal one has already made a tool read this file as binary once, and
+  // String.fromCharCode() cannot repeat that mistake.
+  var CH = {
+    NUL: String.fromCharCode(0),
+    BEL: String.fromCharCode(7),
+    FF:  String.fromCharCode(12),  // Ctrl-L
+    ESC: String.fromCharCode(27),
+    ETX: String.fromCharCode(3),   // Ctrl-C
+    EOT: String.fromCharCode(4),   // Ctrl-D
+    NAK: String.fromCharCode(21),  // Ctrl-U
+    SUB: String.fromCharCode(26),  // Ctrl-Z
+    DEL: String.fromCharCode(127)  // Backspace, as most shells expect it
+  };
+
+  // Foreground colour classes for SGR codes 30-37/90-97. Bright and normal
+  // share a class each - this pane renders eight colours, not sixteen, which
+  // is the plan's own floor and keeps the map small enough to read at a
+  // glance. Picked for legibility on both a light and a dark Unraid theme,
+  // not copied from any one terminal's palette.
+  var SHELL_FG_CLASS = {
+    30: 'k', 31: 'r', 32: 'g', 33: 'y', 34: 'b', 35: 'm', 36: 'c', 37: 'w',
+    90: 'k', 91: 'r', 92: 'g', 93: 'y', 94: 'b', 95: 'm', 96: 'c', 97: 'w'
+  };
+
+  // A fresh terminal model: the lines a session has finished, the one it is
+  // still writing, and the SGR/alternate-screen state that decides how the
+  // next byte is rendered. One of these lives inside every shell session for
+  // as long as that session does - see Instance's shell.sessions.
+  function newShellTerm() {
+    return { lines: [], cur: [], curCls: '', bold: false, fg: null, altScreen: false, pending: '' };
+  }
+
+  // Finds one complete escape sequence starting at text[i] (text[i] is
+  // already known to be ESC), or returns null when the bytes seen so far
+  // could still be the start of a longer one and more should be waited for.
+  // Real terminal output arrives in arbitrary-sized chunks from a byte-offset
+  // read, so a sequence split across two polls is routine, not an edge case.
+  // The length caps exist so genuinely malformed input cannot stall
+  // rendering forever waiting for a terminator that will never arrive.
+  function matchShellEscape(text, i) {
+    if (text.charAt(i + 1) === '[') {
+      // Matched against what follows the ESC, then handed back WITH the ESC
+      // back on the front — the caller advances by the returned length, so
+      // dropping ESC here would leave it unconsumed and seen again forever.
+      var m = /^\[[0-?]*[ -\/]*[@-~]/.exec(text.slice(i + 1));
+      if (m) return CH.ESC + m[0];
+      if (text.length - i < 32) return null;
+      return text.slice(i, i + 2); // gives up and drops just the opener, rather than hanging forever
+    }
+    if (text.charAt(i + 1) === ']') {
+      var tail = text.slice(i + 2);
+      var belAt = tail.indexOf(CH.BEL);
+      var escAt = tail.indexOf(CH.ESC + '\\');
+      var end = belAt === -1 ? escAt : (escAt === -1 ? belAt : Math.min(belAt, escAt));
+      if (end === -1) {
+        if (text.length - i < 256) return null;
+        return text.slice(i, i + 2);
+      }
+      var termLen = (end === belAt) ? 1 : 2;
+      return text.slice(i, i + 2 + end + termLen);
+    }
+    if (text.length - i < 2) return null;
+    return text.slice(i, i + 2); // a lone ESC + one byte - consumed and ignored
+  }
+
+  function applyShellSgr(term, params) {
+    var codes = params === '' ? [0] : params.split(';').map(function (s) { return parseInt(s, 10) || 0; });
+    codes.forEach(function (c) {
+      if (c === 0) { term.bold = false; term.fg = null; }
+      else if (c === 1) { term.bold = true; }
+      else if (c === 22) { term.bold = false; }
+      else if (c === 39) { term.fg = null; }
+      else if (SHELL_FG_CLASS[c]) { term.fg = SHELL_FG_CLASS[c]; }
+    });
+    var cls = [];
+    if (term.bold) cls.push('staxx-sh-b');
+    if (term.fg) cls.push('staxx-sh-fg-' + term.fg);
+    term.curCls = cls.join(' ');
+  }
+
+  // Built with `new RegExp` rather than a literal, same reasoning as
+  // SHELL_SPECIAL_RE below: ESC has no safe way to sit in a regex literal in
+  // this file's source, only as the CH.ESC value built at runtime.
+  var SHELL_CSI_RE = new RegExp('^' + CH.ESC + '\\[([0-?]*)[ -\\/]*([@-~])$');
+
+  // Only colour and the alternate-screen request change how anything is
+  // shown; every other CSI (cursor moves, bracketed-paste toggling, scroll
+  // regions...) is recognised, consumed and silently dropped - rendered as
+  // nothing rather than as the gibberish it would be printed as verbatim.
+  function applyShellEscape(term, seq) {
+    var m = SHELL_CSI_RE.exec(seq);
+    if (!m) return; // an OSC (window title) or a lone ESC+byte - nothing to render either way
+    var params = m[1], final = m[2];
+    if (final === 'h' && params === '?1049') { term.altScreen = true; term.cur = []; return; }
+    if (final === 'l' && params === '?1049') { term.altScreen = false; return; }
+    if (final !== 'm') return;
+    applyShellSgr(term, params);
+  }
+
+  function shellAppendText(term, run) {
+    if (term.altScreen || !run) return;
+    term.cur.push({ text: run, cls: term.curCls });
+  }
+
+  function shellPushLine(term) {
+    if (term.altScreen) return;
+    term.lines.push(term.cur);
+    term.cur = [];
+    if (term.lines.length > SHELL_LINE_CAP) term.lines.shift();
+  }
+
+  function shellBackspace(term) {
+    if (term.altScreen) return;
+    while (term.cur.length) {
+      var seg = term.cur[term.cur.length - 1];
+      if (seg.text.length > 1) { seg.text = seg.text.slice(0, -1); return; }
+      term.cur.pop();
+      return;
+    }
+  }
+
+  // Anything that ends a plain run of text: ESC (built at runtime, see CH
+  // above - a literal in a regex here would be exactly the trap this file
+  // has already fallen into once), CR, LF and backspace.
+  var SHELL_SPECIAL_RE = new RegExp('[' + CH.ESC + '\\r\\n\\b]');
+
+  // Consumes one chunk of raw session output - only the new bytes since the
+  // last read, per the contract exec-read hands back. A bare CR (not
+  // followed by LF) is a real carriage return, which is how a progress bar
+  // redraws its own line; CRLF, the ending every line actually uses, is just
+  // a newline once the redundant CR is folded away.
+  function feedShellTerm(term, chunk) {
+    var text = term.pending + chunk;
+    term.pending = '';
+    var i = 0;
+    while (i < text.length) {
+      var ch = text.charAt(i);
+      if (ch === CH.ESC) {
+        var seq = matchShellEscape(text, i);
+        if (seq === null) { term.pending = text.slice(i); break; }
+        i += seq.length;
+        applyShellEscape(term, seq);
+        continue;
+      }
+      if (ch === '\r') {
+        if (text.charAt(i + 1) === '\n') { i++; continue; }
+        if (!term.altScreen) term.cur = [];
+        i++;
+        continue;
+      }
+      if (ch === '\n') { shellPushLine(term); i++; continue; }
+      if (ch === '\b') { shellBackspace(term); i++; continue; }
+      if (ch === CH.BEL) { i++; continue; } // nothing visible, and never a sound
+      if (ch === CH.NUL) { i++; continue; } // script(1)'s stray leading NUL
+      var rest = text.slice(i);
+      var stop = rest.search(SHELL_SPECIAL_RE);
+      var run = stop === -1 ? rest : rest.slice(0, stop);
+      shellAppendText(term, run);
+      i += run.length;
+    }
+  }
+
   // A line compose printed carries a timestamp because the follower always
   // asks for one; the "prefix" a multi-container "All" tab adds (the
   // service name compose stamps in front) sits before it. Hiding timestamps
@@ -131,6 +303,7 @@
       var right = document.createElement('div');
       right.className = 'staxx-manage-right';
       var shell = pane('shell', 'Shell');
+      buildShellBody(shell.body);
       var files = pane('files', 'Files');
       right.appendChild(shell.el);
       right.appendChild(files.el);
@@ -574,6 +747,412 @@
       appendNewLines(startIdx);
     }
 
+    // ---- D4: the shell -----------------------------------------------------
+    //
+    // One session per container, kept open server-side for as long as the
+    // editor is (PLAN_44 D4's "until the editor closes, half-typed line
+    // included"), but only the visible one is ever polled — a background
+    // session's own output keeps landing in its exec log regardless, so the
+    // next poll after switching back to it catches up in one read rather
+    // than losing anything. shellState.sessions is keyed by service name;
+    // there is deliberately no entry for 'all', which has no shell at all.
+    var shellState = {
+      warned:  null,   // null = not yet asked the server; true/false once known — see checkShellWarned()
+      warning: false,  // an settings-save for SHELL_WARNED is in flight
+      sessions: {},
+      active:   null   // the service whose session currently owns the screen and the poll loop
+    };
+
+    function buildShellBody(bodyEl) {
+      bodyEl.innerHTML = '';
+      bodyEl.classList.add('staxx-manage-shell-body');
+
+      var msg = document.createElement('p');
+      msg.className = 'staxx-manage-shell-msg staxx-manage-shell-msg--hidden';
+
+      var warn = document.createElement('div');
+      warn.className = 'staxx-manage-shell-warn staxx-manage-shell-warn--hidden';
+      warn.innerHTML =
+        '<p>A shell gives a root command line inside the container — the same reach as signing ' +
+        'into the machine itself, but scoped to whatever this one container can see.</p>' +
+        '<p>Anything changed this way is gone the next time the container is rebuilt — a recreate, ' +
+        'an update, or simply the image being pulled again all start it fresh.</p>';
+      var warnBtn = document.createElement('button');
+      warnBtn.type = 'button';
+      warnBtn.className = 'staxx-manage-shell-warn-btn';
+      warnBtn.textContent = 'I understand — open the shell';
+      warnBtn.addEventListener('click', acknowledgeShellWarning);
+      warn.appendChild(warnBtn);
+
+      var screenWrap = document.createElement('div');
+      screenWrap.className = 'staxx-manage-shell-screenwrap staxx-manage-shell-screenwrap--hidden';
+
+      var alt = document.createElement('div');
+      alt.className = 'staxx-manage-shell-alt staxx-manage-shell-alt--hidden';
+      var altP = document.createElement('p');
+      altP.textContent = 'This program wants a full screen — something like nano, htop or mc — ' +
+        'which this pane cannot show. Open Unraid’s own terminal for it instead.';
+      var ctrlBtn = document.createElement('button');
+      ctrlBtn.type = 'button';
+      ctrlBtn.className = 'staxx-manage-shell-ctrlc';
+      ctrlBtn.textContent = 'Send Ctrl-C';
+      ctrlBtn.addEventListener('click', function () { sendShellChunk(state.selected, CH.ETX); });
+      alt.appendChild(altP);
+      alt.appendChild(ctrlBtn);
+
+      var lines = document.createElement('div');
+      lines.className = 'staxx-manage-shell-lines';
+      lines.tabIndex = 0;
+      lines.setAttribute('role', 'log');
+      lines.setAttribute('aria-label', 'Shell');
+      lines.title = 'Click here, then type — this is a real shell inside the container.';
+      lines.addEventListener('keydown', shellKeydown);
+      lines.addEventListener('paste', shellPaste);
+
+      screenWrap.appendChild(alt);
+      screenWrap.appendChild(lines);
+
+      bodyEl.appendChild(msg);
+      bodyEl.appendChild(warn);
+      bodyEl.appendChild(screenWrap);
+
+      els.shellUI = { msg: msg, warn: warn, warnBtn: warnBtn, screenWrap: screenWrap, alt: alt, lines: lines };
+    }
+
+    function shellPanel(which) {
+      var ui = els.shellUI;
+      ui.msg.classList.toggle('staxx-manage-shell-msg--hidden', which !== 'msg');
+      ui.warn.classList.toggle('staxx-manage-shell-warn--hidden', which !== 'warn');
+      ui.screenWrap.classList.toggle('staxx-manage-shell-screenwrap--hidden', which !== 'screen');
+    }
+
+    // Stops the poll loop without closing the session — the difference
+    // matters: leaving a container's tab must not lose its half-typed line
+    // or its scrollback, only the one-second read nobody is watching for.
+    function pauseShellPoll() {
+      var svc = shellState.active;
+      if (svc && shellState.sessions[svc]) {
+        var sess = shellState.sessions[svc];
+        sess.pollSeq++;
+        if (sess.pollTimer) { clearTimeout(sess.pollTimer); sess.pollTimer = null; }
+      }
+      shellState.active = null;
+    }
+
+    function showShellMessage(text) {
+      pauseShellPoll();
+      els.shellUI.msg.textContent = text;
+      shellPanel('msg');
+    }
+
+    // Asks the server once whether this box has already shown the shell
+    // warning (PLAN_44 D4 — "once per server", tracked in the flash config,
+    // never in the browser). Cached for the rest of this Instance's life,
+    // same as the plan's own "once per server, not once per tab".
+    function checkShellWarned(then) {
+      if (shellState.warned !== null) { then(); return; }
+      if (shellState.warning) return; // a check is already in flight; its render() will call through again
+      shellState.warning = true;
+      call('settings', {}).then(function (res) {
+        shellState.warning = false;
+        shellState.warned = !!(res.ok && res.settings && res.settings.SHELL_WARNED === 'true');
+        render();
+      });
+    }
+
+    function acknowledgeShellWarning() {
+      els.shellUI.warnBtn.disabled = true;
+      call('settings-save', { SHELL_WARNED: 'true' }).then(function () {
+        // Marked seen either way: a failed save here is a lost write to a
+        // flag nobody but this pane reads, not a reason to nag on every
+        // subsequent container tab for the rest of the session.
+        shellState.warned = true;
+        render();
+      });
+    }
+
+    // Opens a session the first time a container's tab is actually looked
+    // at — not one per service at mount, which would open a shell in every
+    // container in a nine-service stack whether anyone asked or not.
+    function ensureShellSession(service) {
+      if (shellState.sessions[service]) return;
+      var sess = {
+        id: null, offset: 0, pollTimer: null, pollSeq: 0,
+        opening: true, error: '', term: newShellTerm(), rendered: 0
+      };
+      shellState.sessions[service] = sess;
+      call('exec-open', { name: state.stack, service: service }).then(function (res) {
+        // The session this belongs to may have already been torn down by
+        // unmount() while the request was in flight — closeAllShellSessions()
+        // replaces shellState.sessions wholesale, so this object no longer
+        // being the one held there is exactly that signal.
+        if (shellState.sessions[service] !== sess) {
+          if (res.ok) call('exec-close', { id: res.id });
+          return;
+        }
+        sess.opening = false;
+        if (!res.ok) { sess.error = res.error || 'Could not open a shell in this container.'; renderShellIfActive(service); return; }
+        sess.id = res.id;
+        renderShellIfActive(service);
+        resumeShellPoll(service);
+      });
+    }
+
+    function renderShellIfActive(service) {
+      if (service === shellState.active) fullShellRender(service);
+    }
+
+    function resumeShellPoll(service) {
+      var sess = shellState.sessions[service];
+      if (!sess || !sess.id || service !== shellState.active || sess.pollTimer) return;
+      var mySeq = ++sess.pollSeq;
+      sess.pollTimer = setTimeout(function () { pollShell(service, mySeq); }, 0);
+    }
+
+    function pollShell(service, mySeq) {
+      var sess = shellState.sessions[service];
+      if (!sess || mySeq !== sess.pollSeq || !sess.id || service !== shellState.active) return;
+      var id = sess.id;
+      call('exec-read', { id: id, offset: sess.offset }).then(function (res) {
+        var live = shellState.sessions[service];
+        if (!live || mySeq !== live.pollSeq || live.id !== id) return; // superseded meanwhile
+        live.pollTimer = null;
+        if (res.ok) {
+          if (res.text) feedShellTerm(live.term, res.text);
+          if (typeof res.offset === 'number') live.offset = res.offset;
+          if (service === shellState.active) appendShellRender(service);
+        }
+        // alive:false means the session ended on its own — the container
+        // stopped, or the shell process exited — so polling stops rather
+        // than spinning against a session that will never answer again.
+        if (res.ok && res.alive !== false && service === shellState.active) {
+          live.pollTimer = setTimeout(function () { pollShell(service, mySeq); }, POLL_MS);
+        }
+      });
+    }
+
+    function shellNoteEl(text) {
+      var d = document.createElement('div');
+      d.className = 'staxx-manage-shell-line staxx-manage-shell-line--note';
+      d.textContent = text;
+      return d;
+    }
+
+    function shellSegEl(seg) {
+      var span = document.createElement('span');
+      if (seg.cls) span.className = seg.cls;
+      span.textContent = seg.text;
+      return span;
+    }
+
+    function shellLineEl(segments) {
+      var d = document.createElement('div');
+      d.className = 'staxx-manage-shell-line';
+      segments.forEach(function (seg) { d.appendChild(shellSegEl(seg)); });
+      return d;
+    }
+
+    function shellCurEl(term) {
+      var d = document.createElement('div');
+      d.className = 'staxx-manage-shell-line staxx-manage-shell-cur';
+      term.cur.forEach(function (seg) { d.appendChild(shellSegEl(seg)); });
+      return d;
+    }
+
+    function scrollShellBottom() {
+      var el = els.shellUI.lines;
+      el.scrollTop = el.scrollHeight;
+    }
+
+    // Full rebuild — used whenever the visible session itself changes
+    // (a tab switch, a session opening, an error arriving) rather than just
+    // gaining another line. The one-second poll below never calls this
+    // directly; see appendShellRender().
+    function fullShellRender(service) {
+      var sess = shellState.sessions[service];
+      var ui = els.shellUI;
+      if (!sess) return;
+      shellPanel('screen');
+      ui.alt.classList.add('staxx-manage-shell-alt--hidden');
+      ui.lines.innerHTML = '';
+      if (sess.opening) { ui.lines.appendChild(shellNoteEl('Opening a shell…')); sess.rendered = 0; return; }
+      if (sess.error) { ui.lines.appendChild(shellNoteEl(sess.error)); sess.rendered = 0; return; }
+      if (sess.term.altScreen) { ui.alt.classList.remove('staxx-manage-shell-alt--hidden'); sess.rendered = sess.term.lines.length; return; }
+      sess.term.lines.forEach(function (line) { ui.lines.appendChild(shellLineEl(line)); });
+      ui.lines.appendChild(shellCurEl(sess.term));
+      sess.rendered = sess.term.lines.length;
+      scrollShellBottom();
+    }
+
+    // Appends only what changed since the last tick: newly finished lines,
+    // plus a fresh redraw of the one line still being written. Rebuilding
+    // every line on every one-second poll is what the log pane's own
+    // appendNewLines() avoids for the same reason — see its comment.
+    function appendShellRender(service) {
+      if (service !== shellState.active) return;
+      var sess = shellState.sessions[service];
+      var ui = els.shellUI;
+      if (!sess || sess.opening || sess.error) { fullShellRender(service); return; }
+      if (sess.term.altScreen) { fullShellRender(service); return; }
+      var curEl = ui.lines.lastChild;
+      if (!curEl || !curEl.classList || !curEl.classList.contains('staxx-manage-shell-cur')) {
+        fullShellRender(service); return; // nothing rendered yet for this session — e.g. resuming after "All"
+      }
+      for (var i = sess.rendered; i < sess.term.lines.length; i++) {
+        ui.lines.insertBefore(shellLineEl(sess.term.lines[i]), curEl);
+      }
+      sess.rendered = sess.term.lines.length;
+      ui.lines.replaceChild(shellCurEl(sess.term), curEl);
+      scrollShellBottom();
+    }
+
+    // Everything typed goes through one queue per session, and only one write
+    // is ever in flight for it.
+    //
+    // This is not tidiness. Each keystroke used to be its own request, and
+    // separate requests finish in whatever order the network and the server
+    // give them — so typing "echo SHELL" arrived in the container as
+    // "echoS HLELP-NAE". Measured, not imagined. Ordering is the whole point
+    // of a terminal, so the next write waits for the previous one to land.
+    //
+    // Queueing also coalesces: anything typed while a write is out goes in one
+    // request rather than one each, so typing fast means fewer requests, not
+    // more. The 4096-byte cap exec-write enforces is what bounds each one — a
+    // keystroke is never near it, a paste usually is.
+    function sendShellChunk(service, text) {
+      var sess = shellState.sessions[service];
+      if (!sess || !sess.id || !text) return;
+      sess.outbox = (sess.outbox || '') + text;
+      flushShellOutbox(service);
+    }
+
+    function flushShellOutbox(service) {
+      var sess = shellState.sessions[service];
+      if (!sess || !sess.id || sess.writing || !sess.outbox) return;
+
+      var CAP  = 4096;
+      var part = sess.outbox.slice(0, CAP);
+      sess.outbox = sess.outbox.slice(CAP);
+      sess.writing = true;
+
+      call('exec-write', { id: sess.id, bytes: part }).then(function (res) {
+        sess.writing = false;
+        if (!res.ok) {
+          // What was still queued is dropped on purpose: it was typed at a
+          // session that is no longer listening, and sending the rest of it
+          // somewhere else later would be worse than losing it.
+          sess.outbox = '';
+          sess.error = res.error || 'The shell stopped accepting input.';
+          if (service === shellState.active) fullShellRender(service);
+          return;
+        }
+        flushShellOutbox(service);
+      });
+    }
+
+    // The keys a single-line input could never carry: Ctrl-C/D/L/U/Z, tab
+    // completion, arrow-key history, Home/End/Delete. Copy, paste and
+    // select-all are deliberately left alone — see the two exceptions below.
+    function shellKeydown(ev) {
+      var service = state.selected;
+      if (service === 'all') return;
+      var sess = shellState.sessions[service];
+      if (!sess || !sess.id) return;
+
+      if (ev.ctrlKey) {
+        var lower = ev.key.length === 1 ? ev.key.toLowerCase() : '';
+        if (lower === 'c') {
+          // A selection means the person wants to copy it — the browser's
+          // own shortcut, left untouched. No selection means the shell's
+          // own Ctrl-C, sent as the interrupt byte it always is.
+          if (window.getSelection && String(window.getSelection()) !== '') return;
+          ev.preventDefault(); sendShellChunk(service, CH.ETX); return;
+        }
+        if (lower === 'd') { ev.preventDefault(); sendShellChunk(service, CH.EOT); return; }
+        if (lower === 'l') { ev.preventDefault(); sendShellChunk(service, CH.FF); return; }
+        if (lower === 'u') { ev.preventDefault(); sendShellChunk(service, CH.NAK); return; }
+        if (lower === 'z') { ev.preventDefault(); sendShellChunk(service, CH.SUB); return; }
+        return; // every other Ctrl chord — A, V, and the rest — is left to the browser
+      }
+
+      var special = {
+        Enter: '\r', Backspace: CH.DEL, Tab: '\t', Escape: CH.ESC,
+        ArrowUp: CH.ESC + '[A', ArrowDown: CH.ESC + '[B', ArrowRight: CH.ESC + '[C', ArrowLeft: CH.ESC + '[D',
+        Home: CH.ESC + '[H', End: CH.ESC + '[F', Delete: CH.ESC + '[3~'
+      };
+      if (Object.prototype.hasOwnProperty.call(special, ev.key)) {
+        ev.preventDefault(); sendShellChunk(service, special[ev.key]); return;
+      }
+      if (ev.key.length === 1 && !ev.metaKey && !ev.altKey) {
+        ev.preventDefault(); sendShellChunk(service, ev.key);
+      }
+    }
+
+    // Paste is its own event rather than a Ctrl-V keydown — the pane holds
+    // no editable field for the browser to paste into, so there is no
+    // default behaviour here to override, only clipboard text to forward.
+    function shellPaste(ev) {
+      var service = state.selected;
+      if (service === 'all') return;
+      var sess = shellState.sessions[service];
+      if (!sess || !sess.id) return;
+      ev.preventDefault();
+      var cd = ev.clipboardData || window.clipboardData;
+      var text = cd ? cd.getData('text') : '';
+      if (text) sendShellChunk(service, text);
+    }
+
+    // Closes every open session — called on unmount() (the editor closing)
+    // and at the start of mount() (a different stack has an entirely
+    // different set of containers, so nothing here still applies to it).
+    function closeAllShellSessions() {
+      Object.keys(shellState.sessions).forEach(function (svc) {
+        var sess = shellState.sessions[svc];
+        if (sess.pollTimer) clearTimeout(sess.pollTimer);
+        if (sess.id) call('exec-close', { id: sess.id });
+      });
+      shellState.sessions = {};
+      shellState.active = null;
+    }
+
+    // Called at the end of every render() (PLAN_44 D4) — decides what the
+    // shell pane shows for whichever tab is currently selected, and moves
+    // the poll loop to match. Mirrors syncLogFollower()'s place in render(),
+    // but a shell's session is never restarted on a re-render the way a log
+    // follower is: switching back to a container already open just resumes
+    // its own poll loop exactly where it left off.
+    function syncShellPane() {
+      var service = state.selected;
+
+      if (service === 'all') {
+        showShellMessage('Pick a container above — there is no shared shell for the whole stack.');
+        return;
+      }
+
+      if (shellState.warned === null) {
+        showShellMessage('Checking…');
+        checkShellWarned(syncShellPane);
+        return;
+      }
+
+      if (!shellState.warned) {
+        pauseShellPoll();
+        els.shellUI.warnBtn.disabled = false;
+        shellPanel('warn');
+        return;
+      }
+
+      if (shellState.active === service) return; // already showing and polling this one — nothing to do
+
+      pauseShellPoll();
+      shellState.active = service;
+      ensureShellSession(service);
+      var sess = shellState.sessions[service];
+      if (sess.id || sess.error) fullShellRender(service);
+      else { shellPanel('screen'); els.shellUI.lines.innerHTML = ''; els.shellUI.lines.appendChild(shellNoteEl('Opening a shell…')); }
+      resumeShellPoll(service);
+    }
+
     function buildButtons(mid) {
       var scope = document.createElement('div');
       scope.className = 'staxx-manage-scope';
@@ -778,6 +1357,7 @@
       renderTabs();
       renderButtons();
       syncLogFollower();
+      syncShellPane();
     }
 
     build();
@@ -785,6 +1365,9 @@
     return {
       mount: function (spec) {
         if (torndown) { build(); torndown = false; }
+        // A different stack means an entirely different set of containers —
+        // nothing an already-open shell session was talking to still exists.
+        closeAllShellSessions();
         spec = spec || {};
         state.stack = spec.stack || '';
         state.services = Array.isArray(spec.services) ? spec.services.slice() : [];
@@ -820,6 +1403,7 @@
       unmount: function () {
         stopFollower();
         log.downloadText = null;
+        closeAllShellSessions();
         host.innerHTML = '';
         host.classList.remove('staxx-manage');
         torndown = true;
