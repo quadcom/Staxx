@@ -18,13 +18,22 @@
  *   Nvidia GPU                    needs nvidia-smi; the proprietary driver does
  *                                 not fill in fdinfo.
  *
- * radeontop and intel_gpu_top are still sampled, but only as a machine-wide
- * backstop — and they are the WEAKER reading, not the stronger one. During a
- * real AMD encode both radeontop and the kernel's own gpu_busy_percent report
- * 0%, because they watch the graphics pipe while the work is on the video
- * encode engine. fdinfo saw it the whole time. On a media server that is the
- * case that matters, so the per-process figures come first and these are only
- * a fallback.
+ * radeontop and the Intel sysfs counters are still sampled, but only as a
+ * machine-wide backstop — and they are the WEAKER reading, not the stronger
+ * one. During a real AMD encode both radeontop and the kernel's own
+ * gpu_busy_percent report 0%, because they watch the graphics pipe while the
+ * work is on the video encode engine. fdinfo saw it the whole time. On a
+ * media server that is the case that matters, so the per-process figures come
+ * first and these are only a fallback.
+ *
+ * The Intel figure no longer comes from intel_gpu_top. That tool attaches to
+ * the i915 perf/PMU interface, and the collector was starting it and then
+ * killing it under a timeout every few seconds, indefinitely, for as long as
+ * any StaXX page stayed open. On a server whose discrete Arc card also does
+ * the Plex hardware transcode and which had unexplained GPU crashes, that is
+ * a needless risk for a number plain sysfs reads already give: the busy
+ * percentage is worked out from how much the card's idle-time counter grew
+ * between two readings, with nothing ever attached to the GPU.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License version 2,
@@ -179,73 +188,106 @@ function staxx_stats_containers(): array {
 /* ------------------------------------------------------------------ GPU -- */
 
 /**
- * The last complete sample from intel_gpu_top.
+ * Parse one intel.raw/intel.prev sysfs sample.
  *
- * It streams objects forever and is killed by a timeout mid-write, so the tail
- * of the file is usually a partial object. Each top-level object begins with a
- * lone "{" and ends with a lone "}", which is what this matches — anything
- * incomplete simply does not match and is skipped.
+ * First line is a millisecond timestamp; the rest are "i <card> <rc6_ms>
+ * <freq_mhz> <max_freq_mhz>", one per Intel card found — see sample_intel()
+ * in the collector.
+ *
+ * @return array{at: float, cards: array<string, array{rc6: float, freq: float, max: float}>}
  */
-function staxx_stats_intel(): ?array {
-  $raw = (string)@file_get_contents(STAXX_STATS_DIR.'/intel.raw');
-  if ($raw === '') return null;
+function staxx_gpu_intel_sample(string $file): array {
+  $lines = @file($file, FILE_IGNORE_NEW_LINES) ?: [];
+  if (!$lines) return ['at' => 0.0, 'cards' => []];
 
-  if (!preg_match_all('/^\{$.*?^\}$/ms', $raw, $matches) || !$matches[0]) return null;
+  $at = (float)array_shift($lines);
 
-  $sample = json_decode(end($matches[0]), true);
-  return is_array($sample) ? $sample : null;
+  $cards = [];
+  foreach ($lines as $line) {
+    $f = explode(' ', $line);
+    if (count($f) < 5 || $f[0] !== 'i') continue;
+    $cards[$f[1]] = ['rc6' => (float)$f[2], 'freq' => (float)$f[3], 'max' => (float)$f[4]];
+  }
+
+  return ['at' => $at, 'cards' => $cards];
 }
 
 /**
- * Map each Intel GPU user to the container it is running in.
+ * A card's busy percentage from two idle-residency readings.
  *
- * intel_gpu_top reports a host PID per GPU client. On this kernel every
- * process in a container has a cgroup line of the form
+ * rc6_residency_ms counts upward, in milliseconds, the total time the card
+ * has spent in its idle power state — so the share of the elapsed interval it
+ * was NOT idle is the busy figure. Verified on the real hardware: over a
+ * 2004ms interval the idle counter grew by 2002ms, i.e. 0% busy, agreeing
+ * with a clock speed of 0 MHz at the same moment.
  *
- *     0::/docker/<64-character container id>
+ * Clamped to 0–100 rather than trusted outright, because the counter can go
+ * backwards — a card reset, or the 32-bit value wrapping — and an interval of
+ * zero (two readings taken in the same millisecond) must read as "no data"
+ * rather than divide by zero.
  *
- * so the container is a file read away. A PID with no docker cgroup is
- * something on the host and is left out of the per-container totals.
+ * @param float $idleBefore rc6_residency_ms at the earlier reading
+ * @param float $idleAfter  rc6_residency_ms at the later reading
+ * @param float $elapsedMs  wall time between the two readings
+ */
+function staxx_gpu_busy_percent(float $idleBefore, float $idleAfter, float $elapsedMs): float {
+  if ($elapsedMs <= 0) return 0.0;
+
+  $idleDelta = $idleAfter - $idleBefore;
+  if ($idleDelta < 0) return 0.0;               // counter reset or wrapped
+
+  $idlePercent = ($idleDelta / $elapsedMs) * 100;
+  $busy = 100 - $idlePercent;
+
+  if ($busy < 0)   $busy = 0.0;                 // idle grew faster than time itself
+  if ($busy > 100) $busy = 100.0;
+
+  return $busy;
+}
+
+/**
+ * Intel GPU figures, read straight from sysfs — no external tool, nothing
+ * attached to the card. See sample_intel() in the collector for why this
+ * replaced intel_gpu_top, and staxx_gpu_busy_percent() for the maths.
  *
- * @return array{byContainer: array<string,float>, engines: array<string,float>, total: float}
+ * `engines` is always empty here: only intel_gpu_top ever broke usage down by
+ * render/video/enhance engine, and nothing in sysfs offers that. The strip
+ * already draws an empty engines list for the AMD card, so this path is
+ * already exercised elsewhere on the page.
+ *
+ * `byContainer` is deliberately left empty too. Per-container attribution for
+ * Intel now comes only from the kernel's own per-process accounting in
+ * staxx_stats_gpu_procs() (fdinfo), which staxx_stats_snapshot() already
+ * prefers over this figure — this used to be a second, weaker route to the
+ * same number and duplicating it would double-count nothing usefully.
+ *
+ * @return array{byContainer: array<string,float>, engines: array<string,float>, total: float, present: bool}
  */
 function staxx_stats_intel_gpu(): array {
   $empty = ['byContainer' => [], 'engines' => [], 'total' => 0.0, 'present' => false];
 
-  $sample = staxx_stats_intel();
-  if ($sample === null) return $empty;
+  $now  = staxx_gpu_intel_sample(STAXX_STATS_DIR.'/intel.raw');
+  $then = staxx_gpu_intel_sample(STAXX_STATS_DIR.'/intel.prev');
+  if (!$now['cards']) return $empty;
 
-  $engines = [];
-  foreach ((array)($sample['engines'] ?? []) as $name => $engine) {
-    $busy = (float)($engine['busy'] ?? 0);
-    if ($busy > 0.05) $engines[$name] = round($busy, 1);
-  }
+  $elapsedMs = $now['at'] - $then['at'];
 
-  $byContainer = [];
-  foreach ((array)($sample['clients'] ?? []) as $client) {
-    $pid = (int)($client['pid'] ?? 0);
-    if ($pid <= 0) continue;
+  $busiest = 0.0;
+  foreach ($now['cards'] as $card => $reading) {
+    $before = $then['cards'][$card] ?? null;
+    if ($before === null) continue;             // first sighting: no rate yet
 
-    $busy = 0.0;
-    foreach ((array)($client['engine-classes'] ?? []) as $engine) {
-      $busy += (float)($engine['busy'] ?? 0);
-    }
-    if ($busy <= 0.05) continue;
-
-    $cgroup = (string)@file_get_contents('/proc/'.$pid.'/cgroup');
-    if (!preg_match('#/docker[/-]([0-9a-f]{12,64})#', $cgroup, $m)) continue;
-
-    $id = $m[1];
-    $byContainer[$id] = ($byContainer[$id] ?? 0.0) + $busy;
+    $busy = staxx_gpu_busy_percent($before['rc6'], $reading['rc6'], $elapsedMs);
+    $busiest = max($busiest, $busy);
   }
 
   return [
-    'byContainer' => $byContainer,
-    'engines'     => $engines,
-    'total'       => $engines ? round(max($engines), 1) : 0.0,
-    // A card that answered is reported even when every engine reads zero.
-    // Dropping it while idle would make a working GPU look like a missing one,
-    // which is the opposite of what the reading is for.
+    'byContainer' => [],
+    'engines'     => [],
+    'total'       => round($busiest, 1),
+    // A card that answered is reported even when it is idle. Dropping it
+    // while idle would make a working GPU look like a missing one, which is
+    // the opposite of what the reading is for.
     'present'     => true,
   ];
 }
@@ -565,7 +607,9 @@ const STAXX_GPU_METRICS_MM = [
  * was one stream or six — true, and useless for judging what the card has
  * left. Averaging instants sampled across a second measures how much of that
  * second the engine was working, which is what "busy" means everywhere else
- * on this page: the Intel figure from intel_gpu_top is the same statistic.
+ * on this page: the Intel figure is the same statistic, reached a different
+ * way — the share of the interval its idle-time counter did NOT grow by, see
+ * staxx_gpu_busy_percent().
  *
  * The peak is kept as well, since a card that touches 100% is worth knowing
  * about even when its average is modest.
@@ -709,21 +753,16 @@ function staxx_stats_snapshot(): array {
   $gpuProcs   = staxx_stats_gpu_procs();
   $clients    = staxx_stats_gpu_clients();
 
-  // Attach GPU usage to the container it belongs to. intel_gpu_top may report
-  // a short id, so ids are matched by prefix.
+  // Attach GPU usage to the container it belongs to.
   foreach ($containers as $name => &$c) {
-    // The kernel's own per-process figures come first: they cover both Intel
-    // and AMD, and they see the video engines that the machine-wide tools miss
-    // entirely. intel_gpu_top is only a fallback for the Intel card.
+    // The kernel's own per-process figures cover both Intel and AMD, and see
+    // the video engines that the machine-wide readings miss entirely, so they
+    // are the only per-container GPU source now — see staxx_stats_intel_gpu()
+    // for why the sysfs reading no longer offers a second one.
     if (isset($gpuProcs[$c['id']])) {
       $c['gpu']        = $gpuProcs[$c['id']]['busy'];
       $c['gpuEngines'] = $gpuProcs[$c['id']]['engines'];
     } else {
-      foreach ($intel['byContainer'] as $id => $busy) {
-        if ($c['id'] !== '' && strncmp($c['id'], $id, min(strlen($id), strlen($c['id']))) === 0) {
-          $c['gpu'] += $busy;
-        }
-      }
       $c['gpuEngines'] = [];
     }
     $c['gpu'] = round($c['gpu'], 1);

@@ -780,6 +780,28 @@ switch ($action) {
   case 'probe':
     staxx_reply(['ok' => true, 'result' => staxx_run_probe((string)($_POST['probe'] ?? ''))]);
 
+  // ---- try one service's web address, exactly as its row's link would open it ----
+  case 'webui-test':
+    $url = staxx_webui_for($name, (string)($_POST['service'] ?? ''), $error);
+    if ($url === '') staxx_reply(['ok' => false, 'error' => $error]);
+
+    $answered = staxx_webui_try($url, $code);
+    if (!$answered) {
+      $message = 'Nothing answered at '.$url.' within four seconds. Check the port in '
+               . 'the ports section against the port the application is actually listening on.';
+    } elseif ($code < 400) {
+      $message = 'Something answered at '.$url.' — the web page opens.';
+    } elseif ($code < 500) {
+      $message = $url.' replied with status '.$code.'. Something is listening there, but that '
+               . 'is not the web page, so the port is probably right and the path in the web '
+               . 'address wrong.';
+    } else {
+      $message = $url.' replied with status '.$code.'. Something answered with an error of its '
+               . 'own, so the port is right and the application is unhappy.';
+    }
+
+    staxx_reply(['ok' => true, 'url' => $url, 'answered' => $answered, 'code' => $code, 'message' => $message]);
+
   /* ------------------------------------------------------------ folders -- */
 
   case 'folder-list':

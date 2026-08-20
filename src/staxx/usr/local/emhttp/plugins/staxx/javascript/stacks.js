@@ -258,8 +258,8 @@
     // --ports rides alongside --mapped rather than replacing it: a port row is
     // the same five-cell shape as a mount, but its two halves hold numbers,
     // not paths, so they get much narrower tracks and give the width back to
-    // the note. It also adds two more tracks: a leading one for the
-    // drag/reorder grip (PLAN_40) and a trailing one the WebUI chip lives in.
+    // the note. It also adds a leading track for the drag/reorder grip
+    // (PLAN_40).
     { key: 'port',      heading: 'Ports',     cls: 'staxx-formgroup--mapped staxx-formgroup--ports', add: 'port',   flag: 'port' },
     // --volumes rides alongside --mapped the same way --ports does, and for
     // the same reason: it is what lets the two column shapes diverge without
@@ -368,6 +368,11 @@
   // plain setting, which is what Advanced otherwise holds.
   function groupFor(f) {
     if (f.fixed) return 'container';
+    // The web page port (PLAN_51) reaches inside x-unraid, so it is not one
+    // of the plain compose keys ALWAYS_KEYS lists and f.fixed is false for
+    // it — an explicit rule beside this one is what still lands it in the
+    // Container group, as the fourth row.
+    if (f.target === 'x-unraid.webui') return 'container';
     // A declaration belongs to no service, so it gets its own bucket per
     // kind rather than falling in with Advanced. A fold field carries this
     // same binder — it is bucketed here too if a caller does not filter it
@@ -1436,6 +1441,7 @@
   // mirrors devPresent's split between a naming list and a presence check.
   var ALL_NETS   = [];      // [name, name] pairs, every server network as-is
   var netPresent = {};      // name -> true
+  var netDriver  = {};      // name -> driver, for working out a service's network kind
 
   // Just the names, for YAML.lint()'s network_mode check. null — not [] —
   // until the server has answered, because "we do not know yet" and "there
@@ -1445,6 +1451,17 @@
     if (!netLoaded) return null;
     var out = [];
     for (var i = 0; i < NETWORKS.length; i++) out.push(NETWORKS[i][0]);
+    return out;
+  }
+
+  // name -> driver for every network this server reports. Same null-until-answered
+  // policy as netNames() above, and for the same reason: "not answered yet" must
+  // never be read as "definitely a macvlan" or every stack would flash the wrong
+  // sentence on the first render after loading.
+  function netDrivers() {
+    if (!netLoaded) return null;
+    var out = {};
+    for (var name in netDriver) if (netDriver.hasOwnProperty(name)) out[name] = netDriver[name];
     return out;
   }
 
@@ -2420,11 +2437,7 @@
              esc(info.description) + '</p>';
   }
 
-  // firstPort is true only for the first port row of a service, in file
-  // order — set by the one caller that knows a row's position within its
-  // group (renderForm). It draws the badge marking the port PLAN_39's web
-  // page button opens; every other row ignores the argument entirely.
-  function fieldHtml(f, index, firstPort) {
+  function fieldHtml(f, index) {
     var grp    = groupFor(f);
     var isContainer = grp === 'container';
     var declared = f.binder === 'declared';
@@ -2488,7 +2501,6 @@
 
     bits.push('<div class="staxx-fieldrow' + (f.locked ? ' staxx-fieldrow--locked' : '') +
               (f.sensitive ? ' staxx-fieldrow--secret' : '') +
-              (firstPort ? ' staxx-portfirst' : '') +
               '" data-row="' + index + '" data-field-row="' + esc(f.id) + '"' +
               ' data-from="' + (f.range ? f.range.start : -1) + '"' +
               ' data-to="'   + (f.range ? f.range.end   : -1) + '"' +
@@ -2514,6 +2526,15 @@
       bits.push('<span class="staxx-fieldlabel">' + esc(f.title) + helpBtnHtml(help, helpId) + '</span>');
       bits.push(boxHtml(f, index, 'value', 'value'));
       bits.push(noteBoxHtml(f, index));
+      // The web page port is the one Container row the WebUI button actually
+      // follows (PLAN_51) — filled in, the button opens this port; cleared,
+      // it turns off. Said here rather than left for the button to explain
+      // on its own, since this is the only place that changes it.
+      if (f.target === 'x-unraid.webui') {
+        bits.push('<span class="staxx-webchip" title="' +
+          esc('The WebUI button on this container’s row opens this port. Clear it and the button turns off.') +
+          '">WebUI</span>');
+      }
     } else if (dev) {
       // One box, not two. For nearly every device the two halves are the same
       // path, and where they differ the picker has already set both — a USB
@@ -2562,9 +2583,6 @@
             '</button>'
           : '<span class="staxx-boxgap" aria-hidden="true"></span>');
       }
-      // The rule the web page button follows (PLAN_39): the first port in
-      // the file is the one it opens. Said here, on that row's own host box,
-      // rather than left as a fact nobody but the button knows.
       // Only a volume gets the folder picker. A port is a number, so browsing
       // for one would be a button that never finds what you came for.
       bits.push(boxHtml(f, index, 'host',
@@ -2693,18 +2711,6 @@
                 '</button>');
     }
 
-    // Last cell on a port row, after the ×, and a column that is ALWAYS there
-    // — hidden by CSS on every row but the first. It is emitted on every row
-    // (not just the first) so that a drag never has to add or remove the
-    // chip itself, only flip which row's copy is visible (see
-    // staxx-portfirst and markFirstPort) — rows never move mid-drag, so the
-    // chip would otherwise stay glued to the row that used to be first.
-    if (f.binder === 'port') {
-      bits.push('<span class="staxx-webchip" title="' +
-        esc('The WebUI button on this container’s row opens this port. ' +
-            'Put a different port first to change which one.') + '">WebUI</span>');
-    }
-
     // Everything full-width comes last, after every cell the row's column
     // template names. A full-width child ends the grid row it lands on and
     // resets auto-placement to column 1 below it, so anything emitted after
@@ -2828,8 +2834,10 @@
     // it instead of sliding one column left of where it belongs.
     if (grp.key === 'port') bits.push('<span></span>');
     for (var i = 0; i < cols.length; i++) bits.push('<span>' + esc(cols[i]) + '</span>');
-    // Container is the only group with no × column to leave a blank for.
-    if (grp.key !== 'container') bits.push('<span></span>');
+    // Every group's last track is blank in the caption — a × on every group
+    // but Container, the WebUI chip beside the web page port row (PLAN_51)
+    // on Container itself — so this is unconditional now.
+    bits.push('<span></span>');
     bits.push('</div>');
     return bits.join('');
   }
@@ -2987,7 +2995,7 @@
           out.push(groupHeadHtml(grp, svc.name, grp.key === 'container' ? flags : null));
           if (rows.length) out.push(captionRow(grp));
           for (var r = 0; r < rows.length; r++) {
-            out.push(fieldHtml(form.fields[rows[r]], rows[r], grp.key === 'port' && r === 0));
+            out.push(fieldHtml(form.fields[rows[r]], rows[r]));
           }
           out.push('</div>');
         }
@@ -3253,7 +3261,7 @@
     if (!YAML) { formHost.innerHTML = '<p class="staxx-form-empty">The form view could not load.</p>'; return; }
 
     var doc  = YAML.parse(currentText());
-    var form = YAML.buildForm(doc);
+    var form = YAML.buildForm(doc, netDrivers());
     form.doc = doc;
     MODEL = form;
 
@@ -3292,7 +3300,7 @@
 
   function refreshRanges() {
     var doc   = MODEL.doc;
-    var fresh = YAML.buildForm(doc);
+    var fresh = YAML.buildForm(doc, netDrivers());
     fresh.doc = doc;
     MODEL = fresh;
 
@@ -4215,7 +4223,7 @@
     // the file — an empty section is nothing to write down.
     var gk = (f.binder === 'depends' || f.listKey === 'depends_on') ? 'depends'
            : f.listKey ? 'list:' + f.listKey : '';
-    if (SECTIONS_BY_KEY[gk] && fileFlagCounts(YAML.buildForm(MODEL.doc), f.service)[gk] === 0) {
+    if (SECTIONS_BY_KEY[gk] && fileFlagCounts(YAML.buildForm(MODEL.doc, netDrivers()), f.service)[gk] === 0) {
       (sectionOn[f.service] = sectionOn[f.service] || {})[gk] = true;
     }
     structuralEdit(-1, say);
@@ -4279,26 +4287,6 @@
   var portSlot = null;
   var draggingPortFrom = -1;
 
-  // The top line of a service's port list always wears the WebUI chip —
-  // the drag gap included, since that is where the dragged row will land.
-  // Rows never move during a drag (only hide), so without this the chip
-  // stays with the row that was first and appears to slide down the list.
-  function markFirstPort(grp) {
-    if (!grp) return;
-    var kids = grp.children;
-    var first = null;
-    for (var i = 0; i < kids.length; i++) {
-      var kid = kids[i];
-      if (kid.classList.contains('staxx-portslot') ||
-          (kid.classList.contains('staxx-fieldrow') && !kid.classList.contains('staxx-portdrag'))) {
-        first = kid;
-        break;
-      }
-    }
-    for (var j = 0; j < kids.length; j++) kids[j].classList.remove('staxx-portfirst');
-    if (first) first.classList.add('staxx-portfirst');
-  }
-
   formHost.addEventListener('pointerdown', function (event) {
     var grip = event.target.closest('[data-port-grip]');
     if (!grip) return;
@@ -4318,14 +4306,11 @@
 
   function endPortDrag() {
     if (!draggingPortRow) return;
-    var grp = draggingPortRow.closest('.staxx-formgroup--ports');
     draggingPortRow.draggable = false;
     draggingPortRow.classList.remove('staxx-portdrag');
     if (portSlot && portSlot.parentNode) portSlot.parentNode.removeChild(portSlot);
     portSlot = null;
     draggingPortRow = null;
-    // An abandoned drag (no drop) still leaves the true first row correct.
-    markFirstPort(grp);
   }
   formHost.addEventListener('pointerup', endPortDrag);
   formHost.addEventListener('dragend', endPortDrag);
@@ -4349,14 +4334,9 @@
       if (draggingPortRow !== row) return;   // drag already over — a click with no drag
       portSlot = document.createElement('div');
       portSlot.className = 'staxx-portslot';
-      // Decorative echo of the chip a real row carries — no title, since a
-      // placeholder has nothing to explain — needed so the slot has a chip
-      // of its own for markFirstPort to reveal when the gap sits on top.
-      portSlot.innerHTML = '<span class="staxx-webchip" aria-hidden="true">WebUI</span>';
       portSlot.style.height = rowHeight + 'px';
       row.parentNode.insertBefore(portSlot, row);
       row.classList.add('staxx-portdrag');
-      markFirstPort(grp);
     }, 0);
   });
 
@@ -4376,7 +4356,6 @@
       // The row itself never moved, only hid — "home" is just beside it.
       if (portSlot.nextSibling !== draggingPortRow) {
         draggingPortRow.parentNode.insertBefore(portSlot, draggingPortRow);
-        markFirstPort(grp);
       }
       return;
     }
@@ -4396,7 +4375,6 @@
     // from under the pointer and the decision flips back and forth.
     if (portSlot.nextSibling !== target) {
       grp.insertBefore(portSlot, target);
-      markFirstPort(grp);
     }
   });
 
@@ -7973,12 +7951,14 @@
       NETWORKS = [];
       ALL_NETS = [];
       netPresent = {};
+      netDriver = {};
       var nets = res.networks || [];
       for (var n = 0; n < nets.length; n++) {
         var name = nets[n].name, driver = nets[n].driver;
         if (!name) continue;
         ALL_NETS.push([name, name]);
         netPresent[name] = true;
+        netDriver[name] = driver;
         if (known[name]) continue;
         NETWORKS.push([name, name]);
         known[name] = true;
@@ -8238,7 +8218,7 @@
    *
    * Only ever written into an empty note, never over the user's own words. */
   function devNameLine(line, label) {
-    var fresh = YAML.buildForm(MODEL.doc);
+    var fresh = YAML.buildForm(MODEL.doc, netDrivers());
     var id    = YAML.fieldAtLine(fresh, line);
     if (!id) return;
 
@@ -12489,6 +12469,27 @@
       // is worth explaining on its own, separately from the ordinary
       // "docker unavailable" hint above, which is why this checks !exists
       // specifically rather than reusing `why`.
+      hint: !exists ? 'This container has not been created yet' : ''
+    });
+
+    // PLAN_50. Same !exists judgement as Logs just above, not !up: a stopped
+    // container still has a compose file to resolve an address from, and the
+    // server's own refusal ("Start the container first.") says more than a
+    // greyed-out item would — so only "never created at all" is disabled here.
+    menuItem('Test web page', 'external-link', function () {
+      logPanel.hidden = false;
+      logTitle.textContent = 'Test web page';
+      logBox.textContent = 'Checking…';
+      logPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      // 15s: comfortably above the server's own four-second attempt, so a
+      // slow reply still lands rather than reading as our own timeout.
+      call('webui-test', { name: stack, service: service }, 15000).then(function (r) {
+        // The server writes the sentence; this only ever displays it.
+        logBox.textContent = r.ok ? r.message : (r.error || 'That request returned nothing usable.');
+      });
+    }, {
+      disabled: !CAN_RUN || !exists,
       hint: !exists ? 'This container has not been created yet' : ''
     });
 
