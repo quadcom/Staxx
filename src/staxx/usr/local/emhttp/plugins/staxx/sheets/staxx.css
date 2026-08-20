@@ -513,10 +513,9 @@
   min-width: 4.2rem;
 }
 
-/* Added by PHP for every service row, which always carries all four chips
-   (staxx_row_actions_html()) — the stack row has only WebUI and Logs and
-   never gets this class. Two columns rather than one turns the four-chip
-   stack into a 2x2 block that is exactly as tall as the WebUI/Logs pair
+/* Added by PHP to every row, stack and service alike, because both carry all
+   four chips (staxx_row_actions_html()). Two columns rather than one turns
+   the four-chip stack into a 2x2 block that is exactly as tall as the WebUI/Logs pair
    already is, so .staxx-icon's align-self: flex-start and .staxx-dot's
    absolute offsets (both above, both anchored on the TILE, not this column)
    keep meaning what their own comments say regardless of how many chips a

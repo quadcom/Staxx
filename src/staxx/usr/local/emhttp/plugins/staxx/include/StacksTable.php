@@ -307,15 +307,18 @@ function staxx_update_pill_html(array $u): string {
  * @param bool   $running whether that service's own container is running
  * @param string $offWhy  why the web button is off when $url is ''; ignored
  *                         when $url is set (then it is always "not running")
- * @param string $project the service's resolved project-page URL, or '' —
- *                         Repo and CA are only ever passed by the service-row
- *                         call site, which always gets both chips (disabled
- *                         when there is nothing to link to); the stack row
- *                         leaves both at their default and so never grows
- *                         the two extra chips at all
+ * @param string $project the service's (or, on the stack row, the one
+ *                         candidate's) resolved project-page URL, or '' —
+ *                         every row gets all four chips, Repo and CA
+ *                         disabled the same way WebUI is when there is
+ *                         nothing to link to
  * @param string $support the service's resolved support/forum-thread URL, or ''
+ * @param string $linksOffWhy why Repo/CA are off, used for both chips alike
+ *                         since a stack's reason for having neither is one
+ *                         reason, not two; '' keeps the default per-chip
+ *                         sentence ("no project page" / "no support thread")
  */
-function staxx_row_actions_html(string $stack, string $service, string $url, bool $running, string $offWhy, string $project = '', string $support = ''): string {
+function staxx_row_actions_html(string $stack, string $service, string $url, bool $running, string $offWhy, string $project = '', string $support = '', string $linksOffWhy = ''): string {
   $label = _('Open web page');
 
   // Checked here as well as in staxx_webui_url(), which is the only caller
@@ -360,41 +363,36 @@ function staxx_row_actions_html(string $stack, string $service, string $url, boo
   // than omitted when there is nothing to link to, same as WebUI's own
   // disabled shape above — so the icon column never reflows depending on
   // whether this image happens to carry a project page or a support thread.
-  // Only the service-row call site ever reaches here with $service set;
-  // the stack row's $service is always '', and that is what keeps it at
-  // WebUI+Logs only.
+  // Every row builds both chips, stack and service alike: the stack row
+  // either has one clear candidate (mirroring $url/$running above) or shares
+  // one reason via $linksOffWhy for having neither.
   // Both link values come out of a registry label or a third-party feed, so
   // they are escaped exactly like every other stranger's text this file
   // prints.
-  $repo = '';
-  $ca   = '';
-  if ($service !== '') {
-    if ($project !== '' && preg_match('~^https?://~i', $project)) {
-      $repo = '<a class="staxx-webbtn" href="'.htmlspecialchars($project).'"'
-            . ' target="_blank" rel="noopener" title="'.htmlspecialchars(_('Open the project page')).'">'
-            . htmlspecialchars(_('Repo')).'</a>';
-    } else {
-      $repo = '<span class="staxx-webbtn staxx-webbtn--off" title="'.htmlspecialchars(_('This image has no project page to open.')).'">'
-            . htmlspecialchars(_('Repo')).'</span>';
-    }
-
-    if ($support !== '' && preg_match('~^https?://~i', $support)) {
-      $ca = '<a class="staxx-webbtn" href="'.htmlspecialchars($support).'"'
-          . ' target="_blank" rel="noopener" title="'.htmlspecialchars(_('Open the support thread')).'">'
-          . htmlspecialchars(_('CA')).'</a>';
-    } else {
-      $ca = '<span class="staxx-webbtn staxx-webbtn--off" title="'.htmlspecialchars(_('This image has no support thread to open.')).'">'
-          . htmlspecialchars(_('CA')).'</span>';
-    }
+  if ($project !== '' && preg_match('~^https?://~i', $project)) {
+    $repo = '<a class="staxx-webbtn" href="'.htmlspecialchars($project).'"'
+          . ' target="_blank" rel="noopener" title="'.htmlspecialchars(_('Open the project page')).'">'
+          . htmlspecialchars(_('Repo')).'</a>';
+  } else {
+    $repoWhy = $linksOffWhy !== '' ? $linksOffWhy : _('This image has no project page to open.');
+    $repo = '<span class="staxx-webbtn staxx-webbtn--off" title="'.htmlspecialchars($repoWhy).'">'
+          . htmlspecialchars(_('Repo')).'</span>';
   }
 
-  // Two columns whenever Repo/CA exist at all — which, now that both are
-  // always rendered (enabled or disabled) for the service-row call site, is
-  // every service row rather than only some of them. See
-  // .staxx-rowactions--wide in sheets/staxx.css.
-  $wideCls = $service !== '' ? ' staxx-rowactions--wide' : '';
+  if ($support !== '' && preg_match('~^https?://~i', $support)) {
+    $ca = '<a class="staxx-webbtn" href="'.htmlspecialchars($support).'"'
+        . ' target="_blank" rel="noopener" title="'.htmlspecialchars(_('Open the support thread')).'">'
+        . htmlspecialchars(_('CA')).'</a>';
+  } else {
+    $caWhy = $linksOffWhy !== '' ? $linksOffWhy : _('This image has no support thread to open.');
+    $ca = '<span class="staxx-webbtn staxx-webbtn--off" title="'.htmlspecialchars($caWhy).'">'
+        . htmlspecialchars(_('CA')).'</span>';
+  }
 
-  return '<span class="staxx-rowactions'.$wideCls.'">'.$web.$logs.$repo.$ca.'</span>';
+  // Every row carries all four chips, enabled or disabled, so the 2x2 block
+  // is the same size on a stack row as on a service row. See
+  // .staxx-rowactions--wide in sheets/staxx.css.
+  return '<span class="staxx-rowactions staxx-rowactions--wide">'.$web.$logs.$repo.$ca.'</span>';
 }
 
 /**
@@ -949,6 +947,18 @@ function staxx_render_rows(array $rows, bool $canRun): string {
         ? _('More than one container here has its own web page — open one from the container row below.')
         : _('This stack has no web page to open.');
 
+      // Repo/CA for the stack row: same "one clear candidate or none" rule as
+      // WebUI above, but keyed on the service count rather than which ones
+      // happen to have a link — picking one project page out of several would
+      // be a guess, so a multi-service stack shows the pair greyed and points
+      // at the rows below, exactly as the web-page chip already does.
+      $linkKid    = count($kids) === 1 ? reset($kids) : null;
+      $linkProject = $linkKid['project'] ?? '';
+      $linkSupport = $linkKid['support'] ?? '';
+      $linksOffWhy = count($kids) > 1
+        ? _('More than one container here has its own project page — open one from the container row below.')
+        : '';
+
       // A stack with one service has nothing to break down: the row already
       // names it and gives its state, and a chevron that reveals a single line
       // repeating what is above it is a click that buys nothing. Only stacks
@@ -1080,7 +1090,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                   // reads, it never starts anything, and on this row it means
                   // the whole stack rather than any one service.
                 ?>
-                <?= staxx_row_actions_html($s['name'], '', $webUrl, $webRunning, $webOffWhy) ?>
+                <?= staxx_row_actions_html($s['name'], '', $webUrl, $webRunning, $webOffWhy, $linkProject, $linkSupport, $linksOffWhy) ?>
               </span>
 
               <span class="staxx-nameinfo">
