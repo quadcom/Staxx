@@ -18,6 +18,12 @@
   var modal       = document.getElementById('staxx-modal');
   var modalTitle  = document.getElementById('staxx-modal-title');
   var modalBody   = modal.querySelector('.staxx-modal-body');
+  // The Configure/Manage tab strip (PLAN_44 C1) and Manage's own empty host —
+  // manage.js (a separate file, may not have loaded) fills the host in via
+  // window.StaxxManage.create(). See setTab()/ensureManage() further down.
+  var tabConfigureBtn = document.getElementById('staxx-tab-configure');
+  var tabManageBtn    = document.getElementById('staxx-tab-manage');
+  var manageHost      = document.getElementById('staxx-modal-manage');
   var nameField   = document.getElementById('staxx-name-field');
   var nameInput   = document.getElementById('staxx-name');
   var nameFolder  = document.getElementById('staxx-name-folder');
@@ -95,6 +101,10 @@
   var confirmMsg    = document.getElementById('staxx-confirm-msg');
   var confirmCancel = document.getElementById('staxx-confirm-cancel');
   var confirmGo     = document.getElementById('staxx-confirm-go');
+  // The optional third answer (PLAN_44 C2) — null-guarded the same way the
+  // rest of this dialog already is, and hidden except when a caller passes
+  // askConfirm() an extraLabel.
+  var confirmExtra  = document.getElementById('staxx-confirm-extra');
 
   // The Settings panel. May be null on a stale page — guarded the same way
   // confirmModal is above; openSettings() itself is a no-op without it.
@@ -8333,7 +8343,13 @@
 
   // focusService (PLAN_44 A2): a container icon opens straight at its own
   // section of the form, rather than at the top of the file.
-  function openEditor(name, body, isNew, focusService) {
+  // manageSelect (PLAN_44 C1/A4) is undefined for every ordinary opener, which
+  // leaves the dialog on Configure exactly as it always has. The Logs button
+  // and the two Logs menu items are the only callers that pass it — '' for
+  // the whole stack's own All tab, a service name for one container's — and
+  // it is what switches straight to Manage further down, once the model this
+  // stack's Manage view is built from (MODEL, from reparse() above) exists.
+  function openEditor(name, body, isNew, focusService, manageSelect) {
     closeMenu();
     clearError();
 
@@ -8481,6 +8497,29 @@
       ? modal.querySelector('.staxx-viewbtn[aria-pressed="true"]')
       : yamlPane;
     (isNew ? nameInput : afterFocus).focus({ preventScroll: true });
+
+    // PLAN_44 C1. Configure is where every stack opens, even one left on
+    // Manage last time — a freshly read compose file is the whole reason the
+    // editor opens at all. If Manage was already opened once this page
+    // session, mount it against the stack that just opened so its data is
+    // never a stack behind; a first-ever open is left for ensureManage() to
+    // do lazily, whenever Manage is actually asked for (the tab, or
+    // manageSelect below).
+    manageMounted = false;
+    setTab('configure');
+    if (manageInst) mountManageForCurrentStack();
+
+    // manageSelect !== undefined means the Logs button or a Logs menu item
+    // opened this — switch straight to Manage and pick the container asked
+    // for, after the focus above so Manage's own focus (once manage.js sets
+    // one) is what actually wins rather than the Configure focus just set.
+    // Silently stays on Configure if manage.js never loaded, the same
+    // fallback the comments at each of those call sites describe.
+    if (manageSelect !== undefined && ensureManage()) {
+      if (!manageMounted) mountManageForCurrentStack();
+      setTab('manage');
+      manageInst.select(manageSelect === '' ? 'all' : manageSelect);
+    }
   }
 
   function closeEditor() {
@@ -8558,6 +8597,10 @@
     hideHover();
     closeOutline();
     closeTabmenu();
+    // PLAN_44 C1: whatever Manage was showing (a shell, a follower) belongs
+    // to this stack and dies with its editor — see instance.unmount() in the
+    // manage.js contract. A no-op if Manage was never opened this session.
+    if (manageInst) { manageInst.unmount(); manageMounted = false; }
   });
 
   // <dialog> fires no event for the backdrop, because the backdrop is a
@@ -11124,7 +11167,52 @@
     return up + ' of ' + total + ' running';
   }
 
+  // PLAN_44 C1. manage.js's setSnapshot() replaces state.snapshot wholesale,
+  // not merged with what came before — so passing it the state poll's reply
+  // one tick and the stats poll's reply the next would blank out whichever
+  // half the OTHER poll last supplied. This is the one persistent object
+  // both polls write into instead, in the shape manage.js actually reads
+  // (containers keyed by service, stats keyed by the real container name) —
+  // neither poll's own reply is that shape on its own; see the two updaters
+  // below for how each is translated.
+  var manageSnapshot = { containers: {}, stats: {} };
+
+  // Sent on every state/stats poll, but only while Manage is actually the tab
+  // on screen — no polling of its own, and no work done for a poll nobody is
+  // looking at.
+  function manageMaybeSnapshot() {
+    if (manageInst && modal.open && modal.dataset.tab === 'manage') manageInst.setSnapshot(manageSnapshot);
+  }
+
+  // The state poll's res.stacks is keyed by STACK name (the folder path,
+  // same key openedName and rowFor() use) and already carries, per service,
+  // exactly the { state, container } shape manage.js's tab row reads — no
+  // translation needed, just picking out the one stack that is mounted.
+  function manageUpdateContainers(res) {
+    var s = (res.stacks || {})[openedName];
+    manageSnapshot.containers = (s && s.containers) || {};
+    manageMaybeSnapshot();
+  }
+
+  // The stats poll's res.stacks is keyed by compose PROJECT name instead —
+  // read off the row, since that is the only place the two names are already
+  // reconciled (see applyState() above) — and each container is an array
+  // entry with memUsed, not the mem key manage.js's statsFor() reads; this is
+  // the one place that renaming happens.
+  function manageUpdateStats(res) {
+    var row     = rowFor(openedName);
+    var project = row ? row.dataset.project : '';
+    var s       = (res.stacks || {})[project];
+    var byName  = {};
+    (s && s.containers || []).forEach(function (c) {
+      byName[c.name] = { cpu: c.cpu, mem: c.memUsed };
+    });
+    manageSnapshot.stats = byName;
+    manageMaybeSnapshot();
+  }
+
   function applyState(res) {
+    manageUpdateContainers(res);
     var stacks = res.stacks || {};
     Object.keys(stacks).forEach(function (name) {
       var row = rowFor(name);
@@ -11551,13 +11639,17 @@
     return !!(btn && btn.dataset.running === '1');
   }
 
-  // focusService (PLAN_44 A2/A4): passed straight through to openEditor(),
-  // which scrolls the form to that service once the dialog is up. Left
-  // undefined for every caller that just wants the editor at the top.
-  function editStack(name, label, focusService) {
+  // focusService (PLAN_44 A2): passed straight through to openEditor(), which
+  // scrolls the form to that service once the dialog is up. Left undefined
+  // for every caller that just wants the editor at the top.
+  //
+  // manageSelect (PLAN_44 A4/C1): also passed straight through — it is what
+  // makes the Logs button and the two Logs menu items open on Manage,
+  // already pointed at the container asked for, instead of on Configure.
+  function editStack(name, label, focusService, manageSelect) {
     call('read', { name: name }).then(function (res) {
       if (!res.ok) { failed('Could not open ' + label, res.error); return; }
-      openEditor(res.name, res.body, false, focusService);
+      openEditor(res.name, res.body, false, focusService, manageSelect);
     });
   }
 
@@ -11594,6 +11686,7 @@
     confirmBusy = busy;
     confirmCancel.disabled = busy;
     confirmGo.disabled = busy;
+    if (confirmExtra) confirmExtra.disabled = busy;
   }
 
   function closeConfirm() {
@@ -11607,21 +11700,32 @@
     resolve(value);
   }
 
-  // A yes/no question through #staxx-confirm, resolving true (Go) or
-  // false (Cancel, Escape, a backdrop click, or the dialog closing any other
-  // way). Callable again while the dialog is already open — it updates the
-  // title, body and button label in place rather than closing and
-  // reopening — so removeStack() below can re-ask after a failed attempt, or
-  // turn the same dialog into "Removed" once one has succeeded, without ever
-  // flickering through a second one. Leaves confirmMsg alone: that is a
-  // status line for the request a question leads to, not part of the question
-  // itself, and clearing it here would erase an error the moment a caller
-  // re-asks to offer a retry.
+  // A yes/no question through #staxx-confirm, resolving true (Go), 'extra'
+  // (PLAN_44 C2's third answer — see below), or false (Cancel, Escape, a
+  // backdrop click, or the dialog closing any other way). Callable again
+  // while the dialog is already open — it updates the title, body and button
+  // labels in place rather than closing and reopening — so removeStack()
+  // below can re-ask after a failed attempt, or turn the same dialog into
+  // "Removed" once one has succeeded, without ever flickering through a
+  // second one. Leaves confirmMsg alone: that is a status line for the
+  // request a question leads to, not part of the question itself, and
+  // clearing it here would erase an error the moment a caller re-asks to
+  // offer a retry.
+  //
+  // opts.extraLabel is optional and adds the third answer: a caller that
+  // never sets it never shows the button and can go on comparing the
+  // resolved value against true/false exactly as it always has — Manage's
+  // "unsaved changes" question (PLAN_44 C2) is the only caller that passes
+  // it, so every existing two-answer question is untouched by this.
   function askConfirm(opts) {
     confirmSetBusy(false);
     confirmTitle.textContent = opts.title;
     confirmBody.innerHTML = opts.bodyHtml;
     confirmGo.textContent = opts.goLabel;
+    if (confirmExtra) {
+      confirmExtra.hidden = !opts.extraLabel;
+      confirmExtra.textContent = opts.extraLabel || '';
+    }
     if (!confirmModal.open) confirmModal.showModal();
     // Explicit, and after showModal(), for the same reason openEditor() sets
     // focus explicitly: the dialog's own "first focusable descendant" rule
@@ -11664,6 +11768,13 @@
       if (confirmBusy) return;
       settleConfirm(true);
     });
+
+    if (confirmExtra) {
+      confirmExtra.addEventListener('click', function () {
+        if (confirmBusy) return;
+        settleConfirm('extra');
+      });
+    }
   }
 
   // The one dialog's body. Nothing is destroyed any more, so there is no
@@ -12046,6 +12157,164 @@
     return function () {
       if (verb !== 'logs' && verb !== 'config') refreshStateSoon();
     };
+  }
+
+  /* ---- the Manage tab (PLAN_44 Part D) -------------------------------------
+   *
+   * manage.js — a separate file, written in parallel with this one — owns
+   * everything inside #staxx-modal-manage: the container tab row, the log,
+   * the shell, the files. Everything here is the shell it lives in and the
+   * wiring that drives it, per the contract in window.StaxxManage.create():
+   * a host element, call()/esc()/bytes() lifted straight from this file so
+   * nothing is duplicated, and an onRun() this file answers with the very
+   * same run()/afterRun() every other button on the page already uses — so
+   * the busy pill, the sticky failure marker and the folder summary all
+   * apply to a Manage run exactly as they do to a menu one.
+   */
+
+  var manageMod     = window.StaxxManage || null;
+  var manageInst    = null;   // created once, lazily — see ensureManage()
+  var manageMounted = false;  // whether mount() has run for the CURRENT stack
+
+  if (tabManageBtn && !manageMod) {
+    tabManageBtn.disabled = true;
+    tabManageBtn.title = 'This page’s Manage script did not load.';
+  }
+
+  // Present-tense label for a job verb, for the one sentence in manageOnRun()
+  // below that has to say "Start anyway" rather than "up anyway" — the verb
+  // names here are staxx_job_verbs() keys, not words anyone reads, so this is
+  // its own small map rather than a reuse of BUSY_LABEL (which is already
+  // "-ing…", the wrong tense for a button).
+  var VERB_LABEL = {
+    up: 'Start', down: 'Stop', restart: 'Restart',
+    recreate: 'Recreate', update: 'Update', pull: 'Update'
+  };
+
+  function verbLabel(verb) {
+    return VERB_LABEL[verb] || 'Run';
+  }
+
+  // The icon already resolved for a row's container button, read straight
+  // off it rather than asked for again — see the brief's own reasoning: "no
+  // second resolution path". Scoped by BOTH data-stack and data-service,
+  // because a service name is only unique within its own stack.
+  function manageIconsFor(stack, services) {
+    var icons = {};
+    services.forEach(function (svc) {
+      var btn = document.querySelector(
+        '[data-menu="container"][data-stack="' + stack + '"][data-service="' + svc + '"]');
+      if (btn) icons[svc] = btn.innerHTML;
+    });
+    return icons;
+  }
+
+  // Rebuilds Manage's view of the currently open stack from the editor's own
+  // parsed model — the only source that exists for a stack that has never
+  // been started (PLAN_44 D1) — rather than from the table, which knows
+  // nothing about a service with no container yet.
+  function mountManageForCurrentStack() {
+    if (!manageInst) return;
+    // Yesterday's stack's figures are meaningless against today's — mount()
+    // itself blanks manage.js's own copy, but this one is what the next poll
+    // adds to, so it has to start empty too or a stale reading could survive
+    // one tick into the new stack.
+    manageSnapshot = { containers: {}, stats: {} };
+    var services = ((MODEL && MODEL.services) || []).map(function (s) { return s.name; });
+    manageInst.mount({
+      stack: openedName,
+      services: services,
+      icons: manageIconsFor(openedName, services)
+    });
+    manageMounted = true;
+  }
+
+  // Created once, the first time Manage is opened — either by clicking the
+  // tab or via the Logs button/menu items further down, which open straight
+  // onto it. A later stack's editor still mounts against this same instance;
+  // see mountManageForCurrentStack() above and openEditor() below.
+  function ensureManage() {
+    if (manageInst || !manageMod) return manageInst;
+    manageInst = manageMod.create({
+      host: manageHost,
+      call: call,
+      esc: esc,
+      bytes: bytes,
+      onRun: manageOnRun
+    });
+    return manageInst;
+  }
+
+  function setTab(tab) {
+    modal.dataset.tab = tab;
+    if (tabConfigureBtn) tabConfigureBtn.setAttribute('aria-selected', tab === 'configure' ? 'true' : 'false');
+    if (tabManageBtn) tabManageBtn.setAttribute('aria-selected', tab === 'manage' ? 'true' : 'false');
+  }
+
+  if (tabConfigureBtn) tabConfigureBtn.addEventListener('click', function () { setTab('configure'); });
+  if (tabManageBtn) {
+    tabManageBtn.addEventListener('click', function () {
+      if (tabManageBtn.disabled) return;
+      if (!ensureManage()) return;
+      if (!manageMounted) mountManageForCurrentStack();
+      setTab('manage');
+    });
+  }
+
+  // "Save and start" from Manage (PLAN_44 C2). Not save() further up: that
+  // function's success path always closeEditor()s, which is right for the
+  // Save/Save-and-start buttons on Configure but wrong here — a run started
+  // from Manage has to leave the editor open so there is something left to
+  // watch it in. So this writes the file the same way save() does, without
+  // save()'s rename dance (renaming and running from Manage in the same click
+  // is not a case C2 asks for) and without ever closing the dialog.
+  function manageSaveThenRun(verb, service) {
+    var name = openedName;
+    var body = currentText();
+    clearError();
+    saveBtn.disabled = true;
+    startBtn.disabled = true;
+    call('save', { name: name, body: withEol(body, composeEol), 'new': modal.dataset.new })
+      .then(function (res) {
+        saveBtn.disabled = false;
+        startBtn.disabled = startBtnWasDisabled;
+        if (!res.ok || !res.file || !res.bytes) {
+          showError((res.error || 'Save failed.') + strayWarning(res));
+          return;
+        }
+        textAtOpen = body;
+        run(name, verb, afterRun(verb), service);
+      });
+  }
+
+  // The one place a Manage button asks Configure a question first (PLAN_44
+  // C2). isDirty() is the editor's own existing dirty test — not a second one
+  // — so this agrees with the unsaved-changes guard on closing the dialog.
+  function manageOnRun(verb, service) {
+    var stack = openedName;
+    if (!isDirty()) { run(stack, verb, afterRun(verb), service); return; }
+
+    var label = verbLabel(verb);
+    askConfirm({
+      title: 'Unsaved changes on Configure',
+      bodyHtml:
+        '<p>“' + esc(nameInput.value || stack) + '” has changes on Configure that are not saved.</p>' +
+        '<p><strong>Save and ' + esc(label.toLowerCase()) + '</strong> saves them first. <strong>' +
+        esc(label) + ' anyway</strong> uses the file already on disk, ignoring what is on screen.</p>',
+      goLabel: label + ' anyway',
+      extraLabel: 'Save and ' + label.toLowerCase()
+    }).then(function (answer) {
+      if (answer === false) return;   // Cancel
+      closeConfirm();
+      if (answer === 'extra') { manageSaveThenRun(verb, service); return; }
+      // "Start anyway": runs the file on disk, not what is on screen. Belongs
+      // in Manage's own log pane once it exists (PLAN_44 D3) — until then
+      // this is the only place on the page that would be seen.
+      openLogDialog(label + ' — used the saved file',
+        'Configure had unsaved changes. They were not used: ' + label + ' ran against the ' +
+        'compose file already on disk, not what was on screen.');
+      run(stack, verb, afterRun(verb), service);
+    });
   }
 
   /* ---- settings panel -----------------------------------------------------
@@ -12692,10 +12961,11 @@
       // taking it down as a side effect.
       menuItem('Update images', 'download', function () { run(name, 'pull', afterRun('pull')); },
                { disabled: !CAN_RUN });
-      // PLAN_44 A4: re-points at Manage in phase 2. Until that tab exists this
-      // opens the editor instead — reading a file needs neither Docker nor
-      // compose, so it is not gated on CAN_RUN the way the run verbs above are.
-      menuItem('Logs', 'file-text-o', function () { editStack(name, label); });
+      // PLAN_44 A4: opens on Manage's All tab. Falls back to Configure on its
+      // own (editStack() -> openEditor() only switches tabs when manage.js
+      // has loaded) — reading a file needs neither Docker nor compose, so
+      // this is not gated on CAN_RUN the way the run verbs above are.
+      menuItem('Logs', 'file-text-o', function () { editStack(name, label, null, ''); });
       menuSeparator();
     }
 
@@ -12783,12 +13053,12 @@
       run(stack, up ? 'update' : 'pull', afterRun('update'), service);
     }, { disabled: !CAN_RUN });
 
-    // PLAN_44 A4: re-points at Manage in phase 2. Until that tab exists this
-    // opens the editor instead, at this service's own section — reading a
-    // file needs neither Docker nor an existing container, so neither of the
-    // hints above (CAN_RUN, !exists) applies here any more.
+    // PLAN_44 A4: opens on Manage with this container selected. Falls back to
+    // Configure on its own if manage.js never loaded — reading a file needs
+    // neither Docker nor an existing container, so neither of the hints
+    // above (CAN_RUN, !exists) applies here any more.
     menuItem('Logs', 'file-text-o', function () {
-      editStack(stack, stackLabel(stack), service);
+      editStack(stack, stackLabel(stack), null, service);
     });
 
     // PLAN_50. Same !exists judgement as Logs just above, not !up: a stopped
@@ -13497,15 +13767,15 @@
 
     if (el.dataset.toggleFolder) { toggleFolder(el.dataset.toggleFolder, el); return; }
     if (el.dataset.toggleStack)  { toggleStack(el.dataset.toggleStack, el);  return; }
-    // PLAN_44 A4: Logs re-points at Manage in phase 2. Until that tab exists
-    // this opens the editor instead — undefined service scopes it to the
-    // whole stack, same as the two menu Logs items this mirrors. The stack
+    // PLAN_44 A4: opens on Manage — '' (no data-service) selects the whole
+    // stack's own All tab, same as the two menu Logs items this mirrors, and
+    // falls back to Configure on its own if manage.js never loaded. The stack
     // name is in data-logs itself, the way data-toggle-stack above carries
     // its own subject — the button has no separate data-stack, and reading
     // one gave every click an empty stack name and "no compose file found in
     // this stack".
     if (el.dataset.logs) {
-      editStack(el.dataset.logs, stackLabel(el.dataset.logs), el.dataset.service);
+      editStack(el.dataset.logs, stackLabel(el.dataset.logs), null, el.dataset.service || '');
       return;
     }
     if (el.dataset.menu) {
@@ -14302,6 +14572,7 @@
 
   function applyStats(res) {
     if (!res || !res.ok) return;
+    manageUpdateStats(res);
 
     // Say how stale the figures are rather than letting an unchanging table
     // look like a quiet server.

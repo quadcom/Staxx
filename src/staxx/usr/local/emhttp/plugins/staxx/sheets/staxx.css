@@ -2079,11 +2079,14 @@
   color: var(--text-color, #e0e0e0);
   overflow: hidden;
 
-  /* The three rows: head and foot size to their content, the body takes the
-     rest. Without this the panes grow to fit their content and the whole
-     dialog scrolls, which loses the header the moment a file is long. */
+  /* Four rows now (PLAN_44 C1): head, the Configure/Manage tab strip, the
+     body — either .staxx-modal-body or .staxx-modal-manage, whichever the
+     dialog's own data-tab says to show — and foot. Head, strip and foot
+     size to their content; the body takes the rest. Without this the panes
+     grow to fit their content and the whole dialog scrolls, which loses the
+     header the moment a file is long. */
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto;
 
   /* One column, and minmax(0, ...) rather than 1fr on its own. A grid track
      will not shrink below the widest thing in it, and the header is a row of
@@ -2124,10 +2127,16 @@
  * is the same width it was a moment ago: switching view moves the dialog's
  * edges and reflows nothing inside them. 84rem is half of the 168rem cap, and
  * the 52rem floor is there because a narrow desktop window would otherwise
- * take that half literally and leave a column too thin to fill in. */
+ * take that half literally and leave a column too thin to fill in.
+ *
+ * :not([data-tab="manage"]) (PLAN_44 C1) because .staxx-modal-body stays in
+ * the DOM, with its data-view untouched, the whole time Manage is showing —
+ * it is only hidden by CSS, not removed — so without this exclusion these two
+ * selectors would keep matching and squeeze the Manage tab, which always
+ * wants the full width, into half a screen. */
 @media not all and (max-width: 45rem) {
-  .staxx-modal:has(> .staxx-modal-body[data-view="form"]),
-  .staxx-modal:has(> .staxx-modal-body[data-view="yaml"]) {
+  .staxx-modal:not([data-tab="manage"]):has(> .staxx-modal-body[data-view="form"]),
+  .staxx-modal:not([data-tab="manage"]):has(> .staxx-modal-body[data-view="yaml"]) {
     width: clamp(52rem, 48vw, 84rem);
   }
 }
@@ -2363,6 +2372,48 @@
 
 .staxx-scaffold .staxx-viewbtn:hover:disabled {
   background: transparent;
+}
+
+/* ---- modal: Configure/Manage tabs (PLAN_44 C1) ---- */
+
+/* Configure's own controls — the Form/Split/Compose segmented control — mean
+   nothing on Manage, so they hide with it. The file tab strip further down
+   needs no rule of its own: it lives inside .staxx-modal-body, which the next
+   rule already takes out of the layout entirely. */
+.staxx-modal[data-tab="manage"] .staxx-views {
+  display: none;
+}
+
+.staxx-modal[data-tab="manage"] .staxx-modal-body {
+  display: none;
+}
+
+/* The foot goes too. Every word in it is about writing the file — that
+   comments and ordering survive a save, and that a relative volume path puts
+   container data on the flash drive — alongside Undo and the two Save
+   buttons. None of that means anything while you are watching a container
+   run, and leaving a Save button under a pane that cannot edit anything is
+   an offer to do something the tab does not do. Editing lives one tab to the
+   left, and switching back is where saving belongs; an unsaved edit is not
+   lost by coming here, and pressing a run button with one outstanding asks
+   what to do about it (PLAN_44 C2). */
+.staxx-modal[data-tab="manage"] .staxx-modal-foot {
+  display: none;
+}
+
+.staxx-modal-manage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;          /* same reason as .staxx-modal-body below */
+}
+
+/* The reverse of the rule above the pane block. Undone by hiding rather than
+   built hidden-by-default, because .staxx-modal-manage is empty markup until
+   manage.js fills it in (see StacksPage.php) and has no view of its own to
+   gate on the way .staxx-modal-body has data-view. */
+.staxx-modal:not([data-tab="manage"]) .staxx-modal-manage {
+  display: none;
 }
 
 /* ---- modal: body and the two panes ---- */
@@ -4037,6 +4088,14 @@
 .staxx-scaffold .staxx-tab:focus-visible {
   outline: 0.2rem solid var(--sm-accent);
   outline-offset: -0.2rem;
+}
+
+/* Manage, disabled when window.StaxxManage never loaded (see stacks.js) —
+   same treatment as .staxx-viewbtn:disabled above, so a script that failed to
+   load reads as "not available yet" rather than a dead, unlabelled button. */
+.staxx-scaffold .staxx-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* The pending-autosave dot. --sm-danger (the "bad" colour every other error

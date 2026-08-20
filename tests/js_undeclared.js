@@ -22,7 +22,8 @@ var fs = require('fs');
 
 var FILES = [
   'src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js'
+  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js',
+  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/manage.js'
 ];
 
 var KEYWORD = /^(?:if|for|while|do|else|return|case|switch|try|catch|typeof|new|delete|void|in|of|instanceof|null|true|false|this|function|var|let|const)$/;

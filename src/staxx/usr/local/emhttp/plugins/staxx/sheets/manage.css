@@ -1,0 +1,236 @@
+/* StaXX — the Manage tab's own styles (PLAN_44 Part D).
+ * Copyright 2026, StaXX contributors. GPL-2.0.
+ *
+ * Kept out of staxx.css deliberately, same reasoning as manage.js living
+ * apart from stacks.js: this is new, high-churn surface and it must not
+ * collide with whoever is editing the main sheet at the same time.
+ *
+ * Reuses staxx.css's theme tokens (--sm-line, --sm-accent, --sm-good,
+ * --sm-danger, --sm-muted, --sm-fill-2, --sm-radius, …) rather than
+ * inventing colours — those are already mapped to Unraid's own theme
+ * variables and verified to hold actual colours across themes.
+ *
+ * The narrow-screen breakpoint literal (45rem) is not used here yet —
+ * phase 6 owns the pane-becomes-tabs behaviour, but the pane markup below
+ * is already shaped so that phase does not have to restructure anything.
+ */
+
+/* ---- Button trap, restated here — see staxx.css's own note on this ------
+ * Unraid's own sheet carries
+ *   `.unapi button { background-color: transparent; border-radius: 0;
+ *      font: inherit; color: inherit }`
+ * at specificity (0,1,1) — one class plus an element type. A bare class of
+ * ours is (0,1,0) and loses. Every rule below that styles a <button> is
+ * therefore written as `.staxx-scaffold .staxx-manage-…` — two classes,
+ * (0,2,0) — so it wins regardless of source order. staxx.css's own button
+ * reset (`.staxx-scaffold :where(button)`) already ran `all: unset` on
+ * every button under the scaffold before these rules apply, which is why
+ * these do not need to restate box-sizing or appearance themselves.
+ * ------------------------------------------------------------------------- */
+
+.staxx-manage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  height: 100%;
+  min-height: 0;
+}
+
+/* ---- D1: the container tab row ------------------------------------------ */
+
+.staxx-manage-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--sm-line);
+  padding-bottom: 0.25rem;
+}
+
+.staxx-scaffold .staxx-manage-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: var(--sm-radius);
+  background-color: transparent;
+  color: inherit;
+}
+
+.staxx-scaffold .staxx-manage-tab:hover,
+.staxx-scaffold .staxx-manage-tab:focus-visible {
+  border-color: var(--sm-line);
+  background-color: var(--sm-fill-0, var(--sm-fill));
+}
+
+.staxx-scaffold .staxx-manage-tab--selected {
+  border-color: var(--sm-accent);
+  background-color: var(--sm-fill-2);
+}
+
+.staxx-manage-tab-icon {
+  display: inline-flex;
+  width: 1.1rem;
+  height: 1.1rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.staxx-manage-tab-icon img,
+.staxx-manage-tab-icon svg {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.staxx-manage-tab-label {
+  font-weight: 500;
+}
+
+/* The running light. Colour carries the meaning; :unknown (never created)
+   is deliberately dim rather than red, since "never created" is not a
+   failure — it just hasn't happened yet. */
+.staxx-manage-light {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background-color: var(--sm-muted);
+  opacity: 0.5;
+}
+
+.staxx-manage-light--running { background-color: var(--sm-good); opacity: 1; }
+.staxx-manage-light--exited  { background-color: var(--sm-muted); opacity: 0.8; }
+.staxx-manage-light--restarting,
+.staxx-manage-light--paused,
+.staxx-manage-light--dead    { background-color: var(--sm-danger); opacity: 1; }
+.staxx-manage-light--created { background-color: var(--sm-accent); opacity: 0.8; }
+
+.staxx-manage-warn {
+  color: var(--sm-danger);
+  line-height: 1;
+}
+
+.staxx-manage-tab-stats {
+  font-size: 0.8em;
+  color: var(--sm-muted);
+  white-space: nowrap;
+}
+
+/* ---- Body layout: log | buttons | (shell over files) --------------------- */
+
+.staxx-manage-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0.5rem;
+}
+
+.staxx-manage-pane--log  { flex: 3 1 0; }
+.staxx-manage-right      { flex: 3 1 0; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
+.staxx-manage-pane--shell,
+.staxx-manage-pane--files { flex: 1 1 0; }
+
+.staxx-manage-buttons {
+  flex: 0 0 auto;
+  width: 9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.staxx-manage-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  overflow: hidden;
+}
+
+/* A collapsed pane keeps its heading and gives up everything else, so the
+   siblings sharing the same flex row get the room — a click, not a drag,
+   per the plan's explicit "not draggable" rule. */
+.staxx-manage-pane--collapsed {
+  flex: 0 0 auto;
+}
+
+.staxx-manage-pane--collapsed .staxx-manage-pane-body {
+  display: none;
+}
+
+.staxx-scaffold .staxx-manage-pane-head {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  background-color: var(--sm-fill-0, var(--sm-fill));
+  border-bottom: 1px solid var(--sm-line);
+  font-weight: 600;
+}
+
+.staxx-manage-pane--collapsed .staxx-manage-pane-head {
+  border-bottom: none;
+}
+
+.staxx-manage-pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.6rem;
+}
+
+.staxx-manage-placeholder {
+  color: var(--sm-muted);
+  font-style: italic;
+}
+
+/* ---- D2: scope switch and verb buttons ------------------------------------ */
+
+.staxx-manage-scope {
+  display: flex;
+  border: 1px solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  overflow: hidden;
+}
+
+.staxx-scaffold .staxx-manage-scope-btn {
+  flex: 1 1 50%;
+  padding: 0.35rem 0.3rem;
+  text-align: center;
+  font-size: 0.8em;
+  background-color: transparent;
+  color: var(--sm-muted);
+}
+
+.staxx-scaffold .staxx-manage-scope-btn--armed {
+  background-color: var(--sm-fill-2);
+  color: inherit;
+  font-weight: 600;
+}
+
+.staxx-scaffold .staxx-manage-scope-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.staxx-manage-verbs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.staxx-scaffold .staxx-manage-verb {
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-fill-0, var(--sm-fill));
+  text-align: center;
+}
+
+.staxx-scaffold .staxx-manage-verb:hover:not(:disabled),
+.staxx-scaffold .staxx-manage-verb:focus-visible {
+  border-color: var(--sm-accent);
+}
+
+.staxx-scaffold .staxx-manage-verb:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

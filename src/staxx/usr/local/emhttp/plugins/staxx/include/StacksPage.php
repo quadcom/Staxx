@@ -48,11 +48,19 @@ $jsFile  = STAXX_ROOT.'/javascript/stacks.js';
 $modelFile = STAXX_ROOT.'/javascript/compose-model.js';
 $caFile  = STAXX_ROOT.'/javascript/ca-convert.js';
 $imageFile = STAXX_ROOT.'/javascript/image-import.js';
+// The Manage tab's own script and stylesheet (PLAN_44 phase 2) — written by a
+// separate agent in parallel with this file, so neither is guaranteed to exist
+// yet at any given moment. Guarded the same way the three scripts above are:
+// a missing file costs a 404 in the console, not a broken page.
+$manageJsFile  = STAXX_ROOT.'/javascript/manage.js';
+$manageCssFile = STAXX_ROOT.'/sheets/manage.css';
 $cssFile = STAXX_ROOT.'/sheets/staxx.css';
 $jsTag   = $assets.'/javascript/stacks.js?v='.(is_file($jsFile) ? filemtime($jsFile) : '0');
 $modelTag = $assets.'/javascript/compose-model.js?v='.(is_file($modelFile) ? filemtime($modelFile) : '0');
 $caTag   = $assets.'/javascript/ca-convert.js?v='.(is_file($caFile) ? filemtime($caFile) : '0');
 $imageTag = $assets.'/javascript/image-import.js?v='.(is_file($imageFile) ? filemtime($imageFile) : '0');
+$manageJsTag  = $assets.'/javascript/manage.js?v='.(is_file($manageJsFile) ? filemtime($manageJsFile) : '0');
+$manageCssTag = $assets.'/sheets/manage.css?v='.(is_file($manageCssFile) ? filemtime($manageCssFile) : '0');
 $cssTag  = $assets.'/sheets/staxx.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
 
 // Password managers ignore autocomplete="off" — that attribute only speaks to
@@ -76,6 +84,10 @@ endif;
 ?>
 
 <link rel="stylesheet" href="<?= $cssTag ?>">
+<!-- The Manage tab's own stylesheet, kept separate on purpose so it cannot
+     collide with anything below — see the comment on $manageCssFile above. A
+     missing file 404s quietly; nothing here depends on it loading. -->
+<link rel="stylesheet" href="<?= $manageCssTag ?>">
 
 <!-- `unapi` is Unraid's own opt-out marker, not a styling class. Its only
      appearances in webGui/styles are inside :not(.unapi *) guards on 88 rules
@@ -213,7 +225,7 @@ endif;
        No <form> wrapper. A form would submit implicitly on Enter in the name
        field, and with method="dialog" that closes the dialog and throws the
        edit away. -->
-  <dialog class="staxx-modal" id="staxx-modal" aria-labelledby="staxx-modal-title">
+  <dialog class="staxx-modal" id="staxx-modal" data-tab="configure" aria-labelledby="staxx-modal-title">
 
     <div class="staxx-modal-head">
       <h3 class="staxx-modal-title" id="staxx-modal-title"><?= _('New stack') ?></h3>
@@ -264,6 +276,23 @@ endif;
           <i class="fa fa-times"></i> <?= _('Close') ?>
         </button>
       </div>
+    </div>
+
+    <!-- PLAN_44 C1. Configure is the form/split/compose editing everything
+         above already did; Manage (PLAN_44 Part D) is a live console for a
+         running or stopped container — a shell, a log and a file browser —
+         built by a separate agent into #staxx-modal-manage below. Which one
+         shows is the .staxx-modal's own data-tab attribute, read by the
+         stylesheet (see the ~2129 comment there for the one trap it has to
+         dodge) and set by stacks.js's setTab(). Copies .staxx-tabstrip/
+         .staxx-tab wholesale from the file-tab strip further down rather than
+         .staxx-ca-tab, so the dialog is internally consistent with the one
+         tab strip it already had. -->
+    <div class="staxx-tabstrip staxx-modal-tabstrip" role="tablist" aria-label="<?= _('Editor section') ?>">
+      <button type="button" class="staxx-tab" id="staxx-tab-configure" role="tab"
+              aria-selected="true" data-tab="configure"><?= _('Configure') ?></button>
+      <button type="button" class="staxx-tab" id="staxx-tab-manage" role="tab"
+              aria-selected="false" data-tab="manage"><?= _('Manage') ?></button>
     </div>
 
     <div class="staxx-notice staxx-modal-banner" id="staxx-sanitise-note" hidden>
@@ -424,6 +453,15 @@ endif;
       </div>
 
     </div>
+
+    <!-- Empty on purpose. The other PLAN_44 agent's manage.js fills this in
+         via window.StaxxManage.create({ host: this element, ... }) the first
+         time the Manage tab is opened — see ensureManage()/mountManageFor-
+         CurrentStack() in stacks.js. Shown only while data-tab="manage" on
+         the dialog above; .staxx-modal-body stays in the DOM meanwhile
+         rather than being hidden and re-shown, which is what the width-clamp
+         comment at staxx.css:~2129 has to work around. -->
+    <div class="staxx-modal-manage" id="staxx-modal-manage"></div>
 
     <div class="staxx-modal-foot">
       <div class="staxx-error" id="staxx-error" hidden></div>
@@ -795,6 +833,11 @@ endif;
       <p class="staxx-confirm-msg" id="staxx-confirm-msg" role="status" aria-live="polite"></p>
       <div class="staxx-buttons staxx-buttons--inline">
         <button type="button" class="staxx-btn" id="staxx-confirm-cancel"><?= _('Cancel') ?></button>
+        <!-- The third answer askConfirm() can offer (PLAN_44 C2: "Save and
+             start" beside "Start anyway"). Hidden except when a caller passes
+             opts.extraLabel — every existing two-answer question leaves this
+             alone and never sees it. -->
+        <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-confirm-extra" hidden></button>
         <button type="button" class="staxx-btn staxx-btn--danger" id="staxx-confirm-go"><?= _('Delete stack') ?></button>
       </div>
     </div>
@@ -967,5 +1010,15 @@ endif;
      Conditional for the same reason as the two above. -->
 <? if (is_file($imageFile)): ?>
 <script src="<?= $imageTag ?>"></script>
+<? endif; ?>
+<!-- The Manage tab (PLAN_44 Part D), a separate file for the same reason as
+     the three above: a bad edit there costs the Manage tab, not the rest of
+     the page. It sets window.StaxxManage, which stacks.js reads with a null
+     check and a plain refusal — the Manage tab disables itself rather than
+     the page breaking — so load order only matters in that stacks.js must
+     come after it, not the reverse. Conditional because it may not exist yet
+     while it is still being written; a missing src would only be a 404. -->
+<? if (is_file($manageJsFile)): ?>
+<script src="<?= $manageJsTag ?>"></script>
 <? endif; ?>
 <script src="<?= $jsTag ?>"></script>
