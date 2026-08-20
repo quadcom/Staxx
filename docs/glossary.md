@@ -138,6 +138,37 @@ Relevant because anything stored there cannot be read at boot time.
 
 ---
 
+## Bringing containers in
+
+**Import** — turning a container you already run into a stack, by copying its setup into a compose
+file. The source is one of three things: an Unraid template, a Compose Manager project, or neither.
+Only the first two can be imported; a container matching neither has nothing to convert it from.
+
+*Why it matters here:* it means starting from what you already have rather than from nothing.
+
+**Needs review** — the state an imported stack arrives in. Every start and stop button is refused,
+and the row says plainly that it is waiting to be checked. Nothing runs and nothing of yours is
+touched until you look it over and clear the mark.
+
+*Why it matters here:* it is what makes bringing a container in safe — the copy exists, but it cannot
+do anything until you have said so.
+
+**Taking over** — the one button that clears a "needs review" mark and puts the new stack in charge.
+What it actually does depends on where the container came from:
+
+- From a **template**, the running container is stopped and set aside under another name, and the
+  new stack starts in its place. Reversible — nothing is deleted, and a failed start puts the
+  original back.
+- From a **Compose Manager project**, the new stack is given the same name Docker already knows
+  those containers by, so taking over rebuilds the containers you already run, in place, rather than
+  starting a second copy. There is no going back to a stopped original — going back means starting
+  the project from Compose Manager again.
+
+*Why it matters here:* the two sources look the same in the list but taking over behaves
+differently, and that difference is the one thing worth knowing before pressing the button.
+
+---
+
 ## Terms used about this project
 
 **Prior art** — existing projects that already solve part of the same problem. Studied so we do not
