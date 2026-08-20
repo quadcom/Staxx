@@ -12074,10 +12074,12 @@
     });
   }
 
-  // "Update now" — runs the update straight away instead of waiting for its
-  // clock. Scoped to one service when `service` is given, the whole stack
-  // otherwise, the same split run() already makes.
-  function updateNow(name, service, label) {
+  // The one route for applying an update — both menus' "Update" item and the
+  // pill itself. Scoped to one service when `service` is given, the whole
+  // stack otherwise, the same split run() already makes. Which verb the
+  // server actually runs (pull, or pull-then-up-d) is decided there, not
+  // here, since only it knows whether the target container is running.
+  function applyUpdate(name, service, label) {
     var rows = service ? containerRows(name, service) : stackRows(name);
     if (rows.length) setBusy(rows, 'Updating…');
     var fields = { name: name };
@@ -13537,7 +13539,7 @@
       key: 'UPDATE_MODE', control: 'choice', label: 'What to do with what is found',
       choices: [
         ['off',    'Nothing — just show it on the row'],
-        ['notify', 'Wait for you to press Update'],
+        ['notify', 'Wait for you to press Update, on the row\'s badge or its menu'],
         ['auto',   'Install it by itself once the delay below has passed']
       ],
       help: 'The default for every stack. A stack or a service can set its own in its compose ' +
@@ -14183,6 +14185,9 @@
 
     if (parses && !review && !handover) {
       var why = CAN_RUN ? '' : 'Docker or compose unavailable';
+      // Read once, up here, so both the always-present Update item below and
+      // the image-gated items further down share the one pill reading.
+      var updateEntry = updatePillEntry(updatePillEl(rowFor(name)));
       // Offered here as well as on a review-locked stack, because a plain
       // Start cannot free a container name something outside StaXX is
       // holding — compose simply fails against it. Gating this on the review
@@ -14200,14 +14205,28 @@
                { disabled: !CAN_RUN, hint: why });
       menuItem('Stop', 'stop', function () { run(name, 'down', afterRun('down')); },
                { disabled: !CAN_RUN || !running });
-      // A plain pull, not pull-then-up-d like the container menu's own
-      // Update below: at stack scope the two halves are separate buttons.
-      // This fetches the new images and leaves everything running on the old
-      // ones; Restart above is what rebuilds the containers onto them, since
-      // that is already what it does to apply any other change. Splitting
-      // them means a pull can be left to finish on a busy stack without
-      // taking it down as a side effect.
-      menuItem('Update images', 'download', function () { run(name, 'pull', afterRun('pull')); },
+      // Fetches the new image and rebuilds the container on it. Offered
+      // unconditionally, the same as Start/Stop above, and not only once a
+      // check has found something: pulling an image that has not moved and
+      // bringing the stack up again on it changes nothing, so there is no
+      // state in which this needs hiding. Where a countdown is already
+      // running, the hint says pressing this installs it now rather than
+      // waiting for the clock to reach zero.
+      menuItem('Update', 'download', function () {
+        applyUpdate(name, undefined, label);
+      }, {
+        disabled: !CAN_RUN,
+        hint: !CAN_RUN ? why :
+          ((updateEntry && updateEntry.state === 'update' && updateEntry.due > 0)
+            ? 'Installs the update now, instead of waiting for its countdown.' : '')
+      });
+
+      // Fetches every service's new image and leaves everything running on
+      // the old ones — Docker's own word for a fetch that changes nothing
+      // else. Update above fetches and rebuilds together; this is for
+      // getting the download out of the way on a busy stack without taking
+      // it down as a side effect.
+      menuItem('Pull images', 'download', function () { run(name, 'pull', afterRun('pull')); },
                { disabled: !CAN_RUN });
 
       // PLAN_45 phase 3. Scoped to the whole stack — the check itself has
@@ -14216,15 +14235,10 @@
         runUpdateCheck(name, label);
       }, { disabled: !CAN_RUN });
 
-      var updateEntry = updatePillEntry(updatePillEl(rowFor(name)));
+      // update-apply above needs only the row's identity, but skipping a
+      // version and the countdown controls act on a specific image, so they
+      // stay gated on the pill actually carrying one.
       if (updateEntry && updateEntry.state === 'update' && updateEntry.image) {
-        // PLAN_45 phase 4-8. Runs it now rather than waiting for its clock —
-        // every service in the stack, the same scope "Update images" above
-        // already uses.
-        menuItem('Update now', 'download', function () {
-          updateNow(name, undefined, label);
-        }, { disabled: !CAN_RUN });
-
         if (updateEntry.hold) {
           menuItem('Resume the countdown', 'play', function () {
             holdUpdate(updateEntry.image, false, label);
@@ -14338,7 +14352,8 @@
     var exists  = state !== '';
     var up      = state === 'running' || state === 'restarting' || state === 'paused';
 
-    var why = CAN_RUN ? '' : 'Docker or compose unavailable';
+    var why      = CAN_RUN ? '' : 'Docker or compose unavailable';
+    var svcLabel = stackLabel(stack) + ' / ' + service;
 
     menuItem(up ? 'Restart' : 'Start', up ? 'refresh' : 'play', function () {
       run(stack, up ? 'restart' : 'up', afterRun('up'), service);
@@ -14348,24 +14363,30 @@
       run(stack, 'down', afterRun('down'), service);
     }, { disabled: !CAN_RUN || !up });
 
-    // Singular "image" — this pulls the one image behind this one container,
-    // not every service's, which is what "Update images" on the stack menu
-    // does.
-    //
-    // Which verb runs depends on whether the container is up, and that is
-    // the point, not an inconsistency to fix later. A running container gets
-    // `pull` followed by `up -d`, so it comes back on the image that was
-    // just fetched — that IS what "update" means for something that is
-    // running, since a pull on its own only leaves a new image sitting on
-    // disk unused. A container that is not running has nothing to restart,
-    // and `up -d` on it would START it, which is not what pressing Update
-    // asked for — so a stopped container is only pulled, and the new image
-    // is simply what its next Start uses. Same label, same icon, and either
-    // way the container ends up on the newest image; the only difference is
-    // whether Update is allowed to change whether the container is running,
-    // and it is not.
-    menuItem('Update image', 'download', function () {
-      run(stack, up ? 'update' : 'pull', afterRun('update'), service);
+    // Read once, up here, so both this item's hint and the image-gated items
+    // further down share the one pill reading.
+    var updateEntry = updatePillEntry(updatePillEl(row));
+
+    // Fetches this one container's new image and rebuilds it — same command
+    // as the stack menu's own Update, at container scope. A stopped
+    // container is only pulled: update-apply never starts a container that
+    // was stopped, so the new image simply sits there for the next Start.
+    // Same label, same icon, either way; only whether the container ends up
+    // running is left alone.
+    menuItem('Update', 'download', function () {
+      applyUpdate(stack, service, svcLabel);
+    }, {
+      disabled: !CAN_RUN,
+      hint: !CAN_RUN ? why :
+        (!up ? 'This container is stopped, so the image is fetched and its next start uses it.' :
+          ((updateEntry && updateEntry.state === 'update' && updateEntry.due > 0)
+            ? 'Installs the update now, instead of waiting for its countdown.' : ''))
+    });
+
+    // Singular "image" — pulls the one image behind this one container, not
+    // every service's, which is what "Pull images" on the stack menu does.
+    menuItem('Pull image', 'download', function () {
+      run(stack, 'pull', afterRun('pull'), service);
     }, { disabled: !CAN_RUN });
 
     // PLAN_45 phase 3. There is no per-service form of the check itself —
@@ -14375,15 +14396,10 @@
       runUpdateCheck(stack, stackLabel(stack));
     }, { disabled: !CAN_RUN });
 
-    var updateEntry = updatePillEntry(updatePillEl(row));
+    // update-apply above needs only the row's identity, but skipping a
+    // version and the countdown controls act on a specific image, so they
+    // stay gated on the pill actually carrying one.
     if (updateEntry && updateEntry.state === 'update' && updateEntry.image) {
-      var svcLabel = stackLabel(stack) + ' / ' + service;
-
-      // PLAN_45 phase 4-8. Runs it now rather than waiting for its clock.
-      menuItem('Update now', 'download', function () {
-        updateNow(stack, service, svcLabel);
-      }, { disabled: !CAN_RUN });
-
       if (updateEntry.hold) {
         menuItem('Resume the countdown', 'play', function () {
           holdUpdate(updateEntry.image, false, svcLabel);
@@ -15156,6 +15172,29 @@
   scaffold.addEventListener('click', function (event) {
     var el = event.target.closest('button');
     if (!el) return;
+
+    // The pill itself, once staxx_update_pill_html() has drawn it as a
+    // button — only an 'update' pill on a stack or container row ever is, so
+    // every other pill stays a <span> and never reaches here at all. Reads
+    // the stack (and, on a container row, the service) off the row the pill
+    // sits in, the same way the row's own menu does.
+    if (el.classList.contains('staxx-updatepill')) {
+      var pillRow = el.closest('.staxx-stack-row, .staxx-container-row');
+      if (!pillRow) return;
+
+      var onContainer = pillRow.classList.contains('staxx-container-row');
+      var pillStack   = onContainer ? pillRow.dataset.inStack : pillRow.dataset.stackRow;
+      // The row's own data-service is its match key, which for a replicated
+      // service reads "service/container-name" — not something compose takes.
+      // The menu trigger carries the bare compose service name, which is what
+      // every command in here is built from, so it is read from there.
+      var pillTrigger = onContainer ? pillRow.querySelector('[data-menu="container"]') : null;
+      var pillService = pillTrigger ? pillTrigger.dataset.service : undefined;
+      applyUpdate(pillStack, pillService,
+                  onContainer ? stackLabel(pillStack) + ' / ' + pillService
+                              : stackLabel(pillStack));
+      return;
+    }
 
     // Clicking the sticky failure marker is its own acknowledgement: it
     // shows what happened and clears itself, on this row only.

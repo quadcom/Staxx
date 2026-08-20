@@ -1016,8 +1016,9 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
     $label = ($was !== '' && $ver !== '') ? $was.' → '.$ver : 'update ready';
     $tip = ($was !== '' && $ver !== '')
       ? 'A newer version, '.$ver.', is available; this is currently running '.$was.'. '
-      . 'Update the stack when you are ready.'
-      : 'A newer version of this image is available. Update the stack when you are ready.';
+      . 'Press this to fetch it and rebuild the container on it.'
+      : 'A newer version of this image is available. Press this to fetch it and rebuild the '
+      . 'container on it.';
     return ['state' => 'update', 'label' => $label, 'source' => $source, 'tip' => $tip,
              'version' => $ver, 'was' => $was];
   }
@@ -1124,7 +1125,9 @@ function staxx_updates_aggregate(array $pills): array {
     'state'  => $state,
     'label'  => $label,
     'count'  => $updateCount,
-    'image'  => '', // a summed-up row speaks for more than one image
+    // A row speaking for several services cannot name one image; a row speaking
+    // for exactly one can and does, which is what the menu's image-keyed items need.
+    'image'  => $total === 1 ? (string)($pills[0]['image'] ?? '') : '',
     'source' => $source,
     'tip'    => $tip,
     'due'    => $due,
@@ -1166,6 +1169,10 @@ function staxx_updates_for_row(string $stack, string $service = ''): array {
     $image = trim((string)($svcMeta['image'] ?? ''));
     if ($image === '') continue;
     $pill = staxx_updates_pill_for_image($image, $images);
+    // Carried on each pill the same way the single-service branch above does:
+    // staxx_updates_pill_for_image() does not set it, and the aggregate below
+    // hands it on when a stack turns out to have only one service.
+    $pill['image'] = $image;
     staxx_updates_apply_service_state($pill, $stack, $svc, $image);
     $pills[] = $pill;
   }

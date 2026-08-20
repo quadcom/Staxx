@@ -3817,8 +3817,13 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
  *             version of removing containers, so a second stack-scope entry
  *             would just be `down` under another name.
  *
- *   update    is two commands run in sequence, `pull` then `up -d`, at both
- *             scopes. A pull only fetches the new image onto disk — it does
+ *   pull      fetches the new image onto disk and leaves everything running
+ *             on what it already has — nothing about a live container
+ *             changes. On its own, at either scope.
+ *
+ *   update    fetches the new image AND rebuilds the container on it: two
+ *             commands run in sequence, `pull` then `up -d`, at both scopes.
+ *             The pull half only fetches the new image onto disk — it does
  *             not touch the running container, which keeps using whatever
  *             image ID it already started with. `up -d` is the step that
  *             notices the service's tag now resolves to a different image ID
@@ -3837,12 +3842,12 @@ function staxx_job_verbs(): array {
                    'svc'  => ['up -d', 'restart'],                                   'label' => 'Restart'],
     'recreate' => ['args' => 'up -d --force-recreate --remove-orphans',
                    'svc'  => 'up -d --force-recreate',                              'label' => 'Recreate'],
-    'pull'     => ['args' => 'pull',                   'svc' => 'pull',              'label' => 'Update images'],
+    'pull'     => ['args' => 'pull',                   'svc' => 'pull',              'label' => 'Pull images'],
     'logs'     => ['args' => 'logs --tail 200',        'svc' => 'logs --tail 200',   'label' => 'Logs'],
     'config'   => ['args' => 'config',                                               'label' => 'Resolved settings'],
     'remove'   => [                                    'svc' => 'rm --stop --force', 'label' => 'Remove container'],
     'update'   => ['args' => ['pull', 'up -d --remove-orphans'],
-                   'svc'  => ['pull', 'up -d'],                                      'label' => 'Update image'],
+                   'svc'  => ['pull', 'up -d'],                                      'label' => 'Update'],
     'rebuild'  => ['args' => ['build --pull', 'up -d --remove-orphans'],
                    'svc'  => ['build --pull', 'up -d'],                              'label' => 'Rebuild'],
   ];

@@ -761,7 +761,8 @@ switch ($action) {
 
   /* ---- "update it now" — the same 'update' verb the clock would run itself --
    *
-   * A whole stack when service is left out, one service when it is given.
+   * A whole stack when service is left out, one service when it is given —
+   * except a stopped service, which runs 'pull' instead (see below).
    * staxx_start_job() is what actually checks the service name against this
    * stack's own compose services; nothing here needs to repeat that check.
    */
@@ -769,7 +770,32 @@ switch ($action) {
     if (!staxx_valid_path($name)) {
       staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
     }
-    $job = staxx_start_job($name, 'update', $error, (string)($_POST['service'] ?? ''));
+    $service = (string)($_POST['service'] ?? '');
+
+    // Update must never be the thing that starts a container the reader
+    // deliberately stopped. Whole-stack scope always updates; a single named
+    // service only updates if it is already running — otherwise (stopped, or
+    // never started at all) it is pulled instead, same as the menu's own
+    // Pull, so its next start picks up the new image. Same container lookup
+    // staxx_stack_containers() gives the row renderer, so this can never
+    // disagree with what the row itself shows as running.
+    $verb = 'update';
+    if ($service !== '') {
+      $rows = staxx_stack_containers([
+        'name' => $name, 'leaf' => staxx_path_leaf($name), 'project' => '',
+        'file' => staxx_find_compose_file(staxx_stack_dir($name)),
+      ]);
+      $running = false;
+      foreach ($rows as $row) {
+        if ($row['service'] === $service && strtolower($row['state']) === 'running') {
+          $running = true;
+          break;
+        }
+      }
+      if (!$running) $verb = 'pull';
+    }
+
+    $job = staxx_start_job($name, $verb, $error, $service);
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_prune_jobs();
     staxx_reply(['ok' => true, 'job' => $job]);

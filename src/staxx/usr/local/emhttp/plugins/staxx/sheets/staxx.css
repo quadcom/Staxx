@@ -2074,6 +2074,44 @@
   color: #000;
 }
 
+/* staxx_update_pill_html() draws only these two states as a real <button> —
+   there is something to press. Prefixed with .staxx-scaffold purely for
+   specificity, as with the Logs button and the failure marker above:
+   Unraid's own sheet carries `.unapi button { background-color: transparent;
+   border-radius: 0 }`, and a class plus an element type outranks the single
+   classes above, so an unprefixed rule here would lose the fill and the
+   rounded ends and the button would render as square, colourless text.
+   The rest resets the browser's own button chrome, which a <span> never had
+   to begin with — the span form is untouched by any of this and keeps looking
+   exactly as it does today.
+
+   Size and weight are restated rather than left to `font: inherit`, which is
+   the trap: this selector outranks the plain .staxx-updatepill above, so
+   inheriting the font takes the pill's own 1.1rem/600 with it and the button
+   renders a size larger and a weight lighter than the text pill beside it. */
+.staxx-scaffold button.staxx-updatepill {
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.staxx-scaffold button.staxx-updatepill.staxx-updatepill--update {
+  border-radius: 1rem;
+  background-color: var(--sm-accent);
+  color: #000;
+}
+
+.staxx-scaffold button.staxx-updatepill:hover {
+  filter: brightness(1.12);
+}
+
+.staxx-scaffold button.staxx-updatepill:focus-visible {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.1rem;
+}
+
 /* Built here, could not be checked, the image itself has gone missing, or a
    tag has been withdrawn — four different facts, but none of them is an
    alarm (a withdrawn tag is not a broken container), so all four get the

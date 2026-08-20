@@ -247,8 +247,11 @@ function staxx_container_pill(array $c): string {
  * asking the server again for something this same reply already knew.
  *
  * @param array $u from staxx_updates_for_row() / staxx_updates_for_folder()
+ * @param bool  $pressable whether this row has somewhere for a press to go —
+ *                         false on a folder row, whose updates are a queue the
+ *                         folder's own menu starts, not a single command
  */
-function staxx_update_pill_html(array $u): string {
+function staxx_update_pill_html(array $u, bool $pressable = true): string {
   $state = (string)($u['state'] ?? 'unknown');
 
   // Only the states with something worth flagging get a modifier class; an
@@ -275,12 +278,22 @@ function staxx_update_pill_html(array $u): string {
   $title  = (string)($u['tip'] ?? '');
   $titleAttr = $title !== '' ? ' title="'.htmlspecialchars($title).'"' : '';
 
+  // Only `update` becomes a real button, and only where a press has somewhere
+  // to go. Every other state is text, and a button that can only ever do
+  // nothing is worse than a span — `rebuild` is deliberately among them,
+  // because rebuilding names one service and a stack row cannot. Classes and
+  // data-update-* attributes are identical either way, so stacks.js's
+  // paintUpdatePill()/paintPillClock() need no change: both read the pill by
+  // its class, never by its tag.
+  $tag = ($pressable && $state === 'update') ? 'button' : 'span';
+  $typeAttr = $tag === 'button' ? ' type="button"' : '';
+
   // The clock's own three values, written here as well as by the browser so a
   // countdown is right in the very first render rather than only once the
   // updates poll has been round. paintPillClock() in stacks.js reads exactly
   // these, and `back` is what lets the row menu hide roll back when there is
   // nothing kept to roll back to.
-  return '<span class="staxx-updatepill '.$cls.'"'
+  return '<'.$tag.' class="staxx-updatepill '.$cls.'"'.$typeAttr
        . ' data-update-state="'.htmlspecialchars($state).'"'
        . ' data-update-image="'.$image.'"'
        . ' data-update-source="'.$source.'"'
@@ -288,7 +301,7 @@ function staxx_update_pill_html(array $u): string {
        . ' data-update-hold="'.(!empty($u['hold']) ? '1' : '0').'"'
        . ' data-update-back="'.(!empty($u['back']) ? '1' : '0').'"'
        . ' data-update-why="'.htmlspecialchars((string)($u['why'] ?? '')).'"'
-       . $titleAttr.'>'.$label.'</span>';
+       . $titleAttr.'>'.$label.'</'.$tag.'>';
 }
 
 /**
@@ -862,7 +875,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
               <span class="staxx-nameinfo">
                 <span class="staxx-folder-name"><?= htmlspecialchars($row['name']) ?></span>
                 <?= staxx_boot_mark_html($fWait, $fTitle) ?>
-                <?= staxx_update_pill_html($fUpdate) ?>
+                <?= staxx_update_pill_html($fUpdate, false) ?>
                 <span class="staxx-sub" data-cell="folder-sub"><?= staxx_folder_sub($row['count'], $row['running']) ?></span>
               </span>
             </div>
