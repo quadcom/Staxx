@@ -710,16 +710,37 @@
   border-bottom: 1px solid var(--sm-line);
 }
 
+/* The listing scrolls inside its own box, so without this the column names
+   leave the screen on any folder worth scrolling — which is exactly when a
+   row is hard to read across. --sm-bg because it is the only opaque token
+   here: every --sm-fill* is a translucent wash and the rows would show
+   through as they pass under. nowrap so a header can never wrap and squeeze
+   its own column narrower than its label. */
+.staxx-manage-files-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+  background-color: var(--sm-bg);
+}
+
 .staxx-manage-files-row--mounted {
   background-color: var(--sm-fill-2);
 }
 
+/* Not a flex box, deliberately. A <td> told to lay out as flex stops being a
+   table cell — the browser blockifies it, so it no longer stretches to the
+   row's height. Measured on the server it came out 23.4px against 26.6px for
+   its neighbours, which drew this cell's own bottom border three pixels above
+   the rest of the row's (the stepped divider lines) and left the name sitting
+   off the baseline of the size beside it. Its three children are inline
+   already, so ordinary inline flow does the same job with a margin standing in
+   for the gap. */
 .staxx-manage-files-name {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
   word-break: break-word;
 }
+
+.staxx-manage-files-name > * { vertical-align: middle; }
 
 .staxx-scaffold .staxx-manage-files-namebtn {
   color: inherit;
@@ -740,23 +761,49 @@
   line-height: 1;
 }
 
+.staxx-manage-files-badge-mount { margin-right: 0.3rem; }
+.staxx-manage-files-badge-link { margin-left: 0.3rem; }
+
+/* width: 1% is the table idiom for "shrink to your content" — a percentage
+   the browser cannot honour, so the column settles at its minimum. Applied to
+   these three, all the slack lands on the name column, the only one that
+   should move as you change folder. */
 .staxx-manage-files-size,
 .staxx-manage-files-perms {
+  width: 1%;
   white-space: nowrap;
   font-family: ui-monospace, Consolas, monospace;
   color: var(--sm-muted);
 }
 
+/* A floor wide enough for the longest figure this ever prints, so the size
+   column does not widen the moment you step into a folder of real files and
+   narrow again in a folder of subfolders, where every row reads as a dash.
+   The permission column needs no such floor — its text is one fixed width. */
+.staxx-manage-files-size { min-width: 7rem; }
+
+/* Flex removed for the same reason as the name cell above. Right-aligned so
+   Delete lands in the same place on every row, whether or not that row also
+   carries Open and Download. */
 .staxx-manage-files-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
+  width: 1%;
   white-space: nowrap;
+  text-align: right;
 }
 
+.staxx-manage-files-actions > button {
+  vertical-align: middle;
+  margin-right: 0.25rem;
+}
+
+.staxx-manage-files-actions > button:last-child { margin-right: 0; }
+
+/* Starts below the header row, not at the top of the scroll box: the header
+   is sticky and paints above this, so an inset of 0 would hide the message
+   behind it. */
 .staxx-manage-files-empty {
   position: absolute;
-  inset: 0;
+  inset: 2.4rem 0 0 0;
   padding: 0.7rem;
   color: var(--sm-muted);
   font-style: italic;
