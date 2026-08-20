@@ -31,12 +31,20 @@
  * these do not need to restate box-sizing or appearance themselves.
  * ------------------------------------------------------------------------- */
 
+/* A frame around the whole tab. Without it the panes sat one pixel from the
+   modal's left, right and bottom edges — measured at L33/R1555/B907 inside a
+   dialog of L32/R1555/B908 — because this tab is the last thing in the dialog
+   and has no footer below it to hold it off. Slightly wider than the 0.5rem
+   gap between the panes, so the outside of the group reads as its edge rather
+   than as one more gap. Safe against `height: 100%` above because the
+   scaffold is border-box throughout. */
 .staxx-manage {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   height: 100%;
   min-height: 0;
+  padding: 0.4rem 0.7rem 0.7rem;
 }
 
 /* ---- D1: the container tab row ------------------------------------------ */
@@ -728,7 +736,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.4rem 0.5rem;
+  padding: 0.5rem 0.6rem;
   border-bottom: 1px solid var(--sm-line);
 }
 
@@ -797,7 +805,7 @@
 
 .staxx-manage-files-note,
 .staxx-manage-files-cap {
-  padding: 0.4rem 0.5rem;
+  padding: 0.4rem 0.6rem;
   margin: 0;
   font-size: 0.85em;
   color: var(--sm-muted);
@@ -808,7 +816,7 @@
 .staxx-manage-files-cap--hidden { display: none; }
 
 .staxx-manage-files-error {
-  padding: 0.4rem 0.5rem;
+  padding: 0.4rem 0.6rem;
   margin: 0;
   color: var(--sm-danger);
   border-bottom: 1px solid var(--sm-line);
