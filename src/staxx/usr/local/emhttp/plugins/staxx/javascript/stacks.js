@@ -914,13 +914,26 @@
     yamlNums.style.width = 'calc(' + String(n).length + 'ch + 2.2rem)';
 
     // Read back the real width so the text and the highlight bands both clear
-    // the gutter no matter what the font actually measured.
+    // the gutter no matter what the font actually measured. The textarea's
+    // box starts past the gutter (left) rather than being padded past it
+    // (see .staxx-scaffold .staxx-yaml), so scrollLeft: 0 can never hide the
+    // first character under the gutter; the 9px is just its own breathing
+    // room, unrelated to the gutter's width.
     var w = yamlNums.offsetWidth;
-    yamlPane.style.paddingLeft = (w + 9) + 'px';
+    yamlPane.style.left = w + 'px';
+    yamlPane.style.paddingLeft = '9px';
     yamlMarks.style.left = w + 'px';
     // The ink layer draws its own text, so it needs the textarea's own left
     // padding, not the bands' — otherwise the colouring sits under the gutter.
     yamlInk.firstElementChild.style.paddingLeft = (w + 9) + 'px';
+  }
+
+  // How far into .staxx-yamlwrap a line's first character sits: the gutter the
+  // textarea starts clear of, plus its own breathing padding. Everything that
+  // draws against a column measures from here, because the textarea's padding
+  // alone stopped being the whole offset when it was moved off the gutter.
+  function textLeft() {
+    return (parseFloat(yamlPane.style.left) || 0) + (parseFloat(yamlPane.style.paddingLeft) || 0);
   }
 
   // What paintInk() drew last time, so ordinary typing repaints only the one
@@ -4721,13 +4734,12 @@
 
     // #staxx-yamlmarks' own box already starts just past the gutter —
     // paintGutter() offsets its "left" by the gutter's measured width — while
-    // the textarea's padding-left goes a few pixels further so the text has
-    // room to breathe. The difference between the two, read back rather than
-    // recomputed, is how far into THIS layer a hit box has to start to land
-    // under the first real character of a line.
-    var padLeft  = parseFloat(yamlPane.style.paddingLeft) || 0;
+    // the textarea's box starts there too and then breathes a few pixels
+    // further before its text begins. The difference between the two is how
+    // far into THIS layer a hit box has to start to land under the first
+    // real character of a line.
     var markLeft = parseFloat(yamlMarks.style.left) || 0;
-    var leftBase = padLeft - markLeft;
+    var leftBase = textLeft() - markLeft;
 
     var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
     var firstLine = Math.floor((top - PAD_T) / LINE_H) - 2;
@@ -5037,9 +5049,8 @@
     if (!pathHits.length) return;
 
     // Same geometry and the same visible-range trim as repaintHits() above.
-    var padLeft  = parseFloat(yamlPane.style.paddingLeft) || 0;
     var markLeft = parseFloat(yamlMarks.style.left) || 0;
-    var leftBase = padLeft - markLeft;
+    var leftBase = textLeft() - markLeft;
 
     var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
     var firstLine = Math.floor((top - PAD_T) / LINE_H) - 2;
@@ -10180,8 +10191,7 @@
   function pointToLineCol(clientX, clientY) {
     if (!LINE_H) measure();
     var rect    = yamlWrap.getBoundingClientRect();
-    var padLeft = parseFloat(yamlPane.style.paddingLeft) || 0;
-    var x = clientX - rect.left + yamlPane.scrollLeft - padLeft;
+    var x = clientX - rect.left + yamlPane.scrollLeft - textLeft();
     var y = clientY - rect.top  + yamlPane.scrollTop  - PAD_T;
     if (x < 0 || y < 0) return null;
     return { line: Math.floor(y / LINE_H), col: Math.round(x / CHAR_W) };
@@ -10200,8 +10210,7 @@
   // keeps it on screen instead.
   function placeCaretPanel(panel, line, col, below) {
     if (!LINE_H) measure();
-    var padLeft = parseFloat(yamlPane.style.paddingLeft) || 0;
-    var left    = padLeft + col * CHAR_W - yamlPane.scrollLeft;
+    var left    = textLeft() + col * CHAR_W - yamlPane.scrollLeft;
     var lineTop = PAD_T + line * LINE_H - yamlPane.scrollTop;
     var top     = below ? lineTop + LINE_H : lineTop;
 

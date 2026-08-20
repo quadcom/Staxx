@@ -4710,16 +4710,25 @@
 }
 
 .staxx-scaffold .staxx-yaml {
-  position: relative;
+  /* Positioned to START past the gutter, rather than padded past it: a
+     textarea's own left padding scrolls away with its content, so a
+     gutter-sized padding let an accidental caret-reveal (focus(),
+     setSelectionRange(), a scripted edit) leave scrollLeft just non-zero
+     and slide the first characters of every line under the opaque gutter.
+     Starting the box itself past the gutter means scrollLeft: 0 already
+     has the first character clear of it. Script sets `left` to the
+     gutter's measured width (paintGutter()). */
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: block;
   box-sizing: border-box;
-  width: 100%;
-  height: 100%;
   margin: 0;
-  /* Left padding clears the gutter. Script keeps it in step with the gutter's
-     real width; this value is the two-digit case, which is what a new stack
-     opens on. */
-  padding: 1.2rem 1.4rem 1.2rem 5.9rem;
+  /* Breathing room only now — the gutter is cleared by `left` above, not
+     by this. Script keeps it at 9px in step with the ink layer. */
+  padding: 1.2rem 1.4rem 1.2rem 0.9rem;
   border: 0;
   outline: none;
   resize: none;
