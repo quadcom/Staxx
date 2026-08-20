@@ -7245,9 +7245,13 @@
   // travel across, what will not, where it was found, and whether Docker's
   // own running project already disagrees with it.
   function importProjectPreviewHtml(entry) {
+    // Said the way the review note says it. "An indirect file" is Compose
+    // Manager's own word for it and means nothing to anybody who has not read
+    // that plugin's source.
     var viaText = {
-      indirect: 'an indirect file',
-      label: "the container's own label",
+      indirect: "a note in the project's own folder pointing at where it really lives",
+      label: "the label on its own containers, because the copy on the flash drive "
+           + 'was not the one being used',
       flash: 'the project folder on the flash drive'
     }[entry.via];
 
