@@ -409,6 +409,75 @@ switch ($action) {
     staxx_exec_stop((string)($_POST['id'] ?? ''));
     staxx_reply(['ok' => true]);
 
+  /* ---- the file manager: list, read, save, rename, delete and mkdir
+   * inside a running container. See the "container files" section of
+   * Stacks.php — the same SHELL_ENABLED switch and container-resolution
+   * rules as the shell above gate every one of these. */
+  case 'cfile-list':
+    $service = (string)($_POST['service'] ?? '');
+    $dir     = (string)($_POST['dir'] ?? '');
+    $listing = staxx_cfile_list($name, $service, $dir, $error);
+    if ($listing === null) staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true] + $listing);
+
+  case 'cfile-read':
+    $service = (string)($_POST['service'] ?? '');
+    $path    = (string)($_POST['path'] ?? '');
+    $read    = staxx_cfile_read($name, $service, $path, $error);
+    if ($read === null) staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'path' => $path] + $read);
+
+  case 'cfile-save':
+    $service  = (string)($_POST['service'] ?? '');
+    $path     = (string)($_POST['path'] ?? '');
+    $body     = (string)($_POST['body'] ?? '');
+    $encoding = (string)($_POST['encoding'] ?? '');
+
+    if ($encoding === 'base64') {
+      $decoded = base64_decode($body, true);
+      if ($decoded === false) {
+        staxx_reply([
+          'ok'    => false,
+          'error' => 'That file did not arrive intact. Try uploading it again.',
+        ]);
+      }
+      $body = $decoded;
+    }
+
+    if (!staxx_cfile_write($name, $service, $path, $body, $encoding !== 'base64', $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
+
+  case 'cfile-rename':
+    $service = (string)($_POST['service'] ?? '');
+    if (!staxx_cfile_rename($name, $service, (string)($_POST['path'] ?? ''),
+                                (string)($_POST['to'] ?? ''), $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
+
+  case 'cfile-delete':
+    $service = (string)($_POST['service'] ?? '');
+    $recurse = (string)($_POST['recurse'] ?? '') === '1';
+    if (!staxx_cfile_delete($name, $service, (string)($_POST['path'] ?? ''), $recurse, $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
+
+  case 'cfile-mkdir':
+    $service = (string)($_POST['service'] ?? '');
+    if (!staxx_cfile_mkdir($name, $service, (string)($_POST['path'] ?? ''), $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
+
+  case 'cfile-home':
+    $service = (string)($_POST['service'] ?? '');
+    $home    = staxx_cfile_home($name, $service, $error);
+    if ($home === '' && $error !== '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'home' => $home]);
+
   /* ---------------------------------------------------------------------
    * The handover — taking over an imported stack's container name.
    *

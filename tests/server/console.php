@@ -18,6 +18,18 @@
  * questions about a stack that was deliberately never started — see the
  * comment beside it.
  *
+ * PLAN_44 phase 5 adds the container file manager — staxx_cfile_list(),
+ * staxx_cfile_read(), staxx_cfile_write(), staxx_cfile_rename(),
+ * staxx_cfile_delete(), staxx_cfile_mkdir() and staxx_cfile_home() —
+ * covered further down under "container files". Every one of them calls
+ * staxx_cfile_container() first, which shares staxx_exec_start()'s own
+ * refusal chain, so the same never-really-runs-docker guarantee applies:
+ * each case below is refused at path validation or at that shared chain
+ * before any staxx_sh() call is built. The command-builder helpers
+ * (staxx_cfile_ls_cmd() and friends) are asserted on as plain strings,
+ * never executed, which is what proves the `--`-before-path and
+ * escapeshellarg() rules without touching a container at all.
+ *
  * Runs ON THE SERVER — there is no PHP on the dev machine.
  *
  *     pscp tests/server/console.php root@<box>:/tmp/
@@ -512,6 +524,177 @@ ok('…and its heartbeat is left alone', is_file($freshDir.'/hb'));
 
 @exec('rm -rf '.escapeshellarg($staleDir));
 @exec('rm -rf '.escapeshellarg($freshDir));
+
+/* ==================================================== container files === */
+
+$root = staxx_stack_root();
+
+/* ------------------------------------------------- path shape refusals -- */
+
+$badPaths = [
+  'relative'         => 'etc/passwd',
+  'traversal'        => '/mnt/user/../etc/passwd',
+  'traversal at end' => '/mnt/user/..',
+  'empty'            => '',
+];
+
+foreach ($badPaths as $label => $bad) {
+  ok("staxx_cfile_valid_path() refuses a $label path", staxx_cfile_valid_path($bad) === false);
+}
+ok('staxx_cfile_valid_path() accepts a clean absolute path',
+   staxx_cfile_valid_path('/config/settings.json') === true);
+ok('...and one beginning with a dash, since a dash is only a problem for a flag position',
+   staxx_cfile_valid_path('/-oddname') === true);
+
+// Every function checks path shape before it ever asks staxx_cfile_container()
+// anything, so a bad path is refused the same way regardless of the stack.
+foreach ($badPaths as $label => $bad) {
+  $err = '';
+  ok("cfile_list refuses a $label path",
+     staxx_cfile_list($none, 'a', $bad, $err) === null && stripos($err, 'valid') !== false, $err);
+
+  $err = '';
+  ok("cfile_read refuses a $label path",
+     staxx_cfile_read($none, 'a', $bad, $err) === null && stripos($err, 'valid') !== false, $err);
+
+  $err = '';
+  ok("cfile_write refuses a $label path",
+     staxx_cfile_write($none, 'a', $bad, 'x', true, $err) === false && stripos($err, 'valid') !== false, $err);
+
+  $err = '';
+  ok("cfile_rename refuses a $label path (from)",
+     staxx_cfile_rename($none, 'a', $bad, '/tmp/x', $err) === false && stripos($err, 'valid') !== false, $err);
+  $err = '';
+  ok("cfile_rename refuses a $label path (to)",
+     staxx_cfile_rename($none, 'a', '/tmp/x', $bad, $err) === false && stripos($err, 'valid') !== false, $err);
+
+  $err = '';
+  ok("cfile_delete refuses a $label path",
+     staxx_cfile_delete($none, 'a', $bad, false, $err) === false && stripos($err, 'valid') !== false, $err);
+
+  $err = '';
+  ok("cfile_mkdir refuses a $label path",
+     staxx_cfile_mkdir($none, 'a', $bad, $err) === false && stripos($err, 'valid') !== false, $err);
+}
+
+/* --------------------------------------------------- shared refusal chain -- */
+//
+// staxx_cfile_container() is exercised directly rather than through all six
+// callers again — the same refusal chain staxx_exec_start() already proves
+// case-by-case above, shared by every staxx_cfile_*() function.
+
+$err = '';
+$r = staxx_cfile_container('a/b/c', 'a', $err);
+ok('an invalid stack path is refused', $r === '' && stripos($err, 'invalid') !== false, $err);
+
+$err = '';
+$r = staxx_cfile_container($none, 'a', $err);
+if (staxx_cfg_bool('SHELL_ENABLED')) {
+  ok('SHELL_ENABLED=true lets a request through to the next check',
+     $r === '' && stripos($err, 'turned off') === false, $err);
+} else {
+  ok('SHELL_ENABLED=false refuses, and says so in words',
+     $r === '' && stripos($err, 'turned off') !== false, $err);
+}
+
+$cLockedRel = 'zzc2clocked';
+$cLockedDir = $root.'/'.$cLockedRel;
+@exec('rm -rf '.escapeshellarg($cLockedDir));
+mkdir($cLockedDir, 0755, true);
+file_put_contents($cLockedDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+file_put_contents($cLockedDir.'/'.STAXX_REVIEW_FILE, "imported\n");
+
+$err = '';
+$r = staxx_cfile_container($cLockedRel, 'a', $err);
+ok('a review-locked stack is refused', $r === '' && stripos($err, 'review') !== false, $err);
+
+$cPlainRel = 'zzc2cplain';
+$cPlainDir = $root.'/'.$cPlainRel;
+@exec('rm -rf '.escapeshellarg($cPlainDir));
+mkdir($cPlainDir, 0755, true);
+file_put_contents($cPlainDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+
+$err = '';
+$r = staxx_cfile_container($cPlainRel, 'nosuchservice', $err);
+ok('a service not in the compose file is refused',
+   $r === '' && stripos($err, 'no service called') !== false, $err);
+
+// The same read-only "not running" proof staxx_exec_start() relies on —
+// nothing here starts, stops or execs anything either.
+if (staxx_cfg_bool('SHELL_ENABLED')) {
+  $err = '';
+  $r = staxx_cfile_container($cPlainRel, 'a', $err);
+  ok('a stack whose containers are not running is refused',
+     $r === '' && stripos($err, 'does not appear to be running') !== false, $err);
+}
+
+@exec('rm -rf '.escapeshellarg($cLockedDir));
+@exec('rm -rf '.escapeshellarg($cPlainDir));
+
+/* ------------------------------------------------- command builders ---- */
+//
+// Asserted as plain strings rather than run, which is what proves the
+// `--`-before-path rule without ever touching docker. A container name and a
+// path each go through their own escapeshellarg(), so a path beginning with
+// "-" is quoted data sitting after a literal `--`, never a bare flag.
+
+$docker = staxx_docker_bin();
+$dq     = escapeshellarg($docker);
+
+ok('ls command puts -- before the path',
+   staxx_cfile_ls_cmd('my-c', '-oddname')
+     === $dq.' exec '.escapeshellarg('my-c').' ls -lAn -- '.escapeshellarg('-oddname'));
+
+ok('mv command quotes both paths and separates them from the flags with --',
+   staxx_cfile_mv_cmd('my-c', '-from', '-to')
+     === $dq.' exec '.escapeshellarg('my-c').' mv -- '.escapeshellarg('-from').' '.escapeshellarg('-to'));
+
+ok('rm command without recurse uses -f, not -rf',
+   staxx_cfile_rm_cmd('my-c', '-target', false)
+     === $dq.' exec '.escapeshellarg('my-c').' rm -f -- '.escapeshellarg('-target'));
+ok('rm command with recurse uses -rf',
+   staxx_cfile_rm_cmd('my-c', '-target', true)
+     === $dq.' exec '.escapeshellarg('my-c').' rm -rf -- '.escapeshellarg('-target'));
+
+ok('mkdir command puts -- before the path',
+   staxx_cfile_mkdir_cmd('my-c', '-newdir')
+     === $dq.' exec '.escapeshellarg('my-c').' mkdir -p -- '.escapeshellarg('-newdir'));
+
+ok('docker cp out quotes the container:path pair as one argument',
+   staxx_cfile_cp_out_cmd('my-c', '-oddname', '/tmp/x')
+     === $dq.' cp -- '.escapeshellarg('my-c:-oddname').' '.escapeshellarg('/tmp/x'));
+ok('docker cp in quotes the container:path pair as one argument',
+   staxx_cfile_cp_in_cmd('my-c', '/tmp/x', '-oddname')
+     === $dq.' cp -- '.escapeshellarg('/tmp/x').' '.escapeshellarg('my-c:-oddname'));
+
+/* -------------------------------------------------- the listing cap ---- */
+//
+// staxx_cfile_list() itself needs a real container to call ls inside, which
+// this script must never do — so only the constant it caps against is
+// checked here, the same way the constant's own comment justifies it
+// against staxx_browse_dirs()'s cap on the host-folder picker.
+ok('the container listing cap exists and is a sane positive number',
+   STAXX_CFILE_LIST_MAX > 0 && STAXX_CFILE_LIST_MAX <= 20000);
+
+/* ------------------------------------- text/binary and size cap parity -- */
+//
+// staxx_cfile_read() reuses staxx_looks_text() and STAXX_FILE_MAX directly
+// rather than its own copies, so proving those two constants/functions
+// already covered by the plain file tests elsewhere is proving this path's
+// contract too. Asserted here directly, since this script has no container
+// to copy a real file out of.
+ok('the container file size cap is the same constant a stack file uses',
+   STAXX_FILE_MAX === 262144);
+
+$textTmp = STAXX_CFILE_TMP;
+if (!is_dir($textTmp)) mkdir($textTmp, 0700, true);
+$sample = $textTmp.'/zzc2sample.txt';
+file_put_contents($sample, "hello\n");
+ok('staxx_looks_text() — the same test staxx_cfile_read() defers to — says text is text',
+   staxx_looks_text($sample) === true);
+file_put_contents($sample, "hello\0world");
+ok('...and binary is binary', staxx_looks_text($sample) === false);
+@unlink($sample);
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

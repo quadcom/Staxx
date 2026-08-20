@@ -69,6 +69,16 @@ const STAXX_COMPOSE_FILENAMES = [
 // test box).
 define('STAXX_FILE_MAX', 262144);   // 256 KiB
 
+// The container file manager's own temp folder — a `docker cp` lands here on
+// its way in or out. Under /tmp for the same reason job logs and exec
+// sessions are: worthless after a reboot, and noisy.
+define('STAXX_CFILE_TMP', '/tmp/staxx/cfile');
+
+// Cap on one directory listing inside a container, the same idea as
+// staxx_browse_dirs()'s cap on the host-folder picker: a directory with tens
+// of thousands of entries gets a partial answer instead of no answer at all.
+define('STAXX_CFILE_LIST_MAX', 2000);
+
 /* ------------------------------------------------------------------ paths -- */
 
 function staxx_stack_root(): string {
@@ -4563,5 +4573,350 @@ function staxx_exec_reap(): void {
       @exec('rm -rf '.escapeshellarg($sessDir));
     }
   }
+}
+
+/* ============================================================= container files ===
+ *
+ * A file manager for the inside of a running container, gated by the SAME
+ * SHELL_ENABLED switch as the shell above — not a switch of its own, because
+ * it is the same capability wearing a different hat: both let the browser
+ * reach into whatever is inside a container. Being honest about that is why
+ * one switch covers both rather than two that would always be flipped
+ * together.
+ *
+ * Listings and the small operations (rename, delete, mkdir) go through
+ * `docker exec`, one short-lived command at a time. File *contents* go
+ * through `docker cp` instead — it is binary-safe and needs no shell inside
+ * the container at all, so an image that ships none still gets a working
+ * editor and upload/download. Every command below is built with $path
+ * arguments AFTER a literal `--`, so a name that happens to start with "-"
+ * can never be read as a flag, and every one of those arguments is
+ * escapeshellarg()'d regardless — belt and braces, the same as everywhere
+ * else a path reaches a shell in this file.
+ *
+ * Command strings are built by small helpers rather than inline, purely so a
+ * test can assert on the string itself without a real container to run it
+ * against — see tests/server/console.php.
+ */
+
+/**
+ * A path inside a container is data about a filesystem this host cannot see,
+ * so there is no realpath() to resolve it against the way a stack's own
+ * files are checked. It is refused instead of normalised: must be absolute,
+ * must not contain a ".." segment anywhere, and kept to a sane length.
+ */
+function staxx_cfile_valid_path(string $path): bool {
+  if ($path === '' || $path[0] !== '/' || strlen($path) > 4096) return false;
+  foreach (explode('/', $path) as $seg) {
+    if ($seg === '..') return false;
+  }
+  return true;
+}
+
+function staxx_cfile_ls_cmd(string $container, string $dir): string {
+  return escapeshellarg(staxx_docker_bin()).' exec '.escapeshellarg($container)
+       . ' ls -lAn -- '.escapeshellarg($dir);
+}
+
+function staxx_cfile_mv_cmd(string $container, string $from, string $to): string {
+  return escapeshellarg(staxx_docker_bin()).' exec '.escapeshellarg($container)
+       . ' mv -- '.escapeshellarg($from).' '.escapeshellarg($to);
+}
+
+function staxx_cfile_rm_cmd(string $container, string $path, bool $recurse): string {
+  // Without -r, rm's own refusal on a directory ("Is a directory") is what
+  // enforces "a directory needs the recurse flag" — there is no separate
+  // stat call first to tell a file from a folder, rm already knows how.
+  return escapeshellarg(staxx_docker_bin()).' exec '.escapeshellarg($container)
+       . ' rm '.($recurse ? '-rf' : '-f').' -- '.escapeshellarg($path);
+}
+
+function staxx_cfile_mkdir_cmd(string $container, string $path): string {
+  return escapeshellarg(staxx_docker_bin()).' exec '.escapeshellarg($container)
+       . ' mkdir -p -- '.escapeshellarg($path);
+}
+
+function staxx_cfile_cp_out_cmd(string $container, string $path, string $hostTemp): string {
+  return escapeshellarg(staxx_docker_bin()).' cp -- '
+       . escapeshellarg($container.':'.$path).' '.escapeshellarg($hostTemp);
+}
+
+function staxx_cfile_cp_in_cmd(string $container, string $hostTemp, string $path): string {
+  return escapeshellarg(staxx_docker_bin()).' cp -- '
+       . escapeshellarg($hostTemp).' '.escapeshellarg($container.':'.$path);
+}
+
+/**
+ * Resolve the running container behind one service of one stack, gated by
+ * the same order staxx_exec_start() uses for the shell: valid stack path,
+ * the SHELL_ENABLED switch, the review lock, compose and Docker present, the
+ * service actually named in the compose file, then a container that both
+ * resolves and is running. Every staxx_cfile_*() function below calls this
+ * first, so all of them share one place these refusals are enforced.
+ */
+function staxx_cfile_container(string $stack, string $service, string &$error): string {
+  $error = '';
+  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
+
+  if (!staxx_cfg_bool('SHELL_ENABLED')) {
+    $error = 'Container file access is turned off in Settings, under the same switch as the shell.';
+    return '';
+  }
+
+  if (staxx_review_locked($stack)) {
+    $error = 'This stack was imported and has not been reviewed yet. Open it, read '
+           . STAXX_REVIEW_FILE . ', then choose "Mark as reviewed" before browsing files inside a container.';
+    return '';
+  }
+
+  $cmd = staxx_compose_cmd();
+  if ($cmd === '') { $error = 'Compose is not installed, so nothing can be run.'; return ''; }
+  if (!staxx_docker_running()) { $error = 'The Docker service is not running.'; return ''; }
+
+  $dir  = staxx_stack_dir($stack);
+  $file = staxx_find_compose_file($dir);
+  if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
+
+  $services = staxx_compose_meta($file)['services'];
+  if (!isset($services[$service])) {
+    $error = 'No service called "'.$service.'" in this stack.';
+    return '';
+  }
+
+  return staxx_exec_resolve_container($file, staxx_path_leaf($stack), $service, $error);
+}
+
+/**
+ * List one directory inside a running container.
+ *
+ * @return array{dir:string, entries:array<int, array{name:string, size:int,
+ *               perms:string, uid:string, gid:string, dir:bool,
+ *               link:bool}>, more:bool}|null
+ */
+function staxx_cfile_list(string $stack, string $service, string $dir, string &$error): ?array {
+  $error = '';
+  if (!staxx_cfile_valid_path($dir)) { $error = 'That is not a valid absolute path.'; return null; }
+
+  $container = staxx_cfile_container($stack, $service, $error);
+  if ($container === '') return null;
+
+  $code = 1;
+  $out  = staxx_sh(staxx_cfile_ls_cmd($container, $dir), 10, $code);
+  if ($code !== 0) {
+    // An image with no `ls` fails here with docker's own "executable file
+    // not found" text — that is a true and plain-enough answer on its own,
+    // so it is passed straight through rather than replaced.
+    $error = trim($out) !== '' ? trim($out) : 'Could not list that folder inside the container.';
+    return null;
+  }
+
+  $lines = explode("\n", trim($out));
+  if (isset($lines[0]) && stripos($lines[0], 'total ') === 0) array_shift($lines); // ls -l's own summary line
+
+  $entries = [];
+  $more    = false;
+  foreach ($lines as $line) {
+    if ($line === '') continue;
+    if (count($entries) >= STAXX_CFILE_LIST_MAX) { $more = true; break; }
+
+    // ls -lAn columns, numeric owner/group so no name lookup is needed inside
+    // the container: perms, link-count, uid, gid, size, month, day,
+    // time-or-year, name. The name is everything after the eighth run of
+    // whitespace, not a ninth split field, because it can itself hold spaces.
+    if (!preg_match('/^(\S+)\s+\S+\s+(\S+)\s+(\S+)\s+(\S+)\s+\S+\s+\S+\s+\S+\s+(.*)$/', $line, $m)) continue;
+    [, $perms, $uid, $gid, $size] = $m;
+    $name = $m[5];
+    if ($name === '.' || $name === '..') continue;
+
+    $isLink = $perms[0] === 'l';
+    if ($isLink) {
+      // A symlink's ls -l entry reads "name -> target"; the arrow and target
+      // are not part of the name.
+      $arrow = strpos($name, ' -> ');
+      if ($arrow !== false) $name = substr($name, 0, $arrow);
+    }
+
+    $entries[] = [
+      'name'  => $name,
+      'size'  => (int)$size,
+      'perms' => $perms,
+      'uid'   => $uid,
+      'gid'   => $gid,
+      'dir'   => $perms[0] === 'd',
+      'link'  => $isLink,
+    ];
+  }
+
+  return ['dir' => $dir, 'entries' => $entries, 'more' => $more];
+}
+
+/**
+ * Read one file out of a running container via `docker cp` into a host temp
+ * file, then hand it through exactly the same text/binary/size-cap rules
+ * staxx_read_file() uses for a stack's own companion files — same contract,
+ * a container just sits in front of it now.
+ *
+ * @return array{text?:string, b64?:string, binary:bool}|null
+ */
+function staxx_cfile_read(string $stack, string $service, string $path, string &$error): ?array {
+  $error = '';
+  if (!staxx_cfile_valid_path($path)) { $error = 'That is not a valid absolute path.'; return null; }
+
+  $container = staxx_cfile_container($stack, $service, $error);
+  if ($container === '') return null;
+
+  if (!is_dir(STAXX_CFILE_TMP) && !@mkdir(STAXX_CFILE_TMP, 0700, true)) {
+    $error = 'Could not create a temporary folder to copy the file into.';
+    return null;
+  }
+  $tmp = STAXX_CFILE_TMP.'/'.bin2hex(random_bytes(8));
+
+  $code = 1;
+  $out  = staxx_sh(staxx_cfile_cp_out_cmd($container, $path, $tmp), 20, $code);
+  if ($code !== 0 || !is_file($tmp)) {
+    @unlink($tmp);
+    $error = trim($out) !== '' ? trim($out) : 'Could not copy "'.$path.'" out of the container.';
+    return null;
+  }
+
+  $size = @filesize($tmp);
+  if ($size !== false && $size > STAXX_FILE_MAX) {
+    @unlink($tmp);
+    $error = '"'.basename($path).'" is '.ceil($size / 1024).' KiB, over the '
+           . round(STAXX_FILE_MAX / 1024).' KiB limit for editing here.';
+    return null;
+  }
+
+  // staxx_looks_text() is called before the temp file is removed, and its own
+  // verdict is trusted rather than re-derived from $raw below — one test,
+  // used everywhere a file's kind is decided.
+  $isText = staxx_looks_text($tmp);
+  $raw    = @file_get_contents($tmp);
+  @unlink($tmp);
+  if ($raw === false) { $error = 'Could not read the copied file.'; return null; }
+
+  if ($isText) return ['text' => $raw, 'binary' => false];
+  return ['b64' => base64_encode($raw), 'binary' => true];
+}
+
+/**
+ * Write one file into a running container: a host temp file first, then
+ * `docker cp` puts it in place — the same two-step shape staxx_write_file()
+ * uses a rename() for, since a `docker cp` cannot write partially either way
+ * but the temp file still means a failed copy never leaves a half-sent one
+ * behind claiming to be the real thing.
+ *
+ * $isText does not change what is written — the bytes go down exactly as
+ * sent either way, same reasoning as staxx_write_file(). It stays in the
+ * signature because every caller already knows which kind it is holding.
+ */
+function staxx_cfile_write(string $stack, string $service, string $path, string $body, bool $isText, string &$error): bool {
+  $error = '';
+  if (!staxx_cfile_valid_path($path)) { $error = 'That is not a valid absolute path.'; return false; }
+
+  if (strlen($body) > STAXX_FILE_MAX) {
+    $error = 'That file is over the '.round(STAXX_FILE_MAX / 1024).' KiB limit for editing here.';
+    return false;
+  }
+
+  $container = staxx_cfile_container($stack, $service, $error);
+  if ($container === '') return false;
+
+  if (!is_dir(STAXX_CFILE_TMP) && !@mkdir(STAXX_CFILE_TMP, 0700, true)) {
+    $error = 'Could not create a temporary folder to copy the file through.';
+    return false;
+  }
+  $tmp = STAXX_CFILE_TMP.'/'.bin2hex(random_bytes(8));
+  if (@file_put_contents($tmp, $body) === false) {
+    $error = 'Could not write a temporary copy of the file.';
+    return false;
+  }
+
+  $code = 1;
+  $out  = staxx_sh(staxx_cfile_cp_in_cmd($container, $tmp, $path), 20, $code);
+  @unlink($tmp);
+  if ($code !== 0) {
+    $error = trim($out) !== '' ? trim($out) : 'Could not copy "'.$path.'" into the container.';
+    return false;
+  }
+  return true;
+}
+
+/** Rename (or move) one path inside a running container. */
+function staxx_cfile_rename(string $stack, string $service, string $from, string $to, string &$error): bool {
+  $error = '';
+  if (!staxx_cfile_valid_path($from) || !staxx_cfile_valid_path($to)) {
+    $error = 'That is not a valid absolute path.';
+    return false;
+  }
+
+  $container = staxx_cfile_container($stack, $service, $error);
+  if ($container === '') return false;
+
+  $code = 1;
+  $out  = staxx_sh(staxx_cfile_mv_cmd($container, $from, $to), 10, $code);
+  if ($code !== 0) {
+    $error = trim($out) !== '' ? trim($out) : 'Could not rename "'.$from.'" to "'.$to.'".';
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Delete one path inside a running container. $recurse must be true to
+ * remove a directory — see staxx_cfile_rm_cmd() for how that is enforced by
+ * rm itself rather than a separate check here.
+ */
+function staxx_cfile_delete(string $stack, string $service, string $path, bool $recurse, string &$error): bool {
+  $error = '';
+  if (!staxx_cfile_valid_path($path)) { $error = 'That is not a valid absolute path.'; return false; }
+  if ($path === '/') { $error = 'Refusing to delete the container\'s whole filesystem.'; return false; }
+
+  $container = staxx_cfile_container($stack, $service, $error);
+  if ($container === '') return false;
+
+  $code = 1;
+  $out  = staxx_sh(staxx_cfile_rm_cmd($container, $path, $recurse), 15, $code);
+  if ($code !== 0) {
+    $error = trim($out) !== '' ? trim($out) : 'Could not delete "'.$path.'".';
+    return false;
+  }
+  return true;
+}
+
+/** Make one folder inside a running container, including any missing parents. */
+function staxx_cfile_mkdir(string $stack, string $service, string $path, string &$error): bool {
+  $error = '';
+  if (!staxx_cfile_valid_path($path)) { $error = 'That is not a valid absolute path.'; return false; }
+
+  $container = staxx_cfile_container($stack, $service, $error);
+  if ($container === '') return false;
+
+  $code = 1;
+  $out  = staxx_sh(staxx_cfile_mkdir_cmd($container, $path), 10, $code);
+  if ($code !== 0) {
+    $error = trim($out) !== '' ? trim($out) : 'Could not create "'.$path.'".';
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Where the file manager opens by default: the container's own working
+ * directory, read from Docker's own image inspection rather than asked of
+ * the container — an image with no shell still has this recorded, and
+ * falling back to "/" matches what Docker itself does for one with none set.
+ */
+function staxx_cfile_home(string $stack, string $service, string &$error): string {
+  $error = '';
+  $container = staxx_cfile_container($stack, $service, $error);
+  if ($container === '') return '';
+
+  $out = trim(staxx_sh(
+    escapeshellarg(staxx_docker_bin()).' inspect -f '.escapeshellarg('{{.Config.WorkingDir}}')
+    . ' -- '.escapeshellarg($container),
+    10
+  ));
+  return $out !== '' ? $out : '/';
 }
 ?>
