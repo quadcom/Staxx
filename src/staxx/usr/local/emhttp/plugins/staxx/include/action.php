@@ -68,6 +68,61 @@ function staxx_reply(array $payload, int $status = 200): void {
   exit;
 }
 
+/* ----------------------------------------------------------- events push -- */
+
+define('STAXX_EVENTS_DIR', '/tmp/staxx/events');
+define('STAXX_EVENTS_SCRIPT', STAXX_ROOT.'/scripts/events-watcher.sh');
+
+/**
+ * Whether push actually works here, checked for real rather than assumed.
+ * The page decides whether to open an EventSource on this answer, so a box
+ * without nchan — a future Unraid release, or nginx simply not up yet — has
+ * to come back false rather than be reported as working: the socket has to
+ * exist, and a GET to the publish endpoint (which reports the audience but
+ * publishes nothing) has to actually answer.
+ */
+function staxx_events_available(): bool {
+  if (!file_exists('/var/run/nginx.socket')) return false;
+
+  $cmd  = 'curl -s -o /dev/null -w '.escapeshellarg('%{http_code}').' --max-time 4 '
+        . '--unix-socket '.escapeshellarg('/var/run/nginx.socket').' '
+        . escapeshellarg('http://localhost/pub/staxx?buffer_length=1');
+
+  // 404 counts as available, and getting this wrong made push unavailable for
+  // good: nchan answers 404 for a channel that does not exist, which is the
+  // state on every boot until something subscribes or publishes. Requiring
+  // 200 meant the page never subscribed, so the channel was never created, so
+  // the answer stayed 404 — a deadlock that looked exactly like "this server
+  // cannot do push". What is being asked here is whether the endpoint is
+  // there and answering, and both codes prove that; anything else (a refused
+  // connection, no reply at all) does not.
+  $code = trim(staxx_sh($cmd, 6));
+  return $code === '200' || $code === '404';
+}
+
+/** Same "is the pid in the file still alive" test staxx_stats_collector_running() uses. */
+function staxx_events_watcher_running(): bool {
+  $pidFile = STAXX_EVENTS_DIR.'/watcher.pid';
+  if (!is_file($pidFile)) return false;
+  $pid = (int)trim((string)@file_get_contents($pidFile));
+  return $pid > 0 && is_dir('/proc/'.$pid);
+}
+
+/**
+ * Start the watcher if nothing is watching already, following exactly how
+ * staxx_stats_touch() starts the stats collector in Stats.php: `setsid`
+ * detaches it, and stdin/stdout/stderr are all disconnected so it outlives
+ * this request instead of dying when PHP finishes answering it.
+ */
+function staxx_events_watch_start(): void {
+  if (staxx_events_watcher_running()) return;
+  if (!is_file(STAXX_EVENTS_SCRIPT)) return;
+  if (!is_dir(STAXX_EVENTS_DIR)) @mkdir(STAXX_EVENTS_DIR, 0755, true);
+
+  @exec('setsid sh '.escapeshellarg(STAXX_EVENTS_SCRIPT).' '
+        .escapeshellarg(STAXX_EVENTS_DIR).' </dev/null >/dev/null 2>&1 &');
+}
+
 /* ------------------------------------------------------------------ auth -- */
 
 /*
@@ -941,6 +996,21 @@ switch ($action) {
   // also what keeps the collector alive — see Stats.php.
   case 'stats':
     staxx_reply(['ok' => true] + staxx_stats_snapshot());
+
+  /* ---- start the event watcher, and say whether push works at all ----
+   *
+   * The watcher is self-terminating just like the stats collector — it
+   * exits on its own once nobody is subscribed — so calling this on every
+   * page load is safe; finding one already running is a no-op. Only started
+   * when push is actually available, since a watcher with nowhere to
+   * publish would do nothing but sit there. The page uses "available" to
+   * decide whether to open its EventSource at all, so this has to be a real
+   * check, not an assumption — see staxx_events_available().
+   */
+  case 'events-watch':
+    $available = staxx_events_available();
+    if ($available) staxx_events_watch_start();
+    staxx_reply(['ok' => true, 'available' => $available]);
 
   /* ---- list the folders inside one directory, for the volume picker ----
    *

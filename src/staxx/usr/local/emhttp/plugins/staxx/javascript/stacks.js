@@ -16477,6 +16477,107 @@
     statsTimer = setInterval(pollStats, STATS_POLL);
   }
 
+  /* ---- server push (PLAN_58 part 3) ---------------------------------------
+   *
+   * The table is refreshed on a timer nowhere on this page — instead the
+   * server tells it what changed. A background watcher turns real container
+   * lifecycle events into one of two words and publishes them on a channel;
+   * this opens a plain EventSource on it and dispatches on the word alone.
+   * The message carries only that word — never a container name or a stack
+   * path — so nothing sensitive crosses the channel even though it is a
+   * one-way broadcast to anyone subscribed. The two words are exactly the
+   * two refresh sizes above: 'state' asks for what refreshState() already
+   * asks for, 'rows' for what refreshRows() already asks for. Anything else
+   * received is ignored outright — the dispatch trusts nothing beyond those
+   * two exact strings.
+   *
+   * Availability is asked for once, up front, because a box with no nchan
+   * must carry on exactly as it does today rather than opening a stream that
+   * can never deliver anything.
+   */
+  var pushSource      = null;
+  var pushFailures     = 0;
+  var pushRowsTimer   = null;   // set while a burst is being coalesced
+  var pushRowsBusy    = false;  // set while a push-triggered refreshRows() is in flight
+  var pushOwed        = '';     // a message that arrived while the tab was hidden
+
+  // Several 'rows' messages can arrive within the same second (starting a
+  // stack emits a burst) — fold them into one refresh, and if that refresh
+  // is still running when the next one is due, wait rather than stack a
+  // second request behind it.
+  function pushRowsSoon() {
+    if (pushRowsTimer) return;
+    pushRowsTimer = setTimeout(function () {
+      pushRowsTimer = null;
+      if (pushRowsBusy) { pushRowsSoon(); return; }
+
+      // refreshRows() runs its callback on success only — a failed refresh
+      // reports itself and returns without calling back. Relying on it alone
+      // would pin this flag for good on the first failure, and since the
+      // check above re-arms rather than gives up, that left a timer waking
+      // four times a second for as long as the page stayed open. The timer
+      // below is the release for that path; whichever fires first wins.
+      pushRowsBusy = true;
+      var release = function () { pushRowsBusy = false; };
+      refreshRows(release);
+      setTimeout(release, 65000);   // just past the rows call's own 60s timeout
+    }, 250);
+  }
+
+  // Which refresh a message asks for. Split out because two callers reach it:
+  // a message arriving at a visible tab, and the catch-up when a hidden one is
+  // shown again.
+  function pushApply(verb) {
+    if (verb === 'rows') { pushRowsSoon(); return; }
+    // A pending or in-flight rows refresh already covers everything a state
+    // refresh would, so do not ask for the smaller one on top.
+    if (!pushRowsTimer && !pushRowsBusy) refreshState();
+  }
+
+  function startPush() {
+    call('events-watch', {}, 10000).then(function (res) {
+      if (!res.ok || !res.available) return;   // nchan absent — page behaves as today
+      pushSource = new EventSource('/sub/staxx');
+      pushSource.onopen = function () { pushFailures = 0; };
+      pushSource.onmessage = function (ev) {
+        if (ev.data !== 'rows' && ev.data !== 'state') return;
+
+        // A hidden tab is nobody's window on the server: refreshing it now
+        // spends a request on a table no one is looking at, and left running
+        // it does that for every event all day across every tab somebody
+        // forgot to close. What is owed is remembered instead and paid on the
+        // way back in — see the visibilitychange handler below. 'rows' wins
+        // over 'state' because it does everything the smaller one would.
+        if (document.hidden) {
+          if (ev.data === 'rows' || !pushOwed) pushOwed = ev.data;
+          return;
+        }
+        pushApply(ev.data);
+      };
+      pushSource.onerror = function () {
+        // EventSource retries a dropped connection on its own — that shows
+        // up here with readyState CONNECTING, and is not a failure worth
+        // counting. readyState CLOSED means the browser has already given
+        // up for good (wrong content type, a hard error) and will not try
+        // again, so that gets treated as fatal immediately. A run of plain
+        // reconnect attempts that never settles is treated the same way
+        // after a handful, so a flapping endpoint cannot retry forever.
+        pushFailures++;
+        if (pushSource.readyState === EventSource.CLOSED || pushFailures >= 5) {
+          pushSource.close();
+          pushSource = null;
+        }
+      };
+    });
+  }
+  startPush();
+
+  // Closing the stream on the way out lets the watcher notice the tab has
+  // gone straight away, rather than waiting for it to time out on its own.
+  window.addEventListener('pagehide', function () {
+    if (pushSource) { pushSource.close(); pushSource = null; }
+  });
+
   // A hidden tab stops all four pollers on this page — each checks
   // document.hidden itself — so returning to it can leave figures, jobs and
   // the update queue looking stale until their own next tick, up to 5s for
@@ -16486,6 +16587,9 @@
   // its own reason (no jobs, no queue, Manage closed) should stay stopped.
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) return;
+    // Pay whatever arrived while nobody was looking. One refresh covers any
+    // number of events missed, however long the tab sat in the background.
+    if (pushOwed) { var owed = pushOwed; pushOwed = ''; pushApply(owed); }
     pollStats();
     if (jobTicker) tickJobs();
     if (updateQueueTimer) pollQueueOnce();
