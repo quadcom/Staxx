@@ -1,5 +1,19 @@
 # PLAN — packaging compliance fixes (Unraid plugin requirements audit)
 
+> **Status: complete, 2026-08-21.** Verified item by item against the code rather than
+> trusted: 14 of the 15 sub-items below are genuinely implemented, and all four verification
+> checks pass (`bash -n` over the three shell files, plus the XML parse of `staxx.plg`).
+>
+> **One item outstanding, and it is tracked in `PLAN_60.md` — §7.5, cross-referenced at §13.1.
+> Do not action it from here.** On `--purge` the dev installer deletes the config folder before
+> testing for the `hub_login` marker inside it, so the branch can never be true and the Docker
+> Hub session StaXX created stays signed in. `--remove` is correct, and `staxx.plg` never
+> deletes the config folder, so it does not share the bug.
+>
+> The five sections below are kept as written, for the reasoning rather than as a work list.
+> The `TODO-` placeholders (author, repository, support thread, both checksums) remain
+> deliberately in place: a premature publish must still fail loudly.
+
 ## Context
 
 An audit of the plugin against Unraid's plugin-installer rules and the Community

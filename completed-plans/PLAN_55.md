@@ -1,8 +1,36 @@
 # PLAN_55 — the app moved house, and nothing told you
 
-**Status: drafted 2026-08-20, awaiting approval.** Nothing here is built. Every decision below is a
-*recommendation* rather than a settled answer — the ones that need Adrian's word are marked, and the
-plan should not start until they have it.
+> # CLOSED — 2026-08-21. Do not action anything from this file.
+>
+> Verified item by item against the code, then split, because this file held two things in very
+> different states and neither belonged here any longer.
+>
+> - **Part One (registry-move detection) was never started, and is a feature rather than a fix.**
+>   Its concept, measurements, decisions and risks now live in **`FEATURE_55.md`**. Its code plan
+>   will be **`PLAN_61.md`**, written *after* `PLAN_60.md` lands — because `PLAN_60.md` changes the
+>   compose-model write path that Part One's decision 7 depends on, and a plan drafted against
+>   today's behaviour would specify a write that no longer exists. It is also still blocked on
+>   decision 10 (whether the importer takes the template's current address).
+> - **Part Two (the withdrawn tag, the project links, the chips) is built.** Part A complete, Part C
+>   complete, Part B complete bar two small items. Those two, and the chip decision, are tracked in
+>   **`PLAN_60.md` §13**.
+>
+> Kept for the reasoning behind Part Two's decisions, which is not recoverable from the code. The
+> text below has been corrected where the shipped behaviour differs from what was originally
+> specified; each such change is marked *(revised 2026-08-21)*.
+
+**Status of Part One: drafted 2026-08-20, awaiting approval.** Nothing in this half is built. Every
+decision below is a *recommendation* rather than a settled answer — the ones that need Adrian's word
+are marked, and the plan should not start until they have it.
+
+> **Sequencing note added 2026-08-21 — read before starting this half.** `PLAN_60.md` changes the
+> compose-model write path, so decision 7 below (*rewrite the one `image:` line through the compose
+> model*) describes a contract that is about to change. When this half is picked up, re-specify that
+> step against the post-PLAN_60 behaviour: indentation comes from the parent's existing children, a
+> failed insert rolls back instead of leaving half a line behind, and a value containing a backslash
+> is emitted single-quoted. Everything else here — the catalogue join, the host-only comparison, the
+> hint and the dismissal — is unaffected, because it only reads. `PLAN_60.md` §13.4 records this from
+> the other side.
 
 ## Context
 
@@ -104,6 +132,23 @@ pointing its state at `/tmp` so the real file is never touched. Weighted at the 
 
 # Part two — the tag went away, and the links nobody reads
 
+> **Status: built, verified against the code 2026-08-21.**
+>
+> - **Part A (withdrawn tag): complete.** All of A1–A5 shipped and wired end to end, with the
+>   suggestion-ordering rules and the "tag present despite a not-found answer" refusal covered by
+>   tests in `tests/server/updates.php`.
+> - **Part B (project and support links): complete bar two items,** both tracked in `PLAN_60.md`
+>   §13.2 and §13.3 — links are still written once per stack rather than per service on import, and
+>   the round-trip promise is untested on a file with anchors and no `x-unraid` block. The resolver,
+>   the schema keys, the docs, the endpoint, the row menu and the preview-before-write are all built,
+>   with ~35 cases in `tests/server/project-links.php`. The plan's open question is answered:
+>   `addNested()` in `javascript/compose-model.js` inserts a key and creates an absent block.
+> - **Part C (the chips): complete.** Shipped deliberately wider than decision 4 below — the
+>   decision table and the Part C section have been corrected to match, and the reasoning is
+>   recorded there.
+>
+> Nothing in Part Two is outstanding work in this file. Action §13 of `PLAN_60.md` instead.
+
 **Approved 2026-08-20.** Three related pieces, in dependency order. The registry-move detector above
 and these share one subject and one remedy: the address in your file is stale, and nothing told you.
 
@@ -138,7 +183,7 @@ WebUI and Logs chips.
 | 1 | How a withdrawn tag is fixed | The row menu **opens the editor with that service's image field focused**, where the existing tag picker already offers the real tags. Never switched automatically — a tag is which version of a program runs. |
 | 2 | Registry coverage for tag lookups | **All registries**, not just Docker Hub. |
 | 3 | Where project and support links live | **Written into the compose file**, so they travel with the stack and cost nothing to read when drawing the grid. |
-| 4 | Which rows get the new chips | **Service rows only.** A repo link belongs to an image, and images are per service. |
+| 4 | Which rows get the new chips | **Service rows and stack rows** *(revised 2026-08-21 to match what shipped)*. A repo link usually belongs to an image, and images are per service — so service rows carry their own. A stack row carries one too: it takes the link from its sole child, or greys out saying more than one container here has its own project page. The stack-level chip is wanted deliberately, because it is how a stack can point at where its compose template came from — which matters if compose templates ever get a repository of their own. Nothing is designed for that yet; the chip is not to be removed as a tidy-up. |
 | 5 | Whether we write without asking | No. Every write to an existing file is previewed and approved. |
 
 **One concern to state plainly** (decision 3's consequence): nothing is in the files today, so chips
@@ -260,21 +305,25 @@ prose in `docs/x-unraid-schema.md`. Stack level keeps working and acts as the fa
 ## Part C — the Repo and CA chips
 
 `staxx_row_actions_html()` (`include/StacksTable.php:295`) is the single renderer for the WebUI and
-Logs chips, called once for a stack row and once per service row. Two more chips go in there, on the
-**service call site only** (`:1162`):
+Logs chips, called once for a stack row and once per service row. Two more chips go in there, on
+**both call sites** *(revised 2026-08-21 — see decision 4)*:
 
 - **Repo** → the resolved `project` URL, `target="_blank" rel="noopener"`, gated by the same
   `^https?://` test the WebUI chip already applies at `:304`.
 - **CA** → the `support` URL, which for a Community Applications app is its Unraid forum thread. The
   label is `CA` rather than "CA Support" because the chip column is 4.2rem wide.
-- Both are **omitted** when there is no URL, unlike WebUI which shows disabled. That chip stays for
-  alignment of the name column; these carry no such duty, and an empty chip teaches nothing.
+- Both are **shown disabled** when there is no URL, the same as WebUI *(revised 2026-08-21 — the
+  plan originally said omitted)*. Omitting them reflowed the icon column between rows, and two CSS
+  rules are written against that column's height already, so matching WebUI is what keeps the name
+  column aligned.
 
 **Layout.** `.staxx-rowactions` is a single-column grid (`sheets/staxx.css:449`), so four chips would
 stack vertically and roughly double the height of every service row — and two rules are written
 against that column's height already (`.staxx-icon { align-self: flex-start }` at `:471`, and
-`.staxx-dot`'s absolute position at `:556`). Make it two columns when there are more than two chips,
-so four chips sit two-by-two and the row grows by nothing. Revisit `min-width: 4.2rem` for the pair.
+`.staxx-dot`'s absolute position at `:556`). Make it two columns
+*(shipped unconditionally rather than only when there are more than two chips, which follows from
+decision 4 — every row now always carries four)*, so four chips sit two-by-two and the row grows by
+nothing. Revisit `min-width: 4.2rem` for the pair.
 
 **Getting the data to the row.** A service row does not have its `x-unraid` block in scope: only
 `icon` and `webui` are lifted out of `$declared` inside `staxx_stack_children()`

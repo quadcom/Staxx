@@ -28,3 +28,6 @@ desktop.ini
 /scratch/
 /local/
 *.local
+
+# Review artifacts — kept locally for comparison, not part of the source
+/audits/
