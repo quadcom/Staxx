@@ -346,6 +346,7 @@ All four stages built, deployed and verified on the server. `1476` round-trip, `
 - Decision 11's freshness argument, deliberately shipped without. `PLAN_62.md` may answer it for
   free, since an author's own published example is a better freshness signal than a second registry
   call.
-- The `x-unriad` typo trap, unrelated to this feature and still needing its own small fix.
+- ~~The `x-unriad` typo trap.~~ **Fixed 2026-08-21**, in the editor's existing unknown-key check —
+  a near miss of `x-unraid` now warns, an unrelated `x-` block still does not.
 
 The GitHub-watch half deferred here is now written up as `PLAN_62.md`.

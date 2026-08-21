@@ -275,6 +275,6 @@ the fetching by hand against the real repositories named above.
 3. **The other half.** Roughly half of all images carry no project address and are not at GitHub's
    registry — the plain ones, `alpine`, `adminer`, `apache/tika`. There is nothing to watch and no
    honest way to invent it. The copy must say so rather than looking broken.
-4. **A typo in the metadata key is still silently ignored** — anything starting `x-` is waved
-   through, so `x-unriad` is accepted and then never read. Found during `PLAN_60`, unrelated to this,
-   still worth its own small fix.
+4. ~~**A typo in the metadata key is silently ignored.**~~ **Fixed 2026-08-21.** The editor now
+   warns on an `x-` key that reads as a near miss of `x-unraid`, including one differing only in
+   capitals, while leaving an unrelated `x-` block alone.
