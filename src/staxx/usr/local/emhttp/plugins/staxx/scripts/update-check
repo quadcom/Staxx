@@ -101,7 +101,13 @@ run_check() {
   # false = a scheduled pass respects the remembered six-hour answers; only a
   # person pressing the button in the browser forces every image to be asked
   # again.
-  "${php_bin}" -r "require '${PLUGIN_DIR}/include/Updates.php'; staxx_update_check('all', false);" >> "${LOG}" 2>&1
+  #
+  # Links.php, not Updates.php directly — it requires Updates.php itself, so
+  # this still gets staxx_update_check(), but also staxx_links_move_candidate()
+  # for the PLAN_61 registry-move check inside it. Requiring Updates.php alone
+  # leaves that check's function_exists() guard permanently false here, which
+  # is the one spawn site that runs every scheduled pass — see PLAN_61.
+  "${php_bin}" -r "require '${PLUGIN_DIR}/include/Links.php'; staxx_update_check('all', false);" >> "${LOG}" 2>&1
   log "check pass finished."
 }
 

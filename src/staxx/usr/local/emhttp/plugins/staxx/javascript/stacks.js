@@ -1224,6 +1224,15 @@
   var MODEL = null;      // the last form that parsed
   var activeField = null;
 
+  // The `read` reply's own move advice (PLAN_61) — service name -> {repo,
+  // host, tag, tags, reason} — set once by openEditor() and never touched by
+  // buildForm(), which stays registry-ignorant. movedSpots is what
+  // applyMovedAdvice() below fills each pass: the {line, col, len, fact} of
+  // every Image field it currently matches, which is all the editor's
+  // underline, hover text and gutter dot need.
+  var movedFacts = {};
+  var movedSpots = [];
+
   // Whether the Stack section's <details> is open. renderForm() rebuilds the
   // whole form from scratch on every structural edit, so nothing the DOM
   // itself remembers survives an add, remove or undo — this is the session's
@@ -2313,6 +2322,24 @@
              'title="Declares ' + esc(f.declareMissing) + ' as a network created outside this file, ' +
              'which is what an Unraid network is.">Add it to this file</button>';
     }
+    // Image only (movedAdvice is grafted on nowhere else — see
+    // applyMovedAdvice()): this app's template now publishes at a different
+    // registry (PLAN_61). reason is composed server-side, since only the
+    // server knows both registries — never built here.
+    if (f.movedAdvice) {
+      var mv = f.movedAdvice;
+      var mvTags = (mv.tags && mv.tags.length) ? mv.tags : [mv.tag];
+      out += '<p class="staxx-fieldnote">' + esc(mv.reason) + '</p>';
+      out += '<p class="staxx-moved-switch">Switch to:';
+      for (var mt = 0; mt < mvTags.length; mt++) {
+        var mvValue = mv.host + '/' + mv.repo + ':' + mvTags[mt];
+        out += ' <button type="button" class="staxx-declfix staxx-declfix--moved" data-move-apply="1" ' +
+               'data-move-value="' + esc(mvValue) + '" ' +
+               'title="Rewrites the image line to ' + esc(mvValue) + '.">:' + esc(mvTags[mt]) + '</button>';
+      }
+      out += ' <button type="button" class="staxx-declfix" data-move-dismiss="1" ' +
+             'title="Keeps the current image and stops asking about this move.">Leave it alone</button></p>';
+    }
     return out;
   }
 
@@ -2576,6 +2603,7 @@
 
     bits.push('<div class="staxx-fieldrow' + (f.locked ? ' staxx-fieldrow--locked' : '') +
               (f.sensitive ? ' staxx-fieldrow--secret' : '') +
+              (f.movedAdvice ? ' staxx-fieldrow--moved' : '') +
               '" data-row="' + index + '" data-field-row="' + esc(f.id) + '"' +
               ' data-from="' + (f.range ? f.range.start : -1) + '"' +
               ' data-to="'   + (f.range ? f.range.end   : -1) + '"' +
@@ -3315,7 +3343,58 @@
     var list = composeActive ? lastLint.concat(varLint) : [];
     if (composeActive && saveErrorDot) list = list.concat([saveErrorDot]);
     if (checkDot) list = list.concat([checkDot]);
+    // movedSpots is compose-file-only too — a companion file has no Image
+    // setting of its own to have moved.
+    if (composeActive && movedSpots.length) {
+      list = list.concat(movedSpots.map(function (m) { return { line: m.line, level: 'warn' }; }));
+    }
     paintDots(list);
+  }
+
+  // Grafts the read reply's move advice (PLAN_61, movedFacts) onto the Image
+  // field it names, and repaints whatever is already on screen to match —
+  // the row's own border, its note (via adviceText()) and movedSpots, which
+  // feeds the editor's underline and gutter dot. buildForm() itself never
+  // learns the registry exists; this is the one place that reads movedFacts,
+  // called after every buildForm() call since reparse() and refreshRanges()
+  // both replace MODEL.fields wholesale.
+  function applyMovedAdvice() {
+    movedSpots = [];
+    if (!MODEL) return;
+
+    for (var i = 0; i < MODEL.fields.length; i++) {
+      var f = MODEL.fields[i];
+      f.movedAdvice = null;
+      if (f.binder !== 'setting' || f.target !== 'image') continue;
+      var candidate = movedFacts[f.service];
+      if (!candidate) continue;
+      // A hand-edit made since the fact was raised leaves the repository
+      // different from the one it was raised against — stale advice must
+      // never show.
+      if (repoOf(f.parts.value.value) !== candidate.repo) continue;
+      f.movedAdvice = candidate;
+      if (f.parts.value && f.parts.value.spot) {
+        var spot = f.parts.value.spot;
+        movedSpots.push({ line: spot.line, col: spot.col, len: spot.len, fact: candidate });
+      }
+    }
+
+    // Rows may not exist yet — reparse() calls this before drawing the form,
+    // so fieldHtml() picks up f.movedAdvice on first paint instead. When they
+    // do exist (refreshRanges(), or a second call after reparse()'s own
+    // render), bring them into line without a full redraw.
+    var rows = formHost.querySelectorAll('.staxx-fieldrow');
+    for (var r = 0; r < rows.length; r++) {
+      var field = MODEL.fields[rows[r].dataset.row | 0];
+      rows[r].classList.toggle('staxx-fieldrow--moved', !!(field && field.movedAdvice));
+      var advice = rows[r].querySelector('[data-advice]');
+      if (advice && field) {
+        advice.innerHTML = adviceText(field);
+        advice.hidden = !advice.innerHTML;
+      }
+    }
+
+    redrawDots();
   }
 
   // Guarded the same way paintInk() guards for YAML.highlight: if the linter
@@ -3339,6 +3418,7 @@
     var form = YAML.buildForm(doc, netDrivers());
     form.doc = doc;
     MODEL = form;
+    applyMovedAdvice();   // before renderForm() below, so its first paint already carries the fact
 
     var scrollWas = formHost.scrollTop;
     devPanel = null;            // the device panel lives in here and just went
@@ -3378,6 +3458,7 @@
     var fresh = YAML.buildForm(doc, netDrivers());
     fresh.doc = doc;
     MODEL = fresh;
+    applyMovedAdvice();   // rows already exist here, so this brings them into line itself
 
     var rows = formHost.querySelectorAll('.staxx-fieldrow');
     for (var i = 0; i < rows.length; i++) {
@@ -4007,6 +4088,57 @@
         return;
       }
       structuralEdit(nLine, '');
+      return;
+    }
+
+    // The version buttons beside a moved-image advisory (adviceText(),
+    // applyMovedAdvice()) — one in-place rewrite of the image line, exactly
+    // the box's own commit() path below. No confirmation dialog: the
+    // button's own label is the preview, and Undo is right there.
+    var moveApply = event.target.closest('[data-move-apply]');
+    if (moveApply) {
+      var applyRow = moveApply.closest('.staxx-fieldrow');
+      var applyField = applyRow && MODEL.fields[applyRow.dataset.row | 0];
+      if (!applyField || !applyField.movedAdvice) return;
+
+      flushPending();
+      pushUndo('switching "' + applyField.service + '"’s image');
+      var applied = YAML.setValue(MODEL.doc, MODEL, applyField.id, moveApply.dataset.moveValue);
+      if (!applied) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus('This image line could not be rewritten — fix it in the Compose view instead.');
+        return;
+      }
+      setYamlStatus('');
+      yamlPane.value = YAML.serialise(MODEL.doc);
+      paintGutter();
+      paintInk();
+      refreshRanges();
+      return;
+    }
+
+    // "Leave it alone" on the same advisory. Recomputed rather than stored,
+    // the same reasoning missingNote's click handler gives: whatever is on
+    // screen right now is the only thing this can honestly act on.
+    var moveDismiss = event.target.closest('[data-move-dismiss]');
+    if (moveDismiss) {
+      var dismissRow = moveDismiss.closest('.staxx-fieldrow');
+      var dismissField = dismissRow && MODEL.fields[dismissRow.dataset.row | 0];
+      if (!dismissField || !dismissField.movedAdvice) return;
+
+      // The host is not sent — the server already has it on the same
+      // per-image entry the join wrote it onto, and pulls it from there.
+      call('update-skip-move', { image: dismissField.parts.value.value })
+        .then(function (res) {
+          if (!res.ok) { setYamlStatus(res.error); return; }
+          // The state file is the only thing that decides whether this
+          // revives — dropping it here too just clears the surfaces without
+          // waiting for the next reparse() to notice.
+          delete movedFacts[dismissField.service];
+          applyMovedAdvice();
+          refreshUpdates();   // the row's own pill carries the same fact (Stage 2)
+        });
       return;
     }
 
@@ -4738,6 +4870,9 @@
     // below. Drawn last so a path mark under a search hit still shows
     // through: the hit is a fill, the path mark only an underline.
     repaintPaths();
+    // A moved image's own underline (PLAN_61) — same layer again, drawn last
+    // of all for the same reason.
+    repaintMoved();
     updateMissingPaths();
     updateInUsePaths();
   }
@@ -5121,6 +5256,44 @@
         'Starting this stack would point this container at that same data.';
     }
     return 'Nothing exists at ' + mark.path + ' on the server. Create the folder, or correct the path.';
+  }
+
+  // The image-moved underline (PLAN_61) — same layer and geometry as
+  // repaintPaths() above, but keyed off movedSpots rather than a path lookup:
+  // the spot comes straight from the field's own value part, via
+  // applyMovedAdvice(), with nothing to ask the server for here.
+  function repaintMoved() {
+    if (!movedSpots.length) return;
+
+    var markLeft = parseFloat(yamlMarks.style.left) || 0;
+    var leftBase = textLeft() - markLeft;
+
+    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
+    var firstLine = Math.floor((top - PAD_T) / LINE_H) - 2;
+    var lastLine  = Math.ceil((top + viewH - PAD_T) / LINE_H) + 2;
+
+    for (var i = 0; i < movedSpots.length; i++) {
+      var m = movedSpots[i];
+      if (m.line < firstLine || m.line > lastLine) continue;
+
+      var box = document.createElement('div');
+      box.className = 'staxx-badpath staxx-badpath--moved';
+      box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
+      box.style.left   = (leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
+      box.style.width  = (m.len * CHAR_W) + 'px';
+      box.style.height = LINE_H + 'px';
+      yamlMarks.appendChild(box);
+    }
+  }
+
+  // Hit-test for the hover panel — same shape as pathMarkAt() above, over
+  // movedSpots instead.
+  function movedMarkAt(line, col) {
+    for (var i = 0; i < movedSpots.length; i++) {
+      var m = movedSpots[i];
+      if (m.line === line && col >= m.col && col < m.col + m.len) return m;
+    }
+    return null;
   }
 
   function revealLine(line) {
@@ -8669,7 +8842,7 @@
   // the whole stack's own All tab, a service name for one container's — and
   // it is what switches straight to Manage further down, once the model this
   // stack's Manage view is built from (MODEL, from reparse() above) exists.
-  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField) {
+  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved) {
     closeMenu();
     clearError();
 
@@ -8678,6 +8851,11 @@
     openedName = name || '';
     fingerprintAtOpen = fingerprint || '';   // '' for a new stack — nothing to conflict with yet
     serviceRenamed = false;
+    // Yesterday's move advice is meaningless against today's stack — a new
+    // stack, and every open that is not editStack()'s own `read`, passes
+    // nothing here. reparse() below (via applyMovedAdvice()) is what turns
+    // this into the row border, note and underline.
+    movedFacts = moved || {};
 
     // Yesterday's tabs are meaningless against today's stack — cleared before
     // the fresh listing arrives (or, for a new stack with no folder yet, before
@@ -10554,6 +10732,17 @@
     var mark = pathMarkAt(lc.line, lc.col);
     if (mark) {
       keyHelp.innerHTML = '<strong>' + esc(mark.path) + '</strong><p>' + esc(pathHoverText(mark)) + '</p>';
+      placeCaretPanel(keyHelp, lc.line, lc.col, false);
+      return;
+    }
+
+    // A moved image (PLAN_61) — prose only, no buttons: the Form view is
+    // where the fix actually lives, and a tooltip containing buttons closes
+    // as the pointer moves toward what it wants to click.
+    var moved = movedMarkAt(lc.line, lc.col);
+    if (moved) {
+      keyHelp.innerHTML = '<strong>Image moved</strong><p>' + esc(moved.fact.reason) +
+        ' Switch it from the Form view.</p>';
       placeCaretPanel(keyHelp, lc.line, lc.col, false);
       return;
     }
@@ -12939,7 +13128,7 @@
   function editStack(name, label, focusService, manageSelect, focusField) {
     call('read', { name: name }).then(function (res) {
       if (!res.ok) { failed('Could not open ' + label, res.error); return; }
-      openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField);
+      openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved);
     });
   }
 

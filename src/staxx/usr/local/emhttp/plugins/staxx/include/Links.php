@@ -81,6 +81,64 @@ function staxx_links_repo_path(string $image): string {
 }
 
 /**
+ * The registry host half of an image reference, lower-cased, '' when none is
+ * written — the same split staxx_links_repo_path() uses, so the two can never
+ * disagree about where the host ends and the path begins.
+ *
+ * Docker Hub's own aliases (docker.io, index.docker.io, registry-1.docker.io)
+ * fold to '', the same as writing no host at all — otherwise an image
+ * written `docker.io/x/y` would misread as "moved" against a catalogue entry
+ * that carries no host, purely because one of the two spells Hub out and the
+ * other does not.
+ */
+function staxx_links_image_host(string $image): string {
+  $bare = staxx_links_strip_tag($image);
+  if ($bare === '') return '';
+  $segments = explode('/', $bare);
+  if (count($segments) < 2 || !preg_match('/[.:]/', $segments[0])) return '';
+  $host = strtolower($segments[0]);
+  if (in_array($host, ['docker.io', 'index.docker.io', 'registry-1.docker.io'], true)) return '';
+  return $host;
+}
+
+/**
+ * PLAN_61 — has this catalogue app's template moved to a different registry
+ * since this compose file was written? Reads only the catalogue index
+ * already decoded by staxx_ca_index_data() (see staxx_links_ca_map()); no
+ * seek into apps.jsonl and no network call, so this is cheap enough for the
+ * per-image loop in staxx_update_check() to call on every pass.
+ *
+ * What counts as a move is deliberately narrow: the same repository path,
+ * a different registry host. An account rename is never offered here and
+ * needs no branch to refuse it — under Community Applications' own rules,
+ * changing the account or app name after the fact gets the app pulled from
+ * the catalogue, so a legitimate rename cannot happen. An apparent one is
+ * either a different app entirely (a different repository path, so it is
+ * simply never found in the map below) or an app CA has already withdrawn.
+ * Either way there is nothing to offer, and nothing to test for.
+ *
+ * @return array{} | array{host:string, image:string} the new host and the
+ *   registry-free path rejoined against it, or [] for not-catalogued, same
+ *   host, or anything else.
+ */
+function staxx_links_move_candidate(string $image): array {
+  $repo = strtolower(staxx_links_repo_path($image));
+  if ($repo === '') return [];
+
+  $ordinal = staxx_links_ca_map()[$repo] ?? null;
+  if ($ordinal === null) return [];
+
+  // The catalogue's own current address, straight off the index row already
+  // held in memory — not staxx_ca_app(), which would seek into apps.jsonl for
+  // detail this join does not need.
+  $catalogueImage = (string)(staxx_ca_index_data()['apps'][$ordinal]['r'] ?? '');
+  $catalogueHost  = staxx_links_image_host($catalogueImage);
+  if ($catalogueHost === '' || $catalogueHost === staxx_links_image_host($image)) return [];
+
+  return ['host' => $catalogueHost, 'image' => $catalogueHost.'/'.$repo];
+}
+
+/**
  * Community Applications' repository field, joined once per request into an
  * ordinal any image can look itself up against. staxx_ca_search() ranks free
  * text and is not this — there is no exact join over the feed today, so this

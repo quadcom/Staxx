@@ -3772,6 +3772,17 @@
   border-color: var(--sm-danger);
 }
 
+/* An image whose template now publishes at a different registry (PLAN_61) —
+   same shape as .staxx-fieldrow--gap above, but --sm-accent: nothing here is
+   broken, so the border is a caution, not the danger colour. */
+.staxx-fieldrow--moved {
+  box-shadow: inset 0.3rem 0 0 var(--sm-accent);
+}
+
+.staxx-fieldrow--moved .staxx-input:not(:disabled) {
+  border-color: var(--sm-accent);
+}
+
 .staxx-scaffold .staxx-required {
   display: block;
   width: 100%;
@@ -4068,6 +4079,34 @@
 .staxx-declfix:focus-visible {
   outline: 0.15rem solid var(--sm-accent);
   outline-offset: 0.1rem;
+}
+
+/* The "Switch to…" line on a moved-image advisory (PLAN_61) — the label,
+   then the version buttons and "Leave it alone", spaced here rather than by
+   each button's own margin so they sit on one line instead of stacking. */
+.staxx-moved-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.staxx-moved-switch .staxx-declfix {
+  margin-top: 0;
+}
+
+/* Each version offered — bordered in the same accent colour as the row's
+   own border and the editor's underline for the same fact, so all three read
+   as one warning. "Leave it alone" keeps .staxx-declfix's plain look:
+   dismissing an advisory is not itself the accented action. */
+.staxx-declfix--moved {
+  border-color: var(--sm-accent);
+  color: var(--sm-accent);
+}
+
+.staxx-declfix--moved:hover {
+  background: color-mix(in srgb, var(--sm-accent) 14%, transparent);
 }
 
 /* ---- the device picker ---- */
@@ -4693,6 +4732,13 @@
    stack — a caution, not a fault in the file, so it borrows the same accent
    colour as .staxx-badpath--file above rather than the danger one. */
 .staxx-badpath--inuse {
+  border-bottom-color: var(--sm-accent);
+}
+
+/* An image value underlined because its template now publishes at a
+   different registry (PLAN_61) — same accent colour again: a caution about
+   where updates come from, not a fault in the file. */
+.staxx-badpath--moved {
   border-bottom-color: var(--sm-accent);
 }
 

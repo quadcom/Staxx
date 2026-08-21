@@ -693,6 +693,55 @@ function staxx_update_check(string $scope, bool $force): array {
     if (!$first) usleep(1500000);
     $first = false;
 
+    // PLAN_61 — has this catalogue app's template moved registries? Unset
+    // first so a fact that stops being true (the repo left the catalogue, or
+    // the two addresses converged) disappears rather than lingering from a
+    // stale pass. Guarded by function_exists() because Links.php requires
+    // this file, so the reverse would be a cycle — see staxx_rebuild_due()'s
+    // own guard just below for the same reason. The out-of-band spawns that
+    // actually run this pass (staxx_update_check_start() below, and
+    // scripts/update-check) require Links.php directly, so the guard is
+    // never false there; only a stray caller that requires Updates.php alone
+    // would see it skipped, and no such caller exists.
+    unset($existing['move']);
+    if (function_exists('staxx_links_move_candidate')) {
+      $candidate = staxx_links_move_candidate($image);
+      if ($candidate !== []) {
+        $tagInUse = staxx_image_tag_part($image);
+        $newTags  = staxx_registry_tags($candidate['image'].':'.$tagInUse);
+        // Proved, not assumed: an offer that 404s at the new address is worse
+        // than no offer at all, so the fact is only kept when the tag this
+        // service is actually running is confirmed present there.
+        if (in_array($tagInUse, $newTags, true)) {
+          // staxx_registry_tags() answers newest-first only when it routes
+          // through Hub's own API (a bare name, or the lscr.io/ghcr.io
+          // linuxserver mirrors) — everything else, this new address
+          // included, answers lexically. staxx_tag_suggestions()'s backfill
+          // walks candidates in the order given, so passing it lexical order
+          // here would offer the three OLDEST tags for anything date- or
+          // hash-tagged. Reversed here, at this call site only — the
+          // withdrawn-tag path must keep behaving exactly as it does today.
+          $ordered = staxx_hub_repo_path($candidate['image']) !== '' ? $newTags : array_reverse($newTags);
+          // '' as $missing: nothing is being replaced here, so nothing should
+          // be excluded — the tag in use is welcome to be the top pick, which
+          // is exactly right when it is itself a rolling tag like "latest".
+          //
+          // Named as Docker Hub specifically when that is the old address —
+          // staxx_links_image_host() folds a written host down to '' for Hub
+          // and its two aliases, so '' here means Hub, not "unknown host".
+          $oldHostName = staxx_links_image_host($image) === '' ? 'Docker Hub' : 'the old address';
+          $existing['move'] = [
+            'host'   => $candidate['host'],
+            'tag'    => $tagInUse,
+            'tags'   => staxx_tag_suggestions('', $ordered),
+            'reason' => 'The template for this app now publishes at '.$candidate['host'].'. '
+                      . ucfirst($oldHostName).' still answers, but it is no longer where updates '
+                      . 'are pushed.',
+          ];
+        }
+      }
+    }
+
     $why    = '';
     $tags   = null;
     $remote = staxx_image_remote($image, $why, $tags);
@@ -912,8 +961,14 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
 
   @file_put_contents($log, '$ checking updates for '.$scope."\n\n");
 
+  // Links.php, not __FILE__ — it requires this file itself, so the detached
+  // process also gets staxx_links_move_candidate() and the PLAN_61 move
+  // check inside staxx_update_check() stops being permanently guarded off.
+  // Requiring Updates.php alone here would leave function_exists() false for
+  // every out-of-band pass, which is exactly the dead-code trap PLAN_61 warns
+  // against.
   $php = staxx_php_bin().' -r '.escapeshellarg(
-    'require '.var_export(__FILE__, true).'; '
+    'require '.var_export(__DIR__.'/Links.php', true).'; '
     .'$r = staxx_update_check('.var_export($scope, true).', '.($force ? 'true' : 'false').'); '
     .'echo "\nchecked ".$r["asked"]." asked, ".$r["skipped"]." skipped, "'
     .'.$r["updates"]." updates, ".$r["failed"]." failed\n";'
@@ -1064,13 +1119,17 @@ function staxx_updates_aggregate(array $pills): array {
     ];
   }
 
+  // 'moved' ranks below built/missing and above unknown — a registry move is
+  // worth knowing about, but it is never as pressing as something that could
+  // not be checked at all or an image not even installed here.
   $rank = ['update' => 0, 'error' => 1, 'tagmissing' => 1, 'rebuild' => 2,
-           'built' => 3, 'missing' => 3, 'unknown' => 4, 'current' => 5];
+           'built' => 3, 'missing' => 3, 'moved' => 4, 'unknown' => 5, 'current' => 6];
 
   $best      = null;
   $bestRank  = 99;
   $updateCount     = 0;
   $tagMissingCount = 0;
+  $movedCount      = 0;
   $source    = '';
   // The soonest clock among the children, and the first non-empty reason one
   // of them will not fire automatically — a folder or stack row speaks for
@@ -1083,6 +1142,7 @@ function staxx_updates_aggregate(array $pills): array {
     $state = $p['state'] ?? 'unknown';
     if ($state === 'update') $updateCount++;
     if ($state === 'tagmissing') $tagMissingCount++;
+    if ($state === 'moved') $movedCount++;
     $r = $rank[$state] ?? 99;
     if ($r < $bestRank) { $bestRank = $r; $best = $p; }
     if ($source === '' && ($p['source'] ?? '') !== '') $source = $p['source'];
@@ -1129,6 +1189,13 @@ function staxx_updates_aggregate(array $pills): array {
       $label = 'not installed';
       $tip   = 'One or more services here have not been installed on this server yet, so '
              . 'there is nothing to compare.';
+      break;
+    case 'moved':
+      $label = 'registry moved';
+      $tip   = $movedCount === 1
+        ? $best['tip']
+        : $movedCount.' of '.$total.' services here now publish at a different registry than '
+        . 'the one their template was written against. Open the stack to see where.';
       break;
     case 'unknown':
       $label = 'never checked';
@@ -1224,6 +1291,24 @@ function staxx_updates_apply_service_state(array &$pill, string $stack, string $
   // roll back on every service and let the refusal explain itself, which is a
   // menu item that usually does nothing.
   $pill['back'] = !empty(staxx_update_state()['history'][$stack.'::'.$service]);
+
+  // PLAN_61 — carried on every pill regardless of headline state: a service
+  // has exactly one advisory state, so 'update' (and everything else) wins
+  // the badge over a registry move — see staxx_updates_aggregate()'s ranking
+  // for the same reasoning applied across a row's whole set of services.
+  // Promoted to the headline state only from 'current', mirroring how
+  // 'built' becomes 'rebuild' just below.
+  $imageState = staxx_update_state()['images'][$image] ?? [];
+  $moveFact   = $imageState['move'] ?? null;
+  $moved      = is_array($moveFact) && ($moveFact['host'] ?? '') !== ''
+              && ($imageState['skipMove'] ?? '') !== $moveFact['host'];
+  $pill['moved'] = $moved;
+  if ($moved && $pill['state'] === 'current') {
+    $pill['state'] = 'moved';
+    $pill['label'] = 'registry moved';
+    $pill['tip']   = 'The template for this app now publishes at '.$moveFact['host'].'. Open the '
+                    . 'row menu to see the details.';
+  }
 
   if ($pill['state'] === 'built') {
     $rebuilds = (array)staxx_update_state()['rebuilds'];
@@ -1329,5 +1414,90 @@ function staxx_update_skip(string $image, string &$error): bool {
 
   staxx_update_state_save(['images' => $images]);
   return true;
+}
+
+/**
+ * Dismiss the registry-move hint currently on offer for one image: remember
+ * the host it points at under 'skipMove', the same self-expiring shape
+ * staxx_update_skip() gives 'skip' — staxx_updates_moved_for_stack() honours
+ * it only while the recorded move still points at that same host, so a
+ * template that moves house a second time surfaces again rather than
+ * staying silent for ever because of a dismissal of the first move. Same
+ * allowlist as staxx_update_skip(): the image must already be a key in the
+ * state file, so a request cannot invent an entry.
+ */
+function staxx_update_skip_move(string $image, string &$error): bool {
+  $error = '';
+  $state  = staxx_update_state();
+  $images = (array)$state['images'];
+
+  if (!array_key_exists($image, $images)) {
+    $error = 'This image has not been checked yet, so there is nothing to skip.';
+    return false;
+  }
+
+  $entry = $images[$image];
+  $host  = (string)($entry['move']['host'] ?? '');
+  if ($host === '') {
+    $error = 'There is no registry move recorded for this image, so there is nothing to skip.';
+    return false;
+  }
+
+  $entry['skipMove'] = $host;
+  $images[$image]    = $entry;
+
+  staxx_update_state_save(['images' => $images]);
+  return true;
+}
+
+/**
+ * The `moved` map for the `read` reply — see PLAN_61's wire contract. Per
+ * service, the registry-move fact staxx_update_check() already proved and
+ * stored, reshaped for the editor: repo (registry-free, so the browser can
+ * notice a hand-edited line), host, the tag proved present there, up to
+ * three newest tags, and a reason composed server-side because only the
+ * server knows both registries. A pure read of cached compose metadata and
+ * the state file — no network, so opening the editor stays cheap.
+ *
+ * Guarded by function_exists() for the same reason staxx_rebuild_due() is:
+ * staxx_links_repo_path() lives in Links.php, which requires this file, so
+ * requiring it back would be a cycle. action.php requires both, which is the
+ * only place this is called from.
+ *
+ * @return array<string,array{repo:string,host:string,tag:string,tags:string[],reason:string}>
+ */
+function staxx_updates_moved_for_stack(string $stack): array {
+  if (!function_exists('staxx_links_repo_path')) return [];
+
+  // Same cheap lookup staxx_updates_for_row() uses, rather than
+  // staxx_list_stacks() — see its own comment for why.
+  $file = '';
+  foreach (staxx_scan_stacks()['stacks'] as $s) {
+    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
+  }
+  $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false, 'services' => []];
+  if (!$meta['ok']) return [];
+
+  $images = (array)staxx_update_state()['images'];
+  $out = [];
+  foreach ($meta['services'] as $svc => $svcMeta) {
+    $image = trim((string)($svcMeta['image'] ?? ''));
+    if ($image === '') continue;
+
+    $move = $images[$image]['move'] ?? null;
+    if (!is_array($move) || ($move['host'] ?? '') === '') continue;
+
+    $skipped = ($images[$image]['skipMove'] ?? '') === $move['host'];
+    if ($skipped) continue;
+
+    $out[$svc] = [
+      'repo'   => staxx_links_repo_path($image),
+      'host'   => (string)$move['host'],
+      'tag'    => (string)($move['tag'] ?? ''),
+      'tags'   => array_values((array)($move['tags'] ?? [])),
+      'reason' => (string)($move['reason'] ?? ''),
+    ];
+  }
+  return $out;
 }
 ?>

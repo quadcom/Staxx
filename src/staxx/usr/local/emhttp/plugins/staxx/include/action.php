@@ -189,7 +189,14 @@ switch ($action) {
   case 'read':
     $body = staxx_read_stack($name, $error);
     if ($body === null) staxx_reply(['ok' => false, 'error' => $error]);
-    staxx_reply(['ok' => true, 'name' => $name, 'body' => $body, 'fingerprint' => md5($body)]);
+    $reply = ['ok' => true, 'name' => $name, 'body' => $body, 'fingerprint' => md5($body)];
+    // PLAN_61 — the registry-move facts for this stack's services, if any.
+    // Absent entirely when there is nothing to say, per the wire contract:
+    // an empty array would encode as `[]`, not the `{}` the contract expects,
+    // so the key itself is left out rather than sent empty.
+    $moved = staxx_updates_moved_for_stack($name);
+    if ($moved !== []) $reply['moved'] = $moved;
+    staxx_reply($reply);
 
   // ---- create a new stack, or overwrite an existing one ----
   case 'save':
@@ -838,6 +845,13 @@ switch ($action) {
   // ---- dismiss the version currently on offer for one image ----
   case 'update-skip':
     if (!staxx_update_skip((string)($_POST['image'] ?? ''), $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
+
+  // ---- dismiss the registry-move hint currently on offer for one image ----
+  case 'update-skip-move':
+    if (!staxx_update_skip_move((string)($_POST['image'] ?? ''), $error)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
     staxx_reply(['ok' => true]);

@@ -270,6 +270,11 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
     // now — so it gets the same quiet treatment as built/missing rather
     // than error's louder colour.
     'tagmissing' => 'staxx-updatepill--tagmissing',
+    // A registry move is the same kind of fact, not an alarm — see
+    // PLAN_61 — so it reuses tagmissing's quiet styling rather than a class
+    // of its own; the two can be split apart later if they ever need to
+    // look different.
+    'moved'      => 'staxx-updatepill--tagmissing',
   ][$state] ?? '';
   if ($cls === '') return '';
 
