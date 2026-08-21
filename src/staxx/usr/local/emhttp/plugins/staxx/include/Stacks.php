@@ -2286,6 +2286,17 @@ function staxx_selftest(): array {
     if (staxx_review_file($found['dir']) !== '') $awaitingReview++;
   }
 
+  // PLAN_61 stage 4 — reads the update-check state file staxx_updates_moved_
+  // for_stack() already caches; no network of its own. Guarded because this
+  // file is loadable on its own (see the troubleshooting one-liner in
+  // stacks.js), and Updates.php is then not necessarily loaded.
+  $movedLines = function_exists('staxx_updates_moved_report') ? staxx_updates_moved_report() : null;
+  $movedReport = $movedLines === null
+    ? 'not checked — the update-checking module did not load'
+    : ($movedLines === []
+        ? 'none — every catalogued image is still pulling from where its template currently publishes'
+        : implode("\n  ", $movedLines));
+
   $canWrite = false;
   $writeErr = '';
   if (!is_dir($root)) {
@@ -2381,6 +2392,7 @@ function staxx_selftest(): array {
     'stacks found'        => (string)$dirs,
     'folders found'       => (string)$folds,
     'stacks awaiting review' => (string)$awaitingReview,
+    'images pulling from a registry their template has left' => $movedReport,
     'unraid templates on disk'  => $templatesReport,
     'compose manager projects on disk' => $projectsReport,
     'containers matching neither' => 'needs docker — see the Import panel, not this list',

@@ -197,12 +197,53 @@ ok('a dismissed hint stays dismissed', !isset($movedAfterSkip['moved']));
 
 // The template moves house a second time — same image, a different new host.
 $state = staxx_update_state();
-$state['images'][$movedImage]['move']['host'] = 'codeberg.example.io';
+// Host and reason are written together by the check pass and can never
+// disagree in real use, so the fixture keeps them in step too — a test whose
+// own output contradicts itself sends the next reader chasing a phantom.
+$state['images'][$movedImage]['move']['host']   = 'codeberg.example.io';
+$state['images'][$movedImage]['move']['reason'] =
+  'The template for this app now publishes at codeberg.example.io. Docker Hub still '
+  . 'answers, but it is no longer where updates are pushed.';
 staxx_update_state_save($state);
 
 $movedAfterRevive = staxx_updates_moved_for_stack($stackName);
 ok('a dismissed hint revives when the template moves somewhere new',
    isset($movedAfterRevive['moved']) && $movedAfterRevive['moved']['host'] === 'codeberg.example.io');
+
+/* ------------------------------- 5. staxx_updates_moved_report() -------- */
+// Stage 4's one-off drift report: one line per drifted image, built from the
+// state file alone. It deliberately carries NO stack/service attribution —
+// getting that would mean parsing every stack's compose file, which shells
+// out on a cache miss and could blow the 15-second budget the browser gives
+// the self-test. Asserted here so nobody "improves" it back into a stack walk
+// without meeting that constraint.
+
+$report = staxx_updates_moved_report();
+ok('the drift report has exactly one line', count($report) === 1);
+if ($report) {
+  ok('it names the address written in the file',
+     strpos($report[0], 'ich777/rustdesk-server-aio:latest ->') === 0, $report[0]);
+  ok('it names the address the template now uses',
+     strpos($report[0], '-> codeberg.example.io/ich777/rustdesk-server-aio:latest') !== false, $report[0]);
+  ok('it explains what the drift means, not just that it exists',
+     strlen($report[0]) > strlen('ich777/rustdesk-server-aio:latest -> '
+       . 'codeberg.example.io/ich777/rustdesk-server-aio:latest. '), $report[0]);
+}
+
+// staxx_selftest() is the actual surface this stage adds to — the drifted
+// case must reach its report key as the same one-line fact.
+$key = 'images pulling from a registry their template has left';
+$selftest = staxx_selftest();
+ok('the self-test carries the drift line',
+   isset($selftest[$key]) && strpos($selftest[$key], 'codeberg.example.io') !== false,
+   $selftest[$key] ?? '(missing)');
+
+// Undo the revive and re-dismiss, so nothing has moved as far as the report
+// is concerned — the "nothing to see" case must say so, not print nothing.
+staxx_update_skip_move($movedImage, $err);
+ok('with every move dismissed, the report is empty', staxx_updates_moved_report() === []);
+ok('and the self-test says so in one sentence',
+   strpos(staxx_selftest()[$key], 'none — ') === 0, staxx_selftest()[$key]);
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

@@ -30,3 +30,10 @@ src/**/event/*    text eol=lf
 *.txz    binary
 *.png    binary
 *.jpg    binary
+
+# The certificate fixture in tests/fixtures/ exists to prove a binary
+# companion file survives a round trip. `text=auto` above only *guesses*, and
+# it guesses right today solely because these bytes contain NULs — a .der
+# without them would be normalised and the fixture would silently stop testing
+# what it was built to test.
+*.der    binary

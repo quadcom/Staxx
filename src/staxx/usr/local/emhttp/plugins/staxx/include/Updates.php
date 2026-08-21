@@ -1500,4 +1500,42 @@ function staxx_updates_moved_for_stack(string $stack): array {
   }
   return $out;
 }
+
+/**
+ * PLAN_61 stage 4 — a one-off list of every image, across every stack,
+ * currently pointed at a registry its catalogue template has left: one line
+ * each, naming the stack, the service, the address written in the file and
+ * the address the template now uses. Calls staxx_updates_moved_for_stack()
+ * per stack rather than re-deriving the join, so this can only ever report a
+ * move the periodic update check has already proved (the tag named really
+ * does answer at the new address) — never the raw join on its own, which
+ * cannot promise that. Same reason it is safe inside the self-test's
+ * no-network half: it is a read of the cached state file and cached compose
+ * metadata, nothing else.
+ *
+ * @return string[] one line per drifted image, in stack order.
+ */
+function staxx_updates_moved_report(): array {
+  if (!function_exists('staxx_links_repo_path')) return [];
+
+  // Built from the state file alone — no stack walk, no compose parsing. The
+  // stack/service attribution that would add costs the one property the
+  // self-test promises: staxx_compose_meta() shells out to `compose config`
+  // on a cache miss, so walking every stack from cold could spend 15 seconds
+  // each and blow the 15-second budget the browser gives this call, leaving
+  // the self-test blank exactly when someone is using it to find out why the
+  // page is misbehaving. The image reference is the actionable identity
+  // anyway, and the table already badges the row it belongs to.
+  $lines = [];
+  foreach ((array)staxx_update_state()['images'] as $image => $entry) {
+    $move = is_array($entry) ? ($entry['move'] ?? null) : null;
+    if (!is_array($move) || ($move['host'] ?? '') === '') continue;
+    if ((string)($entry['skipMove'] ?? '') === (string)$move['host']) continue;
+
+    $lines[] = $image.' -> '.$move['host'].'/'.staxx_links_repo_path((string)$image)
+             . ':'.(string)($move['tag'] ?? '').'. '.(string)($move['reason'] ?? '');
+  }
+  sort($lines);
+  return $lines;
+}
 ?>
