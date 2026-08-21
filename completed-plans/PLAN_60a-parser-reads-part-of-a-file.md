@@ -3,6 +3,19 @@
 Sub-plan of `PLAN_60.md` Phase 2, called for by that phase itself. Written 2026-08-21, after
 Phase 1.1 landed and turned this from a latent fault into a blocking one.
 
+## Status: COMPLETE, 2026-08-21
+
+All four steps in, and the three red assertions went green by deliberate refusal with the file
+byte-identical, which was the whole acceptance test. Two things worth carrying forward:
+
+- **Step 4 needed no code.** `lint()` already folds every `doc.warnings` entry in as a warning, and
+  `'unparsable'` was already in `LINT_ERROR_REASONS`, so the new seal and the new warning both
+  surface on the margin with nothing added.
+- **Two functions were not covered by the two choke points.** `addService()` and `restoreSection()`
+  call `splice()` directly rather than going through `ensurePath`/`insertChild`, so each needed its
+  own guard. Seven of the nine writers the plan listed were covered by the choke points; those two
+  were not. Anything added later that splices lines itself needs the same guard.
+
 ## Why this moved to the front of the queue
 
 PLAN_60 sequenced Phase 2 after Phase 1. Running Phase 1.1 proved that ordering wrong.

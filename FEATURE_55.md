@@ -2,7 +2,8 @@
 
 **Concept only. No code plan here.** Extracted from `PLAN_55.md` (now closed) on 2026-08-21, so the
 idea survives without a stale implementation plan attached to it. The code plan becomes `PLAN_61.md`
-and must be written **after** `PLAN_60.md` has landed — see *Before this is planned* at the end.
+and is now unblocked on that count: `PLAN_60` landed on 2026-08-21. One gate remains — see
+*Before this is planned* at the end.
 
 **Blocked on one decision from Adrian: number 10 below.**
 
@@ -113,14 +114,25 @@ never touched. Weighted at the refusals, as ever:
 
 ## Before this is planned
 
-Two gates, both outside this document:
+One gate left. The other is cleared.
 
 1. **Decision 10 needs an answer.** Nothing is startable without it.
-2. **`PLAN_60.md` must have landed first.** That plan changes the compose-model write path, which is
-   what decision 7 depends on. Written against today's behaviour, the code plan would specify a
-   write that no longer exists — and worse, that write currently corrupts any file indented with
-   four spaces. Once PLAN_60 is in, the contract decision 7 must be written against is: indentation
-   comes from the parent's existing children, a failed insert rolls back rather than leaving half a
-   line, and a value containing a backslash is emitted single-quoted.
+2. ~~`PLAN_60.md` must have landed first.~~ **Cleared 2026-08-21 — it has landed**
+   (`completed-plans/PLAN_60-full-tree-review-fixes.md`). The write path decision 7 depends on was
+   corrupting any file indented with four spaces at the time this document was written, so a code
+   plan drafted then would have specified a write that no longer exists.
 
-Everything else here only *reads*, so it is unaffected by PLAN_60 and does not need revisiting.
+**The contract decision 7 must now be written against**, all four proven by test:
+
+- indentation for a new nested key comes from the parent's existing children, not a fixed two-space
+  step;
+- a failed structural write rolls back, leaving the file byte-identical, rather than stranding a
+  half-built line;
+- a value containing a backslash is emitted single-quoted, and one containing a line break is
+  refused outright;
+- **a file the parser could only read part of refuses any write that adds or removes structure.**
+  This one is new since the original plan and matters most here: a registry switch rewrites one
+  `image:` line in place, which is *not* a structural write and so is still allowed — but the code
+  plan must say that explicitly rather than leave it to be discovered.
+
+Everything else here only *reads*, so it is unaffected and does not need revisiting.

@@ -43,7 +43,8 @@ These are the constraints the project is built around, in priority order.
 ## Planned scope
 
 - Compose engine — managing stacks as ordinary directories of ordinary files is **built**;
-  installing the compose CLI itself is not — see item 12.3 in `PLAN_60.md` for the gap.
+  installing the compose CLI itself is not — the page says to install the Docker Compose Manager
+  plugin from Community Applications instead.
 - Compose → form UI, with comment-preserving write-back — **built**. The form is generated from
   the compose file's `x-unraid` metadata, 22 field groups covering everything from ports and
   volumes to update policy — the largest piece of engineering in the plugin.

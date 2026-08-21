@@ -67,7 +67,9 @@ failure; its negative cases (what the schema must *reject*) matter more than the
 compose files, each built to exercise one quirk (comments, anchors, odd indentation, duplicate
 field names, and so on), that `yaml_roundtrip.js` and others parse, edit and write back to prove
 nothing is lost. It lives in the repository so anyone can reproduce the numbers rather than trust
-a claim. `PLAN_60a.md` is the sub-plan tracking the parser work that corpus was built to check.
+a claim. `completed-plans/PLAN_60a-parser-reads-part-of-a-file.md` records the parser work that
+corpus was built to check, including the two writers that splice lines themselves and so need their
+own guard against editing a file only partly read.
 
 ## Deploying to the test server
 
