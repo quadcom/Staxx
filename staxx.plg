@@ -16,6 +16,7 @@
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
 <!ENTITY packageMD5           "TODO-MD5">
+<!ENTITY packageSHA256        "TODO-SHA256">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -54,7 +55,9 @@
 -->
 <FILE Name="&pluginLOC;/&packageFile;" Run="upgradepkg --install-new --reinstall">
 <URL>&packageURL;</URL>
+<!-- Unraid prefers SHA256 when both are present; MD5 stays as the fallback for older releases. -->
 <MD5>&packageMD5;</MD5>
+<SHA256>&packageSHA256;</SHA256>
 </FILE>
 
 <!--
@@ -95,9 +98,17 @@ if [[ ! -f "/boot/config/plugins/staxx/staxx.cfg" ]]; then
      "/boot/config/plugins/staxx/staxx.cfg"
 fi
 
+# Unconditional (not just on first install): the file holds a Docker Hub access
+# token, so it must not be readable by any other login on the box.
+chmod 0600 "/boot/config/plugins/staxx/staxx.cfg" 2>/dev/null || true
+
 chmod +x /usr/local/emhttp/plugins/staxx/scripts/* 2>/dev/null || true
 
-/usr/local/emhttp/plugins/staxx/scripts/apply_settings
+# Non-fatal on purpose: this is the one call in this block that must not trip
+# set -e. A settings script hiccup here is recoverable at the next settings
+# save or reboot, and should not be reported as a failed plugin install.
+/usr/local/emhttp/plugins/staxx/scripts/apply_settings \
+  || echo "warning: settings could not be applied yet; they will be applied on the next settings save or reboot."
 
 echo ""
 echo "-----------------------------------------------------------"
@@ -134,6 +145,21 @@ removepkg "staxx-"* 2>/dev/null || true
 removepkg "stack.manager-"* 2>/dev/null || true   # a pre-rename install
 rm -rf "/usr/local/emhttp/plugins/staxx"
 rm -f  "/boot/config/plugins/staxx/"*.txz
+
+# Unraid's cron builder concatenates every *.cron file under a plugin's own folder
+# on the flash drive into root's crontab, so leaving ours behind keeps the server
+# scheduling passes whose scripts have just been deleted.
+rm -f "/boot/config/plugins/staxx/staxx.cron"
+if [[ -x /usr/local/sbin/update_cron ]]; then /usr/local/sbin/update_cron || true; fi
+
+# Only ever undo a sign-in this plugin performed — never an administrator's own
+# Docker Hub session from outside StaXX.
+if [[ -f "/boot/config/plugins/staxx/hub_login" ]]; then
+  docker logout >/dev/null 2>&1 || true
+  rm -f "/boot/config/plugins/staxx/hub_login"
+fi
+
+rm -rf "/tmp/staxx"   # job logs, stats snapshots, icon cache — all regenerate
 
 echo ""
 echo "-----------------------------------------------------------"

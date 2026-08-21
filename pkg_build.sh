@@ -39,6 +39,13 @@ trap 'rm -rf "${STAGE}"' EXIT
 
 cp -a "${SRC_DIR}/." "${STAGE}/"
 
+# The Plugin Manager shows a README from the installed folder. Copied at build
+# time rather than kept as a second copy in the tree, which would drift.
+if [[ -f "${REPO_ROOT}/README.md" ]]; then
+  cp "${REPO_ROOT}/README.md" \
+    "${STAGE}/usr/local/emhttp/plugins/${NAME}/README.md"
+fi
+
 # Permissions are part of the package, and the shipped tree comes off a
 # filesystem that may not preserve them (this repo is developed on Windows).
 # Set them explicitly rather than trusting what was checked out.
@@ -63,11 +70,13 @@ rm -f "${PKG_FILE}"
 tar -C "${STAGE}" -cJf "${PKG_FILE}" --owner=0 --group=0 .
 
 MD5="$(md5sum "${PKG_FILE}" | cut -d' ' -f1)"
+SHA256="$(sha256sum "${PKG_FILE}" | cut -d' ' -f1)"
 
 echo
 echo "    package : ${PKG_FILE}"
 echo "    size    : $(du -h "${PKG_FILE}" | cut -f1)"
 echo "    md5     : ${MD5}"
+echo "    sha256  : ${SHA256}"
 echo
 
 if [[ "${UPDATE_PLG}" == "--update-plg" ]]; then
@@ -75,6 +84,7 @@ if [[ "${UPDATE_PLG}" == "--update-plg" ]]; then
   sed -i \
     -e "s|<!ENTITY version              \"[^\"]*\">|<!ENTITY version              \"${VERSION}\">|" \
     -e "s|<!ENTITY packageMD5           \"[^\"]*\">|<!ENTITY packageMD5           \"${MD5}\">|" \
+    -e "s|<!ENTITY packageSHA256 *\"[^\"]*\">|<!ENTITY packageSHA256        \"${SHA256}\">|" \
     "${PLG}"
 
   # XML entities do not expand inside CDATA, so the cleanup block carries a

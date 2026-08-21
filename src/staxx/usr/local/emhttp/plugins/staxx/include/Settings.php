@@ -368,7 +368,9 @@ function staxx_settings_save(
     $error = 'Could not write '.$tmp.'.';
     return false;
   }
-  @chmod($tmp, 0644);
+  // Owner-only: this file holds the Docker Hub token (HUB_TOKEN) in the clear,
+  // so no other login on the box should be able to read it.
+  @chmod($tmp, 0600);
   if (!@rename($tmp, STAXX_CFG)) {
     @unlink($tmp);
     $error = 'Could not save the settings file — the temporary file could not be put in place.';

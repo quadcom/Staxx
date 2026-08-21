@@ -62,11 +62,16 @@ if [[ -d "${PLUGIN_DIR}" ]]; then
   docker_tab_live="${PLUGIN_DIR}/Docker.page"
   docker_tab_shadow="${PLUGIN_DIR}/shadow/Docker.page.tmpl"
   if [[ "${takeover_docker_tab}" == "true" ]]; then
-    if [[ ! -f "${docker_tab_shadow}" ]]; then
-      echo "error: ${docker_tab_shadow} is missing, so the Docker menu cannot be taken over." >&2
-      exit 1
+    if [[ -f "${docker_tab_shadow}" ]]; then
+      cp "${docker_tab_shadow}" "${docker_tab_live}"
+    else
+      # Never exit non-zero here: this script is run by the installer and after
+      # every settings save, and under set -e a failure would fail the whole
+      # install. Removing the live copy is the safe outcome — a stale one would
+      # shadow the stock Docker button with a page whose template has gone.
+      echo "warning: ${docker_tab_shadow} is missing, so the Docker menu was not taken over." >&2
+      rm -f "${docker_tab_live}"
     fi
-    cp "${docker_tab_shadow}" "${docker_tab_live}"
   else
     rm -f "${docker_tab_live}"
   fi

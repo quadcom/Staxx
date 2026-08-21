@@ -62,6 +62,21 @@ case "${MODE}" in
     else
       echo "    Settings kept at ${CFG_DIR} (use --purge to remove them)"
     fi
+
+    # Unraid's cron builder concatenates every *.cron file under a plugin's own
+    # folder on the flash drive into root's crontab, so leaving ours behind keeps
+    # the server scheduling passes whose scripts have just been deleted.
+    rm -f "${CFG_DIR}/${PLUGIN}.cron"
+    if [[ -x /usr/local/sbin/update_cron ]]; then /usr/local/sbin/update_cron || true; fi
+
+    # Only ever undo a sign-in StaXX performed — never an administrator's own.
+    if [[ -f "${CFG_DIR}/hub_login" ]]; then
+      docker logout >/dev/null 2>&1 || true
+      rm -f "${CFG_DIR}/hub_login"
+    fi
+
+    rm -rf "/tmp/${PLUGIN}"   # job logs, stats snapshots, icon cache — all regenerate
+
     # Undo the registration marker below, so nothing of a dev install lingers.
     rm -f "/var/log/plugins/${PLUGIN}.plg"
     echo
@@ -81,6 +96,10 @@ echo "==> Installing ${PLUGIN} from ${SRC}"
 rm -rf "${DEST}"
 mkdir -p "${DEST}"
 cp -a "${SRC}/." "${DEST}/"
+
+# The deploy step does not upload the README today; carry it in if it is
+# sitting beside the script, but a dev install must not fail without one.
+[[ -f "${HERE}/README.md" ]] && cp "${HERE}/README.md" "${DEST}/README.md" || true
 
 # Unraid splits .page files on a literal newline-dash-dash-dash-newline. A file
 # copied from Windows with carriage returns fails that split, and the page is
@@ -118,6 +137,8 @@ if [[ ! -f "${CFG_DIR}/${PLUGIN}.cfg" ]]; then
 else
   echo "    kept existing ${CFG_DIR}/${PLUGIN}.cfg"
 fi
+# Holds a Docker Hub access token, so no other login on the box may read it.
+chmod 0600 "${CFG_DIR}/${PLUGIN}.cfg" 2>/dev/null || true
 bash "${DEST}/scripts/apply_settings"
 
 echo
