@@ -1,0 +1,73 @@
+# Interpolation, mounts and markers — the main hand-testing stack.
+#
+# Three things are being exercised here at once:
+#
+#   1. Values that come from the .env file next to this one rather than from
+#      this file. The form must show "${HTTP_PORT}" as something editable, and
+#      must NOT silently write 15107 over it when saving.
+#
+#   2. Volume mounts in every shape the short form allows — a plain pair, a
+#      read-only pair, and one whose host path does not exist yet.
+#
+#   3. The two comment markers, which are the only presentation metadata this
+#      plugin stores. They sit at the END of the comment, after the prose:
+#
+#        -!S   this value is a secret — hidden when Sanitise is on
+#        -!R   this value must not be left empty
+#
+# There is deliberately no `fields:` block. Everything a person needs to read
+# comes from the comment on the line itself.
+#
+# This stack genuinely serves a page, so the web-interface link is clickable.
+
+name: busybox-http
+
+services:
+  page-server:
+    image: busybox:1.36
+    container_name: page-server
+    restart: unless-stopped
+    # GPU test — the MEASURABLE case.
+    #
+    # renderD128 is the Intel Arc on this machine. intel_gpu_top reports a
+    # process id per GPU user, so usage here can be traced back to this
+    # container and the GPU column should show a real percentage — 0.0% while
+    # nothing is transcoding, which is a measurement rather than an absence.
+    #
+    # See the note in 03-multi-tier about node numbering not being fixed.
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128   # the GPU this container may use
+    ports:
+      - "${HTTP_PORT}:80"                         # the page you open -!R
+    volumes:
+      - /mnt/user/appdata/page-server:/config     # settings and state -!R
+      - /mnt/user/media/films:/media/films:ro     # films, mounted read-only
+      - /mnt/user/backups/page-server:/backup     # where backups are written
+    environment:
+      TZ: ${TZ}                                   # timezone for timestamps
+      SITE_TITLE: ${SITE_TITLE}                   # heading at the top of the page -!R
+      SITE_MESSAGE: ${SITE_MESSAGE}               # the line under the title
+      ADMIN_TOKEN: not-a-real-token               # used to reach the admin page -!S -!R
+      SESSION_KEY: also-not-real                  # -!S
+      LOG_LEVEL: info                             # how chatty the logs are
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /www
+        printf '<title>%s</title><h1>%s</h1><p>%s</p>' \
+          "$$SITE_TITLE" "$$SITE_TITLE" "$$SITE_MESSAGE" > /www/index.html
+        exec httpd -f -v -p 80 -h /www
+
+    x-unraid:
+      name: Page Server
+      webui: "http://[IP]:[PORT:80]/"
+      overview: |
+        Serves a single page. Open the web interface to confirm the stack is
+        running and that the values from the .env file came through.

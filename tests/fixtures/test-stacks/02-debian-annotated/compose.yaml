@@ -1,0 +1,54 @@
+# Fully annotated stack — the mirror image of 01, which carries nothing at all.
+#
+# Every setting here has a note beside it, and both markers appear, so the form
+# should be almost entirely hand-written. "Almost" is the honest word: the name
+# of each box is still worked out from the setting itself, because there is
+# nowhere to write one and nowhere that needs to be.
+#
+# What this stack is for is checking that:
+#
+#   * every note turns up as help text under the right box, in file order
+#   * -!R on four settings makes four boxes refuse an empty save
+#   * -!S on one hides it under Sanitise, and the others stay visible
+#   * a note edited in the form comes back as the comment on that same line,
+#     with nothing else in the file moved
+
+name: debian-annotated
+
+x-unraid:
+  version: 1
+  name: Debian Toolbox
+  icon: https://www.debian.org/logos/openlogo-nd-100.png
+  category: Tools:Utilities
+  project: https://www.debian.org
+  support: https://lists.debian.org
+  overview: |
+    A plain Debian container that sits and does nothing. Exists so the form
+    renderer has something with complete metadata to draw.
+
+services:
+  debian-toolbox:
+    image: debian:bookworm-slim
+    container_name: debian-toolbox
+    restart: unless-stopped
+    hostname: toolbox
+    ports:
+      - "15102:15102"                    # the page you open -!R
+    volumes:
+      - ./data/config:/config            # settings live here. Back this up -!R
+      - ./data/scratch:/scratch          # temporary working files. Safe to delete
+    environment:
+      PUID: "99"                         # the user the container runs as -!R
+      PGID: "100"                        # the group the container runs as -!R
+      TZ: America/Toronto                # affects timestamps written by anything inside
+      TOOLBOX_GREETING: Hello from the toolbox   # free text, shown nowhere. Exercises a plain text box
+      TOOLBOX_LOG_LEVEL: info            # how chatty the logs are: debug, info, warn or error
+      TOOLBOX_SECRET: not-a-real-secret  # stands in for a password, to test Sanitise -!S
+    command: ["sleep", "infinity"]
+
+    x-unraid:
+      name: Debian Toolbox
+      webui: "http://[IP]:[PORT:15102]/"
+      overview: |
+        Nothing listens on the port — the link is here so the UI has a
+        `[PORT:]` token to substitute.

@@ -584,8 +584,20 @@ try {
   // half-built one.
   $oldDir = STAXX_CA_DIR.'.old';
   staxx_ca_index_rmtree($oldDir);
-  if (is_dir(STAXX_CA_DIR)) rename(STAXX_CA_DIR, $oldDir);
-  rename($newDir, STAXX_CA_DIR);
+
+  $hadOld = is_dir(STAXX_CA_DIR);
+  if ($hadOld && !rename(STAXX_CA_DIR, $oldDir)) {
+    throw new Exception('Could not move the previous catalogue cache aside. Try again in a minute.');
+  }
+
+  if (!rename($newDir, STAXX_CA_DIR)) {
+    // Put the previous cache straight back rather than leave the directory
+    // staxx_ca_status() reads from missing entirely while status.json is
+    // about to be written 'ready'.
+    if ($hadOld) @rename($oldDir, STAXX_CA_DIR);
+    throw new Exception('Could not install the new catalogue cache. Try again in a minute.');
+  }
+
   staxx_ca_index_rmtree($oldDir);
 
   staxx_ca_index_status('ready', 'The applications catalogue is up to date.', time(), $result['count']);
@@ -603,9 +615,10 @@ try {
   @unlink(STAXX_CA_DIR.'/feed.json.download');
   staxx_ca_index_rmtree(STAXX_CA_DIR.'.new');
 
-  // Released here unconditionally: the swap above already carries the lock
-  // directory away inside the old ca/ and deletes it, so this is a no-op on
-  // success and the real release on any failure caught above.
+  // Released here unconditionally. The lock lives outside STAXX_CA_DIR
+  // precisely so the swap above never carries it away — released before the
+  // new cache was actually in place would let a second rebuild start against
+  // a half-installed one.
   @rmdir(STAXX_CA_LOCK);
 }
 ?>

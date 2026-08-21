@@ -1,0 +1,13 @@
+name: alpine-minimal
+
+services:
+  tiny-runner:
+    image: alpine:3.20
+    container_name: tiny-runner
+    restart: unless-stopped
+    ports:
+      - "15101:15101"
+    environment:
+      TZ: America/Toronto
+      RUNNER_MODE: idle
+    command: ["sleep", "infinity"]

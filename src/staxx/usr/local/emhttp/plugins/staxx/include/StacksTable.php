@@ -78,11 +78,12 @@ function staxx_address_html(array $addresses): string {
 
   foreach ($addresses as $a) {
     $ports = $a['ports'] ?? [];
-    $label = (string)($a['label'] ?? $a['ip'] ?? '');
+    $ip    = (string)($a['ip'] ?? '');
+    $label = (string)($a['label'] ?? $ip);
     if ($label === '') continue;
 
-    $title = ($a['ip'] !== $label && $a['ip'] !== '')
-      ? ' title="'.htmlspecialchars(sprintf(_('on %s'), $a['ip'])).'"'
+    $title = ($ip !== $label && $ip !== '')
+      ? ' title="'.htmlspecialchars(sprintf(_('on %s'), $ip)).'"'
       : '';
 
     $name = '<span class="staxx-addr-label">'.htmlspecialchars($label).'</span>';
@@ -139,8 +140,8 @@ function staxx_merged_addresses(array $containers, array $webuiById = []): array
     foreach ($addresses as $a) {
       $key = (string)($a['label'] ?? $a['ip'] ?? '');
       if ($key === '') continue;
-      if (!isset($groups[$key])) $groups[$key] = ['ip' => $a['ip'], 'ports' => []];
-      foreach ($a['ports'] as $port) $groups[$key]['ports'][$port] = true;
+      if (!isset($groups[$key])) $groups[$key] = ['ip' => $a['ip'] ?? '', 'ports' => []];
+      foreach ((array)($a['ports'] ?? []) as $port) $groups[$key]['ports'][$port] = true;
     }
   }
 
@@ -274,7 +275,12 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
 
   $label  = htmlspecialchars((string)($u['label'] ?? ''));
   $image  = htmlspecialchars((string)($u['image'] ?? ''));
-  $source = htmlspecialchars((string)($u['source'] ?? ''));
+  // Same ^https?:// gate every href in this file uses (see
+  // staxx_row_actions_html() below) — stacks.js opens this value with
+  // window.open(), so an unrecognised scheme is dropped here rather than
+  // trusted through to it.
+  $rawSource = (string)($u['source'] ?? '');
+  $source = preg_match('~^https?://~i', $rawSource) ? htmlspecialchars($rawSource) : '';
   $title  = (string)($u['tip'] ?? '');
   $titleAttr = $title !== '' ? ' title="'.htmlspecialchars($title).'"' : '';
 
@@ -853,12 +859,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
       $fTitle  = $autostart['available']
         ? staxx_boot_title($fBoot['mode'], $fWait, false, _('stacks'))
         : _('The boot list cannot be read while Docker is stopped.');
-      // Nothing to drag when the folder holds fewer than two stacks, or when
-      // there is only one folder to trade a place with in the first place.
-      $fGripOff = $row['count'] < 2 || $folderCount < 2;
-      $fGripWhy = $row['count'] < 2
-        ? _('This folder holds fewer than two stacks, so there is nothing to reorder.')
-        : _('There is only one folder, so there is nothing to reorder it against.');
+      // This grip drags the FOLDER itself, to trade places with another
+      // folder — how many stacks sit inside it is irrelevant to that; only
+      // whether there is a second folder to trade places with is.
+      $fGripOff = $folderCount < 2;
+      $fGripWhy = _('There is only one folder, so there is nothing to reorder it against.');
       // Sums its stacks' own pills (see PLAN_45 Part H) — a folder has no
       // image of its own to check.
       $fUpdate = staxx_updates_for_folder($row['id']);
@@ -1493,8 +1498,12 @@ function staxx_state_snapshot(): array {
     // 64 stacks, against 90ms for this whole refresh before it. Gating it here
     // takes that to a handful of files. See PLAN_48 on why this particular
     // function has to stay fast.
+    // Called once and kept — this and the 'declared' check just below both
+    // used to call staxx_stack_containers($s) separately.
+    $mine = staxx_stack_containers($s);
+
     $needWebui = false;
-    foreach (staxx_stack_containers($s) as $c) {
+    foreach ($mine as $c) {
       if (!(staxx_container_net()[$c['id']]['published'] ?? false)) { $needWebui = true; break; }
     }
     $declared = ($needWebui && $s['file'] !== '') ? staxx_compose_meta($s['file'])['services'] : [];
@@ -1503,7 +1512,6 @@ function staxx_state_snapshot(): array {
     // can find each row without knowing the container names in advance. That
     // matters the first time a stack is started: those rows were rendered from
     // the compose file and have no container name on them yet.
-    $mine       = staxx_stack_containers($s);
     $containers = [];
     $webuiById  = [];
     $seen       = [];

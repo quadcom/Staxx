@@ -61,7 +61,7 @@ var ROOT = path.join(__dirname, '..');
 
 function findComposeFiles() {
   var out = [];
-  ['scratch/test-stacks', 'examples'].forEach(function (dir) {
+  ['tests/fixtures/test-stacks', 'examples'].forEach(function (dir) {
     var base = path.join(ROOT, dir);
     if (!fs.existsSync(base)) return;
     fs.readdirSync(base).forEach(function (entry) {
@@ -202,7 +202,7 @@ FILES.forEach(function (file) {
 console.log('\nD. Sealing (07-yaml-quirks)');
 
 (function () {
-  var file = path.join(ROOT, 'scratch/test-stacks/07-yaml-quirks/compose.yaml');
+  var file = path.join(ROOT, 'tests/fixtures/test-stacks/07-yaml-quirks/compose.yaml');
   if (!fs.existsSync(file)) { ok('07-yaml-quirks present', false, 'file missing'); return; }
 
   var text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
@@ -261,7 +261,7 @@ console.log('\nD. Sealing (07-yaml-quirks)');
 console.log('\nE. Long-form ports and volumes (06-fedora-advanced)');
 
 (function () {
-  var file = path.join(ROOT, 'scratch/test-stacks/06-fedora-advanced/compose.yaml');
+  var file = path.join(ROOT, 'tests/fixtures/test-stacks/06-fedora-advanced/compose.yaml');
   if (!fs.existsSync(file)) { ok('06-fedora-advanced present', false, 'file missing'); return; }
 
   var text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
@@ -299,13 +299,13 @@ console.log('\nE. Long-form ports and volumes (06-fedora-advanced)');
   // Both halves of a long-form port are separately writable, on their own
   // lines, and neither disturbs the other.
   var d2 = Y.parse(text), f2 = Y.buildForm(d2);
-  Y.setPart(d2, f2, 'fedora-main/port/15108/tcp', 'host', '25108');
+  Y.setPart(d2, f2, 'fedora-main/port#0/15108/tcp', 'host', '25108');
   var after = Y.serialise(d2);
   ok('editing the host half moves one line', diffLines(text, after).length === 1,
      diffLines(text, after).join(', '));
 
   var d3 = Y.parse(text), f3 = Y.buildForm(d3);
-  Y.setPart(d3, f3, 'fedora-main/port/15108/tcp', 'container', '25108');
+  Y.setPart(d3, f3, 'fedora-main/port#0/15108/tcp', 'container', '25108');
   ok('editing the container half moves one line',
      diffLines(text, Y.serialise(d3)).length === 1);
 })();
@@ -321,10 +321,10 @@ console.log('\nE2. Host and container in a single short-form entry');
             '    volumes:\n      - /mnt/user/media:/media:ro\n';
 
   var cases = [
-    ['host port',      'a/port/8097/udp',  'host',      '9000', '      - "9000:8097/udp"'],
-    ['container port', 'a/port/8097/udp',  'container', '9001', '      - "8096:9001/udp"'],
-    ['host path',      'a/volume//media',  'host',      '/mnt/user/films', '      - /mnt/user/films:/media:ro'],
-    ['container path', 'a/volume//media',  'container', '/films', '      - /mnt/user/media:/films:ro']
+    ['host port',      'a/port#0/8097/udp',  'host',      '9000', '      - "9000:8097/udp"'],
+    ['container port', 'a/port#0/8097/udp',  'container', '9001', '      - "8096:9001/udp"'],
+    ['host path',      'a/volume#0//media',  'host',      '/mnt/user/films', '      - /mnt/user/films:/media:ro'],
+    ['container path', 'a/volume#0//media',  'container', '/films', '      - /mnt/user/media:/films:ro']
   ];
 
   cases.forEach(function (c) {
@@ -339,9 +339,9 @@ console.log('\nE2. Host and container in a single short-form entry');
 
   // The protocol and the mount mode are carried through untouched by both.
   var d = Y.parse(src), f = Y.buildForm(d);
-  Y.setPart(d, f, 'a/port/8097/udp', 'host', '1');
+  Y.setPart(d, f, 'a/port#0/8097/udp', 'host', '1');
   var f2 = Y.buildForm(Y.parse(Y.serialise(d)));
-  ok('protocol survives a host edit', !!Y.fieldById(f2, 'a/port/8097/udp'),
+  ok('protocol survives a host edit', !!Y.fieldById(f2, 'a/port#0/8097/udp'),
      f2.fields.map(function (x) { return x.id; }).join(', '));
 })();
 
@@ -362,7 +362,11 @@ console.log('\nE3. Notes and the two trailing markers');
             '      PLAIN: x\n';
 
   var f = Y.buildForm(Y.parse(src));
-  var get = function (t) { return Y.fieldById(f, 'a/env/' + t); };
+  // A mapping's index is its position among the file's own keys, so each
+  // name below needs its own suffix rather than one shared prefix.
+  var envIdx = { ADMIN_PASSWORD: 0, API_KEY: 1, SITE_TITLE: 2, SESSION_KEY: 3,
+                 REVERSED: 4, LOG_LEVEL: 5, PLAIN: 6 };
+  var get = function (t) { return Y.fieldById(f, 'a/env#' + envIdx[t] + '/' + t); };
 
   ok('a trailing -!S is read and stripped',
      get('ADMIN_PASSWORD').sensitive === true &&
@@ -395,49 +399,49 @@ console.log('\nE3. Notes and the two trailing markers');
   // Something that merely LOOKS like a marker, mid-sentence, is prose.
   var mid = Y.buildForm(Y.parse(
     'services:\n  a:\n    environment:\n      X: y   # -!S is how you mark a secret\n'));
-  var midf = Y.fieldById(mid, 'a/env/X');
+  var midf = Y.fieldById(mid, 'a/env#0/X');
   ok('a marker mid-sentence stays part of the note',
      midf.sensitive === false && midf.note === '-!S is how you mark a secret',
      JSON.stringify(midf.note));
 
   // Marking, un-marking and re-marking must land exactly where it started.
   var d = Y.parse(src), m = Y.buildForm(d);
-  Y.setComment(d, m, 'a/env/ADMIN_PASSWORD', 'the login password', false, false);
+  Y.setComment(d, m, 'a/env#0/ADMIN_PASSWORD', 'the login password', false, false);
   var without = Y.serialise(d);
   ok('un-marking drops only the marker',
      without.split('\n')[3] === '      ADMIN_PASSWORD: hunter2      # the login password',
      JSON.stringify(without.split('\n')[3]));
 
   var d2 = Y.parse(without), m2 = Y.buildForm(d2);
-  Y.setComment(d2, m2, 'a/env/ADMIN_PASSWORD', 'the login password', true, false);
+  Y.setComment(d2, m2, 'a/env#0/ADMIN_PASSWORD', 'the login password', true, false);
   ok('re-marking restores the original line',
      Y.serialise(d2).split('\n')[3] === src.split('\n')[3],
      'got: ' + JSON.stringify(Y.serialise(d2).split('\n')[3]));
 
   // Both markers must survive a full round trip in the fixed order.
   var d5 = Y.parse(src), m5 = Y.buildForm(d5);
-  Y.setComment(d5, m5, 'a/env/REVERSED', 'written the other way', true, true);
+  Y.setComment(d5, m5, 'a/env#4/REVERSED', 'written the other way', true, true);
   ok('both markers are re-emitted in a fixed order',
      Y.serialise(d5).split('\n')[7] === '      REVERSED: abc                # written the other way -!S -!R',
      JSON.stringify(Y.serialise(d5).split('\n')[7]));
 
   // A value with no comment at all must be able to gain one.
   var d3 = Y.parse(src), m3 = Y.buildForm(d3);
-  Y.setComment(d3, m3, 'a/env/PLAIN', 'newly written note', true, true);
+  Y.setComment(d3, m3, 'a/env#6/PLAIN', 'newly written note', true, true);
   ok('a note can be added where there was none',
      Y.serialise(d3).split('\n')[9] === '      PLAIN: x  # newly written note -!S -!R',
      JSON.stringify(Y.serialise(d3).split('\n')[9]));
 
   // And lose it again without leaving a bare hash behind.
   var d4 = Y.parse(src), m4 = Y.buildForm(d4);
-  Y.setComment(d4, m4, 'a/env/LOG_LEVEL', '', false, false);
+  Y.setComment(d4, m4, 'a/env#5/LOG_LEVEL', '', false, false);
   ok('clearing a note removes the comment',
      Y.serialise(d4).split('\n')[8] === '      LOG_LEVEL: info',
      JSON.stringify(Y.serialise(d4).split('\n')[8]));
 
   // A bare marker with no prose.
   var d6 = Y.parse(src), m6 = Y.buildForm(d6);
-  Y.setComment(d6, m6, 'a/env/PLAIN', '', false, true);
+  Y.setComment(d6, m6, 'a/env#6/PLAIN', '', false, true);
   ok('a marker with no note needs no leading space',
      Y.serialise(d6).split('\n')[9] === '      PLAIN: x  # -!R',
      JSON.stringify(Y.serialise(d6).split('\n')[9]));
@@ -1006,11 +1010,11 @@ console.log('\nH2. Naming a variable');
 
   // Mapping form.
   var d = Y.parse(mapForm), f = Y.buildForm(d);
-  var tz = Y.fieldById(f, 'a/env/TZ');
+  var tz = Y.fieldById(f, 'a/env#0/TZ');
   ok('a mapping variable has a name box', !!tz && !!tz.parts.name && !!tz.parts.name.spot);
   ok('the name box holds the name', tz && tz.parts.name.value === 'TZ', tz && tz.parts.name.value);
 
-  Y.setPart(d, f, 'a/env/TZ', 'name', 'TIMEZONE');
+  Y.setPart(d, f, 'a/env#0/TZ', 'name', 'TIMEZONE');
   var after = Y.serialise(d);
   ok('renaming moves exactly one line', diffLines(mapForm, after).length === 1,
      diffLines(mapForm, after).join(', '));
@@ -1021,33 +1025,33 @@ console.log('\nH2. Naming a variable');
   // A colon in a key has to be quoted, or the key would be read only as far
   // as the colon and the rest would become the value.
   var d2 = Y.parse(mapForm), f2 = Y.buildForm(d2);
-  Y.setPart(d2, f2, 'a/env/TZ', 'name', 'a:b');
+  Y.setPart(d2, f2, 'a/env#0/TZ', 'name', 'a:b');
   ok('a colon in a name is quoted',
      /^ {6}'a:b': UTC/.test(Y.serialise(d2).split('\n')[3]),
      JSON.stringify(Y.serialise(d2).split('\n')[3]));
   ok('and it reads back as one key',
-     !!Y.fieldById(Y.buildForm(Y.parse(Y.serialise(d2))), 'a/env/a:b'),
+     !!Y.fieldById(Y.buildForm(Y.parse(Y.serialise(d2))), 'a/env#0/a:b'),
      Y.buildForm(Y.parse(Y.serialise(d2))).fields.map(function (x) { return x.id; }).join(', '));
 
   // List form: name and value are two halves of one scalar.
   var d3 = Y.parse(listForm), f3 = Y.buildForm(d3);
-  var lt = Y.fieldById(f3, 'a/env/TZ');
+  var lt = Y.fieldById(f3, 'a/env#0/TZ');
   ok('a list variable has both boxes',
      !!lt && lt.parts.name.value === 'TZ' && lt.parts.value.value === 'UTC');
-  Y.setPart(d3, f3, 'a/env/TZ', 'name', 'TIMEZONE');
+  Y.setPart(d3, f3, 'a/env#0/TZ', 'name', 'TIMEZONE');
   ok('renaming a list variable keeps its value',
      Y.serialise(d3).split('\n')[3] === '      - TIMEZONE=UTC',
      JSON.stringify(Y.serialise(d3).split('\n')[3]));
 
   // "- FOO" with no "=" means "take this from the server's environment".
-  var pt = Y.fieldById(f3, 'a/env/PASSTHROUGH');
+  var pt = Y.fieldById(f3, 'a/env#1/PASSTHROUGH');
   ok('a pass-through variable stays editable', !!pt && !pt.locked);
   ok('its value box is dead, its name box is not',
      !!pt && !pt.parts.value.spot && !!pt.parts.name.spot);
   ok('and the row says why', !!pt && /server/.test(pt.lockReason), pt && pt.lockReason);
 
   var d4 = Y.parse(listForm), f4 = Y.buildForm(d4);
-  Y.setPart(d4, f4, 'a/env/PASSTHROUGH', 'value', 'x');
+  Y.setPart(d4, f4, 'a/env#1/PASSTHROUGH', 'value', 'x');
   ok('writing a value into a pass-through is refused, not written as "FOO="',
      Y.serialise(d4) === listForm, firstDiff(listForm, Y.serialise(d4)));
 
@@ -1342,8 +1346,8 @@ console.log('\nK. A command written as a list');
 
 console.log('\nL. 10-advanced-compose-test (PLAN_4 phase 1)');
 
-// Copied verbatim from scratch/test-stacks/10-advanced-compose-test/compose.yaml —
-// scratch/ is gitignored, so the fixture has to live here instead. No trailing
+// Copied verbatim from tests/fixtures/test-stacks/10-advanced-compose-test/compose.yaml —
+// kept inline so this section's own reconstruction reads standalone. No trailing
 // blank line, because the file on disk does not have one either.
 var FIXTURE_10_ADVANCED = [
   'version: "3.9"',
@@ -1542,8 +1546,8 @@ var FIXTURE_10_ADVANCED = [
     'web/setting/build.context',
     'web/setting/build.dockerfile',
     'web/setting/build.target',
-    'web/port/80/tcp',
-    'web/env/NGINX_PORT',
+    'web/port#0/80/tcp',
+    'web/env#0/NGINX_PORT',
     'web/list.networks#0/frontend_net',
     'web/list.networks#1/backend_net',
     'web/depends/depends_on.db',
@@ -1949,7 +1953,9 @@ var FIXTURE_10_ADVANCED = [
     return f.advice.some(function (a) { return a.indexOf('typing over it replaces the variable') >= 0; });
   };
   var port = function (t) { return form.fields.filter(function (f) { return f.binder === 'port' && f.target === t; })[0]; };
-  var env  = function (n) { return Y.fieldById(form, 'a/env/' + n); };
+  // Mapping order: LITERAL is #0, MIXED is #1.
+  var envIdx = { LITERAL: 0, MIXED: 1 };
+  var env  = function (n) { return Y.fieldById(form, 'a/env#' + envIdx[n] + '/' + n); };
 
   ok('a bare ${VAR} port carries the interpolation advice', advised(port('80/tcp')));
   ok('a ${VAR:-default} port carries the advice', advised(port('81/tcp')));
@@ -2290,6 +2296,63 @@ console.log('\nM. 10-advanced-compose-test (PLAN_4 phase 2)');
   var afterEdit = f3.fields.filter(function (f) { return f.listKey === 'dns'; })[0];
   ok('editing the second entry to match the first leaves the first entry\u2019s id unchanged',
      afterEdit.id === firstId, JSON.stringify({ before: firstId, after: afterEdit.id }));
+})();
+
+/* ---- 9b. the same fix, for the binders whose target isn't unique either
+ *         (PLAN_60 1.3) — env, port and volume, not just 'list' ----------- */
+
+(function () {
+  // The reported bug: two PUID entries, edit the second, the first changes.
+  var src = 'services:\n  a:\n    image: alpine\n    environment:\n' +
+            '      - PUID=99\n      - PUID=100\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var env = form.fields.filter(function (f) { return f.binder === 'env'; });
+
+  ok('two PUID entries get two distinct, indexed ids',
+     env.length === 2 && env[0].id === 'a/env#0/PUID' && env[1].id === 'a/env#1/PUID',
+     JSON.stringify(env.map(function (f) { return f.id; })));
+
+  Y.setPart(doc, form, env[1].id, 'value', '200');
+  ok('editing the second by id rewrites only the second line',
+     Y.serialise(doc) === 'services:\n  a:\n    image: alpine\n    environment:\n' +
+                          '      - PUID=99\n      - PUID=200\n',
+     Y.serialise(doc));
+})();
+
+(function () {
+  // Two ports that both target container port 80.
+  var src = 'services:\n  a:\n    image: alpine\n    ports:\n' +
+            '      - "8080:80"\n      - "8081:80"\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var ports = form.fields.filter(function (f) { return f.binder === 'port'; });
+
+  ok('two ports sharing a container port get two distinct, indexed ids',
+     ports.length === 2 && ports[0].id === 'a/port#0/80/tcp' && ports[1].id === 'a/port#1/80/tcp',
+     JSON.stringify(ports.map(function (f) { return f.id; })));
+
+  Y.setPart(doc, form, ports[1].id, 'host', '9081');
+  ok('editing the second by id leaves the first untouched',
+     Y.serialise(doc) === 'services:\n  a:\n    image: alpine\n    ports:\n' +
+                          '      - "8080:80"\n      - "9081:80"\n',
+     Y.serialise(doc));
+})();
+
+(function () {
+  // Two mounts that both land on /data inside the container.
+  var src = 'services:\n  a:\n    image: alpine\n    volumes:\n' +
+            '      - /host/one:/data\n      - /host/two:/data\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var vols = form.fields.filter(function (f) { return f.binder === 'volume'; });
+
+  ok('two mounts sharing a container path get two distinct, indexed ids',
+     vols.length === 2 && vols[0].id === 'a/volume#0//data' && vols[1].id === 'a/volume#1//data',
+     JSON.stringify(vols.map(function (f) { return f.id; })));
+
+  Y.setPart(doc, form, vols[1].id, 'host', '/host/three');
+  ok('editing the second by id leaves the first untouched',
+     Y.serialise(doc) === 'services:\n  a:\n    image: alpine\n    volumes:\n' +
+                          '      - /host/one:/data\n      - /host/three:/data\n',
+     Y.serialise(doc));
 })();
 
 /* ---- 10. the strongest case, again -------------------------------------- */
@@ -3733,9 +3796,9 @@ console.log('\nW. Boolean writes go unquoted');
   var src  = 'services:\n  a:\n    image: alpine\n    environment:\n      FLAG: yes\n';
   var want = 'services:\n  a:\n    image: alpine\n    environment:\n      FLAG: \'true\'\n';
   var doc  = Y.parse(src), form = Y.buildForm(doc);
-  var flag = Y.fieldById(form, 'a/env/FLAG');
+  var flag = Y.fieldById(form, 'a/env#0/FLAG');
   ok('an ordinary environment value is not typed as boolean', !!flag && flag.type === 'text');
-  Y.setPart(doc, form, 'a/env/FLAG', 'value', 'true');
+  Y.setPart(doc, form, 'a/env#0/FLAG', 'value', 'true');
   ok('setting it to the text "true" still gets quoted',
      Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
 })();
@@ -4769,7 +4832,7 @@ console.log('\nK. Search');
 /* ---- K12. Real use: search a corpus fixture and check the count ---------- */
 
 (function () {
-  var file = path.join(ROOT, 'scratch/test-stacks/03-multi-tier/compose.yaml');
+  var file = path.join(ROOT, 'tests/fixtures/test-stacks/03-multi-tier/compose.yaml');
   var text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
   var r = Y.searchMatches(text, 'image');
   var independent = (text.match(/image/g) || []).length;
@@ -6839,7 +6902,7 @@ console.log('\nX. Long forms — the vanishing entry, and a long-form port\'s pr
      !!p && p.parts.proto && p.parts.proto.value === 'udp' && !!p.parts.proto.spot,
      p && JSON.stringify(p.parts.proto));
   ok('the row\'s id is still keyed on target+protocol, unmoved by adding the part',
-     !!p && p.id === 'a/port/8096/udp', p && p.id);
+     !!p && p.id === 'a/port#0/8096/udp', p && p.id);
 })();
 
 /* ---- X3. The null edit — every part, including the new one, written back
@@ -7455,9 +7518,8 @@ console.log('\nZ. A stashed section reads as hidden, not shown, so ticking it ba
  * mechanically humanising the raw key instead, so it disagreed with its own
  * help ("Mac Address" beside help text that says "MAC address"). This is
  * built as an inline document, not read from
- * scratch/test-stacks/17-uncovered-keys/, because that folder is gitignored
- * — the same reason section L's fixture is copied out verbatim rather than
- * read from disk.
+ * tests/fixtures/test-stacks/17-uncovered-keys/, so this section reads
+ * standalone the same way section L's copied-out fixture does.
  * ========================================================================= */
 
 console.log('\nAA. Uncovered service-level keys carry their written title (PLAN_36)');
@@ -7565,9 +7627,8 @@ console.log('\nAA. Uncovered service-level keys carry their written title (PLAN_
  *   yaml: line 4: did not find expected key
  *
  * Built as an inline document, not read from
- * scratch/test-stacks/18-declaration-shapes/, because that folder is
- * gitignored — the same reason section AA's fixture is copied out verbatim
- * rather than read from disk. The lock reasons are hardcoded from
+ * tests/fixtures/test-stacks/18-declaration-shapes/, so this section reads
+ * standalone the same way section AA's does. The lock reasons are hardcoded from
  * LOCK_WORDS rather than looked up through it, the same way section L's
  * alias assertions do, since the table is not exported.
  * ========================================================================= */
@@ -7663,8 +7724,8 @@ console.log('\nAB. Flow-map, anchor and alias network declarations lock instead 
  * ordinary dotted/underscored settings still go through humanise() as
  * before — the fix has to be narrow, not a global change to titling.
  * Built as inline documents, not read from
- * scratch/test-stacks/18-declaration-shapes/, for the same reason sections
- * AA and AB are.
+ * tests/fixtures/test-stacks/18-declaration-shapes/, for the same reason
+ * sections AA and AB are.
  * ========================================================================= */
 
 console.log('\nAC. Network names title verbatim; humanise() unchanged elsewhere (PLAN_34 Phase 2)');
@@ -9116,6 +9177,354 @@ console.log('\nAI. Driver and external share one box on a network/volume row');
 
   ok('...and the file round-trips untouched — this section only reads',
      Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * AJ. PLAN_60a — a parse that stops partway through says so, and refuses to
+ *     be written to, rather than silently reporting itself complete
+ * ========================================================================= */
+
+(function () {
+  // A multi-line plain scalar: legal YAML, and compose reads it, but this
+  // parser only ever takes the first line of one — the continuation line
+  // must not be reported as read when it was not.
+  var src = 'services:\n  web:\n    image: nginx\n    command: echo hello\n' +
+            '      world\n  db:\n    image: postgres\n';
+  var doc = Y.parse(src);
+  ok('a multi-line plain scalar seals the rest of the file rather than losing it silently',
+     doc.sealed.length === 1 && doc.sealed[0].reason === 'unparsable',
+     JSON.stringify(doc.sealed));
+  ok('...and a warning names the line the continuation starts on',
+     doc.warnings.length === 1 && doc.warnings[0].line === 4, JSON.stringify(doc.warnings));
+  ok('...and the file still round-trips byte for byte', Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // Two siblings indented four and three apart. Nothing here is exotic YAML —
+  // it is just wrong — so the parser has to notice rather than fold the
+  // second sibling's line into whatever comes next.
+  var src = 'services:\n  a:\n    image: alpine\n   b:\n    image: nginx\n';
+  var doc = Y.parse(src);
+  ok('inconsistent sibling indents (4 and 3) seal rather than truncate silently',
+     doc.sealed.length === 1 && doc.sealed[0].reason === 'unparsable',
+     JSON.stringify(doc.sealed));
+  ok('...and a warning is raised rather than nothing at all',
+     doc.warnings.length === 1, JSON.stringify(doc.warnings));
+  ok('...and the file still round-trips byte for byte', Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // The exact PLAN_60a repro: addService must refuse outright, because a
+  // service named "db" could already exist inside the unread region.
+  var ragged = 'services:\n  broken:\n    image: alpine\n    environment:\n' +
+               '      GOOD: 1\n     BAD_INDENT: 2\n';
+  var doc = Y.parse(ragged), form = Y.buildForm(doc);
+  ok('addService refuses on a ragged file rather than writing a second key',
+     Y.addService(doc, form, 'db') === -1, Y.addService(doc, form, 'db'));
+  ok('...and the file is untouched', Y.serialise(doc) === ragged,
+     firstDiff(ragged, Y.serialise(doc)));
+})();
+
+(function () {
+  // Every corpus fixture: this change must add warnings without moving a
+  // single byte of any of them — the round-trip is the proof this step is
+  // right, not merely that the new seal fires somewhere.
+  var moved = FILES.filter(function (file) {
+    var text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    return Y.serialise(Y.parse(text)) !== text;
+  }).map(function (file) { return path.relative(ROOT, file).replace(/\\/g, '/'); });
+  ok('every corpus fixture still serialises byte-identically', moved.length === 0,
+     JSON.stringify(moved));
+})();
+
+/* =========================================================================
+ * AK. PLAN_60 Phase 4 — ensurePath rolls back its own partial work
+ * ========================================================================= */
+
+console.log('\nAK. ensurePath rolls back a failed multi-level write');
+
+(function () {
+  // §11.2's named case: insertChild/addSetting/addNested into a four-space
+  // file, checked on a file with more than one service so a level landing at
+  // the wrong depth would show up as one of them going missing.
+  var src = 'services:\n    web:\n        image: nginx\n    api:\n        image: api:1.0\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+
+  // setPart on an absent ALWAYS field routes through addSetting/insertChild.
+  var setOk = Y.setPart(doc, form, 'web/setting/restart', 'value', 'always');
+  form = Y.buildForm(doc);
+  var nestedLine = Y.addNested(doc, form, 'web', ['healthcheck', 'interval'], '30s');
+
+  var reparsed = Y.parse(Y.serialise(doc));
+  var services = Y.buildForm(reparsed).services.map(function (s) { return s.name; });
+  ok('addSetting (via setPart) and addNested both wrote a line, on a four-space file',
+     setOk === true && nestedLine >= 0, JSON.stringify({ setOk: setOk, nestedLine: nestedLine }));
+  ok('...and the file re-parses with both original services still present, none swallowed',
+     services.indexOf('web') >= 0 && services.indexOf('api') >= 0 && reparsed.warnings.length === 0,
+     JSON.stringify({ services: services, warnings: reparsed.warnings }));
+})();
+
+/* ---- whether a shape still reaches ensurePath's own rollback --------------
+ *
+ * Tried, honestly, before writing the assertions below: a mis-indented line
+ * nested away from the write (under a sibling's environment:), the same
+ * shape on the very service being written to, tab indentation, and a
+ * pre-existing anchored/sealed node partway down the path. Every one of them
+ * is already caught *before* ensurePath makes a single insert — a ragged
+ * indent anywhere seals the rest of the whole document (PLAN_60a's
+ * `unreadTail`), which ensurePath refuses on at the top of its loop, and a
+ * pre-existing sealed or scalar node blocks the walk before any level below
+ * it could need creating.
+ *
+ * There is no way left to make the walk insert a real level and *then* meet
+ * a wall in the same call: insertChild only ever writes a bare "key:" line,
+ * so a level ensurePath just created has nothing under it yet, and a level
+ * that already holds a scalar or a sealed node — the only things the walk
+ * refuses on — must therefore already have existed, which means every
+ * level above it did too and nothing was inserted this run. No shape
+ * survives both Phase 1.1 (the column always comes from real, already-
+ * parsed structure) and Phase 2 (any inconsistency anywhere seals the rest
+ * of the file) to reach ensurePath's own rollback with real lines already
+ * on the ground.
+ *
+ * So this asserts the rollback directly at the seam that is still
+ * reachable and, until now, untested: addDeclNested — the only one of
+ * ensurePath's three callers with no coverage at all before this phase.
+ * One case creates a real level from nothing, the other refuses on a
+ * pre-existing sealed node, byte-identical.
+ */
+(function () {
+  var src = 'networks:\n  foo:\n    driver: bridge\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var line = Y.addDeclNested(doc, form, 'networks', 'foo', ['labels', 'a'], 'b');
+  ok('addDeclNested creates labels: and the entry together, from nothing',
+     line >= 0 && Y.serialise(doc) === 'networks:\n  foo:\n    driver: bridge\n    labels:\n      a: b\n',
+     firstDiff('networks:\n  foo:\n    driver: bridge\n    labels:\n      a: b\n', Y.serialise(doc)));
+})();
+
+(function () {
+  var src = 'networks:\n  foo:\n    driver: bridge\n    labels: &lbls\n      a: b\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var line = Y.addDeclNested(doc, form, 'networks', 'foo', ['labels', 'c'], 'd');
+  ok('addDeclNested refuses on an anchored labels: block, writing nothing',
+     line === -1, line);
+  ok('...and the file is untouched', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+/* =========================================================================
+ * AL. §11.2's remaining table rows — cases nothing above already covers.
+ * ========================================================================= */
+
+console.log('\nAL. Block scalars, bare-value quoting, non-ASCII, vars and shapes the table asks for');
+
+// Block-scalar variants: chomping (-, +) and folding (>) both lock the field
+// under the same 'block-scalar' reason as plain |, and none of them is
+// mistaken for something else on the way back out.
+(function () {
+  ['|-', '|+', '>-', '>+', '|2'].forEach(function (ind) {
+    var src = 'services:\n  a:\n    image: alpine\n    command: ' + ind +
+              '\n      echo one\n      echo two\n    environment:\n      TZ: UTC\n';
+    var doc = Y.parse(src), form = Y.buildForm(doc);
+    var f = Y.fieldById(form, 'a/setting/command');
+    ok('block scalar "' + ind + '" seals as block-scalar and round-trips',
+       !!f && f.locked && f.lockReason === 'this is written across several lines' &&
+       Y.serialise(doc) === src,
+       f && JSON.stringify({ locked: f.locked, reason: f.lockReason }));
+  });
+})();
+
+// A '#' at the start of a line inside a block scalar's body is data, not a
+// comment — blockEnd() has to keep reading past it rather than stopping.
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    command: |\n      echo one\n' +
+            '      # not a comment, this is data\n      echo two\n    environment:\n      TZ: UTC\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var f = Y.fieldById(form, 'a/setting/command');
+  ok('a "#" line inside the block scalar body stays part of it, not a comment',
+     !!f && f.raw.indexOf('# not a comment') >= 0, f && f.raw);
+  ok('...and the file round-trips byte for byte',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+// Bare words YAML 1.1 loaders read as a boolean are always quoted; a bare
+// '*' (an alias sigil in first position) is too. '1.10' and '0755' are
+// written bare today — recorded here as the documented gap PLAN_60 phase 11
+// calls "hardening", not fixed as part of this pass.
+(function () {
+  ['yes', 'no', 'on', 'off', 'Yes', 'OFF'].forEach(function (v) {
+    ok('emitScalar quotes the bare word "' + v + '"',
+       Y.emitScalar(v) === "'" + v + "'", Y.emitScalar(v));
+  });
+  ok('emitScalar quotes a bare "*"', Y.emitScalar('*') === "'*'", Y.emitScalar('*'));
+  ok('emitScalar leaves "1.10" bare (documented gap, not fixed here)',
+     Y.emitScalar('1.10') === '1.10', Y.emitScalar('1.10'));
+  ok('emitScalar leaves "0755" bare (documented gap, not fixed here)',
+     Y.emitScalar('0755') === '0755', Y.emitScalar('0755'));
+})();
+
+// setValue's export-level contract for a value containing a real line break:
+// a clean refusal, not a written newline. emitScalar's own refusal is what
+// makes this so; asserted through the public API every caller actually uses.
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    environment:\n      NOTE: hello\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var f = form.fields.filter(function (x) { return x.binder === 'env' && x.target === 'NOTE'; })[0];
+  var wrote = Y.setValue(doc, form, f.id, 'line one\nline two');
+  ok('setValue refuses a value containing \\n', wrote === false, wrote);
+  ok('...and the file is untouched', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+// Non-ASCII survives parse -> edit -> serialise with no transliteration or
+// escaping — emitScalar's quoting rules never fire on it, so it goes out
+// exactly as typed.
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    environment:\n      NOTE: hello\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  var f = form.fields.filter(function (x) { return x.binder === 'env' && x.target === 'NOTE'; })[0];
+  var value = '北京 café ☂';
+  ok('a non-ASCII value is written', Y.setValue(doc, form, f.id, value));
+  ok('...and reads back unchanged', Y.serialise(doc) ===
+     'services:\n  a:\n    image: alpine\n    environment:\n      NOTE: ' + value + '\n',
+     Y.serialise(doc));
+})();
+
+// splitOutsideVars must split on the port/volume separator colon and no
+// other — a variable's own ":-default" colon sits inside ${...} and is not
+// one of the field boundaries.
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    ports:\n      - "${HOST_PORT:-8080}:80"\n';
+  var port = Y.buildForm(Y.parse(src)).fields.filter(function (f) { return f.binder === 'port'; })[0];
+  ok('a ${VAR:-default} host side in a port short form keeps its own colon',
+     port.parts.host.value === '${HOST_PORT:-8080}' && port.parts.container.value === '80',
+     JSON.stringify(port.parts));
+  ok('...and the file round-trips byte for byte',
+     Y.serialise(Y.parse(src)) === src, firstDiff(src, Y.serialise(Y.parse(src))));
+})();
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    volumes:\n      - "${DATA_DIR}:/data"\n';
+  var vol = Y.buildForm(Y.parse(src)).fields.filter(function (f) { return f.binder === 'volume'; })[0];
+  ok('a bare ${VAR} host side in a volume short form keeps its own name',
+     vol.parts.host.value === '${DATA_DIR}' && vol.parts.container.value === '/data',
+     JSON.stringify(vol.parts));
+})();
+
+// labels: in list form and map form must read as the same pairs — env
+// already has this pair of cases, labels does not.
+(function () {
+  var list = 'services:\n  a:\n    image: alpine\n    labels:\n      - "foo=bar"\n      - "baz=qux"\n';
+  var map  = 'services:\n  a:\n    image: alpine\n    labels:\n      foo: bar\n      baz: qux\n';
+  var fromList = Y.buildForm(Y.parse(list)).fields
+    .filter(function (f) { return f.binder === 'label'; })
+    .map(function (f) { return f.target + '=' + f.parts.value.value; }).sort();
+  var fromMap = Y.buildForm(Y.parse(map)).fields
+    .filter(function (f) { return f.binder === 'label'; })
+    .map(function (f) { return f.target + '=' + f.parts.value.value; }).sort();
+  ok('labels: as a list and as a map read as the same pairs',
+     fromList.join(',') === fromMap.join(',') && fromList.join(',') === 'baz=qux,foo=bar',
+     JSON.stringify({ list: fromList, map: fromMap }));
+  ok('both shapes round-trip byte for byte',
+     Y.serialise(Y.parse(list)) === list && Y.serialise(Y.parse(map)) === map);
+})();
+
+// A comment as the very last line of the file, with nothing after it.
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n\n# a trailing note about the whole file\n';
+  var doc = Y.parse(src);
+  ok('a comment at end of file round-trips byte for byte',
+     Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+  ok('...and raises no warning', doc.warnings.length === 0, doc.warnings);
+})();
+
+// A large-file parse-cost bound. Generous and machine-independent on
+// purpose — a bound tight enough to flake on someone else's laptop is worse
+// than no bound at all. Only the regex-hang guard existed before this.
+(function () {
+  var lines = ['services:'];
+  for (var i = 0; i < 500; i++) {
+    lines.push('  svc' + i + ':');
+    lines.push('    image: alpine:' + i);
+    lines.push('    environment:');
+    lines.push('      VAR_A: value' + i);
+    lines.push('      VAR_B: ' + i);
+    lines.push('    ports:');
+    lines.push('      - "' + (10000 + i) + ':80"');
+  }
+  var src = lines.join('\n') + '\n';
+
+  var t0 = Date.now();
+  var doc = Y.parse(src);
+  Y.buildForm(doc);
+  var out = Y.serialise(doc);
+  var ms = Date.now() - t0;
+
+  ok('a 500-service file (' + src.length + ' bytes) parses, builds and serialises in well under a second',
+     ms < 5000, ms + 'ms');
+  ok('...and comes back byte for byte', out === src, firstDiff(src, out));
+})();
+
+/* =========================================================================
+ * AM. PLAN_55/PLAN_60 §13.3 — the project-link write, on the file it was
+ *     actually asked about: hand-authored, comments, ordering and an
+ *     anchor, no x-unraid: block at all. Written against post-fix
+ *     behaviour (Phases 1, 2 and 4 have all landed) — a test adjusted to
+ *     match today's output rather than the file's own rules would bake a
+ *     corruption in as the expected result, which is the danger the plan
+ *     names outright.
+ * ========================================================================= */
+
+console.log('\nAM. The project-link write on a hand-authored, anchored, x-unraid-less file');
+
+(function () {
+  // Four-space indent, a trailing comment, and an anchor/alias pair — the
+  // named scenario, word for word.
+  var src = 'services:\n    web:\n        image: nginx           # the web front end\n' +
+            '        environment: &common\n            TZ: Europe/London\n' +
+            '    api:\n        image: api:1.0\n        environment: *common\n';
+  var doc = Y.parse(src);
+
+  var at = Y.addNested(doc, null, 'web', ['x-unraid', 'project'], 'https://example.com/project');
+  ok('the insert succeeds rather than refusing', at >= 0, at);
+
+  var out = Y.serialise(doc);
+  ok('x-unraid: lands at the indent web\'s own children already use (8, not 6)',
+     /\n {8}x-unraid:\n/.test(out), JSON.stringify(out));
+
+  var reparsed = Y.parse(out);
+  ok('the file re-parses clean — no warnings, no unread tail',
+     reparsed.warnings.length === 0 && !reparsed.unreadTail,
+     JSON.stringify({ warnings: reparsed.warnings, unreadTail: reparsed.unreadTail }));
+
+  var form = Y.buildForm(reparsed);
+  ok('both services survive, and the comment and anchor/alias are untouched',
+     form.services.map(function (s) { return s.name; }).join(',') === 'web,api' &&
+     out.indexOf('# the web front end') >= 0 &&
+     out.indexOf('&common') >= 0 && out.indexOf('*common') >= 0,
+     out);
+
+  // project/support/readme are not form fields at all — the form only ever
+  // exposes webui (see harvestWebui()) — so the write is checked as text,
+  // the same way the PHP reader that actually consumes it would see it.
+  ok('the new line carries the value written, nested under x-unraid',
+     /\n {8}x-unraid:\n {10}project: https:\/\/example\.com\/project\n/.test(out),
+     JSON.stringify(out));
+})();
+
+(function () {
+  // The refusal half: an x-unraid: block already exists but is anchored, so
+  // ensurePath meets a sealed node on the very first step and must write
+  // nothing at all — the byte-identical half of the same promise.
+  var src = 'services:\n    web:\n        image: nginx           # the web front end\n' +
+            '        x-unraid: &meta\n            name: Thing\n' +
+            '    api:\n        image: api:1.0\n        x-unraid: *meta\n';
+  var doc = Y.parse(src);
+  var at = Y.addNested(doc, null, 'web', ['x-unraid', 'project'], 'https://example.com/project');
+
+  ok('an anchored x-unraid: block refuses the insert', at === -1, at);
+  ok('...and the file comes back byte-identical', Y.serialise(doc) === src,
+     firstDiff(src, Y.serialise(doc)));
 })();
 
 /* ---- result ------------------------------------------------------------- */

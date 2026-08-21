@@ -118,6 +118,29 @@ ok('and stores it as a symlink, not what it points at',
 ok('the link\'s target still holds its own files untouched',
    is_dir('/tmp/b1-outside') && file_exists('/tmp/b1-outside/target.txt'));
 
+/* A stack folder that is itself a link — not just a link inside one — must
+ * never be archived or removed: zip would store the link rather than the
+ * target's contents, and the delete step underneath resolves through the
+ * link and would empty out whatever it points at instead. */
+
+$linkedRel = 'linkedstack';
+$linkedDir = $root.'/'.$linkedRel;
+mkdir('/tmp/b1-outside2', 0755, true);
+file_put_contents('/tmp/b1-outside2/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+file_put_contents('/tmp/b1-outside2/keep.txt', 'must survive');
+ok('a stack folder can itself be a link', symlink('/tmp/b1-outside2', $linkedDir));
+
+ok('a linked stack is not listed', !in_array($linkedRel, array_column(staxx_list_stacks(), 'name')));
+
+$archive2 = null;
+ok('archiving a linked stack refuses', !staxx_archive_stack($linkedRel, $err, true, $archive2), $err);
+ok('and says why',                     strpos($err, 'link') !== false, $err);
+ok('the link is untouched',            is_link($linkedDir));
+ok('its target still holds its files',
+   is_dir('/tmp/b1-outside2') && file_exists('/tmp/b1-outside2/keep.txt'));
+
+@exec('rm -rf /tmp/b1-outside2');
+
 @exec('rm -rf /tmp/b1-root /tmp/b1-outside '.escapeshellarg($archiveRoot));
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";

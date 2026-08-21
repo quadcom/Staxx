@@ -35,6 +35,7 @@ function staxx_update_state_defaults(): array {
     'ok'        => true,
     'error'     => '',
     'inspector' => '',
+    'inspector_at' => 0,
     'paused'    => false,
     'limited'   => false, // drives the page's rate-limited notice; cleared by the next pass that isn't refused
     'images'    => [],
@@ -116,8 +117,12 @@ function staxx_docker_inspector(): string {
   static $cached = '';
   if ($cached !== '') return $cached;
 
-  $stored = (string)(staxx_update_state()['inspector'] ?? '');
-  if ($stored !== '') return $cached = $stored;
+  $state    = staxx_update_state();
+  $stored   = (string)($state['inspector'] ?? '');
+  $storedAt = (int)($state['inspector_at'] ?? 0);
+  // Same TTL as the digest cache — a transient buildx/manifest failure right
+  // after install must not downgrade this box to the slow route permanently.
+  if ($stored !== '' && (time() - $storedAt) < STAXX_UPDATE_ASK_TTL) return $cached = $stored;
 
   $bin = staxx_docker_bin();
   $code = 1;
@@ -130,7 +135,7 @@ function staxx_docker_inspector(): string {
     $found = $code === 0 ? 'manifest' : 'hub';
   }
 
-  staxx_update_state_save(['inspector' => $found]);
+  staxx_update_state_save(['inspector' => $found, 'inspector_at' => time()]);
   return $cached = $found;
 }
 
@@ -213,14 +218,19 @@ function staxx_registry_tags(string $image): array {
   // body away on anything but 2xx). A host with no challenge at all is
   // already anonymous, so an empty realm below is not itself a failure.
   $headers = staxx_sh(
-    'curl -sS --max-time 6 -D /dev/stdout -o /dev/null '.escapeshellarg('https://'.$host.'/v2/'), 8
+    'curl -sS -L --max-time 6 -D /dev/stdout -o /dev/null '.escapeshellarg('https://'.$host.'/v2/'), 8
   );
 
   $realm = '';
   $service = '';
   foreach (explode("\n", $headers) as $line) {
     if (preg_match('/^www-authenticate:\s*(.+)$/i', trim($line), $m)) {
-      if (preg_match('/realm="([^"]+)"/i', $m[1], $rm)) $realm = $rm[1];
+      // The realm is whatever the remote registry says it is — a hostile one
+      // could name a file:// path or an internal address, so only an actual
+      // http(s) realm is accepted before it is ever used to build a URL.
+      if (preg_match('/realm="([^"]+)"/i', $m[1], $rm) && preg_match('#^https?://#i', $rm[1])) {
+        $realm = $rm[1];
+      }
       if (preg_match('/service="([^"]+)"/i', $m[1], $sm)) $service = $sm[1];
       break;
     }
@@ -454,7 +464,7 @@ function staxx_image_remote(string $image, string &$why = null, ?array &$tags = 
           . 'application/vnd.docker.distribution.manifest.v2+json';
 
   $url = 'https://registry-1.docker.io/v2/'.$repo.'/manifests/'.rawurlencode($tag);
-  $cmd = 'curl -sS --max-time 8 -D /dev/stdout -o /dev/null -X GET'
+  $cmd = 'curl -sS -L --max-time 8 -D /dev/stdout -o /dev/null -X GET'
        . ' -H '.escapeshellarg($bearer)
        . ' -H '.escapeshellarg($accept)
        . ' '.escapeshellarg($url);
@@ -1157,9 +1167,14 @@ function staxx_updates_aggregate(array $pills): array {
  * the update state file; runs no command of its own.
  */
 function staxx_updates_for_row(string $stack, string $service = ''): array {
+  // staxx_list_stacks() works out compose metadata, run state, the review
+  // lock and more for every stack, just so this could throw all of it away
+  // bar one file path — costly when called once per stack row and once per
+  // container row. staxx_scan_stacks() (request-cached) plus a compose-file
+  // lookup answers the same question far more cheaply.
   $file = '';
-  foreach (staxx_list_stacks() as $s) {
-    if ($s['name'] === $stack) { $file = $s['file']; break; }
+  foreach (staxx_scan_stacks()['stacks'] as $s) {
+    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
   }
 
   $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false, 'services' => []];
@@ -1238,10 +1253,12 @@ function staxx_updates_apply_service_state(array &$pill, string $stack, string $
  * folder scope.
  */
 function staxx_updates_for_folder(string $folder): array {
+  // Names only, off the cheap scan — see staxx_updates_for_row() for why
+  // staxx_list_stacks() is avoided here too.
   $pills = [];
-  foreach (staxx_list_stacks() as $s) {
-    if (strpos($s['name'], $folder.'/') !== 0) continue;
-    $pills[] = staxx_updates_for_row($s['name']);
+  foreach (staxx_scan_stacks()['stacks'] as $s) {
+    if (strpos($s['rel'], $folder.'/') !== 0) continue;
+    $pills[] = staxx_updates_for_row($s['rel']);
   }
   return staxx_updates_aggregate($pills);
 }

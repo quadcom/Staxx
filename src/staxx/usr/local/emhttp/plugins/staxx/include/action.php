@@ -64,7 +64,19 @@ function staxx_reply(array $payload, int $status = 200): void {
   http_response_code($status);
   header('Content-Type: application/json');
   header('Cache-Control: no-store');
-  echo json_encode($payload);
+
+  // Invalid UTF-8 anywhere in $payload — a binary file read back as text, a
+  // log line from a container with no encoding discipline at all — used to
+  // make json_encode() fail outright, and the reply this function exists to
+  // guarantee became exactly the empty body its own file header promises
+  // never to send. JSON_INVALID_UTF8_SUBSTITUTE swaps the bad bytes for U+FFFD
+  // instead of giving up; the plain fallback below is only for whatever that
+  // still cannot save (a resource, NAN/INF, a cycle).
+  $json = json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE);
+  if ($json === false) {
+    $json = json_encode(['ok' => false, 'error' => 'The reply could not be encoded as JSON.']);
+  }
+  echo $json;
   exit;
 }
 
@@ -177,13 +189,14 @@ switch ($action) {
   case 'read':
     $body = staxx_read_stack($name, $error);
     if ($body === null) staxx_reply(['ok' => false, 'error' => $error]);
-    staxx_reply(['ok' => true, 'name' => $name, 'body' => $body]);
+    staxx_reply(['ok' => true, 'name' => $name, 'body' => $body, 'fingerprint' => md5($body)]);
 
   // ---- create a new stack, or overwrite an existing one ----
   case 'save':
-    $body   = (string)($_POST['body'] ?? '');
-    $isNew  = ($_POST['new'] ?? '') === '1';
-    $exists = is_dir(staxx_stack_dir($name));
+    $body        = (string)($_POST['body'] ?? '');
+    $isNew       = ($_POST['new'] ?? '') === '1';
+    $fingerprint = (string)($_POST['fingerprint'] ?? '');
+    $exists      = is_dir(staxx_stack_dir($name));
 
     if ($isNew && $exists) {
       staxx_reply([
@@ -192,17 +205,38 @@ switch ($action) {
                  . 'or edit the existing one.',
       ]);
     }
+
+    // The last save always winning silently is the bug this closes: a save
+    // that does not say what it started from is refused, and so is one that
+    // started from a version this is no longer on disk — another tab, the
+    // image updater, or a hand edit could all have landed in between. A new
+    // stack is exempt, since there is nothing on disk yet to conflict with.
+    if (!$isNew) {
+      $onDisk = staxx_stack_fingerprint($name);
+      if ($fingerprint === '' || ($onDisk !== '' && $onDisk !== $fingerprint)) {
+        staxx_reply([
+          'ok'       => false,
+          'conflict' => true,
+          'error'    => 'This file has changed since it was opened — by another tab, an image '
+                      . 'update, or a hand edit on the server. Close the editor and open the '
+                      . 'stack again to see the current version, then make your changes again.',
+        ]);
+      }
+    }
+
     if (!staxx_save_stack($name, $body, $error)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
     // Report back what actually landed on disk, so "saved" is a fact rather
-    // than an assumption.
+    // than an assumption, and the fingerprint of what is now there so a
+    // second save in the same session is not refused against its own write.
     $written = staxx_find_compose_file(staxx_stack_dir($name));
     staxx_reply([
-      'ok'      => true,
-      'name'    => $name,
-      'file'    => $written,
-      'bytes'   => $written !== '' ? (int)@filesize($written) : 0,
+      'ok'          => true,
+      'name'        => $name,
+      'file'        => $written,
+      'bytes'       => $written !== '' ? (int)@filesize($written) : 0,
+      'fingerprint' => staxx_stack_fingerprint($name),
     ]);
 
   /* ---- check a compose file without saving it ----
@@ -233,7 +267,11 @@ switch ($action) {
 
     $before = ''; $after = '';
     if ($target !== '') {
-      $overrideName = isset($pair[1]) ? basename($pair[1]) : '';
+      // Derived from the main file's own name, not read off $pair — an
+      // override that does not exist yet has no entry in $pair for that to
+      // read, and without this its very first save skipped validation
+      // entirely because nothing here recognised its name.
+      $overrideName = isset($pair[1]) ? basename($pair[1]) : staxx_expected_override_basename($main);
       if ($overrideName === '' || $target !== $overrideName) {
         staxx_reply([
           'ok'    => true,
@@ -284,12 +322,14 @@ switch ($action) {
     // reason as stack-rename above: this has to happen here, not inside
     // staxx_archive_stack().
     $folder = staxx_path_folder($name);
-    $data   = staxx_folders_load();
-    $start  = $data['start'];
-    $start['stacks'][$folder] = staxx_start_list_remove($start['stacks'][$folder] ?? [], staxx_path_leaf($name));
-    staxx_start_drop($start, $name);
-    $data['start'] = $start;
-    staxx_folders_save($data);
+    $leaf   = staxx_path_leaf($name);
+    staxx_folders_update(function (array $data) use ($folder, $leaf, $name): array {
+      $start = $data['start'];
+      $start['stacks'][$folder] = staxx_start_list_remove($start['stacks'][$folder] ?? [], $leaf);
+      staxx_start_drop($start, $name);
+      $data['start'] = $start;
+      return $data;
+    });
 
     staxx_reply(['ok' => true, 'archive' => $archive]);
 
@@ -349,7 +389,12 @@ switch ($action) {
     // compose's complaint until something valid is typed or the file is
     // deleted again — visible and reversible, which an impossible button is
     // not.
-    if (isset($pair[1]) && basename($pair[1]) === $file && trim($body) !== '') {
+    // Derived from the main file's own name, not read off $pair — an
+    // override that does not exist yet has no entry in $pair for that to
+    // read, and without this its very first save skipped validation
+    // entirely (nothing here recognised the name it was being saved under).
+    $overrideName = isset($pair[1]) ? basename($pair[1]) : staxx_expected_override_basename($main);
+    if ($overrideName !== '' && $overrideName === $file && trim($body) !== '') {
       if (!staxx_validate_compose($body, $error, $dir, $warnings, $main, '')) {
         staxx_reply(['ok' => false, 'error' => $error]);
       }
@@ -1417,15 +1462,16 @@ switch ($action) {
     // rename inherits would silently be lost.
     if ($renamed !== $name) {
       $folder = staxx_path_folder($name);
-      $data   = staxx_folders_load();
-      $start  = $data['start'];
-      $list   = $start['stacks'][$folder] ?? [];
-      $pos    = array_search(staxx_path_leaf($name), $list, true);
-      if ($pos !== false) $list[$pos] = staxx_path_leaf($renamed);
-      $start['stacks'][$folder] = $list;
-      staxx_start_rekey($start, $name, $renamed);
-      $data['start'] = $start;
-      staxx_folders_save($data);
+      staxx_folders_update(function (array $data) use ($folder, $name, $renamed): array {
+        $start = $data['start'];
+        $list  = $start['stacks'][$folder] ?? [];
+        $pos   = array_search(staxx_path_leaf($name), $list, true);
+        if ($pos !== false) $list[$pos] = staxx_path_leaf($renamed);
+        $start['stacks'][$folder] = $list;
+        staxx_start_rekey($start, $name, $renamed);
+        $data['start'] = $start;
+        return $data;
+      });
     }
 
     staxx_reply(['ok' => true, 'name' => $renamed]);

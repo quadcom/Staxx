@@ -256,9 +256,20 @@ function staxx_update_clock(string $stack, string $service, string $image): arra
   } elseif (staxx_update_editing($stack)) {
     $why = 'This stack is being edited right now, so it will not update itself until you are done.';
   } else {
+    // Only "is this stack running" is needed here, so this is
+    // staxx_list_stacks()'s own 'running' derivation, not the full per-stack
+    // walk (compose metadata, review lock, handover, foreign holders) that
+    // function does for every stack — costly when called once per pending
+    // service. A locked stack reports no state, same as staxx_list_stacks()
+    // itself, so an unreviewed import never reads as running here either.
     $running = false;
-    foreach (staxx_list_stacks() as $s) {
-      if ($s['name'] === $stack) { $running = $s['running']; break; }
+    foreach (staxx_scan_stacks()['stacks'] as $s) {
+      if ($s['rel'] !== $stack) continue;
+      if (staxx_review_file($s['dir']) === '') {
+        $st = staxx_state_for(staxx_find_compose_file($s['dir']), $s['leaf']);
+        $running = stripos($st['status'] ?? '', 'running') !== false;
+      }
+      break;
     }
     if (!$running) {
       $why = 'This stack is stopped, so it will not update itself.';
@@ -470,6 +481,18 @@ function staxx_update_cleanup(bool $dry, string &$error): array {
   $removed = [];
   $kept    = 0;
 
+  // The keep-set below is built from the state file, which only catches up
+  // once a job finishes — so a pull the queue has just started, or is about
+  // to start, is invisible to it. The window is narrow, but skipping cleanup
+  // entirely while anything is running or waiting costs nothing and rules
+  // out deleting an image that pull just fetched.
+  foreach ((array)(staxx_update_queue_state()['items'] ?? []) as $item) {
+    if (in_array($item['state'] ?? '', ['running', 'waiting'], true)) {
+      $error = 'An update is running or queued, so cleanup was skipped. Try again once it finishes.';
+      return ['removed' => [], 'kept' => 0];
+    }
+  }
+
   // Fails closed outright when Docker cannot even be asked what is running —
   // an empty "in use" list here would look identical to "nothing is using
   // any of these images" and delete things it never actually checked.
@@ -634,16 +657,24 @@ function staxx_update_queue_state(): array {
 function staxx_update_queue_start(string $scope, bool $includeStopped, string &$error): string {
   $error = '';
 
+  // Held for the whole read-check-write below, so a manual start landing on
+  // the cron tick can never pass "nothing running" against a queue the tick
+  // is about to replace. staxx_update_queue_tick() takes this same lock, but
+  // is never called from here, so there is no re-entrancy to worry about.
+  if (!staxx_update_queue_lock($error)) return '';
+
   $current = staxx_update_queue_read();
   foreach ((array)($current['items'] ?? []) as $item) {
     if (in_array($item['state'] ?? '', ['running', 'waiting'], true) && !($current['stopped'] ?? false)) {
       $error = 'A queue is already running. Stop it before starting another.';
+      staxx_update_queue_unlock();
       return '';
     }
   }
 
   if ($scope !== 'all' && !staxx_valid_path($scope)) {
     $error = 'Invalid scope.';
+    staxx_update_queue_unlock();
     return '';
   }
 
@@ -683,6 +714,7 @@ function staxx_update_queue_start(string $scope, bool $includeStopped, string &$
 
   if (!$items) {
     $error = 'Nothing in that scope has an update waiting.';
+    staxx_update_queue_unlock();
     return '';
   }
 
@@ -692,9 +724,11 @@ function staxx_update_queue_start(string $scope, bool $includeStopped, string &$
     'includeStopped' => $includeStopped, 'items' => $items,
   ])) {
     $error = 'Could not write the update queue.';
+    staxx_update_queue_unlock();
     return '';
   }
 
+  staxx_update_queue_unlock();
   return $id;
 }
 
@@ -833,15 +867,29 @@ function staxx_update_queue_stop(): bool {
  * digest it acts on was already fetched by a check pass.
  */
 function staxx_update_apply_pass(): array {
+  // Held only across the read-check-write below, never across a call to
+  // staxx_update_queue_tick() — that function takes this same lock itself,
+  // and a non-reentrant mkdir lock taken twice by one process would just
+  // block on itself. If someone else holds the lock (a manual start, or
+  // another pass), the queue is left exactly as it is rather than raced.
+  $lockError = '';
+  if (!staxx_update_queue_lock($lockError)) return staxx_update_queue_state();
+
   $queue = staxx_update_queue_read();
   $active = false;
   foreach ((array)($queue['items'] ?? []) as $item) {
     if (in_array($item['state'] ?? '', ['running', 'waiting'], true)) { $active = true; break; }
   }
-  if ($active && !($queue['stopped'] ?? false)) return staxx_update_queue_tick();
+  if ($active && !($queue['stopped'] ?? false)) {
+    staxx_update_queue_unlock();
+    return staxx_update_queue_tick();
+  }
 
   $due = staxx_update_due();
-  if (!$due) return staxx_update_queue_state();
+  if (!$due) {
+    staxx_update_queue_unlock();
+    return staxx_update_queue_state();
+  }
 
   // staxx_update_due() answers per service; the queue works a stack at a
   // time, so the due list collapses to its distinct stacks first.
@@ -853,13 +901,17 @@ function staxx_update_apply_pass(): array {
     if ($row['type'] !== 'stack' || !isset($wanted[$row['stack']['name']])) continue;
     $items[] = ['stack' => $row['stack']['name'], 'state' => 'waiting', 'job' => '', 'error' => ''];
   }
-  if (!$items) return staxx_update_queue_state();
+  if (!$items) {
+    staxx_update_queue_unlock();
+    return staxx_update_queue_state();
+  }
 
   staxx_update_queue_write([
     'id' => (string)time(), 'scope' => 'all', 'stopped' => false,
     'includeStopped' => false, 'items' => $items,
   ]);
 
+  staxx_update_queue_unlock();
   return staxx_update_queue_tick();
 }
 
@@ -929,6 +981,10 @@ function staxx_build_base(string $stack, string $service): string {
   if ($context === '') return ''; // this service does not build an image at all
 
   $ctxDir = $context[0] === '/' ? $context : rtrim($dir, '/').'/'.$context;
+  // A compose file setting `dockerfile: ""` explicitly is nonsense, but it
+  // parses, and indexing an empty string below would otherwise be a warning
+  // on every such call rather than the harmless fallback this defaulted to.
+  if ($dockerfile === '') $dockerfile = 'Dockerfile';
   $recipePath = $dockerfile[0] === '/' ? $dockerfile : rtrim($ctxDir, '/').'/'.$dockerfile;
 
   $recipe = @file_get_contents($recipePath);

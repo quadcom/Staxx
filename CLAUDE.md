@@ -18,9 +18,13 @@ Two rules override most other judgement calls:
 
 ## Development environment
 
-Development happens on **Windows**; the code runs on a **Linux Unraid server**. Nothing in the
-plugin can be executed locally — there is no PHP, no Docker, and no browser on the dev machine.
-Anything beyond a syntax check has to happen on the server.
+Development happens on **Windows**; the code runs on a **Linux Unraid server**. There is no PHP,
+no Docker, and no browser on the dev machine, so a webGUI page can never be driven locally. But
+node and python are both present here, and every JavaScript and schema suite — the compose model's
+own round-trip tests, the Community Applications converter, the image importer, the undeclared-name
+check, the schema self-test — runs on the dev machine, not just a syntax check of it. `compose-
+model.js` is requireable from node directly, so a suspected round-trip bug can be proven with a
+throwaway probe instead of guessed at. Only PHP is genuinely absent locally.
 
 **CRITICAL:** Never rewrite entire files. Provide targeted patch diffs or isolated code blocks only.
 **Execution:** Before executing any multi-file changes, write your proposed architecture to `PLAN.md` and wait for user approval. If during the process there are new sub-plans built. Create PLAN_X.md incrementing 'X' to keep track of all the steps that are outstanding. Once the plan(s) are complete then the plan files can be marked as complete. Keep the plans for future quick reference but move them into a complerted plans folder.
@@ -32,6 +36,8 @@ Anything beyond a syntax check has to happen on the server.
 ```sh
 python tests/validate_schema.py     # x-unraid schema self-test (needs pyyaml, jsonschema)
 node tests/yaml_roundtrip.js        # the compose model — parse, edit, write back
+node tests/ca_convert.js            # Community Applications template -> compose conversion
+node tests/image_import.js          # Docker Hub / local image -> starting compose file
 node tests/js_undeclared.js         # names assigned but declared nowhere
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
@@ -56,6 +62,12 @@ file's header gives the exact commands. Both `files.php` and `links.php` also po
 
 `validate_schema.py` has no runner or framework. It prints one line per case and exits non-zero on
 failure; its negative cases (what the schema must *reject*) matter more than the positive ones.
+
+`tests/fixtures/test-stacks/` is the corpus that proves the never-destroy-a-file promise: real
+compose files, each built to exercise one quirk (comments, anchors, odd indentation, duplicate
+field names, and so on), that `yaml_roundtrip.js` and others parse, edit and write back to prove
+nothing is lost. It lives in the repository so anyone can reproduce the numbers rather than trust
+a claim. `PLAN_60a.md` is the sub-plan tracking the parser work that corpus was built to check.
 
 ## Deploying to the test server
 
@@ -116,12 +128,14 @@ Three pages, two of them mutually exclusive:
 - `StaXX.page` — `Menu="Tasks:59"`, its own top-nav button just left of stock Docker (`Tasks:60`), at `/StaXX`
 - `staxx.settings.page` — Settings → Utilities
 
-Both view pages `include` the same `include/StacksPage.php`, and their `Cond` expressions test for
-`/boot/config/plugins/staxx/header_menu` in opposite directions, so exactly one is ever
-live. That marker file is a **projection of the `HEADER_MENU` config key**, written by
-`scripts/apply_settings` (run by `/update.php` after a settings save). The indirection exists
-because `Cond` runs constantly and parsing an ini file there — or quoting a config lookup inside an
-ini header — would be wasteful and fragile.
+Both view pages `include` the same `include/StacksPage.php`. Their `Cond` expressions test the
+*same two* marker files — `header_menu` and `takeover_docker_tab` — in opposite directions of one
+combined condition, so exactly one page is ever live, including the case where the takeover
+setting is on but the header-menu setting is off. Both markers are **projections of the
+`HEADER_MENU` and `TAKEOVER_DOCKER_TAB` config keys**, written by `scripts/apply_settings` (run by
+`/update.php` after a settings save). The indirection exists because `Cond` runs constantly and
+parsing an ini file there — or quoting a config lookup inside an ini header — would be wasteful and
+fragile.
 
 ### The stack model
 
@@ -214,8 +228,9 @@ file and moved into place, so a reader never sees half of one. Locking is an ato
 
 `schema/x-unraid.schema.json` (JSON Schema Draft 2020-12) with prose in `docs/x-unraid-schema.md`.
 Metadata lives *inside* the compose file — comment blocks and a companion file were both considered
-and rejected. `staxx_compose_meta()` already parses `x-unraid` blocks; **nothing renders them as
-a form yet**, and that renderer is the whole point of the project.
+and rejected. `staxx_compose_meta()` parses `x-unraid` blocks, and the form renderer built on top of
+it — 22 field groups, covering everything from ports and volumes to update policy — is the largest
+piece of engineering in the repository, and the reason the rest of this exists.
 
 ## Constraints that bite
 

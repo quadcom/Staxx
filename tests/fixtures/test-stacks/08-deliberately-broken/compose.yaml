@@ -1,0 +1,44 @@
+# !! THIS FILE IS INVALID ON PURPOSE. !!
+#
+# It is here to check that a bad file produces a clear, specific error rather
+# than a blank page or a half-drawn form. Do not "fix" it.
+#
+# Three separate faults, so you can see which one gets reported first:
+#
+#   1. YAML fault     — the "environment:" block below is indented wrongly.
+#   2. Compose fault  — "portz:" is not a real compose key.
+#   3. Metadata fault — x-unraid says display: sometimes, and the only two
+#                       values it accepts are basic and advanced.
+#
+# The faults get further from the parser as you go down the list, which is also
+# the order they are caught in — but not all by the same thing. Faults 1 and 2
+# are caught on the server, by `docker compose config`, which is what has to
+# refuse to start this. Fault 3 is only caught by validating against the schema.
+#
+# The form in the browser does something different again, and this is the
+# behaviour to check: it reads what it can and leaves the rest alone. BAD_INDENT
+# below does not appear as a box, because the parser cannot tell what it is —
+# and it is not deleted either. Save from the form and that line must still be
+# in the file, byte for byte, exactly where it was.
+#
+# There is no fourth fault about a mis-stated setting, because there is no
+# longer anywhere to mis-state one. What a setting is for is written in the
+# comment beside it, and a comment cannot contradict the line it sits on.
+
+name: deliberately-broken
+
+services:
+  broken-thing:
+    image: alpine:3.20
+    container_name: broken-thing
+    restart: unless-stopped
+    portz:
+      - "15112:15112"
+    environment:
+        TZ: America/Toronto
+       BAD_INDENT: this line is indented less than the one above it
+    command: ["sleep", "infinity"]
+
+    x-unraid:
+      name: Broken Thing
+      display: sometimes

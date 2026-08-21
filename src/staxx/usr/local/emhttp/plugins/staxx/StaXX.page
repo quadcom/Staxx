@@ -6,7 +6,7 @@ Tag="fa-cubes"
 Code="f1b3"
 Lock="true"
 Markdown="false"
-Cond="$var['fsState'] == 'Started' && is_file('/var/run/dockerd.pid') && (file_exists('/boot/config/plugins/staxx/header_menu') || file_exists('/boot/config/plugins/staxx/takeover_docker_tab'))"
+Cond="($var['fsState'] ?? '') == 'Started' && is_file('/var/run/dockerd.pid') && (file_exists('/boot/config/plugins/staxx/header_menu') || file_exists('/boot/config/plugins/staxx/takeover_docker_tab'))"
 ---
 <?PHP
 /* StaXX — the app's own button in the top navigation bar.

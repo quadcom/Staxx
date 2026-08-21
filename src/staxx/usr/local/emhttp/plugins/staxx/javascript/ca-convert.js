@@ -49,7 +49,12 @@
    * ===================================================================== */
 
   function dq(v) {
-    return '"' + String(v == null ? '' : v).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+    // Collapsed before escaping: a real newline inside a double-quoted
+    // scalar is legal YAML but breaks the value across two lines in the
+    // file, which every other multi-line value here (buildComment,
+    // cleanOverview) already avoids by flattening to one line first.
+    return '"' + String(v == null ? '' : v).replace(/[\r\n]+/g, ' ')
+      .replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
   }
 
   var UNSAFE_LEAD = /^[\s\-?:,\[\]{}#&*!|>'"%@`]/;
@@ -60,6 +65,10 @@
     s = String(s == null ? '' : s);
     if (s === '') return false;
     if (/^\s|\s$/.test(s)) return false;
+    // A bare scalar has no quotes to carry a newline inside — an internal
+    // one would otherwise start a new (unindented, invalid) line in the
+    // file, so any newline routes the value through dq() instead.
+    if (/[\r\n]/.test(s)) return false;
     if (UNSAFE_LEAD.test(s.charAt(0))) return false;
     if (s.indexOf(': ') >= 0 || /:$/.test(s)) return false;
     if (s.indexOf(' #') >= 0) return false;
@@ -78,7 +87,11 @@
   // be quoted or it silently produces a second, bogus colon.
   function keyOut(k) {
     k = String(k == null ? '' : k);
-    if (k !== '' && !/[:#"'\s]/.test(k) && !UNSAFE_LEAD.test(k.charAt(0))) return k;
+    // A key named literally "yes"/"no"/"on" etc. is harmless bare under
+    // compose-model.js's own parser, which never folds it to a boolean, but
+    // a real YAML 1.1 loader downstream would — so it is quoted the same as
+    // any other keyword, matching scalarOut()'s own rule for values.
+    if (k !== '' && !YAML_KEYWORD.test(k) && !/[:#"'\s]/.test(k) && !UNSAFE_LEAD.test(k.charAt(0))) return k;
     return dq(k);
   }
 
@@ -692,8 +705,13 @@
     /* ---- the service body -------------------------------------------- */
 
     var svc = [];
-    if (app.Repository) {
-      svc.push('    image: ' + app.Repository);
+    // scalarPresent(), not bare truthiness: an empty <Repository/> element
+    // arrives as an empty array (see scalarPresent()'s own comment), which
+    // is truthy, and would otherwise emit "image:" with no value while also
+    // suppressing the "no image name" note below.
+    if (scalarPresent(app.Repository)) {
+      var repository = String(app.Repository);
+      svc.push('    image: ' + scalarOut(repository));
       // Written through unchanged either way — lowercasing it would be a
       // guess at a registry path nobody has checked exists (see the module
       // comment on ExtraParams for why a guessed "fix" is worse than none).
@@ -701,8 +719,8 @@
       // Some feed entries are Unraid plugins, not containers: their
       // Repository is a .plg download URL, never a Docker image reference,
       // so a "://" rules those out before the check even runs.
-      if (app.Repository.indexOf('://') === -1 && /[A-Z]/.test(repositoryPath(app.Repository))) {
-        notes.push('The image "' + app.Repository + '" has an uppercase letter in its ' +
+      if (repository.indexOf('://') === -1 && /[A-Z]/.test(repositoryPath(repository))) {
+        notes.push('The image "' + repository + '" has an uppercase letter in its ' +
           'repository name. Docker requires repository names to be lowercase and will refuse ' +
           'to pull this image as written — check the app\'s own page for the correct name.');
       }
@@ -781,9 +799,18 @@
       }
     }
 
-    if (scalarPresent(app.WebUI)) {
+    // project/support are written here too, not only at stack level below:
+    // the schema's service-level keys exist so a multi-service stack (a
+    // catalogue app importing several containers together) can give each
+    // service its own project page rather than all of them sharing the
+    // stack's one link. readme has no service-level key — it stays stack-only.
+    var svcProject = scalarPresent(app.Project) ? scalarOut(app.Project) : '';
+    var svcSupport = scalarPresent(app.Support) ? scalarOut(app.Support) : '';
+    if (scalarPresent(app.WebUI) || svcProject || svcSupport) {
       svc.push('    x-unraid:');
-      svc.push('      webui: ' + dq(app.WebUI));
+      if (scalarPresent(app.WebUI)) svc.push('      webui: ' + dq(app.WebUI));
+      if (svcProject) svc.push('      project: ' + svcProject);
+      if (svcSupport) svc.push('      support: ' + svcSupport);
     }
 
     /* ---- stack-level x-unraid ------------------------------------------ */
@@ -792,11 +819,15 @@
     if (scalarPresent(app.Icon)) stackMeta.push('  icon: ' + scalarOut(app.Icon));
     var category = normaliseCategory(app);
     if (category) stackMeta.push('  category: ' + scalarOut(category));
-    if (app.Project) stackMeta.push('  project: ' + scalarOut(app.Project));
-    if (app.Support) stackMeta.push('  support: ' + scalarOut(app.Support));
-    if (app.ReadMe) stackMeta.push('  readme: ' + scalarOut(app.ReadMe));
-    var author = app.Author || app.Repo || '';
-    if (author) stackMeta.push('  author: ' + scalarOut(author));
+    // scalarPresent(), not bare truthiness — same empty-XML-element bug as
+    // Repository above: an empty <Project/>/<Support/>/<ReadMe/> is an empty
+    // array, which is truthy, and would otherwise write "project:" etc with
+    // no value.
+    if (scalarPresent(app.Project)) stackMeta.push('  project: ' + scalarOut(app.Project));
+    if (scalarPresent(app.Support)) stackMeta.push('  support: ' + scalarOut(app.Support));
+    if (scalarPresent(app.ReadMe)) stackMeta.push('  readme: ' + scalarOut(app.ReadMe));
+    var author = scalarPresent(app.Author) ? app.Author : (scalarPresent(app.Repo) ? app.Repo : '');
+    if (scalarPresent(author)) stackMeta.push('  author: ' + scalarOut(author));
     var overview = app.Overview ? cleanOverview(app.Overview) : '';
     if (overview) {
       stackMeta.push('  overview: |');

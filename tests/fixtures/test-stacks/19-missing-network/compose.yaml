@@ -1,0 +1,24 @@
+# Fixture for PLAN_34 phase 6: a service joins a network the file never
+# declares. The row says so already; the point of this fixture is the button
+# beside that note, which writes the whole declaration with external: true.
+# br0.2 is the shape that matters — an Unraid VLAN network, made outside the
+# file, which is why the fix marks it external rather than leaving a bare key
+# for compose to create a second network under.
+services:
+  app:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    networks:
+      - br0.2
+
+  # The control beside it: this one names a network the file does declare, so
+  # it must show no note and no button at all.
+  sidecar:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge

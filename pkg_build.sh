@@ -46,6 +46,17 @@ if [[ -f "${REPO_ROOT}/README.md" ]]; then
     "${STAGE}/usr/local/emhttp/plugins/${NAME}/README.md"
 fi
 
+# Not a live problem today — this repo has no CRLF files, .gitattributes sees
+# to that — but this is the artefact a user actually installs, and the dev
+# installer already strips defensively rather than trusting the checkout.
+# `-I` skips a binary file instead of searching its bytes for a CR, so the
+# first icon, font or screenshot added under the plugin folder is not
+# corrupted the day this next runs.
+echo "==> Normalising line endings"
+while IFS= read -r -d '' f; do
+  grep -qIU $'\r' "$f" 2>/dev/null && sed -i 's/\r$//' "$f"
+done < <(find "${STAGE}" -type f -print0)
+
 # Permissions are part of the package, and the shipped tree comes off a
 # filesystem that may not preserve them (this repo is developed on Windows).
 # Set them explicitly rather than trusting what was checked out.

@@ -56,6 +56,30 @@ NEGATIVE = [
         {"x-unraid": {"icon": {"url": "https://example.org/icon.png"}}},
     ),
     (
+        "stack icon climbing out of the stack directory",
+        {"x-unraid": {"icon": "../../../etc/passwd"}},
+    ),
+    (
+        "stack icon holding a javascript: URI",
+        {"x-unraid": {"icon": "javascript:alert(1)"}},
+    ),
+    (
+        "stack project that is not a link",
+        {"x-unraid": {"project": "javascript:alert(1)"}},
+    ),
+    (
+        "stack support that is not a link",
+        {"x-unraid": {"support": "not a link"}},
+    ),
+    (
+        "stack readme that is not a link",
+        {"x-unraid": {"readme": "not a link"}},
+    ),
+    (
+        "service webui that is not a link",
+        service_doc(webui="not a link"),
+    ),
+    (
         "services written as a list rather than a mapping",
         {"services": [{"image": "nginx"}]},
     ),
@@ -201,9 +225,11 @@ POSITIVE = [
 def main() -> int:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
-    # format_checker turned on deliberately: draft 2020-12 treats "format" as
-    # an annotation only unless something asks it to be enforced, and the new
-    # service-level project/support keys need "not a link" to actually fail.
+    # format_checker is passed for completeness, but it enforces nothing here:
+    # "uri" is absent from FormatChecker.checkers without the optional
+    # rfc3987/rfc3986-validator package, which this project does not install.
+    # Every "not a link" case below is caught by a "pattern" in the schema,
+    # not by format — format stays as documentation only.
     validator = Draft202012Validator(schema, format_checker=FormatChecker())
     print(f"schema is valid Draft 2020-12 ({SCHEMA_PATH.relative_to(ROOT)})\n")
 

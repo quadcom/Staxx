@@ -1,0 +1,143 @@
+# Three services in one stack. This is the grouping test: all three should
+# collapse under a single "multi-tier" heading in the UI, because Docker stamps
+# each of them with com.docker.compose.project=multi-tier.
+#
+# Deliberately mixed annotation — the front end has a note on every setting, the
+# database has notes on two of them, and the cache has none at all. A stack
+# should be allowed to be half-documented, and an unannotated setting must still
+# get a usable box rather than being left out.
+
+name: multi-tier
+
+x-unraid:
+  version: 1
+  name: Multi-Tier Demo
+  category: Tools:Utilities
+  overview: |
+    A pretend three-tier application: a front end, a database and a cache.
+    None of them do anything. They exist to prove that related containers stay
+    grouped together instead of scattering through one long list.
+
+services:
+  demo-frontend:
+    image: busybox:1.36
+    container_name: demo-frontend
+    restart: unless-stopped
+    depends_on:
+      - demo-database
+      - demo-cache
+    # GPU test — the UNMEASURABLE case.
+    #
+    # renderD129 is the AMD card on this machine. AMD tooling reports the card
+    # as a whole and cannot say which process caused the load, so the GPU
+    # column should show "n/a" for this stack with the reason on hover — not a
+    # zero, and not a blank.
+    #
+    # Node numbering is not fixed across machines or even reboots: renderD128
+    # and renderD129 are assigned in probe order. The plugin reads the vendor
+    # from /sys/class/drm/<node>/device/vendor rather than assuming, but this
+    # test file has to name one, so it names the one that is AMD today.
+    devices:
+      - /dev/dri/renderD129:/dev/dri/renderD129
+    ports:
+      - "15103:80"                     # the page you open in a browser -!R
+    environment:
+      TZ: America/Toronto              # timezone for timestamps
+      APP_NAME: Multi-Tier Demo        # shown in the page title
+      DATABASE_HOST: demo-database     # leave as-is unless you renamed the database service
+      CACHE_HOST: demo-cache           # leave as-is unless you renamed the cache service
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /www
+        echo "<h1>Multi-Tier Demo</h1><p>Front end is up.</p>" > /www/index.html
+        exec httpd -f -v -p 80 -h /www
+
+    x-unraid:
+      name: Front End
+      webui: "http://[IP]:[PORT:80]/"
+      overview: Serves a one-line page so you can confirm the stack is running.
+
+  demo-database:
+    image: alpine:3.20
+    container_name: demo-database
+    restart: unless-stopped
+    ports:
+      - "15104:5432"
+    volumes:
+      - ./data/db:/var/lib/pretend-db  # where the data would live. Back this up -!R
+    environment:
+      TZ: America/Toronto
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: change-me-please   # used by the front end to connect -!S -!R
+      POSTGRES_DB: demo
+    command: ["sleep", "infinity"]
+
+    # POSTGRES_USER, POSTGRES_DB, TZ and the port carry no note on purpose —
+    # they should still appear in the form, named after themselves.
+    x-unraid:
+      name: Database
+      overview: Stands in for PostgreSQL. Stores nothing.
+
+  demo-cache:
+    image: alpine:3.20
+    container_name: demo-cache
+    restart: unless-stopped
+    ports:
+      - "15105:6379"
+    environment:
+      TZ: America/Toronto
+      CACHE_MAX_MEMORY: 128mb
+      REDIS_PASSWORD: also-change-me
+    command: ["sleep", "infinity"]
+    # No x-unraid block and not one note. Everything here is worked out from the
+    # file. REDIS_PASSWORD is deliberately left unmarked: it must NOT be hidden,
+    # because nothing is ever guessed from a variable's name. Compare it with
+    # POSTGRES_PASSWORD above, which carries -!S and is.
+
+  demo-vlan:
+    image: alpine:3.20
+    container_name: demo-vlan
+    restart: unless-stopped
+    # VLAN test — the ADDRESS-LEADS case.
+    #
+    # This service sits on the br0.2 macvlan network with a static IP on the
+    # LAN (192.168.202.20), instead of the stack's default bridge network.
+    # The Address column should show that IP on its own, not a
+    # network:port pair, because this container has no published port for
+    # the IP to be paired with.
+    #
+    # No ports: on this service. On a macvlan network the container already
+    # has its own address on the LAN and is reached directly at that
+    # address, so a published port would map nothing meaningful — Docker
+    # ignores ports: here regardless. Do not "helpfully" add one back.
+    #
+    # This container cannot resolve demo-frontend, demo-database or
+    # demo-cache by name. It only joins br0.2, while the other three only
+    # join the implicit multi-tier_default bridge network, and the two
+    # networks do not share DNS. That is expected for this fixture, not a
+    # bug to fix.
+    networks:
+      br0.2:
+        ipv4_address: 192.168.202.20
+    environment:
+      TZ: America/Toronto
+    command: ["sleep", "infinity"]
+
+    x-unraid:
+      name: VLAN Demo
+      overview: A container with a static IP on the br0.2 VLAN instead of the stack's bridge network. Exists to test the Address column against a non-bridge network.
+
+# br0.2 is an existing macvlan VLAN network on this machine (subnet
+# 192.168.202.0/24, gateway 192.168.202.1). It is declared here as external
+# so Compose looks it up instead of trying to create it.
+#
+# Adding this section does not take the other three services off the
+# bridge network: demo-frontend, demo-database and demo-cache name no
+# networks: key of their own, so they still join the implicit
+# multi-tier_default network exactly as they did before this section
+# existed. Only demo-vlan, which names br0.2 explicitly, is affected.
+networks:
+  br0.2:
+    external: true

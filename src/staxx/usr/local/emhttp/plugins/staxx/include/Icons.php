@@ -75,6 +75,15 @@ const STAXX_ICON_MISS_DIR = '/tmp/staxx/icon-miss';
 /** How long a failed download is remembered before it is tried again. */
 const STAXX_ICON_MISS_TTL = 6 * 3600;
 
+/**
+ * How long a local icon copy (see staxx_icon_from_path()) may sit unused
+ * before staxx_icon_evict() removes it. Its ref is keyed on the source
+ * file's own path and mtime, so a re-downloaded Unraid icon writes a fresh
+ * copy under a new name every time and never revisits the old one — nothing
+ * else in the plugin ever cleans that up.
+ */
+const STAXX_ICON_EVICT_DAYS = 30;
+
 /** Where Unraid keeps a picture per container it has already downloaded, on
  *  the Docker vdisk rather than the flash device. Read-only from here — the
  *  importer copies out of it, exactly as the relative-path branch below
@@ -359,8 +368,16 @@ function staxx_icon_get(string $url, int $seconds = 10): ?string {
   $ch = curl_init($url);
   if ($ch === false) return null;
 
+  // CURLOPT_MAXFILESIZE only rejects a reply that *declares* itself too big
+  // in Content-Length; a chunked reply carries no such header and would
+  // otherwise write without limit to the flash device. The write callback
+  // below is the backstop that actually enforces the cap byte-for-byte, so
+  // RETURNTRANSFER is dropped in favour of building $body here instead.
+  $cap  = 2 * 1024 * 1024;
+  $body = '';
+  $over = false;
+
   curl_setopt_array($ch, [
-    CURLOPT_RETURNTRANSFER => true,
     CURLOPT_FOLLOWLOCATION => true,
     CURLOPT_MAXREDIRS      => 3,
     CURLOPT_CONNECTTIMEOUT => 5,
@@ -369,15 +386,22 @@ function staxx_icon_get(string $url, int $seconds = 10): ?string {
     // An icon is kilobytes. A URL from a compose file is not necessarily an
     // icon, and a plugin that will happily download a DVD image because a
     // compose file asked it to is a plugin that fills the flash device.
-    CURLOPT_MAXFILESIZE    => 2 * 1024 * 1024,
+    CURLOPT_MAXFILESIZE    => $cap,
+    CURLOPT_WRITEFUNCTION  => function ($ch, string $chunk) use (&$body, &$over, $cap): int {
+      $body .= $chunk;
+      // Returning anything other than the chunk's own length tells curl the
+      // write failed, which aborts the transfer immediately.
+      if (strlen($body) > $cap) { $over = true; return -1; }
+      return strlen($chunk);
+    },
   ]);
 
-  $body = curl_exec($ch);
+  $ok   = curl_exec($ch);
   $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
   curl_close($ch);
 
-  if ($body === false || $body === '' || $code < 200 || $code > 299) return null;
-  return (string)$body;
+  if ($over || $ok === false || $body === '' || $code < 200 || $code > 299) return null;
+  return $body;
 }
 
 /**
@@ -397,6 +421,12 @@ function staxx_icon_url(string $ref): string {
 
     $kept = STAXX_ICON_STORE.'/'.$ref.'.'.$ext;
     if (is_file($kept)) {
+      // Touched here, not on the (far more frequent) RAM-copy hit above: this
+      // still runs about once per boot for anything actually displayed —
+      // exactly the moment the RAM copy needs rebuilding anyway — without
+      // adding a flash write to every ordinary page render. Untouched is what
+      // staxx_icon_evict() reads as "orphaned"; see its own comment.
+      @touch($kept);
       if (!is_dir(STAXX_ICON_SERVE)) @mkdir(STAXX_ICON_SERVE, 0755, true);
       if (@copy($kept, $served)) return STAXX_ICON_BASE.'/'.$ref.'.'.$ext;
     }
@@ -471,10 +501,16 @@ function staxx_icon_from_path(string $path): array {
   // served stale forever from the cache.
   $ref = 'local-'.md5($path.'|'.(string)@filemtime($path));
   $url = staxx_icon_url($ref);
-  if ($url === '') {
+  // A copy that failed once (unreadable file, or bytes that do not actually
+  // look like $ext) is marked missed the same way a failed download is, so a
+  // page's first icon sweep does not retry it every single time — see
+  // staxx_icon_fetch()'s use of the same marker below.
+  if ($url === '' && !staxx_icon_missed($ref)) {
     $body = @file_get_contents($path);
     if ($body !== false && staxx_icon_store($ref, $ext, $body)) {
       $url = STAXX_ICON_BASE.'/'.$ref.'.'.$ext;
+    } else {
+      staxx_icon_mark_missed($ref);
     }
   }
   return ['fa' => '', 'ref' => $ref, 'url' => $url, 'remote' => ''];
@@ -534,11 +570,12 @@ function staxx_icon_fetch(string $ref, string $remote = ''): string {
   if ($cached !== '') return $cached;
   if (staxx_icon_missed($ref)) return '';
 
+  // A URL from $remote comes from the catalogue feed, not from this server —
+  // its extension is left blank here rather than guessed, because the guess
+  // used to default straight to 'png' and silently fail on anything else.
   $sources = [];
   if ($remote !== '') {
-    $ext = strtolower((string)pathinfo((string)parse_url($remote, PHP_URL_PATH), PATHINFO_EXTENSION));
-    if (!in_array($ext, STAXX_ICON_EXTS, true)) $ext = 'png';
-    $sources[] = [$remote, $ext];
+    $sources[] = [$remote, ''];
   } else {
     $have = staxx_icon_index()['refs'][$ref] ?? '';
     if ($have === '') return '';
@@ -549,6 +586,22 @@ function staxx_icon_fetch(string $ref, string $remote = ''): string {
   foreach ($sources as [$url, $ext]) {
     $body = staxx_icon_get($url);
     if ($body === null) continue;
+
+    if ($ext === '') {
+      // An untrusted URL's extension is not evidence of its content, so the
+      // real type comes from sniffing the body instead — and SVG is left out
+      // of the candidates entirely. A same-origin SVG with a <script> in it
+      // executes if its cached URL is ever opened directly, and a filter that
+      // has to catch every way to smuggle a script into an SVG forever is a
+      // bet not worth taking for an icon; refusing it outright is one
+      // condition to keep right, not a sanitiser to maintain.
+      foreach (STAXX_ICON_EXTS as $candidate) {
+        if ($candidate === 'svg') continue;
+        if (staxx_icon_is_picture($candidate, $body)) { $ext = $candidate; break; }
+      }
+      if ($ext === '') continue;
+    }
+
     if (staxx_icon_store($ref, $ext, $body)) return STAXX_ICON_BASE.'/'.$ref.'.'.$ext;
   }
 
@@ -558,6 +611,32 @@ function staxx_icon_fetch(string $ref, string $remote = ''): string {
   // again 500ms later, forever.
   staxx_icon_mark_missed($ref);
   return '';
+}
+
+/**
+ * Remove local icon copies nobody has asked for in STAXX_ICON_EVICT_DAYS —
+ * see the constant's own comment for why they otherwise accumulate on the
+ * flash device forever. Only "local-*" files are ever considered: a
+ * catalogue icon's ref never changes, so nothing about it can go orphaned
+ * the same way.
+ *
+ * Gated behind its own marker file so this only actually scans the icon
+ * store about once a day, not on every sweep tick.
+ */
+function staxx_icon_evict(): void {
+  $marker = STAXX_ICON_STORE.'/.last-evict';
+  if (is_file($marker) && (int)@filemtime($marker) > time() - 86400) return;
+
+  $cutoff = time() - STAXX_ICON_EVICT_DAYS * 86400;
+  foreach ((array)@glob(STAXX_ICON_STORE.'/local-*') as $path) {
+    if ((int)@filemtime($path) >= $cutoff) continue;
+    @unlink($path);
+    $served = STAXX_ICON_SERVE.'/'.basename($path);
+    if (is_file($served)) @unlink($served);
+  }
+
+  if (!is_dir(STAXX_ICON_STORE)) @mkdir(STAXX_ICON_STORE, 0755, true);
+  @touch($marker);
 }
 
 /**
@@ -577,6 +656,10 @@ function staxx_icon_fetch(string $ref, string $remote = ''): string {
  */
 function staxx_icon_sweep(array $wanted, int $budget = 10): array {
   if (!staxx_icon_fetching()) return ['icons' => [], 'done' => true];
+
+  // Cheap on every call bar the first one each day — see the function's own
+  // marker-file gate — so it costs nothing to run unconditionally here.
+  staxx_icon_evict();
 
   $deadline = time() + $budget;
 

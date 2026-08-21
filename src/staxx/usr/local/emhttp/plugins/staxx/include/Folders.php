@@ -97,19 +97,66 @@ function staxx_folders_load(bool $fresh = false): array {
   ];
 }
 
+/**
+ * Write folders.json, the whole document — temp-then-rename so a reader
+ * never sees a half-written file, and json_encode() checked for failure
+ * rather than trusted, since an unchecked one would write a near-empty "\n"
+ * over every collapsed flag, drag order and boot wait already on disk.
+ *
+ * Does NOT lock. Every caller reaches this already holding the lock
+ * staxx_mkdir_lock(STAXX_FOLDERS_FILE, ...) takes — see staxx_folders_update()
+ * below, which is how every mutator in this file gets here. Locking a second
+ * time in here as well would just make this call wait out its own caller's
+ * lock and then time out.
+ */
 function staxx_folders_save(array $data, ?string &$error = null): bool {
   $error = '';
   if (!is_dir(STAXX_CFG_DIR) && !@mkdir(STAXX_CFG_DIR, 0755, true)) {
     $error = 'Could not create '.STAXX_CFG_DIR;
     return false;
   }
+
   $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-  if (@file_put_contents(STAXX_FOLDERS_FILE, $json."\n") === false) {
+  if ($json === false) {
+    $error = 'Could not encode the folder layout, so nothing was written.';
+    return false;
+  }
+
+  $tmp = STAXX_FOLDERS_FILE.'.'.getmypid().'.tmp';
+  $written = @file_put_contents($tmp, $json."\n");
+  if ($written === false || $written !== strlen($json) + 1) {
+    @unlink($tmp);
     $error = 'Could not write '.STAXX_FOLDERS_FILE;
     return false;
   }
+  if (!@rename($tmp, STAXX_FOLDERS_FILE)) {
+    @unlink($tmp);
+    $error = 'Could not save '.STAXX_FOLDERS_FILE.' — the temporary file could not be put in place.';
+    return false;
+  }
+
   staxx_folders_load(true);   // the cached copy is now a lie
   return true;
+}
+
+/**
+ * Run one change to folders.json under a single lock spanning both the read
+ * and the write — the atomic-mkdir trick staxx_update_lock() uses for its own,
+ * longer-lived pass, held here just long enough that a second save started
+ * while this one is still in flight waits for it, rather than starting from
+ * the same stale read and silently overwriting it once both finish. $mutate
+ * is handed the freshly-reloaded data (never the request-cached copy) and
+ * returns what should be saved.
+ */
+function staxx_folders_update(callable $mutate, ?string &$error = null): bool {
+  $error = '';
+  if (!staxx_mkdir_lock(STAXX_FOLDERS_FILE, $error)) return false;
+
+  $data = $mutate(staxx_folders_load(true));
+  $ok   = staxx_folders_save($data, $error);
+
+  staxx_mkdir_unlock(STAXX_FOLDERS_FILE);
+  return $ok;
 }
 
 /* --------------------------------------------------------- start order -- */
@@ -173,9 +220,28 @@ function staxx_start_load(): array {
 
 /** Replace the `start` block and save, leaving `collapsed` untouched. */
 function staxx_start_store(array $start, ?string &$error = null): bool {
-  $data = staxx_folders_load();
-  $data['start'] = staxx_start_normalise($start);
-  return staxx_folders_save($data, $error);
+  return staxx_folders_update(function (array $data) use ($start) {
+    $data['start'] = staxx_start_normalise($start);
+    return $data;
+  }, $error);
+}
+
+/**
+ * Mutate the `start` block under the same lock the write itself takes:
+ * $mutate is handed the freshly-reloaded, normalised block and returns what
+ * it should become. staxx_start_store() alone cannot close this race for a
+ * caller that read the block with staxx_start_load() before taking any
+ * lock — that read can already be stale by the time a save follows it, so a
+ * drag order saved from one tab and a boot-wait saved from another can have
+ * the second overwrite the first's change rather than merge with it. Every
+ * mutator that changes the `start` block from a fresh read should call this
+ * instead of staxx_start_load() + staxx_start_store().
+ */
+function staxx_start_update(callable $mutate, ?string &$error = null): bool {
+  return staxx_folders_update(function (array $data) use ($mutate) {
+    $data['start'] = staxx_start_normalise($mutate(staxx_start_normalise($data['start'] ?? [])));
+    return $data;
+  }, $error);
 }
 
 /**
@@ -223,7 +289,11 @@ function staxx_start_order_set(string $scope, string $parent, array $names, stri
     $error = 'Folders have no parent to be ordered within.';
     return false;
   }
-  if ($scope === 'stacks' && $parent !== '' && !staxx_folder_valid_name($parent)) {
+  // Checked against real folders on disk, not just against the naming rule —
+  // a name that merely looks valid but does not exist would otherwise be
+  // accepted here and quietly grow a "stacks" entry for a folder nobody can
+  // ever see or clear.
+  if ($scope === 'stacks' && $parent !== '' && !in_array($parent, staxx_folder_names(), true)) {
     $error = 'No such folder.';
     return false;
   }
@@ -245,14 +315,14 @@ function staxx_start_order_set(string $scope, string $parent, array $names, stri
     }
   }
 
-  $start = staxx_start_load();
   $names = array_values($names);
 
-  if ($scope === 'folders')    $start['folders']            = $names;
-  elseif ($scope === 'stacks') $start['stacks'][$parent]     = $names;
-  else                         $start['services'][$parent]   = $names;
-
-  return staxx_start_store($start, $error);
+  return staxx_start_update(function (array $start) use ($scope, $parent, $names): array {
+    if ($scope === 'folders')    $start['folders']          = $names;
+    elseif ($scope === 'stacks') $start['stacks'][$parent]   = $names;
+    else                         $start['services'][$parent] = $names;
+    return $start;
+  }, $error);
 }
 
 /**
@@ -376,6 +446,9 @@ function staxx_folder_create(string $name, string &$error): string {
   $dir = staxx_stack_root().'/'.$name;
   if (!@mkdir($dir, 0755, true)) { $error = 'Could not create '.$dir; return ''; }
 
+  // The tree's shape just changed on disk; see staxx_scan_stacks_reset().
+  staxx_scan_stacks_reset();
+
   return $name;
 }
 
@@ -406,23 +479,27 @@ function staxx_folder_rename(string $from, string $to, string &$error): bool {
     return false;
   }
 
-  $data = staxx_folders_load();
-  if (!empty($data['collapsed'][$from])) {
-    unset($data['collapsed'][$from]);
-    $data['collapsed'][$to] = true;
-  }
+  // The tree's shape just changed on disk; see staxx_scan_stacks_reset().
+  staxx_scan_stacks_reset();
 
-  $start = $data['start'];
-  $idx = array_search($from, $start['folders'], true);
-  if ($idx !== false) $start['folders'][$idx] = $to;
-  if (isset($start['stacks'][$from])) {
-    $start['stacks'][$to] = $start['stacks'][$from];
-    unset($start['stacks'][$from]);
-  }
-  staxx_start_rekey($start, $from, $to);
-  $data['start'] = $start;
+  staxx_folders_update(function (array $data) use ($from, $to): array {
+    if (!empty($data['collapsed'][$from])) {
+      unset($data['collapsed'][$from]);
+      $data['collapsed'][$to] = true;
+    }
 
-  staxx_folders_save($data);
+    $start = $data['start'];
+    $idx = array_search($from, $start['folders'], true);
+    if ($idx !== false) $start['folders'][$idx] = $to;
+    if (isset($start['stacks'][$from])) {
+      $start['stacks'][$to] = $start['stacks'][$from];
+      unset($start['stacks'][$from]);
+    }
+    staxx_start_rekey($start, $from, $to);
+    $data['start'] = $start;
+
+    return $data;
+  });
   return true;
 }
 
@@ -459,39 +536,67 @@ function staxx_folder_delete(string $name, string &$error): bool {
     return false;
   }
 
-  foreach ($members as $m) {
-    if (@rename($m['dir'], $root.'/'.$m['leaf'])) continue;
-    $error = 'Moved what it could, but "'.$m['leaf'].'" could not be moved out of the folder. '
-           . 'The folder has been left in place.';
+  // Checked BEFORE anything moves, not after: the docblock promises nothing
+  // is moved unless everything can be, and running this once every member is
+  // already gone can only describe what is left, never what was really here
+  // to begin with.
+  $memberLeaves = array_map(fn($m) => $m['leaf'], $members);
+  $left = array_values(array_diff((array)@scandir($dir), ['.', '..'], $memberLeaves));
+  if ($left) {
+    $error = 'Nothing was moved. The folder also contains: '
+           . implode(', ', array_slice($left, 0, 6)) . (count($left) > 6 ? ', …' : '')
+           . '. Remove it by hand first, or move the stacks out yourself.';
     return false;
   }
 
-  // Anything still in there is something this plugin did not put there and does
-  // not understand, so say what is in the way rather than deleting it.
-  $left = array_values(array_diff((array)@scandir($dir), ['.', '..']));
-  if ($left) {
-    $error = 'The stacks were moved out, but the folder still contains: '
-           . implode(', ', array_slice($left, 0, 6)) . (count($left) > 6 ? ', …' : '')
-           . '. Remove it by hand if you are sure.';
+  $moved      = [];
+  $failedLeaf = '';
+  foreach ($members as $m) {
+    if (@rename($m['dir'], $root.'/'.$m['leaf'])) { $moved[] = $m['leaf']; continue; }
+    $failedLeaf = $m['leaf'];
+    break;
+  }
+  if ($moved) staxx_scan_stacks_reset(); // stacks left the folder on disk
+
+  // Bookkeeping runs regardless of whether anything actually needed moving
+  // (an empty folder has none), and for whatever DID move even when a
+  // sibling did not — a stack that really is sitting at the top level now
+  // must never be left pointing at a folder that no longer holds it, even
+  // when the folder itself survives because a sibling could not be moved.
+  staxx_folders_update(function (array $data) use ($name, $moved, $failedLeaf): array {
+    $start = $data['start'];
+    foreach ($moved as $leaf) staxx_start_rekey($start, $name.'/'.$leaf, $leaf);
+    if ($moved) {
+      $ordered = staxx_start_sort($moved, $start['stacks'][$name] ?? []);
+      $start['stacks'][''] = array_values(array_merge($start['stacks'][''] ?? [], $ordered));
+    }
+
+    if ($failedLeaf === '') {
+      unset($start['stacks'][$name]);
+      $idx = array_search($name, $start['folders'], true);
+      if ($idx !== false) array_splice($start['folders'], $idx, 1);
+      unset($data['collapsed'][$name]);
+    } else {
+      // A sibling is still in the folder, so its own order entry has to
+      // survive — just without the leaves that already left.
+      $start['stacks'][$name] = array_values(array_diff($start['stacks'][$name] ?? [], $moved));
+    }
+
+    $data['start'] = $start;
+    return $data;
+  });
+
+  if ($failedLeaf !== '') {
+    $error = 'Moved what it could, but "'.$failedLeaf.'" could not be moved out of the folder. '
+           . 'The folder has been left in place.';
     return false;
   }
 
   if (!@rmdir($dir)) { $error = 'Could not remove the folder '.$dir; return false; }
 
-  $data = staxx_folders_load();
-  unset($data['collapsed'][$name]);
+  // The tree's shape just changed on disk; see staxx_scan_stacks_reset().
+  staxx_scan_stacks_reset();
 
-  $start   = $data['start'];
-  $leaves  = array_map(fn($m) => $m['leaf'], $members);
-  $ordered = staxx_start_sort($leaves, $start['stacks'][$name] ?? []);
-  $start['stacks'][''] = array_values(array_merge($start['stacks'][''] ?? [], $ordered));
-  unset($start['stacks'][$name]);
-  $idx = array_search($name, $start['folders'], true);
-  if ($idx !== false) array_splice($start['folders'], $idx, 1);
-  staxx_start_rekey($start, $name, '');
-  $data['start'] = $start;
-
-  staxx_folders_save($data);
   return true;
 }
 
@@ -525,6 +630,29 @@ function staxx_folder_assign(string $stack, string $folder, string &$error): str
 
   if ($folder !== '' && !is_dir($root.'/'.$folder)) { $error = 'No such folder.'; return ''; }
 
+  // Case-insensitive, the same rule staxx_folder_taken() already uses for a
+  // brand new folder or stack: staxx_project_name() lowercases, so
+  // "Media/Jellyfin" moving in beside an existing "Media/jellyfin" would give
+  // both stacks the same compose project the moment either one started,
+  // regardless of what the filesystem itself is willing to hold side by side.
+  if ($folder === '') {
+    $what = '';
+    if (staxx_folder_taken($leaf, $what)) {
+      $error = 'There is already a '.$what.' called "'.$leaf.'" at the top level.';
+      return '';
+    }
+  } else {
+    foreach (staxx_scan_stacks()['stacks'] as $s) {
+      if ($s['folder'] === $folder && strcasecmp($s['leaf'], $leaf) === 0) {
+        $error = 'There is already a stack called "'.$leaf.'" in "'.$folder.'".';
+        return '';
+      }
+    }
+  }
+
+  // The checks above only know about stacks and folders. A stray empty
+  // directory is neither, and rename() onto an empty directory *succeeds* on
+  // Linux — so this still catches it, same reasoning as staxx_rename_stack().
   $to = $root.'/'.$rel;
   if (file_exists($to)) {
     $error = 'There is already something called "'.$leaf.'" '
@@ -534,18 +662,22 @@ function staxx_folder_assign(string $stack, string $folder, string &$error): str
 
   if (!@rename($from, $to)) { $error = 'Could not move the stack on disk.'; return ''; }
 
-  $data = staxx_folders_load();
-  $start = $data['start'];
+  // The tree's shape just changed on disk; see staxx_scan_stacks_reset().
+  staxx_scan_stacks_reset();
 
-  $oldFolder = staxx_path_folder($stack);
-  $start['stacks'][$oldFolder] = staxx_start_list_remove($start['stacks'][$oldFolder] ?? [], $leaf);
-  $newList = $start['stacks'][$folder] ?? [];
-  $newList[] = $leaf;
-  $start['stacks'][$folder] = $newList;
+  staxx_folders_update(function (array $data) use ($stack, $rel, $folder, $leaf): array {
+    $start = $data['start'];
 
-  staxx_start_rekey($start, $stack, $rel);
-  $data['start'] = $start;
-  staxx_folders_save($data);
+    $oldFolder = staxx_path_folder($stack);
+    $start['stacks'][$oldFolder] = staxx_start_list_remove($start['stacks'][$oldFolder] ?? [], $leaf);
+    $newList = $start['stacks'][$folder] ?? [];
+    $newList[] = $leaf;
+    $start['stacks'][$folder] = $newList;
+
+    staxx_start_rekey($start, $stack, $rel);
+    $data['start'] = $start;
+    return $data;
+  });
 
   return $rel;
 }
@@ -554,11 +686,11 @@ function staxx_folder_collapse(string $name, bool $collapsed, string &$error): b
   $error = '';
   if (!staxx_folder_valid_name($name)) { $error = 'No such folder.'; return false; }
 
-  $data = staxx_folders_load();
-  if ($collapsed) $data['collapsed'][$name] = true;
-  else unset($data['collapsed'][$name]);
-
-  return staxx_folders_save($data, $error);
+  return staxx_folders_update(function (array $data) use ($name, $collapsed): array {
+    if ($collapsed) $data['collapsed'][$name] = true;
+    else unset($data['collapsed'][$name]);
+    return $data;
+  }, $error);
 }
 
 /**

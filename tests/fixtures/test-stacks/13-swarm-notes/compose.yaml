@@ -1,0 +1,37 @@
+# Fixture for PLAN_29: every setting the scaling block ignores on one machine,
+# plus the fixed-name-versus-copies clash. It is deliberately invalid, like
+# 08-deliberately-broken: compose refuses it, so it will not save until one
+# of the two clashing settings is cleared. It renders fine, which is the point.
+services:
+  web:
+    image: nginx:alpine
+    container_name: fixed-name-here   # clashes with replicas: 3 below
+    restart: unless-stopped
+    deploy:
+      replicas: 3                     # honoured here, but not with a fixed name
+      mode: replicated                # ignored outside a cluster
+      endpoint_mode: vip              # ignored outside a cluster
+      placement:                      # ignored outside a cluster
+        constraints:
+          - node.role == manager
+      update_config:                  # ignored outside a cluster
+        parallelism: 1
+        order: start-first
+      rollback_config:                # ignored outside a cluster
+        parallelism: 1
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+
+  variable-copies:
+    image: alpine
+    container_name: also-fixed
+    deploy:
+      replicas: ${COPIES}             # must NOT warn - the value is unknown
+
+  one-copy:
+    image: alpine
+    container_name: single
+    deploy:
+      replicas: 1                     # must NOT warn

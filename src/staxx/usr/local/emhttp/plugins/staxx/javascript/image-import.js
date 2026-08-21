@@ -81,7 +81,7 @@
     // what a search result or a README example often writes, so dropping the
     // prefix here is what keeps the link alive rather than merely tidy.
     if (p.indexOf('library/') === 0) p = p.slice('library/'.length);
-    var slash = p.indexOf('/');
+    slash = p.indexOf('/');
     if (slash === -1) return 'https://hub.docker.com/_/' + encodeURIComponent(p);
     var segs = p.split('/'), i;
     for (i = 0; i < segs.length; i++) segs[i] = encodeURIComponent(segs[i]);
@@ -322,7 +322,11 @@
   function requote(v, quote) { return quote ? quote + v + quote : v; }
 
   var ENV_LIST_RE = /^(\s*-\s*)([A-Za-z_][\w.-]*)=(.*)$/;
-  var ENV_MAP_RE = /^(\s*)([A-Za-z_][\w.-]*):\s?(.*)$/;
+  // ":[ \t]*", not ":\s?" — the latter allows at most one space, so an
+  // aligned block ("PUID:   1000") never matches at all and gets neither the
+  // PUID/PGID correction nor its note, leaving the container running as the
+  // wrong user with no sign anything was skipped.
+  var ENV_MAP_RE = /^(\s*)([A-Za-z_][\w.-]*):[ \t]*(.*)$/;
 
   function matchEnvAssignment(body) {
     var m = ENV_LIST_RE.exec(body);
@@ -362,12 +366,24 @@
   // tells a reader that a media library still needs moving onto a share.
   function correctPathLine(line, opts) {
     if (!opts.appdata || line.indexOf('/path/to/') === -1) return { changed: false, line: line };
+    // Same "exactly one trailing slash" normalisation buildConfigRoute()
+    // applies to opts.appdata — without it a caller passing the setting's
+    // raw value ("/mnt/user/appdata", no slash) gets a path glued straight
+    // onto the next segment ("/mnt/user/appdataconfig").
+    var appdata = String(opts.appdata).replace(/\/*$/, '/');
     var sc = splitComment(line);
-    var oldPaths = sc.body.match(/\/path\/to\/[^\s:'"#]*/g) || [];
-    if (!oldPaths.length) return { changed: false, line: line };
-    var newBody = sc.body.split('/path/to/').join(opts.appdata);
-    var newPaths = oldPaths.map(function (p) { return p.replace('/path/to/', opts.appdata); });
-    return { changed: true, line: newBody + sc.suffix, oldPaths: oldPaths, newPaths: newPaths };
+    var idx = sc.body.indexOf('/path/to/');
+    if (idx === -1) return { changed: false, line: line };
+    var m = /^\/path\/to\/[^\s:'"#]*/.exec(sc.body.slice(idx));
+    if (!m) return { changed: false, line: line };
+    // Only the first occurrence — the host side of "- /path/to/x:/config".
+    // A doc that illustrates both sides of the mount the same way puts a
+    // second "/path/to/" on the container side, which the image itself has
+    // hard-coded and this must leave alone.
+    var oldPath = m[0];
+    var newPath = oldPath.replace('/path/to/', appdata);
+    var newBody = sc.body.slice(0, idx) + newPath + sc.body.slice(idx + oldPath.length);
+    return { changed: true, line: newBody + sc.suffix, oldPaths: [oldPath], newPaths: [newPath] };
   }
 
   // A password/secret/token/key left at a documentation placeholder is never
@@ -381,10 +397,19 @@
   var SECRET_KEY_RE = /PASS|SECRET|TOKEN|KEY/i;
   var SECRET_MARKERS = ['example', 'changeme', 'yourpass', 'password', 'secret', 'letmein'];
 
+  // An env-style key, not a structural compose one. matchEnvAssignment()
+  // matches ANY "key: value" shaped line, so without this an unrelated
+  // top-level "secrets:" (Docker's own compose section, plural, no value on
+  // that line) reads as an env var called "secrets" — which contains
+  // "secret" — with an empty value, and becomes a permanent "has no value"
+  // comment in the written file. Real environment variables are
+  // conventionally upper-case; every structural compose key is lower-case.
+  var ENV_KEY_SHAPE_RE = /^[A-Z][A-Z0-9_]*$/;
+
   function detectSecretPlaceholder(line) {
     var sc = splitComment(line);
     var m = matchEnvAssignment(sc.body);
-    if (!m || !SECRET_KEY_RE.test(m.key)) return null;
+    if (!m || !ENV_KEY_SHAPE_RE.test(m.key) || !SECRET_KEY_RE.test(m.key)) return null;
     var v = unquote(m.rawValue.replace(/\s+$/, '')).value.toLowerCase();
 
     // Empty and not marked optional means the documentation expects a value

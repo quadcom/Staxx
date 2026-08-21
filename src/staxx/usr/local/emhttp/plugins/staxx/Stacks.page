@@ -2,7 +2,7 @@ Menu="Docker:0"
 Title="StaXX"
 Tag="cubes"
 Markdown="false"
-Cond="is_file('/var/run/dockerd.pid') && !file_exists('/boot/config/plugins/staxx/header_menu')"
+Cond="($var['fsState'] ?? '') == 'Started' && is_file('/var/run/dockerd.pid') && !file_exists('/boot/config/plugins/staxx/header_menu') && !file_exists('/boot/config/plugins/staxx/takeover_docker_tab')"
 ---
 <?PHP
 /* StaXX — the app's tab under the existing Docker menu.
@@ -13,7 +13,9 @@ Cond="is_file('/var/run/dockerd.pid') && !file_exists('/boot/config/plugins/stax
  * the stock tab is still there, one click away.
  *
  * Mutually exclusive with StaXX.page, which puts the same view in the top
- * navigation bar instead. The header_menu marker file decides which is live.
+ * navigation bar instead. The header_menu marker file decides which is live —
+ * and the takeover_docker_tab marker forces this one off regardless, because
+ * taking the Docker menu over removes this sub-tab's own parent along with it.
  *
  * The filename is the URL — PageBuilder names a page by its basename — so this
  * is /Docker/Stacks. It cannot also be StaXX.page, because the top-nav page

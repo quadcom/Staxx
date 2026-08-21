@@ -1,0 +1,55 @@
+# Fixture for PLAN_34 Phase 0. A top-level network declaration written as a
+# flow map, an anchor or an alias used to render as an ordinary, editable row
+# with an empty driver box — indistinguishable from a bare declaration, even
+# though the file said something. Choosing a driver for one appended an
+# indented child under a node that cannot take one, and real compose then
+# refused the file outright:
+#
+#   $ docker compose -f bad-flow.yaml config -q
+#   yaml: line 4: did not find expected key
+#
+# This fixture carries all three shapes plus a bare declaration as the
+# control, so the guard can prove the three now lock (with their raw text
+# still shown) while the bare one keeps editing exactly as before. Valid
+# compose on purpose — nothing here is deliberately broken.
+services:
+  app:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    networks:
+      - backend
+      - hft
+      - frontend
+
+  sidecar:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    networks:
+      - internal_net
+      - shared_net
+      - backend
+
+networks:
+  # The control. Nothing under it yet, so choosing a driver here is a normal,
+  # everyday edit — the one shape of these five that must stay editable.
+  backend:
+
+  # A flow map on one line, using the name: alias form — this is the real-
+  # world case, already present in Adrian's own Homepage-For-Tesla project.
+  # Everything after the colon is one YAML node with nowhere to hang a child.
+  hft: {name: br0.2, external: true}
+
+  # An anchored declaration. The &tag makes this whole mapping a shared block
+  # that another declaration below reuses by reference.
+  internal_net: &net_defaults
+    driver: bridge
+    attachable: true
+
+  # An alias. This line's entire value is a pointer at the anchor above, not
+  # a mapping of its own, so there is no map here to append a child to either.
+  shared_net: *net_defaults
+
+  # An ordinary indented block, for contrast. This has always worked and goes
+  # on working: it is not opaque, just spelled out over more than one line.
+  frontend:
+    driver: bridge

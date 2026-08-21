@@ -36,8 +36,11 @@ const STAXX_CA_APPS   = STAXX_CA_DIR.'/apps.jsonl';
 const STAXX_CA_INDEX  = STAXX_CA_DIR.'/index.json';
 const STAXX_CA_STATUS = STAXX_CA_DIR.'/status.json';
 
-/** Atomic-mkdir lock, the same trick scripts/stats-collector.sh uses. */
-const STAXX_CA_LOCK = STAXX_CA_DIR.'/.lock';
+/** Atomic-mkdir lock, the same trick scripts/stats-collector.sh uses.
+ *  Outside STAXX_CA_DIR on purpose: the rebuild swap renames that whole
+ *  directory away and deletes the old one, which would carry the lock off
+ *  and release it before the new cache is actually in place. */
+const STAXX_CA_LOCK = '/tmp/staxx/ca.lock';
 
 /** How long a built index is trusted before a search triggers a rebuild. */
 const STAXX_CA_TTL = 24 * 3600;
@@ -69,7 +72,14 @@ function staxx_ca_index_data(): array {
   if ($raw === false) return $data = $empty;
 
   $decoded = json_decode($raw, true);
-  return $data = is_array($decoded) ? array_merge($empty, $decoded) : $empty;
+  if (!is_array($decoded)) return $data = $empty;
+
+  $merged = array_merge($empty, $decoded);
+  // A corrupt cache file can carry 'apps' as anything JSON allows, not just an
+  // array — and count() on a scalar is a PHP 8 TypeError, fatal for the whole
+  // search box rather than just this one stale-looking result.
+  if (!is_array($merged['apps'])) $merged['apps'] = [];
+  return $data = $merged;
 }
 
 /**

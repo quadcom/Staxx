@@ -140,19 +140,36 @@ function staxx_autostart_names(array $s): array {
  *               byName: array<string, array>}
  */
 function staxx_autostart_index(array $stacks): array {
-  $owner  = [];
-  $names  = [];
-  $byName = [];
+  $owner     = [];
+  $names     = [];
+  $byName    = [];
+  // "rel/service" => true. A real docker container name is unique by
+  // construction, so this only ever fires for the guessed fallback name a
+  // never-started service gets — see staxx_autostart_names(). Two stacks
+  // sharing a leaf in different folders ("Media/jellyfin", "Test/jellyfin")
+  // guess the identical name, and there is no way to tell which one a line
+  // in the boot file would actually be controlling.
+  $ambiguous = [];
 
   foreach ($stacks as $s) {
     $byName[$s['name']] = $s;
     $names[$s['name']]  = staxx_autostart_names($s);
     foreach ($names[$s['name']] as $svc => $list) {
-      foreach ($list as $n) $owner[$n] = [$s['name'], $svc];
+      foreach ($list as $n) {
+        if (!isset($owner[$n])) { $owner[$n] = [$s['name'], $svc]; continue; }
+        if ($owner[$n][0] === $s['name']) continue; // this stack naming itself twice — harmless
+
+        // Skip the guess rather than pick a side: dropped from this stack's
+        // own list so toggling it here can never silently add or remove the
+        // OTHER stack's line, and flagged so the state reported below can
+        // say so rather than showing a switch that quietly does nothing.
+        $ambiguous[$s['name'].'/'.$svc] = true;
+        $names[$s['name']][$svc] = array_values(array_diff($names[$s['name']][$svc], [$n]));
+      }
     }
   }
 
-  return ['owner' => $owner, 'names' => $names, 'byName' => $byName];
+  return ['owner' => $owner, 'names' => $names, 'byName' => $byName, 'ambiguous' => $ambiguous];
 }
 
 /**
@@ -210,7 +227,7 @@ function staxx_autostart_merge_order(array $stored, array $seen): array {
  * @return array{available:bool,
  *               folders:array<string, array{mode:string, wait:int}>,
  *               stacks:array<string, array{mode:string, wait:int, interleaved:bool}>,
- *               services:array<string, array<string, array{on:bool, wait:int}>>}
+ *               services:array<string, array<string, array{on:bool, wait:int, ambiguous:bool}>>}
  */
 function staxx_autostart_state(array $stacks): array {
   $result = ['available' => staxx_autostart_available(), 'folders' => [], 'stacks' => [], 'services' => []];
@@ -228,8 +245,15 @@ function staxx_autostart_state(array $stacks): array {
       $isOn = isset($onMap[$rel][$svc]);
       $on[$svc] = $isOn;
       $result['services'][$rel][$svc] = [
-        'on'   => $isOn,
-        'wait' => (int)($delay['service:'.$rel.'/'.$svc] ?? 0),
+        'on'        => $isOn,
+        'wait'      => (int)($delay['service:'.$rel.'/'.$svc] ?? 0),
+        // True when this service has never run and its guessed boot-file
+        // name collided with another stack's guess — see
+        // staxx_autostart_index(). Reported so the page can eventually say
+        // so; nothing here can safely control this service's own line until
+        // one of the two stacks has actually started once and stopped
+        // guessing.
+        'ambiguous' => !empty($idx['ambiguous'][$rel.'/'.$svc]),
       ];
     }
 
@@ -275,11 +299,15 @@ function staxx_autostart_state(array $stacks): array {
  * only, every wait summed onto the one line it lands on.
  *
  * @param array<int, array> $stacksHere every stack in this folder, natural order
- * @param array $onMap   staxx_autostart_on_map()'s return
+ * @param array $onMap    staxx_autostart_on_map()'s return
+ * @param array $curLines the file's own lines, so a scaled service can be
+ *                         limited to the names actually switched on there —
+ *                         see the note on $names below
  * @return array<int, array{name:string, wait:int}>
  */
 function staxx_autostart_group_lines(
-  string $folder, array $stacksHere, array $start, array $idx, array $onMap, array $delay
+  string $folder, array $stacksHere, array $start, array $idx, array $onMap, array $delay,
+  array $curLines
 ): array {
   $lines = [];
 
@@ -303,7 +331,15 @@ function staxx_autostart_group_lines(
     $lastSvc  = $onSvcs ? end($onSvcs) : null;
 
     foreach ($onSvcs as $svc) {
-      $names       = $idx['names'][$rel][$svc] ?? [];
+      // Membership above was decided per service ("is anything for this
+      // service on at all"), but a scaled service can have some of its
+      // containers on and others not — emitting the WHOLE list here would
+      // write back a container nobody switched on, unasked, on every render.
+      // Restricted to the names the file itself currently has on for this
+      // service, in the same relative order staxx_autostart_names() gave them.
+      $onNames = [];
+      foreach ($onMap[$rel][$svc] ?? [] as $i) $onNames[] = $curLines[$i]['name'];
+      $names       = array_values(array_intersect($idx['names'][$rel][$svc] ?? [], $onNames));
       $lastNameIdx = count($names) - 1;
 
       foreach ($names as $ni => $name) {
@@ -351,13 +387,26 @@ function staxx_autostart_project(array $stacks, string &$error): bool {
   $delay = (array)($start['delay'] ?? []);
   $idx   = staxx_autostart_index($stacks);
 
+  // The same read-modify-write lock staxx_autostart_set() takes around its
+  // own toggle — held for the read below through the write further down, so
+  // a toggle made while another tab's projection is mid-run cannot be lost
+  // to it, or the reverse. Re-entrant (see staxx_mkdir_lock()), so a call
+  // arriving here already under staxx_autostart_set()'s own lock does not
+  // wait out its own hold.
+  if (!staxx_mkdir_lock(STAXX_AUTOSTART_FILE, $error)) return false;
+
   $read     = staxx_autostart_read();
   $curLines = $read['lines'];
   $onMap    = staxx_autostart_on_map($curLines, $idx['owner']);
 
-  // Split the file around the first line StaXX owns: everything before that
-  // point, and every foreign line from that point on, keeps its place and its
-  // wait untouched. Everything StaXX owns is pulled into one run there.
+  // Split the file around the first line StaXX owns. A foreign line BEFORE
+  // that point keeps its exact place, untouched. A foreign line AFTER it does
+  // not: everything StaXX owns is pulled together into one run starting where
+  // its first line was, so a foreign line that sat between two StaXX lines is
+  // pushed to after the whole run rather than staying interleaved — there is
+  // no ordering rule connecting a foreign line to whichever StaXX lines used
+  // to sit around it, so "after the run" is the only place left that is not
+  // also arbitrary.
   $foreignBefore = [];
   $foreignAfter  = [];
   $reachedOwned  = false;
@@ -376,7 +425,7 @@ function staxx_autostart_project(array $stacks, string &$error): bool {
     if (empty($byFolder[$folder])) continue;
     $ourRun = array_merge(
       $ourRun,
-      staxx_autostart_group_lines($folder, $byFolder[$folder], $start, $idx, $onMap, $delay)
+      staxx_autostart_group_lines($folder, $byFolder[$folder], $start, $idx, $onMap, $delay, $curLines)
     );
   }
   // Ungrouped stacks always come after every real folder, same as
@@ -384,7 +433,7 @@ function staxx_autostart_project(array $stacks, string &$error): bool {
   if (!empty($byFolder[''])) {
     $ourRun = array_merge(
       $ourRun,
-      staxx_autostart_group_lines('', $byFolder[''], $start, $idx, $onMap, $delay)
+      staxx_autostart_group_lines('', $byFolder[''], $start, $idx, $onMap, $delay, $curLines)
     );
   }
 
@@ -392,6 +441,7 @@ function staxx_autostart_project(array $stacks, string &$error): bool {
 
   if ($final !== $curLines) {
     if (!staxx_autostart_write($final)) {
+      staxx_mkdir_unlock(STAXX_AUTOSTART_FILE);
       $error = 'Could not write '.STAXX_AUTOSTART_FILE.'.';
       return false;
     }
@@ -402,6 +452,8 @@ function staxx_autostart_project(array $stacks, string &$error): bool {
     // and all, rather than one staxx_autostart_format() would have produced.
     $newHash = $read['hash'];
   }
+
+  staxx_mkdir_unlock(STAXX_AUTOSTART_FILE);
 
   $start['pending'] = false;
   $start['seen']    = $newHash;
@@ -452,6 +504,13 @@ function staxx_autostart_set(array $stacks, string $stack, string $service, bool
     foreach ($namesByService[$svc] ?? [] as $n) $targets[] = $n;
   }
 
+  // Locked from this read through to the write below, and held on into the
+  // staxx_autostart_project() call that follows — that call re-enters the
+  // same lock rather than waiting it out (see staxx_mkdir_lock()) — so a
+  // toggle made while another tab's projection is mid-run cannot read the
+  // file before that write lands and then overwrite it with a stale copy.
+  if (!staxx_mkdir_lock(STAXX_AUTOSTART_FILE, $error)) return false;
+
   $lines = staxx_autostart_read()['lines'];
 
   if ($on) {
@@ -464,13 +523,16 @@ function staxx_autostart_set(array $stacks, string $stack, string $service, bool
   }
 
   if (!staxx_autostart_write($lines)) {
+    staxx_mkdir_unlock(STAXX_AUTOSTART_FILE);
     $error = 'Could not write '.STAXX_AUTOSTART_FILE.'.';
     return false;
   }
 
   // That write is raw and unordered — projection is what folds it into the
   // tree's order and turns the store's per-level waits into real sums.
-  return staxx_autostart_project($stacks, $error);
+  $ok = staxx_autostart_project($stacks, $error);
+  staxx_mkdir_unlock(STAXX_AUTOSTART_FILE);
+  return $ok;
 }
 
 /**

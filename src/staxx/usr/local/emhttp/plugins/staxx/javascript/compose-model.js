@@ -177,6 +177,18 @@
   function emitScalar(value, style, asKey) {
     value = String(value);
 
+    // Every form here writes one line, so a value carrying a line break has no
+    // representation among them — written anyway it splits into a line the
+    // parser would read as something else entirely. This is the refusal the
+    // contract above promises; every caller already handles it by leaving the
+    // file alone and saying so.
+    if (/[\r\n]/.test(value)) return null;
+
+    // Single-quoted YAML has no escape sequences at all, so a backslash survives
+    // literally. Double-quoted does, and an unescaped \ either makes the file
+    // unreadable (\d) or silently changes the value (\b, \t).
+    if (value.indexOf('\\') >= 0) return "'" + value.replace(/'/g, "''") + "'";
+
     var hasD = value.indexOf('"') >= 0;
     var hasS = value.indexOf("'") >= 0;
 
@@ -523,7 +535,31 @@
       doc.root = seal(ctx, j, lines.length, 'unparsable');
       return doc;
     }
-    doc.root = parseMap(ctx, j, ctx.cls[j].indent, false).node;
+    var rootParse = parseMap(ctx, j, ctx.cls[j].indent, false);
+    doc.root = rootParse.node;
+
+    // parseMap breaks silently at the first line it cannot make sense of, by
+    // design — see the comment above it — so nothing says the parse stopped
+    // short of the file's end unless this checks for it. significant() is the
+    // same "ignore a trailing blank or comment" walk parseMap itself already
+    // uses, so a file that merely ends in a comment is not flagged as cut off.
+    // A trailing '...' or '---' is exactly as harmless here as it was for the
+    // leading-marker skip above (doc.lines is never touched either way) — so
+    // it is skipped the same way, alternating with significant() in case a
+    // blank or comment line sits between two markers.
+    var tail = significant(ctx, rootParse.next);
+    while (tail < lines.length && /^(---|\.\.\.)\s*$/.test(lines[tail])) {
+      tail = significant(ctx, tail + 1);
+    }
+    if (tail < lines.length) {
+      seal(ctx, rootParse.next, lines.length, 'unparsable');
+      ctx.warnings.push({
+        line: tail,
+        message: 'Line ' + (tail + 1) + ' could not be read, so the rest of the file is being left ' +
+                 'alone. This is usually caused by a line indented differently from the ones around it.'
+      });
+      doc.unreadTail = true;
+    }
     return doc;
   }
 
@@ -556,7 +592,16 @@
     doc.root = next.root;
     doc.sealed = next.sealed;
     doc.warnings = next.warnings;
+    doc.unreadTail = next.unreadTail;
     return doc;
+  }
+
+  // A write that inserts or removes structure has to refuse once any part of
+  // the file failed to parse — the unread region could hold anything,
+  // including the very key the write is about to add a second copy of. An
+  // in-place edit on a line the parser did read is unaffected; see PLAN_60a.
+  function hasUnreadTail(doc) {
+    return !!(doc && doc.unreadTail);
   }
 
   // Replaces one scalar in place. Everything after it on the line — the run of
@@ -1155,7 +1200,8 @@
         // Matched by its exact text in buildForm's network-kind pass — see
         // the note beside the short-form wording above.
         lockReason: pub ? '' : 'no host port is set here',
-        listKey: listKey
+        listKey: listKey,
+        index: index
       });
       // Tells fieldsFor()/choiceFor() this row's proto part is the bare-word
       // long form, not the short form's slash-carrying one — see stacks.js's
@@ -1175,7 +1221,8 @@
       mode: ro && /^(true|yes)$/i.test(ro.value) ? 'ro' : '',
       range: range, comment: note.comment, commentSpot: note.spot,
       lockReason: src ? '' : 'this mount has no source path to edit',
-      listKey: listKey
+      listKey: listKey,
+      index: index
     });
     vt.longForm = true;
     harvestLongExtras(vt, map, ['source', 'target'], lines);
@@ -1263,7 +1310,8 @@
           },
           range: range,
           comment: readComment(p.value.comment),
-          commentSpot: commentSpot(p.value, lines)
+          commentSpot: commentSpot(p.value, lines),
+          index: i
         }));
       }
       return;
@@ -1295,7 +1343,8 @@
         range: r,
         comment: readComment(it.value.comment),
         commentSpot: commentSpot(it.value, lines),
-        lockReason: eq < 0 ? 'this one takes its value from the server’s environment' : ''
+        lockReason: eq < 0 ? 'this one takes its value from the server’s environment' : '',
+        index: i
       }));
     }
   }
@@ -2125,18 +2174,21 @@
 
       // A 'list' binder covers eight different compose keys, so its own value
       // is not enough to make an id unique — "networks: [web]" and
-      // "depends_on: [web]" would otherwise both become "a/list/web". The index
-      // is always appended, not just on a genuine duplicate value — editing one
-      // entry to match another would otherwise change an untouched sibling's id
-      // too (the edit-stability docs/x-unraid-schema.md:317 asks for), and
-      // stacks.js looks a row up by this exact id string in several places, so
-      // the shape must never come in two forms.
+      // "depends_on: [web]" would otherwise both become "a/list/web". The same
+      // problem hits port/volume/device/env/label, whose target is a container
+      // port, container path or variable name — also not unique on its own.
+      // The index is always appended when there is one, not just on a genuine
+      // duplicate value — editing one entry to match another would otherwise
+      // change an untouched sibling's id too (the edit-stability
+      // docs/x-unraid-schema.md:317 asks for), and stacks.js looks a row up by
+      // this exact id string in several places, so the shape must never come
+      // in two forms.
       var listSpec = t.listKey && KEYS[t.listKey];
-      var listSuffix = (t.binder === 'list' && typeof t.index === 'number') ? '#' + t.index : '';
+      var indexSuffix = typeof t.index === 'number' ? '#' + t.index : '';
 
       fields.push({
         id: serviceName + '/' + t.binder +
-            (t.binder === 'list' ? '.' + t.listKey + listSuffix : '') + '/' + t.target,
+            (t.binder === 'list' ? '.' + t.listKey : '') + indexSuffix + '/' + t.target,
         service: serviceName,
         binder: t.binder,
         target: t.target,
@@ -2388,8 +2440,13 @@
   // when nothing resolves it at all, so the caller can tell "definitely not
   // macvlan/ipvlan" from "no idea".
   function resolveNetDriver(out, name, netDrivers) {
-    for (var i = 0; i < out.fields.length; i++) {
-      var f = out.fields[i];
+    // A declared block's own fields carry no .service, so they all sit under
+    // the '' key of fieldsByService — a much shorter list to scan than every
+    // field in the file, which is what this used to walk once per attached
+    // network per service.
+    var declFields = (out.fieldsByService && out.fieldsByService['']) || out.fields;
+    for (var i = 0; i < declFields.length; i++) {
+      var f = declFields[i];
       if (f.binder === 'declared' && f.declKind === 'networks' && f.target === 'networks.' + name) {
         var v = f.parts.value ? f.parts.value.value : '';
         if (v !== EXTERNAL_CHOICE) return v || '';
@@ -2625,6 +2682,23 @@
     // existing field's index untouched.
     out.fields = out.fields.concat(declaredFields(doc, doc.lines));
 
+    // Two lookups built once the field list is final (nothing below this
+    // point adds a field, only edits ones already here) — everything past
+    // here that used to re-scan out.fields per service or per row now reads
+    // off these instead. Keyed by names straight out of the compose file, so
+    // Object.create(null) rather than {} — a service or network called
+    // "constructor" must not read back as a field belonging to Object.prototype.
+    var fieldsByService = Object.create(null);
+    for (var mi = 0; mi < out.fields.length; mi++) {
+      var mf0 = out.fields[mi];
+      var msvc = mf0.service || '';
+      if (!fieldsByService[msvc]) fieldsByService[msvc] = [];
+      fieldsByService[msvc].push(mf0);
+    }
+    out.fieldsByService = fieldsByService;
+    out.fieldIndex = Object.create(null);
+    for (var mj = 0; mj < out.fields.length; mj++) out.fieldIndex[out.fields[mj].id] = out.fields[mj];
+
     // 1e: a field that names a network, volume, secret or service the file
     // never declares is an error compose only reports at start — flag it
     // here instead. Read off f.from, which fieldsFor already worked out from
@@ -2669,11 +2743,12 @@
     for (var ski = 0; ski < out.services.length; ski++) {
       var skName = out.services[ski].name;
       var skKind = 'bridge';
+      var skFields = fieldsByService[skName] || [];
 
       var modeVal = '';
-      for (var mfi = 0; mfi < out.fields.length; mfi++) {
-        var mf = out.fields[mfi];
-        if (mf.service === skName && mf.binder === 'setting' && mf.target === 'network_mode') {
+      for (var mfi = 0; mfi < skFields.length; mfi++) {
+        var mf = skFields[mfi];
+        if (mf.binder === 'setting' && mf.target === 'network_mode') {
           modeVal = mf.parts.value ? String(mf.parts.value.value).trim() : '';
           break;
         }
@@ -2682,9 +2757,9 @@
       if (modeVal === 'host' || modeVal.indexOf('container:') === 0 || modeVal.indexOf('service:') === 0) {
         skKind = 'host';
       } else {
-        for (var nfi = 0; nfi < out.fields.length; nfi++) {
-          var nf = out.fields[nfi];
-          if (nf.service !== skName || nf.binder !== 'list' || nf.listKey !== 'networks') continue;
+        for (var nfi = 0; nfi < skFields.length; nfi++) {
+          var nf = skFields[nfi];
+          if (nf.binder !== 'list' || nf.listKey !== 'networks') continue;
           var attachedName = nf.parts.value ? nf.parts.value.value : '';
           if (!attachedName) continue;
           var attachedDriver = resolveNetDriver(out, attachedName, netDrivers);
@@ -2781,9 +2856,9 @@
       if (depCond !== 'service_healthy' || !depName) continue;
 
       var hasCheck = false;
-      for (var hi = 0; hi < out.fields.length && !hasCheck; hi++) {
-        var hf = out.fields[hi];
-        if (hf.service === depName && hf.target.indexOf('healthcheck.') === 0 && !hf.absent) hasCheck = true;
+      var depFields = fieldsByService[depName] || [];
+      for (var hi = 0; hi < depFields.length && !hasCheck; hi++) {
+        if (depFields[hi].target.indexOf('healthcheck.') === 0 && !depFields[hi].absent) hasCheck = true;
       }
       if (!hasCheck) {
         df.advice.push('"' + depName + '" has no health check, so this will never come true — ' +
@@ -2804,11 +2879,9 @@
       if (!nameVal) continue;
 
       var rf = null;
-      for (var rj = 0; rj < out.fields.length; rj++) {
-        if (out.fields[rj].service === cf.service && out.fields[rj].target === 'deploy.replicas') {
-          rf = out.fields[rj];
-          break;
-        }
+      var cfFields = fieldsByService[cf.service] || [];
+      for (var rj = 0; rj < cfFields.length; rj++) {
+        if (cfFields[rj].target === 'deploy.replicas') { rf = cfFields[rj]; break; }
       }
       if (!rf) continue;
 
@@ -2873,6 +2946,9 @@
   }
 
   function fieldById(form, id) {
+    // buildForm() always stamps fieldIndex once its fields are final; the
+    // scan is only a fallback for a form object built some other way.
+    if (form.fieldIndex) return form.fieldIndex[id] || null;
     for (var i = 0; i < form.fields.length; i++) {
       if (form.fields[i].id === id) return form.fields[i];
     }
@@ -3452,7 +3528,9 @@
     return to + lines.length - 1;
   }
 
-  // Writes one `key: value` line as a child of `pair`, at pair.indent + 2.
+  // Writes one `key: value` line as a child of `pair`, at whatever column
+  // that parent's existing children already sit at (two in from the parent
+  // when it has none yet).
   // Shared rather than copied because a declaration's driver, a service's
   // setting and (later) a healthcheck's timings are the same write at three
   // different depths — see PLAN_7.md.
@@ -3470,14 +3548,19 @@
   //
   // Returns the inserted line number, or -1 when emitScalar refuses the value.
   function insertChild(doc, pair, key, value, before, bare) {
+    if (hasUnreadTail(doc)) return -1;
+
     var raw = null;
     if (value !== undefined && value !== null) {
       raw = emitScalar(value, bare ? 'bare' : 'plain', false);
       if (raw === null) return -1;
     }
 
-    var indent = pair.indent + 2;
     var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
+    // The parent's own children decide the column. A file that nests by four must
+    // not have a two-space step forced into it — the line lands at a depth that
+    // belongs to nothing and compose refuses the file.
+    var indent = map ? map.indent : pair.indent + 2;
 
     var after = null, i;
     if (map) {
@@ -3532,35 +3615,44 @@
    * from the document root, and both need that lookup repeated after a
    * restart, not just the first time.
    *
-   * Returns null, rather than guessing, whenever a level along the way is
-   * sealed, opaque, or a scalar — inserting into something the parser could
-   * not read is how a working file gets corrupted.
+   * One insert per missing level and no more — insertChild reports where it
+   * wrote, not whether the re-parse then read it back as the child it was
+   * meant to be, and in a file whose own indentation is inconsistent it is
+   * not, so the level still looks missing on the next pass. A snapshot is
+   * taken up front, so any of that — a sealed/opaque/scalar level, an insert
+   * that does not read back, or running out of tries — restores the file to
+   * exactly what it was and returns null rather than leaving the levels it
+   * did manage to insert behind. Every caller inherits the rollback this way
+   * instead of having to remember its own.
    */
-  function ensurePath(doc, getPair, path, top, tries) {
-    // One insert per missing level and no more. insertChild reports where it
-    // wrote, not whether the re-parse then read it back as the child it was
-    // meant to be — and in a file whose own indentation is inconsistent it is
-    // not, so the level still looks missing on the next pass. Unbounded, that
-    // appends a line and recurses until the stack gives out, turning a file
-    // the parser merely finds odd into a dead page. Refusing is the answer
-    // every other unreadable shape here gets.
-    if (tries === undefined) tries = path.length;
-
-    var pair = getPair();
-    if (!pair) return null;
-
-    for (var i = 0; i < path.length; i++) {
-      var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
-      if (pair.value && !map) return null;
-      var next = map ? map.pairs[path[i]] : null;
-      if (!next) {
-        if (tries <= 0) return null;
-        if (insertChild(doc, pair, path[i], null, i === 0 ? top : null) < 0) return null;
-        return ensurePath(doc, getPair, path, top, tries - 1);
-      }
-      pair = next;
+  function ensurePath(doc, getPair, path, top) {
+    var before = doc.lines.slice();
+    function refuse() {
+      doc.lines = before;
+      splice(doc, 0, 0, []);
+      return null;
     }
-    return pair;
+
+    for (var tries = path.length; ; tries--) {
+      if (hasUnreadTail(doc)) return refuse();
+
+      var pair = getPair();
+      if (!pair) return refuse();
+
+      var i;
+      for (i = 0; i < path.length; i++) {
+        var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
+        if (pair.value && !map) return refuse();
+        var next = map ? map.pairs[path[i]] : null;
+        if (!next) break;
+        pair = next;
+      }
+      if (i === path.length) return pair;
+
+      if (tries <= 0) return refuse();
+      if (insertChild(doc, pair, path[i], null, i === 0 ? top : null) < 0) return refuse();
+      // Loop restarts the walk from getPair() — see the docblock above for why.
+    }
   }
 
   /**
@@ -3573,9 +3665,13 @@
    *
    * Returns -1, rather than guessing, whenever a level along the way is
    * sealed, opaque, or a scalar — inserting into something the parser could
-   * not read is how a working file gets corrupted.
+   * not read is how a working file gets corrupted. ensurePath rolls back its
+   * own partial work, but the leaf write below is one more step it does not
+   * cover — a snapshot here restores the levels ensurePath *did* create if
+   * that last write is what fails.
    */
   function addNested(doc, form, service, path, value, bare) {
+    var before = doc.lines.slice();
     var pair = ensurePath(doc, function () { return serviceMapOf(doc, service); },
                           path.slice(0, -1), 'x-unraid');
     // The loop inside ensurePath only checks a level before descending past
@@ -3584,8 +3680,10 @@
     // every intermediate level gets: a scalar, anchor or flow value here is
     // exactly as unsafe to write a child into as one higher up the path.
     if (!pair || (pair.value && pair.value.kind !== 'map')) return -1;
-    return insertChild(doc, pair, path[path.length - 1], value,
-                       path.length === 1 ? 'x-unraid' : null, bare);
+    var at = insertChild(doc, pair, path[path.length - 1], value,
+                         path.length === 1 ? 'x-unraid' : null, bare);
+    if (at < 0) { doc.lines = before; splice(doc, 0, 0, []); }
+    return at;
   }
 
   /** The pair holding one top-level declaration (networks.foo, volumes.bar…),
@@ -3613,13 +3711,18 @@
    * Returns -1, rather than guessing, whenever a level along the way is
    * sealed, opaque, or a scalar — inserting into something the parser could
    * not read is how a working file gets corrupted (the same guard Phase 0
-   * put in setPart's own declaration branch, for the same reason).
+   * put in setPart's own declaration branch, for the same reason). Same
+   * snapshot as addNested, and for the same reason: the leaf write below is
+   * one step ensurePath's own rollback does not reach.
    */
   function addDeclNested(doc, form, kind, name, path, value, bare) {
+    var before = doc.lines.slice();
     var pair = ensurePath(doc, function () { return declPairOf(doc, kind, name); },
                           path.slice(0, -1));
     if (!pair || (pair.value && pair.value.kind !== 'map')) return -1;
-    return insertChild(doc, pair, path[path.length - 1], value, null, bare);
+    var at = insertChild(doc, pair, path[path.length - 1], value, null, bare);
+    if (at < 0) { doc.lines = before; splice(doc, 0, 0, []); }
+    return at;
   }
 
   // Builds the canonical flow-list text for healthcheck.test — the one shape
@@ -3928,6 +4031,11 @@
   function addService(doc, form, name) {
     if (!name || !SERVICE_NAME_RE.test(name)) return -1;
     if (!doc.root || doc.root.kind !== 'map') return -1;
+    // Bypasses insertChild (it places the new service itself, not a child of
+    // one), so the unread-tail refusal has to be repeated here — a name that
+    // may already exist inside the unread region is every name once a region
+    // is unread, which is exactly what closes the duplicate-service route.
+    if (hasUnreadTail(doc)) return -1;
 
     var svc = doc.root.pairs['services'];
     if (!svc || !svc.value || svc.value.kind !== 'map') return -1;
@@ -4148,11 +4256,12 @@
   // existing entry is overwritten in place rather than appended again, which
   // would leave two lines for the same key and a "first one wins" warning.
   function writeSectionEntry(doc, service, key, value) {
-    // ensurePath creates a level at a time, so giving up part way leaves the
-    // levels it already made behind — a bare "x-unraid:" and "sections:" over
-    // a file this could not finish writing to. A refusal has to leave the file
-    // exactly as it found it, so the line array is put back on any failure
-    // below; splice re-parses from it, which is all that reverting takes.
+    // ensurePath now rolls back its own partial work, but this function still
+    // writes the leaf itself afterwards (writeScalar or insertChild below),
+    // which is work ensurePath does not cover — a failure there must undo the
+    // levels ensurePath *did* manage to create, so this snapshot stays.
+    // splice re-parses from the restored array, which is all that reverting
+    // takes.
     var before = doc.lines.slice();
     function refuse() {
       doc.lines = before;
@@ -4323,6 +4432,11 @@
    * cannot be read, or a surviving parent turns out sealed or not a map.
    */
   function restoreSection(doc, form, service, key) {
+    // The two splice() calls below place the restored lines directly, rather
+    // than through insertChild, so the unread-tail refusal has to be
+    // repeated here too.
+    if (hasUnreadTail(doc)) return false;
+
     var sections = readSections(doc);
     var entry = sections[service] ? sections[service][key] : undefined;
     if (!entry || !entry.lines || !entry.lines.length) {

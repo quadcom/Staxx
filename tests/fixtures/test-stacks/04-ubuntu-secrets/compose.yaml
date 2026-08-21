@@ -1,0 +1,59 @@
+# Secrets test. No x-unraid block anywhere, on purpose.
+#
+# This file used to test the opposite of what it tests now. It was written when
+# a variable was hidden if its NAME looked like a password, and it listed which
+# spellings should trip that rule. There is no such rule any more: a value is
+# hidden if, and only if, its comment ends in -!S.
+#
+# So the names below are now bait. Every one of them looks like a secret, or
+# looks like it is not, and none of that counts for anything.
+#
+#   Hidden under Sanitise:  exactly the four carrying -!S, and nothing else.
+#   Shown in plain text:    everything else, INCLUDING ADMIN_PASSWORD and
+#                           PRIVATE_KEY, which are unmarked on purpose.
+#
+# The pair to look at is DB_PASSWD and ADMIN_PASSWORD. They are the same kind of
+# thing spelled two ways; one is marked and one is not, and only the marked one
+# hides. If both hide, something is guessing from the name again.
+#
+# That is a deliberate trade. Guessing is wrong in both directions — the old
+# rule would have hidden SECRETARY_EMAIL's neighbours and left real secrets
+# showing — and a wrong guess about a secret surfaces in somebody's screenshot
+# rather than in a test. An unmarked secret is the author's omission, which they
+# can see and fix. A guess is nobody's, and cannot be.
+
+name: ubuntu-secrets
+
+services:
+  secret-keeper:
+    image: ubuntu:24.04
+    container_name: secret-keeper
+    restart: unless-stopped
+    ports:
+      - "15106:15106"                # the page you open -!R
+    environment:
+      TZ: America/Toronto
+      PUID: "99"
+      PGID: "100"
+
+      # Marked. These four must hide.
+      DB_PASSWD: correct-horse-battery-staple   # the database password -!S -!R
+      API_KEY: sk-test-0000000000               # -!S
+      SESSION_SECRET: not-a-real-secret         # signs login cookies -!S
+      SMTP_CREDENTIALS: user:pass@example.invalid   # user:pass for the mail server -!S -!R
+
+      # Unmarked, and named to tempt a guesser. These must all stay visible.
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: hunter2
+      APIKEY: legacy-spelling-0000
+      AUTH_TOKEN: bearer-abc123
+      PRIVATE_KEY: -----BEGIN NOT A REAL KEY-----
+
+      # Unmarked and genuinely not secret. The old rule got these wrong too,
+      # in the other direction.
+      PASSWORD_POLICY: minimum-12-characters
+      TOKEN_BUCKET_SIZE: "64"
+      KEYBOARD_LAYOUT: en-CA
+      SECRETARY_EMAIL: nobody@example.invalid
+      LOG_LEVEL: info                # how chatty the logs are
+    command: ["sleep", "infinity"]

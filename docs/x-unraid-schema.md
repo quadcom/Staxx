@@ -492,6 +492,21 @@ which is what a comment is anyway.
 Check the user's real file, not `docker compose config` output — that command drops `x-` sections, as
 explained above.
 
+**`format: "uri"` is documentation only.** Draft 2020-12 treats `format` as an annotation unless the
+validator is handed an optional RFC-3986/3987 checker package, which this project does not install —
+so on its own it catches nothing. Every address-shaped key (`project`, `support`, `readme`, `icon`,
+`webui`) also carries a `pattern`, and that is the part actually doing the rejecting.
+
+**A typo in a metadata key is not caught.** `overvieww` or `webUI` both validate: neither
+`$defs/stack` nor `$defs/service` sets `additionalProperties: false`. That is deliberate, not an
+oversight — [reading rule 1](#reading-rules) already commits to ignoring unknown keys so that a file
+written for a later version of this schema still renders on an older StaXX. A `propertyNames`
+pattern was considered as a middle ground, but rejected: a typo like `overvieww` is still a
+perfectly well-shaped property name, so a shape check does not catch the thing it is meant to catch,
+and it would only add a second, narrower rule about key spelling sitting alongside the same
+forward-compatibility promise. `$defs/update`'s key set, by contrast, is closed — no future version
+is expected to add a key there — so it keeps `additionalProperties: false`.
+
 ---
 
 ## A note on the name

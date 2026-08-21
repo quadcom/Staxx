@@ -29,6 +29,12 @@ define('STAXX_JOB_DIR', '/tmp/staxx/jobs');
 // Deliberately unlikely to appear in compose output.
 define('STAXX_JOB_END', '###staxx-finished###');
 
+// The most any single poll of a log or exec buffer hands back. Without this a
+// first poll against a long-running `pull` (or an exec session nobody has
+// read from in a while) returns the whole thing in one reply; a later poll
+// just picks up at the new offset, so nothing is lost by capping it.
+define('STAXX_LOG_CHUNK_MAX', 256 * 1024);
+
 // Remembered `docker compose config` answers, one file per stack, in /tmp for
 // the same reasons as the job logs above. See staxx_compose_meta().
 define('STAXX_META_DIR', '/tmp/staxx/meta');
@@ -42,6 +48,13 @@ define('STAXX_LOG_DIR', '/tmp/staxx/logs');
 // Same stale figure scripts/stats-collector.sh uses for the same reason: give
 // up on a follower once nobody has asked it for output in this many seconds.
 define('STAXX_LOG_STALE', 45);
+
+// A `compose logs --follow` file has no size ceiling of its own, and an open
+// tab keeps its heartbeat fresh indefinitely — so a chatty container over a
+// long weekend could otherwise fill /tmp, which is RAM on Unraid. This is the
+// most a follower's log is allowed to grow to before staxx_log_reap() kills
+// it outright, heartbeat or not.
+define('STAXX_LOG_SIZE_MAX', 64 * 1024 * 1024);
 
 // Cap on what a single "download the whole log" reply carries — the browser
 // posts everything in one page load, so this is chosen to sit well under
@@ -665,6 +678,22 @@ function staxx_compose_files(string $main): array {
 }
 
 /**
+ * The override basename this stack's main file would pair with, whether or
+ * not that override exists yet — same rule staxx_compose_files() itself
+ * follows on the way in: same directory, same base name, same extension.
+ * Used to check a first-ever override save, when staxx_compose_files() has
+ * nothing on disk yet to report as $pair[1].
+ */
+function staxx_expected_override_basename(string $main): string {
+  if ($main === '') return '';
+  $dot = strrpos($main, '.');
+  if ($dot === false) return '';
+  $ext = substr($main, $dot + 1);
+  if (!in_array($ext, ['yaml', 'yml'], true)) return '';
+  return basename(substr($main, 0, $dot)).'.override.'.$ext;
+}
+
+/**
  * The `-f` sequence for a set of compose files, already shell-quoted.
  *
  * For one file this is character-for-character what every caller used to
@@ -695,17 +724,24 @@ function staxx_compose_file_args(array $files): string {
  * @return array{stacks: array<int, array{rel:string, dir:string, folder:string, leaf:string}>,
  *               folders: string[]}
  */
-function staxx_scan_stacks(): array {
+function staxx_scan_stacks(bool $reset = false): array {
+  static $cache = null;
+  if ($reset) { $cache = null; return ['stacks' => [], 'folders' => []]; }
+  if ($cache !== null) return $cache;
+
   $root = staxx_stack_root();
   $out  = ['stacks' => [], 'folders' => []];
-  if (!is_dir($root)) return $out;
+  if (!is_dir($root)) return $cache = $out;
 
   foreach ((array)@scandir($root) as $entry) {
     if ($entry === '.' || $entry === '..') continue;
     if (!staxx_valid_name($entry)) continue;
 
     $dir = $root.'/'.$entry;
-    if (!is_dir($dir)) continue;
+    // is_dir() follows a symlink, and everything downstream — archive,
+    // delete, rmtree — assumes the directory it was handed is the thing it
+    // may act on. A linked stack must never reach that code as a stack.
+    if (is_link($dir) || !is_dir($dir)) continue;
 
     if (staxx_find_compose_file($dir) !== '') {
       $out['stacks'][] = ['rel' => $entry, 'dir' => $dir, 'folder' => '', 'leaf' => $entry];
@@ -719,7 +755,9 @@ function staxx_scan_stacks(): array {
       if (!staxx_valid_name($kid)) continue;
 
       $kidDir = $dir.'/'.$kid;
-      if (!is_dir($kidDir)) continue;
+      // Same reasoning as the top-level check above: a linked folder member
+      // must not be treated as a stack directory either.
+      if (is_link($kidDir) || !is_dir($kidDir)) continue;
 
       $out['stacks'][] = [
         'rel' => $entry.'/'.$kid, 'dir' => $kidDir, 'folder' => $entry, 'leaf' => $kid
@@ -729,7 +767,25 @@ function staxx_scan_stacks(): array {
 
   natcasesort($out['folders']);
   $out['folders'] = array_values($out['folders']);
-  return $out;
+  return $cache = $out;
+}
+
+/**
+ * Drop the cached tree walk so the next staxx_scan_stacks() call re-reads
+ * disk, rather than a second static living alongside it.
+ *
+ * Called after every save, rename and archive below as a belt-and-braces
+ * measure, though none of them actually need it: one request is one PHP
+ * process here, and every one of those functions already reads the tree
+ * before it writes, never after, in the same request — the browser always
+ * makes a fresh 'rows' request to see the result. This only protects a
+ * future caller that reverses that order. Folder moves and imports (in
+ * Folders.php and Import.php) follow the same read-before-write shape but
+ * sit outside this file, so they rely on the same "next request re-scans"
+ * guarantee rather than calling this.
+ */
+function staxx_scan_stacks_reset(): void {
+  staxx_scan_stacks(true);
 }
 
 /** Just the folder names, for the "move to folder" menu and the layout. */
@@ -806,6 +862,14 @@ function staxx_compose_state(): array {
   $rows = json_decode($json, true);
   if (!is_array($rows)) return $state;
 
+  // A tail ("jellyfin/compose.yaml") only stands in safely for a moved
+  // stack's real path while it points at one project. The moment a second
+  // project's file produces the same tail — two stacks sharing a leaf name
+  // in different folders — neither guess is trustworthy, so the entry is
+  // removed rather than left pointing at whichever project happened to be
+  // listed second.
+  $ambiguousTails = [];
+
   foreach ($rows as $row) {
     if (!is_array($row)) continue;
 
@@ -819,7 +883,15 @@ function staxx_compose_state(): array {
       $file = trim($file);
       if ($file === '') continue;
       $state['byFile'][$file] = $entry;
-      $state['byTail'][staxx_file_tail($file)] = $entry;
+
+      $tail = staxx_file_tail($file);
+      if (isset($ambiguousTails[$tail])) continue;
+      if (isset($state['byTail'][$tail]) && $state['byTail'][$tail]['name'] !== $entry['name']) {
+        unset($state['byTail'][$tail]);
+        $ambiguousTails[$tail] = true;
+        continue;
+      }
+      $state['byTail'][$tail] = $entry;
     }
   }
   return $state;
@@ -852,15 +924,22 @@ function staxx_state_for(string $file, string $leaf): ?array {
 /**
  * Read a block-mapping YAML document into a flat "path => value" map.
  *
- * NOT a YAML parser, and it must never be pointed at a file a user wrote. It is
- * fed the output of `docker compose config`, which is CANONICAL yaml: two-space
- * indentation throughout, no anchors, no aliases, no flow style for mappings,
- * every shorthand and override already resolved. Compose guarantees that shape,
- * which is what makes reading it by hand reasonable — the repository's own
- * 07-yaml-quirks stack exists precisely to break anything that tries this on a
- * hand-written file. (PHP on Unraid has no YAML extension, and compose's JSON
- * output cannot be used: it silently drops service-level `x-` fields, which are
- * the whole reason for reading the file.)
+ * NOT a YAML parser, and it should never be pointed at a file a user wrote. It
+ * is normally fed the output of `docker compose config`, which is CANONICAL
+ * yaml: two-space indentation throughout, no anchors, no aliases, no flow
+ * style for mappings, every shorthand and override already resolved. Compose
+ * guarantees that shape, which is what makes reading it by hand reasonable —
+ * the repository's own 07-yaml-quirks stack exists precisely to break
+ * anything that tries this on a hand-written file. (PHP on Unraid has no YAML
+ * extension, and compose's JSON output cannot be used: it silently drops
+ * service-level `x-` fields, which are the whole reason for reading the file.)
+ *
+ * The one exception, deliberate and documented at its call site
+ * (staxx_compose_meta()): with compose not installed there is nothing able to
+ * produce that canonical form at all, and the choice is between reading the
+ * hand-written file poorly or not listing anything for that stack — so it is
+ * fed here anyway, and a file using anchors or flow style is read worse than
+ * it would be with compose available. Nothing from that pass is ever cached.
  *
  * Anything it does not understand — sequences, block scalars, tags — is SKIPPED
  * rather than guessed at. A missing key reads as "not set", which is a correct
@@ -1136,8 +1215,8 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
 
   if ($diskPath !== '' && $metaKey !== null) {
     $stored = @json_decode((string)@file_get_contents($diskPath), true);
-    if (is_array($stored) && ($stored['key'] ?? null) === $metaKey && isset($stored['meta'])) {
-      $error = $stored['meta']['error'];
+    if (is_array($stored) && ($stored['key'] ?? null) === $metaKey && is_array($stored['meta'] ?? null)) {
+      $error = $stored['meta']['error'] ?? null;
       return $cache[$key] = $stored['meta'];
     }
   }
@@ -1365,47 +1444,29 @@ function staxx_container_index(): array {
   if ($index !== null) return $index;
 
   $index = ['byFile' => [], 'byProject' => []];
-  if (!staxx_docker_running()) return $index;
 
-  // `.Label "key"` looks up one label. `index .Labels "key"` does not work in a
-  // docker ps template — see the note in staxx_containers_by_project().
-  //
-  // The trailing "end" holds the last field open: PHP's exec() trims trailing
-  // whitespace from each line, so a container whose final label is empty would
-  // lose the tab before it and arrive one field short. See the longer note in
-  // staxx_container_net().
-  //
-  // Unlike `docker inspect`, `docker ps --format` DOES translate \t into a tab,
-  // which is why this one can be written the readable way.
-  $fmt = '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}\t'
-       . '{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}\t'
-       . '{{.Label "com.docker.compose.project.config_files"}}\tend';
-
-  $out = staxx_sh(
-    escapeshellarg(staxx_docker_bin()).' ps -a --no-trunc --format '.escapeshellarg($fmt), 15
-  );
-
-  foreach (explode("\n", $out) as $line) {
-    if (trim($line) === '') continue;
-    $c = explode("\t", $line);
-    if (count($c) < 7) continue;
-    if ($c[5] === '') continue;                   // not compose-managed
+  // staxx_docker_ps_raw() (Defines.php) is the one `docker ps -a` this and
+  // staxx_containers_by_project() and staxx_docker_container_names() all
+  // read from, rather than each running its own — StacksPage.php used to
+  // trigger three separate ones in consecutive lines.
+  foreach (staxx_docker_ps_raw() as $r) {
+    if ($r['project'] === '') continue;             // not compose-managed
 
     $row = [
-      'id'      => $c[0],
-      'name'    => $c[1],
-      'state'   => $c[2],
-      'status'  => $c[3],
-      'image'   => $c[4],
-      'project' => $c[5],
-      'service' => $c[6],
+      'id'      => $r['id'],
+      'name'    => $r['name'],
+      'state'   => $r['state'],
+      'status'  => $r['status'],
+      'image'   => $r['image'],
+      'project' => $r['project'],
+      'service' => $r['service'],
     ];
 
-    $index['byProject'][$c[5]][] = $row;
+    $index['byProject'][$row['project']][] = $row;
 
     // A project can be built from several files ("a.yml,b.yml"); it is listed
     // under each, the same way staxx_compose_ls() does it.
-    foreach (explode(',', $c[7] ?? '') as $file) {
+    foreach (explode(',', $r['configFiles']) as $file) {
       $file = trim($file);
       if ($file !== '') $index['byFile'][$file][] = $row;
     }
@@ -1964,6 +2025,14 @@ function staxx_container_net(): array {
  * @param array $s one entry from staxx_list_stacks()
  */
 function staxx_stack_containers(array $s): array {
+  // Memoised on the stack's name — StacksTable.php's full render and cheap
+  // refresh both ask for the same stack's containers more than once within
+  // one request, and nothing here can change under a stack mid-request, so
+  // the repeat calls are free rather than re-filtering staxx_container_index().
+  static $memo = [];
+  $key = $s['name'] ?? null;
+  if ($key !== null && isset($memo[$key])) return $memo[$key];
+
   // A stack awaiting review owns nothing, by definition — it was imported and
   // nobody has confirmed what it refers to. The project-name fallback below
   // would otherwise hand it the LIVE containers of whatever it was copied
@@ -1971,12 +2040,16 @@ function staxx_stack_containers(array $s): array {
   // memory as though the import were already working. Guarded here rather
   // than at each of the three call sites so the full render and the cheap
   // state refresh cannot disagree about it.
-  if (isset($s['name']) && staxx_review_locked((string)$s['name'])) return [];
+  if ($key !== null && staxx_review_locked((string)$key)) {
+    return $memo[$key] = [];
+  }
 
   $index = staxx_container_index();
 
   if ($s['file'] !== '' && isset($index['byFile'][$s['file']])) {
-    return $index['byFile'][$s['file']];
+    $result = $index['byFile'][$s['file']];
+    if ($key !== null) $memo[$key] = $result;
+    return $result;
   }
 
   // The LEAF, never the full path. Compose names a project after the directory
@@ -1985,7 +2058,9 @@ function staxx_stack_containers(array $s): array {
   // stack was filed.
   $leaf    = $s['leaf'] ?? staxx_path_leaf($s['name']);
   $project = $s['project'] !== '' ? $s['project'] : staxx_project_name($leaf);
-  return $index['byProject'][$project] ?? [];
+  $result  = $index['byProject'][$project] ?? [];
+  if ($key !== null) $memo[$key] = $result;
+  return $result;
 }
 
 /** Can anything actually be started? Both halves have to be true. */
@@ -2050,6 +2125,24 @@ function staxx_read_stack(string $name, string &$error): ?string {
 }
 
 /**
+ * A content hash of the compose file as it stands on disk right now, so a
+ * save can be refused if the file changed after the editor opened it —
+ * another tab, the image updater, or a hand edit on the server. Same
+ * md5-of-bytes idiom as the meta cache (staxx_meta_cache_key()) rather than
+ * a second one, but not that function itself: this has to stay '' only when
+ * there is truly no file yet, never because an unrelated .env or an
+ * include:/extends: line is present, which would make an in-progress edit
+ * unsaveable. Returns '' when the stack has no compose file yet.
+ */
+function staxx_stack_fingerprint(string $name): string {
+  if (!staxx_valid_path($name)) return '';
+  $file = staxx_find_compose_file(staxx_stack_dir($name));
+  if ($file === '') return '';
+  $body = @file_get_contents($file);
+  return $body === false ? '' : md5($body);
+}
+
+/**
  * Check a compose file the only way that means anything: hand it to compose.
  *
  * The text is written to a scratch file and `config -q` is run over it, which
@@ -2097,12 +2190,23 @@ function staxx_validate_compose(string $yaml, string &$error, string $dir = '', 
   if ($cmd === '') return true;   // Nothing to check with; accept and warn elsewhere.
 
   $tmpdir = @tempnam(sys_get_temp_dir(), 'staxx');
-  if ($tmpdir === false) return true;
+  if ($tmpdir === false) {
+    $error = 'Could not create a scratch file to check this against, so it was not validated. Nothing was saved.';
+    return false;
+  }
   @unlink($tmpdir);
-  if (!@mkdir($tmpdir, 0700)) return true;
+  if (!@mkdir($tmpdir, 0700)) {
+    $error = 'Could not create a scratch folder to check this against, so it was not validated. Nothing was saved.';
+    return false;
+  }
 
   $tmpfile = $tmpdir.'/compose.yaml';
-  @file_put_contents($tmpfile, str_replace("\r\n", "\n", $yaml));
+  $written = @file_put_contents($tmpfile, str_replace("\r\n", "\n", $yaml));
+  if ($written === false) {
+    @rmdir($tmpdir);
+    $error = 'Could not write the scratch file to check this against, so it was not validated. Nothing was saved.';
+    return false;
+  }
 
   $projectFlag = ($dir !== '' && is_dir($dir))
     ? '--project-directory '.escapeshellarg($dir).' '
@@ -2403,11 +2507,30 @@ function staxx_save_stack(string $name, string $yaml, string &$error): bool {
   $file = staxx_find_compose_file($dir);
   if ($file === '') $file = $dir.'/compose.yaml';
 
-  if (@file_put_contents($file, $yaml) === false) {
+  // Temp-then-rename, same reasoning as staxx_settings_save(): a short write
+  // on a full flash drive still reports success, so the byte count actually
+  // written is checked against what was asked for before the file is put in
+  // place. A reader — compose, or the next open of this stack — never sees a
+  // half-written file either way.
+  $tmp = $file.'.'.getmypid().'.tmp';
+  $written = @file_put_contents($tmp, $yaml);
+  if ($written === false || $written !== strlen($yaml)) {
+    @unlink($tmp);
     $error = 'Could not write '.$file;
     return false;
   }
-  @chmod($file, 0644);
+  // Owner-only: a compose file can hold every password the containers it
+  // describes were given. This is moot on /boot — that filesystem takes its
+  // mode from how it is mounted, whatever chmod says — but it matters the
+  // moment STACK_ROOT is pointed at an array share, which the setting invites.
+  @chmod($tmp, 0600);
+  if (!@rename($tmp, $file)) {
+    @unlink($tmp);
+    $error = 'Could not save '.$file.' — the temporary file could not be put in place.';
+    return false;
+  }
+  // A brand new stack just changed the tree's shape; see staxx_scan_stacks_reset().
+  staxx_scan_stacks_reset();
   return true;
 }
 
@@ -2533,6 +2656,16 @@ function staxx_archive_stack(
 
   $dir = staxx_stack_dir($name);
   if (!is_dir($dir)) { $error = 'No such stack.'; return false; }
+
+  // A symlinked stack folder cannot be archived faithfully: zip stores the
+  // link itself rather than its target's contents, while removing the
+  // folder afterwards resolves through the link and deletes whatever it
+  // points at instead. Refuse rather than guess which half the user wanted.
+  if (is_link($dir)) {
+    $error = 'This stack folder is a link to somewhere else, so it cannot be archived '
+           . 'or removed safely. Remove the link by hand instead.';
+    return false;
+  }
 
   // A locked stack's containers, if anything answers to its name, belong to
   // whatever it was imported from — tearing them down is the exact accident
@@ -2682,6 +2815,7 @@ function staxx_archive_stack(
     return false;
   }
 
+  staxx_scan_stacks_reset(); // the stack's directory is gone; see the function's own comment
   $archive = $final;
   return true;
 }
@@ -2781,12 +2915,22 @@ define('STAXX_REVIEW_FILE', 'NEEDS-REVIEW.md');
  * name the filesystem actually holds, not the one we would have written.
  */
 function staxx_review_file(string $dir): string {
+  // Per-directory, for the render loop that asks this once per stack row and
+  // once per container row — a scandir() each time on a 64-stack server adds
+  // up. Safe to keep for the whole request: nothing that moves or removes
+  // this file re-checks it afterwards in the same request (see
+  // staxx_scan_stacks_reset()'s comment for why that pattern holds here).
+  static $cache = [];
+  if (array_key_exists($dir, $cache)) return $cache[$dir];
+
+  $found = '';
   foreach ((array)@scandir($dir) as $entry) {
     if (strcasecmp($entry, STAXX_REVIEW_FILE) === 0 && is_file($dir.'/'.$entry)) {
-      return $entry;
+      $found = $entry;
+      break;
     }
   }
-  return '';
+  return $cache[$dir] = $found;
 }
 
 /**
@@ -2826,9 +2970,11 @@ define('STAXX_HANDOVER_FILE', 'HANDOVER.md');
 /**
  * Every container Docker knows about, by name — including ones with no
  * compose label at all. staxx_container_index() deliberately drops those,
- * which is exactly what a template's own container has, so this is a
- * separate read. (Import.php has a near-identical one; a later pass can
- * dedupe rather than this file reaching into that one.)
+ * which is exactly what a template's own container has, so this reads the
+ * full, unfiltered scan too, off the same shared `docker ps -a` as the index
+ * and staxx_containers_by_project() rather than running its own.
+ * (Import.php has a near-identical one; a later pass can dedupe rather than
+ * this file reaching into that one.)
  *
  * @return array<string, array{running:bool, project:string}>
  */
@@ -2837,18 +2983,9 @@ function staxx_docker_container_names(): array {
   if ($byName !== null) return $byName;
 
   $byName = [];
-  if (!staxx_docker_running()) return $byName;
-
-  $fmt = '{{.Names}}\t{{.State}}\t{{.Label "com.docker.compose.project"}}\tend';
-  $out = staxx_sh(
-    escapeshellarg(staxx_docker_bin()).' ps -a --no-trunc --format '.escapeshellarg($fmt), 15
-  );
-
-  foreach (explode("\n", $out) as $line) {
-    if (trim($line) === '') continue;
-    $c = explode("\t", $line);
-    if (count($c) < 3 || $c[0] === '') continue;
-    $byName[$c[0]] = ['running' => $c[1] === 'running', 'project' => $c[2]];
+  foreach (staxx_docker_ps_raw() as $r) {
+    if ($r['name'] === '') continue;
+    $byName[$r['name']] = ['running' => $r['state'] === 'running', 'project' => $r['project']];
   }
   return $byName;
 }
@@ -2930,20 +3067,33 @@ function staxx_handover_setaside_name(string $original, array $taken): string {
   $candidate = $original.'-before-staxx';
   if (!in_array($candidate, $taken, true)) return $candidate;
 
-  for ($n = 2; ; $n++) {
+  // Bounded rather than open-ended: at most one collision per name already
+  // taken, plus a little slack, so this cannot spin forever against a
+  // pathological $taken. A random suffix past that bound still guarantees
+  // termination and is astronomically unlikely to collide itself.
+  $limit = count($taken) + 8;
+  for ($n = 2; $n <= $limit; $n++) {
     $try = $candidate.'-'.$n;
     if (!in_array($try, $taken, true)) return $try;
   }
+  return $candidate.'-'.bin2hex(random_bytes(4));
 }
 
 /** The handover state file actually present in $dir, by its real name, or ''. */
 function staxx_handover_file(string $dir): string {
+  // Same per-directory memoisation and the same reasoning as
+  // staxx_review_file() just above.
+  static $cache = [];
+  if (array_key_exists($dir, $cache)) return $cache[$dir];
+
+  $found = '';
   foreach ((array)@scandir($dir) as $entry) {
     if (strcasecmp($entry, STAXX_HANDOVER_FILE) === 0 && is_file($dir.'/'.$entry)) {
-      return $entry;
+      $found = $entry;
+      break;
     }
   }
-  return '';
+  return $cache[$dir] = $found;
 }
 
 /** Is a handover on this stack waiting to be confirmed right now? */
@@ -3250,8 +3400,16 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
     foreach ($state['targets'] as $t) {
       $steps[] = $docker.' rm -f '.escapeshellarg($t['setaside']).' 2>&1';
     }
-    $steps[] = 'rm -f '.$stateFile.' 2>&1';
-    $steps[] = 'echo "The old container has been cleared away." 2>&1';
+    // Chained with && and the exit code caught straight away, not one echo
+    // per line joined by newlines — that older shape always ran every step
+    // regardless of whether an earlier one failed, and "$?" at the end was
+    // always the echo's own exit status, so this job reported success no
+    // matter what actually happened above it.
+    $chain  = implode(' && ', $steps);
+    $script = $chain.'; ec=$?; '
+            . 'if [ "$ec" -eq 0 ]; then rm -f '.$stateFile.' 2>&1; '
+            . 'echo "The old container has been cleared away."; fi; '
+            . 'echo "'.STAXX_JOB_END.' $ec"';
 
     $shown = implode(' && ', array_map(fn($t) => 'docker rm -f '.$t['setaside'], $state['targets']));
   } else {
@@ -3285,16 +3443,25 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
         $steps[] = $docker.' start '.escapeshellarg($t['original']).' 2>&1';
       }
     }
-    $steps[] = 'rm -f '.$stateFile.' 2>&1';
-    $steps[] = 'echo "Put back exactly as it was." 2>&1';
+
+    // This is the dangerous direction: a real failure here leaves the
+    // original container renamed aside and switched off, so it must never be
+    // reported as "put back" — the state file (which is what makes this
+    // stack's review lock read as "handover in progress") is only cleared,
+    // and the reassuring line only printed, once the whole rename/start
+    // chain actually succeeded.
+    $chain  = implode(' && ', $steps);
+    $script = $chain.'; ec=$?; '
+            . 'if [ "$ec" -eq 0 ]; then rm -f '.$stateFile.' 2>&1; '
+            . 'echo "Put back exactly as it was."; '
+            . 'else echo "Could not fully put the original container back - see the output above. '
+            . 'The handover note has been left in place; try again from the stack menu."; fi; '
+            . 'echo "'.STAXX_JOB_END.' $ec"';
 
     $shown = 'compose down && '.implode(' && ', array_map(
       fn($t) => 'docker rename '.$t['setaside'].' '.$t['original'], $state['targets']
     ));
   }
-
-  $steps[] = 'echo "'.STAXX_JOB_END.' $?"';
-  $script  = implode("\n", $steps)."\n";
 
   if (!is_dir(STAXX_JOB_DIR) && !@mkdir(STAXX_JOB_DIR, 0755, true)) {
     $error = 'Could not create '.STAXX_JOB_DIR;
@@ -3564,7 +3731,14 @@ function staxx_read_file(string $rel, string $file, string &$error): ?array {
   }
 
   $size = @filesize($path);
-  if ($size !== false && $size > STAXX_FILE_MAX) {
+  if ($size === false) {
+    // Unknown size is refused rather than let through: the whole point of
+    // this cap is to stop a huge file being read into memory, and a
+    // filesystem error here is no reason to skip that check.
+    $error = 'Could not determine the size of "'.$file.'", so it was not read.';
+    return null;
+  }
+  if ($size > STAXX_FILE_MAX) {
     // ceil(), not round(): a file one byte over the cap rounds back down to
     // the cap itself, and "is 256 KiB, over the 256 KiB limit" reads as a
     // mistake rather than a rule.
@@ -3612,7 +3786,11 @@ function staxx_write_file(string $rel, string $file, string $body, bool $isText,
     return false;
   }
 
-  $tmp = $path.'.staxx-tmp';
+  // Pid-suffixed, not a fixed name: two concurrent saves of the same
+  // companion file would otherwise share one temp file, and whichever
+  // rename() lost the race would report an error for content that had
+  // already landed under the other save's name.
+  $tmp = $path.'.'.getmypid().'.staxx-tmp';
   if (@file_put_contents($tmp, $body) === false) {
     $error = 'Could not write '.$tmp;
     return false;
@@ -3743,6 +3921,7 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
     $error = 'Could not rename the stack on disk. Check the permissions on '.$from.'.';
     return '';
   }
+  staxx_scan_stacks_reset(); // moved the directory; see the function's own comment
   return $newRel;
 }
 
@@ -4053,7 +4232,11 @@ function staxx_job_log(string $job, int $offset = 0): array {
   // it would re-send everything already shown on every poll after a job ends.
   if ($offset < 0) $offset = 0;
 
-  $chunk = @file_get_contents($log, false, null, $offset);
+  // Capped: a first poll against a long-running `pull` used to hand back the
+  // whole log in one go. $newOffset only ever advances by what was actually
+  // read, so a capped chunk just means the next poll picks up where this one
+  // left off rather than losing anything.
+  $chunk = @file_get_contents($log, false, null, $offset, STAXX_LOG_CHUNK_MAX);
   if ($chunk === false) $chunk = '';
   // Measured on the raw chunk, before the sentinel below is stripped out of
   // $text — otherwise the offset would undercount by the sentinel's own
@@ -4080,7 +4263,17 @@ function staxx_job_log(string $job, int $offset = 0): array {
 function staxx_prune_jobs(): void {
   if (!is_dir(STAXX_JOB_DIR)) return;
   foreach ((array)@glob(STAXX_JOB_DIR.'/*.log') as $log) {
-    if (@filemtime($log) < time() - 3600) @unlink($log);
+    if (@filemtime($log) >= time() - 3600) continue;
+
+    // A log with no sentinel yet is still being appended to by a live job —
+    // an hour is a long time for an ordinary command, but not for a slow
+    // image pull, and deleting the file out from under `setsid` would make
+    // that job vanish rather than finish. Reading the last line is enough:
+    // the sentinel is always the final thing written.
+    $tail = (string)@file_get_contents($log, false, null, max(0, (int)@filesize($log) - 64));
+    if (strpos($tail, STAXX_JOB_END) === false) continue;
+
+    @unlink($log);
   }
 }
 
@@ -4218,7 +4411,10 @@ function staxx_log_read(string $id, int $offset): array {
   // the end of the file instead of being refused outright.
   if ($offset < 0) $offset = 0;
 
-  $chunk = @file_get_contents($log, false, null, $offset);
+  // Capped for the same reason as staxx_job_log() — a first poll against a
+  // follower nobody has read from in a while must not hand back everything
+  // it has buffered in one reply.
+  $chunk = @file_get_contents($log, false, null, $offset, STAXX_LOG_CHUNK_MAX);
   if ($chunk === false) $chunk = '';
   $newOffset = $offset + strlen($chunk);
 
@@ -4294,7 +4490,12 @@ function staxx_log_reap(): void {
   foreach ((array)@glob(STAXX_LOG_DIR.'/*.hb') as $hb) {
     $id   = basename($hb, '.hb');
     $seen = (int)trim((string)@file_get_contents($hb));
-    if (time() - $seen > STAXX_LOG_STALE) {
+    $log  = STAXX_LOG_DIR.'/'.$id.'.log';
+    // A heartbeat this fresh means someone is still watching, so age alone
+    // would never catch a follower stuck writing gigabytes to a live tab —
+    // the size ceiling is the only thing that reaps that one.
+    $tooBig = is_file($log) && (int)@filesize($log) > STAXX_LOG_SIZE_MAX;
+    if ($tooBig || time() - $seen > STAXX_LOG_STALE) {
       staxx_log_kill($id);
       foreach (['log', 'pid', 'hb'] as $ext) @unlink(STAXX_LOG_DIR.'/'.$id.'.'.$ext);
     }
@@ -4418,18 +4619,22 @@ function staxx_exec_resolve_container(string $file, string $leaf, string $servic
        . '{{.Label "com.docker.compose.service"}}\t{{.State}}';
   $out = staxx_sh(escapeshellarg(staxx_docker_bin()).' ps -a --format '.escapeshellarg($fmt), 10);
 
+  // A scaled service, or one restarted while an old exited copy still
+  // lingers, can list more than one match for the same project and service —
+  // an exited leftover must never hide a sibling that is actually running, so
+  // every line is checked before giving up.
+  $foundStopped = false;
   foreach (explode("\n", trim($out)) as $line) {
     if ($line === '') continue;
     [$cname, $proj, $svc, $state2] = array_pad(explode("\t", $line, 4), 4, '');
     if ($proj !== $project || $svc !== $service) continue;
-    if ($state2 !== 'running') {
-      $error = 'That container is not running, so there is nothing to open a shell into.';
-      return '';
-    }
+    if ($state2 !== 'running') { $foundStopped = true; continue; }
     return $cname;
   }
 
-  $error = 'No running container for service "'.$service.'" in this stack.';
+  $error = $foundStopped
+    ? 'That container is not running, so there is nothing to open a shell into.'
+    : 'No running container for service "'.$service.'" in this stack.';
   return '';
 }
 
@@ -4649,7 +4854,8 @@ function staxx_exec_read(string $id, int $offset): array {
   // refused outright.
   if ($offset < 0) $offset = 0;
 
-  $chunk = @file_get_contents($out, false, null, $offset);
+  // Capped for the same reason as staxx_job_log() and staxx_log_read().
+  $chunk = @file_get_contents($out, false, null, $offset, STAXX_LOG_CHUNK_MAX);
   if ($chunk === false) $chunk = '';
   $newOffset = $offset + strlen($chunk);
 

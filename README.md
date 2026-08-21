@@ -1,6 +1,7 @@
 # StaXX — compose-native Docker management for Unraid
 
-**Status: pre-alpha. Nothing here is installable yet.**
+**Status: pre-alpha. Installable for testing via `dev-install.sh` (see below); not yet packaged
+or listed for a normal install — see `SUBMISSION.md` for what is still missing.**
 
 **New here? Start with [docs/README.md](docs/README.md)** — a plain-English explanation of what this
 is and why. The [glossary](docs/glossary.md) defines every term used across the project.
@@ -41,18 +42,22 @@ These are the constraints the project is built around, in priority order.
 
 ## Planned scope
 
-- Compose engine — install the compose CLI, manage stacks as ordinary directories of ordinary files
-- Compose → form UI, with comment-preserving write-back
-- Container and stack lifecycle control (start / stop / restart / logs / console). Restart means
-  what Apply means on an Unraid template: a container's settings are fixed when it is built, so
-  restarting one that already exists could never apply an edit. It rebuilds whatever the file no
-  longer matches, and restarts the rest — leaving those containers, and their logs, alone.
+- Compose engine — managing stacks as ordinary directories of ordinary files is **built**;
+  installing the compose CLI itself is not — see item 12.3 in `PLAN_60.md` for the gap.
+- Compose → form UI, with comment-preserving write-back — **built**. The form is generated from
+  the compose file's `x-unraid` metadata, 22 field groups covering everything from ports and
+  volumes to update policy — the largest piece of engineering in the plugin.
+- Container and stack lifecycle control (start / stop / restart / logs / console) — **built**.
+  Restart means what Apply means on an Unraid template: a container's settings are fixed when it
+  is built, so restarting one that already exists could never apply an edit. It rebuilds whatever
+  the file no longer matches, and restarts the rest — leaving those containers, and their logs,
+  alone.
 - Removing a stack — **built**. It stops and removes the containers, then zips the whole folder —
   compose file, notes, certificates, anything else living beside it — to a settings-configurable
   archive folder outside the stacks tree before taking the folder itself away. Nothing is deleted
   outright; getting a stack back is unzipping its archive into the stacks tree by hand.
-- Collapsible stack grouping — stacks can be placed one level deep into user-created folders, and a
-  running stack is matched back to its directory via `com.docker.compose.project`
+- Collapsible stack grouping — **built**. Stacks can be placed one level deep into user-created
+  folders, and a running stack is matched back to its directory via `com.docker.compose.project`.
 - Community Applications template → compose conversion, on demand — **built**; see
   [Importing from Community Applications](#importing-from-community-applications)
 - Autostart and start order — **built**. Unraid boots from one plain list of container names, walked

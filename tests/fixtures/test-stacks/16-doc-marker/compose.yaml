@@ -1,0 +1,13 @@
+---
+# Fixture for PLAN_31 step 1: a file that opens with a YAML document-start
+# marker. Every linuxserver.io example compose file is written this way, and
+# until now the whole file showed as one uneditable locked block.
+services:
+  web:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "15117:80"
+    environment:
+      TZ: Etc/UTC
+...

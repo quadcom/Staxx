@@ -20,6 +20,7 @@
 *.js     text eol=lf
 *.json   text eol=lf
 *.md     text eol=lf
+*.tmpl   text eol=lf
 
 # Unraid event hooks and helper scripts are extensionless.
 src/**/scripts/*  text eol=lf

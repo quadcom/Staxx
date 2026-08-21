@@ -29,7 +29,12 @@ $projects      = staxx_containers_by_project();
 $stacks        = staxx_list_stacks();
 // Reconcile with Unraid's boot list before the layout is worked out, since
 // adopting a change made on its own Docker page can reorder what follows.
-staxx_autostart_sync($stacks);
+// $syncError is kept and shown below rather than discarded: a failed write
+// here means the boot markers the table is about to draw describe a state
+// that was never actually written, which is worse than a banner nobody
+// wanted to see.
+$syncError = '';
+staxx_autostart_sync($stacks, $syncError);
 $rows          = staxx_folder_layout($stacks);
 $folders       = staxx_folder_names();
 $root          = staxx_stack_root();
@@ -113,6 +118,21 @@ endif;
 
        Deliberately not Unraid's .notice class. Borrowing a stock class means
        inheriting layout rules we do not control and cannot see change. -->
+  <? if ($csrf === ''): ?>
+    <!-- Unraid's own CSRF check rejects every POST this page makes once
+         csrf_token is missing from var.ini, and it does so silently from
+         here — the request just comes back refused. Said outright, because
+         nothing else on the page would explain why every button seems to do
+         nothing. -->
+    <div class="staxx-notice staxx-notice--bad">
+      <i class="fa fa-times-circle" aria-hidden="true"></i>
+      <div>
+        <strong><?= _('The security token this page needs was not found.') ?></strong>
+        <?= _('Every action on this page will be refused until you reload it. If reloading does not help, log in to the webGUI again.') ?>
+      </div>
+    </div>
+  <? endif; ?>
+
   <? if (!$compose['available']): ?>
     <div class="staxx-notice staxx-notice--bad">
       <i class="fa fa-times-circle" aria-hidden="true"></i>
@@ -144,6 +164,20 @@ endif;
       <div>
         <strong><?= _('Docker Hub has stopped answering questions about images from this server for now.') ?></strong>
         <?= _('Signing in to a Docker Hub account in the') ?> <button type="button" id="staxx-open-hub-settings" class="staxx-link-btn"><?= _('settings panel') ?></button> <?= _('raises the limit, or you can just leave it to try again later.') ?>
+      </div>
+    </div>
+  <? endif; ?>
+
+  <!-- A real failure, not a warning: the boot markers this table is about to
+       draw come from what staxx_autostart_sync() intended to write, and if
+       that write failed they describe a state Unraid's own boot list never
+       actually reached. -->
+  <? if ($syncError !== ''): ?>
+    <div class="staxx-notice staxx-notice--bad">
+      <i class="fa fa-times-circle" aria-hidden="true"></i>
+      <div>
+        <strong><?= _('The boot-start list could not be updated.') ?></strong>
+        <?= htmlspecialchars($syncError) ?>
       </div>
     </div>
   <? endif; ?>
@@ -962,7 +996,11 @@ endif;
                   : _('v%s — `docker compose` CLI plugin'),
                 $compose['version'] ?: '?'
               )
-            : _('Not found. Unraid does not ship compose; StaXX will install it.')
+            // Says how to get it rather than promising an installer this
+            // plugin does not have. Unraid ships no compose of its own, and
+            // Compose Manager is how it reaches nearly every box that has it.
+            : _('Not found. Unraid does not ship compose — install the Docker Compose '
+              . 'Manager plugin from Community Applications, then reload this page.')
         );
 
         staxx_status_row(

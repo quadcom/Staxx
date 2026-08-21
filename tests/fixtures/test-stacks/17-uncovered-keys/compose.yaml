@@ -1,0 +1,105 @@
+# Fixture for PLAN_36. Nothing else in this corpus carries these settings, so
+# this is the only place a change to how they are labelled or typed can be
+# looked at rather than shipped blind. The form has no control for 51 of the
+# compose spec's service-level keys; each still lands in Advanced as an
+# ordinary editable box, but its name used to come from mechanically
+# humanising the raw key ("Mac Address", "Cpus", "Oom Kill Disable") instead
+# of the proper written title that was already sitting unused in the help
+# text beside it. This file is for opening in the browser to see that for
+# real — the round-trip suite proves the same fix with an inline copy of a
+# few of these keys instead, because this folder is gitignored and the suite
+# cannot read it.
+#
+# oom_kill_disable below is written as `yes` rather than `true` on purpose:
+# an unknown key's type is guessed from the value it holds, and `yes` is the
+# value that exposes a guess with no explicit type behind it.
+#
+# Three services split the spread so no single one is an unreadable wall.
+# None of them do anything real — they all just sleep.
+
+name: uncovered-keys
+
+x-unraid:
+  version: 1
+  name: Uncovered Keys
+  category: Tools:Utilities
+  overview: |
+    Carries every compose service-level setting the form has no dedicated
+    control for, so a change to how those settings are labelled or typed has
+    something real to be checked against.
+
+services:
+  resource-limits:
+    image: alpine:3.20
+    container_name: uncovered-resource-limits
+    restart: unless-stopped
+    domainname: example.com
+    stop_grace_period: 30s
+    cpus: '1.5'
+    cpu_shares: 512
+    cpu_period: 100000
+    cpu_quota: 50000
+    cpuset: "0,1"                # cores 0 and 1 — needs a host with at least two
+    pids_limit: 100
+    mem_reservation: 128M
+    memswap_limit: 512M
+    mem_swappiness: 60
+    oom_score_adj: -500
+    oom_kill_disable: yes        # written as yes, not true — see the file header
+    command: ["sleep", "infinity"]
+
+  namespaces-and-devices:
+    image: busybox:1.36
+    container_name: uncovered-namespaces-and-devices
+    restart: unless-stopped
+    hostname: uncovered-nd
+    mac_address: "02:42:ac:11:00:02"
+    platform: linux/amd64
+    runtime: runc
+    dns_search:
+      - example.com
+    dns_opt:
+      - "ndots:2"
+      - single-request
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - "no-new-privileges:true"
+    group_add:
+      - "1000"
+      - users
+    device_cgroup_rules:
+      - "c 13:* rmw"
+    sysctls:
+      net.core.somaxconn: "1024"
+      net.ipv4.ip_forward: "1"
+    storage_opt:
+      size: "120G"                # only takes effect on a storage driver that supports quotas
+    cgroup: private
+    cgroup_parent: uncovered.slice
+    isolation: default
+    userns_mode: host
+    uts: host
+    gpus: all                     # remove if this machine has no GPU — docker refuses to start otherwise
+    command: ["sleep", "infinity"]
+
+  extras:
+    image: alpine:3.20
+    container_name: uncovered-extras
+    restart: unless-stopped
+    links:
+      - "resource-limits:limits"
+    external_links:
+      - "some-other-stacks-container:legacy"   # only resolves if a container by that name is actually running
+    label_file: ./labels.env
+    tmpfs:
+      - /tmp
+      - /run:size=64m
+    annotations:
+      com.example.note: "sample annotation"
+    volumes_from:
+      - resource-limits
+    scale: 1
+    attach: false
+    pull_refresh_after: 24h
+    command: ["sleep", "infinity"]

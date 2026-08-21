@@ -182,6 +182,29 @@ ok('project: no longer interleaved',
    staxx_autostart_state($stacks)['stacks'][$multi['name']]['interleaved'] === false);
 ok('project: nothing was lost', count($lines) === 5 + count($flat));
 
+/* ---------------------------------------------------- scaled services ---- */
+
+/* A service scaled to three containers, with only one of them present in
+   Unraid's own boot file — membership is decided per container there, so
+   projecting must never grow that to all three, unasked, on every render.
+   Built by hand rather than via a real scaled stack, because nothing on this
+   box is guaranteed to actually be scaled past one container; this calls
+   staxx_autostart_group_lines() directly with the shape staxx_autostart_index()
+   would have produced for one. */
+$scaledStack = ['name' => 'scaled-test', 'leaf' => 'scaled-test', 'folder' => '', 'services' => ['web']];
+$scaledIdx   = [
+  'byName' => ['scaled-test' => $scaledStack],
+  'names'  => ['scaled-test' => ['web' => ['scaled-web-1', 'scaled-web-2', 'scaled-web-3']]],
+];
+$scaledLines = [['name' => 'scaled-web-1', 'wait' => 0]];   // only one of the three, in the file
+$scaledOnMap = ['scaled-test' => ['web' => [0]]];           // that one line is on, by index
+
+$scaledOut = staxx_autostart_group_lines(
+  '', [$scaledStack], staxx_start_defaults(), $scaledIdx, $scaledOnMap, [], $scaledLines
+);
+ok('scaled: only the container actually on in the file is emitted',
+   $scaledOut === [['name' => 'scaled-web-1', 'wait' => 0]], json_encode($scaledOut));
+
 /* ------------------------------------------------------------ adopting ---- */
 
 reset_start();

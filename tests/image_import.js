@@ -402,6 +402,38 @@ ok('exactly one warning, so the optional ones are not noise', dup.warnings.lengt
    JSON.stringify(dup.warnings));
 
 /* =========================================================================
+ * J. ENV_MAP_RE alignment, container-side /path/to/, and a false secrets:
+ * ========================================================================= */
+
+console.log('\nJ. Aligned env values, the container side of a mount, and secrets:');
+
+// An aligned block ("PUID:   1000") used to miss ENV_MAP_RE's ":\s?" (at
+// most one space) entirely — no correction, no note, and the container
+// silently keeps running as uid 1000.
+var ALIGNED_README = ['```yaml', 'services:', '  aligned:',
+  '    image: someone/aligned-map-test', '    environment:',
+  '      PUID:   1000', '      PGID:   1000',
+  '    secrets:', '    volumes:',
+  '      - /path/to/data:/path/to/data', '```'].join('\n');
+var aligned = build('someone/aligned-map-test', 'hub', { readme: ALIGNED_README },
+  { appdata: '/mnt/user/appdata', timezone: 'America/Toronto' });
+ok('an aligned "PUID:   1000" is still corrected to 99',
+   aligned.yaml.indexOf('PUID:   99') >= 0 || aligned.yaml.indexOf('PUID: 99') >= 0,
+   aligned.yaml);
+ok('...with the usual note',
+   aligned.notes.some(function (n) { return /PUID to 99/.test(n); }));
+ok('opts.appdata with no trailing slash still lands on a real path, not "appdatadata"',
+   aligned.yaml.indexOf('/mnt/user/appdata/data:') >= 0 &&
+   aligned.yaml.indexOf('appdatadata') === -1,
+   aligned.yaml);
+ok('only the host side of "/path/to/data:/path/to/data" is rewritten — the container side stays',
+   aligned.yaml.indexOf('/mnt/user/appdata/data:/path/to/data') >= 0,
+   aligned.yaml);
+ok('a bare "secrets:" line is not mistaken for an empty SECRET_KEY_RE env var',
+   !aligned.warnings.some(function (w) { return /secrets/.test(w); }),
+   JSON.stringify(aligned.warnings));
+
+/* =========================================================================
  * H. Round-trip guard — every produced file, every case
  * ========================================================================= */
 

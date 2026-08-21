@@ -1,0 +1,78 @@
+# Awkward-but-legal syntax test. Everything here is standard compose; it is
+# just written in the less common of the two forms the spec allows:
+#
+#   - environment as a list ("KEY=value") rather than a mapping (KEY: value)
+#   - ports written out in full (target/published/protocol) rather than "a:b"
+#   - volumes written out in full (type/source/target) rather than "a:b"
+#
+# A parser that only handles the short forms will fall over on this file. It
+# also carries devices, labels and a profile, which the form has to cope with.
+#
+# The long forms are also where a note has to be placed with some thought. A
+# port spread over four lines has four places a comment could go, and the form
+# reads the one on the `target:` line — the entry's first line, and the half that
+# names it. A note beside `published:` is ignored, which is the case this stack
+# exists to pin down.
+
+name: fedora-advanced
+
+x-unraid:
+  version: 1
+  name: Fedora Advanced
+  category: Tools:Utilities
+  overview: |
+    Exercises the long-hand spellings of ports and volumes, plus devices,
+    labels and an optional service behind a profile.
+
+services:
+  fedora-main:
+    image: fedora:41
+    container_name: fedora-main
+    restart: unless-stopped
+    hostname: fedora-main
+    ports:
+      - target: 15108             # the page you open -!R
+        published: "15108"
+        protocol: tcp
+        mode: host
+      - target: 15109             # lets other machines on the network find this one
+        published: "15109"        # this note is on the wrong line and must be ignored
+        protocol: udp
+        mode: host
+    volumes:
+      - type: bind
+        source: ./data/config
+        target: /config           # settings and state. Back this up -!R
+      - type: bind
+        source: ./data/media
+        target: /media            # mounted read-only, so nothing inside can change your files
+        read_only: true
+    devices:
+      - /dev/dri:/dev/dri         # remove this if your server has no integrated GPU
+    environment:
+      - TZ=America/Toronto        # timezone for timestamps
+      - PUID=99                   # -!R
+      - PGID=100                  # -!R
+      - ENABLE_HW_ACCEL=true      # use the GPU above for encoding
+      - WORKER_COUNT=4            # how many jobs run at once
+    labels:
+      net.unraid.docker.icon: https://fedoraproject.org/favicon.ico
+      com.example.tier: primary   # arbitrary label, here to prove labels can be surfaced
+    command: ["sleep", "infinity"]
+
+    x-unraid:
+      name: Fedora Main
+      webui: "http://[IP]:[PORT:15108]/"
+
+  fedora-optional:
+    image: fedora:41
+    container_name: fedora-optional
+    restart: unless-stopped
+    profiles:
+      - extras
+    environment:
+      - TZ=America/Toronto
+    command: ["sleep", "infinity"]
+    # Behind a profile, so `docker compose up` skips it unless you ask for it
+    # with `--profile extras`. The UI should show it as present but inactive,
+    # not as a container that failed to start.

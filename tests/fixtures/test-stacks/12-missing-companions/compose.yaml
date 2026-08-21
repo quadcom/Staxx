@@ -1,0 +1,41 @@
+# A stack that names files which are not there.
+#
+# Nothing is missing by accident here — the folder holds this compose file and
+# nothing else, on purpose. Opening it must say so straight away rather than
+# waiting until the stack fails to start.
+#
+# What should happen:
+#
+#   app.env       flagged as missing; creating it writes DB_PASS= and API_HOST=
+#                 (the ${...} names below that have no default), and never TZ
+#   api_key.txt   flagged as missing; creating it makes an empty file, and says
+#                 so, because nothing can honestly be guessed about a secret
+#   ${DB_PASS}    an amber dot — compose would replace it with nothing, silently
+#   ${API_HOST}   the same
+#   ${TZ:-...}    NO dot: it carries its own default
+
+name: missing-companions
+
+services:
+
+  app:
+    image: alpine:3.20
+    container_name: missing-companions
+    restart: unless-stopped
+
+    env_file:
+      - app.env
+
+    environment:
+      DB_PASS: ${DB_PASS}
+      API_HOST: ${API_HOST}
+      TZ: ${TZ:-Europe/London}
+
+    ports:
+      - "15113:80"
+
+    command: ["sleep", "infinity"]
+
+secrets:
+  api_key:
+    file: api_key.txt

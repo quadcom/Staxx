@@ -1,0 +1,47 @@
+# A stack whose folder holds more than its compose file.
+#
+# Four companions, each there to be a different kind of tab:
+#
+#   .env          text, referenced, and the file compose reads by itself
+#   site.der      binary — no editor, a Download/Replace panel instead
+#   notes.txt     text, referenced by nothing — an orphan
+#   certs/        a directory, which is never a tab at all
+#
+# It also proves the delete confirmation: this folder can never be deleted
+# without naming all four first.
+
+name: companion-files
+
+services:
+
+  greeter:
+    image: busybox:1.36
+    container_name: companion-files
+    restart: unless-stopped
+
+    # Passed INTO the container. Not the same thing as compose reading .env
+    # to fill in ${...} below, which it does whether this line is here or not.
+    env_file:
+      - .env
+
+    # ${GREETING} is defined in .env, so it must NOT be flagged.
+    # ${MOTD} is defined nowhere, so it must be.
+    environment:
+      GREETING: ${GREETING}
+      MOTD: ${MOTD}
+      FALLBACK: ${NOT_SET:-a default, so this one is fine}
+
+    ports:
+      - "${HTTP_PORT}:80"
+
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /web
+        printf '%s\n' "$$GREETING" > /web/index.html
+        httpd -f -h /web -p 80
+
+configs:
+  site:
+    file: certs/inner.conf

@@ -1,0 +1,62 @@
+# GPU test — a stack that genuinely works the graphics card.
+#
+# Everything else in this folder is idle by design, which makes the GPU column
+# impossible to check: a correct reading and a broken one both show 0%. This
+# one runs a real hardware video encode so the figure has something to report.
+#
+# It encodes a generated test pattern to nowhere. Nothing is written, nothing
+# is served, and it stops on its own after ten minutes — `restart: "no"` means
+# it stays stopped rather than looping forever and sitting on the card.
+#
+# WHY THIS PROVES SOMETHING THE OTHER TOOLS CANNOT
+#
+# The work happens on the video ENCODE engine, which is a separate part of the
+# chip from the graphics pipe. While this runs, both radeontop and the kernel's
+# gpu_busy_percent report 0%, because neither watches that engine. The
+# per-process counters in /proc/<pid>/fdinfo do see it. On a media server,
+# encoding and decoding is the whole point, so a GPU reading that misses it is
+# worse than no reading at all.
+#
+# renderD129 is the AMD card on this machine. See the note in 03-multi-tier
+# about node numbering not being fixed across machines.
+
+name: gpu-encode
+
+x-unraid:
+  version: 1
+  name: GPU Encode Test
+  category: Tools:Utilities
+  overview: |
+    Runs a hardware video encode so the GPU column has a real number to show.
+    Start it, watch the GPU figure climb, and it stops by itself after ten
+    minutes.
+
+services:
+  gpu-encode:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: gpu-encode
+    # Deliberately not restarted: this is a burst of load to look at, not a
+    # service. Left on "unless-stopped" it would occupy the encoder forever.
+    restart: "no"
+    devices:
+      - /dev/dri/renderD129:/dev/dri/renderD129
+    environment:
+      TZ: America/Toronto
+    entrypoint: ["/bin/sh", "-c"]
+    # -re pastes the frames through at real-time speed. Without it ffmpeg
+    # encodes as fast as the card allows and a ten-minute clip is finished in
+    # seconds — which is exactly how an earlier attempt at this test appeared
+    # to show "no GPU activity" when the encode had simply already ended.
+    command:
+      - >
+        /usr/lib/jellyfin-ffmpeg/ffmpeg
+        -hide_banner -loglevel error -re
+        -init_hw_device vaapi=va:/dev/dri/renderD129
+        -filter_hw_device va
+        -f lavfi -i testsrc=size=1920x1080:rate=60
+        -vf format=nv12,hwupload
+        -c:v h264_vaapi -t 600 -f null -
+
+    x-unraid:
+      name: Encoder
+      overview: A hardware video encode, running for ten minutes and then stopping.

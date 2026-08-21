@@ -1,16 +1,18 @@
 <?php
 /* The companion-file helpers, checked against the real installed Stacks.php.
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine. The archive cases
- * near the end need ARCHIVE_ROOT pointed at /tmp/b1-archives, or the archives
- * would land wherever the box's real appdata is — the caller sets that and
- * puts the config back, the same way tests/server/links.php does for
- * STACK_ROOT:
+ * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STACK_ROOT
+ * pointed at /tmp/b1-root and ARCHIVE_ROOT at /tmp/b1-archives, the same way
+ * tests/server/links.php does — STACK_ROOT because the permission case near
+ * the end has to land on a real filesystem, not /boot's vfat, which takes its
+ * mode from the mount and would pass that case for the wrong reason; the
+ * caller sets both and puts the config back:
  *
  *     pscp tests/server/files.php root@<box>:/tmp/
  *     plink … '
  *       CFG=/boot/config/plugins/staxx/staxx.cfg
  *       cp $CFG /tmp/cfg.bak
+ *       sed -i "s#^STACK_ROOT=.*#STACK_ROOT=\"/tmp/b1-root\"#" $CFG
  *       grep -q "^ARCHIVE_ROOT=" $CFG \
  *         && sed -i "s#^ARCHIVE_ROOT=.*#ARCHIVE_ROOT=\"/tmp/b1-archives\"#" $CFG \
  *         || echo "ARCHIVE_ROOT=\"/tmp/b1-archives\"" >> $CFG
@@ -21,7 +23,7 @@
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, "zzb1test" and a handful of "zz…" siblings, under
- * whatever the stack root is. */
+ * the temporary stack root. */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
@@ -30,6 +32,11 @@ function ok(string $what, bool $pass, string $note = ''): void {
   global $fails;
   if (!$pass) $fails++;
   printf("%-6s %s%s\n", $pass ? 'ok' : 'FAIL', $what, $note !== '' ? '  ('.$note.')' : '');
+}
+
+if (staxx_stack_root() !== '/tmp/b1-root') {
+  echo "FAIL   the temporary stack root is not in place (got ".staxx_stack_root().")\n";
+  exit(1);
 }
 
 /* ---------------------------------------------------- valid_filename ---- */
@@ -54,11 +61,52 @@ file_put_contents($dir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20
 
 $err = '';
 
+/* --------------------------------------------------------- save-stack ---- */
+// staxx_save_stack() writes the compose file itself, on its own atomic-write
+// and permission path (PLAN_60 3.2/3.3) — never staxx_write_file()'s, which
+// is checked separately below for the companion files it actually handles.
+
+$saveRel = 'zzb1save';
+$saveDir = $root.'/'.$saveRel;
+@exec('rm -rf '.escapeshellarg($saveDir));
+
+$saveYaml = "services:\n  a:\n    image: alpine:3.20\n";
+ok('saves a new stack', staxx_save_stack($saveRel, $saveYaml, $err), $err);
+$saveFile = $saveDir.'/compose.yaml';
+ok('the file exists', file_exists($saveFile));
+ok('the content landed byte-for-byte', file_get_contents($saveFile) === $saveYaml);
+// The stack root is pinned at /tmp/b1-root for this run (a real filesystem,
+// not /boot's vfat, which ignores chmod entirely) — precisely so this case
+// means something rather than passing for the wrong reason.
+ok('it is not world-readable', (fileperms($saveFile) & 0777) === 0600,
+   sprintf('got %o', fileperms($saveFile) & 0777));
+ok('no temp file left behind', count(glob($saveDir.'/compose.yaml.*.tmp')) === 0);
+
+@exec('rm -rf '.escapeshellarg($saveDir));
+
+/* ------------------------------------------------------------ fingerprint -- */
+// staxx_stack_fingerprint() is what the save endpoint compares against the
+// browser's own copy to refuse a write that would clobber a change made
+// elsewhere since — see action.php's 'save' case (PLAN_60 3.1). Same content
+// must hash the same and changed content must hash differently, or that
+// refusal could never fire, or would fire on every save.
+
+$fp1 = staxx_stack_fingerprint($rel);
+ok('fingerprint is non-empty for an existing file', $fp1 !== '');
+ok('fingerprint is stable for unchanged content', staxx_stack_fingerprint($rel) === $fp1);
+
+file_put_contents($dir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.21\n");
+$fp2 = staxx_stack_fingerprint($rel);
+ok('fingerprint changes when the file changes', $fp2 !== '' && $fp2 !== $fp1);
+
+ok('fingerprint is empty for a stack with no compose file',
+   staxx_stack_fingerprint('zznocomposefile') === '');
+
 /* ------------------------------------------------------------- writing -- */
 
 ok('writes a text file', staxx_write_file($rel, '.env', "A=1\r\nB=2\r\n", true, $err), $err);
 ok('keeps CRLF',         file_get_contents($dir.'/.env') === "A=1\r\nB=2\r\n");
-ok('leaves no temp file', !file_exists($dir.'/.env.staxx-tmp'));
+ok('leaves no temp file', count(glob($dir.'/.env.*.staxx-tmp')) === 0);
 
 ok('writes an LF file', staxx_write_file($rel, 'lf.env', "C=3\nD=4\n", true, $err), $err);
 ok('keeps LF, invents no CR', file_get_contents($dir.'/lf.env') === "C=3\nD=4\n");
@@ -77,7 +125,7 @@ ok('refuses over the cap',
    !staxx_write_file($rel, 'big.bin', str_repeat('x', STAXX_FILE_MAX + 1), false, $err), $err);
 ok('accepts exactly the cap',
    staxx_write_file($rel, 'big.bin', str_repeat('x', STAXX_FILE_MAX), false, $err), $err);
-ok('leaves no temp file after a refusal', !file_exists($dir.'/big.bin.staxx-tmp'));
+ok('leaves no temp file after a refusal', count(glob($dir.'/big.bin.*.staxx-tmp')) === 0);
 
 /* ------------------------------------------------------------- reading -- */
 

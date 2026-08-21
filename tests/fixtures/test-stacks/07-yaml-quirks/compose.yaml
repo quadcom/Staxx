@@ -1,0 +1,102 @@
+# ============================================================================
+#  ROUND-TRIP TORTURE TEST
+# ============================================================================
+#
+#  This file is here to be edited through the form and then compared, byte for
+#  byte, against a copy of the original. Everything that a careless parser
+#  destroys is deliberately present:
+#
+#    * comments in every position — above, beside and between things
+#    * this banner, which uses blank comment lines for spacing
+#    * an anchor (&defaults) and two aliases (<<: *defaults)
+#    * a mix of quoting styles: "double", 'single', and none at all
+#    * blank lines used as visual separators
+#    * a long block of text written with the > and | styles
+#    * keys in an order a tidying-up parser would want to rearrange
+#    * a comment carrying a marker, and a comment carrying nothing but a marker
+#
+#  Rule for judging a pass: change ONE field in the form, save, and diff. The
+#  only difference should be that one field. Anything else lost or moved is a
+#  bug, not a trade-off.
+#
+#  Comments matter twice over in this file. They are what the round trip is
+#  hunting, and they are also where the form reads what each setting is for — so
+#  a parser that drops one loses the file's formatting AND its help text in the
+#  same stroke.
+#
+# ============================================================================
+
+name: yaml-quirks
+
+# Shared settings, written once and reused below. A parser that resolves this
+# and then writes the file back out will have copied the block into both
+# services and deleted the anchor. That is the failure this file is hunting.
+x-defaults: &defaults
+  image: alpine:3.20          # same base for both services
+  restart: unless-stopped
+  command: ["sleep", "infinity"]
+  environment:
+    TZ: America/Toronto
+    PUID: "99"                # quoted on purpose — YAML would read 99 as a number
+    PGID: "100"
+
+x-unraid:
+  version: 1
+  name: YAML Quirks
+  category: Tools:Utilities
+
+  # Note the > below: it folds the following lines into one paragraph.
+  overview: >
+    Two identical containers built from a shared anchor. The point of this
+    stack is not what it runs — it is whether the file survives being saved.
+
+services:
+
+  # ---- first service -------------------------------------------------------
+  quirks-alpha:
+    <<: *defaults             # pull in the shared settings above
+    container_name: quirks-alpha
+
+    ports:
+      - "15110:15110"         # short form, quoted, and the page you open -!R
+
+    volumes:
+      - './data/alpha:/data'  # single quotes, relative path. Back this up -!R
+
+    environment:
+      # These merge with the shared ones from the anchor.
+      TZ: America/Toronto
+      PUID: "99"
+      PGID: "100"
+      ROLE: alpha             # unquoted
+      GREETING: "hello, alpha"
+      SHARED_TOKEN: nonsense  # -!S
+
+    x-unraid:
+      name: Alpha
+
+      # And the | below: it keeps every line break exactly as typed.
+      overview: |
+        Line one of the overview.
+        Line two, which should stay on its own line.
+
+          Indented line, also preserved.
+
+  # ---- second service ------------------------------------------------------
+  quirks-beta:
+    <<: *defaults
+    container_name: quirks-beta
+
+    ports:
+      - "15111:15111"
+
+    environment:
+      TZ: America/Toronto
+      PUID: "99"
+      PGID: "100"
+      ROLE: beta
+      GREETING: 'hello, beta'   # single quotes this time
+
+    # No x-unraid block here — half-documented on purpose, matching stack 03.
+
+# ---- trailing comment, which is the very first thing most parsers lose ------

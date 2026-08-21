@@ -26,12 +26,12 @@ DIR="$1"
 [ -n "$DIR" ] || exit 1
 
 STALE=45          # give up if nobody has asked for stats in this many seconds
-INTERVAL=1        # pause between sampling rounds
 
-# Measured on a 62-container server: docker stats 1.5s and radeontop 1.1s.
-# The Intel reading is now a handful of file reads and costs next to nothing.
-# With the pause that is a round every two or three seconds, which is what the
-# graphs advance at.
+# Measured on a 62-container server: docker stats takes about 1.5s, and the
+# Intel reading is a handful of file reads that cost next to nothing.
+# sample_gpu_metrics() below spends roughly another second reading the AMD
+# metrics table repeatedly, which paces the round out to about two or three
+# seconds end to end — that is what the graphs advance at.
 
 WATCH="$DIR/watch"
 LOCK="$DIR/collector.pid"
@@ -78,6 +78,10 @@ echo $$ > "$LOCK"
 # and the count crept upward — four were running at once before this was
 # spotted. Checking the recorded pid against our own makes the release safe.
 cleanup() {
+  # A round killed mid-sample leaves its *.raw.tmp half-written; nothing else
+  # ever cleans those up, so left alone they sit in the state directory
+  # forever alongside the real snapshots.
+  rm -f "$DIR"/*.raw.tmp
   if [ "$(cat "$LOCK" 2>/dev/null)" = "$$" ]; then
     rm -f "$LOCK"
     rmdir "$LOCKDIR" 2>/dev/null
@@ -92,6 +96,11 @@ trap cleanup EXIT INT TERM
 # process and declines to start the new one, so a fixed collector never takes
 # over until the machine reboots. Noticing our own mtime change and exiting
 # lets the next page request start the new version.
+#
+# A `stat` that fails here (a busy filesystem, say) must not be compared
+# against a later, successful reading — that reads as "replaced" and exits
+# after a single round — so an empty reading skips the check entirely rather
+# than being compared as-is.
 VERSION=$(stat -c %Y "$0" 2>/dev/null)
 
 # Per-process GPU time, straight from the kernel.
@@ -157,8 +166,11 @@ sample_gpu_procs() {
     done
   done < "$DIR/devices.raw"
 
-  # Keep the previous sample: a rate needs two.
-  [ -f "$DIR/gpuproc.raw" ] && mv "$DIR/gpuproc.raw" "$DIR/gpuproc.prev"
+  # Keep the previous sample: a rate needs two. Copied, not moved — moving it
+  # away first leaves a window with no .raw at all until the line below
+  # replaces it, which is a real gap a reader can land in, not just a
+  # theoretical one (a cosmetic flicker in the graph).
+  [ -f "$DIR/gpuproc.raw" ] && cp "$DIR/gpuproc.raw" "$DIR/gpuproc.prev"
   mv "$out" "$DIR/gpuproc.raw"
 }
 
@@ -257,8 +269,10 @@ sample_intel() {
   done
 
   # Keep the previous sample: the busy figure is a rate, and a rate needs two
-  # readings and the time between them.
-  [ -f "$DIR/intel.raw" ] && mv "$DIR/intel.raw" "$DIR/intel.prev"
+  # readings and the time between them. Copied, not moved — see the same swap
+  # in sample_gpu_procs() above for why moving it away first leaves a real gap
+  # with no .raw file in it at all.
+  [ -f "$DIR/intel.raw" ] && cp "$DIR/intel.raw" "$DIR/intel.prev"
   mv "$out" "$DIR/intel.raw"
 }
 
@@ -311,19 +325,6 @@ sample_gpu_metrics() {
   mv "$out" "$DIR/gpumetrics.raw"
 }
 
-# radeontop reports the card as a whole and has no per-process breakdown, so
-# this figure is the machine's, not any one container's. The page labels it
-# that way rather than pretending otherwise.
-sample_amd() {
-  command -v radeontop >/dev/null 2>&1 || return 1
-  timeout -k 1 5 radeontop -d - -l 1 > "$DIR/amd.raw.tmp" 2>/dev/null
-  if [ -s "$DIR/amd.raw.tmp" ]; then
-    mv "$DIR/amd.raw.tmp" "$DIR/amd.raw"
-  else
-    rm -f "$DIR/amd.raw.tmp"
-  fi
-}
-
 while [ -f "$WATCH" ]; do
   now=$(date +%s)
   seen=$(cat "$WATCH" 2>/dev/null)
@@ -333,7 +334,10 @@ while [ -f "$WATCH" ]; do
   [ $((now - seen)) -gt $STALE ] && break        # nobody watching: stop
 
   # This script has been replaced underneath us: let the new one take over.
-  [ "$(stat -c %Y "$0" 2>/dev/null)" = "$VERSION" ] || break
+  # Skipped when VERSION itself could not be read — see the comment by it.
+  if [ -n "$VERSION" ] && [ "$(stat -c %Y "$0" 2>/dev/null)" != "$VERSION" ]; then
+    break
+  fi
 
   # Our lock is gone, or now belongs to somebody else. That happens if the
   # state directory is cleared while we are running, which lets a second
@@ -404,11 +408,10 @@ while [ -f "$WATCH" ]; do
   sample_gpu_clients
 
   sample_intel
-  sample_amd
 
   # This is the pause at the end of the round, spent reading the AMD metrics
-  # table over and over instead of doing nothing. It takes the same second the
-  # bare `sleep $INTERVAL` used to.
+  # table over and over instead of doing nothing. It takes the same second a
+  # plain sleep used to.
   sample_gpu_metrics
 done
 

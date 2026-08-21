@@ -54,6 +54,12 @@ rm -rf "/tmp/stack.manager"                        # a cache, regenerates
 
 case "${MODE}" in
   --remove|--purge)
+    # Captured before --purge deletes CFG_DIR below — otherwise the marker
+    # this check depends on is already gone, so purge destroyed the record
+    # of a live sign-in without ever signing out of it.
+    had_login=0
+    [[ -f "${CFG_DIR}/hub_login" ]] && had_login=1
+
     echo "==> Removing ${DEST}"
     rm -rf "${DEST}"
     if [[ "${MODE}" == "--purge" ]]; then
@@ -70,8 +76,8 @@ case "${MODE}" in
     if [[ -x /usr/local/sbin/update_cron ]]; then /usr/local/sbin/update_cron || true; fi
 
     # Only ever undo a sign-in StaXX performed — never an administrator's own.
-    if [[ -f "${CFG_DIR}/hub_login" ]]; then
-      docker logout >/dev/null 2>&1 || true
+    if [[ "${had_login}" -eq 1 ]]; then
+      timeout -k 2 10 docker logout >/dev/null 2>&1 || true
       rm -f "${CFG_DIR}/hub_login"
     fi
 
@@ -105,10 +111,15 @@ cp -a "${SRC}/." "${DEST}/"
 # copied from Windows with carriage returns fails that split, and the page is
 # discarded with nothing but a one-line complaint in the syslog. Strip them
 # rather than trust the copy.
+#
+# `-I` treats a binary file as a non-match rather than searching its bytes for
+# a CR, so it is skipped rather than "fixed" — no binary asset exists in the
+# plugin today, but the first icon, font or screenshot added under it must not
+# be silently corrupted the day this next runs.
 echo "==> Normalising line endings"
 stripped=0
 while IFS= read -r -d '' f; do
-  if grep -qU $'\r' "$f" 2>/dev/null; then
+  if grep -qIU $'\r' "$f" 2>/dev/null; then
     sed -i 's/\r$//' "$f"
     echo "    fixed: ${f#"${DEST}/"}"
     stripped=$((stripped + 1))

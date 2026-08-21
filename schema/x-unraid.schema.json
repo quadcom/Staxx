@@ -3,6 +3,7 @@
   "$id": "https://github.com/TODO-OWNER/TODO-REPO/schema/x-unraid.schema.json",
   "title": "x-unraid",
   "description": "Presentation metadata carried inside an ordinary compose file. Validates the x-unraid blocks and permits every other compose key, so it can be run against a whole compose file converted to JSON. Validate the SOURCE file converted to JSON, not `docker compose config` output, which has a history of stripping extension fields. There is nothing here for individual form fields: what a value is for is written in the comment beside it, which YAML already has and this schema cannot see.",
+  "$comment": "format: \"uri\" throughout this schema is documentation only — Draft 2020-12 treats \"format\" as a non-enforcing annotation unless the validator is given an optional RFC-3986/3987 checker package, which this project does not install. The actual gate on every address-shaped key below is its \"pattern\", not its \"format\".",
 
   "type": "object",
   "properties": {
@@ -22,6 +23,7 @@
     "stack": {
       "type": "object",
       "description": "Stack-level metadata. Every key optional.",
+      "$comment": "additionalProperties is deliberately absent (see docs/x-unraid-schema.md, Validation): reading rule 1 already commits to ignoring unknown keys so a file written for a later schema version still renders on an older StaXX. A propertyNames pattern was weighed and rejected — a typo like overvieww is still a perfectly shaped property name, so a shape check would not catch the thing it is meant to catch, and would only put a second, narrower key format in competition with the same forward-compatibility promise.",
       "properties": {
         "version": {
           "type": "integer",
@@ -32,9 +34,9 @@
         "icon":     { "$ref": "#/$defs/icon" },
         "overview": { "type": "string", "description": "Markdown." },
         "category": { "type": "string", "description": "Unraid's existing category taxonomy, e.g. MediaApp:Video." },
-        "project":  { "type": "string", "format": "uri" },
-        "support":  { "type": "string", "format": "uri" },
-        "readme":   { "type": "string", "format": "uri" },
+        "project":  { "type": "string", "format": "uri", "pattern": "^https?://" },
+        "support":  { "type": "string", "format": "uri", "pattern": "^https?://" },
+        "readme":   { "type": "string", "format": "uri", "pattern": "^https?://" },
         "author":   { "type": "string" },
         "update":   { "$ref": "#/$defs/update" },
         "sections": {
@@ -55,7 +57,8 @@
 
     "icon": {
       "type": "string",
-      "description": "Four accepted forms, told apart by their shape: a full http(s) URL; a path relative to the stack directory, e.g. ./icon.png; a name from the selfh.st icon collection, e.g. jellyfin; or a Font Awesome glyph, e.g. fa-database, which is what Unraid's own XML templates accept. Omit it and the icon is matched automatically from the container's image name.",
+      "pattern": "^(https?://\\S+|\\./\\S+|fa-[a-z0-9-]+|[A-Za-z0-9][A-Za-z0-9._-]*)$",
+      "description": "Four accepted forms, told apart by their shape: a full http(s) URL; a path relative to the stack directory, e.g. ./icon.png; a name from the selfh.st icon collection, e.g. jellyfin; or a Font Awesome glyph, e.g. fa-database, which is what Unraid's own XML templates accept. Omit it and the icon is matched automatically from the container's image name. The pattern only rules out shapes that are none of these — e.g. a path climbing out of the stack directory with ../ — it does not confirm a selfh.st name or a file actually exist.",
       "examples": [
         "jellyfin",
         "./icon.png",
@@ -67,6 +70,7 @@
     "service": {
       "type": "object",
       "description": "Service-level metadata. Every key optional.",
+      "$comment": "additionalProperties absent for the same reason as $defs/stack — see the $comment there.",
       "properties": {
         "icon":     { "$ref": "#/$defs/icon" },
         "overview": { "type": "string", "description": "Markdown." },
@@ -74,6 +78,7 @@
         "support":  { "type": "string", "format": "uri", "pattern": "^https?://", "description": "This service's own support page (a forum thread, an issue tracker). Falls back to the stack-level key of the same name when absent." },
         "webui": {
           "type": "string",
+          "pattern": "^https?://",
           "description": "Link to the container's web interface. Supports Unraid's [IP] substitution. A literal port written in the address, e.g. http://[IP]:80/, is used as-is. A [PORT:nnnn] token is an older shape kept for files written before the port was typed in directly; its own number is not read, and StaXX instead works the port out from the service's first ports entry, taking whichever side of it actually answers: the host-facing side on a bridge network, or the container's own side on host networking or macvlan/ipvlan, where nothing is published."
         },
         "display": {

@@ -130,8 +130,8 @@ exists for the app you want, you fill in every field by hand.
 maintained by volunteers.
 
 *Why it matters here:* it is the main reason people choose Unraid, and it is built entirely on
-templates. Any replacement has to answer what happens to those 2000 apps — planned as a converter
-that turns a template into a compose file on demand.
+templates. Any replacement has to answer what happens to those existing apps — StaXX answers it
+with a converter, already built, that turns a template into a compose file on demand.
 
 **Array** — the Unraid disks that hold your data, which are unavailable until you start the array.
 Relevant because anything stored there cannot be read at boot time.

@@ -566,6 +566,15 @@
       (event.reason && event.reason.stack ? event.reason.stack : String(event.reason)));
   });
 
+  // A thrown error (as opposed to a rejected promise, above) used to be
+  // visible only in a console the user will never open — exactly the
+  // failure this file worries about most. Same dialog, same wording shape.
+  window.addEventListener('error', function (event) {
+    if (!logDlg) return;
+    openLogDialog('Script error', 'Something in the page failed:\n\n' +
+      (event.error && event.error.stack ? event.error.stack : String(event.message || event.error)));
+  });
+
   /* ---------------------------------------------------------------- net -- */
 
   // Every failure mode here has to end up visible. A reply that is not JSON —
@@ -794,6 +803,9 @@
   var textAtOpen  = '';    // what the file said when it opened — the dirty check
   var composeEol  = '\n';  // the compose file's own line ending — put back on save(), see withEol()
   var openedName  = '';    // the rel this editor opened at — what save() renames FROM
+  var fingerprintAtOpen = '';  // content hash of the file when this editor opened it — save()
+                                // sends it back so the server can refuse a write that would
+                                // overwrite a change made elsewhere since (see PLAN_60 3.1)
   var serviceRenamed = false;  // a pencil rename happened this session — offer a recreate after save
 
   // The tab strip's own state. FILES is the last `files` listing, in the
@@ -1502,7 +1514,7 @@
   // the same list as a lookup, for the "not found on this server" tag —
   // mirrors devPresent's split between a naming list and a presence check.
   var ALL_NETS   = [];      // [name, name] pairs, every server network as-is
-  var netPresent = {};      // name -> true
+  var netPresent = Object.create(null);      // name -> true; a plain {} would read a network literally named "constructor" as already present
   var netDriver  = {};      // name -> driver, for working out a service's network kind
 
   // Just the names, for YAML.lint()'s network_mode check. null — not [] —
@@ -1541,7 +1553,7 @@
   function netChoices(f) {
     var ownName = f ? f.parts.name.value : null;
     var declared = (MODEL && MODEL.declared && MODEL.declared.networks) || [];
-    var taken = {};
+    var taken = Object.create(null);   // a network literally named "constructor" must read as taken, not fall through to Object.prototype's
     for (var d = 0; d < declared.length; d++) {
       if (declared[d] !== ownName) taken[declared[d]] = true;
     }
@@ -1672,7 +1684,7 @@
   // own services have to be walked by hand, straight off the parsed
   // document, to find every profile name written anywhere in it.
   function fileProfiles() {
-    var seen = {}, out = [];
+    var seen = Object.create(null), out = [];   // a profile literally named "constructor" must not read as already seen
     var svcBlock = MODEL && MODEL.doc && MODEL.doc.root && MODEL.doc.root.kind === 'map' &&
                    MODEL.doc.root.pairs.services && MODEL.doc.root.pairs.services.value;
     if (!svcBlock || svcBlock.kind !== 'map') return out;
@@ -4040,6 +4052,10 @@
       // mean "nothing yet", since a bare "name:" here is null and compose
       // refuses the file.
       if (add.dataset.add === 'depends') {
+        // Read MODEL only after flushing — every sibling handler in this
+        // listener does the same, and a pending edit not yet folded in could
+        // otherwise leave `used` answering for a value already typed over.
+        flushPending();
         var dSvc = add.dataset.service, used = {};
         used[dSvc] = true;   // a service cannot depend on itself
         for (var ui = 0; ui < MODEL.fields.length; ui++) {
@@ -4057,7 +4073,6 @@
                         'so there is nothing left to add.');
           return;
         }
-        flushPending();
         pushUndo('adding that service dependency');
         var dLine = YAML.addNested(MODEL.doc, MODEL, dSvc, ['depends_on', pick, 'condition'], 'service_started');
         if (dLine < 0) {
@@ -4349,6 +4364,12 @@
   // exactly what 'from' means at drop time.
   var portSlot = null;
   var draggingPortFrom = -1;
+  // Every other row in the group plus its own height, read once at dragstart
+  // rather than re-querying and re-measuring (offsetHeight forces a layout
+  // pass) on every dragover — the set of rows and their heights are both
+  // fixed for the rest of the drag; only their position shifts as the
+  // placeholder moves, so that part is still read live below.
+  var draggingPortSiblings = [];
 
   formHost.addEventListener('pointerdown', function (event) {
     var grip = event.target.closest('[data-port-grip]');
@@ -4374,6 +4395,7 @@
     if (portSlot && portSlot.parentNode) portSlot.parentNode.removeChild(portSlot);
     portSlot = null;
     draggingPortRow = null;
+    draggingPortSiblings = [];
   }
   formHost.addEventListener('pointerup', endPortDrag);
   formHost.addEventListener('dragend', endPortDrag);
@@ -4389,6 +4411,8 @@
     var rows = grp ? Array.prototype.slice.call(grp.querySelectorAll(':scope > .staxx-fieldrow')) : [];
     draggingPortFrom = rows.indexOf(row);
     var rowHeight = row.offsetHeight;   // measured now, while the row is still laid out
+    draggingPortSiblings = rows.filter(function (r) { return r !== row; })
+      .map(function (r) { return { row: r, height: r.offsetHeight }; });
 
     // Deferred by one tick: Chrome snapshots the drag image asynchronously,
     // so hiding the row synchronously here — inside dragstart itself — blanks
@@ -4425,12 +4449,11 @@
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
 
-    var rows = Array.prototype.slice.call(grp.querySelectorAll(':scope > .staxx-fieldrow'))
-      .filter(function (r) { return r !== draggingPortRow; });
     var target = null;
-    for (var i = 0; i < rows.length; i++) {
-      var mid = rows[i].getBoundingClientRect().top + rows[i].offsetHeight / 2;
-      if (mid > event.clientY) { target = rows[i]; break; }
+    for (var i = 0; i < draggingPortSiblings.length; i++) {
+      var s = draggingPortSiblings[i];
+      var mid = s.row.getBoundingClientRect().top + s.height / 2;
+      if (mid > event.clientY) { target = s.row; break; }
     }
     // The hidden row and the placeholder are the same height, so the group's
     // total height never changes as the gap moves — that is what stops the
@@ -5709,6 +5732,7 @@
   var caCats  = false;  // whether the category <select> has been filled in yet
   var caCatCount = null;   // the whole catalogue's size, from the last ca-search reply — for the footer message only
   var caSearched = false;  // whether caSearch() has run yet in this open — so the Search tab knows to run one rather than show a blank list
+  var caSearchStamp = 0;   // bumped on every call, same precedent as caHubStamp — a "still building" poll from an older call must not land after a newer one has already gone ready
 
   // The dialog opens on a curated homepage rather than a search; caView says
   // which of the two views of this one panel is on screen, caHomeData is the
@@ -5845,7 +5869,7 @@
     // on about half the entries, and absent there means nobody counted rather
     // than nobody liked it, so a card with no figure shows no line at all.
     var stars = app.st
-      ? '<span class="staxx-ca-cardstars" title="' + app.st + ' Docker Hub stars">★ ' + caCompact(app.st) + '</span>'
+      ? '<span class="staxx-ca-cardstars" title="' + esc(app.st) + ' Docker Hub stars">★ ' + caCompact(app.st) + '</span>'
       : '';
 
     // Add, stars and the flag share the top-right corner, so they are one
@@ -6224,8 +6248,9 @@
 
   function caSearch() {
     caSearched = true;   // so the Search tab knows not to run another one just to avoid a blank list
+    var stamp = ++caSearchStamp;
     call('ca-search', { q: caBox.value.trim(), cat: caCatSel.value }, 20000).then(function (res) {
-      if (!caModal.open) return;   // the dialog closed while this was in flight
+      if (!caModal.open || stamp !== caSearchStamp) return;   // the dialog closed, or a newer search has since begun
 
       // Typing and then clearing the box quickly leaves this reply arriving
       // after the homepage is back on screen. Keep the results for when the
@@ -6437,7 +6462,7 @@
     // caModal's own 'close' handler below — so this needs no opinion on
     // whether that dialog happens to be open too.
     caModal.close();
-    openEditor(result.name, result.yaml, true);
+    openEditor(result.name, result.yaml, true, '');
 
     // Two different lists, two different headlines. warnings are settings
     // that had nothing to convert TO — a real gap worth calling a failure.
@@ -6501,7 +6526,7 @@
     if (caFactsBusy) return;   // a lookup is already running; a second click must not open a second editor
     if (!window.StaxxImage) {
       caModal.close();
-      openEditor(caImageName(image), caSkeleton(image, source), true);
+      openEditor(caImageName(image), caSkeleton(image, source), true, '');
       return;
     }
 
@@ -6527,13 +6552,13 @@
     function fallback() {
       settle();
       caModal.close();
-      openEditor(caImageName(image), caSkeleton(image, source), true);
+      openEditor(caImageName(image), caSkeleton(image, source), true, '');
     }
 
     function finish(result) {
       settle();
       caModal.close();
-      openEditor(result.name, result.yaml, true);
+      openEditor(result.name, result.yaml, true, '');
 
       // caImport()'s own three wordings, in shape: warnings are settings a
       // correction had nothing to put right, notes are values filled in on
@@ -7055,7 +7080,12 @@
   caTabSearch.addEventListener('click', function () {
     if (caView === 'search') return;
     caShowView('search');
-    if (!caSearched) caSearch();   // nothing has run yet this open — an empty list would look broken, not blank on purpose
+    // Whether there is anything to show, not whether caSearch() has ever
+    // run: a reply that arrived mid-download while Home was on screen
+    // returns without restarting its own poll (see caSearch()'s
+    // `caView !== 'search'` guard), so the one-shot latch alone would leave
+    // this tab with no results and nothing left asking for any.
+    if (!caApps.length) caSearch();
   });
 
   document.getElementById('staxx-ca-cancel').addEventListener('click', function () {
@@ -7896,6 +7926,25 @@
     var failures = [];
     var folderFailures = {};   // folderName -> error, filled in only in Match mode
 
+    // Two ticked rows that would land on the very same (folder, name) collide
+    // silently otherwise — the second write lands on top of the first
+    // mid-run, with nothing in the summary to say why. `total` above is left
+    // counting every ticked row, so the summary still reads "wrote X of Y"
+    // against what was actually ticked.
+    (function dropDuplicateDestinations() {
+      var seen = {};
+      idxs = idxs.filter(function (idx) {
+        var entry = importEntries[idx];
+        var key = importRowFolder(entry) + '/' + importLeafName(entry);
+        if (seen[key]) {
+          failures.push({ name: entry.name, error: 'Another ticked row already writes to the same place.' });
+          return false;
+        }
+        seen[key] = true;
+        return true;
+      });
+    })();
+
     // Every distinct folder a ticked row would land in, minus whatever
     // already exists — checked against the folder list this dialog already
     // has, since folder-create itself refuses rather than confirms a name is
@@ -8152,7 +8201,7 @@
 
       NETWORKS = [];
       ALL_NETS = [];
-      netPresent = {};
+      netPresent = Object.create(null);
       netDriver = {};
       var nets = res.networks || [];
       for (var n = 0; n < nets.length; n++) {
@@ -8620,13 +8669,14 @@
   // the whole stack's own All tab, a service name for one container's — and
   // it is what switches straight to Manage further down, once the model this
   // stack's Manage view is built from (MODEL, from reparse() above) exists.
-  function openEditor(name, body, isNew, focusService, manageSelect, focusField) {
+  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField) {
     closeMenu();
     clearError();
 
     modal.dataset.new = isNew ? '1' : '0';
     modalTitle.textContent = isNew ? 'New stack' : 'Edit stack';
     openedName = name || '';
+    fingerprintAtOpen = fingerprint || '';   // '' for a new stack — nothing to conflict with yet
     serviceRenamed = false;
 
     // Yesterday's tabs are meaningless against today's stack — cleared before
@@ -8785,7 +8835,9 @@
     var afterFocus = focusFieldEl
       ? focusFieldEl
       : svcSection
-      ? modal.querySelector('.staxx-viewbtn[aria-pressed="true"]')
+      // A stale cached page with no view button carrying aria-pressed must
+      // not throw here — fall back to the box every path already ends on.
+      ? (modal.querySelector('.staxx-viewbtn[aria-pressed="true"]') || yamlPane)
       : yamlPane;
     (isNew ? nameInput : afterFocus).focus({ preventScroll: true });
     if (focusFieldEl) focusFieldEl.scrollIntoView({ block: 'center' });
@@ -8859,8 +8911,10 @@
     if (document.activeElement === yamlPane) {
       event.preventDefault();
       // Whichever button is pressed right now. Naming one outright would pick a
-      // button that is not there — Split is hidden on a narrow screen.
-      modal.querySelector('.staxx-viewbtn[aria-pressed="true"]').focus();
+      // button that is not there — Split is hidden on a narrow screen. Guarded
+      // the same way openEditor()'s own focus choice is, for the same reason.
+      var pressed = modal.querySelector('.staxx-viewbtn[aria-pressed="true"]');
+      if (pressed) pressed.focus();
       return;
     }
     if (!confirmDiscard()) event.preventDefault();
@@ -9335,7 +9389,8 @@
     dot.classList.toggle('staxx-tab-dot--bad', state === 'bad');
   }
 
-  var fileSaveTimer = null;
+  var fileSaveTimer   = null;
+  var fileSaveInFlight = null;   // the POST currently travelling, if any
 
   function runFileSave() {
     if (fileOpen === null) return Promise.resolve();
@@ -9343,6 +9398,16 @@
     // written back. A binary, or a read that failed, leaves an empty box that
     // must never reach the disk.
     if (!fileEditable) return Promise.resolve();
+
+    // A save already on its way must land — and update fileAtLoad — before
+    // another one starts. Without this, a debounce firing right as the tab
+    // changes could send a second POST of the very same text: the first
+    // request has not resolved yet, so fileAtLoad is still the old value and
+    // looks exactly like unsaved typing. Chaining onto it re-checks
+    // afterwards, so a genuine edit made while the first was in flight still
+    // gets its own save, just not a concurrent one.
+    if (fileSaveInFlight) return fileSaveInFlight.then(runFileSave);
+
     var file = fileOpen, body = yamlPane.value;
     // Nothing typed since the file was loaded or last saved, so there is
     // nothing to write. Worth the check rather than writing anyway: this is
@@ -9351,8 +9416,9 @@
     if (body === fileAtLoad) return Promise.resolve();
     // fileAtLoad above and fileAtLoad below both stay LF, since that is the
     // box's own form — only the posted body gets the file's ending back.
-    return call('file-save', { name: openedName, file: file, body: withEol(body, fileEol), encoding: 'text' })
+    var req = call('file-save', { name: openedName, file: file, body: withEol(body, fileEol), encoding: 'text' })
       .then(function (res) {
+        fileSaveInFlight = null;
         if (!res || !res.ok) {
           // Left ON, deliberately — the file on disk is now out of step with
           // what is on screen, and that has to stay visible from any tab.
@@ -9371,10 +9437,14 @@
         // notice this write.
         if (file === '.env') envLoad();
       });
+    fileSaveInFlight = req;
+    return req;
   }
 
   // Cancels the debounce and sends at once, so a tab switch or the editor
   // closing can wait for a pending edit to land before the box moves on.
+  // runFileSave() itself waits for a save already in flight rather than
+  // racing it, so this never has to hold that promise separately.
   function flushFileSave() {
     if (fileSaveTimer) { clearTimeout(fileSaveTimer); fileSaveTimer = null; }
     return runFileSave();
@@ -11019,8 +11089,11 @@
 
     // The box only ever holds LF, so the file's own ending — recorded when it
     // was opened — is put back for the write. textAtOpen below stays LF: it
-    // is compared against the box, not against the file on disk.
-    call('save', { name: name, body: withEol(body, composeEol), 'new': modal.dataset.new })
+    // is compared against the box, not against the file on disk. fingerprint
+    // is what the editor started from — the server refuses the write outright
+    // if that no longer matches what is on disk (see PLAN_60 3.1).
+    call('save', { name: name, body: withEol(body, composeEol), 'new': modal.dataset.new,
+                    fingerprint: fingerprintAtOpen })
       .then(function (res) {
         if (!res.ok) {
           saveBtn.disabled = false;
@@ -11031,8 +11104,10 @@
         }
 
         // Trust nothing: the server reports the path and size it actually
-        // wrote, and an empty file means the save silently did nothing.
-        if (!res.file || !res.bytes) {
+        // wrote. res.bytes == null is what "did nothing" looks like — a
+        // genuine 0-byte write is a legitimate answer, not a failure, so
+        // !res.bytes (which is also true for 0) would wrongly reject it.
+        if (!res.file || res.bytes == null) {
           saveBtn.disabled = false;
           startBtn.disabled = startBtnWasDisabled;
           showError('The server reported success but no file was written.\n\n' +
@@ -11042,8 +11117,10 @@
         }
 
         // What is on screen is now what is on disk, so closing must not ask
-        // about discarding it.
+        // about discarding it. The fingerprint moves on too, or this save's
+        // own write would look like a conflict to the very next one.
         textAtOpen = body;
+        fingerprintAtOpen = res.fingerprint || '';
 
         var oldLeaf = openedName.slice(openedName.lastIndexOf('/') + 1);
         if (isNew || leaf === oldLeaf) { finishSave(name, thenStart); return; }
@@ -11430,6 +11507,11 @@
     // chains on afterwards is what corrects it, which matters because
     // stopping the last running container does change the stack's own state.
     var rows = show ? [] : (service ? containerRows(name, service) : stackRows(name));
+
+    // setBusy() below is what a double-click's second press would see on
+    // screen, but nothing stopped it being sent anyway — refuse outright
+    // while the row is already showing an earlier command's busy pill.
+    if (rows.length && rows.some(function (r) { return r.dataset.busy; })) return;
 
     if (rows.length) setBusy(rows, BUSY_LABEL[verb] || 'Working…');
 
@@ -12212,7 +12294,10 @@
       goLabel: 'Update'
     }).then(function (go) {
       if (!go) return;
-      var includeStopped = !!document.getElementById('staxx-updateall-stopped').checked;
+      // Guarded the same way the checkbox's own change listener below is —
+      // a stale cached page missing this markup must not throw here.
+      var stoppedBox = document.getElementById('staxx-updateall-stopped');
+      var includeStopped = !!(stoppedBox && stoppedBox.checked);
       closeConfirm();
       call('update-queue-start', { scope: scope, stopped: includeStopped ? '1' : '0' }).then(function (res) {
         if (!res.ok) { failed('Could not start updating', res.error); return; }
@@ -12447,7 +12532,8 @@
         return;
       }
 
-      call('save', { name: res.name, body: YAML.serialise(doc), 'new': '0' }).then(function (r) {
+      call('save', { name: res.name, body: YAML.serialise(doc), 'new': '0',
+                      fingerprint: res.fingerprint }).then(function (r) {
         if (!r.ok) { failed('Could not save the link', r.error); return; }
         refreshRows();
       });
@@ -12501,9 +12587,32 @@
    * get out of by pressing harder. The redraw still follows and still has the
    * last word.
    */
+  // Same shape as refreshState()'s stateBusy/stateAgain: at most one of
+  // these in flight, since it replaces the whole table wholesale and a
+  // second reply landing after would tear down and rebuild rows the first
+  // one had just finished settling. Callers with a `done` of their own are
+  // queued rather than dropped, and all run once the refresh that actually
+  // happens next finishes.
+  var rowsBusy = false;
+  var rowsAgainDones = null;   // null when nothing is queued, an array once something is
+
   function refreshRows(done) {
+    if (rowsBusy) {
+      if (!rowsAgainDones) rowsAgainDones = [];
+      if (done) rowsAgainDones.push(done);
+      return;
+    }
+    rowsBusy = true;
     call('rows', {}, 60000).then(function (res) {
-      if (!res.ok) { failed('Could not refresh the stack list', res.error); return; }
+      rowsBusy = false;
+      var queued = rowsAgainDones;
+      rowsAgainDones = null;
+
+      if (!res.ok) {
+        failed('Could not refresh the stack list', res.error);
+        if (queued) refreshRows(function () { queued.forEach(function (d) { d(); }); });
+        return;
+      }
 
       // Captured right before the swap, not any earlier — the request can
       // sit on the network for a while, and whatever the user was focused
@@ -12568,6 +12677,7 @@
       fetchIcons();
 
       if (done) done();
+      if (queued) refreshRows(function () { queued.forEach(function (d) { d(); }); });
     });
   }
 
@@ -12658,7 +12768,12 @@
   document.addEventListener('error', function (e) {
     var img = e.target;
     if (!img || img.tagName !== 'IMG' || !img.dataset || !img.dataset.fallback) return;
-    if (!img.closest || !(img.closest('.staxx-icon') || img.closest('.staxx-fstrip-item'))) return;
+    // Named wrappers rather than a class added to each one: the Manage tab's
+    // icon sits in a box of its own size, and giving it .staxx-icon would drag
+    // that rule's full-size, padded img styling in with it.
+    if (!img.closest ||
+        !(img.closest('.staxx-icon') || img.closest('.staxx-fstrip-item') ||
+          img.closest('.staxx-manage-tab-icon'))) return;
 
     var span = document.createElement('span');
     span.className = 'staxx-tile staxx-tile--' + (img.dataset.fallbackColour || '0');
@@ -12677,7 +12792,7 @@
   });
 
   document.getElementById('staxx-add').addEventListener('click', function () {
-    openEditor('', '', true);
+    openEditor('', '', true, '');
   });
 
   document.getElementById('staxx-apps').addEventListener('click', caOpen);
@@ -12824,7 +12939,7 @@
   function editStack(name, label, focusService, manageSelect, focusField) {
     call('read', { name: name }).then(function (res) {
       if (!res.ok) { failed('Could not open ' + label, res.error); return; }
-      openEditor(res.name, res.body, false, focusService, manageSelect, focusField);
+      openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField);
     });
   }
 
@@ -12882,10 +12997,12 @@
   // labels in place rather than closing and reopening — so removeStack()
   // below can re-ask after a failed attempt, or turn the same dialog into
   // "Removed" once one has succeeded, without ever flickering through a
-  // second one. Leaves confirmMsg alone: that is a status line for the
-  // request a question leads to, not part of the question itself, and
-  // clearing it here would erase an error the moment a caller re-asks to
-  // offer a retry.
+  // second one. Clears confirmMsg on every call: it is a status line for the
+  // request a question leads to, not part of the question itself, and a
+  // caller with no status of its own to show (most of them) never clears
+  // this, so a failed removal's error used to sit under the next, unrelated
+  // question. A retry path that wants to keep showing its own error calls
+  // its re-ask function first and sets the message after — see removeStack().
   //
   // opts.extraLabel is optional and adds the third answer: a caller that
   // never sets it never shows the button and can go on comparing the
@@ -12894,6 +13011,7 @@
   // it, so every existing two-answer question is untouched by this.
   function askConfirm(opts) {
     confirmSetBusy(false);
+    confirmMsg.textContent = '';
     confirmTitle.textContent = opts.title;
     confirmBody.innerHTML = opts.bodyHtml;
     confirmGo.textContent = opts.goLabel;
@@ -13026,8 +13144,10 @@
               confirmSetBusy(false);
 
               if (!res.ok) {
-                confirmMsg.textContent = res.error || ('Could not remove ' + label + '.');
+                // askConfirm() clears this the moment it (re)opens, so the
+                // message is set after calling ask() rather than before it.
                 ask();
+                confirmMsg.textContent = res.error || ('Could not remove ' + label + '.');
                 return;
               }
 
@@ -13123,7 +13243,7 @@
         if (locked) {
           askConfirm({
             title: 'Nothing to take over',
-            bodyHtml: '<p>Nothing on this server holds a container name "' + label + '" asks ' +
+            bodyHtml: '<p>Nothing on this server holds a container name "' + esc(label) + '" asks ' +
                       'for, so there is nothing to replace. Clear the lock and it will start ' +
                       'normally.</p>',
             goLabel: 'Clear the lock'
@@ -13134,7 +13254,7 @@
         } else {
           askConfirm({
             title: 'Nothing to take over',
-            bodyHtml: '<p>Nothing on this server holds a container name "' + label + '" asks ' +
+            bodyHtml: '<p>Nothing on this server holds a container name "' + esc(label) + '" asks ' +
                       'for, so it will start normally.</p>',
             goLabel: 'OK'
           }).then(function () { closeConfirm(); });
@@ -13158,9 +13278,13 @@
       // replacing, so the obvious sentence comes out as 'starts "Vert" in
       // place of "Vert"' — which reads like a mistake even though it is
       // exactly right. Say it the other way round when they match.
+      // Docker container names, not this file's own escaping — every place
+      // one lands in the dialog's HTML body needs esc(), unlike the title
+      // above, which the dialog writes as text rather than markup.
+      var quotedSafe = esc(quoted);
       var opening = targets.length === 1 && targets[0].name === label
-        ? '<p>This starts this stack in place of the container called ' + quoted + '.</p>'
-        : '<p>This starts "' + label + '" in place of ' + quoted + '.</p>';
+        ? '<p>This starts this stack in place of the container called ' + quotedSafe + '.</p>'
+        : '<p>This starts "' + esc(label) + '" in place of ' + quotedSafe + '.</p>';
 
       var bodyHtml =
         opening +
@@ -13171,7 +13295,7 @@
         'untouched.</p>' +
         '<p>The new container keeps the same name, so anything that points at it by name — ' +
         'including starting at boot — carries on working.</p>' +
-        '<p>' + quoted + ' is not deleted. It is switched off and set aside under another ' +
+        '<p>' + quotedSafe + ' is not deleted. It is switched off and set aside under another ' +
         'name, and can be put straight back if this does not work out.</p>';
 
       function step() {
@@ -13184,8 +13308,10 @@
           call('handover-start', { name: name }).then(function (r) {
             if (!r.ok) {
               confirmSetBusy(false);
-              confirmMsg.textContent = r.error || 'Could not start the handover.';
+              // askConfirm() clears this itself the moment step() reopens
+              // it, so the message is set after that call, not before.
               step();
+              confirmMsg.textContent = r.error || 'Could not start the handover.';
               return;
             }
             closeConfirm();
@@ -13221,15 +13347,16 @@
     var project = res.project || label;
 
     var quoted = joinNames(rebuild.map(function (t) { return '"' + t.name + '"'; }));
+    var quotedSafe = esc(quoted);
     var runningNow = rebuild.filter(function (t) { return t.running; })
                             .map(function (t) { return '"' + t.name + '"'; });
     var runningLine = runningNow.length
-      ? '<p>' + joinNames(runningNow) + (runningNow.length === 1 ? ' is' : ' are') +
+      ? '<p>' + esc(joinNames(runningNow)) + (runningNow.length === 1 ? ' is' : ' are') +
         ' running right now.</p>'
       : '<p>None of them are running at the moment.</p>';
 
     var bodyHtml =
-      '<p>This rebuilds ' + quoted + ' in place, from the files copied from the "' + project +
+      '<p>This rebuilds ' + quotedSafe + ' in place, from the files copied from the "' + esc(project) +
       '" project in Compose Manager.</p>' +
       runningLine +
       '<p>The Compose Manager project itself is untouched, and can start these same ' +
@@ -13249,8 +13376,10 @@
         call('takeover-start', { name: name }).then(function (r) {
           if (!r.ok) {
             confirmSetBusy(false);
-            confirmMsg.textContent = r.error || 'Could not start the rebuild.';
+            // askConfirm() clears this itself the moment step() reopens
+            // it, so the message is set after that call, not before.
             step();
+            confirmMsg.textContent = r.error || 'Could not start the rebuild.';
             return;
           }
           closeConfirm();
@@ -13278,7 +13407,7 @@
       if (!res.active) {
         askConfirm({
           title: 'Nothing waiting for an answer',
-          bodyHtml: '<p>"' + label + '" has no handover waiting to be confirmed — it may ' +
+          bodyHtml: '<p>"' + esc(label) + '" has no handover waiting to be confirmed — it may ' +
                     'already have been answered.</p>',
           goLabel: 'OK'
         }).then(function () { closeConfirm(); });
@@ -13287,7 +13416,7 @@
       }
 
       var quoted   = joinNames((res.targets || []).map(function (t) { return '"' + t.name + '"'; }));
-      var replaced = quoted || 'the old container';
+      var replaced = esc(quoted) || 'the old container';
 
       // The dialog's fixed Cancel/Go pair only carries two outcomes, and
       // "decide later" has to be a genuine third one — dismissing this must
@@ -13329,8 +13458,10 @@
             if (!r.ok) {
               confirmSetBusy(false);
               if (worksBtn) worksBtn.disabled = false;
-              confirmMsg.textContent = r.error || 'Could not answer for "' + label + '".';
+              // askConfirm() clears this itself the moment step() reopens
+              // it, so the message is set after that call, not before.
               step();
+              confirmMsg.textContent = r.error || 'Could not answer for "' + label + '".';
               return;
             }
             closeConfirm();
@@ -13434,19 +13565,20 @@
   // that exists — and the point of marking these is to say what survives the
   // container being rebuilt.
   //
-  // A volume field's id is "<service>/volume/<path inside the container>", so
-  // the container-side half is whatever follows that prefix. A host folder and
-  // a named volume are both marked: the note this feeds is about what survives
-  // a rebuild, and both do — only the container's own filesystem does not.
+  // A volume field's container-side path is its target, read off the field
+  // rather than sliced back out of its id — an id carries an entry index so
+  // that two mounts sharing a container path stay separate, and picking the
+  // path apart from the id again would have to know that shape. A host folder
+  // and a named volume are both marked: the note this feeds is about what
+  // survives a rebuild, and both do — only the container's own filesystem does not.
   function manageMountsFor(services) {
     var out = {};
     if (!MODEL || !MODEL.fields) return out;
     services.forEach(function (svc) {
-      var prefix = svc + '/volume/';
       var paths = [];
       MODEL.fields.forEach(function (f) {
-        if (f.service !== svc || !f.id || f.id.indexOf(prefix) !== 0) return;
-        var path = f.id.slice(prefix.length);
+        if (f.service !== svc || f.binder !== 'volume' || !f.target) return;
+        var path = f.target;
         if (path.charAt(0) === '/' && paths.indexOf(path) === -1) paths.push(path);
       });
       if (paths.length) out[svc] = paths;
@@ -13546,15 +13678,19 @@
     clearError();
     saveBtn.disabled = true;
     startBtn.disabled = true;
-    call('save', { name: name, body: withEol(body, composeEol), 'new': modal.dataset.new })
+    call('save', { name: name, body: withEol(body, composeEol), 'new': modal.dataset.new,
+                    fingerprint: fingerprintAtOpen })
       .then(function (res) {
         saveBtn.disabled = false;
         startBtn.disabled = startBtnWasDisabled;
-        if (!res.ok || !res.file || !res.bytes) {
+        // res.bytes == null, not !res.bytes — a genuine 0-byte write is a
+        // legitimate answer, not a failure. Same reasoning as save() above.
+        if (!res.ok || !res.file || res.bytes == null) {
           showError((res.error || 'Save failed.') + strayWarning(res));
           return;
         }
         textAtOpen = body;
+        fingerprintAtOpen = res.fingerprint || '';
         noteRun(name, verb, service);
       });
   }
@@ -14751,9 +14887,10 @@
   function folderRun(id, verb, label) {
     // Every stack in the folder spins, and so does everything inside them.
     var rows = [];
+    var stackNames = [];
     Array.prototype.forEach.call(
       document.querySelectorAll('.staxx-stack-row[data-in-folder="' + id + '"]'),
-      function (r) { rows = rows.concat(stackRows(r.dataset.stackRow)); }
+      function (r) { stackNames.push(r.dataset.stackRow); rows = rows.concat(stackRows(r.dataset.stackRow)); }
     );
     setBusy(rows, BUSY_LABEL[verb] || 'Working…');
 
@@ -14783,6 +14920,27 @@
       var doneCount = 0;
       var failCount = 0;
       var verbWord  = VERB_PAST[verb] || 'run';
+
+      // The server already decided which stacks it could not touch — a bad
+      // parse, or staxx_start_job() refusing outright — and only returns a
+      // job for the rest. Every row in the folder was marked busy above, so
+      // a skipped stack's row would never hear otherwise: paintState's own
+      // busy guard leaves it spinning for the rest of the page's life.
+      // Clear the lot and re-busy only the rows a job actually exists for.
+      clearBusy(rows);
+      var activeRows = [];
+      var activeNames = {};
+      jobsList.forEach(function (item) {
+        activeNames[item.name] = true;
+        activeRows = activeRows.concat(stackRows(item.name));
+      });
+      setBusy(activeRows, BUSY_LABEL[verb] || 'Working…');
+
+      var skipped = stackNames.filter(function (n) { return !activeNames[n]; });
+      if (skipped.length) {
+        failed(label, skipped.length + ' of ' + stackNames.length +
+          ' stacks did not ' + verb + ': ' + skipped.join(', '));
+      }
 
       function paintSummary() {
         if (!sub) return;
@@ -15172,6 +15330,11 @@
   var draggingGripFrom   = -1;     // its index among its siblings when the drag started
   var draggingGripKind   = '';     // 'folder' | 'stack' | 'service'
   var draggingGripParent = '';     // '' for a folder, else the parent's key
+  // Every other unit in the sibling group plus its own height, read once at
+  // dragstart — see the port drag above for why: the set and the heights
+  // are both fixed for the rest of the drag, only position shifts as the
+  // placeholder moves, so only that is still read live in dragover below.
+  var draggingGripSiblings = [];
 
   if (rowsHost) {
     rowsHost.addEventListener('pointerdown', function (event) {
@@ -15196,6 +15359,7 @@
       draggingGripKind = '';
       draggingGripParent = '';
       draggingGripFrom = -1;
+      draggingGripSiblings = [];
     }
     rowsHost.addEventListener('pointerup', endGripDrag);
     rowsHost.addEventListener('dragend', endGripDrag);
@@ -15205,8 +15369,11 @@
       event.dataTransfer.effectAllowed = 'move';
       event.dataTransfer.setData('text/plain', '');   // Firefox refuses an empty drag
 
-      var unit = draggingGripRow;
-      draggingGripFrom = gripSiblingUnits(draggingGripKind, draggingGripParent).indexOf(unit);
+      var unit  = draggingGripRow;
+      var units = gripSiblingUnits(draggingGripKind, draggingGripParent);
+      draggingGripFrom = units.indexOf(unit);
+      draggingGripSiblings = units.filter(function (u) { return u !== unit; })
+        .map(function (u) { return { unit: u, height: u.offsetHeight }; });
       var h = unit.offsetHeight;   // measured now, before it is hidden
 
       // Deferred one tick for the same reason the port drag above defers it:
@@ -15238,12 +15405,11 @@
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
 
-      var siblings = gripSiblingUnits(draggingGripKind, draggingGripParent)
-        .filter(function (u) { return u !== draggingGripRow; });
       var target = null;
-      for (var i = 0; i < siblings.length; i++) {
-        var mid = siblings[i].getBoundingClientRect().top + siblings[i].offsetHeight / 2;
-        if (mid > event.clientY) { target = siblings[i]; break; }
+      for (var i = 0; i < draggingGripSiblings.length; i++) {
+        var s = draggingGripSiblings[i];
+        var mid = s.unit.getBoundingClientRect().top + s.height / 2;
+        if (mid > event.clientY) { target = s.unit; break; }
       }
       if (gripSlot.nextSibling !== target) container.insertBefore(gripSlot, target);
     });
@@ -15257,7 +15423,7 @@
       var parent = draggingGripParent;
       var from   = draggingGripFrom;
 
-      var siblings = gripSiblingUnits(kind, parent).filter(function (u) { return u !== unit; });
+      var siblings = draggingGripSiblings.map(function (s) { return s.unit; });
       var to = 0;
       for (var i = 0; i < siblings.length; i++) {
         if (siblings[i].compareDocumentPosition(gripSlot) & Node.DOCUMENT_POSITION_FOLLOWING) to++;
@@ -15306,7 +15472,10 @@
     var open = chevron.getAttribute('aria-expanded') !== 'true';
 
     chevron.setAttribute('aria-expanded', open ? 'true' : 'false');
-    chevron.querySelector('i').className = 'fa fa-chevron-' + (open ? 'down' : 'right');
+    // Guarded the same way folderIcon below is — a stale cached page missing
+    // the icon element must not throw here.
+    var chevronIcon = chevron.querySelector('i');
+    if (chevronIcon) chevronIcon.className = 'fa fa-chevron-' + (open ? 'down' : 'right');
 
     // The row carries its own aria-expanded too — the chevron's is what a
     // screen reader announces on the control it just activated, the row's is
@@ -16101,8 +16270,8 @@
 
     return vendors.map(function (v) {
       var name = GPU_NAMES[v] || v;
-      return '<span class="staxx-gpu-badge staxx-gpu-' + v +
-             '" title="' + name + ' GPU">' +
+      return '<span class="staxx-gpu-badge staxx-gpu-' + esc(v) +
+             '" title="' + esc(name) + ' GPU">' +
         '<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">' +
           '<rect class="staxx-chip" x="3" y="3" width="10" height="10" rx="2"/>' +
           '<g class="staxx-pins">' +
@@ -16110,7 +16279,7 @@
             '<path d="M1 5.5h2M1 8h2M1 10.5h2M13 5.5h2M13 8h2M13 10.5h2"/>' +
           '</g>' +
         '</svg>' +
-        '<span class="staxx-sr">' + name + '</span>' +
+        '<span class="staxx-sr">' + esc(name) + '</span>' +
       '</span>';
     }).join('');
   }
@@ -16302,7 +16471,7 @@
         // Engines only ever appear for a card that has some, and only while
         // something is on them, so they cannot reintroduce the asymmetry.
         var engines = Object.keys(c.engines || {})
-          .map(function (k) { return k + ' ' + c.engines[k] + '%'; });
+          .map(function (k) { return esc(k) + ' ' + c.engines[k] + '%'; });
 
         return '<b>' + label + '</b> ' +
                n + ' thread' + (n === 1 ? '' : 's') + ' &middot; ' + busy + '%' +
@@ -16501,6 +16670,55 @@
   var pushRowsBusy    = false;  // set while a push-triggered refreshRows() is in flight
   var pushOwed        = '';     // a message that arrived while the tab was hidden
 
+  // How long to wait before trying the live feed again, and how often to
+  // poll in the meantime. 30s is several times over an nginx reload's own
+  // ~3s EventSource retry cadence, so a routine blip never turns into a
+  // background loop of our own; 20s matches the idle-page stats cadence
+  // below, which is the page's own definition of "occasionally stale" as
+  // opposed to frozen.
+  var PUSH_COOLDOWN = 30000;
+  var PUSH_FALLBACK = 20000;
+  var pushFallbackTimer = null;
+
+  // The one place on the page that already says quietly how stale its own
+  // figures are (see applyStats' stripAge) — a degraded feed is the same
+  // kind of fact, so it is shown the same way rather than in a dialog that
+  // would interrupt whatever the user is doing.
+  var pushStatusEl = document.createElement('span');
+  pushStatusEl.className = 'staxx-strip-item';
+  pushStatusEl.hidden = true;
+  if (strip) strip.insertBefore(pushStatusEl, strip.firstChild);
+
+  function setPushStatus(text) {
+    if (!strip) return;
+    if (!text) { pushStatusEl.hidden = true; return; }
+    pushStatusEl.textContent = text;
+    pushStatusEl.hidden = false;
+    strip.hidden = false;
+  }
+
+  function pushFallbackTick() {
+    if (document.hidden) return;   // same guard every other poller on this page uses
+    refreshState();
+  }
+
+  // Called once the feed has given up, whether that is a run of connection
+  // failures or nchan being absent altogether. `retry` is false for the
+  // latter — there is nothing to re-arm, since a box with no nchan module
+  // does not grow one while the page is open.
+  function pushDegraded(retry) {
+    setPushStatus(retry
+      ? 'Live updates are not connected — checking every ' + (PUSH_FALLBACK / 1000) + 's instead.'
+      : 'Live updates are not available on this server — checking every ' + (PUSH_FALLBACK / 1000) + 's instead.');
+    if (!pushFallbackTimer) pushFallbackTimer = setInterval(pushFallbackTick, PUSH_FALLBACK);
+    if (retry) setTimeout(startPush, PUSH_COOLDOWN);
+  }
+
+  function pushRecovered() {
+    setPushStatus('');
+    if (pushFallbackTimer) { clearInterval(pushFallbackTimer); pushFallbackTimer = null; }
+  }
+
   // Several 'rows' messages can arrive within the same second (starting a
   // stack emits a burst) — fold them into one refresh, and if that refresh
   // is still running when the next one is due, wait rather than stack a
@@ -16536,9 +16754,9 @@
 
   function startPush() {
     call('events-watch', {}, 10000).then(function (res) {
-      if (!res.ok || !res.available) return;   // nchan absent — page behaves as today
+      if (!res.ok || !res.available) { pushDegraded(false); return; }
       pushSource = new EventSource('/sub/staxx');
-      pushSource.onopen = function () { pushFailures = 0; };
+      pushSource.onopen = function () { pushFailures = 0; pushRecovered(); };
       pushSource.onmessage = function (ev) {
         if (ev.data !== 'rows' && ev.data !== 'state') return;
 
@@ -16566,6 +16784,10 @@
         if (pushSource.readyState === EventSource.CLOSED || pushFailures >= 5) {
           pushSource.close();
           pushSource = null;
+          // Nothing else ever calls startPush() again — without this the
+          // table would rely for the rest of the page's life on a feed that
+          // has already given up, showing "live" while actually frozen.
+          pushDegraded(true);
         }
       };
     });
@@ -16576,6 +16798,7 @@
   // gone straight away, rather than waiting for it to time out on its own.
   window.addEventListener('pagehide', function () {
     if (pushSource) { pushSource.close(); pushSource = null; }
+    if (pushFallbackTimer) { clearInterval(pushFallbackTimer); pushFallbackTimer = null; }
   });
 
   // A hidden tab stops all four pollers on this page — each checks

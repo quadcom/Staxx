@@ -605,6 +605,100 @@ ok('an empty PostArgs array produces no command: line', phpShapedR.yaml.indexOf(
 ok('an empty WebUI array produces no webui: line', phpShapedR.yaml.indexOf('webui:') === -1);
 ok('an empty Icon array produces no empty icon: line', phpShapedR.yaml.indexOf('icon: ""') === -1);
 ok('an empty Category array produces no empty category: line', phpShapedR.yaml.indexOf('category: ""') === -1);
+// Repository/Project/Support/ReadMe/Author/Repo all use the same bare-
+// truthiness-turned-scalarPresent() fix (11.5's first bullet) — same empty-
+// array-is-truthy shape as PostArgs above.
+ok('an empty Support array produces no support: line', phpShapedR.yaml.indexOf('support:') === -1);
+ok('an empty ReadMe array produces no readme: line', phpShapedR.yaml.indexOf('readme:') === -1);
+ok('an empty Project array produces no project: line', phpShapedR.yaml.indexOf('project:') === -1);
+
+var PHP_EMPTY_REPOSITORY = {
+  Name: 'php-shaped-repo-test',
+  Repository: [],
+  Network: 'bridge'
+};
+var phpEmptyRepoR = CA.convert(PHP_EMPTY_REPOSITORY);
+ok('an empty Repository array falls back to the stack name as the image',
+   phpEmptyRepoR.yaml.indexOf('image: php-shaped-repo-test') >= 0);
+ok('...and still reports that the template named no image',
+   phpEmptyRepoR.notes.some(function (n) { return n.indexOf('has no image name') >= 0; }));
+
+var PHP_EMPTY_AUTHOR = {
+  Name: 'php-shaped-author-test',
+  Repository: 'example/php-shaped-author-test',
+  Author: [],
+  Repo: []
+};
+var phpEmptyAuthorR = CA.convert(PHP_EMPTY_AUTHOR);
+ok('empty Author and Repo arrays produce no author: line', phpEmptyAuthorR.yaml.indexOf('author:') === -1);
+
+/* =========================================================================
+ * H5. Item 13.2 — project/support written per service, not stack-only
+ *
+ * The service-level x-unraid keys exist so a multi-service stack can give
+ * each service its own project page instead of every service sharing the
+ * one written at stack level.
+ * ========================================================================= */
+
+console.log('\nH5. Project/support written at both stack and service level');
+var LINKED_APP = {
+  Name: 'linked-app-test',
+  Repository: 'example/linked-app-test',
+  Project: 'https://example.org/project',
+  Support: 'https://example.org/support',
+  ReadMe: 'https://example.org/readme',
+  WebUI: 'http://[IP]:1234'
+};
+var linkedR = CA.convert(LINKED_APP);
+var linkedDoc = Y.parse(linkedR.yaml);
+ok('the stack-level x-unraid block still carries project/support/readme',
+   linkedR.yaml.indexOf('  project: https://example.org/project') >= 0 &&
+   linkedR.yaml.indexOf('  support: https://example.org/support') >= 0 &&
+   linkedR.yaml.indexOf('  readme: https://example.org/readme') >= 0);
+ok('the service-level x-unraid block also carries its own project/support',
+   linkedR.yaml.indexOf('      project: https://example.org/project') >= 0 &&
+   linkedR.yaml.indexOf('      support: https://example.org/support') >= 0);
+ok('the service-level block has no readme key — that stays stack-only',
+   !/^\s{6}readme:/m.test(linkedR.yaml));
+ok('the file still round-trips byte for byte with the service-level keys added',
+   Y.serialise(linkedDoc) === linkedR.yaml);
+
+var UNLINKED_APP = { Name: 'unlinked-app-test', Repository: 'example/unlinked-app-test' };
+var unlinkedR = CA.convert(UNLINKED_APP);
+ok('no WebUI/Project/Support at all produces no service-level x-unraid block',
+   !/^\s{4}x-unraid:/m.test(unlinkedR.yaml));
+
+/* =========================================================================
+ * H6. isSafeBare()/dq() and keyOut() — the remaining 11.5 bullets
+ * ========================================================================= */
+
+console.log('\nH6. Newline handling and YAML-keyword keys');
+var NEWLINE_DEFAULT = {
+  Name: 'newline-default-test',
+  Repository: 'example/newline-default-test',
+  Config: [
+    { '@attributes': { Name: 'Variable: NOTE', Target: 'NOTE', Default: 'line one\nline two',
+        Description: 'A multi-line default.', Type: 'Variable', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var newlineR = CA.convert(NEWLINE_DEFAULT);
+var newlineDoc = Y.parse(newlineR.yaml);
+ok('a Default containing a real newline is collapsed onto one quoted line',
+   newlineR.yaml.indexOf('NOTE: "line one line two"') >= 0);
+ok('the collapsed value still round-trips byte for byte',
+   Y.serialise(newlineDoc) === newlineR.yaml);
+
+var YAML_KEYWORD_TARGET = {
+  Name: 'keyword-target-test',
+  Repository: 'example/keyword-target-test',
+  Config: [
+    { '@attributes': { Name: 'Variable: yes', Target: 'yes', Default: 'on',
+        Description: 'A variable literally named yes.', Type: 'Variable', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var keywordR = CA.convert(YAML_KEYWORD_TARGET);
+ok('a Target literally "yes" is quoted as a key, not written bare',
+   keywordR.yaml.indexOf('"yes": "on"') >= 0);
 
 /* =========================================================================
  * I. Bulk sanity — every app in the live feed, if it is on disk

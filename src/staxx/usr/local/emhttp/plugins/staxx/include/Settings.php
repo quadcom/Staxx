@@ -353,7 +353,19 @@ function staxx_settings_save(
   // The file as it exists on disk right now, unknown keys and all — this is
   // what gets overlaid and written straight back, so a key from a newer
   // version of the plugin survives a save made by an older one.
-  $existing = @parse_ini_file(STAXX_CFG) ?: [];
+  //
+  // parse_ini_file() returns false, for the WHOLE file, on a single syntax
+  // error — never an empty array — so `?: []` cannot tell "nothing there yet"
+  // apart from "could not be read", and would otherwise silently drop every
+  // key this save does not know about (STACK_ROOT, ARCHIVE_ROOT, HUB_TOKEN,
+  // the whole update block) back to their defaults.
+  $raw = @parse_ini_file(STAXX_CFG, false, INI_SCANNER_RAW);
+  if ($raw === false && is_file(STAXX_CFG)) {
+    $error = 'Could not read '.STAXX_CFG.' — it may have a syntax error. Fix it by hand, '
+           . 'or remove it and let StaXX recreate it, before saving settings again.';
+    return false;
+  }
+  $existing = $raw !== false ? $raw : [];
   foreach ($overlay as $key => $value) $existing[$key] = $value;
 
   $lines = [];
@@ -368,8 +380,12 @@ function staxx_settings_save(
     $error = 'Could not write '.$tmp.'.';
     return false;
   }
-  // Owner-only: this file holds the Docker Hub token (HUB_TOKEN) in the clear,
-  // so no other login on the box should be able to read it.
+  // Intent is owner-only, since this file holds the Docker Hub token (HUB_TOKEN) in the
+  // clear — but the config lives on the flash drive, which is vfat and has no concept of
+  // Unix permissions, so this call is a no-op there: every file on that mount is already
+  // owner-only regardless of what chmod reports. The mount is the real protection, not this
+  // call; it is kept so the file still gets a real 0600 if STAXX_CFG is ever pointed
+  // somewhere off the flash drive, such as in the test suite.
   @chmod($tmp, 0600);
   if (!@rename($tmp, STAXX_CFG)) {
     @unlink($tmp);
@@ -392,8 +408,15 @@ function staxx_settings_save(
   // and (once built) the Docker-tab shadow page land exactly the way they do
   // from there. The config is already written by this point, so a failure here
   // is reported as "saved but not applied" rather than implying nothing happened.
+  //
+  // 25 seconds, not 15: the script itself now runs `docker info` and, at most,
+  // one of `docker login`/`docker logout` in sequence, each under its own
+  // 10-second timeout — 20 seconds worst case. This budget has to clear both
+  // of those plus a few seconds of slack for the rest of the script, or a slow
+  // network reads as a failed save even though apply_settings would have
+  // finished fine given a little longer.
   $code = 0;
-  staxx_sh('bash '.escapeshellarg(STAXX_ROOT.'/scripts/apply_settings'), 15, $code);
+  staxx_sh('bash '.escapeshellarg(STAXX_ROOT.'/scripts/apply_settings'), 25, $code);
   if ($code !== 0) {
     $error = 'Settings were saved, but applying them failed (apply_settings exited with status '
            . $code.'). Reboot the server, or run scripts/apply_settings by hand, to finish applying them.';

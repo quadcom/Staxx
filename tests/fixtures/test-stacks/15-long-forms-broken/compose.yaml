@@ -1,0 +1,19 @@
+# Fixture for PLAN_30: the long-form entries that used to disappear from the
+# form while staying in the file — the worst of the four faults, because a row
+# that is not there cannot tell you it is not there. Each one now shows as a
+# locked row saying what it is missing.
+#
+# Deliberately invalid, like 08-deliberately-broken: compose refuses an entry
+# with no target:, so this will not save. It renders fine, which is the point.
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - published: 15116
+        protocol: tcp
+    volumes:
+      - type: bind
+        source: /mnt/user/appdata/nowhere
+    secrets:
+      - target: db_pw
+        uid: "99"

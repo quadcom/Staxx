@@ -87,7 +87,10 @@ trap cleanup EXIT INT TERM
 # Stand down when this script itself is updated, exactly as the stats
 # collector does — otherwise a watcher started before an upgrade runs the old
 # code forever, because the lock above sees it as still alive and refuses to
-# start the new one.
+# start the new one. A `stat` that fails here (busy filesystem, odd
+# permissions) must not be read as "replaced" the moment it next succeeds —
+# that reads as a mismatch and exits after a single housekeeping pass — so an
+# empty reading skips the check entirely rather than being compared as-is.
 VERSION=$(stat -c %Y "$0" 2>/dev/null)
 
 # PHP's environment has no PATH worth trusting either, so the docker binary is
@@ -169,6 +172,7 @@ exec 3<"$FIFO"
 pending=""              # the strongest verb seen since the last publish
 zeroes=0                # consecutive subscriber checks that read zero
 ticks=0                 # read timeouts since the last housekeeping pass
+last_flush=$(date +%s)  # wall clock, so a sustained event stream still flushes
 
 # Everything below is counted in `read -t 1` timeouts rather than read off the
 # clock, and the housekeeping only runs once every CHECK of them. Written the
@@ -195,30 +199,62 @@ while :; do
     fi
   fi
 
-  # A timeout, not a line: one tick of the housekeeping clock. A read that
-  # returned something does not tick, so a burst of events is drained as fast
-  # as it arrives instead of one per second.
-  if [ "$read_ok" -ne 0 ]; then
-    ticks=$((ticks + 1))
+  # Flushed against the wall clock, not the tick count below: a sustained
+  # event stream with no 1-second gap between reads (a mass container
+  # restart) never times out, so counting on a timeout to flush withheld
+  # every refresh until the stream went quiet. A second since the last
+  # publish is enough on its own, whether or not this particular read timed
+  # out.
+  now=$(date +%s)
+  if [ -n "$pending" ] && [ $((now - last_flush)) -ge 1 ]; then
+    publish "$pending"
+    pending=""
+    last_flush="$now"
+  fi
 
-    # Anything held back is sent on the first quiet moment, so a coalesced
-    # burst lands within a second of the last event in it rather than waiting
-    # for the housekeeping pass below.
-    if [ -n "$pending" ]; then
-      publish "$pending"
-      pending=""
-    fi
+  # rc>128 is a genuine timeout — `read -t` delivers it via its own alarm.
+  # rc=1 is EOF: the fifo's write end has closed, which means the producer
+  # (and, on a NAS, the Docker daemon under it) has died. Treating the two
+  # alike used to let a dead daemon be re-forked as fast as the shell could
+  # loop, because EOF returns instantly rather than after a second — ticks
+  # reached the housekeeping threshold in milliseconds. Both still tick the
+  # housekeeping clock (an EOF that never ticked would never reach the
+  # producer-restart/subscriber check below at all), but EOF backs off for a
+  # second first, so a wedged dockerd is retried at a sane rate instead of
+  # busy-looped.
+  if [ "$read_ok" -gt 128 ]; then
+    ticks=$((ticks + 1))
+  elif [ "$read_ok" -ne 0 ]; then
+    sleep 1
+    ticks=$((ticks + 1))
   fi
 
   [ "$ticks" -lt "$CHECK" ] && continue
   ticks=0
 
   # This script has been replaced underneath us: let the new one take over.
-  [ "$(stat -c %Y "$0" 2>/dev/null)" = "$VERSION" ] || break
+  # Skipped when VERSION itself could not be read, so a transient `stat`
+  # failure earlier is never compared against a later, successful one.
+  if [ -n "$VERSION" ] && [ "$(stat -c %Y "$0" 2>/dev/null)" != "$VERSION" ]; then
+    break
+  fi
 
   # Our lock is gone, or now belongs to somebody else.
   [ -d "$LOCKDIR" ] || break
   [ "$(cat "$LOCK" 2>/dev/null)" = "$$" ] || break
+
+  # Checked before any producer restart below, so a dead Docker daemon can
+  # never suppress this: the old code restarted the producer and then
+  # `continue`d, skipping straight past the one check that lets a watcher
+  # with nobody listening exit. That is what let a wedged dockerd be forked
+  # against ~30 times a second forever.
+  subs=$(subscribers)
+  case "$subs" in
+    0)  zeroes=$((zeroes + 1)) ;;
+    '') ;;                      # endpoint unreadable: treat as unknown, not as zero
+    *)  zeroes=0 ;;
+  esac
+  [ "$zeroes" -ge 2 ] && break
 
   # The event reader died — the Docker daemon restarted under us, most
   # likely. Closing our end of the old fifo before making a new one matters:
@@ -228,16 +264,7 @@ while :; do
     exec 3<&-
     start_producer
     exec 3<"$FIFO"
-    continue
   fi
-
-  subs=$(subscribers)
-  case "$subs" in
-    0)  zeroes=$((zeroes + 1)) ;;
-    '') ;;                      # endpoint unreadable: treat as unknown, not as zero
-    *)  zeroes=0 ;;
-  esac
-  [ "$zeroes" -ge 2 ] && break
 done
 
 cleanup

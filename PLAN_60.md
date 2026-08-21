@@ -1,5 +1,36 @@
 # PLAN — fixes from the full-tree review, 2026-08-21
 
+## Status: COMPLETE, 2026-08-21
+
+Every phase implemented, deployed and verified. Phase 2 grew its own sub-plan, `PLAN_60a.md`, and
+had to be brought forward — Phase 1.1 removed a refusal that had been protecting ragged files by
+accident, so the deliberate refusal had to exist before Phase 1 could be called done.
+
+| | Before | After |
+|---|---|---|
+| Round-trip assertions | 1,420 | **1,476** |
+| Catalogue conversion | 222 | **236** |
+| Image import | 73 (was 68) | **73** |
+| Schema self-test | pass | pass |
+| `php -l` over `include/*.php` | — | clean, all 16 |
+| `tests/server/` suites | — | **17 of 17 pass** |
+| `buildForm` on a 120-service stack | 16.2 ms | **12.2 ms** |
+| Fixture corpus | gitignored scratch | **`tests/fixtures/`, tracked** |
+
+**Five places this plan was wrong, corrected in place rather than quietly followed:**
+
+1. §9.1 claimed two realm-parsing sites. There is one — the two line ranges named the same block.
+2. §5.5's `pointermove` bullet was withdrawn: the four listeners said to cover it do not, and
+   deleting it would have made the page decide nobody was watching.
+3. §5.5's Manage-icon fix would have introduced a visual bug; done a different way, same one line.
+4. §7.8's `StaXX.css` cannot be added from a case-insensitive checkout without endangering the real
+   stylesheet. Deliberately not done, with the reasoning recorded there.
+5. Phase 2 had to run before Phase 1 was complete, not after it.
+
+**One finding recorded rather than fixed:** a number-shaped value is written unquoted, so `1.10` or
+`0755` may not survive a round trip through compose's own loader. Out-of-scope item 13, with a test
+documenting today's behaviour.
+
 ## Context
 
 A deep review read every line of the plugin: the PHP layer, both browser files, the shell
@@ -363,10 +394,17 @@ into a class/title/innerHTML unescaped; `writeProjectLink` ~12428 and the handov
 - **Maps keyed by compose names** (`netPresent`/`taken`/`seen`) are plain `{}`, so a network
   named `constructor` reads as present. `Object.create(null)`.
 - **Manage-tab icons never self-heal** (~12658–12667 vs `manage.js` ~2452): the fallback needs
-  `.staxx-icon` or `.staxx-fstrip-item`, and the Manage wrapper is neither. Add `staxx-icon` to
-  that wrapper.
-- **Drop the site-wide `pointermove` idle detector ~15946** — the other four presence listeners
-  already cover it.
+  `.staxx-icon` or `.staxx-fstrip-item`, and the Manage wrapper is neither. **Done differently from
+  the plan, 2026-08-21:** this said to add `staxx-icon` to the wrapper, which would have been a
+  visual bug — `.staxx-icon img` sets full width, height and a 0.4rem padding, and the Manage tab's
+  icon lives in a 1.1rem box with its own `max-width` rule. The wrapper's own class was added to the
+  fallback's selector list instead, which is the same one-line change with no styling side effect.
+- ~~**Drop the site-wide `pointermove` idle detector ~15946** — the other four presence listeners
+  already cover it.~~ **Withdrawn 2026-08-21: this plan was wrong.** The other four are
+  `pointerdown`, `keydown`, `wheel` and `scroll`, and none of them fires when a pointer simply moves.
+  Someone reading the page without clicking, typing or scrolling for two minutes is exactly the case
+  `pointermove` exists to catch, and deleting it would have made the page decide nobody was there.
+  Left in place.
 
 ---
 
@@ -604,8 +642,18 @@ every page in PHP 8.
 Also: **`staxx.settings.page` ~63** reads `$cfg['STACK_ROOT']` with no `??`, unlike the two
 reads above it. If `default.cfg` ever becomes unparseable — the failure the file's own header is
 dedicated to — that is a warning plus `htmlspecialchars(null)` on the one page that must still
-work. And **`sheets/`** has `Stacks.css` but no `StaXX.css`, so in the header-menu configuration
-PageBuilder's name-based auto-load may 404 per page load; one empty `StaXX.css` settles it.
+work.
+
+**`sheets/StaXX.css` — deliberately not added, decided 2026-08-21 during implementation.** The idea
+was that PageBuilder's name-based auto-load may 404 once per page load in the header-menu
+configuration, and an empty file would settle it. It cannot be done safely from this machine: the
+development checkout is on a case-insensitive filesystem, so `StaXX.css` and the existing 8,274-line
+`staxx.css` are the *same file* here. A first attempt truncated the real stylesheet, and forcing the
+name into git's index instead left a phantom entry whose content git read from `staxx.css` — a commit
+away from shipping two full copies of the stylesheet under two names. Both pages already emit their
+stylesheet tags explicitly, with `filemtime()` cache-busting, so the auto-load is not how the styling
+arrives; a possible cosmetic 404 is a far smaller cost than a case collision nobody can see on the
+machine the code is written on. Leave it.
 
 ### 7.9 The AMD sampler contradicts its own file
 
@@ -707,19 +755,20 @@ eviction exists anywhere in the repo. Prune entries untouched for N days during 
 
 ### 9.1 A registry can point the server anywhere
 
-**Two sites, not one.** Both parse the realm out of the remote registry's own `WWW-Authenticate`
-header and pass it verbatim to `staxx_hub_json()`, which runs `curl -fsSL` (`Defines.php` ~287) with
-no scheme restriction — so `file:///…` and internal addresses are reachable. A compose file naming a
-hostile registry can make the server read a local file or hit a metadata address.
+The realm is parsed out of the remote registry's own `WWW-Authenticate` header and passed verbatim
+to `staxx_hub_json()`, which runs `curl -fsSL` (`Defines.php` ~287) with no scheme restriction — so
+`file:///…` and internal addresses are reachable. A compose file naming a hostile registry can make
+the server read a local file or hit a metadata address.
 
-1. **`include/Updates.php` ~219–236** — the original digest path.
-2. **`include/Updates.php` ~218–236 inside `staxx_registry_tags()`** — added later by PLAN_55 Part A.
-   It correctly forces `https://` for the ping and for the tags list, and shape-checks the repository
-   name, but the realm it builds `$tokenUrl` from is taken straight from the remote reply.
+**Corrected 2026-08-21, during implementation: there is one site, not two.** This plan and §13.4
+both said two, giving `include/Updates.php` ~219–236 and ~218–236 — the same physical block, counted
+twice. PLAN_55 Part A merged its tags lookup *into* that function rather than adding a second one, so
+one guard covers every caller. Grepping the whole tree for `realm`, `tokenUrl` and
+`WWW-Authenticate` confirms it: the only other two token fetches, in `staxx_registry_config()` and
+`staxx_image_remote()`'s `hub` branch, both hardcode `auth.docker.io` and never read a realm.
 
-Require the realm to match `^https?://` before use **in both**, and add `--proto '=https,http'` to
-`staxx_hub_json()` so the transport is bounded regardless of any future caller. A fix applied to only
-the first site would look complete and leave the newer one open.
+Require the realm to match `^https?://` before use, and add `--proto '=https,http'` to
+`staxx_hub_json()` so the transport is bounded regardless of any future caller.
 
 ### 9.2 Remote SVGs become same-origin files
 
@@ -1022,7 +1071,7 @@ Part One is unstarted and gets a forward-looking note instead (below).
 |---|---|---|
 | *Fix the tag…* opening the editor on a service's image field | **1.3** (field ids gain an index) | It addresses the field by service + key (`'image'`), not by a composed id, so it should be unaffected — but `image` is a `setting` binder and 1.3 only touches `port`/`volume`/`device`/`env`/`label`. Confirm no hand-built id strings in the two menu builders assume the old shape. |
 | *Find the project link…* → `addNested()` | **1.1** and **4** | Already broken today (see 13.3). After both land, re-run the scenario in 13.3 and require a correctly-indented insert and a byte-identical file on refusal. |
-| `staxx_registry_tags()` realm handling | **9.1** | Second realm-parsing site — §9.1 has been widened to name it. Fixing only the original leaves this one open. |
+| `staxx_registry_tags()` realm handling | **9.1** | Corrected during implementation: this is the *only* realm-parsing site, not a second one — PLAN_55 merged its tags lookup into the existing function. One guard covers it. See §9.1. |
 | Service-level `project`/`support` schema keys | **10** | Already carry `^https?://`. §10 brings stack level up to match; it must not re-pattern these. |
 | `staxx_links_ca_map()` reading the catalogue index | **9.4** (lock moves, renames checked) | Map is built once per request from the index data; a relocated lock does not change that. Confirm the map still builds when the index is mid-swap — it should return empty, never a partial map. |
 | Repo/CA chip data via `staxx_stack_children()` | **8.1** (memoised tree walk) | The chips read `$declared`, already in hand, with no extra metadata call. Confirm memoisation does not serve a stale `project` after a link write — the write goes through the ordinary `save`, so invalidation must cover it. |
@@ -1117,6 +1166,17 @@ fixes. They belong in their own plans, in roughly this order of value:
     Adrian's word, and this plan must be in. Honest scale, measured on the live server: three
     affected images out of seventy — the argument is that the two publishers involved are among the
     largest still on Docker Hub, so the number only moves one way.
+
+13. **A number-shaped value is written bare, and compose may not read it back as itself.** Found
+    2026-08-21 while adding Phase 11's quoting cases. `emitScalar` deliberately writes a plain number
+    unquoted — the comment there explains why, and it is right for an ordinary number. But `1.10`,
+    `0755`, `007` and `.5` are all written bare too, and while *our* parser hands them back
+    unchanged, a YAML loader is entitled to read `1.10` as the number 1.1 and `0755` as octal. A
+    version pin or a file mode typed into a text box could therefore mean something else by the time
+    compose reads it. Left out of PLAN_60 on purpose: the fix is a narrow extra quoting rule, but
+    which values actually change meaning depends on compose's own loader, and that can only be
+    settled by testing on the server rather than reasoned about here. Phase 11 added a case that
+    documents today's behaviour, so the gap is recorded rather than silent.
 
 **Rejected, recorded so they are not revisited casually:** a markdown library for catalogue
 descriptions (third-party code in a page that has none, and it forfeits today's guarantee that

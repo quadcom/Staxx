@@ -83,6 +83,9 @@ alongside everything else:
 
 - [ ] **The changelog.** It currently has one entry from the day the scaffold was written,
       and it is what users read before pressing update. Every release needs a line.
+- [ ] **The install banner.** The message printed at the end of installing — the last thing a
+      user reads before deciding StaXX worked. Like the changelog, check it says something true
+      before every release; it is easy to leave it saying what an earlier version said.
 - [ ] **The version stamp** moves with each build; the build script handles it, but do not
       publish two different packages under one version number — the update check compares
       nothing else.

@@ -68,13 +68,73 @@ function staxx_cfg(): array {
   static $cfg = null;
   if ($cfg !== null) return $cfg;
 
-  $defaults = @parse_ini_file(STAXX_ROOT.'/default.cfg') ?: [];
-  $user     = @parse_ini_file(STAXX_CFG) ?: [];
+  // INI_SCANNER_RAW: every value this plugin ever writes is already quoted,
+  // so the raw scanner changes nothing for a file it wrote itself. What it
+  // fixes is a hand-edited line with no quotes at all — the normal scanner
+  // rewrites a bare true/false/on/off/yes/no to a PHP bool and interpolates
+  // ${...}, so an unquoted "ICON_FETCH=false" came back as PHP false, and
+  // (string) that is '' rather than the literal word "false" every reader
+  // here compares against — leaving a setting switched off read as still on.
+  $defaults = @parse_ini_file(STAXX_ROOT.'/default.cfg', false, INI_SCANNER_RAW) ?: [];
+  $user     = @parse_ini_file(STAXX_CFG, false, INI_SCANNER_RAW) ?: [];
   return $cfg = array_merge($defaults, $user);
 }
 
 function staxx_cfg_bool(string $key): bool {
   return (staxx_cfg()[$key] ?? 'false') === 'true';
+}
+
+/**
+ * The depth this request currently holds each lock at, shared between
+ * staxx_mkdir_lock() and staxx_mkdir_unlock() via a reference to the same
+ * static array — what makes the lock re-entrant within one request (below).
+ */
+function &staxx_mkdir_lock_depth(): array {
+  static $depth = [];
+  return $depth;
+}
+
+/**
+ * A short-lived mutex for a read-modify-write against one file, the same
+ * atomic-mkdir trick staxx_update_lock() uses for its own, longer-lived pass:
+ * mkdir() either succeeds or fails outright, with no race window either way.
+ * Callers here only ever hold it across a read plus a write, so a lock older
+ * than 5 seconds is read as abandoned by a request that died mid-write —
+ * never one that is still going — and is taken over instead.
+ *
+ * Re-entrant within one request: a function that already holds this path's
+ * lock and calls another function that asks for the same one (projection
+ * called from a toggle it is already locked for, say) gets it back
+ * immediately rather than waiting out its own lock and timing out.
+ */
+function staxx_mkdir_lock(string $path, string &$error, int $tries = 40): bool {
+  $error = '';
+  $depth = &staxx_mkdir_lock_depth();
+
+  if (($depth[$path] ?? 0) > 0) { $depth[$path]++; return true; }
+
+  $lock = $path.'.lock';
+  for ($i = 0; $i < $tries; $i++) {
+    if (@mkdir($lock, 0700)) { $depth[$path] = 1; return true; }
+
+    $age = is_dir($lock) ? (time() - (int)@filemtime($lock)) : 0;
+    if ($age > 5) { @rmdir($lock); continue; }
+
+    usleep(50000); // 50ms — a read-modify-write here is over almost instantly
+  }
+
+  $error = 'Could not get an exclusive lock on '.$path.' — another save may be in progress. Try again.';
+  return false;
+}
+
+/** Release a lock taken with staxx_mkdir_lock(). Safe to call even if it was never held. */
+function staxx_mkdir_unlock(string $path): void {
+  $depth = &staxx_mkdir_lock_depth();
+  if (($depth[$path] ?? 0) <= 0) return;
+
+  if (--$depth[$path] > 0) return;
+  unset($depth[$path]);
+  @rmdir($path.'.lock');
 }
 
 /**
@@ -284,7 +344,11 @@ function staxx_docker_images(): array {
  *                     no network, DNS, a non-JSON body, an HTTP error
  */
 function staxx_hub_json(string $url, array $headers = [], int $maxTime = 8, int $shSeconds = 12): ?array {
-  $cmd = 'curl -fsSL --max-time '.$maxTime;
+  // --proto bounds the transport whatever the caller passes: a token realm
+  // read out of a remote registry's own reply reaches this function, and
+  // without this a hostile registry could name file:// or any other scheme
+  // curl happens to support and have the server read it back.
+  $cmd = 'curl -fsSL --proto \'=https,http\' --max-time '.$maxTime;
   foreach ($headers as $header) $cmd .= ' -H '.escapeshellarg($header);
   $cmd .= ' '.escapeshellarg($url);
 
@@ -617,7 +681,10 @@ function staxx_image_facts(string $image, string $source, bool $wantConfig = fal
 
   $facts = [];
 
-  $repo = staxx_hub_repo($image);
+  // Docker Hub knows nothing about an image that only exists on this server,
+  // and an unsigned-in server gets roughly ten questions an hour — so the
+  // local case must not spend one of them on an answer it cannot use.
+  $repo = $source === 'local' ? [] : staxx_hub_repo($image);
   if (isset($repo['readme']))      $facts['readme']      = $repo['readme'];
   if (isset($repo['description'])) $facts['description'] = $repo['description'];
 
@@ -639,6 +706,57 @@ function staxx_image_facts(string $image, string $source, bool $wantConfig = fal
 }
 
 /**
+ * One `docker ps -a` for the whole machine, every field the plugin's several
+ * container readers each want, so they can share this single shell-out
+ * instead of running their own near-identical one straight after it —
+ * StacksPage.php used to trigger three of them in consecutive lines.
+ *
+ * `.Label "key"` looks up one label. The obvious-looking `index .Labels
+ * "key"` does not work here: in a `docker ps` template .Labels is a list, not
+ * a lookup table, and asking it for a named key fails the whole command —
+ * which looks exactly like "no compose containers exist".
+ *
+ * The trailing "end" holds the last field open: PHP's exec() trims trailing
+ * whitespace from each line, so a container whose final label is empty would
+ * otherwise lose the tab before it and arrive one field short.
+ *
+ * @return array<int, array{id:string, name:string, state:string, status:string,
+ *                          image:string, project:string, service:string,
+ *                          configFiles:string}>
+ */
+function staxx_docker_ps_raw(): array {
+  static $rows = null;
+  if ($rows !== null) return $rows;
+
+  $rows = [];
+  if (!staxx_docker_running()) return $rows;
+
+  $fmt = '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}\t'
+       . '{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}\t'
+       . '{{.Label "com.docker.compose.project.config_files"}}\tend';
+  $out = staxx_sh(
+    escapeshellarg(staxx_docker_bin()).' ps -a --no-trunc --format '.escapeshellarg($fmt), 15
+  );
+
+  foreach (explode("\n", $out) as $line) {
+    if (trim($line) === '') continue;
+    $c = explode("\t", $line);
+    if (count($c) < 7) continue;
+    $rows[] = [
+      'id'          => $c[0],
+      'name'        => $c[1],
+      'state'       => $c[2],
+      'status'      => $c[3],
+      'image'       => $c[4],
+      'project'     => $c[5],
+      'service'     => $c[6],
+      'configFiles' => $c[7] ?? '',
+    ];
+  }
+  return $rows;
+}
+
+/**
  * Containers on the system grouped by their compose project.
  *
  * This is the grouping key the whole stack presentation rests on: compose
@@ -649,22 +767,9 @@ function staxx_image_facts(string $image, string $source, bool $wantConfig = fal
  * @return array<string, string[]> project name => container names
  */
 function staxx_containers_by_project(): array {
-  if (!staxx_docker_running()) return [];
-
-  // `.Label "key"` looks up one label. The obvious-looking
-  // `index .Labels "key"` does not work here: in `docker ps` templates .Labels
-  // is a list, not a lookup table, and asking it for a named key fails the
-  // whole command — which looked exactly like "no compose containers exist".
-  $fmt = '{{.Names}}\t{{.Label "com.docker.compose.project"}}';
-  $out = staxx_sh(
-    escapeshellarg(staxx_docker_bin()).' ps -a --format '.escapeshellarg($fmt), 10
-  );
-
   $projects = [];
-  foreach (explode("\n", trim($out)) as $line) {
-    if ($line === '') continue;
-    [$name, $project] = array_pad(explode("\t", $line, 2), 2, '');
-    $projects[$project][] = $name;
+  foreach (staxx_docker_ps_raw() as $row) {
+    $projects[$row['project']][] = $row['name'];
   }
   ksort($projects);
   return $projects;

@@ -1,0 +1,75 @@
+# Fixture for PLAN_30 (the remains of PLAN_16): every long form the form used
+# to handle badly, in one file. Valid compose on purpose — the thing to check
+# here is that each row is editable and that saving it back changes nothing,
+# which a file compose refuses could never show. Its broken twin, the two
+# entries that used to vanish altogether, is 15-long-forms-broken.
+services:
+  web:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      # Spelled out. The protocol and the mode were both invisible before.
+      - target: 80
+        published: 15114
+        protocol: tcp
+        mode: host
+        host_ip: 127.0.0.1
+      # The short form beside it, unchanged, for comparison.
+      - "15115:443/udp"
+    volumes:
+      # Spelled out. Only the source, the target and the read-only badge
+      # showed before; the kind of mount and the bind block did not.
+      - type: bind
+        source: /mnt/user/appdata/long-forms
+        target: /config
+        read_only: true
+        consistency: cached
+        bind:
+          propagation: rslave
+          create_host_path: true
+      - type: volume
+        source: shared-data
+        target: /data
+        volume:
+          nocopy: true
+      # The short form beside them, unchanged.
+      - /mnt/user/appdata/long-forms/extra:/extra:ro
+    networks:
+      # Written as a map, which is how a container gets a fixed address. This
+      # was one locked block before; it is now one row per network.
+      frontend:
+        ipv4_address: 10.77.0.20
+        priority: 100
+        aliases:
+          - web-inside
+      backend:
+    secrets:
+      # Spelled out, so it can set the file's owner and permissions.
+      - source: db_password
+        target: db_pw
+        uid: "99"
+        gid: "100"
+        mode: 0400
+
+  helper:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    networks:
+      - backend
+    secrets:
+      - db_password
+
+networks:
+  frontend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.77.0.0/24
+  backend:
+
+volumes:
+  shared-data:
+
+secrets:
+  db_password:
+    file: ./db_password.txt

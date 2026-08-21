@@ -23,7 +23,12 @@ $cfg    = parse_plugin_cfg($plugin);
 // is what the URL segment is. The header button is StaXX.page, so /StaXX; the
 // Docker sub-tab is Stacks.page, so /Docker/Stacks. The two cannot share a
 // basename, which is why only one of them is spelt the way the app is.
-$stacksUrl = ($cfg['HEADER_MENU'] ?? 'false') === 'true' ? '/StaXX#settings' : '/Docker/Stacks#settings';
+// StaXX.page is live on either marker, not HEADER_MENU alone — with the
+// Docker menu taken over, Stacks.page (and the Docker button it hangs off)
+// is shadowed away regardless of HEADER_MENU, so testing that setting by
+// itself sent the takeover-on / header-off combination to a dead link.
+$onHeader = ($cfg['HEADER_MENU'] ?? 'false') === 'true' || ($cfg['TAKEOVER_DOCKER_TAB'] ?? 'false') === 'true';
+$stacksUrl = $onHeader ? '/StaXX#settings' : '/Docker/Stacks#settings';
 
 // A lone text box inside a form reads to a password manager like a username,
 // and autocomplete="off" does not stop one — that attribute only speaks to the
@@ -60,7 +65,7 @@ _(Docker menu)_:
 > Docker menu back.
 
 _(Stack directory)_:
-: <input type="text" name="STACK_ROOT" value="<?=htmlspecialchars($cfg['STACK_ROOT'])?>" spellcheck="false" <?=$nofill?>>
+: <input type="text" name="STACK_ROOT" value="<?=htmlspecialchars($cfg['STACK_ROOT'] ?? '')?>" spellcheck="false" <?=$nofill?>>
 
 > Only set this here if you have moved where stacks are stored by hand and the StaXX page can no
 > longer find them. The normal way to change it is the settings panel in the app.

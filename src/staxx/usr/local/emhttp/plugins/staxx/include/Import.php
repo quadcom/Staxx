@@ -1051,6 +1051,9 @@ function staxx_import_prepare_dir(string $rel, string &$error): string {
     return '';
   }
 
+  // The tree's shape just changed on disk; see staxx_scan_stacks_reset().
+  staxx_scan_stacks_reset();
+
   return $dir;
 }
 

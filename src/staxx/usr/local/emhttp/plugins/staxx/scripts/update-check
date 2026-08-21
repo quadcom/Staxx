@@ -14,10 +14,25 @@ set -euo pipefail
 PLUGIN_DIR="/usr/local/emhttp/plugins/staxx"
 CFG="/boot/config/plugins/staxx/staxx.cfg"
 LOG_DIR="/tmp/staxx/updates"
+
+# Allowlisted before anything else touches the filesystem. LOG below is built
+# straight from this argument, and building it before this check meant
+# `update-check ../../../etc/foo` truncated that file rather than a log of
+# ours. Root-only and the cron entries always pass one of these three fixed
+# words, so this is hygiene rather than a live vulnerability — but the order
+# still matters.
+case "${1:-}" in
+  check|apply|cleanup) ;;
+  *)
+    echo "Usage: update-check {check|apply|cleanup}" >&2
+    exit 1
+    ;;
+esac
+
 # One log per pass, not one shared file: the apply pass now runs every 15
 # minutes, and a single log truncated on every run would wipe out a daily
 # check pass's own output within the same quarter hour.
-LOG="${LOG_DIR}/update-${1:-check}.log"
+LOG="${LOG_DIR}/update-$1.log"
 
 mkdir -p "${LOG_DIR}"
 chmod 0755 "${LOG_DIR}"
@@ -30,6 +45,25 @@ chmod 0755 "${LOG_DIR}"
 log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "${LOG}"
 }
+
+# One pass at a time, same atomic-mkdir idiom as stats-collector.sh's lock —
+# without it, two passes (a cron tick landing on top of a manual run, say)
+# could run over the same queue at once, and the second pass's `: >` above
+# would already have wiped the first's log mid-flight even before this. A
+# lock younger than five minutes belongs to a pass still running (every pass
+# here finishes in seconds — the compose work itself runs as a detached job,
+# not inside this script); anything older is abandoned and reclaimed.
+LOCKDIR="${LOG_DIR}/update.lock"
+if ! mkdir "${LOCKDIR}" 2>/dev/null; then
+  age=$(( $(date +%s) - $(stat -c %Y "${LOCKDIR}" 2>/dev/null || echo 0) ))
+  if [[ ${age} -lt 300 ]]; then
+    log "another update-check pass is already running; skipping."
+    exit 0
+  fi
+  rm -rf "${LOCKDIR}"          # stale: whatever held it is long gone
+  mkdir "${LOCKDIR}" 2>/dev/null || { log "could not take the update lock; skipping."; exit 0; }
+fi
+trap 'rmdir "${LOCKDIR}" 2>/dev/null' EXIT INT TERM
 
 # Resolved explicitly rather than trusted from PATH — cron's PATH is often
 # just /usr/bin:/bin, but is not guaranteed to hold php at all.
@@ -57,7 +91,7 @@ run_check() {
     exit 0
   fi
 
-  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1 || ! timeout -k 2 10 docker info >/dev/null 2>&1; then
     # A cron job firing before Docker is up on boot is not an error.
     log "Docker is not available; skipping this pass."
     exit 0
@@ -72,7 +106,7 @@ run_check() {
 }
 
 run_apply() {
-  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1 || ! timeout -k 2 10 docker info >/dev/null 2>&1; then
     # A cron job firing before Docker is up on boot is not an error.
     log "Docker is not available; skipping this pass."
     exit 0
@@ -92,7 +126,7 @@ run_apply() {
 }
 
 run_cleanup() {
-  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1 || ! timeout -k 2 10 docker info >/dev/null 2>&1; then
     log "Docker is not available; skipping this pass."
     exit 0
   fi
