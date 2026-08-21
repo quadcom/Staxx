@@ -4520,6 +4520,44 @@ var SPEC_SERVICE_KEYS = [
   ok('x- keys at both levels report nothing', Y.lint(doc).length === 0, JSON.stringify(Y.lint(doc)));
 })();
 
+/* ---- J8b. ...except one that misspells x-unraid ------------------------- */
+/* Sits beside J8 deliberately: the two are a pair, and the interesting part
+ * is the boundary between what is waved through and what is not. Compose
+ * accepts every key here, so nothing below is an invalid file — a warning
+ * is the strongest thing that would be honest. */
+
+(function () {
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n    x-unriad:\n      icon: x.png\n');
+  var res = Y.lint(doc);
+  ok('a transposed x-unraid is flagged', res.length === 1, JSON.stringify(res));
+  ok('on its own line, as a warning rather than an error',
+     !!res[0] && res[0].level === 'warn' && res[0].line === 3, JSON.stringify(res));
+  ok('and it names the correct spelling',
+     !!res[0] && res[0].message.indexOf('"x-unriad"') >= 0 &&
+     res[0].message.indexOf('Rename it to "x-unraid"') >= 0, JSON.stringify(res));
+})();
+
+(function () {
+  var doc = Y.parse('X-Unraid:\n  name: Thing\nservices:\n  a:\n    image: alpine\n');
+  var res = Y.lint(doc);
+  ok('a capitalised x-unraid is flagged at the top level too', res.length === 1, JSON.stringify(res));
+  ok('and says the reason is capitals, not spelling',
+     !!res[0] && res[0].message.indexOf('only in capitals') >= 0, JSON.stringify(res));
+})();
+
+(function () {
+  // The real key, and three that are somebody else's business. 'x-common'
+  // holding an anchor is the ordinary compose idiom this must never nag
+  // about, and 'x-unraid-defaults' is a deliberate name that merely starts
+  // the same way. Silence here is the whole reason the test is a near-miss
+  // test rather than a check that all x- keys are ours.
+  var doc = Y.parse('x-unraid:\n  name: Thing\nx-common: &c\n  restart: always\n' +
+                    'x-unraid-defaults:\n  note: mine\nservices:\n  a:\n    image: alpine\n' +
+                    '    x-logging:\n      note: mine\n');
+  ok('the real key and unrelated x- keys are all silent',
+     Y.lint(doc).length === 0, JSON.stringify(Y.lint(doc)));
+})();
+
 /* ---- J9. A tab-indented file reports exactly one error ------------------ */
 
 (function () {

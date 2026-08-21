@@ -5276,15 +5276,57 @@
   // help, so it is left alone rather than risking a false alarm.
   var KEY_TEXT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+  // Our own metadata key. Compose ignores every key beginning 'x-' without
+  // looking inside it, so a misspelling here produces a perfectly valid file
+  // whose settings this plugin then never reads — and the failure has no
+  // symptom beyond a form that looks oddly empty, which is why it needs
+  // saying out loud rather than leaving to be discovered.
+  var META_KEY = 'x-unraid';
+
+  // Only a NEAR miss is judged. An 'x-' key that is nothing like ours is
+  // somebody's own shared block ('x-common: &common'), which is ordinary
+  // compose and none of our business. Compared in lower case because a
+  // capitalised key is the same trap: YAML key names are case-sensitive,
+  // which is not obvious to anyone who has not been bitten by it.
+  function metaKeyTypo(key) {
+    var lower = key.toLowerCase();
+    if (key === META_KEY || lower.slice(0, 2) !== 'x-') return false;
+    return levenshtein(lower, META_KEY) <= 2;
+  }
+
+  function metaTypoMessage(key) {
+    if (key.toLowerCase() === META_KEY) {
+      return 'The key "' + key + '" differs from "' + META_KEY + '" only in capitals, and key ' +
+             'names are case-sensitive, so none of the settings inside it are being read. ' +
+             'Write it in lower case.';
+    }
+    return 'The key "' + key + '" looks like a misspelling of "' + META_KEY + '". Compose ignores ' +
+           'anything starting with "x-", so the file itself is fine — but none of the settings ' +
+           'inside this block are being read. Rename it to "' + META_KEY + '".';
+  }
+
   // Pushes one warning per key in `map` that is not in `specSet` — used at
   // the two levels the schema lets us be sure about: top level, and directly
-  // under a service. 'x-' keys are valid everywhere (they are the whole
-  // basis of this project's metadata) and '<<' is YAML's merge key, not a
-  // compose setting — both are skipped rather than judged.
+  // under a service, which are also the two places `x-unraid` may appear.
+  // '<<' is YAML's merge key, not a compose setting, and is skipped. So are
+  // 'x-' keys, which are valid everywhere and are the whole basis of this
+  // project's metadata — except for one that reads as a misspelling of ours.
   function checkSpecKeys(map, specSet, specList, add) {
     for (var i = 0; i < map.keys.length; i++) {
       var key = map.keys[i];
-      if (typeof key !== 'string' || key === '<<' || key.slice(0, 2) === 'x-') continue;
+      if (typeof key !== 'string' || key === '<<') continue;
+      // Ahead of KEY_TEXT_RE below, which rejects the hyphen every 'x-' key
+      // has — tested the other way round, this branch would never run.
+      //
+      // Matched without regard to case, so 'X-Unraid' reaches the check
+      // rather than being dropped by KEY_TEXT_RE and silently waved through.
+      // Compose's own extension prefix is lower case, so a capitalised one is
+      // not a valid extension key either way; ours is the more useful thing
+      // to say about it.
+      if (key.slice(0, 2).toLowerCase() === 'x-') {
+        if (metaKeyTypo(key)) add(map.pairs[key].start, 'warn', metaTypoMessage(key));
+        continue;
+      }
       if (!KEY_TEXT_RE.test(key)) continue;
       if (specSet[key]) continue;
       add(map.pairs[key].start, 'warn', unknownKeyMessage(key, specList));
