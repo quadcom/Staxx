@@ -319,3 +319,33 @@ the join and the state machine here; verify the proving step by hand against the
 2. **A typo in the metadata key is still silently ignored** — anything starting `x-` is waved
    through, so `x-unriad` is accepted and then never read. Unrelated to this feature, found during
    `PLAN_60`, still worth its own small fix.
+
+---
+
+## Status: COMPLETE — 2026-08-21
+
+All four stages built, deployed and verified on the server. `1476` round-trip, `236` catalogue,
+`73` undeclared-name, schema self-test clean, `php -l` clean, all 18 server suites passing
+(including the new `tests/server/moves.php`).
+
+**Where the plan was wrong, recorded so the next one is not:**
+
+1. **Stage 4 as written would have broken the self-test.** It specified attributing each drift to a
+   stack and service, which means parsing every compose file — and that shells out for up to 15
+   seconds per stack on a cache miss, while the browser gives the whole self-test 15 seconds total.
+   On a cold cache the button people press when the page misbehaves would have shown nothing.
+   Rewritten to read the state file alone, deliberately dropping attribution, with the test now
+   asserting the absence so nobody restores the slow version without solving that first.
+2. **The ordering wart was worse than item 3 of *Four things verified* allowed for.** Correct that
+   the two ranked picks are order-independent; the fix at the new call site was necessary and is in.
+3. **A test fixture contradicted itself** — printing one host as the new address beside a reason
+   naming a different one. Fixed; host and reason now stay in step.
+
+**Still open** — the two items under *Open, and deliberately left open* above, neither blocking:
+
+- Decision 11's freshness argument, deliberately shipped without. `PLAN_62.md` may answer it for
+  free, since an author's own published example is a better freshness signal than a second registry
+  call.
+- The `x-unriad` typo trap, unrelated to this feature and still needing its own small fix.
+
+The GitHub-watch half deferred here is now written up as `PLAN_62.md`.

@@ -1,11 +1,16 @@
 # FEATURE — the app moved house, and nothing told you
 
 **Concept only. No code plan here.** Extracted from `PLAN_55.md` (now closed) on 2026-08-21, so the
-idea survives without a stale implementation plan attached to it. The code plan becomes `PLAN_61.md`
-and is now unblocked on that count: `PLAN_60` landed on 2026-08-21. One gate remains — see
-*Before this is planned* at the end.
+idea survives without a stale implementation plan attached to it.
 
-**Blocked on one decision from Adrian: number 10 below.**
+**BUILT — 2026-08-21.** Both gates cleared, decision 10 answered, and the code plan is done and
+filed at `completed-plans/PLAN_61-catalogue-registry-move.md`. That file records what the plan got
+wrong and the two items it deliberately left open; this one is kept only for the concept and the
+measurements behind it. Nothing here is outstanding.
+
+Decision 10's answer, for the record: **an imported stack keeps the address written in the file it
+came from.** Nothing is rewritten at import time; the drift is reported afterwards, as an orange
+advisory rather than an error.
 
 ---
 
@@ -68,7 +73,7 @@ Carried over as settled unless marked. These are the answers a code plan must no
 | 7 | Applying it | Rewrite the one `image:` line through the compose model, so comments, ordering and formatting survive. **Never** restarts anything by itself. |
 | 8 | Dismissal | Remembered per image, the same way a skipped update is, so it stays silent until the template moves again. |
 | 9 | Non-CA images | Left entirely alone. Sixteen of this server's images are nobody's template and must never be second-guessed. |
-| **10** | **New imports — NEEDS A DECISION** | Should the importer take the template's *current* address instead of the one written into the file being imported? It fixes this at the door rather than reporting it later, but it means an imported stack no longer matches the file it came from. **Nothing can be planned until this is answered.** |
+| **10** | New imports — **ANSWERED 2026-08-21** | An imported stack **keeps the address written in the file it came from**. The importer rewrites nothing; the drift is reported afterwards as an orange advisory, not an error, so an imported stack always matches the file it came from. |
 | 11 | Whether the old address is also checked | Yes, and worth saying on the hint: if the old repository has stopped being updated while the new one moves, that is the argument for switching, and we can see it. |
 
 ## Shape of the work
@@ -112,11 +117,9 @@ never touched. Weighted at the refusals, as ever:
 
 ---
 
-## Before this is planned
+## Before this is planned — both gates cleared, and it is built
 
-One gate left. The other is cleared.
-
-1. **Decision 10 needs an answer.** Nothing is startable without it.
+1. ~~**Decision 10 needs an answer.**~~ **Answered 2026-08-21** — see the decisions table above.
 2. ~~`PLAN_60.md` must have landed first.~~ **Cleared 2026-08-21 — it has landed**
    (`completed-plans/PLAN_60-full-tree-review-fixes.md`). The write path decision 7 depends on was
    corrupting any file indented with four spaces at the time this document was written, so a code
