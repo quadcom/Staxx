@@ -1245,4 +1245,192 @@ function staxx_import_write_project(string $rel, string $id, array $about, strin
 
   return true;
 }
+
+/* --------------------------------------------------------------------- handoff -- */
+
+/**
+ * A one-shot bridge from the Add Container page to StaXX's own view: the
+ * shadowed page decodes an Unraid template and needs to hand it to a
+ * different page load. Not a query-string path, on purpose — a filesystem
+ * path in a URL is a traversal surface on the receiving end; the source XML
+ * may not outlive Community Applications' own temp folder; the original XML
+ * is needed again, untouched, when the template is stamped back at save
+ * time; and an id that names nothing fails cleanly, as an empty form rather
+ * than a broken one.
+ *
+ * `/tmp`, not the flash drive: this is a few seconds of state and flash
+ * writes are worth being stingy with.
+ */
+const STAXX_HANDOFF_DIR = '/tmp/staxx/handoff';
+const STAXX_HANDOFF_TTL = 3600;
+
+/**
+ * Deletes every handoff file older than STAXX_HANDOFF_TTL. Called only from
+ * staxx_handoff_write() — no timer, and none is wanted, the same discipline
+ * the stats collector uses to stop sampling on its own once nobody is asking.
+ */
+function staxx_handoff_sweep(): void {
+  foreach ((array)@glob(STAXX_HANDOFF_DIR.'/*.json') as $file) {
+    $mtime = @filemtime($file);
+    if ($mtime !== false && (time() - $mtime) > STAXX_HANDOFF_TTL) {
+      @unlink($file);
+    }
+  }
+}
+
+/**
+ * Stores one decoded template plus its original XML text under a fresh id,
+ * returning the id — or '' with $error set. Written to a temp name first and
+ * rename()'d into place, so a reader never sees a half-written file, the
+ * same pairing the stats collector uses for its own snapshots.
+ *
+ * $kind is which of the three routes AddContainer.page.tmpl caught this
+ * through — 'default' (a fresh install), 'user' (Reinstall From Previous
+ * Apps) or 'edit' (converted off the Phase E offer). Carried along only so
+ * the browser can word the banner it shows differently and, for 'user',
+ * dodge a name the stack it already runs is using — nothing on the server
+ * reads it back.
+ *
+ * $xmlTemplate is the original query value, verbatim — "default:/tmp/...".
+ * Unlike $xml, this one IS the browser's business: it is what the "Let
+ * Unraid install this instead" escape hatch on the caught-install banner
+ * rebuilds Unraid's own URL from (PLAN_63 section 16).
+ */
+function staxx_handoff_write(
+  array $record, string $xml, string &$error, string $kind = 'default', string $xmlTemplate = ''
+): string {
+  if (!is_dir(STAXX_HANDOFF_DIR) && !@mkdir(STAXX_HANDOFF_DIR, 0700, true)) {
+    $error = 'Could not create '.STAXX_HANDOFF_DIR.'.';
+    return '';
+  }
+
+  staxx_handoff_sweep();
+
+  $id   = bin2hex(random_bytes(16));
+  $path = STAXX_HANDOFF_DIR.'/'.$id.'.json';
+  $tmp  = $path.'.tmp';
+
+  $json = json_encode(['app' => $record, 'xml' => $xml, 'kind' => $kind, 'xmlTemplate' => $xmlTemplate]);
+  if ($json === false || @file_put_contents($tmp, $json) === false) {
+    $error = 'Could not write the handoff file.';
+    @unlink($tmp);
+    return '';
+  }
+  @chmod($tmp, 0600);
+
+  if (!@rename($tmp, $path)) {
+    $error = 'Could not put the handoff file in place.';
+    @unlink($tmp);
+    return '';
+  }
+
+  return $id;
+}
+
+/**
+ * Reads back a handoff written by staxx_handoff_write(), or null for a
+ * malformed id, an id nothing wrote, an expired file, or JSON that will not
+ * decode. The id is checked against the hex pattern BEFORE it is ever
+ * concatenated into a path — it arrives from a URL and is treated as
+ * hostile, never trusted to a name that could only ever be "../../etc".
+ *
+ * Deliberately not deleted here: Phase D's save step reads the same record
+ * again to stamp the Unraid template, so this stays a read, not a
+ * read-and-consume. Expiry via STAXX_HANDOFF_TTL is what eventually clears it.
+ */
+function staxx_handoff_read(string $id): ?array {
+  if (!preg_match('/^[0-9a-f]{32}$/', $id)) return null;
+
+  $path  = STAXX_HANDOFF_DIR.'/'.$id.'.json';
+  $mtime = @filemtime($path);
+  if ($mtime === false || (time() - $mtime) > STAXX_HANDOFF_TTL) return null;
+
+  $json = @file_get_contents($path);
+  if ($json === false) return null;
+
+  $decoded = json_decode($json, true);
+  return is_array($decoded) ? $decoded : null;
+}
+
+/**
+ * Whether the file behind a stored xmlTemplate value ("default:/tmp/...")
+ * is still there for Unraid to read, checked fresh rather than trusted from
+ * the moment the handoff was written — the whole point of asking is whether
+ * it is STILL there, since Community Applications may have tidied up its
+ * temp copy in the meantime. The escape hatch must never offer a link to a
+ * path that has gone; this is what lets it refuse instead of failing silently.
+ */
+function staxx_handoff_template_available(string $xmlTemplate): bool {
+  $colon = strpos($xmlTemplate, ':');
+  if ($colon === false) return false;
+  $path = substr($xmlTemplate, $colon + 1);
+  return $path !== '' && is_file($path) && is_readable($path);
+}
+
+/**
+ * Phase D — the exit route. Stamps the original template XML back into
+ * Unraid's own template folder, the moment a caught install is first saved
+ * as a stack, so Apps still sees the app as installed and there is a way
+ * back to plain Unraid Docker if StaXX is ever abandoned.
+ *
+ * Written once, at save, and never revisited: not updated when the stack is
+ * later edited, not deleted when the stack is removed. Keeping it in step
+ * would mean writing an Unraid template on every stack edit, in a format
+ * that cannot express everything a compose file can — a second source of
+ * truth by any other name. Nothing in StaXX ever reads this file back; the
+ * proper fix for it going stale is a translator that reads the stack as it
+ * stands, which is a future possibility and not this.
+ *
+ * No handoff, or one with no XML in it, is not an error: it just means this
+ * save had no caught install behind it. Only a handoff that exists and has
+ * to be acted on but fails to write is worth a sentence back.
+ */
+function staxx_import_stamp_template(string $handoffId, string &$error): string {
+  $error = '';
+
+  $handoff = staxx_handoff_read($handoffId);
+  $xml     = (string)($handoff['xml'] ?? '');
+  if ($handoff === null || $xml === '') return '';
+
+  // The filename CA itself looks for is "my-<Name>.xml" where <Name> is the
+  // app's own template field — not the stack's folder name, which may differ
+  // if the stack was renamed on the way in. staxx_import_safe_name() slugs an
+  // unusable name into something else entirely (falling back to "stack"),
+  // which is right for choosing a folder but wrong here: this filename has to
+  // be the exact name CA checks for, or not written at all. staxx_valid_name()
+  // is the plain yes/no test that fits — it also already refuses "..", a bare
+  // slash-free path segment, and an empty string.
+  $name = (string)($handoff['app']['Name'] ?? '');
+  if (!staxx_valid_name($name)) {
+    $error = 'The caught install\'s name was not usable as a filename, so no template was left behind.';
+    return '';
+  }
+
+  if (!is_dir(STAXX_IMPORT_TEMPLATES_DIR) && !@mkdir(STAXX_IMPORT_TEMPLATES_DIR, 0700, true)) {
+    $error = 'Could not create '.STAXX_IMPORT_TEMPLATES_DIR.'.';
+    return '';
+  }
+
+  $path = STAXX_IMPORT_TEMPLATES_DIR.'/my-'.$name.'.xml';
+
+  // Never overwrite. A file already at that name belongs to an app somebody
+  // already has installed, and that template is their own exit route — the
+  // collision is reported, not overridden, and nothing is written.
+  if (file_exists($path)) {
+    $error = 'A template called "my-'.$name.'.xml" already exists, so this install was not '
+           . 'stamped as one — the existing file is left exactly as it was.';
+    return '';
+  }
+
+  // Byte for byte: this is Community Applications' own template text, not a
+  // re-serialisation of what staxx_import_read_template() decoded from it.
+  if (@file_put_contents($path, $xml) === false) {
+    $error = 'Could not write '.$path.'.';
+    return '';
+  }
+  // No chmod: /boot is a vfat mount where every file is owner-only regardless
+  // of the mode requested, so a chmod call here would do nothing.
+
+  return $path;
+}
 ?>

@@ -56,6 +56,18 @@ else
   rm -f "${TAKEOVER_MARKER}"
 fi
 
+# Whether Add Container installs from Unraid's Apps page (and Add Container
+# pressed by hand) are caught and brought into StaXX. Defaults true, unlike
+# the two markers above, so a config predating this key still catches installs.
+# Three values: true (catch silently), prompt (ask first — same shadow page,
+# it decides what to show), false (Unraid's own route). The shadow is
+# installed for true AND prompt, and removed only for false.
+catch_installs="true"
+if [[ -f "${CFG}" ]]; then
+  catch_installs=$(sed -n 's/^[[:space:]]*CATCH_INSTALLS[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+  catch_installs="${catch_installs:-true}"
+fi
+
 # The plugin folder may not exist yet the first time this runs during install
 # ordering; skip quietly rather than fail; there is nothing to shadow into yet.
 if [[ -d "${PLUGIN_DIR}" ]]; then
@@ -74,6 +86,22 @@ if [[ -d "${PLUGIN_DIR}" ]]; then
     fi
   else
     rm -f "${docker_tab_live}"
+  fi
+
+  # AddContainer.page has no marker file: nothing's .page Cond needs to know
+  # about this setting, since the file being there at all is what does the
+  # catching — same mechanism as Docker.page above, just with no Cond to feed.
+  add_container_live="${PLUGIN_DIR}/AddContainer.page"
+  add_container_shadow="${PLUGIN_DIR}/shadow/AddContainer.page.tmpl"
+  if [[ "${catch_installs}" == "true" || "${catch_installs}" == "prompt" ]]; then
+    if [[ -f "${add_container_shadow}" ]]; then
+      cp "${add_container_shadow}" "${add_container_live}"
+    else
+      echo "warning: ${add_container_shadow} is missing, so installs are not being caught." >&2
+      rm -f "${add_container_live}"
+    fi
+  else
+    rm -f "${add_container_live}"
   fi
 fi
 

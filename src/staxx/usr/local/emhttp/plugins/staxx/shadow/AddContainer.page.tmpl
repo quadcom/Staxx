@@ -1,0 +1,504 @@
+Title="Add Container"
+Cond="(pgrep('dockerd')!==false)"
+Markdown="false"
+Eval="true"
+---
+<?PHP
+/* StaXX — shadow of Unraid's stock Add Container page.
+ * Copyright 2026, StaXX contributors.
+ *
+ * Ships as .tmpl, never .page: every .page file in this folder is collected
+ * by PageBuilder, so a dormant copy of this file cannot carry that extension
+ * or it would run permanently — the same reason shadow/Docker.page.tmpl ships
+ * inert. scripts/apply_settings copies this to AddContainer.page only while
+ * the setting that catches Apps-page installs is on, and removes that copy
+ * the moment it goes off.
+ *
+ * PageBuilder keys every page by its bare filename and gives the win to
+ * whichever plugin folder sorts last alphabetically — "staxx" sorts after
+ * both dynamix.docker.manager and community.applications, so once copied
+ * this wins over the stock AddContainer.page. This is the same shadowing
+ * mechanism Docker.page.tmpl already relies on, not a new trick.
+ *
+ * The stock file carries no Menu key, which is why one page answers at both
+ * /Docker/AddContainer (Add Container pressed from the Docker tab) and
+ * /Apps/AddContainer (an install arriving from Community Applications).
+ * Shadowing it adds nothing to any menu; it only decides, per request,
+ * whether StaXX wants to handle what just arrived.
+ *
+ * A request StaXX does not want is never re-rendered by an imitation of the
+ * stock form — it is handed to Unraid's *real* one by calling the exact file
+ * the stock page itself calls, the same way, so anything Unraid changes there
+ * in a future release is picked up automatically rather than needing a copy
+ * kept in step by hand.
+ *
+ * Cond here is copied byte for byte off the stock page — it is stock
+ * Unraid's own "is dockerd actually running" test, not a StaXX condition, and
+ * PLAN_63 elsewhere forbids a Cond of ours on a shadow for good reason: a
+ * page stays registered once PageBuilder has seen it, so a false Cond of
+ * ours would not fall back to the stock page, it would remove Add Container
+ * entirely. This Cond is a different thing — dropping or changing it would
+ * make Add Container answer even with Docker turned off, which the stock
+ * page itself never did. The setting that controls whether this feature is
+ * live at all is honoured by whether apply_settings put this file in place
+ * to begin with, never by a Cond.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version 2,
+ * as published by the Free Software Foundation.
+ */
+?>
+<?PHP
+/**
+ * The realpath()-resolved form of $path if it is a real, readable file
+ * inside one of the folders CA and Unraid are allowed to hand us for $type
+ * ("default" or "edit"), or '' on any refusal. The value arrives in a query
+ * string, so it is treated as hostile.
+ *
+ * Returns the resolved path rather than a bool because the caller needs that
+ * exact string to open the file — re-resolving it a second time would just
+ * be trusting the same query-string value a second time, which defeats the
+ * point of resolving it here at all.
+ *
+ * realpath() runs first deliberately: it resolves ".." and symlinks and
+ * returns false outright if nothing exists there, so a symlink planted
+ * outside the allowed folder is already resolved to its real target by the
+ * time the prefix test below sees it — checking the raw string first would
+ * let exactly that symlink through.
+ */
+// Guarded because PageBuilder evaluates this page body with eval(), and a
+// redeclaration inside eval'd code is a fatal error rather than a notice.
+if (!function_exists('staxx_addcontainer_valid_path')) {
+function staxx_addcontainer_valid_path(string $type, string $path): string {
+  // "user" (Reinstall From Previous Apps) only ever names a file already
+  // inside templates-user/ — the same folder "edit" is confined to — so it
+  // shares that list rather than getting a third one that would only ever
+  // agree with it by chance.
+  $prefixes = ($type === 'edit' || $type === 'user')
+    ? ['/boot/config/plugins/dockerMan/templates-user/']
+    : ['/tmp/community.applications/', '/boot/config/plugins/dockerMan/'];
+
+  $real = realpath($path);
+  if ($real === false || !is_file($real) || !is_readable($real)) return '';
+
+  foreach ($prefixes as $prefix) {
+    // Compared against the prefix WITH its trailing slash, so a folder that
+    // merely starts with the same characters — dockerManEvil next to
+    // dockerMan — cannot pass as being inside it.
+    if (strpos($real, $prefix) === 0) return $real;
+  }
+  return '';
+}
+}
+
+// Table this branch implements is PLAN_63 section 6, in its exact order.
+$staxx_passthrough = true;
+// Named on the waiting page below when a template gave us a name to show;
+// the hand-pressed route has no template and so no name, and says less.
+$staxx_app = '';
+// Stays '' unless the default: branch below resolves a real template path —
+// that is also what tells the handoff block apart from the hand-pressed
+// "no template at all" case, which must fall through to the bare redirect.
+$staxx_real_path = '';
+// Which of the three handoff routes this request took — carried into the
+// handoff file so stacks.js can word the banner accordingly. Meaningless
+// unless $staxx_real_path is also set.
+$staxx_kind = 'default';
+// Phase E item 17: an edit request gets our own interstitial rather than
+// either an outcome above — set below, checked before anything else that
+// would otherwise render. Section 16 part 2 reuses this same page for
+// default/user/hand-pressed too, whenever CATCH_INSTALLS is "prompt" and
+// this is a first visit; which wording it gets is $staxx_offer_type.
+$staxx_show_edit_offer = false;
+$staxx_offer_type = '';
+// Section 16 part 3: the prompt page's own "always capture from now on"
+// tickbox, ticked on the way here. Only ever true alongside a proceed
+// (never a decline) — see where it is read below.
+$staxx_set_always = false;
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+  // Rule 1, checked first, before anything else on the request is even read.
+  // The stock form submits to this same URL, so a GET-shaped check that also
+  // caught the POST would break creating a container in Unraid itself —
+  // the worst possible failure here, because it breaks Unraid, not StaXX.
+  $staxx_passthrough = true;
+} elseif (($_GET['staxx'] ?? '') === 'skip') {
+  // The decline Phase E's offer will link to. Checked ahead of the type
+  // branch below so it always wins, whatever xmlTemplate says.
+  $staxx_passthrough = true;
+} else {
+  $xmlTemplate = (string)($_GET['xmlTemplate'] ?? '');
+  // The interstitial's own "Convert to a StaXX stack" control (below)
+  // revisits this exact URL with this one flag added — see section 6/item 17
+  // and section 16 parts 2-3.
+  $staxx_convert = ($_GET['staxx'] ?? '') === 'convert';
+  // The offer page's own tickbox — only ever meaningful alongside a proceed,
+  // never read on the decline link, which carries no such field at all.
+  $staxx_set_always = $staxx_convert && ($_GET['staxx_always'] ?? '') === '1';
+
+  if ($xmlTemplate === '') {
+    // Add Container pressed by hand, with no CA install behind it at all.
+    // Still answers to CATCH_INSTALLS=prompt below — there is just nothing
+    // to name on the offer page in that case.
+    $staxx_offer_type = 'manual';
+    $staxx_passthrough = false;
+  } else {
+    $colon = strpos($xmlTemplate, ':');
+    $type  = $colon === false ? '' : substr($xmlTemplate, 0, $colon);
+    $path  = $colon === false ? '' : substr($xmlTemplate, $colon + 1);
+    // There are four install types on CA's own skin — "default", "second",
+    // "edit" and "user" — but "second" never reaches here: CA rewrites it to
+    // "default" before it ever builds this URL. No branch for it below on
+    // purpose; it would be dead code, not a missing case.
+    //
+    // Resolved once here and carried forward — the branch below that builds
+    // the handoff must open exactly this file, not re-resolve the raw
+    // query-string value a second time.
+    $staxx_real_path = in_array($type, ['default', 'edit', 'user'], true)
+      ? staxx_addcontainer_valid_path($type, $path) : '';
+
+    if ($type === 'default' && $staxx_real_path !== '') {
+      // A fresh install arriving from Community Applications.
+      $staxx_passthrough = false;
+      $staxx_kind = 'default';
+      $staxx_offer_type = 'default';
+    } elseif ($type === 'user' && $staxx_real_path !== '') {
+      // "Reinstall From Previous Apps" (PLAN_63 item 18, PLAN_65 decision 1):
+      // makes a SECOND stack, the same way Unraid's own reinstall already
+      // makes a second container with a suffixed name — whatever already
+      // runs this app is never touched. Routed exactly like a fresh install;
+      // stacks.js tells the two apart only to word the banner differently
+      // and to dodge a name the existing stack already owns. Left as an
+      // unknown type this would fall through to Unraid's form, which would
+      // rebuild a container compose already owns underneath it — the hazard
+      // PLAN_63's risk table names as the reason Phase D could not go live
+      // until this landed.
+      $staxx_passthrough = false;
+      $staxx_kind = 'user';
+      $staxx_offer_type = 'user';
+    } elseif ($type === 'edit' && $staxx_real_path !== '' && $staxx_convert) {
+      // "Convert to a StaXX stack" chosen on the interstitial, on a second
+      // visit to this same URL — take the fresh-install route below, using
+      // the path already validated above.
+      $staxx_passthrough = false;
+      $staxx_kind = 'edit';
+    } elseif ($type === 'edit' && $staxx_real_path !== '') {
+      // First arrival at editing an existing Unraid template. Neither
+      // Unraid's own form nor a silent redirect: an interstitial of our own,
+      // offering to convert it to a stack or keep using Unraid's form as
+      // before — rendered further down, and never remembered. The offer
+      // stays available on every edit of every old-style container for as
+      // long as it stays one, which is the whole point of leaving it in
+      // Unraid's form rather than converting it the first time it is seen.
+      // Always shown, whatever CATCH_INSTALLS reads — that setting governs
+      // only whether a fresh install is caught silently or asked about,
+      // never this (section 16 part 2).
+      $staxx_passthrough = false;
+      $staxx_show_edit_offer = true;
+      $staxx_offer_type = 'edit';
+    } else {
+      // Unknown type, no colon, a vanished or unreadable file, or a path
+      // outside every allowed folder. Every doubt passes through — the safe
+      // direction to fail is "Unraid behaves exactly as it always did".
+      $staxx_passthrough = true;
+    }
+  }
+
+  // Section 16 part 2: with CATCH_INSTALLS=prompt, the three routes above
+  // that answer to it (edit does not — see its own comment) ask first rather
+  // than catching outright, on a first visit only ($staxx_convert is how a
+  // second visit, after choosing to proceed, is told apart from a first).
+  if (!$staxx_passthrough && !$staxx_show_edit_offer && !$staxx_convert && $staxx_offer_type !== '') {
+    // Reading the setting needs Defines.php, which nothing above this point
+    // loads — a request already on doubt (unknown type, vanished file) never
+    // reaches here, so it never loads it either, matching the file header's
+    // rule that nothing of ours runs on a pass-through.
+    require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+    if ((staxx_cfg()['CATCH_INSTALLS'] ?? 'true') === 'prompt') {
+      $staxx_show_edit_offer = true;
+    }
+  }
+}
+
+if ($staxx_show_edit_offer) {
+  // Item 17's interstitial, and (section 16 part 2) the CATCH_INSTALLS=prompt
+  // offer for default/user/hand-pressed too — one page, worded per
+  // $staxx_offer_type. Not the stock form, and not a redirect: a page of our
+  // own, styled exactly like the waiting page below. Nothing here is ever
+  // stored — see the comment where $staxx_show_edit_offer is set for why a
+  // decline must not be remembered.
+  require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
+
+  // A hand-pressed Add Container names nothing — there is no template to
+  // read a name off, so this is skipped entirely rather than asking
+  // staxx_import_read_template() to make sense of an empty path.
+  $staxx_edit_name = '';
+  $staxx_already   = false;
+  if ($staxx_offer_type !== 'manual') {
+    try {
+      $staxx_edit_record = staxx_import_read_template($staxx_real_path);
+      $staxx_edit_name   = (string)($staxx_edit_record['Name'] ?? '');
+    } catch (Throwable $e) {
+      // Only the display name is at risk here — "Convert" revisits this same
+      // URL and re-reads the template properly, through the doubt-passes-
+      // through path above, so a decode failure here costs a generic heading
+      // and nothing else.
+    }
+
+    // The same name-to-folder heuristic staxx_import_templates() already uses
+    // to mark an import row "taken" — not a guarantee (a stack can be renamed
+    // away from its app's name on the way in), but cheap, off a lookup this
+    // request needs no extra work to have, and worth saying rather than
+    // staying quiet about the exact duplicate PLAN_63's Phase D worried about.
+    $staxx_already = $staxx_edit_name !== ''
+      && in_array(staxx_import_safe_name($staxx_edit_name), staxx_import_taken_names(), true);
+  }
+
+  // Both follow-ups are THIS request's own URL with only the "staxx" flag
+  // changed, so every parameter CA or Unraid attached survives exactly as
+  // they built it (item 17) — never reconstructed from $type/$path, which
+  // would drop anything this plugin does not itself know to keep.
+  $staxx_qs   = $_GET;
+  $staxx_base = strtok($_SERVER['REQUEST_URI'], '?');
+  $staxx_qs['staxx']  = 'convert';
+  $staxx_convert_fields = $staxx_qs;   // section 16 part 3 — see the form below
+  $staxx_convert_url  = $staxx_base.'?'.http_build_query($staxx_qs);
+  $staxx_qs['staxx']  = 'skip';
+  $staxx_skip_url     = $staxx_base.'?'.http_build_query($staxx_qs);
+
+  $staxx_name_html = htmlspecialchars($staxx_edit_name !== '' ? $staxx_edit_name : 'This app', ENT_QUOTES);
+
+  switch ($staxx_offer_type) {
+    case 'default':
+      $staxx_offer_heading = $staxx_name_html.' is arriving from Unraid’s Apps page.';
+      $staxx_offer_intro = '<p>StaXX can bring this in as a stack it manages from here on, or you '
+        . 'can let Unraid install it the ordinary way instead. This choice only applies to this '
+        . 'one install.</p>';
+      break;
+    case 'user':
+      $staxx_offer_heading = $staxx_name_html.' is being reinstalled from Unraid’s Apps page.';
+      $staxx_offer_intro = '<p>This makes a second copy, alongside whatever already runs this app '
+        . '— the one already running is never touched. StaXX can bring the new copy in as a '
+        . 'stack, or you can let Unraid install it the ordinary way instead.</p>';
+      break;
+    case 'manual':
+      $staxx_offer_heading = 'Add Container — bring this into StaXX, or use Unraid’s own form?';
+      $staxx_offer_intro = '<p>StaXX can start a new stack from here, or you can carry on with '
+        . 'Unraid’s own Add Container form instead.</p>';
+      break;
+    default: // 'edit' — wording unchanged from before this addendum
+      $staxx_offer_heading = $staxx_name_html.' is still an Unraid container, not a StaXX stack.';
+      $staxx_offer_intro = '<p>Converting turns it into a stack that StaXX manages from here on. '
+        . 'Choosing to keep editing here changes nothing — this same offer will be here again '
+        . 'next time it is edited, whenever converting it makes sense.</p>';
+  }
+
+  $staxx_decline_label = $staxx_offer_type === 'edit' ? 'Keep editing here'
+                                                       : 'Let Unraid install this instead';
+
+  // The "always capture" tickbox (section 16 part 3) only ever belongs to
+  // the proceed side, and only on the three routes CATCH_INSTALLS actually
+  // governs — never on 'edit', whose offer this switch does not control. A
+  // real <form> rather than JS building the URL, because the setting must
+  // never be written from a GET link (see stacks.js's own comment on this):
+  // the tickbox just rides as one more field on the same GET the plain
+  // "Convert" link would have made.
+  if ($staxx_offer_type === 'edit') {
+    $staxx_primary_html = '<a class="staxx-primary" href="'
+      . htmlspecialchars($staxx_convert_url, ENT_QUOTES).'">Convert to a StaXX stack</a>';
+  } else {
+    $staxx_hidden_fields = '';
+    foreach ($staxx_convert_fields as $staxx_fk => $staxx_fv) {
+      if (!is_scalar($staxx_fv)) continue; // query arrays ("x[]=y"); never built by CA or Unraid
+      $staxx_hidden_fields .= '<input type="hidden" name="'.htmlspecialchars((string)$staxx_fk, ENT_QUOTES)
+        . '" value="'.htmlspecialchars((string)$staxx_fv, ENT_QUOTES).'">';
+    }
+    $staxx_primary_html = '<form method="get" class="staxx-offerform">'.$staxx_hidden_fields
+      . '<label class="staxx-offeralways"><input type="checkbox" name="staxx_always" value="1"> '
+      . 'Always capture installs like this from now on</label>'
+      . '<button type="submit" class="staxx-primary">Convert to a StaXX stack</button></form>';
+  }
+
+  // Built once and echoed either way. A page that renders nothing when the
+  // shell happens to have gone out first is a blank window, which is the one
+  // outcome this whole branch exists to avoid — landing inside Unraid's shell
+  // is untidy, but it is still a readable offer with two working links.
+  $staxx_offer_css = '<style>'
+       . 'body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;'
+       . 'font:1rem/1.5 system-ui,sans-serif;background:#1c1c1c;color:#e8e8e8}'
+       . '.staxx-editoffer{max-width:34rem;padding:2rem;text-align:center}'
+       . '.staxx-editoffer h1{font-size:1.25rem;margin:0 0 0.75rem}'
+       . '.staxx-editoffer p{opacity:0.85;margin:0 0 1rem}'
+       . '.staxx-editoffer p.staxx-warn{color:#e8c15a;opacity:1}'
+       . '.staxx-editoffer .staxx-actions{display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;'
+       . 'align-items:center}'
+       . '.staxx-editoffer a,.staxx-editoffer button{display:inline-block;padding:0.6rem 1.1rem;'
+       . 'border-radius:0.4rem;text-decoration:none;font-weight:600;border:none;font:inherit;'
+       . 'cursor:pointer}'
+       . '.staxx-editoffer a.staxx-primary,.staxx-editoffer button.staxx-primary{background:#3a7ecf;color:#fff}'
+       . '.staxx-editoffer a.staxx-secondary{background:#333;color:#e8e8e8}'
+       . '.staxx-offerform{display:flex;flex-direction:column;align-items:center;gap:0.5rem}'
+       . '.staxx-offeralways{font-size:0.85rem;opacity:0.85;font-weight:normal}'
+       . '</style>';
+  $staxx_offer_html = '<div class="staxx-editoffer">'
+       . '<h1>'.$staxx_offer_heading.'</h1>'
+       . $staxx_offer_intro
+       . ($staxx_already
+           ? '<p class="staxx-warn">StaXX already runs an app by this name. Converting again '
+           . 'would make a second stack of it, alongside the one already there.</p>'
+           : '')
+       . '<div class="staxx-actions">'
+       . $staxx_primary_html
+       . '<a class="staxx-secondary" href="'.htmlspecialchars($staxx_skip_url, ENT_QUOTES).'">'.$staxx_decline_label.'</a>'
+       . '</div></div>';
+
+  if (!headers_sent()) {
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!doctype html>'."
+".'<html lang="en"><head><meta charset="utf-8"><title>StaXX</title>'
+       . $staxx_offer_css.'</head><body>'.$staxx_offer_html.'</body></html>';
+  } else {
+    echo $staxx_offer_css.$staxx_offer_html;
+  }
+  exit;
+}
+
+if (!$staxx_passthrough) {
+  // Loaded only here, never on the pass-through: nothing of ours should be
+  // running while Unraid renders its own form.
+  require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+  $staxx_url = staxx_view_url();
+
+  // Add Container pressed by hand carries no template at all, so there is
+  // nothing to hand off — it keeps the bare redirect straight to the live
+  // view, same as Phase B. A CA install ($staxx_real_path set above) gets a
+  // one-time handoff: decode the template, write it and the original XML to
+  // /tmp, and pass only the resulting id in the query string, never a path.
+  if ($staxx_real_path !== '') {
+    require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
+
+    // Same reason as the try below: a template shaped in a way the decoder
+    // has never met must cost someone an ordinary Unraid install, not a
+    // blank page.
+    try {
+      $staxx_record = staxx_import_read_template($staxx_real_path);
+    } catch (Throwable $e) {
+      error_log('staxx: reading this template failed, passing it to Unraid: '.$e->getMessage());
+      $staxx_record = null;
+    }
+    // Read straight from the same resolved path, never re-derived — this is
+    // what Phase D stamps the exit-route template from, long after CA may
+    // have cleaned up its own temp copy.
+    $staxx_xml = $staxx_record !== null ? @file_get_contents($staxx_real_path) : false;
+
+    // Declared before the call, not left to spring into existence at it: the
+    // parameter is a typed string reference, so an undeclared name arrives as
+    // null and PHP throws — which inside a page body means a blank screen and
+    // no install, the exact failure the pass-through below exists to avoid.
+    $staxx_error = '';
+    $staxx_id = '';
+    if ($staxx_record !== null && $staxx_xml !== false) {
+      // Anything unforeseen in here is still a doubt, and a doubt passes
+      // through. Without this a bug on this path renders nothing at all,
+      // rather than handing the install back to Unraid intact.
+      try {
+        // $xmlTemplate (section 16 part 1) is the original query value,
+        // verbatim — what the caught-install banner's "Let Unraid install
+        // this instead" escape hatch rebuilds Unraid's own URL from.
+        $staxx_id = staxx_handoff_write($staxx_record, $staxx_xml, $staxx_error, $staxx_kind, $xmlTemplate);
+      } catch (Throwable $e) {
+        error_log('staxx: catching this install failed, passing it to Unraid: '.$e->getMessage());
+        $staxx_id = '';
+      }
+    }
+
+    if ($staxx_id !== '') {
+      $staxx_url .= '?staxx-install='.$staxx_id;
+      // Section 16 part 3: rides along to the view on the same redirect,
+      // never written here — see stacks.js for why (a GET must not write
+      // config).
+      if ($staxx_set_always) $staxx_url .= '&staxx-always=1';
+      $staxx_app  = (string)($staxx_record['Name'] ?? '');
+    } else {
+      // The template would not decode, or the handoff could not be written.
+      // Every doubt passes through (section 6, rule 2): handing this back to
+      // Unraid's own form is not a bug, it is what happens whenever StaXX
+      // cannot be sure it can handle an install — the same rule that governs
+      // every other refusal in the branch table above.
+      $staxx_passthrough = true;
+    }
+  } elseif ($staxx_set_always) {
+    // Add Container pressed by hand has no handoff to attach this to — it
+    // rides straight on the bare redirect instead.
+    $staxx_url .= '?staxx-always=1';
+  }
+}
+
+if (!$staxx_passthrough) {
+  // A page that says what is happening, not a Location header.
+  //
+  // A redirect leaves the window blank for as long as the stacks view takes
+  // to build — several seconds on a server with a lot of stacks, because that
+  // page reads every compose file before it draws anything. Blank for several
+  // seconds straight after pressing Install reads as a failed install. The
+  // browser keeps THIS page on screen until the next one is ready, so saying
+  // so here costs nothing and fills the whole gap.
+  //
+  // Measured on the server 2026-08-21: by the time this page body runs,
+  // PageBuilder has ALWAYS already emitted the page shell — headers_sent() is
+  // true on every real request. An earlier version only drew this message in
+  // the not-yet-sent branch, so the message never appeared at all and the
+  // window sat near-empty for the seconds the stacks view took to build. That
+  // was the whole complaint this block exists to answer, so the message is
+  // now drawn unconditionally and the redirect follows it.
+  //
+  // Styles are inline: one request, no stylesheet to fetch, and every class
+  // is staxx-prefixed regardless, so nothing here leans on stock Unraid CSS.
+  $staxx_where = htmlspecialchars($staxx_url, ENT_QUOTES);
+  $staxx_what  = ($staxx_app ?? '') !== ''
+    ? htmlspecialchars($staxx_app, ENT_QUOTES).' is being set up as a stack.'
+    : 'Opening the stacks view.';
+
+  if (!headers_sent()) header('Content-Type: text/html; charset=utf-8');
+
+  echo '<style>'
+     . '.staxx-handover{text-align:center;padding:3rem 2rem;'
+     . 'font:1rem/1.5 system-ui,sans-serif}'
+     . '.staxx-handover strong{display:block;font-size:1.25rem;margin-bottom:0.4rem}'
+     . '.staxx-handover span{opacity:0.75}'
+     . '</style>'
+     . '<div class="staxx-handover">'
+     . '<strong>StaXX is taking this install.</strong>'
+     . '<span>'.$staxx_what.' This will only take a moment.</span>'
+     . '</div>';
+
+  // Both, deliberately. A meta refresh inside the body is honoured by every
+  // browser that matters but is not where the spec puts it, and the shell is
+  // already out so it cannot go in the head — the script is the one that is
+  // actually specified for this. replace(), not assign(), so Back does not
+  // land straight back on this page and bounce forward again.
+  echo '<meta http-equiv="refresh" content="0;url='.$staxx_where.'">'
+     . '<script>location.replace('.json_encode($staxx_url).');</script>';
+  exit;
+}
+
+// Pass-through: reproduces the stock page's own three steps, in order, and
+// nothing else — no StaXX translations, stylesheets, scripts or page
+// furniture, because a pass-through that renders differently is not one.
+//
+// This runs inline, in the page's own scope, deliberately not inside a
+// function. $docroot, $locale and $language are PageBuilder's own page-scope
+// variables, and the stock code both reads and rewrites $language — handing
+// this to a function would give it a fresh, empty $language and silently
+// drop every docker translation string merged into it.
+if (substr($_SERVER['REQUEST_URI'], 0, 7) != '/Docker') {
+  $docker = "$docroot/languages/$locale/docker.dot";
+  if (file_exists($docker)) $language = array_merge($language, unserialize(file_get_contents($docker)));
+}
+// Avoid blocking other browser tabs by releasing the PHP session lock
+// before running long-running container creation logic.
+if (session_status() === PHP_SESSION_ACTIVE) {
+  session_write_close();
+}
+eval('?>'.parse_file("$docroot/plugins/dynamix.docker.manager/include/CreateDocker.php"));
+?>

@@ -168,6 +168,19 @@ endif;
     </div>
   <? endif; ?>
 
+  <!-- Said by the page itself rather than by a dialog, for cases with no
+       dialog to say it in: an install caught on Unraid's Add Container page
+       that StaXX then could not convert, or (Phase F) a container that
+       appeared belonging to no stack, offering the same importer the "Import"
+       button opens. Filled in by showPageNotice() in stacks.js, which also
+       switches the icon/colour and shows or hides the button depending on
+       whether this is an error or an offer. -->
+  <div class="staxx-notice staxx-notice--bad" id="staxx-page-notice" hidden>
+    <i class="fa fa-times-circle" aria-hidden="true"></i>
+    <div></div>
+    <button type="button" class="staxx-link-btn" id="staxx-page-notice-action" hidden></button>
+  </div>
+
   <!-- A real failure, not a warning: the boot markers this table is about to
        draw come from what staxx_autostart_sync() intended to write, and if
        that write failed they describe a state Unraid's own boot list never
@@ -375,6 +388,21 @@ endif;
         <strong><?= _('Sanitised for screenshots.') ?></strong>
         <?= _('Values marked sensitive are hidden and nothing can be changed. Turn Sanitise off to make edits. The real values are still in the page — this hides them from a picture, not from anyone with access to this browser.') ?>
       </div>
+    </div>
+
+    <!-- An install caught on Unraid's own Add Container page opens the editor
+         with the app already converted, which is a surprising thing to be
+         looking at with no explanation of how it got there. Filled in and
+         shown by the handoff hook in stacks.js; plain .staxx-notice, not
+         --bad, because nothing is wrong. -->
+    <div class="staxx-notice staxx-modal-banner" id="staxx-install-note" hidden>
+      <i class="fa fa-download" aria-hidden="true"></i>
+      <div></div>
+      <!-- PLAN_63 section 16: the way out of a caught install. Filled in and
+           shown/hidden by caOpenConverted() in stacks.js — only when the
+           handoff behind this had an original Unraid request AND the
+           temp file it points at is still there for Unraid to read. -->
+      <a href="#" class="staxx-link-btn" id="staxx-install-note-escape" hidden><?= _('Let Unraid install this instead') ?></a>
     </div>
 
     <div class="staxx-modal-body" data-view="split">

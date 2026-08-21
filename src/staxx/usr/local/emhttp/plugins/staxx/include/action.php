@@ -135,6 +135,48 @@ function staxx_events_watch_start(): void {
         .escapeshellarg(STAXX_EVENTS_DIR).' </dev/null >/dev/null 2>&1 &');
 }
 
+/* ------------------------------------------------------- loose-container watch --
+ *
+ * Phase F's safety net: the doorway is the main route in, but if a future
+ * Unraid or Community Applications release stops matching it, an install
+ * quietly goes back to the old way and nothing would ever say so. This is
+ * what notices — no new watcher, just a comparison run every time the rows
+ * refresh already reads the world.
+ *
+ * staxx_import_loose() (Import.php) is the same "belongs to no stack, and
+ * no template already claims it" list the import panel itself shows, so
+ * a container left behind on purpose via the Phase D exit route is never
+ * mistaken for one that arrived the old way.
+ *
+ * The stamp is a single file holding last look's names, sorted, one per
+ * line — not a database of what was seen or dismissed, just enough to ask
+ * "is this different from last time". It lives under /tmp rather than the
+ * flash drive: this box's writes are worth avoiding for something this
+ * cheap, and losing the stamp on reboot only means the next look quietly
+ * re-establishes a baseline instead of wrongly calling every already-there
+ * container new.
+ */
+define('STAXX_LOOSE_WATCH_FILE', '/tmp/staxx/loose-seen');
+
+/** @return string[] names that are loose now but were not in the last stamp. */
+function staxx_loose_watch_new(): array {
+  $now = array_map(fn($row) => $row['name'], staxx_import_loose());
+  sort($now);
+
+  $prev = @file_get_contents(STAXX_LOOSE_WATCH_FILE);
+
+  if (!is_dir('/tmp/staxx')) @mkdir('/tmp/staxx', 0755, true);
+  @file_put_contents(STAXX_LOOSE_WATCH_FILE, implode("\n", $now));
+
+  // No stamp yet: nothing to compare against, so this look just sets the
+  // baseline rather than reporting every pre-existing loose container as a
+  // fresh arrival.
+  if ($prev === false) return [];
+
+  $before = $prev === '' ? [] : explode("\n", $prev);
+  return array_values(array_diff($now, $before));
+}
+
 /* ------------------------------------------------------------------ auth -- */
 
 /*
@@ -234,16 +276,35 @@ switch ($action) {
     if (!staxx_save_stack($name, $body, $error)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
+
+    // Phase D — the exit route. Only a brand-new stack can be a caught
+    // install, so an edit of an existing one never stamps a template even if
+    // a stale 'handoff' field somehow arrived with it. Stamped only now that
+    // the stack itself is confirmed on disk — a template for a save that
+    // failed would be a lie — and a stamp failing must never fail the save
+    // that is already sitting there working; it is reported, not rolled back.
+    $templateNote = '';
+    if ($isNew && ($_POST['handoff'] ?? '') !== '') {
+      // staxx_import_stamp_template() reads the handoff through
+      // staxx_handoff_read(), which is where the id's shape is actually
+      // checked — a malformed id lands the same as one nothing wrote: no
+      // template, no error, nothing to show.
+      $templateError = '';
+      $templatePath  = staxx_import_stamp_template((string)$_POST['handoff'], $templateError);
+      if ($templatePath === '' && $templateError !== '') $templateNote = $templateError;
+    }
+
     // Report back what actually landed on disk, so "saved" is a fact rather
     // than an assumption, and the fingerprint of what is now there so a
     // second save in the same session is not refused against its own write.
     $written = staxx_find_compose_file(staxx_stack_dir($name));
     staxx_reply([
-      'ok'          => true,
-      'name'        => $name,
-      'file'        => $written,
-      'bytes'       => $written !== '' ? (int)@filesize($written) : 0,
-      'fingerprint' => staxx_stack_fingerprint($name),
+      'ok'           => true,
+      'name'         => $name,
+      'file'         => $written,
+      'bytes'        => $written !== '' ? (int)@filesize($written) : 0,
+      'fingerprint'  => staxx_stack_fingerprint($name),
+      'templateNote' => $templateNote,
     ]);
 
   /* ---- check a compose file without saving it ----
@@ -744,7 +805,7 @@ switch ($action) {
     // flipped on its own Docker page shows up here rather than being quietly
     // overwritten the next time something is dragged.
     staxx_autostart_sync($stacks);
-    staxx_reply([
+    $reply = [
       'ok'      => true,
       'html'    => staxx_render_rows(staxx_folder_layout($stacks), staxx_can_run()),
       // The "Move to folder" list in the context menu is built from this, so it
@@ -755,7 +816,14 @@ switch ($action) {
         fn($f) => ['id' => $f, 'name' => $f],
         staxx_folder_names()
       ),
-    ]);
+    ];
+    // Phase F's safety net — see staxx_loose_watch_new() for why this rides
+    // the expensive refresh rather than the cheap one. Left out entirely
+    // when quiet, the same wire contract the 'read' action's 'moved' field
+    // uses above.
+    $looseNew = staxx_loose_watch_new();
+    if ($looseNew !== []) $reply['looseNew'] = $looseNew;
+    staxx_reply($reply);
 
   /* ---- PLAN_45 phase 3: every row's update pill, plus the summary line ----
    *
@@ -1647,6 +1715,37 @@ switch ($action) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
     staxx_reply(['ok' => true, 'name' => $name]);
+
+  /* ---- read back one Add Container handoff ----
+   *
+   * See staxx_handoff_read() in Import.php. Only the decoded template record
+   * goes to the browser — that is all the converter needs, and the original
+   * XML is the server's own business at save time, not the browser's. A
+   * malformed or expired id is the normal case of a handoff nobody opened in
+   * time, not a fault worth alarming anyone over.
+   *
+   * xmlTemplate/xmlTemplateAvailable (PLAN_63 section 16) ARE the browser's
+   * business, unlike the XML: they are what the caught-install banner's
+   * "Let Unraid install this instead" escape hatch is built from, and
+   * whether it is shown at all.
+   */
+  case 'handoff-read':
+    $app = staxx_handoff_read((string)($_POST['id'] ?? ''));
+    // A file that read back without a template in it is as useless as no file
+    // at all, so it is refused the same way rather than handing the converter
+    // a null and letting it fail somewhere less obvious.
+    if ($app === null || !is_array($app['app'] ?? null)) {
+      staxx_reply(['ok' => false, 'error' => 'This install link has expired. Go back to Apps and '
+                                            . 'install it again.']);
+    }
+    $xmlTemplate = (string)($app['xmlTemplate'] ?? '');
+    staxx_reply([
+      'ok' => true,
+      'app' => $app['app'],
+      'kind' => (string)($app['kind'] ?? 'default'),
+      'xmlTemplate' => $xmlTemplate,
+      'xmlTemplateAvailable' => $xmlTemplate !== '' && staxx_handoff_template_available($xmlTemplate),
+    ]);
 }
 
 staxx_reply(['ok' => false, 'error' => 'Unknown action "'.$action.'".'], 400);

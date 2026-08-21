@@ -20,6 +20,12 @@ define('STAXX_CFG',     STAXX_CFG_DIR.'/'.STAXX_PLUGIN.'.cfg');
 // parsing the config, because Cond runs on every render of every page.
 define('STAXX_MARKER_HEADER_MENU', STAXX_CFG_DIR.'/header_menu');
 
+// Same projection, for TAKEOVER_DOCKER_TAB. Stacks.page and StaXX.page's own
+// Cond expressions test both marker files directly rather than the config, so
+// staxx_view_url() below does the same — reading STAXX_CFG here instead would
+// risk disagreeing with which page Cond actually put live.
+define('STAXX_MARKER_TAKEOVER_DOCKER_TAB', STAXX_CFG_DIR.'/takeover_docker_tab');
+
 // The one directory the volume picker will look inside. Everything a container
 // should be given lives under here, and confining the picker to it means the
 // only path the browser can ask about is one the user could already see in
@@ -82,6 +88,19 @@ function staxx_cfg(): array {
 
 function staxx_cfg_bool(string $key): bool {
   return (staxx_cfg()[$key] ?? 'false') === 'true';
+}
+
+/**
+ * Where a request that wants StaXX's own view of the world should land —
+ * '/StaXX' once either the header-menu button or the Docker-tab takeover is
+ * on, '/Docker/Stacks' otherwise. Matches the marker-file test Stacks.page
+ * and StaXX.page's own Cond expressions make, so a caller such as the
+ * AddContainer shadow does not re-derive it and risk landing on a page that
+ * Cond has actually made unavailable.
+ */
+function staxx_view_url(): string {
+  return (is_file(STAXX_MARKER_HEADER_MENU) || is_file(STAXX_MARKER_TAKEOVER_DOCKER_TAB))
+    ? '/StaXX' : '/Docker/Stacks';
 }
 
 /**

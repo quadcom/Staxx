@@ -71,6 +71,24 @@
   var binPut   = document.getElementById('staxx-binfile-put');
   var sanitiseBox = document.getElementById('staxx-sanitise');
   var sanitiseNote = document.getElementById('staxx-sanitise-note');
+  var installNote  = document.getElementById('staxx-install-note');
+  // PLAN_63 section 16: the caught-install banner's own way out. Filled in
+  // and shown/hidden by caOpenConverted() below, never by markup here.
+  var installEscape = document.getElementById('staxx-install-note-escape');
+  // PLAN_63 Phase D: the id of a caught install waiting to be stamped as an
+  // Unraid template once its stack is saved — see the handoff hook at the end
+  // of this file. Cleared the instant it has done its one job, and also by
+  // openEditor() itself (below), so it can never attach itself to a stack it
+  // had nothing to do with.
+  var pendingHandoffId = '';
+  // PLAN_63 Phase E item 19: whether the caught install now open is a
+  // converted edit — the one caught-install kind with a real Unraid
+  // container still running the old way behind it, so a save worth offering
+  // the handover for. Lives and dies alongside pendingHandoffId above.
+  var pendingHandoffEdit = false;
+  var pageNotice   = document.getElementById('staxx-page-notice');
+  var pageNoticeIcon   = pageNotice ? pageNotice.querySelector('.fa') : null;
+  var pageNoticeAction = document.getElementById('staxx-page-notice-action');
   var refNote      = document.getElementById('staxx-refnote');
   var gapNote     = document.getElementById('staxx-required-note');
   var errorBox    = document.getElementById('staxx-error');
@@ -853,6 +871,37 @@
     errorBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
+  // showError() writes into the editor dialog's footer, so it is invisible
+  // whenever that dialog is not open. This is the same thing said by the page
+  // itself, for callers that can fire before any dialog exists — an install
+  // caught on Unraid's Add Container page that would not convert, or (Phase
+  // F) a container found belonging to no stack.
+  //
+  // `action`, when given, turns this from an error into an offer: the red
+  // icon and border become the same accent used everywhere else on the page,
+  // and a button appears that runs action.run when clicked. Every existing
+  // caller passes no action and gets exactly the old error styling.
+  function showPageNotice(message, action) {
+    if (!pageNotice) return;
+    pageNotice.querySelector('div').textContent = message;
+    pageNotice.classList.toggle('staxx-notice--bad', !action);
+    if (pageNoticeIcon) {
+      pageNoticeIcon.className = 'fa ' + (action ? 'fa-info-circle' : 'fa-times-circle');
+    }
+    if (pageNoticeAction) {
+      if (action) {
+        pageNoticeAction.textContent = action.label;
+        pageNoticeAction.onclick = action.run;
+        pageNoticeAction.hidden = false;
+      } else {
+        pageNoticeAction.hidden = true;
+        pageNoticeAction.onclick = null;
+      }
+    }
+    pageNotice.hidden = false;
+    pageNotice.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
   function clearError() {
     errorBox.textContent = '';
     errorBox.hidden = true;
@@ -1548,6 +1597,26 @@
     return out;
   }
 
+  // The one exclusion rule both a declared network's own dropdown
+  // (netChoices()) and a service's network-row dropdown (fromChoice(),
+  // PLAN_64) need: every server network, split into bridge / ordinary /
+  // host / none, leaving out whatever name is in `taken`. Kept as one
+  // function so the rule is written once — copying it into a second place
+  // is exactly what PLAN_64 says not to do.
+  function splitServerNets(taken) {
+    var bridge = [], others = [], host = [], none = [];
+    for (var i = 0; i < ALL_NETS.length; i++) {
+      var name = ALL_NETS[i][0];
+      if (taken[name]) continue;
+      if (name === 'bridge') bridge.push([name, name]);
+      else if (name === 'host') host.push([name, name]);
+      else if (name === 'none') none.push([name, name]);
+      else others.push([name, name]);
+    }
+    others.sort(function (a, b) { return a[0].localeCompare(b[0]); });
+    return { bridge: bridge, others: others, host: host, none: none };
+  }
+
   // The order a declared network's own name dropdown offers the server's
   // networks in: the default first, custom ones next alphabetically, then
   // the two special modes nobody usually means to declare, last. Built from
@@ -1567,18 +1636,8 @@
       if (declared[d] !== ownName) taken[declared[d]] = true;
     }
 
-    var bridge = [], others = [], host = [], none = [];
-    for (var i = 0; i < ALL_NETS.length; i++) {
-      var name = ALL_NETS[i][0];
-      if (taken[name]) continue;
-      if (name === 'bridge') bridge.push([name, name]);
-      else if (name === 'host') host.push([name, name]);
-      else if (name === 'none') none.push([name, name]);
-      else others.push([name, name]);
-    }
-    others.sort(function (a, b) { return a[0].localeCompare(b[0]); });
-
-    return bridge.concat(others, host, none);
+    var split = splitServerNets(taken);
+    return split.bridge.concat(split.others, split.host, split.none);
   }
 
   // Images already on this server (IMAGES, up near choiceFor()) and, per
@@ -1602,6 +1661,29 @@
     var names = safeRefNames((MODEL && MODEL.declared && MODEL.declared[f.from]) || [], f.from, f.service);
     var options = [];
     for (var i = 0; i < names.length; i++) options.push([names[i], names[i]]);
+
+    // PLAN_64: a service's own network row also offers this server's real
+    // networks, not just the ones this file already declares — picking one
+    // declares it too (see commit()'s networks branch below), which is the
+    // whole point of this plan. bridge/host/none are left out: bridge is not
+    // what compose's `default` means (section 5), and host/none are modes,
+    // not networks to join (Phase C's job, not this one). names already
+    // covers every declared network plus the synthetic `default`, first —
+    // splitServerNets()'s own exclusion is enough to keep a declared one
+    // from appearing twice.
+    if (f.from === 'networks') {
+      var taken = Object.create(null);
+      for (var t = 0; t < names.length; t++) taken[names[t]] = true;
+      var others = splitServerNets(taken).others;
+      if (others.length) {
+        for (var o = 0; o < others.length; o++) {
+          options.push([others[o][0], others[o][0] + ' (on this server, not in this file yet)']);
+        }
+        return { hint: 'a name already declared in this file, or one of this server’s own networks',
+                 options: options };
+      }
+    }
+
     return { hint: 'a name already declared in this file', options: options };
   }
 
@@ -6605,19 +6687,56 @@
     });
   }
 
-  // The shared tail of the import path: convert an already-fetched record and
-  // open the editor on it. caAdd() reaches this after its own fetch; the
-  // details window's own Add button reaches it with the record caDetails()
-  // already fetched, so pressing Add in there never asks the server twice.
-  function caImport(ordinal, app) {
-    if (!window.StaxxCA) {
-      caMsg.textContent = 'The app converter has not loaded. Reload the page and try again.';
-      return;
-    }
+  // Every top-level stack name the page's own table already has rows for —
+  // read off the rows themselves, never a server round trip, since the
+  // browser already has this the moment the page has drawn. Matches what
+  // staxx_import_taken_names() checks server-side: only folder === '' stacks
+  // (data-stack-row carries the full rel path, "Media/jellyfin" included, so
+  // anything with a slash is filtered out here rather than counted).
+  function staxxTakenNames() {
+    var taken = {};
+    document.querySelectorAll('[data-stack-row]').forEach(function (el) {
+      var n = el.dataset.stackRow || '';
+      if (n && n.indexOf('/') === -1) taken[n] = true;
+    });
+    return taken;
+  }
 
-    var appName = 'This app';
-    for (var j = 0; j < caApps.length; j++) {
-      if (String(caApps[j].i) === String(ordinal)) { appName = caApps[j].n; break; }
+  // CA's own answer to a name already in use: try "-1", "-2", … until one is
+  // free. Reused rather than invented (PLAN_63 item 18), so a StaXX reinstall
+  // behaves the way this already looks to anyone who has done it in Unraid.
+  function staxxFreeName(name, taken) {
+    if (!taken[name]) return name;
+    var n = 1;
+    while (taken[name + '-' + n]) n++;
+    return name + '-' + n;
+  }
+
+  // The shared tail of the import path: convert an already-fetched record and
+  // open the editor on it. caImport() reaches this after closing the CA
+  // dialog; the handoff hook at the end of this file reaches it with no CA
+  // dialog ever having been open.
+  //
+  // handoffId (PLAN_63 Phase D) is only ever passed by that handoff hook — a
+  // StaXX-native import from the app store has no Unraid template to stamp,
+  // so caImport() leaves it undefined and openEditor() above has already
+  // cleared pendingHandoffId to '' before this runs. kind is that same hook's
+  // 'default'/'user'/'edit' (PLAN_63 Phase E) — also undefined from caImport().
+  //
+  // Both failures below happen before openEditor(), so showError() would put
+  // them in a dialog footer nobody can see — they go to the page instead.
+  // Everything after openEditor() can safely use showError(), because by then
+  // the dialog holding that box is open.
+  //
+  // escapeUrl (PLAN_63 section 16) is the "Let Unraid install this instead"
+  // link's target, or '' to hide it — only ever set by the handoff hook,
+  // and only when a real original request survives behind this. Neither
+  // caImport() nor caAdd() below ever pass one, so a plain Community
+  // Applications import (never a caught install) never shows it.
+  function caOpenConverted(app, label, intro, handoffId, kind, escapeUrl) {
+    if (!window.StaxxCA) {
+      showPageNotice('The app converter has not loaded. Reload the page and try again.');
+      return;
     }
 
     // A single odd template must not take the page down — convert() runs
@@ -6627,15 +6746,38 @@
     try {
       result = window.StaxxCA.convert(app, { appdataRoot: APPDATA });
     } catch (e) {
-      caMsg.textContent = appName + ' could not be converted: ' + (e && e.message ? e.message : e);
+      showPageNotice(label + ' could not be converted: ' + (e && e.message ? e.message : e));
       return;
     }
 
-    // Closing the search dialog also force-closes the details window, via
-    // caModal's own 'close' handler below — so this needs no opinion on
-    // whether that dialog happens to be open too.
-    caModal.close();
-    openEditor(result.name, result.yaml, true, '');
+    // A reinstall never touches the stack already running this app (PLAN_65
+    // decision 1) — so it needs its own name rather than letting the save
+    // fail against the name already taken, with nowhere obvious to go from
+    // a form that has only just opened.
+    var openName = kind === 'user' ? staxxFreeName(result.name, staxxTakenNames()) : result.name;
+
+    openEditor(openName, result.yaml, true, '');
+    if (handoffId) pendingHandoffId = handoffId;
+    pendingHandoffEdit = kind === 'edit';
+
+    // Not folded into the warnings below: this is context, not a problem, and
+    // the error box is red. openEditor() hides this banner again on its way
+    // in, so it never survives into the next stack someone opens.
+    if (intro) {
+      installNote.querySelector('div').textContent = intro;
+      installNote.hidden = false;
+    }
+    // Set unconditionally, whether or not intro fired above — every caller
+    // that reaches this point has already decided one way or the other.
+    if (installEscape) {
+      if (escapeUrl) {
+        installEscape.href = escapeUrl;
+        installEscape.hidden = false;
+      } else {
+        installEscape.hidden = true;
+        installEscape.removeAttribute('href');
+      }
+    }
 
     // Two different lists, two different headlines. warnings are settings
     // that had nothing to convert TO — a real gap worth calling a failure.
@@ -6645,18 +6787,35 @@
     // the body too, so which list said what is never in doubt.
     var warnings = result.warnings || [];
     var notes    = result.notes || [];
+    var bits = [];
     if (warnings.length && notes.length) {
-      showError('This app converted, but some settings had no compose equivalent, and some ' +
+      bits.push('This app converted, but some settings had no compose equivalent, and some ' +
                  'values were not in the template and have been filled in. Check these before saving:\n\n' +
                  'No compose equivalent:\n' + warnings.join('\n') +
                  '\n\nFilled in:\n' + notes.join('\n'));
     } else if (warnings.length) {
-      showError('This app converted, but some of its settings had no compose equivalent. ' +
+      bits.push('This app converted, but some of its settings had no compose equivalent. ' +
                  'Check these before saving:\n\n' + warnings.join('\n'));
     } else if (notes.length) {
-      showError('This app converted. Some values were not in the template and have been filled in. ' +
+      bits.push('This app converted. Some values were not in the template and have been filled in. ' +
                  'Check these before saving:\n\n' + notes.join('\n'));
     }
+    if (bits.length) showError(bits.join('\n\n'));
+  }
+
+  // caAdd()/the details window's own Add button reach this after their own
+  // fetch, with app already in hand.
+  function caImport(ordinal, app) {
+    var appName = 'This app';
+    for (var j = 0; j < caApps.length; j++) {
+      if (String(caApps[j].i) === String(ordinal)) { appName = caApps[j].n; break; }
+    }
+
+    // Closing the search dialog also force-closes the details window, via
+    // caModal's own 'close' handler below — so this needs no opinion on
+    // whether that dialog happens to be open too.
+    caModal.close();
+    caOpenConverted(app, appName);
   }
 
   function caAdd(ordinal) {
@@ -8899,6 +9058,14 @@
     sanitiseBox.checked = false;
     sanitiseNote.hidden = true;
     modal.dataset.sanitised = '0';
+
+    // Yesterday's caught install is meaningless against today's stack.
+    // caOpenConverted() shows this again, after this call, for the one open
+    // that really is a caught install — and reattaches pendingHandoffId the
+    // same way, immediately below this call, for the same reason.
+    installNote.hidden = true;
+    pendingHandoffId = '';
+    pendingHandoffEdit = false;
     yamlPane.readOnly = false;
 
     // A new stack starts with one service rather than an empty box. The Add
@@ -11149,7 +11316,7 @@
   // The common ending once the compose file is on disk and no directory move
   // is needed — a brand new stack, or an existing one whose leaf did not
   // change.
-  function finishSave(name, thenStart) {
+  function finishSave(name, thenStart, thenHandover) {
     saveBtn.disabled = false;
     startBtn.disabled = startBtnWasDisabled;
 
@@ -11160,7 +11327,15 @@
     // the table is refreshed first and the command issued from there.
     closeEditor();
     refreshRows(function () {
+      // PLAN_63 Phase E item 19: a converted edit's save is the one case with
+      // a real Unraid container still running the old way behind it, so it
+      // is worth offering straight away — openTakeover() is the same
+      // call-and-confirm the row's own "Take over and start" menu item
+      // already uses, reused rather than rebuilt. thenStart wins if both
+      // somehow applied, the same priority "start after saving" already had
+      // over the rename-recreate offer below.
       if (thenStart) run(name, 'up', afterRun('up'));
+      else if (thenHandover) openTakeover(name, stackLabel(name), false);
       else if (offer) offerRecreate(name);
     });
   }
@@ -11281,8 +11456,16 @@
     // is compared against the box, not against the file on disk. fingerprint
     // is what the editor started from — the server refuses the write outright
     // if that no longer matches what is on disk (see PLAN_60 3.1).
-    call('save', { name: name, body: withEol(body, composeEol), 'new': modal.dataset.new,
-                    fingerprint: fingerprintAtOpen })
+    //
+    // handoff (PLAN_63 Phase D) rides along only for a new stack — an edit
+    // never stamps a template regardless, but there is also nothing to send:
+    // pendingHandoffId only survives past openEditor() for the one open that
+    // really is a caught install, which is always a new stack.
+    var payload = { name: name, body: withEol(body, composeEol), 'new': modal.dataset.new,
+                     fingerprint: fingerprintAtOpen };
+    if (isNew && pendingHandoffId) payload.handoff = pendingHandoffId;
+
+    call('save', payload)
       .then(function (res) {
         if (!res.ok) {
           saveBtn.disabled = false;
@@ -11291,6 +11474,26 @@
           markSaveError(res.error);
           return;
         }
+
+        // finishSave() below always closeEditor()s, so the install banner
+        // would vanish with it unseen — the page-level notice is the surface
+        // that survives that close. Silent when there is nothing to say: a
+        // template written without incident is not news.
+        // Cleared here rather than beside the send, so it survives a refused
+        // save — a name clash, a conflict — and the retry still stamps. The
+        // editor is still open on the same caught install either way, and an
+        // app that lost its exit route because the first save needed a
+        // different name would lose it silently.
+        pendingHandoffId = '';
+
+        // Read before clearing, same reasoning: a refused save must still
+        // leave the offer waiting for the retry that actually lands.
+        // PLAN_63 Phase E item 19 — offered once the save that follows
+        // finally succeeds, never before.
+        var offerHandover = isNew && pendingHandoffEdit;
+        pendingHandoffEdit = false;
+
+        if (res.templateNote) showPageNotice(res.templateNote);
 
         // Trust nothing: the server reports the path and size it actually
         // wrote. res.bytes == null is what "did nothing" looks like — a
@@ -11312,7 +11515,7 @@
         fingerprintAtOpen = res.fingerprint || '';
 
         var oldLeaf = openedName.slice(openedName.lastIndexOf('/') + 1);
-        if (isNew || leaf === oldLeaf) { finishSave(name, thenStart); return; }
+        if (isNew || leaf === oldLeaf) { finishSave(name, thenStart, offerHandover); return; }
 
         renameThenFinish(name, leaf, thenStart);
       });
@@ -12803,6 +13006,18 @@
         return;
       }
 
+      // Phase F's safety net: the server only sends this when it saw a
+      // container appear that belongs to no stack — see
+      // staxx_loose_watch_new() in action.php. One banner regardless of how
+      // many arrived, and it only offers the importer; nothing here adopts
+      // anything on its own.
+      if (res.looseNew && res.looseNew.length) {
+        var found = res.looseNew.length === 1
+          ? 'A container ("' + res.looseNew[0] + '") was found running outside any stack.'
+          : res.looseNew.length + ' containers were found running outside any stack.';
+        showPageNotice(found, { label: 'Review in Import', run: importOpen });
+      }
+
       // Captured right before the swap, not any earlier — the request can
       // sit on the network for a while, and whatever the user was focused
       // on when it started is not necessarily still true when it lands.
@@ -13966,6 +14181,25 @@
             'for there to be any way in.'
     },
     {
+      key: 'CATCH_INSTALLS', control: 'choice', label: 'Installs from the Apps page',
+      choices: [
+        ['true',   'Bring them into StaXX'],
+        ['prompt', 'Ask first'],
+        ['false',  'Leave them to Unraid']
+      ],
+      help: 'When an app is installed from Unraid\'s own Apps page, StaXX steps in and makes it a ' +
+            'stack instead of an Unraid container; pressing Add Container by hand does the same. ' +
+            '"Ask first" shows an offer before doing either, so nothing is converted without a yes ' +
+            '— the caught-install page itself also offers a way to send a "Bring them into StaXX" ' +
+            'install back to Unraid instead. Opening an existing Unraid container for editing is ' +
+            'only ever offered regardless of this setting — decline and you stay in Unraid\'s own ' +
+            'form, unchanged, and the app can still be brought over later. StaXX also leaves an ' +
+            'Unraid template behind for each app it installs this way, so you can stop using StaXX ' +
+            'and Unraid will still see your apps — the template describes the app as it was ' +
+            'installed, not as it is now. Turning this off puts Unraid\'s own install route back ' +
+            'exactly as it was, and nothing already installed changes.'
+    },
+    {
       key: 'ICON_FETCH', control: 'choice', label: 'Container icons',
       choices: [
         ['true',  'Download them automatically'],
@@ -14310,9 +14544,9 @@
         return;
       }
 
-      // Neither ICON_FETCH nor IMAGE_LOOKUP — the only two settings that
-      // never set reload — change anything already on screen, so closing is
-      // the whole of a successful save.
+      // Every setting that does not set reload takes effect on the server
+      // side alone, so none of them change anything already on screen and
+      // closing is the whole of a successful save.
       settingsModal.close();
     });
   }
@@ -17011,4 +17245,115 @@
   // The signpost page (Settings → StaXX) links here to open the
   // panel directly, for whoever followed it from the Plugins list.
   if (location.hash === '#settings') openSettings();
+
+  // PLAN_63 Phase C: an install caught on Unraid's own Add Container page
+  // lands here with '?staxx-install=<id>' — see shadow/AddContainer.page.tmpl
+  // and staxx_handoff_write() in Import.php. Section 16 part 3 adds a second,
+  // independent flag, '&staxx-always=1': the prompt page's own "always
+  // capture from now on" tickbox, ticked on the way here. Either can arrive
+  // alone (a plain caught install; a hand-pressed Add Container with nothing
+  // to hand off) or together.
+  (function () {
+    var installMatch = location.search.match(/(?:^\?|&)staxx-install=([^&]*)/);
+    var alwaysMatch  = location.search.match(/(?:^\?|&)staxx-always=1(?:&|$)/);
+    if (!installMatch && !alwaysMatch) return;
+
+    // Stripped from the address bar before anything else runs, not after —
+    // a refresh must never be able to replay either flag (staxx_handoff_read()
+    // deletes nothing, but re-fetching an id that already opened the editor
+    // would be confusing at best, and re-saving the setting on every reload
+    // would be a strange thing for someone to notice happening).
+    var url = location.pathname + location.search
+      .replace(/(?:^\?|&)staxx-install=[^&]*/, '')
+      .replace(/(?:^\?|&)staxx-always=1/, '')
+      .replace(/^&/, '?') + location.hash;
+    // window.history, spelled out: this file declares its own `history` (the
+    // stats graphs' per-project sample arrays) and the whole file is one
+    // function, so the bare name finds that object instead of the browser's.
+    // Nothing catches this — it parses, and the name is declared.
+    window.history.replaceState(null, '', url);
+
+    // The tickbox writes nothing itself — the offer page is a GET, and
+    // Unraid's CSRF gate covers POST only, so a link that wrote config would
+    // be a link anyone could be tricked into following. It only rides this
+    // flag to here; the actual write goes through the same POSTed,
+    // CSRF-gated settings-save the panel itself uses. Reported on screen
+    // only once this promise resolves true — never optimistically.
+    var alwaysSaved = alwaysMatch
+      ? call('settings-save', { CATCH_INSTALLS: 'true' }).then(function (res) { return !!res.ok; })
+                                                           .catch(function () { return false; })
+      : null;
+
+    if (!installMatch) {
+      // Add Container pressed by hand, with the tickbox used and nothing
+      // else — no app, so no editor and no install banner to say it on.
+      if (alwaysSaved) {
+        alwaysSaved.then(function (ok) {
+          if (ok) {
+            showPageNotice('Installs from the Apps page will now be brought into StaXX ' +
+              'automatically.', { label: 'Settings', run: openSettings });
+          }
+        });
+      }
+      return;
+    }
+
+    var id = installMatch[1];
+    // Cannot have come from us otherwise — ignored silently rather than
+    // reported, since a stray parameter typed by hand is not an error.
+    if (!/^[0-9a-f]{32}$/.test(id)) return;
+
+    call('handoff-read', { id: id }).then(function (res) {
+      if (!res.ok) { showError(res.error); return; }
+      // 'default' (a fresh Apps install), 'user' (Reinstall From Previous
+      // Apps) or 'edit' (converted off the Phase E offer) — see
+      // AddContainer.page.tmpl's $staxx_kind and staxx_handoff_write() in
+      // Import.php. Only changes the banner wording below and, for 'user',
+      // is read again inside caOpenConverted() to dodge a name already taken.
+      var kind = res.kind || 'default';
+      var intro;
+      if (kind === 'user') {
+        intro = 'This is a second copy of an app already here, installed the same way Unraid’s ' +
+          'own "Reinstall From Previous Apps" would — as a new stack, leaving the one already ' +
+          'running untouched. Check for anything the two would share, such as appdata, before ' +
+          'starting this one.';
+      } else if (kind === 'edit') {
+        intro = 'This existing container is being converted to a stack. Save it to finish — ' +
+          'StaXX will then offer to switch the running container over to it.';
+      } else {
+        intro = 'This install came in from Unraid’s Apps page. StaXX has converted it to a stack ' +
+          'below — save it to install the app.';
+      }
+
+      // Section 16's escape hatch: only offered when a real original request
+      // survives behind this, and only while the file it names is still
+      // there for Unraid to read — once Community Applications has cleaned
+      // up its temp copy there is nothing to hand back, and a link that
+      // leads to Unraid failing is worse than no link at all.
+      var escapeUrl = '';
+      if (res.xmlTemplate) {
+        if (res.xmlTemplateAvailable) {
+          escapeUrl = '/Docker/AddContainer?xmlTemplate=' + encodeURIComponent(res.xmlTemplate) +
+            '&staxx=skip';
+        } else {
+          intro += ' Handing this back to Unraid isn’t possible any more — the file it came from ' +
+            'has been cleaned up.';
+        }
+      }
+
+      // handoffId (id) is passed through so the save that follows can ask the
+      // server to stamp this same handoff's original XML into an Unraid
+      // template — see staxx_import_stamp_template() in Import.php.
+      caOpenConverted(res.app, 'This app', intro, id, kind, escapeUrl);
+
+      if (alwaysSaved) {
+        alwaysSaved.then(function (ok) {
+          if (ok) {
+            installNote.querySelector('div').textContent += ' Installs like this will now be ' +
+              'brought into StaXX automatically — change this back any time in Settings → StaXX.';
+          }
+        });
+      }
+    });
+  })();
 })();

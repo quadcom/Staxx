@@ -47,6 +47,13 @@ function staxx_settings_keys(): array {
   return [
     'HEADER_MENU'         => ['type' => 'choice', 'default' => 'false', 'choices' => ['false', 'true']],
     'TAKEOVER_DOCKER_TAB' => ['type' => 'choice', 'default' => 'false', 'choices' => ['false', 'true']],
+    // Three positions, not two: 'true' catches silently, 'prompt' asks first
+    // (the same offer page an existing container's Edit already uses),
+    // 'false' leaves Unraid's own route untouched. true/false are kept rather
+    // than renamed to on/off because both are already written into every
+    // config this has shipped to; 'prompt' is simply added beside them —
+    // read as an oversight only if you don't know that.
+    'CATCH_INSTALLS'      => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'prompt', 'false']],
     'STACK_ROOT'          => ['type' => 'path',   'default' => '/boot/config/plugins/staxx/stacks'],
     'ARCHIVE_ROOT'        => ['type' => 'path',   'default' => staxx_archive_root()],
     'ICON_FETCH'          => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
