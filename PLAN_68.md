@@ -492,3 +492,16 @@ Medium. Four separable pieces, in this order:
 
 Pieces 1 and 2 are worth landing before 3 and 4 exist, because the move is the part that can lose
 something and it can be proved without any interface at all.
+
+### Piece 1 landed 2026-08-22, and found one more hole
+
+Both directions of the overlap rule are now enforced, and the help text says what the measurements
+showed rather than what was believed before them.
+
+**Outstanding, found while doing it:** each direction is checked against the **stored** value of the
+other, read through a cached config. So a single save that changes both paths at once compares each
+new value against the other's *old* one, and an overlap between the two new values passes both
+checks. Narrow — it needs both changed in one submit — but it is a real hole in the rule just
+completed. The fix is to validate the two as a pair against what is actually being submitted, which
+is a change to how the validator is called rather than a patch inside it. **Not done; decide
+separately.**
