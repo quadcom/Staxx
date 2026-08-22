@@ -104,7 +104,7 @@ forty-five seconds after the last one goes away.
 Opening a stack gives you three ways to look at the same file: the **form**, the **file**, or both
 side by side with the highlight following you between them.
 
-![Form and file side by side](docs/images/editor-split.jpg)
+![Form and file side by side, with the stack's other files as tabs above](docs/images/editor-split.jpg)
 
 The form is drawn from the file. More than twenty groups of settings are covered — the image and its
 web page port, networks, ports, folders, variables, devices, labels, health checks, resource limits,
@@ -133,8 +133,17 @@ Nothing in your file is ever invisible.
 **Buttons where typing is the wrong tool.** Pick a folder from the server, pick a timezone off a
 world map, pick a device from the hardware this server actually has.
 
-**Everything beside the compose file is editable too** — notes, certificates, settings files — each
-one a tab. Add a settings-shaped file and StaXX offers to wire it in for you.
+**Everything beside the compose file is a tab.** The strip above the file, visible in the picture, is
+every file in the stack's folder — the compose file itself, the `.env` file holding the values kept
+out of it, an override file where a stack has one, and anything else you have put there. Docker
+treats a compose file and its override as one thing, so StaXX does too.
+
+You can create a file, rename it, delete it, download it, or **upload** one — several at once if you
+like. **Certificates, keys and other binary files are expressly allowed**, and are the reason uploads
+exist at all: a reverse proxy needs its certificate to live beside the compose file that mounts it.
+Anything that is not text gets a panel showing its name and size, with buttons to download it or
+replace it, rather than being mangled into a text box it was never going to survive. Add a
+settings-shaped file and StaXX offers to wire it in for you.
 
 **Asking for help without handing over your passwords.** One switch hides every value marked as a
 secret, in the form *and* in the file, so you can screenshot your own stack for a forum thread. While
