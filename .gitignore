@@ -34,3 +34,7 @@ desktop.ini
 
 # Finished plans — kept on disk for reference, not carried in the repository
 /completed-plans/
+
+# Working plans — kept on disk while a piece is being built, not carried in the repository
+/PLAN.md
+/PLAN_*.md
