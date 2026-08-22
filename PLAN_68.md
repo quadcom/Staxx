@@ -256,3 +256,51 @@ So the order within Part C changes: the autostart bridge moves from *first, beca
 configuration* to **still worth doing, because it hides a change** — and `staxx_scan_stacks()`
 itself becomes the one that matters most, since the prune bug was the real instance of this and the
 bridge only ever looked like one.
+
+---
+
+## Adrian's decisions, 2026-08-22 — after the measurements above
+
+1. **Stacks go on `m2cache`.** Mirrored NVMe, a direct filesystem rather than the overlay, and
+   mounted before Docker. Compose files are tiny, so redundancy and directness decided it, not room.
+2. **His own 16 stacks stay on flash for now.** The chooser is built first; his box is not migrated
+   as a side effect of building it.
+3. **But the chooser must offer to move what is already there** — that is part of the feature, not a
+   one-off migration script, and it is the part that needs testing.
+4. **The move is copy, verify, then delete.** Verbatim: *"a byte-for-byte copy then delete after a
+   success test passes."* Never a rename, never a `mv`, and nothing removed from the old location
+   until the new one has been proved good.
+5. **Part A waits** until this lands, as sequenced.
+
+### What decision 4 rules out, and why it matters
+
+A rename is a single step that either happens or does not — which sounds safer and is not, because
+across two filesystems it is not a rename at all: the tools fall back to copy-then-delete internally,
+**with no gate between the two halves**. An interrupted one leaves a partial copy at the destination
+and a deletion already begun at the source. Doing the two halves explicitly puts a check between
+them, and that check is the whole point.
+
+The success test has to be stated, not assumed. Weakest acceptable: **every file present, every size
+equal, every content hash equal**, and the count of files matching. Anything less than a content
+comparison is not "byte-for-byte" and should not claim to be.
+
+Two things the move must carry beyond the compose file: whatever else is in the stack's folder — the
+promise is that a stack is a *directory* — and the fact that **a companion record will live there
+later**, so the move must copy the folder wholesale rather than the files it recognises.
+
+### The one thing that will look like a failure and is not
+
+A moved stack keeps its compose project name, but Docker recorded the **old** path. This is already
+solved: what compose reports is indexed three ways, including by the tail of the path, which a move
+does not change. **The acceptance test is that his running containers keep working across the move**
+— untouched, unrestarted, still showing as up. If they read as stopped, that index is where to look
+first, not the move.
+
+### Still open, and not decided here
+
+1. **Where archives go.** Already off flash, on the overlay. Moving them to sit beside the stacks
+   satisfies the same-parent-different-folder rule neatly, but archives are zips and can be large,
+   which is the one place capacity does argue. Ask before assuming.
+2. **What the chooser offers on a machine with no pool at all** — array-only, or booted from an
+   internal drive. The confirmed-flash path exists for exactly this, but the wording matters.
+3. Whether declining the offered move can be revisited later, or is a one-time offer.
