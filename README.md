@@ -307,7 +307,7 @@ completed-plans/            Every piece of work that has landed
 ## Direction
 
 Ship as a community plugin first. Once that is proven, propose it to
-[unraid/webgui](https://github.com/unraid/webgui) as the built-in Docker experience.
+[unraid/webgui](https://github.com/unraid/webgui) as the built-in Docker experience (Bold move, I know!). 
 
 ## Licence
 
