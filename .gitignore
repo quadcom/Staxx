@@ -31,3 +31,6 @@ desktop.ini
 
 # Review artifacts — kept locally for comparison, not part of the source
 /audits/
+
+# Finished plans — kept on disk for reference, not carried in the repository
+/completed-plans/
