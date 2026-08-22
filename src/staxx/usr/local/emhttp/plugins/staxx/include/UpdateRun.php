@@ -501,6 +501,24 @@ function staxx_update_cleanup(bool $dry, string &$error): array {
     return ['removed' => [], 'kept' => 0];
   }
 
+  // PLAN_68 Part C: the history-based half of the keep-set below matches each
+  // remembered digest back to a live stack by walking staxx_list_stacks() —
+  // and when the stack root cannot be seen, that list is empty, so every
+  // digest kept for a rollback reads as belonging to no stack at all and
+  // would be handed to `docker rmi` as if genuinely unused. Failing closed
+  // here is the same principle as the Docker check just above, for a root
+  // that is unmounted or unreadable rather than a daemon that is down.
+  // A dry run is guarded too, and deliberately. Its whole job is to tell
+  // somebody what WOULD be removed, and with the root unseen that list names
+  // rollback images as unused when they are not — a preview that is confidently
+  // wrong is worse than one that declines to answer, because the answer is
+  // what somebody decides on.
+  if (!staxx_stacks_visible()) {
+    $error = 'StaXX cannot see the stacks right now, so nothing was worked out or removed. '
+           . 'Check the array is started, then try again.';
+    return ['removed' => [], 'kept' => 0];
+  }
+
   $state  = staxx_update_state();
   $images = (array)$state['images'];
 
@@ -779,7 +797,16 @@ function staxx_update_queue_tick(): array {
   $hasRunning = false;
   foreach ($items as $item) if (($item['state'] ?? '') === 'running') $hasRunning = true;
 
-  if (!$hasRunning && !($queue['stopped'] ?? false)) {
+  // PLAN_68 Part C: starting the next item looks the stack up by name in
+  // staxx_list_stacks() twice below — once to push its rollback fingerprint,
+  // once (inside staxx_start_job()) to actually run it — and an unreadable
+  // root makes that list empty, not merely stale. Skipping this tick
+  // entirely rather than proceeding means a stack that briefly can't be seen
+  // never has its update started without its "before" digest recorded, and
+  // never gets waved through staxx_start_job() against a root it cannot
+  // read. The item stays 'waiting' and is picked up on a later tick once the
+  // root is visible again — nothing here is lost, only delayed.
+  if (!$hasRunning && !($queue['stopped'] ?? false) && staxx_stacks_visible()) {
     foreach ($items as $i => &$item) {
       if (($item['state'] ?? '') !== 'waiting') continue;
 

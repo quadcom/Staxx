@@ -736,19 +736,43 @@ function staxx_compose_file_args(array $files): string {
  * Anything whose name this plugin could not act on is skipped rather than shown.
  * A row we cannot start, stop or delete is worse than no row.
  *
+ * PLAN_68 Part C: an empty 'stacks' array must never be read as "there are no
+ * stacks" when the real answer is "the root could not be looked at" — a
+ * missing directory (an unmounted pool, an array not started) and one that
+ * exists but will not scandir() both mean the same thing to a caller, and
+ * both are folded into 'ok' => false here so nobody downstream has to
+ * re-derive it from is_dir() by hand. 'ok' => true with empty arrays is the
+ * genuinely different case: the root was read and there is nothing in it.
+ *
  * @return array{stacks: array<int, array{rel:string, dir:string, folder:string, leaf:string}>,
- *               folders: string[]}
+ *               folders: string[], ok: bool, error: string}
  */
 function staxx_scan_stacks(bool $reset = false): array {
   static $cache = null;
-  if ($reset) { $cache = null; return ['stacks' => [], 'folders' => []]; }
+  if ($reset) { $cache = null; return ['stacks' => [], 'folders' => [], 'ok' => true, 'error' => '']; }
   if ($cache !== null) return $cache;
 
   $root = staxx_stack_root();
-  $out  = ['stacks' => [], 'folders' => []];
-  if (!is_dir($root)) return $cache = $out;
+  $out  = ['stacks' => [], 'folders' => [], 'ok' => true, 'error' => ''];
+  if (!is_dir($root)) {
+    $out['ok']    = false;
+    $out['error'] = 'The stack folder does not exist or is not mounted right now.';
+    return $cache = $out;
+  }
 
-  foreach ((array)@scandir($root) as $entry) {
+  // is_dir() above only proves the path is a directory, not that it can be
+  // read — scandir() returns false, not an empty array, when it can't, and
+  // (array)@scandir(...) used to fold that silently into "no stacks". A pool
+  // that is mounted but unreadable (or drops out mid-request) hits this,
+  // not just a missing one.
+  $top = @scandir($root);
+  if ($top === false) {
+    $out['ok']    = false;
+    $out['error'] = 'The stack folder exists but could not be read.';
+    return $cache = $out;
+  }
+
+  foreach ($top as $entry) {
     if ($entry === '.' || $entry === '..') continue;
     if (!staxx_valid_name($entry)) continue;
 
@@ -801,6 +825,17 @@ function staxx_scan_stacks(bool $reset = false): array {
  */
 function staxx_scan_stacks_reset(): void {
   staxx_scan_stacks(true);
+}
+
+/**
+ * The same "could this even be looked at?" answer staxx_scan_stacks() carries
+ * in its own 'ok' key, for a caller holding only staxx_list_stacks()'s plain
+ * array — which has no room for the flag, since it's an empty list either
+ * way. Reads the same statically-cached scan, so calling this after
+ * staxx_list_stacks() in the same request costs nothing further.
+ */
+function staxx_stacks_visible(): bool {
+  return staxx_scan_stacks()['ok'];
 }
 
 /** Just the folder names, for the "move to folder" menu and the layout. */
@@ -2294,6 +2329,13 @@ function staxx_selftest(): array {
   $dirs  = count($scan['stacks']);
   $folds = count($scan['folders']);
 
+  // PLAN_68 Part C: a self-test that reports "0 stacks" while the array is
+  // down is a healthy nothing dressed up as a fact. $scan['ok'] is false for
+  // exactly the case an empty count cannot tell apart from a genuinely empty
+  // stack folder, so every count built from the scan below says so plainly
+  // instead of reporting zero.
+  $seen = $scan['ok'];
+
   // Pure PHP, like everything else here — no external command, so this stays
   // instant and checkable from the server with no browser.
   $awaitingReview = 0;
@@ -2404,9 +2446,9 @@ function staxx_selftest(): array {
     'free space'          => is_dir($root) && ($free = @disk_free_space($root)) !== false
                                ? round($free / 1048576).' MB'
                                : 'unknown',
-    'stacks found'        => (string)$dirs,
-    'folders found'       => (string)$folds,
-    'stacks awaiting review' => (string)$awaitingReview,
+    'stacks found'        => $seen ? (string)$dirs : 'UNKNOWN — '.$scan['error'],
+    'folders found'       => $seen ? (string)$folds : 'UNKNOWN — '.$scan['error'],
+    'stacks awaiting review' => $seen ? (string)$awaitingReview : 'UNKNOWN — the stacks could not be seen',
     'images pulling from a registry their template has left' => $movedReport,
     'unraid templates on disk'  => $templatesReport,
     'compose manager projects on disk' => $projectsReport,

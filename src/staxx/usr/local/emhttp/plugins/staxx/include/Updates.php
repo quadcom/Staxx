@@ -983,13 +983,15 @@ function staxx_update_check(string $scope, bool $force): array {
   // not looked at every stack and would delete what it simply did not visit.
   //
   // And only while the stack root can actually be read. staxx_scan_stacks()
-  // returns an empty list both when there are no stacks and when it cannot
-  // look at all — an unmounted pool, an array that is not started — and those
-  // two must never be treated alike. This pass runs from cron regardless of
-  // array state, so without the is_dir() below the first check after a reboot
-  // would quietly delete every stack's history on the grounds that no stack
-  // exists.
-  if ($scope === 'all' && is_dir(staxx_stack_root())) {
+  // used to return an empty list both when there are no stacks and when it
+  // cannot look at all — an unmounted pool, an array that is not started —
+  // and those two must never be treated alike. This pass runs from cron
+  // regardless of array state, so without staxx_stacks_visible() below the
+  // first check after a reboot would quietly delete every stack's history on
+  // the grounds that no stack exists. staxx_stacks_visible() replaces the
+  // is_dir() this guard used to run by hand: it also catches a root that
+  // exists but will not scandir(), which is_dir() alone reports as fine.
+  if ($scope === 'all' && staxx_stacks_visible()) {
     $live = staxx_update_stack_files();
     foreach (array_keys($stacksState) as $known) {
       if (!isset($live[$known])) unset($stacksState[$known]);
@@ -1636,16 +1638,20 @@ function staxx_watch_active_findings(array $entry): array {
  * PLAN_68 Part C: an empty answer must carry why it is empty.
  * staxx_scan_stacks() reads empty both when there genuinely are no stacks
  * and when it cannot look at all — an unmounted pool, an array not started —
- * and this report must never present the second as the first. is_dir() is
- * the same cheap test the six-hourly prune above already uses for exactly
- * this reason.
+ * and this report must never present the second as the first.
+ * staxx_stacks_visible() is the same cheap test the six-hourly prune above
+ * uses for exactly this reason, replacing the is_dir() this guard used to
+ * run by hand, which reports an unreadable-but-present root as fine.
  *
  * @return array{ok:bool, reason:string, items:array}
  */
 function staxx_watch_report(): array {
-  if (!is_dir(staxx_stack_root())) {
+  if (!staxx_stacks_visible()) {
+    // The scan's own reason, not a guessed one: "the array is not started" is
+    // the usual cause but not the only one, and telling somebody to start an
+    // array that is already running would send them looking in the wrong place.
     return ['ok' => false, 'items' => [],
-      'reason' => 'The array is not started, so StaXX cannot see the stacks or what has been found.'];
+      'reason' => staxx_scan_stacks()['error'].' StaXX cannot show what has been found until it can.'];
   }
 
   $items = [];

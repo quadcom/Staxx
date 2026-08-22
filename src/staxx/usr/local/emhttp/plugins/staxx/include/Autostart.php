@@ -135,6 +135,23 @@ function staxx_autostart_names(array $s): array {
  * function below needs, built once so the same staxx_autostart_names() calls
  * are not repeated across the whole stack list.
  *
+ * PLAN_68 Part C: $stacks is always whatever staxx_list_stacks() saw, and
+ * that can come back empty when the stack root itself cannot be seen — an
+ * unmounted pool, an array not started. This function is safe against that
+ * BY ACCIDENT, not by design, and the accident is worth spelling out because
+ * it is easy to break without noticing. With $stacks empty, $owner is empty
+ * too, so staxx_autostart_on_map() and staxx_autostart_adopt() below read
+ * every line in Unraid's boot file as belonging to somebody else and leave
+ * every one of them exactly where it is — proved on the server against a
+ * real boot list, byte-identical afterwards. That safety holds only because
+ * ownership (this function) and membership (which lines exist to compare
+ * against) both come from the same scan. If either one is ever changed to
+ * read from a different source — a cached copy, a separate index — the two
+ * can disagree, and an empty $stacks would then look like every line
+ * needing to be removed rather than like nothing to check. Do not "fix" the
+ * empty case here; the caller not being able to see the stacks is exactly
+ * when doing nothing is correct.
+ *
  * @return array{owner: array<string, array{0:string,1:string}>,
  *               names: array<string, array<string, string[]>>,
  *               byName: array<string, array>}

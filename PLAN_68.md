@@ -766,3 +766,34 @@ A green test proves nothing about the thing it names unless the failure it claim
 actually happen. This morning it was a refusal caught by the wrong rule; this afternoon a permission
 failure that root ignores. **Both passed. Neither tested anything.** The third instance was worse
 than useless, because the case that could not fail safely instead did something real.
+
+### Part C landed 2026-08-22, right after the move made it matter
+
+Written when the stacks were on flash, which is readable when almost nothing else is. They are on a
+pool now, so an unmounted pool or a stopped array makes the folder simply absent — and every
+scheduled pass that asks "what stacks are there?" got back an empty list meaning either *there are
+none* or *I could not look*.
+
+**The answer now lives at the source.** The scan says whether it could look, so no caller has to
+re-derive it. Two already did, each by hand, and both are replaced — the new test is strictly better
+because it also catches **a folder that exists but cannot be read**, which the old check reports as
+perfectly fine. Proved on the server: that branch fires with its own distinct message.
+
+**Two real data-loss paths were found that this plan had not listed:**
+
+1. **Cleanup could have deleted rollback images.** It matches each remembered image back to a live
+   stack; with no stacks visible, every kept image reads as belonging to nothing and is offered up as
+   unused. Guarded — and the *preview* is guarded too, deliberately: its whole job is to tell somebody
+   what would go, and a preview that is confidently wrong is worse than one that declines, because
+   the answer is what somebody decides on.
+2. **The update queue would have started work against a root it could not read**, without recording
+   the "before" fingerprint a rollback depends on. It now waits. Nothing is lost, only delayed.
+
+**The autostart bridge is unchanged and now says why.** Its safety is accidental — ownership and
+membership come from the same scan, so with nothing visible every line reads as somebody else's and
+is left alone. Written down so nobody separates those two sources and quietly breaks it.
+
+**Left honest rather than faked:** the guards in the update runner have no dedicated test, because
+flipping the stack root mid-process there would either touch the real config or need a subprocess.
+The condition they use is proved elsewhere. Said plainly rather than covered by a test that could not
+fail — that mistake was made twice today and did real damage once.
