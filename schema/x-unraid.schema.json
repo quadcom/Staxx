@@ -88,6 +88,10 @@
         "update": {
           "$ref": "#/$defs/update",
           "description": "Overrides the stack-level update block for this service alone; falls back to it, then to the global setting, when absent."
+        },
+        "network_stash": {
+          "type": "string",
+          "description": "A clipboard, not a description of anything: written only by the network-mode picker, and read only when that same control is asked to restore it. Holds this service's own networks: block exactly as it stood before network_mode replaced it — a JSON object holding the block's own lines verbatim (comments, fixed addresses and all) rather than read into values and rebuilt, plus the name of the key it followed so it goes back in the same place. Both halves matter: a restore that rebuilt the lines would lose the comments, and one that ignored the position would reorder the file. Together they make a set-aside and a restore byte-for-byte. Not validated as YAML here for the same reason sections' own stash is not: it is one opaque string to this schema, not a second copy of the compose structure. Meaningless, and ignored, on a service that is not currently using network_mode."
         }
       }
     },

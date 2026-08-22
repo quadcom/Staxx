@@ -1,7 +1,26 @@
 # PLAN 64 — joining a container to one of this server's own networks
 
-**Status: open, and now fully specified. Every question has been asked and answered — 2026-08-21.
-Awaiting the go-ahead to build.**
+**Status: Phases A, B and C built, verified and deployed 2026-08-21. Phase D not started.**
+
+- **Phase A — the dropdown.** A service's network row offers this server's own networks alongside the
+  file's own, labelled "on this server, not in this file yet". `bridge`, `host` and `none` are left
+  out of that list deliberately.
+- **Phase B — declaring on pick.** Picking one declares it as external and attaches the container in
+  one move, one undo entry, and writes neither half on a refusal. **A bug was found here after the
+  fact and is now the subject of `PLAN_66`:** declaring re-reads the file, and writing through the
+  form's stale memory of line positions corrupted an unrelated line. Fixed twice over — the form
+  re-derives, and the model now refuses a write whose position has gone stale.
+- **Phase C — the modes and the set-aside.** `host`, `none` and sharing another container write
+  `network_mode` and take every network row off that service, keeping them in its `x-unraid` block
+  with a one-line note and a way to put them back. The stash records **where the block sat** as well
+  as what it held, so a set-aside and a restore leave the file byte-identical.
+  *Deviation from section 6, accepted:* the reverse direction (mode back to a network) runs through
+  the `network_mode` row's own existing dropdown rather than a resurrected empty network row. Both
+  directions are one dropdown, one undo, and cannot leave a service holding both — just not literally
+  the same row.
+- **Phase D — the converter.** Not started: an unstated network becomes an explicit `default`, and
+  Unraid's Container mode stops being mistaken for a named network. This is the phase where
+  `tests/ca_convert.js` numbers are expected to move.
 
 `PLAN_63` is complete and filed. Sections 4a, 4b and 6 were rewritten after Adrian read the first
 draft; where they disagree with anything earlier in this file, they win.

@@ -300,6 +300,42 @@ guessing is no longer needed for that file.
 the scheme, the path, `icon`, `overview`, `display` — still cannot be, because nothing yet renders
 the whole of `x-unraid` as form fields. Changing those still means opening the Compose view.
 
+### `network_stash`
+
+```yaml
+services:
+  jellyfin:
+    x-unraid:
+      network_stash: '{"after":"restart","lines":["    networks:","      - mybridge","      - br0.2"]}'
+    network_mode: host
+```
+
+A clipboard, not a description of anything — the first key in this schema that is. It is written
+only by the network row's own dropdown, the moment a service is switched to `host`, `none`, or
+sharing another container's network (compose forbids a service holding both `networks:` and
+`network_mode`, so one of them has to go), and it is read only when that same control is asked to
+put the networks back. Nothing else in StaXX ever looks at it.
+
+The value is [JSON](https://www.json.org/), the same "one opaque string, not validated as YAML"
+shape `sections` above uses, and for the same reason. It holds two things:
+
+- `lines` — the removed `networks:` block's own lines, kept verbatim: comments, fixed addresses,
+  anything else the block held. Restoring splices them back rather than reading values out and
+  rebuilding them, which is what makes it byte-for-byte.
+- `after` — the name of the key the block sat after, or `""` if it was the service's first. Without
+  it a restore would land the block at the end of the service, which loses nothing but silently
+  reorders somebody's file — and ordering is part of what a write-back has to preserve.
+
+**The compose file is the source of truth** here too: a `network_stash` sitting beside a service that
+is not currently using `network_mode` means nothing and is ignored; restoring drops whatever it finds
+that no longer has that shape rather than writing it back blind; and a key named in `after` that has
+since been deleted by hand simply puts the block at the end instead of failing.
+
+Do not read this as a precedent for keeping a second copy of ordinary compose settings — the
+[dividing line](#the-dividing-line) above still holds. This exists because compose's own rule
+leaves nothing else standing: the network list has to leave the file the moment a mode is chosen,
+and this is the only place left for it to go.
+
 ---
 
 ## Icons

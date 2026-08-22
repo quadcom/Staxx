@@ -580,9 +580,19 @@
   // The price is one rule callers must keep: never hold a node across an edit.
   // The form holds field ids, which are derived from the binder and the
   // container-side target, and so survive a re-parse unchanged.
+  // How many entries splice() keeps of what it did. Diagnosis only needs the
+  // most recent handful of structural writes; an editing session can run for
+  // hours, so the journal is capped rather than left to grow with it.
+  var SPLICE_JOURNAL_MAX = 50;
+
   function splice(doc, at, remove, insert) {
     var args = [at, remove].concat(insert || []);
     Array.prototype.splice.apply(doc.lines, args);
+    // Not a check — just a record of what the operation actually did, kept
+    // for diagnosis (PLAN_66 §4). An index, a count removed and the lines
+    // inserted, no more: nothing here is compared against anything yet.
+    (doc.spliceLog = doc.spliceLog || []).push({ at: at, removed: remove, inserted: (insert || []).length });
+    if (doc.spliceLog.length > SPLICE_JOURNAL_MAX) doc.spliceLog.shift();
     // Re-parsed joined with plain '\n' — the lines hold no carriage returns
     // after parse() strips them, so this never touches doc.eol; only lines,
     // lineStart, root, sealed and warnings are copied back below.
@@ -604,12 +614,37 @@
     return !!(doc && doc.unreadTail);
   }
 
+  // True once the text at a spot's line/col/len no longer matches the text
+  // the spot was built from — the exact way PLAN_64 Phase B's bug happened:
+  // declaring a network re-parsed the document, which shifted every service
+  // line up by one, and the write that followed used the old line number and
+  // landed mid-word. `spot.text` is missing only for a spot with nothing to
+  // compare (a zero-width insertion point) or one built before this guard
+  // existed; either way there is nothing to catch it against, so it passes.
+  function spotStale(doc, spot) {
+    if (!spot || spot.text === undefined) return false;
+    var line = doc.lines[spot.line];
+    var stale = line === undefined ||
+                line.slice(spot.col, spot.col + spot.len) !== spot.text;
+    // Recorded on the document, because every writer here reports failure as a
+    // bare false and the caller cannot otherwise tell "this value will not fit
+    // in a compose file" from "the position went stale". Those two need
+    // OPPOSITE advice — the first says edit it by hand, the second says try
+    // again — so a caller that cannot tell them apart has to give one of them
+    // wrong. Cleared on every check so it never describes an older failure.
+    doc.staleWrite = stale;
+    return stale;
+  }
+
   // Replaces one scalar in place. Everything after it on the line — the run of
   // spaces and any comment — rides along in the tail slice untouched, which is
   // why keeping comments through an edit needs no code of its own.
   function writeScalar(doc, where, decoded, style) {
     var raw = emitScalar(decoded, style, where.isKey);
     if (raw === null) return false;
+    // Precondition, not postcondition: fail before doc.lines is touched, so
+    // there is nothing to revert. See spotStale() and PLAN_66.
+    if (spotStale(doc, where)) return false;
 
     var line = doc.lines[where.line];
     doc.lines[where.line] = line.slice(0, where.col) + raw + line.slice(where.col + where.len);
@@ -857,7 +892,10 @@
   }
 
   function scalarSpot(node) {
-    return { line: node.line, col: node.col, len: node.raw.length, style: node.style };
+    // node.raw IS the text at [node.col, node.col + node.raw.length) on
+    // node.line — that is where the parser read it from — so it doubles as
+    // the "what was here" record a later write checks itself against.
+    return { line: node.line, col: node.col, len: node.raw.length, style: node.style, text: node.raw };
   }
 
   // Where a mapping key sits on its own line. A variable's NAME is as much a
@@ -868,7 +906,7 @@
     return {
       line: pair.start, col: pair.indent, len: pair.keyRaw.length,
       style: q === '"' ? 'double' : q === "'" ? 'single' : 'plain',
-      isKey: true
+      isKey: true, text: pair.keyRaw
     };
   }
 
@@ -1084,7 +1122,7 @@
       // empty half says nothing about which half is missing.
       if (binder === 'list' && !it.value && it.contentCol > it.indent + 1) {
         out.push(target(binder, '', {
-          parts: { value: part('', { line: it.start, col: it.contentCol, len: 0, style: 'plain' }) },
+          parts: { value: part('', { line: it.start, col: it.contentCol, len: 0, style: 'plain', text: '' }) },
           range: range, listKey: listKey, index: i
         }));
         continue;
@@ -1694,7 +1732,7 @@
     // fieldsFor()'s `single` check), and (b) point at a real line, so the
     // screenshot-sanitise pass — which reads spot.line/col if this field is
     // ever marked secret — cannot be handed a line that does not exist.
-    var spot = ok ? { line: leafPair.start, col: 0, len: 0, style: 'plain' } : null;
+    var spot = ok ? { line: leafPair.start, col: 0, len: 0, style: 'plain', text: '' } : null;
     var isScalarComment = ok && leafPair.value && leafPair.value.kind === 'scalar';
 
     out.push(target('setting', 'healthcheck.test.mode', {
@@ -2016,7 +2054,7 @@
     var raw  = node.comment || '';
     var col  = raw ? node.commentCol : line.length;
     var pad  = raw ? /^[ \t]*/.exec(raw)[0] : '  ';
-    return { line: node.line, col: col, len: line.length - col, pad: pad };
+    return { line: node.line, col: col, len: line.length - col, pad: pad, text: line.slice(col) };
   }
 
   /* ---- inference --------------------------------------------------------- */
@@ -3184,6 +3222,7 @@
     // writes nothing — removing the entry is what the × is for.
     if (f.binder === 'list' && which === 'value' && !String(value).trim()) {
       if (p.spot.isKey) return true;
+      if (spotStale(doc, p.spot)) return false;   // see writeScalar / PLAN_66
       var bare = doc.lines[p.spot.line];
       doc.lines[p.spot.line] = bare.slice(0, p.spot.col) + bare.slice(p.spot.col + p.spot.len);
       splice(doc, 0, 0, []);                  // re-parse, no line count change
@@ -3209,8 +3248,9 @@
   function setComment(doc, form, id, note, secret, required) {
     var f = fieldById(form, id);
     if (!f || !f.commentSpot) return false;
+    var at = f.commentSpot;
+    if (spotStale(doc, at)) return false;       // see writeScalar / PLAN_66
 
-    var at   = f.commentSpot;
     var line = doc.lines[at.line];
     var head = line.slice(0, at.col).replace(/[ \t]+$/, '');
     doc.lines[at.line] = head +
@@ -4012,6 +4052,170 @@
   }
 
   /**
+   * PLAN_64 phase C: switches a service from joining networks to a
+   * network_mode (host, none, or sharing another service/container) in one
+   * move — compose refuses a service holding both keys, so this never
+   * leaves one written without the other. Whatever the service's own
+   * networks: block held is kept, verbatim and whole, under the service's
+   * own x-unraid.network_stash — not read as values and rebuilt, the same
+   * "capture the raw lines" posture stashSection already takes, because a
+   * fixed IP or a hand-written comment on one entry has nowhere else to
+   * live if this rewrote the list itself. restoreNetworkStash below is the
+   * way back.
+   *
+   * Refuses, changing nothing, when networks: is written in a way this
+   * parser cannot safely lift out whole (sealed, opaque — an anchor, a flow
+   * list) or when the x-unraid block cannot be added to; either refusal is
+   * reported rather than guessed past, the same posture every other
+   * structural writer in this file takes.
+   *
+   * `form` is accepted for symmetry with every other writer here but never
+   * read — every position below comes from a fresh serviceMapOf(doc, ...),
+   * which is what keeps this safe to call without rebuilding the form in
+   * between (see PLAN_66's account of the bug this avoids).
+   *
+   * -> { ok: true }
+   * -> { ok: false, error: '<what to do next>' }
+   */
+  function setNetworkMode(doc, form, service, mode) {
+    var svc = serviceMapOf(doc, service);
+    if (!svc) return { ok: false, error: 'That service could not be found — reopen the stack and try again.' };
+
+    var pair = svc.value.pairs['networks'];
+    var stash = null;
+    if (pair) {
+      if (!pair.value || pair.value.kind === 'opaque') {
+        return { ok: false, error: 'That list is written in a way the form cannot move — remove it in the Compose view instead.' };
+      }
+      // The key it sat after, so restoring puts it back where it was rather
+      // than at the end of the service. Ordering is part of what a write-back
+      // has to preserve, and a set-aside whose whole purpose is to lose
+      // nothing must not quietly reorder someone's file instead. '' means it
+      // was the service's first key.
+      var at = svc.value.keys.indexOf('networks');
+      stash = { after: at > 0 ? svc.value.keys[at - 1] : '',
+                lines: doc.lines.slice(pair.leadStart, pair.end) };
+    }
+
+    if (stash) {
+      if (addNested(doc, form, service, ['x-unraid', 'network_stash'], JSON.stringify(stash)) < 0) {
+        return { ok: false, error: 'The x-unraid block in this file is written in a way the form cannot add to — set this up in the Compose view instead.' };
+      }
+      if (!removeKey(doc, form, service, ['networks'])) {
+        // The stash write above already landed — take it back rather than
+        // leave a copy sitting beside the block it was meant to replace.
+        removeKey(doc, form, service, ['x-unraid', 'network_stash']);
+        return { ok: false, error: 'That list is written in a way the form cannot move — remove it in the Compose view instead.' };
+      }
+    }
+
+    svc = serviceMapOf(doc, service);            // stale after either write above
+    var modePair = svc.value.pairs['network_mode'];
+    if (modePair && modePair.value && modePair.value.kind === 'scalar') {
+      if (!writeScalar(doc, scalarSpot(modePair.value), mode, 'plain')) {
+        return { ok: false, error: 'That value cannot be written as it stands — edit it in the Compose view instead.' };
+      }
+    } else if (modePair) {
+      return { ok: false, error: 'network_mode is written in a way the form cannot change — edit it in the Compose view instead.' };
+    } else if (insertChild(doc, svc, 'network_mode', mode, 'x-unraid') < 0) {
+      return { ok: false, error: 'That could not be written — edit it in the Compose view instead.' };
+    }
+
+    return { ok: true };
+  }
+
+  /**
+   * Reads back what setNetworkMode above stashed for one service, validated
+   * the same way restoreNetworkStash validates before actually writing —
+   * shared rather than copied so the note stacks.js shows beneath a
+   * network_mode row can never claim a stash restoreNetworkStash would
+   * then refuse. Returns the raw lines (JSON.parse't, not otherwise read),
+   * or null when there is nothing there or what is there does not parse as
+   * this function wrote it.
+   */
+  function readNetworkStash(doc, service) {
+    var svc = serviceMapOf(doc, service);
+    var xu = svc && svc.value.pairs['x-unraid'];
+    var raw = xu && xu.value && xu.value.kind === 'map' ? xu.value.pairs['network_stash'] : null;
+    if (!raw || !raw.value || raw.value.kind !== 'scalar') return null;
+    try {
+      var parsed = JSON.parse(raw.value.value);
+      // { after: '<key it followed>', lines: [...] }. `after` may legitimately
+      // be '' (it was the first key), so only its type is checked. Anything
+      // else at all — including the bare array an earlier build of this wrote
+      // — is treated as not ours and dropped, because this block is as
+      // hand-editable as the rest of the file.
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
+          typeof parsed.after === 'string' &&
+          Array.isArray(parsed.lines) && parsed.lines.length &&
+          parsed.lines.every(function (l) { return typeof l === 'string'; })) {
+        return parsed;
+      }
+    } catch (e) { /* not our JSON */ }
+    return null;
+  }
+
+  /**
+   * setNetworkMode's way back: drops network_mode and puts back whatever
+   * networks: block was set aside, verbatim, exactly as it was captured.
+   * "Restoring validates what it finds" (PLAN_64 section 6) — a stash that
+   * is not a JSON array of strings, hand-edited into nonsense or simply
+   * gone, is dropped rather than guessed at, and the caller is told nothing
+   * was restored rather than have this write something that looks plausible
+   * but is not what was actually there.
+   *
+   * The stash is dropped whether or not it turns out restorable — a hand
+   * edit since it was taken is not a reason to leave a second, unreadable
+   * copy sitting in the file — but only after network_mode itself is
+   * confirmed removable, so a refusal there never leaves the stash gone
+   * with nothing put back for it.
+   *
+   * -> { ok: true, restored: true|false }
+   * -> { ok: false, error: '<what to do next>' }
+   */
+  function restoreNetworkStash(doc, form, service) {
+    var svc = serviceMapOf(doc, service);
+    if (!svc) return { ok: false, error: 'That service could not be found — reopen the stack and try again.' };
+
+    var lines = readNetworkStash(doc, service);
+    var hadStash = !!svc.value.pairs['x-unraid'] &&
+                   svc.value.pairs['x-unraid'].value.kind === 'map' &&
+                   !!svc.value.pairs['x-unraid'].value.pairs['network_stash'];
+
+    if (!removeKey(doc, form, service, ['network_mode'])) {
+      return { ok: false, error: 'network_mode is written in a way the form cannot remove — remove it in the Compose view instead.' };
+    }
+
+    if (hadStash && !removeKey(doc, form, service, ['x-unraid', 'network_stash'])) {
+      return { ok: false, error: 'The x-unraid block in this file is written in a way the form cannot change — edit it in the Compose view instead.' };
+    }
+
+    if (!lines) return { ok: true, restored: false };
+
+    // Back where it was, using the key the stash recorded it followed — so a
+    // set-aside and a restore leave the file in the order it was written in.
+    // Two honest fallbacks: '' means it was the service's first key, and a
+    // named key that has since been deleted by hand lands it just ahead of
+    // the x-unraid tail, where every other freshly written service key goes.
+    svc = serviceMapOf(doc, service);
+    var at = null;
+    if (lines.after !== '' && svc.value.pairs[lines.after]) {
+      at = svc.value.pairs[lines.after].end;
+    } else if (lines.after === '') {
+      at = svc.value.start + 1;
+    } else {
+      var last = null;
+      for (var i = 0; i < svc.value.keys.length; i++) {
+        if (svc.value.keys[i] === 'x-unraid') continue;
+        last = svc.value.pairs[svc.value.keys[i]];
+      }
+      at = last ? last.end : svc.value.start + 1;
+    }
+    splice(doc, at, 0, lines.lines);
+    return { ok: true, restored: true };
+  }
+
+  /**
    * Adds a new service under `services:`, after the last existing one, seeded
    * with `image:` (blank) and `restart: unless-stopped` — two lines, never
    * one, the same rule addItem() follows when it creates a list key's first
@@ -4572,6 +4776,12 @@
   // column after it if applied left-to-right against stale positions.
   function applyRenameWrites(doc, writes) {
     var byLine = {}, i;
+    // Checked as one batch before any line is touched: a rename is one
+    // action, so a stale spot anywhere in it must leave the whole file
+    // alone rather than land the rest and skip only the bad one.
+    for (i = 0; i < writes.length; i++) {
+      if (spotStale(doc, writes[i].spot)) return false;
+    }
     for (i = 0; i < writes.length; i++) {
       var w = writes[i];
       (byLine[w.spot.line] = byLine[w.spot.line] || []).push(w);
@@ -4587,6 +4797,7 @@
       doc.lines[line] = text;
     }
     splice(doc, 0, 0, []);          // one re-parse for the whole batch
+    return true;
   }
 
   /**
@@ -4653,7 +4864,9 @@
       writes.push({ spot: edits[i].spot, raw: raw });
     }
 
-    applyRenameWrites(doc, writes);
+    if (!applyRenameWrites(doc, writes)) {
+      return { ok: false, error: 'The file changed underneath this rename, so nothing has been written — try again.' };
+    }
     return { ok: true, refs: edits.length };
   }
 
@@ -4780,7 +4993,9 @@
       writes.push({ spot: e.spot, raw: raw });
     }
 
-    applyRenameWrites(doc, writes);
+    if (!applyRenameWrites(doc, writes)) {
+      return { ok: false, error: 'The file changed underneath this rename, so nothing has been written — try again.' };
+    }
     // refs always carries the declaration's own key as its first entry, so
     // the count reported here excludes it, matching renameService.
     return { ok: true, refs: refs.length - 1 };
@@ -7173,6 +7388,11 @@
     moveItem: moveItem,
     addDeclared: addDeclared,
     declareNetwork: declareNetwork,
+    // PLAN_64 phase C: the network row dropdown's mode branch, and its way
+    // back — see their own comments for the stash they share.
+    setNetworkMode: setNetworkMode,
+    restoreNetworkStash: restoreNetworkStash,
+    readNetworkStash: readNetworkStash,
     // The row's sentinel value for "created outside this file" — stacks.js
     // needs the exact same string to build the dropdown option, and a second
     // literal there would be a bug waiting to happen.

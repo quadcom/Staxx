@@ -1640,6 +1640,48 @@
     return split.bridge.concat(split.others, split.host, split.none);
   }
 
+  // Guards commit()'s networks branch (PLAN_64): true only for a name that
+  // is genuinely one of this server's real networks, is not `default`
+  // (which is never declared, only assumed), and is not already declared in
+  // this file. Mirrors fromChoice()'s own exclusion of bridge/host/none —
+  // repeated here rather than trusted to "the dropdown never offers them",
+  // since this guard is what a stray or scripted value has to pass too.
+  function isUndeclaredServerNet(name) {
+    if (!name || name === 'default' || name === 'bridge' || name === 'host' || name === 'none') return false;
+    if (!netPresent[name]) return false;
+    var declared = (MODEL && MODEL.declared && MODEL.declared.networks) || [];
+    return declared.indexOf(name) < 0;
+  }
+
+  // Guards commit()'s mode branch (PLAN_64 phase C): true for exactly the
+  // values fromChoice() adds beyond an ordinary network name — host, none,
+  // or another service in this same file. A real network sharing one of
+  // those names is never offered here in the first place (splitServerNets()
+  // leaves bridge/host/none out of the "others" group), so there is no
+  // value this could wrongly catch. The container-share sentinel is handled
+  // by its own change-listener guard, the same way NET_NEW_SENTINEL is,
+  // since picking it writes nothing on its own — it only opens a prompt.
+  function isModePick(f, value) {
+    if (value === 'host' || value === 'none') return true;
+    if (value.slice(0, 'service:'.length) === 'service:') {
+      var name = value.slice('service:'.length);
+      var services = (MODEL && MODEL.declared && MODEL.declared.services) || [];
+      return name !== f.service && services.indexOf(name) >= 0;
+    }
+    return false;
+  }
+
+  // The reverse guard: true when `name` is one of the real networks
+  // network_mode's own dropdown appends from NETWORKS (see choiceFor()'s
+  // f.target === 'network_mode' branch) rather than one of netmode's own
+  // vocabulary words (bridge/host/none) or a service: share — the only
+  // values that dropdown can hold that mean "join this network", not "set
+  // this mode". switchServiceFromMode() is what a match here routes to.
+  function isServerNetworkName(name) {
+    for (var i = 0; i < NETWORKS.length; i++) if (NETWORKS[i][0] === name) return true;
+    return false;
+  }
+
   // Images already on this server (IMAGES, up near choiceFor()) and, per
   // repo, its tags from the registry — see imgLoad()/tagLoad() far below.
   var imgLoaded  = false;
@@ -1662,26 +1704,41 @@
     var options = [];
     for (var i = 0; i < names.length; i++) options.push([names[i], names[i]]);
 
-    // PLAN_64: a service's own network row also offers this server's real
-    // networks, not just the ones this file already declares — picking one
-    // declares it too (see commit()'s networks branch below), which is the
-    // whole point of this plan. bridge/host/none are left out: bridge is not
-    // what compose's `default` means (section 5), and host/none are modes,
-    // not networks to join (Phase C's job, not this one). names already
-    // covers every declared network plus the synthetic `default`, first —
-    // splitServerNets()'s own exclusion is enough to keep a declared one
-    // from appearing twice.
+    // PLAN_64 phase A/B: a service's own network row also offers this
+    // server's real networks, not just the ones this file already
+    // declares — picking one declares it too (see commit()'s networks
+    // branch below). bridge is left out: it is not what compose's
+    // `default` means (section 5). names already covers every declared
+    // network plus the synthetic `default`, first — splitServerNets()'s own
+    // exclusion is enough to keep a declared one from appearing twice.
     if (f.from === 'networks') {
       var taken = Object.create(null);
       for (var t = 0; t < names.length; t++) taken[names[t]] = true;
       var others = splitServerNets(taken).others;
-      if (others.length) {
-        for (var o = 0; o < others.length; o++) {
-          options.push([others[o][0], others[o][0] + ' (on this server, not in this file yet)']);
-        }
-        return { hint: 'a name already declared in this file, or one of this server’s own networks',
-                 options: options };
+      for (var o = 0; o < others.length; o++) {
+        options.push([others[o][0], others[o][0] + ' (on this server, not in this file yet)']);
       }
+
+      // Phase C: the same box also carries the "join no network at all"
+      // half of the choice — host, none, or sharing another container's
+      // network stack entirely. Picking one of these removes every network
+      // row on the service and writes network_mode instead (see
+      // isModePick()/switchServiceToMode()) — compose forbids a service
+      // holding both keys, so this dropdown is the one place that decision
+      // is made. Labelled plainly rather than left as the bare word alone,
+      // since picking one of these does not write what the row itself would
+      // suggest — a second thing changes underneath it.
+      options.push(['host', 'host (network mode — removes this service’s networks)']);
+      options.push(['none', 'none (network mode — removes this service’s networks)']);
+      var svcModes = serviceModeOptions(f.service, 'service:');
+      for (var sm = 0; sm < svcModes.length; sm++) {
+        options.push([svcModes[sm][0],
+                      'share "' + svcModes[sm][0].slice('service:'.length) + '"’s network (network mode)']);
+      }
+      options.push([NET_MODE_CONTAINER_SENTINEL, 'share a container not in this stack… (network mode)']);
+
+      return { hint: 'a name already declared in this file, one of this server’s own networks, ' +
+                     'or a network mode such as host', options: options };
     }
 
     return { hint: 'a name already declared in this file', options: options };
@@ -1698,6 +1755,13 @@
   // nothing; it swaps the row over to a plain text box instead (see
   // swapNetworkToNew() and the change listener's sentinel guard).
   var NET_NEW_SENTINEL = ' new-network';
+
+  // Same trick again, on a service's own network row (fromChoice(),
+  // PLAN_64 phase C): picking this asks for a container name by prompt
+  // rather than swapping the box to a text input, since it is one value
+  // typed once and then committed — see the change listener's sentinel
+  // guard beside NET_NEW_SENTINEL's own.
+  var NET_MODE_CONTAINER_SENTINEL = ' share-a-container';
 
   // A volume's host half is either a name Docker manages the storage for, or
   // a path on the server — never both, and only the file itself says which.
@@ -2386,6 +2450,23 @@
   // drop fresh notes straight into an existing [data-advice] element rather
   // than rebuilding the row. Each entry is independent (a dangling reference,
   // a value using an outside variable...) so every one gets its own line.
+  // Best-effort names out of a network stash's raw lines, for the note's
+  // wording only — skips the "networks:" line itself (index 0) and reads
+  // whatever looks like a plain list entry or a bare map key, dropping
+  // anything with a value after it (an extra such as ipv4_address, not an
+  // entry of its own). Getting this wrong costs nothing but a plainer
+  // sentence: restoreServiceNetworks() puts the lines back verbatim
+  // regardless of what this manages to read out of them.
+  function netStashNames(lines) {
+    var names = [];
+    for (var i = 1; i < lines.length; i++) {
+      var l = lines[i].replace(/#.*$/, '').trim();
+      var m = /^-\s*['"]?([^'"\s:]+)['"]?\s*:?$/.exec(l) || /^['"]?([^'"\s:]+)['"]?\s*:$/.exec(l);
+      if (m) names.push(m[1]);
+    }
+    return names;
+  }
+
   function adviceText(f) {
     var advice = f.advice || [];
     var out = '';
@@ -2403,6 +2484,20 @@
              'data-net-name="' + esc(f.declareMissing) + '" ' +
              'title="Declares ' + esc(f.declareMissing) + ' as a network created outside this file, ' +
              'which is what an Unraid network is.">Add it to this file</button>';
+    }
+    // PLAN_64 phase C: not a greyed-out row for each network that was set
+    // aside — section 6 rules that out on purpose, since a disabled row
+    // reads as file content switched off, when in truth it has been removed.
+    // One line instead, naming what was kept, with the one click back.
+    if (f.netStash) {
+      var kept = f.netStash.names;
+      out += '<p class="staxx-fieldnote">' +
+             (kept.length
+               ? (kept.length === 1 ? 'Its network' : kept.length + ' networks') + ' set aside: ' + esc(kept.join(', ')) + '.'
+               : 'Its networks were set aside.') +
+             ' <button type="button" class="staxx-declfix" data-restore-networks="1" ' +
+             'data-service="' + esc(f.service) + '" ' +
+             'title="Removes network_mode and puts the networks back exactly as they were.">Put them back</button></p>';
     }
     // Image only (movedAdvice is grafted on nowhere else — see
     // applyMovedAdvice()): this app's template now publishes at a different
@@ -3447,6 +3542,22 @@
     for (var i = 0; i < MODEL.fields.length; i++) {
       var f = MODEL.fields[i];
       f.movedAdvice = null;
+
+      // PLAN_64 phase C: a network_mode row's own "networks were set aside"
+      // note — read straight off the document rather than carried on the
+      // field by buildForm(), the same reason movedAdvice is grafted on
+      // here rather than there (compose-model.js has no reason otherwise
+      // to know this file exists). netStashNames() is best-effort: it is
+      // only for the note's wording, never for what restoreServiceNetworks()
+      // actually writes back, which reads and validates the stash itself.
+      f.netStash = null;
+      if (f.binder === 'setting' && f.target === 'network_mode' && YAML && YAML.readNetworkStash) {
+        // The reader now hands back { after, lines } — where the block sat as
+        // well as what was in it — so the note reads the lines out of it.
+        var stash = YAML.readNetworkStash(MODEL.doc, f.service);
+        if (stash) f.netStash = { names: netStashNames(stash.lines) };
+      }
+
       if (f.binder !== 'setting' || f.target !== 'image') continue;
       var candidate = movedFacts[f.service];
       if (!candidate) continue;
@@ -3641,6 +3752,26 @@
       return;
     }
 
+    // PLAN_64 phase C: host/none/sharing another service — switchServiceToMode()
+    // owns its own confirm, undo entry and redraw (it is a bigger edit than
+    // this one row), so this returns rather than falling into the generic
+    // done/setPart machinery below.
+    if (f.binder === 'list' && f.listKey === 'networks' && f.from === 'networks' &&
+        el.dataset.part === 'value' && isModePick(f, el.value)) {
+      switchServiceToMode(f.service, el.value);
+      return;
+    }
+
+    // The other direction: network_mode's own setting row offers this
+    // server's real networks in its dropdown too (choiceFor()'s NETWORKS
+    // join) — picking one is "stop sharing, join this network instead",
+    // which switchServiceFromMode() carries out as its own two writes.
+    if (f.binder === 'setting' && f.target === 'network_mode' &&
+        el.dataset.part === 'value' && isServerNetworkName(el.value)) {
+      switchServiceFromMode(f, el.value);
+      return;
+    }
+
     var done;
     if (el.dataset.note !== undefined) {
       // The note shares one comment with the -!S and -!R markers, so the whole
@@ -3648,12 +3779,74 @@
       // model, not from the row — there is no control for them, and passing
       // false would silently strip a hand-written marker out of the file.
       done = YAML.setComment(MODEL.doc, MODEL, f.id, el.value, !!f.sensitive, !!f.required);
+    } else if (f.binder === 'list' && f.listKey === 'networks' && f.from === 'networks' &&
+               el.dataset.part === 'value' && isUndeclaredServerNet(el.value)) {
+      // PLAN_64: picking one of the server's own networks that this file
+      // does not declare yet does both halves in one move — declare it
+      // (as external: the network already exists, so compose must not try
+      // to create its own) and then write the reference, as one undo entry.
+      // Order matters: declareNetwork() runs first, so a refusal from it
+      // leaves the file completely untouched — the reference is never
+      // written either. declareNetwork() re-parses MODEL.doc, so nothing
+      // read out of it earlier in this function can be trusted afterwards;
+      // el.value is a plain string, not anything stale.
+      pushUndo('joining the network "' + el.value + '"');
+      var declLine = YAML.declareNetwork(MODEL.doc, el.value);
+      if (declLine < 0) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus('The networks block in this file is written in a way the form cannot add to — ' +
+                      'add the declaration in the Compose view instead.');
+        return;
+      }
+      // MODEL is now STALE. This is the PLAN_64 Phase B fix: in a file whose
+      // networks: block sits ABOVE services:, the declaration inserts a line
+      // before every service line, so MODEL's remembered line numbers all
+      // point one line too high. PLAN_66 added its own guard inside the
+      // model layer that refuses a write through a position like that rather
+      // than let it land on the wrong line — so this rebuild is now belt and
+      // braces rather than the only thing standing between a stale position
+      // and a mangled file. Kept anyway: it turns the stale case into "this
+      // still works" instead of "this politely refuses".
+      //
+      // So the form is rebuilt against the document as it now is, and the
+      // same field looked up again by id (ids survive a re-parse; line
+      // numbers do not). MODEL itself is left for reparse() further down the
+      // usual path to replace.
+      var afterDecl = YAML.buildForm(MODEL.doc);
+      var fAgain    = YAML.fieldById(afterDecl, f.id);
+      if (!fAgain) {
+        // Nothing should make the row vanish, but writing through a lookup
+        // that failed is how the corruption above happened. Put the file back
+        // to the snapshot pushUndo() just took — the declaration goes with it,
+        // so this leaves neither half — rather than guess at a line number.
+        var back = undoStack.pop();
+        if (back) {
+          yamlPane.value = back.text;
+          paintGutter();
+          paintInk();
+          reparse();
+        }
+        updateUndo();
+        setYamlStatus('That network was not added — the row it belongs to could not be found again. '
+                      + 'Add it in the Compose view instead.');
+        return;
+      }
+      done = YAML.setPart(MODEL.doc, afterDecl, fAgain.id, el.dataset.part, el.value);
     } else {
       done = YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, el.value);
     }
 
     if (!done) {
-      setYamlStatus('That value cannot be written as it stands — edit this one in the Compose view.');
+      // Two different failures, needing opposite advice. A value that cannot
+      // be expressed in a compose file is the person's to sort out by hand.
+      // A stale position (PLAN_66's guard) is StaXX's own fault and the file
+      // is untouched, so the honest thing is "try again" — telling somebody to
+      // go and hand-edit YAML because of our bug sends them somewhere they
+      // never needed to go.
+      setYamlStatus(MODEL.doc.staleWrite
+        ? 'That edit was not made — the file moved underneath it. Try it again.'
+        : 'That value cannot be written as it stands — edit this one in the Compose view.');
       return;
     }
 
@@ -3896,6 +4089,18 @@
     if (el.tagName === 'SELECT' && el.dataset.part === 'name' && el.value === NET_NEW_SENTINEL) {
       var nf = MODEL && MODEL.fields[el.dataset.row | 0];
       if (nf && nf.binder === 'declared' && nf.declKind === 'networks') { swapNetworkToNew(el); return; }
+    }
+
+    // Same guard again, for "share a container not in this stack…" on a
+    // service's own network row (PLAN_64 phase C) — one value, asked for by
+    // prompt rather than a box swap, since there is nothing else on this row
+    // to type it into.
+    if (el.tagName === 'SELECT' && el.dataset.part === 'value' && el.value === NET_MODE_CONTAINER_SENTINEL) {
+      var cf = MODEL && MODEL.fields[el.dataset.row | 0];
+      if (cf && cf.binder === 'list' && cf.listKey === 'networks' && cf.from === 'networks') {
+        promptShareContainer(cf, el);
+      }
+      return;
     }
 
     // A pick from a list is a decision, not a keystroke — commit it at once. A
@@ -4170,6 +4375,15 @@
         return;
       }
       structuralEdit(nLine, '');
+      return;
+    }
+
+    // "Put them back", beside a network_mode row's set-aside note
+    // (adviceText(), PLAN_64 phase C). restoreServiceNetworks() owns its
+    // own undo entry and redraw.
+    var restoreNets = event.target.closest('[data-restore-networks]');
+    if (restoreNets) {
+      restoreServiceNetworks(restoreNets.dataset.service);
       return;
     }
 
@@ -4539,6 +4753,144 @@
     netFoldOpen[f.id] = true;
     structuralEdit(-1, 'Every network under "' + f.service + '" can now take a fixed address ' +
                        'or a hardware address. Undo is at the bottom if that was wrong.');
+  }
+
+  // The plain word a mode value reads as in a sentence — 'service:web'
+  // means "web", and the bare values speak for themselves. Shared by the
+  // confirm prompt and the status line below so the two never drift apart.
+  function modeWord(mode) {
+    if (mode.slice(0, 'service:'.length) === 'service:') return 'share "' + mode.slice(8) + '"’s network';
+    if (mode.slice(0, 'container:'.length) === 'container:') return 'share "' + mode.slice(10) + '"’s network';
+    return mode;
+  }
+
+  // PLAN_64 phase C: the network row dropdown's mode branch. Compose forbids
+  // a service holding both network_mode and networks:, so every network row
+  // on the service has to go — a bigger edit than the row it started from,
+  // hence the confirm, reusing the guard's own wording (network_mode's own
+  // `excludes` check further up this file) rather than a second sentence
+  // saying the same thing. The networks that come out are not lost: they
+  // are kept, verbatim, in the service's own x-unraid block, and the note
+  // structuralEdit() leaves behind names them and offers them back — see
+  // restoreServiceNetworks() below.
+  function switchServiceToMode(service, mode) {
+    flushPending();
+    var names = [];
+    for (var i = 0; i < MODEL.fields.length; i++) {
+      var nf = MODEL.fields[i];
+      if (nf.service === service && nf.binder === 'list' && nf.listKey === 'networks' && nf.from === 'networks') {
+        names.push(nf.parts.value.value);
+      }
+    }
+
+    var word = modeWord(mode);
+    if (names.length && !window.confirm(
+          'Compose does not allow a service to have both network_mode and networks. ' +
+          'Switching "' + service + '" to ' + word + ' will remove ' +
+          (names.length === 1 ? 'its one network row (' : 'all ' + names.length + ' of its network rows (') +
+          names.join(', ') + '). They are kept and can be put back if you switch away from ' + word + '.')) {
+      return;
+    }
+
+    pushUndo('switching "' + service + '" to ' + word);
+    var res = YAML.setNetworkMode(MODEL.doc, MODEL, service, mode);
+    if (!res.ok) {
+      undoStack.pop();
+      updateUndo();
+      setYamlStatus(res.error);
+      return;
+    }
+
+    structuralEdit(-1, 'Switched "' + service + '" to ' + word + '.' +
+                  (names.length
+                    ? ' Its network' + (names.length === 1 ? '' : 's') + ' ' +
+                      (names.length === 1 ? 'was' : 'were') + ' set aside — see the note below to put ' +
+                      (names.length === 1 ? 'it' : 'them') + ' back.'
+                    : '') +
+                  ' Undo is at the bottom if that was wrong.');
+  }
+
+  // The reverse of switchServiceToMode() — dropped straight into commit()'s
+  // networks branch below rather than getting its own confirm, since
+  // nothing here removes anything the person did not just ask this row to
+  // hold. Declares the network first, the same order and the same "MODEL is
+  // now stale" rebuild commit()'s own declare-on-pick branch already needs,
+  // since network_mode's removal below is itself a second structural write.
+  function switchServiceFromMode(f, value) {
+    pushUndo('switching "' + f.service + '" to the network "' + value + '"');
+
+    var declLine = -1;
+    if (isUndeclaredServerNet(value)) {
+      declLine = YAML.declareNetwork(MODEL.doc, value);
+      if (declLine < 0) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus('The networks block in this file is written in a way the form cannot add to — ' +
+                      'add the declaration in the Compose view instead.');
+        return;
+      }
+    }
+
+    if (!YAML.removeKey(MODEL.doc, MODEL, f.service, ['network_mode'])) {
+      undoStack.pop();
+      updateUndo();
+      setYamlStatus('network_mode is written in a way the form cannot remove — remove it in the Compose view instead.');
+      return;
+    }
+
+    // removeKey and declareNetwork above never read a cached line number —
+    // both re-derive their own position from the document as it stands, so
+    // there is no PLAN_66-shaped staleness here even though this is a
+    // second structural write. addItem() below is the same: form is only
+    // read for a placeholder this call never needs, since value is given.
+    var line = YAML.addItem(MODEL.doc, MODEL, f.service, 'list', value, 'networks');
+    if (line < 0) {
+      undoStack.pop();
+      updateUndo();
+      setYamlStatus('That list is written in a way the form cannot add to — ' +
+                    'add it in the Compose view instead.');
+      return;
+    }
+
+    structuralEdit(line, 'Switched "' + f.service + '" to the network "' + value + '". ' +
+                          'Undo is at the bottom if that was wrong.');
+  }
+
+  // The "put them back" link beneath a network_mode row's note (see
+  // netStashAdvice() and fieldHtml()'s setting/network_mode branch). One
+  // click, one undo entry — restoreNetworkStash() drops the stash whether
+  // or not it turns out restorable, so a hand-edited or missing entry never
+  // leaves a phantom note behind.
+  function restoreServiceNetworks(service) {
+    flushPending();
+    pushUndo('putting "' + service + '"’s networks back');
+    var res = YAML.restoreNetworkStash(MODEL.doc, MODEL, service);
+    if (!res.ok) {
+      undoStack.pop();
+      updateUndo();
+      setYamlStatus(res.error);
+      return;
+    }
+    structuralEdit(-1, res.restored
+      ? 'Put "' + service + '"’s networks back. Undo is at the bottom if that was wrong.'
+      : 'There was nothing left to restore — the stash was empty or no longer made sense, so it was dropped.');
+  }
+
+  // Asks for a container name by prompt rather than swapping the row's box —
+  // one value, typed once (PLAN_64 phase C, NET_MODE_CONTAINER_SENTINEL). A
+  // name matching one of this file's own services shares that service's
+  // network stack (network_mode: service:<name>); any other name is taken
+  // as a container running outside this stack (network_mode: container:<name>),
+  // exactly as compose itself tells the two apart. Cancelling, or leaving it
+  // blank, writes nothing and puts the box back to what it showed before.
+  function promptShareContainer(f, el) {
+    var name = window.prompt('Share which container’s network?');
+    name = name ? name.trim() : '';
+    if (!name) { el.value = f.parts.value.value; return; }
+
+    var services = (MODEL.declared && MODEL.declared.services) || [];
+    var mode = (services.indexOf(name) >= 0 && name !== f.service ? 'service:' : 'container:') + name;
+    switchServiceToMode(f.service, mode);
   }
 
   // Moves one port to a new spot in its service's list (PLAN_40) — the same
