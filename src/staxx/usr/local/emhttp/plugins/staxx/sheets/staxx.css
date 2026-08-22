@@ -2446,14 +2446,15 @@
  * the 52rem floor is there because a narrow desktop window would otherwise
  * take that half literally and leave a column too thin to fill in.
  *
- * :not([data-tab="manage"]) (PLAN_44 C1) because .staxx-modal-body stays in
- * the DOM, with its data-view untouched, the whole time Manage is showing —
- * it is only hidden by CSS, not removed — so without this exclusion these two
- * selectors would keep matching and squeeze the Manage tab, which always
- * wants the full width, into half a screen. */
+ * :not([data-tab="manage"]):not([data-tab="history"]) (PLAN_44 C1, extended
+ * PLAN_68 Part A piece 3) because .staxx-modal-body stays in the DOM, with
+ * its data-view untouched, the whole time Manage or History is showing — it
+ * is only hidden by CSS, not removed — so without this exclusion these two
+ * selectors would keep matching and squeeze whichever of those tabs is open,
+ * both of which always want the full width, into half a screen. */
 @media not all and (max-width: 45rem) {
-  .staxx-modal:not([data-tab="manage"]):has(> .staxx-modal-body[data-view="form"]),
-  .staxx-modal:not([data-tab="manage"]):has(> .staxx-modal-body[data-view="yaml"]) {
+  .staxx-modal:not([data-tab="manage"]):not([data-tab="history"]):has(> .staxx-modal-body[data-view="form"]),
+  .staxx-modal:not([data-tab="manage"]):not([data-tab="history"]):has(> .staxx-modal-body[data-view="yaml"]) {
     width: clamp(52rem, 48vw, 84rem);
   }
 }
@@ -2691,30 +2692,36 @@
   background: transparent;
 }
 
-/* ---- modal: Configure/Manage tabs (PLAN_44 C1) ---- */
+/* ---- modal: Configure/Manage/History tabs (PLAN_44 C1, PLAN_68 Part A) ---- */
 
 /* Configure's own controls — the Form/Split/Compose segmented control — mean
-   nothing on Manage, so they hide with it. The file tab strip further down
-   needs no rule of its own: it lives inside .staxx-modal-body, which the next
-   rule already takes out of the layout entirely. */
-.staxx-modal[data-tab="manage"] .staxx-views {
+   nothing on Manage or History, so they hide with either. The file tab strip
+   further down needs no rule of its own: it lives inside .staxx-modal-body,
+   which the next rule already takes out of the layout entirely. */
+.staxx-modal[data-tab="manage"] .staxx-views,
+.staxx-modal[data-tab="history"] .staxx-views {
   display: none;
 }
 
-.staxx-modal[data-tab="manage"] .staxx-modal-body {
+.staxx-modal[data-tab="manage"] .staxx-modal-body,
+.staxx-modal[data-tab="history"] .staxx-modal-body {
   display: none;
 }
 
-/* The foot goes too. Every word in it is about writing the file — that
-   comments and ordering survive a save, and that a relative volume path puts
-   container data on the flash drive — alongside Undo and the two Save
-   buttons. None of that means anything while you are watching a container
-   run, and leaving a Save button under a pane that cannot edit anything is
+/* The foot goes too, on both tabs, and for the same reason: every word in it
+   is about writing the file — that comments and ordering survive a save,
+   and that a relative volume path puts container data on the flash drive —
+   alongside Undo and the two Save buttons. None of that means anything while
+   you are watching a container run or looking at a past version of the
+   file, and leaving a Save button under a pane that cannot edit anything is
    an offer to do something the tab does not do. Editing lives one tab to the
    left, and switching back is where saving belongs; an unsaved edit is not
-   lost by coming here, and pressing a run button with one outstanding asks
-   what to do about it (PLAN_44 C2). */
-.staxx-modal[data-tab="manage"] .staxx-modal-foot {
+   lost by coming here, and pressing a run button — or restoring a version —
+   with one outstanding asks what to do about it (PLAN_44 C2). History's own
+   Restore button lives inside #staxx-modal-history instead, because it acts
+   on the version chosen there, not on whatever the editor currently holds. */
+.staxx-modal[data-tab="manage"] .staxx-modal-foot,
+.staxx-modal[data-tab="history"] .staxx-modal-foot {
   display: none;
 }
 
@@ -2731,6 +2738,131 @@
    gate on the way .staxx-modal-body has data-view. */
 .staxx-modal:not([data-tab="manage"]) .staxx-modal-manage {
   display: none;
+}
+
+/* ---- modal: History tab (PLAN_68 Part A piece 3) ----
+ *
+ * A fixed-width list of previous versions on the left, scrolling on its
+ * own, and the chosen version filling the rest, also scrolling on its own —
+ * so a long file never pushes a short list out of view or the other way
+ * round. #staxx-modal-history is empty markup until the history-panel agent
+ * fills it in (see StacksPage.php); every class below is a hook for that
+ * script, not something this pane pre-builds for itself.
+ *
+ * --sanitised is a modifier the script adds while Sanitise is on, which
+ * collapses the two-column layout to one so the "not available" notice
+ * (an ordinary .staxx-notice, the same pattern #staxx-sanitise-note already
+ * uses further up this dialog) can centre itself rather than sit pinned to
+ * the width of the list column that has nothing to show beside it. */
+.staxx-modal-history {
+  display: grid;
+  grid-template-columns: 18rem minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.staxx-modal-history--sanitised {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* The reverse of the pane block below it — same reasoning as
+   .staxx-modal-manage above: hidden by CSS rather than built hidden, because
+   this pane has no view of its own to gate on the way .staxx-modal-body has
+   data-view. */
+.staxx-modal:not([data-tab="history"]) .staxx-modal-history {
+  display: none;
+}
+
+/* The version list. A fixed width rather than a fraction of the dialog,
+   because what it holds — a timestamp or a short name — never needs more
+   room than this, and giving it a share of a wide desktop dialog would
+   waste exactly the space the compose file on the right wants most. */
+.staxx-history-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 0.1rem solid var(--sm-line);
+  background: var(--sm-fill-0);
+}
+
+.staxx-history-entry {
+  display: block;
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: none;
+  border-bottom: 0.1rem solid var(--sm-hairline);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.2rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staxx-history-entry:hover {
+  background: var(--sm-fill);
+}
+
+/* aria-current, not a class, for the version currently shown on the right —
+   the same "one of a set, this is the one you are looking at" relationship
+   .staxx-tab marks with aria-selected, but this list is not a tablist. */
+.staxx-history-entry[aria-current="true"] {
+  background: var(--sm-fill-2);
+  color: var(--sm-fg);
+  box-shadow: inset 0.2rem 0 0 var(--sm-accent);
+}
+
+/* Pinned to the bottom of the list column rather than living among the
+   entries, so it always acts on whichever entry is current without having
+   to travel with it. */
+.staxx-history-restore {
+  margin: 0.6rem;
+}
+
+/* The chosen version, read-only. white-space: pre (not pre-wrap), the same
+   as the compose editor's own textarea further up this sheet: a wrapped
+   YAML file misrepresents its own indentation, which is the one thing worth
+   checking in an old version. overflow: auto rather than overflow-x alone,
+   because unlike the editor this pane also has to scroll vertically on its
+   own, independently of the list beside it. */
+.staxx-history-content {
+  min-width: 0;
+  min-height: 0;
+  padding: 1rem 1.2rem;
+  overflow: auto;
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.2rem;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+/* The Sanitise notice takes the place of both columns above, so it is
+   centred in the space they would otherwise share rather than pinned to
+   the left column's width. */
+.staxx-history-sanitised {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+/* Below the same width this dialog goes full-screen at everywhere else
+   (see the @media not all and (max-width: 45rem) block above), a fixed
+   left column stops being a small fraction of the dialog and starts being
+   most of a phone screen — so the list moves above the version instead of
+   beside it, capped to a few rows so the version underneath still gets
+   most of the height. */
+@media (max-width: 45rem) {
+  .staxx-modal-history {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 12rem minmax(0, 1fr);
+  }
+
+  .staxx-history-list {
+    border-right: none;
+    border-bottom: 0.1rem solid var(--sm-line);
+  }
 }
 
 /* ---- modal: body and the two panes ---- */

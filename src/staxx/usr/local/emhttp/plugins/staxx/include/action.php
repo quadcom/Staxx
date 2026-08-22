@@ -55,6 +55,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Relocate.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -1844,6 +1845,89 @@ switch ($action) {
       'xmlTemplate' => $xmlTemplate,
       'xmlTemplateAvailable' => $xmlTemplate !== '' && staxx_handoff_template_available($xmlTemplate),
     ]);
+
+  /* ---- PLAN_68 Part A piece 3: list one stack's kept history ----
+   *
+   * Read-only and cheap: staxx_record_list() only ever reads the hidden
+   * index, and reading it is never what creates it, so a stack with no
+   * history at all is answered with an empty list, not an error. Hashes are
+   * the record's own bookkeeping and are left out — the page has no use for
+   * them.
+   */
+  case 'history-list':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $versions = array_map(fn($v) => [
+      'n'    => $v['n'],
+      'at'   => $v['at'],
+      'size' => $v['size'],
+      'file' => $v['file'],
+      'name' => $v['name'],
+    ], staxx_record_list($name));
+    staxx_reply(['ok' => true, 'versions' => $versions, 'keep' => STAXX_RECORD_KEEP]);
+
+  /* ---- read one kept version's text, for the history panel ----
+   *
+   * staxx_record_get() returns null for two different reasons that must not
+   * read the same to the person: the index no longer names this version at
+   * all (pruned away), or it does but the stored bytes no longer match their
+   * own recorded fingerprint (tampered with, or corrupted on disk). The
+   * index is checked first so the right one of those two is reported.
+   */
+  case 'history-read':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $n = (int)($_POST['n'] ?? 0);
+    if ($n < 1) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid version number.']);
+    }
+
+    $entry = null;
+    foreach (staxx_record_list($name) as $v) {
+      if ($v['n'] === $n) { $entry = $v; break; }
+    }
+    if ($entry === null) {
+      staxx_reply(['ok' => false, 'error' => 'That version is no longer kept.']);
+    }
+
+    $text = staxx_record_get($name, $n);
+    if ($text === null) {
+      staxx_reply([
+        'ok'    => false,
+        'error' => 'The stored copy of that version no longer matches what was recorded, '
+                 . 'so it cannot be trusted and will not be shown.',
+      ]);
+    }
+    staxx_reply(['ok' => true, 'text' => $text, 'file' => $entry['file'], 'at' => $entry['at']]);
+
+  /* ---- name, or clear the name of, one kept version ----
+   *
+   * An empty label clears it. Replies with the refreshed list in the same
+   * shape 'history-list' uses, so the page never has to ask twice for it and
+   * can never end up drawing a stale one after the change.
+   */
+  case 'history-name':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $n     = (int)($_POST['n'] ?? 0);
+    $label = (string)($_POST['label'] ?? '');
+    if ($n < 1) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid version number.']);
+    }
+    if (!staxx_record_name($name, $n, $label, $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    $versions = array_map(fn($v) => [
+      'n'    => $v['n'],
+      'at'   => $v['at'],
+      'size' => $v['size'],
+      'file' => $v['file'],
+      'name' => $v['name'],
+    ], staxx_record_list($name));
+    staxx_reply(['ok' => true, 'versions' => $versions]);
 }
 
 staxx_reply(['ok' => false, 'error' => 'Unknown action "'.$action.'".'], 400);

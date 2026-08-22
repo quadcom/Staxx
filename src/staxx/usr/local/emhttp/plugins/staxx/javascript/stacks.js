@@ -24,6 +24,12 @@
   var tabConfigureBtn = document.getElementById('staxx-tab-configure');
   var tabManageBtn    = document.getElementById('staxx-tab-manage');
   var manageHost      = document.getElementById('staxx-modal-manage');
+  // History (PLAN_68 Part A piece 3) — a third peer tab, built entirely by
+  // this file straight into its own empty host, the same "empty markup until
+  // script fills it in" shape as manageHost above. See the History section
+  // further down, near setTab().
+  var tabHistoryBtn   = document.getElementById('staxx-tab-history');
+  var historyHost     = document.getElementById('staxx-modal-history');
   var nameField   = document.getElementById('staxx-name-field');
   var nameInput   = document.getElementById('staxx-name');
   var nameFolder  = document.getElementById('staxx-name-folder');
@@ -851,6 +857,25 @@
                                 // sends it back so the server can refuse a write that would
                                 // overwrite a change made elsewhere since (see PLAN_60 3.1)
   var serviceRenamed = false;  // a pencil rename happened this session — offer a recreate after save
+
+  // History (PLAN_68 Part A piece 3) — this stack's kept versions. Reset on
+  // every open (see openEditor() below) so a leftover list or selection from
+  // the last stack can never show through, and fetched lazily the first time
+  // the tab is actually entered rather than on open, since most people never
+  // look. historySeq is bumped on every open and closed over by every request
+  // below, so a reply that lands after a different stack has opened — or after
+  // Sanitise has hidden the tab — finds itself superseded and paints nothing.
+  var historySeq          = 0;
+  var historyLoaded       = false;   // true once history-list has answered for THIS stack
+  var historyBusy         = false;   // the history-list request is in flight
+  var historyVersions     = [];      // the last list the server sent, newest first
+  var historyKeep         = 20;      // STAXX_RECORD_KEEP, echoed back by history-list
+  var historySelected     = null;    // the version number shown in the viewer, or null
+  var historyText         = '';      // that version's own text, once history-read answers
+  var historyReadBusy     = false;
+  var historyReadError    = '';
+  var historyLoadError    = '';      // history-list itself failed — nothing else in the pane can be trusted
+  var historyActionError  = '';      // a failed name/clear, shown above an otherwise normal list
 
   // The tab strip's own state. FILES is the last `files` listing, in the
   // order it arrived — compose file first, then alphabetical (see
@@ -6393,6 +6418,17 @@
     startBtn.disabled = on || startBtnWasDisabled;
     if (!on) updateRequired();   // turning it off hands the decision back
 
+    // An old version holds the real, unhidden values — Sanitise being on must
+    // hide History as completely as it hides the form, whichever tab is on
+    // screen right now. Disabling the tab stops a fresh visit; repainting the
+    // pane in place (function declared further down, hoisted) covers the case
+    // where History is already open when Sanitise is switched on.
+    if (tabHistoryBtn) {
+      tabHistoryBtn.disabled = on;
+      tabHistoryBtn.title = on ? 'Not available while Sanitised — an old version holds the real values.' : '';
+    }
+    renderHistoryPane();
+
     var controls = formHost.querySelectorAll('input, select, button');
     for (var i = 0; i < controls.length; i++) {
       if (on) {
@@ -9893,6 +9929,25 @@
     fileDots = {};
     fileMime = {};
     hideBinPanel();   // yesterday's stack may have left this showing
+
+    // Yesterday's history is meaningless against today's stack — bumping the
+    // sequence is what stops a history-list/-read reply still in flight from
+    // painting over the pane a moment after a different stack has opened.
+    historySeq++;
+    historyLoaded = false;
+    historyBusy = false;
+    historyVersions = [];
+    historySelected = null;
+    historyText = '';
+    historyReadBusy = false;
+    historyReadError = '';
+    historyLoadError = '';
+    historyActionError = '';
+    if (historyHost) {
+      historyHost.innerHTML = '';
+      historyHost.classList.remove('staxx-modal-history--sanitised');
+    }
+    if (tabHistoryBtn) { tabHistoryBtn.disabled = false; tabHistoryBtn.title = ''; }
 
     // A stack's identity is its path under the stack root — "jellyfin" at the
     // top level, "Media/jellyfin" inside a folder. The box shows only the last
@@ -15051,11 +15106,306 @@
     if (manageStateTimer) { clearInterval(manageStateTimer); manageStateTimer = null; }
   }
 
+  /* ---- History tab (PLAN_68 Part A piece 3) --------------------------------
+   *
+   * A stack's kept versions — whole previous copies of the compose file and
+   * its override, captured by the server on every save. This file owns the
+   * whole pane: the list, the read-only viewer, naming, and Restore. Nothing
+   * here is polled; the list is fetched once when the tab is entered and
+   * refreshed only after an action that could have changed it.
+   *
+   * Rebuilt wholesale on every state change, the same way reparse() rebuilds
+   * the form — simpler than patching a live tree, and small enough (twenty
+   * rows at most) that the cost is not worth avoiding. */
+
+  // "less than a minute ago" while it happened today, a plain date and time
+  // once it did not — a version from three weeks ago is not usefully "25200
+  // minutes ago", and the reader's own clock (toLocaleString()) is what a
+  // local time means to them, not the server's.
+  function historyWhen(at) {
+    var d = new Date(at * 1000);
+    var now = new Date();
+    var sameDay = d.getFullYear() === now.getFullYear() &&
+                  d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    return sameDay ? timeAgoWords(at) + ' ago' : d.toLocaleString();
+  }
+
+  // aria-current, not a class — see the CSS comment on .staxx-history-entry.
+  function historyRowHtml(v) {
+    var isOv = isStackOverride(v.file);
+    var meta = (isOv ? 'Override' : 'Compose file') + ' · ' + esc(bytes(v.size));
+    var nameHtml = v.name ? ' — <strong>' + esc(v.name) + '</strong>' : '';
+    return '<button type="button" class="staxx-history-entry" data-history-row="' + v.n + '" ' +
+      'aria-current="' + (historySelected === v.n ? 'true' : 'false') + '">' +
+      '<div>' + esc(historyWhen(v.at)) + nameHtml + '</div>' +
+      '<div style="color:var(--sm-muted);">' + meta + '</div>' +
+      '</button>';
+  }
+
+  // The naming strip and Restore button, both pinned under the list and both
+  // acting on whichever entry is aria-current — there is one of each for the
+  // whole list, not one per row, so neither has to travel with its entry.
+  function historyActionsHtml() {
+    if (historySelected === null) {
+      return '<button type="button" class="staxx-btn staxx-history-restore" disabled ' +
+        'title="Pick a version above first.">Restore</button>';
+    }
+    var v = null;
+    for (var i = 0; i < historyVersions.length; i++) {
+      if (historyVersions[i].n === historySelected) { v = historyVersions[i]; break; }
+    }
+    // The list answered again (after a name change) and no longer names this
+    // version — it has been pruned since it was selected.
+    if (!v) {
+      return '<button type="button" class="staxx-btn staxx-history-restore" disabled>Restore</button>';
+    }
+
+    var isOv = isStackOverride(v.file);
+    var out = [];
+    out.push('<div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;padding:0.6rem 1rem;' +
+      'border-top:0.1rem solid var(--sm-line);">' +
+      '<input type="text" class="staxx-inline-name" id="staxx-history-name-input" ' +
+      'placeholder="Name to keep forever" value="' + esc(v.name || '') + '">' +
+      (v.name
+        ? '<button type="button" class="staxx-btn staxx-btn--small" data-history-clearname="' + v.n + '">Clear</button>'
+        : '') +
+      '</div>');
+
+    out.push('<button type="button" class="staxx-btn staxx-btn--primary staxx-history-restore"' +
+      (isOv ? ' disabled title="An override version cannot be restored here yet — open its own ' +
+        'tab and copy the text in by hand."' : '') + '>Restore into Configure</button>');
+    return out.join('');
+  }
+
+  function historyContentHtml() {
+    if (historySelected === null) {
+      return '<p class="staxx-form-empty">Pick a version on the left to look at it.</p>';
+    }
+    if (historyReadBusy) return '<p class="staxx-form-empty">Reading…</p>';
+    if (historyReadError) {
+      // Shown verbatim — see the endpoint's own two error strings, one for a
+      // pruned version and one for a stored copy that no longer matches its
+      // own recorded fingerprint. Neither reads well paraphrased.
+      return '<div class="staxx-notice staxx-notice--bad"><i class="fa fa-times-circle" ' +
+        'aria-hidden="true"></i><div>' + esc(historyReadError) + '</div></div>';
+    }
+    return esc(historyText);
+  }
+
+  // Everything before the normal two-column list-and-viewer state is really
+  // the same shape: one centred message where the grid would otherwise put
+  // two columns. --sanitised is the modifier the stylesheet gives that
+  // one-column collapse (see its own comment on .staxx-modal-history); reused
+  // here for "not loaded yet", "could not load at all" and "nothing kept
+  // yet" too, since all four are the same "there is no list to show beside a
+  // viewer" case as far as the grid is concerned.
+  function historySingleColumn(html) {
+    historyHost.classList.add('staxx-modal-history--sanitised');
+    historyHost.innerHTML = '<div class="staxx-history-sanitised">' + html + '</div>';
+  }
+
+  // The one function that draws #staxx-modal-history, from whatever the state
+  // above currently says. Called after every state change instead of patching
+  // the tree in place — see the section comment above for why.
+  function renderHistoryPane() {
+    if (!historyHost) return;
+
+    if (sanitised) {
+      historySingleColumn('<div class="staxx-notice"><i class="fa fa-eye-slash" aria-hidden="true">' +
+        '</i><div><strong>Not available while Sanitised.</strong> An old version holds the real, ' +
+        'unhidden values, so history is hidden until Sanitise is turned off.</div></div>');
+      return;
+    }
+
+    if (!historyLoaded) {
+      if (historyBusy) historySingleColumn('<p class="staxx-form-empty">Reading this stack’s history…</p>');
+      else { historyHost.classList.remove('staxx-modal-history--sanitised'); historyHost.innerHTML = ''; }
+      return;
+    }
+
+    if (historyLoadError) {
+      historySingleColumn('<div class="staxx-notice staxx-notice--bad"><i class="fa fa-times-circle" ' +
+        'aria-hidden="true"></i><div>' + esc(historyLoadError) + '</div></div>');
+      return;
+    }
+
+    if (!historyVersions.length) {
+      historySingleColumn('<p class="staxx-form-empty">No history yet. The next time this stack ' +
+        'is saved, that version starts being kept.</p>');
+      return;
+    }
+
+    // A failed name/clear does not invalidate the list itself, so it is a
+    // banner above the grid rather than a replacement for it — grid-column
+    // spans both of #staxx-modal-history's own columns rather than sitting
+    // squeezed into whichever one it would otherwise fall into as a third
+    // grid item.
+    var banner = historyActionError
+      ? '<div class="staxx-notice staxx-notice--bad" style="grid-column:1 / -1;">' +
+        '<i class="fa fa-times-circle" aria-hidden="true"></i><div>' + esc(historyActionError) +
+        '</div></div>'
+      : '';
+    historyHost.classList.remove('staxx-modal-history--sanitised');
+    historyHost.innerHTML = banner +
+      '<div class="staxx-history-list">' +
+        historyVersions.map(historyRowHtml).join('') +
+        historyActionsHtml() +
+      '</div>' +
+      '<div class="staxx-history-content">' + historyContentHtml() + '</div>';
+  }
+
+  // Fetched once per stack, the first time the tab is entered — see setTab().
+  function ensureHistoryLoaded() {
+    if (historyLoaded || historyBusy || sanitised) return;
+    historyBusy = true;
+    var seq = historySeq;
+    var stack = openedName;
+    renderHistoryPane();
+    call('history-list', { name: stack }).then(function (res) {
+      if (seq !== historySeq) return;   // a different stack opened before this answered
+      historyBusy = false;
+      historyLoaded = true;
+      if (!res || !res.ok) {
+        historyLoadError = (res && res.error) || 'Could not read this stack’s history.';
+        historyVersions = [];
+      } else {
+        historyVersions = res.versions || [];
+        historyKeep = res.keep || historyKeep;
+      }
+      renderHistoryPane();
+    });
+  }
+
+  function selectHistoryVersion(n) {
+    if (historySelected === n) return;
+    historySelected = n;
+    historyText = '';
+    historyReadError = '';
+    historyReadBusy = true;
+    var seq = historySeq;
+    renderHistoryPane();
+    call('history-read', { name: openedName, n: n }).then(function (res) {
+      if (seq !== historySeq || historySelected !== n) return;
+      historyReadBusy = false;
+      if (!res || !res.ok) {
+        // Shown verbatim — see the endpoint's own two error strings, one for
+        // a pruned version and one for a stored copy that no longer matches
+        // its own recorded fingerprint. Neither reads well paraphrased.
+        historyReadError = (res && res.error) || 'Could not read that version.';
+      } else {
+        historyText = res.text;
+      }
+      renderHistoryPane();
+    });
+  }
+
+  function saveHistoryName(n, label) {
+    call('history-name', { name: openedName, n: n, label: label }).then(function (res) {
+      if (!res || !res.ok) {
+        historyActionError = (res && res.error) || 'Could not update that version’s name.';
+        renderHistoryPane();
+        return;
+      }
+      historyActionError = '';
+      historyVersions = res.versions || [];
+      // The version just unnamed may already be gone — see the warning this
+      // is reached from, in clearHistoryName() below.
+      if (historySelected !== null && !historyVersions.some(function (v) { return v.n === historySelected; })) {
+        historySelected = null;
+        historyText = '';
+      }
+      renderHistoryPane();
+    });
+  }
+
+  // Clearing a name is not undoable the way naming one is — it can rejoin the
+  // ordinary queue and be pruned the instant it does, so this asks first,
+  // through the same yes/no dialog every other destructive question here uses.
+  function clearHistoryName(n) {
+    askConfirm({
+      title: 'Clear this version’s name?',
+      bodyHtml: '<p>A named version is kept forever. Clearing its name puts it back in the ordinary ' +
+        'queue of the last ' + historyKeep + ' saves, where it can be deleted the moment a newer one ' +
+        'is saved — possibly straight away.</p>',
+      goLabel: 'Clear the name'
+    }).then(function (go) {
+      closeConfirm();
+      if (!go) return;
+      saveHistoryName(n, '');
+    });
+  }
+
+  // Loads the chosen version into the editor as an unsaved change and switches
+  // to Configure — it never writes to disk itself. The ordinary Save commits
+  // it, and Save always captures whatever it is overwriting first, so undoing
+  // an undo works the same way any other save does.
+  function performRestore(n, text) {
+    var doRestore = function () {
+      // Back on the compose tab first — pushUndo() below snapshots whatever
+      // currentText() returns, which is the stashed compose text regardless
+      // of which tab is showing, but the box itself has to be showing it
+      // before this writes into it directly.
+      return openFile('').then(function () {
+        pushUndo('restoring version ' + n + ' from history');
+        yamlPane.value = text;
+        paintGutter();
+        paintInk();
+        reparse();
+        setYamlStatus('Restored version ' + n + ' from history — Save keeps it, or Undo puts the ' +
+          'previous version back.');
+        setTab('configure');
+        yamlPane.focus({ preventScroll: true });
+      });
+    };
+    if (!isDirty()) { doRestore(); return; }
+    askConfirm({
+      title: 'Discard changes?',
+      bodyHtml: '<p>Configure has changes that have not been saved. Restoring version ' + n +
+        ' replaces what is on screen with it.</p>',
+      goLabel: 'Discard and restore'
+    }).then(function (go) {
+      closeConfirm();
+      if (go) doRestore();
+    });
+  }
+
+  if (historyHost) {
+    historyHost.addEventListener('click', function (event) {
+      var row = event.target.closest('[data-history-row]');
+      if (row) { selectHistoryVersion(parseInt(row.dataset.historyRow, 10)); return; }
+
+      var restoreBtn = event.target.closest('.staxx-history-restore');
+      if (restoreBtn) {
+        if (restoreBtn.disabled || historySelected === null || historyReadBusy || historyReadError) return;
+        performRestore(historySelected, historyText);
+        return;
+      }
+
+      var clearBtn = event.target.closest('[data-history-clearname]');
+      if (clearBtn) { clearHistoryName(parseInt(clearBtn.dataset.historyClearname, 10)); return; }
+    });
+
+    // Enter commits the name box the same way blurring it does (below) —
+    // without this, Enter would do nothing but leave the caret sitting there.
+    historyHost.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' || event.target.id !== 'staxx-history-name-input') return;
+      event.preventDefault();
+      event.target.blur();
+    });
+
+    historyHost.addEventListener('change', function (event) {
+      if (event.target.id !== 'staxx-history-name-input' || historySelected === null) return;
+      saveHistoryName(historySelected, event.target.value.trim());
+    });
+  }
+
   function setTab(tab) {
     modal.dataset.tab = tab;
     if (tabConfigureBtn) tabConfigureBtn.setAttribute('aria-selected', tab === 'configure' ? 'true' : 'false');
     if (tabManageBtn) tabManageBtn.setAttribute('aria-selected', tab === 'manage' ? 'true' : 'false');
+    if (tabHistoryBtn) tabHistoryBtn.setAttribute('aria-selected', tab === 'history' ? 'true' : 'false');
     manageStatePoll(tab === 'manage');
+    if (tab === 'history') ensureHistoryLoaded();
   }
 
   if (tabConfigureBtn) tabConfigureBtn.addEventListener('click', function () { setTab('configure'); });
@@ -15065,6 +15415,12 @@
       if (!ensureManage()) return;
       if (!manageMounted) mountManageForCurrentStack();
       setTab('manage');
+    });
+  }
+  if (tabHistoryBtn) {
+    tabHistoryBtn.addEventListener('click', function () {
+      if (tabHistoryBtn.disabled) return;
+      setTab('history');
     });
   }
 

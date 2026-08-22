@@ -399,16 +399,28 @@ endif;
          running or stopped container — a shell, a log and a file browser —
          built by a separate agent into #staxx-modal-manage below. Which one
          shows is the .staxx-modal's own data-tab attribute, read by the
-         stylesheet (see the ~2129 comment there for the one trap it has to
+         stylesheet (see the ~2454 comment there for the one trap it has to
          dodge) and set by stacks.js's setTab(). Copies .staxx-tabstrip/
          .staxx-tab wholesale from the file-tab strip further down rather than
          .staxx-ca-tab, so the dialog is internally consistent with the one
-         tab strip it already had. -->
+         tab strip it already had.
+
+         History (PLAN_68 Part A piece 3) is a third peer here rather than a
+         control tucked inside Configure, because it is a property of the
+         file being edited, not of whatever the editor happens to be showing
+         right now — burying it behind Configure's own controls would hide it
+         exactly when somebody has clicked away from the file that has a
+         history. It is disabled (native `disabled`, not a class — see
+         .staxx-tab:disabled in the stylesheet) whenever Sanitise is on: an
+         old version holds the real, unhidden values, and showing it would
+         defeat Sanitise outright. -->
     <div class="staxx-tabstrip staxx-modal-tabstrip" role="tablist" aria-label="<?= _('Editor section') ?>">
       <button type="button" class="staxx-tab" id="staxx-tab-configure" role="tab"
               aria-selected="true" data-tab="configure"><?= _('Configure') ?></button>
       <button type="button" class="staxx-tab" id="staxx-tab-manage" role="tab"
               aria-selected="false" data-tab="manage"><?= _('Manage') ?></button>
+      <button type="button" class="staxx-tab" id="staxx-tab-history" role="tab"
+              aria-selected="false" data-tab="history"><?= _('History') ?></button>
     </div>
 
     <div class="staxx-notice staxx-modal-banner" id="staxx-sanitise-note" hidden>
@@ -591,8 +603,17 @@ endif;
          CurrentStack() in stacks.js. Shown only while data-tab="manage" on
          the dialog above; .staxx-modal-body stays in the DOM meanwhile
          rather than being hidden and re-shown, which is what the width-clamp
-         comment at staxx.css:~2129 has to work around. -->
+         comment at staxx.css:~2454 has to work around. -->
     <div class="staxx-modal-manage" id="staxx-modal-manage"></div>
+
+    <!-- Empty on purpose, same reasoning as #staxx-modal-manage above:
+         stacks.js fills this the first time the History tab is opened and
+         owns everything inside it — the list of previous versions, the
+         read-only version view, the Restore button, and (while Sanitise is
+         on) the "not available" notice in its place. Built on demand rather
+         than with the dialog, because most people never open this tab.
+         Shown only while data-tab="history" on the dialog above. -->
+    <div class="staxx-modal-history" id="staxx-modal-history"></div>
 
     <div class="staxx-modal-foot">
       <div class="staxx-error" id="staxx-error" hidden></div>
