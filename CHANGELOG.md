@@ -8,7 +8,7 @@ apologising for.
 
 ---
 
-## 2026.08.21 — not yet released
+## 2026.08.21 — released 2026-08-22
 
 The first version worth writing down. Nothing before this was packaged or tagged, so this entry
 covers the state of the whole plugin rather than a list of differences.
