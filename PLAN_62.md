@@ -7,8 +7,19 @@ are not re-derived. Plan only; no code has been written.
 Scope answered by Adrian, 2026-08-21. Every decision below is his; the measurements are mine and
 were taken on the live server rather than assumed.
 
-**Stages 1 to 4 built, verified and deployed — the plan's original scope is complete. Stage 5 is
-written up and deliberately held at Adrian's word, 2026-08-22.**
+**COMPLETE — all five stages built, verified and deployed, 2026-08-22.** Stage 5 was widened at
+Adrian's decision to accept the Community Applications catalogue as well as a local template, both
+behind one resemblance gate; see "How it was actually built" below.
+
+**Measured on the live server after Stage 5 landed:** of 61 rolling-tagged images, **49 now have a
+project home, up from 38** — 31 from the publisher's own label, 7 derived from a ghcr.io address,
+**8 from the catalogue and 3 from a local template.** The remaining 12 are the base images and the
+genuinely unclaimable, which correctly get nothing.
+
+Worth recording because it corrects an expectation: the catalogue knows 3,665 apps against 86 local
+templates, so it looked like the far bigger source — but it only added 8, because almost everything it
+could have placed had already declared a label itself. **Breadth of a source is not reach.** The
+plan's own estimate of "roughly ten more" was very nearly exact.
 
 Stage 4 keeps a dismissal as **the author's value, not a flag**, so it expires itself: the dismissal
 is honoured only while the author's value is still the one that was waved away. The report is built
@@ -317,6 +328,34 @@ watched.
 `<Project>` is a *third party's* claim about the app, not the publisher's own. The resemblance test is
 what keeps it from being a guess. Note also that a URL may need normalising to the repository root: one
 template names an `/issues` sub-path.
+
+### How it was actually built — 2026-08-22, one deliberate widening
+
+**The plan's premise was true but narrower than what was already available.** The Community
+Applications catalogue is *already* a source for the project link on a stack row, joined on the image's
+repository path, and it knows thousands of apps rather than the 86 installed here. It was excluded from
+*watching* for a good reason — it is a third party's claim about an app, not the publisher's own — but
+**a local template is exactly the same kind of claim.** The resemblance test is what makes either safe,
+and it is the same test for both.
+
+Adrian chose both sources, 2026-08-22. So this stage builds:
+
+1. **One gate, `staxx_watch_claim_ok()`.** A claimed address is accepted only when it is a GitHub
+   repository *and* its owner matches the image's namespace, or its repository name matches the
+   image's name, case-insensitively. Rebuilt from owner and repository so a `/issues` sub-path
+   normalises to the repository root.
+2. **Two sources behind it**, tried in the order the existing link resolver already uses: the
+   catalogue, then a light scan of the local templates for their `Repository` and `Project` fields.
+3. **Provenance recorded, not just the address.** `staxx_watch_home()` now returns where the address
+   came from as well, and the finding carries it — because presenting a third party's claim as "the
+   author's own example" without saying so is the silent-correction failure rule 2 forbids.
+
+**Consequence to expect:** more images watched than the ten this stage predicted, because the
+catalogue's reach is far wider than the flash drive's. The per-pass cap still bounds the work.
+
+**Guards the gate needs, from the measured sample:** `library` and an empty namespace never match
+(every Docker official image would otherwise match every claim), and a matched token must be at least
+three characters. Actual Budget's `Kippenhof/docker-templates` is the case that must stay rejected.
 
 ## Verification
 

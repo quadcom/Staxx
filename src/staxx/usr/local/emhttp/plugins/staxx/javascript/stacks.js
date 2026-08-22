@@ -1375,8 +1375,13 @@
   function findClashes(text, ownProject) {
     var out = [];
     if (!YAML || typeof YAML.hostPorts !== 'function') return out;
+    // Compose v2 joins project and service with '-'; older compose, and the
+    // Compose Manager plugin, still join them with '_'. A stack named the
+    // second way would otherwise see every one of its own ports and paths
+    // reported as a clash with itself.
     var isOwn = function (container) {
-      return ownProject && container.indexOf(ownProject + '-') === 0;
+      return ownProject && (container.indexOf(ownProject + '-') === 0 ||
+                             container.indexOf(ownProject + '_') === 0);
     };
     YAML.hostPorts(text).forEach(function (p) {
       TAKEN.ports.forEach(function (t) {
@@ -2675,6 +2680,12 @@
                           : 'The author\'s published example does not set ' + wDropped + ' things here.') +
           '</p>';
       }
+      // PLAN_62 Stage 5 — the address this example was fetched from is not
+      // always the publisher's own (see watchHomeSourceNote() below), and
+      // rule 2 forbids presenting a third party's guess as the author's
+      // word without saying so.
+      var wSrc = watchHomeSourceNote(f.watchAdvice[0].home_from);
+      if (wSrc) out += '<p class="staxx-fieldnote">' + esc(wSrc) + '</p>';
       // PLAN_62 Stage 4 — every item on this field concerns the same setting
       // (that is what matched them all to it), so one Dismiss covers them.
       out += '<p class="staxx-fieldnote">' + watchDismissBtn({
@@ -3851,6 +3862,23 @@
     return null;
   }
 
+  // PLAN_62 Stage 5 — home_from names where the example's address came
+  // from. 'label' and 'derived' are the publisher's own declaration (inside
+  // the image, or worked out from its own ghcr.io address) and need no
+  // comment. 'catalog' and 'template' are a third party's claim about the
+  // app — the Community Applications catalogue, or an Unraid template on
+  // this server — so silence there would be the silent-correction failure
+  // rule 2 forbids: the person is owed one plain sentence saying so.
+  function watchHomeSourceNote(homeFrom) {
+    if (homeFrom === 'catalog') {
+      return 'This example\'s address came from the app catalogue, not the publisher, so this is someone else\'s idea of where this app lives.';
+    }
+    if (homeFrom === 'template') {
+      return 'This example\'s address came from an Unraid template on this server, not the publisher, so this is someone else\'s idea of where this app lives.';
+    }
+    return '';
+  }
+
   // setting -> the phrase a leftover sentence names it by, when there is no
   // field beside it to make that obvious instead.
   function watchSettingWord(setting) {
@@ -3870,7 +3898,7 @@
     leftover.forEach(function (f) {
       var key = f.service + '|' + f.setting + '|' + f.side;
       if (!groups[key]) {
-        groups[key] = { service: f.service, setting: f.setting, side: f.side, image: f.image, count: 0 };
+        groups[key] = { service: f.service, setting: f.setting, side: f.side, image: f.image, home_from: f.home_from, count: 0 };
         order.push(key);
       }
       groups[key].count++;
@@ -3908,7 +3936,9 @@
     if (!watchNotes.length && !groups.length) { watchNote.hidden = true; watchNote.innerHTML = ''; return; }
     var lines = watchNotes.map(function (l) { return '<span>' + esc(l) + '</span>'; })
       .concat(groups.map(function (g) {
-        return '<span>' + esc(watchLeftoverSentence(g)) + watchDismissBtn(g) + '</span>';
+        var wSrc = watchHomeSourceNote(g.home_from);
+        return '<span>' + esc(watchLeftoverSentence(g)) + watchDismissBtn(g) + '</span>' +
+               (wSrc ? '<br><span>' + esc(wSrc) + '</span>' : '');
       }));
     watchNote.innerHTML = lines.join('<br>');
     watchNote.hidden = false;
@@ -3955,7 +3985,7 @@
           field.watchAdvice = field.watchAdvice || [];
           field.watchAdvice.push(finding);
         } else {
-          leftover.push({ service: svc, setting: finding.setting, side: finding.side, image: finding.image });
+          leftover.push({ service: svc, setting: finding.setting, side: finding.side, image: finding.image, home_from: finding.home_from });
         }
       });
     });
@@ -4208,14 +4238,7 @@
         // that failed is how the corruption above happened. Put the file back
         // to the snapshot pushUndo() just took — the declaration goes with it,
         // so this leaves neither half — rather than guess at a line number.
-        var back = undoStack.pop();
-        if (back) {
-          yamlPane.value = back.text;
-          paintGutter();
-          paintInk();
-          reparse();
-        }
-        updateUndo();
+        restoreUndo();
         setYamlStatus('That network was not added — the row it belongs to could not be found again. '
                       + 'Add it in the Compose view instead.');
         return;
@@ -4684,6 +4707,22 @@
   function pushUndo(what) {
     undoStack.push({ text: currentText(), what: what });
     if (undoStack.length > 25) undoStack.shift();
+    updateUndo();
+  }
+
+  // For a multi-step edit that fails partway through, after some of it has
+  // already reached the document — a plain undoStack.pop() would throw away
+  // the one thing that could put that half-write back. Restoring is
+  // unconditionally safe even when nothing landed: the snapshot then equals
+  // the current text and this is a no-op.
+  function restoreUndo() {
+    var back = undoStack.pop();
+    if (back) {
+      yamlPane.value = back.text;
+      paintGutter();
+      paintInk();
+      reparse();
+    }
     updateUndo();
   }
 
@@ -5194,8 +5233,10 @@
     pushUndo('switching "' + service + '" to ' + word);
     var res = YAML.setNetworkMode(MODEL.doc, MODEL, service, mode);
     if (!res.ok) {
-      undoStack.pop();
-      updateUndo();
+      // setNetworkMode can fail after it has already stashed and removed
+      // the service's networks: block, so a plain pop would discard the
+      // snapshot that could put that half-write back — restore from it.
+      restoreUndo();
       setYamlStatus(res.error);
       return;
     }
@@ -5231,8 +5272,9 @@
     }
 
     if (!YAML.removeKey(MODEL.doc, MODEL, f.service, ['network_mode'])) {
-      undoStack.pop();
-      updateUndo();
+      // declareNetwork() above may already have landed, so restore rather
+      // than discard — same reasoning as switchServiceToMode().
+      restoreUndo();
       setYamlStatus('network_mode is written in a way the form cannot remove — remove it in the Compose view instead.');
       return;
     }
@@ -5244,8 +5286,9 @@
     // read for a placeholder this call never needs, since value is given.
     var line = YAML.addItem(MODEL.doc, MODEL, f.service, 'list', value, 'networks');
     if (line < 0) {
-      undoStack.pop();
-      updateUndo();
+      // network_mode is already gone by here, so a discard would leave the
+      // service with neither it nor the network that was meant to replace it.
+      restoreUndo();
       setYamlStatus('That list is written in a way the form cannot add to — ' +
                     'add it in the Compose view instead.');
       return;
@@ -5265,8 +5308,9 @@
     pushUndo('putting "' + service + '"’s networks back');
     var res = YAML.restoreNetworkStash(MODEL.doc, MODEL, service);
     if (!res.ok) {
-      undoStack.pop();
-      updateUndo();
+      // restoreNetworkStash removes network_mode before it removes the
+      // stash, so a failure on the second leaves the first already done.
+      restoreUndo();
       setYamlStatus(res.error);
       return;
     }

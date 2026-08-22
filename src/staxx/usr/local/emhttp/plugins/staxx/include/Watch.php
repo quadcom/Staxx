@@ -36,6 +36,7 @@
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
 
 if (defined('STAXX_WATCH_DIR')) return;
 
@@ -65,18 +66,152 @@ function staxx_watch_rolling_tag(string $image): bool {
 
 /**
  * Where this image's publisher is, for this feature's purposes only — never
- * a guess dressed up as one. A declared org.opencontainers.image.source
- * label always wins, because the publisher wrote it themselves; failing
- * that, and only for an image actually hosted at ghcr.io, the matching
- * GitHub address, which staxx_links_derive_ghcr() already treats as a good
- * guess rather than a fact. Nothing else is tried — a plain image like
- * alpine correctly comes back empty.
+ * a guess dressed up as one, and always said which kind of answer it is.
+ * Tried in order: a declared org.opencontainers.image.source label (the
+ * publisher's own word), then an image hosted at ghcr.io, whose GitHub
+ * address staxx_links_derive_ghcr() already treats as a good guess rather
+ * than a fact, then two THIRD-PARTY claims about the app — the Community
+ * Applications catalogue and a local Unraid template — accepted only when
+ * staxx_watch_claim_ok() judges the claimed repository actually resembles
+ * this image (see that function). A plain image like alpine correctly comes
+ * back empty.
+ *
+ * The provenance word travels with the address into the state file as
+ * 'home_from', because presenting a stranger's claim as "the author's own
+ * example" without saying so is the silent-correction failure rule 2 (see
+ * CLAUDE.md) forbids.
+ *
+ * @return array{0:string,1:string} [address, provenance] — provenance is
+ *   'label', 'derived', 'catalog', 'template', or '' alongside an empty
+ *   address.
  */
-function staxx_watch_home(string $image): string {
+function staxx_watch_home(string $image): array {
   $images = staxx_update_state()['images'] ?? [];
   $label  = staxx_links_url((string)($images[$image]['source'] ?? ''));
-  if ($label !== '') return $label;
-  return staxx_links_derive_ghcr($image);
+  if ($label !== '') return [$label, 'label'];
+
+  $derived = staxx_links_derive_ghcr($image);
+  if ($derived !== '') return [$derived, 'derived'];
+
+  return staxx_watch_claimed_home($image);
+}
+
+/**
+ * Is a third party's claimed project address trustworthy enough to fetch
+ * from? Accepted only when the claim is a GitHub repository AND its owner or
+ * repository name resembles this image's own namespace or name — that
+ * resemblance is what tells the app's own repository (Excalidraw naming
+ * itself) apart from a template author's personal collection (the Actual
+ * Budget template naming Kippenhof/docker-templates, which must be refused:
+ * following it would fetch a stranger's repository and present whatever it
+ * holds as "the author's example").
+ *
+ * A namespace of 'library' (Docker's own official images, which have no
+ * real owner to compare) or an empty one never matches, and a matched token
+ * shorter than three characters does not count — both guard against a
+ * coincidental match on a name too short or too generic to mean anything.
+ *
+ * Rebuilt from the owner and repository staxx_watch_github_repo() already
+ * extracted, so a claimed sub-path (a template naming an issue tracker URL)
+ * normalises to the repository root.
+ */
+function staxx_watch_claim_ok(string $image, string $home): string {
+  $parts = staxx_watch_github_repo($home);
+  if ($parts === []) return '';
+  [$owner, $repo] = $parts;
+
+  $path = strtolower(staxx_links_repo_path($image));
+  if ($path === '') return '';
+  $segments = explode('/', $path);
+  if (count($segments) === 1) {
+    // No registry account written at all — an official Docker Hub image,
+    // implicitly under 'library', which is excluded from matching below.
+    $namespace = 'library';
+    $name      = $segments[0];
+  } else {
+    $namespace = $segments[0];
+    $name      = end($segments);
+  }
+
+  $ownerLower = strtolower($owner);
+  $repoLower  = strtolower($repo);
+
+  $namespaceMatches = $namespace !== '' && $namespace !== 'library'
+                    && strlen($namespace) >= 3 && $namespace === $ownerLower;
+  $nameMatches = $name !== '' && strlen($name) >= 3 && $name === $repoLower;
+
+  if (!$namespaceMatches && !$nameMatches) return '';
+  return 'https://github.com/'.$owner.'/'.$repo;
+}
+
+/**
+ * The two THIRD-PARTY sources for a project home, tried in the order
+ * staxx_project_links() already uses for the same two sources: the
+ * catalogue, then the local templates. Each candidate still has to pass
+ * staxx_watch_claim_ok() — being in the catalogue or on the flash drive does
+ * not by itself make a claim trustworthy.
+ *
+ * $templatesDir defaults to the real template folder, same as
+ * staxx_watch_template_claims() itself; only a test passes another one.
+ *
+ * @return array{0:string,1:string} [address, provenance] or ['', ''].
+ */
+function staxx_watch_claimed_home(string $image, string $templatesDir = STAXX_IMPORT_TEMPLATES_DIR): array {
+  $repo = strtolower(staxx_links_repo_path($image));
+  if ($repo === '') return ['', ''];
+
+  $ordinal = staxx_links_ca_map()[$repo] ?? null;
+  if ($ordinal !== null) {
+    $app = staxx_ca_app($ordinal);
+    if (is_array($app)) {
+      $claimed = staxx_links_url((string)($app['Project'] ?? ''));
+      $ok      = $claimed !== '' ? staxx_watch_claim_ok($image, $claimed) : '';
+      if ($ok !== '') return [$ok, 'catalog'];
+    }
+  }
+
+  $claimed = staxx_links_url((string)(staxx_watch_template_claims($templatesDir)[$repo] ?? ''));
+  $ok      = $claimed !== '' ? staxx_watch_claim_ok($image, $claimed) : '';
+  if ($ok !== '') return [$ok, 'template'];
+
+  return ['', ''];
+}
+
+/**
+ * A light scan of the local Unraid templates for their own <Repository> and
+ * <Project> fields — repository path (lowercased) => project URL. Deliberately
+ * not staxx_import_templates(), which also loads every container and folder
+ * view this does not need. *.xml only: the folder also holds a .bak of
+ * whatever was last overwritten, and it parses just as happily as a real
+ * template (see the identical filter and comment in Import.php). First entry
+ * for a repeated repository wins a tie, the same rule staxx_links_ca_map()
+ * uses.
+ *
+ * $dir defaults to the real template folder; every caller in this plugin
+ * uses that default, and only a test passes another one.
+ *
+ * @return array<string,string>
+ */
+function staxx_watch_template_claims(string $dir = STAXX_IMPORT_TEMPLATES_DIR): array {
+  static $cache = [];
+  if (isset($cache[$dir])) return $cache[$dir];
+
+  $claims = [];
+  foreach ((array)@scandir($dir) as $file) {
+    if (!preg_match('/\.xml$/i', $file)) continue;
+    $path = $dir.'/'.$file;
+    if (!is_file($path)) continue;
+
+    $xml = @simplexml_load_file($path);
+    if ($xml === false) continue;
+
+    $repo    = strtolower(staxx_links_repo_path((string)($xml->Repository ?? '')));
+    $project = staxx_links_url((string)($xml->Project ?? ''));
+    if ($repo === '' || $project === '' || isset($claims[$repo])) continue;
+    $claims[$repo] = $project;
+  }
+
+  return $cache[$dir] = $claims;
 }
 
 /**
@@ -383,15 +518,15 @@ function staxx_watch_compare(string $localFile, string $image): array {
  * Docker Hub's, but it is still a limit, and a forced recheck of every image
  * in one pass must stop well short of it rather than retrying into a wall.
  *
- * @return array{} | array{home?:string, discover_etag?:string, path?:string,
- *   candidates?:int, fetch_etag?:string, body_saved?:bool, reason?:string}
+ * @return array{} | array{home?:string, home_from?:string, discover_etag?:string,
+ *   path?:string, candidates?:int, fetch_etag?:string, body_saved?:bool, reason?:string}
  *   [] means "pinned — nothing to say, nothing stored".
  */
 function staxx_watch_check(string $image, array $prior, int &$spent): array {
   $spent = 0;
   if (!staxx_watch_rolling_tag($image)) return [];
 
-  $home = staxx_watch_home($image);
+  [$home, $homeFrom] = staxx_watch_home($image);
   if ($home === '') return ['reason' => 'no known project home for this image'];
 
   $discover = staxx_watch_discover($home, (string)($prior['discover_etag'] ?? ''));
@@ -399,15 +534,17 @@ function staxx_watch_check(string $image, array $prior, int &$spent): array {
 
   if ($discover['unchanged']) {
     $out = $prior;
-    $out['home'] = $home;
+    $out['home']      = $home;
+    $out['home_from'] = $homeFrom;
   } elseif (!$discover['ok']) {
     // A refused listing must never clear what was already known — a
     // transient network failure must not read as "the author changed
     // nothing", but it must also not erase a real finding from last time.
-    return $prior !== [] ? $prior : ['home' => $home, 'reason' => $discover['reason']];
+    return $prior !== [] ? $prior : ['home' => $home, 'home_from' => $homeFrom, 'reason' => $discover['reason']];
   } else {
     $out = [
       'home'          => $home,
+      'home_from'     => $homeFrom,
       'discover_etag' => $discover['etag'],
       'path'          => $discover['path'],
       'candidates'    => $discover['candidates'],

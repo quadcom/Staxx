@@ -407,10 +407,16 @@ function staxx_watch_for_stack(string $stack): array {
         // staxx_watch_skip() needs (PLAN_62 Stage 4) — the field itself
         // never carries it otherwise, since a service's image is not one of
         // its own settings.
+        // 'home_from' rides along for the same reason — where the example's
+        // address came from is a property of the image's check, not of the
+        // setting, and the browser says so beside a finding whose address was
+        // a third party's claim rather than the publisher's own (PLAN_62
+        // Stage 5). '' for state written before that was recorded.
         $findings[(string)($f['service'] ?? $svc)][] = [
-          'setting' => (string)($f['setting'] ?? ''),
-          'side'    => (string)($f['side'] ?? ''),
-          'image'   => $image,
+          'setting'   => (string)($f['setting'] ?? ''),
+          'side'      => (string)($f['side'] ?? ''),
+          'image'     => $image,
+          'home_from' => (string)($entry['home_from'] ?? ''),
         ];
       }
       continue;

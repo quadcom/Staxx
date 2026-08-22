@@ -37,6 +37,25 @@
  *   - staxx_watch_check()'s state machine for the cases reachable with no
  *     network: a pinned tag is never even asked about, and an image with no
  *     known project home says so without touching a socket.
+ *   - PLAN_62 Stage 5 — staxx_watch_claim_ok(), the gate that decides whether
+ *     a third party's claimed project address is trustworthy enough to
+ *     fetch from. Pure, no network.
+ *   - staxx_watch_template_claims() — the light template scanner, against a
+ *     throwaway fixture directory under /tmp, never the real templates.
+ *   - staxx_watch_claimed_home() — both the catalogue and the template
+ *     source, and the order between them, against a fixture CA cache
+ *     (backed up and restored the way tests/server/project-links.php already
+ *     does) and the same throwaway template directory. Both functions take
+ *     an optional directory argument for exactly this reason; every real
+ *     caller in the plugin omits it and gets the real template folder.
+ *   - staxx_watch_home()'s provenance word for a declared label and a
+ *     derived ghcr.io address, and staxx_watch_check()'s 'home_from' field
+ *     surviving the one no-network failure branch (an unGitHub home). The
+ *     'unchanged' merge is code-identical (see staxx_watch_check()) and only
+ *     reachable via a genuine 304 from GitHub, so it is checked by hand
+ *     against the real API rather than here, the same boundary this file
+ *     already draws for staxx_watch_discover()/staxx_watch_fetch() reaching
+ *     the network.
  */
 
 $scratch = '/tmp/staxx-watch-test.json';
@@ -56,6 +75,37 @@ function ok(string $what, bool $pass, string $note = ''): void {
   if (!$pass) $fails++;
   printf("%-6s %s%s\n", $pass ? 'ok' : 'FAIL', $what, $note !== '' ? '  ('.$note.')' : '');
 }
+
+/* ---------- 0. the catalogue fixture, built before anything reads one -----
+ * staxx_ca_index_data() caches statically, so the first catalogue read of the
+ * process wins for the rest of it. The cases that use this fixture are in 4d
+ * below; the fixture has to be here. */
+
+$caIndex  = STAXX_CA_INDEX;
+$caApps   = STAXX_CA_APPS;
+$idxBak   = '/tmp/staxx-watch-test-index.bak';
+$appsBak  = '/tmp/staxx-watch-test-apps.bak';
+$hadIndex = is_file($caIndex);
+$hadApps  = is_file($caApps);
+if ($hadIndex) copy($caIndex, $idxBak);
+if ($hadApps)  copy($caApps, $appsBak);
+
+register_shutdown_function(function () use ($caIndex, $caApps, $idxBak, $appsBak, $hadIndex, $hadApps) {
+  if ($hadIndex) { copy($idxBak, $caIndex); @unlink($idxBak); } else { @unlink($caIndex); }
+  if ($hadApps)  { copy($appsBak, $caApps); @unlink($appsBak); } else { @unlink($caApps); }
+  echo "CA cache restored\n";
+});
+
+// Same fixture shape as tests/server/project-links.php: index.json's own 'r'
+// joined against apps.jsonl's byte offset, exactly what staxx_ca_app() reads.
+$caRepo = 'excalidraw/excalidraw';
+$caLine = json_encode(['Name' => 'Excalidraw', 'r' => $caRepo, 'Project' => 'https://github.com/excalidraw/excalidraw']);
+if (!is_dir(STAXX_CA_DIR)) @mkdir(STAXX_CA_DIR, 0755, true);
+file_put_contents($caApps, $caLine."\n");
+file_put_contents($caIndex, json_encode([
+  'v' => 4, 'built' => time(), 'count' => 1, 'categories' => [],
+  'apps' => [['r' => $caRepo, 'n' => 'Excalidraw', 'o' => 0, 'len' => strlen($caLine)]],
+]));
 
 /* --------------------------- 1. staxx_watch_readme_block() — written first, -
  * pure, no network. ------------------------------------------------------- */
@@ -151,11 +201,94 @@ staxx_update_state_save(['images' => [
 ]]);
 
 ok('a declared label wins',
-   staxx_watch_home('labelled/app:latest') === 'https://example.com/labelled/app');
+   staxx_watch_home('labelled/app:latest') === ['https://example.com/labelled/app', 'label']);
 ok('ghcr.io derives the matching GitHub address when nothing is declared',
-   staxx_watch_home('ghcr.io/someowner/somename:latest') === 'https://github.com/someowner/somename');
+   staxx_watch_home('ghcr.io/someowner/somename:latest') === ['https://github.com/someowner/somename', 'derived']);
 ok('a plain image with neither source gets nothing, honestly',
-   staxx_watch_home('alpine:latest') === '');
+   staxx_watch_home('alpine:latest') === ['', '']);
+
+/* --------- 4b. staxx_watch_claim_ok() — PLAN_62 Stage 5's gate, pure ------ */
+
+// The plan's own measured accept/reject pairs, by name.
+ok('Memos: repo name resemblance accepts (neosmemo/memos -> usememos/memos)',
+   staxx_watch_claim_ok('neosmemo/memos:latest', 'https://github.com/usememos/memos')
+   === 'https://github.com/usememos/memos');
+ok('Excalidraw: exact owner and name accepts',
+   staxx_watch_claim_ok('excalidraw/excalidraw:latest', 'https://github.com/excalidraw/excalidraw')
+   === 'https://github.com/excalidraw/excalidraw');
+ok('CloudBeaver: exact owner and name accepts',
+   staxx_watch_claim_ok('dbeaver/cloudbeaver:latest', 'https://github.com/dbeaver/cloudbeaver')
+   === 'https://github.com/dbeaver/cloudbeaver');
+ok('Actual Budget: a template author\'s own repository is rejected, not the app\'s',
+   staxx_watch_claim_ok('actualbudget/actual-server:latest', 'https://github.com/Kippenhof/docker-templates') === '');
+ok('a product website is rejected outright — not GitHub at all',
+   staxx_watch_claim_ok('postgres:latest', 'https://postgresql.org/download') === '');
+
+// Guards.
+ok('an empty namespace never matches',
+   staxx_watch_claim_ok('', 'https://github.com/owner/repo') === '');
+ok('a namespace of library never matches, even when the name alone would not',
+   staxx_watch_claim_ok('postgres:latest', 'https://github.com/library/somethingelse') === '');
+ok('a matching token shorter than 3 characters does not count',
+   staxx_watch_claim_ok('ab/svc:latest', 'https://github.com/ab/other') === '');
+ok('a sub-path normalises to the repository root',
+   staxx_watch_claim_ok('excalidraw/excalidraw:latest', 'https://github.com/excalidraw/excalidraw/issues')
+   === 'https://github.com/excalidraw/excalidraw');
+
+/* -------- 4c. staxx_watch_template_claims() — the local template scanner - */
+
+$tplDir = '/tmp/staxx-watch-templates-test';
+@mkdir($tplDir, 0755, true);
+foreach (glob($tplDir.'/*') as $stale) @unlink($stale);
+register_shutdown_function(function () use ($tplDir) {
+  foreach ((array)@glob($tplDir.'/*') as $stale) @unlink($stale);
+  @rmdir($tplDir);
+});
+
+file_put_contents($tplDir.'/memos.xml',
+  '<?xml version="1.0"?><Container><Repository>neosmemo/memos</Repository>'
+  .'<Project>https://github.com/usememos/memos</Project></Container>');
+file_put_contents($tplDir.'/actualbudget.xml',
+  '<?xml version="1.0"?><Container><Repository>actualbudget/actual-server</Repository>'
+  .'<Project>https://github.com/Kippenhof/docker-templates</Project></Container>');
+// Same content as a real template, but the extension a stale overwrite
+// leaves behind — must never be offered as if it were the real template.
+file_put_contents($tplDir.'/memos.xml.bak',
+  '<?xml version="1.0"?><Container><Repository>bakonly/bakonly</Repository>'
+  .'<Project>https://github.com/bakonly/bakonly</Project></Container>');
+
+$claims = staxx_watch_template_claims($tplDir);
+ok('the scanner reads a template\'s Repository and Project fields',
+   ($claims['neosmemo/memos'] ?? '') === 'https://github.com/usememos/memos');
+ok('a rejectable claim (Actual Budget) is still recorded by the scanner — the gate, not the scan, refuses it',
+   ($claims['actualbudget/actual-server'] ?? '') === 'https://github.com/Kippenhof/docker-templates');
+ok('a .bak file is ignored by the scanner', !isset($claims['bakonly/bakonly']));
+
+/* ---------- 4d. staxx_watch_claimed_home() — the catalogue source --------
+ * The catalogue fixture itself is built at the top of this file, before any
+ * call that could read the real one: staxx_ca_index_data() caches statically,
+ * so the FIRST catalogue read of the process wins and a fixture written here
+ * would never be seen. That is a real trap, not a test artefact — anything
+ * that stubs the catalogue has to do it before the first read. */
+
+$claimed = staxx_watch_claimed_home('excalidraw/excalidraw:latest', $tplDir);
+ok('the catalogue is tried first and its claim accepted',
+   $claimed === ['https://github.com/excalidraw/excalidraw', 'catalog'], json_encode($claimed));
+
+// Memos is only in the template fixture, not the catalogue fixture above —
+// proves the fall-through to the template source, and its own provenance.
+$claimed = staxx_watch_claimed_home('neosmemo/memos:latest', $tplDir);
+ok('a repository named only by a template falls through to it, tagged template',
+   $claimed === ['https://github.com/usememos/memos', 'template'], json_encode($claimed));
+
+// The template fixture also names Actual Budget's rejectable claim — proves
+// the gate, not just the catalogue-then-template order, still governs here.
+$claimed = staxx_watch_claimed_home('actualbudget/actual-server:latest', $tplDir);
+ok('a template claim the gate rejects yields nothing, not the stranger\'s repository',
+   $claimed === ['', ''], json_encode($claimed));
+
+ok('an image nobody claims comes back empty from both sources',
+   staxx_watch_claimed_home('nobody-publishes-this/at-all:latest', $tplDir) === ['', '']);
 
 /* --------------------------- 5. staxx_watch_check() — no-network cases --- */
 
@@ -168,6 +301,32 @@ $spent = 0;
 $w = staxx_watch_check('alpine:latest', [], $spent);
 ok('a rolling image with no known project home says so, and spends nothing',
    isset($w['reason']) && $w['reason'] !== '' && $spent === 0, $w['reason'] ?? '');
+
+/* ---- 5b. 'home_from' surviving a failed discovery — the no-network case - *
+ * A non-GitHub home fails inside staxx_watch_discover() before any curl is
+ * built (see its own 'not a GitHub repository' branch), so this is the one
+ * failure this suite can exercise deterministically; the 'unchanged' merge
+ * is code-identical to the fresh-discovery branch below and is checked by
+ * hand against the real API instead (see this file's header). */
+
+staxx_update_state_save(['images' => [
+  'nongithub/app:latest' => ['source' => 'https://example.com/nongithub/app'],
+]]);
+
+$spent = 0;
+$w = staxx_watch_check('nongithub/app:latest', [], $spent);
+ok('a non-GitHub home is refused without any network call, and home_from is stored',
+   $w['home'] === 'https://example.com/nongithub/app' && $w['home_from'] === 'label',
+   json_encode($w));
+
+$prior = [
+  'home' => 'https://example.com/nongithub/app', 'home_from' => 'label',
+  'path' => 'docker-compose.yml', 'reason' => 'a stale reason from a previous pass',
+];
+$spent = 0;
+$w2 = staxx_watch_check('nongithub/app:latest', $prior, $spent);
+ok('a repeated failure returns the prior entry wholesale — home_from is not lost',
+   $w2 === $prior && $w2['home_from'] === 'label', json_encode($w2));
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

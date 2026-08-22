@@ -92,6 +92,21 @@ define('STAXX_CFILE_TMP', '/tmp/staxx/cfile');
 // of thousands of entries gets a partial answer instead of no answer at all.
 define('STAXX_CFILE_LIST_MAX', 2000);
 
+/**
+ * Make sure a job/log working directory exists and is private — job output
+ * can hold a resolved compose config, variables and all, so nobody but this
+ * process's owner should be able to read it. The same lesson
+ * staxx_browse_mkdir() already carries: mkdir()'s mode is filtered by the
+ * process umask, so it has to be set again with chmod() regardless of what
+ * mkdir() was given, and regardless of whether this call made the directory
+ * or found it already there from an earlier, looser-mode request.
+ */
+function staxx_private_dir(string $dir): bool {
+  if (!is_dir($dir) && !@mkdir($dir, 0700, true)) return false;
+  @chmod($dir, 0700);
+  return true;
+}
+
 /* ------------------------------------------------------------------ paths -- */
 
 function staxx_stack_root(): string {
@@ -3356,7 +3371,7 @@ function staxx_start_handover(string $rel, string &$error): string {
     return '';
   }
 
-  if (!is_dir(STAXX_JOB_DIR) && !@mkdir(STAXX_JOB_DIR, 0755, true)) {
+  if (!staxx_private_dir(STAXX_JOB_DIR)) {
     // Put both files back — nothing should look started when nothing was.
     if ($reviewPath !== '') @rename($heldPath, $reviewPath);
     @unlink($dir.'/'.STAXX_HANDOVER_FILE);
@@ -3378,6 +3393,7 @@ function staxx_start_handover(string $rel, string &$error): string {
     ['compose '.$shownFiles.' up -d --remove-orphans']
   ));
   @file_put_contents($log, '$ '.$shown."\n\n");
+  @chmod($log, 0600);
 
   @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
 
@@ -3475,7 +3491,7 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
     ));
   }
 
-  if (!is_dir(STAXX_JOB_DIR) && !@mkdir(STAXX_JOB_DIR, 0755, true)) {
+  if (!staxx_private_dir(STAXX_JOB_DIR)) {
     $error = 'Could not create '.STAXX_JOB_DIR;
     return '';
   }
@@ -3483,6 +3499,7 @@ function staxx_finish_handover(string $rel, bool $worked, string &$error): strin
   $job = bin2hex(random_bytes(8));
   $log = STAXX_JOB_DIR.'/'.$job.'.log';
   @file_put_contents($log, '$ '.$shown."\n\n");
+  @chmod($log, 0600);
   @exec('setsid sh -c '.escapeshellarg($script).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
 
   return $job;
@@ -3581,7 +3598,7 @@ function staxx_start_takeover(string $rel, string &$error): string {
     return '';
   }
 
-  if (!is_dir(STAXX_JOB_DIR) && !@mkdir(STAXX_JOB_DIR, 0755, true)) {
+  if (!staxx_private_dir(STAXX_JOB_DIR)) {
     if ($reviewPath !== '') @rename($heldPath, $reviewPath);
     $error = 'Could not create '.STAXX_JOB_DIR;
     return '';
@@ -3598,6 +3615,7 @@ function staxx_start_takeover(string $rel, string &$error): string {
 
   $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
   @file_put_contents($log, '$ compose '.$shownFiles." up -d --remove-orphans\n\n");
+  @chmod($log, 0600);
 
   // $? is captured into $ec straight after the one real step, before the
   // rollback's own commands get a chance to overwrite it — the same reason
@@ -4156,7 +4174,7 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
     $steps = array_map(fn($step) => $step.' '.escapeshellarg($service), $steps);
   }
 
-  if (!is_dir(STAXX_JOB_DIR) && !@mkdir(STAXX_JOB_DIR, 0755, true)) {
+  if (!staxx_private_dir(STAXX_JOB_DIR)) {
     $error = 'Could not create '.STAXX_JOB_DIR;
     return '';
   }
@@ -4204,6 +4222,7 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
   $shown = implode(' && ', array_map(fn($step) => 'compose '.$shownFiles.' '.$step, $steps));
   @file_put_contents($log, '$ '.$shown."\n\n");
+  @chmod($log, 0600);
 
   // setsid detaches the command into its own session, and stdin/stdout/stderr
   // are all redirected away from this request. Without that, the background
@@ -4359,7 +4378,7 @@ function staxx_log_start(string $stack, string $service, string &$error): string
   // stack of them cannot build up under someone who never closes a tab.
   staxx_log_reap();
 
-  if (!is_dir(STAXX_LOG_DIR) && !@mkdir(STAXX_LOG_DIR, 0755, true)) {
+  if (!staxx_private_dir(STAXX_LOG_DIR)) {
     $error = 'Could not create '.STAXX_LOG_DIR;
     return '';
   }
@@ -4368,6 +4387,14 @@ function staxx_log_start(string $stack, string $service, string &$error): string
   $log     = STAXX_LOG_DIR.'/'.$id.'.log';
   $pidfile = STAXX_LOG_DIR.'/'.$id.'.pid';
   $hbfile  = STAXX_LOG_DIR.'/'.$id.'.hb';
+
+  // Unlike a job's log, nothing here writes $log before the detached shell
+  // starts — its own `>>` redirect is what creates the file. Created here
+  // instead, empty, so the mode can be locked down before compose's output
+  // (which can include a resolved environment variable) ever lands in it;
+  // the shell's redirect then just appends to a file that already exists.
+  @file_put_contents($log, '');
+  @chmod($log, 0600);
 
   // The heartbeat is written before the follower even starts, so a poll that
   // lands in the gap between this call returning and the process actually

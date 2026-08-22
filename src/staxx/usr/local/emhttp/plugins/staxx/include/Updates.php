@@ -1046,7 +1046,7 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
     return '';
   }
 
-  if (!is_dir(STAXX_JOB_DIR) && !@mkdir(STAXX_JOB_DIR, 0755, true)) {
+  if (!staxx_private_dir(STAXX_JOB_DIR)) {
     $error = 'Could not create '.STAXX_JOB_DIR;
     return '';
   }
@@ -1055,6 +1055,7 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
   $log = STAXX_JOB_DIR.'/'.$job.'.log';
 
   @file_put_contents($log, '$ checking updates for '.$scope."\n\n");
+  @chmod($log, 0600);
 
   // Watch.php, not __FILE__ — it requires Links.php, which requires this
   // file, so the detached process also gets staxx_links_move_candidate()
