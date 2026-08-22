@@ -816,6 +816,12 @@ switch ($action) {
         fn($f) => ['id' => $f, 'name' => $f],
         staxx_folder_names()
       ),
+      // PLAN_65 — every host port and bind-mount path already taken by a
+      // container, so the editor can warn about a clash. Rides this refresh
+      // rather than 'state' (deliberately just one `compose ls`) or a new
+      // action, because 'rows' already re-reads everything and is the one
+      // meant to cost more.
+      'taken'   => staxx_import_taken_facts(),
     ];
     // Phase F's safety net — see staxx_loose_watch_new() for why this rides
     // the expensive refresh rather than the cheap one. Left out entirely

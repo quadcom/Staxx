@@ -91,6 +91,15 @@
   var pageNoticeAction = document.getElementById('staxx-page-notice-action');
   var refNote      = document.getElementById('staxx-refnote');
   var gapNote     = document.getElementById('staxx-required-note');
+  // PLAN_65 phase C — the "what clashed" summary. No server-rendered element
+  // exists for this (the plan scopes the work to this file alone), so it is
+  // built once here, as a sibling of gapNote, reusing #staxx-inusepaths' own
+  // caution styling rather than inventing a fourth one.
+  var clashNote = document.createElement('p');
+  clashNote.className = 'staxx-missing staxx-missing--inuse';
+  clashNote.id = 'staxx-clash-note';
+  clashNote.hidden = true;
+  if (gapNote && gapNote.parentNode) gapNote.parentNode.insertBefore(clashNote, gapNote);
   var errorBox    = document.getElementById('staxx-error');
   var missingNote = document.getElementById('staxx-missing');
   var makePathsNote = document.getElementById('staxx-makepaths');
@@ -1281,6 +1290,100 @@
   // underline, hover text and gutter dot need.
   var movedFacts = {};
   var movedSpots = [];
+
+  // PLAN_65 — every host port and bind-mount path Docker already has,
+  // refreshed by refreshRows() (see 'taken' on that reply); never fetched by
+  // the editor itself. clashSpots is what applyClashAdvice() below fills each
+  // pass, the clash sibling of movedSpots just above.
+  var TAKEN = { ports: [], paths: [] };
+  var clashSpots = [];
+
+  // A published port or bind-mount path is written as one exact value most
+  // of the time, but a port can be a whole range ("8000-8010") written as one
+  // string rather than expanded — see hostPorts()'s own comment on this. Both
+  // sides of a comparison have to be read as a range (a single number is just
+  // a range of one) or a range clash against a lone taken port is missed
+  // entirely, which is worse than never checking at all.
+  function portBounds(s) {
+    var m = /^(\d+)\s*-\s*(\d+)$/.exec(String(s));
+    if (m) return [parseInt(m[1], 10), parseInt(m[2], 10)];
+    var n = parseInt(s, 10);
+    return isNaN(n) ? null : [n, n];
+  }
+
+  function portsOverlap(a, b) {
+    var ra = portBounds(a), rb = portBounds(b);
+    return !!ra && !!rb && ra[0] <= rb[1] && rb[0] <= ra[1];
+  }
+
+  // The immediate child of the appdata root a path sits under, or null when
+  // it is not under appdata at all — that one directory is where a container
+  // keeps its own private state, so two different containers writing into it
+  // is the corruption case decision 4 is about. Anything else — a shared
+  // media or downloads path, however exactly it matches another container's
+  // — is deliberately never flagged: sharing those is normal, and warning
+  // about it would train people to ignore the warning (PLAN_65's "what
+  // counts as a clash").
+  function underAppdata(path) {
+    if (!APPDATA) return false;
+    var root = APPDATA.replace(/\/+$/, '');
+    return String(path).replace(/\/+$/, '').indexOf(root + '/') === 0;
+  }
+
+  // The decision reads "the same host path exactly, or anything UNDERNEATH A
+  // FOLDER another container already owns" — containment, not merely two
+  // paths that happen to share the same appdata folder further up. Checked
+  // against the real machine's own 114 taken paths before landing: a same-
+  // TOP-CHILD rule (matching on nothing but the first directory under
+  // appdata) flagged 9 pairs, most of them a multi-container app's own
+  // sidecar reading its own sibling folder — TubeArchivist's search index,
+  // NPM's own log viewer, a stack's own app+database pair. Containment cuts
+  // that to 4, all of them one container's path actually sitting inside
+  // another's own mount rather than merely nearby it.
+  function pathsClash(a, b) {
+    var na = String(a).replace(/\/+$/, ''), nb = String(b).replace(/\/+$/, '');
+    if (!underAppdata(na) || !underAppdata(nb)) return false;
+    return na === nb || na.indexOf(nb + '/') === 0 || nb.indexOf(na + '/') === 0;
+  }
+
+  // Every clash between one compose file's own published ports / bind-mount
+  // host paths and what TAKEN already holds elsewhere — shared by the live
+  // editor's marks (applyClashAdvice() below) and the start guard (run()),
+  // so the rule lives in exactly one place. `ownProject` drops a taken fact
+  // that belongs to this very stack's own (possibly stopped-but-not-removed)
+  // container — starting a stack is never a clash with itself.
+  function findClashes(text, ownProject) {
+    var out = [];
+    if (!YAML || typeof YAML.hostPorts !== 'function') return out;
+    var isOwn = function (container) {
+      return ownProject && container.indexOf(ownProject + '-') === 0;
+    };
+    YAML.hostPorts(text).forEach(function (p) {
+      TAKEN.ports.forEach(function (t) {
+        if (isOwn(t.container) || t.proto !== p.proto || !portsOverlap(p.port, t.port)) return;
+        out.push({ kind: 'port', line: p.line, col: p.col, len: p.len,
+                   mine: p.port, proto: p.proto, container: t.container });
+      });
+    });
+    YAML.hostPaths(text).forEach(function (p) {
+      TAKEN.paths.forEach(function (t) {
+        if (isOwn(t.container) || !pathsClash(p.path, t.path)) return;
+        out.push({ kind: 'path', line: p.line, col: p.col, len: p.len,
+                   mine: p.path, container: t.container });
+      });
+    });
+    return out;
+  }
+
+  // The project a stack's own row already carries (staxx_project_name(), the
+  // same name docker stamps on its own containers) — read off the DOM rather
+  // than asked for again, so findClashes() above can exclude a stack's own
+  // container without a second round trip. '' for a stack with no row yet
+  // (a brand new, unsaved one), which has no container of its own to exclude.
+  function projectForStack(name) {
+    var row = rowsHost && rowsHost.querySelector('.staxx-stack-row[data-stack-row="' + name + '"]');
+    return row ? (row.dataset.project || '') : '';
+  }
 
   // Whether the Stack section's <details> is open. renderForm() rebuilds the
   // whole form from scratch on every structural edit, so nothing the DOM
@@ -2517,6 +2620,19 @@
       out += ' <button type="button" class="staxx-declfix" data-move-dismiss="1" ' +
              'title="Keeps the current image and stops asking about this move.">Leave it alone</button></p>';
     }
+    // Port/path only (clashAdvice is grafted on nowhere else — see
+    // applyClashAdvice()): PLAN_65. No fix button, unlike movedAdvice above —
+    // there is no one right value to switch this to, only a fact to weigh.
+    // Clears itself the moment the value changes or the other container lets
+    // go, since applyClashAdvice() rebuilds this from nothing on every pass.
+    if (f.clashAdvice) {
+      var cl = f.clashAdvice;
+      out += '<p class="staxx-fieldnote">' +
+             (cl.kind === 'port'
+               ? 'Port ' + esc(cl.mine) + '/' + esc(cl.proto) + ' is already published by "' + esc(cl.container) + '".'
+               : '"' + esc(cl.mine) + '" is already used by "' + esc(cl.container) + '".') +
+             '</p>';
+    }
     return out;
   }
 
@@ -3525,6 +3641,10 @@
     if (composeActive && movedSpots.length) {
       list = list.concat(movedSpots.map(function (m) { return { line: m.line, level: 'warn' }; }));
     }
+    // clashSpots (PLAN_65), same reasoning.
+    if (composeActive && clashSpots.length) {
+      list = list.concat(clashSpots.map(function (m) { return { line: m.line, level: 'warn' }; }));
+    }
     paintDots(list);
   }
 
@@ -3590,6 +3710,72 @@
     redrawDots();
   }
 
+  // The field a clash's spot belongs to — matched by line/col rather than by
+  // target, since findClashes() reads straight off the file text and has no
+  // field index of its own. Only a port or a bind-mount's host side ever
+  // carries a spot findClashes() could have found in the first place.
+  function fieldAtSpot(line, col) {
+    for (var i = 0; i < MODEL.fields.length; i++) {
+      var f = MODEL.fields[i];
+      if (f.binder !== 'port' && f.binder !== 'volume') continue;
+      var h = f.parts.host;
+      if (h && h.spot && h.spot.line === line && h.spot.col === col) return f;
+    }
+    return null;
+  }
+
+  // One summary line, never one per clash (PLAN_65 decision 3) — naming the
+  // first fact and counting the rest, the same shape updateRequired() gives
+  // gapNote just above it.
+  function paintClashSummary(hits) {
+    if (!hits.length) { clashNote.hidden = true; clashNote.textContent = ''; return; }
+    var first = hits[0], extra = hits.length - 1;
+    var lead = first.kind === 'port'
+      ? 'Port ' + first.mine + '/' + first.proto + ' is already used by "' + first.container + '".'
+      : '"' + first.mine + '" is already used by "' + first.container + '".';
+    clashNote.textContent = lead +
+      (extra ? '  And ' + extra + ' more clash' + (extra > 1 ? 'es' : '') + ' with what is already running.' : '');
+    clashNote.hidden = false;
+  }
+
+  // Grafts a live port/path clash (PLAN_65) onto the field that declares it,
+  // the same way applyMovedAdvice() just above grafts a registry move onto an
+  // Image field — same call sites, same reason: MODEL.fields is rebuilt
+  // wholesale by both reparse() and refreshRanges(). Runs against TAKEN,
+  // which the row list refreshes independently, so this is also re-run
+  // whenever TAKEN itself changes while the editor is open (see
+  // refreshRows()) — a clash a fresh compose ls resolved elsewhere clears
+  // itself here too, with nothing to dismiss by hand.
+  function applyClashAdvice() {
+    clashSpots = [];
+    if (!MODEL) { paintClashSummary([]); return; }
+
+    for (var i = 0; i < MODEL.fields.length; i++) MODEL.fields[i].clashAdvice = null;
+
+    // fileOpen !== null means a companion file is on screen — it has no
+    // ports or volumes of its own, the same guard checkHostPaths() uses.
+    var hits = fileOpen === null ? findClashes(currentText(), projectForStack(openedName)) : [];
+    hits.forEach(function (h) {
+      var f = fieldAtSpot(h.line, h.col);
+      if (f) f.clashAdvice = h;
+      clashSpots.push(h);
+    });
+
+    var rows = formHost.querySelectorAll('.staxx-fieldrow');
+    for (var r = 0; r < rows.length; r++) {
+      var field = MODEL.fields[rows[r].dataset.row | 0];
+      rows[r].classList.toggle('staxx-fieldrow--clash', !!(field && field.clashAdvice));
+      var advice = rows[r].querySelector('[data-advice]');
+      if (advice && field) {
+        advice.innerHTML = adviceText(field);
+        advice.hidden = !advice.innerHTML;
+      }
+    }
+
+    paintClashSummary(hits);
+    redrawDots();
+  }
+
   // Guarded the same way paintInk() guards for YAML.highlight: if the linter
   // has not landed yet, this simply never finds any problems to mark.
   function relint() {
@@ -3612,6 +3798,7 @@
     form.doc = doc;
     MODEL = form;
     applyMovedAdvice();   // before renderForm() below, so its first paint already carries the fact
+    applyClashAdvice();   // ditto, for PLAN_65's port/path clash marks
 
     var scrollWas = formHost.scrollTop;
     devPanel = null;            // the device panel lives in here and just went
@@ -3652,6 +3839,7 @@
     fresh.doc = doc;
     MODEL = fresh;
     applyMovedAdvice();   // rows already exist here, so this brings them into line itself
+    applyClashAdvice();   // ditto, for PLAN_65's port/path clash marks
 
     var rows = formHost.querySelectorAll('.staxx-fieldrow');
     for (var i = 0; i < rows.length; i++) {
@@ -5307,6 +5495,8 @@
     // A moved image's own underline (PLAN_61) — same layer again, drawn last
     // of all for the same reason.
     repaintMoved();
+    // A clashing port or path (PLAN_65) — same layer again.
+    repaintClash();
     updateMissingPaths();
     updateInUsePaths();
   }
@@ -5725,6 +5915,42 @@
   function movedMarkAt(line, col) {
     for (var i = 0; i < movedSpots.length; i++) {
       var m = movedSpots[i];
+      if (m.line === line && col >= m.col && col < m.col + m.len) return m;
+    }
+    return null;
+  }
+
+  // A clashing port or path's own underline (PLAN_65) — same layer and
+  // geometry as repaintMoved() just above, keyed off clashSpots instead.
+  function repaintClash() {
+    if (!clashSpots.length) return;
+
+    var markLeft = parseFloat(yamlMarks.style.left) || 0;
+    var leftBase = textLeft() - markLeft;
+
+    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
+    var firstLine = Math.floor((top - PAD_T) / LINE_H) - 2;
+    var lastLine  = Math.ceil((top + viewH - PAD_T) / LINE_H) + 2;
+
+    for (var i = 0; i < clashSpots.length; i++) {
+      var m = clashSpots[i];
+      if (m.line < firstLine || m.line > lastLine) continue;
+
+      var box = document.createElement('div');
+      box.className = 'staxx-badpath staxx-badpath--clash';
+      box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
+      box.style.left   = (leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
+      box.style.width  = (m.len * CHAR_W) + 'px';
+      box.style.height = LINE_H + 'px';
+      yamlMarks.appendChild(box);
+    }
+  }
+
+  // Hit-test for the hover panel — same shape as movedMarkAt() just above,
+  // over clashSpots instead.
+  function clashMarkAt(line, col) {
+    for (var i = 0; i < clashSpots.length; i++) {
+      var m = clashSpots[i];
       if (m.line === line && col >= m.col && col < m.col + m.len) return m;
     }
     return null;
@@ -11266,6 +11492,19 @@
       return;
     }
 
+    // A clashing port or path (PLAN_65) — same shape as the moved-image
+    // tooltip just above.
+    var clash = clashMarkAt(lc.line, lc.col);
+    if (clash) {
+      keyHelp.innerHTML = '<strong>Already in use</strong><p>' +
+        (clash.kind === 'port'
+          ? 'Port ' + esc(clash.mine) + '/' + esc(clash.proto) + ' is already published by "' + esc(clash.container) + '".'
+          : '"' + esc(clash.mine) + '" is already used by "' + esc(clash.container) + '".') +
+        '</p>';
+      placeCaretPanel(keyHelp, lc.line, lc.col, false);
+      return;
+    }
+
     if (!YAML || typeof YAML.keyAt !== 'function') return;   // not landed yet
 
     var info = YAML.keyAt(yamlPane.value, lc.line, lc.col);
@@ -12241,7 +12480,74 @@
     startTicker();
   }
 
+  // PLAN_65 phase D — one clash line, reused by the single-stack and the
+  // whole-folder confirmation below. `stack` is only ever set in the folder
+  // case, where more than one stack's own name is worth keeping straight.
+  function clashLineHtml(c) {
+    var lead = c.stack ? '<strong>' + esc(c.stack) + '</strong>: ' : '';
+    return '<li>' + lead + (c.kind === 'port'
+      ? 'Port ' + esc(c.mine) + '/' + esc(c.proto) + ' is already published by "' + esc(c.container) + '".'
+      : '"' + esc(c.mine) + '" is already used by "' + esc(c.container) + '".') + '</li>';
+  }
+
+  // The double confirmation decision 4 asks for — a checkbox, THEN a button,
+  // two deliberate acts rather than one OK — asked completely fresh every
+  // time against whatever the machine says right now (never remembered, the
+  // same reasoning PLAN_63 decision 2 gives for never remembering a
+  // decline). Names the exact port or folder and the container that already
+  // has it (clashLineHtml() above), and says only the sentence a clash
+  // actually present here calls for — a folder clash always gets the
+  // corruption warning, a port clash always gets the "will have to be
+  // stopped" one — rather than a generic "are you sure" that says both
+  // regardless.
+  function confirmClash(clashes, onGo) {
+    var ports = clashes.filter(function (c) { return c.kind === 'port'; });
+    var paths = clashes.filter(function (c) { return c.kind === 'path'; });
+    var warn = '';
+    if (paths.length) warn += '<p>Two containers writing the same folder can corrupt what is in it.</p>';
+    if (ports.length) warn += '<p>The container that has that port now will have to be stopped.</p>';
+
+    askConfirm({
+      title: 'This clashes with something already running',
+      bodyHtml: '<ul class="staxx-confirm-list">' + clashes.map(clashLineHtml).join('') + '</ul>' +
+        warn +
+        '<label class="staxx-sectionrow"><input type="checkbox" id="staxx-clash-ack"> ' +
+        'I understand, and want to start it anyway.</label>',
+      goLabel: 'Start anyway'
+    }).then(function (go) {
+      closeConfirm();
+      if (go) onGo();
+    });
+
+    // askConfirm() itself always leaves Go enabled (confirmSetBusy(false)),
+    // since every other question this same dialog asks is a single deliberate
+    // click — overridden here, after the fact, so only THIS question gates
+    // its own Go button on the checkbox above rather than disabling it for
+    // every caller of askConfirm().
+    confirmGo.disabled = true;
+    var ack = confirmBody.querySelector('#staxx-clash-ack');
+    if (ack) ack.addEventListener('change', function () { confirmGo.disabled = !ack.checked; });
+  }
+
+  // PLAN_65 phase D — the one place every start (and every stop, pull,
+  // recreate…) actually reaches the server, so it is also the one place a
+  // start guard can sit and be sure of covering every route to it: the row
+  // menu's Start/Restart toggle, a single service's own Start, "Save and
+  // start" and a rename that restarts, and Manage's own buttons (noteRun()
+  // wraps this, never call('run', …) directly) — all of them call run().
+  // 'restart' is never guarded: every call site only ever sends it once a
+  // stack is already running (the toggle is always `running ? 'restart' :
+  // 'up'`), so it never introduces a clash that was not there a moment ago.
   function run(name, verb, done, service) {
+    if (verb !== 'up') { runNow(name, verb, done, service); return; }
+    call('read', { name: name }).then(function (res) {
+      var clashes = res && res.ok ? findClashes(res.body, projectForStack(name)) : [];
+      if (!clashes.length) { runNow(name, verb, done, service); return; }
+      confirmClash(clashes, function () { runNow(name, verb, done, service); });
+    });
+  }
+
+  function runNow(name, verb, done, service) {
     var show = wantsOutput(verb);
 
     // A container-scoped command spins only its own row(s), not the whole
@@ -13421,6 +13727,13 @@
 
       FOLDERS = res.folders || [];
       scaffold.dataset.folders = JSON.stringify(FOLDERS);
+
+      // PLAN_65 — refreshed here because 'rows' is the refresh this rides,
+      // never 'state'. Re-applied against whatever is open right now, so a
+      // clash this resolves elsewhere (or a fresh one docker just picked up)
+      // clears or appears on its own rather than waiting for the next edit.
+      TAKEN = res.taken || { ports: [], paths: [] };
+      if (MODEL) applyClashAdvice();
 
       // New rows arrive with empty statistics cells. Re-collect them and ask
       // for figures immediately rather than leaving a table of em dashes until
@@ -15659,7 +15972,36 @@
     }, { danger: true });
   }
 
+  // PLAN_65 phase D — folderRun()'s "Start everything" is the other route to
+  // a start that does not run through run() above (it posts 'folder-run'
+  // directly, not 'run'), so it needs the same guard in front of it,
+  // tagging each clash with which stack it belongs to (clashLineHtml()
+  // reads c.stack when it is set).
   function folderRun(id, verb, label) {
+    if (verb !== 'up') { folderRunNow(id, verb, label); return; }
+
+    var stackNames = [];
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.staxx-stack-row[data-in-folder="' + id + '"]'),
+      function (r) { stackNames.push(r.dataset.stackRow); }
+    );
+
+    Promise.all(stackNames.map(function (name) {
+      return call('read', { name: name }).then(function (res) {
+        if (!res || !res.ok) return [];
+        return findClashes(res.body, projectForStack(name)).map(function (c) {
+          c.stack = name;
+          return c;
+        });
+      });
+    })).then(function (perStack) {
+      var clashes = [].concat.apply([], perStack);
+      if (!clashes.length) { folderRunNow(id, verb, label); return; }
+      confirmClash(clashes, function () { folderRunNow(id, verb, label); });
+    });
+  }
+
+  function folderRunNow(id, verb, label) {
     // Every stack in the folder spins, and so does everything inside them.
     var rows = [];
     var stackNames = [];

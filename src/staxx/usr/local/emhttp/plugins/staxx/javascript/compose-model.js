@@ -7058,6 +7058,119 @@
     return out;
   }
 
+  // A published port that names a real number/range, not a ${...} variable
+  // compose only fills in at run time — the same reasoning isHostPathLike()
+  // gives, and for the same reason: unresolvable is left out, not guessed.
+  function isHostPortLike(s) {
+    return !!s && s.indexOf('${') < 0;
+  }
+
+  // Compose's default protocol is tcp; folding an unstated one to that name
+  // here means a bare "8080:80" and an explicit "8080:80/tcp" compare equal
+  // wherever this feeds a clash check, instead of '' looking like a third
+  // protocol of its own.
+  function normalisePortProto(p) {
+    p = (p || '').toLowerCase();
+    return p === '' ? 'tcp' : p;
+  }
+
+  // Reads one long-form port item ({target:, published:, protocol:, ...})
+  // starting at line i, whose dash-line classification is c — the port
+  // sibling of readVolumeItem() just above, and for the same reason: a
+  // mount and a port both spell out their fields over several lines, and
+  // both need nothing more than "which line held source/published".
+  function readPortItem(lines, i, c) {
+    var itemIndent = c.indent, published = null, protocol = null, j = i;
+    while (j < lines.length) {
+      var cj = j === i ? c.sub : classify(lines[j], j);
+      if (cj.kind === 'blank' || cj.kind === 'comment') { j++; continue; }
+      if (j !== i && cj.indent <= itemIndent) break;
+      if (cj.kind === 'key' && cj.valueCol >= 0) {
+        var sc = scanEntryText(lines[j], cj.valueCol);
+        if (sc && cj.key === 'published') published = { text: sc.text, line: j, col: sc.col };
+        if (sc && cj.key === 'protocol') protocol = sc.text;
+      }
+      j++;
+    }
+    return { published: published, protocol: protocol, next: j };
+  }
+
+  /**
+   * hostPorts(text) -> [{port, proto, line, col, len}]
+   *
+   * Every published host-side port of a service under `ports:` — `port` is
+   * the number or range exactly as written (a range such as "8000-8010" is
+   * returned whole, not expanded), `proto` is always 'tcp' or 'udp'/'sctp',
+   * never blank. `line`/`col` are 0-based; `col` points inside any
+   * surrounding quotes. A port compose itself would pick (no host side at
+   * all) and one written as a ${...} variable (cannot be resolved without
+   * running compose) are both left out rather than guessed at — mirrors
+   * hostPaths() just above in every other respect, including never
+   * parse()ing and never throwing.
+   */
+  function hostPorts(text) {
+    var out = [];
+    try {
+      text = String(text == null ? '' : text);
+      var lines = text.split('\n');
+      var stack = [];    // ancestor mapping keys enclosing the current line
+
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var c = classify(line, i);
+        if (c.kind === 'blank' || c.kind === 'comment') continue;
+
+        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
+        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
+
+        if (c.kind === 'key') { stack.push({ indent: c.indent, key: c.key }); continue; }
+        if (c.kind !== 'seq' || !c.sub) continue;
+
+        var inServicePorts = stack.length >= 3 &&
+          stack[stack.length - 1].key === 'ports' &&
+          stack[stack.length - 3].key === 'services';
+        if (!inServicePorts) continue;
+
+        if (c.sub.kind === 'key') {
+          // Long form over several lines: {target:, published:, protocol:}.
+          var r = readPortItem(lines, i, c);
+          if (r.published && isHostPortLike(r.published.text)) {
+            out.push({
+              port: r.published.text, proto: normalisePortProto(r.protocol),
+              line: r.published.line, col: r.published.col, len: r.published.text.length
+            });
+          }
+          i = r.next - 1;
+          continue;
+        }
+
+        // Short form: "[IP:]HOST:CONTAINER[/PROTO]", possibly quoted whole.
+        var scanned = scanEntryText(line, c.contentCol);
+        if (!scanned) continue;
+        var proto = '', body = scanned.text;
+        var slash = body.lastIndexOf('/');
+        if (slash > 0 && /^[a-zA-Z]+$/.test(body.slice(slash + 1))) {
+          proto = body.slice(slash + 1);
+          body = body.slice(0, slash);
+        }
+        var bits = splitOutsideVars(body);
+        if (bits.length < 2) continue;                // container-only: nothing published
+        // Same rule splitPortShort() above uses to place the host field when
+        // an interface address is also present: the host is always the
+        // second-to-last colon-separated bit, whatever leads it.
+        var host = bits[bits.length - 2];
+        if (!isHostPortLike(host)) continue;
+        var lead = bits.slice(0, bits.length - 2).join(':');
+        var hostCol = scanned.col + (lead ? lead.length + 1 : 0);
+        out.push({ port: host, proto: normalisePortProto(proto), line: i, col: hostCol, len: host.length });
+      }
+    } catch (e) {
+      return [];
+    }
+    out.sort(function (a, b) { return a.line - b.line || a.col - b.col; });
+    return out;
+  }
+
   /* =====================================================================
    * The file's own names
    *
@@ -7464,6 +7577,10 @@
     // Every host-side path of a volume mount — see the "Host paths" section
     // above. Used to check the folder actually exists on the server.
     hostPaths: hostPaths,
+    // Every published host-side port under services -> ports:, its sibling
+    // just below the same section. Used to check the port is not already
+    // taken by another container.
+    hostPorts: hostPorts,
     // Every service/network/volume/secret/config/profile name the file
     // itself declares — see the "The file's own names" section above.
     fileNames: fileNames,

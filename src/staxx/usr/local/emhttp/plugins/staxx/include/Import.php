@@ -212,6 +212,90 @@ function staxx_import_all_containers(): array {
   return $byName;
 }
 
+/**
+ * Every host port already published and every bind-mount host path already
+ * in use, across ALL containers docker knows about (running or stopped),
+ * each fact naming the container that holds it — PLAN_65's "what is already
+ * taken".
+ *
+ * Read from docker, deliberately not by re-parsing every stack's own compose
+ * file: docker is the one place that already knows every container's real
+ * bindings in a single call, catches containers StaXX does not manage at
+ * all (an Unraid template most often clashes with one of those), and would
+ * otherwise mean the compose extractor — which is JavaScript — rebuilt a
+ * second time in PHP. The accepted gap: a stack that has never been started
+ * has no container, so its ports and paths are invisible here. That is a
+ * real hole, not an oversight, and the help text this feeds must say so.
+ *
+ * @return array{ports: array<int, array{port:string, proto:string, container:string}>,
+ *               paths: array<int, array{path:string, container:string}>}
+ */
+function staxx_import_taken_facts(): array {
+  static $facts = null;
+  if ($facts !== null) return $facts;
+
+  $facts = ['ports' => [], 'paths' => []];
+  if (!staxx_docker_running()) return $facts;
+
+  // A REAL tab — see staxx_container_net()'s own comment on this: `docker
+  // inspect --format` prints \t literally rather than translating it, unlike
+  // `docker ps --format`. Fields are separated by a distinct control
+  // character (\x1f) inside the ports/mounts columns since a host path can
+  // itself contain a space.
+  $tab = "\t";
+  $fmt = '{{.Id}}'.$tab.'{{.Name}}'.$tab
+       . '{{range $p, $b := index .NetworkSettings "Ports"}}{{range $b}}{{$p}}={{.HostPort}}'."\x1f".'{{end}}{{end}}'.$tab
+       . '{{range .Mounts}}{{if eq .Type "bind"}}{{if .RW}}{{.Source}}'."\x1f".'{{end}}{{end}}{{end}}'.$tab.'end';
+
+  $docker = escapeshellarg(staxx_docker_bin());
+  $out    = staxx_sh(
+    $docker.' ps -aq | xargs -r '.$docker.' inspect --format '.escapeshellarg($fmt), 20
+  );
+
+  foreach (explode("\n", $out) as $line) {
+    $c = explode("\t", $line);
+    // Five fields including the trailing "end" sentinel — see
+    // staxx_container_net()'s comment on why a field that is never empty at
+    // the end stops exec() trimming a real one away.
+    if (count($c) < 4 || $c[0] === '') continue;
+    [$id, $name, $ports, $mounts] = $c;
+    $name = ltrim($name, '/');
+
+    // Docker lists one binding per host address a port is published on, so a
+    // port opened on "every address" (0.0.0.0 and its IPv6 equivalent ::)
+    // arrives twice for the very same port — staxx_container_net() hits the
+    // same thing and folds it the same way. Deduping per container is enough:
+    // the fact is "this container holds this port", not which address.
+    $seen = [];
+    foreach (explode("\x1f", trim($ports)) as $p) {
+      if ($p === '' || strpos($p, '=') === false) continue;
+      [$portProto, $hostPort] = explode('=', $p, 2);
+      if ($hostPort === '') continue;
+      // $portProto is docker's own map key, "80/tcp" — the slash is always
+      // there, but default to tcp defensively rather than emit a blank.
+      $slash = strpos($portProto, '/');
+      $proto = $slash !== false ? substr($portProto, $slash + 1) : 'tcp';
+      $key = $hostPort.'/'.$proto;
+      if (isset($seen[$key])) continue;
+      $seen[$key] = true;
+      $facts['ports'][] = ['port' => $hostPort, 'proto' => $proto, 'container' => $name];
+    }
+
+    // Writable mounts only - see the format string above. A read-only mount
+    // cannot corrupt what it reads, and warning about one is how a check earns
+    // a reputation for crying wolf: measured on this box, every residual false
+    // positive was a companion container reading another app's own folder - a
+    // log viewer beside its proxy, a stats app beside its media server - which
+    // is deliberate and harmless. The fact collected here is "two things
+    // WRITING the same folder", so a reader is not one of them.
+    foreach (explode("\x1f", trim($mounts)) as $path) {
+      if ($path === '') continue;
+      $facts['paths'][] = ['path' => $path, 'container' => $name];
+    }
+  }
+  return $facts;
+}
+
 /* ---------------------------------------------------------------- templates -- */
 
 /**

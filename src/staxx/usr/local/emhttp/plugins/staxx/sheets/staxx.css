@@ -3783,6 +3783,17 @@
   border-color: var(--sm-accent);
 }
 
+/* A port or bind-mount path that clashes with something Docker already has
+   taken (PLAN_65) — same shape and same --sm-accent again: a fact worth
+   weighing, not something broken in the file. */
+.staxx-fieldrow--clash {
+  box-shadow: inset 0.3rem 0 0 var(--sm-accent);
+}
+
+.staxx-fieldrow--clash .staxx-input:not(:disabled) {
+  border-color: var(--sm-accent);
+}
+
 .staxx-scaffold .staxx-required {
   display: block;
   width: 100%;
@@ -4739,6 +4750,12 @@
    different registry (PLAN_61) — same accent colour again: a caution about
    where updates come from, not a fault in the file. */
 .staxx-badpath--moved {
+  border-bottom-color: var(--sm-accent);
+}
+
+/* A port or bind-mount path underlined because it clashes with something
+   Docker already has taken (PLAN_65) — same accent colour again. */
+.staxx-badpath--clash {
   border-bottom-color: var(--sm-accent);
 }
 
