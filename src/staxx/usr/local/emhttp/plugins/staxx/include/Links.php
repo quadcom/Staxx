@@ -102,6 +102,21 @@ function staxx_links_image_host(string $image): string {
 }
 
 /**
+ * PLAN_62 — is a tag the kind of thing that could change under you, rather
+ * than a fixed version someone chose deliberately? Version-shaped (1.2.3,
+ * v10) and a bare digit string (a date-stamped build) both read as "this
+ * exact thing" and are not rolling; anything else — latest, stable, main, a
+ * hand-picked word, even a test-build tag like edge or nightly — is. Written
+ * once here rather than inline at staxx_watch_rolling_tag()'s call site so a
+ * second, disagreeing idea of "rolling" can never grow up beside it.
+ */
+function staxx_links_rolling_tag(string $tag): bool {
+  $tag = trim($tag);
+  if ($tag === '') return false;
+  return preg_match('/^v?\d+(\.\d+)*$/', $tag) !== 1;
+}
+
+/**
  * PLAN_61 — has this catalogue app's template moved to a different registry
  * since this compose file was written? Reads only the catalogue index
  * already decoded by staxx_ca_index_data() (see staxx_links_ca_map()); no

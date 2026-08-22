@@ -679,6 +679,12 @@ function staxx_update_check(string $scope, bool $force): array {
 
   $first = true;
   $limited = false;
+  // PLAN_62 Stage 1 — GitHub's unauthenticated ceiling (60/hour) is a
+  // separate counter from Docker Hub's, shared by nothing else on this box,
+  // but a forced recheck of every image in one pass must still stop well
+  // short of it rather than retrying into a wall. Spent by staxx_watch_check()
+  // below, never reset mid-pass.
+  $watchBudget = 20;
   foreach ($refs as $image => $rows) {
     $existing = $images[$image] ?? [];
 
@@ -739,6 +745,25 @@ function staxx_update_check(string $scope, bool $force): array {
                       . 'are pushed.',
           ];
         }
+      }
+    }
+
+    // PLAN_62 Stage 1 — does this image's own publisher hold up a compose
+    // example worth comparing against later? Guarded by function_exists()
+    // for the same reason as the move check above: Watch.php requires
+    // Links.php, which requires this file, so the reverse would be a cycle.
+    // Both out-of-band spawn sites that actually run this pass —
+    // staxx_update_check_start() below, and scripts/update-check — require
+    // Watch.php directly, so the guard is never false where it matters; see
+    // PLAN_61's own note just above for why that distinction is load-bearing.
+    if (staxx_cfg_bool('WATCH_EXAMPLES') && function_exists('staxx_watch_check') && $watchBudget > 0) {
+      $spent = 0;
+      $watch = staxx_watch_check($image, (array)($existing['watch'] ?? []), $spent);
+      $watchBudget -= $spent;
+      if ($watch === []) {
+        unset($existing['watch']);
+      } else {
+        $existing['watch'] = $watch;
       }
     }
 
@@ -961,14 +986,15 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
 
   @file_put_contents($log, '$ checking updates for '.$scope."\n\n");
 
-  // Links.php, not __FILE__ — it requires this file itself, so the detached
-  // process also gets staxx_links_move_candidate() and the PLAN_61 move
-  // check inside staxx_update_check() stops being permanently guarded off.
-  // Requiring Updates.php alone here would leave function_exists() false for
-  // every out-of-band pass, which is exactly the dead-code trap PLAN_61 warns
-  // against.
+  // Watch.php, not __FILE__ — it requires Links.php, which requires this
+  // file, so the detached process also gets staxx_links_move_candidate()
+  // (PLAN_61) and staxx_watch_check() (PLAN_62), and neither check inside
+  // staxx_update_check() stays permanently guarded off. Requiring Updates.php
+  // or even Links.php alone here would leave one or both function_exists()
+  // tests false for every out-of-band pass, which is exactly the dead-code
+  // trap PLAN_61 warns about and PLAN_62 repeats verbatim.
   $php = staxx_php_bin().' -r '.escapeshellarg(
-    'require '.var_export(__DIR__.'/Links.php', true).'; '
+    'require '.var_export(__DIR__.'/Watch.php', true).'; '
     .'$r = staxx_update_check('.var_export($scope, true).', '.($force ? 'true' : 'false').'); '
     .'echo "\nchecked ".$r["asked"]." asked, ".$r["skipped"]." skipped, "'
     .'.$r["updates"]." updates, ".$r["failed"]." failed\n";'

@@ -75,6 +75,9 @@ function staxx_settings_keys(): array {
     // just closes on save.
     'UPDATE_CHECK'        => ['type' => 'choice', 'default' => 'daily', 'choices' => ['off', 'daily', 'weekly']],
     'UPDATE_CHECK_TIME'   => ['type' => 'time',   'default' => '04:00'],
+    // PLAN_62 — look at the publisher's own GitHub repository during the
+    // same check pass. Not read at page load, so not in $reload below.
+    'WATCH_EXAMPLES'      => ['type' => 'choice', 'default' => 'true', 'choices' => ['true', 'false']],
     // What happens once an update is found (global default; a stack or
     // service can override it — PLAN_45 Part G), and the rest of the update
     // pipeline's settings. None of these are read at page load either, so

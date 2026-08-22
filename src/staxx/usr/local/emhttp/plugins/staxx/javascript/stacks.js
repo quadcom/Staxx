@@ -14930,6 +14930,23 @@
             'effort even though it is cheap. Enter a 24-hour time, such as 04:00.'
     },
     {
+      key: 'WATCH_EXAMPLES', control: 'choice', label: 'Watch the publisher\'s own examples',
+      choices: [
+        ['true',  'Look, during the same check'],
+        ['false', 'Do not look at anything']
+      ],
+      help: 'For an image that names its own GitHub project — or that is itself hosted at ' +
+            'ghcr.io, where the project is almost always the matching GitHub repository — your ' +
+            'server looks at whether that project publishes an example compose file, so a later ' +
+            'feature can point out a setting the author added that you do not have. This only ' +
+            'ever runs as part of the update check above, on an image whose tag can actually ' +
+            'change (a pinned version is never looked at), and it talks to GitHub, never Docker ' +
+            'Hub — so it never spends the allowance update checking depends on. The only things ' +
+            'sent out are the project\'s own web address and the path to one file inside it; ' +
+            'nothing about this server, its containers, or its settings ever leaves. Turning it ' +
+            'off stops all of that; update checking itself keeps working exactly as before.'
+    },
+    {
       key: 'UPDATE_MODE', control: 'choice', label: 'What to do with what is found',
       choices: [
         ['off',    'Nothing — just show it on the row'],

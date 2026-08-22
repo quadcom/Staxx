@@ -7,6 +7,27 @@ are not re-derived. Plan only; no code has been written.
 Scope answered by Adrian, 2026-08-21. Every decision below is his; the measurements are mine and
 were taken on the live server rather than assumed.
 
+**Stage 1 built, verified and deployed 2026-08-21. Stages 2, 3 and 4 not started.**
+
+**The reach, measured on the box rather than estimated:** 68 images — **7 pinned, so never looked at
+at all**, 61 rolling, and of those **38 have a project home to ask**. The plan predicted 37 listings
+would fit inside GitHub's hourly allowance of 60; the real number is 38. Twenty-three rolling images
+have no home and get nothing, exactly as the "other half" note says: `debian`, `postgres:15-alpine`,
+`nginx:alpine` and the like have nothing to watch and no honest way to invent it.
+
+**The spawn-site trap was cleared and proved the right way** — by running the real out-of-band pass
+on the server, not by calling the function. Two images carry a watch result in the live state file
+after it, which is what a partial pass under the per-pass budget should leave.
+
+**A bug the first test run caught, worth remembering:** PHP's `+` on two arrays keeps the *left*
+side's value on a key collision, so building a result as `$empty + ['ok' => true]` silently kept
+`ok: false`. Nineteen call sites. It is the kind of thing that reads correctly and does the opposite.
+
+**Outbound, counted:** eight requests to GitHub from the server across all testing. Each sent only an
+`Accept` header, a conditional stamp, and a generic agent string. Confirmed against the live API that
+an unchanged file costs nothing at all against the hourly allowance, which is what makes asking on
+every pass affordable.
+
 ---
 
 ## Context

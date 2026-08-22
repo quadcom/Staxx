@@ -102,12 +102,13 @@ run_check() {
   # person pressing the button in the browser forces every image to be asked
   # again.
   #
-  # Links.php, not Updates.php directly — it requires Updates.php itself, so
-  # this still gets staxx_update_check(), but also staxx_links_move_candidate()
-  # for the PLAN_61 registry-move check inside it. Requiring Updates.php alone
-  # leaves that check's function_exists() guard permanently false here, which
-  # is the one spawn site that runs every scheduled pass — see PLAN_61.
-  "${php_bin}" -r "require '${PLUGIN_DIR}/include/Links.php'; staxx_update_check('all', false);" >> "${LOG}" 2>&1
+  # Watch.php, not Links.php or Updates.php directly — it requires Links.php,
+  # which requires Updates.php, so this still gets staxx_update_check(), but
+  # also staxx_links_move_candidate() (PLAN_61) and staxx_watch_check()
+  # (PLAN_62) for the checks inside it. Requiring anything narrower leaves one
+  # or both function_exists() guards permanently false here, which is the one
+  # spawn site that runs every scheduled pass — see PLAN_61 and PLAN_62.
+  "${php_bin}" -r "require '${PLUGIN_DIR}/include/Watch.php'; staxx_update_check('all', false);" >> "${LOG}" 2>&1
   log "check pass finished."
 }
 
