@@ -304,3 +304,191 @@ first, not the move.
 2. **What the chooser offers on a machine with no pool at all** — array-only, or booted from an
    internal drive. The confirmed-flash path exists for exactly this, but the wording matters.
 3. Whether declining the offered move can be revisited later, or is a one-time offer.
+
+---
+
+# Part B — the design
+
+**Status: design written 2026-08-22, awaiting approval. No code until Adrian says so.**
+
+Grounded in what was read rather than assumed. Four findings shaped it:
+
+1. **There is no first-run flow anywhere in the plugin.** Nothing runs once and asks a question. So
+   "a chooser at install time" cannot be built where the phrase suggests: the installer is a shell
+   script with nobody watching it, and plugin installation is silent by design.
+2. **The page already warns when stacks are on flash** — the volume-path note in the page shell. There
+   is a hook to build on, not a blank field.
+3. **A set-once config key already has precedent** — the shell warning is exactly that shape.
+4. **Unraid publishes pool redundancy itself.** Its disk state file carries, per pool, the name, the
+   filesystem, whether it is mounted, and the redundancy profile. On his box: `cache-big` mirror,
+   `m2cache` mirror, and `cache-small` reporting **no profile at all**. So redundancy is *readable*
+   and never has to be inferred — and an absent profile means "not reported as redundant", which is
+   not the same claim as "not redundant" and must not be worded as one.
+
+---
+
+## 1. Where the chooser lives
+
+**A one-time offer on the page, not a step in the installer.** The only place a person exists is the
+page, so that is where a question can honestly be asked.
+
+- Shown when the stacks folder is **on the flash drive** and the offer has not been settled.
+- Settled state is a single set-once key, following the existing precedent. Three values, because two
+  cannot express what is needed: **unset** (never asked), **chosen** (moved, or deliberately placed),
+  **declined** (asked, said no).
+- **Declining is remembered and is not nagged.** It reappears only where the person went looking for
+  it — in the settings panel, as a line saying stacks are on flash and offering the move again.
+- The existing flash warning on the page becomes the entry point rather than a second, competing
+  message. One voice about flash, not two.
+
+## 2. What the chooser offers
+
+Built from Unraid's own disk state, so every claim on screen is one the server made:
+
+| Offered | Shown as | Condition |
+|---|---|---|
+| Each mounted pool | name, filesystem, free space, **"redundant (mirror)"** only where the profile says so | mounted, and not a memory filesystem |
+| The overlay (`/mnt/user/...`) | offered, with the note that it goes through Unraid's share layer | always, when the array is up |
+| Staying on flash | offered **last**, behind the confirmation below | always |
+
+Each offer becomes a concrete suggested path — a `staxx/stacks` folder on the chosen pool — which the
+person may edit. The **existing path validator does the checking**; nothing new validates paths. It
+already refuses a relative path, a `..` segment, anything outside `/mnt` and the plugin's own config
+folder, a non-existent parent, and — the subtle one it already gets right — a path that would land on
+a memory filesystem and vanish at the next reboot.
+
+**A pool is not offered while it is not mounted.** Choosing an unmounted pool would write the stacks
+somewhere that is about to be shadowed by a mount, which is the memory-filesystem trap wearing a
+different hat.
+
+### Preference, stated honestly
+
+A pool is preferred for two reasons and they should both be said, because they are different: it is a
+**direct filesystem** rather than the share layer, and — where the profile says so — it is
+**redundant**. A pool with no redundancy is a legitimate choice that is fast and direct; the wording
+must let somebody pick it knowingly rather than imply it is wrong.
+
+### The flash confirmation
+
+The `PLAN_65` shape: not one OK. It says what the risk actually is — finite write cycles, and the
+least redundant thing in the machine — and acknowledges the one case where somebody means it:
+**booting Unraid from an internal drive**, where "flash" is not flash at all. That case deserves
+detecting rather than lecturing: if the boot device is not removable, say so and drop the warning to a
+note.
+
+## 3. The move
+
+### The shape, and where the commit point sits
+
+Not per-stack, and this is the crux. **Copy everything, verify everything, switch the setting, then
+delete.**
+
+    copy   every stack folder to the new location, wholesale
+    verify every file, every size, every content hash
+           -> any failure here: stop, delete nothing, remove the partial copy, report
+    switch the stacks folder setting to the new location   <-- THE COMMIT POINT
+    delete the old folders
+           -> any failure here: the stacks are already live in the new place;
+              report what could not be removed, lose nothing
+
+**The setting change is the commit point**, and it deliberately sits between verification and
+deletion. Everything before it is reversible by discarding the copy. Everything after it is a tidy-up
+whose worst outcome is a harmless duplicate. There is no window in which a stack exists in neither
+place.
+
+Per-stack copy-verify-delete was rejected: an interrupted run would leave half the stacks in each
+location with the setting naming only one, and nothing on disk recording which half went.
+
+### Verify means verify
+
+The success test, stated so it cannot drift: **the same set of files, each the same size, each the
+same content hash.** A count and a size comparison is not byte-for-byte and must not be described as
+one. The comparison runs against what is actually on disk at the destination, not against what the
+copy believed it wrote.
+
+### Copy the folder, not the files we recognise
+
+A stack is a *directory*. Whatever else is in it travels — an environment file, a note the author
+left, data somebody put there against advice, and the companion record Part A will add later.
+**Copying only the files the tool understands would quietly discard the rest**, which is rule 2 in
+its plainest form. Symlinks need deciding rather than defaulting: there is already handling for a
+symlink inside a stack folder, and the move must not turn a link into a copy of its target, or follow
+one out of the tree.
+
+### Never a rename
+
+Recorded above under decision 4 and restated here because it is the thing most likely to be
+"simplified" later by somebody who sees two steps where one would do.
+
+### It runs as a job
+
+The existing detached job machinery, for one reason: nobody knows how big a stack folder is. Sixteen
+compose files are instant; one stack where somebody put a database in the folder is not. A job reports
+progress, survives the page being closed, and cannot be half-abandoned by a browser navigation. The
+verbs are an allowlist, so this needs a new one — whole-operation only, with no per-service form,
+since it is not that kind of verb.
+
+### Running containers must not notice
+
+A moved stack keeps its project name while Docker still records the **old** path. Already solved: what
+compose reports is indexed three ways, one of them by the tail of the path, which a move does not
+change. **Acceptance test: his containers are up before the move and up after it, untouched and
+unrestarted.** If any reads as stopped, that index is the first place to look — not the move.
+
+## 4. Two smaller pieces of the same work
+
+### The two-location rule is currently half-enforced
+
+The archive folder is checked against the stacks folder — an archive inside the stacks tree would be
+read back as a stack. **The reverse is not checked:** nothing stops the stacks folder being set to the
+archive folder, or to somewhere inside it. Same hazard, one direction covered. Extend the existing
+check rather than adding a second one.
+
+His archives stay where they are, off both flash and the new location, so his own box satisfies the
+rule without doing anything — but the check is what makes that true for everybody.
+
+### The help text now says something untrue
+
+The stacks-folder help still gives the flash rationale — readable before the array starts, which
+autostart needs. **The measurements above disprove it.** It has to be rewritten to say what is
+actually true: a pool is available before Docker is, so nothing is gained by flash and write wear is
+lost by it. Leaving it would be a document arguing against the feature beside it.
+
+## 5. What must never be guessed
+
+- **Never claim redundancy that was not read.** An absent profile means not reported, and the wording
+  must say that rather than promoting a guess into a fact.
+- **Never delete before verifying.** Not "verify shortly after"; verify, then delete.
+- **Never move part of a folder.** Wholesale or not at all.
+- **Never relocate anybody's stacks without being asked**, including on upgrade. An existing install
+  that says nothing keeps exactly what it has.
+- **Never offer an unmounted pool**, and never write to a path that lands on a memory filesystem —
+  the validator already refuses the second and must not be bypassed by the chooser building a path
+  itself.
+- **An empty answer must still carry why it is empty.** Part C's rule matters more once this ships,
+  because a pool can be unmounted and flash could not. The chooser must not read an unmounted new
+  location as "you have no stacks".
+
+## 6. Verification
+
+- The path validator's new direction, and the existing one, in the server-side settings checks.
+- The move: a scratch tree under `/tmp`, moved to another `/tmp` location, with the verification
+  deliberately made to fail — **the failure case is the point**, so the case that must be proved is
+  that a failed verify deletes nothing and leaves the source complete.
+- The chooser's offer list built against the real disk state file, and against a copy of it edited to
+  hold an unmounted pool and a pool with no profile.
+- A syntax check on every include, both JavaScript checks, and the round-trip suite.
+- On his box, read-only: the offer list rendered, showing three pools with two marked redundant and
+  one not. **His stacks are not moved as part of building this.**
+
+## 7. Size and order
+
+Medium. Four separable pieces, in this order:
+
+1. The path validator's missing direction, and the corrected help text. Small, independent, no UI.
+2. The move itself, as a job, with its verification — testable entirely in a scratch folder.
+3. The offer list, read from Unraid's disk state.
+4. The one-time offer on the page, the settled-state key, and the flash confirmation.
+
+Pieces 1 and 2 are worth landing before 3 and 4 exist, because the move is the part that can lose
+something and it can be proved without any interface at all.
