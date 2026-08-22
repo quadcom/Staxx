@@ -4125,6 +4125,87 @@
   }
 
   /**
+   * Whether a set of stashed lines still looks like the one block it claims
+   * to be, shared by both writers that splice stashed lines back verbatim
+   * (network_stash and sections). Never throws — this runs on hand-editable
+   * data on every render path, and a check that can itself blow up the page
+   * is worse than the thing it is guarding against.
+   *
+   * `expectKey` names the key the block's first real line must be (e.g.
+   * 'networks'), or null/omitted to accept any single mapping key — a
+   * section entry's stored first line is whichever key was outermost when
+   * it was emptied, which is not always the last segment of the entry's own
+   * path, so it cannot be predicted the way network_stash's key can.
+   *
+   * The check that actually matters is the embedded-newline one: the
+   * document is `doc.lines.join('\n')` on the way out, so one array element
+   * holding its own newline becomes several real lines at whatever column
+   * its text says — including column zero, which is how a stashed "line"
+   * can close the current service and open a new one. Everything else here
+   * (tabs, one key at the base indent, deeper indent after it, a size cap)
+   * only matters once that hole is shut.
+   *
+   * `wantIndent`, when given, requires the key line to sit at exactly that
+   * column. network_stash splices its lines back at the indentation they
+   * were stored with, so a stash whose indent no longer matches the service
+   * lands mid-file and orphans everything below it — proved to mangle a
+   * file even with every other check above passing. Sections do not pass
+   * this: they store their lines with the indent stripped and re-pad on the
+   * way back, so their base indent is 0 by construction.
+   */
+  function stashLinesOk(lines, expectKey, wantIndent) {
+    try {
+      if (!Array.isArray(lines) || lines.length < 1 || lines.length > 200) return false;
+
+      var total = 0, i;
+      for (i = 0; i < lines.length; i++) {
+        var l = lines[i];
+        if (typeof l !== 'string') return false;
+        if (l.indexOf('\n') >= 0 || l.indexOf('\r') >= 0) return false;
+        total += l.length;
+        if (total > 20000) return false;
+        var lead = l.match(/^[ \t]*/)[0];
+        if (lead.indexOf('\t') >= 0) return false;
+      }
+
+      var keyRe = new RegExp('^(\\s*)(?:' +
+        (expectKey ? expectKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '[^\\s#][^:]*') +
+        ')\\s*:(\\s.*)?$');
+
+      var keyIdx = -1, baseIndent = -1;
+      for (i = 0; i < lines.length; i++) {
+        if (/^\s*$/.test(lines[i]) || /^\s*#/.test(lines[i])) continue;
+        var m = lines[i].match(keyRe);
+        if (!m) return false;
+        keyIdx = i;
+        baseIndent = m[1].length;
+        break;
+      }
+      if (keyIdx < 0) return false;
+      if (typeof wantIndent === 'number' && baseIndent !== wantIndent) return false;
+
+      // Nothing before the key line but blanks and comments (its own
+      // attached leading comments, which the capture deliberately keeps).
+      for (i = 0; i < keyIdx; i++) {
+        if (!/^\s*$/.test(lines[i]) && !/^\s*#/.test(lines[i])) return false;
+      }
+
+      // Everything after must sit strictly deeper than the key line — a
+      // comment included, since one at the base indent would attach to
+      // whatever follows rather than to this block.
+      for (i = keyIdx + 1; i < lines.length; i++) {
+        if (/^\s*$/.test(lines[i])) continue;
+        var thisIndent = lines[i].match(/^\s*/)[0].length;
+        if (thisIndent <= baseIndent) return false;
+      }
+
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
    * Reads back what setNetworkMode above stashed for one service, validated
    * the same way restoreNetworkStash validates before actually writing —
    * shared rather than copied so the note stacks.js shows beneath a
@@ -4148,7 +4229,8 @@
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
           typeof parsed.after === 'string' &&
           Array.isArray(parsed.lines) && parsed.lines.length &&
-          parsed.lines.every(function (l) { return typeof l === 'string'; })) {
+          parsed.lines.every(function (l) { return typeof l === 'string'; }) &&
+          stashLinesOk(parsed.lines, 'networks', svc.value.indent)) {
         return parsed;
       }
     } catch (e) { /* not our JSON */ }
@@ -4190,7 +4272,11 @@
       return { ok: false, error: 'The x-unraid block in this file is written in a way the form cannot change — edit it in the Compose view instead.' };
     }
 
-    if (!lines) return { ok: true, restored: false };
+    // hadStash but !lines means there was something there and it failed
+    // stashLinesOk — say so, rather than let a discarded stash look
+    // identical to a file that never had one.
+    if (!lines) return hadStash ? { ok: true, restored: false, discarded: true }
+                                 : { ok: true, restored: false };
 
     // Back where it was, using the key the stash recorded it followed — so a
     // set-aside and a restore leave the file in the order it was written in.
@@ -4647,6 +4733,16 @@
       return setSectionState(doc, form, service, key, null);
     }
 
+    // The entry's first stored line is whichever key stashSection found
+    // outermost when it emptied the block, not necessarily the last
+    // segment of `key` itself, so no particular name can be expected here
+    // — null accepts any single mapping key. A stash that fails this is
+    // dropped exactly like an empty one, rather than left as a second,
+    // unreadable copy sitting in the file.
+    if (!stashLinesOk(entry.lines, null)) {
+      return setSectionState(doc, form, service, key, null);
+    }
+
     var path = key.split('.');
     var svc = serviceMapOf(doc, service);
     if (!svc) return false;
@@ -4697,6 +4793,20 @@
     }
 
     return setSectionState(doc, form, service, key, null);
+  }
+
+  /**
+   * Whether restoreSection would actually restore what is stashed for one
+   * service/key, without doing the restore or the discard — the UI needs to
+   * warn before the entry is dropped, and restoreSection's own return value
+   * is a plain boolean existing callers already depend on. Returns null when
+   * there is nothing stashed (nothing to say), true or false otherwise.
+   */
+  function sectionStashOk(doc, service, key) {
+    var sections = readSections(doc);
+    var entry = sections[service] ? sections[service][key] : undefined;
+    if (!entry || !entry.lines || !entry.lines.length) return null;
+    return stashLinesOk(entry.lines, null);
   }
 
   /* =====================================================================
@@ -7506,6 +7616,8 @@
     setNetworkMode: setNetworkMode,
     restoreNetworkStash: restoreNetworkStash,
     readNetworkStash: readNetworkStash,
+    // Shared by both stash writers — see its own comment.
+    stashLinesOk: stashLinesOk,
     // The row's sentinel value for "created outside this file" — stacks.js
     // needs the exact same string to build the dropdown option, and a second
     // literal there would be a bug waiting to happen.
@@ -7550,6 +7662,7 @@
     sectionHidden: sectionHidden,
     stashSection: stashSection,
     restoreSection: restoreSection,
+    sectionStashOk: sectionStashOk,
     setSectionState: setSectionState,
     // The editor overlay's one-line-at-a-time syntax tokeniser — see the
     // "Syntax highlighting" section above for the carry contract.

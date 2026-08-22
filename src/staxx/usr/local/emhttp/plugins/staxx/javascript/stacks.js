@@ -4584,6 +4584,10 @@
       entry = entry ? entry[key] : undefined;
       var restoring = !!(entry && entry.lines && entry.lines.length);
 
+      // Checked ahead of restoreSection (PLAN_81) because the restore drops
+      // an unusable stash as it goes — asking after would always see "gone".
+      var stashOk = restoring ? YAML.sectionStashOk(MODEL.doc, svc, key) : null;
+
       pushUndo('turning on ' + label + ' for "' + svc + '"');
       // Nothing to restore means nothing to write: the tick is remembered in
       // sectionOn until something is put in the section. An entry saying
@@ -4603,8 +4607,15 @@
       }
       (sectionOn[svc] = sectionOn[svc] || {})[flagKey] = true;
 
-      say = 'Turned ' + label + (restoring ? ' back on' : ' on') + ' for "' + svc +
-            '". Undo is at the bottom if that was wrong.';
+      // A stash that failed the shape check is discarded rather than restored
+      // — that has to be said out loud, or a tampered/corrupted file looks
+      // exactly like a section that was simply empty (see the network-row
+      // case above for the same reasoning).
+      say = stashOk === false
+        ? 'The stored contents of this section are not in a form StaXX can put back, so they have ' +
+          'been discarded. The section is on but empty, and nothing else in the file was changed.'
+        : 'Turned ' + label + (restoring ? ' back on' : ' on') + ' for "' + svc +
+          '". Undo is at the bottom if that was wrong.';
 
       // Closed before the redraw, not after, so the form is drawn without the
       // panel rather than drawn with it and then having it taken away. The
@@ -5321,8 +5332,16 @@
       setYamlStatus(res.error);
       return;
     }
+    // discarded (PLAN_81) means a stash was there but failed the shape check —
+    // that is different from there being nothing to restore, and it has to be
+    // said plainly: a silently dropped stash is indistinguishable from a file
+    // that never had one, and the person tampering with the file (or the
+    // corruption) leaves no trace otherwise.
     structuralEdit(-1, res.restored
       ? 'Put "' + service + '"’s networks back. Undo is at the bottom if that was wrong.'
+      : res.discarded
+      ? 'The stored network list in this file is not in a form StaXX can put back, so it has been ' +
+        'discarded. The network mode has been cleared, so add the networks again from this row.'
       : 'There was nothing left to restore — the stash was empty or no longer made sense, so it was dropped.');
   }
 
