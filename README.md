@@ -23,23 +23,6 @@ underneath stays an ordinary compose file that runs anywhere.
 
 ---
 
-## How the form gets its friendly bits
-
-A compose file says a container uses port 8096. It does not say "this is the web interface" or "this
-one is a password".
-
-That goes in two places, both ordinary parts of a compose file:
-
-- **What a setting is for** — the comment beside it. The form shows it as help text; typing help text
-  writes the comment back. Two marks cover what a comment cannot say: one for "secret", one for
-  "required".
-- **What the app is** — its logo, description and web address, in a section named `x-unraid`. The
-  compose standard reserves `x-` sections for extras, so other tools ignore it.
-
-Neither is required. A plain file still gets a form.
-
----
-
 ## The stacks page
 
 **This page is a view of one folder on your server.** What you see is what is on disk: a subfolder
