@@ -20,6 +20,14 @@
  * ever read — never Docker Hub's, which would spend the separate allowance
  * the update check itself depends on.
  *
+ * PLAN_62 Stage 2 adds the comparison itself. It runs through node, calling
+ * the exact YAML parser the browser uses (scripts/watch-compare.js, which
+ * requires compose-model.js directly) — never a second, cruder PHP reader,
+ * and never `docker compose config`, which would resolve env_file/extends
+ * against a third party's paths. See the plan's "load-bearing decision"
+ * section. There is no write path anywhere in this file: applying a finding
+ * is never done, by design.
+ *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License version 2,
  * as published by the Free Software Foundation.
@@ -278,10 +286,86 @@ function staxx_watch_store_body(string $image, string $body): void {
 }
 
 /**
+ * Which node binary this box has, or '' when it has none — probed once and
+ * remembered in the state file, exactly as staxx_docker_inspector() probes
+ * for an inspection route, and for the same reason: node arrives via an
+ * optional Unraid package, not the base system, and asking per image would
+ * be sixty pointless processes on a busy server.
+ *
+ * Unlike staxx_docker_inspector() (docker is always present, so '' never
+ * means anything but "not probed yet"), '' is itself a real, cacheable
+ * answer here — so the short-circuit below tests the timestamp, not whether
+ * the stored string is empty.
+ */
+function staxx_watch_node_bin(): string {
+  static $cached = null;
+  if ($cached !== null) return $cached;
+
+  $state    = staxx_update_state();
+  $stored   = (string)($state['node_bin'] ?? '');
+  $storedAt = (int)($state['node_bin_at'] ?? 0);
+  if ($storedAt > 0 && (time() - $storedAt) < STAXX_UPDATE_ASK_TTL) return $cached = $stored;
+
+  $found = '';
+  foreach (['/usr/local/bin/node', '/usr/bin/node'] as $path) {
+    if (!is_file($path) || !is_executable($path)) continue;
+    $code = 1;
+    staxx_sh(escapeshellarg($path).' --version', 5, $code);
+    if ($code === 0) { $found = $path; break; }
+  }
+
+  staxx_update_state_save(['node_bin' => $found, 'node_bin_at' => time()]);
+  return $cached = $found;
+}
+
+/**
+ * Stage 2 itself: hand one stack's compose file and the image's cached
+ * example off to scripts/watch-compare.js, through staxx_sh() so a stuck
+ * node process cannot hang the pass. Called once per stack that uses
+ * $image, never once per image — two stacks sharing an image must each be
+ * compared against their own file, not shown the other's findings. Cheap
+ * and local (no network), so the caller does not need to budget it the way
+ * discovery is budgeted. Read-only in every direction — nothing here ever
+ * writes to $localFile or anywhere else a stack lives.
+ *
+ * @return array{findings:array, compare_error:string}
+ */
+function staxx_watch_compare(string $localFile, string $image): array {
+  $empty = ['findings' => [], 'compare_error' => ''];
+  if ($localFile === '' || !is_file($localFile)) return $empty;
+
+  $remoteFile = staxx_watch_body_path($image);
+  if (!is_file($remoteFile)) return $empty;
+
+  $node = staxx_watch_node_bin();
+  if ($node === '') return array_merge($empty, ['compare_error' => 'the comparison cannot run on this server']);
+
+  $script = '/usr/local/emhttp/plugins/staxx/scripts/watch-compare.js';
+  $cmd = escapeshellarg($node).' '.escapeshellarg($script).' '.escapeshellarg($localFile).' '.escapeshellarg($remoteFile);
+  $code = 1;
+  $out = staxx_sh($cmd, 10, $code);
+  $data = $code === 0 ? json_decode($out, true) : null;
+
+  if (!is_array($data) || !($data['ok'] ?? false)) {
+    $reason = is_array($data) ? (string)($data['reason'] ?? '') : '';
+    return array_merge($empty, ['compare_error' => $reason !== '' ? $reason : 'could not compare the two files']);
+  }
+  return ['findings' => $data['findings'] ?? [], 'compare_error' => ''];
+}
+
+/**
  * The whole Stage-1 answer for one image, folded into the single entry the
  * per-image loop in staxx_update_check() stores on the existing state file —
  * see the call site there for why this is guarded by function_exists()
  * rather than required directly.
+ *
+ * Discovery and the fetch are properties of the image's own upstream
+ * project, not of any one stack, so this takes no local file and does no
+ * comparing — an image used by no stack at all still discovers and fetches
+ * exactly the same. The comparison itself is per stack (PLAN_62's
+ * correction: two stacks sharing an image must never be shown a finding
+ * computed from the other stack's file), and runs separately, per stack,
+ * through staxx_watch_compare() at the call site once a body is cached here.
  *
  * $prior is this image's previous 'watch' entry, so an unchanged discovery
  * or fetch can carry its resolved path and reason forward without asking

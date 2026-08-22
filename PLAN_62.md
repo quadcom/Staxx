@@ -7,7 +7,25 @@ are not re-derived. Plan only; no code has been written.
 Scope answered by Adrian, 2026-08-21. Every decision below is his; the measurements are mine and
 were taken on the live server rather than assumed.
 
-**Stage 1 built, verified and deployed 2026-08-21. Stages 2, 3 and 4 not started.**
+**Stages 1 and 2 built, verified and deployed 2026-08-21. Stages 3 and 4 not started.**
+
+**A correction to this plan, found by measuring rather than reading.** Stage 2 says findings are
+"stored per image in the state file". That is wrong wherever **two stacks use the same image** — the
+comparison runs against one stack's file, and the findings would then be shown against the other
+stack too, which is a wrong finding presented as the author's word. Counted on the box: **5 of 65
+images are used by more than one stack**, including two real ones (`phpmyadmin` across two stacks,
+`tdarr` across two).
+
+Discovery and the fetch stay **per image** — that is where the network cost is. The **comparison is
+local and cheap**, so it runs **per stack**, and findings are keyed by stack. Settled before Stage 3
+paints anything, since Stage 3 would otherwise be built on the wrong shape.
+
+**And a second trap that came with the new shape, closed at the same time:** a stack that is removed
+or renamed leaves its findings behind. Stage 4's report is built **from the state file alone** — a
+constraint this plan already imposes for a good reason — so without pruning it would list findings
+against stacks that no longer exist, and the file would grow on the flash drive forever. Pruned on a
+full pass only: a scoped pass has not looked at every stack, and would delete what it merely did not
+visit.
 
 **The reach, measured on the box rather than estimated:** 68 images — **7 pinned, so never looked at
 at all**, 61 rolling, and of those **38 have a project home to ask**. The plan predicted 37 listings

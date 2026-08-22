@@ -42,6 +42,12 @@ function staxx_update_state_defaults(): array {
     'history'   => [],
     'bases'     => [],
     'rebuilds'  => [],
+    // PLAN_62 — Stage 2's findings, keyed by stack then by image. Discovery
+    // (what the author publishes) is a property of the image and stays under
+    // 'images'; the comparison result is a property of one stack's own file
+    // and must never be shared with another stack that happens to run the
+    // same image — see the plan's correction for the bug this fixes.
+    'stacks'    => [],
   ];
 }
 
@@ -588,6 +594,22 @@ function staxx_update_images(string $scope): array {
 }
 
 /**
+ * Stack name -> compose file path, for every stack — built once per pass so
+ * PLAN_62 Stage 2 can hand staxx_watch_compare() a real local file for every
+ * stack that uses a watched image, without re-walking staxx_list_stacks()
+ * once per stack.
+ *
+ * @return array<string, string>
+ */
+function staxx_update_stack_files(): array {
+  $files = [];
+  foreach (staxx_list_stacks() as $stack) {
+    if ($stack['file'] !== '') $files[$stack['name']] = $stack['file'];
+  }
+  return $files;
+}
+
+/**
  * Take the check pass's lock. An atomic mkdir either succeeds or fails
  * outright — no race window either way, the same trick the stats collector
  * uses. A lock directory older than 30 minutes is treated as abandoned by a
@@ -658,12 +680,18 @@ function staxx_update_check(string $scope, bool $force): array {
   $state  = staxx_update_state();
   $images = (array)$state['images'];
   $rebuilds = (array)$state['rebuilds'];
+  // PLAN_62 Stage 2 findings, keyed by stack — see staxx_update_state_defaults().
+  $stacksState = (array)$state['stacks'];
   $now    = time();
   $failedNames = [];
   $newlyFound = 0; // images whose 'seen' clock started fresh THIS pass, for the "found" notification
 
   $refs = staxx_update_images($scope);
   $total = count($refs);
+  // PLAN_62 Stage 2 — a real file on disk to compare the author's example
+  // against, keyed by stack name so the loop below can look one up per image
+  // from $rows without re-walking every stack's folder each time.
+  $stackFiles = staxx_update_stack_files();
 
   // Ask the least recently asked first. staxx_update_images() returns the
   // same order every time (disk order), and the rate ceiling always cuts
@@ -758,12 +786,33 @@ function staxx_update_check(string $scope, bool $force): array {
     // PLAN_61's own note just above for why that distinction is load-bearing.
     if (staxx_cfg_bool('WATCH_EXAMPLES') && function_exists('staxx_watch_check') && $watchBudget > 0) {
       $spent = 0;
+      // Discovery and the fetch are a property of the image's own upstream
+      // project, never of any one stack — this costs the same one GitHub
+      // question whichever, or however many, stacks use $image.
       $watch = staxx_watch_check($image, (array)($existing['watch'] ?? []), $spent);
       $watchBudget -= $spent;
       if ($watch === []) {
         unset($existing['watch']);
       } else {
         $existing['watch'] = $watch;
+      }
+
+      // The comparison is the opposite: local, free, and belongs to each
+      // stack's own file. Run it per stack rather than once for whichever
+      // stack happened to be first — that "stands in for all of them"
+      // shortcut is the exact bug this loop used to have (PLAN_62's
+      // correction): a second stack sharing the image would be shown
+      // findings computed against the first stack's file. Only runs when a
+      // body was actually cached to compare against.
+      if (function_exists('staxx_watch_compare') && ($watch['body_saved'] ?? false)) {
+        $stackNames = [];
+        foreach ($rows as $holder) $stackNames[explode('::', $holder, 2)[0]] = true;
+        foreach (array_keys($stackNames) as $stackName) {
+          $localFile = $stackFiles[$stackName] ?? '';
+          if ($localFile === '') continue;
+          $compare = staxx_watch_compare($localFile, $image);
+          $stacksState[$stackName]['watch'][$image] = $compare;
+        }
       }
     }
 
@@ -927,6 +976,18 @@ function staxx_update_check(string $scope, bool $force): array {
     ? 'Docker Hub is limiting how often this server may ask about images. Sign in under Settings to raise the limit, or try again in an hour.'
     : ($result['failed'] > 0 ? 'Could not check: '.implode(', ', $failedNames) : '');
 
+  // A stack that has been removed or renamed leaves findings behind, and
+  // Stage 4's report is built from this file alone — so without this it would
+  // list findings against stacks that no longer exist, and the file would grow
+  // on the flash drive forever. Only a full pass may prune: a scoped one has
+  // not looked at every stack and would delete what it simply did not visit.
+  if ($scope === 'all') {
+    $live = staxx_update_stack_files();
+    foreach (array_keys($stacksState) as $known) {
+      if (!isset($live[$known])) unset($stacksState[$known]);
+    }
+  }
+
   staxx_update_state_save([
     'checked'  => $now,
     'ok'       => $result['ok'],
@@ -934,6 +995,7 @@ function staxx_update_check(string $scope, bool $force): array {
     'limited'  => $limited,
     'images'   => $images,
     'rebuilds' => $rebuilds,
+    'stacks'   => $stacksState,
   ]);
 
   staxx_update_unlock();
