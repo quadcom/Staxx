@@ -1467,14 +1467,23 @@ function staxx_updates_summary(): array {
     if ($pillState === 'tagmissing') $tagmissing++;
   }
 
+  // PLAN_62 Stage 4's own count, cheap for the same reason the rest of this
+  // function is: staxx_watch_report() reads the state file alone. Carried as
+  // a count plus a reason rather than folded into 'ok'/'error' above, since
+  // "the array is not started" is a fact about this report specifically, not
+  // about whether the update check itself ran.
+  $watchReport = staxx_watch_report();
+
   return [
-    'checked'    => (int)$state['checked'],
-    'ok'         => (bool)$state['ok'],
-    'error'      => (string)$state['error'],
-    'limited'    => (bool)$state['limited'],
-    'updates'    => $updates,
-    'tagmissing' => $tagmissing,
-    'known'      => $known,
+    'checked'     => (int)$state['checked'],
+    'ok'          => (bool)$state['ok'],
+    'error'       => (string)$state['error'],
+    'limited'     => (bool)$state['limited'],
+    'updates'     => $updates,
+    'tagmissing'  => $tagmissing,
+    'known'       => $known,
+    'watch'       => count($watchReport['items']),
+    'watchReason' => $watchReport['reason'],
   ];
 }
 
@@ -1544,6 +1553,117 @@ function staxx_update_skip_move(string $image, string &$error): bool {
 
   staxx_update_state_save(['images' => $images]);
   return true;
+}
+
+/**
+ * PLAN_62 Stage 4 — dismiss one author-example finding: remember the
+ * author's current value for this exact (stack, image, service, setting)
+ * under 'skip' on the stack's own watch entry, so a later change to that
+ * same setting speaks up once more. Third use of the self-expiring shape
+ * staxx_update_skip()/staxx_update_skip_move() already establish above.
+ *
+ * Findings are per stack, not per image (PLAN_62's correction: two stacks
+ * sharing an image must dismiss independently), so the key has to include
+ * the stack — unlike the two functions above, whose allowlist is just the
+ * image. The finding must currently be on offer, which is the allowlist
+ * here: it stops a request inventing an entry in a file nothing else writes
+ * to freely, the same reasoning staxx_update_skip() gives for refusing an
+ * image with no remote digest recorded.
+ */
+function staxx_watch_skip(string $stack, string $image, string $service, string $setting, string &$error): bool {
+  $error  = '';
+  $state  = staxx_update_state();
+  $stacks = (array)$state['stacks'];
+
+  $entry = $stacks[$stack]['watch'][$image] ?? null;
+  if (!is_array($entry)) {
+    $error = 'This has not been checked yet, so there is nothing to skip.';
+    return false;
+  }
+
+  $found = false;
+  $value = null;
+  foreach ((array)($entry['findings'] ?? []) as $f) {
+    if ((string)($f['service'] ?? '') === $service && (string)($f['setting'] ?? '') === $setting) {
+      $value = $f['value'] ?? null;
+      $found = true;
+      break;
+    }
+  }
+  if (!$found) {
+    $error = 'There is no finding recorded for this setting, so there is nothing to skip.';
+    return false;
+  }
+
+  $entry['skip'][$service.'|'.$setting] = $value;
+  $stacks[$stack]['watch'][$image]      = $entry;
+
+  staxx_update_state_save(['stacks' => $stacks]);
+  return true;
+}
+
+/**
+ * One image's findings for one stack, with anything currently dismissed
+ * filtered out first — shared by every reader (the row pill's count, the
+ * field grafts, Stage 4's combined report) so the three can never disagree
+ * about what a dismissal covers. A dismissal only holds while the author's
+ * value for that setting has not moved since it was recorded; the moment it
+ * has, the stored 'skip' entry is stale and the finding shows again.
+ */
+function staxx_watch_active_findings(array $entry): array {
+  $skip = (array)($entry['skip'] ?? []);
+  $all  = (array)($entry['findings'] ?? []);
+  if ($skip === []) return $all;
+
+  $out = [];
+  foreach ($all as $f) {
+    $key = (string)($f['service'] ?? '').'|'.(string)($f['setting'] ?? '');
+    if (array_key_exists($key, $skip) && $skip[$key] === ($f['value'] ?? null)) continue;
+    $out[] = $f;
+  }
+  return $out;
+}
+
+/**
+ * PLAN_62 Stage 4 — every undismissed author-example finding, across every
+ * stack, in one list. Reads the state file alone and parses no compose
+ * file: PLAN_61's Stage 4 first tried walking every stack and re-reading its
+ * file to build its own report, which would have blown the self-test's
+ * fifteen-second budget on a cold cache and turned the button people press
+ * when the page misbehaves into a blank screen. Same constraint, same answer.
+ *
+ * PLAN_68 Part C: an empty answer must carry why it is empty.
+ * staxx_scan_stacks() reads empty both when there genuinely are no stacks
+ * and when it cannot look at all — an unmounted pool, an array not started —
+ * and this report must never present the second as the first. is_dir() is
+ * the same cheap test the six-hourly prune above already uses for exactly
+ * this reason.
+ *
+ * @return array{ok:bool, reason:string, items:array}
+ */
+function staxx_watch_report(): array {
+  if (!is_dir(staxx_stack_root())) {
+    return ['ok' => false, 'items' => [],
+      'reason' => 'The array is not started, so StaXX cannot see the stacks or what has been found.'];
+  }
+
+  $items = [];
+  foreach ((array)staxx_update_state()['stacks'] as $stack => $entry) {
+    foreach ((array)($entry['watch'] ?? []) as $image => $imageEntry) {
+      if (!is_array($imageEntry)) continue;
+      foreach (staxx_watch_active_findings($imageEntry) as $f) {
+        $items[] = [
+          'stack'   => (string)$stack,
+          'image'   => (string)$image,
+          'service' => (string)($f['service'] ?? ''),
+          'setting' => (string)($f['setting'] ?? ''),
+          'side'    => (string)($f['side'] ?? ''),
+        ];
+      }
+    }
+  }
+
+  return ['ok' => true, 'reason' => '', 'items' => $items];
 }
 
 /**

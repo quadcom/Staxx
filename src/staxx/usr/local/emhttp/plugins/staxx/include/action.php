@@ -934,6 +934,29 @@ switch ($action) {
     }
     staxx_reply(['ok' => true]);
 
+  // ---- dismiss one author-example finding for one stack (PLAN_62 Stage 4) ----
+  case 'watch-skip':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    if (!staxx_watch_skip(
+      $name,
+      (string)($_POST['image'] ?? ''),
+      (string)($_POST['service'] ?? ''),
+      (string)($_POST['setting'] ?? ''),
+      $error
+    )) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
+
+  // ---- every undismissed author-example finding, across every stack ----
+  // staxx_watch_report() already answers with its own 'ok', so this is a
+  // plain pass-through — not '+'-merged with a second ['ok' => true], which
+  // is exactly the left-wins-on-collision trap PLAN_62 caught elsewhere.
+  case 'watch-report':
+    staxx_reply(staxx_watch_report());
+
   // ---- the grid-wide switch: stop every clock without touching a single one ----
   case 'update-pause':
     $on = ($_POST['on'] ?? '') === '1';

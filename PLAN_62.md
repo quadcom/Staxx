@@ -7,7 +7,14 @@ are not re-derived. Plan only; no code has been written.
 Scope answered by Adrian, 2026-08-21. Every decision below is his; the measurements are mine and
 were taken on the live server rather than assumed.
 
-**Stages 1, 2 and 3 built, verified and deployed. Stage 4 not started; Stage 5 added and not started.**
+**Stages 1 to 4 built, verified and deployed — the plan's original scope is complete. Stage 5 is
+written up and deliberately held at Adrian's word, 2026-08-22.**
+
+Stage 4 keeps a dismissal as **the author's value, not a flag**, so it expires itself: the dismissal
+is honoured only while the author's value is still the one that was waved away. The report is built
+from the state file alone and measured at **0.17ms over 100 findings**, against a self-test budget of
+fifteen seconds — and it distinguishes "nothing to look at" from "the array is not started, so StaXX
+cannot see the stacks", which `PLAN_68` Part C names as a rule.
 
 **A third bug, found while checking Stage 3 and fixed at the root.** The stamp that says "this file has
 not changed" lives on the **flash drive**; the copy of the file it refers to lives in **`/tmp`, which a

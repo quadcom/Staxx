@@ -2675,6 +2675,11 @@
                           : 'The author\'s published example does not set ' + wDropped + ' things here.') +
           '</p>';
       }
+      // PLAN_62 Stage 4 — every item on this field concerns the same setting
+      // (that is what matched them all to it), so one Dismiss covers them.
+      out += '<p class="staxx-fieldnote">' + watchDismissBtn({
+        image: f.watchAdvice[0].image, service: f.service, setting: f.watchAdvice[0].setting
+      }) + '</p>';
     }
     return out;
   }
@@ -3856,7 +3861,7 @@
     return '"' + setting + '"';
   }
 
-  // One sentence per distinct (service, setting, side) left over after
+  // One group per distinct (service, setting, side) left over after
   // applyWatchAdvice()'s field pass — grouped so several added entries under
   // one list key read as one line, never a value that merely differs (see
   // watch-compare.js for why that is excluded before this ever runs).
@@ -3864,30 +3869,72 @@
     var groups = {}, order = [];
     leftover.forEach(function (f) {
       var key = f.service + '|' + f.setting + '|' + f.side;
-      if (!groups[key]) { groups[key] = { service: f.service, setting: f.setting, side: f.side, count: 0 }; order.push(key); }
+      if (!groups[key]) {
+        groups[key] = { service: f.service, setting: f.setting, side: f.side, image: f.image, count: 0 };
+        order.push(key);
+      }
       groups[key].count++;
     });
-    return order.map(function (key) {
-      var g = groups[key];
-      var verb = g.side === 'added' ? 'also sets' : 'does not set';
-      var word = g.count > 1 ? g.count + ' more things under "' + g.setting + '"' : watchSettingWord(g.setting);
-      return 'For ' + g.service + ': the author\'s published example ' + verb + ' ' + word + '.';
-    });
+    return order.map(function (key) { return groups[key]; });
+  }
+
+  function watchLeftoverSentence(g) {
+    var verb = g.side === 'added' ? 'also sets' : 'does not set';
+    var word = g.count > 1 ? g.count + ' more things under "' + g.setting + '"' : watchSettingWord(g.setting);
+    return 'For ' + g.service + ': the author\'s published example ' + verb + ' ' + word + '.';
+  }
+
+  // Shared by this note and adviceText()'s own watchAdvice branch: one
+  // button that dismisses PLAN_62 Stage 4's finding for exactly this
+  // (service, setting) — the value is never sent, since the server already
+  // has it on the same entry it is about to compare the button against.
+  function watchDismissBtn(g) {
+    return ' <button type="button" class="staxx-declfix" data-watch-dismiss="1" ' +
+      'data-watch-image="' + esc(g.image || '') + '" ' +
+      'data-watch-service="' + esc(g.service) + '" ' +
+      'data-watch-setting="' + esc(g.setting) + '" ' +
+      'title="Stops asking about this until the author changes it again.">Dismiss</button>';
   }
 
   // The note at the top of the form (PLAN_62 Stage 3): the server's own
   // refusal sentences (watchNotes — a fact, worded plainly, never a failure)
-  // plus one line for every finding applyWatchAdvice() could not graft onto
-  // a field. Nothing here ever touches the raw editor view — an addition has
-  // no line to underline there, so this note is the only honest place to say
-  // it at all.
+  // plus one line, each with its own Dismiss (Stage 4), for every finding
+  // applyWatchAdvice() could not graft onto a field. Nothing here ever
+  // touches the raw editor view — an addition has no line to underline
+  // there, so this note is the only honest place to say it at all.
   function paintWatchNote(leftover) {
     if (!watchNote) return;
-    var lines = watchNotes.concat(watchLeftoverSentences(leftover));
-    if (!lines.length) { watchNote.hidden = true; watchNote.innerHTML = ''; return; }
-    watchNote.innerHTML = lines.map(function (l) { return '<span>' + esc(l) + '</span>'; }).join('<br>');
+    var groups = watchLeftoverSentences(leftover);
+    if (!watchNotes.length && !groups.length) { watchNote.hidden = true; watchNote.innerHTML = ''; return; }
+    var lines = watchNotes.map(function (l) { return '<span>' + esc(l) + '</span>'; })
+      .concat(groups.map(function (g) {
+        return '<span>' + esc(watchLeftoverSentence(g)) + watchDismissBtn(g) + '</span>';
+      }));
+    watchNote.innerHTML = lines.join('<br>');
     watchNote.hidden = false;
   }
+
+  // Drops one dismissed finding out of watchFacts so every surface (this
+  // note, the field grafts, the row pill) clears it without waiting for the
+  // next reparse() — the state file on the server is still what decides
+  // whether it revives, this is only the client's own copy going stale.
+  function watchSkip(image, service, setting) {
+    return call('watch-skip', { name: openedName, image: image, service: service, setting: setting })
+      .then(function (res) {
+        if (!res.ok) { setYamlStatus(res.error); return; }
+        watchFacts[service] = (watchFacts[service] || []).filter(function (f) {
+          return f.setting !== setting;
+        });
+        applyWatchAdvice();
+        refreshUpdates();   // the row's own "N to look at" pill carries the same count
+      });
+  }
+
+  watchNote.addEventListener('click', function (event) {
+    var btn = event.target.closest('[data-watch-dismiss]');
+    if (!btn) return;
+    watchSkip(btn.dataset.watchImage, btn.dataset.watchService, btn.dataset.watchSetting);
+  });
 
   // Grafts PLAN_62 Stage 2's findings (watchFacts, keyed by service) onto the
   // field each setting concerns — same call sites and same reason as
@@ -3908,7 +3955,7 @@
           field.watchAdvice = field.watchAdvice || [];
           field.watchAdvice.push(finding);
         } else {
-          leftover.push({ service: svc, setting: finding.setting, side: finding.side });
+          leftover.push({ service: svc, setting: finding.setting, side: finding.side, image: finding.image });
         }
       });
     });
@@ -4776,6 +4823,17 @@
           applyMovedAdvice();
           refreshUpdates();   // the row's own pill carries the same fact (Stage 2)
         });
+      return;
+    }
+
+    // Dismiss beside a field-grafted watch finding (adviceText(),
+    // applyWatchAdvice(), PLAN_62 Stage 4). watchSkip() owns the call and
+    // the local bookkeeping — shared with the same button in the top-of-form
+    // note, since a field row's Dismiss and a leftover line's Dismiss are
+    // the same action on the same (service, setting).
+    var watchDismiss = event.target.closest('[data-watch-dismiss]');
+    if (watchDismiss) {
+      watchSkip(watchDismiss.dataset.watchImage, watchDismiss.dataset.watchService, watchDismiss.dataset.watchSetting);
       return;
     }
 
@@ -13261,8 +13319,17 @@
     var when = 'Checked ' + timeAgoWords(summary.checked) + ' ago';
     if (!summary.ok) return when + ', but it could not finish.';
     var n = summary.updates || 0;
-    if (!n) return when + ', nothing needs updating.';
-    return when + ', ' + n + (n === 1 ? ' update waiting.' : ' updates waiting.');
+    var text = when + (n ? ', ' + n + (n === 1 ? ' update waiting.' : ' updates waiting.') : ', nothing needs updating.');
+    // PLAN_62 Stage 4 — appended, never folded into the sentence above: a
+    // report that could not be built must never read like "0 to look at"
+    // (PLAN_68 Part C's rule, applied here too).
+    if (summary.watchReason) {
+      text += ' The author-example report could not be built: ' + summary.watchReason + '.';
+    } else if (summary.watch) {
+      text += ' ' + summary.watch +
+        (summary.watch === 1 ? ' author-example finding to look at.' : ' author-example findings to look at.');
+    }
+    return text;
   }
 
   // The button and its line are the server's own markup now, like every
@@ -13274,13 +13341,51 @@
 
   var updatesChecking = false;
 
+  // Set by paintUpdatesLine() below, read by the click handler beside it —
+  // whatever is on screen right now is the only thing a click can honestly
+  // open, the same reasoning gapNote's own click handler gives.
+  var lastUpdatesSummary = null;
+
   function paintUpdatesLine(summary) {
     if (!updatesLine) return;
+    lastUpdatesSummary = summary;
     updatesLine.textContent = updatesLineText(summary);
     // Worth a second look — no updates found is not, silence or a broken
     // check is.
     setClass(updatesLine, 'staxx-hint--warn',
       !!(summary && summary.checked && (!summary.ok || summary.updates)));
+    // Only clickable when there is something behind it to open — a fixed
+    // width cursor either way would invite a click that does nothing.
+    setClass(updatesLine, 'staxx-hint--clickable',
+      !!(summary && summary.checked && (summary.watch || summary.watchReason)));
+  }
+
+  // PLAN_62 Stage 4's combined report: every undismissed author-example
+  // finding, across every stack, fetched only when someone actually asks —
+  // the count already on the line costs nothing extra (staxx_updates_summary()
+  // reads the state file alone), so the full list is worth a second request
+  // rather than being carried on every poll.
+  if (updatesLine) {
+    updatesLine.addEventListener('click', function () {
+      if (!lastUpdatesSummary || !lastUpdatesSummary.checked) return;
+      if (!lastUpdatesSummary.watch && !lastUpdatesSummary.watchReason) return;
+      call('watch-report', {}, 15000).then(function (res) {
+        if (!res.ok) {
+          openLogDialog('Author-example findings', res.reason || 'Could not build the report.');
+          return;
+        }
+        if (!res.items.length) {
+          openLogDialog('Author-example findings', 'Nothing to look at.');
+          return;
+        }
+        var lines = res.items.map(function (it) {
+          return stackLabel(it.stack) + ' / ' + it.service + ' (' + it.image + '): ' +
+            (it.side === 'added' ? 'the author\'s example also sets ' : 'the author\'s example does not set ') +
+            it.setting;
+        });
+        openLogDialog('Author-example findings', lines.join('\n'));
+      });
+    });
   }
 
   // The last `updates` reply's per-row answers, kept so paintState() wiping

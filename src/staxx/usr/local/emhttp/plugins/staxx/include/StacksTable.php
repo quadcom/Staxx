@@ -329,7 +329,12 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
 function staxx_watch_count_for_stack(string $stack): int {
   $watch = (array)(staxx_update_state()['stacks'][$stack]['watch'] ?? []);
   $count = 0;
-  foreach ($watch as $entry) $count += count((array)($entry['findings'] ?? []));
+  // PLAN_62 Stage 4 — a dismissed finding must not still swell this count;
+  // staxx_watch_active_findings() is the one place that decides "dismissed",
+  // shared with the field grafts and the combined report below.
+  foreach ($watch as $entry) {
+    if (is_array($entry)) $count += count(staxx_watch_active_findings($entry));
+  }
   return $count;
 }
 
@@ -393,11 +398,19 @@ function staxx_watch_for_stack(string $stack): array {
     $seenImage[$image] = true;
 
     $entry = $stackWatch[$image] ?? null;
-    if (is_array($entry) && !empty($entry['findings'])) {
-      foreach ($entry['findings'] as $f) {
+    // PLAN_62 Stage 4 — a dismissed finding is left out here too, the same
+    // filter the row's count and the combined report both go through.
+    $active = is_array($entry) ? staxx_watch_active_findings($entry) : [];
+    if ($active !== []) {
+      foreach ($active as $f) {
+        // 'image' rides along so a dismiss button can name exactly what
+        // staxx_watch_skip() needs (PLAN_62 Stage 4) — the field itself
+        // never carries it otherwise, since a service's image is not one of
+        // its own settings.
         $findings[(string)($f['service'] ?? $svc)][] = [
           'setting' => (string)($f['setting'] ?? ''),
           'side'    => (string)($f['side'] ?? ''),
+          'image'   => $image,
         ];
       }
       continue;
