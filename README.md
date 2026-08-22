@@ -69,7 +69,9 @@ Every stack is a row. Expand it and each container inside gets its own row.
 
 - **Live figures** — processor, memory, network and graphics use, each with a small graph of the last
   few minutes. Graphics use is read per container out of the kernel's own accounting for Intel and
-  AMD cards, not divided up from a whole-card figure and hoped for.
+  AMD cards, not divided up from a whole-card figure and hoped for. **Nvidia cards show no figures
+  yet** — Nvidia's driver does not keep that per-program tally, so the same trick cannot work. A
+  container given an Nvidia card is recognised and labelled as such; it just has no numbers beside it.
 - **State**, container by container, including how long it has been up and what its own health check
   says about it.
 - **Four buttons, always in the same place**: the app's web page, its logs, its project page and its
@@ -353,6 +355,8 @@ above this line works today; nothing below it does.
   container waiting on another that has no health check to wait for.
 - **Clash warnings that can see the machine itself**, so a reverse proxy wanting port 80 is told what
   already holds it.
+- **Graphics figures for Nvidia cards**, by asking Nvidia's own tool and matching what it reports
+  back to the containers it belongs to — the roundabout route, since the direct one is closed.
 - **Acting on several stacks at once**, with each one's progress shown separately.
 - **Giving somebody your stack** — export it as a recipe with your passwords blanked and your own
   paths generalised, and a screen showing exactly what was taken out.
