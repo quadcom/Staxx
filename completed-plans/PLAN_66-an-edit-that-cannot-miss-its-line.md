@@ -1,6 +1,7 @@
 # PLAN 66 — an edit that cannot land on the wrong line
 
-**Status: open. Awaiting approval before any code is written.**
+**Status: complete 2026-08-21.** The guard is in place in every scalar writer and in the two
+line-splicing writers, and a stale write is reported to the person rather than swallowed.
 
 Written 2026-08-21 from a bug found the same day in `PLAN_64` Phase B. **Smaller than the reservation
 note estimated** — see section 3, which corrects it: this is not a tax on twenty writers.

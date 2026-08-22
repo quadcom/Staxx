@@ -40,6 +40,23 @@ rejected. **That reasoning still stands for half of this, and must not be swept 
 | **A record of what happened to this stack** — dismissals, check history, what was kept for rollback | **The new sidecar** | None of it has any representation in compose and never could. There is nothing for it to disagree with, so the second-source-of-truth objection simply does not apply. |
 | **Belongs to the server, not a stack** — the image catalogue, what is cached, node's presence | Stays central where it is | Not a property of any stack. |
 
+### First use for it: an edit history
+
+Added 2026-08-22 from the feature review. **Every save overwrites the file, and undo dies with the
+page** — so the rule that protects an author's comments and meaning from *our* writer lets them
+overwrite the whole thing themselves with no way back. Two of three reviews ranked this the most
+valuable missing thing in the plugin.
+
+It is recorded here rather than as a plan of its own because it needs exactly what Part A is: somewhere
+beside the stack to keep what happened to it. It is also the best argument for Part A, since it is a
+want that cannot be met any other way — a central index would face the same keying and stale-entry
+bugs that Part A exists to make impossible.
+
+What it needs deciding: how many versions are kept and for how long; whether a version is the whole
+file or a difference; whether this is real version control underneath or something much smaller; and
+whether an automatic save before every write is enough, or whether a person should be able to name a
+point to come back to.
+
 ### What has to be got right
 
 1. **Write on change only.** The reason this was a bad idea while stacks lived on the flash drive is
