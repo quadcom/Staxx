@@ -42,8 +42,9 @@ Neither is required. A plain file still gets a form.
 
 ## The stacks page
 
-A **stack** is a folder with a compose file in it. Drop a compose file in a folder and it is a stack;
-delete the folder and it is gone. No database, no index.
+**This page is a view of one folder on your server.** What you see is what is on disk: a subfolder
+holding a compose file is a **stack** and gets a row; a subfolder without one is just a folder. Add a
+compose file by hand and its row appears; delete the folder and the row goes. No database, no index.
 
 ![A folder opened up, with the stacks inside it](docs/images/stacks-grid.jpg)
 
