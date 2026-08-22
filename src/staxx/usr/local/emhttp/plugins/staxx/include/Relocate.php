@@ -8,10 +8,12 @@
  * exists here, on its own, so it can be proved correct before anything can
  * reach it by accident.
  *
- * The shape is fixed and does not change per stack: copy everything, verify
- * everything against what actually landed on disk, switch the stacks folder
- * setting — the point after which the move cannot be undone by discarding
- * the copy — then remove the old folders. Never a rename: across two
+ * The shape is fixed and does not change per stack: fingerprint the source,
+ * prove the destination can hold the same shape with a trial run of empty
+ * placeholders, copy everything, verify everything against what actually
+ * landed on disk, switch the stacks folder setting — the point after which
+ * the move cannot be undone by discarding the copy — then remove the old
+ * folders. Never a rename: across two
  * filesystems that is already a copy and a delete with no gate in between,
  * which is exactly what this file exists to add.
  *
@@ -168,6 +170,104 @@ function staxx_relocate_scan(string $root, string &$error): ?array {
 }
 
 /**
+ * Prove the new location can hold the *shape* of the tree before a single
+ * byte is copied — every directory as a directory, every file as an empty
+ * one, every symlink pointing at the same target text, all inside a
+ * uniquely-named folder under the destination. This is what catches a
+ * filesystem that cannot make a symlink, a name it refuses outright, two
+ * names that only differ by case landing on a case-insensitive filesystem,
+ * or a folder that is writable at the top and not further down — every one
+ * of which would otherwise only surface partway through the real copy,
+ * leaving exactly the half-written mess this whole file exists to prevent.
+ *
+ * NOT A GUARANTEE: this proves the shape can be created, not that the bytes
+ * will land. staxx_relocate_verify() is still what actually decides that,
+ * and nothing here shortens or replaces it.
+ *
+ * The destination may not exist yet at this point — normally the copy step
+ * is what creates it — so this creates it here too, rather than inventing a
+ * second place for the proof to live. On any failure the whole destination
+ * is removed with the existing cleanup helper, the same as a failed copy or
+ * a failed verify does; on success only the trial folder is removed, since a
+ * leftover would make the destination look like it "already holds
+ * something" and refuse the next attempt at the very check this file starts
+ * with.
+ *
+ * A name is checked for a collision *before* it is created, not because
+ * Unraid's own array or pool filesystems are case-blind — xfs, btrfs and
+ * zfs all tell "Demo" and "demo" apart. The check earns its place for two
+ * other reasons: it catches the scan above ever having produced the same
+ * relative path twice, which would otherwise let the second placeholder
+ * silently overwrite the first while the real copy quietly moved one file
+ * fewer than it reported; and a destination reached through Unassigned
+ * Devices or a mounted remote share can genuinely be NTFS, exFAT, or
+ * Windows-backed, where two names differing only in case really do collide.
+ *
+ * @param array<string, array{type:string, size:int, sha256:string, target:string}> $manifest
+ */
+function staxx_relocate_trial(array $manifest, string $dest, string &$error): bool {
+  $error = '';
+  if (!is_dir($dest) && !@mkdir($dest, 0755, true)) {
+    $error = 'Could not create the new location "'.$dest.'" to test whether it can hold everything. '
+           . 'Nothing was moved.';
+    return false;
+  }
+
+  $trial = $dest.'/.staxx-relocate-trial-'.bin2hex(random_bytes(8));
+  if (file_exists($trial) || is_link($trial) || !@mkdir($trial, 0755, true)) {
+    $error = 'Could not create a trial folder inside "'.$dest.'" to test whether it can hold everything. '
+           . 'Nothing was moved.';
+    // Nothing of ours exists yet — the trial folder is what just failed to be
+    // made. Whether $dest itself should go is the caller's call, not this
+    // function's, because only the caller knows whether it made it.
+    return false;
+  }
+
+  foreach ($manifest as $rel => $info) {
+    $path = $trial.'/'.$rel;
+
+    if (file_exists($path) || is_link($path)) {
+      $error = '"'.$rel.'" collides with another entry already placed at the new location — either '
+             . 'two names that only differ in case, on a filesystem that treats them as the same '
+             . 'name, or the same path appearing twice in what was read from the source. '
+             . 'Nothing was moved.';
+      staxx_relocate_cleanup($trial);
+      return false;
+    }
+
+    if ($info['type'] === 'dir') {
+      if (!@mkdir($path, 0755, true)) {
+        $error = 'Could not create the folder "'.$rel.'" at the new location while testing it. Nothing was moved.';
+        staxx_relocate_cleanup($trial);
+        return false;
+      }
+      continue;
+    }
+    if ($info['type'] === 'link') {
+      if (!@symlink($info['target'], $path)) {
+        $error = 'Could not create the link "'.$rel.'" at the new location while testing it. Nothing was moved.';
+        staxx_relocate_cleanup($trial);
+        return false;
+      }
+      continue;
+    }
+
+    // A plain file, created empty — no content is written during the trial,
+    // which is what keeps this cheap even for a large stacks folder.
+    $handle = @fopen($path, 'x');
+    if ($handle === false) {
+      $error = 'Could not create the file "'.$rel.'" at the new location while testing it. Nothing was moved.';
+      staxx_relocate_cleanup($trial);
+      return false;
+    }
+    fclose($handle);
+  }
+
+  staxx_relocate_cleanup($trial);
+  return true;
+}
+
+/**
  * Copy the whole stacks tree to the new location, wholesale — every file the
  * tool understands and every file it does not, because a stack is a
  * directory and whatever else is in it has to travel too. A symlink is
@@ -269,9 +369,20 @@ function staxx_relocate_verify(array $manifest, string $dst): array {
  * the same, and a plain, unresolved $dest here would make that containment
  * check compare two different strings for what is really the same place.
  */
-function staxx_relocate_cleanup(string $dest): void {
+function staxx_relocate_cleanup(string $dest, bool $keepFolder = false): void {
   $real = @realpath($dest);
-  if ($real !== false) staxx_rmtree($real, $real);
+  if ($real === false) return;
+
+  if (!$keepFolder) { staxx_rmtree($real, $real); return; }
+
+  // Somebody made this folder themselves and pointed the move at it. What we
+  // put inside it is ours to take back; the folder is not, and removing it
+  // would be destroying something they created to answer a failure that was
+  // ours. Its contents go, it stays.
+  foreach ((array)@scandir($real) as $entry) {
+    if ($entry === '.' || $entry === '..') continue;
+    staxx_rmtree($real.'/'.$entry, $real);
+  }
 }
 
 /**
@@ -296,6 +407,12 @@ function staxx_relocate_run(string $destInput, callable $log, string &$error): b
   $log('Checking the new location.');
   $dest = staxx_relocate_refuse($destInput, $error);
   if ($dest === '') { $log('Refused: '.$error); return false; }
+
+  // Remembered before anything is created, because every failure below has to
+  // put the destination back as it was found — and "as it was found" is a
+  // folder somebody may have made themselves and pointed this at. Removing
+  // that to report our own failure would be destroying something of theirs.
+  $destExisted = is_dir($dest);
 
   $log('Looking at the current stacks folder.');
   $manifest = staxx_relocate_scan($source, $error);
@@ -331,10 +448,22 @@ function staxx_relocate_run(string $destInput, callable $log, string &$error): b
     return false;
   }
 
+  $log('Testing whether the new location can hold everything (no files copied yet).');
+  if (!staxx_relocate_trial($manifest, $dest, $error)) {
+    // The trial clears up after itself, but it may have created the
+    // destination folder to work in — so the same put-it-back-as-found rule
+    // every other failure here follows applies to this one too.
+    staxx_relocate_cleanup($dest, $destExisted);
+    $log('Refused: '.$error);
+    $log('Nothing was copied, and the current stacks folder was not touched.');
+    return false;
+  }
+  $log('The new location can hold everything. Nothing has been copied yet.');
+
   $log('Copying every stack to the new location.');
   if (!staxx_relocate_copy_tree($source, $dest, $error)) {
     $log('The copy failed: '.$error);
-    staxx_relocate_cleanup($dest);
+    staxx_relocate_cleanup($dest, $destExisted);
     $log('The partial copy has been removed. Nothing at the current location was touched.');
     return false;
   }
@@ -343,7 +472,7 @@ function staxx_relocate_run(string $destInput, callable $log, string &$error): b
   $problems = staxx_relocate_verify($manifest, $dest);
   if ($problems) {
     foreach ($problems as $p) $log('Verification problem: '.$p);
-    staxx_relocate_cleanup($dest);
+    staxx_relocate_cleanup($dest, $destExisted);
     $error = 'Verification found '.count($problems).' problem(s) with the copy; see the lines above. '
            . 'The current stacks folder was left untouched and the partial copy was removed.';
     $log($error);
@@ -354,7 +483,7 @@ function staxx_relocate_run(string $destInput, callable $log, string &$error): b
   $log('Switching the stacks folder setting to the new location.');
   $saveError = '';
   if (!staxx_settings_save(['STACK_ROOT' => $dest], $saveError)) {
-    staxx_relocate_cleanup($dest);
+    staxx_relocate_cleanup($dest, $destExisted);
     $error = 'Could not switch the stacks folder setting ('.$saveError.'), so the copy has been '
            . 'removed and nothing has changed. Your stacks are still where they were.';
     $log($error);

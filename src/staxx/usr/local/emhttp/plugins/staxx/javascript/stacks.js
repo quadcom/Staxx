@@ -15689,16 +15689,76 @@
         '<span class="staxx-hint">' + storageKindLine(opt) + '</span>' +
       '</div>';
     }
+    // The button starts disabled — it is only turned on once relocate-check
+    // has come back clean for whatever is currently in the box, including
+    // the suggested path itself, checked once as soon as this is drawn.
     return '<div class="staxx-field">' +
       '<span>' + esc(opt.name) + ' (' + esc(opt.kind) + ')</span>' +
       '<div class="staxx-boxline">' +
         '<input type="text" class="staxx-input" id="staxx-storage-path-' + idx + '" ' +
              'spellcheck="false" value="' + esc(opt.path) + '">' +
-        '<button type="button" class="staxx-btn staxx-btn--primary" data-storage-move="' + idx +
-             '">Move stacks here</button>' +
+        '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-storage-move-' + idx +
+             '" data-storage-move="' + idx + '" disabled>Move stacks here</button>' +
       '</div>' +
+      '<span class="staxx-hint" id="staxx-storage-check-' + idx + '">Checking…</span>' +
       '<span class="staxx-hint">' + storageKindLine(opt) + ' ' + storageFreeLine(opt) + '</span>' +
     '</div>';
+  }
+
+  /* ---- checking a candidate path as it is typed, one state per option ----
+   *
+   * Every rule that decides whether a path is acceptable lives on the server
+   * (see staxx_relocate_refuse() in Relocate.php) — this only ever displays
+   * its answer. The disabled Move button is a courtesy so nobody has to
+   * press it to find out; the move itself re-checks everything again when it
+   * actually runs, exactly as before, so nothing here is a security boundary.
+   *
+   * Keyed by the option's index rather than a shared variable, so typing in
+   * one box can never disable or clear another's result. Each entry keeps a
+   * sequence number: a reply is only applied if it is still the most recent
+   * check sent for that box, so a slow answer to an old keystroke can never
+   * overwrite a newer one that already came back.
+   */
+  var storageCheckState = {};
+
+  function storageCheckLine(idx) { return document.getElementById('staxx-storage-check-' + idx); }
+  function storageMoveBtn(idx)   { return document.getElementById('staxx-storage-move-' + idx); }
+
+  function runStorageCheck(idx, dest) {
+    var state = storageCheckState[idx] || (storageCheckState[idx] = {});
+    var seq = (state.seq || 0) + 1;
+    state.seq = seq;
+    var btn = storageMoveBtn(idx), line = storageCheckLine(idx);
+    if (btn) btn.disabled = true;
+    if (line) { line.textContent = 'Checking…'; line.classList.remove('staxx-error'); }
+
+    call('relocate-check', { dest: dest }).then(function (res) {
+      if (state.seq !== seq) return; // a later keystroke already asked again — this answer is stale
+      if (!res.ok) {
+        if (line) { line.textContent = res.error || 'Could not check this path.'; line.classList.add('staxx-error'); }
+        return;
+      }
+      if (res.ready) {
+        if (btn) btn.disabled = false;
+        if (line) { line.textContent = 'This path can be used.'; line.classList.remove('staxx-error'); }
+      } else if (line) {
+        line.textContent = res.error;
+        line.classList.add('staxx-error');
+      }
+    });
+  }
+
+  // Debounced at 400ms — short enough that the answer feels immediate once
+  // someone pauses, long enough that an ordinary typing burst costs one disk
+  // check rather than one per keystroke. The button is disabled the instant
+  // typing happens, before the timer even fires, so a click cannot land
+  // between a keystroke and the check it is waiting on.
+  function debounceStorageCheck(idx, dest) {
+    var state = storageCheckState[idx] || (storageCheckState[idx] = {});
+    if (state.timer) clearTimeout(state.timer);
+    var btn = storageMoveBtn(idx);
+    if (btn) btn.disabled = true;
+    state.timer = setTimeout(function () { runStorageCheck(idx, dest); }, 400);
   }
 
   // A pool visible in Unraid but not offered here, with no reason given,
@@ -15729,6 +15789,13 @@
         return;
       }
       storageOptions = res;
+      // A fresh set of options means a fresh set of boxes, so any check still
+      // pending from a previous time this dialog was open is dropped rather
+      // than left to land on whatever now happens to share its index.
+      Object.keys(storageCheckState).forEach(function (k) {
+        if (storageCheckState[k].timer) clearTimeout(storageCheckState[k].timer);
+      });
+      storageCheckState = {};
       // Flash is offered last, and only ever behind the confirmation below —
       // never given a plain "Move here" button like the others, since
       // staying on flash is the one choice that needs a second, deliberate
@@ -15741,6 +15808,13 @@
         'nothing is deleted before the copy is proved good.</p>' +
         order.map(function (i) { return storageOptionHtml(res.offered[i], i); }).join('') +
         storageUnavailableHtml(res.unavailable);
+
+      // The suggested path is checked once as soon as the dialog is drawn,
+      // so a suggestion that is already unusable says so immediately rather
+      // than looking fine until someone touches the box.
+      order.forEach(function (i) {
+        if (res.offered[i].kind !== 'flash') runStorageCheck(i, res.offered[i].path);
+      });
     });
   }
 
@@ -15826,6 +15900,15 @@
         return;
       }
       if (event.target.closest('[data-storage-flash]')) confirmStorageFlash();
+    });
+
+    // Delegated so it covers every option box, present or redrawn — each box
+    // is told apart by the index in its own id, never by a shared variable,
+    // so editing one path can only ever affect that option's own state.
+    storageBody.addEventListener('input', function (event) {
+      var input = event.target.closest('input[id^="staxx-storage-path-"]');
+      if (!input) return;
+      debounceStorageCheck(Number(input.id.slice('staxx-storage-path-'.length)), input.value);
     });
 
     if (storageClose) storageClose.addEventListener('click', function () { storageModal.close(); });

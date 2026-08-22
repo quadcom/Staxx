@@ -1708,6 +1708,19 @@ switch ($action) {
       'unavailable' => $options['unavailable'],
     ]);
 
+  /* ---- would this destination be refused, without moving anything ----
+   *
+   * Read-only — calls the exact function staxx_relocate_start() calls before
+   * it commits to anything, so the browser can tell someone the answer while
+   * they are still typing instead of only after they press Move. 'ok' is
+   * true whenever the question was answered at all; a path that would be
+   * refused is a successful answer, not a failed request.
+   */
+  case 'relocate-check':
+    $dest = staxx_relocate_refuse((string)($_POST['dest'] ?? ''), $error);
+    if ($dest === '') staxx_reply(['ok' => true, 'ready' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'ready' => true, 'path' => $dest]);
+
   // ---- start moving the stacks folder to a new location ----
   case 'relocate':
     $job = staxx_relocate_start((string)($_POST['dest'] ?? ''), $error);

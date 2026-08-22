@@ -714,3 +714,55 @@ single one could be created, then remove the lot.
 - The setting switch stays between the comparison and the deletion.
 - The comparison stays a full content comparison. A trial run is not a reason to check less
   afterwards — it moves failures earlier, it does not replace the one that counts.
+
+### Piece 5 landed 2026-08-22 — and a test moved his real stacks
+
+Both halves are built and pass. **But running the test suite for them moved his 16 live stacks off
+the flash drive and repointed the setting at a scratch folder.** Fully recovered — every file hash-
+compared back into place, the config byte-identical to its backup, all 63 containers untouched
+throughout — but the *how* is the thing worth keeping.
+
+#### Two flaws, and neither was in the feature
+
+**1. A failure that could not be caused, reported as coverage.** The new test tried to make the trial
+run fail by making the destination read-only. **Everything here runs as root, and root ignores
+permission bits.** So the "unwritable" destination was perfectly writable: the trial passed, the copy
+ran, the setting was switched, and a case whose entire claim was "the move stops" quietly proved the
+opposite while failing for unrelated reasons. Replaced with failures root cannot ignore — a
+destination whose parent is a file, and a manifest naming a file and then something inside it.
+
+**2. A test whose safety depended on another test passing.** The last case checked that starting a
+job refuses a bad destination, using a folder that was only bad *because an earlier case had filled
+it*. With that earlier case broken, the folder was empty, the destination was accepted, and the case
+**started a real detached move.**
+
+That is the one that reached his data, and the reason is worth stating plainly: **a detached job is a
+fresh process.** It re-reads the config from disk, so it never sees the throwaway stack root this
+suite seeds into a memoised config in its own process — it sees the server's own. And it outlives the
+script, so it kept running after the shutdown handler had put the config back and swept the scratch
+folders away. It then did exactly what it was told, correctly, to the wrong stacks.
+
+Fixed three ways:
+
+- The job case now uses a destination refused **structurally** — the source folder, which the first
+  rule always rejects, for a reason that cannot stop being true.
+- A hard stop at the top: if the throwaway stack root is not actually in force, the suite prints why
+  and exits rather than carrying on. A failed guard is not a reason to continue; it is the reason the
+  guard exists.
+- The hazard is written into the file above that case, in capitals, because the next person to change
+  that one line needs to know what it can do.
+
+#### Also corrected, in the feature itself
+
+**A failure removed the whole destination folder, including one the person had made and pointed the
+move at.** Its contents are ours to take back; the folder is not. Cleanup now keeps a folder it did
+not create, and the caller — which is the only thing that knows whether it created it — decides. A
+second gap surfaced while fixing the first: **a failed trial left the destination behind entirely**,
+with no cleanup on that path at all.
+
+#### The lesson, which is the same one three times today
+
+A green test proves nothing about the thing it names unless the failure it claims to detect can
+actually happen. This morning it was a refusal caught by the wrong rule; this afternoon a permission
+failure that root ignores. **Both passed. Neither tested anything.** The third instance was worse
+than useless, because the case that could not fail safely instead did something real.
