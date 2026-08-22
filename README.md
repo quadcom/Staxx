@@ -5,8 +5,12 @@
 > screenshots and text below may describe things that do not work yet. For the current state of the
 > project, read [`main`](https://github.com/quadcom/Staxx/blob/main/README.md).
 
-> **Pre-alpha.** It runs, but it is not packaged or listed yet — installing means copying the files
-> onto a server yourself. See [Installing](#installing). Every screenshot here is a live server.
+> **Where this is up to.** In daily use on the author's own server, and far enough along to judge on
+> its merits. What it is not yet is *packaged* — there is no one-click install and it is not listed in
+> Community Applications, so trying it means copying the files onto a server yourself. See
+> [Installing](#installing). Every screenshot here is a live server.
+>
+> Version 2026.08.21 · [changelog](CHANGELOG.md)
 
 Unraid describes containers with its own template format. StaXX uses
 **[compose files](https://compose-spec.io/)** instead — the format containerised projects already
@@ -296,6 +300,7 @@ node tests/js_undeclared.js         # names assigned but declared nowhere
 ```
 
 ```
+CHANGELOG.md                What changed, and the current version
 docs/README.md              Plain-English overview
 docs/glossary.md            Every term used in this project, defined
 docs/feasibility.md         Whether this is possible, and the evidence
