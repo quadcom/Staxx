@@ -1,0 +1,184 @@
+# PLAN 68 — where a stack's own record lives, and where stacks live at all
+
+**Status: reserved 2026-08-22. Adrian's concept and his decisions, recorded so they are not lost.
+Not to be designed further or built until he asks.**
+
+Two things that arrived together and belong together, because both are about **where StaXX puts
+things on disk** — and the second changes the first's main objection.
+
+---
+
+## Part A — a record beside each stack
+
+### The idea
+
+Adrian, 2026-08-22: StaXX-specific data attributed to a stack — settings, history, transactions, the
+moving parts that are not compose's business — kept in a file **beside the compose file**, filtered
+out of the editor.
+
+### Why it is worth doing, with evidence from the same day
+
+**Both bugs found in `PLAN_62` Stage 2/3 were symptoms of the central index**, and neither could occur
+if the record lived with the stack:
+
+- Findings were keyed by *image*, so two stacks sharing an image saw each other's findings.
+- Findings for **deleted stacks lingered**, needing a prune written specially — and the report is
+  built from that file alone, so it would have listed stacks that no longer exist.
+
+A record that lives in the stack's own folder fixes both **by construction**: a rename carries it, a
+move carries it, a delete removes it, an archive-and-restore brings it back. None of that needs code.
+
+### The line, which matters because a sidecar was already rejected once
+
+`CLAUDE.md` says a stack is "a directory containing a compose file, and nothing else. No database, no
+index, no metadata sidecar", and `feature_56.md` records a companion file being considered and
+rejected. **That reasoning still stands for half of this, and must not be swept aside:**
+
+| Kind of data | Where it belongs | Why |
+|---|---|---|
+| **Describes the stack** — icon, overview, web address, update policy | Stays in `x-unraid` inside the compose file | It is a second copy of something compose can hold, so it *can* disagree. This is exactly what was rejected, and `x-unraid` solved it properly. |
+| **A record of what happened to this stack** — dismissals, check history, what was kept for rollback | **The new sidecar** | None of it has any representation in compose and never could. There is nothing for it to disagree with, so the second-source-of-truth objection simply does not apply. |
+| **Belongs to the server, not a stack** — the image catalogue, what is cached, node's presence | Stays central where it is | Not a property of any stack. |
+
+### What has to be got right
+
+1. **Write on change only.** The reason this was a bad idea while stacks lived on the flash drive is
+   write wear — one central file written once per pass becomes many files written per pass. **Part B
+   removes that objection**, but the discipline stays.
+2. **The volatile parts stay in `/tmp`** as they do now. A sidecar is for what should survive; it is
+   not a cache.
+3. **Genuinely invisible, everywhere.** Not merely skipped by the file list. A file you cannot see in
+   a tool whose job is showing you your files is a small honesty problem unless it is consistent —
+   and the archive, the copy, the move and the export must all carry or skip it deliberately rather
+   than by accident.
+4. **It must never be required.** Delete it and the stack still works, still starts, still edits —
+   losing only its history. A stack is still "a folder with a compose file in it"; the sidecar is
+   never what makes it one.
+5. **Rule 1 still holds:** copy the folder to any machine with compose and it runs. An unknown extra
+   file does not change that, but it does mean somebody's bookkeeping travels with a copied folder.
+   Decide whether that is acceptable or whether a copy should drop it.
+
+---
+
+## Part B — stacks must not live on the flash drive
+
+### Adrian's decision, 2026-08-22
+
+**Stacks on the flash drive is too risky.** Verbatim intent:
+
+- During installation, **a folder is chosen** that lives **off the flash drive**.
+- **Preferably on a redundant cache pool**, or otherwise **off the FUSE overlay**.
+- With Unraid's newer internal-drive boot, a user *could* override that — but the override is
+  **behind a confirmation**, not a free choice.
+- **The archive location is chosen at the same time.**
+- **The two may not be the same folder.** They may be children of the same parent.
+
+### What is true on his box today
+
+- `STACK_ROOT` is `/boot/config/plugins/staxx/stacks` — **the flash drive**, holding **16 stacks**.
+  So this is a migration, not merely a change of default.
+- `ARCHIVE_ROOT` is `/mnt/user/appdata/staxx/archives` — already off the flash, and already defaulted
+  that way. Part of this decision is therefore already the shipped behaviour for archives.
+- The box has real pools to choose from: `cache`, `cache-big`, `cache-small`, `m2cache`, plus
+  `/mnt/user` (the FUSE overlay) and the individual disks.
+- `/mnt/user` is `fuse.shfs`. A pool path such as `/mnt/cache-small/...` is a direct filesystem and
+  avoids the overlay, which is what "off the FUSE overlay" means in practice.
+
+### The objection that has to be answered, not glossed
+
+**Flash was chosen originally for a stated reason**, still in the settings help today:
+
+> *"Keeping this on the flash device means stacks are readable before the array starts, which matters
+> for autostart. Placing it on an array share gives more room but is unavailable until the array is
+> up."*
+
+So moving off flash **delays or changes autostart**. Before this plan is built, settle on the server:
+
+1. **When is a pool actually mounted** relative to array start and to the Docker service starting?
+   If pools mount with the array, then "readable before the array starts" is lost wherever stacks go,
+   and the autostart bridge has to cope — which may be fine, since Docker itself is not up before the
+   array either. **Measure it; do not reason about it.**
+2. **What does StaXX's autostart bridge do today** if the stack root is unreadable at boot? If it
+   writes an empty list, that is a data-loss path, not an inconvenience.
+3. Whether the honest answer is that autostart simply happens after the array starts, which is when
+   Docker can run anything at all.
+
+### The rest of the work
+
+4. **The chooser at install time.** A first-run step, not a silently applied default — the point of
+   the decision is that somebody *picks*. It must offer what the machine actually has (the pools, and
+   the overlay), say plainly why a pool is preferred, and refuse a flash path unless confirmed.
+5. **The confirmation for a flash path.** Same shape as `PLAN_65`'s start guard: not a single OK. It
+   says what the risk is — flash has finite writes and is the least redundant thing in the machine —
+   and Unraid's internal-drive boot is the case where somebody may legitimately mean it.
+6. **The two-location rule.** Not the same folder; siblings under one parent allowed. Note that a
+   related rule already exists and is enforced — the archive may not sit *inside* the stack root, or
+   the zip would be read back as a stack — so this extends an existing check rather than inventing
+   one.
+7. **Migrating the 16 stacks already on flash.** The hardest part and the one most likely to be
+   skipped. A stack is a folder; moving it is a directory move; but a moved stack keeps its compose
+   project name while Docker remembers the old path — the very problem
+   `staxx_compose_state()`'s three-way index already exists to solve. Read that before designing
+   anything, and treat "his running containers keep working across the move" as the acceptance test.
+8. **What happens to an existing install that says nothing.** Silently relocating somebody's stacks
+   is not acceptable; nor is leaving them on flash while telling them flash is risky. An offer, once,
+   that explains and does it for them.
+
+---
+
+## Part C — StaXX must know the difference between "nothing" and "cannot look"
+
+Adrian, 2026-08-22: *"StaXX also needs to understand when the array is down or it will either
+complain or crash if it can't access the location where it needs to look."*
+
+**This is already true today and already caused a bug**, found the moment he said it.
+
+`staxx_scan_stacks()` returns an **empty list** both when there genuinely are no stacks and when it
+cannot look at all — a missing directory, an unmounted pool, an array that is not started. It reports
+no error and draws no distinction. Everything downstream inherits that ambiguity.
+
+**The bug that caused, live in the code within the hour:** `PLAN_62`'s prune deletes the stored
+history of any stack it cannot see. The background pass runs from cron **regardless of array state**,
+so the first check after a reboot — before the array is up, with the stack root unreadable — would
+have quietly deleted **every stack's history**, on the grounds that no stack existed. Guarded, and
+proved on the server with a scratch config pointed at an unmounted pool: two stacks' history before,
+two after.
+
+The pages themselves are already safe — `Stacks.page` and `StaXX.page` both test
+`$var['fsState'] == 'Started'` in their `Cond`, so nothing renders against a stopped array. **It is
+everything that runs out of band that is exposed**, and Part B makes it far more exposed, because
+today the stack root is on flash and is readable when almost nothing else is.
+
+### The rule to establish
+
+**An empty answer must carry why it is empty.** "There are no stacks" and "I could not look" must be
+different answers everywhere they are produced, not merely where somebody remembered.
+
+Places to go through before Part B ships, each of which currently treats the two alike:
+
+1. **`staxx_scan_stacks()`** itself — the source of the ambiguity, and the right place to fix it.
+2. **The autostart bridge.** If it writes Unraid's boot-start list from an empty scan, a boot with an
+   unreadable root would erase what should start. **Check this first; it is the one that loses
+   somebody's configuration rather than merely their history.**
+3. **The six-hourly pass** in every branch that decides something is gone: the prune above, the
+   registry-move state, the update state.
+4. **`PLAN_62` Stage 4's report**, when it is built — it reads the state file alone, so an empty scan
+   must not read as "everything is fine".
+5. **The self-test**, which should say the array is down rather than reporting a healthy nothing.
+
+### And say it, rather than failing quietly
+
+Where a person is present, the honest line is that the array is not started so StaXX cannot see the
+stacks — not a blank list, and not a crash. Where nobody is present, the pass should do **nothing at
+all** and leave the state exactly as it found it, which is what the guard above now does.
+
+---
+
+## Sequencing
+
+**Part B before Part A.** The main objection to a per-stack record is write wear on the flash drive,
+and Part B removes it. Building Part A first would mean building it under a constraint that is about
+to disappear, and probably designing around the wrong thing.
+
+Both are foundational, like the rewrite of rule 2 on 2026-08-21. Neither should be started from this
+file alone: it records the decisions, not a design.

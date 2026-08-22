@@ -981,7 +981,15 @@ function staxx_update_check(string $scope, bool $force): array {
   // list findings against stacks that no longer exist, and the file would grow
   // on the flash drive forever. Only a full pass may prune: a scoped one has
   // not looked at every stack and would delete what it simply did not visit.
-  if ($scope === 'all') {
+  //
+  // And only while the stack root can actually be read. staxx_scan_stacks()
+  // returns an empty list both when there are no stacks and when it cannot
+  // look at all — an unmounted pool, an array that is not started — and those
+  // two must never be treated alike. This pass runs from cron regardless of
+  // array state, so without the is_dir() below the first check after a reboot
+  // would quietly delete every stack's history on the grounds that no stack
+  // exists.
+  if ($scope === 'all' && is_dir(staxx_stack_root())) {
     $live = staxx_update_stack_files();
     foreach (array_keys($stacksState) as $known) {
       if (!isset($live[$known])) unset($stacksState[$known]);
