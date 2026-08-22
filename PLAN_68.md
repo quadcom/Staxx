@@ -570,3 +570,37 @@ share layer, a full pool means a new stack quietly lands on the array where the 
 looking, and the stack simply appears to be gone. Written straight to the pool, a full pool refuses
 the write and says so. **A loud failure beats a silent relocation**, which is the same principle the
 copy-verify-switch-delete order exists to serve.
+
+### Piece 3 landed 2026-08-22 — what the offer list actually says on his box
+
+```
+OFFERED
+  pool     m2cache   /mnt/m2cache/appdata/staxx-stacks   zfs        247 GiB   redundant (mirror)
+  overlay  appdata   /mnt/user/appdata/staxx-stacks      fuse.shfs   19 TiB   no profile reported
+  flash    flash     /boot/config/plugins/staxx/stacks   vfat             -   no profile reported
+
+NOT OFFERED
+  cache-big     no "appdata" folder yet, and making one would create a new share
+  cache-small   same
+```
+
+Read entirely from Unraid's own records. 19 cases pass, including the one most likely to be got
+wrong: **a pool's member drives report the same type as the pool itself**, and the only reliable
+difference is that a member carries no mount status at all. Mistake them and the chooser offers a
+bare drive.
+
+Two deliberate choices worth recording:
+
+1. **The suggested folder is named for the plugin, not "stacks".** It is offered inside somebody's
+   real appdata share, and "stacks" is a name other compose tools plausibly already own there. A
+   colliding suggestion is refused later for holding something — safe, but a poor thing to offer.
+2. **A missing storage policy and a policy saying "move it" are different answers** and no longer
+   share a message. Saying the wrong one is the confident-wrong-answer failure this project keeps
+   catching in itself.
+
+**Known limitation, and the hook for piece 4.** A pool is only offered when the appdata share
+already lives on it, which on his box means one pool of three. That is the safe direction — it never
+invents a share and never suggests a folder the mover would drain — but somebody with a pool and no
+appdata on it is told to make a share first rather than being offered anything. The refinement, if
+it is wanted: offer such a pool anyway and let the person supply the folder themselves, with the
+share warning attached. That belongs with the chooser, not here.

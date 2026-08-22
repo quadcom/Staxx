@@ -27,6 +27,13 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
 if (defined('STAXX_RELOCATE_LOADED')) return;
 define('STAXX_RELOCATE_LOADED', true);
 
+// The folder name suggested inside an existing share. Named for the plugin
+// rather than called "stacks", because it is offered inside somebody's real
+// appdata share and "stacks" is a name other compose tools plausibly already
+// own there — a suggestion that collides is refused later for holding
+// something, which is safe but a poor thing to offer in the first place.
+define('STAXX_STACKS_FOLDER', 'staxx-stacks');
+
 /**
  * Is this a symlink's target reachable, and does it lie outside the stacks
  * tree? Answered only to note it in the report — the move never follows a
@@ -404,5 +411,220 @@ function staxx_relocate_start(string $destInput, string &$error): string {
   @exec('setsid sh -c '.escapeshellarg($inner).' </dev/null >> '.escapeshellarg($log).' 2>&1 &');
 
   return $job;
+}
+
+/* -------------------------------------------------------- storage options -- */
+
+/**
+ * PLAN_68 Part B, piece 3: what locations a person could actually move the
+ * stacks folder to. Reads Unraid's own disk state rather than guessing at
+ * it — nothing here invents a share, a filesystem, or a redundancy claim
+ * that was not read from somewhere. No chooser and no page reach this yet;
+ * it only answers "what is there", the same one-piece-at-a-time approach
+ * staxx_relocate_run() itself was built with.
+ *
+ * A quoted-section ini file — disks.ini and a share's own .cfg share this
+ * shape — read with every value already unquoted by the raw scanner (see
+ * staxx_cfg()'s own comment on why RAW is used everywhere in this plugin)
+ * and every section name stripped of the quotes disks.ini wraps around them,
+ * so a caller sees "m2cache" rather than the literal string with the quote
+ * marks still on it.
+ *
+ * @return array<string, array<string, string>>
+ */
+function staxx_storage_ini_sections(string $path): array {
+  $raw = @parse_ini_file($path, true, INI_SCANNER_RAW);
+  if ($raw === false) return [];
+  $out = [];
+  foreach ($raw as $name => $info) {
+    if (is_array($info)) $out[trim((string)$name, '"')] = $info;
+  }
+  return $out;
+}
+
+/**
+ * Is $profile a redundancy Unraid would actually stand behind — mirror, or
+ * any RAIDZ level? An empty profile is NOT the opposite of this: it means
+ * the pool never reported one, which is "not reported as redundant", never
+ * worded as "not redundant" — so every caller keeps $profile alongside this
+ * flag rather than presenting the flag alone.
+ */
+function staxx_storage_redundant(string $profile): bool {
+  return $profile === 'mirror' || preg_match('/^raidz/i', $profile) === 1;
+}
+
+/**
+ * Would Unraid's mover leave a folder on this pool alone, or carry it back
+ * onto the array? Read from the share's own config, never assumed — "yes"
+ * drains it onto the array, "prefer" and "only" both pin it to the named
+ * pool, and a share with no config file at all, or a config naming a
+ * different pool as its cache target, is a policy this cannot vouch for.
+ *
+ * @return string '' when the share can be trusted to stay on $pool, else why not.
+ */
+function staxx_storage_share_reason(string $sharesDir, string $shareName, string $pool): string {
+  $cfg = @parse_ini_file($sharesDir.'/'.$shareName.'.cfg', false, INI_SCANNER_RAW);
+  if ($cfg === false) {
+    return 'The "'.$shareName.'" share has no storage policy on record, so whether Unraid\'s mover '
+         . 'would carry it off this pool is not known.';
+  }
+
+  // An absent key is not the same answer as a key saying "yes", and must not
+  // borrow its message: one is a policy this cannot read, the other is a
+  // policy that would move the folder. Saying the wrong one of those is the
+  // confident-wrong-answer failure this project keeps catching in itself.
+  if (!isset($cfg['shareUseCache'])) {
+    return 'The "'.$shareName.'" share does not record where it keeps its files, so whether '
+         . 'the mover would carry it off this pool is not known.';
+  }
+
+  $useCache = trim((string)$cfg['shareUseCache'], '"');
+  if ($useCache !== 'prefer' && $useCache !== 'only') {
+    return 'The "'.$shareName.'" share is set to move onto the array, so a stack folder there '
+         . 'would not reliably stay on this pool.';
+  }
+
+  $cachePool = trim((string)($cfg['shareCachePool'] ?? ''), '"');
+  if ($cachePool !== '' && $cachePool !== $pool) {
+    return 'The "'.$shareName.'" share keeps its files on a different pool ("'.$cachePool.'"), not this one.';
+  }
+
+  return '';
+}
+
+/**
+ * What locations could the stacks folder actually move to, read entirely
+ * from Unraid's own records — never a guess dressed up as an option.
+ *
+ * A pool is only ever offered when it is genuinely mounted, holds an
+ * existing top-level folder matching the appdata share Unraid itself names
+ * (never a new one — staxx_folder_create()'s own comment explains why
+ * inventing a share is refused everywhere else in this plugin, and this is
+ * no exception), and that share's own policy keeps files on this pool
+ * rather than letting the mover carry them onto the array. Every candidate
+ * path still has to pass the existing STACK_ROOT validator, which is what
+ * actually refuses a memory filesystem, a missing parent or anything
+ * outside /mnt — nothing here re-implements that check.
+ *
+ * A member device of a pool reports the same type as the pool itself but
+ * carries no fsStatus at all; that absence is the only reliable way to
+ * tell the two apart, so it is the rule used here.
+ *
+ * $disksIni and $sharesDir exist only so a test can point them at fixtures,
+ * the same reasoning staxx_watch_template_claims() takes its directory for —
+ * every real caller in this plugin omits both and gets Unraid's real files.
+ *
+ * @return array{offered: array<int, array{kind:string, name:string, path:string,
+ *   fsType:string, freeBytes:?int, fsProfile:string, redundant:bool, share:string,
+ *   removable:?bool}>, unavailable: array<int, array{kind:string, name:string, reason:string}>}
+ */
+function staxx_storage_options(string $disksIni = '/var/local/emhttp/disks.ini',
+                               string $sharesDir = '/boot/config/shares'): array {
+  $unavailable = [];
+  $sections    = staxx_storage_ini_sections($disksIni);
+  if ($sections === []) {
+    return ['offered' => [], 'unavailable' => [[
+      'kind' => 'pool', 'name' => '',
+      'reason' => 'Unraid\'s disk state ('.$disksIni.') could not be read, so no location could be checked.',
+    ]]];
+  }
+
+  $shareName   = basename(rtrim(staxx_appdata_root(), '/'));
+  $currentRoot = staxx_stack_root();
+  $pools       = [];
+  $flash       = null;
+
+  foreach ($sections as $name => $info) {
+    $type = trim((string)($info['type'] ?? ''), '"');
+
+    if ($type === 'Flash') {
+      // Offered only as where the stacks folder already is — never a flash
+      // path invented from nothing, since that would be inventing the one
+      // location this whole feature exists to move people away from.
+      if ($currentRoot !== '/boot' && strpos($currentRoot, '/boot/') !== 0) continue;
+      $err  = '';
+      $norm = staxx_settings_validate_path('STACK_ROOT', $currentRoot, $err);
+      if ($norm === '') { $unavailable[] = ['kind' => 'flash', 'name' => 'flash', 'reason' => $err]; continue; }
+      $removableRaw = $info['removable'] ?? null;
+      $flash = [
+        'kind' => 'flash', 'name' => 'flash', 'path' => $norm,
+        'fsType' => trim((string)($info['fsType'] ?? ''), '"'), 'freeBytes' => null,
+        'fsProfile' => '', 'redundant' => false, 'share' => '',
+        'removable' => $removableRaw === null ? null : trim((string)$removableRaw, '"') === '1',
+      ];
+      continue;
+    }
+
+    // Neither the array, parity, nor a pool: skip. A pool's own member
+    // device shares its type with the pool but reports no fsStatus at all —
+    // that is the case most likely to be got wrong, so it is tested for
+    // explicitly rather than trusted to fall through by accident.
+    if ($type !== 'Cache' || !isset($info['fsStatus'])) continue;
+
+    if (trim((string)$info['fsStatus'], '"') !== 'Mounted') {
+      $unavailable[] = ['kind' => 'pool', 'name' => $name,
+        'reason' => 'The "'.$name.'" pool is not mounted, so nothing on it could be offered.'];
+      continue;
+    }
+
+    $folder = '/mnt/'.$name.'/'.$shareName;
+    if (!is_dir($folder)) {
+      $unavailable[] = ['kind' => 'pool', 'name' => $name,
+        'reason' => 'The "'.$name.'" pool has no "'.$shareName.'" folder yet, and making one here '
+                  . 'would create a new share — make the share itself on the Shares page first.'];
+      continue;
+    }
+
+    $shareReason = staxx_storage_share_reason($sharesDir, $shareName, $name);
+    if ($shareReason !== '') {
+      $unavailable[] = ['kind' => 'pool', 'name' => $name, 'reason' => $shareReason];
+      continue;
+    }
+
+    // One level below the folder just proved to exist, never two — the
+    // validator below refuses a path whose parent does not already exist, so
+    // anything nested deeper would be refused on every single install.
+    $err  = '';
+    $norm = staxx_settings_validate_path('STACK_ROOT', $folder.'/'.STAXX_STACKS_FOLDER, $err);
+    if ($norm === '') { $unavailable[] = ['kind' => 'pool', 'name' => $name, 'reason' => $err]; continue; }
+
+    $profile = trim((string)($info['fsProfile'] ?? ''), '"');
+    $pools[] = [
+      'kind' => 'pool', 'name' => $name, 'path' => $norm,
+      'fsType' => trim((string)($info['fsType'] ?? ''), '"'),
+      'freeBytes' => (int)trim((string)($info['fsFree'] ?? '0'), '"') * 1024,
+      'fsProfile' => $profile, 'redundant' => staxx_storage_redundant($profile),
+      'share' => $shareName, 'removable' => null,
+    ];
+  }
+
+  // Redundant pools first, then whatever order disks.ini gave the rest in —
+  // a stable sort, since nothing here claims to rank two equally-redundant
+  // pools against each other.
+  usort($pools, fn($a, $b) => ($b['redundant'] ? 1 : 0) <=> ($a['redundant'] ? 1 : 0));
+
+  $overlay = null;
+  $appdataRoot = rtrim(staxx_appdata_root(), '/');
+  $err  = '';
+  $norm = staxx_settings_validate_path('STACK_ROOT', $appdataRoot.'/'.STAXX_STACKS_FOLDER, $err);
+  if ($norm === '') {
+    $unavailable[] = ['kind' => 'overlay', 'name' => $shareName, 'reason' => $err];
+  } else {
+    $free = @disk_free_space($appdataRoot);
+    $overlay = [
+      'kind' => 'overlay', 'name' => $shareName, 'path' => $norm,
+      'fsType' => 'fuse.shfs', 'freeBytes' => $free !== false ? (int)$free : null,
+      // The overlay spans whatever the array's own disks happen to be, which
+      // this function has no way to characterise as one pool's redundancy —
+      // so, same as an unreported pool profile, it is never claimed.
+      'fsProfile' => '', 'redundant' => false, 'share' => $shareName, 'removable' => null,
+    ];
+  }
+
+  $offered = $pools;
+  if ($overlay !== null) $offered[] = $overlay;
+  if ($flash !== null)   $offered[] = $flash;
+
+  return ['offered' => $offered, 'unavailable' => $unavailable];
 }
 ?>
