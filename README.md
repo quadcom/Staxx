@@ -135,15 +135,6 @@ imported. Each row says where it came from and where it will land — one folder
 **Importing only copies** — nothing at the source changes. What arrives is locked until you have
 reviewed it.
 
-Taking one over afterwards:
-
-- **From a template** — the running container is set aside under another name and the new stack
-  starts in its place. If it fails, the old one comes back.
-- **From a Compose Manager project** — the new stack takes the name Docker already knows, and
-  rebuilds those containers in place.
-
-A row says so if a copy has drifted from its source.
-
 ---
 
 ## Updates
