@@ -132,7 +132,7 @@ settings: bring them in, ask first, or leave them to Unraid.
 StaXX lists what is on the server, sorted into what it can bring in and what it cannot: apps from an
 Unraid template, Compose Manager projects, containers with nothing behind them, and things already
 imported. Each row says where it came from and where it will land — one folder for everything, or
-**"Match my Docker folders"**.
+**"Match my Docker folders"**, using the folders from FolderView.
 
 **Importing only copies.** Nothing at the source is changed. What arrives is **held still** — marked
 as needing a look, with start and stop refused until you say otherwise.
