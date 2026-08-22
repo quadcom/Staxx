@@ -505,3 +505,31 @@ checks. Narrow — it needs both changed in one submit — but it is a real hole
 completed. The fix is to validate the two as a pair against what is actually being submitted, which
 is a change to how the validator is called rather than a patch inside it. **Not done; decide
 separately.**
+
+### Piece 2 landed 2026-08-22 — the move, with the failing case proved
+
+Copy, verify, switch the setting, delete — with the commit point exactly where the design put it.
+28 cases pass on the server, and the ones that matter are the failures: a corrupted file and a
+missing file at the destination are both caught, the partial copy is removed, and the source is
+proved still byte-identical afterwards with the setting never touched.
+
+Nothing reaches this from the page yet, deliberately. It can be run by hand on the server, which is
+the easiest way to watch what it does.
+
+**Two things caught in review, not by the tests:**
+
+1. **The test would have created six new top-level shares.** Its scratch folders sat directly under
+   `/mnt/user`, where a directory *is* a share with whatever defaults happen to apply — the very
+   thing `staxx_folder_create()` refuses to do, for the reason written in its own comment. Rehomed
+   inside an existing share before it was ever run. A test has no more business inventing shares
+   than the plugin does.
+2. **File modes are not carried across, and that is deliberate** — but it needs saying, because it
+   is a real limitation. The flash drive is vfat and invents a mode for every file it holds, so
+   copying the source's mode onto a real filesystem would stamp that invention on everything.
+   Letting the destination take a sensible default is the better answer for the move this feature
+   exists to do. **The cost:** a pool-to-pool move later would not carry an executable bit. Nothing
+   in a stack folder needs one today. Revisit if that changes.
+
+**Not covered by any test:** the detached run actually completing — spawning the process and watching
+for the finished marker. Only the up-front refusal is tested. That gap closes when the interface
+piece wires it up and there is something to watch it with.
