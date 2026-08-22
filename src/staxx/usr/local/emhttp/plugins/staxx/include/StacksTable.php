@@ -275,6 +275,10 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
     // of its own; the two can be split apart later if they ever need to
     // look different.
     'moved'      => 'staxx-updatepill--tagmissing',
+    // PLAN_62 Stage 3 — the author's published example says something this
+    // file does not. Also a fact, not an alarm (it is a suggestion, never
+    // proven correct), so it shares the same quiet styling too.
+    'watch'      => 'staxx-updatepill--tagmissing',
   ][$state] ?? '';
   if ($cls === '') return '';
 
@@ -314,6 +318,106 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
        . ' data-update-why="'.htmlspecialchars((string)($u['why'] ?? '')).'"'
        . ' data-update-suggest="'.htmlspecialchars((string)($u['suggest'] ?? '')).'"'
        . $titleAttr.'>'.$label.'</'.$tag.'>';
+}
+
+/**
+ * PLAN_62 Stage 3 — how many things this stack's author-example comparison
+ * found worth a look, straight off the state file Stage 2 already wrote.
+ * No network and no compose parsing here — just counting an array that is
+ * already there, so this costs nothing extra on every row of every render.
+ */
+function staxx_watch_count_for_stack(string $stack): int {
+  $watch = (array)(staxx_update_state()['stacks'][$stack]['watch'] ?? []);
+  $count = 0;
+  foreach ($watch as $entry) $count += count((array)($entry['findings'] ?? []));
+  return $count;
+}
+
+/**
+ * Overlays a "N to look at" pill onto one already computed by
+ * staxx_updates_for_row()/staxx_updates_for_folder() — the same way PLAN_61's
+ * 'moved' is promoted only from 'current' (see
+ * staxx_updates_apply_service_state()), so this can never outrank a real
+ * problem. Kept here rather than in Updates.php's own rank table on purpose:
+ * this is presentation only, and nothing else in the plugin (the notifier,
+ * the check pass itself) needs to know a row looks this way.
+ */
+function staxx_watch_apply_pill(array $u, int $count): array {
+  if ($count <= 0) return $u;
+  if (!in_array($u['state'] ?? 'unknown', ['unknown', 'current'], true)) return $u;
+  $u['state'] = 'watch';
+  $u['label'] = $count.' to look at';
+  $u['tip']   = $count === 1
+    ? 'The author\'s published example does one thing differently here that this file does not. '
+    . 'Open the stack to see it.'
+    : 'The author\'s published example does '.$count.' things differently here that this file '
+    . 'does not. Open the stack to see them.';
+  return $u;
+}
+
+/**
+ * PLAN_62 Stage 3 — this stack's Stage-2 findings, reshaped for the `read`
+ * reply: per service, the settings the author's own example adds or drops;
+ * plus one sentence for every image that could not be compared at all,
+ * worded as a fact ("this author publishes no example"), never a failure.
+ * A pure read of the state file and the compose metadata staxx_compose_meta()
+ * already caches — no network, so opening the editor costs nothing extra.
+ *
+ * @return array{findings: array<string, array>, notes: string[]}
+ */
+function staxx_watch_for_stack(string $stack): array {
+  $empty = ['findings' => [], 'notes' => []];
+
+  // Same cheap lookup staxx_updates_moved_for_stack() uses, rather than
+  // staxx_list_stacks() — see its own comment for why.
+  $file = '';
+  foreach (staxx_scan_stacks()['stacks'] as $s) {
+    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
+  }
+  $meta = $file !== '' ? staxx_compose_meta($file) : ['ok' => false, 'services' => []];
+  if (!$meta['ok']) return $empty;
+
+  $state       = staxx_update_state();
+  $stackWatch  = (array)($state['stacks'][$stack]['watch'] ?? []);
+  $imagesState = (array)$state['images'];
+
+  $findings  = [];
+  $notes     = [];
+  $seenImage = [];
+  foreach ($meta['services'] as $svc => $svcMeta) {
+    $image = trim((string)($svcMeta['image'] ?? ''));
+    // Each refusal reason is a property of the image, said once even when
+    // several services here share it — nobody needs to be told twice that
+    // one author publishes no example.
+    if ($image === '' || isset($seenImage[$image])) continue;
+    $seenImage[$image] = true;
+
+    $entry = $stackWatch[$image] ?? null;
+    if (is_array($entry) && !empty($entry['findings'])) {
+      foreach ($entry['findings'] as $f) {
+        $findings[(string)($f['service'] ?? $svc)][] = [
+          'setting' => (string)($f['setting'] ?? ''),
+          'side'    => (string)($f['side'] ?? ''),
+        ];
+      }
+      continue;
+    }
+
+    // Nothing to graft onto a field — either the comparison genuinely found
+    // no differences (silence, correctly), or it could not even be
+    // attempted. staxx_watch_compare() records the former reason on the
+    // stack's own entry; staxx_watch_check() records the latter on the
+    // image's, since discovery is a property of the image, not this stack.
+    $reason = '';
+    if (is_array($entry) && ($entry['compare_error'] ?? '') !== '') {
+      $reason = (string)$entry['compare_error'];
+    } elseif (($imagesState[$image]['watch']['reason'] ?? '') !== '') {
+      $reason = (string)$imagesState[$image]['watch']['reason'];
+    }
+    if ($reason !== '') $notes[] = ucfirst($reason).'.';
+  }
+
+  return ['findings' => $findings, 'notes' => $notes];
 }
 
 /**
@@ -872,6 +976,12 @@ function staxx_render_rows(array $rows, bool $canRun): string {
       // Sums its stacks' own pills (see PLAN_45 Part H) — a folder has no
       // image of its own to check.
       $fUpdate = staxx_updates_for_folder($row['id']);
+      // PLAN_62 Stage 3 — summed the same way, over the same stacks.
+      $fWatch = 0;
+      foreach (staxx_scan_stacks()['stacks'] as $watchStack) {
+        if (strpos($watchStack['rel'], $row['id'].'/') === 0) $fWatch += staxx_watch_count_for_stack($watchStack['rel']);
+      }
+      $fUpdate = staxx_watch_apply_pill($fUpdate, $fWatch);
 ?>
       <div class="staxx-group staxx-group--folder" role="presentation" data-folder-group="<?= htmlspecialchars($row['id']) ?>">
         <div class="staxx-row staxx-folder-row" role="row" aria-level="1"
@@ -1043,6 +1153,9 @@ function staxx_render_rows(array $rows, bool $canRun): string {
       // up, depending what staxx_updates_for_row() decides for a multi-service
       // stack.
       $sUpdate = staxx_updates_for_row($s['name']);
+      // PLAN_62 Stage 3 — the row's own "N to look at", never outranking a
+      // real problem — see staxx_watch_apply_pill().
+      $sUpdate = staxx_watch_apply_pill($sUpdate, staxx_watch_count_for_stack($s['name']));
 
       $expanded = $expandable && !empty($row['expanded']);
       $kidsUp   = count(array_filter($kids, fn($k) => $k['state'] === 'running'));

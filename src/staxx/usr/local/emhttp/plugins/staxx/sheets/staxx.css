@@ -3794,6 +3794,17 @@
   border-color: var(--sm-accent);
 }
 
+/* The author's own published example sets or drops this setting (PLAN_62) —
+   same shape and same --sm-accent again: a suggestion worth weighing, never
+   proven correct, so nothing here is broken either. */
+.staxx-fieldrow--watch {
+  box-shadow: inset 0.3rem 0 0 var(--sm-accent);
+}
+
+.staxx-fieldrow--watch .staxx-input:not(:disabled) {
+  border-color: var(--sm-accent);
+}
+
 .staxx-scaffold .staxx-required {
   display: block;
   width: 100%;

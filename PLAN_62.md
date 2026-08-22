@@ -7,7 +7,18 @@ are not re-derived. Plan only; no code has been written.
 Scope answered by Adrian, 2026-08-21. Every decision below is his; the measurements are mine and
 were taken on the live server rather than assumed.
 
-**Stages 1 and 2 built, verified and deployed 2026-08-21. Stages 3 and 4 not started.**
+**Stages 1, 2 and 3 built, verified and deployed. Stage 4 not started; Stage 5 added and not started.**
+
+**A third bug, found while checking Stage 3 and fixed at the root.** The stamp that says "this file has
+not changed" lives on the **flash drive**; the copy of the file it refers to lives in **`/tmp`, which a
+reboot wipes**. Quoting a stamp for a body no longer held earns a cheap "unchanged" — and then there
+is nothing to compare against. Worse, the comparison returned **no findings and no reason**, which on
+screen is indistinguishable from "your file matches the author's". After any reboot that would have
+been every stack, silently, until an author happened to edit their file — possibly never.
+
+Fixed in two places: the stamp is only offered while the body is genuinely still there, so a wiped
+cache costs one honest refetch; and a missing body is now a stated reason rather than a clean zero.
+Proven on the box by moving the cache aside — 0 findings with the reason, 4 findings with it back.
 
 **A correction to this plan, found by measuring rather than reading.** Stage 2 says findings are
 "stored per image in the state file". That is wrong wherever **two stacks use the same image** — the
@@ -261,6 +272,44 @@ Then one list of everything, across every stack. **Built from the state file alo
 Stage 4 first tried walking every stack and parsing every compose file, which would have blown the
 self-test's fifteen-second budget on a cold cache and turned the button people press when the page
 misbehaves into a blank screen. Same constraint, same answer, and the test should assert it.
+
+## Stage 5 — a third source for the project home
+
+**Added 2026-08-22, from Adrian asking whether the images with no project home were base images that
+people build on.** They mostly are not, and the measuring is what showed it.
+
+**What the 23 unplaceable rolling images on the box actually are:**
+
+- **Three or four are genuinely base images** — `debian:bookworm-slim`, `node:22-alpine`, arguably
+  `nginx:alpine`. Adrian is right about what they are, and **watching them is the wrong response**:
+  there is no author's opinion to compare against, because the person running it wrote the behaviour.
+  A *label* saying "this is a base image; what it does is your own configuration" would help someone
+  reading such a stack, but that is a different feature and not this plan's.
+- **The other twenty are ordinary published apps** — Excalidraw, Memos, CloudBeaver, Posterr, MQTT
+  Explorer. They all have a project. This plan cannot find it only because the publisher did not put
+  the address inside the image and they are not at GitHub's registry.
+
+**The information is already on the flash drive.** Of those 23, **15 are named by a `<Project>` field
+in one of the 86 Unraid templates already on the box.** No network at all.
+
+**It cannot be taken at face value, and one case proves why.** The Actual Budget template names
+`Kippenhof/docker-templates` — **the template author's own repository, not the app's**. Following that
+would fetch a stranger's template collection and present whatever compose file it holds as "the
+author's example", which is exactly the failure the "several candidates" and "never guess" decisions
+exist to prevent. Four others name a product website (`postgresql.org`, `influxdata.com`, `redis.io`,
+`iventoy.com`) with no repository to fetch from.
+
+**The rule to build:** accept a template's address as a third source **only** when it is a GitHub
+repository **and** its owner or repository name resembles the image's own namespace or name. On the
+measured sample that accepts Memos (`neosmemo/memos` → `usememos/memos`, name matches), Excalidraw and
+CloudBeaver (both exact), and **correctly rejects Actual Budget**. Expect roughly ten more images
+watched.
+
+**This overturns a settled decision, deliberately and with Adrian's agreement.** The original rule was
+"the address the publisher declared inside the image... nothing else is guessed" — a template's
+`<Project>` is a *third party's* claim about the app, not the publisher's own. The resemblance test is
+what keeps it from being a guess. Note also that a URL may need normalising to the repository root: one
+template names an `/issues` sub-path.
 
 ## Verification
 

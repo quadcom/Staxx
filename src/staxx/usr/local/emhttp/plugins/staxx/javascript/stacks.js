@@ -100,6 +100,16 @@
   clashNote.id = 'staxx-clash-note';
   clashNote.hidden = true;
   if (gapNote && gapNote.parentNode) gapNote.parentNode.insertBefore(clashNote, gapNote);
+  // PLAN_62 Stage 3 — what the author's published example adds or drops that
+  // has no field of its own to sit on (mostly additions — the local file has
+  // no line to attach one to), plus why a comparison could not even be
+  // attempted. Built here for the same reason clashNote is: this plan also
+  // scopes the work to this file alone.
+  var watchNote = document.createElement('p');
+  watchNote.className = 'staxx-missing staxx-missing--inuse';
+  watchNote.id = 'staxx-watch-note';
+  watchNote.hidden = true;
+  if (gapNote && gapNote.parentNode) gapNote.parentNode.insertBefore(watchNote, gapNote);
   var errorBox    = document.getElementById('staxx-error');
   var missingNote = document.getElementById('staxx-missing');
   var makePathsNote = document.getElementById('staxx-makepaths');
@@ -1290,6 +1300,16 @@
   // underline, hover text and gutter dot need.
   var movedFacts = {};
   var movedSpots = [];
+
+  // PLAN_62 Stage 3 — the `read` reply's own author-example findings (Stage
+  // 2), service name -> [{setting, side}]. Same "set once by openEditor(),
+  // read only here" shape as movedFacts just above — applyWatchAdvice()
+  // below is the one place that reads it. watchNotes carries the refusal
+  // sentences the server already composed, plus (via applyWatchAdvice())
+  // one per finding with nowhere to graft onto — buildForm() stays ignorant
+  // of any of this, same reason as movedFacts.
+  var watchFacts = {};
+  var watchNotes = [];
 
   // PLAN_65 — every host port and bind-mount path Docker already has,
   // refreshed by refreshRows() (see 'taken' on that reply); never fetched by
@@ -2633,6 +2653,29 @@
                : '"' + esc(cl.mine) + '" is already used by "' + esc(cl.container) + '".') +
              '</p>';
     }
+    // Setting only (watchAdvice is grafted on nowhere else — see
+    // applyWatchAdvice()): PLAN_62, what the author's own published example
+    // adds or drops for this setting. No fix button, unlike movedAdvice
+    // above — this is an example, possibly for a different major version,
+    // never something to apply automatically.
+    if (f.watchAdvice && f.watchAdvice.length) {
+      var wAdded = 0, wDropped = 0;
+      for (var wi = 0; wi < f.watchAdvice.length; wi++) {
+        if (f.watchAdvice[wi].side === 'added') wAdded++; else wDropped++;
+      }
+      if (wAdded) {
+        out += '<p class="staxx-fieldnote">' +
+          (wAdded === 1 ? 'The author\'s published example also sets this.'
+                        : 'The author\'s published example also sets ' + wAdded + ' more things here.') +
+          '</p>';
+      }
+      if (wDropped) {
+        out += '<p class="staxx-fieldnote">' +
+          (wDropped === 1 ? 'The author\'s published example does not set this.'
+                          : 'The author\'s published example does not set ' + wDropped + ' things here.') +
+          '</p>';
+      }
+    }
     return out;
   }
 
@@ -2897,6 +2940,7 @@
     bits.push('<div class="staxx-fieldrow' + (f.locked ? ' staxx-fieldrow--locked' : '') +
               (f.sensitive ? ' staxx-fieldrow--secret' : '') +
               (f.movedAdvice ? ' staxx-fieldrow--moved' : '') +
+              (f.watchAdvice && f.watchAdvice.length ? ' staxx-fieldrow--watch' : '') +
               '" data-row="' + index + '" data-field-row="' + esc(f.id) + '"' +
               ' data-from="' + (f.range ? f.range.start : -1) + '"' +
               ' data-to="'   + (f.range ? f.range.end   : -1) + '"' +
@@ -3776,6 +3820,113 @@
     redrawDots();
   }
 
+  // The one field a watch finding (PLAN_62) concerns, matched by service and
+  // setting name — never by line/column, since these findings come from
+  // comparing two entirely separate files. environment./labels. entries are
+  // per-variable fields (binder 'env'/'label', target the variable's own
+  // name), so only the DROPPED side — a variable this file already has —
+  // ever finds one; an ADDED variable has no line to attach to and always
+  // falls through. Everything else is matched only against a plain 'setting'
+  // field by its exact target name — deliberately never against a 'list'
+  // binder's per-entry fields (cap_add, dns, profiles, secrets, configs,
+  // depends_on, env_file, expose), where the match found would be some
+  // existing entry's own row, not "the list", and grafting a general finding
+  // onto it would misname what changed. Those, like most additions, are left
+  // for paintWatchNote() below.
+  function fieldForWatch(service, setting) {
+    var m = /^environment\.(.+)$/.exec(setting);
+    if (m) return findFieldBy(function (f) { return f.binder === 'env' && f.service === service && f.target === m[1]; });
+    m = /^labels\.(.+)$/.exec(setting);
+    if (m) return findFieldBy(function (f) { return f.binder === 'label' && f.service === service && f.target === m[1]; });
+    return findFieldBy(function (f) { return f.binder === 'setting' && f.service === service && f.target === setting; });
+  }
+
+  function findFieldBy(pred) {
+    for (var i = 0; i < MODEL.fields.length; i++) if (pred(MODEL.fields[i])) return MODEL.fields[i];
+    return null;
+  }
+
+  // setting -> the phrase a leftover sentence names it by, when there is no
+  // field beside it to make that obvious instead.
+  function watchSettingWord(setting) {
+    var m = /^environment\.(.+)$/.exec(setting);
+    if (m) return 'the environment variable "' + m[1] + '"';
+    m = /^labels\.(.+)$/.exec(setting);
+    if (m) return 'the label "' + m[1] + '"';
+    return '"' + setting + '"';
+  }
+
+  // One sentence per distinct (service, setting, side) left over after
+  // applyWatchAdvice()'s field pass — grouped so several added entries under
+  // one list key read as one line, never a value that merely differs (see
+  // watch-compare.js for why that is excluded before this ever runs).
+  function watchLeftoverSentences(leftover) {
+    var groups = {}, order = [];
+    leftover.forEach(function (f) {
+      var key = f.service + '|' + f.setting + '|' + f.side;
+      if (!groups[key]) { groups[key] = { service: f.service, setting: f.setting, side: f.side, count: 0 }; order.push(key); }
+      groups[key].count++;
+    });
+    return order.map(function (key) {
+      var g = groups[key];
+      var verb = g.side === 'added' ? 'also sets' : 'does not set';
+      var word = g.count > 1 ? g.count + ' more things under "' + g.setting + '"' : watchSettingWord(g.setting);
+      return 'For ' + g.service + ': the author\'s published example ' + verb + ' ' + word + '.';
+    });
+  }
+
+  // The note at the top of the form (PLAN_62 Stage 3): the server's own
+  // refusal sentences (watchNotes — a fact, worded plainly, never a failure)
+  // plus one line for every finding applyWatchAdvice() could not graft onto
+  // a field. Nothing here ever touches the raw editor view — an addition has
+  // no line to underline there, so this note is the only honest place to say
+  // it at all.
+  function paintWatchNote(leftover) {
+    if (!watchNote) return;
+    var lines = watchNotes.concat(watchLeftoverSentences(leftover));
+    if (!lines.length) { watchNote.hidden = true; watchNote.innerHTML = ''; return; }
+    watchNote.innerHTML = lines.map(function (l) { return '<span>' + esc(l) + '</span>'; }).join('<br>');
+    watchNote.hidden = false;
+  }
+
+  // Grafts PLAN_62 Stage 2's findings (watchFacts, keyed by service) onto the
+  // field each setting concerns — same call sites and same reason as
+  // applyMovedAdvice() above: MODEL.fields is rebuilt wholesale by both
+  // reparse() and refreshRanges(). Never a write path: applying an author's
+  // example is out of scope by design (it may be for a different major
+  // version) — this only ever adds a note.
+  function applyWatchAdvice() {
+    if (!MODEL) { paintWatchNote([]); return; }
+
+    for (var i = 0; i < MODEL.fields.length; i++) MODEL.fields[i].watchAdvice = null;
+
+    var leftover = [];
+    Object.keys(watchFacts).forEach(function (svc) {
+      (watchFacts[svc] || []).forEach(function (finding) {
+        var field = fieldForWatch(svc, finding.setting);
+        if (field) {
+          field.watchAdvice = field.watchAdvice || [];
+          field.watchAdvice.push(finding);
+        } else {
+          leftover.push({ service: svc, setting: finding.setting, side: finding.side });
+        }
+      });
+    });
+
+    var rows = formHost.querySelectorAll('.staxx-fieldrow');
+    for (var r = 0; r < rows.length; r++) {
+      var field2 = MODEL.fields[rows[r].dataset.row | 0];
+      rows[r].classList.toggle('staxx-fieldrow--watch', !!(field2 && field2.watchAdvice && field2.watchAdvice.length));
+      var advice = rows[r].querySelector('[data-advice]');
+      if (advice && field2) {
+        advice.innerHTML = adviceText(field2);
+        advice.hidden = !advice.innerHTML;
+      }
+    }
+
+    paintWatchNote(leftover);
+  }
+
   // Guarded the same way paintInk() guards for YAML.highlight: if the linter
   // has not landed yet, this simply never finds any problems to mark.
   function relint() {
@@ -3799,6 +3950,7 @@
     MODEL = form;
     applyMovedAdvice();   // before renderForm() below, so its first paint already carries the fact
     applyClashAdvice();   // ditto, for PLAN_65's port/path clash marks
+    applyWatchAdvice();   // ditto, for PLAN_62's author-example findings
 
     var scrollWas = formHost.scrollTop;
     devPanel = null;            // the device panel lives in here and just went
@@ -3840,6 +3992,7 @@
     MODEL = fresh;
     applyMovedAdvice();   // rows already exist here, so this brings them into line itself
     applyClashAdvice();   // ditto, for PLAN_65's port/path clash marks
+    applyWatchAdvice();   // ditto, for PLAN_62's author-example findings
 
     var rows = formHost.querySelectorAll('.staxx-fieldrow');
     for (var i = 0; i < rows.length; i++) {
@@ -9579,7 +9732,7 @@
   // the whole stack's own All tab, a service name for one container's — and
   // it is what switches straight to Manage further down, once the model this
   // stack's Manage view is built from (MODEL, from reparse() above) exists.
-  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved) {
+  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved, watch) {
     closeMenu();
     clearError();
 
@@ -9593,6 +9746,11 @@
     // nothing here. reparse() below (via applyMovedAdvice()) is what turns
     // this into the row border, note and underline.
     movedFacts = moved || {};
+    // Same reasoning, for PLAN_62 Stage 3's findings — applyWatchAdvice()
+    // (via reparse() just below) turns this into the field note and the
+    // top-of-form summary; buildForm() never learns any of it exists either.
+    watchFacts = (watch && watch.findings) || {};
+    watchNotes = (watch && watch.notes) || [];
 
     // Yesterday's tabs are meaningless against today's stack — cleared before
     // the fresh listing arrives (or, for a new stack with no folder yet, before
@@ -14008,7 +14166,7 @@
   function editStack(name, label, focusService, manageSelect, focusField) {
     call('read', { name: name }).then(function (res) {
       if (!res.ok) { failed('Could not open ' + label, res.error); return; }
-      openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved);
+      openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch);
     });
   }
 

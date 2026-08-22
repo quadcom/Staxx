@@ -238,6 +238,10 @@ switch ($action) {
     // so the key itself is left out rather than sent empty.
     $moved = staxx_updates_moved_for_stack($name);
     if ($moved !== []) $reply['moved'] = $moved;
+    // PLAN_62 Stage 3 — this stack's author-example findings, same omit-when-
+    // empty wire contract as 'moved' just above.
+    $watch = staxx_watch_for_stack($name);
+    if ($watch['findings'] !== [] || $watch['notes'] !== []) $reply['watch'] = $watch;
     staxx_reply($reply);
 
   // ---- create a new stack, or overwrite an existing one ----

@@ -334,8 +334,16 @@ function staxx_watch_compare(string $localFile, string $image): array {
   $empty = ['findings' => [], 'compare_error' => ''];
   if ($localFile === '' || !is_file($localFile)) return $empty;
 
+  // Never a silent zero. "No findings" and "there was nothing to compare
+  // against" look identical on screen, and the second one dressed as the
+  // first would read as "your file matches the author's" when in truth the
+  // cached copy is gone. staxx_watch_check() above stops this arising by
+  // refetching, so reaching here at all means something else went wrong.
   $remoteFile = staxx_watch_body_path($image);
-  if (!is_file($remoteFile)) return $empty;
+  if (!is_file($remoteFile)) {
+    return array_merge($empty, ['compare_error' => "the author's example is not on this server "
+                                                 . 'at the moment; it will be fetched again on the next check']);
+  }
 
   $node = staxx_watch_node_bin();
   if ($node === '') return array_merge($empty, ['compare_error' => 'the comparison cannot run on this server']);
@@ -407,13 +415,22 @@ function staxx_watch_check(string $image, array $prior, int &$spent): array {
     ];
   }
 
+  // The stamp we would quote lives on the flash drive; the body it refers to
+  // lives in /tmp, which a reboot wipes. Quoting a stamp for a body we no
+  // longer hold earns a cheap "unchanged" and leaves nothing to compare
+  // against — silently, and until the author happens to edit their file,
+  // which may be never. So the stamp is only offered while the body is
+  // actually still here; otherwise ask afresh and pay for one real fetch.
+  $haveBody  = is_file(staxx_watch_body_path($image));
+  $priorEtag = $haveBody ? (string)($prior['fetch_etag'] ?? '') : '';
+
   $path = (string)($out['path'] ?? '');
   if ($path !== '') {
-    $fetch = staxx_watch_fetch($home, $path, (string)($prior['fetch_etag'] ?? ''));
+    $fetch = staxx_watch_fetch($home, $path, $priorEtag);
     $spent++;
     if ($fetch['unchanged']) {
-      $out['fetch_etag'] = (string)($prior['fetch_etag'] ?? '');
-      $out['body_saved'] = (bool)($prior['body_saved'] ?? false);
+      $out['fetch_etag'] = $priorEtag;
+      $out['body_saved'] = true;   // only reachable while the body is still here
     } elseif ($fetch['ok']) {
       staxx_watch_store_body($image, $fetch['body']);
       $out['fetch_etag'] = $fetch['etag'];
@@ -428,11 +445,11 @@ function staxx_watch_check(string $image, array $prior, int &$spent): array {
   // genuinely found nothing (never after a several-candidates refusal —
   // that refusal is the honest answer and a README guess would undercut it).
   if ((int)($out['candidates'] ?? 0) === 0) {
-    $readme = staxx_watch_fetch($home, 'README.md', (string)($prior['fetch_etag'] ?? ''));
+    $readme = staxx_watch_fetch($home, 'README.md', $priorEtag);
     $spent++;
     if ($readme['unchanged']) {
-      $out['fetch_etag'] = (string)($prior['fetch_etag'] ?? '');
-      $out['body_saved'] = (bool)($prior['body_saved'] ?? false);
+      $out['fetch_etag'] = $priorEtag;
+      $out['body_saved'] = true;   // same reasoning as the file branch above
     } elseif ($readme['ok']) {
       $block = staxx_watch_readme_block($readme['body']);
       if ($block['ok']) {
