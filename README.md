@@ -1,5 +1,10 @@
 # StaXX — Docker on Unraid, built on compose files
 
+> **Development branch — do not install from here.** This is where work in progress lands. Features
+> on this branch may be half-finished, broken, or in the middle of being changed, and the
+> screenshots and text below may describe things that do not work yet. For the current state of the
+> project, read [`main`](https://github.com/quadcom/Staxx/blob/main/README.md).
+
 > **Pre-alpha.** It runs, but it is not packaged or listed yet — installing means copying the files
 > onto a server yourself. See [Installing](#installing). Every screenshot here is a live server.
 
