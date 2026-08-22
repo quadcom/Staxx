@@ -322,7 +322,8 @@ ok('image: comes from Repository', embyY.indexOf('image: ghcr.io/binhex/arch-emb
 // normalised name — the real proof that container_name is Name verbatim,
 // not the sanitised form, is section N below.
 ok('container_name: equals Name verbatim', embyY.indexOf('container_name: binhex-emby') >= 0);
-ok('bridge network emits no network_mode/networks', embyY.indexOf('network_mode') === -1 && embyY.indexOf('networks:') === -1);
+ok('bridge network emits no network_mode, but an explicit default network',
+   embyY.indexOf('network_mode') === -1 && embyY.indexOf('    networks:\n      - default\n') >= 0);
 ok('ExtraParams --restart=unless-stopped becomes restart: unless-stopped', embyY.indexOf('restart: unless-stopped') >= 0);
 ok('the empty-valued Port falls back to Default 8096', embyY.indexOf('"8096:8096"') >= 0);
 ok('the empty-valued /config Path falls back to its Default', embyY.indexOf('/mnt/user/appdata/emby:/config') >= 0);
@@ -367,7 +368,48 @@ var liquidY = CA.convert(LIQUIDCTL).yaml;
 ok('Network: none becomes network_mode: none', liquidY.indexOf('network_mode: none') >= 0);
 
 var linkY = CA.convert(LINKSTACK).yaml;
-ok('bridge network on linkstack emits nothing network-related', linkY.indexOf('network_mode') === -1 && linkY.indexOf('networks:') === -1);
+ok('bridge network on linkstack writes the default network, nothing else',
+   linkY.indexOf('network_mode') === -1 && linkY.indexOf('    networks:\n      - default\n') >= 0);
+
+// No Network field at all — same meaning as "bridge", said the same way.
+var noNetR = CA.convert({ Name: 'no-network-test', Repository: 'example/no-network-test' });
+ok('no Network field at all still writes the default network',
+   noNetR.yaml.indexOf('    networks:\n      - default\n') >= 0);
+ok('...and no top-level networks: declaration — compose creates default itself',
+   noNetR.yaml.indexOf('\nnetworks:\n') === -1);
+
+// Unraid's Container mode: share another container's/service's network stack
+// entirely — a mode, not a named network (PLAN_64 section 4b).
+var containerOutsideR = CA.convert({
+  Name: 'container-outside-test', Repository: 'example/container-outside-test',
+  Network: 'container:openvpn-client'
+});
+ok('Container mode naming a container outside this stack becomes network_mode: container:<name>',
+   containerOutsideR.yaml.indexOf('network_mode: container:openvpn-client') >= 0);
+ok('...and emits no networks: block', containerOutsideR.yaml.indexOf('networks:') === -1);
+ok('...and a note that the target container must already exist',
+   containerOutsideR.notes.some(function (w) { return /openvpn-client/.test(w); }));
+
+// Same field, but the target is one of this stack's own services — compose
+// works out the start order itself for this form, so it gets no such note.
+var containerInsideR = CA.convert({
+  Name: 'container-inside-test', Repository: 'example/container-inside-test',
+  Network: 'container:sibling-service'
+}, { stackServices: ['sibling-service'] });
+ok('Container mode naming a service already in this stack becomes network_mode: service:<name>',
+   containerInsideR.yaml.indexOf('network_mode: service:sibling-service') >= 0);
+ok('...and produces no "must already exist" note for it',
+   !containerInsideR.notes.some(function (w) { return /sibling-service/.test(w); }));
+
+// A fixed IP has nowhere to live under a shared network stack, exactly as
+// for host/none — dropped with a warning naming it, same mechanism reused.
+var containerFixedIpR = CA.convert({
+  Name: 'container-fixedip-test', Repository: 'example/container-fixedip-test',
+  Network: 'container:openvpn-client', MyIP: '192.168.202.66'
+});
+ok('a fixed IP under Container mode is dropped with a warning naming it',
+   containerFixedIpR.warnings.some(function (w) { return /192\.168\.202\.66/.test(w); }));
+ok('...and never written as a field', containerFixedIpR.yaml.indexOf('ipv4_address') === -1);
 
 /* =========================================================================
  * E. Path / Port / Device / Label edge rules

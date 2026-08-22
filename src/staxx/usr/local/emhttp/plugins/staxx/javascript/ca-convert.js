@@ -250,9 +250,22 @@
     return true;
   }
 
-  // bridge/empty -> Compose's own default network, nothing to write.
-  // host/none -> network_mode. Anything else is a named network that must
-  // already exist on the server, so a note rides along with it.
+  // bridge/empty -> Compose's own default network. Said explicitly, as
+  // "default", rather than left silent — absence meaning "the usual one"
+  // is a shorthand, and shorthand is hardest for someone starting from
+  // nothing. `docker compose config` agrees: asked for its own canonical
+  // version of a file that says nothing about networks, it writes the
+  // default network out in full (confirmed on the server).
+  // host/none -> network_mode, nothing else to write.
+  // container:<name> -> Unraid's "Container" mode: share another
+  // container's network stack entirely, same address, same ports, no
+  // separation — how a container is routed through a VPN container.
+  // Written as network_mode "service:<name>" when <name> is one of this
+  // stack's own services (Compose then works out the start order itself)
+  // or "container:<name>" otherwise, the same distinction the form's own
+  // "share a container's network" control already draws.
+  // Anything else is a named network that must already exist on the
+  // server, so a note rides along with it.
   //
   // A fixed IP/MAC (Unraid's MyIP/MyMAC) rides along when there is somewhere
   // for it to live. `extraMac` is ExtraParams' --mac-address, read via
@@ -260,13 +273,34 @@
   // same care, since an empty `<MyIP/>` element survives PHP's XML parse as
   // an empty array, which is truthy, so a plain `if (app.MyIP)` would fire on
   // a template that set no address at all.
-  function networkInfo(app, notes, warnings, extraMac) {
+  //
+  // `stackServices` names the other services already in the stack being
+  // built — nothing today calls convert() with more than one app, so it is
+  // always empty in practice, but the container:<name> check needs it to
+  // tell "share this stack's own service" from "share some other container"
+  // the moment a multi-service import exists.
+  function networkInfo(app, notes, warnings, extraMac, stackServices) {
     var raw = String(app.Network == null ? '' : app.Network).trim();
     var lower = raw.toLowerCase();
     var mode = null, network = null;
     if (raw !== '' && lower !== 'bridge') {
       if (lower === 'host' || lower === 'none') {
         mode = lower;
+      } else if (/^container:/i.test(raw)) {
+        var target = raw.replace(/^container:\s*/i, '').trim();
+        if (target) {
+          var sibling = stackServices && stackServices.indexOf(target) >= 0;
+          mode = (sibling ? 'service:' : 'container:') + target;
+          if (!sibling) {
+            notes.push('This container shares the network of another container named "' + target +
+              '". That container must already exist on this server or Compose will refuse to ' +
+              'start the stack.');
+          }
+        } else {
+          warnings.push('This container is set to share another container\'s network, but the ' +
+            'template gave no container name to share with — it was left on the default network ' +
+            'instead.');
+        }
       } else {
         network = raw.replace(/^custom:\s*/i, '').trim();
         notes.push('This container is set to use the network "' + network + '". That network ' +
@@ -292,10 +326,11 @@
 
     var result = { mode: mode, network: network, ipv4: null, mac: null };
 
-    // host/none have no interface at all, so neither address has anywhere to
+    // Any mode — host, none, or sharing another container's stack entirely
+    // — has no interface of its own, so neither address has anywhere to
     // live. Writing one anyway would produce a file Compose starts without
     // ever applying it, which is worse than dropping it visibly.
-    if (mode === 'host' || mode === 'none') {
+    if (mode) {
       if (ipRaw) warnings.push('The fixed IP "' + ipRaw + '" was dropped: network_mode "' +
         mode + '" has no interface to put it on.');
       if (macCandidate) warnings.push('The fixed MAC address "' + macCandidate +
@@ -686,7 +721,8 @@
     var extra = parseExtraParams(app.ExtraParams || '');
     warnings = warnings.concat(extra.warnings);
     notes = notes.concat(extra.notes);
-    var net = networkInfo(app, notes, warnings, extra.macAddress);
+    var net = networkInfo(app, notes, warnings, extra.macAddress,
+      (opts.stackServices || []).filter(function (s) { return s !== service; }));
     var cfg = processConfig(app.Config, name, warnings, notes, appdataRoot);
     reorderPortsForWebUI(cfg.ports, app.WebUI, notes);
 
@@ -769,6 +805,13 @@
       } else {
         svc.push('      - ' + scalarOut(net.network));
       }
+    } else {
+      // No mode and no named network: a template saying "bridge", or
+      // saying nothing, both mean Compose's own default network — said
+      // explicitly now rather than left for a beginner to work out from
+      // silence (see networkInfo()'s own comment above).
+      svc.push('    networks:');
+      svc.push('      - default');
     }
 
     if (cfg.ports.length) { svc.push('    ports:'); emitAlignedBlock(cfg.ports).forEach(function (l) { svc.push(l); }); }

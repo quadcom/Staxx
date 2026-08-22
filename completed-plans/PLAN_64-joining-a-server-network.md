@@ -1,6 +1,6 @@
 # PLAN 64 — joining a container to one of this server's own networks
 
-**Status: Phases A, B and C built, verified and deployed 2026-08-21. Phase D not started.**
+**Status: complete 2026-08-21. All four phases built, verified and deployed.**
 
 - **Phase A — the dropdown.** A service's network row offers this server's own networks alongside the
   file's own, labelled "on this server, not in this file yet". `bridge`, `host` and `none` are left
@@ -18,9 +18,24 @@
   the `network_mode` row's own existing dropdown rather than a resurrected empty network row. Both
   directions are one dropdown, one undo, and cannot leave a service holding both — just not literally
   the same row.
-- **Phase D — the converter.** Not started: an unstated network becomes an explicit `default`, and
-  Unraid's Container mode stops being mistaken for a named network. This is the phase where
-  `tests/ca_convert.js` numbers are expected to move.
+- **Phase D — the converter. Done.** A template saying `bridge`, or saying nothing, now writes
+  `networks: [default]` on the service — and no top-level declaration, since compose creates that
+  network itself. Unraid's Container mode writes `network_mode: container:<name>`, or
+  `service:<name>` when the target is in the same stack, instead of being mistaken for a named
+  network; a fixed IP or MAC is dropped with the same warning `host`/`none` already give, not a
+  second mechanism.
+
+  **The `container:<name>` spelling was established, not guessed** — Unraid's own Add Container form
+  matches `/^container:(.*)/` against the template's `Network` field, and its Docker client tests the
+  same prefix. Verified on the live server, not from a memory of GitHub.
+
+  `tests/ca_convert.js` moved 236 → 245, the only expected movement in this plan, and it reconciles
+  exactly: two existing assertions rewritten in place (both about `bridge` emitting nothing, which is
+  precisely what changed) plus eleven new cases. Nothing was lost or quietly relaxed.
+
+  **Inert for everything already on the box.** None of the 86 templates there says plain `bridge`;
+  they are named networks, `host`, or nothing this touches. The explicit `default` only shows up on
+  newly installed apps.
 
 `PLAN_63` is complete and filed. Sections 4a, 4b and 6 were rewritten after Adrian read the first
 draft; where they disagree with anything earlier in this file, they win.
