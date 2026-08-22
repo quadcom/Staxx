@@ -63,7 +63,7 @@ gone.
 
 Every stack is a row. Expand it and each container inside gets its own row.
 
-![A stack expanded into its containers](docs/images/service-rows.jpg)
+![A folder opened up, with the stacks inside it](docs/images/stacks-grid.jpg)
 
 **On each row**
 
