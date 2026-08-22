@@ -545,3 +545,28 @@ the easiest way to watch what it does.
 **Not covered by any test:** the detached run actually completing — spawning the process and watching
 for the finished marker. Only the up-front refusal is tested. That gap closes when the interface
 piece wires it up and there is something to watch it with.
+
+### Why the suggested pool path goes straight to the pool, not through the share layer
+
+Adrian raised this and was right. Recorded because the reasoning is not recoverable from the code.
+
+Reaching a share **around** the share layer is genuinely dangerous when the share lives on the array:
+the layer is what decides which drive each new file lands on, so stepping around it means choosing a
+drive by hand, possibly against the share's own rules — and the same share can end up holding two
+files of the same name on different drives, with no defined answer for which one is seen.
+
+**On a pool none of that applies.** A pool is one filesystem. There is no drive to choose, so the
+direct path is not one of several candidate homes; it is the only one. Nothing is bypassed except
+the translation, which is why reaching container data directly on a pool is ordinary practice rather
+than a trick.
+
+The qualification: this holds only while the share's data really does live on that pool alone. A
+share set to keep data on the pool does; one the mover drains onto the array does not, which is why
+the offer list refuses to suggest a path inside such a share.
+
+**And the edge case argues for the direct path rather than against it.** A share set to *prefer* —
+which is his appdata, and the common case — spills onto the array if the pool fills. Through the
+share layer, a full pool means a new stack quietly lands on the array where the setting is not
+looking, and the stack simply appears to be gone. Written straight to the pool, a full pool refuses
+the write and says so. **A loud failure beats a silent relocation**, which is the same principle the
+copy-verify-switch-delete order exists to serve.
