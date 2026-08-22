@@ -648,3 +648,69 @@ point it at a path that will be refused and confirm the server's own sentence ap
 
 **His own stacks have not been moved.** That was the decision: build the chooser, do not migrate his
 box as a side effect of building it.
+
+---
+
+## Part B piece 5 — checking before the click, and a trial run
+
+**Status: proposed 2026-08-22 from Adrian's own description of how he wants it to work. Awaiting
+approval.**
+
+He described the sequence he expects and asked whether it matches. **Two of five already do** — the
+pre-move fingerprint of every source file, and the post-move comparison with deletion only on
+success. **Two do not**, and are this piece. One step he did not mention sits in the middle and is
+kept exactly where it is: the setting switch between the comparison and the deletion, which is the
+hinge the whole design turns on.
+
+### 5a. Check the path as it is typed, not when Move is pressed
+
+Today the click is the trigger: the server checks the path and refuses with a sentence. That works,
+but it makes the person guess and be told no, when the answer could have been on screen already.
+
+**A checking action, called as the box is edited, with Move disabled until it comes back clean.**
+
+- **The server does the checking, not the browser.** Every rule that matters — under `/mnt` or the
+  plugin's own folder, no relative path, a parent that exists, not a filesystem that lives in memory,
+  not overlapping the archive folder, not inside or containing the current stacks folder, nothing
+  already in it — lives on the server and must stay there. A second copy of those rules in the
+  browser would be two answers to one question, and the browser's would be the one that goes stale.
+- So this is a **new read-only action that answers the same refusal in advance**, built from the
+  same check the move itself runs. Not a reimplementation of it — the same function, called with
+  nothing committed.
+- Debounced, because it runs per keystroke otherwise, and each call reads the disk.
+- **The disabled button must never be the only guard.** The move re-checks everything when it
+  actually runs, exactly as it does now. A disabled button is a courtesy to the person, not a
+  security boundary — anything else would put the only check in the one place a person can edit.
+- While a check is in flight the button stays disabled, so a fast click cannot outrun the answer.
+
+### 5b. A trial run before any bytes move
+
+The valuable thing here is not extra caution about space. It is that **the destination may not be
+able to represent the tree at all**, and finding that out halfway through a copy leaves exactly the
+half-written mess this design exists to prevent.
+
+Real cases: a filesystem that cannot create a symlink; a name length or a character the target
+refuses; two names that differ only in case landing on a case-insensitive filesystem; a folder that
+is writable at the top and not further down.
+
+**So: replay the whole manifest at the destination as empty placeholders** — every directory, every
+file as a zero-byte file, every symlink as a symlink — inside one temporary folder, confirm every
+single one could be created, then remove the lot.
+
+- Runs **after** the fingerprint pass, which is where he put it, and it is the right place: the
+  fingerprint pass has already proved every source file can be read end to end, so the two together
+  prove both halves before anything is committed.
+- **Any failure stops the move with nothing copied**, naming the path that could not be created and
+  what was being attempted. That message is the whole value.
+- The trial folder is removed on success and on failure. A leftover trial folder would make the
+  destination "already hold something" and refuse the next attempt.
+- Cheap: no file content is written, so this is metadata work even for a large stack folder.
+- **It is not a guarantee.** It proves the shape can be created, not that the bytes will land. The
+  post-move comparison remains the thing that actually decides, and nothing about this weakens it.
+
+### What must not change
+
+- The order stays: refuse, fingerprint, **trial run**, copy, compare, switch the setting, delete.
+- The setting switch stays between the comparison and the deletion.
+- The comparison stays a full content comparison. A trial run is not a reason to check less
+  afterwards — it moves failures earlier, it does not replace the one that counts.
