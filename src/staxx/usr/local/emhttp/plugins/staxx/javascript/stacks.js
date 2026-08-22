@@ -12371,6 +12371,7 @@
         pendingHandoffEdit = false;
 
         if (res.templateNote) showPageNotice(res.templateNote);
+        if (res.historyNote) showPageNotice(res.historyNote);
 
         // Trust nothing: the server reports the path and size it actually
         // wrote. res.bytes == null is what "did nothing" looks like — a

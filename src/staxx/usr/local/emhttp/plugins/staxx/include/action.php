@@ -278,7 +278,8 @@ switch ($action) {
       }
     }
 
-    if (!staxx_save_stack($name, $body, $error)) {
+    $historyNote = '';
+    if (!staxx_save_stack($name, $body, $error, $historyNote)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
 
@@ -310,6 +311,9 @@ switch ($action) {
       'bytes'        => $written !== '' ? (int)@filesize($written) : 0,
       'fingerprint'  => staxx_stack_fingerprint($name),
       'templateNote' => $templateNote,
+      // Empty unless the previous version could not be kept — this save then
+      // has no undo, which the person is entitled to know at the time.
+      'historyNote'  => $historyNote,
     ]);
 
   /* ---- check a compose file without saving it ----

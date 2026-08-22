@@ -18,6 +18,7 @@
 ?>
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
 
 if (defined('STAXX_JOB_DIR')) return;
 
@@ -75,6 +76,11 @@ define('STAXX_EXEC_WRITE_MAX', 4096);
 const STAXX_COMPOSE_FILENAMES = [
   'compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
 ];
+
+// The hidden per-stack history folder (see Record.php). Never listed, never
+// reachable through the companion-file tools — a stack works exactly as it
+// does today whether or not this exists.
+define('STAXX_RECORD_DIR', '.staxx');
 
 // A companion file's size cap. The browser reads the file itself and posts
 // its content as an ordinary form field, so the whole thing sits in one POST
@@ -2531,7 +2537,7 @@ function staxx_run_probe(string $key): array {
  * the whole promise of the project and it is enforced here by simply not
  * touching the string.
  */
-function staxx_save_stack(string $name, string $yaml, string &$error): bool {
+function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$note = null): bool {
   $error = '';
 
   if (!staxx_valid_path($name)) {
@@ -2575,6 +2581,21 @@ function staxx_save_stack(string $name, string $yaml, string &$error): bool {
   // Keep an existing file's name rather than imposing ours on it.
   $file = staxx_find_compose_file($dir);
   if ($file === '') $file = $dir.'/compose.yaml';
+
+  // Keep whatever is on disk right now before it is overwritten — this has
+  // to run after every check above (a refused save must not leave a version
+  // behind) and before the write below (or the version worth keeping is
+  // already gone). A failure here is never allowed to block the save itself;
+  // it just means this one save has no undo, and the person is told so at
+  // the time rather than finding out the day they go looking for it.
+  $recordNote = '';
+  // basename, not the path in $file — the record resolves the stack folder
+  // itself, and handing it a full path silently finds no file and keeps
+  // nothing while reporting success.
+  if (!staxx_record_capture($name, basename($file), $recordNote) && $recordNote !== '') {
+    if ($note !== null) $note = $recordNote;
+    error_log('StaXX: history not kept for '.$name.': '.$recordNote);
+  }
 
   // Temp-then-rename, same reasoning as staxx_settings_save(): a short write
   // on a full flash drive still reports success, so the byte count actually
@@ -3701,6 +3722,15 @@ function staxx_stack_file(string $rel, string $file, string &$error): string {
            . 'must be 63 characters or fewer, and may not be a compose file.';
     return '';
   }
+  // Compared case-sensitively, unlike a compose filename above: the risk
+  // there was a near-miss upload becoming a second file compose might
+  // actually read. Here the record directory's real path always comes from
+  // the constant itself, so a differently-cased name is just an ordinary
+  // file that happens to look similar — nothing to protect against.
+  if ($file === STAXX_RECORD_DIR) {
+    $error = 'That name is reserved for this stack\'s own history, and cannot be used here.';
+    return '';
+  }
 
   $dir = @realpath(staxx_stack_dir($rel));
   if ($dir === false || !is_dir($dir)) {
@@ -3733,6 +3763,9 @@ function staxx_list_files(string $rel, string &$error): ?array {
   $out = [];
   foreach ((array)@scandir($dir) as $name) {
     if ($name === '.' || $name === '..') continue;
+    // The history folder is bookkeeping, not a file anybody put there —
+    // see STAXX_RECORD_DIR and staxx_stack_file().
+    if ($name === STAXX_RECORD_DIR) continue;
 
     $path  = $dir.'/'.$name;
     $link  = is_link($path);
@@ -3856,6 +3889,22 @@ function staxx_write_file(string $rel, string $file, string $body, bool $isText,
   if (strlen($body) > STAXX_FILE_MAX) {
     $error = 'That file is over the '.round(STAXX_FILE_MAX / 1024).' KiB limit for a companion file.';
     return false;
+  }
+
+  // The compose file itself never reaches here — staxx_valid_filename()
+  // refuses those four names outright, so the editor cannot open it and the
+  // form's own save is the only door to it. What does reach here is the
+  // override, which is compose configuration every bit as much as the main
+  // file: it is authored by hand, saved straight over the top, and had no
+  // way back before this. Anything else in the folder is a companion file
+  // and is not this stack's compose history.
+  $mainPath = staxx_find_compose_file(dirname($path));
+  if ($mainPath !== ''
+      && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0) {
+    $recordNote = '';
+    if (!staxx_record_capture($rel, $file, $recordNote) && $recordNote !== '') {
+      error_log('StaXX: history not kept for '.$rel.'/'.$file.': '.$recordNote);
+    }
   }
 
   // Pid-suffixed, not a fixed name: two concurrent saves of the same
