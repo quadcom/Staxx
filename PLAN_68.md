@@ -199,3 +199,60 @@ to disappear, and probably designing around the wrong thing.
 
 Both are foundational, like the rewrite of rule 2 on 2026-08-21. Neither should be started from this
 file alone: it records the decisions, not a design.
+
+---
+
+## Measured on the server, 2026-08-22 — the boot-order objection does not survive
+
+Part B question 1 said *measure it; do not reason about it*. Measured, from the last boot in the
+rotated syslog:
+
+| Time | What happened |
+|---|---|
+| 17:56:59 | `Mounting disks...` — the array's own disks |
+| 17:57:03–04 | **every pool mounts** — `cache-big`, `cache-small`, `m2cache` |
+| 17:57:04 | `/mnt/user` — the FUSE overlay — comes up |
+| 17:57:11 | `rc.docker start` |
+| 17:57:14 | Docker daemon reports started |
+
+**Every pool is mounted seven seconds before Docker exists.** So the settings help's stated reason
+for flash — "readable before the array starts, which matters for autostart" — protects nothing:
+nothing can be started before Docker, and Docker is last. The honest answer is question 3's:
+autostart happens after the array starts, because that is the only time anything *can* start.
+
+There is a second, stronger reason the objection is empty. **StaXX does not start anything at boot.**
+It writes names into Unraid's boot-start list and Unraid starts them, from `/var/lib/docker`, which is
+nothing to do with the stack root. So the stack root does not need to be readable at boot at all.
+
+**Conclusion: Part B is unblocked.** A pool path is available before Docker, and the flash rationale
+was answering a question that never applied.
+
+## Part C item 2, probed rather than argued — the boot list is safe
+
+Item 2 said *check this first; it is the one that loses somebody's configuration*. Checked, with a
+throwaway probe on the server against the real installed code, the config directory and the boot-list
+file both pointed at `/tmp` and the stack root pointed at an unmounted path.
+
+**The boot list came back byte-identical.** The reason matters: the bridge decides which lines are
+*ours* from the same scan that came back empty, so with no stacks visible, **every line reads as
+somebody else's and is therefore left exactly where it is.** The empty case is safe because it is
+indistinguishable from a machine with no StaXX stacks on it.
+
+That is **accidental safety, not designed safety** — nothing states it, no test holds it, and it
+turns on ownership and membership being derived from the same source. Record it and test it; do not
+rely on it silently.
+
+Two real but smaller things the probe did expose:
+
+1. **The "already seen" marker is still updated.** After an empty run the bridge records the boot
+   list's current fingerprint as seen. A switch flipped on Unraid's own Docker page while the stacks
+   were unreachable would therefore be **swallowed** rather than adopted. Not lost configuration —
+   the line stays in Unraid's file — but a change StaXX should have noticed and did not.
+2. **The stored order lives on the flash drive and should stay there.** It survived the probe
+   untouched and is readable whatever else is mounted. Part B moves the *stacks*; it should not move
+   the bookkeeping that has to be readable when the stacks are not.
+
+So the order within Part C changes: the autostart bridge moves from *first, because it loses
+configuration* to **still worth doing, because it hides a change** — and `staxx_scan_stacks()`
+itself becomes the one that matters most, since the prune bug was the real instance of this and the
+bridge only ever looked like one.
