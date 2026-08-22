@@ -104,6 +104,8 @@ forty-five seconds after the last one goes away.
 Opening a stack gives you three ways to look at the same file: the **form**, the **file**, or both
 side by side with the highlight following you between them.
 
+![Form and file side by side](docs/images/editor-split.jpg)
+
 The form is drawn from the file. More than twenty groups of settings are covered — the image and its
 web page port, networks, ports, folders, variables, devices, labels, health checks, resource limits,
 build instructions, start-up order between containers, secrets, configuration files, profiles, name
@@ -133,6 +135,16 @@ world map, pick a device from the hardware this server actually has.
 
 **Everything beside the compose file is editable too** — notes, certificates, settings files — each
 one a tab. Add a settings-shaped file and StaXX offers to wire it in for you.
+
+**Asking for help without handing over your passwords.** One switch hides every value marked as a
+secret, in the form *and* in the file, so you can screenshot your own stack for a forum thread. While
+it is on the whole window is locked, because a masked value must never be saved back over a real one.
+
+![The file with secrets hidden](docs/images/sanitise-file.jpg)
+
+The picture above this section was taken that way — the database name and user are still readable,
+because they are not secrets. Only what is marked gets hidden, and the mark is the same one the form
+uses to decide whether to hide a field as you type it.
 
 ---
 
