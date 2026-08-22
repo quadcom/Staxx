@@ -208,6 +208,61 @@ ok('file is untouched by a refused save', file_get_contents($cfgFile) === $befor
 $tmpGlob = glob($cfgFile.'.tmp-*');
 ok('no temp file left behind after a refusal', $tmpGlob === [] || $tmpGlob === false);
 
+// A save that changes BOTH paths in the same request must be checked against
+// each other's NEW value, not the stale one still on disk — the per-key
+// validator alone compares each posted value against the other's old value,
+// which two new paths that only overlap each other would sail through.
+//
+// The nested folders are created for real first, and every refusal below
+// asserts on the MESSAGE. Without both, these cases pass for the wrong
+// reason: a path whose parent does not exist is refused by the older
+// "that folder does not exist" rule long before the overlap check is
+// reached, and a test that only asks "was it refused?" cannot tell the two
+// apart.
+$pairStack  = '/mnt/user/appdata/zzb1-pair-stack-'.getmypid();
+$pairNested = $pairStack.'/archive';
+@mkdir($pairNested, 0755, true);
+$overlapMsg = 'cannot be the same, or sit inside one another';
+
+$before = file_get_contents($cfgFile);
+$err = ''; $reload = null; $saved = null;
+$okPair = staxx_settings_save(['STACK_ROOT' => $pairStack, 'ARCHIVE_ROOT' => $pairNested], $err, $reload, $saved);
+ok('save refuses a new ARCHIVE_ROOT nested inside a new STACK_ROOT', !$okPair, $err);
+ok('...and refuses it for the overlap, not for a missing folder',
+   strpos($err, $overlapMsg) !== false, $err);
+ok('file is untouched by that refused pair save', file_get_contents($cfgFile) === $before);
+
+$pairArchive = '/mnt/user/appdata/zzb1-pair-archive-'.getmypid();
+$pairNested2 = $pairArchive.'/stacks';
+@mkdir($pairNested2, 0755, true);
+
+$before = file_get_contents($cfgFile);
+$err = ''; $reload = null; $saved = null;
+$okPair2 = staxx_settings_save(['ARCHIVE_ROOT' => $pairArchive, 'STACK_ROOT' => $pairNested2], $err, $reload, $saved);
+ok('save refuses a new STACK_ROOT nested inside a new ARCHIVE_ROOT', !$okPair2, $err);
+ok('...and refuses that one for the overlap too',
+   strpos($err, $overlapMsg) !== false, $err);
+ok('file is untouched by the reverse refused pair save', file_get_contents($cfgFile) === $before);
+
+$pairOkStack   = '/mnt/user/appdata/zzb1-pair-ok-stack-'.getmypid();
+$pairOkArchive = '/mnt/user/appdata/zzb1-pair-ok-archive-'.getmypid();
+$err = ''; $reload = null; $saved = null;
+$okPair3 = staxx_settings_save(['STACK_ROOT' => $pairOkStack, 'ARCHIVE_ROOT' => $pairOkArchive], $err, $reload, $saved);
+ok('save accepts both paths changed at once when they do not overlap', $okPair3, $err);
+
+// Cleared on the way out rather than here. The accepted save above leaves
+// STACK_ROOT naming a throwaway path for the rest of this process — staxx_cfg()
+// memoises, so it cannot be put back mid-run — and the folder gets created on
+// demand by whatever asks for it next. Removing it inline just means it comes
+// straight back. Every one of these is empty, so rmdir is the safe call: it
+// refuses outright if anything unexpected turns out to be inside.
+register_shutdown_function(function () use (
+  $pairStack, $pairNested, $pairArchive, $pairNested2, $pairOkStack, $pairOkArchive
+) {
+  foreach ([$pairNested, $pairStack, $pairNested2, $pairArchive,
+            $pairOkStack, $pairOkArchive] as $d) @rmdir($d);
+});
+
 // Worth knowing when reading a failure here: staxx_cfg() caches the parsed
 // config in a per-request static, and this whole file is one request. So the
 // "before" values staxx_settings_save() compares against are the ones that

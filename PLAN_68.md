@@ -503,8 +503,20 @@ other, read through a cached config. So a single save that changes both paths at
 new value against the other's *old* one, and an overlap between the two new values passes both
 checks. Narrow — it needs both changed in one submit — but it is a real hole in the rule just
 completed. The fix is to validate the two as a pair against what is actually being submitted, which
-is a change to how the validator is called rather than a patch inside it. **Not done; decide
-separately.**
+is a change to how the validator is called rather than a patch inside it.
+
+**Closed the same day.** The save now settles the pair once, after it has worked out every value it
+is about to write and before anything reaches disk, comparing the two paths this save will actually
+leave in force. The per-key checks stay: they catch the ordinary single change, and the move
+machinery calls one of them directly as its own guard, where only one of the two paths is in play.
+
+Worth recording, because it is the second time today a test would have passed for the wrong reason:
+**the first version of these cases never reached the new check at all.** Both nested paths had
+parents that did not exist, so the older "that folder does not exist" rule refused them first, and a
+test that only asks *was it refused?* cannot tell the two apart. Fixed by creating the folders for
+real and asserting on the message. Its sibling: the accepted case leaves a stacks folder behind,
+because setting the path makes the folder on demand — and removing it inline does not work, since
+the config is memoised for the rest of the run and the next thing to ask simply makes it again.
 
 ### Piece 2 landed 2026-08-22 — the move, with the failing case proved
 

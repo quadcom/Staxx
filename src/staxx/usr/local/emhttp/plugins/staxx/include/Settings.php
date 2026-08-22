@@ -366,6 +366,25 @@ function staxx_settings_save(
     $overlay[$key] = $stored;
   }
 
+  // The per-key checks inside staxx_settings_validate_path() each compare
+  // against the OTHER path read fresh off disk — right for an ordinary
+  // single-key change, and for Relocate.php's direct call, which only ever
+  // has one of the two to check. But a save that posts both paths at once
+  // compares each new value against the other's now-stale old value, so two
+  // new paths that overlap each other pass both checks. This is the
+  // authoritative check: it compares the two values this save will actually
+  // leave in force. Both are already normalised (the validator rtrims, and
+  // both resolvers rtrim too), so nothing further is done to them here.
+  $newStackRoot   = $overlay['STACK_ROOT']   ?? staxx_stack_root();
+  $newArchiveRoot = $overlay['ARCHIVE_ROOT'] ?? staxx_archive_root();
+  if ($newStackRoot === $newArchiveRoot
+      || strpos($newStackRoot, $newArchiveRoot.'/') === 0
+      || strpos($newArchiveRoot, $newStackRoot.'/') === 0) {
+    $error = 'The stacks folder and the archive folder cannot be the same, or sit inside one '
+           . 'another — choose two locations that do not overlap.';
+    return false;
+  }
+
   if (!is_dir(STAXX_CFG_DIR) && !@mkdir(STAXX_CFG_DIR, 0755, true)) {
     $error = 'Could not create '.STAXX_CFG_DIR.'.';
     return false;
