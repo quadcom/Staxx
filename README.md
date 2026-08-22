@@ -25,9 +25,9 @@ underneath stays an ordinary compose file that runs anywhere.
 
 ## The stacks page
 
-**This page is a view of one folder on your server.** What you see is what is on disk: a subfolder
-holding a compose file is a **stack** and gets a row; a subfolder without one is just a folder. Add a
-compose file by hand and its row appears; delete the folder and the row goes. No database, no index.
+**This page is a view of one folder on your server.** A subfolder with a compose file in it is a
+**stack**; one without is just a folder. Add a compose file by hand and its row appears; delete the
+folder and it goes.
 
 ![A folder opened up, with the stacks inside it](docs/images/stacks-grid.jpg)
 
@@ -38,7 +38,7 @@ Every stack is a row, and each container inside it gets its own row.
   given an Nvidia card is still labelled as such.
 - **State** per container, with uptime and what its health check says.
 - **Four buttons** — web page, logs, project page, Unraid support thread. One with nowhere to go is
-  greyed rather than removed.
+  greyed.
 - **Its address**, with Unraid's own address-and-port substitution.
 - **Badges** for an update waiting, a withdrawn tag, an image that moved registry, a copy that has
   drifted from its source, a container built from an image the file no longer names.
@@ -52,8 +52,7 @@ it and can start, stop, check or update the lot.
 
 ![The row menu](docs/images/stack-row-menu.jpg)
 
-The page listens to Docker's own events rather than polling, so a container stopped elsewhere shows
-as stopped straight away.
+Rows follow Docker's own events, so a container stopped elsewhere shows as stopped straight away.
 
 ---
 
@@ -69,7 +68,7 @@ folders, variables, devices, labels, health check, resource limits, build, start
 configs, profiles, name servers, permissions, internal ports, variable files and logging — plus the
 file's own top-level networks, volumes, secrets and configs. You pick which groups are on screen.
 
-Anything the form cannot take apart appears in an **Advanced** block rather than being hidden.
+Anything the form cannot take apart appears in an **Advanced** block.
 
 **While you type**
 
@@ -78,7 +77,7 @@ Anything the form cannot take apart appears in an **Advanced** block rather than
 - Checks the folders you name exist, and offers to create the ones that do not.
 - Flags a placeholder nothing will fill in, and a missing companion file.
 - Warns when a port is already taken.
-- Runs the file past Docker itself, which catches plain misspellings.
+- Runs the file past Docker itself.
 - None of it blocks a save.
 
 **Pickers** for a folder on the server, a timezone off a world map, and a device from this server's
@@ -86,11 +85,11 @@ hardware.
 
 **Every file in the stack folder is a tab** — the compose file, `.env`, an override file, anything
 else. Create, rename, delete, download, or upload several at once. Certificates, keys and other
-binary files are allowed; a non-text file gets a panel with download and replace instead of a text
-box. Add a settings-shaped file and StaXX offers to wire it in.
+binary files are allowed; a non-text file gets a download-and-replace panel. Add a settings-shaped
+file and StaXX offers to wire it in.
 
-**Sanitise** hides every value marked secret, in the form and the file, for screenshots. The window
-locks while it is on.
+**Sanitise** hides every value marked secret, in the form and the file. The window locks while it
+is on.
 
 ![The file with secrets hidden](docs/images/sanitise-file.jpg)
 
@@ -110,15 +109,14 @@ started.
 
 ![An app's details](docs/images/apps-detail.jpg)
 
-Each setting's description becomes the comment beside it, so the form has real help text. Required
-and masked settings get their marks. Logo, category, project page and support thread become metadata.
+Each setting's description becomes the comment beside it. Required and masked settings get their
+marks. Logo, category, project page and support thread become metadata.
 
 Ports, folders, variables, devices, labels, extra arguments, privileged mode and the web address all
 convert, along with about thirty of the loose command-line flags an app can carry. **Any flag that
 does not convert is named in a warning above the form**, and so is any value StaXX had to guess.
 
-The catalogue is downloaded once, on first use, and kept in temporary storage — **nothing goes on
-your flash drive**.
+The catalogue is downloaded once, on first use, and kept off your flash drive.
 
 StaXX can also catch an app installed from Unraid's *own* Apps page and make it a stack. Three
 settings: bring them in, ask first, or leave them to Unraid.
@@ -134,37 +132,37 @@ Unraid template, Compose Manager projects, containers with nothing behind them, 
 imported. Each row says where it came from and where it will land — one folder for everything, or
 **"Match my Docker folders"**, using the folders from FolderView.
 
-**Importing only copies.** Nothing at the source is changed. What arrives is **held still** — marked
-as needing a look, with start and stop refused until you say otherwise.
+**Importing only copies** — nothing at the source changes. What arrives is locked until you have
+reviewed it.
 
 Taking one over afterwards:
 
-- **From a template** — the running container is stopped and set aside under another name, and the
-  new stack starts in its place. If it fails to start, the old one comes back.
-- **From a Compose Manager project** — the new stack takes the name Docker already knows, so it
-  rebuilds those containers rather than making a second copy.
+- **From a template** — the running container is set aside under another name and the new stack
+  starts in its place. If it fails, the old one comes back.
+- **From a Compose Manager project** — the new stack takes the name Docker already knows, and
+  rebuilds those containers in place.
 
-A row says so if a copy has since drifted from the thing it was copied from.
+A row says so if a copy has drifted from its source.
 
 ---
 
 ## Updates
 
-**Checking.** StaXX asks each image's registry whether a newer version of the same tag exists.
-Nothing is downloaded. It tells an ordinary update from a locally built image whose base moved, a
+**Checking.** StaXX asks each image's registry whether a newer version of the same tag exists —
+nothing is downloaded. It tells an ordinary update from a locally built image whose base moved, a
 withdrawn tag, and an app that changed registry.
 
-**Watching the author.** Where an image points at a public project, StaXX can compare your file with
-the example that project publishes, and report settings the author has added or dropped. It never
-changes anything, and findings can be waved away.
+**Watching the author.** Where an image points at a public project, StaXX compares your file with
+the example that project publishes and reports settings the author has added or dropped. Findings can
+be waved away.
 
 **Applying.** Three modes: show it, wait for you to press Update, or install itself after a delay you
 set. A stack or a single container can overrule the setting in its own file. There is a countdown you
 can pause, a quiet time of day, a global pause, a queue, "skip this version", and release notes where
 the publisher provides them.
 
-**Rolling back.** Up to five previous versions of each image are kept, so a bad update can be undone.
-Old images are cleaned up only when nothing needs them.
+**Rolling back.** Up to five previous versions of each image are kept. Old images are cleaned up
+when nothing needs them.
 
 Checks run daily or weekly at a time you pick, and Unraid's notifications report what was found.
 
@@ -180,8 +178,8 @@ to roughly a hundred.
 Start, stop, restart, update and remove work on a whole stack or one container. Long commands run
 detached and stream their output.
 
-**Restart applies your edits.** It rebuilds whatever no longer matches the file and restarts the
-rest, leaving the others and their logs alone.
+**Restart applies your edits** — it rebuilds whatever no longer matches the file and restarts the
+rest.
 
 The **Manage** tab gives you, per container: a live log you can search and download, a root command
 line inside the container, and a file browser inside it that can read, edit, rename and delete.
@@ -194,22 +192,21 @@ The command line is off until you turn it on.
 
 ## Autostart
 
-StaXX writes to Unraid's own boot list and reads it back, so the two cannot disagree — a change made
-on Unraid's Docker page is picked up rather than overwritten.
+StaXX writes to Unraid's own boot list and reads it back, so a change made on Unraid's Docker page
+is picked up rather than overwritten.
 
 Folders, stacks and containers are dragged into position, and that order is the order they start in.
 Any entry can be followed by a pause in seconds. A row warns you when a stack's containers have ended
 up scattered through the list.
 
-Unraid *starts* containers at boot, it does not build them, so a stack has to be started by hand once
-first.
+A stack has to be started by hand once before it can start at boot.
 
 ---
 
 ## Removing a stack
 
-Nothing is deleted. The containers are stopped and removed, then the whole folder is zipped into an
-archive folder outside the stacks tree, and the folder taken away.
+Nothing is deleted. The containers are removed, then the whole folder is zipped into an archive
+folder outside the stacks tree and the folder taken away.
 
 The confirmation names where the zip will go, and the settings panel lists what has been archived.
 Getting a stack back is unzipping it by hand.
@@ -233,10 +230,10 @@ Getting a stack back is unzipping it by hand.
 
 1. **Never require non-standard syntax.** A file StaXX writes runs unmodified anywhere Docker Compose
    does.
-2. **Never lose what the author wrote.** Comments, shortcuts, values and intent survive an edit. A
-   file that is genuinely wrong gets fixed, and you are told what changed.
+2. **Never lose what the author wrote.** Comments, shortcuts, values and intent survive an edit.
+   A file that is genuinely wrong gets fixed, and you are told what changed.
 3. **Degrade gracefully.** A file with no extras still produces a usable form.
-4. **Own the render.** Layout and controls are drawn by StaXX, not injected into somebody else's page.
+4. **Own the render.** Layout and controls are drawn by StaXX, not injected into another page.
 
 ---
 
