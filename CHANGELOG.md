@@ -2,10 +2,6 @@
 
 What changed, newest first. Versions are dates, matching the plugin manifest.
 
-The words used for stages here: **alpha** means only the people building it can run it; **beta**
-means it is packaged and other people can install it; **1.0** means it no longer needs
-apologising for.
-
 ---
 
 ## 2026.08.21 — released 2026-08-22
@@ -15,8 +11,9 @@ covers the state of the whole plugin rather than a list of differences.
 
 ### Where it stands
 
-Alpha, in the sense above: it runs the author's own containers every day, but nobody else can
-install it yet. The blockers are packaging, not features — the installer manifest still has
+In daily use on the author's own server, and far enough along to judge on its merits. What it is
+not yet is packaged: installing means copying the plugin files onto a server yourself, there is no
+one-click install, and it is not listed in Community Applications. The installer manifest still has
 deliberate blanks where the author name, repository and checksums go, so a premature publish fails
 loudly instead of quietly shipping something broken.
 
