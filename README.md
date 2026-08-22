@@ -32,9 +32,11 @@ These are the constraints the project is built around, in priority order.
    compose spec permits and ignores. What an individual setting is *for* lives in the ordinary
    comment beside it, with two marks (`-!S` secret, `-!R` required) for the only two things a comment
    cannot say.
-2. **Never destroy a hand-authored file.** Editing through the form preserves comments, ordering,
-   anchors, and formatting. Saving a normalised round-trip over someone's file is a bug, not a
-   trade-off.
+2. **Never lose what the author wrote.** Editing through the form preserves their comments, their
+   anchors, their values and their intent. What is protected is the meaning of the file, not the
+   order of its bytes: the same configuration written in a different order is the same stack.
+   Losing something is the bug — as is changing a file without saying so. A file that is genuinely
+   wrong gets fixed rather than refused, and you are told what changed and can put it back.
 3. **Degrade gracefully.** A compose file with no metadata of either kind still produces a usable
    form, with names and control types worked out from the file itself.
 4. **Own the render, don't inject into someone else's.** Grouping, lifecycle controls, and layout

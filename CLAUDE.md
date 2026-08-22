@@ -13,8 +13,17 @@ Two rules override most other judgement calls:
 
 1. **A file authored here must run unmodified under plain `docker compose up` anywhere.** UI
    metadata lives only in optional `x-unraid:` extension keys, which the compose spec ignores.
-2. **Never destroy a hand-authored file.** Comments, ordering, anchors and formatting survive a
-   write-back. A normalised round-trip over someone's file is a bug, not a trade-off.
+2. **Never lose what the author wrote.** The thing under protection is their *meaning and their
+   annotations*, not the byte order. Comments, anchors, values and intent survive a write-back.
+   Rearranging is not the harm — two files holding the same configuration in a different order are
+   the same stack. **Losing** something is the harm, and so is changing a file without saying so.
+   A file that is genuinely wrong should be *fixed*, not refused: say what was wrong, say what
+   changed, and make it undoable. A silent correction is the real danger, not an edit.
+
+   Two places where order is genuinely not neutral, so this is not a licence to normalise:
+   a comment sits on a line rather than on a key, so it has to travel with what it annotates; and a
+   YAML alias must come after its anchor, so some reorderings turn a valid file into one that will
+   not load.
 
 ## Development environment
 
