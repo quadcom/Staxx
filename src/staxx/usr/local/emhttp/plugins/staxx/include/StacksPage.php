@@ -21,6 +21,9 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Folders.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Autostart.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
+// Only for staxx_settings_read(), to read the remembered PLAN_68 Part B
+// storage-choice below — nothing else here writes a setting.
+require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
 
 $compose       = staxx_compose();
 $dockerRunning = staxx_docker_running();
@@ -39,6 +42,13 @@ $rows          = staxx_folder_layout($stacks);
 $folders       = staxx_folder_names();
 $root          = staxx_stack_root();
 $canRun        = $compose['available'] && $dockerRunning;
+// PLAN_68 Part B: the same "is this on flash" test the volume-path warning
+// below already makes, reused rather than asked a second way. Read straight
+// from the settings allowlist's own getter rather than staxx_cfg() directly,
+// so a config predating this key still gets the right default ('ask') and a
+// masked/coerced value is never possible here either.
+$onFlash       = strpos($root, '/boot/') === 0;
+$storageChoice = staxx_settings_read()['STORAGE_CHOICE'];
 
 $stackCount     = count(array_filter(array_keys($projects), fn($p) => $p !== ''));
 $unmanagedCount = count($projects[''] ?? []);
@@ -191,6 +201,25 @@ endif;
       <div>
         <strong><?= _('The boot-start list could not be updated.') ?></strong>
         <?= htmlspecialchars($syncError) ?>
+      </div>
+    </div>
+  <? endif; ?>
+
+  <!-- PLAN_68 Part B: a one-time offer, not a standing warning — shown only
+       while the stacks folder is still on flash AND nobody has answered this
+       yet. "Not now" (wired in stacks.js) writes STORAGE_CHOICE=declined so
+       this never asks twice; the settings panel's own line for STACK_ROOT is
+       the way back for anyone who changes their mind, per PLAN_68 section 5. -->
+  <? if ($onFlash && $storageChoice === 'ask'): ?>
+    <div class="staxx-notice" id="staxx-storage-banner">
+      <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+      <div>
+        <strong><?= _('Your stacks are stored on the USB flash drive.') ?></strong>
+        <?= _('Flash storage can only be written a limited number of times before it wears out, and it is the least redundant thing in the machine. A drive pool is available before Docker even starts, so nothing is gained by staying on flash.') ?>
+        <div class="staxx-buttons staxx-buttons--inline">
+          <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-storage-banner-open"><?= _('Choose a location') ?></button>
+          <button type="button" class="staxx-btn" id="staxx-storage-banner-decline"><?= _('Not now') ?></button>
+        </div>
       </div>
     </div>
   <? endif; ?>
@@ -965,6 +994,32 @@ endif;
       <div class="staxx-buttons staxx-buttons--inline">
         <button type="button" class="staxx-btn" id="staxx-settings-cancel"><?= _('Cancel') ?></button>
         <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-settings-save"><?= _('Save') ?></button>
+      </div>
+    </div>
+
+  </dialog>
+
+  <!-- ------------------------------------------------------------ storage -- -->
+
+  <!-- PLAN_68 Part B: the chooser behind both the one-time banner above and
+       the settings panel's own "Move it" line. Reuses every .staxx-settings
+       class rather than a stylesheet of its own — this is the same shape of
+       dialog, a list of fields and a Close button, so a second look and a
+       second animation would only be two ways of saying the same thing. The
+       body starts empty; script fills it from the storage-options action
+       before showModal(). -->
+  <dialog class="staxx-settings" id="staxx-storage-dlg" aria-labelledby="staxx-storage-title">
+
+    <div class="staxx-settings-head">
+      <h3 class="staxx-settings-title" id="staxx-storage-title"><?= _('Where should stacks live?') ?></h3>
+    </div>
+
+    <div class="staxx-settings-body" id="staxx-storage-body"></div>
+
+    <div class="staxx-settings-foot">
+      <p class="staxx-settings-msg" id="staxx-storage-msg" role="status" aria-live="polite"></p>
+      <div class="staxx-buttons staxx-buttons--inline">
+        <button type="button" class="staxx-btn" id="staxx-storage-close"><?= _('Close') ?></button>
       </div>
     </div>
 

@@ -604,3 +604,47 @@ invents a share and never suggests a folder the mover would drain — but somebo
 appdata on it is told to make a share first rather than being offered anything. The refinement, if
 it is wanted: offer such a pool anyway and let the person supply the folder themselves, with the
 share warning attached. That belongs with the chooser, not here.
+
+### Piece 4 landed 2026-08-22 — Part B is built
+
+The offer, the chooser, the flash confirmation, and the remembered answer. Verified on the server:
+every include lints, the settings suite passes, his config is byte-identical afterwards, and the
+banner's own condition returns true on his box — stacks on flash, question unanswered.
+
+**Where the chooser lives, and why not the installer.** There is no first-run flow in this plugin and
+the installer has nobody watching it, so the only honest place to ask is the page. The answer is
+remembered in three states — never asked, settled, declined — because two cannot say what is needed:
+a decline has to be remembered *and* distinguishable from never having asked, or the banner either
+nags forever or vanishes for people who never saw it.
+
+**The reload is driven off the job finishing, not off the reply.** This was a mistake in the brief,
+caught by the half that could see it: starting the move answers immediately, long before the setting
+is switched inside the job, so the reply cannot know whether anything worked. The page reloads only
+on a successful exit code; a failure leaves the log open, and the stacks are still where they were.
+
+**Two things corrected in review:**
+
+1. **Stepping into the chooser from the settings panel would have binned unsaved edits silently.**
+   The justification offered was that it matched the Browse button — but Browse does not close the
+   panel at all, so there was nothing to match. It now asks, worded for this case, because "discard"
+   reads oddly when the reason for closing is that something else is opening.
+2. **A pool with no reported profile is worded as exactly that** — never "not redundant", which is a
+   stronger claim than the server can support. A profile that exists but is not a redundant kind is
+   named outright rather than folded into either of the other two sentences.
+
+**Not verified, and cannot be from here:** that the thing looks right and behaves right in a browser.
+Every helper and every CSS class it uses was checked to exist, the markup balances, and both
+JavaScript checks pass — but no click has been tested. **The one to try first is the failing one:**
+point it at a path that will be refused and confirm the server's own sentence appears verbatim.
+
+## Part B status: complete, pending a look in a browser
+
+| Piece | State |
+|---|---|
+| 1. The overlap rule's missing direction, and the corrected help | done, tested on the server |
+| 2. The move — copy, verify, switch, delete | done, 28 cases, the failures are the point |
+| 3. The offer list, read from Unraid's own records | done, 19 cases |
+| 4. The offer, the chooser, the flash confirmation | done, needs a browser |
+
+**His own stacks have not been moved.** That was the decision: build the chooser, do not migrate his
+box as a side effect of building it.

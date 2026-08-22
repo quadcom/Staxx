@@ -151,6 +151,13 @@
   var settingsCancel = document.getElementById('staxx-settings-cancel');
   var settingsSave   = document.getElementById('staxx-settings-save');
 
+  // PLAN_68 Part B — where the stacks folder should live. May be null on a
+  // stale page, guarded the same way settingsModal is above.
+  var storageModal = document.getElementById('staxx-storage-dlg');
+  var storageBody  = document.getElementById('staxx-storage-body');
+  var storageMsg   = document.getElementById('staxx-storage-msg');
+  var storageClose = document.getElementById('staxx-storage-close');
+
   // The find/replace bar. May be null while the markup has not landed yet —
   // every function below that touches one of these guards on findBar first,
   // the same way yamlDots is guarded above.
@@ -15386,11 +15393,20 @@
         '<h4 class="staxx-settings-group-title">' + esc(row.group) + '</h4>' +
         (row.groupHelp ? '<p class="staxx-hint">' + row.groupHelp + '</p>' : '') +
       '</div>' : '';
+    // PLAN_68 Part B section 5: the way back to the storage chooser for
+    // anyone who declined the one-time banner. One entry point, reached two
+    // ways — this line and the banner both open the same #staxx-storage-dlg,
+    // never a second chooser of its own.
+    var storageLine = (row.key === 'STACK_ROOT' && (value === '/boot' || value.indexOf('/boot/') === 0))
+      ? '<p class="staxx-hint">Stacks are on the flash drive. ' +
+        '<button type="button" class="staxx-link-btn" id="staxx-open-storage-settings">' +
+        'Move them somewhere else</button></p>'
+      : '';
     return head + '<div class="staxx-field">' +
              '<span>' + esc(row.label) + '</span>' +
              control +
              '<span class="staxx-hint">' + row.help + '</span>' +
-           '</div>';
+           '</div>' + storageLine;
   }
 
   function settingsControlValue(row) {
@@ -15547,9 +15563,34 @@
 
     settingsBody.addEventListener('click', function (event) {
       var btn = event.target.closest('[data-browse]');
-      if (!btn) return;
-      var input = document.getElementById(btn.dataset.browse);
-      if (input) pickerOpen(input);
+      if (btn) {
+        var input = document.getElementById(btn.dataset.browse);
+        if (input) pickerOpen(input);
+        return;
+      }
+      // The STACK_ROOT row's own way back to the storage chooser (PLAN_68
+      // section 5). Stepping sideways into another dialog still loses
+      // anything typed in this panel, so it asks first — the same question
+      // Close asks, worded for this case, because "discard" reads oddly when
+      // the reason for closing is that something else is opening. Asked here
+      // rather than through closeSettingsAsk() because that answers
+      // asynchronously and the chooser must open only once this has really
+      // closed, never beside it.
+      if (event.target.closest('#staxx-open-storage-settings')) {
+        if (!settingsDirty()) { settingsModal.close(); openStorageChooser(); return; }
+        askConfirm({
+          title: 'Discard changes?',
+          bodyHtml: '<p>Settings has changes that have not been saved. Choosing where stacks ' +
+                    'live closes this panel and loses them.</p>',
+          goLabel: 'Discard and choose'
+        }).then(function (go) {
+          closeConfirm();
+          if (!go) return;
+          settingsModal.close();
+          openStorageChooser();
+        });
+        return;
+      }
     });
 
     settingsCancel.addEventListener('click', closeSettingsAsk);
@@ -15586,6 +15627,233 @@
       settingsOpenValues = null;
     });
   }
+
+  /* ---------------------------------------------------- storage chooser --
+   * PLAN_68 Part B: the one-time offer to move the stacks folder off the
+   * flash drive, and the dialog it opens onto — reached from the page banner
+   * above and from the settings panel's own "Move them somewhere else" line
+   * (see settingsFieldHtml()'s STACK_ROOT case). Three server actions carry
+   * this: storage-options (read-only), relocate (starts the move as a job —
+   * followed with the same track()/tickJobs() every other job here uses) and
+   * store-choice (remembers ask/chosen/declined so nothing here ever nags
+   * twice).
+   */
+
+  // The last storage-options reply, kept only so the "Move here" and "Keep
+  // on flash" handlers below can look an option back up by the index the
+  // markup was built with — never re-fetched to answer a click, since the
+  // click already has everything it needs to hand.
+  var storageOptions = null;
+
+  // An absent profile is not the opposite of redundant — it means the pool
+  // never reported one, which is a different and weaker claim, so this never
+  // collapses the two into "not redundant". A profile that is neither empty
+  // nor one of the redundant kinds (e.g. "single") gets named rather than
+  // silently folded into either of the other two sentences.
+  function storageRedundancyLine(opt) {
+    if (opt.kind !== 'pool') return '';
+    if (opt.redundant) return 'Reports a "' + esc(opt.fsProfile) + '" redundancy profile.';
+    if (opt.fsProfile) return 'Reports a "' + esc(opt.fsProfile) + '" profile, which is not one of the redundant kinds.';
+    return 'This pool does not report a redundancy profile.';
+  }
+
+  function storageKindLine(opt) {
+    if (opt.kind === 'pool') {
+      return 'Reached directly, rather than through Unraid’s share layer, which is both faster ' +
+        'and safer here. ' + storageRedundancyLine(opt);
+    }
+    if (opt.kind === 'overlay') {
+      return 'Works, but goes through Unraid’s share layer — if the pool behind it ever ' +
+        'fills, a new stack could quietly land on the array instead.';
+    }
+    return 'Where your stacks already are.';
+  }
+
+  function storageFreeLine(opt) {
+    return (opt.freeBytes === null || opt.freeBytes === undefined)
+      ? 'Free space not reported.' : bytes(opt.freeBytes) + ' free.';
+  }
+
+  // The path box is editable — somebody may want a different folder than the
+  // one suggested. Whatever is typed there goes to relocate() as `dest`
+  // exactly as submitted; the existing path validator on the server is what
+  // actually checks it, and its refusal is shown verbatim, never reworded.
+  function storageOptionHtml(opt, idx) {
+    if (opt.kind === 'flash') {
+      return '<div class="staxx-field">' +
+        '<span>' + esc(opt.name) + ' (current location)</span>' +
+        '<div class="staxx-boxline">' +
+          '<code>' + esc(opt.path) + '</code>' +
+          '<button type="button" class="staxx-btn" data-storage-flash="1">Keep stacks on flash</button>' +
+        '</div>' +
+        '<span class="staxx-hint">' + storageKindLine(opt) + '</span>' +
+      '</div>';
+    }
+    return '<div class="staxx-field">' +
+      '<span>' + esc(opt.name) + ' (' + esc(opt.kind) + ')</span>' +
+      '<div class="staxx-boxline">' +
+        '<input type="text" class="staxx-input" id="staxx-storage-path-' + idx + '" ' +
+             'spellcheck="false" value="' + esc(opt.path) + '">' +
+        '<button type="button" class="staxx-btn staxx-btn--primary" data-storage-move="' + idx +
+             '">Move stacks here</button>' +
+      '</div>' +
+      '<span class="staxx-hint">' + storageKindLine(opt) + ' ' + storageFreeLine(opt) + '</span>' +
+    '</div>';
+  }
+
+  // A pool visible in Unraid but not offered here, with no reason given,
+  // would read as a broken tool rather than a deliberate refusal — so every
+  // refusal the server made is shown, verbatim, alongside what was offered.
+  function storageUnavailableHtml(list) {
+    if (!list || !list.length) return '';
+    return '<div class="staxx-field">' +
+      '<span>Not offered</span>' +
+      '<ul class="staxx-confirm-list">' +
+        list.map(function (u) {
+          return '<li><strong>' + esc(u.name || u.kind) + '</strong>: ' + esc(u.reason) + '</li>';
+        }).join('') +
+      '</ul>' +
+    '</div>';
+  }
+
+  function openStorageChooser() {
+    if (!storageModal) return;
+    storageMsg.textContent = '';
+    storageBody.innerHTML = '<p class="staxx-hint">Checking what is available…</p>';
+    storageModal.showModal();
+
+    call('storage-options', {}).then(function (res) {
+      if (!res.ok) {
+        storageBody.innerHTML = '';
+        storageMsg.textContent = res.error || 'Could not read what is available.';
+        return;
+      }
+      storageOptions = res;
+      // Flash is offered last, and only ever behind the confirmation below —
+      // never given a plain "Move here" button like the others, since
+      // staying on flash is the one choice that needs a second, deliberate
+      // step before it takes effect.
+      var order = res.offered.map(function (o, i) { return i; })
+        .sort(function (a, b) { return (res.offered[a].kind === 'flash' ? 1 : 0) - (res.offered[b].kind === 'flash' ? 1 : 0); });
+      storageBody.innerHTML =
+        '<p class="staxx-hint">The current stacks folder is copied to the new location, checked ' +
+        'byte for byte, and only removed from where it is now once that check has passed — ' +
+        'nothing is deleted before the copy is proved good.</p>' +
+        order.map(function (i) { return storageOptionHtml(res.offered[i], i); }).join('') +
+        storageUnavailableHtml(res.unavailable);
+    });
+  }
+
+  function startStorageMove(dest) {
+    storageMsg.textContent = 'Starting…';
+    call('relocate', { dest: dest }).then(function (res) {
+      if (!res.ok) {
+        storageMsg.textContent = res.error || 'Could not start the move.';
+        return;
+      }
+      storageModal.close();
+      openLogDialog('Moving stacks', 'Working…');
+
+      // relocate only STARTS the job and answers straight away — the actual
+      // copy-verify-switch-delete runs inside it, so success can only be
+      // known once the job itself reports its exit code, never from this
+      // reply. A non-zero exit leaves the log open with whatever the job
+      // said went wrong; the stacks are still exactly where they were.
+      track(res.job, {
+        show: true,
+        done: function (job) {
+          if (job.exit !== 0) return;
+          // The stacks folder just changed under it, so every row and path
+          // already drawn on this page describes a location that no longer
+          // exists — reloaded only now that the job has actually finished,
+          // never merely because it started.
+          call('store-choice', { choice: 'chosen' }).then(function () { location.reload(); });
+        }
+      });
+    });
+  }
+
+  // The PLAN_65 double-confirmation shape, reused rather than a second
+  // dialog: a checkbox, then a button, both asked fresh every time. Skipped
+  // when the box was not booted from removable flash at all (Unraid's newer
+  // internal-drive boot) — lecturing about wear and redundancy that do not
+  // apply here would just teach people to stop reading these.
+  function confirmStorageFlash() {
+    var flash = storageOptions && storageOptions.offered.filter(function (o) { return o.kind === 'flash'; })[0];
+    var removable = flash ? flash.removable : null;
+    var gated = removable !== false;
+
+    askConfirm({
+      title: 'Keep stacks on the flash drive?',
+      bodyHtml: gated
+        ? '<p>Flash storage can only be written a limited number of times before it wears out, and ' +
+          'it is the least redundant thing in the machine.</p>' +
+          '<label class="staxx-sectionrow"><input type="checkbox" id="staxx-storage-flash-ack"> ' +
+          'I understand, and want to keep stacks on the flash drive.</label>'
+        : '<p>This server boots from an internal drive rather than removable flash, so the usual ' +
+          'flash wear and redundancy risk does not apply here.</p>',
+      goLabel: 'Keep on flash'
+    }).then(function (go) {
+      closeConfirm();
+      if (!go) return;
+      call('store-choice', { choice: 'chosen' }).then(function (res) {
+        if (!res.ok) { failed('Could not save your choice', res.error); return; }
+        if (storageModal && storageModal.open) storageModal.close();
+        var banner = document.getElementById('staxx-storage-banner');
+        if (banner) banner.remove();
+      });
+    });
+
+    // Same override confirmClash() makes above: only this question gates its
+    // own Go button on a checkbox, and only when there is one to gate on —
+    // the internal-drive wording above has nothing to tick.
+    if (gated) {
+      confirmGo.disabled = true;
+      var ack = confirmBody.querySelector('#staxx-storage-flash-ack');
+      if (ack) ack.addEventListener('change', function () { confirmGo.disabled = !ack.checked; });
+    }
+  }
+
+  if (storageModal) {
+    storageBody.addEventListener('click', function (event) {
+      var moveBtn = event.target.closest('[data-storage-move]');
+      if (moveBtn) {
+        var idx = Number(moveBtn.dataset.storageMove);
+        var opt = storageOptions && storageOptions.offered[idx];
+        if (!opt) return;
+        var input = document.getElementById('staxx-storage-path-' + idx);
+        startStorageMove(input ? input.value : opt.path);
+        return;
+      }
+      if (event.target.closest('[data-storage-flash]')) confirmStorageFlash();
+    });
+
+    if (storageClose) storageClose.addEventListener('click', function () { storageModal.close(); });
+
+    // Same hit-test every dialog here uses: <dialog> fires no backdrop click
+    // of its own, because a click on the backdrop targets the dialog element.
+    storageModal.addEventListener('click', function (event) {
+      if (event.target !== storageModal) return;
+      var r = storageModal.getBoundingClientRect();
+      if (event.clientX < r.left || event.clientX > r.right ||
+          event.clientY < r.top  || event.clientY > r.bottom) storageModal.close();
+    });
+  }
+
+  var storageBannerOpen = document.getElementById('staxx-storage-banner-open');
+  if (storageBannerOpen) storageBannerOpen.addEventListener('click', openStorageChooser);
+
+  // "Not now" is remembered so the banner never asks twice — see PLAN_68
+  // section 5. The settings panel's own line for STACK_ROOT is the only way
+  // back to the chooser once this is clicked.
+  var storageBannerDecline = document.getElementById('staxx-storage-banner-decline');
+  if (storageBannerDecline) storageBannerDecline.addEventListener('click', function () {
+    call('store-choice', { choice: 'declined' }).then(function (res) {
+      var banner = document.getElementById('staxx-storage-banner');
+      if (!res.ok) { failed('Could not save your choice', res.error); return; }
+      if (banner) banner.remove();
+    });
+  });
 
   /* --------------------------------------------------------- context menu -- */
 

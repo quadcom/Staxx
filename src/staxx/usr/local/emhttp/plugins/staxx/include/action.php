@@ -54,6 +54,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Relocate.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -1682,6 +1683,53 @@ switch ($action) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
     staxx_reply(['ok' => true, 'settings' => $saved, 'reload' => $reload]);
+
+  /* ---------------------------------------------------- moving the stacks --
+   * PLAN_68 Part B piece 4: the one-time offer to move stacks off the flash
+   * drive, and the remembered answer to it. See Relocate.php for the move
+   * itself and the storage-options reader; nothing here re-implements either.
+   */
+
+  /* ---- what could the stacks folder move to, and has this been settled ----
+   *
+   * Read-only. 'onFlash' is true when the CURRENT stacks folder is /boot or
+   * sits under it — the same test staxx_storage_options() itself makes when
+   * deciding whether to offer flash as "where it already is".
+   */
+  case 'storage-options':
+    $current = staxx_stack_root();
+    $options = staxx_storage_options();
+    staxx_reply([
+      'ok'          => true,
+      'current'     => $current,
+      'onFlash'     => $current === '/boot' || strpos($current, '/boot/') === 0,
+      'choice'      => staxx_settings_read()['STORAGE_CHOICE'],
+      'offered'     => $options['offered'],
+      'unavailable' => $options['unavailable'],
+    ]);
+
+  // ---- start moving the stacks folder to a new location ----
+  case 'relocate':
+    $job = staxx_relocate_start((string)($_POST['dest'] ?? ''), $error);
+    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'job' => $job]);
+
+  /* ---- remember that the storage question has been settled ----
+   *
+   * Only 'chosen' or 'declined' are ever accepted here — never 'ask', which
+   * is the untouched default and must never be written back by this action.
+   * Written through staxx_settings_save() so the allowlist check and the
+   * atomic write are not duplicated here.
+   */
+  case 'store-choice':
+    $choice = (string)($_POST['choice'] ?? '');
+    if ($choice !== 'chosen' && $choice !== 'declined') {
+      staxx_reply(['ok' => false, 'error' => 'Choice must be "chosen" or "declined".']);
+    }
+    if (!staxx_settings_save(['STORAGE_CHOICE' => $choice], $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true]);
 
   /* ---- everything that could be imported: templates, projects, loose ----
    *

@@ -56,6 +56,11 @@ function staxx_settings_keys(): array {
     'CATCH_INSTALLS'      => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'prompt', 'false']],
     'STACK_ROOT'          => ['type' => 'path',   'default' => '/boot/config/plugins/staxx/stacks'],
     'ARCHIVE_ROOT'        => ['type' => 'path',   'default' => staxx_archive_root()],
+    // PLAN_68 Part B piece 4 — has the person settled where stacks live?
+    // Set once, automatically, the same shape as SHELL_WARNED below. 'ask'
+    // is never posted back by the store-choice action deliberately: nothing
+    // may put the question back except a person editing the setting by hand.
+    'STORAGE_CHOICE'      => ['type' => 'choice', 'default' => 'ask', 'choices' => ['ask', 'chosen', 'declined']],
     'ICON_FETCH'          => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     'IMAGE_LOOKUP'        => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     // Gates staxx_exec_start() on the server, not only the button in the

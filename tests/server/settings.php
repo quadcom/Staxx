@@ -32,11 +32,11 @@ $keys = staxx_settings_keys();
 // while proving nothing about WHICH keys are there — this list is the thing
 // worth asserting, and a key disappearing from it is a real regression.
 foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STACK_ROOT', 'ARCHIVE_ROOT',
-          'ICON_FETCH', 'IMAGE_LOOKUP', 'SHELL_ENABLED', 'SHELL_WARNED',
-          'HUB_USER', 'HUB_TOKEN', 'UPDATE_CHECK', 'UPDATE_CHECK_TIME',
-          'UPDATE_MODE', 'UPDATE_DELAY_HOURS', 'UPDATE_WINDOW',
-          'UPDATE_WINDOW_START', 'UPDATE_WINDOW_END', 'UPDATE_NOTIFY',
-          'UPDATE_RETAIN', 'UPDATE_CLEANUP'] as $k) {
+          'STORAGE_CHOICE', 'ICON_FETCH', 'IMAGE_LOOKUP', 'SHELL_ENABLED',
+          'SHELL_WARNED', 'HUB_USER', 'HUB_TOKEN', 'UPDATE_CHECK',
+          'UPDATE_CHECK_TIME', 'UPDATE_MODE', 'UPDATE_DELAY_HOURS',
+          'UPDATE_WINDOW', 'UPDATE_WINDOW_START', 'UPDATE_WINDOW_END',
+          'UPDATE_NOTIFY', 'UPDATE_RETAIN', 'UPDATE_CLEANUP'] as $k) {
   ok('has '.$k, array_key_exists($k, $keys));
 }
 
@@ -140,6 +140,14 @@ foreach ($keys as $k => $spec) {
     ok('accepts '.$k.'='.$choice, $v === $choice, $err);
   }
 }
+
+// PLAN_68 Part B piece 4 — the three settled-state values are already proven
+// accepted by the generic choices loop just above; what is worth proving on
+// top is that nothing outside the three gets in, since a typo here would
+// silently create a fourth state the rest of the plugin does not know about.
+$err = '';
+$v = staxx_settings_validate('STORAGE_CHOICE', $keys['STORAGE_CHOICE'], 'later', $err);
+ok('rejects STORAGE_CHOICE "later"', $v === '' && $err !== '', $err);
 
 $err = '';
 $v = staxx_settings_validate('UPDATE_CHECK', $keys['UPDATE_CHECK'], 'hourly', $err);
