@@ -198,13 +198,24 @@ function staxx_settings_validate_path(string $key, string $v, string &$error): s
   // has real content left afterwards ("/mnt/" -> "/mnt", never "").
   $norm = rtrim($v, '/');
 
-  // An archive sitting inside the stacks tree would be read back as a stack
-  // or a folder — the model has no way to tell a zip apart from either.
+  // The stacks folder and the archive folder must never overlap, in either
+  // direction: an archive inside the stacks tree would be read back as a
+  // stack or a folder (the model has no way to tell a zip apart from
+  // either), and a stacks folder inside the archive tree would read every
+  // old zip as a stack the moment it landed there.
   if ($key === 'ARCHIVE_ROOT') {
     $stackRoot = staxx_stack_root();
     if ($norm === $stackRoot || strpos($norm, $stackRoot.'/') === 0) {
       $error = 'The archive folder cannot be the stacks folder, or sit inside it — '
              . 'a zip file there would be mistaken for a stack. Choose a location outside it.';
+      return '';
+    }
+  }
+  if ($key === 'STACK_ROOT') {
+    $archiveRoot = staxx_archive_root();
+    if ($norm === $archiveRoot || strpos($norm, $archiveRoot.'/') === 0) {
+      $error = 'The stacks folder cannot be the archive folder, or sit inside it — '
+             . 'an old zip there would be mistaken for a stack. Choose a location outside it.';
       return '';
     }
   }

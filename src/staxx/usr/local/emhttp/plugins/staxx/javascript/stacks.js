@@ -15126,10 +15126,11 @@
     },
     {
       key: 'STACK_ROOT', control: 'path', label: 'Stack directory',
-      help: 'Root directory holding stack definitions, one subdirectory per stack. Keeping this ' +
-            'on the flash device means stacks are readable before the array starts, which matters ' +
-            'for autostart. Placing it on an array share gives more room but is unavailable until ' +
-            'the array is up.'
+      help: 'Root directory holding stack definitions, one subdirectory per stack. A storage pool ' +
+            'is mounted before Docker itself even starts, so keeping this on the flash device buys ' +
+            'nothing and only wears out the drive; a pool reporting a mirror is already redundant. ' +
+            'A path straight on a pool also skips Unraid\'s share layer, which a path under ' +
+            '/mnt/user does not.'
     },
     {
       key: 'ARCHIVE_ROOT', control: 'path', label: 'Archive folder',

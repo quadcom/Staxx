@@ -117,6 +117,21 @@ $good = '/mnt/user/appdata/zzb1-archive-test-'.getmypid();
 $v = staxx_settings_validate('ARCHIVE_ROOT', $keys['ARCHIVE_ROOT'], $good, $err);
 ok('accepts an ARCHIVE_ROOT outside it', $v === $good, $err);
 
+// The same rule in the other direction: a stacks folder must not be the
+// archive folder, or sit inside it, or an old zip would be read back as a
+// stack the moment it landed there.
+$err = '';
+$v = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], staxx_archive_root(), $err);
+ok('rejects a STACK_ROOT that IS the archive folder', $v === '' && $err !== '', $err);
+$err = '';
+$v = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'],
+                             staxx_archive_root().'/nested', $err);
+ok('rejects a STACK_ROOT inside the archive folder', $v === '' && $err !== '', $err);
+$err  = '';
+$good = '/mnt/user/appdata/zzb1-stack-test-'.getmypid();
+$v = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], $good, $err);
+ok('accepts a STACK_ROOT outside the archive folder', $v === $good, $err);
+
 foreach ($keys as $k => $spec) {
   if ($spec['type'] !== 'choice') continue;
   foreach ($spec['choices'] as $choice) {
