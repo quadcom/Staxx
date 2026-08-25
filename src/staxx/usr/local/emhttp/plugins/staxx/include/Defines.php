@@ -745,7 +745,7 @@ function staxx_image_facts(string $image, string $source, bool $wantConfig = fal
  *
  * @return array<int, array{id:string, name:string, state:string, status:string,
  *                          image:string, project:string, service:string,
- *                          configFiles:string}>
+ *                          configFiles:string, configHash:string}>
  */
 function staxx_docker_ps_raw(): array {
   static $rows = null;
@@ -754,9 +754,14 @@ function staxx_docker_ps_raw(): array {
   $rows = [];
   if (!staxx_docker_running()) return $rows;
 
+  // configHash is PLAN_71's "restart pending" fingerprint — the resolved
+  // config compose created the container from. It goes before "end", the
+  // same as every other label here, so it stays protected by the same
+  // trailing-whitespace guard rather than needing one of its own.
   $fmt = '{{.ID}}\t{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}\t'
        . '{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}\t'
-       . '{{.Label "com.docker.compose.project.config_files"}}\tend';
+       . '{{.Label "com.docker.compose.project.config_files"}}\t'
+       . '{{.Label "com.docker.compose.config-hash"}}\tend';
   $out = staxx_sh(
     escapeshellarg(staxx_docker_bin()).' ps -a --no-trunc --format '.escapeshellarg($fmt), 15
   );
@@ -764,7 +769,10 @@ function staxx_docker_ps_raw(): array {
   foreach (explode("\n", $out) as $line) {
     if (trim($line) === '') continue;
     $c = explode("\t", $line);
-    if (count($c) < 7) continue;
+    // One more required field than before (through configFiles) — a line
+    // that arrives short of that is genuinely garbled, not just a container
+    // with no labels, so it is skipped rather than kept with a guessed key.
+    if (count($c) < 8) continue;
     $rows[] = [
       'id'          => $c[0],
       'name'        => $c[1],
@@ -773,7 +781,8 @@ function staxx_docker_ps_raw(): array {
       'image'       => $c[4],
       'project'     => $c[5],
       'service'     => $c[6],
-      'configFiles' => $c[7] ?? '',
+      'configFiles' => $c[7],
+      'configHash'  => $c[8] ?? '',
     ];
   }
   return $rows;

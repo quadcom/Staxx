@@ -1386,6 +1386,77 @@ function staxx_service_names(string $file, ?string &$error = null): array {
   return array_keys(staxx_compose_meta($file, $error)['services']);
 }
 
+/**
+ * PLAN_71 Stage 2 — one stack's resolved config fingerprints, service =>
+ * 64-hex hash, straight from `compose config --hash='*'`. This is the "file
+ * side" that a container's own `com.docker.compose.config-hash` label is
+ * compared against to say whether a restart is pending.
+ *
+ * Null means "unknown", never "everything agrees": compose not installed, a
+ * non-zero exit, or output nothing here recognises. An empty array is never
+ * returned for a failure, because downstream a match set with nothing in it
+ * reads as "nothing has changed".
+ *
+ * Cached the same way staxx_compose_meta() is — in memory for the request,
+ * and on disk under STAXX_META_DIR keyed by staxx_meta_cache_key(), so a
+ * touched-but-unchanged file costs nothing and only a real edit pays the
+ * ~66ms `compose config` takes. A distinct filename suffix (.hash.json)
+ * keeps this record from colliding with staxx_compose_meta()'s own.
+ */
+function staxx_service_hashes(string $file): ?array {
+  static $cache = [];
+
+  $files = staxx_compose_files($file);
+  if ($files === []) return null;
+  $key = implode("\0", $files);
+  if (isset($cache[$key])) return $cache[$key];
+
+  $diskPath = STAXX_META_DIR.'/'.md5($files[0]).'.hash.json';
+  $metaKey  = staxx_meta_cache_key($files);
+
+  if ($metaKey !== null) {
+    $stored = @json_decode((string)@file_get_contents($diskPath), true);
+    if (is_array($stored) && ($stored['key'] ?? null) === $metaKey && is_array($stored['meta'] ?? null)) {
+      return $cache[$key] = $stored['meta'];
+    }
+  }
+
+  $cmd = staxx_compose_cmd();
+  if ($cmd === '') return $cache[$key] = null;
+
+  $code = 1;
+  $out  = staxx_sh($cmd.' '.staxx_compose_file_args($files)." config --hash='*' 2>&1", 15, $code);
+  if ($code !== 0) return $cache[$key] = null;
+
+  $hashes = [];
+  foreach (explode("\n", $out) as $line) {
+    // "<service><whitespace><64-hex-hash>" — anything else on a line (a
+    // warning compose printed to stdout, a blank line) is ignored rather
+    // than treated as a service with a malformed name.
+    if (preg_match('/^(\S+)\s+([0-9a-f]{64})$/', trim($line), $m)) {
+      $hashes[$m[1]] = $m[2];
+    }
+  }
+  if ($hashes === []) return $cache[$key] = null;   // nothing parsed: unknown, not empty
+
+  if ($metaKey !== null) staxx_meta_cache_write($diskPath, $metaKey, $hashes);
+  return $cache[$key] = $hashes;
+}
+
+/**
+ * The newest modification time across every file that feeds this stack's
+ * config (main file, plus override if there is one) — "when the file was
+ * last changed", for the restart-pending panel.
+ */
+function staxx_compose_files_mtime(string $file): int {
+  $newest = 0;
+  foreach (staxx_compose_files($file) as $f) {
+    $mtime = @filemtime($f);
+    if ($mtime !== false && $mtime > $newest) $newest = $mtime;
+  }
+  return $newest;
+}
+
 /* ----------------------------------------------------------------- stacks -- */
 
 /**
@@ -1509,13 +1580,14 @@ function staxx_container_index(): array {
     if ($r['project'] === '') continue;             // not compose-managed
 
     $row = [
-      'id'      => $r['id'],
-      'name'    => $r['name'],
-      'state'   => $r['state'],
-      'status'  => $r['status'],
-      'image'   => $r['image'],
-      'project' => $r['project'],
-      'service' => $r['service'],
+      'id'         => $r['id'],
+      'name'       => $r['name'],
+      'state'      => $r['state'],
+      'status'     => $r['status'],
+      'image'      => $r['image'],
+      'project'    => $r['project'],
+      'service'    => $r['service'],
+      'configHash' => $r['configHash'] ?? '',
     ];
 
     $index['byProject'][$row['project']][] = $row;
@@ -2117,6 +2189,95 @@ function staxx_stack_containers(array $s): array {
   $result  = $index['byProject'][$project] ?? [];
   if ($key !== null) $memo[$key] = $result;
   return $result;
+}
+
+/**
+ * PLAN_71 Stage 3 — "restart pending": does what is running still match what
+ * the file now says, service by service. Never a guess — state is '' (no
+ * chip) for every case this cannot judge, not just the ones it can prove
+ * match: a stopped stack, an unknown file, containers with no fingerprint.
+ *
+ * @param array $s one entry from staxx_list_stacks() (needs name, file)
+ * @return array{state:string, changed:string[], absent:string[], leftover:string[],
+ *               edited:int, services:array<string,string>}
+ */
+function staxx_restart_pending(array $s): array {
+  static $memo = [];
+  // Unlike staxx_stack_containers(), every caller here already has a real
+  // stack row, so the name is never absent — no null-key special case needed.
+  $key = (string)($s['name'] ?? '');
+  if (isset($memo[$key])) return $memo[$key];
+
+  $empty = ['state' => '', 'changed' => [], 'absent' => [], 'leftover' => [],
+            'edited' => 0, 'services' => []];
+
+  $containers = staxx_stack_containers($s);
+  $running = false;
+  foreach ($containers as $c) {
+    if (strtolower($c['state']) === 'running') { $running = true; break; }
+  }
+  // Nothing running means nothing can be running the wrong settings —
+  // no chip, by decision, not "no chip because it's unknown".
+  if (!$running) return $memo[$key] = $empty;
+
+  $hashes = $s['file'] !== '' ? staxx_service_hashes($s['file']) : null;
+  if ($hashes === null) return $memo[$key] = $empty;   // unknown, never a match
+
+  $services = [];
+  $changed  = [];
+  $absent   = [];
+  $leftover = [];
+
+  $seen = [];   // services a container was found for, so absent can be found by elimination
+  foreach ($containers as $c) {
+    $svc = (string)$c['service'];
+    if ($svc === '') {
+      // A container with no service label at all cannot be matched to a
+      // declared service; it is leftover noise this stack cannot name.
+      continue;
+    }
+    // A service running more than one copy (replicas) has a container each,
+    // all carrying the same fingerprint. The verdict is the service's, not the
+    // container's, so the first copy settles it and the rest are skipped —
+    // otherwise the panel names the same service twice.
+    if (isset($seen[$svc])) continue;
+    $seen[$svc] = true;
+
+    if (!array_key_exists($svc, $hashes)) {
+      $leftover[] = $svc;
+      $services[$svc] = 'leftover';
+      continue;
+    }
+
+    $fileHash = (string)$hashes[$svc];
+    $liveHash = (string)($c['configHash'] ?? '');
+    if ($fileHash === '' || $liveHash === '') {
+      $services[$svc] = 'unknown';
+    } elseif ($fileHash !== $liveHash) {
+      $changed[] = $svc;
+      $services[$svc] = 'changed';
+    } else {
+      $services[$svc] = 'match';
+    }
+  }
+
+  foreach (array_keys($hashes) as $svc) {
+    if (!isset($seen[$svc])) {
+      $absent[] = $svc;
+      $services[$svc] = 'absent';
+    }
+  }
+
+  $state = ($changed !== [] || $absent !== [] || $leftover !== []) ? 'pending' : '';
+
+  return $memo[$key] = [
+    'state'    => $state,
+    'changed'  => $changed,
+    'absent'   => $absent,
+    'leftover' => $leftover,
+    'edited'   => staxx_compose_files_mtime($s['file']),
+    'services' => $services,
+  ];
 }
 
 /** Can anything actually be started? Both halves have to be true. */

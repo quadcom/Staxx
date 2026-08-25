@@ -66,6 +66,9 @@ time. One such line inside a function every render calls kills the whole page.
 there. `files.php` covers the companion-file helpers and the archive confirmation; `record.php` and
 `imagehistory.php` cover each stack's own hidden record — its compose-file history, and the image
 versions kept for a rollback, including the keep-set that decides what may be deleted;
+`pending.php` covers the restart-pending comparison — whether what is running still matches what the
+file now says — and above all its refusals; it needs no config keys and changes nothing, because the
+cases it builds are handed explicit `/tmp` paths rather than moving `STACK_ROOT`;
 `unpin.php` covers releasing a pin, including the one trap in it: the declined-version
 fingerprint is filed under the image's UNPINNED name, so clearing the pinned one instead makes the
 whole feature silently do nothing;

@@ -2157,6 +2157,67 @@
   border-left-color: var(--sm-line);
 }
 
+/* The "restart pending" chip (PLAN_71 stage 5) — sits right after the
+   update pill in the same status area (staxx_pending_chip_html() draws it
+   there; paintPendingChip() in stacks.js matches the order). Deliberately
+   grey-blue rather than the update pill's amber, or the accent colour
+   .staxx-driftmark/.staxx-imgmismatch use: a stack whose file has moved on
+   since it started is a normal mid-edit state, not a fault and not the
+   "look at this" language those two already carry, and "visually distinct,
+   never merged" (PLAN_71) means it must not read as another update pill
+   either. No token in this file gives a blue, so it is a literal here,
+   chosen to sit correctly on both light and dark themes the same way
+   --sm-muted/--sm-fill-2 already do. */
+.staxx-pendingchip {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.25rem 0.8rem;
+  border-radius: 1rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(90, 140, 180, 0.22);
+  color: rgb(120, 165, 205);
+}
+
+/* Always a real <button> (see staxx_pending_chip_html()) so it is pressable
+   — same trap as the update pill above: Unraid's own `.unapi button` rule
+   outranks a single class and would otherwise render this square and
+   colourless, and font size/weight has to be restated rather than left to
+   inherit, which would take the wrong size with it. */
+.staxx-scaffold button.staxx-pendingchip {
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 1.1rem;
+  font-weight: 600;
+  /* Restated, not inherited from the plain class above: `.unapi button` is a
+     class plus an element type, so it outranks that single class and squares
+     the ends off — the same trap the update pill's own --update rule had to
+     work around. */
+  border-radius: 1rem;
+  background: rgba(90, 140, 180, 0.22);
+  color: rgb(120, 165, 205);
+}
+
+.staxx-scaffold button.staxx-pendingchip:hover {
+  filter: brightness(1.15);
+}
+
+.staxx-scaffold button.staxx-pendingchip:focus-visible {
+  outline: 0.15rem solid rgb(120, 165, 205);
+  outline-offset: 0.1rem;
+}
+
+/* The icon-only form on a service row — same reasoning as .staxx-driftmark/
+   .staxx-imgmismatch above: one glyph is enough per row, and the full
+   sentence already lives in the panel this opens rather than needing to be
+   spelled out beside every service. */
+.staxx-pendingchip--service {
+  padding: 0.15rem 0.4rem;
+  font-size: 1rem;
+}
+
 /* The progress bar above the grid while "Update all" (or a folder's own
    "Update this folder") is running — painted entirely by
    paintUpdateQueue(), hidden the rest of the time. */
@@ -3163,6 +3224,23 @@
   padding: 0.8rem 1.4rem;
   border-bottom: 0.1rem solid var(--sm-line);
   color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+/* The "restart pending" line above the form (PLAN_71 stage 6) — same sibling
+   position and reasoning as .staxx-refnote just above (a fixed strip above
+   #staxx-form so it survives reparse()'s wholesale replace of the form's own
+   contents), but tinted with .staxx-pendingchip's own grey-blue rather than
+   .staxx-refnote's plain muted grey, so the two stay readable as separate
+   facts. Information only, the same as the chip: no button, and nothing
+   here may ever offer to restart anything. */
+.staxx-pendingnote {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.8rem 1.4rem;
+  border-bottom: 0.1rem solid var(--sm-line);
+  background: rgba(90, 140, 180, 0.12);
+  color: rgb(120, 165, 205);
   font-size: 1.2rem;
 }
 

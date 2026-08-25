@@ -54,6 +54,17 @@
   var suggestBox  = document.getElementById('staxx-suggest');
   var keyHelp     = document.getElementById('staxx-keyhelp');
   var formHost    = document.getElementById('staxx-form');
+  // PLAN_71 stage 6 — the "restart pending" line for the form itself, not
+  // just the row. No server-rendered element exists for this (the plan
+  // scopes the work to this file alone, the same reasoning clashNote and
+  // watchNote below already give for themselves), so it is built here and
+  // placed the same way #staxx-refnote is: above #staxx-form rather than
+  // inside it, because reparse() replaces that element's contents wholesale
+  // and anything inside it would go with them.
+  var pendingNote = document.createElement('p');
+  pendingNote.className = 'staxx-pendingnote';
+  pendingNote.hidden = true;
+  if (formHost && formHost.parentNode) formHost.parentNode.insertBefore(pendingNote, formHost);
   // The structure outline: a button in the modal header and the panel it
   // toggles open, both siblings inside .staxx-outlinewrap. May be null
   // while the markup has not landed yet — guarded everywhere below, the same
@@ -10021,6 +10032,11 @@
     // that really is a caught install — and reattaches pendingHandoffId the
     // same way, immediately below this call, for the same reason.
     installNote.hidden = true;
+    // Same reasoning for the restart-pending line (PLAN_71 stage 6): reset
+    // to "show nothing" rather than leave yesterday's stack's own note
+    // showing against today's — the one render path, reapplyPendingChips(),
+    // puts the right answer back the next time it runs.
+    pendingNote.hidden = true;
     pendingHandoffId = '';
     pendingHandoffEdit = false;
     yamlPane.readOnly = false;
@@ -12485,6 +12501,12 @@
         textAtOpen = body;
         fingerprintAtOpen = res.fingerprint || '';
 
+        // PLAN_71 stage 5: a save is exactly the moment the file side of the
+        // comparison can have moved — asked for here rather than waiting on
+        // the state poll, so a chip can appear "the instant a save lands"
+        // as decided.
+        refreshPending();
+
         var oldLeaf = openedName.slice(openedName.lastIndexOf('/') + 1);
         if (isNew || leaf === oldLeaf) { finishSave(name, thenStart, offerHandover); return; }
 
@@ -12796,6 +12818,7 @@
     call('job', { jobs: ids.join(','), offsets: offsets.join(',') }).then(function (res) {
       if (!res.ok || !res.jobs) { stopTickerIfIdle(); return; }
 
+      var finished = false;
       ids.forEach(function (id) {
         var entry = jobs[id];
         var part  = res.jobs[id];
@@ -12824,9 +12847,17 @@
               : ' — done';
           }
           if (entry.done) entry.done({ text: entry.text, exit: part.exit, done: true });
+          // PLAN_71 stage 5: every job — start, stop, restart, an update,
+          // anything — can move the running side of the comparison, so this
+          // is the one place that catches all of them rather than adding the
+          // same call to each individual verb's own done() above. Noted here
+          // and asked for once below: a bulk action finishes several jobs in
+          // the same tick, and each ask sweeps the whole machine.
+          finished = true;
         }
       });
 
+      if (finished) refreshPending();
       stopTickerIfIdle();
     });
   }
@@ -13236,10 +13267,11 @@
 
     // paintState() above just replaced a batch of state cells' innerHTML,
     // which throws away any pill living inside them — put back the ones
-    // already in hand from the last `updates` reply. Declared after
-    // reapplyUpdatePills() is defined further down, but called only once
-    // the page is running, by which time it exists.
+    // already in hand from the last `updates` reply, and the last `pending`
+    // reply's chips beside them. Both are declared further down, but called
+    // only once the page is running, by which time they exist.
     reapplyUpdatePills();
+    reapplyPendingChips();
   }
 
   function refreshState() {
@@ -13588,6 +13620,150 @@
       var tr = document.querySelector('[data-folder-row="' + id + '"]');
       if (tr) paintUpdatePill(tr, lastUpdateFolders[id]);
     });
+  }
+
+  /* ---- restart pending (PLAN_71 stage 5) --------------------------------
+   *
+   * The exact same problem the `updates` block above already solved, so this
+   * mirrors it rather than inventing a second shape: the cheap state refresh
+   * is deliberately forbidden from reading compose files, so the browser
+   * keeps the last `pending` reply and re-applies it after every state
+   * repaint. "Pending", never "drift" — that word already means an Unraid
+   * template moving on since import (staxx-driftmark), an unrelated fact.
+   */
+  var lastPendingRows = {};
+
+  // The status area a chip belongs inside — the update pill's own host, so
+  // both land in the same place and staxx_pending_chip_html()'s ordering
+  // (after the update pill) only has to be matched once, here.
+  function pendingChipHost(row) {
+    return updatePillHost(row);
+  }
+
+  // The server hands back ready-made markup (unlike paintUpdatePill, which
+  // builds its own from plain facts) because the chip's own data attributes
+  // are already baked in by staxx_pending_chip_html() — this only has to
+  // place it, not build it. Rebuilt from scratch on every call, the same as
+  // paintState()'s innerHTML replace just above: simpler than diffing, and
+  // cheap enough that the state poll already does the equivalent every time
+  // it repaints a cell.
+  function paintPendingChip(row, entry) {
+    var host = pendingChipHost(row);
+    if (!host) return;
+    var chip = host.querySelector('.staxx-pendingchip');
+    if (chip) chip.parentNode.removeChild(chip);
+    var html = entry && entry.html ? entry.html : '';
+    if (!html) return;
+    var wrap = document.createElement('span');
+    wrap.innerHTML = html;
+    var node = wrap.firstElementChild;
+    if (!node) return;
+    // Right after the update pill, matching the server's own order, so a
+    // repaint never reshuffles the cell.
+    var pill = host.querySelector('.staxx-updatepill');
+    if (pill) host.insertBefore(node, pill.nextSibling);
+    else host.appendChild(node);
+  }
+
+  function paintPendingRow(key, entry) {
+    var sep = key.indexOf('::');
+    if (sep === -1) {
+      paintPendingChip(rowFor(key), entry);
+      return;
+    }
+    var stack = key.slice(0, sep), service = key.slice(sep + 2);
+    Array.prototype.forEach.call(
+      document.querySelectorAll(
+        '.staxx-container-row[data-in-stack="' + stack + '"][data-service="' + service + '"]'
+      ),
+      function (row) { paintPendingChip(row, entry); }
+    );
+  }
+
+  // PLAN_71 stage 6 — the one quiet line above the fields, shown only while
+  // the editor is open on a stack that has an entry (with something to say)
+  // in the last `pending` reply. Read straight out of lastPendingRows rather
+  // than asked for again — refreshPending() is the only fetch, this only
+  // ever repaints from what it last brought back. No entry yet (nothing has
+  // answered) reads the same as "nothing pending": never guessed at either
+  // way.
+  function paintPendingNote() {
+    if (!pendingNote) return;
+    var entry = (modal.open && openedName) ? lastPendingRows[openedName] : null;
+    var show = !!(entry && entry.html);
+    pendingNote.hidden = !show;
+    if (show) {
+      pendingNote.textContent = 'The containers running now were started with older ' +
+        'settings. Restart this stack to apply what you see here.';
+    }
+  }
+
+  // Re-applies the chips already in hand, with no request of its own — see
+  // reapplyUpdatePills() just above for why this has to exist at all.
+  function reapplyPendingChips() {
+    Object.keys(lastPendingRows).forEach(function (key) {
+      paintPendingRow(key, lastPendingRows[key]);
+    });
+    paintPendingNote();
+  }
+
+  // Asked for on page load, after a save, and after any job finishes (see
+  // those call sites) — never on a clock, for the same reason refreshUpdates()
+  // is not: nothing here changes on its own between one of those moments and
+  // the next.
+  function refreshPending() {
+    call('pending', {}).then(function (res) {
+      if (!res.ok) return;
+      lastPendingRows = res.rows || {};
+      reapplyPendingChips();
+    });
+  }
+
+  // "today at 14:32" while the file changed today — a plain date once it did
+  // not, the reader's own local clock either way. Deliberately not
+  // historyWhen()'s "3 hours ago" shape: that reads well in a sentence about
+  // the past, but the panel wants a fixed point in time to anchor the list
+  // of parts against, not a relative one that keeps sliding as it is read.
+  function pendingEditedWhen(at) {
+    if (!at) return 'an unknown time';
+    var d = new Date(at * 1000);
+    var now = new Date();
+    var sameDay = d.getFullYear() === now.getFullYear() &&
+                  d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    if (!sameDay) return d.toLocaleDateString();
+    var hh = ('0' + d.getHours()).slice(-2);
+    var mm = ('0' + d.getMinutes()).slice(-2);
+    return 'today at ' + hh + ':' + mm;
+  }
+
+  // Comma-separated service names off a chip's own data attributes, split
+  // back into a list — '' yields [], not [''].
+  function pendingNames(list) {
+    return (list || '').split(',').filter(function (s) { return s; });
+  }
+
+  // The panel a chip opens — reused straight off the existing output dialog
+  // rather than a new mechanism, since it is already exactly this: a title
+  // and a block of read-only text. logBox.textContent (not innerHTML) is
+  // what openLogDialog() writes with, so nothing here needs its own escaping
+  // — a service name can never become markup no matter what it contains.
+  // Never restarts anything: no button in it does anything but close.
+  function openPendingPanel(chip) {
+    var stack   = chip.dataset.stack || '';
+    var edited  = parseInt(chip.dataset.edited || '0', 10) || 0;
+    var changed  = pendingNames(chip.dataset.changed);
+    var absent   = pendingNames(chip.dataset.absent);
+    var leftover = pendingNames(chip.dataset.leftover);
+
+    var parts = [];
+    parts.push('The file was last changed ' + pendingEditedWhen(edited) + '.');
+    if (changed.length)  parts.push('Settings changed since this started: ' + changed.join(', ') + '.');
+    if (absent.length)   parts.push('Not started yet: ' + absent.join(', ') + '.');
+    if (leftover.length) parts.push('No longer in the file: ' + leftover.join(', ') + '.');
+    parts.push('Restarting the stack rebuilds these from the file as it stands now — ' +
+               'nothing is wrong until you do.');
+
+    openLogDialog(stackLabel(stack) + ' — restart pending', parts.join('\n\n'));
   }
 
   /* ---- pause switch (PLAN_45 phase 4-8) ---------------------------------
@@ -14040,6 +14216,7 @@
   // progress (started by the cron pass, or left running from a previous
   // visit) and resumes polling it.
   refreshUpdates();
+  refreshPending();   // PLAN_71 stage 5 — the chips on first load
   startPageClock();
 
   /* There are exactly TWO refresh sizes, and adding a third needs a
@@ -18157,6 +18334,16 @@
   scaffold.addEventListener('click', function (event) {
     var el = event.target.closest('button');
     if (!el) return;
+
+    // The restart-pending chip (PLAN_71 stage 5) — always its own button,
+    // never a menu item, because it must only ever explain itself. Every
+    // fact the panel needs is already on the chip's own data attributes, put
+    // there by staxx_pending_chip_html(), so this reads them straight off
+    // the element that was clicked rather than off the row.
+    if (el.classList.contains('staxx-pendingchip')) {
+      openPendingPanel(el);
+      return;
+    }
 
     // The pill itself, once staxx_update_pill_html() has drawn it as a
     // button — only an 'update' pill on a stack or container row ever is, so

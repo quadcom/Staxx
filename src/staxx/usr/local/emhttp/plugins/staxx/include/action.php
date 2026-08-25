@@ -881,6 +881,37 @@ switch ($action) {
       'due'     => staxx_update_due(),
     ]);
 
+  /* ---- PLAN_71 Stage 4b — "restart pending": what is running versus what
+   * the file now says, for every stack, shaped like 'updates' above. A key
+   * is emitted for every stack and every one of its declared services even
+   * when the html is '' — the browser has to be told to clear a chip that
+   * no longer applies, and a key that is simply missing cannot do that.
+   */
+  case 'pending':
+    $rows = [];
+    foreach (staxx_list_stacks() as $s) {
+      if ($s['file'] === '') continue;
+
+      $p = staxx_restart_pending($s);
+      $p['stack'] = $s['name'];
+      $rows[$s['name']] = [
+        'html'     => staxx_pending_chip_html($p),
+        'changed'  => $p['changed'],
+        'absent'   => $p['absent'],
+        'leftover' => $p['leftover'],
+        'edited'   => $p['edited'],
+      ];
+
+      foreach ($s['services'] as $svc) {
+        $kind = (string)($p['services'][$svc] ?? '');
+        $rows[$s['name'].'::'.$svc] = [
+          'html' => staxx_pending_service_chip_html($kind),
+          'kind' => $kind,
+        ];
+      }
+    }
+    staxx_reply(['ok' => true, 'rows' => $rows]);
+
   // ---- start a check pass; the page follows it with the existing 'job' action ----
   //
   // Always forced: a person pressing this button means "ask now", which is
