@@ -332,10 +332,16 @@ unset($state['history'][$fixtureName . '::stack-only']);
 staxx_update_state_save($state);
 staxx_update_history_push($fixtureName, 'stack-only', 'sha256:' . str_repeat('0', 64)); // a digest guaranteed not to be on this box
 
+/* A rollback now pins the compose file, so it needs the pinned text supplied
+ * or it refuses for that reason instead and this case stops testing what it
+ * says it does. The text only has to satisfy the "does this really name the
+ * requested version" check; the run still stops at the presence check below,
+ * so nothing is saved and no job starts. */
+$pinnedYaml = "services:\n  stack-only:\n    image: alpine:3.20@sha256:0000000000000000000000000000000000000000000000000000000000000000\n";
 $err = '';
-$rbJob = staxx_update_rollback($fixtureName, 'stack-only', $err);
+$rbJob = staxx_update_rollback($fixtureName, 'stack-only', $err, 'sha256:'.str_repeat('0', 64), $pinnedYaml);
 ok('rollback: refuses when the previous image is no longer present locally, with a sentence',
-   $rbJob === '' && $err !== '', $err);
+   $rbJob === '' && strpos($err, 'no longer present') !== false, $err);
 
 $err = '';
 $state = staxx_update_state();

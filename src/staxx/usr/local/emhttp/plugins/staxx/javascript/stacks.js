@@ -15583,17 +15583,86 @@
     renderVersionsPane();
   }
 
-  // Asks first, since this changes what is running, then follows the job the
-  // same way rollbackUpdate() above does — the table row goes busy and a
-  // failed run is marked the same as any other failed run.
+  // Puts the freshly-pinned text on screen in place of whatever currentText()
+  // was reading before, then lets reparse() rebuild MODEL against it — the
+  // same "box drives the model" order the editor uses everywhere else. Kept
+  // as its own function because there are three different places the text
+  // can live (see currentText()), and a rollback must update whichever one
+  // is live without disturbing the other two.
+  function adoptRolledBackText(newText) {
+    if (fileOpen !== null) {
+      fileStash = newText;
+    } else if (sanitised) {
+      realText = newText;
+    } else {
+      yamlPane.value = newText;
+      paintGutter();
+      paintInk();
+    }
+    textAtOpen = newText;
+    reparse();
+    // redact() reads spots off MODEL, which reparse() just rebuilt against
+    // this same text — only safe to call after that, not before.
+    if (sanitised && fileOpen === null) yamlPane.value = redact(realText);
+  }
+
+  // Finds the service's image exactly as the file has it written — never
+  // svc.image, which is what the running container reports and may already
+  // be a resolved digest — then asks compose-model.js's pinnedImageRef() to
+  // turn it into a reference that pins this digest. The edit is made on a
+  // throwaway parse of currentText(), not on the live MODEL, so a refusal
+  // from the server below leaves the real editor state untouched — only a
+  // confirmed write is allowed to reach the box.
+  function pinServiceImage(service, digest) {
+    if (!YAML || typeof YAML.pinnedImageRef !== 'function') {
+      return { ok: false, why: 'This version of StaXX cannot pin images yet — reload the page and try again.' };
+    }
+    var doc = YAML.parse(currentText());
+    var form = YAML.buildForm(doc, netDrivers());
+    form.doc = doc;
+    var field = null;
+    for (var i = 0; i < form.fields.length; i++) {
+      var f = form.fields[i];
+      if (f.service === service && f.binder === 'setting' && f.target === 'image') { field = f; break; }
+    }
+    var image = field && field.parts.value ? field.parts.value.value : '';
+    var pinned = YAML.pinnedImageRef(image, digest);
+    if (!pinned.ok) return pinned;
+    if (!field || !YAML.setValue(doc, form, field.id, pinned.ref)) {
+      return { ok: false, why: 'That image line could not be rewritten — edit it in the Compose view instead.' };
+    }
+    return { ok: true, yaml: YAML.serialise(doc) };
+  }
+
+  // Asks first, since this now edits the compose file as well as changing
+  // what is running, then follows the job the same way rollbackUpdate() above
+  // does — the table row goes busy and a failed run is marked the same as any
+  // other failed run.
   function rollbackToVersion(service, digest, label) {
-    call('update-rollback', { name: openedName, service: service, digest: digest }).then(function (res) {
+    var pinned = pinServiceImage(service, digest);
+    if (!pinned.ok) {
+      versionsActionError = pinned.why;
+      renderVersionsPane();
+      return;
+    }
+    call('update-rollback', { name: openedName, service: service, digest: digest,
+                               yaml: withEol(pinned.yaml, composeEol) }).then(function (res) {
       if (!res || !res.ok) {
         versionsActionError = (res && res.error) || 'Could not put ' + label + ' back for ' + service + '.';
         renderVersionsPane();
         return;
       }
       versionsActionError = '';
+      // What is on screen has to match what the server just wrote, the same
+      // as after any other save — the person has had their file changed and
+      // must be able to see it.
+      adoptRolledBackText(pinned.yaml);
+      // The file on disk has changed, so the stamp this editor is holding is
+      // stale. Without this the next Save is refused as a conflict with a
+      // change the person made themselves a moment ago.
+      fingerprintAtOpen = res.fingerprint || '';
+      showPageNotice(res.historyNote ||
+        ('The compose file now pins "' + service + '" to this version. The file it replaces is kept in History.'));
       var rows = containerRows(openedName, service);
       if (rows.length) setBusy(rows, 'Rolling back…');
       track(res.job, {
@@ -15619,11 +15688,19 @@
   // own textContent — see askConfirm(), which never treats its title as HTML.
   function performRollback(service, v) {
     var label = v.version || historyWhen(v.at);
+    // FILES is already loaded for the open stack (filesLoad(), on modal
+    // open) — this is a look at what is already known, never a fetch of its
+    // own, which is why it is cheap enough to add here.
+    var hasOverride = FILES.some(function (f) { return isStackOverride(f.name); });
     askConfirm({
       title: 'Put ' + label + ' back for ' + service + '?',
-      bodyHtml: '<p>The version you are moving away from will not come back on its own. A newer one ' +
-        'still will, when one appears — which is usually what you want, since a later release may be ' +
-        'the fix.</p>',
+      bodyHtml: '<p>This edits the compose file so it names that exact version, which is what makes it ' +
+        'stick — a pull will not move off it. The file as it stands now is kept in History, so this can ' +
+        'be undone.' +
+        (hasOverride ? ' This stack has an override file, though, and an image set there can win over ' +
+          'this pin and make it look as though nothing happened.' : '') +
+        '</p>' +
+        '<p>The version you are moving away from will not come back on its own.</p>',
       goLabel: 'Put it back'
     }).then(function (go) {
       closeConfirm();

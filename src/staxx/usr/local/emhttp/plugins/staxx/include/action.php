@@ -1064,11 +1064,23 @@ switch ($action) {
     if (!staxx_valid_path($name)) {
       staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
     }
+    $rbNote = '';
     $job = staxx_update_rollback(
-      $name, (string)($_POST['service'] ?? ''), $error, (string)($_POST['digest'] ?? '')
+      $name, (string)($_POST['service'] ?? ''), $error, (string)($_POST['digest'] ?? ''),
+      (string)($_POST['yaml'] ?? ''), $rbNote
     );
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
-    staxx_reply(['ok' => true, 'job' => $job]);
+    // A pin is only acceptable because it can be undone from the file history,
+    // so a save that kept no previous version cannot stay quiet about it.
+    //
+    // The fingerprint of what is now on disk goes back too. A pin rewrites the
+    // compose file, so an editor still holding the stamp from before it would
+    // have its next Save refused as somebody else's change — a safe failure,
+    // but a baffling one when the change was this button.
+    staxx_reply(['ok'          => true,
+                 'job'         => $job,
+                 'historyNote' => $rbNote,
+                 'fingerprint' => staxx_stack_fingerprint($name)]);
 
   /* ---- what a stack's Versions tab needs: every service's image, what is on
    * disk for it now, and everything recorded that a rollback could target --

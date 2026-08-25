@@ -105,17 +105,22 @@ function b4_make_stack(string $rel, string $service = 'web', string $image = 'al
  * request could re-tag a service's image to any digest present on the
  * server, not just one it actually ran.
  *
- * A SUCCESSFUL rollback runs `docker image inspect`, `docker tag` and starts
- * a job — none of that belongs in a suite that must never touch real docker
- * state. Every case below is therefore one the function REFUSES, and the
+ * A SUCCESSFUL rollback now saves the compose file with the pin already in
+ * it, checks the image is present locally, and starts a job — none of that
+ * belongs in a suite that must never touch real docker state or write a
+ * stack. Every case below is therefore one the function REFUSES, and the
  * success path is deliberately out of scope.
  *
  * One case is the exception worth naming: the "the service that DID record
  * it gets past the membership test" case has to get past the gate, or it
- * would not be proving the gate can be passed. It reaches a read-only
- * `docker image inspect` for an image that does not exist, which fails, and
- * the function refuses there — so no `docker tag` and no job ever run. That
- * is the furthest anything in this file goes.
+ * would not be proving the gate can be passed. It calls with no $yaml, so —
+ * now that an empty $yaml is refused outright rather than falling back to
+ * re-tagging a local image — it is refused one step later than the
+ * membership test, by that same "no file text was supplied" check, and
+ * never reaches docker at all. Its assertion only checks that the refusal is
+ * NOT the membership one, which stays true regardless of exactly which later
+ * check catches it, so this comment is what pins down which one actually
+ * does right now.
  * ======================================================================= */
 
 b4_make_stack('zzb4target', 'web', 'ghcr.io/example/target:latest');
@@ -175,11 +180,17 @@ ok('a digest recorded for a sibling service in the SAME stack is refused',
    $res === '' && refusedBecause($err, NOT_RECORDED), $err);
 
 // ...and the service it really belongs to is not refused for that reason,
-// which is what proves the test is per-service rather than per-stack.
+// which is what proves the test is per-service rather than per-stack. It
+// still refuses one step further on, at the "no $yaml supplied" check (see
+// NO_YAML below, defined ahead of use here because this is the first case
+// that needs it) — named explicitly rather than left as a bare negative, so
+// this asserts exactly where it stops rather than merely where it does not.
+const NO_YAML = 'no file text was supplied';
 $err = '';
 staxx_update_rollback('zzb4twosvc', 'db', $err, dg('t-dbonly'));
-ok('...while the service that DID record it gets past the membership test',
-   !refusedBecause($err, NOT_RECORDED), $err);
+ok('...while the service that DID record it gets past the membership test, '
+ . 'and is refused next for having no file text',
+   !refusedBecause($err, NOT_RECORDED) && refusedBecause($err, NO_YAML), $err);
 
 /* 3. Recorded, but for the SAME service name in a DIFFERENT stack. */
 $err = '';
@@ -306,6 +317,165 @@ echo "note   hold-clearing lives in staxx_update_check(), not in the pure pill
 "
    . "note   function — not provable from here, and deliberately not faked.
 ";
+
+/* ======================================================================= *
+ * Part C — the supplied $yaml is not trusted.
+ *
+ * staxx_update_rollback()'s fifth parameter, $yaml, is the browser's own
+ * edited compose text. It is never taken at face value: it is written to a
+ * temp file, parsed properly with staxx_compose_meta(), and the requested
+ * service's image must be shown to actually carry '@'.$target — a plain
+ * strpos() on the raw text would not do, since the digest could just as
+ * easily sit inside a comment.
+ *
+ * EVERY case in this section is one the function must REFUSE. None may
+ * reach staxx_save_stack(), docker, or staxx_start_job() — proven case by
+ * case in the walk-through in the report, not just asserted here.
+ *
+ * The check order in the function puts this text check BEFORE the "is the
+ * image actually present locally" check that follows it. That ordering is
+ * what makes every case below reachable from fixtures alone: there is no
+ * real image pulled anywhere on this box, and if the text check did not
+ * stop these first, they would all refuse anyway — for the local-image
+ * reason instead, which would prove the wrong thing entirely. So the
+ * ordering is not incidental here; it is the reason this section can exist
+ * without touching docker at all.
+ *
+ * An empty $yaml is now refused even earlier than this, before the text is
+ * even looked at (see NO_YAML in Part A) — every case below supplies real,
+ * non-empty text, so that earlier gate is passed through and it is genuinely
+ * this section's own check being exercised, not the empty-string one.
+ * ======================================================================= */
+
+const NOT_PINNED    = 'does not pin this service to the requested version';
+const COULD_NOT_CHECK = 'The supplied file could not be checked';
+
+/* A stack with one recorded digest, reused by most of the cases below. A
+ * second digest is recorded too, so case 2 (a different RECORDED digest)
+ * is testing a mismatch between two genuine values, not a made-up one. */
+b4_make_stack('zzb4textcase', 'web', 'ghcr.io/example/text:latest');
+$cReal  = dg('c-real');
+$cOlder = dg('c-older');
+staxx_image_history_push('zzb4textcase', 'web', $cOlder, []);
+staxx_image_history_push('zzb4textcase', 'web', $cReal, []);
+
+// Counted around the whole batch below: every case here is a refusal, so
+// none of tempnam()'s files should still exist once the batch is done.
+$tmpBefore = glob(sys_get_temp_dir().'/staxx-rb-*');
+
+/* 1. Text that does not name the digest at all — a valid file, but a plain
+ * unpinned image. Must be refused by the text check, not waved through to
+ * the local-image check further down. */
+$yaml1 = <<<'YAML'
+services:
+  web:
+    image: ghcr.io/example/text:latest
+YAML;
+$err = '';
+$res = staxx_update_rollback('zzb4textcase', 'web', $err, $cReal, $yaml1);
+ok('an unpinned image is refused by the text check',
+   $res === '' && refusedBecause($err, NOT_PINNED), $err);
+
+/* 2. Text naming a DIFFERENT recorded digest than $target — the mismatched-
+ * arguments case. $cOlder is a real, recorded digest; it is just not the
+ * one this call asked to roll back to. */
+$yaml2 = <<<YAML
+services:
+  web:
+    image: ghcr.io/example/text:latest@{$cOlder}
+YAML;
+$err = '';
+$res = staxx_update_rollback('zzb4textcase', 'web', $err, $cReal, $yaml2);
+ok('text pinned to a different recorded digest than $target is refused',
+   $res === '' && refusedBecause($err, NOT_PINNED), $err);
+
+/* 3. Text that does not parse as compose at all (unterminated quoted
+ * scalar — invalid YAML under any parser, not merely something compose
+ * dislikes). */
+$yaml3 = <<<'YAML'
+services:
+  web:
+    image: "unterminated
+YAML;
+$err = '';
+$res = staxx_update_rollback('zzb4textcase', 'web', $err, $cReal, $yaml3);
+ok('text that does not parse at all is refused',
+   $res === '' && refusedBecause($err, COULD_NOT_CHECK), $err);
+
+/* 4. Text that parses fine but has no service of that name — the service
+ * was renamed. */
+$yaml4 = <<<YAML
+services:
+  website:
+    image: ghcr.io/example/text:latest@{$cReal}
+YAML;
+$err = '';
+$res = staxx_update_rollback('zzb4textcase', 'web', $err, $cReal, $yaml4);
+ok('text with the requested service renamed away is refused',
+   $res === '' && refusedBecause($err, COULD_NOT_CHECK), $err);
+
+/* 5. Text naming the right digest but on a DIFFERENT service in the file,
+ * while the requested service is left unpinned — the near miss. */
+b4_make_stack('zzb4crosssvc', 'web', 'ghcr.io/example/cross:latest');
+$cCross = dg('c-cross');
+staxx_image_history_push('zzb4crosssvc', 'web', $cCross, []);
+$yaml5 = <<<YAML
+services:
+  web:
+    image: ghcr.io/example/cross:latest
+  db:
+    image: ghcr.io/example/cross-db:latest@{$cCross}
+YAML;
+$err = '';
+$res = staxx_update_rollback('zzb4crosssvc', 'web', $err, $cCross, $yaml5);
+ok('the right digest pinned to a sibling service does not count for the '
+ . 'requested one',
+   $res === '' && refusedBecause($err, NOT_PINNED), $err);
+
+/* 6. Empty-ish text that is NOT '' — must still be checked (and refused),
+ * not treated as "no $yaml supplied" and silently fall back to the old
+ * tag-moving behaviour. */
+foreach (['a bare newline' => "\n", 'a comment only' => "# just a comment\n"] as $label => $yaml6) {
+  $err = '';
+  $res = staxx_update_rollback('zzb4textcase', 'web', $err, $cReal, $yaml6);
+  ok('empty-ish but non-empty text ('.$label.') is checked and refused, not '
+   . 'treated as no-$yaml',
+     $res === '' && $yaml6 !== '' && refusedBecause($err, COULD_NOT_CHECK), $err);
+}
+
+/* 7. Membership is still enforced when text is supplied — a $yaml that
+ * correctly names a digest this service never recorded must still be
+ * caught by the membership test (checked BEFORE the text is even looked
+ * at), proving the new parameter did not open a way round that gate. */
+$cNeverRecorded = dg('c-never-recorded-for-text');
+$yaml7 = <<<YAML
+services:
+  web:
+    image: ghcr.io/example/text:latest@{$cNeverRecorded}
+YAML;
+$err = '';
+$res = staxx_update_rollback('zzb4textcase', 'web', $err, $cNeverRecorded, $yaml7);
+ok('a $yaml correctly pinned to a digest never recorded for this service '
+ . 'is still caught by the membership test, not the text check',
+   $res === '' && refusedBecause($err, NOT_RECORDED), $err);
+
+/* 8. A four-argument call — a real, recorded target, but no $yaml — is
+ * refused outright, by the NO_YAML message specifically and no other. The
+ * old behaviour (re-point the local tag, file untouched) is gone: an empty
+ * $yaml is no longer a weaker-but-working fallback, it is a footgun closed
+ * off. $cReal is genuinely recorded for this stack/service, so this proves
+ * the refusal is the "no file text" one and not a membership failure in
+ * disguise. */
+$err = '';
+$res = staxx_update_rollback('zzb4textcase', 'web', $err, $cReal);
+ok('a four-argument call with no $yaml is refused for having no file text, '
+ . 'not waved through to the old tag-moving behaviour',
+   $res === '' && refusedBecause($err, NO_YAML) && !refusedBecause($err, NOT_RECORDED), $err);
+
+$tmpAfter = glob(sys_get_temp_dir().'/staxx-rb-*');
+ok('none of the temp files this batch created are still on disk',
+   count($tmpBefore) === count($tmpAfter),
+   count($tmpBefore).' before, '.count($tmpAfter).' after');
 
 /* ---------------------------------------------------------------------- */
 

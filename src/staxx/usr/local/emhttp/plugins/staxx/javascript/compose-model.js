@@ -7590,6 +7590,79 @@
   }
 
   /* =====================================================================
+   * Pinning an image to a digest
+   *
+   * API.pinnedImageRef — turns an image reference plus a fingerprint (what
+   * `docker inspect` calls a digest) into the reference that pins it. Pure
+   * and requireable from node, unlike the front end that will call it, so
+   * this is the one place the rule can be proved rather than eyeballed —
+   * see tests/pin_image.js.
+   * ===================================================================== */
+
+  // The shape docker itself prints for a digest, and the only shape this
+  // project ever records — anything else is not a fingerprint worth
+  // trusting.
+  var DIGEST_RE = /^[a-z0-9+._-]+:[0-9a-f]{32,}$/;
+
+  /**
+   * pinnedImageRef(ref, digest) -> {ok, ref} or {ok:false, why}
+   *
+   * Never throws: an input this cannot make sense of comes back as a
+   * refusal, the same contract stashLinesOk() follows above.
+   */
+  function pinnedImageRef(ref, digest) {
+    try {
+      if (typeof digest !== 'string' || !DIGEST_RE.test(digest)) {
+        return { ok: false, why: 'This does not look like an image fingerprint. Pull the image again and try pinning once that finishes.' };
+      }
+
+      // Only a genuine string is a reference — a number or an object has no
+      // business being coerced into one (String(42) is "42", not empty, so
+      // it would otherwise sail through the emptiness check below).
+      ref = (typeof ref === 'string' ? ref : '').trim();
+      if (ref === '') {
+        return { ok: false, why: 'There is no image set on this service yet. Choose an image before pinning it.' };
+      }
+
+      // Split off any existing pin first. A digest itself contains a colon
+      // (e.g. "sha256:abcd…"), so the tag separator below must be found in
+      // the part before "@" — searching the whole string would sometimes
+      // find the colon inside an old digest instead of the real tag one.
+      var atIdx = ref.indexOf('@');
+      var base = atIdx >= 0 ? ref.slice(0, atIdx) : ref;
+
+      // Find the tag separator: the last ":" after the last "/" (or, with
+      // no "/" at all, the last ":" in the string). Everything before it is
+      // the repository part — this is the only way to tell a tag's colon
+      // apart from a registry port's, e.g. "myhost:5000/app/thing:1.2".
+      var lastSlash = base.lastIndexOf('/');
+      var searchFrom = lastSlash >= 0 ? lastSlash : 0;
+      var sepIdx = base.lastIndexOf(':');
+      if (sepIdx < searchFrom) sepIdx = -1;
+      var repoPart = sepIdx >= 0 ? base.slice(0, sepIdx) : base;
+
+      // The server reads the compose file literally and substitutes no
+      // variables at all, so a "${IMAGE}" or "ghcr.io/${OWNER}/app"
+      // repository cannot be resolved here — there is no way to confirm the
+      // chosen version actually exists before pinning it. A tag-only
+      // variable is fine: the repository is still literal, so every check
+      // above still means something.
+      if (repoPart.indexOf('$') >= 0) {
+        return { ok: false, why: 'The image name uses a variable StaXX cannot look up, so there is no way to confirm this version exists. Write the image name out in full to pin it.' };
+      }
+
+      // The tag is always kept, even once pinned: docker resolves by digest
+      // and ignores the tag, so keeping it costs nothing, lets a person
+      // reading the file see which stream this came from, and means getting
+      // back out of the pin later is "drop everything from the @" rather
+      // than "work out what the tag used to be".
+      return { ok: true, ref: base + '@' + digest };
+    } catch (e) {
+      return { ok: false, why: 'Something went wrong reading that image name. Try again.' };
+    }
+  }
+
+  /* =====================================================================
    * Exports
    * ===================================================================== */
 
@@ -7709,7 +7782,11 @@
     varRefs: varRefs,
     // PLAN_15 phase 1: the dropdown value lists moved out of stacks.js's
     // CHOICES table — see the comment above VOCAB for what stayed behind.
-    vocab: vocab
+    vocab: vocab,
+    // Turns an image reference plus a fingerprint into the reference that
+    // pins it — see its own comment above for the rule and why it exists
+    // here rather than in the front end.
+    pinnedImageRef: pinnedImageRef
   };
 
   if (typeof window !== 'undefined') window.StaxxYaml = API;
