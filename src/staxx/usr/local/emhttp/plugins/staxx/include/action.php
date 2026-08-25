@@ -1082,6 +1082,26 @@ switch ($action) {
                  'historyNote' => $rbNote,
                  'fingerprint' => staxx_stack_fingerprint($name)]);
 
+  /* ---- release a pin: put a service's image back to plain repo:tag ----
+   *
+   * No job comes back — releasing changes only the file, nothing on disk
+   * or in Docker, so there is nothing to poll for.
+   */
+  case 'update-unpin':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $upNote = '';
+    $ok = staxx_update_unpin(
+      $name, (string)($_POST['service'] ?? ''), (string)($_POST['yaml'] ?? ''), $error, $upNote
+    );
+    if (!$ok) staxx_reply(['ok' => false, 'error' => $error]);
+    // Same reasoning as update-rollback's reply just above: the file changed,
+    // so the fingerprint an open editor is holding has to change with it.
+    staxx_reply(['ok'          => true,
+                 'historyNote' => $upNote,
+                 'fingerprint' => staxx_stack_fingerprint($name)]);
+
   /* ---- what a stack's Versions tab needs: every service's image, what is on
    * disk for it now, and everything recorded that a rollback could target --
    *

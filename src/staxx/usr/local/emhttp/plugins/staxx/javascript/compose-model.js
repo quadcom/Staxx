@@ -7662,6 +7662,41 @@
     }
   }
 
+  /**
+   * unpinnedImageRef(ref) -> {ok, ref} or {ok:false, why}
+   *
+   * The mirror of pinnedImageRef() above: drops everything from the first
+   * "@" onward. Unlike pinning, releasing needs nothing looked up — there is
+   * no fingerprint to validate and no repository to resolve — so a tag that
+   * is a variable (e.g. "ghcr.io/app/thing:${TAG}@sha256:…") is not a reason
+   * to refuse here, even though it would be one for pinnedImageRef(). This
+   * is deliberate, not an oversight to "fix" into matching its sibling.
+   */
+  function unpinnedImageRef(ref) {
+    try {
+      // Only a genuine string is a reference — see the matching comment in
+      // pinnedImageRef() above for why coercion is not safe here.
+      ref = (typeof ref === 'string' ? ref : '').trim();
+      if (ref === '') {
+        return { ok: false, why: 'There is no image set on this service yet. Choose an image before releasing its pin.' };
+      }
+
+      var atIdx = ref.indexOf('@');
+      if (atIdx < 0) {
+        return { ok: false, why: 'This service is not pinned to a version, so there is nothing to release.' };
+      }
+
+      var base = ref.slice(0, atIdx).trim();
+      if (base === '') {
+        return { ok: false, why: 'That leaves no image name at all. Fix the image before removing its pin.' };
+      }
+
+      return { ok: true, ref: base };
+    } catch (e) {
+      return { ok: false, why: 'Something went wrong reading that image name. Try again.' };
+    }
+  }
+
   /* =====================================================================
    * Exports
    * ===================================================================== */
@@ -7786,7 +7821,8 @@
     // Turns an image reference plus a fingerprint into the reference that
     // pins it — see its own comment above for the rule and why it exists
     // here rather than in the front end.
-    pinnedImageRef: pinnedImageRef
+    pinnedImageRef: pinnedImageRef,
+    unpinnedImageRef: unpinnedImageRef
   };
 
   if (typeof window !== 'undefined') window.StaxxYaml = API;

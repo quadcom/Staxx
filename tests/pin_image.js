@@ -117,5 +117,107 @@ console.log('\n3. Reference shape — empty and non-string inputs');
      r && r.ok === false && typeof r.why === 'string' && r.why.length > 0, JSON.stringify(r));
 });
 
+console.log('\n4. Releasing a pin — unpinnedImageRef()');
+
+(function () {
+  var r = Y.unpinnedImageRef('jellyfin/jellyfin:latest@' + GOOD_DIGEST);
+  ok('plain pinned repo:tag has the fingerprint removed',
+     r.ok === true && r.ref === 'jellyfin/jellyfin:latest', JSON.stringify(r));
+})();
+
+(function () {
+  var r = Y.unpinnedImageRef('jellyfin/jellyfin@' + GOOD_DIGEST);
+  ok('pinned reference with no tag has the fingerprint removed',
+     r.ok === true && r.ref === 'jellyfin/jellyfin', JSON.stringify(r));
+})();
+
+(function () {
+  var r = Y.unpinnedImageRef('myhost:5000/app/thing:1.2@' + GOOD_DIGEST);
+  ok('a registry port survives release untouched',
+     r.ok === true && r.ref === 'myhost:5000/app/thing:1.2', JSON.stringify(r));
+})();
+
+(function () {
+  var r = Y.unpinnedImageRef('ghcr.io/app/thing:${TAG}@' + GOOD_DIGEST);
+  ok('a variable tag is released successfully — no lookup is needed to release',
+     r.ok === true && r.ref === 'ghcr.io/app/thing:${TAG}', JSON.stringify(r));
+})();
+
+// Refusals.
+
+['', '   '].forEach(function (v) {
+  var r = Y.unpinnedImageRef(v);
+  ok('empty/whitespace reference refused: ' + JSON.stringify(v),
+     r.ok === false && typeof r.why === 'string' && r.why.length > 0, JSON.stringify(r));
+});
+
+[null, undefined, 42, {}].forEach(function (v) {
+  var r = Y.unpinnedImageRef(v);
+  ok('non-string reference refused, not thrown: ' + JSON.stringify(v),
+     r && r.ok === false && typeof r.why === 'string' && r.why.length > 0, JSON.stringify(r));
+});
+
+(function () {
+  var r = Y.unpinnedImageRef('jellyfin/jellyfin:latest');
+  ok('a reference with no "@" is refused, not silently returned unchanged',
+     r.ok === false && typeof r.why === 'string' && r.why.length > 0, JSON.stringify(r));
+})();
+
+(function () {
+  var r = Y.unpinnedImageRef('@' + GOOD_DIGEST);
+  ok('a reference that is only the fingerprint is refused — release would leave no image',
+     r.ok === false && typeof r.why === 'string' && r.why.length > 0, JSON.stringify(r));
+})();
+
+console.log('\n5. Round trip — pin then release gives back the original');
+
+[
+  'jellyfin/jellyfin:latest',
+  'myhost:5000/app/thing:1.2',
+  'jellyfin/jellyfin',
+  'ghcr.io/app/thing:${TAG}'
+].forEach(function (original) {
+  var pinned = Y.pinnedImageRef(original, GOOD_DIGEST);
+  var released = pinned.ok ? Y.unpinnedImageRef(pinned.ref) : { ok: false };
+  ok('round trip preserves the original exactly: ' + original,
+     pinned.ok === true && released.ok === true && released.ref === original,
+     JSON.stringify({ pinned: pinned, released: released }));
+});
+
+(function () {
+  var OTHER_DIGEST = 'sha256:' + '1111111111111111111111111111111111111111111111111111111111111111'.slice(0, 32);
+  var original = 'jellyfin/jellyfin:latest';
+  var firstPin = Y.pinnedImageRef(original, GOOD_DIGEST);
+  var released = Y.unpinnedImageRef(firstPin.ref);
+  var repinnedFromReleased = Y.pinnedImageRef(released.ref, OTHER_DIGEST);
+  var pinnedDirectly = Y.pinnedImageRef(original, OTHER_DIGEST);
+  ok('release then re-pin to a different fingerprint matches pinning the original directly',
+     repinnedFromReleased.ok === true && pinnedDirectly.ok === true &&
+     repinnedFromReleased.ref === pinnedDirectly.ref,
+     JSON.stringify({ repinnedFromReleased: repinnedFromReleased, pinnedDirectly: pinnedDirectly }));
+})();
+
+/* The type guard, given teeth of its own.
+ *
+ * Every other non-string case here — null, a number, a plain object — turns
+ * into text containing no "@", so the "not pinned" rule refuses it anyway
+ * and the suite passes whether the type guard exists or not. It cannot tell
+ * the two apart. An object that stringifies to something pinned-looking is
+ * the one input where only the type guard stands between a caller and a
+ * confident wrong answer, so it is the only case that really proves it. */
+(function () {
+  var sixtyFour = new Array(65).join('0');
+
+  var looksPinned = { toString: function () { return 'ghcr.io/app/thing:latest@sha256:' + sixtyFour; } };
+  var released = Y.unpinnedImageRef(looksPinned);
+  ok('an object that stringifies to a pinned reference is refused, not released',
+     released.ok === false, JSON.stringify(released));
+
+  var looksPlain = { toString: function () { return 'ghcr.io/app/thing:latest'; } };
+  var pinned = Y.pinnedImageRef(looksPlain, 'sha256:' + sixtyFour);
+  ok('an object that stringifies to a plain reference is refused, not pinned',
+     pinned.ok === false, JSON.stringify(pinned));
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 if (fail > 0) process.exit(1);

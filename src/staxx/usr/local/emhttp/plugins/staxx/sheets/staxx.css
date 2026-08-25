@@ -2217,6 +2217,19 @@
   font-size: 1.1rem;
 }
 
+/* The marker for a stack with at least one service pinned to an exact build
+   (see staxx_pin_mark_html()) — information, not a warning, so it takes
+   .staxx-sub's quiet grey rather than .staxx-driftmark/.staxx-imgmismatch's
+   accent colour just above. Same icon-only shape otherwise: the tooltip and
+   the .staxx-sr span inside it already carry the whole sentence. */
+.staxx-pinmark {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
 /* The boot marker (PLAN_43) — always in the markup (see staxx_boot_mark_html())
    but hidden by default, because "off" is the common case and a lightning
    bolt on every row would be noise, not information. Keyed off the ROW's own
@@ -2978,6 +2991,27 @@
 
 .staxx-version-rollback {
   margin-top: 0.4rem;
+}
+
+/* The band saying this service is held at one exact build. Stated rather than
+ * warned about — a pin is a decision somebody made on purpose, so it reads in
+ * the same accent as "running now" instead of an alarm colour. */
+.staxx-version-pinned {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--sm-line);
+  border-left: 3px solid var(--sm-accent);
+  border-radius: var(--sm-radius);
+  font-size: 1.2rem;
+}
+
+.staxx-version-unpin {
+  flex: 0 0 auto;
 }
 
 .staxx-versions-single {

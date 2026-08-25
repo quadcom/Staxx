@@ -909,6 +909,68 @@ function staxx_image_mismatch_html(string $declared, string $running): string {
 }
 
 /**
+ * The human half of a pinned image's fingerprint — the tag written before the
+ * @, since that is the name a person actually recognises. Only when there is
+ * none (an image pinned with no tag at all) does this fall back to the first
+ * twelve characters of the digest itself, which is the shortest slice of it
+ * anyone could still tell apart from another.
+ */
+function staxx_pin_version(string $image): string {
+  $at = strpos($image, '@');
+  if ($at === false) return $image;
+  $repoTag = substr($image, 0, $at);
+  $digest  = substr($image, $at + 1);   // algo:hex, e.g. sha256:abcdef012345...
+
+  // A colon only names a tag when it comes after the last slash — one before
+  // it is a registry host's port number (registry.example.com:5000/app).
+  $slash = strrpos($repoTag, '/');
+  $colon = strrpos($repoTag, ':');
+  if ($colon !== false && ($slash === false || $colon > $slash)) {
+    return substr($repoTag, $colon + 1);
+  }
+
+  $hexColon = strpos($digest, ':');
+  $hex      = $hexColon !== false ? substr($digest, $hexColon + 1) : $digest;
+  return substr($hex, 0, 12);
+}
+
+/**
+ * The small marker on a stack row naming any service pinned to an exact
+ * build — an image whose value carries an @, so a pull can never move it off
+ * that build. Read straight off $kids' own 'declared' field, which is the
+ * compose file's own image string already parsed once by
+ * staxx_stack_children() — no second read of the file here.
+ *
+ * Deliberately its own class rather than staxx_drift_mark_html()'s or
+ * staxx_image_mismatch_html()'s: this is neither a warning nor a change since
+ * import, just a fact worth a quiet note, and sharing either class would say
+ * otherwise.
+ *
+ * @param array $kids from staxx_stack_children()
+ */
+function staxx_pin_mark_html(array $kids): string {
+  $pins = [];
+  foreach ($kids as $kid) {
+    $image = (string)($kid['declared'] ?? '');
+    if (strpos($image, '@') === false) continue;
+    $pins[] = ['service' => $kid['service'] !== '' ? $kid['service'] : $kid['name'], 'image' => $image];
+  }
+  if (!$pins) return '';
+
+  $text = count($pins) === 1
+    ? sprintf(_('%s is pinned to %s.'), $pins[0]['service'], staxx_pin_version($pins[0]['image']))
+    : sprintf(_('%d services are pinned to an exact build.'), count($pins));
+
+  // Named for a screen reader with a .staxx-sr span, not title alone — title
+  // is not reliably read out by assistive tech, and .staxx-sr is this file's
+  // existing pattern for an icon that has to carry real text (see
+  // staxx_grip_html() and stacks.js's own uses of the same class).
+  return '<span class="staxx-pinmark" title="'.htmlspecialchars($text).'">'
+       . '<i class="fa fa-thumb-tack"></i>'
+       . '<span class="staxx-sr">'.htmlspecialchars($text).'</span></span>';
+}
+
+/**
  * Every row of the table body, as HTML.
  *
  * Divs standing in for a table, arranged as CSS grid / subgrid so the columns
@@ -1320,6 +1382,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                 <? if (isset($drift[$s['name']])): ?>
                   <?= staxx_drift_mark_html($drift[$s['name']]) ?>
                 <? endif; ?>
+                <?= staxx_pin_mark_html($kids) ?>
                 <!-- The count is only worth printing for a stack that has more
                      than one container; for a single one the State column
                      already says everything this would. -->

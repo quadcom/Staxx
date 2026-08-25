@@ -311,6 +311,15 @@ function staxx_update_due(): array {
       $image = trim((string)($svcMeta['image'] ?? ''));
       if ($image === '') continue;
 
+      // A pinned image (repo:tag@sha256:...) can never move: pulling it
+      // fetches exactly the build it already names. Skipped here, on the
+      // acting list only — the checker still honestly reports "there is an
+      // update" for a pinned service, and that reporting path is untouched.
+      // Without this, an automatic update on a pinned service would recreate
+      // the same container every pass for ever, concluding nothing had
+      // changed and trying again the very next night.
+      if (strpos($image, '@') !== false) continue;
+
       $clock = staxx_update_clock($stack['name'], $svc, $image);
       if ($clock['due'] > 0 && $clock['due'] <= $now && $clock['why'] === '') {
         $out[] = ['stack' => $stack['name'], 'service' => $svc, 'image' => $image, 'due' => $clock['due']];
@@ -544,6 +553,101 @@ function staxx_update_rollback(string $stack, string $service, string &$error, s
   }
 
   return staxx_start_job($stack, 'recreate', $error, $service);
+}
+
+/**
+ * Release a pin: put a service's image back to plain "repo:tag", with
+ * everything from the first "@" removed. The mirror of
+ * staxx_update_rollback() above, minus the parts that pin something — no
+ * history lookup, and deliberately no job at the end. See point 6 below for
+ * why.
+ *
+ * As with a rollback, the file is the authority: the browser has already
+ * rewritten the image line and this function's job is to check that edit,
+ * not to write YAML itself.
+ *
+ * @return bool true on success, false with $error set on refusal
+ */
+function staxx_update_unpin(string $stack, string $service, string $yaml, string &$error, ?string &$note = null): bool {
+  $error = '';
+
+  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return false; }
+
+  $file = '';
+  foreach (staxx_list_stacks() as $s) {
+    if ($s['name'] === $stack) { $file = $s['file']; break; }
+  }
+  if ($file === '') { $error = 'No compose file found in this stack.'; return false; }
+
+  $meta = staxx_compose_meta($file);
+  if (!$meta['ok'] || !isset($meta['services'][$service])) {
+    $error = 'No service called "'.$service.'" in this stack.';
+    return false;
+  }
+
+  $image = trim((string)($meta['services'][$service]['image'] ?? ''));
+  if ($image === '') {
+    $error = 'This service has no image set, so there is nothing to release.';
+    return false;
+  }
+
+  $at = strpos($image, '@');
+  if ($at === false) {
+    $error = 'This service is not pinned to a version, so there is nothing to release.';
+    return false;
+  }
+  $unpinned = substr($image, 0, $at);
+
+  // The supplied text must turn the pin into exactly the same image with the
+  // "@sha256:..." removed — nothing else. Without this, "release" would be a
+  // way to change a service's image to anything at all, under cover of an
+  // action whose confirmation dialog only ever tells the person a pin is
+  // being lifted. As with a rollback, the text is parsed properly rather
+  // than trusted, so a digest (or anything else) hiding inside a comment
+  // cannot pass a plain string search.
+  $tmp = tempnam(sys_get_temp_dir(), 'staxx-up-');
+  if ($tmp === false) {
+    $error = 'Could not check the supplied file, so nothing was changed.';
+    return false;
+  }
+  file_put_contents($tmp, $yaml);
+  $checkMeta = staxx_compose_meta($tmp);
+  @unlink($tmp);
+
+  if (!$checkMeta['ok'] || !isset($checkMeta['services'][$service])) {
+    $error = 'The supplied file could not be checked, so nothing was changed.';
+    return false;
+  }
+  $checkImage = trim((string)($checkMeta['services'][$service]['image'] ?? ''));
+  if ($checkImage !== $unpinned) {
+    $error = 'The supplied file does not release this service to its unpinned image, so nothing was changed.';
+    return false;
+  }
+
+  if (!staxx_save_stack($stack, $yaml, $error, $note)) {
+    return false;
+  }
+
+  // The "don't offer me that version again" fingerprint written at pin time
+  // sits under the image key as it existed BEFORE the pin — see
+  // staxx_update_state()['images'] in Updates.php, keyed by the image string
+  // exactly as the compose file reads. Pinning added a fresh entry under the
+  // pinned name and left this one behind; releasing puts the file back to
+  // the unpinned name, so if this stale entry is not cleared here it comes
+  // back to life and silently suppresses the very update the release was
+  // meant to resume. Cleared under $unpinned, deliberately not $image.
+  $state  = staxx_update_state();
+  $images = (array)$state['images'];
+  if (isset($images[$unpinned]['skip'])) {
+    unset($images[$unpinned]['skip']);
+    staxx_update_state_save(['images' => $images]);
+  }
+
+  // No pull, no recreate, no job: releasing a pin changes only the file. The
+  // next check pass decides on its own whether the now-unpinned image is
+  // due anything, on the normal clock and policy — this function does not
+  // pre-empt that.
+  return true;
 }
 
 /* -------------------------------------------------------------------- cleanup -- */

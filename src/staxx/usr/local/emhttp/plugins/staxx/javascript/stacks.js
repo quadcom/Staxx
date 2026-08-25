@@ -15500,17 +15500,49 @@
       '</div>';
   }
 
+  // A service is pinned when its image line names an exact fingerprint,
+  // which is read off the file itself (the "@" the endpoint's image string
+  // carries) rather than any record StaXX kept — so a pin typed in by hand
+  // is shown and released just as well as one this tab made. Looked up
+  // among this service's own entries so the band can name the version, but
+  // a hand-typed pin will usually not be in that list at all — the short
+  // fingerprint is shown instead, and that is the ordinary case, not a
+  // missing value, so it is never spelled out as "unknown".
+  function pinnedBandHtml(svc) {
+    var image = svc.image || '';
+    var atIdx = image.indexOf('@');
+    if (atIdx === -1) return '';
+    var fingerprint = image.slice(atIdx + 1);
+    var entry = null;
+    for (var i = 0; i < svc.entries.length; i++) {
+      if (svc.entries[i].digest === fingerprint) { entry = svc.entries[i]; break; }
+    }
+    var label;
+    if (entry && entry.version) {
+      label = entry.version;
+    } else {
+      var colon = fingerprint.indexOf(':');
+      label = colon !== -1 ? fingerprint.slice(colon + 1, colon + 13) : fingerprint.slice(0, 12);
+    }
+    return '<div class="staxx-version-pinned">' +
+      '<div>' + esc('Pinned to ' + label) + '</div>' +
+      '<button type="button" class="staxx-btn staxx-btn--small staxx-version-unpin" ' +
+      'data-version-unpin="' + esc(svc.service) + '">' + esc('Release this pin') + '</button>' +
+      '</div>';
+  }
+
   function versionsContentHtml() {
     var svc = null;
     for (var i = 0; i < versionsServices.length; i++) {
       if (versionsServices[i].service === versionsSelected) { svc = versionsServices[i]; break; }
     }
     if (!svc) return '<p class="staxx-form-empty">Pick a service on the left.</p>';
+    var band = pinnedBandHtml(svc);
     if (!svc.entries.length) {
-      return '<p class="staxx-form-empty">Nothing has been recorded for ' + esc(svc.service) + ' yet. ' +
+      return band + '<p class="staxx-form-empty">Nothing has been recorded for ' + esc(svc.service) + ' yet. ' +
         'A version is recorded the first time StaXX updates this image.</p>';
     }
-    return svc.entries.map(function (v) { return versionRowHtml(svc, v); }).join('');
+    return band + svc.entries.map(function (v) { return versionRowHtml(svc, v); }).join('');
   }
 
   // The one function that draws #staxx-modal-versions — same "rebuilt
@@ -15708,10 +15740,86 @@
     });
   }
 
+  // Mirrors pinServiceImage() above: reads the image line exactly as
+  // written, on a throwaway parse so a refusal below never touches the
+  // live editor state, and asks compose-model.js's unpinnedImageRef() to
+  // drop the pin rather than doing that stripping here.
+  function unpinServiceImage(service) {
+    if (!YAML || typeof YAML.unpinnedImageRef !== 'function') {
+      return { ok: false, why: 'This version of StaXX cannot release pins yet — reload the page and try again.' };
+    }
+    var doc = YAML.parse(currentText());
+    var form = YAML.buildForm(doc, netDrivers());
+    form.doc = doc;
+    var field = null;
+    for (var i = 0; i < form.fields.length; i++) {
+      var f = form.fields[i];
+      if (f.service === service && f.binder === 'setting' && f.target === 'image') { field = f; break; }
+    }
+    var image = field && field.parts.value ? field.parts.value.value : '';
+    var unpinned = YAML.unpinnedImageRef(image);
+    if (!unpinned.ok) return unpinned;
+    if (!field || !YAML.setValue(doc, form, field.id, unpinned.ref)) {
+      return { ok: false, why: 'That image line could not be rewritten — edit it in the Compose view instead.' };
+    }
+    return { ok: true, yaml: YAML.serialise(doc) };
+  }
+
+  // Releasing a pin only edits the compose file — nothing is recreated, so
+  // unlike rollbackToVersion() there is no job to follow. adoptRolledBackText
+  // is reused as-is: it just puts fresh text wherever the editor is
+  // currently reading it from, which is exactly what a release needs too.
+  function releasePin(service) {
+    var unpinned = unpinServiceImage(service);
+    if (!unpinned.ok) {
+      versionsActionError = unpinned.why;
+      renderVersionsPane();
+      return;
+    }
+    call('update-unpin', { name: openedName, service: service,
+                            yaml: withEol(unpinned.yaml, composeEol) }).then(function (res) {
+      if (!res || !res.ok) {
+        versionsActionError = (res && res.error) || 'Could not release the pin on ' + service + '.';
+        renderVersionsPane();
+        return;
+      }
+      versionsActionError = '';
+      adoptRolledBackText(unpinned.yaml);
+      // As with a rollback, the stamp this editor is holding is now stale —
+      // the file on disk just changed under it.
+      fingerprintAtOpen = res.fingerprint || '';
+      showPageNotice(res.historyNote ||
+        ('"' + service + '" now follows its tag again. The pinned file is kept in History.'));
+      // The pin just came off, so the band above the list has to go too.
+      versionsLoaded = false;
+      if (modal.dataset.tab === 'versions') ensureVersionsLoaded();
+      else renderVersionsPane();
+    });
+  }
+
+  // service is the raw (unescaped) name, for the confirmation's own
+  // textContent — see askConfirm(), which never treats its title as HTML.
+  function performUnpin(service) {
+    askConfirm({
+      title: 'Release the pin on ' + service + '?',
+      bodyHtml: '<p>The compose file will stop naming an exact build, so this service follows its tag again. ' +
+        'Nothing restarts now — it keeps running what it is running until the next update or recreate moves ' +
+        'it.</p>' +
+        '<p>The pinned file is kept in History, so this can be undone.</p>',
+      goLabel: 'Release it'
+    }).then(function (go) {
+      closeConfirm();
+      if (go) releasePin(service);
+    });
+  }
+
   if (versionsHost) {
     versionsHost.addEventListener('click', function (event) {
       var svcBtn = event.target.closest('[data-versions-service]');
       if (svcBtn) { selectVersionsService(svcBtn.dataset.versionsService); return; }
+
+      var unpinBtn = event.target.closest('[data-version-unpin]');
+      if (unpinBtn) { performUnpin(unpinBtn.dataset.versionUnpin); return; }
 
       var rollbackBtn = event.target.closest('[data-version-rollback]');
       if (rollbackBtn) {
