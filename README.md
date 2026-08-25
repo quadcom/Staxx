@@ -30,7 +30,7 @@ underneath stays an ordinary compose file that runs anywhere.
 
 - [The stacks page](#the-stacks-page) · [The editor](#the-editor) · [Adding an app](#adding-an-app)
 - [Importing what you already run](#importing-what-you-already-run) · [Updates](#updates) · [Running containers](#running-containers)
-- [Autostart](#autostart) · [Removing a stack](#removing-a-stack) · [Settings](#settings)
+- [History and versions](#history-and-versions) · [Autostart](#autostart) · [Removing a stack](#removing-a-stack) · [Settings](#settings)
 - [What it promises](#what-it-promises) · [Roadmap](#roadmap) · [Limitations](#limitations) · [Installing](#installing) · [For contributors](#for-contributors)
 
 ---
@@ -149,7 +149,7 @@ source changes, and what arrives is locked until you have reviewed it.
   with a countdown you can pause, a quiet time of day, a global pause, a queue, "skip this version",
   and release notes where the publisher provides them. Any stack or container can overrule the
   setting in its own file.
-- **Rolling back.** Up to five previous versions of each image are kept.
+- **Rolling back.** Previous builds of each image are kept, so a bad update is one click undone.
 
 Checks run daily or weekly at a time you pick, and Unraid's notifications report what was found.
 
@@ -170,8 +170,20 @@ line inside the container, and a file browser inside it that can read, edit, ren
 
 The command line is off until you turn it on.
 
-**History** keeps every version of the file you have saved, to look at, name or put back. **Versions**
-remembers which build of each image has actually run, and rolls one back.
+---
+
+## History and versions
+
+**Every save is kept, and so is every image that has actually run.** Two more tabs in the editor,
+beside Configure and Manage.
+
+**History** takes a whole copy of the compose file and its override before each save. Open any of
+them read-only, give one a name, and put it back in a click. Twenty unnamed copies of each file are
+kept; a named one stays for good.
+
+**Versions** lists, per container, the builds of its image that have actually run — when, where they
+came from, and the publisher's release notes where there are any. Put an earlier build back, or pin a
+container to a version so updates leave it alone until you release it.
 
 ---
 
