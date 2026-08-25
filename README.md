@@ -236,8 +236,8 @@ lists what has been archived.
 
 Everything above works today. None of this does yet.
 
-- The settings that matter across a multi-part app gathered on one screen, rather than one container
-  at a time.
+- A value two containers have to share — a database password, say — typed once and carried across to
+  the other, once you have confirmed the two really are the same setting.
 - Showing how the containers in a stack are connected, and warning when an edit breaks that.
 - Showing what will change before a restart.
 - Choosing which parts of a stack start.
