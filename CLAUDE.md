@@ -63,7 +63,10 @@ mode, where assigning to a name nothing declared throws instead of quietly makin
 time. One such line inside a function every render calls kills the whole page.
 
 `tests/server/` holds PHP checks that can only run **on the server** — copy them up and run them
-there. `files.php` covers the companion-file helpers and the archive confirmation; `links.php` covers
+there. `files.php` covers the companion-file helpers and the archive confirmation; `record.php` and
+`imagehistory.php` cover each stack's own hidden record — its compose-file history, and the image
+versions kept for a rollback, including the keep-set that decides what may be deleted;
+`links.php` covers
 what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
 for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's
 boot-start list, and points `STAXX_AUTOSTART_FILE` at `/tmp` so the real one is never touched. Each

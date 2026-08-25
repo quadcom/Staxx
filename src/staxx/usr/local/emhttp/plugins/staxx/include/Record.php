@@ -74,12 +74,34 @@ function staxx_record_valid_entry($entry): bool {
 }
 
 /**
+ * Is "versions" itself shaped the way it must be — a plain list where every
+ * entry passes staxx_record_valid_entry()? Split out of staxx_record_read()
+ * so it can be checked independently of "images" (PLAN_82): a hand-edited
+ * or corrupted half of the record must never take the other half down with
+ * it. See staxx_image_history_valid_map() in ImageHistory.php, which gets
+ * the same treatment for the other half.
+ */
+function staxx_record_valid_versions($versions): bool {
+  if (!is_array($versions)) return false;
+
+  // Must be a plain list — a hand-edited file could easily turn this into a
+  // map keyed by version number, which json_decode would still accept as an
+  // array but which nothing downstream expects.
+  if (array_keys($versions) !== range(0, count($versions) - 1)) return false;
+
+  foreach ($versions as $entry) {
+    if (!staxx_record_valid_entry($entry)) return false;
+  }
+  return true;
+}
+
+/**
  * The decoded index, or [] for anything at all that is not a well-formed
- * record — missing, unreadable, invalid JSON, wrong "v", "versions" not a
- * plain list, or a single entry missing a field or of the wrong type. One bad
- * entry invalidates the whole read rather than being silently dropped: a
- * partially-trusted index is how a caller ends up reading history that was
- * never really there.
+ * record at all — missing, unreadable, invalid JSON, or a wrong or missing
+ * "v" or "next". Below that, "versions" and "images" (PLAN_82) are each
+ * validated on their own and each degrades to [] independently rather than
+ * invalidating the whole read: a bad entry in one is never allowed to lose
+ * the other, which is otherwise a well-formed half of the same file.
  */
 function staxx_record_read(string $rel): array {
   $path = staxx_record_dir($rel).'/record.json';
@@ -92,19 +114,18 @@ function staxx_record_read(string $rel): array {
   if (!is_array($data)) return [];
   if (($data['v'] ?? null) !== 1) return [];
   if (!is_int($data['next'] ?? null) || $data['next'] < 1) return [];
-  if (!is_array($data['versions'] ?? null)) return [];
 
-  // Must be a plain list — a hand-edited file could easily turn this into a
-  // map keyed by version number, which json_decode would still accept as an
-  // array but which nothing downstream expects.
-  $versions = $data['versions'];
-  if (array_keys($versions) !== range(0, count($versions) - 1)) return [];
+  $versions = staxx_record_valid_versions($data['versions'] ?? null) ? $data['versions'] : [];
 
-  foreach ($versions as $entry) {
-    if (!staxx_record_valid_entry($entry)) return [];
-  }
+  // staxx_image_history_valid_map() lives in ImageHistory.php, which not
+  // every caller of this file loads — the compose-edit history has to keep
+  // working with that file never included at all, which is exactly the
+  // independence this guards.
+  $images = function_exists('staxx_image_history_valid_map')
+    && staxx_image_history_valid_map($data['images'] ?? null)
+    ? $data['images'] : [];
 
-  return ['v' => 1, 'next' => $data['next'], 'versions' => $versions];
+  return ['v' => 1, 'next' => $data['next'], 'versions' => $versions, 'images' => $images];
 }
 
 /**
@@ -127,9 +148,25 @@ function staxx_record_atomic_write(string $path, string $data): bool {
   return true;
 }
 
-/** Encode and write the index. The one place record.json is ever written. */
+/**
+ * Encode and write the index. The one place record.json is ever written.
+ *
+ * Callers that only touch the compose-edit history (staxx_record_capture(),
+ * staxx_record_name(), staxx_record_prune()) know nothing about "images"
+ * (PLAN_82) and never pass it — so whatever is already on disk is carried
+ * forward unless the caller explicitly overrides it, meaning a plain history
+ * save can never wipe out a stack's image history, or vice versa. Omitted
+ * entirely when empty, so a record that has never recorded an image keeps
+ * exactly the shape it always had.
+ */
 function staxx_record_write_index(string $rel, array $record): bool {
-  $json = json_encode($record, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+  if (!array_key_exists('images', $record)) {
+    $record['images'] = staxx_record_read($rel)['images'] ?? [];
+  }
+  $out = ['v' => 1, 'next' => $record['next'], 'versions' => $record['versions']];
+  if ($record['images']) $out['images'] = $record['images'];
+
+  $json = json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($json === false) return false;
   return staxx_record_atomic_write(staxx_record_dir($rel).'/record.json', $json."\n");
 }

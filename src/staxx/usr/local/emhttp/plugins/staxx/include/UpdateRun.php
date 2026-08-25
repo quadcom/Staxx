@@ -17,6 +17,12 @@
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
+// The per-stack record that PLAN_82 Part 1 moves image history into. The
+// central file below (staxx_update_history_push()/staxx_update_history())
+// stays as a second, un-migrated source for as long as anything is still
+// only recorded there — see staxx_update_cleanup()'s keep-set for why both
+// are read together rather than one replacing the other.
+require_once '/usr/local/emhttp/plugins/staxx/include/ImageHistory.php';
 // staxx_update_due() and the queue walk the grid in folder order, which lives
 // in Folders.php rather than anywhere Stacks.php or Updates.php already pull
 // in. action.php happens to require it first anyway, but scripts/update-check
@@ -347,31 +353,42 @@ function staxx_update_hold(string $image, bool $on, string &$error): bool {
 /* ------------------------------------------------------------------- history -- */
 
 /**
- * Remember one service's fingerprint before an update runs — capped at the
- * retention setting, and never the same digest twice running, which is what
- * keeps a repeatedly-recreated container from filling the list with copies of
- * itself.
+ * Remember one service's fingerprint before an update runs, alongside the
+ * version name and where it came from (PLAN_82 Part 1) — both commonly
+ * absent, which is a normal answer, never a placeholder. Written straight
+ * into the stack's own record rather than the old central file: retention
+ * and the "never the same digest twice running" rule are staxx_image_
+ * history_push()'s job now, so they are enforced exactly once rather than
+ * risking two different answers from two places that both write.
+ *
+ * The old central file is left untouched here, on purpose. It still holds
+ * whatever an un-migrated stack recorded before this change shipped, and
+ * staxx_update_history() below reads both until a migration (or the lazy
+ * adopt on the update path) has moved a given stack's entries across.
  */
-function staxx_update_history_push(string $stack, string $service, string $digest): void {
+function staxx_update_history_push(string $stack, string $service, string $digest, array $meta = []): void {
   if ($digest === '') return;
-
-  $key     = $stack.'::'.$service;
-  $state   = staxx_update_state();
-  $history = (array)$state['history'];
-  $list    = (array)($history[$key] ?? []);
-
-  if (($list[0] ?? '') === $digest) return;
-
-  array_unshift($list, $digest);
-  $retain = staxx_update_settings()['retain'];
-  $history[$key] = array_slice($list, 0, max(0, $retain));
-
-  staxx_update_state_save(['history' => $history]);
+  staxx_image_history_push($stack, $service, $digest, $meta);
 }
 
+/**
+ * The rollback's reader: every digest recorded for this service, newest
+ * first, with no duplicates. Reads the new per-stack record AND whatever the
+ * old central file still holds for this key — a union, never a replacement,
+ * because a stack that has not been migrated (or adopted lazily on the
+ * update path) has its history nowhere else. New entries always come from
+ * the new store now, so putting its digests first is newest-first in
+ * practice, not just in theory.
+ */
 function staxx_update_history(string $stack, string $service): array {
-  $state = staxx_update_state();
-  return (array)($state['history'][$stack.'::'.$service] ?? []);
+  $new = staxx_image_history_digests($stack, $service);
+  $old = (array)(staxx_update_state()['history'][$stack.'::'.$service] ?? []);
+
+  $merged = $new;
+  foreach ($old as $digest) {
+    if (!in_array($digest, $merged, true)) $merged[] = $digest;
+  }
+  return $merged;
 }
 
 /* ------------------------------------------------------------------- roll back -- */
@@ -465,6 +482,55 @@ function staxx_update_rollback(string $stack, string $service, string &$error): 
  * @return array{removed: string[], kept: int}
  */
 /**
+ * Every digest worth keeping, grouped by repository: the live pointer for
+ * each known image, plus whatever any service's history still remembers.
+ *
+ * Pulled out of staxx_update_cleanup() so it can be proved directly rather
+ * than re-implemented in a test and asserted about. This is the list that
+ * decides what `docker rmi` is allowed to touch, so "the test builds the
+ * same union by hand and it matches" proves the test, not the code.
+ *
+ * The history half is the UNION of the per-stack records and whatever the
+ * old central file still holds. Reading only one of the two would mean a
+ * digest a rollback still needs — whichever source went un-read — looks
+ * unused and gets removed. That exact bug has been found in this codebase
+ * once already; do not "tidy away" either half while anything is still
+ * recorded only there.
+ */
+function staxx_update_keep_digests(): array {
+  $state  = staxx_update_state();
+  $images = (array)$state['images'];
+
+  $keep = [];
+  foreach ($images as $ref => $entry) {
+    $repo = staxx_hub_repo_path($ref);
+    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
+    if (!empty($entry['local'])) $keep[$repo][] = $entry['local'];
+  }
+
+  $historyKeys = array_unique(array_merge(
+    array_keys(staxx_image_history_all()),
+    array_keys((array)$state['history'])
+  ));
+  foreach ($historyKeys as $key) {
+    [$stack, $service] = array_pad(explode('::', $key, 2), 2, '');
+    $file = '';
+    foreach (staxx_list_stacks() as $s) {
+      if ($s['name'] === $stack) { $file = $s['file']; break; }
+    }
+    if ($file === '') continue;
+    $meta = staxx_compose_meta($file);
+    $ref  = trim((string)($meta['services'][$service]['image'] ?? ''));
+    if ($ref === '') continue;
+    $repo = staxx_hub_repo_path($ref);
+    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
+    foreach (staxx_update_history($stack, $service) as $d) $keep[$repo][] = $d;
+  }
+
+  return $keep;
+}
+
+/**
  * Normalise a docker image id for comparison: strip an optional
  * 'sha256:' prefix and keep only the leading twelve characters, since
  * `docker image ls` prints the short form and `docker inspect` may print
@@ -519,31 +585,9 @@ function staxx_update_cleanup(bool $dry, string &$error): array {
     return ['removed' => [], 'kept' => 0];
   }
 
-  $state  = staxx_update_state();
-  $images = (array)$state['images'];
-
-  // Every digest worth keeping, per repository: the live pointer plus
-  // whatever history still remembers for any service using that repository.
-  $keep = [];
-  foreach ($images as $ref => $entry) {
-    $repo = staxx_hub_repo_path($ref);
-    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
-    if (!empty($entry['local'])) $keep[$repo][] = $entry['local'];
-  }
-  foreach ((array)$state['history'] as $key => $digests) {
-    [$stack, $service] = array_pad(explode('::', $key, 2), 2, '');
-    $file = '';
-    foreach (staxx_list_stacks() as $s) {
-      if ($s['name'] === $stack) { $file = $s['file']; break; }
-    }
-    if ($file === '') continue;
-    $meta = staxx_compose_meta($file);
-    $ref  = trim((string)($meta['services'][$service]['image'] ?? ''));
-    if ($ref === '') continue;
-    $repo = staxx_hub_repo_path($ref);
-    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
-    foreach ((array)$digests as $d) $keep[$repo][] = $d;
-  }
+  // The keep-set, built by its own function so it can be proved directly
+  // rather than re-derived by a test that would then be proving itself.
+  $keep = staxx_update_keep_digests();
 
   // Every image a container is actually using, by id, running or stopped —
   // never removed regardless of what the bookkeeping above says.
@@ -814,6 +858,18 @@ function staxx_update_queue_tick(): array {
       // history list before the pull runs — the same "before, not after"
       // ordering Part C3 describes, so a roll back has something to roll
       // back to even if the update job itself never finishes cleanly.
+      // Move anything this stack still has sitting in the old central file
+      // into its own record before adding to it — a side effect of the
+      // ordinary update path rather than a separate event, per PLAN_82 Part
+      // 1. Logged and carried on rather than failing the update: a missed
+      // adopt this time round just means the central file still has this
+      // stack's older entries, which staxx_update_history() already reads
+      // regardless.
+      $adoptError = '';
+      if (!staxx_image_history_adopt($item['stack'], $adoptError) && $adoptError !== '') {
+        error_log('StaXX: image history adopt failed for '.$item['stack'].': '.$adoptError);
+      }
+
       $file = '';
       foreach (staxx_list_stacks() as $s) {
         if ($s['name'] === $item['stack']) { $file = $s['file']; break; }
@@ -821,11 +877,23 @@ function staxx_update_queue_tick(): array {
       if ($file !== '') {
         $meta = staxx_compose_meta($file);
         if ($meta['ok']) {
+          $cachedImages = (array)(staxx_update_state()['images'] ?? []);
           foreach ($meta['services'] as $svc => $svcMeta) {
             $image = trim((string)($svcMeta['image'] ?? ''));
             if ($image === '') continue;
             $local = staxx_image_local($image);
-            if (!empty($local['digest'])) staxx_update_history_push($item['stack'], $svc, $local['digest']);
+            if (empty($local['digest'])) continue;
+
+            // The version and source about to be superseded — read from the
+            // labels cache staxx_image_remote()/staxx_update_labels_meta()
+            // already filled in, the same cache Links.php reads from. Never
+            // a fresh docker call, and never a placeholder when a label is
+            // simply absent, which is the normal case for plenty of images.
+            $cached = (array)($cachedImages[$image] ?? []);
+            $svcMetaOut = [];
+            if (($cached['version'] ?? '') !== '') $svcMetaOut['version'] = (string)$cached['version'];
+            if (($cached['source']  ?? '') !== '') $svcMetaOut['source']  = (string)$cached['source'];
+            staxx_update_history_push($item['stack'], $svc, $local['digest'], $svcMetaOut);
           }
         }
       }
