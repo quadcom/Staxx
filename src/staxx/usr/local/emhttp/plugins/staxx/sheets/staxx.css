@@ -2993,6 +2993,37 @@
   margin-top: 0.4rem;
 }
 
+/* Closed by default (native <details>) so a long version list stays
+   scannable — the vendor's own release text, shown only where it was
+   captured at pull time. */
+.staxx-version-notes {
+  margin-top: 0.4rem;
+  font-size: 1.1rem;
+}
+
+.staxx-version-notes > summary {
+  cursor: pointer;
+  color: var(--sm-accent);
+}
+
+/* Vendor prose can run long and carries long URLs with no natural break,
+   hence overflow-wrap rather than relying on whitespace alone. */
+.staxx-version-notes-body {
+  margin-top: 0.4rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--sm-muted);
+  font-size: 1.05rem;
+}
+
+.staxx-version-notes-cut {
+  margin-top: 0.3rem;
+  color: var(--sm-muted);
+  font-size: 1.05rem;
+}
+
 /* The band saying this service is held at one exact build. Stated rather than
  * warned about — a pin is a decision somebody made on purpose, so it reads in
  * the same accent as "running now" instead of an alarm colour. */

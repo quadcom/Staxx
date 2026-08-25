@@ -15495,9 +15495,28 @@
       : '<button type="button" class="staxx-btn staxx-btn--small staxx-version-rollback" ' +
         'data-version-service="' + esc(svc.service) + '" data-version-rollback="' + esc(v.digest) + '">' +
         esc('Put this back') + '</button>';
+    // Notes were captured once, at pull time, and stored — nothing here ever
+    // fetches them, which is the whole point. Most entries have none (they
+    // predate this, or the image's registry gave nothing usable), and that
+    // is the ordinary case, not a gap, so a blank entry draws nothing at all.
+    var notesHtml = '';
+    if (v.notes) {
+      var cutHtml = '';
+      if (v.notesCut) {
+        var notesLink = safeUpdateSource(v.notesUrl);
+        cutHtml = '<div class="staxx-version-notes-cut">' +
+          (notesLink
+            ? esc('Shortened — ') + '<a href="' + esc(notesLink) + '" target="_blank" rel="noopener">' +
+              esc('see the rest') + '</a>'
+            : esc('Shortened.')) +
+          '</div>';
+      }
+      notesHtml = '<details class="staxx-version-notes"><summary>' + esc('What changed') + '</summary>' +
+        '<div class="staxx-version-notes-body">' + esc(v.notes) + '</div>' + cutHtml + '</details>';
+    }
     return '<div class="staxx-version-entry"' + (isCurrent ? ' aria-current="true"' : '') + '>' +
-      '<div class="staxx-version-heading">' + heading + '</div>' + metaHtml + sourceHtml + actionHtml +
-      '</div>';
+      '<div class="staxx-version-heading">' + heading + '</div>' + metaHtml + sourceHtml + notesHtml +
+      actionHtml + '</div>';
   }
 
   // A service is pinned when its image line names an exact fingerprint,

@@ -1016,6 +1016,12 @@ switch ($action) {
       if (!$running) $verb = 'pull';
     }
 
+    // Recorded before the job starts, not after — a hand-pressed Update is
+    // how most updates actually happen, so it has to leave a rollback
+    // record the same way the automatic queue does, and a slow or failed
+    // job must not be the reason nothing was ever recorded.
+    staxx_update_record_before_pull($name, $service);
+
     $job = staxx_start_job($name, $verb, $error, $service);
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_prune_jobs();

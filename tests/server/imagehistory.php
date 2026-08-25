@@ -1,7 +1,11 @@
 <?php
 /* PLAN_82 Part 1 — per-stack image history (include/ImageHistory.php), the
  * migration out of the old server-wide history file, and the safety-critical
- * keep-list that image cleanup builds from both.
+ * keep-list that image cleanup builds from both. Also covers the Part 2
+ * step 3 round trip of the three optional release-notes keys through the
+ * real push/read functions — the pure shape rules for those keys live in
+ * tests/server/releasenotes.php instead, alongside everything else that
+ * plan step added.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STACK_ROOT
  * pointed at /tmp/b3-root and UPDATE_RETAIN at "3" (so the retention cases
@@ -182,6 +186,52 @@ staxx_image_history_push('zzb3blank', 'web', dg('blank2'), ['version' => 'v10.9.
 $row = staxx_image_history('zzb3blank', 'web')[0] ?? null;
 ok('a push with both fields keeps them verbatim',
    is_array($row) && $row['version'] === 'v10.9.11' && $row['source'] === 'https://example.test/proj');
+
+/* ------------------------------------------ PLAN_82 Part 2 step 3: notes -- *
+ * The three release-notes keys (notes, notesUrl, notesCut) are optional and
+ * additive on a pushed entry — see the comment above staxx_image_history_
+ * push() in ImageHistory.php. The pure shape rules for these keys (absent
+ * is valid, present must be the right type, one wrong type takes the whole
+ * map down) are proved directly against staxx_image_history_valid_entry()/
+ * staxx_image_history_valid_map() in tests/server/releasenotes.php; what
+ * belongs here is the round trip through the real functions this suite
+ * already exercises everywhere else — a push with notes meta actually
+ * WRITES the three keys, and a push with none leaves the entry exactly the
+ * small shape it always was. */
+
+b3_make_stack('zzb3notes', 'web');
+staxx_image_history_push('zzb3notes', 'web', dg('notes1'), [
+  'version'   => '1.2.3',
+  'notes'     => 'Fixed a bug. Added a feature.',
+  'notesUrl'  => 'https://github.com/example/project/releases/tag/1.2.3',
+  'notesCut'  => true,
+]);
+$notesRow = staxx_image_history('zzb3notes', 'web')[0] ?? null;
+ok('a push with notes meta writes all three keys verbatim',
+   is_array($notesRow)
+     && $notesRow['notes'] === 'Fixed a bug. Added a feature.'
+     && $notesRow['notesUrl'] === 'https://github.com/example/project/releases/tag/1.2.3'
+     && $notesRow['notesCut'] === true,
+   $notesRow === null ? '(nothing recorded)' : json_encode($notesRow));
+
+staxx_image_history_push('zzb3notes', 'web', dg('notes2'), ['version' => '1.2.4']);
+$noNotesRow = staxx_image_history('zzb3notes', 'web')[0] ?? null;
+ok('a push with no notes meta leaves the entry with no notes keys at all — '
+ . 'the small shape every entry had before this change',
+   is_array($noNotesRow)
+     && !array_key_exists('notes', $noNotesRow)
+     && !array_key_exists('notesUrl', $noNotesRow)
+     && !array_key_exists('notesCut', $noNotesRow),
+   $noNotesRow === null ? '(nothing recorded)' : json_encode($noNotesRow));
+
+// A blank notes string is the same as no notes at all — nothing to show, so
+// nothing is written, per staxx_image_history_push()'s own "written only
+// when there is something to write" rule.
+staxx_image_history_push('zzb3notes', 'web', dg('notes3'), ['version' => '1.2.5', 'notes' => '']);
+$blankNotesRow = staxx_image_history('zzb3notes', 'web')[0] ?? null;
+ok('a push with an empty notes string writes no notes key either',
+   is_array($blankNotesRow) && !array_key_exists('notes', $blankNotesRow),
+   $blankNotesRow === null ? '(nothing recorded)' : json_encode($blankNotesRow));
 
 /* ----------------------------------------------- digests mirror entries -- */
 

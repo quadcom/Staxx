@@ -15,6 +15,10 @@ define('STAXX_ROOT',    '/usr/local/emhttp/plugins/'.STAXX_PLUGIN);
 define('STAXX_CFG_DIR', '/boot/config/plugins/'.STAXX_PLUGIN);
 define('STAXX_CFG',     STAXX_CFG_DIR.'/'.STAXX_PLUGIN.'.cfg');
 
+// Release-notes cap, characters. A stack's own record must not quietly grow
+// by a megabyte of vendor prose because one release included a full changelog.
+define('STAXX_NOTES_MAX', 4000);
+
 // Projection of the HEADER_MENU setting onto a file, written by
 // scripts/apply_settings. The .page Cond expressions test for this instead of
 // parsing the config, because Cond runs on every render of every page.

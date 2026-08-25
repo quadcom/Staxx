@@ -56,6 +56,13 @@ function staxx_image_history_valid_entry($entry): bool {
   if (!is_int($entry['at']) || $entry['at'] < 0) return false;
   if (!is_string($entry['version'])) return false;
   if (!is_string($entry['source'])) return false;
+
+  // Release notes: optional on every entry, since every one already on disk
+  // predates them — absent is valid, present must be the right type.
+  if (array_key_exists('notes', $entry) && !is_string($entry['notes'])) return false;
+  if (array_key_exists('notesUrl', $entry) && !is_string($entry['notesUrl'])) return false;
+  if (array_key_exists('notesCut', $entry) && !is_bool($entry['notesCut'])) return false;
+
   return true;
 }
 
@@ -116,6 +123,16 @@ function staxx_image_history_push(string $stack, string $service, string $digest
     'version' => (string)($meta['version'] ?? ''),
     'source'  => (string)($meta['source'] ?? ''),
   ];
+
+  // Optional and additive: written only when there is something to write, so
+  // an entry with no notes stays exactly the small shape it always was.
+  if (is_string($meta['notes'] ?? null) && $meta['notes'] !== '') {
+    $entry['notes'] = $meta['notes'];
+    $entry['notesCut'] = (bool)($meta['notesCut'] ?? false);
+  }
+  if (is_string($meta['notesUrl'] ?? null) && $meta['notesUrl'] !== '') {
+    $entry['notesUrl'] = $meta['notesUrl'];
+  }
 
   // Written only if it would be read back. The reader validates the digest's
   // shape, so a writer that did not apply the same test could store an entry

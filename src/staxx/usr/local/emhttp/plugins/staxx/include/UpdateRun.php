@@ -23,6 +23,11 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 // only recorded there — see staxx_update_cleanup()'s keep-set for why both
 // are read together rather than one replacing the other.
 require_once '/usr/local/emhttp/plugins/staxx/include/ImageHistory.php';
+// staxx_update_record_before_pull() looks up a project link so the release
+// notes it fetches (PLAN_82 Part 2) come from the right place. action.php
+// already requires this separately for its own use, but the cron passes
+// include only this file directly, so it has to be named here too.
+require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 // staxx_update_due() and the queue walk the grid in folder order, which lives
 // in Folders.php rather than anywhere Stacks.php or Updates.php already pull
 // in. action.php happens to require it first anyway, but scripts/update-check
@@ -378,6 +383,112 @@ function staxx_update_hold(string $image, bool $on, string &$error): bool {
 function staxx_update_history_push(string $stack, string $service, string $digest, array $meta = []): void {
   if ($digest === '') return;
   staxx_image_history_push($stack, $service, $digest, $meta);
+}
+
+/**
+ * Record every service's fingerprint before a pull runs — whole stack when
+ * $service is '', one named service otherwise (a name not present in this
+ * stack's compose file simply matches nothing). Shared by the queue tick
+ * and a hand-pressed Update (PLAN_82 Part 2), so both leave something to
+ * roll back to even if the job itself never finishes. Best-effort
+ * throughout: nothing calling this has anywhere to show a failure, so an
+ * unreadable stack or a service with no local digest yet simply records
+ * nothing, exactly as it always has.
+ */
+function staxx_update_record_before_pull(string $stack, string $service = ''): void {
+  // Move anything this stack still has sitting in the old central file into
+  // its own record first — a side effect of the ordinary update path rather
+  // than a separate event, per PLAN_82 Part 1. Logged and carried on rather
+  // than blocking the record: a missed adopt just means the central file
+  // still has this stack's older entries, which staxx_update_history()
+  // already reads regardless.
+  $adoptError = '';
+  if (!staxx_image_history_adopt($stack, $adoptError) && $adoptError !== '') {
+    error_log('StaXX: image history adopt failed for '.$stack.': '.$adoptError);
+  }
+
+  $file = '';
+  foreach (staxx_list_stacks() as $s) {
+    if ($s['name'] === $stack) { $file = $s['file']; break; }
+  }
+  if ($file === '') return;
+
+  $meta = staxx_compose_meta($file);
+  if (!$meta['ok']) return;
+
+  $cachedImages = (array)(staxx_update_state()['images'] ?? []);
+
+  // A budget for the release-notes fetching below, and the reason it exists:
+  // the Update button calls this inside its own request, and every other
+  // network read in this plugin is deliberately kept out of a request (the
+  // update check detaches itself into a job for exactly this reason). One
+  // unreachable registry per service, at the fetch's own ceiling, would
+  // otherwise leave the button hanging for a minute on a many-service stack.
+  // Once the budget is gone the remaining services are still recorded, just
+  // without notes — the next update picks them up.
+  $notesUntil = time() + 12;
+
+  foreach ($meta['services'] as $svc => $svcMeta) {
+    if ($service !== '' && $svc !== $service) continue;
+
+    $image = trim((string)($svcMeta['image'] ?? ''));
+    if ($image === '') continue;
+    $local = staxx_image_local($image);
+    if (empty($local['digest'])) continue;
+
+    // The version and source about to be superseded — read from the labels
+    // cache staxx_image_remote()/staxx_update_labels_meta() already filled
+    // in, the same cache Links.php reads from. Never a fresh docker call,
+    // and never a placeholder when a label is simply absent, which is the
+    // normal case for plenty of images.
+    $cached = (array)($cachedImages[$image] ?? []);
+
+    // The checker's own "did this actually change" test. 'version' is
+    // overwritten with the *incoming* build on every check pass, and the
+    // outgoing one is kept separately as 'was' — so an entry describing the
+    // build being superseded must be stamped from 'was' when a change is
+    // under way, not from 'version', or it carries the name of its own
+    // replacement. Empty stays empty either way: absent is a normal answer
+    // for plenty of images, and nothing is ever substituted for it. Entries
+    // already on disk are not revisited — history is not retrospectively
+    // corrected.
+    $changed = ($cached['local'] ?? '') !== '' && ($cached['remote'] ?? '') !== ''
+             && $cached['local'] !== $cached['remote'];
+    $name = $changed ? (string)($cached['was'] ?? '') : (string)($cached['version'] ?? '');
+
+    $svcMetaOut = [];
+    if ($name !== '') $svcMetaOut['version'] = $name;
+    if (($cached['source'] ?? '') !== '') $svcMetaOut['source'] = (string)$cached['source'];
+
+    // Release notes: fetched at most once per version, right here, never
+    // again on view — so there is no cache to expire, only this one guard
+    // against paying for a second network call for the same entry. Needs a
+    // name, a project link, and a digest that is not already on record with
+    // notes; also skipped when the newest entry already carries this
+    // digest, since the push below would refuse it as a duplicate anyway.
+    if ($name !== '' && time() < $notesUntil) {
+      $links   = staxx_project_links($image, $meta['x'] ?? [], $meta['services'][$svc]['x'] ?? []);
+      $project = (string)($links['project'] ?? '');
+      if ($project !== '') {
+        $history = staxx_image_history($stack, $svc);
+        $skip = (($history[0]['digest'] ?? '') === $local['digest']);
+        foreach ($history as $entry) {
+          if ($skip) break;
+          if (($entry['digest'] ?? '') === $local['digest'] && ($entry['notes'] ?? '') !== '') $skip = true;
+        }
+        if (!$skip) {
+          $notes = staxx_release_notes_fetch($project, $name);
+          if (($notes['notes'] ?? '') !== '') {
+            $svcMetaOut['notes']    = (string)$notes['notes'];
+            $svcMetaOut['notesUrl'] = (string)($notes['url'] ?? '');
+            $svcMetaOut['notesCut'] = (bool)($notes['cut'] ?? false);
+          }
+        }
+      }
+    }
+
+    staxx_update_history_push($stack, $svc, $local['digest'], $svcMetaOut);
+  }
 }
 
 /**
@@ -1036,49 +1147,12 @@ function staxx_update_queue_tick(): array {
     foreach ($items as $i => &$item) {
       if (($item['state'] ?? '') !== 'waiting') continue;
 
-      // The fingerprint of every service in this stack is pushed onto its own
-      // history list before the pull runs — the same "before, not after"
-      // ordering Part C3 describes, so a roll back has something to roll
-      // back to even if the update job itself never finishes cleanly.
-      // Move anything this stack still has sitting in the old central file
-      // into its own record before adding to it — a side effect of the
-      // ordinary update path rather than a separate event, per PLAN_82 Part
-      // 1. Logged and carried on rather than failing the update: a missed
-      // adopt this time round just means the central file still has this
-      // stack's older entries, which staxx_update_history() already reads
-      // regardless.
-      $adoptError = '';
-      if (!staxx_image_history_adopt($item['stack'], $adoptError) && $adoptError !== '') {
-        error_log('StaXX: image history adopt failed for '.$item['stack'].': '.$adoptError);
-      }
-
-      $file = '';
-      foreach (staxx_list_stacks() as $s) {
-        if ($s['name'] === $item['stack']) { $file = $s['file']; break; }
-      }
-      if ($file !== '') {
-        $meta = staxx_compose_meta($file);
-        if ($meta['ok']) {
-          $cachedImages = (array)(staxx_update_state()['images'] ?? []);
-          foreach ($meta['services'] as $svc => $svcMeta) {
-            $image = trim((string)($svcMeta['image'] ?? ''));
-            if ($image === '') continue;
-            $local = staxx_image_local($image);
-            if (empty($local['digest'])) continue;
-
-            // The version and source about to be superseded — read from the
-            // labels cache staxx_image_remote()/staxx_update_labels_meta()
-            // already filled in, the same cache Links.php reads from. Never
-            // a fresh docker call, and never a placeholder when a label is
-            // simply absent, which is the normal case for plenty of images.
-            $cached = (array)($cachedImages[$image] ?? []);
-            $svcMetaOut = [];
-            if (($cached['version'] ?? '') !== '') $svcMetaOut['version'] = (string)$cached['version'];
-            if (($cached['source']  ?? '') !== '') $svcMetaOut['source']  = (string)$cached['source'];
-            staxx_update_history_push($item['stack'], $svc, $local['digest'], $svcMetaOut);
-          }
-        }
-      }
+      // Every service in this stack has its fingerprint (and version, source
+      // and release notes, where known) recorded before the pull runs — the
+      // same "before, not after" ordering staxx_update_record_before_pull()
+      // documents, so a roll back has something to roll back to even if the
+      // update job itself never finishes cleanly.
+      staxx_update_record_before_pull($item['stack']);
 
       $jobError = '';
       $job = staxx_start_job($item['stack'], 'update', $jobError);
