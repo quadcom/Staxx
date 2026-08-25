@@ -12302,12 +12302,51 @@
   // The common ending once the compose file is on disk and no directory move
   // is needed — a brand new stack, or an existing one whose leaf did not
   // change.
-  function finishSave(name, thenStart, thenHandover) {
+  // Save leaves the editor open, so a run of small edits is one dialog rather
+  // than a reopen between each. It can only stay open when nothing else is
+  // waiting to happen, though: everything below needs the row on screen, or
+  // needs the editor pointed somewhere it no longer is.
+  //
+  //   isNew        the install banner is a page-level notice, and would sit
+  //                unseen behind this dialog; the editor is also still flagged
+  //                as a new stack, so a second Save would create rather than
+  //                update.
+  //   thenStart    "Save and start" reports progress into the row.
+  //   thenHandover the takeover confirmation is its own dialog.
+  //   offer        the recreate offer likewise.
+  //
+  // A rename never reaches here at all — it goes through renameThenFinish(),
+  // which moves the directory out from under the path this editor opened.
+  // "Saved" on the button itself for a moment, then back to its own label.
+  // The timer is held so a quick second save cannot restore a label captured
+  // while it already read "Saved" and leave the button stuck on it.
+  var savedTimer = null;
+  var saveBtnLabel = '';
+  function confirmSaved() {
+    if (savedTimer === null) saveBtnLabel = saveBtn.textContent;
+    else clearTimeout(savedTimer);
+    saveBtn.textContent = 'Saved';
+    savedTimer = setTimeout(function () {
+      saveBtn.textContent = saveBtnLabel;
+      savedTimer = null;
+    }, 1500);
+  }
+
+  function finishSave(name, thenStart, thenHandover, isNew) {
     saveBtn.disabled = false;
     startBtn.disabled = startBtnWasDisabled;
 
     var offer = serviceRenamed && stackIsRunning(name);
     serviceRenamed = false;
+
+    if (!isNew && !thenStart && !thenHandover && !offer) {
+      // The dialog closing was the only sign a save had landed, so with it
+      // staying open the button says so itself for a moment. No new markup
+      // and no new surface for one word.
+      confirmSaved();
+      refreshRows();
+      return;
+    }
 
     // The row has to exist before the start can report back into it, so
     // the table is refreshed first and the command issued from there.
@@ -12508,7 +12547,7 @@
         refreshPending();
 
         var oldLeaf = openedName.slice(openedName.lastIndexOf('/') + 1);
-        if (isNew || leaf === oldLeaf) { finishSave(name, thenStart, offerHandover); return; }
+        if (isNew || leaf === oldLeaf) { finishSave(name, thenStart, offerHandover, isNew); return; }
 
         renameThenFinish(name, leaf, thenStart);
       });
