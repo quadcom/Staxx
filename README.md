@@ -170,6 +170,9 @@ line inside the container, and a file browser inside it that can read, edit, ren
 
 The command line is off until you turn it on.
 
+**History** keeps every version of the file you have saved, to look at, name or put back. **Versions**
+remembers which build of each image has actually run, and rolls one back.
+
 ---
 
 ## Autostart
@@ -231,7 +234,7 @@ Everything above works today. None of this does yet.
 - Acting on several stacks at once.
 - Exporting a stack as a shareable recipe with your own details stripped.
 - Graphics figures for Nvidia cards.
-- Stacks off the flash drive, and an edit history you can undo.
+- Stacks off the flash drive.
 
 ---
 
@@ -239,7 +242,7 @@ Everything above works today. None of this does yet.
 
 - Pre-alpha. It is installed by hand and is not in Community Applications.
 - Requires Unraid 7.2 or later, and Docker Compose already on the server — StaXX does not install it.
-- Stacks live on the flash drive, and there is no edit history to undo yet.
+- Stacks live on the flash drive.
 - Graphics figures cover Intel and AMD cards. Nvidia shows no figures, though a container given an
   Nvidia card is still labelled as such.
 - Without a Docker Hub read-only token, update checks are limited to roughly ten images an hour
