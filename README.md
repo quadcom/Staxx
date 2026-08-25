@@ -48,7 +48,7 @@ Every stack is a row, and each container inside it gets its own row.
 - **State** per container, with uptime and what its health check says.
 - **Four buttons** — web page, logs, project page, Unraid support thread.
 - **Its address**, with Unraid's own address-and-port substitution.
-- **Its logo**, found for you — or a coloured tile with its initials when there isn't one.
+- **Its logo**, found for you.
 - **Badges** for an update waiting, a withdrawn tag, an image that moved registry, a copy that has
   drifted from its source, a container built from an image the file no longer names.
 
@@ -136,8 +136,7 @@ Each row says where it came from and where it will land — one folder for every
 Docker folders"**, using the folders from FolderView. **Importing only copies**: nothing at the
 source changes, and what arrives is locked until you have reviewed it.
 
-**Taking an app over can be undone.** You are asked whether the new stack works — say it does not,
-and the old container is back and running in seconds.
+**Changed your mind?** One click puts the old app back, running.
 
 ---
 
