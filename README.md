@@ -181,6 +181,8 @@ beside Configure and Manage.
 them read-only, give one a name, and put it back in a click. Twenty unnamed copies of each file are
 kept; a named one stays for good.
 
+![The History tab, with a kept version open](docs/images/history.jpg)
+
 **Versions** lists, per container, the builds of its image that have actually run — when, where they
 came from, and the publisher's release notes where there are any. Put an earlier build back, or pin a
 container to a version so updates leave it alone until you release it.
