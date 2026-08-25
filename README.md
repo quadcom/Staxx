@@ -236,7 +236,8 @@ lists what has been archived.
 
 Everything above works today. None of this does yet.
 
-- A multi-container app installed, configured and updated as one application.
+- The settings that matter across a multi-part app gathered on one screen, rather than one container
+  at a time.
 - Showing how the containers in a stack are connected, and warning when an edit breaks that.
 - Showing what will change before a restart.
 - Choosing which parts of a stack start.
