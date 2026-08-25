@@ -134,6 +134,7 @@
   if (gapNote && gapNote.parentNode) gapNote.parentNode.insertBefore(watchNote, gapNote);
   var errorBox    = document.getElementById('staxx-error');
   var missingNote = document.getElementById('staxx-missing');
+  var scaffoldNote = document.getElementById('staxx-scaffold-note');
   var makePathsNote = document.getElementById('staxx-makepaths');
   var inUseNote     = document.getElementById('staxx-inusepaths');
 
@@ -1286,6 +1287,33 @@
     }
     if (yamlTimer) clearTimeout(yamlTimer);
     yamlTimer = setTimeout(function () { yamlTimer = null; reparse(); }, 400);
+  });
+
+  // PLAN_83: a paste is the moment a whole file arrives from nowhere — same
+  // as any of the other new-stack routes openEditor() itself scaffolds, but
+  // this one happens after the editor is already open. Existing-stack
+  // pastes are left alone; #staxx-scaffold-note is what offers those.
+  // setTimeout(0) is needed because the 'paste' event fires before the
+  // browser has actually inserted the clipboard text into the box.
+  yamlPane.addEventListener('paste', function () {
+    if (modal.dataset.new !== '1' || fileOpen !== null || !window.StaxxMeta) return;
+    setTimeout(function () {
+      var scaffolded = window.StaxxMeta.scaffold(currentText());
+      if (scaffolded.error || !scaffolded.changed) return;
+      pushUndo('adding the StaXX fields');
+      yamlPane.value = scaffolded.yaml;
+      // The new lines can land anywhere in the file (a root block goes in
+      // before "services:"), so recovering the exact caret spot the paste
+      // left behind is not worth chasing — landing at the end of the file
+      // is the same trade-off pushUndo()'s own callers already make.
+      yamlPane.selectionStart = yamlPane.selectionEnd = yamlPane.value.length;
+      paintGutter();
+      paintInk();
+      activeField = null;
+      reparse();
+      updateUndo();
+      setYamlStatus('Added the StaXX fields for icon, links and description.');
+    }, 0);
   });
 
   /* Split is the desktop default and is not offered on a phone, where two panes
@@ -3689,6 +3717,37 @@
     if (missing.length) createMissingFile(missing[0]);
   });
 
+  // PLAN_83: an existing stack with no StaXX presentation fields at all.
+  // Never shown for a brand-new stack — openEditor() already scaffolds that
+  // text before this pane is painted, so needsScaffold() is already false by
+  // the time reparse() first runs. Skipped on a companion file for the same
+  // reason updateMissing() has nothing to say about one either.
+  function updateScaffoldNote() {
+    if (!scaffoldNote) return;
+    if (fileOpen !== null || !window.StaxxMeta || !window.StaxxMeta.needsScaffold(currentText())) {
+      scaffoldNote.hidden = true;
+      scaffoldNote.textContent = '';
+      return;
+    }
+    scaffoldNote.textContent = 'This stack has no StaXX fields for its icon, links and ' +
+      'description. Add them?';
+    scaffoldNote.hidden = false;
+  }
+
+  if (scaffoldNote) scaffoldNote.addEventListener('click', function () {
+    if (!window.StaxxMeta) return;
+    var scaffolded = window.StaxxMeta.scaffold(currentText());
+    if (scaffolded.error || !scaffolded.changed) { updateScaffoldNote(); return; }
+    pushUndo('adding the StaXX fields');
+    yamlPane.value = scaffolded.yaml;
+    paintGutter();
+    paintInk();
+    activeField = null;
+    reparse();
+    updateUndo();
+    setYamlStatus('Added the StaXX fields for icon, links and description.');
+  });
+
   // A file the parser cannot read as a mapping at all has no services, which
   // renderForm() would otherwise draw as an almost-empty form — reading as
   // "this file has no containers" when the truth is "this could not be
@@ -4108,6 +4167,7 @@
     findRecompute();
     updateRequired();
     updateMissing();
+    updateScaffoldNote();
     relint();
     checkHostPaths();   // ask the server about any volume host path not already cached
     scheduleCheck();    // ask the server whether compose itself accepts this file (own, longer debounce)
@@ -9298,7 +9358,18 @@
         notes: result.notes
       });
 
-      call('import-write', { name: stackName, body: result.yaml, about: about }, 20000).then(function (res) {
+      // PLAN_83: written straight to the server with no editor in between,
+      // so this is the only chance to top up the StaXX fields — a refusal
+      // here (bad YAML the converter itself produced) is silently ignored
+      // and the unscaffolded body is written instead, same as every other
+      // caller of scaffold() treats "error" as "leave it alone".
+      var writeBody = result.yaml;
+      if (window.StaxxMeta) {
+        var scaffolded = window.StaxxMeta.scaffold(writeBody);
+        if (!scaffolded.error) writeBody = scaffolded.yaml;
+      }
+
+      call('import-write', { name: stackName, body: writeBody, about: about }, 20000).then(function (res) {
         if (res.ok) {
           written++;
           importExisting.push({ folder: destFolder, leaf: leaf });
@@ -10051,6 +10122,15 @@
     // dirty check below compares CRLF against LF and never agrees, even with
     // nothing typed.
     var raw = body || (isNew ? NEW_STACK : '');
+    // PLAN_83: every route that opens a brand-new stack — Community
+    // Applications, an imported template, Docker Hub, a local image, the
+    // bare skeleton, the empty new-stack button — funnels through here, so
+    // this one call covers all of them. A refusal (error set) leaves raw
+    // exactly as it arrived, same as every other caller treats it.
+    if (isNew && window.StaxxMeta) {
+      var scaffolded = window.StaxxMeta.scaffold(raw);
+      if (!scaffolded.error) raw = scaffolded.yaml;
+    }
     composeEol = raw.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
     yamlPane.value = raw;
     textAtOpen = yamlPane.value;
@@ -16512,6 +16592,115 @@
     if (settingsSave) settingsSave.disabled = !settingsDirty();
   }
 
+  // How many fields one scaffold() result actually added — stack-level plus
+  // every service's own — used for both the confirm list and the tally.
+  function scaffoldFieldCount(added) {
+    var n = added.stack.length;
+    Object.keys(added.services).forEach(function (svc) { n += added.services[svc].length; });
+    return n;
+  }
+
+  // PLAN_83's sweep. Reads every stack and scaffolds each in memory first —
+  // nothing is written until the confirm dialog is accepted — so a stack
+  // changed on disk in between (another tab, an image update) is refused by
+  // 'save' below on its own fingerprint, the same protection a single edit
+  // already gets, rather than this sweep needing a second copy of it.
+  function runScaffoldSweep() {
+    if (!window.StaxxMeta) return;
+    settingsMsg.textContent = 'Checking every stack…';
+
+    call('list', {}).then(function (res) {
+      if (!res.ok) {
+        settingsMsg.textContent = '';
+        openLogDialog('Add missing StaXX fields', res.error || 'Could not list stacks.');
+        return;
+      }
+
+      // A stack with no compose file yet has nothing to read or scaffold —
+      // left out silently rather than reported as a refusal, since it is not
+      // one: there is simply nothing there yet.
+      var stacks = (res.stacks || []).filter(function (s) { return s.hasFile; });
+      var toSave = [], refused = [];
+
+      stacks.reduce(function (chain, s) {
+        return chain.then(function () {
+          return call('read', { name: s.name }).then(function (r) {
+            if (!r.ok) { refused.push({ name: s.name, reason: r.error || 'Could not be read.' }); return; }
+            var result = window.StaxxMeta.scaffold(r.body);
+            if (result.error) { refused.push({ name: s.name, reason: result.error }); return; }
+            if (result.changed) {
+              toSave.push({ name: s.name, body: result.yaml, fingerprint: r.fingerprint, added: result.added });
+            }
+          });
+        });
+      }, Promise.resolve()).then(function () {
+        settingsMsg.textContent = '';
+
+        if (!toSave.length) {
+          var msg = 'Every stack already has its StaXX fields.';
+          if (refused.length) {
+            msg += '\n\n' + refused.length + ' stack' + (refused.length === 1 ? '' : 's') +
+              ' could not be checked:\n' + refused.map(function (r) {
+                return '  ' + r.name + ' — ' + r.reason;
+              }).join('\n');
+          }
+          openLogDialog('Add missing StaXX fields', msg);
+          return;
+        }
+
+        var bodyHtml = '<p>' + toSave.length + ' of ' + stacks.length + ' stack' +
+          (stacks.length === 1 ? '' : 's') + ' would gain fields for their icon, links and ' +
+          'description, written in as commented placeholders. Nothing already in a stack\'s ' +
+          'file is changed.</p>' +
+          '<ul class="staxx-confirm-list">' + toSave.map(function (e) {
+            var n = scaffoldFieldCount(e.added);
+            return '<li><code>' + esc(e.name) + '</code><span class="staxx-confirm-meta">' +
+                   n + ' field' + (n === 1 ? '' : 's') + '</span></li>';
+          }).join('') + '</ul>';
+        if (refused.length) {
+          bodyHtml += '<p>' + refused.length + ' stack' + (refused.length === 1 ? '' : 's') +
+            ' would be left alone:</p><ul class="staxx-confirm-list">' + refused.map(function (r) {
+              return '<li><code>' + esc(r.name) + '</code><span class="staxx-confirm-meta">' +
+                     esc(r.reason) + '</span></li>';
+            }).join('') + '</ul>';
+        }
+
+        askConfirm({
+          title: 'Add missing StaXX fields?',
+          bodyHtml: bodyHtml,
+          goLabel: 'Add fields'
+        }).then(function (go) {
+          closeConfirm();
+          if (go) saveScaffoldSweep(toSave, refused);
+        });
+      });
+    });
+  }
+
+  // The confirmed half of the sweep — one save at a time, each carrying the
+  // fingerprint it was read at back in runScaffoldSweep(), so a stack that
+  // changed underneath the sweep is refused rather than overwritten. Every
+  // save is recorded in that stack's own history regardless, so this needs
+  // no undo of its own.
+  function saveScaffoldSweep(toSave, refused) {
+    openLogDialog('Add missing StaXX fields', 'Saving…');
+    var ok = 0;
+    toSave.reduce(function (chain, e) {
+      return chain.then(function () {
+        return call('save', { name: e.name, body: e.body, new: '0', fingerprint: e.fingerprint }).then(function (r) {
+          logBox.textContent += '\n' + e.name + ' — ' + (r.ok ? 'saved.' : (r.error || 'could not be saved.'));
+          if (r.ok) ok++;
+          logBox.scrollTop = logBox.scrollHeight;
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      logBox.textContent += '\n\n' + ok + ' of ' + toSave.length + ' saved.' +
+        (refused.length ? ' ' + refused.length + ' left alone.' : '');
+      logBox.scrollTop = logBox.scrollHeight;
+      refreshRows();   // the rows may show icons or other x-unraid facts that just changed
+    });
+  }
+
   function openSettings(focusId) {
     if (!settingsModal) return;
     call('settings', {}).then(function (res) {
@@ -16525,6 +16714,17 @@
       settingsBody.innerHTML = SETTINGS_ROWS.map(function (row) {
         return settingsFieldHtml(row, res.settings[row.key] || '');
       }).join('') +
+        // PLAN_83: nothing here is a setting to save — pressing it reads and
+        // checks every stack there and then, so it sits as its own action
+        // row rather than one of SETTINGS_ROWS. See runScaffoldSweep().
+        '<div class="staxx-field">' +
+          '<span>StaXX fields</span>' +
+          '<button type="button" class="staxx-link-btn" id="staxx-scaffold-sweep">' +
+          'Add missing StaXX fields to every stack…</button>' +
+          '<span class="staxx-hint">Checks every stack for its icon, links and description ' +
+          'fields, and offers to add whatever is missing as commented placeholders — nothing ' +
+          'already there is changed.</span>' +
+        '</div>' +
         // Hidden until loadArchiveList() below hears back with something
         // definite to show — a folder holding nothing archived yet still
         // shows the folder, but a failed fetch must not leave a half-drawn
@@ -16624,6 +16824,10 @@
       if (btn) {
         var input = document.getElementById(btn.dataset.browse);
         if (input) pickerOpen(input);
+        return;
+      }
+      if (event.target.closest('#staxx-scaffold-sweep')) {
+        runScaffoldSweep();
         return;
       }
       // The STACK_ROOT row's own way back to the storage chooser (PLAN_68

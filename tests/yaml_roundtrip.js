@@ -9565,6 +9565,91 @@ console.log('\nAM. The project-link write on a hand-authored, anchored, x-unraid
      firstDiff(src, Y.serialise(doc)));
 })();
 
+(function () {
+  // PLAN_83 §5: writing a real webui: line retracts the commented
+  // placeholder meta-scaffold.js left for it, so a stack never ends up with
+  // both a real key and a comment insisting it is unset.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n' +
+            '      # icon:               # overrides the stack icon for this service\n' +
+            '      # webui:              # e.g. http://[IP]:8096/\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('writing the port over a placeholder succeeds',
+     Y.setPart(doc, form, 'a/setting/x-unraid.webui', 'value', '8096'));
+  var out = Y.serialise(doc);
+  ok('the placeholder comment is gone', out.indexOf('# webui:') < 0, out);
+  ok('the real key is there', out.indexOf('webui: http://[IP]:8096/') >= 0, out);
+  ok('an unrelated placeholder in the same block is untouched',
+     out.indexOf('# icon:               # overrides the stack icon for this service') >= 0, out);
+
+  var reparsed = Y.parse(out);
+  ok('the result re-parses clean', reparsed.warnings.length === 0 && !reparsed.unreadTail);
+})();
+
+(function () {
+  // A placeholder for the same key in a DIFFERENT service must survive —
+  // hasPlaceholder()/removePlaceholder() are both scoped to one block's own
+  // physical extent, never to the key name alone.
+  var src = 'services:\n' +
+            '  a:\n    image: alpine\n    x-unraid:\n      # webui:              # e.g. http://[IP]:8096/\n' +
+            '  b:\n    image: alpine\n    x-unraid:\n      # webui:              # e.g. http://[IP]:8096/\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('writing service a\'s port succeeds',
+     Y.setPart(doc, form, 'a/setting/x-unraid.webui', 'value', '8096'));
+  var out = Y.serialise(doc);
+  ok('service a\'s placeholder is gone but service b\'s remains',
+     (out.match(/# webui:/g) || []).length === 1, out);
+})();
+
+(function () {
+  // A user's own comment that merely mentions "webui" — not the exact
+  // "webui:" placeholder shape — must never be mistaken for one.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n' +
+            '      # remember to set webui once DNS is sorted\n';
+  var doc = Y.parse(src), form = Y.buildForm(doc);
+  ok('writing the port succeeds',
+     Y.setPart(doc, form, 'a/setting/x-unraid.webui', 'value', '8096'));
+  var out = Y.serialise(doc);
+  ok('the user\'s own comment survives untouched',
+     out.indexOf('# remember to set webui once DNS is sorted') >= 0, out);
+  ok('the real key was still written', out.indexOf('webui: http://[IP]:8096/') >= 0, out);
+})();
+
+(function () {
+  // The block's only line is the placeholder itself — removing it would
+  // leave "x-unraid:" with nothing under it at all, so it is left in place
+  // even though it is now redundant. Reached directly rather than through
+  // setPart(), since insertChild always adds a real sibling first in normal
+  // use and so never hits this edge on its own.
+  var doc = Y.parse('services:\n  a:\n    image: alpine\n' +
+                     '    x-unraid:\n      # webui:              # e.g. http://[IP]:8096/\n');
+  var xu = doc.root.pairs.services.value.pairs.a.value.pairs['x-unraid'];
+  var before = Y.serialise(doc);
+  Y.removePlaceholder(doc, xu, 'webui');
+  ok('a placeholder that is the block\'s only line is left alone',
+     Y.serialise(doc) === before, firstDiff(before, Y.serialise(doc)));
+})();
+
+(function () {
+  // A file with an unread tail must refuse the structural removal, the same
+  // rule every other splice-based writer in this file follows.
+  var src = 'services:\n  a:\n    image: alpine\n' +
+            '    x-unraid:\n      # webui:              # e.g. http://[IP]:8096/\n' +
+            '      other: 1\n' +
+            '} not yaml {\n';
+  var doc = Y.parse(src);
+  if (doc.unreadTail) {
+    var xu = doc.root.pairs.services.value.pairs.a.value.pairs['x-unraid'];
+    var before = Y.serialise(doc);
+    Y.removePlaceholder(doc, xu, 'webui');
+    ok('an unread tail leaves the placeholder untouched',
+       Y.serialise(doc) === before, firstDiff(before, Y.serialise(doc)));
+  } else {
+    ok('(skipped: this file did not produce an unread tail to test against)', true);
+  }
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

@@ -48,6 +48,7 @@ node tests/yaml_roundtrip.js        # the compose model — parse, edit, write b
 node tests/ca_convert.js            # Community Applications template -> compose conversion
 node tests/image_import.js          # Docker Hub / local image -> starting compose file
 node tests/stash_guard.js           # a set-aside may only hold the block it claims to
+node tests/meta_scaffold.js         # the commented x-unraid fields a new stack starts with
 node tests/js_undeclared.js         # names assigned but declared nowhere
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js

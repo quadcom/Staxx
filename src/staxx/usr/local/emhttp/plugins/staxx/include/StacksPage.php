@@ -65,6 +65,7 @@ $jsFile  = STAXX_ROOT.'/javascript/stacks.js';
 $modelFile = STAXX_ROOT.'/javascript/compose-model.js';
 $caFile  = STAXX_ROOT.'/javascript/ca-convert.js';
 $imageFile = STAXX_ROOT.'/javascript/image-import.js';
+$scaffoldFile = STAXX_ROOT.'/javascript/meta-scaffold.js';
 // The Manage tab's own script and stylesheet (PLAN_44 phase 2) — written by a
 // separate agent in parallel with this file, so neither is guaranteed to exist
 // yet at any given moment. Guarded the same way the three scripts above are:
@@ -76,6 +77,7 @@ $jsTag   = $assets.'/javascript/stacks.js?v='.(is_file($jsFile) ? filemtime($jsF
 $modelTag = $assets.'/javascript/compose-model.js?v='.(is_file($modelFile) ? filemtime($modelFile) : '0');
 $caTag   = $assets.'/javascript/ca-convert.js?v='.(is_file($caFile) ? filemtime($caFile) : '0');
 $imageTag = $assets.'/javascript/image-import.js?v='.(is_file($imageFile) ? filemtime($imageFile) : '0');
+$scaffoldTag = $assets.'/javascript/meta-scaffold.js?v='.(is_file($scaffoldFile) ? filemtime($scaffoldFile) : '0');
 $manageJsTag  = $assets.'/javascript/manage.js?v='.(is_file($manageJsFile) ? filemtime($manageJsFile) : '0');
 $manageCssTag = $assets.'/sheets/manage.css?v='.(is_file($manageCssFile) ? filemtime($manageCssFile) : '0');
 $cssTag  = $assets.'/sheets/staxx.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
@@ -638,6 +640,15 @@ endif;
            this is stacks.js's updateMissing()/createMissingFile(), not a
            second one-shot "paste bar" as PLAN_13 first sketched it. -->
       <button type="button" class="staxx-missing" id="staxx-missing" hidden></button>
+
+      <!-- PLAN_83: an existing stack opened with no StaXX presentation
+           fields (icon, links, description) at all. Same shape and job as
+           #staxx-missing above — clicking it scaffolds the text in the
+           editor via stacks.js's updateScaffoldNote()/its own click handler,
+           leaving the change unsaved like any other edit. Never shown for a
+           brand-new stack, which is scaffolded automatically before this
+           pane is painted. -->
+      <button type="button" class="staxx-missing" id="staxx-scaffold-note" hidden></button>
 
       <!-- Same shape and job as #staxx-missing above, but for a volume's
            HOST side rather than a file inside the stack: clicking it asks the
@@ -1207,6 +1218,13 @@ endif;
      Conditional for the same reason as the two above. -->
 <? if (is_file($imageFile)): ?>
 <script src="<?= $imageTag ?>"></script>
+<? endif; ?>
+<!-- PLAN_83: writes in the commented-out x-unraid fields a stack starts life
+     without. Reads window.StaxxYaml, so it must load after the compose model;
+     stacks.js reads window.StaxxMeta, so this must load before it. Conditional
+     for the same reason as the scripts above. -->
+<? if (is_file($scaffoldFile)): ?>
+<script src="<?= $scaffoldTag ?>"></script>
 <? endif; ?>
 <!-- The Manage tab (PLAN_44 Part D), a separate file for the same reason as
      the three above: a bad edit there costs the Manage tab, not the rest of

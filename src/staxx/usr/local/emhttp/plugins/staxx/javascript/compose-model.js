@@ -3710,6 +3710,52 @@
    * cover — a snapshot here restores the levels ensurePath *did* create if
    * that last write is what fails.
    */
+  // Retracts the commented placeholder meta-scaffold.js wrote for `key`,
+  // once a real line for it has just been written into the same block —
+  // otherwise a stack ends up with both a real `webui:` and a `# webui:`
+  // comment insisting it is unset. Mirrors that file's hasPlaceholder()/
+  // blockExtent() rather than importing them: this is the model's own
+  // structural-write path and must not depend on a form-side helper, and
+  // both sides are entangled enough with parser internals that copying the
+  // handful of lines is clearer than sharing them.
+  //
+  // `pair` must be freshly read — splice() re-parses, so whatever the
+  // caller held before its own insertChild() call is stale by the time this
+  // runs. Silently does nothing if there is no map, no matching placeholder,
+  // or removing it would leave the block with nothing under it at all: this
+  // is a tidy-up, not something a write can fail over.
+  function removePlaceholder(doc, pair, key) {
+    if (hasUnreadTail(doc)) return;
+    var map = pair.value;
+    if (!map || map.kind !== 'map') return;
+    var childIndent = map.indent;
+
+    // Same physical-extent walk as meta-scaffold's blockExtent(): from the
+    // line after the key to the last line still indented deeper than it —
+    // deliberately not pair.value.end, for the same reason given there.
+    var end = pair.start + 1, i = pair.start + 1;
+    while (i < doc.lines.length) {
+      var line = doc.lines[i];
+      if (!/^\s*$/.test(line)) {
+        var lead = line.match(/^[ \t]*/)[0].length;
+        if (lead <= pair.indent) break;
+        end = i + 1;
+      }
+      i++;
+    }
+    if (end - pair.start - 1 <= 1) return; // the block has nothing to spare
+
+    var prefix = pad(childIndent) + '#';
+    var re = new RegExp('^' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:');
+    for (i = pair.start + 1; i < end; i++) {
+      var line = doc.lines[i];
+      if (line.slice(0, prefix.length) !== prefix) continue;
+      if (!re.test(line.slice(prefix.length).replace(/^\s+/, ''))) continue;
+      splice(doc, i, 1, []);
+      return;
+    }
+  }
+
   function addNested(doc, form, service, path, value, bare) {
     var before = doc.lines.slice();
     var pair = ensurePath(doc, function () { return serviceMapOf(doc, service); },
@@ -3723,6 +3769,18 @@
     var at = insertChild(doc, pair, path[path.length - 1], value,
                          path.length === 1 ? 'x-unraid' : null, bare);
     if (at < 0) { doc.lines = before; splice(doc, 0, 0, []); }
+    // Placeholder retraction is scoped to a direct child of x-unraid
+    // (path.length 2 — today, only the webui writer). A field nested a
+    // level deeper still (update.mode, update.delay) has its scaffolded
+    // comment sitting at the OUTER x-unraid block's indent, not the inner
+    // one this just created, so finding it needs a different search — out
+    // of scope for this tidy-up until something actually writes one of
+    // those fields.
+    else if (path.length === 2 && path[0] === 'x-unraid') {
+      var fresh = ensurePath(doc, function () { return serviceMapOf(doc, service); },
+                            path.slice(0, -1), 'x-unraid');
+      if (fresh) removePlaceholder(doc, fresh, path[path.length - 1]);
+    }
     return at;
   }
 
@@ -7726,6 +7784,10 @@
     readNetworkStash: readNetworkStash,
     // Shared by both stash writers — see its own comment.
     stashLinesOk: stashLinesOk,
+    // PLAN_83: meta-scaffold.js writes a bare "x-unraid:" key the same way
+    // addSetting does, and needs the same well-formedness this file already
+    // gets internally.
+    insertChild: insertChild,
     // The row's sentinel value for "created outside this file" — stacks.js
     // needs the exact same string to build the dropdown option, and a second
     // literal there would be a bug waiting to happen.
@@ -7746,6 +7808,7 @@
     // dependency — condition: service_started written explicitly alongside
     // it, since a bare "name:" is null and compose refuses the file.
     addNested: addNested,
+    removePlaceholder: removePlaceholder,
     // PLAN_34 phase 3a: addNested's sibling for a top-level declaration
     // rather than a service.
     addDeclNested: addDeclNested,
