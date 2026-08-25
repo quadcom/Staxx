@@ -413,7 +413,12 @@ endif;
          history. It is disabled (native `disabled`, not a class — see
          .staxx-tab:disabled in the stylesheet) whenever Sanitise is on: an
          old version holds the real, unhidden values, and showing it would
-         defeat Sanitise outright. -->
+         defeat Sanitise outright.
+
+         Versions (PLAN_82 Part 2 step 2) is a fourth peer, for the same
+         reason — which build of an image has actually run. Unlike History it
+         is never disabled under Sanitise: an image name and a version are
+         not values the author wrote, and are not hidden by it. -->
     <div class="staxx-tabstrip staxx-modal-tabstrip" role="tablist" aria-label="<?= _('Editor section') ?>">
       <button type="button" class="staxx-tab" id="staxx-tab-configure" role="tab"
               aria-selected="true" data-tab="configure"><?= _('Configure') ?></button>
@@ -421,6 +426,8 @@ endif;
               aria-selected="false" data-tab="manage"><?= _('Manage') ?></button>
       <button type="button" class="staxx-tab" id="staxx-tab-history" role="tab"
               aria-selected="false" data-tab="history"><?= _('History') ?></button>
+      <button type="button" class="staxx-tab" id="staxx-tab-versions" role="tab"
+              aria-selected="false" data-tab="versions"><?= _('Versions') ?></button>
     </div>
 
     <div class="staxx-notice staxx-modal-banner" id="staxx-sanitise-note" hidden>
@@ -614,6 +621,14 @@ endif;
          than with the dialog, because most people never open this tab.
          Shown only while data-tab="history" on the dialog above. -->
     <div class="staxx-modal-history" id="staxx-modal-history"></div>
+
+    <!-- Empty on purpose, same reasoning as #staxx-modal-history above:
+         stacks.js fills this the first time the Versions tab is opened — the
+         service list, each one's recorded versions, and "Put this back".
+         Shown only while data-tab="versions" on the dialog above. Left
+         enabled under Sanitise, unlike History's own tab button just above —
+         see the tab strip comment further up for why. -->
+    <div class="staxx-modal-versions" id="staxx-modal-versions"></div>
 
     <div class="staxx-modal-foot">
       <div class="staxx-error" id="staxx-error" hidden></div>

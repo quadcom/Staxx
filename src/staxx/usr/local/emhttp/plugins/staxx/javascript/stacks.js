@@ -30,6 +30,11 @@
   // further down, near setTab().
   var tabHistoryBtn   = document.getElementById('staxx-tab-history');
   var historyHost     = document.getElementById('staxx-modal-history');
+  // Versions (PLAN_82 Part 2 step 2) — a fourth peer tab, same "empty host
+  // filled in by this file" shape as History above. See the Versions section
+  // further down, near setTab().
+  var tabVersionsBtn  = document.getElementById('staxx-tab-versions');
+  var versionsHost    = document.getElementById('staxx-modal-versions');
   var nameField   = document.getElementById('staxx-name-field');
   var nameInput   = document.getElementById('staxx-name');
   var nameFolder  = document.getElementById('staxx-name-folder');
@@ -876,6 +881,20 @@
   var historyReadError    = '';
   var historyLoadError    = '';      // history-list itself failed — nothing else in the pane can be trusted
   var historyActionError  = '';      // a failed name/clear, shown above an otherwise normal list
+
+  // Versions (PLAN_82 Part 2 step 2) — which build of each service's image
+  // has actually been running, and a way to put an earlier one back. Unlike
+  // History this stays available while Sanitise is on: an image name and a
+  // version are not values the author wrote, and are not secrets the way a
+  // password is. versionsSeq is the same "close over the sequence number so
+  // a late reply cannot paint over a different stack" guard as historySeq.
+  var versionsSeq          = 0;
+  var versionsLoaded       = false;  // true once image-versions has answered for THIS stack
+  var versionsBusy         = false;
+  var versionsServices     = [];     // [{service, image, current, watched, entries}], as the server sent it
+  var versionsSelected     = null;   // the service name shown on the right, or null
+  var versionsLoadError    = '';     // image-versions itself failed — nothing else in the pane can be trusted
+  var versionsActionError  = '';     // a failed rollback, shown above an otherwise normal list
 
   // The tab strip's own state. FILES is the last `files` listing, in the
   // order it arrived — compose file first, then alphabetical (see
@@ -6429,6 +6448,10 @@
     }
     renderHistoryPane();
 
+    // Versions is deliberately NOT disabled here, unlike History above: an
+    // image name and a version are not values the author wrote, so Sanitise
+    // has nothing on this tab to hide.
+
     var controls = formHost.querySelectorAll('input, select, button');
     for (var i = 0; i < controls.length; i++) {
       if (on) {
@@ -9948,6 +9971,21 @@
       historyHost.classList.remove('staxx-modal-history--sanitised');
     }
     if (tabHistoryBtn) { tabHistoryBtn.disabled = false; tabHistoryBtn.title = ''; }
+
+    // Yesterday's versions are meaningless against today's stack, same
+    // reasoning as historySeq just above — tabVersionsBtn needs no reset of
+    // its own since it is never disabled (see setSanitised()).
+    versionsSeq++;
+    versionsLoaded = false;
+    versionsBusy = false;
+    versionsServices = [];
+    versionsSelected = null;
+    versionsLoadError = '';
+    versionsActionError = '';
+    if (versionsHost) {
+      versionsHost.innerHTML = '';
+      versionsHost.classList.remove('staxx-modal-versions--single');
+    }
 
     // A stack's identity is its path under the stack root — "jellyfin" at the
     // top level, "Media/jellyfin" inside a folder. The box shows only the last
@@ -15399,13 +15437,234 @@
     });
   }
 
+  /* ---- Versions tab (PLAN_82 Part 2 step 2) --------------------------------
+   *
+   * Which build of each service's image has actually been running, and a way
+   * to put an earlier one back. Carries its own service list (there is no
+   * "All" state to grey out against) and, unlike History, needs no per-row
+   * fetch: image-versions answers with every service's whole entry list in
+   * one go, so picking a service on the left only ever re-renders the right
+   * column from data already held. */
+
+  // Same one-column collapse History uses for "not loaded", "failed to load"
+  // and "nothing kept yet" — there is no list worth showing beside a message
+  // that explains why there is nothing to pick from.
+  function versionsSingleColumn(html) {
+    versionsHost.classList.add('staxx-modal-versions--single');
+    versionsHost.innerHTML = '<div class="staxx-versions-single">' + html + '</div>';
+  }
+
+  // The service list on the left — name plus, underneath in quieter text,
+  // the image it points at, so a service can be told apart from another
+  // built off a shared base image.
+  function versionsServiceRowHtml(svc) {
+    return '<button type="button" class="staxx-versions-service" data-versions-service="' +
+      esc(svc.service) + '" aria-current="' + (versionsSelected === svc.service ? 'true' : 'false') + '">' +
+      '<div>' + esc(svc.service) + '</div>' +
+      '<div style="color:var(--sm-muted);font-size:1.1rem;">' + esc(svc.image) + '</div>' +
+      '</button>';
+  }
+
+  // One recorded version. A name where the image published one; where it
+  // did not, the row is just its date — that is the ordinary case for a
+  // great many images, not a missing value, so it is never spelled out as
+  // "unknown" or "n/a". The fingerprint (first 12 characters after the
+  // digest's own ':') is what tells two unlabelled rows apart. The row
+  // currently running gets no button — there is nothing to put back to
+  // when it is already what's running.
+  function versionRowHtml(svc, v) {
+    var isCurrent = !!svc.current && v.digest === svc.current;
+    var when = historyWhen(v.at);
+    var heading = v.version ? esc(v.version) : esc(when);
+    var metaBits = [];
+    if (v.version) metaBits.push(esc(when));
+    var colon = v.digest ? v.digest.indexOf(':') : -1;
+    if (colon !== -1) metaBits.push(esc(v.digest.slice(colon + 1, colon + 13)));
+    var metaHtml = metaBits.length
+      ? '<div style="color:var(--sm-muted);font-size:1.1rem;">' + metaBits.join(' · ') + '</div>' : '';
+    // The source is a registry label, so whoever published the image wrote
+    // it. esc() escapes markup but not scheme, so "javascript:…" would still
+    // become a working href in an admin's own session — safeUpdateSource(),
+    // which already guards this same label elsewhere, is what drops it.
+    var source = safeUpdateSource(v.source);
+    var sourceHtml = source
+      ? '<div><a href="' + esc(source) + '" target="_blank" rel="noopener">' + esc('See the source') +
+        '</a></div>' : '';
+    var actionHtml = isCurrent
+      ? '<div class="staxx-version-current">' + esc('Running now') + '</div>'
+      : '<button type="button" class="staxx-btn staxx-btn--small staxx-version-rollback" ' +
+        'data-version-service="' + esc(svc.service) + '" data-version-rollback="' + esc(v.digest) + '">' +
+        esc('Put this back') + '</button>';
+    return '<div class="staxx-version-entry"' + (isCurrent ? ' aria-current="true"' : '') + '>' +
+      '<div class="staxx-version-heading">' + heading + '</div>' + metaHtml + sourceHtml + actionHtml +
+      '</div>';
+  }
+
+  function versionsContentHtml() {
+    var svc = null;
+    for (var i = 0; i < versionsServices.length; i++) {
+      if (versionsServices[i].service === versionsSelected) { svc = versionsServices[i]; break; }
+    }
+    if (!svc) return '<p class="staxx-form-empty">Pick a service on the left.</p>';
+    if (!svc.entries.length) {
+      return '<p class="staxx-form-empty">Nothing has been recorded for ' + esc(svc.service) + ' yet. ' +
+        'A version is recorded the first time StaXX updates this image.</p>';
+    }
+    return svc.entries.map(function (v) { return versionRowHtml(svc, v); }).join('');
+  }
+
+  // The one function that draws #staxx-modal-versions — same "rebuilt
+  // wholesale on every state change" shape as renderHistoryPane, and small
+  // enough that patching a live tree in place would not be worth it.
+  function renderVersionsPane() {
+    if (!versionsHost) return;
+
+    if (!versionsLoaded) {
+      if (versionsBusy) versionsSingleColumn('<p class="staxx-form-empty">Reading this stack’s versions…</p>');
+      else { versionsHost.classList.remove('staxx-modal-versions--single'); versionsHost.innerHTML = ''; }
+      return;
+    }
+
+    if (versionsLoadError) {
+      versionsSingleColumn('<div class="staxx-notice staxx-notice--bad"><i class="fa fa-times-circle" ' +
+        'aria-hidden="true"></i><div>' + esc(versionsLoadError) + '</div></div>');
+      return;
+    }
+
+    if (!versionsServices.some(function (s) { return s.entries && s.entries.length; })) {
+      versionsSingleColumn('<p class="staxx-form-empty">Nothing has been recorded yet. A version is ' +
+        'recorded the first time StaXX updates one of this stack’s images.</p>');
+      return;
+    }
+
+    var banner = versionsActionError
+      ? '<div class="staxx-notice staxx-notice--bad" style="grid-column:1 / -1;">' +
+        '<i class="fa fa-times-circle" aria-hidden="true"></i><div>' + esc(versionsActionError) +
+        '</div></div>'
+      : '';
+    versionsHost.classList.remove('staxx-modal-versions--single');
+    versionsHost.innerHTML = banner +
+      '<div class="staxx-versions-list">' + versionsServices.map(versionsServiceRowHtml).join('') + '</div>' +
+      '<div class="staxx-versions-content">' + versionsContentHtml() + '</div>';
+  }
+
+  // Fetched once per stack, the first time the tab is entered — see setTab().
+  function ensureVersionsLoaded() {
+    if (versionsLoaded || versionsBusy) return;
+    versionsBusy = true;
+    var seq = versionsSeq;
+    var stack = openedName;
+    renderVersionsPane();
+    call('image-versions', { name: stack }).then(function (res) {
+      if (seq !== versionsSeq) return;   // a different stack opened before this answered
+      versionsBusy = false;
+      versionsLoaded = true;
+      if (!res || !res.ok) {
+        versionsLoadError = (res && res.error) || 'Could not read this stack’s versions.';
+        versionsServices = [];
+      } else {
+        versionsLoadError = '';
+        versionsServices = res.services || [];
+        // Picks something to show straight away rather than leaving the
+        // right column on "Pick a service" — most stacks have only one or
+        // two services, so there is rarely a real choice to make first.
+        if (versionsServices.length &&
+            !versionsServices.some(function (s) { return s.service === versionsSelected; })) {
+          versionsSelected = versionsServices[0].service;
+        }
+      }
+      renderVersionsPane();
+    });
+  }
+
+  function selectVersionsService(name) {
+    if (versionsSelected === name) return;
+    versionsSelected = name;
+    renderVersionsPane();
+  }
+
+  // Asks first, since this changes what is running, then follows the job the
+  // same way rollbackUpdate() above does — the table row goes busy and a
+  // failed run is marked the same as any other failed run.
+  function rollbackToVersion(service, digest, label) {
+    call('update-rollback', { name: openedName, service: service, digest: digest }).then(function (res) {
+      if (!res || !res.ok) {
+        versionsActionError = (res && res.error) || 'Could not put ' + label + ' back for ' + service + '.';
+        renderVersionsPane();
+        return;
+      }
+      versionsActionError = '';
+      var rows = containerRows(openedName, service);
+      if (rows.length) setBusy(rows, 'Rolling back…');
+      track(res.job, {
+        rows: rows, verb: 'recreate',
+        done: function (job) {
+          clearBusy(rows);
+          if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'recreate', res.job);
+          refreshUpdates();
+          refreshStateSoon();
+          // A rollback changes which build is on disk, so "Running now" in
+          // the list this was launched from now points at the wrong row.
+          // Drop it: re-read while the tab is still up, and otherwise let it
+          // load fresh the next time the tab is opened.
+          versionsLoaded = false;
+          if (modal.dataset.tab === 'versions') ensureVersionsLoaded();
+          else renderVersionsPane();
+        }
+      });
+    });
+  }
+
+  // label is the raw (unescaped) version name or date, for the confirmation's
+  // own textContent — see askConfirm(), which never treats its title as HTML.
+  function performRollback(service, v) {
+    var label = v.version || historyWhen(v.at);
+    askConfirm({
+      title: 'Put ' + label + ' back for ' + service + '?',
+      bodyHtml: '<p>The version you are moving away from will not come back on its own. A newer one ' +
+        'still will, when one appears — which is usually what you want, since a later release may be ' +
+        'the fix.</p>',
+      goLabel: 'Put it back'
+    }).then(function (go) {
+      closeConfirm();
+      if (go) rollbackToVersion(service, v.digest, label);
+    });
+  }
+
+  if (versionsHost) {
+    versionsHost.addEventListener('click', function (event) {
+      var svcBtn = event.target.closest('[data-versions-service]');
+      if (svcBtn) { selectVersionsService(svcBtn.dataset.versionsService); return; }
+
+      var rollbackBtn = event.target.closest('[data-version-rollback]');
+      if (rollbackBtn) {
+        var svcName = rollbackBtn.dataset.versionService;
+        var digest = rollbackBtn.dataset.versionRollback;
+        var svc = null;
+        for (var i = 0; i < versionsServices.length; i++) {
+          if (versionsServices[i].service === svcName) { svc = versionsServices[i]; break; }
+        }
+        var entry = null;
+        if (svc) {
+          for (var j = 0; j < svc.entries.length; j++) {
+            if (svc.entries[j].digest === digest) { entry = svc.entries[j]; break; }
+          }
+        }
+        if (svc && entry) performRollback(svcName, entry);
+        return;
+      }
+    });
+  }
+
   function setTab(tab) {
     modal.dataset.tab = tab;
     if (tabConfigureBtn) tabConfigureBtn.setAttribute('aria-selected', tab === 'configure' ? 'true' : 'false');
     if (tabManageBtn) tabManageBtn.setAttribute('aria-selected', tab === 'manage' ? 'true' : 'false');
     if (tabHistoryBtn) tabHistoryBtn.setAttribute('aria-selected', tab === 'history' ? 'true' : 'false');
+    if (tabVersionsBtn) tabVersionsBtn.setAttribute('aria-selected', tab === 'versions' ? 'true' : 'false');
     manageStatePoll(tab === 'manage');
     if (tab === 'history') ensureHistoryLoaded();
+    if (tab === 'versions') ensureVersionsLoaded();
   }
 
   if (tabConfigureBtn) tabConfigureBtn.addEventListener('click', function () { setTab('configure'); });
@@ -15422,6 +15681,9 @@
       if (tabHistoryBtn.disabled) return;
       setTab('history');
     });
+  }
+  if (tabVersionsBtn) {
+    tabVersionsBtn.addEventListener('click', function () { setTab('versions'); });
   }
 
   // "Save and start" from Manage (PLAN_44 C2). Not save() further up: that

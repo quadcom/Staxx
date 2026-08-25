@@ -2446,15 +2446,16 @@
  * the 52rem floor is there because a narrow desktop window would otherwise
  * take that half literally and leave a column too thin to fill in.
  *
- * :not([data-tab="manage"]):not([data-tab="history"]) (PLAN_44 C1, extended
- * PLAN_68 Part A piece 3) because .staxx-modal-body stays in the DOM, with
- * its data-view untouched, the whole time Manage or History is showing — it
- * is only hidden by CSS, not removed — so without this exclusion these two
- * selectors would keep matching and squeeze whichever of those tabs is open,
- * both of which always want the full width, into half a screen. */
+ * :not([data-tab="manage"]):not([data-tab="history"]):not([data-tab="versions"])
+ * (PLAN_44 C1, extended PLAN_68 Part A piece 3 and PLAN_82 Part 2 step 2)
+ * because .staxx-modal-body stays in the DOM, with its data-view untouched,
+ * the whole time Manage, History or Versions is showing — it is only hidden
+ * by CSS, not removed — so without this exclusion these two selectors would
+ * keep matching and squeeze whichever of those tabs is open, all three of
+ * which always want the full width, into half a screen. */
 @media not all and (max-width: 45rem) {
-  .staxx-modal:not([data-tab="manage"]):not([data-tab="history"]):has(> .staxx-modal-body[data-view="form"]),
-  .staxx-modal:not([data-tab="manage"]):not([data-tab="history"]):has(> .staxx-modal-body[data-view="yaml"]) {
+  .staxx-modal:not([data-tab="manage"]):not([data-tab="history"]):not([data-tab="versions"]):has(> .staxx-modal-body[data-view="form"]),
+  .staxx-modal:not([data-tab="manage"]):not([data-tab="history"]):not([data-tab="versions"]):has(> .staxx-modal-body[data-view="yaml"]) {
     width: clamp(52rem, 48vw, 84rem);
   }
 }
@@ -2692,36 +2693,44 @@
   background: transparent;
 }
 
-/* ---- modal: Configure/Manage/History tabs (PLAN_44 C1, PLAN_68 Part A) ---- */
+/* ---- modal: Configure/Manage/History/Versions tabs (PLAN_44 C1, PLAN_68
+   Part A, PLAN_82 Part 2 step 2) ---- */
 
 /* Configure's own controls — the Form/Split/Compose segmented control — mean
-   nothing on Manage or History, so they hide with either. The file tab strip
-   further down needs no rule of its own: it lives inside .staxx-modal-body,
-   which the next rule already takes out of the layout entirely. */
+   nothing on Manage, History or Versions, so they hide with any of them. The
+   file tab strip further down needs no rule of its own: it lives inside
+   .staxx-modal-body, which the next rule already takes out of the layout
+   entirely. */
 .staxx-modal[data-tab="manage"] .staxx-views,
-.staxx-modal[data-tab="history"] .staxx-views {
+.staxx-modal[data-tab="history"] .staxx-views,
+.staxx-modal[data-tab="versions"] .staxx-views {
   display: none;
 }
 
 .staxx-modal[data-tab="manage"] .staxx-modal-body,
-.staxx-modal[data-tab="history"] .staxx-modal-body {
+.staxx-modal[data-tab="history"] .staxx-modal-body,
+.staxx-modal[data-tab="versions"] .staxx-modal-body {
   display: none;
 }
 
-/* The foot goes too, on both tabs, and for the same reason: every word in it
-   is about writing the file — that comments and ordering survive a save,
-   and that a relative volume path puts container data on the flash drive —
-   alongside Undo and the two Save buttons. None of that means anything while
-   you are watching a container run or looking at a past version of the
-   file, and leaving a Save button under a pane that cannot edit anything is
-   an offer to do something the tab does not do. Editing lives one tab to the
-   left, and switching back is where saving belongs; an unsaved edit is not
-   lost by coming here, and pressing a run button — or restoring a version —
-   with one outstanding asks what to do about it (PLAN_44 C2). History's own
+/* The foot goes too, on all three tabs, and for the same reason: every word
+   in it is about writing the file — that comments and ordering survive a
+   save, and that a relative volume path puts container data on the flash
+   drive — alongside Undo and the two Save buttons. None of that means
+   anything while you are watching a container run, looking at a past
+   version of the file, or looking at which build of an image has run.
+   Leaving a Save button under a pane that cannot edit anything is an offer
+   to do something the tab does not do. Editing lives one tab to the left,
+   and switching back is where saving belongs; an unsaved edit is not lost by
+   coming here, and pressing a run button — or restoring a version — with
+   one outstanding asks what to do about it (PLAN_44 C2). History's own
    Restore button lives inside #staxx-modal-history instead, because it acts
-   on the version chosen there, not on whatever the editor currently holds. */
+   on the version chosen there, not on whatever the editor currently holds;
+   Versions' own "Put this back" is the same idea inside
+   #staxx-modal-versions. */
 .staxx-modal[data-tab="manage"] .staxx-modal-foot,
-.staxx-modal[data-tab="history"] .staxx-modal-foot {
+.staxx-modal[data-tab="history"] .staxx-modal-foot,
+.staxx-modal[data-tab="versions"] .staxx-modal-foot {
   display: none;
 }
 
@@ -2860,6 +2869,133 @@
   }
 
   .staxx-history-list {
+    border-right: none;
+    border-bottom: 0.1rem solid var(--sm-line);
+  }
+}
+
+/* ---- modal: Versions tab (PLAN_82 Part 2 step 2) ----
+ *
+ * Same shape as History just above: a fixed-width list on the left, the
+ * chosen service's versions filling the rest, each scrolling on its own.
+ * #staxx-modal-versions is empty markup until stacks.js fills it in (see
+ * StacksPage.php); every class below is a hook for that script.
+ *
+ * --single is Versions' own equivalent of History's --sanitised modifier —
+ * the one-column collapse used for "not loaded yet", "failed to load" and
+ * "nothing recorded yet", none of which have a list worth showing beside
+ * them. Named differently because nothing here is about Sanitise: this tab
+ * has no notion of being unavailable while Sanitised on. */
+.staxx-modal-versions {
+  display: grid;
+  grid-template-columns: 18rem minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.staxx-modal-versions--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* The reverse of the pane block below it — same reasoning as
+   .staxx-modal-history above: hidden by CSS rather than built hidden,
+   because this pane has no view of its own to gate on the way
+   .staxx-modal-body has data-view. */
+.staxx-modal:not([data-tab="versions"]) .staxx-modal-versions {
+  display: none;
+}
+
+.staxx-versions-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 0.1rem solid var(--sm-line);
+  background: var(--sm-fill-0);
+}
+
+.staxx-versions-service {
+  display: block;
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: none;
+  border-bottom: 0.1rem solid var(--sm-hairline);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.2rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staxx-versions-service:hover {
+  background: var(--sm-fill);
+}
+
+/* aria-current, not a class, for the service currently shown on the right —
+   same reasoning as .staxx-history-entry[aria-current="true"]. */
+.staxx-versions-service[aria-current="true"] {
+  background: var(--sm-fill-2);
+  color: var(--sm-fg);
+  box-shadow: inset 0.2rem 0 0 var(--sm-accent);
+}
+
+.staxx-versions-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 1rem 1.2rem;
+  overflow-y: auto;
+}
+
+/* One recorded version. A plain card rather than a button, unlike the list
+   on the left — there is nothing to select here, only a link and a button
+   to act on. */
+.staxx-version-entry {
+  padding: 0.8rem 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+}
+
+/* The row currently running, marked plainly rather than left to be spotted
+   by the absence of a "Put this back" button. */
+.staxx-version-entry[aria-current="true"] {
+  border-color: var(--sm-accent);
+}
+
+.staxx-version-heading {
+  font-weight: 600;
+}
+
+.staxx-version-current {
+  margin-top: 0.4rem;
+  color: var(--sm-accent);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.staxx-version-rollback {
+  margin-top: 0.4rem;
+}
+
+.staxx-versions-single {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+/* Same phone-width collapse as .staxx-modal-history — see its own comment
+   just above. */
+@media (max-width: 45rem) {
+  .staxx-modal-versions {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 12rem minmax(0, 1fr);
+  }
+
+  .staxx-versions-list {
     border-right: none;
     border-bottom: 0.1rem solid var(--sm-line);
   }

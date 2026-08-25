@@ -1064,9 +1064,47 @@ switch ($action) {
     if (!staxx_valid_path($name)) {
       staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
     }
-    $job = staxx_update_rollback($name, (string)($_POST['service'] ?? ''), $error);
+    $job = staxx_update_rollback(
+      $name, (string)($_POST['service'] ?? ''), $error, (string)($_POST['digest'] ?? '')
+    );
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'job' => $job]);
+
+  /* ---- what a stack's Versions tab needs: every service's image, what is on
+   * disk for it now, and everything recorded that a rollback could target --
+   *
+   * $_POST['name'] on purpose, not 'stack' — every other stack action here
+   * reads that key, and getting it wrong is a silent empty reply, not an error.
+   */
+  case 'image-versions':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $file = '';
+    foreach (staxx_list_stacks() as $s) {
+      if ($s['name'] === $name) { $file = $s['file']; break; }
+    }
+    if ($file === '') {
+      staxx_reply(['ok' => false, 'error' => 'No compose file found in this stack.']);
+    }
+    $meta = staxx_compose_meta($file);
+    if (!$meta['ok']) {
+      staxx_reply(['ok' => false, 'error' => 'This stack\'s compose file could not be read.']);
+    }
+    $watchedImages = (array)(staxx_update_state()['images'] ?? []);
+    $services = [];
+    foreach ($meta['services'] as $svcName => $svc) {
+      $image = trim((string)($svc['image'] ?? ''));
+      if ($image === '') continue;
+      $services[] = [
+        'service' => (string)$svcName,
+        'image'   => $image,
+        'current' => (string)($watchedImages[$image]['local'] ?? ''),
+        'watched' => array_key_exists($image, $watchedImages),
+        'entries' => staxx_image_history($name, (string)$svcName),
+      ];
+    }
+    staxx_reply(['ok' => true, 'services' => $services]);
 
   /* ---- start a queue over every stack in scope that actually has an update --
    *

@@ -394,15 +394,18 @@ function staxx_update_history(string $stack, string $service): array {
 /* ------------------------------------------------------------------- roll back -- */
 
 /**
- * Point one service's image back at the version recorded just before its
- * last update, and bring it up. Never edits the compose file — the tag
+ * Point one service's image back at a version it has run before, and bring
+ * it up. With no $target that is the one recorded just before its last
+ * update; with one, any version this service itself recorded — which the
+ * Versions tab needs, since it lists them all rather than only the newest.
+ * Never edits the compose file — the tag
  * itself is re-pointed with `docker tag`, and the existing 'recreate' verb
  * (already scoped to a single service the same way every other job is) does
  * the rest.
  *
  * @return string a job id, or '' with $error set on refusal
  */
-function staxx_update_rollback(string $stack, string $service, string &$error): string {
+function staxx_update_rollback(string $stack, string $service, string &$error, string $target = ''): string {
   $error = '';
 
   if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
@@ -425,10 +428,23 @@ function staxx_update_rollback(string $stack, string $service, string &$error): 
     return '';
   }
 
-  $previous = staxx_update_history($stack, $service)[0] ?? '';
-  if ($previous === '') {
-    $error = 'There is no earlier version recorded for this service, so it cannot be rolled back.';
-    return '';
+  $history = staxx_update_history($stack, $service);
+  if ($target === '') {
+    $previous = $history[0] ?? '';
+    if ($previous === '') {
+      $error = 'There is no earlier version recorded for this service, so it cannot be rolled back.';
+      return '';
+    }
+  } else {
+    // A shape check on $target (does it look like "algo:hex"?) is not a
+    // substitute for this: without confirming it against this service's OWN
+    // recorded history, a request could re-tag this service's image to any
+    // digest present anywhere on the server, not just one it has actually run.
+    if (!in_array($target, $history, true)) {
+      $error = 'That version is not one recorded for this service, so it cannot be rolled back to.';
+      return '';
+    }
+    $previous = $target;
   }
 
   $repo = staxx_hub_repo_path($image);
