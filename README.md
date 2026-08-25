@@ -48,7 +48,7 @@ Every stack is a row, and each container inside it gets its own row.
 - **State** per container, with uptime and what its health check says.
 - **Four buttons** — web page, logs, project page, Unraid support thread.
 - **Its address**, with Unraid's own address-and-port substitution.
-- **Its logo**, found for you from the image name, or a coloured tile with its initials.
+- **Its logo**, found for you — or a coloured tile with its initials when there isn't one.
 - **Badges** for an update waiting, a withdrawn tag, an image that moved registry, a copy that has
   drifted from its source, a container built from an image the file no longer names.
 
@@ -62,9 +62,6 @@ it and can start, stop, check or update the lot.
 ![The row menu](docs/images/stack-row-menu.jpg)
 
 Rows follow Docker's own events, so a container stopped elsewhere shows as stopped straight away.
-
-**Self-test** answers "why did nothing happen?" — a folder missing, a disk full, somewhere it cannot
-write.
 
 ---
 
@@ -88,7 +85,6 @@ appears in an **Advanced** block.
 - Checks the folders you name exist, and offers to create the ones that do not.
 - Warns when a port is already taken.
 - Runs the file past Docker itself.
-- Tests that the web address you gave actually answers.
 - None of it blocks a save.
 
 **Pickers** for a folder on the server, a timezone off a world map, and a device from this server's
@@ -140,8 +136,8 @@ Each row says where it came from and where it will land — one folder for every
 Docker folders"**, using the folders from FolderView. **Importing only copies**: nothing at the
 source changes, and what arrives is locked until you have reviewed it.
 
-**Handing an app over is reversible.** When a StaXX stack takes the place of one Unraid was running,
-you are asked whether it works. Say it does not and the old container is back, running, in seconds.
+**Taking an app over can be undone.** You are asked whether the new stack works — say it does not,
+and the old container is back and running in seconds.
 
 ---
 
