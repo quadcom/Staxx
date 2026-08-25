@@ -48,6 +48,7 @@ Every stack is a row, and each container inside it gets its own row.
 - **State** per container, with uptime and what its health check says.
 - **Four buttons** — web page, logs, project page, Unraid support thread.
 - **Its address**, with Unraid's own address-and-port substitution.
+- **Its logo**, found for you from the image name, or a coloured tile with its initials.
 - **Badges** for an update waiting, a withdrawn tag, an image that moved registry, a copy that has
   drifted from its source, a container built from an image the file no longer names.
 
@@ -61,6 +62,9 @@ it and can start, stop, check or update the lot.
 ![The row menu](docs/images/stack-row-menu.jpg)
 
 Rows follow Docker's own events, so a container stopped elsewhere shows as stopped straight away.
+
+**Self-test** answers "why did nothing happen?" — a folder missing, a disk full, somewhere it cannot
+write.
 
 ---
 
@@ -84,10 +88,12 @@ appears in an **Advanced** block.
 - Checks the folders you name exist, and offers to create the ones that do not.
 - Warns when a port is already taken.
 - Runs the file past Docker itself.
+- Tests that the web address you gave actually answers.
 - None of it blocks a save.
 
 **Pickers** for a folder on the server, a timezone off a world map, and a device from this server's
-hardware.
+hardware. The network list includes the ones this server already has — pick one and it is wired in
+for you.
 
 **Every file in the stack folder is a tab** — the compose file, `.env`, an override file, anything
 else. Create, rename, delete, download, or upload several at once. Certificates and other binary
@@ -133,6 +139,9 @@ behind them, and things already imported.
 Each row says where it came from and where it will land — one folder for everything, or **"Match my
 Docker folders"**, using the folders from FolderView. **Importing only copies**: nothing at the
 source changes, and what arrives is locked until you have reviewed it.
+
+**Handing an app over is reversible.** When a StaXX stack takes the place of one Unraid was running,
+you are asked whether it works. Say it does not and the old container is back, running, in seconds.
 
 ---
 
@@ -214,7 +223,8 @@ lists what has been archived.
 
 - **Where StaXX lives** — a tab under Docker, or its own button in the top navigation bar. It can
   also take the Docker menu over entirely; turning that off puts everything back.
-- **Where stacks live**, and where removed ones are archived.
+- **Where stacks live**, and where removed ones are archived. StaXX offers once to move them off the
+  flash drive, lists the pools it could use with their free space, and does the move for you.
 - **What may leave the server** — one switch each for container logos, image documentation and the
   container command line.
 - **Everything about updates.**
@@ -249,7 +259,6 @@ Everything above works today. None of this does yet.
 - Acting on several stacks at once.
 - Exporting a stack as a shareable recipe with your own details stripped.
 - Graphics figures for Nvidia cards.
-- A guided move of the stacks folder from one place to another.
 
 ---
 
@@ -257,8 +266,8 @@ Everything above works today. None of this does yet.
 
 - Pre-alpha. It is installed by hand and is not in Community Applications.
 - Requires Unraid 7.2 or later, and Docker Compose already on the server — StaXX does not install it.
-- Stacks default to the flash drive. You can point StaXX at a pool instead, but moving an existing
-  set of them there is a copy you do by hand.
+- Stacks start out on the flash drive. StaXX offers to move them, but until you take it up they sit
+  on a drive with finite writes and no redundancy.
 - Graphics figures cover Intel and AMD cards. Nvidia shows no figures, though a container given an
   Nvidia card is still labelled as such.
 - Without a Docker Hub read-only token, update checks are limited to roughly ten images an hour
