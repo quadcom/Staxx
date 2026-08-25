@@ -54,13 +54,10 @@ jobs:
       - name: Check
         run: |
           for f in "$SRC"/javascript/*.js; do node --check "$f"; done
-          node tests/yaml_roundtrip.js
-          node tests/ca_convert.js
-          node tests/image_import.js
-          node tests/stash_guard.js
-          node tests/pin_image.js
-          node tests/vocab-snapshot.js
-          node tests/js_undeclared.js
+          # Every suite the branch has, not a list — the set differs between
+          # branches, and a list that names a suite one of them lacks fails the
+          # gate before it has built anything.
+          for t in tests/*.js; do echo "==> $t"; node "$t"; done
           python tests/validate_schema.py
 
       - name: Stage the bundle
