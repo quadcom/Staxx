@@ -1,0 +1,137 @@
+# StaXX — build the dev-install bundle and publish it as a rolling release.
+#
+# One workflow, both branches. Two files would drift apart the first time one
+# was changed and the other forgotten.
+#
+# The bundle is what /boot/staxx-dev/ expects: the plugin folder's *contents*
+# as staxx/, with dev-install.sh beside it. Staging src/staxx instead would
+# install the mirrored path inside the plugin folder, leaving the webGUI with a
+# plugin directory holding nothing but a usr tree and no error to say so.
+#
+# Copyright 2026, StaXX contributors. GPL-2.0.
+
+name: Release dev-install bundle
+
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # A rolling release is deleted and recreated, so two runs racing on the same
+  # tag can leave it published with no asset attached.
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    env:
+      PLUGIN: staxx
+      SRC: src/staxx/usr/local/emhttp/plugins/staxx
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install schema test dependencies
+        run: pip install pyyaml jsonschema
+
+      # A broken build reaching the server is worse than no build at all, so
+      # every suite that runs without PHP gates the release. stacks.js is one
+      # big IIFE — a single typo kills the whole page's behaviour silently.
+      - name: Check
+        run: |
+          for f in "$SRC"/javascript/*.js; do node --check "$f"; done
+          node tests/yaml_roundtrip.js
+          node tests/ca_convert.js
+          node tests/image_import.js
+          node tests/stash_guard.js
+          node tests/pin_image.js
+          node tests/vocab-snapshot.js
+          node tests/js_undeclared.js
+          python tests/validate_schema.py
+
+      - name: Stage the bundle
+        run: |
+          BUNDLE="${PLUGIN}-${GITHUB_REF_NAME}"
+          echo "BUNDLE=${BUNDLE}" >> "$GITHUB_ENV"
+          STAGE="stage/${BUNDLE}"
+
+          mkdir -p "${STAGE}/${PLUGIN}"
+          cp -a "${SRC}/." "${STAGE}/${PLUGIN}/"
+          cp dev-install.sh "${STAGE}/"
+          # dev-install.sh copies this into the plugin folder if it finds it,
+          # which is where the Plugin Manager looks for a readme.
+          cp README.md "${STAGE}/"
+
+          # Placeholders that only exist to keep empty directories in git.
+          find "${STAGE}" -name '.gitkeep' -delete
+
+          # Unraid splits .page files on a literal newline-dash-dash-dash-newline,
+          # and a carriage return fails that split silently. -I skips a binary
+          # file rather than searching its bytes for a CR, so the first icon or
+          # font added under the plugin folder is not corrupted.
+          while IFS= read -r -d '' f; do
+            grep -qIU $'\r' "$f" 2>/dev/null && sed -i 's/\r$//' "$f"
+          done < <(find "${STAGE}" -type f -print0)
+
+          find "${STAGE}" -type d -exec chmod 0755 {} +
+          find "${STAGE}" -type f -exec chmod 0644 {} +
+          chmod 0755 "${STAGE}/dev-install.sh"
+          chmod 0755 "${STAGE}/${PLUGIN}/scripts/"* 2>/dev/null || true
+          chmod 0755 "${STAGE}/${PLUGIN}/event/"* 2>/dev/null || true
+
+          # So the box can say what it is actually running.
+          cat > "${STAGE}/BUILD-INFO.txt" <<EOF
+          branch : ${GITHUB_REF_NAME}
+          commit : ${GITHUB_SHA}
+          built  : $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          run    : ${GITHUB_RUN_NUMBER}
+          EOF
+
+          tar -C stage -czf "${BUNDLE}.tar.gz" "${BUNDLE}"
+
+      - name: Publish the rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}-latest"
+          PRERELEASE=""
+          [ "${GITHUB_REF_NAME}" != "main" ] && PRERELEASE="--prerelease"
+
+          # Delete and recreate rather than upload --clobber: the tag has to
+          # move to this commit too, and a release keeps pointing at the commit
+          # its tag was created on.
+          gh release delete "${TAG}" --yes --cleanup-tag || true
+
+          gh release create "${TAG}" "${BUNDLE}.tar.gz" \
+            --target "${GITHUB_SHA}" \
+            --title "StaXX ${GITHUB_REF_NAME} (rolling)" \
+            ${PRERELEASE} \
+            --notes "$(cat <<EOF
+          Latest build of the \`${GITHUB_REF_NAME}\` branch. Replaced on every push — this link always points at the newest one.
+
+          Install on the Unraid server:
+
+          \`\`\`sh
+          wget -O - https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${BUNDLE}.tar.gz | tar -xzf - -C /boot
+          bash /boot/${BUNDLE}/dev-install.sh
+          \`\`\`
+
+          Nothing under \`/usr/local/emhttp\` survives a reboot, so a reboot removes it. Settings on the flash drive are kept.
+
+          Built from ${GITHUB_SHA}.
+          EOF
+          )"
