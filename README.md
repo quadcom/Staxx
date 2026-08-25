@@ -243,12 +243,12 @@ Everything above works today. None of this does yet.
 - Explaining a file you did not write, in plain English.
 - Generating a secret, and moving it out of the file.
 - Marking a folder as real data, so destructive actions ask harder.
-- Advisory notices for a log with no size limit, and a container with no health check.
+- Advisory notices for a log with no size limit.
 - Clash warnings that can see the machine's own ports.
 - Acting on several stacks at once.
 - Exporting a stack as a shareable recipe with your own details stripped.
 - Graphics figures for Nvidia cards.
-- Stacks off the flash drive.
+- A guided move of the stacks folder from one place to another.
 
 ---
 
@@ -256,7 +256,8 @@ Everything above works today. None of this does yet.
 
 - Pre-alpha. It is installed by hand and is not in Community Applications.
 - Requires Unraid 7.2 or later, and Docker Compose already on the server — StaXX does not install it.
-- Stacks live on the flash drive.
+- Stacks default to the flash drive. You can point StaXX at a pool instead, but moving an existing
+  set of them there is a copy you do by hand.
 - Graphics figures cover Intel and AMD cards. Nvidia shows no figures, though a container given an
   Nvidia card is still labelled as such.
 - Without a Docker Hub read-only token, update checks are limited to roughly ten images an hour
