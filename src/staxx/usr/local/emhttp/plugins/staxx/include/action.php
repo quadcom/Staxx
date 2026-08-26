@@ -244,6 +244,9 @@ switch ($action) {
     // empty wire contract as 'moved' just above.
     $watch = staxx_watch_for_stack($name);
     if ($watch['findings'] !== [] || $watch['notes'] !== []) $reply['watch'] = $watch;
+    // PLAN_85 — one icon per service, same omit-when-empty wire contract.
+    $icons = staxx_service_icons_for_stack($name);
+    if ($icons !== []) $reply['icons'] = $icons;
     staxx_reply($reply);
 
   // ---- create a new stack, or overwrite an existing one ----

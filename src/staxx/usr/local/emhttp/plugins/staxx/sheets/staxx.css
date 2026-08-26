@@ -3318,6 +3318,60 @@
   font-weight: 700;
 }
 
+/* PLAN_85 — the heading is a row now: name and pencil stay left, the icon
+   link sits at the right-hand end. Scoped to the element selector (not the
+   Stack section's <summary>, which also carries .staxx-svchead) because
+   display: flex on a <summary> loses its disclosure triangle — see
+   stackSectionHtml()'s own heading, which must keep the plain rule above. */
+.staxx-scaffold h4.staxx-svchead {
+  display: flex;
+  align-items: center;
+}
+
+/* Sized to the heading's own type scale (1.8rem) rather than the main
+   table's tile, which would look oversized beside a heading this size. */
+.staxx-scaffold .staxx-svcicon {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  opacity: 0.85;
+}
+
+.staxx-svcicon:hover,
+.staxx-svcicon:focus-visible {
+  opacity: 1;
+  outline: none;
+}
+
+.staxx-svcicon img,
+.staxx-svcicon .staxx-tile {
+  width: 100%;
+  height: 100%;
+}
+
+/* Same box model the table's own logos need: width plus padding overflows the
+   square unless border-box is stated, and contain keeps a tall or wide logo
+   from being stretched to fit. */
+.staxx-svcicon img {
+  box-sizing: border-box;
+  padding: 0.2rem;
+  object-fit: contain;
+}
+
+.staxx-svcicon .staxx-tile {
+  font-size: 1rem;
+}
+
+.staxx-svcicon i {
+  font-size: 1.2rem;
+}
+
 /* Quiet until the heading is hovered or focused, so a pencil beside every
    service name is not the first thing the eye lands on. */
 .staxx-svcrename {

@@ -1401,6 +1401,13 @@
   var watchFacts = {};
   var watchNotes = [];
 
+  // PLAN_85 — the `read` reply's own per-service icon tiles, service name ->
+  // {html, q}, set once by openEditor() the same way as watchFacts above.
+  // Yesterday's icon is meaningless against today's stack, so this is
+  // overwritten wholesale on every open rather than merged; paintServiceIcons()
+  // is the only reader, and renderForm() never learns it exists.
+  var serviceIcons = {};
+
   // PLAN_65 — every host port and bind-mount path Docker already has,
   // refreshed by refreshRows() (see 'taken' on that reply); never fetched by
   // the editor itself. clashSpots is what applyClashAdvice() below fills each
@@ -3491,12 +3498,29 @@
       var svc = form.services[s];
       out.push('<section class="staxx-svc" data-service="' + esc(svc.name) + '"' +
                ' data-from="' + svc.range.start + '" data-to="' + svc.range.end + '">');
+      // The anchor's href is one fixed address of ours, never anything out of
+      // the file, so the javascript:-scheme trap safeUpdateSource() guards
+      // elsewhere cannot arise here. It cannot be pre-searched: the icon
+      // collection reads no URL parameter at all (checked in the browser —
+      // its search box stays empty whatever is passed), so the term goes in
+      // the hover text instead, where it is still worth having. That is
+      // paintServiceIcons()'s job, along with the tile itself, since
+      // renderForm() has no access to serviceIcons. Typing an icon name into
+      // the compose text will not change this heading until the file is saved
+      // and reopened: the icon store lives on the server, and the browser
+      // cannot turn a collection name into a picture.
+      var svcTile = importInitials(svc.name);
       out.push('<h4 class="staxx-svchead">' +
                '<span class="staxx-svcname">' + esc(svc.name) + '</span>' +
                ' <button type="button" class="staxx-svcrename" data-svc-rename="1"' +
                ' data-service="' + esc(svc.name) + '"' +
                ' aria-label="Rename this service" title="Rename this service">' +
                '<i class="fa fa-pencil" aria-hidden="true"></i></button>' +
+               '<a class="staxx-svcicon" data-svc-icon="' + esc(svc.name) + '"' +
+               ' href="https://selfh.st/icons/" target="_blank" rel="noopener noreferrer"' +
+               ' title="Find an icon for this service">' +
+               '<span class="staxx-tile staxx-tile--' + svcTile.colour + '">' + esc(svcTile.text) + '</span>' +
+               '</a>' +
                '</h4>');
       if (svc.overview) out.push('<p class="staxx-fieldhint">' + esc(svc.overview) + '</p>');
       if (svc.note)     out.push('<p class="staxx-fieldnote">' + esc(svc.note) + '</p>');
@@ -4154,6 +4178,7 @@
     devPanel = null;            // the device panel lives in here and just went
     formHost.innerHTML = form.ok ? renderForm(form) : brokenFormHtml(form);
     formHost.scrollTop = scrollWas;
+    paintServiceIcons();   // PLAN_85 — every render repaints from serviceIcons, set once by openEditor()
 
     setFormGate(form.ok, form.warnings[0] && form.warnings[0].message);
 
@@ -10001,7 +10026,7 @@
   // the whole stack's own All tab, a service name for one container's — and
   // it is what switches straight to Manage further down, once the model this
   // stack's Manage view is built from (MODEL, from reparse() above) exists.
-  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved, watch) {
+  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved, watch, icons) {
     closeMenu();
     clearError();
 
@@ -10020,6 +10045,10 @@
     // top-of-form summary; buildForm() never learns any of it exists either.
     watchFacts = (watch && watch.findings) || {};
     watchNotes = (watch && watch.notes) || [];
+    // Same reasoning again, for PLAN_85's per-service icon tiles — yesterday's
+    // icon is meaningless against today's stack, so this is only ever what
+    // the current `read` reply carried.
+    serviceIcons = icons || {};
 
     // Yesterday's tabs are meaningless against today's stack — cleared before
     // the fresh listing arrives (or, for a new stack with no folder yet, before
@@ -14496,6 +14525,24 @@
   // just makes a repeat of that regression impossible rather than unlikely.
   var ICONS_MAX_ROUNDS = 20;
 
+  // PLAN_85 — swaps the server's own tile markup (same shape as the main
+  // table's rows) into each service heading's link, and says in the hover
+  // text what to search the collection for. A service name is
+  // author-supplied text, so it is read off the element's dataset rather than
+  // built into a selector — the same reason data-icon-ref above is safe to
+  // put straight into one and a service name is not. The HTML itself is
+  // trusted because it is our own server-rendered tile, so paintIcons() and
+  // the broken-image fallback listener keep working on it unchanged.
+  function paintServiceIcons() {
+    var nodes = document.querySelectorAll('[data-svc-icon]');
+    Array.prototype.forEach.call(nodes, function (node) {
+      var entry = serviceIcons[node.dataset.svcIcon];
+      if (!entry) return;
+      node.innerHTML = entry.html;
+      if (entry.q) node.title = 'Find an icon for this service — search for “' + entry.q + '”';
+    });
+  }
+
   function paintIcons(map) {
     Object.keys(map).forEach(function (ref) {
       // A reference is lower-case letters, digits and hyphens — the server
@@ -14731,7 +14778,7 @@
   function editStack(name, label, focusService, manageSelect, focusField) {
     call('read', { name: name }).then(function (res) {
       if (!res.ok) { failed('Could not open ' + label, res.error); return; }
-      openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch);
+      openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch, res.icons);
     });
   }
 

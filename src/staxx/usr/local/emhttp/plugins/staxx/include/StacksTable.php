@@ -361,6 +361,19 @@ function staxx_watch_apply_pill(array $u, int $count): array {
 }
 
 /**
+ * PLAN_85 — joins service names into one clause naming all of them: "fldb",
+ * "fldb" and "adminer", or "fldb", "adminer" and "cron" for three or more.
+ * Plain double quotes, matching how this file already quotes a stack's own
+ * name back to the user (e.g. the "already exists" refusal in action.php).
+ */
+function staxx_watch_join_names(array $names): string {
+  $quoted = array_map(static fn($n) => '"'.$n.'"', $names);
+  if (count($quoted) === 1) return $quoted[0];
+  $last = array_pop($quoted);
+  return implode(', ', $quoted).' and '.$last;
+}
+
+/**
  * PLAN_62 Stage 3 — this stack's Stage-2 findings, reshaped for the `read`
  * reply: per service, the settings the author's own example adds or drops;
  * plus one sentence for every image that could not be compared at all,
@@ -386,17 +399,21 @@ function staxx_watch_for_stack(string $stack): array {
   $stackWatch  = (array)($state['stacks'][$stack]['watch'] ?? []);
   $imagesState = (array)$state['images'];
 
-  $findings  = [];
-  $notes     = [];
-  $seenImage = [];
+  $findings = [];
+  $notes    = [];
+
+  // Collected before any lookup: an image-level reason is said once even when
+  // several services here share it (PLAN_85 — and now names all of them, so
+  // "nobody needs to be told twice" no longer costs "told about nobody").
+  $imageServices = [];
   foreach ($meta['services'] as $svc => $svcMeta) {
     $image = trim((string)($svcMeta['image'] ?? ''));
-    // Each refusal reason is a property of the image, said once even when
-    // several services here share it — nobody needs to be told twice that
-    // one author publishes no example.
-    if ($image === '' || isset($seenImage[$image])) continue;
-    $seenImage[$image] = true;
+    if ($image === '') continue;
+    $imageServices[$image][] = $svc;
+  }
 
+  foreach ($imageServices as $image => $services) {
+    $svc   = $services[0];
     $entry = $stackWatch[$image] ?? null;
     // PLAN_62 Stage 4 — a dismissed finding is left out here too, the same
     // filter the row's count and the combined report both go through.
@@ -433,10 +450,52 @@ function staxx_watch_for_stack(string $stack): array {
     } elseif (($imagesState[$image]['watch']['reason'] ?? '') !== '') {
       $reason = (string)$imagesState[$image]['watch']['reason'];
     }
-    if ($reason !== '') $notes[] = ucfirst($reason).'.';
+    // PLAN_85 — the reason is a sentence fragment worded about "this image"
+    // generically ("no known project home for this image"); rather than
+    // rewrite that wording per reason, the service name(s) are appended as
+    // their own clause, which reads correctly for every reason in the list.
+    if ($reason !== '') {
+      $named = staxx_watch_join_names($services);
+      $notes[] = ucfirst($reason).', used by '.$named.'.';
+    }
   }
 
   return ['findings' => $findings, 'notes' => $notes];
+}
+
+/**
+ * PLAN_85 — one icon per service, for the editor's heading row.
+ *
+ * Deliberately narrower than staxx_stack_children()'s icon lookup: this calls
+ * staxx_icon_resolve() with only the icon and the stack directory, no image,
+ * service or stack, which is what stops it falling through to
+ * staxx_icon_match(). The editor must show exactly what the file says, never
+ * a guess made at display time.
+ *
+ * @return array<string, array{html: string, q: string}>
+ */
+function staxx_service_icons_for_stack(string $stack): array {
+  // Same cheap lookup staxx_watch_for_stack() uses, rather than
+  // staxx_list_stacks() — see its own comment for why.
+  $file = '';
+  foreach (staxx_scan_stacks()['stacks'] as $s) {
+    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
+  }
+  if ($file === '') return [];
+  $meta = staxx_compose_meta($file);
+  if (!$meta['ok']) return [];
+
+  $dir = dirname($file);
+  $out = [];
+  foreach ($meta['services'] as $svc => $svcMeta) {
+    $icon  = (string)($svcMeta['x']['icon'] ?? '');
+    $image = trim((string)($svcMeta['image'] ?? ''));
+    $out[$svc] = [
+      'html' => staxx_icon_tile(staxx_icon_resolve($icon, $dir), $svc),
+      'q'    => $image !== '' ? (staxx_icon_candidates($image)[0] ?? '') : '',
+    ];
+  }
+  return $out;
 }
 
 /**
