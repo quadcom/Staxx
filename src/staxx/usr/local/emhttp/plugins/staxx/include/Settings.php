@@ -100,6 +100,22 @@ function staxx_settings_keys(): array {
     'UPDATE_NOTIFY'       => ['type' => 'choice', 'default' => 'off', 'choices' => ['off', 'found', 'applied']],
     'UPDATE_RETAIN'       => ['type' => 'number', 'default' => '2', 'min' => 0, 'max' => 5],
     'UPDATE_CLEANUP'      => ['type' => 'choice', 'default' => 'off', 'choices' => ['off', 'weekly']],
+    // The password generator's own choices (PLAN_74 Part A) — a preference
+    // that should follow the person to any browser, not a secret, and set
+    // from the generator panel in the editor rather than the settings page.
+    'PWGEN_MODE'          => ['type' => 'choice', 'default' => 'chars', 'choices' => ['chars', 'words']],
+    'PWGEN_LENGTH'        => ['type' => 'number', 'default' => '20', 'min' => 8, 'max' => 128],
+    'PWGEN_UPPER'         => ['type' => 'choice', 'default' => 'true', 'choices' => ['true', 'false']],
+    'PWGEN_DIGITS'        => ['type' => 'choice', 'default' => 'true', 'choices' => ['true', 'false']],
+    'PWGEN_PUNCT'         => ['type' => 'choice', 'default' => 'true', 'choices' => ['true', 'false']],
+    'PWGEN_WORDS'         => ['type' => 'number', 'default' => '5', 'min' => 3, 'max' => 12],
+    'PWGEN_SEP'           => ['type' => 'text', 'default' => '-'],
+    // Whether the StaXXCrypt hashing container sits idle between hashes or
+    // stays running (PLAN_74 Part A piece 3). On demand is the default: it
+    // consumes nothing until asked, and the delay — a start and a stop, a
+    // second or two — is unnoticeable for something most people use only a
+    // handful of times a year.
+    'CRYPT_MODE'          => ['type' => 'choice', 'default' => 'ondemand', 'choices' => ['ondemand', 'always']],
   ];
 }
 
@@ -346,6 +362,67 @@ function staxx_settings_validate(string $key, array $spec, string $v, string &$e
  * in the same request still returns what was on disk before this write. This
  * caller builds it directly from what was validated instead.
  */
+/**
+ * Merges $overlay into whatever STAXX_CFG already holds on disk and writes
+ * it back atomically — unknown keys survive untouched, so a key nothing
+ * here validates against (STORAGE_CHOICE from an older build, or
+ * CrossLinks.php's own learned-images key, DB_IMAGES_LEARNED) is never
+ * dropped by a write that does not know about it. The one place this
+ * plugin ever writes its own config file; staxx_settings_save() below and
+ * include/CrossLinks.php's staxx_crosslinks_learn() both go through it
+ * rather than each holding their own copy of the read-merge-rename dance.
+ *
+ * @return bool
+ */
+function staxx_cfg_write_keys(array $overlay, ?string &$error = null): bool {
+  $error = '';
+
+  if (!is_dir(STAXX_CFG_DIR) && !@mkdir(STAXX_CFG_DIR, 0755, true)) {
+    $error = 'Could not create '.STAXX_CFG_DIR.'.';
+    return false;
+  }
+
+  // parse_ini_file() returns false, for the WHOLE file, on a single syntax
+  // error — never an empty array — so `?: []` cannot tell "nothing there
+  // yet" apart from "could not be read", and would otherwise silently drop
+  // every key this write does not know about.
+  $raw = @parse_ini_file(STAXX_CFG, false, INI_SCANNER_RAW);
+  if ($raw === false && is_file(STAXX_CFG)) {
+    $error = 'Could not read '.STAXX_CFG.' — it may have a syntax error. Fix it by hand, '
+           . 'or remove it and let StaXX recreate it, before saving again.';
+    return false;
+  }
+  $existing = $raw !== false ? $raw : [];
+  foreach ($overlay as $key => $value) $existing[$key] = $value;
+
+  $lines = [];
+  foreach ($existing as $key => $value) {
+    if (!is_scalar($value)) continue; // parse_ini_file() array syntax; never used here
+    $lines[] = $key.'="'.$value.'"';
+  }
+
+  $tmp = STAXX_CFG.'.tmp-'.getmypid();
+  if (@file_put_contents($tmp, implode("\n", $lines)."\n") === false) {
+    @unlink($tmp); // a partial write is possible even though the call reported failure
+    $error = 'Could not write '.$tmp.'.';
+    return false;
+  }
+  // Intent is owner-only, since this file can hold the Docker Hub token
+  // (HUB_TOKEN) in the clear — but the config lives on the flash drive,
+  // which is vfat and has no concept of Unix permissions, so this call is a
+  // no-op there: every file on that mount is already owner-only regardless
+  // of what chmod reports. The mount is the real protection, not this call;
+  // it is kept so the file still gets a real 0600 if STAXX_CFG is ever
+  // pointed somewhere off the flash drive, such as in the test suite.
+  @chmod($tmp, 0600);
+  if (!@rename($tmp, STAXX_CFG)) {
+    @unlink($tmp);
+    $error = 'Could not save the settings file — the temporary file could not be put in place.';
+    return false;
+  }
+  return true;
+}
+
 function staxx_settings_save(
   array $posted, ?string &$error = null, ?bool &$reload = null, ?array &$saved = null
 ): bool {
@@ -395,51 +472,10 @@ function staxx_settings_save(
     return false;
   }
 
-  if (!is_dir(STAXX_CFG_DIR) && !@mkdir(STAXX_CFG_DIR, 0755, true)) {
-    $error = 'Could not create '.STAXX_CFG_DIR.'.';
-    return false;
-  }
-
-  // The file as it exists on disk right now, unknown keys and all — this is
-  // what gets overlaid and written straight back, so a key from a newer
-  // version of the plugin survives a save made by an older one.
-  //
-  // parse_ini_file() returns false, for the WHOLE file, on a single syntax
-  // error — never an empty array — so `?: []` cannot tell "nothing there yet"
-  // apart from "could not be read", and would otherwise silently drop every
-  // key this save does not know about (STACK_ROOT, ARCHIVE_ROOT, HUB_TOKEN,
-  // the whole update block) back to their defaults.
-  $raw = @parse_ini_file(STAXX_CFG, false, INI_SCANNER_RAW);
-  if ($raw === false && is_file(STAXX_CFG)) {
-    $error = 'Could not read '.STAXX_CFG.' — it may have a syntax error. Fix it by hand, '
-           . 'or remove it and let StaXX recreate it, before saving settings again.';
-    return false;
-  }
-  $existing = $raw !== false ? $raw : [];
-  foreach ($overlay as $key => $value) $existing[$key] = $value;
-
-  $lines = [];
-  foreach ($existing as $key => $value) {
-    if (!is_scalar($value)) continue; // parse_ini_file() array syntax; never used here
-    $lines[] = $key.'="'.$value.'"';
-  }
-
-  $tmp = STAXX_CFG.'.tmp-'.getmypid();
-  if (@file_put_contents($tmp, implode("\n", $lines)."\n") === false) {
-    @unlink($tmp); // a partial write is possible even though the call reported failure
-    $error = 'Could not write '.$tmp.'.';
-    return false;
-  }
-  // Intent is owner-only, since this file holds the Docker Hub token (HUB_TOKEN) in the
-  // clear — but the config lives on the flash drive, which is vfat and has no concept of
-  // Unix permissions, so this call is a no-op there: every file on that mount is already
-  // owner-only regardless of what chmod reports. The mount is the real protection, not this
-  // call; it is kept so the file still gets a real 0600 if STAXX_CFG is ever pointed
-  // somewhere off the flash drive, such as in the test suite.
-  @chmod($tmp, 0600);
-  if (!@rename($tmp, STAXX_CFG)) {
-    @unlink($tmp);
-    $error = 'Could not save the settings file — the temporary file could not be put in place.';
+  // The write itself — read-merge-atomic-rename — is shared with
+  // include/CrossLinks.php's staxx_crosslinks_learn(); see
+  // staxx_cfg_write_keys()'s own comment just above this function for why.
+  if (!staxx_cfg_write_keys($overlay, $error)) {
     return false;
   }
 

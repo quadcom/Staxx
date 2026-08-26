@@ -242,6 +242,39 @@ A **service** can carry the same block (see below) to override this for one cont
 The order a value is looked up in is: the service's own `update` block, then the stack's, then the
 plugin's global setting — the first one that actually sets the key wins.
 
+### Links
+
+```yaml
+x-unraid:
+  links:
+    - kind: secret          # secret | folder | reference
+      state: confirmed      # confirmed | rejected
+      between:
+        - { service: app, environment: DB_PASSWORD }
+        - { service: db,  environment: POSTGRES_PASSWORD }
+```
+
+StaXX can notice two settings that look like the same secret, the same shared folder, or one
+service pointing at another, and puts up a note asking whether that is right. This block is where
+the answer to that note is written — nothing here is written on its own; only a person's click
+creates an entry. Saying yes writes `state: confirmed`, and the note reads as a stated fact from
+then on. Saying no writes `state: rejected`, which is not deleted afterwards — keeping it on record
+is what stops the same coincidence being suggested again every time the file is opened.
+
+Each endpoint is named by the setting's own name (`environment`) or, for a shared folder, the host
+path (`volume`) — never by its position in the list — so moving things around in the file can never
+break which two boxes a link is about. A `secret` link must name a setting on both sides, and a
+`folder` link must name a path on both sides — the schema rejects either one left bare. An endpoint
+naming a whole service, with neither of those, is only ever valid as the *target* of a `reference`
+link, such as one stack pointing at a database that lives in another; the pointing side of a
+`reference` — the box that actually holds the address — must still name a setting or a path, so
+only the far side may be bare. That far side can also carry a `stack` key, naming the other stack by
+its path, for exactly that cross-stack case.
+
+**If a link names a setting, a folder or a service the file no longer has, it is shown as stale**
+rather than being quietly thrown away — the same rule as `sections` above. Removing a stale entry is
+the person's decision, made with a click, not something StaXX does on its own.
+
 ---
 
 ## Service level

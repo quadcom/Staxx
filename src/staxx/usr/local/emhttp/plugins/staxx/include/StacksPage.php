@@ -21,6 +21,10 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Folders.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Autostart.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
+// Only for staxx_db_images_table(), to hand PLAN_70 stage 5's well-known
+// database images table to the browser below — see db-images.json's own
+// header for why there is now one copy read by both sides.
+require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
 // Only for staxx_settings_read(), to read the remembered PLAN_68 Part B
 // storage-choice below — nothing else here writes a setting.
 require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
@@ -56,6 +60,13 @@ $unmanagedCount = count($projects[''] ?? []);
 $vars = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
 $csrf = (string)($vars['csrf_token'] ?? '');
 
+// PLAN_70 stage 5: the well-known database images table, handed to the
+// browser rather than duplicated into javascript/db-images.js. Left out of
+// the markup entirely when the file failed to load — db-images.js treats a
+// missing attribute as a hard error rather than "no image is known", so a
+// broken deploy is reported rather than silently matching nothing.
+$dbImagesTable = staxx_db_images_table();
+
 // Both assets carry the file's modification time in the URL. Without it an
 // edited stylesheet or script sits in the browser cache and the page appears
 // not to have changed at all — which costs a great deal of time to diagnose,
@@ -66,6 +77,7 @@ $modelFile = STAXX_ROOT.'/javascript/compose-model.js';
 $caFile  = STAXX_ROOT.'/javascript/ca-convert.js';
 $imageFile = STAXX_ROOT.'/javascript/image-import.js';
 $scaffoldFile = STAXX_ROOT.'/javascript/meta-scaffold.js';
+$dbImagesFile = STAXX_ROOT.'/javascript/db-images.js';
 // The Manage tab's own script and stylesheet (PLAN_44 phase 2) — written by a
 // separate agent in parallel with this file, so neither is guaranteed to exist
 // yet at any given moment. Guarded the same way the three scripts above are:
@@ -78,6 +90,7 @@ $modelTag = $assets.'/javascript/compose-model.js?v='.(is_file($modelFile) ? fil
 $caTag   = $assets.'/javascript/ca-convert.js?v='.(is_file($caFile) ? filemtime($caFile) : '0');
 $imageTag = $assets.'/javascript/image-import.js?v='.(is_file($imageFile) ? filemtime($imageFile) : '0');
 $scaffoldTag = $assets.'/javascript/meta-scaffold.js?v='.(is_file($scaffoldFile) ? filemtime($scaffoldFile) : '0');
+$dbImagesTag = $assets.'/javascript/db-images.js?v='.(is_file($dbImagesFile) ? filemtime($dbImagesFile) : '0');
 $manageJsTag  = $assets.'/javascript/manage.js?v='.(is_file($manageJsFile) ? filemtime($manageJsFile) : '0');
 $manageCssTag = $assets.'/sheets/manage.css?v='.(is_file($manageCssFile) ? filemtime($manageCssFile) : '0');
 $cssTag  = $assets.'/sheets/staxx.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
@@ -122,7 +135,8 @@ endif;
      data-folders="<?= htmlspecialchars(json_encode(array_map(
          fn($f) => ['id' => $f, 'name' => $f], $folders
      )), ENT_QUOTES) ?>"
-     data-appdata="<?= htmlspecialchars(staxx_appdata_root()) ?>">
+     data-appdata="<?= htmlspecialchars(staxx_appdata_root()) ?>"
+     <? if ($dbImagesTable['ok']): ?>data-db-images="<?= htmlspecialchars(json_encode(['images' => $dbImagesTable['entries']]), ENT_QUOTES) ?>"<? endif; ?>>
 
   <!-- Only conditions that need acting on get a banner here. The standing
        "this is alpha" notice is gone: a banner shown on every visit stops
@@ -368,6 +382,100 @@ endif;
           <input type="checkbox" id="staxx-sanitise">
           <span><?= _('Sanitise') ?></span>
         </label>
+        <!-- PLAN_74 Part A: one password/passphrase generator in the
+             toolbar, not a button on every secret box. A button repeated
+             down the form is clutter, and one offered on a box that did not
+             want it invites a mistake; a tool belonging to no box cannot
+             overwrite anything by existing. Fill writes to whichever box was
+             last focused before this opened — script's job, not this
+             markup's. Same positioning pattern as .staxx-outlinewrap below:
+             the wrapper only places the panel, the panel itself is the
+             popup. -->
+        <div class="staxx-pwgenwrap">
+          <button type="button" class="staxx-btn staxx-pwgenbtn" id="staxx-pwgen-btn" aria-expanded="false"
+                  title="<?= _('Make a password or passphrase, then put it in the box you last clicked') ?>">
+            <i class="fa fa-key" aria-hidden="true"></i> <?= _('Password') ?>
+          </button>
+          <div class="staxx-pwgen" id="staxx-pwgen" role="dialog" aria-label="<?= _('Password generator') ?>" hidden>
+            <div class="staxx-pwgen-row staxx-pwgen-mode">
+              <label>
+                <input type="radio" name="staxx-pwgen-mode" id="staxx-pwgen-mode-chars" value="chars">
+                <span><?= _('Characters') ?></span>
+              </label>
+              <label>
+                <input type="radio" name="staxx-pwgen-mode" id="staxx-pwgen-mode-words" value="words">
+                <span><?= _('Words') ?></span>
+              </label>
+            </div>
+            <div id="staxx-pwgen-chars">
+              <label class="staxx-pwgen-row">
+                <span><?= _('Length') ?></span>
+                <input type="number" id="staxx-pwgen-length" min="8" max="128" step="1">
+              </label>
+              <label class="staxx-pwgen-row">
+                <input type="checkbox" id="staxx-pwgen-upper">
+                <span><?= _('Capitals') ?></span>
+              </label>
+              <label class="staxx-pwgen-row">
+                <input type="checkbox" id="staxx-pwgen-digits">
+                <span><?= _('Digits') ?></span>
+              </label>
+              <label class="staxx-pwgen-row">
+                <input type="checkbox" id="staxx-pwgen-punct">
+                <span><?= _('Punctuation') ?></span>
+              </label>
+            </div>
+            <div id="staxx-pwgen-words" hidden>
+              <label class="staxx-pwgen-row">
+                <span><?= _('Words') ?></span>
+                <input type="number" id="staxx-pwgen-count" min="3" max="12" step="1">
+              </label>
+              <label class="staxx-pwgen-row">
+                <span><?= _('Joined by') ?></span>
+                <input type="text" id="staxx-pwgen-sep" maxlength="3" spellcheck="false" <?= $nofill ?>>
+              </label>
+              <div class="staxx-pwgen-hint"><?= _('A passphrase survives being read aloud or typed by hand where a random string does not.') ?></div>
+            </div>
+            <div class="staxx-pwgen-strength" id="staxx-pwgen-strength"></div>
+            <div class="staxx-pwgen-row staxx-pwgen-valuerow">
+              <input type="text" id="staxx-pwgen-value" readonly spellcheck="false" <?= $nofill ?>>
+              <button type="button" class="staxx-btn" id="staxx-pwgen-regen" title="<?= _('Generate another') ?>">
+                <i class="fa fa-refresh" aria-hidden="true"></i> <?= _('Regenerate') ?>
+              </button>
+            </div>
+            <div class="staxx-pwgen-row staxx-pwgen-actions">
+              <button type="button" class="staxx-btn" id="staxx-pwgen-copy"><?= _('Copy') ?></button>
+              <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-pwgen-fill"><?= _('Fill') ?></button>
+            </div>
+            <div class="staxx-pwgen-note" id="staxx-pwgen-note"></div>
+            <!-- PLAN_74 Part A piece 4: the password and its hash usually go
+                 to two different places — the hash into the container's
+                 configuration, the password wherever passwords are kept — so
+                 each gets its own Copy and Fill rather than the hash being
+                 treated as a step on the way to filling the password box. -->
+            <div class="staxx-pwgen-hash" id="staxx-pwgen-hashwrap">
+              <div class="staxx-pwgen-hashhead">
+                <?= _('Hash') ?>
+              </div>
+              <div class="staxx-pwgen-hint"><?= _('Some applications want a scrambled version of the password rather than the password itself.') ?></div>
+              <label class="staxx-pwgen-row">
+                <span><?= _('Format') ?></span>
+                <select id="staxx-pwgen-format"></select>
+              </label>
+              <div class="staxx-pwgen-row staxx-pwgen-actions">
+                <button type="button" class="staxx-btn" id="staxx-pwgen-hash-btn"><?= _('Hash') ?></button>
+              </div>
+              <div class="staxx-pwgen-row staxx-pwgen-valuerow">
+                <input type="text" id="staxx-pwgen-hash" readonly spellcheck="false" <?= $nofill ?>>
+              </div>
+              <div class="staxx-pwgen-row staxx-pwgen-actions">
+                <button type="button" class="staxx-btn" id="staxx-pwgen-hash-copy"><?= _('Copy') ?></button>
+                <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-pwgen-hash-fill"><?= _('Fill') ?></button>
+              </div>
+              <div class="staxx-pwgen-note" id="staxx-pwgen-hash-note"></div>
+            </div>
+          </div>
+        </div>
         <!-- Positioning wrapper only, same job as .staxx-sections above the
              Sections button: the panel hangs from this box, not from the
              button itself, so it can sit flush against the button's edge
@@ -1036,6 +1144,14 @@ endif;
 
     <div class="staxx-settings-body" id="staxx-settings-body"></div>
 
+    <!-- PLAN_74 Part A piece 3: StaXXCrypt is StaXX's own plumbing, not an
+         application somebody chose to run, so it does not belong on a page
+         about the containers you chose — but hidden from the list is not
+         hidden from you, so its whole state (built or not, running, recipe
+         version, self-test results, the build/rebuild button) lives here
+         with the rest of StaXX's own configuration. Script fills it. -->
+    <div class="staxx-crypt" id="staxx-crypt-state" hidden></div>
+
     <div class="staxx-settings-foot">
       <p class="staxx-settings-msg" id="staxx-settings-msg" role="status" aria-live="polite"></p>
       <div class="staxx-buttons staxx-buttons--inline">
@@ -1225,6 +1341,15 @@ endif;
      for the same reason as the scripts above. -->
 <? if (is_file($scaffoldFile)): ?>
 <script src="<?= $scaffoldTag ?>"></script>
+<? endif; ?>
+<!-- PLAN_70 stage 5: the well-known database images lookup. Reads its table
+     from the `.staxx-scaffold` element's data-db-images attribute (set above)
+     rather than carrying its own copy, so it must load after that element
+     exists in the DOM — true for every script tag on this page, since they
+     all sit after the scaffold div. Conditional for the same reason as the
+     scripts above. -->
+<? if (is_file($dbImagesFile)): ?>
+<script src="<?= $dbImagesTag ?>"></script>
 <? endif; ?>
 <!-- The Manage tab (PLAN_44 Part D), a separate file for the same reason as
      the three above: a bad edit there costs the Manage tab, not the rest of

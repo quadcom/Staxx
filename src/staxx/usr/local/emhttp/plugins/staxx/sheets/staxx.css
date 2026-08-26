@@ -2741,6 +2741,138 @@
   text-align: center;
 }
 
+/* ---- modal: the password/passphrase generator (PLAN_74 Part A) ----------
+ *
+ * Same family as .staxx-outline just above: .staxx-pwgenwrap only positions
+ * the panel against its button, the panel carries the opaque background,
+ * border, radius and shadow. Wider than .staxx-outline because it holds
+ * controls rather than a list, but capped so it wraps rather than overflows
+ * a narrow window.
+ */
+.staxx-pwgenwrap {
+  position: relative;
+}
+
+.staxx-pwgen {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 5;
+  width: 32rem;
+  max-width: calc(100vw - 2rem);
+  padding: 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-bg);
+  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+}
+
+.staxx-pwgen[hidden] {
+  display: none;
+}
+
+.staxx-pwgen-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+
+.staxx-pwgen-mode {
+  gap: 1.4rem;
+}
+
+.staxx-pwgen-row:last-child {
+  margin-bottom: 0;
+}
+
+/* The scaffold is marked `unapi`, so neither Unraid's form styling nor the
+   browser's own default is anything we want here — an unstyled control comes
+   out white on a dark panel, which is exactly how the format dropdown first
+   shipped. These are the same values .staxx-ca-find select and
+   .staxx-import-dest select already use; stated here rather than shared with
+   them, which is how every other block in this sheet handles its own
+   controls. */
+.staxx-pwgen-row input[type="number"],
+.staxx-pwgen-row input[type="text"],
+.staxx-pwgen-row select {
+  flex: 1 1 auto;
+  min-width: 6rem;
+  box-sizing: border-box;
+  padding: 0.6rem 0.9rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background-color: var(--background-color, #1c1c1c);
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.3rem;
+}
+
+.staxx-pwgen-row input[type="number"]:focus,
+.staxx-pwgen-row input[type="text"]:focus,
+.staxx-pwgen-row select:focus {
+  border-color: var(--sm-accent);
+  outline: none;
+}
+
+/* One line, not a paragraph — it earns its place next to the words it
+   explains rather than below the whole panel. */
+.staxx-pwgen-hint {
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  margin-bottom: 0.7rem;
+}
+
+.staxx-pwgen-strength {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--sm-muted);
+  margin-bottom: 0.7rem;
+}
+
+/* A generated value is read aloud, retyped or copied character by character,
+   so both boxes get the same monospace stack as .staxx-outline-line — a
+   proportional font makes an 'l' and a '1' hard to tell apart.
+   On the row rather than on the boxes: the generic control rule above sets
+   font-family: inherit and, at two classes plus an attribute, outranks any
+   plain class put on the input itself. */
+.staxx-pwgen-valuerow input {
+  user-select: all;
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+}
+
+.staxx-pwgen-actions {
+  justify-content: flex-end;
+}
+
+.staxx-pwgen-note {
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+/* Second half of the same panel (PLAN_74 Part A piece 4): the divider is the
+   only thing telling the eye this is a separate job (hashing) rather than
+   more password options. */
+.staxx-pwgen-hash {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.staxx-pwgen-hashhead {
+  font-weight: 700;
+  margin-bottom: 0.3rem;
+}
+
+/* A hash is many times longer than a password. Its font and selectability
+   come from .staxx-pwgen-valuerow above, shared with the password box; all
+   this adds is the width, because an <input> cannot wrap and a long value
+   must scroll inside its own box rather than widening the panel. */
+#staxx-pwgen-hash {
+  width: 100%;
+}
+
 /* ---- modal: the Form / Split / Compose control ---- */
 
 .staxx-views {
@@ -4294,6 +4426,139 @@
   border-color: var(--sm-accent);
 }
 
+/* A field taking part in a connection detectLinks() found between two
+   services in this file (PLAN_70 stage 2) — --sm-good rather than the
+   --sm-accent every advisory row above uses: unlike a clash or a stale
+   image, a connection usually is not a problem, so it reads as a fact
+   worth knowing rather than a caution. */
+.staxx-fieldrow--link {
+  box-shadow: inset 0.3rem 0 0 var(--sm-good);
+}
+
+.staxx-fieldrow--link .staxx-input:not(:disabled) {
+  border-color: var(--sm-good);
+}
+
+/* A box that could be pointing at a service in a DIFFERENT stack on this
+   server (PLAN_70 stage 5) — same shape and colour as .staxx-fieldrow--link
+   above, for the same reason: a recognised connection is a fact worth
+   knowing, not a caution. */
+.staxx-fieldrow--cross {
+  box-shadow: inset 0.3rem 0 0 var(--sm-good);
+}
+
+.staxx-fieldrow--cross .staxx-input:not(:disabled) {
+  border-color: var(--sm-good);
+}
+
+/* ---- a confirmed connection: the row's chain mark and its popover
+ * (PLAN_70 section 11.4) ---------------------------------------------------
+ *
+ * Adrian's split: a question needs words, a settled fact needs a mark. Once
+ * a person confirms a connection its sentence and buttons collapse to this
+ * one small mark on the row — an unconfirmed connection keeps the full
+ * .staxx-advice prose untouched. Same family as .staxx-outlinewrap and
+ * .staxx-pwgenwrap above: the wrap positions, the panel carries the opaque
+ * background, border, radius and shadow, so this is not a fourth floating
+ * look in the file. It has to be quiet rather than a status badge — plenty
+ * of confirmed rows can sit on screen at once — so it stays small and
+ * takes its colour from the same tokens .staxx-fieldrow--link/--cross
+ * already use for a connection, not a new one.
+ */
+.staxx-linkmarkwrap {
+  position: relative;
+  display: inline-flex;
+  /* A grid cell on its own would fight --sm-fieldcols; this sits inline
+     against whichever cell's content it belongs to instead. */
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.staxx-linkmark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  opacity: 0.55;
+}
+
+.staxx-linkmark:hover,
+.staxx-linkmark:focus-visible {
+  opacity: 1;
+  background: var(--sm-fill);
+}
+
+.staxx-scaffold .staxx-linkmark:focus-visible {
+  outline: 2px solid var(--sm-accent);
+  outline-offset: 2px;
+}
+
+/* Told apart by colour alone, at the same low opacity as the mark itself —
+   the same three tokens already used elsewhere in the sheet, not new ones:
+   danger for a shared secret (PLAN_70's own wording only calls a value a
+   password where the file marks it "secret"), accent for a shared folder
+   (the caution colour .staxx-fieldrow--clash and --watch use for "worth
+   weighing"), good for a naming reference (the colour --fieldrow--link and
+   --cross already use for a connection that usually is not a problem). */
+.staxx-linkmark--secret {
+  color: var(--sm-danger);
+}
+
+.staxx-linkmark--folder {
+  color: var(--sm-accent);
+}
+
+.staxx-linkmark--name {
+  color: var(--sm-good);
+}
+
+/* Right-aligned to the mark and narrow — this holds one line naming the
+   other side plus a single button, nowhere near .staxx-outline's list or
+   .staxx-pwgen's controls, so it stays small rather than borrowing their
+   width. */
+/* Hangs from the mark's LEFT edge, unlike .staxx-outline and .staxx-pwgen
+   which hang from the right. Those two are anchored to buttons at the right
+   end of the toolbar, where opening rightwards would leave the panel off the
+   screen; this mark sits at the left edge of a form row, where the same
+   `right: 0` put the panel off the other side and clipped it against the
+   pane. The rule is the same one in both cases — open into the space that
+   exists — and the answer is opposite because the anchors are opposite. */
+.staxx-linkpop {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  z-index: 5;
+  width: 18rem;
+  max-width: calc(100vw - 2rem);
+  padding: 0.8rem 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-bg);
+  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  /* Plain body text, not a status colour — the mark already said what kind
+     of connection this is; the popover just names the other side. */
+  color: var(--sm-fg);
+  font-size: 1.2rem;
+}
+
+.staxx-linkpop[hidden] {
+  display: none;
+}
+
+.staxx-linkpop-row {
+  margin: 0 0 0.8rem;
+}
+
+.staxx-linkpop-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .staxx-scaffold .staxx-required {
   display: block;
   width: 100%;
@@ -4403,6 +4668,26 @@
 
 .staxx-scaffold .staxx-missing--inuse:hover {
   background: color-mix(in srgb, var(--sm-accent) 14%, transparent);
+}
+
+/* The connections summary (PLAN_70 stage 2) — same shape as .staxx-missing
+   above, but --sm-good throughout rather than --sm-accent, matching
+   .staxx-fieldrow--link: this is reporting a fact, not raising a caution.
+   Also takes the click-and-hover-do-nothing treatment .staxx-missing--inuse
+   has just above, and for the same reason: confirming or rejecting a
+   connection is stage 3, not this one, so there is nothing here to press. */
+.staxx-scaffold .staxx-missing--link {
+  border-left-color: var(--sm-good);
+  background: color-mix(in srgb, var(--sm-good) 14%, transparent);
+  cursor: default;
+}
+
+.staxx-scaffold .staxx-missing--link::after {
+  content: '';
+}
+
+.staxx-scaffold .staxx-missing--link:hover {
+  background: color-mix(in srgb, var(--sm-good) 14%, transparent);
 }
 
 .staxx-fieldtitle {
@@ -5257,6 +5542,14 @@
    Docker already has taken (PLAN_65) — same accent colour again. */
 .staxx-badpath--clash {
   border-bottom-color: var(--sm-accent);
+}
+
+/* A value underlined because detectLinks() found it taking part in a
+   connection to another service (PLAN_70 stage 2) — --sm-good rather than
+   the --sm-accent every modifier above uses, matching .staxx-fieldrow--link:
+   this marks a fact, not a caution. */
+.staxx-badpath--link {
+  border-bottom-color: var(--sm-good);
 }
 
 /* ---- modal: the compose pane ---- */
@@ -7604,6 +7897,70 @@
 .staxx-settings-group .staxx-hint {
   display: block;
   margin: 0;
+}
+
+/* ---- StaXXCrypt state (PLAN_74 Part A piece 3) --------------------------
+ *
+ * Sits between the settings body and its foot, filled entirely by script:
+ * built/not-built, running, recipe version, the last self-test's per-format
+ * results, and the build/rebuild button. Same border-top-as-divider idiom
+ * as .staxx-settings-group above, since it is one more section of the same
+ * panel rather than a dialog of its own.
+ */
+.staxx-crypt {
+  flex: 0 0 auto;
+  padding: 1.2rem 1.4rem 0;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.staxx-crypt[hidden] {
+  display: none;
+}
+
+.staxx-crypt-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.4rem;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+  margin-bottom: 0.8rem;
+}
+
+.staxx-crypt-formats {
+  margin: 0 0 0.8rem;
+  font-size: 1.2rem;
+}
+
+.staxx-crypt-format {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+}
+
+/* Same hues as .staxx-scaffold .fa.green-text/red-text elsewhere in this
+   sheet, not a new pair — a pass or fail here means the same thing it means
+   everywhere else on the page. */
+.staxx-crypt-format--ok {
+  color: var(--sm-good);
+}
+
+.staxx-crypt-format--bad {
+  color: var(--sm-danger);
+}
+
+/* One block of the crypt panel — an explanation with its own button under
+   it. Several stack down the panel, so the gap belongs here rather than on
+   each paragraph inside them. */
+.staxx-crypt-line {
+  margin-bottom: 1rem;
+}
+
+.staxx-crypt-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 1.2rem;
 }
 
 .staxx-settings-foot {

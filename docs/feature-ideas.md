@@ -189,3 +189,51 @@ form, and the whole Ctrl/Alt/Cmd space is free apart from Find and Replace:
   is already there. And a generated value the reader does not keep is one they may already have used
   somewhere else, so generating again is not free.
 - Honour `prefers-reduced-motion`, which the stylesheet already does elsewhere.
+
+---
+
+## 3. "Did you mean?" when an address matches nothing
+
+Adrian's, 2026-08-26, straight after name matching was made case-insensitive and the line was drawn
+there deliberately. This is the step past that line, written down so taking it stays a decision.
+
+**What you would notice.** You type the name of a database that lives in another stack, get a
+character wrong — `supstack_db` for `supstack-db` — and nothing happens. StaXX knows perfectly well
+what you meant and says nothing, at the exact moment you are closest to being right.
+
+**What it would be.** One extra pass over the candidates already gathered — no second question to the
+server, no new information. Where nothing matched exactly, offer at most one or two near names as a
+*question*: "Nothing here is called `supstack_db`. Did you mean `supstack-db` in `supstack_dev`?"
+Clicking it does what typing the right name would have done. Ignoring it costs nothing.
+
+**What "near" would mean.** Three cheap rules, not a similarity score:
+
+1. **Separators ignored** — `-`, `_` and `.` treated as interchangeable and as removable. One rule
+   catches `supstack_db`, `supstack-db` and `supstackdb`, and this is by far the commonest real slip.
+2. **One edit away** — a single character inserted, deleted, changed or swapped with its neighbour.
+   Catches genuine mistyping and nothing else.
+3. **A whole word of a longer name** — `sql` against `company_sql`, split on the separators above.
+   Never a bare substring, which matches far too much to be useful.
+
+Case is already ignored everywhere and is not part of this.
+
+### Caveats to read before anyone starts
+
+- **A suggestion is a button, never an edit.** What was typed stands until somebody clicks.
+- **Never suggest anything when the typed value already works.** An address that resolves is not a
+  mistake, and this must never tempt somebody into pointing a working outside address at a local
+  container. That is the dangerous failure: a missed match merely disappoints, this one *breaks*
+  something that was fine.
+- **Never suggest across a gap the person cannot cross.** A container sharing no network is a
+  suggestion leading nowhere — either withhold it, or say plainly that they would also have to put
+  the two on the same network and let them choose.
+- **Never more than two.** A list of maybes reads as the tool guessing, which is the thing
+  case-insensitive matching was careful not to become.
+- **Names only, never a shared secret.** A password that nearly matches another password is two
+  passwords, and nothing about a mistyped hostname says otherwise.
+- **Should a stopped stack, or one whose file will not parse, be offered at all?** Undecided.
+
+**The real question.** Does a wrong suggestion cost more than no suggestion? For an address,
+probably yes — which argues for tight rules and a hard ceiling rather than a score with a threshold
+to tune. The whole reason this is written out as three rules is that "add fuzzy matching" is a task
+with no end.

@@ -51,8 +51,86 @@
               ]
             }
           }
+        },
+        "links": {
+          "type": "array",
+          "description": "Connections between two settings, host paths or whole services — a shared secret, a shared folder, or one endpoint pointing at the other (e.g. another stack's database container). Written only when a person confirms or rejects a suggested connection; see docs/x-unraid-schema.md.",
+          "$comment": "No schema version bump for this key. Rule 1's forward-compatibility promise already means an older StaXX ignores keys it does not recognise, so an older build simply does not see links, which is correct behaviour rather than a degradation.",
+          "items": { "$ref": "#/$defs/link" }
         }
       }
+    },
+
+    "link": {
+      "type": "object",
+      "description": "One confirmed or rejected connection between two endpoints, written only by a person's click — never as a side effect of detection.",
+      "required": ["kind", "state", "between"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["secret", "folder", "reference"],
+          "description": "secret = the same password or token in both places. folder = the same host path mounted in both places. reference = one endpoint names or resolves to the other, e.g. a database container in another stack, rather than the two sharing a value."
+        },
+        "state": {
+          "type": "string",
+          "enum": ["confirmed", "rejected"],
+          "description": "confirmed = a person agreed the two are the same thing, and it may be shown as a fact and offered for propagation. rejected = a person said they are not related, recorded so the coincidence is kept quiet instead of being suggested again."
+        },
+        "between": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "The two endpoints the link joins.",
+          "items": { "$ref": "#/$defs/linkEndpoint" }
+        }
+      },
+      "$comment": "Per-kind endpoint shape lives here, not on linkEndpoint, because it needs to see kind: a bare { service } endpoint only means something as a reference's target, never as either side of a value that is supposedly shared.",
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "secret" } } },
+          "then": { "properties": { "between": { "items": { "required": ["environment"] } } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "folder" } } },
+          "then": { "properties": { "between": { "items": { "required": ["volume"] } } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "reference" } } },
+          "then": {
+            "properties": {
+              "between": {
+                "prefixItems": [
+                  {
+                    "description": "The pointing side: the setting or bind mount that actually holds the address, so it must name one.",
+                    "anyOf": [
+                      { "required": ["environment"] },
+                      { "required": ["volume"] }
+                    ]
+                  },
+                  {
+                    "description": "The target: may be a bare { service } naming the whole container, or a settled setting/volume."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+
+    "linkEndpoint": {
+      "type": "object",
+      "description": "One side of a link. Named by the setting's own name or the volume's host path, never by its position in the file, so reordering a file cannot break the pairing. Carrying neither environment nor volume names the whole service — enforced (see $defs/link) as valid only for the target side of a reference link, never for a secret or folder link and never for a reference's pointing side. An optional stack names another stack's path under the stack root, e.g. Databases/mariadb, for a link that crosses stacks; absent means this same file.",
+      "$comment": "additionalProperties: false here, unlike $defs/stack and $defs/service: this shape is StaXX's own record of a person's click, never hand-authored compose content, so there is no forward-compatibility promise to keep and a stray key is worth rejecting rather than silently ignoring.",
+      "required": ["service"],
+      "properties": {
+        "service":     { "type": "string" },
+        "stack":       { "type": "string" },
+        "environment": { "type": "string" },
+        "volume":      { "type": "string" }
+      },
+      "additionalProperties": false,
+      "not": { "required": ["environment", "volume"] }
     },
 
     "icon": {
