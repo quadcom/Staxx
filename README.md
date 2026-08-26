@@ -13,7 +13,7 @@
 > **Where this is up to.** In daily use on the author's own server and far enough along to judge on
 > its merits, but not yet packaged — see [Limitations](#limitations).
 >
-> Version 2026.08.21 · [changelog](CHANGELOG.md)
+> Version 2026.08.26 · [changelog](CHANGELOG.md)
 
 Unraid describes containers with its own template format. StaXX uses
 **[compose files](https://compose-spec.io/)** instead — the format containerised projects already
