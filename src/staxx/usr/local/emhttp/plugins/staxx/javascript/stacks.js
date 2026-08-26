@@ -3746,15 +3746,58 @@
   // text before this pane is painted, so needsScaffold() is already false by
   // the time reparse() first runs. Skipped on a companion file for the same
   // reason updateMissing() has nothing to say about one either.
+  // Plain words for the field names, because the note is read by someone who
+  // is not going to look up what `readme` or `update` means in the schema.
+  var SCAFFOLD_WORDS = {
+    icon: 'an icon', overview: 'a description', category: 'a category',
+    project: 'a project page', support: 'a support page',
+    readme: 'a documentation page', author: 'an author',
+    update: 'an update policy', webui: 'a web page address'
+  };
+
+  function scaffoldWords(added) {
+    var seen = {};
+    var out  = [];
+    var take = function (key) {
+      if (key === 'version' || seen[key]) return;
+      seen[key] = true;
+      out.push(SCAFFOLD_WORDS[key] || key);
+    };
+    (added.stack || []).forEach(take);
+    Object.keys(added.services || {}).forEach(function (svc) {
+      (added.services[svc] || []).forEach(take);
+    });
+
+    if (out.length > 4) {
+      var rest = out.length - 3;
+      out = out.slice(0, 3);
+      out.push(rest + ' more');
+    }
+    if (out.length === 1) return out[0];
+    return out.slice(0, -1).join(', ') + ' and ' + out[out.length - 1];
+  }
+
   function updateScaffoldNote() {
     if (!scaffoldNote) return;
-    if (fileOpen !== null || !window.StaxxMeta || !window.StaxxMeta.needsScaffold(currentText())) {
+    // scaffold() rather than needsScaffold(): the same work either way — the
+    // latter only throws the answer away — and what it would add is what
+    // decides which of the two sentences below is true.
+    var plan = window.StaxxMeta ? window.StaxxMeta.scaffold(currentText()) : null;
+    if (fileOpen !== null || !plan || !plan.changed) {
       scaffoldNote.hidden = true;
       scaffoldNote.textContent = '';
       return;
     }
-    scaffoldNote.textContent = 'This stack has no StaXX fields for its icon, links and ' +
-      'description. Add them?';
+
+    // 'version' is only ever added alongside a brand new x-unraid block, so it
+    // is what separates "there is nothing here" from "some of it is missing".
+    // Claiming the former when a file plainly holds an icon, a category and an
+    // overview reads as the page not having looked.
+    var added = plan.added || {};
+    var fresh = (added.stack || []).indexOf('version') >= 0;
+    scaffoldNote.textContent = fresh
+      ? 'This stack has no StaXX fields for its icon, links and description. Add them?'
+      : 'This stack is missing some StaXX fields — ' + scaffoldWords(added) + '. Add them?';
     scaffoldNote.hidden = false;
   }
 
