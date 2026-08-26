@@ -3348,17 +3348,19 @@
   align-items: center;
 }
 
-/* Sized to the heading's own type scale (1.8rem) rather than the main
-   table's tile, which would look oversized beside a heading this size. */
+/* Deliberately much larger than the heading's own type scale: this is the
+   one screen where the icon is being chosen, so it is worth actually seeing.
+   The heading row grows to match it, which is what puts a comfortable gap
+   between one service's settings and the next. */
 .staxx-scaffold .staxx-svcicon {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 2.4rem;
-  height: 2.4rem;
-  border-radius: 0.5rem;
+  width: 7.2rem;
+  height: 7.2rem;
+  border-radius: 0.8rem;
   overflow: hidden;
   opacity: 0.85;
 }
@@ -3380,16 +3382,18 @@
    from being stretched to fit. */
 .staxx-svcicon img {
   box-sizing: border-box;
-  padding: 0.2rem;
+  padding: 0.4rem;
   object-fit: contain;
 }
 
+/* The letters and the glyph follow the box, or a 7.2rem square would hold
+   two tiny characters in the middle of nothing. */
 .staxx-svcicon .staxx-tile {
-  font-size: 1rem;
+  font-size: 2.6rem;
 }
 
 .staxx-svcicon i {
-  font-size: 1.2rem;
+  font-size: 3.6rem;
 }
 
 /* Quiet until the heading is hovered or focused, so a pencil beside every

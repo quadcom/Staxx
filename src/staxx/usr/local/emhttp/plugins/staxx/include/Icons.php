@@ -405,6 +405,29 @@ function staxx_icon_get(string $url, int $seconds = 10): ?string {
 }
 
 /**
+ * GitHub's page for a file, turned into the file itself.
+ *
+ * Copying an image's address out of GitHub gives the /blob/ link — the web
+ * page that displays it — and that answers 200 with a quarter of a megabyte
+ * of HTML. The fetch below correctly refuses it as not-a-picture and marks it
+ * failed, so the icon silently never appears and never retries: an honest
+ * refusal to an address the author was entitled to think was the picture.
+ * Rewriting it is lossless, since the two address forms name the same file.
+ *
+ * Hashing happens AFTER this, so correcting an address already recorded as
+ * failed produces a different cache reference and is tried again at once
+ * rather than waiting for the failure marker to expire.
+ */
+function staxx_icon_raw_url(string $url): string {
+  // The branch or tag can itself contain a slash, so the path is whatever
+  // follows it — matched lazily up to /blob/ and then taken wholesale.
+  if (preg_match('#^https?://github\.com/([^/]+)/([^/]+)/(?:blob|raw)/(.+)$#i', $url, $m)) {
+    return 'https://raw.githubusercontent.com/'.$m[1].'/'.$m[2].'/'.$m[3];
+  }
+  return $url;
+}
+
+/**
  * Where the browser can load a cached icon from, or '' if it is not cached.
  *
  * The served copy lives in RAM and therefore disappears at every reboot, while
@@ -771,6 +794,7 @@ function staxx_icon_resolve(string $icon, string $dir = '', string $image = '',
     // A URL. Cached under a hash of it rather than its filename, because two
     // stacks are perfectly likely to both point at something called icon.png.
     if (preg_match('#^https?://#i', $icon)) {
+      $icon = staxx_icon_raw_url($icon);
       $ref = 'url-'.md5($icon);
       return ['fa' => '', 'ref' => $ref, 'url' => staxx_icon_url($ref), 'remote' => $icon];
     }
