@@ -15,23 +15,63 @@
 >
 > Version 2026.08.26 · [changelog](CHANGELOG.md)
 
-Unraid describes containers with its own template format. StaXX uses
-**[compose files](https://compose-spec.io/)** instead — the format containerised projects already
-publish. Paste one in from a project's documentation and it runs.
+## Why this exists
 
-If you have never read a compose file, StaXX reads it for you and draws it as a form. The file
-underneath stays an ordinary compose file that runs anywhere.
+Unraid describes containers in its own template format. Almost nothing else does. When a project
+publishes its setup — and they nearly all publish a
+**[compose file](https://compose-spec.io/)** — you cannot just use it: you retype it into a
+template, field by field, and hope you read it right.
+
+The obvious fix is to run compose files directly. That works right up until you want to change a
+port, and find yourself editing indented text where one stray space breaks the file.
+
+StaXX takes the compose file as it is and draws it as a form. Change the port in a box. The file
+underneath stays an ordinary compose file that still runs anywhere.
 
 ![The stacks page](docs/images/stacks-overview.jpg)
 
----
+## What it does
+
+- **Paste in a project's own compose file and it runs** — no retyping into a template, no
+  conversion step.
+- **Never read a line of it if you don't want to.** Twenty-odd groups of settings — ports, folders,
+  variables, health checks, start-up order — as ordinary form fields, with the file beside them if
+  you prefer. The author's own comments become the help text next to each box.
+- **Change things without the fear.** There is an Undo button, every save is kept, and every image
+  that has actually run is kept, so a bad decision is one click back.
+- **Bring in what you already run.** One window lists your existing Unraid apps, Compose Manager
+  projects and loose containers, and imports them as copies — the originals stay put, and one click
+  puts them back.
+- **Search 3,700 apps without leaving the page.** Community Applications, Docker Hub and the images
+  already on your server; pick one and get a compose file to look over before anything starts.
+
+## The 60-second start
+
+There is no packaged install yet. Put the installer and the plugin folder on your flash drive:
+
+```
+/boot/staxx-dev/
+    dev-install.sh
+    staxx/          <- src/staxx/usr/local/emhttp/plugins/staxx/
+```
+
+Then, over SSH:
+
+```sh
+bash /boot/staxx-dev/dev-install.sh
+```
+
+Open **Docker → Stacks**. Make a folder under `/boot/config/plugins/staxx/stacks/`, drop a compose
+file in it, and it is there. Or press **Apps** and pick something.
+
+To remove it again: `--remove` keeps your settings, `--purge` takes those too.
 
 ## Contents
 
-- [The stacks page](#the-stacks-page) · [The editor](#the-editor) · [Adding an app](#adding-an-app)
-- [Importing what you already run](#importing-what-you-already-run) · [Updates](#updates) · [Running containers](#running-containers)
+- [The stacks page](#the-stacks-page) · [The editor](#the-editor) · [Secrets and passwords](#secrets-and-passwords) · [Settings that belong together](#settings-that-belong-together)
+- [Adding an app](#adding-an-app) · [Importing what you already run](#importing-what-you-already-run) · [Updates](#updates) · [Running containers](#running-containers)
 - [History and versions](#history-and-versions) · [Autostart](#autostart) · [Removing a stack](#removing-a-stack) · [Settings](#settings)
-- [What it promises](#what-it-promises) · [Roadmap](#roadmap) · [Limitations](#limitations) · [Installing](#installing) · [For contributors](#for-contributors)
+- [What it promises](#what-it-promises) · [Roadmap](#roadmap) · [Limitations](#limitations) · [Configuration](#configuration-optional) · [For contributors](#for-contributors)
 
 ---
 
@@ -48,7 +88,9 @@ Every stack is a row, and each container inside it gets its own row.
 - **State** per container, with uptime and what its health check says.
 - **Four buttons** — web page, logs, project page, Unraid support thread.
 - **Its address**, with Unraid's own address-and-port substitution.
-- **Its logo**, found for you.
+- **Its logo**, kept — the picture is copied in beside the compose file and recorded there, so a
+  stack keeps its look when the folder is copied to another machine, and a change to the icon
+  collection cannot quietly alter how it appears.
 - **Badges** for an update waiting, a withdrawn tag, an image that moved registry, a copy that has
   drifted from its source, a container built from an image the file no longer names.
 
@@ -61,7 +103,10 @@ it and can start, stop, check or update the lot.
 
 ![The row menu](docs/images/stack-row-menu.jpg)
 
-Rows follow Docker's own events, so a container stopped elsewhere shows as stopped straight away.
+Rows follow Docker's own events, so a container stopped elsewhere shows as stopped straight away, and
+a container is matched back to its folder even after you have moved that folder. The figures are
+sampled only while a page is watching — close the tab and it stops, so nothing runs all day for the
+sake of a graph.
 
 ---
 
@@ -87,6 +132,13 @@ appears in an **Advanced** block.
 - Runs the file past Docker itself.
 - None of it blocks a save.
 
+**Undo, and find and replace.** Undo covers the form and the file alike, so a change made in a box
+and the line it wrote go back as one step, not two. The file view has find and replace, including
+replace-all.
+
+**The author's comments become the help text** beside each field, and help text you write becomes
+comments in the file. Two marks — **secret** and **required** — say how a value should be treated.
+
 **Pickers** for a folder on the server, a timezone off a world map, and a device from this server's
 hardware. The network list includes the ones this server already has — pick one and it is wired in
 for you.
@@ -95,10 +147,41 @@ for you.
 else. Create, rename, delete, download, or upload several at once. Certificates and other binary
 files get a download-and-replace panel, and a settings-shaped file is offered to be wired in.
 
-**Sanitise** hides every value marked secret, in the form and the file, so a stack can be shown to
-someone else without leaking it.
+**A note offers to fill in a stack's own details** — its description, logo, project page and support
+thread — naming which of them are missing rather than claiming a file has none. A button in Settings
+does the same across every stack at once, and shows what it would change before writing anything.
+
+---
+
+## Secrets and passwords
+
+**A password can be made up for you, in the box that needs it** — a passphrase or a random string,
+your choice of length and character mix. Nothing generated is written anywhere except the box it
+fills.
+
+Some containers want the *hashed* form rather than the password itself. StaXX will produce it, in
+four formats, from its own tiny container — built only when asked, with no volume, no port and no
+network, and the password handed to it privately rather than on a command line anyone listing
+processes could read. A format is refused until a self-check has proved it works on this machine.
+
+**Sanitise** hides every value marked secret, in the form and the file at once, so a stack can be
+shown to someone else without leaking it. The window is locked while it is on, so nothing can be
+changed by accident mid-screenshot.
 
 ![The file with secrets hidden](docs/images/sanitise-file.jpg)
+
+---
+
+## Settings that belong together
+
+**StaXX notices when two containers share a value** — the same database password, the same folder —
+or when one names the other, and asks whether that is deliberate.
+
+Say yes and the answer is kept in the stack's own file, so it travels with the stack. From then on,
+changing one side writes the other to match — both boxes and the file together, inside a single Undo.
+
+It reaches across stacks too: point a new app at a database living in another stack and StaXX offers
+to wire the two together rather than leaving you to copy the details across by hand.
 
 ---
 
@@ -166,6 +249,9 @@ Checks run daily or weekly at a time you pick, and Unraid's notifications report
 Start, stop, restart, update and remove work on a whole stack or one container, and long commands run
 detached while streaming their output. **Restart applies your edits** — it rebuilds whatever no
 longer matches the file and restarts the rest.
+
+A running stack whose file has moved on says so, so you find out a restart is owed rather than
+wondering why an edit did nothing.
 
 The **Manage** tab gives you, per container: a live log you can search and download, a root command
 line inside the container, and a file browser inside it that can read, edit, rename and delete.
@@ -241,13 +327,12 @@ lists what has been archived.
 
 Everything above works today. None of this does yet.
 
-- A value two containers have to share — a database password, say — typed once and carried across to
-  the other, once you have confirmed the two really are the same setting.
-- Showing how the containers in a stack are connected, and warning when an edit breaks that.
+- Drawing a picture of how the containers in a stack connect. The warnings when an edit breaks that
+  already work; the picture is what is missing.
 - Showing what will change before a restart.
 - Choosing which parts of a stack start.
 - Explaining a file you did not write, in plain English.
-- Generating a secret, and moving it out of the file.
+- Moving a secret out of the file, into somewhere it can be shared safely.
 - Marking a folder as real data, so destructive actions ask harder.
 - Advisory notices for a log with no size limit.
 - Clash warnings that can see the machine's own ports.
@@ -274,22 +359,57 @@ Everything above works today. None of this does yet.
 
 ## Installing
 
-There is no packaged install yet. `dev-install.sh` copies the files into place. Put it and the plugin
-folder on the flash drive and run it there:
+See [The 60-second start](#the-60-second-start). Nothing installed that way survives a reboot —
+Unraid rebuilds that part of the system at boot, so run the installer again. Your settings do
+survive; they live on the flash drive.
 
-```
-/boot/staxx-dev/
-    dev-install.sh
-    staxx/          <- src/staxx/usr/local/emhttp/plugins/staxx/
-```
+---
 
-```sh
-bash /boot/staxx-dev/dev-install.sh            # install or update
-bash /boot/staxx-dev/dev-install.sh --remove   # remove, keep settings
-bash /boot/staxx-dev/dev-install.sh --purge    # remove settings too
-```
+## Configuration (optional)
 
-Nothing installed this way survives a reboot. Settings do — they live on the flash drive.
+Everything here has a switch on the settings page, so this is reference only. The file is
+`/boot/config/plugins/staxx/staxx.cfg`.
+
+**Where things live**
+
+| Key | Default | What it does |
+|---|---|---|
+| `STACK_ROOT` | `/boot/config/plugins/staxx/stacks` | Where your stacks are kept. StaXX offers to move them off the flash drive for you. |
+| `ARCHIVE_ROOT` | *(blank)* | Where a removed stack's zip goes. Blank means a folder under appdata. |
+
+**Where StaXX appears**
+
+| Key | Default | What it does |
+|---|---|---|
+| `HEADER_MENU` | `false` | `true` gives StaXX its own button in the top bar instead of a tab under Docker. |
+| `TAKEOVER_DOCKER_TAB` | `false` | `true` replaces the Docker button entirely. No stock Unraid file is modified either way. |
+| `CATCH_INSTALLS` | `true` | What happens when something is installed from Unraid's own Apps page: `true` brings it in as a stack, `prompt` asks first, `false` leaves it to Unraid. |
+
+**What may leave the server**
+
+| Key | Default | What it does |
+|---|---|---|
+| `ICON_FETCH` | `true` | Fetch container logos. Only the icon's name is sent. |
+| `ICON_ADOPT` | `true` | Record a matched logo in the compose file so it travels with it. |
+| `IMAGE_LOOKUP` | `true` | Read an image's documentation when adding it, for a fuller starting file. |
+| `WATCH_EXAMPLES` | `true` | Compare your file with the publisher's own example during an update check. |
+| `SHELL_ENABLED` | `true` | The root command line inside a container. `false` removes it everywhere. |
+
+**Updates**
+
+| Key | Default | What it does |
+|---|---|---|
+| `UPDATE_CHECK` / `UPDATE_CHECK_TIME` | `daily` / `04:00` | How often to look, and when. `off` never looks. |
+| `UPDATE_MODE` / `UPDATE_DELAY_HOURS` | `notify` / `24` | `off` shows only, `notify` says so, `auto` installs after the delay. Any stack can overrule this in its own file. |
+| `UPDATE_WINDOW` + `_START` / `_END` | `true`, `03:00`–`05:00` | Only install automatically inside a quiet window. |
+| `UPDATE_NOTIFY` | `off` | Unraid notifications: `found`, or `applied` as well. |
+| `UPDATE_RETAIN` | `2` | How many previous builds of each image to keep for a rollback. |
+| `UPDATE_CLEANUP` | `off` | `weekly` removes images nothing uses and no history needs. |
+| `HUB_USER` / `HUB_TOKEN` | *(blank)* | A Docker Hub read-only token. Without one, checks are limited to roughly ten images an hour. |
+
+`CRYPT_MODE` decides whether the password-hashing helper stays running (`always`) or starts only
+when needed (`ondemand`). The `PWGEN_*` keys are the password generator's own remembered choices,
+set from its panel rather than here. Comments in this file must start with a semicolon.
 
 ---
 
@@ -298,8 +418,6 @@ Nothing installed this way survives a reboot. Settings do — they live on the f
 - **One endpoint, POST only.** Every action is named in one list.
 - **No client-side libraries.** Plain browser JavaScript, and every style class prefixed.
 - **Nothing may hang.** Every external command is time-limited.
-- **Tests.** The compose reader and writer, the catalogue converter, the image importer and the
-  metadata schema run on a desktop; the server-side pieces have their own suites.
 
 ```
 CHANGELOG.md                What changed, and the current version
@@ -309,7 +427,6 @@ docs/feasibility.md         Whether this is possible, and the evidence
 docs/x-unraid-schema.md     Format of the extras that make the form friendly
 schema/                     Machine-readable definition of that format
 examples/                   Worked compose files carrying that metadata
-tests/                      Suites, plus a corpus of awkward files
 src/staxx/                  Mirrors the install paths on the server
 completed-plans/            Every piece of work that has landed
 ```
