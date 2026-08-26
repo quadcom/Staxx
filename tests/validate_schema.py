@@ -171,6 +171,110 @@ NEGATIVE = [
         "stack x-unraid given as null",
         {"x-unraid": None},
     ),
+    (
+        "link kind not one of secret/folder/reference",
+        {"x-unraid": {"links": [{
+            "kind": "password", "state": "confirmed",
+            "between": [{"service": "app", "environment": "DB_PASSWORD"},
+                        {"service": "db", "environment": "POSTGRES_PASSWORD"}],
+        }]}},
+    ),
+    (
+        "link state not one of confirmed/rejected",
+        {"x-unraid": {"links": [{
+            "kind": "secret", "state": "maybe",
+            "between": [{"service": "app", "environment": "DB_PASSWORD"},
+                        {"service": "db", "environment": "POSTGRES_PASSWORD"}],
+        }]}},
+    ),
+    (
+        "link missing state entirely",
+        {"x-unraid": {"links": [{
+            "kind": "secret",
+            "between": [{"service": "app", "environment": "DB_PASSWORD"},
+                        {"service": "db", "environment": "POSTGRES_PASSWORD"}],
+        }]}},
+    ),
+    (
+        "link between with only one endpoint",
+        {"x-unraid": {"links": [{
+            "kind": "secret", "state": "confirmed",
+            "between": [{"service": "app", "environment": "DB_PASSWORD"}],
+        }]}},
+    ),
+    (
+        "link between with three endpoints",
+        {"x-unraid": {"links": [{
+            "kind": "secret", "state": "confirmed",
+            "between": [{"service": "app", "environment": "DB_PASSWORD"},
+                        {"service": "db", "environment": "POSTGRES_PASSWORD"},
+                        {"service": "cache", "environment": "REDIS_PASSWORD"}],
+        }]}},
+    ),
+    (
+        "link endpoint naming both a setting and a volume",
+        {"x-unraid": {"links": [{
+            "kind": "folder", "state": "confirmed",
+            "between": [{"service": "app", "environment": "DATA_DIR", "volume": "/mnt/user/data"},
+                        {"service": "db", "volume": "/mnt/user/data"}],
+        }]}},
+    ),
+    (
+        "link endpoint with no service",
+        {"x-unraid": {"links": [{
+            "kind": "secret", "state": "confirmed",
+            "between": [{"environment": "DB_PASSWORD"},
+                        {"service": "db", "environment": "POSTGRES_PASSWORD"}],
+        }]}},
+    ),
+    (
+        "links given as an object rather than a list",
+        {"x-unraid": {"links": {
+            "kind": "secret", "state": "confirmed",
+            "between": [{"service": "app", "environment": "DB_PASSWORD"},
+                        {"service": "db", "environment": "POSTGRES_PASSWORD"}],
+        }}},
+    ),
+    (
+        "secret link with a bare endpoint (a shared value must name a setting)",
+        {"x-unraid": {"links": [{
+            "kind": "secret", "state": "confirmed",
+            "between": [{"service": "app"},
+                        {"service": "db", "environment": "POSTGRES_PASSWORD"}],
+        }]}},
+    ),
+    (
+        "secret link whose endpoint carries volume instead of environment",
+        {"x-unraid": {"links": [{
+            "kind": "secret", "state": "confirmed",
+            "between": [{"service": "app", "volume": "/mnt/user/data"},
+                        {"service": "db", "environment": "POSTGRES_PASSWORD"}],
+        }]}},
+    ),
+    (
+        "folder link whose endpoints carry environment instead of volume",
+        {"x-unraid": {"links": [{
+            "kind": "folder", "state": "confirmed",
+            "between": [{"service": "app", "environment": "DATA_DIR"},
+                        {"service": "db", "environment": "DATA_DIR"}],
+        }]}},
+    ),
+    (
+        "reference link whose pointing (first) endpoint is bare",
+        {"x-unraid": {"links": [{
+            "kind": "reference", "state": "confirmed",
+            "between": [{"service": "app"},
+                        {"service": "db", "environment": "DB_HOST"}],
+        }]}},
+    ),
+    (
+        "reference link with both endpoints bare",
+        {"x-unraid": {"links": [{
+            "kind": "reference", "state": "confirmed",
+            "between": [{"service": "app"},
+                        {"service": "db"}],
+        }]}},
+    ),
 ]
 
 # (description, document) — each must PASS validation.
@@ -241,6 +345,36 @@ POSITIVE = [
     ("service x-unraid scaffolded but nothing uncommented yet (null)", {
         "services": {"app": {"image": "nginx", "x-unraid": None}},
     }),
+    ("a confirmed secret link", {"x-unraid": {"links": [{
+        "kind": "secret", "state": "confirmed",
+        "between": [{"service": "app", "environment": "DB_PASSWORD"},
+                    {"service": "db", "environment": "POSTGRES_PASSWORD"}],
+    }]}}),
+    ("a confirmed folder link naming volumes", {"x-unraid": {"links": [{
+        "kind": "folder", "state": "confirmed",
+        "between": [{"service": "app", "volume": "/mnt/user/photos"},
+                    {"service": "backup", "volume": "/mnt/user/photos"}],
+    }]}}),
+    ("a reference link whose second endpoint names the whole service", {"x-unraid": {"links": [{
+        "kind": "reference", "state": "confirmed",
+        "between": [{"service": "app", "environment": "DB_HOST"},
+                    {"service": "db"}],
+    }]}}),
+    ("a cross-stack reference link naming a stack", {"x-unraid": {"links": [{
+        "kind": "reference", "state": "confirmed",
+        "between": [{"service": "app", "environment": "DB_HOST"},
+                    {"stack": "Databases/mariadb", "service": "db"}],
+    }]}}),
+    ("a reference link whose second endpoint is settled rather than bare", {"x-unraid": {"links": [{
+        "kind": "reference", "state": "confirmed",
+        "between": [{"service": "app", "environment": "DB_HOST"},
+                    {"service": "db", "environment": "LISTEN_ADDRESS"}],
+    }]}}),
+    ("a rejected link", {"x-unraid": {"links": [{
+        "kind": "secret", "state": "rejected",
+        "between": [{"service": "app", "environment": "TZ"},
+                    {"service": "db", "environment": "PUID"}],
+    }]}}),
 ]
 
 

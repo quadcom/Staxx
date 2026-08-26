@@ -184,9 +184,15 @@ function staxx_import_icon(string $iconField, string $dir, string $containerName
  * containers. A template's container carries no compose label at all, and a
  * "loose" container is defined as having neither a template nor a compose
  * project — so both of the things this file needs to find are exactly the
- * containers that index throws away. One extra `docker ps -a`, the same
- * invocation staxx_container_index() already runs, is the cheapest way to
- * get them back.
+ * containers that index throws away.
+ *
+ * Built from staxx_docker_ps_raw(), which keeps every container rather than
+ * only the compose-managed ones, so nothing here is lost by sharing it. This
+ * used to run its own near-identical `docker ps -a`, and that is precisely
+ * what made StaXXCrypt announce itself as "a container found running outside
+ * any stack": the shared reader leaves StaXX's own container out of every
+ * list, and a second copy of the same command quietly opted out of that.
+ * One reader, one exclusion.
  *
  * @return array<string, array{state:string, status:string, project:string}>
  */
@@ -195,19 +201,13 @@ function staxx_import_all_containers(): array {
   if ($byName !== null) return $byName;
 
   $byName = [];
-  if (!staxx_docker_running()) return $byName;
-
-  $fmt = '{{.Names}}\t{{.State}}\t{{.Status}}\t'
-       . '{{.Label "com.docker.compose.project"}}\tend';
-  $out = staxx_sh(
-    escapeshellarg(staxx_docker_bin()).' ps -a --no-trunc --format '.escapeshellarg($fmt), 15
-  );
-
-  foreach (explode("\n", $out) as $line) {
-    if (trim($line) === '') continue;
-    $c = explode("\t", $line);
-    if (count($c) < 4 || $c[0] === '') continue;
-    $byName[$c[0]] = ['state' => $c[1], 'status' => $c[2], 'project' => $c[3]];
+  foreach (staxx_docker_ps_raw() as $row) {
+    if ($row['name'] === '') continue;
+    $byName[$row['name']] = [
+      'state'   => $row['state'],
+      'status'  => $row['status'],
+      'project' => $row['project'],
+    ];
   }
   return $byName;
 }

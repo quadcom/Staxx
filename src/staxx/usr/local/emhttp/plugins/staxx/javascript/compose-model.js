@@ -7442,6 +7442,695 @@
   }
 
   /* =====================================================================
+   * Connections between services (PLAN_70 stage 1)
+   *
+   * API.detectLinks — a pure read of an already-built form: the three kinds
+   * of connection between the services one compose file describes (a shared
+   * secret, a shared folder, one part naming another). No writing, no DOM,
+   * no server call — see PLAN_70's design section 1 for the exact rules and
+   * section 2 for why a connection is named by service plus setting name or
+   * host path rather than by a field's own id: that id carries a "#index",
+   * a position in a list, which a reordered environment block would move
+   * from under it.
+   * ===================================================================== */
+
+  // Literal values too common to mean anything on their own, regardless of
+  // length — TZ=UTC and restart: unless-stopped are not a link between two
+  // services, they are two services agreeing with the same manual.
+  var LINK_BORING = { 'true': 1, 'false': 1, 'yes': 1, 'no': 1, 'none': 1, 'utc': 1,
+                       'unless-stopped': 1, 'always': 1, 'on-failure': 1, '': 1 };
+
+  function linkIsPath(v) { return /^(\.{1,2}\/|\/|~)/.test(v); }
+
+  // The punctuation class deliberately excludes '/': a forward slash is what
+  // a timezone name (Europe/London) or a path is built from, not what a
+  // typed password is, and counting it would put an ordinary TZ value over
+  // the three-classes line the boring-literal list can't catch on its own.
+  function linkClassCount(v) {
+    var n = 0;
+    if (/[a-z]/.test(v)) n++;
+    if (/[A-Z]/.test(v)) n++;
+    if (/[0-9]/.test(v)) n++;
+    if (/[^A-Za-z0-9\/]/.test(v)) n++;
+    return n;
+  }
+
+  // Every service/network/volume/config/secret/image name the file itself
+  // declares. A value equal to one of these belongs to kind 3 (naming a
+  // part), not kind 1 (two services happening to hold the same text).
+  function linkDeclaredNames(form) {
+    var names = {};
+    var d = form.declared || {};
+    ['services', 'networks', 'volumes', 'secrets', 'configs'].forEach(function (k) {
+      (d[k] || []).forEach(function (n) { names[n] = true; });
+    });
+    for (var i = 0; i < form.fields.length; i++) {
+      var f = form.fields[i];
+      if (f.service && f.binder === 'setting' && f.target === 'image' &&
+          f.parts.value && f.parts.value.value) names[f.parts.value.value] = true;
+    }
+    return names;
+  }
+
+  // Whether a value clears the shared-secret floor: a box marked secret in
+  // the file always counts; an unmarked one only counts when it looks
+  // distinctive enough that two services typing the same thing is unlikely
+  // to be chance. The boring-literal refusal applies either way — marking a
+  // box secret does not make "true" a password.
+  function linkQualifiesAsSecret(f, value, declaredNames) {
+    if (LINK_BORING.hasOwnProperty(value.toLowerCase())) return false;
+    // A value that reads a variable from outside the file is not a copy of a
+    // secret — it is a pointer at one, and two services pointing at the same
+    // variable already agree by construction and always will. Offering to
+    // link them says nothing, and honouring that link would be worse than
+    // useless: propagation writes a plain value, so keeping the pair "in
+    // step" would replace BOTH pointers with a fixed string and quietly
+    // detach the stack from its .env file. Checked ahead of f.sensitive
+    // below, because marking a pointer as secret does not turn it into one.
+    if (interpolates(value)) return false;
+    if (f.sensitive) return true;
+    if (value.length < 12) return false;
+    if (linkIsPath(value)) return false;
+    if (/^[0-9]+$/.test(value)) return false;
+    if (declaredNames.hasOwnProperty(value)) return false;
+    return linkClassCount(value) >= 3 || value.length >= 16;
+  }
+
+  function linkNormalisePath(p) {
+    p = String(p || '');
+    return p.length > 1 && p.charAt(p.length - 1) === '/' ? p.slice(0, -1) : p;
+  }
+
+  // Does `a` sit on top of `b` (or the reverse), split at a real path
+  // boundary — "/mnt/user/media" must not match "/mnt/user/mediaserver".
+  function linkNestedPaths(a, b) {
+    if (b.length > a.length && b.indexOf(a + '/') === 0) return true;
+    if (a.length > b.length && a.indexOf(b + '/') === 0) return true;
+    return false;
+  }
+
+  // Host-position match for a value against a short (under 4 char) service
+  // name: the whole value, or the host half of a URL or "host:port". A
+  // short name is too common a substring to trust anywhere else in a value.
+  function linkHostPosition(value, name) {
+    if (value === name) return true;
+    var m = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/(?:[^\/@]*@)?([^\/:?#]+)/.exec(value);
+    if (m) return m[1] === name;
+    m = /^([^\/\s:]+):[0-9]+(?:\/\S*)?$/.exec(value);
+    return !!m && m[1] === name;
+  }
+
+  // Whole-token match for a value against a service name of 4+ characters —
+  // delimited by anything that is not a letter, digit, '-' or '_', or by the
+  // start/end of the string, so "postgres" inside "my-postgres-db" misses
+  // but "DB_HOST=postgres" and a bare "postgres" both hit.
+  function linkTokenMatch(value, name) {
+    var esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp('(^|[^A-Za-z0-9_-])' + esc + '($|[^A-Za-z0-9_-])').test(value);
+  }
+
+  // links:/volumes_from: are not KEYS-table keys, so a service holding one
+  // reaches the form as a single 'setting' field — a locked one (its raw
+  // text is the whole list, one entry per line) unless it was written as one
+  // bare scalar. Either way the name is the part before a ":alias"/":mode".
+  function linkListNames(f) {
+    var names = [];
+    if (f.locked) {
+      var lines = String(f.raw || '').split('\n');
+      for (var i = 1; i < lines.length; i++) {          // line 0 is the key itself
+        var m = /^\s*-\s*(.+)$/.exec(lines[i]);
+        if (!m) continue;
+        names.push(m[1].trim().replace(/^['"]|['"]$/g, '').split(':')[0].trim());
+      }
+    } else if (f.parts && f.parts.value && f.parts.value.value) {
+      names.push(String(f.parts.value.value).split(':')[0].trim());
+    }
+    return names.filter(Boolean);
+  }
+
+  function linkSortKey(c) {
+    return c.kind + '|' + (c.certainty || '') + '|' + (c.variant || '') + '|' +
+      c.between.map(function (e) {
+        return (e.service || '') + ':' + (e.environment || e.volume || '');
+      }).join('|');
+  }
+
+  /**
+   * detectLinks(form) -> [{kind, certainty, variant, between, fields}]
+   *
+   * Pure: reads `form` only, never writes it, never touches the page. See
+   * the section comment above for what each connection object means and
+   * PLAN_70's design for the rules. Deterministically ordered.
+   */
+  function detectLinks(form) {
+    var out = [];
+    if (!form || !form.fields) return out;
+
+    var declaredNames = linkDeclaredNames(form);
+    var serviceNames = {};
+    (form.declared && form.declared.services || []).forEach(function (n) { serviceNames[n] = true; });
+
+    var i, j, f;
+
+    // ---- kind 1: a shared secret ---------------------------------------
+    var byValue = {};
+    for (i = 0; i < form.fields.length; i++) {
+      f = form.fields[i];
+      // f.from marks a list entry that already names a network/secret/
+      // config/service by KEYS' own reference rules (networks:, depends_on:,
+      // ...) — a structural pointer, not free text, and kind 3 already
+      // covers it.
+      if (!f.service || f.locked || f.absent || f.from || !f.parts || !f.parts.value || !f.target) continue;
+      var val = f.parts.value.value;
+      if (!val || !linkQualifiesAsSecret(f, val, declaredNames)) continue;
+      var g = byValue[val] || (byValue[val] = { order: [], bySvc: {}, marked: false });
+      if (f.sensitive) g.marked = true;
+      if (!g.bySvc[f.service]) {
+        g.bySvc[f.service] = { service: f.service, environment: f.target, id: f.id };
+        g.order.push(f.service);
+      }
+    }
+    Object.keys(byValue).forEach(function (val) {
+      var g = byValue[val];
+      if (g.order.length < 2) return;
+      // Three or more services agreeing on an unmarked value is a
+      // convention (TZ, PUID, a base image tag), not a link — but that
+      // guess is only needed because nothing says otherwise. A box the file
+      // marks secret is the author saying what it is, so a marked value
+      // shared by three or more services (an app, its worker and its
+      // database on one database password) is every pair, not none.
+      if (g.order.length >= 3 && !g.marked) return;
+      for (var pi = 0; pi < g.order.length; pi++) {
+        for (var pj = pi + 1; pj < g.order.length; pj++) {
+          var a = g.bySvc[g.order[pi]], b = g.bySvc[g.order[pj]];
+          out.push({
+            kind: 'secret', certainty: 'inferred',
+            between: [{ service: a.service, environment: a.environment },
+                      { service: b.service, environment: b.environment }],
+            fields: [a.id, b.id]
+          });
+        }
+      }
+    });
+
+    // ---- kind 2: a shared folder ----------------------------------------
+    var volFields = [];
+    for (i = 0; i < form.fields.length; i++) {
+      f = form.fields[i];
+      if (!f.service || f.locked || f.absent || f.binder !== 'volume') continue;
+      if (!f.parts || !f.parts.host || !f.parts.host.value) continue;
+      var hostVal = f.parts.host.value;
+      if (!linkIsPath(hostVal)) continue;   // a named volume, not a folder on disk
+      volFields.push({ service: f.service, path: linkNormalisePath(hostVal), id: f.id });
+    }
+    var folderSeen = {};
+    for (i = 0; i < volFields.length; i++) {
+      for (j = i + 1; j < volFields.length; j++) {
+        var va = volFields[i], vb = volFields[j];
+        if (va.service === vb.service) continue;
+        var variant = va.path === vb.path ? 'same'
+                    : linkNestedPaths(va.path, vb.path) ? 'nested' : null;
+        if (!variant) continue;
+        var fkey = [va.service + ':' + va.path, vb.service + ':' + vb.path].sort().join('|') + '|' + variant;
+        if (folderSeen[fkey]) continue;
+        folderSeen[fkey] = true;
+        out.push({
+          kind: 'folder', certainty: 'inferred', variant: variant,
+          between: [{ service: va.service, volume: va.path }, { service: vb.service, volume: vb.path }],
+          fields: [va.id, vb.id]
+        });
+      }
+    }
+
+    // ---- kind 3: one part naming another ---------------------------------
+    var refSeen = {};
+    function pushRef(certainty, sourceEndpoint, sourceFieldId, targetService) {
+      if (!targetService || targetService === sourceEndpoint.service) return;
+      if (!serviceNames.hasOwnProperty(targetService)) return;   // no such service — nothing to point at
+      var key = certainty + '|' + sourceEndpoint.service + '|' + (sourceEndpoint.environment || '') +
+                '|' + targetService;
+      if (refSeen[key]) return;
+      refSeen[key] = true;
+      out.push({
+        kind: 'reference', certainty: certainty,
+        between: [sourceEndpoint, { service: targetService }],
+        fields: [sourceFieldId, null]
+      });
+    }
+
+    for (i = 0; i < form.fields.length; i++) {
+      f = form.fields[i];
+      if (!f.service) continue;
+
+      // Declared — compose's own reference keys say so as fact.
+      if (f.binder === 'list' && f.listKey === 'depends_on' && !f.locked && !f.absent) {
+        pushRef('declared', { service: f.service }, f.id, f.target);
+      }
+      if (f.binder === 'setting' && f.target === 'network_mode' && !f.locked && f.parts.value) {
+        var nm = /^service:(.+)$/.exec(f.parts.value.value || '');
+        if (nm) pushRef('declared', { service: f.service }, f.id, nm[1].trim());
+      }
+      if (f.binder === 'setting' && (f.target === 'links' || f.target === 'volumes_from')) {
+        linkListNames(f).forEach(function (name) { pushRef('declared', { service: f.service }, f.id, name); });
+      }
+    }
+
+    // Inferred — another service's name inside a value, guarded by length.
+    var svcList = Object.keys(serviceNames);
+    for (i = 0; i < form.fields.length; i++) {
+      f = form.fields[i];
+      // Same f.from exclusion as kind 1 above — a depends_on/networks/etc.
+      // entry is already a declared reference, not free text to re-guess at.
+      if (!f.service || f.locked || f.absent || f.from || !f.parts || !f.parts.value || !f.target) continue;
+      var v = f.parts.value.value;
+      if (!v) continue;
+      for (var si = 0; si < svcList.length; si++) {
+        var sn = svcList[si];
+        if (sn === f.service) continue;
+        var hit = sn.length >= 4 ? linkTokenMatch(v, sn) : linkHostPosition(v, sn);
+        if (hit) pushRef('inferred', { service: f.service, environment: f.target }, f.id, sn);
+      }
+    }
+
+    return out.sort(function (a, b) {
+      var ka = linkSortKey(a), kb = linkSortKey(b);
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
+  }
+
+  /* =====================================================================
+   * Connection records (PLAN_70 stage 3)
+   *
+   * x-unraid.links — a person's own click on a connection detectLinks()
+   * found, confirming or rejecting it, written into the stack's own
+   * metadata so it travels with the file. Every endpoint is named by
+   * service plus setting name or host path (never by a field's own id,
+   * whose "#index" moves when a list is reordered) — see the design's
+   * section 2 and detectLinks()'s own section comment above.
+   * ===================================================================== */
+
+  // Two endpoints are the same connection when their naming matches —
+  // never their file position. `undefined` fields on both sides count as
+  // equal, so a bare {service} endpoint (a reference's whole-service
+  // target) matches another bare endpoint for the same service.
+  function linkEndpointEqual(a, b) {
+    return (a.service || '') === (b.service || '') &&
+           (a.stack || '') === (b.stack || '') &&
+           (a.environment || '') === (b.environment || '') &&
+           (a.volume || '') === (b.volume || '');
+  }
+
+  // secret/folder connections are an unordered pair — either side may have
+  // been "a" or "b" when detectLinks built it. A reference connection is
+  // not: its first endpoint is the one holding the pointing value, its
+  // second the target, and swapping them would misname which side is which
+  // (see $defs/link's per-kind rule in the schema).
+  function linksSameConnection(kind, between, other) {
+    if (kind === 'reference') {
+      return linkEndpointEqual(between[0], other[0]) && linkEndpointEqual(between[1], other[1]);
+    }
+    return (linkEndpointEqual(between[0], other[0]) && linkEndpointEqual(between[1], other[1])) ||
+           (linkEndpointEqual(between[0], other[1]) && linkEndpointEqual(between[1], other[0]));
+  }
+
+  /* =====================================================================
+   * Cross-stack lookup (PLAN_70 stage 5) — two pure predicates only. The
+   * server round trip (include/CrossLinks.php's link-match/link-creds),
+   * the debounce, and the advice text itself all live in stacks.js, which
+   * cannot be required from Node — but these two decisions are worth
+   * proving in isolation, so they live here instead, the same way
+   * detectLinks() above does for stage 1-4's own pure rules.
+   * ===================================================================== */
+
+  // A plain name, a dotted hostname, a bare IPv4, a "host:port", or a URL
+  // — the shapes worth asking the server about at all. A pure number, a
+  // boring literal (LINK_BORING above), a bind-mount path, or anything
+  // holding whitespace never reaches it: stage 5's own "never on every
+  // keystroke" rule, checked here rather than guessed at in stacks.js.
+  function crossLooksLikeAddress(value) {
+    if (typeof value !== 'string' || !value || /\s/.test(value) || value.length > 253) return false;
+    if (LINK_BORING.hasOwnProperty(value.toLowerCase())) return false;
+    if (linkIsPath(value)) return false;
+    if (/^[0-9]+$/.test(value)) return false;
+    return /^[A-Za-z0-9][A-Za-z0-9_.-]*(:[0-9]+)?$/.test(value) ||
+           /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(value);
+  }
+
+  // Never assume reachability from a name match (PLAN_70 10.5): a
+  // 'service-name'/'container-name' candidate is only real when the server
+  // also named the shared network; a 'port' candidate needs no network at
+  // all — see CrossLinks.php's own route 2. The server already refuses to
+  // return a name match with no shared network, so this never actually
+  // drops anything under the server as it stands today — but this file
+  // does not get to assume that stays true, so the check is made anyway.
+  function crossReachableCandidates(candidates) {
+    return (candidates || []).filter(function (c) {
+      return c && (c.via === 'port' || ((c.via === 'service-name' || c.via === 'container-name') && c.network));
+    });
+  }
+
+  // Which of a CONNECTING service's own setting names is its username and
+  // its password, given the well-known-images table entry for its own
+  // image — PLAN_70 10.2's "the same way" rule applied to the destination
+  // side (a database pointing at another, in a replica or cluster setup,
+  // is the real case this catches). `entry` is db-images.js's own
+  // lookupImage() result, or null/undefined for an image nothing
+  // recognises; `ownNames` is the plain list of setting names the service
+  // actually has. Priority-ordered exactly like the target side: the
+  // first name in entry.user/entry.password this service actually has
+  // wins. Never invents a name `ownNames` does not already hold, and
+  // answers {} outright for an unrecognised image — stacks.js's own
+  // picker (crossOwnFields()) is what a person uses instead of a guess.
+  function crossOwnSlots(entry, ownNames) {
+    var out = {};
+    if (!entry) return out;
+    var names = ownNames || [];
+    ['user', 'password'].forEach(function (slot) {
+      var candidates = entry[slot] || [];
+      for (var i = 0; i < candidates.length; i++) {
+        if (names.indexOf(candidates[i]) >= 0) { out[slot] = candidates[i]; return; }
+      }
+    });
+    return out;
+  }
+
+  /**
+   * Reads x-unraid.links into an array of {index, kind, state, between}
+   * records. Malformed entries — an unknown kind/state, a between that is
+   * not exactly two endpoints, an endpoint with no service — are skipped
+   * rather than thrown on, the same forgiving rule readSections() above
+   * follows: this runs on every render of a file somebody may have
+   * hand-edited. `index` is this entry's position in the sequence at the
+   * moment it was read — good only until the next write, never carried
+   * across one (splice() re-parses the whole document; see ensurePath's
+   * own comment on why a held position goes stale).
+   */
+  function readLinks(doc) {
+    var out = [];
+    if (!doc.root || doc.root.kind !== 'map') return out;
+    var xu = doc.root.pairs['x-unraid'];
+    var pair = xu && xu.value && xu.value.kind === 'map' ? xu.value.pairs['links'] : null;
+    var seq = pair && pair.value && pair.value.kind === 'seq' ? pair.value : null;
+    if (!seq) return out;
+
+    for (var i = 0; i < seq.items.length; i++) {
+      var v = seq.items[i].value;
+      if (!v || v.kind !== 'map') continue;
+
+      var kindV = v.pairs['kind'], stateV = v.pairs['state'], betweenV = v.pairs['between'];
+      var kind = kindV && kindV.value && kindV.value.kind === 'scalar' ? kindV.value.value : null;
+      var state = stateV && stateV.value && stateV.value.kind === 'scalar' ? stateV.value.value : null;
+      if (kind !== 'secret' && kind !== 'folder' && kind !== 'reference') continue;
+      if (state !== 'confirmed' && state !== 'rejected') continue;
+
+      var betweenSeq = betweenV && betweenV.value && betweenV.value.kind === 'seq' ? betweenV.value : null;
+      if (!betweenSeq || betweenSeq.items.length !== 2) continue;
+
+      var eps = [], bad = false;
+      for (var e = 0; e < 2 && !bad; e++) {
+        var ev = betweenSeq.items[e].value;
+        if (!ev || ev.kind !== 'map' || !ev.pairs['service']) { bad = true; break; }
+        var ep = {};
+        ['service', 'stack', 'environment', 'volume'].forEach(function (k) {
+          var p = ev.pairs[k];
+          if (p && p.value && p.value.kind === 'scalar') ep[k] = p.value.value;
+        });
+        eps.push(ep);
+      }
+      if (bad) continue;
+
+      out.push({ index: i, kind: kind, state: state, between: eps });
+    }
+    return out;
+  }
+
+  /**
+   * The recorded state of one connection — 'confirmed', 'rejected', or null
+   * when nothing has been recorded for it. Shared by applyLinkAdvice() (to
+   * decide how a detected connection reads) and setLinkState() below (to
+   * find whether it is adding a first record or updating one already there).
+   */
+  function linkState(doc, kind, between) {
+    var recs = readLinks(doc);
+    for (var i = 0; i < recs.length; i++) {
+      if (recs[i].kind === kind && linksSameConnection(kind, recs[i].between, between)) return recs[i].state;
+    }
+    return null;
+  }
+
+  // The live field naming a setting or host-path endpoint, or null — the
+  // same lookup linkEndpointLive() needs to answer a yes/no, and the
+  // propagation offer (PLAN_70 stage 4) needs to answer "which box". Never
+  // by file position: `ep` is named by service plus setting name or host
+  // path, exactly as detectLinks() first reported it (see the design's
+  // section 2), so a reordered list cannot make this miss. Excluded exactly
+  // the way detectLinks() excluded a field when it first found the
+  // connection (locked, absent, or a structural reference field via
+  // `from`). A bare endpoint (no environment/volume — a reference's
+  // whole-service target) has no single field to return and always answers
+  // null; callers wanting that case check `form.declared.services` instead.
+  function fieldForEndpoint(form, ep) {
+    if (!form || !ep || !ep.service) return null;
+    if (ep.environment !== undefined) {
+      for (var i = 0; i < form.fields.length; i++) {
+        var f = form.fields[i];
+        if (f.service === ep.service && !f.locked && !f.absent && !f.from && f.target === ep.environment) return f;
+      }
+      return null;
+    }
+    if (ep.volume !== undefined) {
+      for (var j = 0; j < form.fields.length; j++) {
+        var fv = form.fields[j];
+        if (fv.service === ep.service && fv.binder === 'volume' && !fv.locked && !fv.absent &&
+            fv.parts && fv.parts.host && linkNormalisePath(fv.parts.host.value) === linkNormalisePath(ep.volume)) {
+          return fv;
+        }
+      }
+      return null;
+    }
+    return null;
+  }
+
+  // Whether an endpoint still names something the file actually has — the
+  // presence check behind staleLinks() below. A bare endpoint (a
+  // reference's whole-service target) is live as long as the service is
+  // still declared; one naming a setting or a host path is live only while
+  // fieldForEndpoint() above can still find it.
+  function linkEndpointLive(form, ep) {
+    if (!form || !ep || !ep.service) return false;
+    // A cross-stack endpoint (PLAN_70 stage 5's `stack` key) names a service
+    // in a DIFFERENT file — this function reads only the one form on screen,
+    // so it has no way to check one, and calling it stale would misreport
+    // every reference this feature ever records as broken the moment it is
+    // written. Always live, from this file's point of view.
+    if (ep.stack !== undefined) return true;
+    var declared = (form.declared && form.declared.services) || [];
+    if (declared.indexOf(ep.service) < 0) return false;
+    if (ep.environment !== undefined || ep.volume !== undefined) return !!fieldForEndpoint(form, ep);
+    return true;   // a bare endpoint names the whole service, which is live
+  }
+
+  /**
+   * confirmedPartners(doc, kind, ep) -> [endpoint, ...]
+   *
+   * The other side of every CONFIRMED `kind` connection touching `ep` — the
+   * propagation offer (PLAN_70 stage 4) only ever acts on a link a person
+   * has actually confirmed, never a suspicion. Matched by endpoint naming,
+   * the same rule linkState()/setLinkState() already use above — never by
+   * file position.
+   */
+  function confirmedPartners(doc, kind, ep) {
+    var recs = readLinks(doc);
+    var out = [];
+    for (var i = 0; i < recs.length; i++) {
+      var r = recs[i];
+      if (r.kind !== kind || r.state !== 'confirmed') continue;
+      if (linkEndpointEqual(r.between[0], ep)) out.push(r.between[1]);
+      else if (linkEndpointEqual(r.between[1], ep)) out.push(r.between[0]);
+    }
+    return out;
+  }
+
+  /**
+   * staleLinks(doc, form) -> the readLinks() records naming a service,
+   * setting or host path this file no longer has — shown, never dropped
+   * (rule 2): pruning somebody's annotation because the file moved on is
+   * exactly the harm it forbids. Removing one is the person's own click,
+   * via setLinkState(doc, record.kind, record.between, null).
+   */
+  function staleLinks(doc, form) {
+    var recs = readLinks(doc);
+    var out = [];
+    for (var i = 0; i < recs.length; i++) {
+      var r = recs[i];
+      if (linkEndpointLive(form, r.between[0]) && linkEndpointLive(form, r.between[1])) continue;
+      out.push(r);
+    }
+    return out;
+  }
+
+  // One endpoint's block-style lines, indented so its own "- service: …"
+  // dash sits at `dashIndent`. Block style throughout, not the flow braces
+  // the design doc's own prose examples use — emitScalar's quoting rules
+  // are only proven for a key: value line, and a value holding a comma or
+  // brace would need flow-specific escaping this does not attempt. The
+  // schema reads either shape the same way, since both parse to the same
+  // structure.
+  function linkBetweenLines(dashIndent, ep) {
+    var sv = emitScalar(ep.service, 'plain', false);
+    if (sv === null) return null;
+    var lines = [pad(dashIndent) + '- service: ' + sv];
+    var extra = ['stack', 'environment', 'volume'];
+    for (var i = 0; i < extra.length; i++) {
+      var k = extra[i];
+      if (ep[k] === undefined) continue;
+      var sc = emitScalar(ep[k], 'plain', false);
+      if (sc === null) return null;
+      lines.push(pad(dashIndent + 2) + k + ': ' + sc);
+    }
+    return lines;
+  }
+
+  // One whole link entry's lines, dash at `dashIndent` — kind and state are
+  // always one of the schema's own enum words, so they need no quoting.
+  function linkEntryLines(dashIndent, kind, state, between) {
+    var lines = [pad(dashIndent) + '- kind: ' + kind,
+                 pad(dashIndent + 2) + 'state: ' + state,
+                 pad(dashIndent + 2) + 'between:'];
+    for (var i = 0; i < between.length; i++) {
+      var epLines = linkBetweenLines(dashIndent + 4, between[i]);
+      if (!epLines) return null;
+      lines = lines.concat(epLines);
+    }
+    return lines;
+  }
+
+  // Appends one new entry to x-unraid.links, creating the key — and the
+  // list's first entry with it, never one without the other — exactly the
+  // way addItem() above handles a service's own missing list key.
+  function appendLinkEntry(doc, xuPair, kind, state, between) {
+    var map = xuPair.value && xuPair.value.kind === 'map' ? xuPair.value : null;
+    var pair = map ? map.pairs['links'] : null;
+    var v = pair ? pair.value : null;
+
+    // Anything already there that is not a list, we do not write into.
+    if (v && v.kind !== 'seq') return false;
+
+    if (v && v.kind === 'seq') {
+      var lines1 = linkEntryLines(v.indent, kind, state, between);
+      if (!lines1) return false;
+      splice(doc, v.end, 0, lines1);
+      return true;
+    }
+
+    if (pair) {                                  // "links:" with nothing under it
+      var lines2 = linkEntryLines(pair.indent + 2, kind, state, between);
+      if (!lines2) return false;
+      splice(doc, pair.end, 0, lines2);
+      return true;
+    }
+
+    // links: is not there at all — write the key and its first entry
+    // together, so the file is never left holding one with nothing under it.
+    var indent = map ? map.indent : xuPair.indent + 2;
+    var lines3 = linkEntryLines(indent + 2, kind, state, between);
+    if (!lines3) return false;
+    splice(doc, map ? map.end : xuPair.end, 0, [pad(indent) + 'links:'].concat(lines3));
+    return true;
+  }
+
+  // Removes one x-unraid.links entry by its (just-read) index, collapsing
+  // links: — and x-unraid: with it — when the entry removed was the last
+  // one left, the same "never leave a key with nothing under it" rule
+  // removeSectionEntry follows for x-unraid.sections.
+  function removeLinkAt(doc, index) {
+    if (!doc.root || doc.root.kind !== 'map') return false;
+    var xu = doc.root.pairs['x-unraid'];
+    var linksPair = xu && xu.value && xu.value.kind === 'map' ? xu.value.pairs['links'] : null;
+    var seq = linksPair && linksPair.value && linksPair.value.kind === 'seq' ? linksPair.value : null;
+    var item = seq && seq.items[index];
+    if (!item) return false;
+
+    if (seq.items.length === 1) {
+      spliceBlock(doc, xu.value.keys.length === 1 ? xu.leadStart : linksPair.leadStart,
+                       xu.value.keys.length === 1 ? xu.end : linksPair.end);
+      return true;
+    }
+
+    spliceBlock(doc, item.leadStart, item.end);
+    return true;
+  }
+
+  /**
+   * Adds, updates, or removes one x-unraid.links entry — a person's click
+   * confirming or rejecting a connection detectLinks() found, or (state
+   * null) withdrawing an existing record back to "no opinion", the way back
+   * from a mis-click that section 5's two buttons both need. `between` must
+   * be the exact pair detectLinks() reported, named by service plus setting
+   * name or host path — never by line position, so a reordered list cannot
+   * make this miss the record it should update.
+   *
+   * Refuses a `declared` connection outright: depends_on, network_mode:
+   * service:, links: and volumes_from: are facts read straight from the
+   * file, so there is nothing for a person to confirm or reject.
+   *
+   * Re-confirming (or re-rejecting) an already-recorded pair updates that
+   * one entry's state in place — matched by endpoint naming, never
+   * position — rather than appending a second record for the same pair.
+   *
+   * Built on ensurePath exactly as writeSectionEntry() is, including its
+   * own snapshot-and-roll-back: a failure part-way through restores the
+   * file rather than leaving a half-built x-unraid/links behind.
+   *
+   * -> { ok: false, error: '<what to do next>' }
+   */
+  function setLinkState(doc, kind, certainty, between, state) {
+    if (certainty === 'declared') {
+      return { ok: false, error: 'This connection is read straight from the file, so there is nothing to confirm or reject.' };
+    }
+
+    var before = doc.lines.slice();
+    function refuse(msg) {
+      doc.lines = before;
+      splice(doc, 0, 0, []);
+      return { ok: false, error: msg };
+    }
+
+    var existing = null;
+    var recs = readLinks(doc);
+    for (var ri = 0; ri < recs.length; ri++) {
+      if (recs[ri].kind === kind && linksSameConnection(kind, recs[ri].between, between)) { existing = recs[ri]; break; }
+    }
+
+    if (state === null) {
+      if (!existing) return { ok: true };   // nothing recorded — nothing to withdraw
+      return removeLinkAt(doc, existing.index) ? { ok: true }
+        : refuse('That connection record is written in a way the form cannot remove — edit it in the Compose view instead.');
+    }
+
+    if (existing) {
+      var xu = doc.root.pairs['x-unraid'];
+      var stateNode = xu.value.pairs['links'].value.items[existing.index].value.pairs['state'];
+      var done = stateNode && stateNode.value && stateNode.value.kind === 'scalar' &&
+        writeScalar(doc, scalarSpot(stateNode.value), state, 'plain');
+      return done ? { ok: true }
+        : refuse('That connection record is written in a way the form cannot update — edit it in the Compose view instead.');
+    }
+
+    var pair = ensurePath(doc, function () {
+      return doc.root && doc.root.kind === 'map'
+             ? { indent: -2, value: doc.root, end: doc.root.end } : null;
+    }, ['x-unraid'], 'x-unraid');
+    if (!pair || (pair.value && pair.value.kind !== 'map')) {
+      return refuse('The x-unraid block in this file is written in a way the form cannot add to — set this up in the Compose view instead.');
+    }
+
+    return appendLinkEntry(doc, pair, kind, state, between)
+      ? { ok: true }
+      : refuse('This connection could not be written — edit it in the Compose view instead.');
+  }
+
+  /* =====================================================================
    * File references
    *
    * API.fileRefs — every place a compose file names a file that is meant to
@@ -7858,6 +8547,36 @@
     // The Form pane's field help — see fieldHelp()/helpGaps() above.
     fieldHelp: fieldHelp,
     helpGaps: helpGaps,
+    // PLAN_70 stage 1: the connections between services one compose file
+    // describes — a shared secret, a shared folder, one part naming another
+    // — see the section comment above detectLinks() for what it reads.
+    detectLinks: detectLinks,
+    // PLAN_70 stage 3: reading, matching and writing a person's own
+    // confirm/reject click into x-unraid.links — see the section comment
+    // above readLinks() for the shape and setLinkState() for the refusals.
+    readLinks: readLinks,
+    linkState: linkState,
+    staleLinks: staleLinks,
+    setLinkState: setLinkState,
+    // PLAN_70 stage 4: the propagation offer's own two lookups — every
+    // CONFIRMED partner of one endpoint, and the live field one endpoint
+    // names — see the comments above confirmedPartners() and
+    // fieldForEndpoint() for why both are named by service plus setting
+    // rather than by file position.
+    confirmedPartners: confirmedPartners,
+    fieldForEndpoint: fieldForEndpoint,
+    // Whether a value reads a variable from outside the file. Exported for
+    // propagation's own refusal (linkQualifiesAsSecret() above keeps such a
+    // pair from ever being offered, but a pair confirmed while both held
+    // plain values can still have one side hand-edited into a pointer
+    // afterwards, and overwriting that is the harm).
+    interpolates: interpolates,
+    // PLAN_70 stage 5: the two pure decisions behind the cross-stack lookup
+    // — see the section comment above crossLooksLikeAddress() for why they
+    // live here rather than in stacks.js.
+    crossLooksLikeAddress: crossLooksLikeAddress,
+    crossReachableCandidates: crossReachableCandidates,
+    crossOwnSlots: crossOwnSlots,
     // Every host-side path of a volume mount — see the "Host paths" section
     // above. Used to check the folder actually exists on the server.
     hostPaths: hostPaths,

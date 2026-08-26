@@ -19,6 +19,12 @@ define('STAXX_CFG',     STAXX_CFG_DIR.'/'.STAXX_PLUGIN.'.cfg');
 // by a megabyte of vendor prose because one release included a full changelog.
 define('STAXX_NOTES_MAX', 4000);
 
+// StaXXCrypt, the container StaXX hashes with (PLAN_74, include/Crypt.php).
+// Its name lives here rather than beside the rest of that file's constants
+// because staxx_docker_ps_raw() below has to know it, and Crypt.php requires
+// this file — putting it the other way round would be a circle.
+define('STAXX_CRYPT_CONTAINER', 'StaXXCrypt');
+
 // Projection of the HEADER_MENU setting onto a file, written by
 // scripts/apply_settings. The .page Cond expressions test for this instead of
 // parsing the config, because Cond runs on every render of every page.
@@ -773,6 +779,14 @@ function staxx_docker_ps_raw(): array {
     // that arrives short of that is genuinely garbled, not just a container
     // with no labels, so it is skipped rather than kept with a guessed key.
     if (count($c) < 8) continue;
+    // StaXXCrypt is left out of every list built from this,
+    // which is all of them. It carries no compose project, so it would
+    // otherwise collect in the ungrouped pile beside somebody's hand-made
+    // containers — and a page about the containers you chose to run is the
+    // wrong place for one you did not (PLAN_74). Matched on the exact name
+    // we created it with: unlike the image removal in Crypt.php, the worst a
+    // false match can do here is hide a row.
+    if ($c[1] === STAXX_CRYPT_CONTAINER) continue;
     $rows[] = [
       'id'          => $c[0],
       'name'        => $c[1],

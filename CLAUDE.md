@@ -50,6 +50,7 @@ node tests/image_import.js          # Docker Hub / local image -> starting compo
 node tests/stash_guard.js           # a set-aside may only hold the block it claims to
 node tests/meta_scaffold.js         # the commented x-unraid fields a new stack starts with
 node tests/js_undeclared.js         # names assigned but declared nowhere
+node tests/words.js                 # the passphrase generator's word list — count, shape, uniqueness
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 ```
@@ -63,6 +64,15 @@ mode, where assigning to a name nothing declared throws instead of quietly makin
 `node --check` cannot see that, since the file parses perfectly and the error only exists at run
 time. One such line inside a function every render calls kills the whole page.
 
+**None of this is a shipped component, and it must never be presented as one.** `pkg_build.sh`
+packages `src/staxx/` alone, so nothing under `tests/` ever reaches a user's server. Keep every
+mention of the suites — and of `tests/server/` in particular, which has to be copied to a machine to
+run at all — inside developer notes: this file, the plan files, and source comments. It does not
+belong in `README.md`, in `docs/`, in a `.page`, in a translation string, or anywhere else a person
+using StaXX would read it. The one testing-shaped thing that *is* user-facing is
+`staxx_selftest()`, the cheap health check on the settings page, and that is a different thing
+with a different audience.
+
 `tests/server/` holds PHP checks that can only run **on the server** — copy them up and run them
 there. `files.php` covers the companion-file helpers and the archive confirmation; `record.php` and
 `imagehistory.php` cover each stack's own hidden record — its compose-file history, and the image
@@ -75,6 +85,11 @@ fingerprint is filed under the image's UNPINNED name, so clearing the pinned one
 whole feature silently do nothing;
 `rollback.php` covers the image rollback's refusals — above all that the version asked for must be
 one this service itself recorded rather than merely digest-shaped;
+`crypt.php` covers the hashing container's refusals, and needs no config keys at all: every case
+either calls a pure function with made-up data or asks a read-only question, so it builds, starts,
+pulls and removes nothing. The two that matter most are that a hash format is refused unless the
+self-test has actually proven it, and that the superseded-image chooser never picks an image without
+StaXX's own stamp on it — the one place StaXX deletes without asking;
 `links.php` covers
 what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
 for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's

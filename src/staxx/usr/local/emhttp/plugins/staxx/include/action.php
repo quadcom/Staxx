@@ -54,8 +54,10 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Relocate.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Crypt.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -959,6 +961,50 @@ switch ($action) {
     $image = (string)$meta['services'][$service]['image'];
     $links = staxx_project_links($image, $meta['x'], $meta['services'][$service]['x']);
     staxx_reply(['ok' => true, 'name' => $name, 'service' => $service] + $links);
+
+  /* ---- PLAN_70 stage 5 — what could a typed value be pointing at? ----
+   *
+   * $name is the stack being edited, 'service' the one box's own service
+   * (may be blank — see staxx_crosslinks_source_networks()), 'value' the
+   * text as typed. Answers with names, stacks, networks and ports only —
+   * never a value from another stack's file. See CrossLinks.php's own
+   * header for the rule this exists to keep.
+   */
+  case 'link-match':
+    $service = (string)($_POST['service'] ?? '');
+    $value   = (string)($_POST['value']   ?? '');
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    staxx_reply(['ok' => true] + staxx_crosslinks_match($name, $service, $value));
+
+  /* ---- PLAN_70 stage 5 — credentials for ONE confirmed target ----
+   *
+   * Deliberately separate from 'link-match': that action never returns a
+   * value, this one returns values for exactly the stack and service named
+   * here, and nothing else. 'stack' rather than 'name' on purpose — this is
+   * the OTHER stack, not the one open in the editor.
+   */
+  case 'link-creds':
+    $stack   = (string)($_POST['stack']   ?? '');
+    $service = (string)($_POST['service'] ?? '');
+    staxx_reply(staxx_crosslinks_credentials($stack, $service));
+
+  /* ---- PLAN_70 stage 5 — teach StaXX one image's own settings ----
+   *
+   * The person points at the two boxes on a database whose image link-creds
+   * just said it does not recognise — 'stack'/'service' name that same
+   * target, 'user'/'password' the setting NAMES they picked (link-creds's
+   * own settingNames reply, never a value typed by hand). Answers with the
+   * same 'fields' shape link-creds gives for an already-known image, so the
+   * click that teaches StaXX also answers what prompted it.
+   */
+  case 'link-learn':
+    staxx_reply(staxx_crosslinks_learn(
+      (string)($_POST['stack']   ?? ''),
+      (string)($_POST['service'] ?? ''),
+      ['user' => (string)($_POST['user'] ?? ''), 'password' => (string)($_POST['password'] ?? '')]
+    ));
 
   // ---- dismiss the version currently on offer for one image ----
   case 'update-skip':
@@ -2060,6 +2106,48 @@ switch ($action) {
       'name' => $v['name'],
     ], staxx_record_list($name));
     staxx_reply(['ok' => true, 'versions' => $versions]);
+
+  /* ---------------------------------------------------------------------
+   * The StaXXCrypt cryptography container — PLAN_74 Part A pieces 3 and 4.
+   * See include/Crypt.php for the mechanism; every action here is a thin
+   * pass-through to it, exactly like the handover cases above.
+   * ------------------------------------------------------------------- */
+
+  // ---- everything Settings and the editor's hash panel need to draw ----
+  case 'crypt-state':
+    staxx_reply(['ok' => true, 'state' => staxx_crypt_state()]);
+
+  // ---- build the container for the first time; only ever called by a button press ----
+  case 'crypt-build':
+    $job = staxx_crypt_build($error);
+    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'job' => $job]);
+
+  // ---- rebuild from a newer recipe; same shape, see staxx_crypt_do_rebuild() ----
+  case 'crypt-rebuild':
+    $job = staxx_crypt_rebuild($error);
+    if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'job' => $job]);
+
+  /* ---- hash a password ----
+   *
+   * The single most sensitive line in this file: $_POST['password'] must
+   * never be logged, never land in $error, and never be handed to anything
+   * that could put it on a command line — staxx_crypt_hash() carries it to
+   * the container on the command's own input stream and nowhere else. Read
+   * directly into a local rather than assigned through any helper that
+   * might echo its arguments, and never printed here even for debugging.
+   */
+  case 'crypt-hash':
+    $format   = (string)($_POST['format'] ?? '');
+    $password = (string)($_POST['password'] ?? '');
+    $needsBuild = staxx_crypt_container_status() === 'missing';
+    $hash = staxx_crypt_hash($password, $format, $error);
+    $password = ''; // gone the moment it is no longer needed; nothing below can reach it
+    if ($hash === '') {
+      staxx_reply(['ok' => false, 'error' => $error, 'needsBuild' => $needsBuild]);
+    }
+    staxx_reply(['ok' => true, 'hash' => $hash]);
 }
 
 staxx_reply(['ok' => false, 'error' => 'Unknown action "'.$action.'".'], 400);

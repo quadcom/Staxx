@@ -93,6 +93,39 @@
   var binPut   = document.getElementById('staxx-binfile-put');
   var sanitiseBox = document.getElementById('staxx-sanitise');
   var sanitiseNote = document.getElementById('staxx-sanitise-note');
+  // The password/passphrase generator (PLAN_74 Part A) — one tool in the
+  // toolbar beside Sanitise rather than a button per box. May be null while
+  // the markup has not landed yet — guarded everywhere below, the same way
+  // outlinePanel is guarded above. See the "Password generator" section
+  // further down, near the outline panel it mirrors.
+  var pwgenBtn        = document.getElementById('staxx-pwgen-btn');
+  var pwgenPanel       = document.getElementById('staxx-pwgen');
+  var pwgenModeChars   = document.getElementById('staxx-pwgen-mode-chars');
+  var pwgenModeWords   = document.getElementById('staxx-pwgen-mode-words');
+  var pwgenCharsGroup  = document.getElementById('staxx-pwgen-chars');
+  var pwgenWordsGroup  = document.getElementById('staxx-pwgen-words');
+  var pwgenLength      = document.getElementById('staxx-pwgen-length');
+  var pwgenUpper       = document.getElementById('staxx-pwgen-upper');
+  var pwgenDigits      = document.getElementById('staxx-pwgen-digits');
+  var pwgenPunct       = document.getElementById('staxx-pwgen-punct');
+  var pwgenCount       = document.getElementById('staxx-pwgen-count');
+  var pwgenSep         = document.getElementById('staxx-pwgen-sep');
+  var pwgenStrength    = document.getElementById('staxx-pwgen-strength');
+  var pwgenValue       = document.getElementById('staxx-pwgen-value');
+  var pwgenRegen       = document.getElementById('staxx-pwgen-regen');
+  var pwgenCopy        = document.getElementById('staxx-pwgen-copy');
+  var pwgenFill        = document.getElementById('staxx-pwgen-fill');
+  var pwgenNote        = document.getElementById('staxx-pwgen-note');
+  // The hash half of the same panel (PLAN_74 Part A piece 4) — its own
+  // format list, its own Copy/Fill, and its own status line, since a hash
+  // usually goes somewhere different to the password it was made from.
+  var pwgenHashWrap    = document.getElementById('staxx-pwgen-hashwrap');
+  var pwgenFormat      = document.getElementById('staxx-pwgen-format');
+  var pwgenHashBtn     = document.getElementById('staxx-pwgen-hash-btn');
+  var pwgenHashValue   = document.getElementById('staxx-pwgen-hash');
+  var pwgenHashCopy    = document.getElementById('staxx-pwgen-hash-copy');
+  var pwgenHashFill    = document.getElementById('staxx-pwgen-hash-fill');
+  var pwgenHashNote    = document.getElementById('staxx-pwgen-hash-note');
   var installNote  = document.getElementById('staxx-install-note');
   // PLAN_63 section 16: the caught-install banner's own way out. Filled in
   // and shown/hidden by caOpenConverted() below, never by markup here.
@@ -132,6 +165,16 @@
   watchNote.id = 'staxx-watch-note';
   watchNote.hidden = true;
   if (gapNote && gapNote.parentNode) gapNote.parentNode.insertBefore(watchNote, gapNote);
+  // PLAN_70 stage 2 — the connections summary ("app and db share a
+  // password", and so on). Same reason as clashNote and watchNote above:
+  // no server-rendered element exists for this, and it is read-only, so it
+  // gets its own modifier rather than borrowing --inuse's "this may be a
+  // problem" amber — see staxx.css for why.
+  var linkNote = document.createElement('p');
+  linkNote.className = 'staxx-missing staxx-missing--link';
+  linkNote.id = 'staxx-link-note';
+  linkNote.hidden = true;
+  if (gapNote && gapNote.parentNode) gapNote.parentNode.insertBefore(linkNote, gapNote);
   var errorBox    = document.getElementById('staxx-error');
   var missingNote = document.getElementById('staxx-missing');
   var scaffoldNote = document.getElementById('staxx-scaffold-note');
@@ -173,6 +216,10 @@
   var settingsMsg    = document.getElementById('staxx-settings-msg');
   var settingsCancel = document.getElementById('staxx-settings-cancel');
   var settingsSave   = document.getElementById('staxx-settings-save');
+  // StaXXCrypt's own state (PLAN_74 Part A piece 3) — a sibling of the body
+  // rather than one of its rows, since Save/Cancel/dirty-tracking do not
+  // apply to it: nothing here is a setting, only a report and a button.
+  var settingsCryptBox = document.getElementById('staxx-crypt-state');
 
   // PLAN_68 Part B — where the stacks folder should live. May be null on a
   // stale page, guarded the same way settingsModal is above.
@@ -1414,6 +1461,14 @@
   // pass, the clash sibling of movedSpots just above.
   var TAKEN = { ports: [], paths: [] };
   var clashSpots = [];
+
+  // PLAN_70 stage 2 — every field taking part in a connection detectLinks()
+  // found in the open file, the link sibling of clashSpots just above. Filled
+  // by applyLinkAdvice() below, on the same passes that fill clashSpots,
+  // since it reads nothing detectLinks() itself does not already read from
+  // MODEL — no server round trip to wait for.
+  var linkSpots = [];
+
 
   // A published port or bind-mount path is written as one exact value most
   // of the time, but a port can be a whole range ("8000-8010") written as one
@@ -2765,6 +2820,29 @@
                : '"' + esc(cl.mine) + '" is already used by "' + esc(cl.container) + '".') +
              '</p>';
     }
+    // Every connection detectLinks() found this field taking part in
+    // (linkAdvice is grafted on nowhere else — see applyLinkAdvice()):
+    // PLAN_70 stage 2. Read-only, like clashAdvice above — no fix button,
+    // because confirming or rejecting a connection is stage 3, not this
+    // one. A field can sit in more than one connection at once (a password
+    // three services share, say), so each gets its own line, the way
+    // watchAdvice below does for the same reason.
+    if (f.linkAdvice && f.linkAdvice.length) {
+      for (var lk = 0; lk < f.linkAdvice.length; lk++) {
+        out += '<p class="staxx-fieldnote">' + f.linkAdvice[lk] + '</p>';
+      }
+    }
+    // A CONFIRMED secret link's partner is now written automatically the
+    // moment this box changes (§11.3), announced on the status line by
+    // commit() itself rather than as standing advice under the box — there
+    // is nothing left here to graft between one render and the next.
+    // What a typed value could be pointing at in a DIFFERENT stack on this
+    // machine (crossAdvice is grafted on nowhere else — see
+    // applyCrossAdvice()): PLAN_70 stage 5. Already-escaped HTML, the same
+    // way linkAdvice above is — crossAdviceHtml() built it that way.
+    if (f.crossAdvice) {
+      out += '<p class="staxx-fieldnote">' + f.crossAdvice + '</p>';
+    }
     // Setting only (watchAdvice is grafted on nowhere else — see
     // applyWatchAdvice()): PLAN_62, what the author's own published example
     // adds or drops for this setting. No fix button, unlike movedAdvice
@@ -3064,6 +3142,18 @@
               (f.sensitive ? ' staxx-fieldrow--secret' : '') +
               (f.movedAdvice ? ' staxx-fieldrow--moved' : '') +
               (f.watchAdvice && f.watchAdvice.length ? ' staxx-fieldrow--watch' : '') +
+              // Every apply*Advice() runs BEFORE this markup replaces
+              // formHost.innerHTML, so their own classList.toggle() calls
+              // land on rows that are about to be thrown away. The advice
+              // TEXT survives because it is read off the field here; the row
+              // modifier only survives if it is written here too. Left out,
+              // a clash/connection stripe appeared only after the next edit
+              // happened to run refreshRanges() — which read as a stripe
+              // that meant "you just changed something", rather than the
+              // standing fact it is.
+              (f.clashAdvice ? ' staxx-fieldrow--clash' : '') +
+              (f.linkAdvice && f.linkAdvice.length ? ' staxx-fieldrow--link' : '') +
+              (f.crossAdvice ? ' staxx-fieldrow--cross' : '') +
               '" data-row="' + index + '" data-field-row="' + esc(f.id) + '"' +
               ' data-from="' + (f.range ? f.range.start : -1) + '"' +
               ' data-to="'   + (f.range ? f.range.end   : -1) + '"' +
@@ -3903,6 +3993,20 @@
     if (composeActive && clashSpots.length) {
       list = list.concat(clashSpots.map(function (m) { return { line: m.line, level: 'warn' }; }));
     }
+    // linkSpots (PLAN_70 stage 2), same reasoning. paintDots() only knows
+    // two dot colours (warn/error) — 'warn' is the closer of the two even
+    // though a connection is not itself a problem, since the underline and
+    // row marking are what actually carry the "this is not a clash" tone.
+    if (composeActive && linkSpots.length) {
+      list = list.concat(linkSpots.map(function (m) { return { line: m.line, level: 'warn' }; }));
+    }
+    // crossSpots (PLAN_70 stage 5), same reasoning. A gutter dot only — no
+    // underline layer for these, unlike linkSpots above, since the field's
+    // own note (Form view) is already where every action for this feature
+    // lives; the dot is just a way to notice it from the Compose view too.
+    if (composeActive && crossSpots.length) {
+      list = list.concat(crossSpots.map(function (m) { return { line: m.line, level: 'warn' }; }));
+    }
     paintDots(list);
   }
 
@@ -4032,6 +4136,826 @@
 
     paintClashSummary(hits);
     redrawDots();
+  }
+
+  // The one text spot a field's connection underline sits on — the value
+  // for an environment/setting field, the host side for a bind-mount, the
+  // only two shapes detectLinks() ever names an endpoint by (PLAN_70 design
+  // section 2). No spot at all for a kind-3 target field, since that side
+  // is named by the whole service rather than one setting — nothing here
+  // for that connection's far end to underline.
+  function linkSpotFor(f) {
+    if (f.parts && f.parts.host && f.parts.host.spot) return f.parts.host.spot;
+    if (f.parts && f.parts.value && f.parts.value.spot) return f.parts.value.spot;
+    return null;
+  }
+
+  // One sentence of prose for a detected connection (PLAN_70 stage 2 and 3).
+  // Only ever reaches an UNCONFIRMED pair or a DECLARED one now — a
+  // confirmed pair collapses to a mark instead (see applyLinkAdvice() and
+  // linkMarkHtml() below, PLAN_70 §11.4), so `state` arriving here is
+  // always null and `sure` is only ever true via c.certainty === 'declared'.
+  // Kept as a parameter anyway rather than assumed, so this still reads
+  // correctly if a future caller ever hands it a confirmed pair.
+  //
+  // `isPassword` (§11.1): the detector only knows two settings hold the
+  // SAME VALUE — it has no idea what that value is, and it is not changed
+  // here to guess either (that guess is exactly what the anti-name-guessing
+  // rule already forbids elsewhere in this file). "Password" is said only
+  // when the file itself marks one of the two boxes sensitive (the -!S
+  // marker); every other shared value, a database name or a username
+  // included, is honestly just "the same value".
+  function linkAdviceText(c, mine, other, state, isPassword) {
+    var sure = state === 'confirmed' || c.certainty === 'declared';
+    if (c.kind === 'secret') {
+      var lead = (sure ? 'This is' : 'This might be') + ' the same ' +
+        (isPassword ? 'password' : 'value') + ' as "' + esc(other.service) +
+        '"’s <code>' + esc(other.environment) + '</code>.';
+      // §11.2: the "will stop matching" warning described a confirmed
+      // link's old behaviour, not its new one (§11.3 — a confirmed link now
+      // writes its partner automatically). It only ever belongs on an
+      // unconfirmed suspicion, where nothing is written on either side yet.
+      return sure ? lead : lead + ' Change one and the other will stop matching.';
+    }
+    if (c.kind === 'folder') {
+      if (c.variant === 'same') {
+        return '"' + esc(other.service) + '" uses this same folder. That is often deliberate ' +
+          '— sharing media, for instance — but two containers writing to one folder ' +
+          'can also conflict.';
+      }
+      var mineInsideOther = mine.volume.length > other.volume.length &&
+        mine.volume.indexOf(other.volume + '/') === 0;
+      return mineInsideOther
+        ? 'This folder sits inside the one "' + esc(other.service) + '" uses.'
+        : '"' + esc(other.service) + '"’s folder sits inside this one.';
+    }
+    return sure
+      ? 'This names "' + esc(other.service) + '", another part of this stack.'
+      : 'This looks like it names "' + esc(other.service) + '", another part of this stack.';
+  }
+
+  // The confirm/reject buttons beside an UNCONFIRMED connection's own
+  // sentence (PLAN_70 stage 3 section 5) — "these are linked" and "not
+  // related". A confirmed pair never reaches here at all any more — it
+  // collapses to a mark instead (linkMarkHtml() below, §11.4), whose own
+  // "Break link" button reuses linkRecordBtn() directly rather than through
+  // here. A declared connection (depends_on and the like) gets none: it is
+  // read straight from the file, so setLinkState() itself refuses to record
+  // one and offering a button that always fails would be worse than
+  // offering none. A rejected connection never reaches here at all either —
+  // see applyLinkAdvice() — its own "bring it back" lives in the top note
+  // instead, since the connection itself is meant to say nothing.
+  function linkButtonsHtml(c) {
+    if (c.certainty === 'declared') return '';
+    return linkRecordBtn(c, 'confirmed', 'These are linked') + ' ' + linkRecordBtn(c, 'rejected', 'Not related');
+  }
+
+  // The small chain mark a CONFIRMED connection collapses to (§11.4): a
+  // settled fact needs a mark, not a paragraph the person has already read
+  // and agreed with. One mark per connection (the simpler of the two
+  // choices the plan offered for a row in more than one link at once —
+  // applyLinkAdvice() already loops one connection at a time, so grouping
+  // them into a single combined mark would need a second pass for no real
+  // gain). Clicking it opens a small popover naming the other side and
+  // offering Break link, which reuses linkRecordBtn(c, null, ...) — exactly
+  // the record-withdrawing write the old inline Undo button made, just
+  // relabelled, so it is already wired through the existing
+  // [data-link-set] click handler with no new plumbing. Breaking a link
+  // only stops the two being tracked together from then on (§11.5); it
+  // never reaches back and changes a value already written.
+  function linkMarkHtml(c, other) {
+    var kindClass = c.kind === 'secret' ? 'staxx-linkmark--secret'
+      : c.kind === 'folder' ? 'staxx-linkmark--folder' : 'staxx-linkmark--name';
+    // Two versions of the same words: linkEndpointWord()'s HTML is fine
+    // dropped straight into the popover's own markup, but (see otherName()'s
+    // own comment above) it is pre-escaped content, not an attribute-safe
+    // string — its literal quote marks would end aria-label/title early. The
+    // plain version below is escaped exactly once, the same trick this
+    // file's other plain/HTML sentence pairs already use (see otherName()).
+    var plainOther = other.environment !== undefined ? '"' + other.service + '"’s "' + other.environment + '"'
+      : other.volume !== undefined ? '"' + other.service + '"’s "' + other.volume + '"'
+      : '"' + other.service + '"';
+    var plainLabel = 'Linked to ' + plainOther + '.';
+    return '<span class="staxx-linkmarkwrap">' +
+      '<button type="button" class="staxx-linkmark ' + kindClass + '" data-linkmark="1" ' +
+      'aria-haspopup="true" aria-expanded="false" aria-label="' + esc(plainLabel) + '" title="' + esc(plainLabel) + '">' +
+      '<i class="fa fa-link" aria-hidden="true"></i></button>' +
+      '<span class="staxx-linkpop" hidden>' +
+      '<span class="staxx-linkpop-row">Linked to ' + linkEndpointWord(other) + '.</span>' +
+      '<span class="staxx-linkpop-actions">' + linkRecordBtn(c, null, 'Break link') + '</span>' +
+      '</span></span>';
+  }
+
+  // One button that writes `newState` for `r`'s own (kind, between) pair —
+  // shared by a field's own connection note, and the top note's "bring it
+  // back" / "remove it" lines for a rejected or stale record. The pair
+  // travels as JSON in a data attribute rather than an id, because a
+  // connection has no id of its own — it is named by its endpoints, the
+  // same rule setLinkState() itself matches on.
+  function linkRecordBtn(r, newState, label) {
+    var title = newState === 'confirmed' ? 'Records this as the same thing on both sides.'
+      : newState === 'rejected' ? 'Records that these are not related, and stops asking about it.'
+      : 'Withdraws that record — it goes back to unrecorded.';
+    return ' <button type="button" class="staxx-declfix" data-link-set="1" ' +
+      'data-link-kind="' + esc(r.kind) + '" data-link-state="' + esc(newState || '') + '" ' +
+      'data-link-between="' + esc(JSON.stringify(r.between)) + '" title="' + title + '">' + esc(label) + '</button>';
+  }
+
+  // Names one endpoint for the sentences below — the setting or path it
+  // holds, or just the service for a bare (whole-service) endpoint.
+  function linkEndpointWord(e) {
+    if (e.environment !== undefined) return '"' + esc(e.service) + '"’s "' + esc(e.environment) + '"';
+    if (e.volume !== undefined) return '"' + esc(e.service) + '"’s "' + esc(e.volume) + '"';
+    return '"' + esc(e.service) + '"';
+  }
+
+  // A rejected connection whose two endpoints are still live is otherwise
+  // silent everywhere (no note, no mark, no underline — applyLinkAdvice()
+  // drops it before it ever reaches a field), so the only way back from a
+  // mis-click is this line in the top note.
+  function linkRejectedSentence(r) {
+    return linkEndpointWord(r.between[0]) + ' and ' + linkEndpointWord(r.between[1]) +
+      ' were marked not related.' + linkRecordBtn(r, null, 'Bring it back');
+  }
+
+  // A record naming a service, setting or path this file no longer has —
+  // PLAN_70 stage 3 section 5: shown, never dropped, and removing it is the
+  // person's own click, not something a reparse does on its own.
+  function linkStaleSentence(r) {
+    return 'A connection was recorded between ' + linkEndpointWord(r.between[0]) + ' and ' +
+      linkEndpointWord(r.between[1]) + ', but the file no longer has one of them.' +
+      linkRecordBtn(r, null, 'Remove it');
+  }
+
+  // The note above the form: the first live connection found (never one
+  // line per connection — same rule as paintClashSummary() above), then one
+  // line for every rejected record still worth a "bring it back" and every
+  // stale one worth a "remove it" (section 5). `hits` already excludes
+  // rejected connections; `rejectedLive` and `stale` are readLinks()/
+  // staleLinks() records, not detectLinks() connections.
+  function paintLinkSummary(hits, rejectedLive, stale) {
+    var lines = [];
+    if (hits.length) {
+      var first = hits[0], extra = hits.length - 1, a = first.between[0].service, b = first.between[1].service;
+      var lead = first.kind === 'secret' ? '"' + esc(a) + '" and "' + esc(b) + '" share the same password.'
+        : first.kind === 'folder'
+          ? (first.variant === 'same' ? '"' + esc(a) + '" and "' + esc(b) + '" use the same folder.'
+                                       : '"' + esc(a) + '" and "' + esc(b) + '" use folders that sit inside each other.')
+          : '"' + esc(a) + '" names "' + esc(b) + '".';
+      lines.push(lead + (extra ? '  And ' + extra + ' more connection' + (extra > 1 ? 's' : '') + ' like it.' : ''));
+    }
+    (rejectedLive || []).forEach(function (r) { lines.push(linkRejectedSentence(r)); });
+    (stale || []).forEach(function (r) { lines.push(linkStaleSentence(r)); });
+
+    if (!lines.length) { linkNote.hidden = true; linkNote.innerHTML = ''; return; }
+    linkNote.innerHTML = lines.join('<br>');
+    linkNote.hidden = false;
+  }
+
+  // Grafts every connection detectLinks() finds (PLAN_70 stage 2) onto both
+  // fields it names, reading x-unraid.links (PLAN_70 stage 3) to say
+  // whether each is unconfirmed, confirmed, or — silently, nowhere at all —
+  // rejected. Same call sites as applyClashAdvice() above, and for the same
+  // reason: MODEL.fields is rebuilt wholesale by reparse() and
+  // refreshRanges(). detectLinks() and readLinks() both read MODEL/MODEL.doc
+  // only, so it is safe to call anywhere applyClashAdvice() already runs,
+  // including the taken-ports refresh, even though nothing there changed
+  // what a connection is.
+  function applyLinkAdvice() {
+    linkSpots = [];
+    if (!MODEL) { paintLinkSummary([], [], []); return; }
+
+    for (var i = 0; i < MODEL.fields.length; i++) MODEL.fields[i].linkAdvice = null;
+
+    // fileOpen !== null means a companion file is on screen — same guard
+    // applyClashAdvice() uses, for the same reason: it has no compose
+    // structure of its own for detectLinks() to read.
+    var conns = (fileOpen === null && YAML && typeof YAML.detectLinks === 'function')
+      ? YAML.detectLinks(MODEL) : [];
+    var canRecord = fileOpen === null && MODEL.doc && YAML && typeof YAML.linkState === 'function';
+
+    var visible = [];
+    conns.forEach(function (c) {
+      var state = c.certainty === 'declared' ? null : (canRecord ? YAML.linkState(MODEL.doc, c.kind, c.between) : null);
+      if (state === 'rejected') return;   // silent — see the docblock above linkButtonsHtml()
+      visible.push(c);
+
+      // §11.1: "password" is only ever said where the FILE marks one of the
+      // two boxes sensitive (the -!S note marker) — never inferred from the
+      // fact that the detector matched them. Read straight off the two
+      // fields' own .sensitive flag via fieldById(), the same lookup this
+      // loop already needs below, rather than a second way of finding them.
+      var isPassword = !!(YAML.fieldById(MODEL, c.fields[0]) || {}).sensitive ||
+                        !!(c.fields[1] && (YAML.fieldById(MODEL, c.fields[1]) || {}).sensitive);
+
+      var pairs = [[c.fields[0], c.between[0], c.between[1]]];
+      if (c.fields[1]) pairs.push([c.fields[1], c.between[1], c.between[0]]);
+      pairs.forEach(function (p) {
+        var f = YAML.fieldById(MODEL, p[0]);
+        if (!f) return;
+        f.linkAdvice = f.linkAdvice || [];
+        // §11.4: a CONFIRMED pair collapses to a mark, not a paragraph — an
+        // unconfirmed suspicion (state null) and a declared fact (always
+        // "sure" but never confirmable) keep the full sentence unchanged,
+        // since nobody has been told about either of those yet, or ever
+        // needs a "Break link" for something compose itself declared.
+        if (state === 'confirmed') {
+          f.linkAdvice.push(linkMarkHtml(c, p[2]));
+          var markSpot = linkSpotFor(f);
+          if (markSpot) linkSpots.push({ line: markSpot.line, col: markSpot.col, len: markSpot.len,
+            text: 'Linked to "' + p[2].service + '"’s "' + (p[2].environment || p[2].volume || '') + '"' });
+          return;
+        }
+        var sentence = linkAdviceText(c, p[1], p[2], state, isPassword);
+        f.linkAdvice.push(sentence + linkButtonsHtml(c));
+        var spot = linkSpotFor(f);
+        if (spot) linkSpots.push({ line: spot.line, col: spot.col, len: spot.len, text: sentence });
+      });
+    });
+
+    var rows = formHost.querySelectorAll('.staxx-fieldrow');
+    for (var r = 0; r < rows.length; r++) {
+      var field = MODEL.fields[rows[r].dataset.row | 0];
+      rows[r].classList.toggle('staxx-fieldrow--link', !!(field && field.linkAdvice && field.linkAdvice.length));
+      var advice = rows[r].querySelector('[data-advice]');
+      if (advice && field) {
+        advice.innerHTML = adviceText(field);
+        advice.hidden = !advice.innerHTML;
+      }
+    }
+
+    // The top note's own two extra lists (section 5, and section 4's "way
+    // back" for a rejected record): every readLinks() record, split into
+    // what staleLinks() says no longer resolves and what is rejected but
+    // still live. A stale-and-rejected record shows once, as stale — its
+    // only offer is "remove it", never "bring it back" to a pair the file
+    // no longer has both halves of.
+    var rejectedLive = [], stale = [];
+    if (canRecord) {
+      stale = YAML.staleLinks(MODEL.doc, MODEL);
+      var staleIdx = {};
+      stale.forEach(function (r) { staleIdx[r.index] = true; });
+      YAML.readLinks(MODEL.doc).forEach(function (r) {
+        if (r.state === 'rejected' && !staleIdx[r.index]) rejectedLive.push(r);
+      });
+    }
+
+    paintLinkSummary(visible, rejectedLive, stale);
+    redrawDots();
+  }
+
+  // The one click handler for every button linkRecordBtn() writes — the
+  // field-grafted "these are linked"/"not related"/"undo", and the top
+  // note's "bring it back"/"remove it". Shared because they are all the
+  // same action: write one x-unraid.links entry and let reparse() (inside
+  // structuralEdit) rebuild every surface from what the file now says.
+  // Nothing is written until this runs — detection alone never writes.
+  function commitLinkState(kind, between, newState) {
+    if (!MODEL || !MODEL.doc || !YAML || typeof YAML.setLinkState !== 'function') return;
+    flushPending();
+    pushUndo(newState === 'confirmed' ? 'confirming that connection'
+      : newState === 'rejected' ? 'marking that connection not related'
+      : 'withdrawing that connection record');
+    var res = YAML.setLinkState(MODEL.doc, kind, 'inferred', between, newState);
+    if (!res.ok) {
+      undoStack.pop();
+      updateUndo();
+      setYamlStatus(res.error);
+      return;
+    }
+    structuralEdit(-1, '');
+  }
+
+  function linkBtnClick(event) {
+    var btn = event.target.closest('[data-link-set]');
+    if (!btn) return false;
+    var between;
+    try { between = JSON.parse(btn.dataset.linkBetween); } catch (e) { return true; }
+    commitLinkState(btn.dataset.linkKind, between, btn.dataset.linkState || null);
+    return true;
+  }
+
+  linkNote.addEventListener('click', linkBtnClick);
+
+  /* =====================================================================
+   * Propagation (PLAN_70 stage 4, revised §11.3)
+   *
+   * Carrying an edit into a CONFIRMED secret link's other side automatically
+   * — Adrian's decision that confirming the link IS the permission, so this
+   * no longer offers and waits, it writes and says so. Every condition
+   * design section 6 sets out is still an explicit check below, not a side
+   * effect of something else: confirmed-and-secret-only
+   * (computePropagationOffer's YAML.confirmedPartners(doc, 'secret', ...)
+   * call, which already excludes folder/reference and unconfirmed links),
+   * the drift refusal (the `current !== oldVal` check below), and "written
+   * through the ordinary field-writing path" (commit() calls the very
+   * YAML.setValue() a typed edit itself uses, from inside the SAME function
+   * — see the "toPropagate" block there for where this is actually used).
+   * ===================================================================== */
+
+  // otherName(e) — the setting or path an endpoint names, for the plain
+  // (non-HTML) sentences below. Deliberately not linkEndpointWord(): that
+  // helper's output already carries literal quote characters meant for an
+  // innerHTML string, which would break a title="..." attribute or a
+  // pushUndo() label if dropped in unescaped.
+  function otherName(e) {
+    return e.environment !== undefined ? e.environment : (e.volume || '');
+  }
+
+  // Condition 5's drift refusal, in the person's own words: the record
+  // stands, but nothing is WRITTEN until it is re-confirmed on purpose —
+  // said here, on the status line, rather than shown as an offer, because
+  // there is no longer an offer for it to sit beside (§11.5: a refusal must
+  // still say so now that silence would otherwise read as "nothing to
+  // report" rather than "this one step was skipped").
+  function propagationDriftMessage(item) {
+    return '"' + item.other.service + '"’s "' + otherName(item.other) +
+      '" no longer matched what this connection was confirmed against, so it was not updated — ' +
+      'the two have drifted apart. Re-confirming the connection is a deliberate choice, not a fix.';
+  }
+
+  // The pointer refusal's own sentence — see computePropagationOffer()'s
+  // check for why this is not written. Says where the real value lives, so
+  // the next step is obvious rather than mysterious.
+  function propagationPointerMessage(item) {
+    return '"' + item.other.service + '"’s "' + otherName(item.other) +
+      '" reads a variable from outside the compose file, so it was not written over — ' +
+      'change the variable itself and both sides follow.';
+  }
+
+  // What has to be written alongside a box that was just edited — every
+  // CONFIRMED secret link touching it, each judged on its own (condition 7:
+  // a shared secret confirmed for three services is three pairs, and only
+  // the confirmed ones are ever acted on here, never the whole group).
+  // Returns null when there is nothing to do: no change, no confirmed
+  // partner, or every partner already matches the new value. Called from
+  // commit() BEFORE either box is written — see its own comment on why the
+  // undo snapshot has to be taken first.
+  //
+  // The drift check (condition 5) compares the partner's CURRENT value
+  // against `oldVal` — what this box held a moment ago, and so what the
+  // connection was last known to agree on — never against `newVal`. Get
+  // that comparison backwards and every ordinary edit looks like drift.
+  function computePropagationOffer(mineEp, oldVal, newVal) {
+    if (!MODEL || !MODEL.doc || !YAML || typeof YAML.confirmedPartners !== 'function') return null;
+    if (oldVal === newVal) return null;
+    var partners = YAML.confirmedPartners(MODEL.doc, 'secret', mineEp);
+    if (!partners.length) return null;
+
+    var items = [];
+    for (var i = 0; i < partners.length; i++) {
+      var other = partners[i];
+      var pf = YAML.fieldForEndpoint(MODEL, other);
+      if (!pf || !pf.parts || !pf.parts.value) continue;   // no live box — nothing to write
+      var current = pf.parts.value.value;
+      if (current === newVal) continue;                     // already matches — nothing to do
+      // A partner now reading a variable from outside the file is a pointer
+      // at a value, not a copy of one. detectLinks() never offers such a
+      // pair (linkQualifiesAsSecret in compose-model.js), but a pair
+      // confirmed while both held plain values can have one side hand-edited
+      // into a pointer afterwards — and writing a fixed value over it would
+      // silently detach the stack from its .env file. Refused and said, the
+      // same way drift is.
+      if (YAML.interpolates && YAML.interpolates(current)) {
+        items.push({ other: other, current: current, pointer: true });
+        continue;
+      }
+      items.push({ other: other, current: current, drift: current !== oldVal });
+    }
+    return items.length ? { mine: mineEp, newVal: newVal, items: items } : null;
+  }
+
+  /* =====================================================================
+   * PLAN_70 stage 5 — pointing a new stack at a database that already
+   * exists on this machine, in a DIFFERENT stack's file.
+   *
+   * Stages 1-4 above never leave this file; this one has to ask the server
+   * what a typed value could be pointing at (include/CrossLinks.php's
+   * link-match / link-creds actions), because the other stack's compose
+   * file is not on screen. See CrossLinks.php's own header for the rule
+   * that keeps this safe: matching returns names, stacks, networks and
+   * ports only; a value comes back only for the one target a person has
+   * actually confirmed.
+   *
+   * TRIGGER: only a box holding a plain setting or environment value (never
+   * a bind-mount path, never a locked/absent row), and only when what it
+   * now holds could plausibly be an address — see looksLikeCrossValue()
+   * below for the exact shape. Debounced 800ms behind typing, the same gap
+   * scheduleCheck() already uses for its own round trip to the server, and
+   * a single global sequence number discards any reply typing has since
+   * moved past — the same shape runCheck() uses. A 60-container server
+   * cannot afford a request per keystroke; this affords at most one, well
+   * after the person has stopped typing.
+   * ===================================================================== */
+
+  // Named by service plus setting name, the same rule stage 1-4's own
+  // endpoints use (design section 2) — never by row index, so a reparse
+  // (which rebuilds MODEL.fields wholesale) does not lose track of it.
+  function crossKey(service, target) { return service + '\u0000' + target; }
+
+  var crossTimer = null;   // the 800ms debounce handle — one in flight at a time, see the section comment above
+  var crossSeq   = 0;      // bumped by every link-match/link-creds request sent, so a superseded reply cannot paint
+  var crossState = {};     // crossKey() -> the last known lookup for that box; see runCrossMatch()/startCrossCredentials()
+  var crossSpots = [];     // -> redrawDots(), a gutter dot only — see the note above repaintLink() for why this stops short of an underline
+
+  function scheduleCrossLinkCheck(f, value) {
+    if (fileOpen !== null || !f || f.locked || f.absent || f.target === undefined) return;
+    if (!YAML || typeof YAML.crossLooksLikeAddress !== 'function') return;
+    var key = crossKey(f.service, f.target);
+    if (crossTimer) clearTimeout(crossTimer);
+    if (!YAML.crossLooksLikeAddress(value)) {
+      if (crossState[key]) { delete crossState[key]; applyCrossAdvice(); }
+      return;
+    }
+    var service = f.service, target = f.target;
+    crossTimer = setTimeout(function () {
+      crossTimer = null;
+      runCrossMatch(key, service, target, value);
+    }, 800);
+  }
+
+  function runCrossMatch(key, service, target, value) {
+    var mySeq = ++crossSeq;
+    call('link-match', { name: openedName, service: service, value: value }, 8000)
+      .then(function (res) {
+        if (mySeq !== crossSeq || !MODEL) return;   // typing (or a reparse) has moved on
+        if (!res || !res.ok) { delete crossState[key]; applyCrossAdvice(); return; }
+
+        if (res.kind === 'self') {
+          crossState[key] = { key: key, status: 'self', sourceService: service, sourceTarget: target, reason: res.reason };
+          applyCrossAdvice();
+          return;
+        }
+        if (res.kind !== 'match' || !res.candidates || !res.candidates.length) {
+          delete crossState[key];
+          applyCrossAdvice();
+          return;
+        }
+
+        // Never assume reachability from a name match (PLAN_70 10.5) —
+        // YAML.crossReachableCandidates() carries the reasoning; see its
+        // own comment in compose-model.js.
+        var reachable = YAML.crossReachableCandidates(res.candidates);
+        if (!reachable.length) {
+          crossState[key] = { key: key, status: 'unreachable', sourceService: service, sourceTarget: target, candidate: res.candidates[0] };
+          applyCrossAdvice();
+          return;
+        }
+        if (reachable.length > 1) {
+          crossState[key] = { key: key, status: 'pick', sourceService: service, sourceTarget: target, candidates: reachable };
+          applyCrossAdvice();
+          return;
+        }
+        startCrossCredentials(key, service, target, reachable[0]);
+      });
+  }
+
+  // Every existing box on THIS service — the one being edited, never the
+  // target's — that could receive a value. Never invented: this is a list
+  // of what the file already has, for a picker to choose from, not a
+  // pattern match on a name (that guess is exactly what the project
+  // refused when it decided which boxes count as secrets — see PLAN_70
+  // 10.2's own closing paragraph).
+  function crossOwnFields(service) {
+    var out = [];
+    for (var i = 0; i < MODEL.fields.length; i++) {
+      var f = MODEL.fields[i];
+      if (f.service !== service || f.locked || f.absent || !f.target || f.binder === 'volume' || !f.parts || !f.parts.value) continue;
+      out.push(f);
+    }
+    return out;
+  }
+
+  // Which of THIS service's own boxes is its username/password — the ONE
+  // source this ever consults automatically: the images table, when the
+  // CONNECTING service's own image is itself one it recognises (10.2's
+  // "the same way" rule — a database pointing at another, in a replica or
+  // cluster setup, is the case this actually catches). The name-matching
+  // itself is YAML.crossOwnSlots() (compose-model.js), pure and DOM-free
+  // so it can be proven in Node the same way stage 5's other two pure
+  // decisions are; this just maps its answer back onto the live field
+  // objects it named. Anything the table does not name is left for
+  // crossOwnFields()'s own picker; never guessed from a box's spelling.
+  function crossOwnSlotFields(service, image) {
+    var out = {};
+    if (!window.StaxxDbImages || !image || !YAML || typeof YAML.crossOwnSlots !== 'function') return out;
+    var entry = window.StaxxDbImages.lookupImage(image);
+    var own = crossOwnFields(service);
+    var names = own.map(function (f) { return f.target; });
+    var slots = YAML.crossOwnSlots(entry, names);
+    ['user', 'password'].forEach(function (slot) {
+      if (!slots[slot]) return;
+      var hit = own.filter(function (f) { return f.target === slots[slot]; })[0];
+      if (hit) out[slot] = hit;
+    });
+    return out;
+  }
+
+  // The image this service itself runs — read straight off its own Image
+  // box, already in MODEL, no server call needed: this is the file already
+  // open in the browser.
+  function crossServiceImage(service) {
+    for (var i = 0; i < MODEL.fields.length; i++) {
+      var f = MODEL.fields[i];
+      if (f.service === service && f.binder === 'setting' && f.target === 'image' && f.parts && f.parts.value) return f.parts.value.value;
+    }
+    return '';
+  }
+
+  function crossSlotLabel(slot) { return slot === 'user' ? 'username' : 'password'; }
+
+  // The one place a value from another stack's file is ever asked for —
+  // and only for the single target `candidate` names, never a survey (see
+  // CrossLinks.php).
+  function startCrossCredentials(key, service, target, candidate) {
+    var mySeq = ++crossSeq;
+    crossState[key] = { key: key, status: 'loading', sourceService: service, sourceTarget: target, candidate: candidate };
+    applyCrossAdvice();
+
+    call('link-creds', { stack: candidate.stack, service: candidate.service }, 8000)
+      .then(function (creds) {
+        if (mySeq !== crossSeq || !MODEL) return;
+        if (!creds || !creds.ok) {
+          crossState[key] = { key: key, status: 'error', sourceService: service, sourceTarget: target, candidate: candidate,
+            message: (creds && creds.error) || 'That stack’s settings could not be read.' };
+          applyCrossAdvice();
+          return;
+        }
+        if (!creds.known) {
+          crossState[key] = { key: key, status: 'unknown-image', sourceService: service, sourceTarget: target, candidate: candidate,
+            image: creds.image, settingNames: creds.settingNames || [] };
+          applyCrossAdvice();
+          return;
+        }
+        resolveCrossFields(key, service, target, candidate, creds.fields || {}, creds.image);
+      });
+  }
+
+  // Works out which of THIS service's own boxes each of the target's
+  // returned settings ('user'/'password' only — "the two boxes" PLAN_70
+  // 10.2 talks about; a database's own root password or database name has
+  // no natural home on the connecting side) would fill, and whether that
+  // is a fresh offer or a drift from something already confirmed (10.5's
+  // last refusal, reusing stage 4's own drift wording and shape). Shared
+  // by the known-image path above and by applyCrossLearn() below, once a
+  // person has just taught StaXX an image it did not recognise — same
+  // shape, same rules, either way the target became known.
+  function resolveCrossFields(key, service, target, candidate, credsFields, image) {
+    var ownSlots = crossOwnSlotFields(service, crossServiceImage(service));
+    var between = [{ service: service, environment: target }, { stack: candidate.stack, service: candidate.service }];
+    var confirmed = MODEL.doc && YAML && typeof YAML.linkState === 'function' &&
+      YAML.linkState(MODEL.doc, 'reference', between) === 'confirmed';
+
+    var writes = [], drift = [], unresolved = [];
+    ['user', 'password'].forEach(function (slot) {
+      var got = credsFields[slot];
+      if (!got) return;
+      var df = ownSlots[slot];
+      if (!df) { unresolved.push({ slot: slot, value: got.value }); return; }
+      var current = df.parts.value.value;
+      if (current === got.value) return;                   // already matches — nothing to say
+      if (current !== '' && confirmed) {
+        drift.push({ slot: slot, destName: df.target });    // confirmed, but the two have moved apart — report, never re-copy
+      } else {
+        writes.push({ slot: slot, fieldId: df.id, destName: df.target, value: got.value });
+      }
+    });
+
+    crossState[key] = { key: key, status: 'ready', sourceService: service, sourceTarget: target, candidate: candidate,
+      image: image, writes: writes, drift: drift, unresolved: unresolved };
+    applyCrossAdvice();
+  }
+
+  function crossPickBtnHtml(key, idx, c) {
+    return ' <button type="button" class="staxx-declfix" data-cross-pick="1" ' +
+      'data-cross-key="' + esc(key) + '" data-cross-index="' + idx + '" ' +
+      'title="Looks up the username and password for this one.">"' + esc(c.service) + '" in "' + esc(c.stack) + '"</button>';
+  }
+
+  function crossAcceptBtnHtml(key) {
+    return ' <button type="button" class="staxx-declfix" data-cross-apply="1" data-cross-key="' + esc(key) + '" ' +
+      'title="Writes these values into this service, undoably, and records the connection.">Fill these in</button>';
+  }
+
+  // A dropdown over crossOwnFields() — the person points at the box, this
+  // never guesses one. Used both for "which of THIS service's own boxes"
+  // (crossOwnFields, below) and for "which of the TARGET's own settings"
+  // (a plain name list, crossAdviceHtml()'s 'unknown-image' branch passes
+  // its own $options straight through).
+  function crossPickerHtml(marker, key, slot, options) {
+    var opts = '<option value="">— choose —</option>';
+    for (var i = 0; i < options.length; i++) {
+      opts += '<option value="' + esc(options[i].value) + '">' + esc(options[i].label) + '</option>';
+    }
+    return '<select class="staxx-input" data-cross-' + marker + '="1" data-cross-key="' + esc(key) +
+      '" data-cross-slot="' + esc(slot) + '">' + opts + '</select>';
+  }
+
+  // One sentence (plus, sometimes, a button or a picker) for whatever
+  // runCrossMatch()/startCrossCredentials()/resolveCrossFields() last found
+  // for this box — see the states each sets above. Read by
+  // applyCrossAdvice() below and grafted onto the same adviceText() rail
+  // every other advisory in this file already renders through, so it needs
+  // no markup of its own.
+  function crossAdviceHtml(st) {
+    var c = st.candidate;
+    if (st.status === 'self') return esc(st.reason);
+
+    if (st.status === 'pick') {
+      var out = 'This could be pointing at more than one place:';
+      for (var i = 0; i < st.candidates.length; i++) out += crossPickBtnHtml(st.key, i, st.candidates[i]);
+      return out;
+    }
+    if (st.status === 'unreachable') {
+      return 'This might be pointing at "' + esc(c.service) + '" in "' + esc(c.stack) + '", another stack on this server, ' +
+        'but the two are not on a network together, so that name will not resolve.';
+    }
+    if (st.status === 'loading') {
+      return 'This points at "' + esc(c.service) + '" in "' + esc(c.stack) + '". Looking up its username and password…';
+    }
+    if (st.status === 'error') {
+      return 'This points at "' + esc(c.service) + '" in "' + esc(c.stack) + '", but ' + esc(st.message);
+    }
+    if (st.status === 'unknown-image') {
+      var body0 = 'This points at "' + esc(c.service) + '" in "' + esc(c.stack) + '". Its image ("' + esc(st.image) + '") is not one ' +
+        'StaXX recognises, so it will not guess which of its settings are the username and password.';
+      if (!st.settingNames.length) return body0 + ' It has no settings at all to point at.';
+      var opts = st.settingNames.map(function (n) { return { value: n, label: n }; });
+      return body0 +
+        ' Which one is its username? ' + crossPickerHtml('learnpick', st.key, 'user', opts) +
+        ' Which one is its password? ' + crossPickerHtml('learnpick', st.key, 'password', opts) +
+        ' <button type="button" class="staxx-declfix" data-cross-learn="1" data-cross-key="' + esc(st.key) + '" ' +
+        'title="Remembers this for every future stack pointing at this image too.">Remember and fill in</button>';
+    }
+
+    // 'ready'
+    var lead = c.via === 'port'
+      ? 'This reaches "' + esc(c.service) + '" in "' + esc(c.stack) + '" through this server’s own address and the port it publishes.'
+      : 'This is "' + esc(c.service) + '" in "' + esc(c.stack) + '", another stack on this server — they share the network "' + esc(c.network) + '".';
+    var out2 = lead;
+    if (st.writes.length) {
+      var parts = [];
+      for (var w = 0; w < st.writes.length; w++) parts.push('"' + esc(st.writes[w].destName) + '" with "' + esc(st.writes[w].value) + '"');
+      out2 += ' Would fill in ' + parts.join(', ') + '.' + crossAcceptBtnHtml(st.key);
+    }
+    for (var d = 0; d < st.drift.length; d++) {
+      out2 += ' "' + esc(st.drift[d].destName) + '" no longer matches what was copied from "' + esc(c.service) + '" in "' +
+        esc(c.stack) + '" — the two have drifted apart. Nothing is offered here; re-confirming would be a deliberate choice.';
+    }
+    if (st.unresolved && st.unresolved.length) {
+      var own = crossOwnFields(st.sourceService).map(function (f) { return { value: f.id, label: f.target }; });
+      for (var u = 0; u < st.unresolved.length; u++) {
+        var item = st.unresolved[u];
+        out2 += ' Which of this service’s own boxes is its ' + crossSlotLabel(item.slot) + '? ' +
+          crossPickerHtml('destpick', st.key, item.slot, own) +
+          ' <button type="button" class="staxx-declfix" data-cross-fillpick="1" data-cross-key="' + esc(st.key) +
+          '" data-cross-slot="' + esc(item.slot) + '" title="Writes the value into the box you pick.">Fill it in</button>';
+      }
+    }
+    return out2;
+  }
+
+  // Grafts crossState (this session's own, never persisted beyond it — see
+  // the section comment) onto the field it belongs to, called from the same
+  // two places every other advisory in this file is: reparse() and
+  // refreshRanges(). MODEL.fields is rebuilt wholesale by both, so this has
+  // to run every time, exactly like applyLinkAdvice() just above.
+  function applyCrossAdvice() {
+    crossSpots = [];
+    if (!MODEL) return;
+    for (var i = 0; i < MODEL.fields.length; i++) MODEL.fields[i].crossAdvice = null;
+
+    if (fileOpen === null) {
+      for (var j = 0; j < MODEL.fields.length; j++) {
+        var f = MODEL.fields[j];
+        if (f.target === undefined) continue;
+        var st = crossState[crossKey(f.service, f.target)];
+        if (!st) continue;
+        f.crossAdvice = crossAdviceHtml(st);
+        var spot = linkSpotFor(f);
+        if (spot) crossSpots.push({ line: spot.line, col: spot.col, len: spot.len });
+      }
+    }
+
+    var rows = formHost.querySelectorAll('.staxx-fieldrow');
+    for (var r = 0; r < rows.length; r++) {
+      var field = MODEL.fields[rows[r].dataset.row | 0];
+      rows[r].classList.toggle('staxx-fieldrow--cross', !!(field && field.crossAdvice));
+      var advice = rows[r].querySelector('[data-advice]');
+      if (advice && field) {
+        advice.innerHTML = adviceText(field);
+        advice.hidden = !advice.innerHTML;
+      }
+    }
+    redrawDots();
+  }
+
+  // "Fill these in" — condition 3's button: writes every matched box
+  // through the ordinary field-writing path (the same YAML.setValue()
+  // commit() itself calls, so this lands in the stack's own history and is
+  // undoable), one undo entry for the whole batch, then records the
+  // connection (condition 4) as a kind: reference link whose FIRST endpoint
+  // carries the setting that pointed here and whose second is the bare
+  // target service — the shape $defs/link's own reference rule requires.
+  // Never runs a write for anything but the box this session's own click
+  // confirmed; never opens or touches the target stack's file at all
+  // (PLAN_70 10.5 — this copies OUT of it, never into it).
+  function applyCrossFill(st) {
+    if (!MODEL || !MODEL.doc || !YAML || st.status !== 'ready') return;
+    flushPending();
+    pushUndo('filling in the connection to "' + st.candidate.service + '" in "' + st.candidate.stack + '"');
+
+    var doc = MODEL.doc, form = MODEL;
+    for (var i = 0; i < st.writes.length; i++) {
+      var w = st.writes[i];
+      var f = YAML.fieldById(form, w.fieldId);
+      if (!f) continue;   // that box is no longer there — skip it rather than fail the whole click
+      if (!YAML.setValue(doc, form, f.id, w.value)) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus('That value could not be written — edit it in the Compose view instead.');
+        return;
+      }
+      form = YAML.buildForm(doc);   // refresh positions before the next write — PLAN_64's own pattern, for the same reason
+    }
+
+    var between = [{ service: st.sourceService, environment: st.sourceTarget },
+                    { stack: st.candidate.stack, service: st.candidate.service }];
+    var res = YAML.setLinkState(doc, 'reference', 'inferred', between, 'confirmed');
+    if (!res.ok) {
+      restoreUndo();
+      setYamlStatus(res.error);
+      return;
+    }
+
+    delete crossState[st.key];
+    structuralEdit(-1, 'Filled in the connection to "' + st.candidate.service + '" in "' + st.candidate.stack + '".');
+  }
+
+  // "Fill it in" beside a box the images table could not place automatically
+  // — the person's own pick, read from the matching <select> at the moment
+  // of the click, never guessed. Folds any already-resolved writes in
+  // alongside it and reuses applyCrossFill() whole, so a partly-automatic,
+  // partly-picked connection still lands as one undo entry.
+  function applyCrossFillPick(st, slot, fieldId) {
+    var item = (st.unresolved || []).filter(function (u) { return u.slot === slot; })[0];
+    if (!item || !fieldId) return;
+    var all = (st.writes || []).concat([{ slot: slot, fieldId: fieldId, destName: '', value: item.value }]);
+    applyCrossFill({ key: st.key, status: 'ready', sourceService: st.sourceService, sourceTarget: st.sourceTarget,
+      candidate: st.candidate, writes: all, drift: st.drift || [] });
+  }
+
+  // "Remember and fill in" beside an image the target's own table (shipped
+  // or learned) does not recognise — teaches StaXX which of the target's
+  // settings are its username and its password (PLAN_70 10.2's "otherwise,
+  // ask once"), kept server-side as this installation's own setting, never
+  // written into the target's file (10.5's one-way rule — see
+  // staxx_crosslinks_learn()'s own comment). The one click both teaches
+  // StaXX and answers the request that prompted it: link-learn's own reply
+  // carries the resolved fields, so this runs straight into
+  // resolveCrossFields() exactly as the already-known path does.
+  function applyCrossLearn(st, userName, passName) {
+    call('link-learn', { stack: st.candidate.stack, service: st.candidate.service,
+      user: userName || '', password: passName || '' }, 8000)
+      .then(function (res) {
+        if (!MODEL) return;
+        if (!res || !res.ok) {
+          setYamlStatus((res && res.error) || 'That could not be remembered.');
+          return;
+        }
+        resolveCrossFields(st.key, st.sourceService, st.sourceTarget, st.candidate, res.fields || {}, st.image);
+      });
+  }
+
+  function crossBtnClick(event) {
+    var btn = event.target.closest('[data-cross-apply],[data-cross-pick],[data-cross-fillpick],[data-cross-learn]');
+    if (!btn) return false;
+    var st = crossState[btn.dataset.crossKey];
+    if (!st) return true;
+    var advice = btn.closest('[data-advice]');
+
+    if (btn.dataset.crossPick !== undefined) {
+      var chosen = st.candidates && st.candidates[Number(btn.dataset.crossIndex)];
+      if (chosen) startCrossCredentials(st.key, st.sourceService, st.sourceTarget, chosen);
+      return true;
+    }
+    if (btn.dataset.crossFillpick !== undefined) {
+      var destSel = advice && advice.querySelector(
+        'select[data-cross-destpick="1"][data-cross-slot="' + btn.dataset.crossSlot + '"]');
+      if (!destSel || !destSel.value) { setYamlStatus('Choose a box first.'); return true; }
+      applyCrossFillPick(st, btn.dataset.crossSlot, destSel.value);
+      return true;
+    }
+    if (btn.dataset.crossLearn !== undefined) {
+      var userSel = advice && advice.querySelector('select[data-cross-learnpick="1"][data-cross-slot="user"]');
+      var passSel = advice && advice.querySelector('select[data-cross-learnpick="1"][data-cross-slot="password"]');
+      var userName = userSel ? userSel.value : '', passName = passSel ? passSel.value : '';
+      if (!userName && !passName) { setYamlStatus('Point at least at the password setting first.'); return true; }
+      applyCrossLearn(st, userName, passName);
+      return true;
+    }
+    applyCrossFill(st);
+    return true;
   }
 
   // The one field a watch finding (PLAN_62) concerns, matched by service and
@@ -4226,6 +5150,8 @@
     applyMovedAdvice();   // before renderForm() below, so its first paint already carries the fact
     applyClashAdvice();   // ditto, for PLAN_65's port/path clash marks
     applyWatchAdvice();   // ditto, for PLAN_62's author-example findings
+    applyLinkAdvice();    // ditto, for PLAN_70 stage 2's connection marks
+    applyCrossAdvice();   // ditto, for PLAN_70 stage 5's cross-stack lookup, if any is in flight or answered
 
     var scrollWas = formHost.scrollTop;
     devPanel = null;            // the device panel lives in here and just went
@@ -4270,6 +5196,8 @@
     applyMovedAdvice();   // rows already exist here, so this brings them into line itself
     applyClashAdvice();   // ditto, for PLAN_65's port/path clash marks
     applyWatchAdvice();   // ditto, for PLAN_62's author-example findings
+    applyLinkAdvice();    // ditto, for PLAN_70 stage 2's connection marks
+    applyCrossAdvice();   // ditto, for PLAN_70 stage 5's cross-stack lookup, if any is in flight or answered
 
     var rows = formHost.querySelectorAll('.staxx-fieldrow');
     for (var i = 0; i < rows.length; i++) {
@@ -4330,6 +5258,33 @@
     // so beats writing quietly nowhere: that is exactly how a box can look
     // live while every edit to it is silently dropped (PLAN_14.md).
     if (!f) { setYamlStatus('This box lost track of its place in the file — reopen the stack to fix it.'); return; }
+
+    // Captured before anything is written, for PLAN_70 stage 4's automatic
+    // propagation (§11.3) at the foot of this function — the value this box
+    // held a moment ago is what a CONFIRMED secret link's other side is
+    // checked against (section 6's drift refusal), so it has to be read
+    // now, not after the write below has already moved it on.
+    var propEp = (el.dataset.part === 'value' && f.target !== undefined && f.parts && f.parts.value)
+      ? { service: f.service, environment: f.target } : null;
+    var propOld = propEp ? f.parts.value.value : null;
+
+    // Worked out here too, before anything is written, purely so the SIZE
+    // of the coming edit is known before it starts — specifically, whether
+    // pushUndo() has to be called below at all. Confirming a link IS the
+    // permission for its partner to be written automatically (§11.3), but
+    // an Undo that put back only one side of that pair would silently break
+    // the very thing it exists to keep together, so when a partner write is
+    // coming, both it and this box's own write have to sit inside ONE undo
+    // snapshot, taken before either one lands. `drifted` items are never
+    // written (condition 5) but still have to be announced (§11.5), so they
+    // are kept separate rather than dropped here.
+    var propPlan = propEp ? computePropagationOffer(propEp, propOld, el.value) : null;
+    var toPropagate = [], drifted = [], pointers = [];
+    if (propPlan) {
+      propPlan.items.forEach(function (it) {
+        (it.pointer ? pointers : it.drift ? drifted : toPropagate).push(it);
+      });
+    }
 
     // A declared network's own name box (data-rename, set in fieldHtml's
     // declared/networks branch) never reaches YAML.setPart below — that
@@ -4445,6 +5400,17 @@
       }
       done = YAML.setPart(MODEL.doc, afterDecl, fAgain.id, el.dataset.part, el.value);
     } else {
+      // §11.3: pushed here, before this box's own write, whenever a
+      // partner write is about to follow it — see the comment above
+      // toPropagate/drifted for why this has to be the ONE snapshot both
+      // writes share. Every other branch above (rename, mode switches, the
+      // note box, the declare-and-join branch) never has a propEp, so
+      // toPropagate is always empty there and this never fires twice.
+      if (toPropagate.length) {
+        pushUndo(toPropagate.length === 1
+          ? 'updating "' + toPropagate[0].other.service + '"’s "' + otherName(toPropagate[0].other) + '" to match'
+          : 'updating ' + toPropagate.length + ' linked settings to match');
+      }
       done = YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, el.value);
     }
 
@@ -4455,16 +5421,58 @@
       // is untouched, so the honest thing is "try again" — telling somebody to
       // go and hand-edit YAML because of our bug sends them somewhere they
       // never needed to go.
+      if (toPropagate.length) { undoStack.pop(); updateUndo(); }   // nothing landed — the snapshot above goes with it
       setYamlStatus(MODEL.doc.staleWrite
         ? 'That edit was not made — the file moved underneath it. Try it again.'
         : 'That value cannot be written as it stands — edit this one in the Compose view.');
       return;
     }
 
-    setYamlStatus('');
+    // §11.3/§11.5: write every confirmed partner immediately, through the
+    // same YAML.setValue() a typed edit itself uses (condition 6), and
+    // report every outcome — a write, a refusal, or a partner that has gone
+    // — on the status line, since collapsing the old offer into an
+    // automatic write also removed the one place that used to say so.
+    // MODEL is used as-is, not rebuilt: writeScalar() (compose-model.js)
+    // replaces text on one line without changing the line count, so every
+    // OTHER field's own line and column — including these partners', on
+    // their own separate lines — are still exactly where MODEL already says.
+    var propMsgs = [];
+    toPropagate.forEach(function (it) {
+      var pf = YAML.fieldForEndpoint(MODEL, it.other);
+      if (!pf) {
+        propMsgs.push('"' + it.other.service + '"’s "' + otherName(it.other) + '" is no longer in this file, so it was not updated.');
+        return;
+      }
+      if (!YAML.setValue(MODEL.doc, MODEL, pf.id, el.value)) {
+        propMsgs.push('"' + it.other.service + '"’s "' + otherName(it.other) + '" could not be updated — edit it in the Compose view.');
+        return;
+      }
+      // The file now says the new value, but the partner's own box on
+      // screen still shows the old one — nothing rebuilds the form here
+      // (see the note above about MODEL being used as-is), so the box has
+      // to be written by hand. Skipped, the status line claimed a change
+      // the person could see had not happened, which reads as the link
+      // being broken rather than honoured.
+      var pIdx = MODEL.fields.indexOf(pf);
+      var pRow = pIdx < 0 ? null : formHost.querySelector('.staxx-fieldrow[data-row="' + pIdx + '"]');
+      var pBox = pRow ? pRow.querySelector('[data-part="value"]') : null;
+      if (pBox && pBox !== el) pBox.value = el.value;
+      propMsgs.push('Updated "' + it.other.service + '"’s "' + otherName(it.other) + '" to match.');
+    });
+    drifted.forEach(function (it) { propMsgs.push(propagationDriftMessage(it)); });
+    pointers.forEach(function (it) { propMsgs.push(propagationPointerMessage(it)); });
+
+    setYamlStatus(propMsgs.join('  '));
     yamlPane.value = YAML.serialise(MODEL.doc);   // assigning .value fires no
     paintGutter();                                // input event, so this cannot
     paintInk();                                   // loop back round
+    // Same gate propEp above already computed — a plain setting/environment
+    // value box, never a bind-mount path — reused rather than re-derived
+    // (PLAN_70 stage 5). Debounced on its own 800ms timer; see the section
+    // comment above scheduleCrossLinkCheck() for exactly what has to be true
+    // of the typed value before this asks the server anything at all.
+    if (propEp) scheduleCrossLinkCheck(f, el.value);
     refreshRanges();
   }
 
@@ -4965,6 +5973,33 @@
 
   formHost.addEventListener('click', function (event) {
     if (sanitised || !MODEL) return;
+
+    // "These are linked" / "Not related" beside an unconfirmed connection's
+    // own sentence, or "Break link" inside a confirmed one's popover (PLAN_70
+    // stage 3, §11.4) — commitLinkState() owns the write and the redraw,
+    // shared with the top note's own buttons (linkBtnClick above, attached
+    // to linkNote directly since it sits outside formHost).
+    if (linkBtnClick(event)) return;
+
+    // The chain mark itself (§11.4) — opens/closes its own popover. Purely a
+    // display toggle, like the ⓘ button below: nothing here is written, so
+    // there is nothing to reparse.
+    var markBtn = event.target.closest('[data-linkmark]');
+    if (markBtn) {
+      event.stopPropagation();   // else the document click-outside listener
+                                  // below sees this same click and closes
+                                  // what was just opened
+      var pop = markBtn.parentElement && markBtn.parentElement.querySelector('.staxx-linkpop');
+      var willOpen = !!(pop && pop.hidden);
+      closeAllLinkPops();
+      if (willOpen) { pop.hidden = false; markBtn.setAttribute('aria-expanded', 'true'); }
+      return;
+    }
+
+    // "Fill these in" / picking one of several candidates (PLAN_70 stage 5)
+    // — crossBtnClick() owns the write and the redraw, the same shape as
+    // linkBtnClick() just above.
+    if (crossBtnClick(event)) return;
 
     // The ⓘ beside a field's label or a group's heading. Purely a display
     // toggle — the sentence is already in the markup, hidden — so there is
@@ -5824,6 +6859,7 @@
 
   function openOutline() {
     if (!outlineBtn || !outlinePanel) return;
+    closePwgen();   // two popups on the same toolbar row must not both be open
     outlinePanel.innerHTML = outlineHtml();
     outlinePanel.hidden = false;
     outlineBtn.setAttribute('aria-expanded', 'true');
@@ -5879,6 +6915,687 @@
     event.preventDefault();
     closeOutline();
     outlineBtn.focus();
+  });
+
+  // A confirmed link's popover (§11.4) — same click-outside/Escape pattern
+  // as the outline and password panels just above, adapted for there being
+  // many of these at once rather than one shared panel: closing "all" is
+  // still correct, since at most one is ever meaningfully open (opening one
+  // above already closes the others), and it costs nothing to be thorough.
+  function closeAllLinkPops() {
+    var pops = formHost.querySelectorAll('.staxx-linkpop:not([hidden])');
+    for (var i = 0; i < pops.length; i++) pops[i].hidden = true;
+    var marks = formHost.querySelectorAll('[data-linkmark][aria-expanded="true"]');
+    for (var j = 0; j < marks.length; j++) marks[j].setAttribute('aria-expanded', 'false');
+  }
+  function anyLinkPopOpen() {
+    return !!formHost.querySelector('.staxx-linkpop:not([hidden])');
+  }
+  document.addEventListener('click', function (event) {
+    if (!modal.open || !anyLinkPopOpen()) return;
+    if (event.target.closest('.staxx-linkmarkwrap')) return;
+    closeAllLinkPops();
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape' || !modal.open || !anyLinkPopOpen()) return;
+    event.preventDefault();
+    closeAllLinkPops();
+  });
+
+  /* ---- Password generator (PLAN_74 Part A) ------------------------------
+   *
+   * One tool in the toolbar, not a button per box (Adrian rejected the
+   * latter: clutter, and a button on a box that did not want one invites a
+   * mistake). Opening, closing and the two-popups-share-a-row rule all
+   * mirror the outline panel above; only the target-tracking, generation and
+   * Fill machinery below are new.
+   *
+   * Generation is entirely local — crypto.getRandomValues(), no library, no
+   * round trip. A round trip per Regenerate would make the tool feel broken,
+   * and randomness is the one part of this that needs nothing installed.
+   */
+
+  // The box that had focus before the panel opened — set by the focusin
+  // listener below, re-validated by pwgenTargetEl() every time it matters
+  // rather than trusted as-is, because a form redraw replaces every box
+  // wholesale and leaves this pointing at a detached node.
+  var pwgenTarget = null;
+
+  // The settings this panel was opened with, snapshotted once the loaded
+  // values have been painted into the controls — diffed against on close so
+  // a save only fires when something actually changed (see pwgenSaveIfChanged).
+  var pwgenSettings      = null;
+  var pwgenSettingsAtOpen = null;
+
+  // The word list, fetched once and cached as a Promise so a second call
+  // while the first is still in flight gets the same request rather than a
+  // duplicate one. Reset to null on failure so a later attempt (reopening
+  // the panel, switching back to word mode) tries the fetch again.
+  var pwgenWordsPromise = null;
+
+  var PWGEN_DEFAULTS = {
+    mode: 'chars', length: '20', upper: 'true', digits: 'true', punct: 'true',
+    words: '5', sep: '-'
+  };
+
+  function pwgenOpen() {
+    return !!(pwgenPanel && !pwgenPanel.hidden);
+  }
+
+  function setPwgenNote(text) {
+    if (pwgenNote) pwgenNote.textContent = text;
+  }
+
+  // Whatever is in the target box right now, named in plain words. The DOM
+  // is asked directly for the row's own label rather than reading it back
+  // off MODEL, and only the label's own leading text node — the help button
+  // helpBtnHtml() may add sits inside the same span and would otherwise run
+  // straight into this text.
+  function pwgenTargetLabel(el) {
+    if (!el) return '';
+    var row = el.closest('.staxx-fieldrow');
+    if (!row) return 'the box you last clicked';
+
+    var label = row.querySelector('.staxx-fieldlabel');
+    var text = (label && label.firstChild && label.firstChild.nodeType === 3)
+      ? label.firstChild.textContent.trim() : '';
+
+    // A variable, label or other paired row has no fixed label to read: its
+    // name is itself an editable box beside the value. That is exactly the
+    // row a password most often goes into, so falling through to "the box
+    // you last clicked" left the overwrite prompt unable to name the one
+    // thing it is asking about.
+    if (!text) {
+      var nameBox = row.querySelector('[data-part="name"]');
+      if (nameBox && nameBox !== el) text = String(nameBox.value || '').trim();
+    }
+
+    return text ? '"' + text + '"' : 'the box you last clicked';
+  }
+
+  // The remembered target, re-checked before every use: a redraw of the form
+  // (a structural edit, a reparse) replaces every box wholesale, so a stale
+  // reference has to be dropped rather than written to.
+  function pwgenTargetEl() {
+    if (!pwgenTarget) return null;
+    if (!document.contains(pwgenTarget) || !formHost.contains(pwgenTarget)) {
+      pwgenTarget = null;
+      return null;
+    }
+    return pwgenTarget;
+  }
+
+  formHost.addEventListener('focusin', function (event) {
+    var el = event.target;
+    if (!el.dataset || el.dataset.row === undefined) return;
+    pwgenTarget = el;
+    if (pwgenOpen()) updatePwgenAvailability();
+  });
+
+  // Fill is turned off, with a plain sentence saying why, in every case
+  // where writing to the file is not currently possible — but the panel
+  // itself and Copy stay available throughout, including while Sanitise is
+  // on: Sanitise hides values already IN the file, and a password that does
+  // not exist yet is not one of those.
+  // The hash's own Fill button obeys the same rules as the password's — the
+  // target box and the reasons writing to it might be turned off are shared
+  // by both, so this sets them together rather than duplicating every branch
+  // below for a second button.
+  // The hash's own Fill has a second condition the password's does not: there
+  // has to be a hash. Until one has been made its box is empty, and a button
+  // that looks ready but does nothing when pressed reads as broken.
+  function pwgenSetFillDisabled(disabled) {
+    if (pwgenFill) pwgenFill.disabled = disabled;
+    if (pwgenHashFill) {
+      var haveHash = !!(pwgenHashValue && pwgenHashValue.value);
+      pwgenHashFill.disabled = disabled || !haveHash;
+    }
+  }
+
+  function updatePwgenAvailability() {
+    if (!pwgenFill) return;
+
+    if (fileOpen !== null) {
+      pwgenSetFillDisabled(true);
+      setPwgenNote('A companion file is open — switch back to the compose file to fill a box.');
+      return;
+    }
+    if (!MODEL || !MODEL.ok) {
+      pwgenSetFillDisabled(true);
+      setPwgenNote('This file could not be read, so there is nowhere to fill.');
+      return;
+    }
+    if (sanitised) {
+      pwgenSetFillDisabled(true);
+      setPwgenNote('Sanitise is on, so writing to the file is turned off. Turn it off to fill a box.');
+      return;
+    }
+    var el = pwgenTargetEl();
+    if (!el) {
+      pwgenSetFillDisabled(true);
+      setPwgenNote('Click into the box you want filled, then press Fill.');
+      return;
+    }
+    pwgenSetFillDisabled(false);
+    setPwgenNote('Fill will put the value in ' + pwgenTargetLabel(el) + '.');
+  }
+
+  function pwgenModeChanged() {
+    var words = !!(pwgenModeWords && pwgenModeWords.checked);
+    if (pwgenCharsGroup) pwgenCharsGroup.hidden = words;
+    if (pwgenWordsGroup) pwgenWordsGroup.hidden = !words;
+  }
+
+  function clampInt(input, min, max, fallback) {
+    var n = input ? parseInt(input.value, 10) : NaN;
+    if (isNaN(n)) n = fallback;
+    return Math.min(max, Math.max(min, n));
+  }
+
+  // An index below n with no modulo bias: `% n` on a raw 32-bit draw favours
+  // the low end of the range whenever n does not divide 2^32 evenly, which
+  // would quietly weaken every password this produces. Reject-and-redraw
+  // instead — the whole reason this feature exists is to get randomness
+  // right, so this is the one corner not to cut.
+  function randomIndex(n) {
+    var buf = new Uint32Array(1);
+    var max = Math.floor(0xFFFFFFFF / n) * n;
+    var v;
+    do {
+      crypto.getRandomValues(buf);
+      v = buf[0];
+    } while (v >= max);
+    return v % n;
+  }
+
+  function pwgenShuffle(arr) {
+    for (var i = arr.length - 1; i > 0; i--) {
+      var j = randomIndex(i + 1);
+      var t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    }
+    return arr;
+  }
+
+  var PWGEN_LOWER  = 'abcdefghijklmnopqrstuvwxyz';
+  var PWGEN_UPPER  = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  var PWGEN_DIGIT  = '0123456789';
+  // $ is deliberately absent: Compose interpolates it inside a value, so a
+  // password holding one is either silently mangled or has to be written as
+  // $$ — a wrong-password failure with no error to point at it. Quotes, a
+  // backslash and a backtick are left out too, for the trouble they cause in
+  // a shell and in the settings file.
+  var PWGEN_PUNCT  = '!#%&*+,-.:;=?@^_~';
+
+  function pwgenCharsValue(length, upper, digits, punct) {
+    var pool = PWGEN_LOWER;
+    var required = [];
+    if (upper)  { pool += PWGEN_UPPER; required.push(PWGEN_UPPER); }
+    if (digits) { pool += PWGEN_DIGIT; required.push(PWGEN_DIGIT); }
+    if (punct)  { pool += PWGEN_PUNCT; required.push(PWGEN_PUNCT); }
+
+    // One guaranteed character from each ticked class first — otherwise a
+    // password missing a class the person asked for reads as this tool being
+    // broken, since it then fails the application's own password rules.
+    var chars = required.map(function (set) { return set.charAt(randomIndex(set.length)); });
+    while (chars.length < length) chars.push(pool.charAt(randomIndex(pool.length)));
+
+    return { value: pwgenShuffle(chars).join(''), poolSize: pool.length };
+  }
+
+  function pwgenWordsValue(words, count, sep) {
+    var picked = [];
+    for (var i = 0; i < count; i++) picked.push(words[randomIndex(words.length)]);
+    return picked.join(sep);
+  }
+
+  function pwgenStrengthText(bits) {
+    bits = Math.floor(bits);
+    var band = bits < 50 ? 'weak' : bits < 70 ? 'reasonable' : bits < 100 ? 'strong' : 'very strong';
+    return bits + ' bits — ' + band;
+  }
+
+  // Fetched lazily, the first time word mode is actually used, from the
+  // plugin's own data file — not shipped in a page data attribute, since the
+  // list is far too big to send on every page load for a tool used rarely.
+  function pwgenLoadWords() {
+    var first = !pwgenWordsPromise;
+    if (first) setPwgenNote('Loading the word list…');
+    if (!pwgenWordsPromise) {
+      pwgenWordsPromise = fetch('/plugins/staxx/data/words.json')
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var words = data && Array.isArray(data.words) ? data.words : null;
+          if (!words || words.length < 2) throw new Error('empty word list');
+          return words;
+        })
+        .catch(function (err) { pwgenWordsPromise = null; throw err; });
+    }
+    return pwgenWordsPromise;
+  }
+
+  function pwgenGenerate() {
+    if (!pwgenValue) return;
+
+    if (pwgenModeWords && pwgenModeWords.checked) {
+      pwgenLoadWords().then(function (words) {
+        var count = clampInt(pwgenCount, 3, 12, 5);
+        var sep = pwgenSep ? pwgenSep.value.slice(0, 3) : '-';
+        pwgenValue.value = pwgenWordsValue(words, count, sep);
+        // The separator adds nothing to the guesswork, so it is not counted.
+        if (pwgenStrength) pwgenStrength.textContent = pwgenStrengthText(count * Math.log2(words.length));
+        updatePwgenAvailability();
+        updatePwgenHashBtn();
+      }, function () {
+        pwgenValue.value = '';
+        if (pwgenStrength) pwgenStrength.textContent = '';
+        if (pwgenFill) pwgenFill.disabled = true;
+        updatePwgenHashBtn();
+        setPwgenNote('The word list could not be read — character mode still works.');
+      });
+      return;
+    }
+
+    var length = clampInt(pwgenLength, 8, 128, 20);
+    var upper  = !!(pwgenUpper  && pwgenUpper.checked);
+    var digits = !!(pwgenDigits && pwgenDigits.checked);
+    var punct  = !!(pwgenPunct  && pwgenPunct.checked);
+    var made = pwgenCharsValue(length, upper, digits, punct);
+    pwgenValue.value = made.value;
+    if (pwgenStrength) pwgenStrength.textContent = pwgenStrengthText(length * Math.log2(made.poolSize));
+    updatePwgenAvailability();
+    updatePwgenHashBtn();
+  }
+
+  // The seven PWGEN_ keys as this panel's own controls currently hold them —
+  // used both to paint a freshly-loaded settings object into the controls
+  // and, in reverse, to read them back off for saving.
+  function pwgenSettingsFrom(raw) {
+    raw = raw || {};
+    return {
+      PWGEN_MODE:   raw.PWGEN_MODE   || PWGEN_DEFAULTS.mode,
+      PWGEN_LENGTH: raw.PWGEN_LENGTH || PWGEN_DEFAULTS.length,
+      PWGEN_UPPER:  raw.PWGEN_UPPER  !== undefined ? raw.PWGEN_UPPER  : PWGEN_DEFAULTS.upper,
+      PWGEN_DIGITS: raw.PWGEN_DIGITS !== undefined ? raw.PWGEN_DIGITS : PWGEN_DEFAULTS.digits,
+      PWGEN_PUNCT:  raw.PWGEN_PUNCT  !== undefined ? raw.PWGEN_PUNCT  : PWGEN_DEFAULTS.punct,
+      PWGEN_WORDS:  raw.PWGEN_WORDS  || PWGEN_DEFAULTS.words,
+      PWGEN_SEP:    raw.PWGEN_SEP    !== undefined ? raw.PWGEN_SEP    : PWGEN_DEFAULTS.sep
+    };
+  }
+
+  function pwgenApplySettingsToControls() {
+    var s = pwgenSettings || pwgenSettingsFrom(null);
+    if (pwgenModeChars) pwgenModeChars.checked = s.PWGEN_MODE !== 'words';
+    if (pwgenModeWords) pwgenModeWords.checked = s.PWGEN_MODE === 'words';
+    if (pwgenLength) pwgenLength.value = s.PWGEN_LENGTH;
+    if (pwgenUpper)  pwgenUpper.checked  = s.PWGEN_UPPER  === 'true';
+    if (pwgenDigits) pwgenDigits.checked = s.PWGEN_DIGITS === 'true';
+    if (pwgenPunct)  pwgenPunct.checked  = s.PWGEN_PUNCT  === 'true';
+    if (pwgenCount)  pwgenCount.value = s.PWGEN_WORDS;
+    if (pwgenSep)    pwgenSep.value = s.PWGEN_SEP;
+    pwgenModeChanged();
+  }
+
+  function pwgenCurrentSettings() {
+    return {
+      PWGEN_MODE:   (pwgenModeWords && pwgenModeWords.checked) ? 'words' : 'chars',
+      PWGEN_LENGTH: String(clampInt(pwgenLength, 8, 128, 20)),
+      PWGEN_UPPER:  (pwgenUpper  && pwgenUpper.checked)  ? 'true' : 'false',
+      PWGEN_DIGITS: (pwgenDigits && pwgenDigits.checked) ? 'true' : 'false',
+      PWGEN_PUNCT:  (pwgenPunct  && pwgenPunct.checked)  ? 'true' : 'false',
+      PWGEN_WORDS:  String(clampInt(pwgenCount, 3, 12, 5)),
+      PWGEN_SEP:    pwgenSep ? pwgenSep.value.slice(0, 3) : '-'
+    };
+  }
+
+  // Reuses whatever the settings panel already read this session
+  // (settingsOpenValues, declared with the rest of Settings further down)
+  // rather than a second fetch, and only asks the server itself the first
+  // time this panel is opened before Settings ever has been.
+  function pwgenEnsureSettings(then) {
+    if (pwgenSettings) { then(); return; }
+    if (settingsOpenValues) { pwgenSettings = pwgenSettingsFrom(settingsOpenValues); then(); return; }
+    call('settings', {}).then(function (res) {
+      pwgenSettings = pwgenSettingsFrom(res.ok ? res.settings : null);
+      then();
+    });
+  }
+
+  // Fire-and-forget, and only when the panel closes with something actually
+  // changed from what it opened with: settings-save runs the apply-settings
+  // script on the server, which can take a couple of seconds and touches
+  // Docker — not a cost worth paying on every keystroke or every Regenerate.
+  function pwgenSaveIfChanged() {
+    if (!pwgenSettingsAtOpen) return;
+    var now = pwgenCurrentSettings();
+    var was = pwgenSettingsAtOpen;
+    pwgenSettingsAtOpen = null;
+    var changed = Object.keys(now).some(function (k) { return now[k] !== was[k]; });
+    if (!changed) return;
+    call('settings-save', now);
+    pwgenSettings = now;   // keep the in-page cache in step with what was just saved
+  }
+
+  /* ---- Hashing, via the StaXXCrypt container (PLAN_74 Part A piece 4) ---
+   *
+   * The password half above is entirely local; this half is not — a hash
+   * is made by the StaXXCrypt container, so it needs a round trip. That
+   * round trip is fetched lazily (first time this panel opens, never on
+   * page load) and cached, so the generator itself never waits on it: the
+   * cache starts null, the panel opens and works immediately, and this
+   * fills in underneath once the reply arrives.
+   */
+
+  var cryptState        = null;   // last known crypt-state reply, or null before the first fetch
+  var cryptStatePromise = null;   // in-flight fetch, so a second call while one is running joins it
+
+  function cryptFetchState(force) {
+    if (force) { cryptState = null; cryptStatePromise = null; }
+    if (cryptState) return Promise.resolve(cryptState);
+    if (!cryptStatePromise) {
+      cryptStatePromise = call('crypt-state', {}).then(function (res) {
+        cryptState = (res && res.ok && res.state) ? res.state : null;
+        cryptStatePromise = null;
+        return cryptState;
+      }, function () {
+        cryptStatePromise = null;
+        return null;
+      });
+    }
+    return cryptStatePromise;
+  }
+
+  function setPwgenHashNote(text) {
+    if (pwgenHashNote) pwgenHashNote.textContent = text;
+  }
+
+  // Used only for the build/recreate offer, which needs a button inside the
+  // sentence rather than plain text.
+  function setPwgenHashNoteHtml(html) {
+    if (pwgenHashNote) pwgenHashNote.innerHTML = html;
+  }
+
+  function pwgenHashReady() {
+    return !!(cryptState && cryptState.built && cryptState.container !== 'missing');
+  }
+
+  // The Hash button needs both the container ready and a password already
+  // in the box to hash — called after every regeneration as well as every
+  // state refresh, so it never goes stale in either direction.
+  function updatePwgenHashBtn() {
+    if (pwgenHashBtn) pwgenHashBtn.disabled = !pwgenHashReady() || !(pwgenValue && pwgenValue.value);
+  }
+
+  // Only ever built from what the container itself proved, never a
+  // hard-coded list: a hash that is well-formed but in the wrong variant
+  // fails as a silent login failure later, which is the worst failure this
+  // feature has, so nothing is offered here on a guess.
+  function renderPwgenFormats() {
+    if (!pwgenFormat) return;
+    var have = (cryptState && Array.isArray(cryptState.formats)) ? cryptState.formats : [];
+    var ok = have.filter(function (f) { return f && f.id && f.ok === true; });
+    var was = pwgenFormat.value;
+    // A format whose check was the weaker kind says so here too, not only in
+    // Settings — this dropdown is where the choice is actually made, and a
+    // caveat somebody has to go looking for is a caveat nobody reads.
+    pwgenFormat.innerHTML = ok.map(function (f) {
+      var label = (f.label || f.id) + (f.weak ? ' (lighter check)' : '');
+      return '<option value="' + esc(f.id) + '">' + esc(label) + '</option>';
+    }).join('');
+    if (ok.some(function (f) { return f.id === was; })) pwgenFormat.value = was;
+  }
+
+  // The offer to build or recreate the container. Never fired on its own —
+  // only this button starts a build — and worded differently for "never
+  // built" against "built but the container itself was removed by hand",
+  // since the second must not read as StaXX quietly putting it back.
+  function pwgenHashBuildOffer() {
+    var already = !!(cryptState && cryptState.built);
+    var sentence = already
+      ? 'StaXXCrypt, the container StaXX hashes with, was removed. Recreating it fetches the same ' +
+        'base image and packages again — nothing else about your stacks is touched.'
+      : 'Hashing is done by StaXXCrypt, a small container StaXX builds on this server. ' +
+        'Building it fetches a base image and a few packages; the password generator above keeps ' +
+        'working either way.';
+    setPwgenHashNoteHtml('<p>' + sentence + '</p>' +
+      '<button type="button" class="staxx-link-btn" id="staxx-pwgen-hash-build">' +
+      (already ? 'Recreate it…' : 'Build it…') + '</button>');
+  }
+
+  function renderPwgenHash() {
+    if (!pwgenHashWrap) return;
+    renderPwgenFormats();
+    var ready = pwgenHashReady();
+    if (pwgenFormat)  pwgenFormat.disabled  = !ready;
+    updatePwgenHashBtn();
+    if (pwgenHashCopy) pwgenHashCopy.disabled = !(pwgenHashValue && pwgenHashValue.value);
+    updatePwgenAvailability();   // keeps the hash Fill button in step with the password's own rules
+
+    if (!cryptState) { setPwgenHashNote('Checking whether hashing is set up…'); return; }
+    if (!ready) { pwgenHashBuildOffer(); return; }
+    setPwgenHashNote('Choose a format and press Hash.');
+  }
+
+  if (pwgenHashWrap) {
+    pwgenHashWrap.addEventListener('click', function (event) {
+      var btn = event.target.closest('#staxx-pwgen-hash-build');
+      if (!btn) return;
+      btn.disabled = true;
+      setPwgenHashNote('Building… this fetches a base image and installs packages, and can take a ' +
+        'minute or two.');
+      call('crypt-build', {}).then(function (res) {
+        if (!res || !res.ok || !res.job) {
+          setPwgenHashNote((res && res.error) || 'Could not start the build.');
+          return;
+        }
+        track(res.job, {
+          done: function (job) {
+            var failed = job.exit !== 0 && job.exit !== null;
+            cryptFetchState(true).then(function () {
+              renderPwgenHash();
+              renderCryptSettings();
+              if (failed) setPwgenHashNote('The build failed — open Settings for the full log.');
+            });
+          }
+        });
+      });
+    });
+  }
+
+  if (pwgenFormat) {
+    pwgenFormat.addEventListener('change', updatePwgenHashBtn);
+  }
+
+  if (pwgenHashBtn) {
+    pwgenHashBtn.addEventListener('click', function () {
+      if (pwgenHashBtn.disabled) return;
+      var password = pwgenValue ? pwgenValue.value : '';
+      var format = pwgenFormat ? pwgenFormat.value : '';
+      if (!password || !format) return;
+
+      pwgenHashBtn.disabled = true;
+      if (pwgenHashValue) pwgenHashValue.value = '';
+      if (pwgenHashCopy) pwgenHashCopy.disabled = true;
+      // The previous hash has just been cleared, so neither Copy nor Fill has
+      // anything to act on until the reply lands.
+      updatePwgenAvailability();
+      // On demand, the container has to start and stop for this one request,
+      // so a second or two is normal — said here, where the wait actually
+      // happens, rather than left for the person to wonder about.
+      setPwgenHashNote(cryptState && cryptState.mode === 'always'
+        ? 'Hashing…'
+        : 'Hashing… StaXXCrypt has to start and stop, so a couple of seconds is normal.');
+
+      call('crypt-hash', { password: password, format: format }).then(function (res) {
+        updatePwgenHashBtn();
+        if (!res || !res.ok) {
+          if (res && res.needsBuild) {
+            cryptFetchState(true).then(function () { renderPwgenHash(); renderCryptSettings(); });
+            return;
+          }
+          setPwgenHashNote((res && res.error) || 'Could not make a hash.');
+          return;
+        }
+        if (pwgenHashValue) pwgenHashValue.value = res.hash;
+        if (pwgenHashCopy) pwgenHashCopy.disabled = false;
+        updatePwgenAvailability();
+        setPwgenHashNote('Done.');
+      });
+    });
+  }
+
+  if (pwgenHashCopy) {
+    pwgenHashCopy.addEventListener('click', function () { pwgenDoCopy(pwgenHashValue, setPwgenHashNote); });
+  }
+
+  if (pwgenHashFill) {
+    pwgenHashFill.addEventListener('click', function () {
+      if (pwgenHashFill.disabled) return;
+      pwgenPerformFill(pwgenHashValue ? pwgenHashValue.value : '');
+    });
+  }
+
+  function openPwgen() {
+    if (!pwgenBtn || !pwgenPanel) return;
+    closeOutline();   // two popups on the same toolbar row must not both be open
+    pwgenPanel.hidden = false;
+    pwgenBtn.setAttribute('aria-expanded', 'true');
+    updatePwgenAvailability();
+    pwgenEnsureSettings(function () {
+      pwgenApplySettingsToControls();
+      pwgenSettingsAtOpen = pwgenCurrentSettings();
+      pwgenGenerate();
+    });
+    // Fetches only the first time this panel is ever opened (cryptState
+    // starts null and stays cached after) — the panel above is unaffected
+    // either way, which is the whole point of keeping this separate.
+    cryptFetchState().then(renderPwgenHash);
+    renderPwgenHash();   // paint whatever is already cached immediately, do not wait on the fetch
+  }
+
+  function closePwgen() {
+    if (!pwgenOpen()) return;
+    pwgenPanel.hidden = true;
+    if (pwgenBtn) pwgenBtn.setAttribute('aria-expanded', 'false');
+    // Cleared here, not just left to go stale: a generated value must never
+    // sit anywhere but the field and this box, and the box is about to go
+    // off screen. The hash is the same value one step removed, so it gets
+    // the same treatment.
+    if (pwgenValue) pwgenValue.value = '';
+    if (pwgenHashValue) pwgenHashValue.value = '';
+    pwgenSaveIfChanged();
+  }
+
+  if (pwgenBtn) {
+    pwgenBtn.addEventListener('click', function (event) {
+      // Stopped here, same reasoning the Outline button gives for its own
+      // click: left to bubble, the document-level "click outside" listener
+      // below would see this same click and close what it just opened.
+      event.stopPropagation();
+      if (pwgenOpen()) closePwgen(); else openPwgen();
+    });
+  }
+
+  if (pwgenModeChars) pwgenModeChars.addEventListener('change', function () { pwgenModeChanged(); pwgenGenerate(); });
+  if (pwgenModeWords) pwgenModeWords.addEventListener('change', function () { pwgenModeChanged(); pwgenGenerate(); });
+  if (pwgenRegen) pwgenRegen.addEventListener('click', pwgenGenerate);
+
+  // One delegated listener for every control that should produce a fresh
+  // value as soon as it changes, rather than five near-identical ones.
+  if (pwgenPanel) {
+    pwgenPanel.addEventListener('input', function (event) {
+      var id = event.target.id;
+      if (id === 'staxx-pwgen-length' || id === 'staxx-pwgen-count' || id === 'staxx-pwgen-sep') pwgenGenerate();
+    });
+    pwgenPanel.addEventListener('change', function (event) {
+      var id = event.target.id;
+      if (id === 'staxx-pwgen-upper' || id === 'staxx-pwgen-digits' || id === 'staxx-pwgen-punct') pwgenGenerate();
+    });
+  }
+
+  // Shared by the password's own Copy and the hash's — same clipboard
+  // dance, only the source box and where the status line goes differ.
+  function pwgenDoCopy(input, sayFn) {
+    var val = input ? input.value : '';
+    if (!val) return;
+    var said = function (ok) {
+      sayFn(ok ? 'Copied to the clipboard.' : 'Could not copy — select the value and copy it by hand.');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(val).then(function () { said(true); }, function () { said(false); });
+    } else {
+      // A browser with no Clipboard API — select what is already on screen
+      // and fall back to the old copy command.
+      input.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      said(ok);
+    }
+  }
+
+  if (pwgenCopy) {
+    pwgenCopy.addEventListener('click', function () { pwgenDoCopy(pwgenValue, setPwgenNote); });
+  }
+
+  // Shared by the password's own Fill and the hash's — both write to
+  // whatever box last had focus, through the same overwrite question and
+  // the same ordinary field-writing path, and differ only in which value
+  // they are filling in.
+  function pwgenPerformFill(val) {
+    var el = pwgenTargetEl();
+    if (!el || !val) return;
+
+    flushPending();   // whatever the target box was mid-typing goes in first
+    // Re-read after the flush, never before it: a commit that turns out to
+    // be structural redraws the whole form, and the box read a moment ago
+    // is then a detached node that accepts a write and loses it.
+    el = pwgenTargetEl();
+    if (!el) { updatePwgenAvailability(); return; }
+
+    function doFill() {
+      el.value = val;
+      commit(el);       // the ordinary field-writing path — history, undo and reparse all come from here
+      el.focus();
+      closePwgen();
+    }
+
+    var was = String(el.value || '').trim();
+    if (!was) { doFill(); return; }
+
+    // Somebody's working password (or hash) quietly replaced is a broken
+    // application and a lost credential, so this asks first and names what
+    // is there now rather than describing it vaguely.
+    if (!confirmModal) {
+      if (window.confirm('"' + pwgenTargetLabel(el) + '" already holds "' + was + '". Replace it?')) doFill();
+      return;
+    }
+    askConfirm({
+      title: 'Replace the value in ' + pwgenTargetLabel(el) + '?',
+      bodyHtml: '<p>It already holds <code>' + esc(was) + '</code>.</p>',
+      goLabel: 'Replace'
+    }).then(function (go) { if (go) doFill(); });
+  }
+
+  if (pwgenFill) {
+    pwgenFill.addEventListener('click', function () {
+      if (pwgenFill.disabled) return;
+      pwgenPerformFill(pwgenValue ? pwgenValue.value : '');
+    });
+  }
+
+  document.addEventListener('click', function (event) {
+    if (!modal.open || !pwgenOpen()) return;
+    if (event.target.closest('.staxx-pwgenwrap')) return;
+    closePwgen();
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape' || !modal.open || !pwgenOpen()) return;
+    // preventDefault here, not left to the dialog's own Escape-closes-me
+    // action, is the same trick the outline panel's own Escape handler
+    // relies on — it is what keeps this closing only the password panel
+    // rather than the whole editor.
+    event.preventDefault();
+    closePwgen();
+    pwgenBtn.focus();
   });
 
   undoBtn.addEventListener('click', function () {
@@ -5971,6 +7688,9 @@
     repaintMoved();
     // A clashing port or path (PLAN_65) — same layer again.
     repaintClash();
+    // A detected connection (PLAN_70 stage 2) — same layer again, drawn
+    // last of all so it shows through a clash mark it happens to sit under.
+    repaintLink();
     updateMissingPaths();
     updateInUsePaths();
   }
@@ -6430,6 +8150,42 @@
     return null;
   }
 
+  // A connection's own underline (PLAN_70 stage 2) — same layer and
+  // geometry as repaintClash() just above, keyed off linkSpots instead.
+  function repaintLink() {
+    if (!linkSpots.length) return;
+
+    var markLeft = parseFloat(yamlMarks.style.left) || 0;
+    var leftBase = textLeft() - markLeft;
+
+    var top = yamlPane.scrollTop, viewH = yamlPane.clientHeight;
+    var firstLine = Math.floor((top - PAD_T) / LINE_H) - 2;
+    var lastLine  = Math.ceil((top + viewH - PAD_T) / LINE_H) + 2;
+
+    for (var i = 0; i < linkSpots.length; i++) {
+      var m = linkSpots[i];
+      if (m.line < firstLine || m.line > lastLine) continue;
+
+      var box = document.createElement('div');
+      box.className = 'staxx-badpath staxx-badpath--link';
+      box.style.top    = (PAD_T + m.line * LINE_H - yamlPane.scrollTop) + 'px';
+      box.style.left   = (leftBase + m.col * CHAR_W - yamlPane.scrollLeft) + 'px';
+      box.style.width  = (m.len * CHAR_W) + 'px';
+      box.style.height = LINE_H + 'px';
+      yamlMarks.appendChild(box);
+    }
+  }
+
+  // Hit-test for the hover panel — same shape as clashMarkAt() just above,
+  // over linkSpots instead.
+  function linkMarkAt(line, col) {
+    for (var i = 0; i < linkSpots.length; i++) {
+      var m = linkSpots[i];
+      if (m.line === line && col >= m.col && col < m.col + m.len) return m;
+    }
+    return null;
+  }
+
   function revealLine(line) {
     if (!LINE_H) measure();
     var top  = PAD_T + line * LINE_H;
@@ -6630,6 +8386,9 @@
     // The pane's own text just swapped between real and redacted, so a search
     // over it has to notice — quietly, same as reparse()/refreshRanges().
     findRecompute();
+    // Fill is turned off while this is on — see updatePwgenAvailability()'s
+    // own comment for why the panel and Copy are left working regardless.
+    if (pwgenOpen()) updatePwgenAvailability();
   }
 
   sanitiseBox.addEventListener('change', function () { setSanitised(sanitiseBox.checked); });
@@ -10447,6 +12206,8 @@
     hideHover();
     closeOutline();
     closeTabmenu();
+    pwgenTarget = null;   // the box it pointed at belongs to the stack that just closed
+    closePwgen();
   });
 
   // <dialog> fires no event for the backdrop, because the backdrop is a
@@ -11116,6 +12877,7 @@
         syncGutter();
         reparse();
         renderTabs();
+        if (pwgenOpen()) updatePwgenAvailability();
         return;
       }
 
@@ -11129,10 +12891,12 @@
       }
 
       fileOpen = name;
+      pwgenTarget = null;   // the form is not what is on screen once a companion file is open
       hideBinPanel();   // last tab's panel, if any, would otherwise sit over this one while the read is in flight
       fileChrome(true);
       setView(modalBody.dataset.view);   // setView() coerces Form to Split; any other view is kept
       closeOutline();   // yesterday's — this stack's own compose file's — structure means nothing here
+      if (pwgenOpen()) updatePwgenAvailability();
       renderTabs();
 
       loadCompanion(name);
@@ -12058,6 +13822,16 @@
           ? 'Port ' + esc(clash.mine) + '/' + esc(clash.proto) + ' is already published by "' + esc(clash.container) + '".'
           : '"' + esc(clash.mine) + '" is already used by "' + esc(clash.container) + '".') +
         '</p>';
+      placeCaretPanel(keyHelp, lc.line, lc.col, false);
+      return;
+    }
+
+    // A detected connection (PLAN_70 stage 2) — same shape again. m.text is
+    // already the escaped sentence applyLinkAdvice() built for this same
+    // spot, so it goes in as-is rather than being escaped a second time.
+    var link = linkMarkAt(lc.line, lc.col);
+    if (link) {
+      keyHelp.innerHTML = '<strong>Connected</strong><p>' + link.text + '</p>';
       placeCaretPanel(keyHelp, lc.line, lc.col, false);
       return;
     }
@@ -14539,6 +16313,11 @@
       // clears or appears on its own rather than waiting for the next edit.
       TAKEN = res.taken || { ports: [], paths: [] };
       if (MODEL) applyClashAdvice();
+      // PLAN_70 stage 2 — same call site, same reason: nothing this refresh
+      // touches changes what a connection is, but every other pass that
+      // rebuilds or re-applies advice runs this too, so it does not fall
+      // out of step with the rest.
+      if (MODEL) applyLinkAdvice();
 
       // New rows arrive with empty statistics cells. Re-collect them and ask
       // for figures immediately rather than leaving a table of em dashes until
@@ -16575,6 +18354,17 @@
             'worked out afresh on every page, as they were before.'
     },
     {
+      key: 'CRYPT_MODE', control: 'choice', label: 'StaXXCrypt hashing container',
+      choices: [
+        ['ondemand', 'Only while hashing (default)'],
+        ['always',   'Keep it running']
+      ],
+      help: 'Whether the small container StaXX builds to make password hashes (see below) stays ' +
+            'stopped between uses. On demand costs nothing while idle, but each hash starts and ' +
+            'stops it, which takes a couple of seconds. Keeping it running idles at almost no cost and ' +
+            'hashes near-instantly — worth it if you are setting up several logins at once.'
+    },
+    {
       key: 'IMAGE_LOOKUP', control: 'choice', label: 'Image documentation',
       choices: [
         ['true',  'Read it automatically'],
@@ -16819,6 +18609,122 @@
     });
   }
 
+  // StaXXCrypt's own state, shown here rather than the stack/container
+  // lists because it is StaXX's own plumbing — not an application anyone
+  // chose to run — and never removed by a button in what follows: that is
+  // the person's own move, in their own time.
+  function renderCryptSettings() {
+    var box = settingsCryptBox;
+    if (!box) return;
+    var s = cryptState;
+    if (!s) { box.hidden = true; return; }
+    box.hidden = false;
+
+    var statusLine = !s.built ? 'Not built yet.'
+      : s.container === 'running' ? 'Built, and running now.'
+      : s.container === 'stopped' ? 'Built, currently stopped — it starts itself when a hash is needed.'
+      : 'Built, but the container was removed by hand.';
+
+    var factsHtml = '<div class="staxx-crypt-facts">' +
+      '<span class="staxx-crypt-fact">' + esc(statusLine) + '</span>' +
+      (s.built && s.builtRecipeId
+        ? '<span class="staxx-crypt-fact">Recipe ' + esc(String(s.builtRecipeId).slice(0, 8)) + '</span>' : '') +
+    '</div>';
+
+    var formatsHtml = '';
+    if (s.built && Array.isArray(s.formats) && s.formats.length) {
+      formatsHtml = '<div class="staxx-crypt-formats">' +
+        s.formats.map(function (f) {
+          var cls = 'staxx-crypt-format ' + (f.ok ? 'staxx-crypt-format--ok' : 'staxx-crypt-format--bad');
+          // argon2's own check may be weaker than the others' — the plan is
+          // explicit that a format may only claim what was actually proven,
+          // so a weak pass says so rather than reading the same as the rest.
+          var text = (f.label || f.id) + (f.ok ? (f.weak ? ' — passes (checked less thoroughly)' : ' — passes') : ' — failed');
+          return '<div class="' + cls + '">' + esc(text) + '</div>';
+        }).join('') +
+      '</div>';
+    }
+
+    // A newer recipe is a notice, not an action — nothing rebuilds until
+    // this button is pressed.
+    var noticeHtml = (s.built && s.recipeCurrent === false)
+      ? '<div class="staxx-crypt-line">' +
+          '<p class="staxx-hint">StaXX ships a newer recipe for this container than the one it was ' +
+          'built from. Nothing changes until you rebuild — once the new container has actually ' +
+          'produced a correct hash, the old image is removed automatically. That is the only thing ' +
+          'StaXX deletes without asking, because it is an image StaXX itself built, for its own ' +
+          'use, that nothing else can be using.</p>' +
+          '<div class="staxx-crypt-actions">' +
+            '<button type="button" class="staxx-btn" id="staxx-crypt-rebuild">Rebuild</button>' +
+          '</div>' +
+        '</div>'
+      : '';
+
+    var buildHtml = !s.built
+      ? '<div class="staxx-crypt-line">' +
+          '<p class="staxx-hint">Not built yet — hashing is done by StaXXCrypt, a small container. ' +
+          'Building fetches a base image and a few packages onto this server.</p>' +
+          '<div class="staxx-crypt-actions">' +
+            '<button type="button" class="staxx-btn" id="staxx-crypt-build">Build</button>' +
+          '</div>' +
+        '</div>'
+      : (s.container === 'missing'
+          ? '<div class="staxx-crypt-line">' +
+              '<p class="staxx-hint">The container was removed by hand. Recreating it fetches the ' +
+              'same base image and packages again.</p>' +
+              '<div class="staxx-crypt-actions">' +
+                '<button type="button" class="staxx-btn" id="staxx-crypt-build">Recreate</button>' +
+              '</div>' +
+            '</div>'
+          : '');
+
+    box.innerHTML =
+      '<div class="staxx-crypt-line">' + factsHtml + formatsHtml + '</div>' +
+      noticeHtml + buildHtml +
+      '<p class="staxx-hint">Not shown in the Stacks or Container lists — StaXXCrypt is StaXX\'s ' +
+      'own plumbing, not an application you chose to run.</p>';
+  }
+
+  // Runs a build or rebuild started from the Settings panel and follows it
+  // the same way the generator's own build offer does: track the job, then
+  // refresh the cached state so this section and the generator's hash half
+  // both settle on what actually happened.
+  function runCryptJob(action, busyText) {
+    settingsMsg.textContent = busyText;
+    call(action, {}).then(function (res) {
+      if (!res || !res.ok || !res.job) {
+        settingsMsg.textContent = (res && res.error) || 'Could not start.';
+        return;
+      }
+      track(res.job, {
+        done: function (job) {
+          var failed = job.exit !== 0 && job.exit !== null;
+          settingsMsg.textContent = failed ? 'That did not finish cleanly — see the job log.' : '';
+          cryptFetchState(true).then(function () {
+            renderCryptSettings();
+            renderPwgenHash();
+          });
+        }
+      });
+    });
+  }
+
+  if (settingsCryptBox) {
+    settingsCryptBox.addEventListener('click', function (event) {
+      if (event.target.closest('#staxx-crypt-build')) {
+        runCryptJob('crypt-build', 'Building…');
+      } else if (event.target.closest('#staxx-crypt-rebuild')) {
+        runCryptJob('crypt-rebuild', 'Rebuilding…');
+      }
+    });
+  }
+
+  function loadCryptState() {
+    if (!settingsCryptBox) return;
+    cryptFetchState().then(renderCryptSettings);
+    renderCryptSettings();   // paint whatever is already cached immediately, do not wait on the fetch
+  }
+
   function settingsDirty() {
     if (!settingsOpenValues) return false;
     return SETTINGS_ROWS.some(function (row) {
@@ -16985,6 +18891,7 @@
         if (focusId) first.scrollIntoView({ block: 'center' });
       }
       loadArchiveList();
+      loadCryptState();
     });
   }
 
