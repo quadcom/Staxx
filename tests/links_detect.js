@@ -271,5 +271,44 @@ function findKind(list, kind) {
      findKind(links(escaped), 'secret').length === 1, JSON.stringify(findKind(links(escaped), 'secret')));
 })();
 
+/* ---- case 14: a service name in the wrong case still matches -------------
+ * Docker's own name resolution ignores case — a container answers to its
+ * name however it is written, confirmed on the server by asking a running
+ * container to look one up both ways. So a name typed in the wrong case is
+ * a working address and has to be recognised. NAMES only: case 15 holds the
+ * line for values. */
+(function () {
+  var y = [
+    'services:',
+    '  app:', '    image: myapp', '    environment:', '      DB_HOST: POSTGRES',
+    '  postgres:', '    image: postgres'
+  ].join('\n');
+  var refs = findKind(links(y), 'reference');
+  ok('case 14: a four-plus-letter service name in the wrong case is matched',
+     refs.length === 1, JSON.stringify(refs));
+
+  var short = [
+    'services:',
+    '  app:', '    image: myapp', '    environment:', '      DB_HOST: DB:3306',
+    '  db:', '    image: mariadb'
+  ].join('\n');
+  ok('case 14: a short name in host position, wrong case, is matched',
+     findKind(links(short), 'reference').length === 1,
+     JSON.stringify(findKind(links(short), 'reference')));
+})();
+
+/* ---- case 15: a shared value is still compared exactly ------------------
+ * The line the case above must not cross. Two passwords differing only in
+ * case are two passwords, and nothing about DNS says otherwise. */
+(function () {
+  var y = [
+    'services:',
+    '  app:', '    image: myapp', '    environment:', '      TOKEN: Tr0ub4dor&3xyz',
+    '  db:', '    image: mariadb', '    environment:', '      TOKEN: tr0ub4dor&3XYZ'
+  ].join('\n');
+  ok('case 15: two passwords differing only in case are not the same secret',
+     findKind(links(y), 'secret').length === 0, JSON.stringify(findKind(links(y), 'secret')));
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

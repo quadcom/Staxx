@@ -7532,7 +7532,13 @@
   // Host-position match for a value against a short (under 4 char) service
   // name: the whole value, or the host half of a URL or "host:port". A
   // short name is too common a substring to trust anywhere else in a value.
+  // Case-insensitive, like Docker's own name resolution: a container answers
+  // to its name in any case, so "SupStack-DB" typed as "supstack-db" is a
+  // working address and not recognising it was a miss. Only NAMES are
+  // treated this way — a shared secret is still compared exactly.
   function linkHostPosition(value, name) {
+    value = String(value).toLowerCase();
+    name = String(name).toLowerCase();
     if (value === name) return true;
     var m = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/(?:[^\/@]*@)?([^\/:?#]+)/.exec(value);
     if (m) return m[1] === name;
@@ -7546,7 +7552,9 @@
   // but "DB_HOST=postgres" and a bare "postgres" both hit.
   function linkTokenMatch(value, name) {
     var esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp('(^|[^A-Za-z0-9_-])' + esc + '($|[^A-Za-z0-9_-])').test(value);
+    // 'i' for the same reason as linkHostPosition() above — Docker resolves
+    // a container's name whatever case it is written in.
+    return new RegExp('(^|[^A-Za-z0-9_-])' + esc + '($|[^A-Za-z0-9_-])', 'i').test(value);
   }
 
   // links:/volumes_from: are not KEYS-table keys, so a service holding one

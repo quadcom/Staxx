@@ -413,6 +413,14 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
   $nameCandidates = [$value];
   if ($hasHostPort && $host !== '') $nameCandidates[] = $host;
   $nameCandidates = array_values(array_unique($nameCandidates));
+  // Docker's own name resolution ignores case — "supstack-db" and
+  // "SupStack-DB" both reach the same container, confirmed by asking a
+  // running container to look up each in turn. So a name typed in the wrong
+  // case is a working address, and refusing to recognise it was a miss
+  // rather than caution. Matched case-insensitively for that reason and no
+  // other: this is not fuzzy matching, and a shared SECRET is still compared
+  // exactly, because two passwords differing in case are two passwords.
+  $nameLower = array_map('strtolower', $nameCandidates);
 
   $candidates   = [];
   $thisServer   = $hasHostPort && $port !== '' && staxx_crosslinks_is_this_server($host);
@@ -426,9 +434,10 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
     foreach ($meta['services'] as $svcName => $svc) {
       // Route 1 — a name match, gated on a real shared network.
       $via = null;
-      if (in_array($svcName, $nameCandidates, true)) {
+      if (in_array(strtolower($svcName), $nameLower, true)) {
         $via = 'service-name';
-      } elseif ((string)$svc['container_name'] !== '' && in_array($svc['container_name'], $nameCandidates, true)) {
+      } elseif ((string)$svc['container_name'] !== ''
+                && in_array(strtolower($svc['container_name']), $nameLower, true)) {
         $via = 'container-name';
       }
       if ($via !== null) {

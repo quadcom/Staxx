@@ -186,6 +186,29 @@ ok('a container_name on a shared network matches', $r['kind'] === 'match'
               $r['candidates'], true),
   json_encode($r));
 
+// 3b. the same names in the wrong case — still match, because Docker's own
+// resolution ignores case: a container answers to its name however it is
+// written, confirmed on the box by asking a running container to look one up
+// both ways. A name typed in the wrong case is a working address, so not
+// recognising it was a miss rather than caution.
+$r = staxx_crosslinks_match('lk70-appA', 'app', 'LK70_Company_SQL');
+ok('a container_name in the wrong case still matches', $r['kind'] === 'match'
+  && in_array(['stack' => 'lk70-dbcn', 'service' => 'sqldb', 'via' => 'container-name', 'network' => 'lk70net'],
+              $r['candidates'], true),
+  json_encode($r));
+
+$r = staxx_crosslinks_match('lk70-appA', 'app', 'DB');
+ok('a service name in the wrong case still matches', $r['kind'] === 'match'
+  && in_array(['stack' => 'lk70-dbX', 'service' => 'db', 'via' => 'service-name', 'network' => 'lk70net'],
+              $r['candidates'], true),
+  json_encode($r));
+
+// 3c. the case-insensitive name match must not become a fuzzy one — a name
+// that merely resembles a real service is still nothing.
+$r = staxx_crosslinks_match('lk70-appA', 'app', 'dbs');
+ok('a name that is merely similar still does not match', $r['kind'] === 'none' && $r['candidates'] === [],
+  json_encode($r));
+
 // 4. this server's address plus a published port — matches.
 $r = staxx_crosslinks_match('lk70-appB', '', $hostIp.':25432');
 ok('this server\'s address plus a published port matches', $r['kind'] === 'match'
