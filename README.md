@@ -96,17 +96,17 @@ Every stack is a row, and each container inside it gets its own row.
 
 ![Badges on the rows](docs/images/row-states.jpg)
 
-**Folders.** Stacks can sit one level deep in folders you create. A folder row totals what is inside
-it and can start, stop, check or update the lot.
-
-**Right-click a row** for everything it can do.
+- **Folders** you create, one level deep. A folder row totals what is inside it, and can start, stop,
+  check or update the lot.
+- **Right-click a row** for everything it can do.
 
 ![The row menu](docs/images/stack-row-menu.jpg)
 
-Rows follow Docker's own events, so a container stopped elsewhere shows as stopped straight away, and
-a container is matched back to its folder even after you have moved that folder. The figures are
-sampled only while a page is watching — close the tab and it stops, so nothing runs all day for the
-sake of a graph.
+- **A container stopped elsewhere shows as stopped straight away** — the page follows Docker's own
+  events rather than asking every few seconds.
+- **Move a stack's folder and its containers still find it.**
+- **Nothing runs all day for the sake of a graph.** The figures are sampled only while a page is
+  watching; close the tab and it stops.
 
 ---
 
@@ -117,10 +117,10 @@ following you between them.
 
 ![Form and file side by side, with the stack's other files as tabs above](docs/images/editor-split.jpg)
 
-The form covers more than twenty groups of settings, from ports and folders to health checks,
-resource limits, start-up order and logging, plus the file's own top-level networks, volumes,
-secrets and configs. You pick which groups are on screen, and anything the form cannot take apart
-appears in an **Advanced** block.
+More than twenty groups of settings, from ports and folders to health checks, resource limits,
+start-up order and logging, plus the file's own networks, volumes, secrets and configs. You pick
+which groups are on screen, and anything the form cannot take apart appears in an **Advanced**
+block — shown, never hidden.
 
 **While you type**
 
@@ -132,41 +132,41 @@ appears in an **Advanced** block.
 - Runs the file past Docker itself.
 - None of it blocks a save.
 
-**Undo, and find and replace.** Undo covers the form and the file alike, so a change made in a box
-and the line it wrote go back as one step, not two. The file view has find and replace, including
-replace-all.
+**The rest of the editor**
 
-**The author's comments become the help text** beside each field, and help text you write becomes
-comments in the file. Two marks — **secret** and **required** — say how a value should be treated.
-
-**Pickers** for a folder on the server, a timezone off a world map, and a device from this server's
-hardware. The network list includes the ones this server already has — pick one and it is wired in
-for you.
-
-**Every file in the stack folder is a tab** — the compose file, `.env`, an override file, anything
-else. Create, rename, delete, download, or upload several at once. Certificates and other binary
-files get a download-and-replace panel, and a settings-shaped file is offered to be wired in.
-
-**A note offers to fill in a stack's own details** — its description, logo, project page and support
-thread — naming which of them are missing rather than claiming a file has none. A button in Settings
-does the same across every stack at once, and shows what it would change before writing anything.
+- **Undo covers the form and the file alike** — a change made in a box and the line it wrote go back
+  as one step, not two.
+- **Find and replace** in the file view, including replace-all.
+- **The author's comments become the help text** beside each field, and help text you write becomes
+  comments in the file. Two marks — **secret** and **required** — say how a value should be treated.
+- **Pickers** for a folder on the server, a timezone off a world map, and a device from this
+  server's hardware.
+- **The network list includes the ones this server already has** — pick one and it is wired in for
+  you.
+- **Every file in the stack folder is a tab** — the compose file, `.env`, an override file, anything
+  else. Create, rename, delete, download, or upload several at once.
+- **Certificates and other binary files** get a download-and-replace panel, and a settings-shaped
+  file is offered to be wired in.
+- **A note offers to fill in a stack's own details** — description, logo, project page, support
+  thread — naming which are missing. A button in Settings does every stack at once, and shows what
+  it would change first.
 
 ---
 
 ## Secrets and passwords
 
-**A password can be made up for you, in the box that needs it** — a passphrase or a random string,
-your choice of length and character mix. Nothing generated is written anywhere except the box it
-fills.
+**You should never have to invent a password, or paste one into a chat window to get it hashed.**
 
-Some containers want the *hashed* form rather than the password itself. StaXX will produce it, in
-four formats, from its own tiny container — built only when asked, with no volume, no port and no
-network, and the password handed to it privately rather than on a command line anyone listing
-processes could read. A format is refused until a self-check has proved it works on this machine.
-
-**Sanitise** hides every value marked secret, in the form and the file at once, so a stack can be
-shown to someone else without leaking it. The window is locked while it is on, so nothing can be
-changed by accident mid-screenshot.
+- **A password made up for you, in the box that needs it** — a passphrase or a random string, your
+  choice of length and character mix. Nothing generated is written anywhere but the box it fills.
+- **The hashed form, when a container wants that instead.** Four formats, each refused until a
+  self-check has proved it works on this machine.
+- **The hashing happens in StaXX's own tiny container** — built only when asked, with no volume, no
+  port and no network, and the password handed to it privately rather than on a command line anyone
+  listing processes could read.
+- **Sanitise hides every value marked secret**, in the form and the file at once, so a stack can be
+  shown to someone else without leaking it. The window locks while it is on, so nothing is changed
+  by accident mid-screenshot.
 
 ![The file with secrets hidden](docs/images/sanitise-file.jpg)
 
@@ -174,14 +174,16 @@ changed by accident mid-screenshot.
 
 ## Settings that belong together
 
-**StaXX notices when two containers share a value** — the same database password, the same folder —
-or when one names the other, and asks whether that is deliberate.
+**An app and its database have to agree on a password. Get one of them wrong and nothing works, and
+nothing tells you why.**
 
-Say yes and the answer is kept in the stack's own file, so it travels with the stack. From then on,
-changing one side writes the other to match — both boxes and the file together, inside a single Undo.
-
-It reaches across stacks too: point a new app at a database living in another stack and StaXX offers
-to wire the two together rather than leaving you to copy the details across by hand.
+- **StaXX notices when two containers share a value** — the same database password, the same folder
+  — or when one names the other, and asks whether that is deliberate.
+- **Say yes and the two stay in step.** Changing one side writes the other to match — both boxes and
+  the file together, inside a single Undo.
+- **The answer lives in the stack's own file**, so it travels with the stack.
+- **It reaches across stacks.** Point a new app at a database living in another stack and StaXX
+  offers to wire the two together rather than leaving you to copy the details across by hand.
 
 ---
 
@@ -215,11 +217,11 @@ behind them, and things already imported.
 
 ![The import window](docs/images/import.jpg)
 
-Each row says where it came from and where it will land — one folder for everything, or **"Match my
-Docker folders"**, using the folders from FolderView. **Importing only copies**: nothing at the
-source changes, and what arrives is locked until you have reviewed it.
-
-**Changed your mind?** One click puts the old app back, running.
+- **Every row says where it came from and where it will land** — one folder for everything, or
+  **"Match my Docker folders"**, using the folders from FolderView.
+- **Importing only copies.** Nothing at the source changes, and what arrives is locked until you
+  have reviewed it.
+- **Changed your mind?** One click puts the old app back, running.
 
 ---
 
@@ -246,19 +248,20 @@ Checks run daily or weekly at a time you pick, and Unraid's notifications report
 
 ## Running containers
 
-Start, stop, restart, update and remove work on a whole stack or one container, and long commands run
-detached while streaming their output. **Restart applies your edits** — it rebuilds whatever no
-longer matches the file and restarts the rest.
+- **Start, stop, restart, update and remove** — a whole stack or one container. Long commands run
+  detached, streaming their output as they go.
+- **Restart applies your edits.** It rebuilds whatever no longer matches the file and restarts the
+  rest.
+- **A running stack whose file has moved on says so**, so you find out a restart is owed rather than
+  wondering why an edit did nothing.
 
-A running stack whose file has moved on says so, so you find out a restart is owed rather than
-wondering why an edit did nothing.
+The **Manage** tab adds, per container:
 
-The **Manage** tab gives you, per container: a live log you can search and download, a root command
-line inside the container, and a file browser inside it that can read, edit, rename and delete.
+- **A live log** you can search and download.
+- **A root command line** inside the container — off until you turn it on.
+- **A file browser** inside it that can read, edit, rename and delete.
 
 ![The Manage tab](docs/images/manage.jpg)
-
-The command line is off until you turn it on.
 
 ---
 
@@ -267,34 +270,41 @@ The command line is off until you turn it on.
 **Every save is kept, and so is every image that has actually run.** Two more tabs in the editor,
 beside Configure and Manage.
 
-**History** takes a whole copy of the compose file and its override before each save. Open any of
-them read-only, give one a name, and put it back in a click. Twenty unnamed copies of each file are
-kept; a named one stays for good.
+**History** takes a whole copy of the compose file and its override before each save.
+
+- **Open any of them read-only**, or put one back in a click.
+- **Give one a name** and it stays for good. Twenty unnamed copies of each file are kept.
 
 ![The History tab, with a kept version open](docs/images/history.jpg)
 
-**Versions** lists, per container, the builds of its image that have actually run — when, where they
-came from, and the publisher's release notes where there are any. Put an earlier build back, or pin a
-container to a version so updates leave it alone until you release it.
+**Versions** lists, per container, the builds of its image that have actually run.
+
+- **When each one ran, and where it came from**, with the publisher's release notes where there are
+  any.
+- **Put an earlier build back**, or **pin a container to a version** so updates leave it alone until
+  you release it.
 
 ---
 
 ## Autostart
 
-**Drag things into the order they should start in.** Folders, stacks and containers all move, and any
-entry can be followed by a pause in seconds. A row warns you when a stack's containers have ended up
-scattered through the list.
+**Drag things into the order they should start in.**
 
-StaXX writes to Unraid's own boot list and reads it back, so a change made on Unraid's Docker page is
-picked up rather than overwritten.
+- **Folders, stacks and containers all move**, and any entry can be followed by a pause in seconds.
+- **A row warns you** when a stack's containers have ended up scattered through the list.
+- **It is Unraid's own boot list**, written and read back, so a change made on Unraid's Docker page
+  is picked up rather than overwritten.
 
 ---
 
 ## Removing a stack
 
-**Nothing is deleted.** The containers are removed, then the whole folder is zipped into an archive
-folder outside the stacks tree. The confirmation names where the zip will go, and the settings panel
-lists what has been archived.
+**Nothing is deleted.**
+
+- **The containers are removed**, then the whole folder is zipped into an archive folder outside the
+  stacks tree.
+- **The confirmation names where the zip will go**, and the settings panel lists everything that has
+  been archived.
 
 ---
 
@@ -332,12 +342,13 @@ Everything above works today. None of this does yet.
 - Showing what will change before a restart.
 - Choosing which parts of a stack start.
 - Explaining a file you did not write, in plain English.
-- Moving a secret out of the file, into somewhere it can be shared safely.
 - Marking a folder as real data, so destructive actions ask harder.
-- Advisory notices for a log with no size limit.
+- Notices where a setting that matters has been left unset — a log with no size limit first,
+  since that is the commonest way a self-hosted machine fills its disk.
 - Clash warnings that can see the machine's own ports.
 - Acting on several stacks at once.
-- Exporting a stack as a shareable recipe with your own details stripped.
+- Exporting a stack as a shareable recipe, with the passwords blanked and your own paths and ports
+  generalised — and importing one somebody else exported.
 - Graphics figures for Nvidia cards.
 
 ---
