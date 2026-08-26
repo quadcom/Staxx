@@ -243,9 +243,17 @@ function staxx_import_taken_facts(): array {
   // character (\x1f) inside the ports/mounts columns since a host path can
   // itself contain a space.
   $tab = "\t";
+  // The compose project label rides along because a container's NAME is not
+  // reliable proof of which stack it belongs to: a converted Unraid template
+  // sets container_name, so CloudBeaver's own container is called
+  // "CloudBeaver" rather than "cloudbeaver-cloudbeaver", and the editor
+  // reported the stack's own port as taken by a stranger. `with` rather than
+  // a plain index so a container carrying no such label prints nothing at all
+  // instead of Go's literal "<no value>".
   $fmt = '{{.Id}}'.$tab.'{{.Name}}'.$tab
        . '{{range $p, $b := index .NetworkSettings "Ports"}}{{range $b}}{{$p}}={{.HostPort}}'."\x1f".'{{end}}{{end}}'.$tab
-       . '{{range .Mounts}}{{if eq .Type "bind"}}{{if .RW}}{{.Source}}'."\x1f".'{{end}}{{end}}{{end}}'.$tab.'end';
+       . '{{range .Mounts}}{{if eq .Type "bind"}}{{if .RW}}{{.Source}}'."\x1f".'{{end}}{{end}}{{end}}'.$tab
+       . '{{with index .Config.Labels "com.docker.compose.project"}}{{.}}{{end}}'.$tab.'end';
 
   $docker = escapeshellarg(staxx_docker_bin());
   $out    = staxx_sh(
@@ -257,8 +265,8 @@ function staxx_import_taken_facts(): array {
     // Five fields including the trailing "end" sentinel — see
     // staxx_container_net()'s comment on why a field that is never empty at
     // the end stops exec() trimming a real one away.
-    if (count($c) < 4 || $c[0] === '') continue;
-    [$id, $name, $ports, $mounts] = $c;
+    if (count($c) < 5 || $c[0] === '') continue;
+    [$id, $name, $ports, $mounts, $project] = $c;
     $name = ltrim($name, '/');
 
     // Docker lists one binding per host address a port is published on, so a
@@ -278,7 +286,8 @@ function staxx_import_taken_facts(): array {
       $key = $hostPort.'/'.$proto;
       if (isset($seen[$key])) continue;
       $seen[$key] = true;
-      $facts['ports'][] = ['port' => $hostPort, 'proto' => $proto, 'container' => $name];
+      $facts['ports'][] = ['port' => $hostPort, 'proto' => $proto,
+                           'container' => $name, 'project' => $project];
     }
 
     // Writable mounts only - see the format string above. A read-only mount
@@ -290,7 +299,7 @@ function staxx_import_taken_facts(): array {
     // WRITING the same folder", so a reader is not one of them.
     foreach (explode("\x1f", trim($mounts)) as $path) {
       if ($path === '') continue;
-      $facts['paths'][] = ['path' => $path, 'container' => $name];
+      $facts['paths'][] = ['path' => $path, 'container' => $name, 'project' => $project];
     }
   }
   return $facts;

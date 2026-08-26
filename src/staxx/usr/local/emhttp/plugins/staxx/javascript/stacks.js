@@ -1472,24 +1472,34 @@
   function findClashes(text, ownProject) {
     var out = [];
     if (!YAML || typeof YAML.hostPorts !== 'function') return out;
-    // Compose v2 joins project and service with '-'; older compose, and the
-    // Compose Manager plugin, still join them with '_'. A stack named the
-    // second way would otherwise see every one of its own ports and paths
-    // reported as a clash with itself.
-    var isOwn = function (container) {
-      return ownProject && (container.indexOf(ownProject + '-') === 0 ||
-                             container.indexOf(ownProject + '_') === 0);
+    // Docker's own compose-project label is the answer where a container
+    // carries one, because a name is not proof of ownership: a converted
+    // Unraid template sets container_name, so CloudBeaver's container is
+    // called "CloudBeaver" and matched neither pattern below — the stack was
+    // told its own port was taken by a stranger, naming itself.
+    //
+    // The name patterns stay for a container with no such label. Compose v2
+    // joins project and service with '-'; older compose, and the Compose
+    // Manager plugin, still join them with '_'. A stack named the second way
+    // would otherwise see every one of its own ports and paths reported as a
+    // clash with itself.
+    var isOwn = function (t) {
+      if (!ownProject) return false;
+      if (t.project) return t.project === ownProject;
+      var container = t.container || '';
+      return container.indexOf(ownProject + '-') === 0 ||
+             container.indexOf(ownProject + '_') === 0;
     };
     YAML.hostPorts(text).forEach(function (p) {
       TAKEN.ports.forEach(function (t) {
-        if (isOwn(t.container) || t.proto !== p.proto || !portsOverlap(p.port, t.port)) return;
+        if (isOwn(t) || t.proto !== p.proto || !portsOverlap(p.port, t.port)) return;
         out.push({ kind: 'port', line: p.line, col: p.col, len: p.len,
                    mine: p.port, proto: p.proto, container: t.container });
       });
     });
     YAML.hostPaths(text).forEach(function (p) {
       TAKEN.paths.forEach(function (t) {
-        if (isOwn(t.container) || !pathsClash(p.path, t.path)) return;
+        if (isOwn(t) || !pathsClash(p.path, t.path)) return;
         out.push({ kind: 'path', line: p.line, col: p.col, len: p.len,
                    mine: p.path, container: t.container });
       });
