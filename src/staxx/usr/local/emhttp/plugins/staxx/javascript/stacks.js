@@ -14620,6 +14620,128 @@
     if (img.parentNode) img.parentNode.replaceChild(span, img);
   }, true);
 
+  /* ---------------------------------------------------- icon adoption -- */
+
+  /* PLAN_86. `icon-todo` names services with no icon: recorded yet, whose
+   * picture is already sitting in the collection cache; this copies that
+   * picture into the stack's own folder (server-side, before the item is
+   * ever offered) and then writes the line naming it, through the same
+   * read/addNested/save path writeProjectLink() above already uses — never
+   * a hand-rolled splice, so a service block that has to be found and
+   * inserted into is not code this project writes twice.
+   *
+   * One stack at a time, sequentially, never in parallel: a second write
+   * landing on a stack whose fingerprint the first write just moved would
+   * only be dropped anyway, so there is nothing to gain from racing them and
+   * a save under an editor that opens mid-sweep is exactly what this avoids.
+   */
+  var iconAdoptBusy = false;
+  var iconAdoptRounds = 0;
+  // Recorded across every round of one run so the summary line, shown once
+  // at the end, counts the whole run rather than just its last round.
+  var iconAdoptStacks = {};
+  var iconAdoptCount = 0;
+
+  // Writing this key does not change the fingerprint compose hashes a
+  // service by (checked on the server with `docker compose config
+  // --hash='*'` over two files differing only by this key: identical
+  // hashes) — which is why this sweep never marks a running stack "restart
+  // to apply".
+  function iconAdoptWrite(item) {
+    return call('read', { name: item.stack }).then(function (res) {
+      if (!res || !res.ok) return;
+      var doc = YAML.parse(res.body);
+      // form: null, the same as writeProjectLink() above — this write never
+      // has a live editor form to hand, since it may not even be the stack
+      // the editor has open right now.
+      var at = YAML.addNested(doc, null, item.service, ['x-unraid', 'icon'], item.file);
+      if (at < 0) return;   // could not write safely — skip, never force it
+
+      return call('save', { name: res.name, body: YAML.serialise(doc), 'new': '0',
+                             fingerprint: res.fingerprint }).then(function (r) {
+        // A moved fingerprint means someone else changed the file meanwhile —
+        // drop it silently, per PLAN_86; it is offered again next round.
+        if (!r || !r.ok) return;
+        iconAdoptStacks[item.stack] = true;
+        iconAdoptCount++;
+      });
+    });
+  }
+
+  function iconAdoptSweep() {
+    if (iconAdoptBusy) return;
+    // Never fires alongside the import or settings dialogs, the same
+    // caution importFetchIcons() takes for its own list — a save landing
+    // while one of those is mid-flight is not a race worth risking for a
+    // background convenience. Retried shortly rather than abandoned.
+    if ((importModal && importModal.open) || (settingsModal && settingsModal.open)) {
+      setTimeout(iconAdoptSweep, 2000);
+      return;
+    }
+    if (!YAML || typeof YAML.parse !== 'function') return;
+
+    iconAdoptBusy = true;
+    // A stack open in the editor right now is left alone this round, so a
+    // save never lands underneath it.
+    call('icon-todo', { skip: openedName }, 30000).then(function (res) {
+      // Held until the writes finish, not released here: this flag is what
+      // stops a second sweep starting while files are mid-save.
+      if (!res || !res.ok) { iconAdoptBusy = false; return; }
+      var items = res.items || [];
+
+      var chain = Promise.resolve();
+      items.forEach(function (item) { chain = chain.then(function () { return iconAdoptWrite(item); }); });
+
+      chain.then(function () {
+        iconAdoptBusy = false;
+        if (res.done === false) {
+          if (iconAdoptRounds < ICONS_MAX_ROUNDS) {
+            iconAdoptRounds++;
+            setTimeout(iconAdoptSweep, 500);
+          }
+          return;
+        }
+        iconAdoptRounds = 0;
+        if (iconAdoptCount > 0) {
+          showIconAdoptSummary(iconAdoptCount, Object.keys(iconAdoptStacks).length);
+          iconAdoptCount = 0;
+          iconAdoptStacks = {};
+          refreshRows();   // the changed stacks re-render from their files
+        }
+      });
+    }, function () { iconAdoptBusy = false; });
+  }
+
+  // A dismissible line above the table, not a toast — an edit made without
+  // being asked has to stay readable until the user has actually seen it.
+  // Built here rather than in the page's own markup because there is
+  // nothing to show until a run finds something to say.
+  var iconAdoptNotice = null;
+  function showIconAdoptSummary(services, stacks) {
+    if (iconAdoptNotice) iconAdoptNotice.remove();
+
+    var svcText   = services + (services === 1 ? ' service' : ' services');
+    var stackText = stacks + (stacks === 1 ? ' stack' : ' stacks');
+    var notice = document.createElement('div');
+    notice.className = 'staxx-notice';
+    notice.innerHTML =
+      '<i class="fa fa-picture-o" aria-hidden="true"></i>' +
+      '<div>' + esc('An icon was recorded for ' + svcText + ' across ' + stackText +
+                    '. Each of those stacks’ previous version is saved in its own history.') +
+      '</div>' +
+      '<button type="button" class="staxx-notice-close" title="Dismiss" aria-label="Dismiss">' +
+        '<i class="fa fa-times" aria-hidden="true"></i></button>';
+    notice.querySelector('.staxx-notice-close').addEventListener('click', function () {
+      notice.remove();
+      if (iconAdoptNotice === notice) iconAdoptNotice = null;
+    });
+
+    if (pageNotice && pageNotice.parentNode) {
+      pageNotice.insertAdjacentElement('afterend', notice);
+    }
+    iconAdoptNotice = notice;
+  }
+
   /* ------------------------------------------------------------ wiring -- */
 
   var settingsBtn = document.getElementById('staxx-settings-btn');
@@ -16382,6 +16504,22 @@
             '<a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st</a> and ' +
             'used under the <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" ' +
             'rel="noopener">CC BY 4.0</a> licence.'
+    },
+    {
+      key: 'ICON_ADOPT', control: 'choice', label: 'Keep icons with the stack',
+      choices: [
+        ['true',  'Record them in the file'],
+        ['false', 'Work them out each time']
+      ],
+      help: 'When StaXX recognises the software a container runs, it can write that down: the ' +
+            'icon’s name goes into the service’s <code>x-unraid</code> section and a copy of ' +
+            'the picture is saved in the same folder as the compose file. The stack then owns its ' +
+            'icon — it looks the same on any server you copy the folder to, and it cannot change ' +
+            'under you if the icon collection changes. This runs quietly in the background, a few ' +
+            'services at a time, and each file it changes keeps its previous version in that ' +
+            'stack’s own history, so any of it can be undone. An icon you have named yourself is ' +
+            'never touched. Turning this off changes nothing already written; icons are simply ' +
+            'worked out afresh on every page, as they were before.'
     },
     {
       key: 'IMAGE_LOOKUP', control: 'choice', label: 'Image documentation',
@@ -19743,6 +19881,13 @@
   // Not gated on CAN_RUN: icons are worth having whether or not docker and
   // compose are usable, and a stack that cannot start still deserves a face.
   fetchIcons();
+
+  // PLAN_86 — started once, here, after the rows first render. Unlike
+  // fetchIcons() above this does not re-arm on every table refresh: it is a
+  // walk of every stack's own file, not a picture fetch, and its own bounded
+  // rounds already carry it to completion (or the setting being off) without
+  // needing a second trigger.
+  iconAdoptSweep();
 
   // The applications catalogue refreshes itself here rather than waiting for
   // somebody to open the Apps dialog, so it is normally already current by the

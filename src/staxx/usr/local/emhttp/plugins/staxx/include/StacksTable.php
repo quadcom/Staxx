@@ -499,6 +499,66 @@ function staxx_service_icons_for_stack(string $stack): array {
 }
 
 /**
+ * PLAN_86 — the walk that finds services worth recording an icon for, and
+ * copies each picture into its own stack's folder as it goes: an item is
+ * only ever offered once the file it names is already sitting there.
+ *
+ * Skips, quietly, each for its own reason: a stack in $skip (the editor is
+ * open on it right now); a stack whose compose file did not parse; a service
+ * that already records an icon (never overwritten, ever); a service with no
+ * image; an image staxx_icon_match() cannot place; and a copy that failed
+ * for any reason. None of those stop the walk — only the cap does.
+ *
+ * Same call, same arguments, as the grid's own child rows (see
+ * staxx_stack_tile()) — what gets recorded is exactly what the grid was
+ * already showing, never a fresh guess.
+ *
+ * @return array<int, array{stack:string, service:string, file:string}>
+ */
+function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
+  $skip   = array_flip($skip);
+  $out    = [];
+  $cutoff = false;
+
+  foreach (staxx_scan_stacks()['stacks'] as $s) {
+    if (isset($skip[$s['rel']])) continue;
+
+    $file = staxx_find_compose_file($s['dir']);
+    if ($file === '') continue;
+
+    $meta = staxx_compose_meta($file);
+    if (!$meta['ok']) continue;
+
+    foreach ($meta['services'] as $svc => $svcMeta) {
+      if (trim((string)($svcMeta['x']['icon'] ?? '')) !== '') continue;
+
+      $image = trim((string)($svcMeta['image'] ?? ''));
+      if ($image === '') continue;
+
+      // $s['rel'], not the leaf: a stack row's 'name' IS its path under the
+      // root, and that is what the grid hands staxx_icon_match() as its last
+      // candidate. Passing the leaf here instead would let a stack inside a
+      // folder match something the grid never showed, and recording that
+      // would change what it looks like — the one thing this must not do.
+      $ref = staxx_icon_match($image, $svc, $s['rel']);
+      if ($ref === '') continue;
+
+      $error = '';
+      $written = staxx_icon_adopt($ref, $s['dir'], $error);
+      if ($written === '') continue;
+
+      $out[] = ['stack' => $s['rel'], 'service' => $svc, 'file' => $written];
+      if (count($out) >= $cap) { $cutoff = true; break 2; }
+    }
+  }
+
+  // Only a cap-cut walk is unfinished — one that ran out of stacks and
+  // services on its own has genuinely seen everything there is.
+  $done = !$cutoff;
+  return $out;
+}
+
+/**
  * The web page and logs buttons drawn under a row's icon.
  *
  * One renderer for both row types: a stack row and a container row need the
@@ -759,6 +819,34 @@ function staxx_icon_tile(array $icon, string $name): string {
 }
 
 /**
+ * The stack's own icon, resolved — or null when it does not say anything
+ * usable, so the caller falls through to its children's icons.
+ *
+ * A stack's own `icon:` outranks its children's, but an address that cannot
+ * be downloaded is not an answer. Converted Unraid templates carry plenty of
+ * these: StirlingPDF's still names a favicon under the project's former
+ * "Frooodle" account, which 404s, and the initials tile that produced was
+ * indistinguishable from a stack whose icon had never been set — while the
+ * editor, reading the service's own icon, showed the real logo. A download
+ * already known to have failed therefore counts as no icon at all.
+ *
+ * Not a permanent verdict, and deliberately not one for an icon merely
+ * waiting to be fetched: that keeps its reference so the page can swap the
+ * picture in when it arrives, and the failure marker expires on its own, so
+ * a site that was briefly down recovers without anything being edited.
+ */
+function staxx_stack_own_icon(array $s): ?array {
+  $own = (string)($s['x']['icon'] ?? '');
+  if ($own === '') return null;
+
+  $icon = staxx_icon_resolve($own, $s['dir']);
+  if ($icon['fa'] === '' && $icon['url'] === ''
+      && ($icon['ref'] === '' || staxx_icon_missed($icon['ref']))) return null;
+
+  return $icon;
+}
+
+/**
  * A stack's tile: the icons of the containers inside it, tiled together.
  *
  * A stack is not one thing, so one logo cannot honestly stand for it. Four is
@@ -771,12 +859,10 @@ function staxx_icon_tile(array $icon, string $name): string {
  * @param array $kids from staxx_stack_children()
  */
 function staxx_stack_tile(array $s, array $kids): string {
-  $own = (string)($s['x']['icon'] ?? '');
-  if ($own !== '') {
-    // Initials come from the title, so the letters in the tile are the letters
-    // written beside it. The folder name is not what anyone is reading here.
-    return staxx_icon_tile(staxx_icon_resolve($own, $s['dir']), $s['leaf']);
-  }
+  // Initials come from the title, so the letters in the tile are the letters
+  // written beside it. The folder name is not what anyone is reading here.
+  $own = staxx_stack_own_icon($s);
+  if ($own !== null) return staxx_icon_tile($own, $s['leaf']);
 
   if (!$kids) {
     return '<i class="fa fa-cubes"></i>';
@@ -814,10 +900,8 @@ function staxx_stack_tile(array $s, array $kids): string {
  * @param array $kids from staxx_stack_children()
  */
 function staxx_stack_strip_tile(array $s, array $kids): string {
-  $own = (string)($s['x']['icon'] ?? '');
-  if ($own !== '') {
-    return staxx_icon_tile(staxx_icon_resolve($own, $s['dir']), $s['leaf']);
-  }
+  $own = staxx_stack_own_icon($s);
+  if ($own !== null) return staxx_icon_tile($own, $s['leaf']);
 
   if (!$kids) {
     return '<i class="fa fa-cubes"></i>';

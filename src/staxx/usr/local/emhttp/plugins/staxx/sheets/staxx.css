@@ -191,6 +191,26 @@
   outline-offset: 2px;
 }
 
+/* PLAN_86 — the icon-adoption summary is a .staxx-notice with a close cross
+   pinned to its far side, rather than a toast: an unrequested file edit the
+   user never gets to read is the thing rule 2 forbids, so this stays until
+   dismissed by hand. */
+.staxx-notice-close {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 0.2rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.staxx-notice-close:hover,
+.staxx-notice-close:focus-visible {
+  opacity: 1;
+}
+
 /* ---- Section bar -------------------------------------------------------- */
 
 .staxx-bar {
