@@ -744,6 +744,76 @@ function staxx_update_unlock(): void {
 }
 
 /**
+ * Re-read what is actually on disk for one stack's images and fold the
+ * answer into the state file. No network: the registry's half is left
+ * exactly as the last check pass found it, and only the local half is
+ * corrected.
+ *
+ * Called after anything that can change which image a container runs on —
+ * a pull, an update, a rebuild, a rollback. Without it the pill goes on
+ * comparing the digest that was on disk BEFORE the pull against the
+ * registry's, so an update that plainly succeeded still reads as pending
+ * until the six-hourly check pass comes round again.
+ *
+ * @return bool whether anything was actually corrected
+ */
+function staxx_update_refresh_local(string $stack, string $service = ''): bool {
+  if (!staxx_valid_path($stack)) return false;
+
+  $file = staxx_find_compose_file(staxx_stack_dir($stack));
+  if ($file === '') return false;
+  $meta = staxx_compose_meta($file);
+  if (!$meta['ok']) return false;
+
+  // A check pass already holds the whole images map in memory and will
+  // write it back wholesale, so a write under it would just be overwritten.
+  // Skipped rather than queued: that pass reads the local digest itself and
+  // so arrives at the same answer anyway.
+  $lockError = '';
+  if (!staxx_update_lock($lockError)) return false;
+
+  $images = (array)staxx_update_state()['images'];
+  $dirty  = false;
+
+  foreach ($meta['services'] as $svc => $svcMeta) {
+    if ($service !== '' && $svc !== $service) continue;
+
+    $image = trim((string)($svcMeta['image'] ?? ''));
+    // An image no check pass has ever recorded is left alone — with no
+    // registry digest to compare against, a local one on its own says
+    // nothing, and inventing an entry here would only look like an answer.
+    if ($image === '' || !isset($images[$image])) continue;
+
+    $local = staxx_image_local($image);
+    if (empty($local['digest'])) continue; // built here, or not installed — nothing to correct
+
+    $entry = $images[$image];
+    if (($entry['local'] ?? '') === $local['digest']) continue;
+
+    $entry['local'] = $local['digest'];
+    // Both of these are statements about what is on disk, and what is on
+    // disk has just been re-measured — an image that was absent or built
+    // here has plainly been pulled since. Every other remembered error is a
+    // statement about the registry and is none of this function's business.
+    if (($entry['error'] ?? '') === 'not installed') unset($entry['error']);
+    if (!empty($entry['built'])) unset($entry['built'], $entry['error']);
+    // Up to date now, so the countdown running against that version has
+    // nothing left to fire on — cleared by the same three keys
+    // staxx_update_check() clears, so the two can never disagree.
+    if (($entry['remote'] ?? '') === $local['digest']) {
+      unset($entry['seen'], $entry['was'], $entry['seenDigest']);
+    }
+
+    $images[$image] = $entry;
+    $dirty = true;
+  }
+
+  if ($dirty) staxx_update_state_save(['images' => $images]);
+  staxx_update_unlock();
+  return $dirty;
+}
+
+/**
  * Absolute path to the php binary, same reasoning as staxx_docker_bin(): PHP's
  * environment is not a login shell, so PATH cannot be relied on.
  */

@@ -14250,7 +14250,7 @@
           'is recreated.\n\nRecreate "' + stackLabel(name) + '" now?')) {
       return;
     }
-    run(name, 'up', afterRun('up'));
+    run(name, 'up', afterRun('up', name));
   }
 
   // The common ending once the compose file is on disk and no directory move
@@ -14313,7 +14313,7 @@
       // already uses, reused rather than rebuilt. thenStart wins if both
       // somehow applied, the same priority "start after saving" already had
       // over the rename-recreate offer below.
-      if (thenStart) run(name, 'up', afterRun('up'));
+      if (thenStart) run(name, 'up', afterRun('up', name));
       else if (thenHandover) openTakeover(name, stackLabel(name), false);
       else if (offer) offerRecreate(name);
     });
@@ -14348,7 +14348,7 @@
 
         closeEditor();
         refreshRows(function () {
-          if (thenStart || running) run(r.name, 'up', afterRun('up'));
+          if (thenStart || running) run(r.name, 'up', afterRun('up', r.name));
         });
       });
     }
@@ -15992,7 +15992,7 @@
         done: function (job) {
           clearBusy(rows);
           if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'update', res.job);
-          refreshUpdates();
+          refreshUpdates(name, service);
           refreshStateSoon();
         }
       });
@@ -16014,7 +16014,7 @@
         done: function (job) {
           clearBusy(rows);
           if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'recreate', res.job);
-          refreshUpdates();
+          refreshUpdates(name, service);
           refreshStateSoon();
         }
       });
@@ -16036,7 +16036,7 @@
         done: function (job) {
           clearBusy(rows);
           if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'rebuild', res.job);
-          refreshUpdates();
+          refreshUpdates(name, service);
           refreshStateSoon();
         }
       });
@@ -16045,9 +16045,17 @@
 
   // The one place both the row menus' pills and the header line come from.
   // Called after anything that might have changed the answer — never on a
-  // clock, see the note above.
-  function refreshUpdates() {
-    call('updates', {}).then(function (res) {
+  // clock, see the note above. Naming `stack` (and `service`, when the
+  // change was scoped to one) makes the server re-read what is actually
+  // installed there before it answers, so a pill clears the moment an
+  // update finishes rather than waiting for the next scheduled check.
+  // Left out when nothing on disk has changed — a pause toggle, the first
+  // paint — so that re-read is never done needlessly.
+  function refreshUpdates(stack, service) {
+    var fields = {};
+    if (stack) fields.stack = stack;
+    if (service) fields.service = service;
+    call('updates', fields).then(function (res) {
       if (!res.ok) return;
       paintUpdatesLine(res.summary);
 
@@ -17289,10 +17297,20 @@
     });
   }
 
-  function afterRun(verb) {
+  // Verbs that can leave a different image on disk than the one the update
+  // pill was last drawn from — a plain restart or logs view never touches
+  // an image, so they are left out on purpose.
+  var IMAGE_CHANGING_VERBS = { up: true, pull: true, recreate: true, update: true, rebuild: true };
+
+  function afterRun(verb, name, service) {
     // Logs and config change nothing, so leave the table as it is.
     return function () {
       if (verb !== 'logs' && verb !== 'config') refreshStateSoon();
+      // A pull or a start can leave a different image on disk than the one
+      // the pill was last drawn from — without naming the stack here, the
+      // note behind the pill keeps describing the image that was there
+      // before the command ran.
+      if (name && IMAGE_CHANGING_VERBS[verb]) refreshUpdates(name, service);
     };
   }
 
@@ -17346,7 +17364,7 @@
         var ok = job && job.exit === 0;
         manageInst.note(ok ? label + ' finished.' : label + ' finished — exit ' + (job ? job.exit : '?') + '.');
       }
-      afterRun(verb)(job);
+      afterRun(verb, name, service)(job);
     }, service);
   }
 
@@ -18036,7 +18054,7 @@
         done: function (job) {
           clearBusy(rows);
           if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'recreate', res.job);
-          refreshUpdates();
+          refreshUpdates(openedName, service);
           refreshStateSoon();
           // A rollback changes which build is on disk, so "Running now" in
           // the list this was launched from now points at the wrong row.
@@ -19696,9 +19714,9 @@
         });
       }
       menuItem(running ? 'Restart' : 'Start', running ? 'refresh' : 'play',
-               function () { run(name, running ? 'restart' : 'up', afterRun('up')); },
+               function () { run(name, running ? 'restart' : 'up', afterRun('up', name)); },
                { disabled: !CAN_RUN, hint: why });
-      menuItem('Stop', 'stop', function () { run(name, 'down', afterRun('down')); },
+      menuItem('Stop', 'stop', function () { run(name, 'down', afterRun('down', name)); },
                { disabled: !CAN_RUN || !running });
       // Fetches the new image and rebuilds the container on it. Offered
       // unconditionally, the same as Start/Stop above, and not only once a
@@ -19721,7 +19739,7 @@
       // else. Update above fetches and rebuilds together; this is for
       // getting the download out of the way on a busy stack without taking
       // it down as a side effect.
-      menuItem('Pull images', 'download', function () { run(name, 'pull', afterRun('pull')); },
+      menuItem('Pull images', 'download', function () { run(name, 'pull', afterRun('pull', name)); },
                { disabled: !CAN_RUN });
 
       // PLAN_45 phase 3. Scoped to the whole stack — the check itself has
@@ -19860,11 +19878,11 @@
     var svcLabel = stackLabel(stack) + ' / ' + service;
 
     menuItem(up ? 'Restart' : 'Start', up ? 'refresh' : 'play', function () {
-      run(stack, up ? 'restart' : 'up', afterRun('up'), service);
+      run(stack, up ? 'restart' : 'up', afterRun('up', stack, service), service);
     }, { disabled: !CAN_RUN, hint: why });
 
     menuItem('Stop', 'stop', function () {
-      run(stack, 'down', afterRun('down'), service);
+      run(stack, 'down', afterRun('down', stack, service), service);
     }, { disabled: !CAN_RUN || !up });
 
     // Read once, up here, so both this item's hint and the image-gated items
@@ -19890,7 +19908,7 @@
     // Singular "image" — pulls the one image behind this one container, not
     // every service's, which is what "Pull images" on the stack menu does.
     menuItem('Pull image', 'download', function () {
-      run(stack, 'pull', afterRun('pull'), service);
+      run(stack, 'pull', afterRun('pull', stack, service), service);
     }, { disabled: !CAN_RUN });
 
     // PLAN_45 phase 3. There is no per-service form of the check itself —
@@ -20010,7 +20028,7 @@
             'are left alone.')) {
         return;
       }
-      run(stack, 'remove', afterRun('remove'), service);
+      run(stack, 'remove', afterRun('remove', stack, service), service);
     }, { danger: true, disabled: !CAN_RUN || !exists });
   }
 

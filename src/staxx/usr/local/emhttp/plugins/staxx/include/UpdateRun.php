@@ -1121,6 +1121,10 @@ function staxx_update_queue_tick(): array {
                        . 'Check the stack directly.';
       } elseif ($log['exit'] === 0) {
         $item['state'] = 'done';
+        // The queue has no browser to prompt a refresh, so without this the
+        // local digest stays at its pre-pull value and the same stack looks
+        // due again at the next tick, fifteen minutes from now.
+        staxx_update_refresh_local((string)($item['stack'] ?? ''));
       } else {
         $item['state'] = 'failed';
         $item['error'] = 'The update failed. Open the log for details.';
