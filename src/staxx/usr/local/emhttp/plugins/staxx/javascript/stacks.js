@@ -4551,7 +4551,15 @@
   // Named by service plus setting name, the same rule stage 1-4's own
   // endpoints use (design section 2) — never by row index, so a reparse
   // (which rebuilds MODEL.fields wholesale) does not lose track of it.
-  function crossKey(service, target) { return service + '\u0000' + target; }
+  //
+  // The separator is "::" rather than a NUL, and that is not cosmetic: this
+  // key is written into a data- attribute so the advice's own buttons can
+  // find their entry again, and an HTML parser replaces a NUL in an
+  // attribute with U+FFFD. The key that came back therefore never matched
+  // the one that went in, so every button on this advice silently did
+  // nothing, and nothing anywhere said so. A compose service name cannot
+  // contain a colon, so no two different pairs can produce the same key.
+  function crossKey(service, target) { return service + '::' + target; }
 
   var crossTimer = null;   // the 800ms debounce handle — one in flight at a time, see the section comment above
   var crossSeq   = 0;      // bumped by every link-match/link-creds request sent, so a superseded reply cannot paint
@@ -5730,6 +5738,16 @@
     // listener above) is meant to commit, so it is let through here rather
     // than gaining a keydown/focusout handler of its own.
     if (el.tagName !== 'SELECT' && el.dataset.rename === undefined) return;
+    // Not every dropdown in a row IS the row. An advice note can carry
+    // pickers of its own — "which of this service's own boxes is its
+    // password" (PLAN_70 stage 5), answered by its own button — and those
+    // carry no data-part/data-row, because they name a field rather than
+    // being one. Sent to commit() anyway, such a pick was read as an edit to
+    // whichever field data-row defaulted to, which refused with "that value
+    // cannot be written" and would have written to the wrong box had the
+    // parts lined up. Every genuine field control has data-part; the pickers
+    // have none, which is the whole distinction.
+    if (el.tagName === 'SELECT' && el.dataset.part === undefined) return;
     if (commitTimer) { clearTimeout(commitTimer); commitTimer = null; pendingEl = null; }
     commit(el);
   });
