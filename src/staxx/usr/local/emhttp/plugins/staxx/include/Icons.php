@@ -405,6 +405,29 @@ function staxx_icon_get(string $url, int $seconds = 10): ?string {
 }
 
 /**
+ * GitHub's page for a file, turned into the file itself.
+ *
+ * Copying an image's address out of GitHub gives the /blob/ link — the web
+ * page that displays it — and that answers 200 with a quarter of a megabyte
+ * of HTML. The fetch below correctly refuses it as not-a-picture and marks it
+ * failed, so the icon silently never appears and never retries: an honest
+ * refusal to an address the author was entitled to think was the picture.
+ * Rewriting it is lossless, since the two address forms name the same file.
+ *
+ * Hashing happens AFTER this, so correcting an address already recorded as
+ * failed produces a different cache reference and is tried again at once
+ * rather than waiting for the failure marker to expire.
+ */
+function staxx_icon_raw_url(string $url): string {
+  // The branch or tag can itself contain a slash, so the path is whatever
+  // follows it — matched lazily up to /blob/ and then taken wholesale.
+  if (preg_match('#^https?://github\.com/([^/]+)/([^/]+)/(?:blob|raw)/(.+)$#i', $url, $m)) {
+    return 'https://raw.githubusercontent.com/'.$m[1].'/'.$m[2].'/'.$m[3];
+  }
+  return $url;
+}
+
+/**
  * Where the browser can load a cached icon from, or '' if it is not cached.
  *
  * The served copy lives in RAM and therefore disappears at every reboot, while
@@ -432,6 +455,59 @@ function staxx_icon_url(string $ref): string {
     }
   }
   return '';
+}
+
+/**
+ * PLAN_86 — copy an already-cached icon into a stack's own folder, so the
+ * picture travels with the compose file instead of living only in the shared
+ * plugin cache. Returns the filename written (e.g. 'cloudbeaver.png'), or ''
+ * with $error set to a sentence.
+ *
+ * Never fetches anything — the icon must already be in STAXX_ICON_SERVE or
+ * STAXX_ICON_STORE, found the same way staxx_icon_url() looks for one. Safe
+ * to call twice: a file already there with identical contents is treated as
+ * success, having written nothing.
+ *
+ * The stack root is normally on the flash drive, where every file comes out
+ * owner-only whatever mode is asked for — that is the drive, not a bug, so
+ * this does not try to chmod anything looser.
+ */
+function staxx_icon_adopt(string $ref, string $dir, string &$error): string {
+  $error = '';
+  if (!staxx_icon_safe_ref($ref)) { $error = 'That is not a valid icon reference.'; return ''; }
+
+  $source = '';
+  $ext    = '';
+  foreach (STAXX_ICON_EXTS as $candidate) {
+    $served = STAXX_ICON_SERVE.'/'.$ref.'.'.$candidate;
+    $kept   = STAXX_ICON_STORE.'/'.$ref.'.'.$candidate;
+    if (is_file($served)) { $source = $served; $ext = $candidate; break; }
+    if (is_file($kept))   { $source = $kept;   $ext = $candidate; break; }
+  }
+  if ($source === '') { $error = 'This icon has not been downloaded yet.'; return ''; }
+
+  if (!is_dir($dir) || !is_writable($dir)) {
+    $error = 'The stack folder cannot be written to.';
+    return '';
+  }
+
+  $file   = $ref.'.'.$ext;
+  $target = $dir.'/'.$file;
+
+  if (is_file($target)) {
+    // Already there. Identical contents is a no-op success — this has to be
+    // safe to run twice — but different contents is left alone: it is not
+    // this plugin's picture to overwrite.
+    if (md5_file($target) === md5_file($source)) return $file;
+    $error = 'A different file already exists at that name in the stack folder.';
+    return '';
+  }
+
+  $body = @file_get_contents($source);
+  if ($body === false) { $error = 'The cached icon could not be read.'; return ''; }
+  if (!staxx_icon_write($target, $body)) { $error = 'The icon could not be written to the stack folder.'; return ''; }
+
+  return $file;
 }
 
 /**
@@ -718,6 +794,7 @@ function staxx_icon_resolve(string $icon, string $dir = '', string $image = '',
     // A URL. Cached under a hash of it rather than its filename, because two
     // stacks are perfectly likely to both point at something called icon.png.
     if (preg_match('#^https?://#i', $icon)) {
+      $icon = staxx_icon_raw_url($icon);
       $ref = 'url-'.md5($icon);
       return ['fa' => '', 'ref' => $ref, 'url' => staxx_icon_url($ref), 'remote' => $icon];
     }

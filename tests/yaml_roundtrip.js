@@ -9650,6 +9650,64 @@ console.log('\nAM. The project-link write on a hand-authored, anchored, x-unraid
   }
 })();
 
+/* =========================================================================
+ * AN. PLAN_86 — the automatic icon sweep's write: x-unraid: icon: through
+ *     the same addNested() the project-link write above already proves,
+ *     with form: null since the sweep never has a live form open (it may
+ *     not even be the stack the editor currently has open).
+ * ========================================================================= */
+
+console.log('\nAN. The icon-adoption write (x-unraid: icon:)');
+
+(function () {
+  // No x-unraid: block at all — created fresh, correctly indented, nothing
+  // else in the file moves.
+  var src  = 'services:\n  web:\n    image: nginx\n    restart: always\n';
+  var want = 'services:\n  web:\n    image: nginx\n    restart: always\n' +
+             '    x-unraid:\n      icon: cloudbeaver.png\n';
+  var doc = Y.parse(src);
+  var at = Y.addNested(doc, null, 'web', ['x-unraid', 'icon'], 'cloudbeaver.png');
+  ok('the insert succeeds', at >= 0, at);
+  ok('x-unraid: is created and the icon line lands under it, nothing else moved',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // An x-unraid: block already exists with other keys — the new key joins
+  // them, and every existing key survives untouched.
+  var src  = 'services:\n  web:\n    image: nginx\n' +
+             '    x-unraid:\n      project: https://example.com/project\n' +
+             '      webui: http://[IP]:8080/\n';
+  var want = src + '      icon: cloudbeaver.png\n';
+  var doc = Y.parse(src);
+  var at = Y.addNested(doc, null, 'web', ['x-unraid', 'icon'], 'cloudbeaver.png');
+  ok('the insert succeeds against an existing x-unraid: block', at >= 0, at);
+  ok('icon: joins the existing keys, which are untouched',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // Comments immediately above and below the service's own keys — the new
+  // block must land after the last key, never between a comment and the
+  // line it annotates.
+  var src = 'services:\n  web:\n' +
+            '    # the web front end\n' +
+            '    image: nginx\n' +
+            '    # keep this always on\n' +
+            '    restart: always\n';
+  var want = src + '    x-unraid:\n      icon: cloudbeaver.png\n';
+  var doc = Y.parse(src);
+  var at = Y.addNested(doc, null, 'web', ['x-unraid', 'icon'], 'cloudbeaver.png');
+  ok('the insert succeeds', at >= 0, at);
+  ok('both comments stay exactly where they were, still annotating their own lines',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+
+  var reparsed = Y.parse(Y.serialise(doc));
+  ok('the result re-parses clean — no warnings, no unread tail',
+     reparsed.warnings.length === 0 && !reparsed.unreadTail,
+     JSON.stringify({ warnings: reparsed.warnings, unreadTail: reparsed.unreadTail }));
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

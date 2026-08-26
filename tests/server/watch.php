@@ -67,6 +67,31 @@ register_shutdown_function(function () use ($scratch) {
   echo "scratch state removed\n";
 });
 
+/* ---------- STACK_ROOT, pointed at a throwaway tree before ANY include ----
+ * Section 6 below reads a stack off disk, and there is no env override for
+ * the stack root, so the real cfg file is rewritten and put back on exit —
+ * the same trick tests/server/moves.php uses. It has to happen up here,
+ * before the first require: staxx_cfg() memoises on its first call, and any
+ * plugin file included above this point would make that call. Nothing in
+ * sections 0-5 reads a stack, so redirecting the root this early costs them
+ * nothing. */
+$cfgFile  = '/boot/config/plugins/staxx/staxx.cfg';
+$testRoot = '/tmp/staxx-watch-test-root';
+$cfgBackup = @file_get_contents($cfgFile);
+
+register_shutdown_function(function () use ($cfgFile, $testRoot, $cfgBackup) {
+  if ($cfgBackup === false) { @unlink($cfgFile); } else { @file_put_contents($cfgFile, $cfgBackup); }
+  @exec('rm -rf '.escapeshellarg($testRoot));
+  echo "STACK_ROOT restored\n";
+});
+
+@exec('rm -rf '.escapeshellarg($testRoot));
+mkdir($testRoot, 0755, true);
+$cfgLines = $cfgBackup !== false ? preg_split('/\r?\n/', $cfgBackup) : [];
+$cfgLines = array_values(array_filter($cfgLines, fn($l) => strpos(trim((string)$l), 'STACK_ROOT=') !== 0));
+$cfgLines[] = 'STACK_ROOT="'.$testRoot.'"';
+file_put_contents($cfgFile, implode("\n", $cfgLines)."\n");
+
 require_once '/usr/local/emhttp/plugins/staxx/include/Watch.php';
 
 $fails = 0;
@@ -327,6 +352,51 @@ $spent = 0;
 $w2 = staxx_watch_check('nongithub/app:latest', $prior, $spent);
 ok('a repeated failure returns the prior entry wholesale — home_from is not lost',
    $w2 === $prior && $w2['home_from'] === 'label', json_encode($w2));
+
+/* ------- 6. PLAN_85 — staxx_watch_for_stack()'s note names its service --- *
+ * A note built off the state file alone (section 5 above) named no service
+ * at all; this proves the naming clause, and that two services sharing one
+ * image still produce exactly one note, naming both. Needs StacksTable.php
+ * (staxx_watch_for_stack() itself, plus the compose reader it calls), and a
+ * real stack directory to read, under the throwaway stack root set up at the
+ * top of this file. */
+
+require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
+
+ok('the throwaway stack root is now in force', staxx_stack_root() === $testRoot, staxx_stack_root());
+
+// One service alone with an unknown-home image, and two services sharing a
+// second such image — the case the dedupe has to still collapse to one note.
+$namingStack = 'namingtest';
+$namingDir   = $testRoot.'/'.$namingStack;
+mkdir($namingDir, 0755, true);
+file_put_contents($namingDir.'/compose.yaml',
+  "services:\n"
+  ."  fldb:\n"
+  ."    image: nobody-publishes-this/alone:latest\n"
+  ."  adminer:\n"
+  ."    image: nobody-publishes-this/shared:latest\n"
+  ."  cron:\n"
+  ."    image: nobody-publishes-this/shared:latest\n"
+);
+staxx_scan_stacks_reset();
+
+// Both images checked and found to have no known project home — the one
+// no-network reason staxx_watch_check() can reach deterministically (see
+// section 5 above).
+staxx_update_state_save(['images' => [
+  'nobody-publishes-this/alone:latest'  => ['watch' => ['reason' => 'no known project home for this image']],
+  'nobody-publishes-this/shared:latest' => ['watch' => ['reason' => 'no known project home for this image']],
+]]);
+
+$watch = staxx_watch_for_stack($namingStack);
+ok('one note per image, not per service', count($watch['notes']) === 2, implode(' | ', $watch['notes']));
+ok('a single-service image names that one service',
+   in_array('No known project home for this image, used by "fldb".', $watch['notes'], true),
+   implode(' | ', $watch['notes']));
+ok('two services sharing an image produce ONE note naming both',
+   in_array('No known project home for this image, used by "adminer" and "cron".', $watch['notes'], true),
+   implode(' | ', $watch['notes']));
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

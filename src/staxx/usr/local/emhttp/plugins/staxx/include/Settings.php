@@ -62,6 +62,11 @@ function staxx_settings_keys(): array {
     // may put the question back except a person editing the setting by hand.
     'STORAGE_CHOICE'      => ['type' => 'choice', 'default' => 'ask', 'choices' => ['ask', 'chosen', 'declined']],
     'ICON_FETCH'          => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
+    // PLAN_86 — record a matched icon into the compose file and copy its
+    // picture into the stack's own folder, instead of guessing again on
+    // every render. Not in $reload below: nothing that reads this needs the
+    // page itself to reload.
+    'ICON_ADOPT'          => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     'IMAGE_LOOKUP'        => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     // Gates staxx_exec_start() on the server, not only the button in the
     // browser — see PLAN_44 section D4.

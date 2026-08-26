@@ -361,6 +361,19 @@ function staxx_watch_apply_pill(array $u, int $count): array {
 }
 
 /**
+ * PLAN_85 — joins service names into one clause naming all of them: "fldb",
+ * "fldb" and "adminer", or "fldb", "adminer" and "cron" for three or more.
+ * Plain double quotes, matching how this file already quotes a stack's own
+ * name back to the user (e.g. the "already exists" refusal in action.php).
+ */
+function staxx_watch_join_names(array $names): string {
+  $quoted = array_map(static fn($n) => '"'.$n.'"', $names);
+  if (count($quoted) === 1) return $quoted[0];
+  $last = array_pop($quoted);
+  return implode(', ', $quoted).' and '.$last;
+}
+
+/**
  * PLAN_62 Stage 3 — this stack's Stage-2 findings, reshaped for the `read`
  * reply: per service, the settings the author's own example adds or drops;
  * plus one sentence for every image that could not be compared at all,
@@ -386,17 +399,21 @@ function staxx_watch_for_stack(string $stack): array {
   $stackWatch  = (array)($state['stacks'][$stack]['watch'] ?? []);
   $imagesState = (array)$state['images'];
 
-  $findings  = [];
-  $notes     = [];
-  $seenImage = [];
+  $findings = [];
+  $notes    = [];
+
+  // Collected before any lookup: an image-level reason is said once even when
+  // several services here share it (PLAN_85 — and now names all of them, so
+  // "nobody needs to be told twice" no longer costs "told about nobody").
+  $imageServices = [];
   foreach ($meta['services'] as $svc => $svcMeta) {
     $image = trim((string)($svcMeta['image'] ?? ''));
-    // Each refusal reason is a property of the image, said once even when
-    // several services here share it — nobody needs to be told twice that
-    // one author publishes no example.
-    if ($image === '' || isset($seenImage[$image])) continue;
-    $seenImage[$image] = true;
+    if ($image === '') continue;
+    $imageServices[$image][] = $svc;
+  }
 
+  foreach ($imageServices as $image => $services) {
+    $svc   = $services[0];
     $entry = $stackWatch[$image] ?? null;
     // PLAN_62 Stage 4 — a dismissed finding is left out here too, the same
     // filter the row's count and the combined report both go through.
@@ -433,10 +450,112 @@ function staxx_watch_for_stack(string $stack): array {
     } elseif (($imagesState[$image]['watch']['reason'] ?? '') !== '') {
       $reason = (string)$imagesState[$image]['watch']['reason'];
     }
-    if ($reason !== '') $notes[] = ucfirst($reason).'.';
+    // PLAN_85 — the reason is a sentence fragment worded about "this image"
+    // generically ("no known project home for this image"); rather than
+    // rewrite that wording per reason, the service name(s) are appended as
+    // their own clause, which reads correctly for every reason in the list.
+    if ($reason !== '') {
+      $named = staxx_watch_join_names($services);
+      $notes[] = ucfirst($reason).', used by '.$named.'.';
+    }
   }
 
   return ['findings' => $findings, 'notes' => $notes];
+}
+
+/**
+ * PLAN_85 — one icon per service, for the editor's heading row.
+ *
+ * Deliberately narrower than staxx_stack_children()'s icon lookup: this calls
+ * staxx_icon_resolve() with only the icon and the stack directory, no image,
+ * service or stack, which is what stops it falling through to
+ * staxx_icon_match(). The editor must show exactly what the file says, never
+ * a guess made at display time.
+ *
+ * @return array<string, array{html: string, q: string}>
+ */
+function staxx_service_icons_for_stack(string $stack): array {
+  // Same cheap lookup staxx_watch_for_stack() uses, rather than
+  // staxx_list_stacks() — see its own comment for why.
+  $file = '';
+  foreach (staxx_scan_stacks()['stacks'] as $s) {
+    if ($s['rel'] === $stack) { $file = staxx_find_compose_file($s['dir']); break; }
+  }
+  if ($file === '') return [];
+  $meta = staxx_compose_meta($file);
+  if (!$meta['ok']) return [];
+
+  $dir = dirname($file);
+  $out = [];
+  foreach ($meta['services'] as $svc => $svcMeta) {
+    $icon  = (string)($svcMeta['x']['icon'] ?? '');
+    $image = trim((string)($svcMeta['image'] ?? ''));
+    $out[$svc] = [
+      'html' => staxx_icon_tile(staxx_icon_resolve($icon, $dir), $svc),
+      'q'    => $image !== '' ? (staxx_icon_candidates($image)[0] ?? '') : '',
+    ];
+  }
+  return $out;
+}
+
+/**
+ * PLAN_86 — the walk that finds services worth recording an icon for, and
+ * copies each picture into its own stack's folder as it goes: an item is
+ * only ever offered once the file it names is already sitting there.
+ *
+ * Skips, quietly, each for its own reason: a stack in $skip (the editor is
+ * open on it right now); a stack whose compose file did not parse; a service
+ * that already records an icon (never overwritten, ever); a service with no
+ * image; an image staxx_icon_match() cannot place; and a copy that failed
+ * for any reason. None of those stop the walk — only the cap does.
+ *
+ * Same call, same arguments, as the grid's own child rows (see
+ * staxx_stack_tile()) — what gets recorded is exactly what the grid was
+ * already showing, never a fresh guess.
+ *
+ * @return array<int, array{stack:string, service:string, file:string}>
+ */
+function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
+  $skip   = array_flip($skip);
+  $out    = [];
+  $cutoff = false;
+
+  foreach (staxx_scan_stacks()['stacks'] as $s) {
+    if (isset($skip[$s['rel']])) continue;
+
+    $file = staxx_find_compose_file($s['dir']);
+    if ($file === '') continue;
+
+    $meta = staxx_compose_meta($file);
+    if (!$meta['ok']) continue;
+
+    foreach ($meta['services'] as $svc => $svcMeta) {
+      if (trim((string)($svcMeta['x']['icon'] ?? '')) !== '') continue;
+
+      $image = trim((string)($svcMeta['image'] ?? ''));
+      if ($image === '') continue;
+
+      // $s['rel'], not the leaf: a stack row's 'name' IS its path under the
+      // root, and that is what the grid hands staxx_icon_match() as its last
+      // candidate. Passing the leaf here instead would let a stack inside a
+      // folder match something the grid never showed, and recording that
+      // would change what it looks like — the one thing this must not do.
+      $ref = staxx_icon_match($image, $svc, $s['rel']);
+      if ($ref === '') continue;
+
+      $error = '';
+      $written = staxx_icon_adopt($ref, $s['dir'], $error);
+      if ($written === '') continue;
+
+      $out[] = ['stack' => $s['rel'], 'service' => $svc, 'file' => $written];
+      if (count($out) >= $cap) { $cutoff = true; break 2; }
+    }
+  }
+
+  // Only a cap-cut walk is unfinished — one that ran out of stacks and
+  // services on its own has genuinely seen everything there is.
+  $done = !$cutoff;
+  return $out;
 }
 
 /**
@@ -700,6 +819,34 @@ function staxx_icon_tile(array $icon, string $name): string {
 }
 
 /**
+ * The stack's own icon, resolved — or null when it does not say anything
+ * usable, so the caller falls through to its children's icons.
+ *
+ * A stack's own `icon:` outranks its children's, but an address that cannot
+ * be downloaded is not an answer. Converted Unraid templates carry plenty of
+ * these: StirlingPDF's still names a favicon under the project's former
+ * "Frooodle" account, which 404s, and the initials tile that produced was
+ * indistinguishable from a stack whose icon had never been set — while the
+ * editor, reading the service's own icon, showed the real logo. A download
+ * already known to have failed therefore counts as no icon at all.
+ *
+ * Not a permanent verdict, and deliberately not one for an icon merely
+ * waiting to be fetched: that keeps its reference so the page can swap the
+ * picture in when it arrives, and the failure marker expires on its own, so
+ * a site that was briefly down recovers without anything being edited.
+ */
+function staxx_stack_own_icon(array $s): ?array {
+  $own = (string)($s['x']['icon'] ?? '');
+  if ($own === '') return null;
+
+  $icon = staxx_icon_resolve($own, $s['dir']);
+  if ($icon['fa'] === '' && $icon['url'] === ''
+      && ($icon['ref'] === '' || staxx_icon_missed($icon['ref']))) return null;
+
+  return $icon;
+}
+
+/**
  * A stack's tile: the icons of the containers inside it, tiled together.
  *
  * A stack is not one thing, so one logo cannot honestly stand for it. Four is
@@ -712,12 +859,10 @@ function staxx_icon_tile(array $icon, string $name): string {
  * @param array $kids from staxx_stack_children()
  */
 function staxx_stack_tile(array $s, array $kids): string {
-  $own = (string)($s['x']['icon'] ?? '');
-  if ($own !== '') {
-    // Initials come from the title, so the letters in the tile are the letters
-    // written beside it. The folder name is not what anyone is reading here.
-    return staxx_icon_tile(staxx_icon_resolve($own, $s['dir']), $s['leaf']);
-  }
+  // Initials come from the title, so the letters in the tile are the letters
+  // written beside it. The folder name is not what anyone is reading here.
+  $own = staxx_stack_own_icon($s);
+  if ($own !== null) return staxx_icon_tile($own, $s['leaf']);
 
   if (!$kids) {
     return '<i class="fa fa-cubes"></i>';
@@ -755,10 +900,8 @@ function staxx_stack_tile(array $s, array $kids): string {
  * @param array $kids from staxx_stack_children()
  */
 function staxx_stack_strip_tile(array $s, array $kids): string {
-  $own = (string)($s['x']['icon'] ?? '');
-  if ($own !== '') {
-    return staxx_icon_tile(staxx_icon_resolve($own, $s['dir']), $s['leaf']);
-  }
+  $own = staxx_stack_own_icon($s);
+  if ($own !== null) return staxx_icon_tile($own, $s['leaf']);
 
   if (!$kids) {
     return '<i class="fa fa-cubes"></i>';

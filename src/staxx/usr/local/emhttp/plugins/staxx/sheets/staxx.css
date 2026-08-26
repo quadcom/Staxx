@@ -191,6 +191,26 @@
   outline-offset: 2px;
 }
 
+/* PLAN_86 — the icon-adoption summary is a .staxx-notice with a close cross
+   pinned to its far side, rather than a toast: an unrequested file edit the
+   user never gets to read is the thing rule 2 forbids, so this stays until
+   dismissed by hand. */
+.staxx-notice-close {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 0.2rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.staxx-notice-close:hover,
+.staxx-notice-close:focus-visible {
+  opacity: 1;
+}
+
 /* ---- Section bar -------------------------------------------------------- */
 
 .staxx-bar {
@@ -3316,6 +3336,64 @@
   margin: 0 0 1.2rem;
   font-size: 1.8rem;
   font-weight: 700;
+}
+
+/* PLAN_85 — the heading is a row now: name and pencil stay left, the icon
+   link sits at the right-hand end. Scoped to the element selector (not the
+   Stack section's <summary>, which also carries .staxx-svchead) because
+   display: flex on a <summary> loses its disclosure triangle — see
+   stackSectionHtml()'s own heading, which must keep the plain rule above. */
+.staxx-scaffold h4.staxx-svchead {
+  display: flex;
+  align-items: center;
+}
+
+/* Deliberately much larger than the heading's own type scale: this is the
+   one screen where the icon is being chosen, so it is worth actually seeing.
+   The heading row grows to match it, which is what puts a comfortable gap
+   between one service's settings and the next. */
+.staxx-scaffold .staxx-svcicon {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 7.2rem;
+  height: 7.2rem;
+  border-radius: 0.8rem;
+  overflow: hidden;
+  opacity: 0.85;
+}
+
+.staxx-svcicon:hover,
+.staxx-svcicon:focus-visible {
+  opacity: 1;
+  outline: none;
+}
+
+.staxx-svcicon img,
+.staxx-svcicon .staxx-tile {
+  width: 100%;
+  height: 100%;
+}
+
+/* Same box model the table's own logos need: width plus padding overflows the
+   square unless border-box is stated, and contain keeps a tall or wide logo
+   from being stretched to fit. */
+.staxx-svcicon img {
+  box-sizing: border-box;
+  padding: 0.4rem;
+  object-fit: contain;
+}
+
+/* The letters and the glyph follow the box, or a 7.2rem square would hold
+   two tiny characters in the middle of nothing. */
+.staxx-svcicon .staxx-tile {
+  font-size: 2.6rem;
+}
+
+.staxx-svcicon i {
+  font-size: 3.6rem;
 }
 
 /* Quiet until the heading is hovered or focused, so a pencil beside every

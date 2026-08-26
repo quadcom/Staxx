@@ -244,6 +244,9 @@ switch ($action) {
     // empty wire contract as 'moved' just above.
     $watch = staxx_watch_for_stack($name);
     if ($watch['findings'] !== [] || $watch['notes'] !== []) $reply['watch'] = $watch;
+    // PLAN_85 — one icon per service, same omit-when-empty wire contract.
+    $icons = staxx_service_icons_for_stack($name);
+    if ($icons !== []) $reply['icons'] = $icons;
     staxx_reply($reply);
 
   // ---- create a new stack, or overwrite an existing one ----
@@ -1253,6 +1256,28 @@ switch ($action) {
   case 'icons':
     $wanted = ($_POST['scope'] ?? '') === 'import' ? staxx_import_icon_wanted() : staxx_icon_wanted();
     staxx_reply(['ok' => true] + staxx_icon_sweep($wanted));
+
+  /* ---- PLAN_86 — record an icon in the services that only ever guessed one ----
+   *
+   * `skip` names stacks the browser wants left alone this round (the editor
+   * is open on one of them); each entry is validated the same way any other
+   * stack path is, so a bad entry is dropped rather than widening what gets
+   * touched. Nothing else about which file or service is named comes from
+   * the request — the walk decides that itself, from each stack's own file.
+   */
+  case 'icon-todo':
+    if (!staxx_cfg_bool('ICON_ADOPT')) {
+      staxx_reply(['ok' => true, 'items' => [], 'done' => true]);
+    }
+
+    $skip = array_values(array_filter(
+      explode(',', (string)($_POST['skip'] ?? '')),
+      'staxx_valid_path'
+    ));
+
+    $done  = true;
+    $items = staxx_icon_adopt_sweep($skip, 5, $done);
+    staxx_reply(['ok' => true, 'items' => $items, 'done' => $done]);
 
   // ---- self-test: pure PHP, runs no commands, cannot hang ----
   case 'ping':

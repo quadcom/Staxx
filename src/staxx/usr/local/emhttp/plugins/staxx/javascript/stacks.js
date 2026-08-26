@@ -1401,6 +1401,13 @@
   var watchFacts = {};
   var watchNotes = [];
 
+  // PLAN_85 — the `read` reply's own per-service icon tiles, service name ->
+  // {html, q}, set once by openEditor() the same way as watchFacts above.
+  // Yesterday's icon is meaningless against today's stack, so this is
+  // overwritten wholesale on every open rather than merged; paintServiceIcons()
+  // is the only reader, and renderForm() never learns it exists.
+  var serviceIcons = {};
+
   // PLAN_65 — every host port and bind-mount path Docker already has,
   // refreshed by refreshRows() (see 'taken' on that reply); never fetched by
   // the editor itself. clashSpots is what applyClashAdvice() below fills each
@@ -1465,24 +1472,34 @@
   function findClashes(text, ownProject) {
     var out = [];
     if (!YAML || typeof YAML.hostPorts !== 'function') return out;
-    // Compose v2 joins project and service with '-'; older compose, and the
-    // Compose Manager plugin, still join them with '_'. A stack named the
-    // second way would otherwise see every one of its own ports and paths
-    // reported as a clash with itself.
-    var isOwn = function (container) {
-      return ownProject && (container.indexOf(ownProject + '-') === 0 ||
-                             container.indexOf(ownProject + '_') === 0);
+    // Docker's own compose-project label is the answer where a container
+    // carries one, because a name is not proof of ownership: a converted
+    // Unraid template sets container_name, so CloudBeaver's container is
+    // called "CloudBeaver" and matched neither pattern below — the stack was
+    // told its own port was taken by a stranger, naming itself.
+    //
+    // The name patterns stay for a container with no such label. Compose v2
+    // joins project and service with '-'; older compose, and the Compose
+    // Manager plugin, still join them with '_'. A stack named the second way
+    // would otherwise see every one of its own ports and paths reported as a
+    // clash with itself.
+    var isOwn = function (t) {
+      if (!ownProject) return false;
+      if (t.project) return t.project === ownProject;
+      var container = t.container || '';
+      return container.indexOf(ownProject + '-') === 0 ||
+             container.indexOf(ownProject + '_') === 0;
     };
     YAML.hostPorts(text).forEach(function (p) {
       TAKEN.ports.forEach(function (t) {
-        if (isOwn(t.container) || t.proto !== p.proto || !portsOverlap(p.port, t.port)) return;
+        if (isOwn(t) || t.proto !== p.proto || !portsOverlap(p.port, t.port)) return;
         out.push({ kind: 'port', line: p.line, col: p.col, len: p.len,
                    mine: p.port, proto: p.proto, container: t.container });
       });
     });
     YAML.hostPaths(text).forEach(function (p) {
       TAKEN.paths.forEach(function (t) {
-        if (isOwn(t.container) || !pathsClash(p.path, t.path)) return;
+        if (isOwn(t) || !pathsClash(p.path, t.path)) return;
         out.push({ kind: 'path', line: p.line, col: p.col, len: p.len,
                    mine: p.path, container: t.container });
       });
@@ -3491,12 +3508,29 @@
       var svc = form.services[s];
       out.push('<section class="staxx-svc" data-service="' + esc(svc.name) + '"' +
                ' data-from="' + svc.range.start + '" data-to="' + svc.range.end + '">');
+      // The anchor's href is one fixed address of ours, never anything out of
+      // the file, so the javascript:-scheme trap safeUpdateSource() guards
+      // elsewhere cannot arise here. It cannot be pre-searched: the icon
+      // collection reads no URL parameter at all (checked in the browser —
+      // its search box stays empty whatever is passed), so the term goes in
+      // the hover text instead, where it is still worth having. That is
+      // paintServiceIcons()'s job, along with the tile itself, since
+      // renderForm() has no access to serviceIcons. Typing an icon name into
+      // the compose text will not change this heading until the file is saved
+      // and reopened: the icon store lives on the server, and the browser
+      // cannot turn a collection name into a picture.
+      var svcTile = importInitials(svc.name);
       out.push('<h4 class="staxx-svchead">' +
                '<span class="staxx-svcname">' + esc(svc.name) + '</span>' +
                ' <button type="button" class="staxx-svcrename" data-svc-rename="1"' +
                ' data-service="' + esc(svc.name) + '"' +
                ' aria-label="Rename this service" title="Rename this service">' +
                '<i class="fa fa-pencil" aria-hidden="true"></i></button>' +
+               '<a class="staxx-svcicon" data-svc-icon="' + esc(svc.name) + '"' +
+               ' href="https://selfh.st/icons/" target="_blank" rel="noopener noreferrer"' +
+               ' title="Find an icon for this service">' +
+               '<span class="staxx-tile staxx-tile--' + svcTile.colour + '">' + esc(svcTile.text) + '</span>' +
+               '</a>' +
                '</h4>');
       if (svc.overview) out.push('<p class="staxx-fieldhint">' + esc(svc.overview) + '</p>');
       if (svc.note)     out.push('<p class="staxx-fieldnote">' + esc(svc.note) + '</p>');
@@ -3722,15 +3756,58 @@
   // text before this pane is painted, so needsScaffold() is already false by
   // the time reparse() first runs. Skipped on a companion file for the same
   // reason updateMissing() has nothing to say about one either.
+  // Plain words for the field names, because the note is read by someone who
+  // is not going to look up what `readme` or `update` means in the schema.
+  var SCAFFOLD_WORDS = {
+    icon: 'an icon', overview: 'a description', category: 'a category',
+    project: 'a project page', support: 'a support page',
+    readme: 'a documentation page', author: 'an author',
+    update: 'an update policy', webui: 'a web page address'
+  };
+
+  function scaffoldWords(added) {
+    var seen = {};
+    var out  = [];
+    var take = function (key) {
+      if (key === 'version' || seen[key]) return;
+      seen[key] = true;
+      out.push(SCAFFOLD_WORDS[key] || key);
+    };
+    (added.stack || []).forEach(take);
+    Object.keys(added.services || {}).forEach(function (svc) {
+      (added.services[svc] || []).forEach(take);
+    });
+
+    if (out.length > 4) {
+      var rest = out.length - 3;
+      out = out.slice(0, 3);
+      out.push(rest + ' more');
+    }
+    if (out.length === 1) return out[0];
+    return out.slice(0, -1).join(', ') + ' and ' + out[out.length - 1];
+  }
+
   function updateScaffoldNote() {
     if (!scaffoldNote) return;
-    if (fileOpen !== null || !window.StaxxMeta || !window.StaxxMeta.needsScaffold(currentText())) {
+    // scaffold() rather than needsScaffold(): the same work either way — the
+    // latter only throws the answer away — and what it would add is what
+    // decides which of the two sentences below is true.
+    var plan = window.StaxxMeta ? window.StaxxMeta.scaffold(currentText()) : null;
+    if (fileOpen !== null || !plan || !plan.changed) {
       scaffoldNote.hidden = true;
       scaffoldNote.textContent = '';
       return;
     }
-    scaffoldNote.textContent = 'This stack has no StaXX fields for its icon, links and ' +
-      'description. Add them?';
+
+    // 'version' is only ever added alongside a brand new x-unraid block, so it
+    // is what separates "there is nothing here" from "some of it is missing".
+    // Claiming the former when a file plainly holds an icon, a category and an
+    // overview reads as the page not having looked.
+    var added = plan.added || {};
+    var fresh = (added.stack || []).indexOf('version') >= 0;
+    scaffoldNote.textContent = fresh
+      ? 'This stack has no StaXX fields for its icon, links and description. Add them?'
+      : 'This stack is missing some StaXX fields — ' + scaffoldWords(added) + '. Add them?';
     scaffoldNote.hidden = false;
   }
 
@@ -4154,6 +4231,7 @@
     devPanel = null;            // the device panel lives in here and just went
     formHost.innerHTML = form.ok ? renderForm(form) : brokenFormHtml(form);
     formHost.scrollTop = scrollWas;
+    paintServiceIcons();   // PLAN_85 — every render repaints from serviceIcons, set once by openEditor()
 
     setFormGate(form.ok, form.warnings[0] && form.warnings[0].message);
 
@@ -10001,7 +10079,7 @@
   // the whole stack's own All tab, a service name for one container's — and
   // it is what switches straight to Manage further down, once the model this
   // stack's Manage view is built from (MODEL, from reparse() above) exists.
-  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved, watch) {
+  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved, watch, icons) {
     closeMenu();
     clearError();
 
@@ -10020,6 +10098,10 @@
     // top-of-form summary; buildForm() never learns any of it exists either.
     watchFacts = (watch && watch.findings) || {};
     watchNotes = (watch && watch.notes) || [];
+    // Same reasoning again, for PLAN_85's per-service icon tiles — yesterday's
+    // icon is meaningless against today's stack, so this is only ever what
+    // the current `read` reply carried.
+    serviceIcons = icons || {};
 
     // Yesterday's tabs are meaningless against today's stack — cleared before
     // the fresh listing arrives (or, for a new stack with no folder yet, before
@@ -14496,6 +14578,24 @@
   // just makes a repeat of that regression impossible rather than unlikely.
   var ICONS_MAX_ROUNDS = 20;
 
+  // PLAN_85 — swaps the server's own tile markup (same shape as the main
+  // table's rows) into each service heading's link, and says in the hover
+  // text what to search the collection for. A service name is
+  // author-supplied text, so it is read off the element's dataset rather than
+  // built into a selector — the same reason data-icon-ref above is safe to
+  // put straight into one and a service name is not. The HTML itself is
+  // trusted because it is our own server-rendered tile, so paintIcons() and
+  // the broken-image fallback listener keep working on it unchanged.
+  function paintServiceIcons() {
+    var nodes = document.querySelectorAll('[data-svc-icon]');
+    Array.prototype.forEach.call(nodes, function (node) {
+      var entry = serviceIcons[node.dataset.svcIcon];
+      if (!entry) return;
+      node.innerHTML = entry.html;
+      if (entry.q) node.title = 'Find an icon for this service — search for “' + entry.q + '”';
+    });
+  }
+
   function paintIcons(map) {
     Object.keys(map).forEach(function (ref) {
       // A reference is lower-case letters, digits and hyphens — the server
@@ -14572,6 +14672,128 @@
     span.textContent = img.dataset.fallback;
     if (img.parentNode) img.parentNode.replaceChild(span, img);
   }, true);
+
+  /* ---------------------------------------------------- icon adoption -- */
+
+  /* PLAN_86. `icon-todo` names services with no icon: recorded yet, whose
+   * picture is already sitting in the collection cache; this copies that
+   * picture into the stack's own folder (server-side, before the item is
+   * ever offered) and then writes the line naming it, through the same
+   * read/addNested/save path writeProjectLink() above already uses — never
+   * a hand-rolled splice, so a service block that has to be found and
+   * inserted into is not code this project writes twice.
+   *
+   * One stack at a time, sequentially, never in parallel: a second write
+   * landing on a stack whose fingerprint the first write just moved would
+   * only be dropped anyway, so there is nothing to gain from racing them and
+   * a save under an editor that opens mid-sweep is exactly what this avoids.
+   */
+  var iconAdoptBusy = false;
+  var iconAdoptRounds = 0;
+  // Recorded across every round of one run so the summary line, shown once
+  // at the end, counts the whole run rather than just its last round.
+  var iconAdoptStacks = {};
+  var iconAdoptCount = 0;
+
+  // Writing this key does not change the fingerprint compose hashes a
+  // service by (checked on the server with `docker compose config
+  // --hash='*'` over two files differing only by this key: identical
+  // hashes) — which is why this sweep never marks a running stack "restart
+  // to apply".
+  function iconAdoptWrite(item) {
+    return call('read', { name: item.stack }).then(function (res) {
+      if (!res || !res.ok) return;
+      var doc = YAML.parse(res.body);
+      // form: null, the same as writeProjectLink() above — this write never
+      // has a live editor form to hand, since it may not even be the stack
+      // the editor has open right now.
+      var at = YAML.addNested(doc, null, item.service, ['x-unraid', 'icon'], item.file);
+      if (at < 0) return;   // could not write safely — skip, never force it
+
+      return call('save', { name: res.name, body: YAML.serialise(doc), 'new': '0',
+                             fingerprint: res.fingerprint }).then(function (r) {
+        // A moved fingerprint means someone else changed the file meanwhile —
+        // drop it silently, per PLAN_86; it is offered again next round.
+        if (!r || !r.ok) return;
+        iconAdoptStacks[item.stack] = true;
+        iconAdoptCount++;
+      });
+    });
+  }
+
+  function iconAdoptSweep() {
+    if (iconAdoptBusy) return;
+    // Never fires alongside the import or settings dialogs, the same
+    // caution importFetchIcons() takes for its own list — a save landing
+    // while one of those is mid-flight is not a race worth risking for a
+    // background convenience. Retried shortly rather than abandoned.
+    if ((importModal && importModal.open) || (settingsModal && settingsModal.open)) {
+      setTimeout(iconAdoptSweep, 2000);
+      return;
+    }
+    if (!YAML || typeof YAML.parse !== 'function') return;
+
+    iconAdoptBusy = true;
+    // A stack open in the editor right now is left alone this round, so a
+    // save never lands underneath it.
+    call('icon-todo', { skip: openedName }, 30000).then(function (res) {
+      // Held until the writes finish, not released here: this flag is what
+      // stops a second sweep starting while files are mid-save.
+      if (!res || !res.ok) { iconAdoptBusy = false; return; }
+      var items = res.items || [];
+
+      var chain = Promise.resolve();
+      items.forEach(function (item) { chain = chain.then(function () { return iconAdoptWrite(item); }); });
+
+      chain.then(function () {
+        iconAdoptBusy = false;
+        if (res.done === false) {
+          if (iconAdoptRounds < ICONS_MAX_ROUNDS) {
+            iconAdoptRounds++;
+            setTimeout(iconAdoptSweep, 500);
+          }
+          return;
+        }
+        iconAdoptRounds = 0;
+        if (iconAdoptCount > 0) {
+          showIconAdoptSummary(iconAdoptCount, Object.keys(iconAdoptStacks).length);
+          iconAdoptCount = 0;
+          iconAdoptStacks = {};
+          refreshRows();   // the changed stacks re-render from their files
+        }
+      });
+    }, function () { iconAdoptBusy = false; });
+  }
+
+  // A dismissible line above the table, not a toast — an edit made without
+  // being asked has to stay readable until the user has actually seen it.
+  // Built here rather than in the page's own markup because there is
+  // nothing to show until a run finds something to say.
+  var iconAdoptNotice = null;
+  function showIconAdoptSummary(services, stacks) {
+    if (iconAdoptNotice) iconAdoptNotice.remove();
+
+    var svcText   = services + (services === 1 ? ' service' : ' services');
+    var stackText = stacks + (stacks === 1 ? ' stack' : ' stacks');
+    var notice = document.createElement('div');
+    notice.className = 'staxx-notice';
+    notice.innerHTML =
+      '<i class="fa fa-picture-o" aria-hidden="true"></i>' +
+      '<div>' + esc('An icon was recorded for ' + svcText + ' across ' + stackText +
+                    '. Each of those stacks’ previous version is saved in its own history.') +
+      '</div>' +
+      '<button type="button" class="staxx-notice-close" title="Dismiss" aria-label="Dismiss">' +
+        '<i class="fa fa-times" aria-hidden="true"></i></button>';
+    notice.querySelector('.staxx-notice-close').addEventListener('click', function () {
+      notice.remove();
+      if (iconAdoptNotice === notice) iconAdoptNotice = null;
+    });
+
+    if (pageNotice && pageNotice.parentNode) {
+      pageNotice.insertAdjacentElement('afterend', notice);
+    }
+    iconAdoptNotice = notice;
+  }
 
   /* ------------------------------------------------------------ wiring -- */
 
@@ -14731,7 +14953,7 @@
   function editStack(name, label, focusService, manageSelect, focusField) {
     call('read', { name: name }).then(function (res) {
       if (!res.ok) { failed('Could not open ' + label, res.error); return; }
-      openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch);
+      openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch, res.icons);
     });
   }
 
@@ -16335,6 +16557,22 @@
             '<a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st</a> and ' +
             'used under the <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" ' +
             'rel="noopener">CC BY 4.0</a> licence.'
+    },
+    {
+      key: 'ICON_ADOPT', control: 'choice', label: 'Keep icons with the stack',
+      choices: [
+        ['true',  'Record them in the file'],
+        ['false', 'Work them out each time']
+      ],
+      help: 'When StaXX recognises the software a container runs, it can write that down: the ' +
+            'icon’s name goes into the service’s <code>x-unraid</code> section and a copy of ' +
+            'the picture is saved in the same folder as the compose file. The stack then owns its ' +
+            'icon — it looks the same on any server you copy the folder to, and it cannot change ' +
+            'under you if the icon collection changes. This runs quietly in the background, a few ' +
+            'services at a time, and each file it changes keeps its previous version in that ' +
+            'stack’s own history, so any of it can be undone. An icon you have named yourself is ' +
+            'never touched. Turning this off changes nothing already written; icons are simply ' +
+            'worked out afresh on every page, as they were before.'
     },
     {
       key: 'IMAGE_LOOKUP', control: 'choice', label: 'Image documentation',
@@ -19696,6 +19934,13 @@
   // Not gated on CAN_RUN: icons are worth having whether or not docker and
   // compose are usable, and a stack that cannot start still deserves a face.
   fetchIcons();
+
+  // PLAN_86 — started once, here, after the rows first render. Unlike
+  // fetchIcons() above this does not re-arm on every table refresh: it is a
+  // walk of every stack's own file, not a picture fetch, and its own bounded
+  // rounds already carry it to completion (or the setting being off) without
+  // needing a second trigger.
+  iconAdoptSweep();
 
   // The applications catalogue refreshes itself here rather than waiting for
   // somebody to open the Apps dialog, so it is normally already current by the
