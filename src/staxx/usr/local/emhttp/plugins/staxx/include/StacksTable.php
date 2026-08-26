@@ -887,6 +887,54 @@ function staxx_drift_mark_html(string $title): string {
 }
 
 /**
+ * PLAN_71 Stage 4a — the "restart pending" chip on a stack row: what is
+ * running does not match what the file now says. Deliberately its own
+ * classes, never staxx-updatepill's or staxx-driftmark's — those answer two
+ * unrelated questions (an image update; an Unraid template moved on since
+ * import) and must never look like the same thing as this one.
+ *
+ * A real button, because pressing it opens an explanation panel (built in
+ * stacks.js) — it never restarts anything itself. The data attributes carry
+ * everything that panel needs so a press costs nothing further.
+ *
+ * @param array $p from staxx_restart_pending()
+ */
+function staxx_pending_chip_html(array $p): string {
+  if (($p['state'] ?? '') !== 'pending') return '';
+
+  $title = _('The running containers do not yet reflect what is on screen. Restarting rebuilds them from the file as it stands; nothing is wrong until then.');
+
+  return '<button type="button" class="staxx-pendingchip"'
+       . ' data-stack="'.htmlspecialchars((string)($p['stack'] ?? '')).'"'
+       . ' data-edited="'.(int)($p['edited'] ?? 0).'"'
+       . ' data-changed="'.htmlspecialchars(implode(',', $p['changed'] ?? [])).'"'
+       . ' data-absent="'.htmlspecialchars(implode(',', $p['absent'] ?? [])).'"'
+       . ' data-leftover="'.htmlspecialchars(implode(',', $p['leftover'] ?? [])).'"'
+       . ' aria-label="'.htmlspecialchars($title).'"'
+       . ' title="'.htmlspecialchars($title).'">'
+       . '↻ '._('Restart to apply').'</button>';
+}
+
+/**
+ * The same chip's icon-only form for one service row — see
+ * staxx_pending_chip_html() above for why this shares no class with the
+ * update pill or the drift mark. '' for 'match', 'unknown', or anything this
+ * has not been taught about: those are exactly the cases with nothing to
+ * report.
+ */
+function staxx_pending_service_chip_html(string $kind): string {
+  $title = [
+    'changed'  => _('Settings changed since this started'),
+    'absent'   => _('Not started yet'),
+    'leftover' => _('No longer in the file'),
+  ][$kind] ?? '';
+  if ($title === '') return '';
+
+  return '<span class="staxx-pendingchip staxx-pendingchip--service" title="'.htmlspecialchars($title).'"'
+       . ' aria-label="'.htmlspecialchars($title).'">↻</span>';
+}
+
+/**
  * The small marker beside the image column when the compose file asks for one
  * image and the running container is another — a save that has not yet been
  * followed by a start or restart. Deliberately its own class rather than
@@ -906,6 +954,68 @@ function staxx_image_mismatch_html(string $declared, string $running): string {
   );
   return '<span class="staxx-imgmismatch" title="'.htmlspecialchars($title).'">'
        . '<i class="fa fa-exclamation-triangle"></i></span>';
+}
+
+/**
+ * The human half of a pinned image's fingerprint — the tag written before the
+ * @, since that is the name a person actually recognises. Only when there is
+ * none (an image pinned with no tag at all) does this fall back to the first
+ * twelve characters of the digest itself, which is the shortest slice of it
+ * anyone could still tell apart from another.
+ */
+function staxx_pin_version(string $image): string {
+  $at = strpos($image, '@');
+  if ($at === false) return $image;
+  $repoTag = substr($image, 0, $at);
+  $digest  = substr($image, $at + 1);   // algo:hex, e.g. sha256:abcdef012345...
+
+  // A colon only names a tag when it comes after the last slash — one before
+  // it is a registry host's port number (registry.example.com:5000/app).
+  $slash = strrpos($repoTag, '/');
+  $colon = strrpos($repoTag, ':');
+  if ($colon !== false && ($slash === false || $colon > $slash)) {
+    return substr($repoTag, $colon + 1);
+  }
+
+  $hexColon = strpos($digest, ':');
+  $hex      = $hexColon !== false ? substr($digest, $hexColon + 1) : $digest;
+  return substr($hex, 0, 12);
+}
+
+/**
+ * The small marker on a stack row naming any service pinned to an exact
+ * build — an image whose value carries an @, so a pull can never move it off
+ * that build. Read straight off $kids' own 'declared' field, which is the
+ * compose file's own image string already parsed once by
+ * staxx_stack_children() — no second read of the file here.
+ *
+ * Deliberately its own class rather than staxx_drift_mark_html()'s or
+ * staxx_image_mismatch_html()'s: this is neither a warning nor a change since
+ * import, just a fact worth a quiet note, and sharing either class would say
+ * otherwise.
+ *
+ * @param array $kids from staxx_stack_children()
+ */
+function staxx_pin_mark_html(array $kids): string {
+  $pins = [];
+  foreach ($kids as $kid) {
+    $image = (string)($kid['declared'] ?? '');
+    if (strpos($image, '@') === false) continue;
+    $pins[] = ['service' => $kid['service'] !== '' ? $kid['service'] : $kid['name'], 'image' => $image];
+  }
+  if (!$pins) return '';
+
+  $text = count($pins) === 1
+    ? sprintf(_('%s is pinned to %s.'), $pins[0]['service'], staxx_pin_version($pins[0]['image']))
+    : sprintf(_('%d services are pinned to an exact build.'), count($pins));
+
+  // Named for a screen reader with a .staxx-sr span, not title alone — title
+  // is not reliably read out by assistive tech, and .staxx-sr is this file's
+  // existing pattern for an icon that has to carry real text (see
+  // staxx_grip_html() and stacks.js's own uses of the same class).
+  return '<span class="staxx-pinmark" title="'.htmlspecialchars($text).'">'
+       . '<i class="fa fa-thumb-tack"></i>'
+       . '<span class="staxx-sr">'.htmlspecialchars($text).'</span></span>';
 }
 
 /**
@@ -1176,6 +1286,13 @@ function staxx_render_rows(array $rows, bool $canRun): string {
       // real problem — see staxx_watch_apply_pill().
       $sUpdate = staxx_watch_apply_pill($sUpdate, staxx_watch_count_for_stack($s['name']));
 
+      // PLAN_71 — "restart pending": what is running versus what the file
+      // now says. 'stack' is added here rather than by staxx_restart_pending()
+      // itself, which answers only the comparison and does not otherwise
+      // need to know its own row's name.
+      $sPending = staxx_restart_pending($s);
+      $sPending['stack'] = $s['name'];
+
       $expanded = $expandable && !empty($row['expanded']);
       $kidsUp   = count(array_filter($kids, fn($k) => $k['state'] === 'running'));
 
@@ -1320,6 +1437,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                 <? if (isset($drift[$s['name']])): ?>
                   <?= staxx_drift_mark_html($drift[$s['name']]) ?>
                 <? endif; ?>
+                <?= staxx_pin_mark_html($kids) ?>
                 <!-- The count is only worth printing for a stack that has more
                      than one container; for a single one the State column
                      already says everything this would. -->
@@ -1365,7 +1483,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 
           <!-- data-cell names these for the browser: after a start or a stop it
                replaces just these cells rather than the whole row. -->
-          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_state_pill($s, $canRun).staxx_update_pill_html($sUpdate) ?></span>
+          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_state_pill($s, $canRun).staxx_update_pill_html($sUpdate).staxx_pending_chip_html($sPending) ?></span>
           <span class="staxx-cell staxx-cell--address staxx-addrcell" role="gridcell" data-cell="address"><?=
             staxx_address_html(staxx_merged_addresses(staxx_stack_containers($s), array_column($kids, 'webui', 'id')))
           ?></span>
@@ -1423,6 +1541,10 @@ function staxx_render_rows(array $rows, bool $canRun): string {
         $cGripWhy = _('This is the only service here, so there is nothing to reorder it against.');
         // One image, this row's own — see PLAN_45 Part H.
         $kUpdate  = staxx_updates_for_row($s['name'], $kid['service']);
+        // PLAN_71 — this service's own verdict off the stack's already-computed
+        // comparison; a service with no verdict at all (never ran, say) gets
+        // '', which is exactly what staxx_pending_service_chip_html() shows nothing for.
+        $kPending = (string)($sPending['services'][$kid['service']] ?? '');
 ?>
         <!-- data-state below is read by the container menu (buildContainerMenu()
              in stacks.js) straight off the row, so it has to be right on the
@@ -1541,7 +1663,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
             <? endif; ?>
           </span>
 
-          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_container_pill($kid).staxx_update_pill_html($kUpdate) ?></span>
+          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_container_pill($kid).staxx_update_pill_html($kUpdate).staxx_pending_service_chip_html($kPending) ?></span>
           <span class="staxx-cell staxx-cell--address staxx-addrcell" role="gridcell" data-cell="address"><?=
             staxx_address_html($kid['id'] !== ''
               ? staxx_address_webui_override(

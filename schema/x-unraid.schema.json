@@ -68,8 +68,8 @@
     },
 
     "service": {
-      "type": "object",
-      "description": "Service-level metadata. Every key optional.",
+      "description": "Service-level metadata. Every key optional. Also accepts null — the shape a scaffolded-but-untouched block parses as (a bare \"x-unraid:\" key with only commented placeholders under it, none uncommented yet). Measured on the test server against compose v2.40.3: docker compose config --hash='*' gives the identical service hash whether x-unraid is absent, null, or fully populated, because compose excludes every x- extension key from the config hash entirely — so a bare block can never make a running stack look out of date. The stack-level block ($defs/stack) has no such case: the scaffolder always gives it a real \"version: 1\", so it is never null.",
+      "type": ["object", "null"],
       "$comment": "additionalProperties absent for the same reason as $defs/stack — see the $comment there.",
       "properties": {
         "icon":     { "$ref": "#/$defs/icon" },

@@ -24,6 +24,17 @@
   var tabConfigureBtn = document.getElementById('staxx-tab-configure');
   var tabManageBtn    = document.getElementById('staxx-tab-manage');
   var manageHost      = document.getElementById('staxx-modal-manage');
+  // History (PLAN_68 Part A piece 3) — a third peer tab, built entirely by
+  // this file straight into its own empty host, the same "empty markup until
+  // script fills it in" shape as manageHost above. See the History section
+  // further down, near setTab().
+  var tabHistoryBtn   = document.getElementById('staxx-tab-history');
+  var historyHost     = document.getElementById('staxx-modal-history');
+  // Versions (PLAN_82 Part 2 step 2) — a fourth peer tab, same "empty host
+  // filled in by this file" shape as History above. See the Versions section
+  // further down, near setTab().
+  var tabVersionsBtn  = document.getElementById('staxx-tab-versions');
+  var versionsHost    = document.getElementById('staxx-modal-versions');
   var nameField   = document.getElementById('staxx-name-field');
   var nameInput   = document.getElementById('staxx-name');
   var nameFolder  = document.getElementById('staxx-name-folder');
@@ -43,6 +54,17 @@
   var suggestBox  = document.getElementById('staxx-suggest');
   var keyHelp     = document.getElementById('staxx-keyhelp');
   var formHost    = document.getElementById('staxx-form');
+  // PLAN_71 stage 6 — the "restart pending" line for the form itself, not
+  // just the row. No server-rendered element exists for this (the plan
+  // scopes the work to this file alone, the same reasoning clashNote and
+  // watchNote below already give for themselves), so it is built here and
+  // placed the same way #staxx-refnote is: above #staxx-form rather than
+  // inside it, because reparse() replaces that element's contents wholesale
+  // and anything inside it would go with them.
+  var pendingNote = document.createElement('p');
+  pendingNote.className = 'staxx-pendingnote';
+  pendingNote.hidden = true;
+  if (formHost && formHost.parentNode) formHost.parentNode.insertBefore(pendingNote, formHost);
   // The structure outline: a button in the modal header and the panel it
   // toggles open, both siblings inside .staxx-outlinewrap. May be null
   // while the markup has not landed yet — guarded everywhere below, the same
@@ -112,6 +134,7 @@
   if (gapNote && gapNote.parentNode) gapNote.parentNode.insertBefore(watchNote, gapNote);
   var errorBox    = document.getElementById('staxx-error');
   var missingNote = document.getElementById('staxx-missing');
+  var scaffoldNote = document.getElementById('staxx-scaffold-note');
   var makePathsNote = document.getElementById('staxx-makepaths');
   var inUseNote     = document.getElementById('staxx-inusepaths');
 
@@ -852,6 +875,39 @@
                                 // overwrite a change made elsewhere since (see PLAN_60 3.1)
   var serviceRenamed = false;  // a pencil rename happened this session — offer a recreate after save
 
+  // History (PLAN_68 Part A piece 3) — this stack's kept versions. Reset on
+  // every open (see openEditor() below) so a leftover list or selection from
+  // the last stack can never show through, and fetched lazily the first time
+  // the tab is actually entered rather than on open, since most people never
+  // look. historySeq is bumped on every open and closed over by every request
+  // below, so a reply that lands after a different stack has opened — or after
+  // Sanitise has hidden the tab — finds itself superseded and paints nothing.
+  var historySeq          = 0;
+  var historyLoaded       = false;   // true once history-list has answered for THIS stack
+  var historyBusy         = false;   // the history-list request is in flight
+  var historyVersions     = [];      // the last list the server sent, newest first
+  var historyKeep         = 20;      // STAXX_RECORD_KEEP, echoed back by history-list
+  var historySelected     = null;    // the version number shown in the viewer, or null
+  var historyText         = '';      // that version's own text, once history-read answers
+  var historyReadBusy     = false;
+  var historyReadError    = '';
+  var historyLoadError    = '';      // history-list itself failed — nothing else in the pane can be trusted
+  var historyActionError  = '';      // a failed name/clear, shown above an otherwise normal list
+
+  // Versions (PLAN_82 Part 2 step 2) — which build of each service's image
+  // has actually been running, and a way to put an earlier one back. Unlike
+  // History this stays available while Sanitise is on: an image name and a
+  // version are not values the author wrote, and are not secrets the way a
+  // password is. versionsSeq is the same "close over the sequence number so
+  // a late reply cannot paint over a different stack" guard as historySeq.
+  var versionsSeq          = 0;
+  var versionsLoaded       = false;  // true once image-versions has answered for THIS stack
+  var versionsBusy         = false;
+  var versionsServices     = [];     // [{service, image, current, watched, entries}], as the server sent it
+  var versionsSelected     = null;   // the service name shown on the right, or null
+  var versionsLoadError    = '';     // image-versions itself failed — nothing else in the pane can be trusted
+  var versionsActionError  = '';     // a failed rollback, shown above an otherwise normal list
+
   // The tab strip's own state. FILES is the last `files` listing, in the
   // order it arrived — compose file first, then alphabetical (see
   // staxx_list_files() in Stacks.php). fileOpen is the companion filename
@@ -1231,6 +1287,33 @@
     }
     if (yamlTimer) clearTimeout(yamlTimer);
     yamlTimer = setTimeout(function () { yamlTimer = null; reparse(); }, 400);
+  });
+
+  // PLAN_83: a paste is the moment a whole file arrives from nowhere — same
+  // as any of the other new-stack routes openEditor() itself scaffolds, but
+  // this one happens after the editor is already open. Existing-stack
+  // pastes are left alone; #staxx-scaffold-note is what offers those.
+  // setTimeout(0) is needed because the 'paste' event fires before the
+  // browser has actually inserted the clipboard text into the box.
+  yamlPane.addEventListener('paste', function () {
+    if (modal.dataset.new !== '1' || fileOpen !== null || !window.StaxxMeta) return;
+    setTimeout(function () {
+      var scaffolded = window.StaxxMeta.scaffold(currentText());
+      if (scaffolded.error || !scaffolded.changed) return;
+      pushUndo('adding the StaXX fields');
+      yamlPane.value = scaffolded.yaml;
+      // The new lines can land anywhere in the file (a root block goes in
+      // before "services:"), so recovering the exact caret spot the paste
+      // left behind is not worth chasing — landing at the end of the file
+      // is the same trade-off pushUndo()'s own callers already make.
+      yamlPane.selectionStart = yamlPane.selectionEnd = yamlPane.value.length;
+      paintGutter();
+      paintInk();
+      activeField = null;
+      reparse();
+      updateUndo();
+      setYamlStatus('Added the StaXX fields for icon, links and description.');
+    }, 0);
   });
 
   /* Split is the desktop default and is not offered on a phone, where two panes
@@ -3634,6 +3717,37 @@
     if (missing.length) createMissingFile(missing[0]);
   });
 
+  // PLAN_83: an existing stack with no StaXX presentation fields at all.
+  // Never shown for a brand-new stack — openEditor() already scaffolds that
+  // text before this pane is painted, so needsScaffold() is already false by
+  // the time reparse() first runs. Skipped on a companion file for the same
+  // reason updateMissing() has nothing to say about one either.
+  function updateScaffoldNote() {
+    if (!scaffoldNote) return;
+    if (fileOpen !== null || !window.StaxxMeta || !window.StaxxMeta.needsScaffold(currentText())) {
+      scaffoldNote.hidden = true;
+      scaffoldNote.textContent = '';
+      return;
+    }
+    scaffoldNote.textContent = 'This stack has no StaXX fields for its icon, links and ' +
+      'description. Add them?';
+    scaffoldNote.hidden = false;
+  }
+
+  if (scaffoldNote) scaffoldNote.addEventListener('click', function () {
+    if (!window.StaxxMeta) return;
+    var scaffolded = window.StaxxMeta.scaffold(currentText());
+    if (scaffolded.error || !scaffolded.changed) { updateScaffoldNote(); return; }
+    pushUndo('adding the StaXX fields');
+    yamlPane.value = scaffolded.yaml;
+    paintGutter();
+    paintInk();
+    activeField = null;
+    reparse();
+    updateUndo();
+    setYamlStatus('Added the StaXX fields for icon, links and description.');
+  });
+
   // A file the parser cannot read as a mapping at all has no services, which
   // renderForm() would otherwise draw as an almost-empty form — reading as
   // "this file has no containers" when the truth is "this could not be
@@ -4053,6 +4167,7 @@
     findRecompute();
     updateRequired();
     updateMissing();
+    updateScaffoldNote();
     relint();
     checkHostPaths();   // ask the server about any volume host path not already cached
     scheduleCheck();    // ask the server whether compose itself accepts this file (own, longer debounce)
@@ -4584,6 +4699,10 @@
       entry = entry ? entry[key] : undefined;
       var restoring = !!(entry && entry.lines && entry.lines.length);
 
+      // Checked ahead of restoreSection (PLAN_81) because the restore drops
+      // an unusable stash as it goes — asking after would always see "gone".
+      var stashOk = restoring ? YAML.sectionStashOk(MODEL.doc, svc, key) : null;
+
       pushUndo('turning on ' + label + ' for "' + svc + '"');
       // Nothing to restore means nothing to write: the tick is remembered in
       // sectionOn until something is put in the section. An entry saying
@@ -4603,8 +4722,15 @@
       }
       (sectionOn[svc] = sectionOn[svc] || {})[flagKey] = true;
 
-      say = 'Turned ' + label + (restoring ? ' back on' : ' on') + ' for "' + svc +
-            '". Undo is at the bottom if that was wrong.';
+      // A stash that failed the shape check is discarded rather than restored
+      // — that has to be said out loud, or a tampered/corrupted file looks
+      // exactly like a section that was simply empty (see the network-row
+      // case above for the same reasoning).
+      say = stashOk === false
+        ? 'The stored contents of this section are not in a form StaXX can put back, so they have ' +
+          'been discarded. The section is on but empty, and nothing else in the file was changed.'
+        : 'Turned ' + label + (restoring ? ' back on' : ' on') + ' for "' + svc +
+          '". Undo is at the bottom if that was wrong.';
 
       // Closed before the redraw, not after, so the form is drawn without the
       // panel rather than drawn with it and then having it taken away. The
@@ -5321,8 +5447,16 @@
       setYamlStatus(res.error);
       return;
     }
+    // discarded (PLAN_81) means a stash was there but failed the shape check —
+    // that is different from there being nothing to restore, and it has to be
+    // said plainly: a silently dropped stash is indistinguishable from a file
+    // that never had one, and the person tampering with the file (or the
+    // corruption) leaves no trace otherwise.
     structuralEdit(-1, res.restored
       ? 'Put "' + service + '"’s networks back. Undo is at the bottom if that was wrong.'
+      : res.discarded
+      ? 'The stored network list in this file is not in a form StaXX can put back, so it has been ' +
+        'discarded. The network mode has been cleared, so add the networks again from this row.'
       : 'There was nothing left to restore — the stash was empty or no longer made sense, so it was dropped.');
   }
 
@@ -6373,6 +6507,21 @@
     saveBtn.disabled  = on;
     startBtn.disabled = on || startBtnWasDisabled;
     if (!on) updateRequired();   // turning it off hands the decision back
+
+    // An old version holds the real, unhidden values — Sanitise being on must
+    // hide History as completely as it hides the form, whichever tab is on
+    // screen right now. Disabling the tab stops a fresh visit; repainting the
+    // pane in place (function declared further down, hoisted) covers the case
+    // where History is already open when Sanitise is switched on.
+    if (tabHistoryBtn) {
+      tabHistoryBtn.disabled = on;
+      tabHistoryBtn.title = on ? 'Not available while Sanitised — an old version holds the real values.' : '';
+    }
+    renderHistoryPane();
+
+    // Versions is deliberately NOT disabled here, unlike History above: an
+    // image name and a version are not values the author wrote, so Sanitise
+    // has nothing on this tab to hide.
 
     var controls = formHost.querySelectorAll('input, select, button');
     for (var i = 0; i < controls.length; i++) {
@@ -9209,7 +9358,18 @@
         notes: result.notes
       });
 
-      call('import-write', { name: stackName, body: result.yaml, about: about }, 20000).then(function (res) {
+      // PLAN_83: written straight to the server with no editor in between,
+      // so this is the only chance to top up the StaXX fields — a refusal
+      // here (bad YAML the converter itself produced) is silently ignored
+      // and the unscaffolded body is written instead, same as every other
+      // caller of scaffold() treats "error" as "leave it alone".
+      var writeBody = result.yaml;
+      if (window.StaxxMeta) {
+        var scaffolded = window.StaxxMeta.scaffold(writeBody);
+        if (!scaffolded.error) writeBody = scaffolded.yaml;
+      }
+
+      call('import-write', { name: stackName, body: writeBody, about: about }, 20000).then(function (res) {
         if (res.ok) {
           written++;
           importExisting.push({ folder: destFolder, leaf: leaf });
@@ -9875,6 +10035,40 @@
     fileMime = {};
     hideBinPanel();   // yesterday's stack may have left this showing
 
+    // Yesterday's history is meaningless against today's stack — bumping the
+    // sequence is what stops a history-list/-read reply still in flight from
+    // painting over the pane a moment after a different stack has opened.
+    historySeq++;
+    historyLoaded = false;
+    historyBusy = false;
+    historyVersions = [];
+    historySelected = null;
+    historyText = '';
+    historyReadBusy = false;
+    historyReadError = '';
+    historyLoadError = '';
+    historyActionError = '';
+    if (historyHost) {
+      historyHost.innerHTML = '';
+      historyHost.classList.remove('staxx-modal-history--sanitised');
+    }
+    if (tabHistoryBtn) { tabHistoryBtn.disabled = false; tabHistoryBtn.title = ''; }
+
+    // Yesterday's versions are meaningless against today's stack, same
+    // reasoning as historySeq just above — tabVersionsBtn needs no reset of
+    // its own since it is never disabled (see setSanitised()).
+    versionsSeq++;
+    versionsLoaded = false;
+    versionsBusy = false;
+    versionsServices = [];
+    versionsSelected = null;
+    versionsLoadError = '';
+    versionsActionError = '';
+    if (versionsHost) {
+      versionsHost.innerHTML = '';
+      versionsHost.classList.remove('staxx-modal-versions--single');
+    }
+
     // A stack's identity is its path under the stack root — "jellyfin" at the
     // top level, "Media/jellyfin" inside a folder. The box shows only the last
     // part, with the folder beside it as context, because those are two
@@ -9909,6 +10103,11 @@
     // that really is a caught install — and reattaches pendingHandoffId the
     // same way, immediately below this call, for the same reason.
     installNote.hidden = true;
+    // Same reasoning for the restart-pending line (PLAN_71 stage 6): reset
+    // to "show nothing" rather than leave yesterday's stack's own note
+    // showing against today's — the one render path, reapplyPendingChips(),
+    // puts the right answer back the next time it runs.
+    pendingNote.hidden = true;
     pendingHandoffId = '';
     pendingHandoffEdit = false;
     yamlPane.readOnly = false;
@@ -9923,6 +10122,15 @@
     // dirty check below compares CRLF against LF and never agrees, even with
     // nothing typed.
     var raw = body || (isNew ? NEW_STACK : '');
+    // PLAN_83: every route that opens a brand-new stack — Community
+    // Applications, an imported template, Docker Hub, a local image, the
+    // bare skeleton, the empty new-stack button — funnels through here, so
+    // this one call covers all of them. A refusal (error set) leaves raw
+    // exactly as it arrived, same as every other caller treats it.
+    if (isNew && window.StaxxMeta) {
+      var scaffolded = window.StaxxMeta.scaffold(raw);
+      if (!scaffolded.error) raw = scaffolded.yaml;
+    }
     composeEol = raw.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
     yamlPane.value = raw;
     textAtOpen = yamlPane.value;
@@ -12174,12 +12382,51 @@
   // The common ending once the compose file is on disk and no directory move
   // is needed — a brand new stack, or an existing one whose leaf did not
   // change.
-  function finishSave(name, thenStart, thenHandover) {
+  // Save leaves the editor open, so a run of small edits is one dialog rather
+  // than a reopen between each. It can only stay open when nothing else is
+  // waiting to happen, though: everything below needs the row on screen, or
+  // needs the editor pointed somewhere it no longer is.
+  //
+  //   isNew        the install banner is a page-level notice, and would sit
+  //                unseen behind this dialog; the editor is also still flagged
+  //                as a new stack, so a second Save would create rather than
+  //                update.
+  //   thenStart    "Save and start" reports progress into the row.
+  //   thenHandover the takeover confirmation is its own dialog.
+  //   offer        the recreate offer likewise.
+  //
+  // A rename never reaches here at all — it goes through renameThenFinish(),
+  // which moves the directory out from under the path this editor opened.
+  // "Saved" on the button itself for a moment, then back to its own label.
+  // The timer is held so a quick second save cannot restore a label captured
+  // while it already read "Saved" and leave the button stuck on it.
+  var savedTimer = null;
+  var saveBtnLabel = '';
+  function confirmSaved() {
+    if (savedTimer === null) saveBtnLabel = saveBtn.textContent;
+    else clearTimeout(savedTimer);
+    saveBtn.textContent = 'Saved';
+    savedTimer = setTimeout(function () {
+      saveBtn.textContent = saveBtnLabel;
+      savedTimer = null;
+    }, 1500);
+  }
+
+  function finishSave(name, thenStart, thenHandover, isNew) {
     saveBtn.disabled = false;
     startBtn.disabled = startBtnWasDisabled;
 
     var offer = serviceRenamed && stackIsRunning(name);
     serviceRenamed = false;
+
+    if (!isNew && !thenStart && !thenHandover && !offer) {
+      // The dialog closing was the only sign a save had landed, so with it
+      // staying open the button says so itself for a moment. No new markup
+      // and no new surface for one word.
+      confirmSaved();
+      refreshRows();
+      return;
+    }
 
     // The row has to exist before the start can report back into it, so
     // the table is refreshed first and the command issued from there.
@@ -12352,6 +12599,7 @@
         pendingHandoffEdit = false;
 
         if (res.templateNote) showPageNotice(res.templateNote);
+        if (res.historyNote) showPageNotice(res.historyNote);
 
         // Trust nothing: the server reports the path and size it actually
         // wrote. res.bytes == null is what "did nothing" looks like — a
@@ -12372,8 +12620,14 @@
         textAtOpen = body;
         fingerprintAtOpen = res.fingerprint || '';
 
+        // PLAN_71 stage 5: a save is exactly the moment the file side of the
+        // comparison can have moved — asked for here rather than waiting on
+        // the state poll, so a chip can appear "the instant a save lands"
+        // as decided.
+        refreshPending();
+
         var oldLeaf = openedName.slice(openedName.lastIndexOf('/') + 1);
-        if (isNew || leaf === oldLeaf) { finishSave(name, thenStart, offerHandover); return; }
+        if (isNew || leaf === oldLeaf) { finishSave(name, thenStart, offerHandover, isNew); return; }
 
         renameThenFinish(name, leaf, thenStart);
       });
@@ -12683,6 +12937,7 @@
     call('job', { jobs: ids.join(','), offsets: offsets.join(',') }).then(function (res) {
       if (!res.ok || !res.jobs) { stopTickerIfIdle(); return; }
 
+      var finished = false;
       ids.forEach(function (id) {
         var entry = jobs[id];
         var part  = res.jobs[id];
@@ -12711,9 +12966,17 @@
               : ' — done';
           }
           if (entry.done) entry.done({ text: entry.text, exit: part.exit, done: true });
+          // PLAN_71 stage 5: every job — start, stop, restart, an update,
+          // anything — can move the running side of the comparison, so this
+          // is the one place that catches all of them rather than adding the
+          // same call to each individual verb's own done() above. Noted here
+          // and asked for once below: a bulk action finishes several jobs in
+          // the same tick, and each ask sweeps the whole machine.
+          finished = true;
         }
       });
 
+      if (finished) refreshPending();
       stopTickerIfIdle();
     });
   }
@@ -13123,10 +13386,11 @@
 
     // paintState() above just replaced a batch of state cells' innerHTML,
     // which throws away any pill living inside them — put back the ones
-    // already in hand from the last `updates` reply. Declared after
-    // reapplyUpdatePills() is defined further down, but called only once
-    // the page is running, by which time it exists.
+    // already in hand from the last `updates` reply, and the last `pending`
+    // reply's chips beside them. Both are declared further down, but called
+    // only once the page is running, by which time they exist.
     reapplyUpdatePills();
+    reapplyPendingChips();
   }
 
   function refreshState() {
@@ -13475,6 +13739,150 @@
       var tr = document.querySelector('[data-folder-row="' + id + '"]');
       if (tr) paintUpdatePill(tr, lastUpdateFolders[id]);
     });
+  }
+
+  /* ---- restart pending (PLAN_71 stage 5) --------------------------------
+   *
+   * The exact same problem the `updates` block above already solved, so this
+   * mirrors it rather than inventing a second shape: the cheap state refresh
+   * is deliberately forbidden from reading compose files, so the browser
+   * keeps the last `pending` reply and re-applies it after every state
+   * repaint. "Pending", never "drift" — that word already means an Unraid
+   * template moving on since import (staxx-driftmark), an unrelated fact.
+   */
+  var lastPendingRows = {};
+
+  // The status area a chip belongs inside — the update pill's own host, so
+  // both land in the same place and staxx_pending_chip_html()'s ordering
+  // (after the update pill) only has to be matched once, here.
+  function pendingChipHost(row) {
+    return updatePillHost(row);
+  }
+
+  // The server hands back ready-made markup (unlike paintUpdatePill, which
+  // builds its own from plain facts) because the chip's own data attributes
+  // are already baked in by staxx_pending_chip_html() — this only has to
+  // place it, not build it. Rebuilt from scratch on every call, the same as
+  // paintState()'s innerHTML replace just above: simpler than diffing, and
+  // cheap enough that the state poll already does the equivalent every time
+  // it repaints a cell.
+  function paintPendingChip(row, entry) {
+    var host = pendingChipHost(row);
+    if (!host) return;
+    var chip = host.querySelector('.staxx-pendingchip');
+    if (chip) chip.parentNode.removeChild(chip);
+    var html = entry && entry.html ? entry.html : '';
+    if (!html) return;
+    var wrap = document.createElement('span');
+    wrap.innerHTML = html;
+    var node = wrap.firstElementChild;
+    if (!node) return;
+    // Right after the update pill, matching the server's own order, so a
+    // repaint never reshuffles the cell.
+    var pill = host.querySelector('.staxx-updatepill');
+    if (pill) host.insertBefore(node, pill.nextSibling);
+    else host.appendChild(node);
+  }
+
+  function paintPendingRow(key, entry) {
+    var sep = key.indexOf('::');
+    if (sep === -1) {
+      paintPendingChip(rowFor(key), entry);
+      return;
+    }
+    var stack = key.slice(0, sep), service = key.slice(sep + 2);
+    Array.prototype.forEach.call(
+      document.querySelectorAll(
+        '.staxx-container-row[data-in-stack="' + stack + '"][data-service="' + service + '"]'
+      ),
+      function (row) { paintPendingChip(row, entry); }
+    );
+  }
+
+  // PLAN_71 stage 6 — the one quiet line above the fields, shown only while
+  // the editor is open on a stack that has an entry (with something to say)
+  // in the last `pending` reply. Read straight out of lastPendingRows rather
+  // than asked for again — refreshPending() is the only fetch, this only
+  // ever repaints from what it last brought back. No entry yet (nothing has
+  // answered) reads the same as "nothing pending": never guessed at either
+  // way.
+  function paintPendingNote() {
+    if (!pendingNote) return;
+    var entry = (modal.open && openedName) ? lastPendingRows[openedName] : null;
+    var show = !!(entry && entry.html);
+    pendingNote.hidden = !show;
+    if (show) {
+      pendingNote.textContent = 'The containers running now were started with older ' +
+        'settings. Restart this stack to apply what you see here.';
+    }
+  }
+
+  // Re-applies the chips already in hand, with no request of its own — see
+  // reapplyUpdatePills() just above for why this has to exist at all.
+  function reapplyPendingChips() {
+    Object.keys(lastPendingRows).forEach(function (key) {
+      paintPendingRow(key, lastPendingRows[key]);
+    });
+    paintPendingNote();
+  }
+
+  // Asked for on page load, after a save, and after any job finishes (see
+  // those call sites) — never on a clock, for the same reason refreshUpdates()
+  // is not: nothing here changes on its own between one of those moments and
+  // the next.
+  function refreshPending() {
+    call('pending', {}).then(function (res) {
+      if (!res.ok) return;
+      lastPendingRows = res.rows || {};
+      reapplyPendingChips();
+    });
+  }
+
+  // "today at 14:32" while the file changed today — a plain date once it did
+  // not, the reader's own local clock either way. Deliberately not
+  // historyWhen()'s "3 hours ago" shape: that reads well in a sentence about
+  // the past, but the panel wants a fixed point in time to anchor the list
+  // of parts against, not a relative one that keeps sliding as it is read.
+  function pendingEditedWhen(at) {
+    if (!at) return 'an unknown time';
+    var d = new Date(at * 1000);
+    var now = new Date();
+    var sameDay = d.getFullYear() === now.getFullYear() &&
+                  d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    if (!sameDay) return d.toLocaleDateString();
+    var hh = ('0' + d.getHours()).slice(-2);
+    var mm = ('0' + d.getMinutes()).slice(-2);
+    return 'today at ' + hh + ':' + mm;
+  }
+
+  // Comma-separated service names off a chip's own data attributes, split
+  // back into a list — '' yields [], not [''].
+  function pendingNames(list) {
+    return (list || '').split(',').filter(function (s) { return s; });
+  }
+
+  // The panel a chip opens — reused straight off the existing output dialog
+  // rather than a new mechanism, since it is already exactly this: a title
+  // and a block of read-only text. logBox.textContent (not innerHTML) is
+  // what openLogDialog() writes with, so nothing here needs its own escaping
+  // — a service name can never become markup no matter what it contains.
+  // Never restarts anything: no button in it does anything but close.
+  function openPendingPanel(chip) {
+    var stack   = chip.dataset.stack || '';
+    var edited  = parseInt(chip.dataset.edited || '0', 10) || 0;
+    var changed  = pendingNames(chip.dataset.changed);
+    var absent   = pendingNames(chip.dataset.absent);
+    var leftover = pendingNames(chip.dataset.leftover);
+
+    var parts = [];
+    parts.push('The file was last changed ' + pendingEditedWhen(edited) + '.');
+    if (changed.length)  parts.push('Settings changed since this started: ' + changed.join(', ') + '.');
+    if (absent.length)   parts.push('Not started yet: ' + absent.join(', ') + '.');
+    if (leftover.length) parts.push('No longer in the file: ' + leftover.join(', ') + '.');
+    parts.push('Restarting the stack rebuilds these from the file as it stands now — ' +
+               'nothing is wrong until you do.');
+
+    openLogDialog(stackLabel(stack) + ' — restart pending', parts.join('\n\n'));
   }
 
   /* ---- pause switch (PLAN_45 phase 4-8) ---------------------------------
@@ -13927,6 +14335,7 @@
   // progress (started by the cron pass, or left running from a previous
   // visit) and resumes polling it.
   refreshUpdates();
+  refreshPending();   // PLAN_71 stage 5 — the chips on first load
   startPageClock();
 
   /* There are exactly TWO refresh sizes, and adding a third needs a
@@ -15031,11 +15440,731 @@
     if (manageStateTimer) { clearInterval(manageStateTimer); manageStateTimer = null; }
   }
 
+  /* ---- History tab (PLAN_68 Part A piece 3) --------------------------------
+   *
+   * A stack's kept versions — whole previous copies of the compose file and
+   * its override, captured by the server on every save. This file owns the
+   * whole pane: the list, the read-only viewer, naming, and Restore. Nothing
+   * here is polled; the list is fetched once when the tab is entered and
+   * refreshed only after an action that could have changed it.
+   *
+   * Rebuilt wholesale on every state change, the same way reparse() rebuilds
+   * the form — simpler than patching a live tree, and small enough (twenty
+   * rows at most) that the cost is not worth avoiding. */
+
+  // "less than a minute ago" while it happened today, a plain date and time
+  // once it did not — a version from three weeks ago is not usefully "25200
+  // minutes ago", and the reader's own clock (toLocaleString()) is what a
+  // local time means to them, not the server's.
+  function historyWhen(at) {
+    var d = new Date(at * 1000);
+    var now = new Date();
+    var sameDay = d.getFullYear() === now.getFullYear() &&
+                  d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    return sameDay ? timeAgoWords(at) + ' ago' : d.toLocaleString();
+  }
+
+  // aria-current, not a class — see the CSS comment on .staxx-history-entry.
+  function historyRowHtml(v) {
+    var isOv = isStackOverride(v.file);
+    var meta = (isOv ? 'Override' : 'Compose file') + ' · ' + esc(bytes(v.size));
+    var nameHtml = v.name ? ' — <strong>' + esc(v.name) + '</strong>' : '';
+    return '<button type="button" class="staxx-history-entry" data-history-row="' + v.n + '" ' +
+      'aria-current="' + (historySelected === v.n ? 'true' : 'false') + '">' +
+      '<div>' + esc(historyWhen(v.at)) + nameHtml + '</div>' +
+      '<div style="color:var(--sm-muted);">' + meta + '</div>' +
+      '</button>';
+  }
+
+  // The naming strip and Restore button, both pinned under the list and both
+  // acting on whichever entry is aria-current — there is one of each for the
+  // whole list, not one per row, so neither has to travel with its entry.
+  function historyActionsHtml() {
+    if (historySelected === null) {
+      return '<button type="button" class="staxx-btn staxx-history-restore" disabled ' +
+        'title="Pick a version above first.">Restore</button>';
+    }
+    var v = null;
+    for (var i = 0; i < historyVersions.length; i++) {
+      if (historyVersions[i].n === historySelected) { v = historyVersions[i]; break; }
+    }
+    // The list answered again (after a name change) and no longer names this
+    // version — it has been pruned since it was selected.
+    if (!v) {
+      return '<button type="button" class="staxx-btn staxx-history-restore" disabled>Restore</button>';
+    }
+
+    var isOv = isStackOverride(v.file);
+    var out = [];
+    out.push('<div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;padding:0.6rem 1rem;' +
+      'border-top:0.1rem solid var(--sm-line);">' +
+      '<input type="text" class="staxx-inline-name" id="staxx-history-name-input" ' +
+      'placeholder="Name to keep forever" value="' + esc(v.name || '') + '">' +
+      (v.name
+        ? '<button type="button" class="staxx-btn staxx-btn--small" data-history-clearname="' + v.n + '">Clear</button>'
+        : '') +
+      '</div>');
+
+    out.push('<button type="button" class="staxx-btn staxx-btn--primary staxx-history-restore"' +
+      (isOv ? ' disabled title="An override version cannot be restored here yet — open its own ' +
+        'tab and copy the text in by hand."' : '') + '>Restore into Configure</button>');
+    return out.join('');
+  }
+
+  function historyContentHtml() {
+    if (historySelected === null) {
+      return '<p class="staxx-form-empty">Pick a version on the left to look at it.</p>';
+    }
+    if (historyReadBusy) return '<p class="staxx-form-empty">Reading…</p>';
+    if (historyReadError) {
+      // Shown verbatim — see the endpoint's own two error strings, one for a
+      // pruned version and one for a stored copy that no longer matches its
+      // own recorded fingerprint. Neither reads well paraphrased.
+      return '<div class="staxx-notice staxx-notice--bad"><i class="fa fa-times-circle" ' +
+        'aria-hidden="true"></i><div>' + esc(historyReadError) + '</div></div>';
+    }
+    return esc(historyText);
+  }
+
+  // Everything before the normal two-column list-and-viewer state is really
+  // the same shape: one centred message where the grid would otherwise put
+  // two columns. --sanitised is the modifier the stylesheet gives that
+  // one-column collapse (see its own comment on .staxx-modal-history); reused
+  // here for "not loaded yet", "could not load at all" and "nothing kept
+  // yet" too, since all four are the same "there is no list to show beside a
+  // viewer" case as far as the grid is concerned.
+  function historySingleColumn(html) {
+    historyHost.classList.add('staxx-modal-history--sanitised');
+    historyHost.innerHTML = '<div class="staxx-history-sanitised">' + html + '</div>';
+  }
+
+  // The one function that draws #staxx-modal-history, from whatever the state
+  // above currently says. Called after every state change instead of patching
+  // the tree in place — see the section comment above for why.
+  function renderHistoryPane() {
+    if (!historyHost) return;
+
+    if (sanitised) {
+      historySingleColumn('<div class="staxx-notice"><i class="fa fa-eye-slash" aria-hidden="true">' +
+        '</i><div><strong>Not available while Sanitised.</strong> An old version holds the real, ' +
+        'unhidden values, so history is hidden until Sanitise is turned off.</div></div>');
+      return;
+    }
+
+    if (!historyLoaded) {
+      if (historyBusy) historySingleColumn('<p class="staxx-form-empty">Reading this stack’s history…</p>');
+      else { historyHost.classList.remove('staxx-modal-history--sanitised'); historyHost.innerHTML = ''; }
+      return;
+    }
+
+    if (historyLoadError) {
+      historySingleColumn('<div class="staxx-notice staxx-notice--bad"><i class="fa fa-times-circle" ' +
+        'aria-hidden="true"></i><div>' + esc(historyLoadError) + '</div></div>');
+      return;
+    }
+
+    if (!historyVersions.length) {
+      historySingleColumn('<p class="staxx-form-empty">No history yet. The next time this stack ' +
+        'is saved, that version starts being kept.</p>');
+      return;
+    }
+
+    // A failed name/clear does not invalidate the list itself, so it is a
+    // banner above the grid rather than a replacement for it — grid-column
+    // spans both of #staxx-modal-history's own columns rather than sitting
+    // squeezed into whichever one it would otherwise fall into as a third
+    // grid item.
+    var banner = historyActionError
+      ? '<div class="staxx-notice staxx-notice--bad" style="grid-column:1 / -1;">' +
+        '<i class="fa fa-times-circle" aria-hidden="true"></i><div>' + esc(historyActionError) +
+        '</div></div>'
+      : '';
+    historyHost.classList.remove('staxx-modal-history--sanitised');
+    historyHost.innerHTML = banner +
+      '<div class="staxx-history-list">' +
+        historyVersions.map(historyRowHtml).join('') +
+        historyActionsHtml() +
+      '</div>' +
+      '<div class="staxx-history-content">' + historyContentHtml() + '</div>';
+  }
+
+  // Fetched once per stack, the first time the tab is entered — see setTab().
+  function ensureHistoryLoaded() {
+    if (historyLoaded || historyBusy || sanitised) return;
+    historyBusy = true;
+    var seq = historySeq;
+    var stack = openedName;
+    renderHistoryPane();
+    call('history-list', { name: stack }).then(function (res) {
+      if (seq !== historySeq) return;   // a different stack opened before this answered
+      historyBusy = false;
+      historyLoaded = true;
+      if (!res || !res.ok) {
+        historyLoadError = (res && res.error) || 'Could not read this stack’s history.';
+        historyVersions = [];
+      } else {
+        historyVersions = res.versions || [];
+        historyKeep = res.keep || historyKeep;
+      }
+      renderHistoryPane();
+    });
+  }
+
+  function selectHistoryVersion(n) {
+    if (historySelected === n) return;
+    historySelected = n;
+    historyText = '';
+    historyReadError = '';
+    historyReadBusy = true;
+    var seq = historySeq;
+    renderHistoryPane();
+    call('history-read', { name: openedName, n: n }).then(function (res) {
+      if (seq !== historySeq || historySelected !== n) return;
+      historyReadBusy = false;
+      if (!res || !res.ok) {
+        // Shown verbatim — see the endpoint's own two error strings, one for
+        // a pruned version and one for a stored copy that no longer matches
+        // its own recorded fingerprint. Neither reads well paraphrased.
+        historyReadError = (res && res.error) || 'Could not read that version.';
+      } else {
+        historyText = res.text;
+      }
+      renderHistoryPane();
+    });
+  }
+
+  function saveHistoryName(n, label) {
+    call('history-name', { name: openedName, n: n, label: label }).then(function (res) {
+      if (!res || !res.ok) {
+        historyActionError = (res && res.error) || 'Could not update that version’s name.';
+        renderHistoryPane();
+        return;
+      }
+      historyActionError = '';
+      historyVersions = res.versions || [];
+      // The version just unnamed may already be gone — see the warning this
+      // is reached from, in clearHistoryName() below.
+      if (historySelected !== null && !historyVersions.some(function (v) { return v.n === historySelected; })) {
+        historySelected = null;
+        historyText = '';
+      }
+      renderHistoryPane();
+    });
+  }
+
+  // Clearing a name is not undoable the way naming one is — it can rejoin the
+  // ordinary queue and be pruned the instant it does, so this asks first,
+  // through the same yes/no dialog every other destructive question here uses.
+  function clearHistoryName(n) {
+    askConfirm({
+      title: 'Clear this version’s name?',
+      bodyHtml: '<p>A named version is kept forever. Clearing its name puts it back in the ordinary ' +
+        'queue of the last ' + historyKeep + ' saves, where it can be deleted the moment a newer one ' +
+        'is saved — possibly straight away.</p>',
+      goLabel: 'Clear the name'
+    }).then(function (go) {
+      closeConfirm();
+      if (!go) return;
+      saveHistoryName(n, '');
+    });
+  }
+
+  // Loads the chosen version into the editor as an unsaved change and switches
+  // to Configure — it never writes to disk itself. The ordinary Save commits
+  // it, and Save always captures whatever it is overwriting first, so undoing
+  // an undo works the same way any other save does.
+  function performRestore(n, text) {
+    var doRestore = function () {
+      // Back on the compose tab first — pushUndo() below snapshots whatever
+      // currentText() returns, which is the stashed compose text regardless
+      // of which tab is showing, but the box itself has to be showing it
+      // before this writes into it directly.
+      return openFile('').then(function () {
+        pushUndo('restoring version ' + n + ' from history');
+        yamlPane.value = text;
+        paintGutter();
+        paintInk();
+        reparse();
+        setYamlStatus('Restored version ' + n + ' from history — Save keeps it, or Undo puts the ' +
+          'previous version back.');
+        setTab('configure');
+        yamlPane.focus({ preventScroll: true });
+      });
+    };
+    if (!isDirty()) { doRestore(); return; }
+    askConfirm({
+      title: 'Discard changes?',
+      bodyHtml: '<p>Configure has changes that have not been saved. Restoring version ' + n +
+        ' replaces what is on screen with it.</p>',
+      goLabel: 'Discard and restore'
+    }).then(function (go) {
+      closeConfirm();
+      if (go) doRestore();
+    });
+  }
+
+  if (historyHost) {
+    historyHost.addEventListener('click', function (event) {
+      var row = event.target.closest('[data-history-row]');
+      if (row) { selectHistoryVersion(parseInt(row.dataset.historyRow, 10)); return; }
+
+      var restoreBtn = event.target.closest('.staxx-history-restore');
+      if (restoreBtn) {
+        if (restoreBtn.disabled || historySelected === null || historyReadBusy || historyReadError) return;
+        performRestore(historySelected, historyText);
+        return;
+      }
+
+      var clearBtn = event.target.closest('[data-history-clearname]');
+      if (clearBtn) { clearHistoryName(parseInt(clearBtn.dataset.historyClearname, 10)); return; }
+    });
+
+    // Enter commits the name box the same way blurring it does (below) —
+    // without this, Enter would do nothing but leave the caret sitting there.
+    historyHost.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' || event.target.id !== 'staxx-history-name-input') return;
+      event.preventDefault();
+      event.target.blur();
+    });
+
+    historyHost.addEventListener('change', function (event) {
+      if (event.target.id !== 'staxx-history-name-input' || historySelected === null) return;
+      saveHistoryName(historySelected, event.target.value.trim());
+    });
+  }
+
+  /* ---- Versions tab (PLAN_82 Part 2 step 2) --------------------------------
+   *
+   * Which build of each service's image has actually been running, and a way
+   * to put an earlier one back. Carries its own service list (there is no
+   * "All" state to grey out against) and, unlike History, needs no per-row
+   * fetch: image-versions answers with every service's whole entry list in
+   * one go, so picking a service on the left only ever re-renders the right
+   * column from data already held. */
+
+  // Same one-column collapse History uses for "not loaded", "failed to load"
+  // and "nothing kept yet" — there is no list worth showing beside a message
+  // that explains why there is nothing to pick from.
+  function versionsSingleColumn(html) {
+    versionsHost.classList.add('staxx-modal-versions--single');
+    versionsHost.innerHTML = '<div class="staxx-versions-single">' + html + '</div>';
+  }
+
+  // The service list on the left — name plus, underneath in quieter text,
+  // the image it points at, so a service can be told apart from another
+  // built off a shared base image.
+  function versionsServiceRowHtml(svc) {
+    return '<button type="button" class="staxx-versions-service" data-versions-service="' +
+      esc(svc.service) + '" aria-current="' + (versionsSelected === svc.service ? 'true' : 'false') + '">' +
+      '<div>' + esc(svc.service) + '</div>' +
+      '<div style="color:var(--sm-muted);font-size:1.1rem;">' + esc(svc.image) + '</div>' +
+      '</button>';
+  }
+
+  // One recorded version. A name where the image published one; where it
+  // did not, the row is just its date — that is the ordinary case for a
+  // great many images, not a missing value, so it is never spelled out as
+  // "unknown" or "n/a". The fingerprint (first 12 characters after the
+  // digest's own ':') is what tells two unlabelled rows apart. The row
+  // currently running gets no button — there is nothing to put back to
+  // when it is already what's running.
+  function versionRowHtml(svc, v) {
+    var isCurrent = !!svc.current && v.digest === svc.current;
+    var when = historyWhen(v.at);
+    var heading = v.version ? esc(v.version) : esc(when);
+    var metaBits = [];
+    if (v.version) metaBits.push(esc(when));
+    var colon = v.digest ? v.digest.indexOf(':') : -1;
+    if (colon !== -1) metaBits.push(esc(v.digest.slice(colon + 1, colon + 13)));
+    var metaHtml = metaBits.length
+      ? '<div style="color:var(--sm-muted);font-size:1.1rem;">' + metaBits.join(' · ') + '</div>' : '';
+    // The source is a registry label, so whoever published the image wrote
+    // it. esc() escapes markup but not scheme, so "javascript:…" would still
+    // become a working href in an admin's own session — safeUpdateSource(),
+    // which already guards this same label elsewhere, is what drops it.
+    var source = safeUpdateSource(v.source);
+    var sourceHtml = source
+      ? '<div><a href="' + esc(source) + '" target="_blank" rel="noopener">' + esc('See the source') +
+        '</a></div>' : '';
+    var actionHtml = isCurrent
+      ? '<div class="staxx-version-current">' + esc('Running now') + '</div>'
+      : '<button type="button" class="staxx-btn staxx-btn--small staxx-version-rollback" ' +
+        'data-version-service="' + esc(svc.service) + '" data-version-rollback="' + esc(v.digest) + '">' +
+        esc('Put this back') + '</button>';
+    // Notes were captured once, at pull time, and stored — nothing here ever
+    // fetches them, which is the whole point. Most entries have none (they
+    // predate this, or the image's registry gave nothing usable), and that
+    // is the ordinary case, not a gap, so a blank entry draws nothing at all.
+    var notesHtml = '';
+    if (v.notes) {
+      var cutHtml = '';
+      if (v.notesCut) {
+        var notesLink = safeUpdateSource(v.notesUrl);
+        cutHtml = '<div class="staxx-version-notes-cut">' +
+          (notesLink
+            ? esc('Shortened — ') + '<a href="' + esc(notesLink) + '" target="_blank" rel="noopener">' +
+              esc('see the rest') + '</a>'
+            : esc('Shortened.')) +
+          '</div>';
+      }
+      notesHtml = '<details class="staxx-version-notes"><summary>' + esc('What changed') + '</summary>' +
+        '<div class="staxx-version-notes-body">' + esc(v.notes) + '</div>' + cutHtml + '</details>';
+    }
+    return '<div class="staxx-version-entry"' + (isCurrent ? ' aria-current="true"' : '') + '>' +
+      '<div class="staxx-version-heading">' + heading + '</div>' + metaHtml + sourceHtml + notesHtml +
+      actionHtml + '</div>';
+  }
+
+  // A service is pinned when its image line names an exact fingerprint,
+  // which is read off the file itself (the "@" the endpoint's image string
+  // carries) rather than any record StaXX kept — so a pin typed in by hand
+  // is shown and released just as well as one this tab made. Looked up
+  // among this service's own entries so the band can name the version, but
+  // a hand-typed pin will usually not be in that list at all — the short
+  // fingerprint is shown instead, and that is the ordinary case, not a
+  // missing value, so it is never spelled out as "unknown".
+  function pinnedBandHtml(svc) {
+    var image = svc.image || '';
+    var atIdx = image.indexOf('@');
+    if (atIdx === -1) return '';
+    var fingerprint = image.slice(atIdx + 1);
+    var entry = null;
+    for (var i = 0; i < svc.entries.length; i++) {
+      if (svc.entries[i].digest === fingerprint) { entry = svc.entries[i]; break; }
+    }
+    var label;
+    if (entry && entry.version) {
+      label = entry.version;
+    } else {
+      var colon = fingerprint.indexOf(':');
+      label = colon !== -1 ? fingerprint.slice(colon + 1, colon + 13) : fingerprint.slice(0, 12);
+    }
+    return '<div class="staxx-version-pinned">' +
+      '<div>' + esc('Pinned to ' + label) + '</div>' +
+      '<button type="button" class="staxx-btn staxx-btn--small staxx-version-unpin" ' +
+      'data-version-unpin="' + esc(svc.service) + '">' + esc('Release this pin') + '</button>' +
+      '</div>';
+  }
+
+  function versionsContentHtml() {
+    var svc = null;
+    for (var i = 0; i < versionsServices.length; i++) {
+      if (versionsServices[i].service === versionsSelected) { svc = versionsServices[i]; break; }
+    }
+    if (!svc) return '<p class="staxx-form-empty">Pick a service on the left.</p>';
+    var band = pinnedBandHtml(svc);
+    if (!svc.entries.length) {
+      return band + '<p class="staxx-form-empty">Nothing has been recorded for ' + esc(svc.service) + ' yet. ' +
+        'A version is recorded the first time StaXX updates this image.</p>';
+    }
+    return band + svc.entries.map(function (v) { return versionRowHtml(svc, v); }).join('');
+  }
+
+  // The one function that draws #staxx-modal-versions — same "rebuilt
+  // wholesale on every state change" shape as renderHistoryPane, and small
+  // enough that patching a live tree in place would not be worth it.
+  function renderVersionsPane() {
+    if (!versionsHost) return;
+
+    if (!versionsLoaded) {
+      if (versionsBusy) versionsSingleColumn('<p class="staxx-form-empty">Reading this stack’s versions…</p>');
+      else { versionsHost.classList.remove('staxx-modal-versions--single'); versionsHost.innerHTML = ''; }
+      return;
+    }
+
+    if (versionsLoadError) {
+      versionsSingleColumn('<div class="staxx-notice staxx-notice--bad"><i class="fa fa-times-circle" ' +
+        'aria-hidden="true"></i><div>' + esc(versionsLoadError) + '</div></div>');
+      return;
+    }
+
+    if (!versionsServices.some(function (s) { return s.entries && s.entries.length; })) {
+      versionsSingleColumn('<p class="staxx-form-empty">Nothing has been recorded yet. A version is ' +
+        'recorded the first time StaXX updates one of this stack’s images.</p>');
+      return;
+    }
+
+    var banner = versionsActionError
+      ? '<div class="staxx-notice staxx-notice--bad" style="grid-column:1 / -1;">' +
+        '<i class="fa fa-times-circle" aria-hidden="true"></i><div>' + esc(versionsActionError) +
+        '</div></div>'
+      : '';
+    versionsHost.classList.remove('staxx-modal-versions--single');
+    versionsHost.innerHTML = banner +
+      '<div class="staxx-versions-list">' + versionsServices.map(versionsServiceRowHtml).join('') + '</div>' +
+      '<div class="staxx-versions-content">' + versionsContentHtml() + '</div>';
+  }
+
+  // Fetched once per stack, the first time the tab is entered — see setTab().
+  function ensureVersionsLoaded() {
+    if (versionsLoaded || versionsBusy) return;
+    versionsBusy = true;
+    var seq = versionsSeq;
+    var stack = openedName;
+    renderVersionsPane();
+    call('image-versions', { name: stack }).then(function (res) {
+      if (seq !== versionsSeq) return;   // a different stack opened before this answered
+      versionsBusy = false;
+      versionsLoaded = true;
+      if (!res || !res.ok) {
+        versionsLoadError = (res && res.error) || 'Could not read this stack’s versions.';
+        versionsServices = [];
+      } else {
+        versionsLoadError = '';
+        versionsServices = res.services || [];
+        // Picks something to show straight away rather than leaving the
+        // right column on "Pick a service" — most stacks have only one or
+        // two services, so there is rarely a real choice to make first.
+        if (versionsServices.length &&
+            !versionsServices.some(function (s) { return s.service === versionsSelected; })) {
+          versionsSelected = versionsServices[0].service;
+        }
+      }
+      renderVersionsPane();
+    });
+  }
+
+  function selectVersionsService(name) {
+    if (versionsSelected === name) return;
+    versionsSelected = name;
+    renderVersionsPane();
+  }
+
+  // Puts the freshly-pinned text on screen in place of whatever currentText()
+  // was reading before, then lets reparse() rebuild MODEL against it — the
+  // same "box drives the model" order the editor uses everywhere else. Kept
+  // as its own function because there are three different places the text
+  // can live (see currentText()), and a rollback must update whichever one
+  // is live without disturbing the other two.
+  function adoptRolledBackText(newText) {
+    if (fileOpen !== null) {
+      fileStash = newText;
+    } else if (sanitised) {
+      realText = newText;
+    } else {
+      yamlPane.value = newText;
+      paintGutter();
+      paintInk();
+    }
+    textAtOpen = newText;
+    reparse();
+    // redact() reads spots off MODEL, which reparse() just rebuilt against
+    // this same text — only safe to call after that, not before.
+    if (sanitised && fileOpen === null) yamlPane.value = redact(realText);
+  }
+
+  // Finds the service's image exactly as the file has it written — never
+  // svc.image, which is what the running container reports and may already
+  // be a resolved digest — then asks compose-model.js's pinnedImageRef() to
+  // turn it into a reference that pins this digest. The edit is made on a
+  // throwaway parse of currentText(), not on the live MODEL, so a refusal
+  // from the server below leaves the real editor state untouched — only a
+  // confirmed write is allowed to reach the box.
+  function pinServiceImage(service, digest) {
+    if (!YAML || typeof YAML.pinnedImageRef !== 'function') {
+      return { ok: false, why: 'This version of StaXX cannot pin images yet — reload the page and try again.' };
+    }
+    var doc = YAML.parse(currentText());
+    var form = YAML.buildForm(doc, netDrivers());
+    form.doc = doc;
+    var field = null;
+    for (var i = 0; i < form.fields.length; i++) {
+      var f = form.fields[i];
+      if (f.service === service && f.binder === 'setting' && f.target === 'image') { field = f; break; }
+    }
+    var image = field && field.parts.value ? field.parts.value.value : '';
+    var pinned = YAML.pinnedImageRef(image, digest);
+    if (!pinned.ok) return pinned;
+    if (!field || !YAML.setValue(doc, form, field.id, pinned.ref)) {
+      return { ok: false, why: 'That image line could not be rewritten — edit it in the Compose view instead.' };
+    }
+    return { ok: true, yaml: YAML.serialise(doc) };
+  }
+
+  // Asks first, since this now edits the compose file as well as changing
+  // what is running, then follows the job the same way rollbackUpdate() above
+  // does — the table row goes busy and a failed run is marked the same as any
+  // other failed run.
+  function rollbackToVersion(service, digest, label) {
+    var pinned = pinServiceImage(service, digest);
+    if (!pinned.ok) {
+      versionsActionError = pinned.why;
+      renderVersionsPane();
+      return;
+    }
+    call('update-rollback', { name: openedName, service: service, digest: digest,
+                               yaml: withEol(pinned.yaml, composeEol) }).then(function (res) {
+      if (!res || !res.ok) {
+        versionsActionError = (res && res.error) || 'Could not put ' + label + ' back for ' + service + '.';
+        renderVersionsPane();
+        return;
+      }
+      versionsActionError = '';
+      // What is on screen has to match what the server just wrote, the same
+      // as after any other save — the person has had their file changed and
+      // must be able to see it.
+      adoptRolledBackText(pinned.yaml);
+      // The file on disk has changed, so the stamp this editor is holding is
+      // stale. Without this the next Save is refused as a conflict with a
+      // change the person made themselves a moment ago.
+      fingerprintAtOpen = res.fingerprint || '';
+      showPageNotice(res.historyNote ||
+        ('The compose file now pins "' + service + '" to this version. The file it replaces is kept in History.'));
+      var rows = containerRows(openedName, service);
+      if (rows.length) setBusy(rows, 'Rolling back…');
+      track(res.job, {
+        rows: rows, verb: 'recreate',
+        done: function (job) {
+          clearBusy(rows);
+          if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'recreate', res.job);
+          refreshUpdates();
+          refreshStateSoon();
+          // A rollback changes which build is on disk, so "Running now" in
+          // the list this was launched from now points at the wrong row.
+          // Drop it: re-read while the tab is still up, and otherwise let it
+          // load fresh the next time the tab is opened.
+          versionsLoaded = false;
+          if (modal.dataset.tab === 'versions') ensureVersionsLoaded();
+          else renderVersionsPane();
+        }
+      });
+    });
+  }
+
+  // label is the raw (unescaped) version name or date, for the confirmation's
+  // own textContent — see askConfirm(), which never treats its title as HTML.
+  function performRollback(service, v) {
+    var label = v.version || historyWhen(v.at);
+    // FILES is already loaded for the open stack (filesLoad(), on modal
+    // open) — this is a look at what is already known, never a fetch of its
+    // own, which is why it is cheap enough to add here.
+    var hasOverride = FILES.some(function (f) { return isStackOverride(f.name); });
+    askConfirm({
+      title: 'Put ' + label + ' back for ' + service + '?',
+      bodyHtml: '<p>This edits the compose file so it names that exact version, which is what makes it ' +
+        'stick — a pull will not move off it. The file as it stands now is kept in History, so this can ' +
+        'be undone.' +
+        (hasOverride ? ' This stack has an override file, though, and an image set there can win over ' +
+          'this pin and make it look as though nothing happened.' : '') +
+        '</p>' +
+        '<p>The version you are moving away from will not come back on its own.</p>',
+      goLabel: 'Put it back'
+    }).then(function (go) {
+      closeConfirm();
+      if (go) rollbackToVersion(service, v.digest, label);
+    });
+  }
+
+  // Mirrors pinServiceImage() above: reads the image line exactly as
+  // written, on a throwaway parse so a refusal below never touches the
+  // live editor state, and asks compose-model.js's unpinnedImageRef() to
+  // drop the pin rather than doing that stripping here.
+  function unpinServiceImage(service) {
+    if (!YAML || typeof YAML.unpinnedImageRef !== 'function') {
+      return { ok: false, why: 'This version of StaXX cannot release pins yet — reload the page and try again.' };
+    }
+    var doc = YAML.parse(currentText());
+    var form = YAML.buildForm(doc, netDrivers());
+    form.doc = doc;
+    var field = null;
+    for (var i = 0; i < form.fields.length; i++) {
+      var f = form.fields[i];
+      if (f.service === service && f.binder === 'setting' && f.target === 'image') { field = f; break; }
+    }
+    var image = field && field.parts.value ? field.parts.value.value : '';
+    var unpinned = YAML.unpinnedImageRef(image);
+    if (!unpinned.ok) return unpinned;
+    if (!field || !YAML.setValue(doc, form, field.id, unpinned.ref)) {
+      return { ok: false, why: 'That image line could not be rewritten — edit it in the Compose view instead.' };
+    }
+    return { ok: true, yaml: YAML.serialise(doc) };
+  }
+
+  // Releasing a pin only edits the compose file — nothing is recreated, so
+  // unlike rollbackToVersion() there is no job to follow. adoptRolledBackText
+  // is reused as-is: it just puts fresh text wherever the editor is
+  // currently reading it from, which is exactly what a release needs too.
+  function releasePin(service) {
+    var unpinned = unpinServiceImage(service);
+    if (!unpinned.ok) {
+      versionsActionError = unpinned.why;
+      renderVersionsPane();
+      return;
+    }
+    call('update-unpin', { name: openedName, service: service,
+                            yaml: withEol(unpinned.yaml, composeEol) }).then(function (res) {
+      if (!res || !res.ok) {
+        versionsActionError = (res && res.error) || 'Could not release the pin on ' + service + '.';
+        renderVersionsPane();
+        return;
+      }
+      versionsActionError = '';
+      adoptRolledBackText(unpinned.yaml);
+      // As with a rollback, the stamp this editor is holding is now stale —
+      // the file on disk just changed under it.
+      fingerprintAtOpen = res.fingerprint || '';
+      showPageNotice(res.historyNote ||
+        ('"' + service + '" now follows its tag again. The pinned file is kept in History.'));
+      // The pin just came off, so the band above the list has to go too.
+      versionsLoaded = false;
+      if (modal.dataset.tab === 'versions') ensureVersionsLoaded();
+      else renderVersionsPane();
+    });
+  }
+
+  // service is the raw (unescaped) name, for the confirmation's own
+  // textContent — see askConfirm(), which never treats its title as HTML.
+  function performUnpin(service) {
+    askConfirm({
+      title: 'Release the pin on ' + service + '?',
+      bodyHtml: '<p>The compose file will stop naming an exact build, so this service follows its tag again. ' +
+        'Nothing restarts now — it keeps running what it is running until the next update or recreate moves ' +
+        'it.</p>' +
+        '<p>The pinned file is kept in History, so this can be undone.</p>',
+      goLabel: 'Release it'
+    }).then(function (go) {
+      closeConfirm();
+      if (go) releasePin(service);
+    });
+  }
+
+  if (versionsHost) {
+    versionsHost.addEventListener('click', function (event) {
+      var svcBtn = event.target.closest('[data-versions-service]');
+      if (svcBtn) { selectVersionsService(svcBtn.dataset.versionsService); return; }
+
+      var unpinBtn = event.target.closest('[data-version-unpin]');
+      if (unpinBtn) { performUnpin(unpinBtn.dataset.versionUnpin); return; }
+
+      var rollbackBtn = event.target.closest('[data-version-rollback]');
+      if (rollbackBtn) {
+        var svcName = rollbackBtn.dataset.versionService;
+        var digest = rollbackBtn.dataset.versionRollback;
+        var svc = null;
+        for (var i = 0; i < versionsServices.length; i++) {
+          if (versionsServices[i].service === svcName) { svc = versionsServices[i]; break; }
+        }
+        var entry = null;
+        if (svc) {
+          for (var j = 0; j < svc.entries.length; j++) {
+            if (svc.entries[j].digest === digest) { entry = svc.entries[j]; break; }
+          }
+        }
+        if (svc && entry) performRollback(svcName, entry);
+        return;
+      }
+    });
+  }
+
   function setTab(tab) {
     modal.dataset.tab = tab;
     if (tabConfigureBtn) tabConfigureBtn.setAttribute('aria-selected', tab === 'configure' ? 'true' : 'false');
     if (tabManageBtn) tabManageBtn.setAttribute('aria-selected', tab === 'manage' ? 'true' : 'false');
+    if (tabHistoryBtn) tabHistoryBtn.setAttribute('aria-selected', tab === 'history' ? 'true' : 'false');
+    if (tabVersionsBtn) tabVersionsBtn.setAttribute('aria-selected', tab === 'versions' ? 'true' : 'false');
     manageStatePoll(tab === 'manage');
+    if (tab === 'history') ensureHistoryLoaded();
+    if (tab === 'versions') ensureVersionsLoaded();
   }
 
   if (tabConfigureBtn) tabConfigureBtn.addEventListener('click', function () { setTab('configure'); });
@@ -15046,6 +16175,15 @@
       if (!manageMounted) mountManageForCurrentStack();
       setTab('manage');
     });
+  }
+  if (tabHistoryBtn) {
+    tabHistoryBtn.addEventListener('click', function () {
+      if (tabHistoryBtn.disabled) return;
+      setTab('history');
+    });
+  }
+  if (tabVersionsBtn) {
+    tabVersionsBtn.addEventListener('click', function () { setTab('versions'); });
   }
 
   // "Save and start" from Manage (PLAN_44 C2). Not save() further up: that
@@ -15454,6 +16592,115 @@
     if (settingsSave) settingsSave.disabled = !settingsDirty();
   }
 
+  // How many fields one scaffold() result actually added — stack-level plus
+  // every service's own — used for both the confirm list and the tally.
+  function scaffoldFieldCount(added) {
+    var n = added.stack.length;
+    Object.keys(added.services).forEach(function (svc) { n += added.services[svc].length; });
+    return n;
+  }
+
+  // PLAN_83's sweep. Reads every stack and scaffolds each in memory first —
+  // nothing is written until the confirm dialog is accepted — so a stack
+  // changed on disk in between (another tab, an image update) is refused by
+  // 'save' below on its own fingerprint, the same protection a single edit
+  // already gets, rather than this sweep needing a second copy of it.
+  function runScaffoldSweep() {
+    if (!window.StaxxMeta) return;
+    settingsMsg.textContent = 'Checking every stack…';
+
+    call('list', {}).then(function (res) {
+      if (!res.ok) {
+        settingsMsg.textContent = '';
+        openLogDialog('Add missing StaXX fields', res.error || 'Could not list stacks.');
+        return;
+      }
+
+      // A stack with no compose file yet has nothing to read or scaffold —
+      // left out silently rather than reported as a refusal, since it is not
+      // one: there is simply nothing there yet.
+      var stacks = (res.stacks || []).filter(function (s) { return s.hasFile; });
+      var toSave = [], refused = [];
+
+      stacks.reduce(function (chain, s) {
+        return chain.then(function () {
+          return call('read', { name: s.name }).then(function (r) {
+            if (!r.ok) { refused.push({ name: s.name, reason: r.error || 'Could not be read.' }); return; }
+            var result = window.StaxxMeta.scaffold(r.body);
+            if (result.error) { refused.push({ name: s.name, reason: result.error }); return; }
+            if (result.changed) {
+              toSave.push({ name: s.name, body: result.yaml, fingerprint: r.fingerprint, added: result.added });
+            }
+          });
+        });
+      }, Promise.resolve()).then(function () {
+        settingsMsg.textContent = '';
+
+        if (!toSave.length) {
+          var msg = 'Every stack already has its StaXX fields.';
+          if (refused.length) {
+            msg += '\n\n' + refused.length + ' stack' + (refused.length === 1 ? '' : 's') +
+              ' could not be checked:\n' + refused.map(function (r) {
+                return '  ' + r.name + ' — ' + r.reason;
+              }).join('\n');
+          }
+          openLogDialog('Add missing StaXX fields', msg);
+          return;
+        }
+
+        var bodyHtml = '<p>' + toSave.length + ' of ' + stacks.length + ' stack' +
+          (stacks.length === 1 ? '' : 's') + ' would gain fields for their icon, links and ' +
+          'description, written in as commented placeholders. Nothing already in a stack\'s ' +
+          'file is changed.</p>' +
+          '<ul class="staxx-confirm-list">' + toSave.map(function (e) {
+            var n = scaffoldFieldCount(e.added);
+            return '<li><code>' + esc(e.name) + '</code><span class="staxx-confirm-meta">' +
+                   n + ' field' + (n === 1 ? '' : 's') + '</span></li>';
+          }).join('') + '</ul>';
+        if (refused.length) {
+          bodyHtml += '<p>' + refused.length + ' stack' + (refused.length === 1 ? '' : 's') +
+            ' would be left alone:</p><ul class="staxx-confirm-list">' + refused.map(function (r) {
+              return '<li><code>' + esc(r.name) + '</code><span class="staxx-confirm-meta">' +
+                     esc(r.reason) + '</span></li>';
+            }).join('') + '</ul>';
+        }
+
+        askConfirm({
+          title: 'Add missing StaXX fields?',
+          bodyHtml: bodyHtml,
+          goLabel: 'Add fields'
+        }).then(function (go) {
+          closeConfirm();
+          if (go) saveScaffoldSweep(toSave, refused);
+        });
+      });
+    });
+  }
+
+  // The confirmed half of the sweep — one save at a time, each carrying the
+  // fingerprint it was read at back in runScaffoldSweep(), so a stack that
+  // changed underneath the sweep is refused rather than overwritten. Every
+  // save is recorded in that stack's own history regardless, so this needs
+  // no undo of its own.
+  function saveScaffoldSweep(toSave, refused) {
+    openLogDialog('Add missing StaXX fields', 'Saving…');
+    var ok = 0;
+    toSave.reduce(function (chain, e) {
+      return chain.then(function () {
+        return call('save', { name: e.name, body: e.body, new: '0', fingerprint: e.fingerprint }).then(function (r) {
+          logBox.textContent += '\n' + e.name + ' — ' + (r.ok ? 'saved.' : (r.error || 'could not be saved.'));
+          if (r.ok) ok++;
+          logBox.scrollTop = logBox.scrollHeight;
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      logBox.textContent += '\n\n' + ok + ' of ' + toSave.length + ' saved.' +
+        (refused.length ? ' ' + refused.length + ' left alone.' : '');
+      logBox.scrollTop = logBox.scrollHeight;
+      refreshRows();   // the rows may show icons or other x-unraid facts that just changed
+    });
+  }
+
   function openSettings(focusId) {
     if (!settingsModal) return;
     call('settings', {}).then(function (res) {
@@ -15467,6 +16714,17 @@
       settingsBody.innerHTML = SETTINGS_ROWS.map(function (row) {
         return settingsFieldHtml(row, res.settings[row.key] || '');
       }).join('') +
+        // PLAN_83: nothing here is a setting to save — pressing it reads and
+        // checks every stack there and then, so it sits as its own action
+        // row rather than one of SETTINGS_ROWS. See runScaffoldSweep().
+        '<div class="staxx-field">' +
+          '<span>StaXX fields</span>' +
+          '<button type="button" class="staxx-link-btn" id="staxx-scaffold-sweep">' +
+          'Add missing StaXX fields to every stack…</button>' +
+          '<span class="staxx-hint">Checks every stack for its icon, links and description ' +
+          'fields, and offers to add whatever is missing as commented placeholders — nothing ' +
+          'already there is changed.</span>' +
+        '</div>' +
         // Hidden until loadArchiveList() below hears back with something
         // definite to show — a folder holding nothing archived yet still
         // shows the folder, but a failed fetch must not leave a half-drawn
@@ -15566,6 +16824,10 @@
       if (btn) {
         var input = document.getElementById(btn.dataset.browse);
         if (input) pickerOpen(input);
+        return;
+      }
+      if (event.target.closest('#staxx-scaffold-sweep')) {
+        runScaffoldSweep();
         return;
       }
       // The STACK_ROOT row's own way back to the storage chooser (PLAN_68
@@ -17315,6 +18577,16 @@
   scaffold.addEventListener('click', function (event) {
     var el = event.target.closest('button');
     if (!el) return;
+
+    // The restart-pending chip (PLAN_71 stage 5) — always its own button,
+    // never a menu item, because it must only ever explain itself. Every
+    // fact the panel needs is already on the chip's own data attributes, put
+    // there by staxx_pending_chip_html(), so this reads them straight off
+    // the element that was clicked rather than off the row.
+    if (el.classList.contains('staxx-pendingchip')) {
+      openPendingPanel(el);
+      return;
+    }
 
     // The pill itself, once staxx_update_pill_html() has drawn it as a
     // button — only an 'update' pill on a stack or container row ever is, so

@@ -47,6 +47,8 @@ python tests/validate_schema.py     # x-unraid schema self-test (needs pyyaml, j
 node tests/yaml_roundtrip.js        # the compose model — parse, edit, write back
 node tests/ca_convert.js            # Community Applications template -> compose conversion
 node tests/image_import.js          # Docker Hub / local image -> starting compose file
+node tests/stash_guard.js           # a set-aside may only hold the block it claims to
+node tests/meta_scaffold.js         # the commented x-unraid fields a new stack starts with
 node tests/js_undeclared.js         # names assigned but declared nowhere
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
@@ -62,12 +64,24 @@ mode, where assigning to a name nothing declared throws instead of quietly makin
 time. One such line inside a function every render calls kills the whole page.
 
 `tests/server/` holds PHP checks that can only run **on the server** — copy them up and run them
-there. `files.php` covers the companion-file helpers and the archive confirmation; `links.php` covers
+there. `files.php` covers the companion-file helpers and the archive confirmation; `record.php` and
+`imagehistory.php` cover each stack's own hidden record — its compose-file history, and the image
+versions kept for a rollback, including the keep-set that decides what may be deleted;
+`pending.php` covers the restart-pending comparison — whether what is running still matches what the
+file now says — and above all its refusals; it needs no config keys and changes nothing, because the
+cases it builds are handed explicit `/tmp` paths rather than moving `STACK_ROOT`;
+`unpin.php` covers releasing a pin, including the one trap in it: the declined-version
+fingerprint is filed under the image's UNPINNED name, so clearing the pinned one instead makes the
+whole feature silently do nothing;
+`rollback.php` covers the image rollback's refusals — above all that the version asked for must be
+one this service itself recorded rather than merely digest-shaped;
+`links.php` covers
 what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
 for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's
 boot-start list, and points `STAXX_AUTOSTART_FILE` at `/tmp` so the real one is never touched. Each
-file's header gives the exact commands. Both `files.php` and `links.php` also point `ARCHIVE_ROOT`
-(the config key for where a removed stack's zip goes) at a `/tmp` folder, the same way.
+file's header gives the exact commands. `files.php`, `links.php` and `record.php` all point `ARCHIVE_ROOT`
+(the config key for where a removed stack's zip goes) at a `/tmp` folder, the same way, and each
+refuses to run without it — leaving it out is a first-line abort, not a wrong answer.
 
 `validate_schema.py` has no runner or framework. It prints one line per case and exits non-zero on
 failure; its negative cases (what the schema must *reject*) matter more than the positive ones.
@@ -89,7 +103,11 @@ Credentials for the test box live in `local/dev-server.md`, which is gitignored 
 it hanging forever on a host-key prompt).
 
 `dev-install.sh` runs **on the server**, from `/boot/staxx-dev/`, with a copy of the plugin
-folder staged beside it. So a deploy is always two steps: `pscp` the plugin folder up, then `plink`
+folder staged beside it as `/boot/staxx-dev/staxx/`. That folder holds the plugin's **contents** —
+`include`, `javascript`, `sheets`, the `.page` files — so what gets uploaded is
+`src/staxx/usr/local/emhttp/plugins/staxx`, not `src/staxx`. Staging `src/staxx` instead installs
+the mirrored path *inside* the plugin folder, leaving the webGUI with a plugin directory holding
+nothing but a `usr` tree, and no obvious error to say so. So a deploy is always two steps: `pscp` the plugin folder up, then `plink`
 the script. Delete the staged copy first or stale files survive the upload.
 
 ```sh

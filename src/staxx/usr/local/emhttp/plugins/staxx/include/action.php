@@ -55,6 +55,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Relocate.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
 
 function staxx_reply(array $payload, int $status = 200): void {
   $stray = '';
@@ -278,7 +279,8 @@ switch ($action) {
       }
     }
 
-    if (!staxx_save_stack($name, $body, $error)) {
+    $historyNote = '';
+    if (!staxx_save_stack($name, $body, $error, $historyNote)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
 
@@ -310,6 +312,9 @@ switch ($action) {
       'bytes'        => $written !== '' ? (int)@filesize($written) : 0,
       'fingerprint'  => staxx_stack_fingerprint($name),
       'templateNote' => $templateNote,
+      // Empty unless the previous version could not be kept — this save then
+      // has no undo, which the person is entitled to know at the time.
+      'historyNote'  => $historyNote,
     ]);
 
   /* ---- check a compose file without saving it ----
@@ -876,6 +881,37 @@ switch ($action) {
       'due'     => staxx_update_due(),
     ]);
 
+  /* ---- PLAN_71 Stage 4b — "restart pending": what is running versus what
+   * the file now says, for every stack, shaped like 'updates' above. A key
+   * is emitted for every stack and every one of its declared services even
+   * when the html is '' — the browser has to be told to clear a chip that
+   * no longer applies, and a key that is simply missing cannot do that.
+   */
+  case 'pending':
+    $rows = [];
+    foreach (staxx_list_stacks() as $s) {
+      if ($s['file'] === '') continue;
+
+      $p = staxx_restart_pending($s);
+      $p['stack'] = $s['name'];
+      $rows[$s['name']] = [
+        'html'     => staxx_pending_chip_html($p),
+        'changed'  => $p['changed'],
+        'absent'   => $p['absent'],
+        'leftover' => $p['leftover'],
+        'edited'   => $p['edited'],
+      ];
+
+      foreach ($s['services'] as $svc) {
+        $kind = (string)($p['services'][$svc] ?? '');
+        $rows[$s['name'].'::'.$svc] = [
+          'html' => staxx_pending_service_chip_html($kind),
+          'kind' => $kind,
+        ];
+      }
+    }
+    staxx_reply(['ok' => true, 'rows' => $rows]);
+
   // ---- start a check pass; the page follows it with the existing 'job' action ----
   //
   // Always forced: a person pressing this button means "ask now", which is
@@ -1011,6 +1047,12 @@ switch ($action) {
       if (!$running) $verb = 'pull';
     }
 
+    // Recorded before the job starts, not after — a hand-pressed Update is
+    // how most updates actually happen, so it has to leave a rollback
+    // record the same way the automatic queue does, and a slow or failed
+    // job must not be the reason nothing was ever recorded.
+    staxx_update_record_before_pull($name, $service);
+
     $job = staxx_start_job($name, $verb, $error, $service);
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_prune_jobs();
@@ -1059,9 +1101,79 @@ switch ($action) {
     if (!staxx_valid_path($name)) {
       staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
     }
-    $job = staxx_update_rollback($name, (string)($_POST['service'] ?? ''), $error);
+    $rbNote = '';
+    $job = staxx_update_rollback(
+      $name, (string)($_POST['service'] ?? ''), $error, (string)($_POST['digest'] ?? ''),
+      (string)($_POST['yaml'] ?? ''), $rbNote
+    );
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
-    staxx_reply(['ok' => true, 'job' => $job]);
+    // A pin is only acceptable because it can be undone from the file history,
+    // so a save that kept no previous version cannot stay quiet about it.
+    //
+    // The fingerprint of what is now on disk goes back too. A pin rewrites the
+    // compose file, so an editor still holding the stamp from before it would
+    // have its next Save refused as somebody else's change — a safe failure,
+    // but a baffling one when the change was this button.
+    staxx_reply(['ok'          => true,
+                 'job'         => $job,
+                 'historyNote' => $rbNote,
+                 'fingerprint' => staxx_stack_fingerprint($name)]);
+
+  /* ---- release a pin: put a service's image back to plain repo:tag ----
+   *
+   * No job comes back — releasing changes only the file, nothing on disk
+   * or in Docker, so there is nothing to poll for.
+   */
+  case 'update-unpin':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $upNote = '';
+    $ok = staxx_update_unpin(
+      $name, (string)($_POST['service'] ?? ''), (string)($_POST['yaml'] ?? ''), $error, $upNote
+    );
+    if (!$ok) staxx_reply(['ok' => false, 'error' => $error]);
+    // Same reasoning as update-rollback's reply just above: the file changed,
+    // so the fingerprint an open editor is holding has to change with it.
+    staxx_reply(['ok'          => true,
+                 'historyNote' => $upNote,
+                 'fingerprint' => staxx_stack_fingerprint($name)]);
+
+  /* ---- what a stack's Versions tab needs: every service's image, what is on
+   * disk for it now, and everything recorded that a rollback could target --
+   *
+   * $_POST['name'] on purpose, not 'stack' — every other stack action here
+   * reads that key, and getting it wrong is a silent empty reply, not an error.
+   */
+  case 'image-versions':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $file = '';
+    foreach (staxx_list_stacks() as $s) {
+      if ($s['name'] === $name) { $file = $s['file']; break; }
+    }
+    if ($file === '') {
+      staxx_reply(['ok' => false, 'error' => 'No compose file found in this stack.']);
+    }
+    $meta = staxx_compose_meta($file);
+    if (!$meta['ok']) {
+      staxx_reply(['ok' => false, 'error' => 'This stack\'s compose file could not be read.']);
+    }
+    $watchedImages = (array)(staxx_update_state()['images'] ?? []);
+    $services = [];
+    foreach ($meta['services'] as $svcName => $svc) {
+      $image = trim((string)($svc['image'] ?? ''));
+      if ($image === '') continue;
+      $services[] = [
+        'service' => (string)$svcName,
+        'image'   => $image,
+        'current' => (string)($watchedImages[$image]['local'] ?? ''),
+        'watched' => array_key_exists($image, $watchedImages),
+        'entries' => staxx_image_history($name, (string)$svcName),
+      ];
+    }
+    staxx_reply(['ok' => true, 'services' => $services]);
 
   /* ---- start a queue over every stack in scope that actually has an update --
    *
@@ -1840,6 +1952,89 @@ switch ($action) {
       'xmlTemplate' => $xmlTemplate,
       'xmlTemplateAvailable' => $xmlTemplate !== '' && staxx_handoff_template_available($xmlTemplate),
     ]);
+
+  /* ---- PLAN_68 Part A piece 3: list one stack's kept history ----
+   *
+   * Read-only and cheap: staxx_record_list() only ever reads the hidden
+   * index, and reading it is never what creates it, so a stack with no
+   * history at all is answered with an empty list, not an error. Hashes are
+   * the record's own bookkeeping and are left out — the page has no use for
+   * them.
+   */
+  case 'history-list':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $versions = array_map(fn($v) => [
+      'n'    => $v['n'],
+      'at'   => $v['at'],
+      'size' => $v['size'],
+      'file' => $v['file'],
+      'name' => $v['name'],
+    ], staxx_record_list($name));
+    staxx_reply(['ok' => true, 'versions' => $versions, 'keep' => STAXX_RECORD_KEEP]);
+
+  /* ---- read one kept version's text, for the history panel ----
+   *
+   * staxx_record_get() returns null for two different reasons that must not
+   * read the same to the person: the index no longer names this version at
+   * all (pruned away), or it does but the stored bytes no longer match their
+   * own recorded fingerprint (tampered with, or corrupted on disk). The
+   * index is checked first so the right one of those two is reported.
+   */
+  case 'history-read':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $n = (int)($_POST['n'] ?? 0);
+    if ($n < 1) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid version number.']);
+    }
+
+    $entry = null;
+    foreach (staxx_record_list($name) as $v) {
+      if ($v['n'] === $n) { $entry = $v; break; }
+    }
+    if ($entry === null) {
+      staxx_reply(['ok' => false, 'error' => 'That version is no longer kept.']);
+    }
+
+    $text = staxx_record_get($name, $n);
+    if ($text === null) {
+      staxx_reply([
+        'ok'    => false,
+        'error' => 'The stored copy of that version no longer matches what was recorded, '
+                 . 'so it cannot be trusted and will not be shown.',
+      ]);
+    }
+    staxx_reply(['ok' => true, 'text' => $text, 'file' => $entry['file'], 'at' => $entry['at']]);
+
+  /* ---- name, or clear the name of, one kept version ----
+   *
+   * An empty label clears it. Replies with the refreshed list in the same
+   * shape 'history-list' uses, so the page never has to ask twice for it and
+   * can never end up drawing a stale one after the change.
+   */
+  case 'history-name':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $n     = (int)($_POST['n'] ?? 0);
+    $label = (string)($_POST['label'] ?? '');
+    if ($n < 1) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid version number.']);
+    }
+    if (!staxx_record_name($name, $n, $label, $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    $versions = array_map(fn($v) => [
+      'n'    => $v['n'],
+      'at'   => $v['at'],
+      'size' => $v['size'],
+      'file' => $v['file'],
+      'name' => $v['name'],
+    ], staxx_record_list($name));
+    staxx_reply(['ok' => true, 'versions' => $versions]);
 }
 
 staxx_reply(['ok' => false, 'error' => 'Unknown action "'.$action.'".'], 400);

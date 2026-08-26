@@ -23,7 +23,14 @@
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own stacks, "zzb1test" and a handful of "zz…" siblings, under
- * the temporary stack root. */
+ * the temporary stack root.
+ *
+ * The PLAN_68 Part C section at the end also requires Updates.php (pointed
+ * at a scratch state file via STAXX_UPDATE_STATE, never the real one) and
+ * ends by restricting open_basedir — which PHP can only ever narrow, never
+ * widen back, for the rest of the process. Nothing may run after that
+ * section except plain exec() shell calls, which open_basedir does not
+ * touch. Add new cases before it, never after. */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
@@ -344,6 +351,87 @@ ok('it includes what this run wrote', in_array(basename($archiveA), $names, true
 ok('newest first', ($list[0]['mtime'] ?? 0) >= ($list[count($list) - 1]['mtime'] ?? PHP_INT_MAX));
 
 @exec('rm -rf '.escapeshellarg($dir).' '.escapeshellarg($archiveRoot));
+
+/* ------------------------------------- PLAN_68 Part C: cannot look vs nothing -- */
+// staxx_scan_stacks() must never let "the root could not be read" come back
+// looking like "the root has nothing in it" — see PLAN_68 Part C. Run last,
+// in this file, because it already owns a real scratch STACK_ROOT it can
+// safely take away and give back; tests/server/updates.php and updaterun.php
+// cannot do the same without either touching Adrian's real config (STACK_ROOT
+// has no env-var override, unlike STAXX_UPDATE_STATE/STAXX_AUTOSTART_FILE) or
+// spawning a subprocess, and this file already has everything both of those
+// would need to fake.
+
+// Case 3 first, while it is true for free: every stack this file created has
+// now been archived or removed, so the root is genuinely empty — the case
+// that must NOT be reported as an error.
+staxx_scan_stacks_reset();
+$scanEmpty = staxx_scan_stacks();
+ok('a genuinely empty root reads as ok', $scanEmpty['ok'] === true);
+ok('...with nothing in it, not "unknown"', $scanEmpty['stacks'] === [] && $scanEmpty['folders'] === []);
+
+// Case 1: the root does not exist at all. Renamed aside rather than deleted,
+// so there is something to put back.
+rename($root, $root.'.plan68bak');
+staxx_scan_stacks_reset();
+
+$scanMissing = staxx_scan_stacks();
+ok('a missing root says it could not look', $scanMissing['ok'] === false);
+ok('...never as an empty list standing for a fact', $scanMissing['stacks'] === [] && $scanMissing['error'] !== '');
+ok('staxx_stacks_visible() agrees', staxx_stacks_visible() === false);
+
+$selfMissing = staxx_selftest();
+ok('self-test refuses to report zero stacks it could not count',
+   strpos((string)$selfMissing['stacks found'], 'UNKNOWN') === 0, (string)$selfMissing['stacks found']);
+
+// While the root is still missing: staxx_watch_report() must say the same
+// thing rather than "nothing found", and the six-hourly prune in
+// staxx_update_check() must leave stored history alone rather than deleting
+// it on the grounds that no stack exists — the exact bug PLAN_68 Part C
+// records being found and fixed within the hour it was raised.
+putenv('STAXX_UPDATE_STATE=/tmp/staxx-b1-updatestate-test.json');
+@unlink('/tmp/staxx-b1-updatestate-test.json');
+require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
+
+$watchMissing = staxx_watch_report();
+ok('watch-report says it could not look, not "nothing found"',
+   $watchMissing['ok'] === false && $watchMissing['items'] === [], $watchMissing['reason']);
+
+staxx_update_state_save(['stacks' => ['zzb1missing' => ['watch' => ['x' => ['findings' => []]]]]]);
+staxx_update_check('all', false);
+$stateAfter = staxx_update_state();
+ok('the six-hourly prune leaves stored history alone when it cannot see the root',
+   isset($stateAfter['stacks']['zzb1missing']));
+@unlink('/tmp/staxx-b1-updatestate-test.json');
+
+rename($root.'.plan68bak', $root);
+staxx_scan_stacks_reset();
+
+$watchBack = staxx_watch_report();
+ok('watch-report reads ok again once the root can be seen', $watchBack['ok'] === true);
+
+// Case 2: the root exists, and root (the user) can read anything on it — but
+// PHP itself is told not to. A chmod cannot make a directory unreadable here
+// (root ignores permission bits entirely), so this is the one real mechanism
+// found that denies an existing, otherwise ordinary directory to this
+// process regardless of who is running it. open_basedir only ever narrows
+// for the rest of the process — PHP refuses to widen it back — so this MUST
+// stay the last thing this file does; everything after it uses exec() (a
+// shell command, not a PHP filesystem call) precisely because of that.
+//
+// This denies is_dir() as well as scandir(), so it proves the promise a
+// person actually experiences — an existing root this process cannot read
+// answers "could not look", never "empty" — without being able to isolate,
+// under root, the scandir()-returns-false line inside staxx_scan_stacks()
+// from the is_dir()-returns-false line right beside it. That second, more
+// exact case could not be constructed honestly and is left untested.
+$decoy = sys_get_temp_dir().'/staxx-basedir-decoy';
+@mkdir($decoy);
+ini_set('open_basedir', $decoy);
+staxx_scan_stacks_reset();
+$scanDenied = staxx_scan_stacks();
+ok('a root this process is denied from reading says it could not look',
+   $scanDenied['ok'] === false, print_r($scanDenied, true));
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

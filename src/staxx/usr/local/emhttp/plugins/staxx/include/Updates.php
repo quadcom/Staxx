@@ -172,6 +172,109 @@ function staxx_update_labels_meta(array $labels): array {
 }
 
 /**
+ * Candidate GitHub "release by tag" API addresses for a version, or [] when
+ * there is nothing to ask — pure, no network. Only a GitHub project link
+ * qualifies; a documentation site or a Docker Hub page gets [].
+ *
+ * The version comes from a label the image PUBLISHER wrote, so it is
+ * untrusted input about to be spliced into a path — the same reasoning that
+ * made the source link go through a guard applies here. A version holding a
+ * '/', a '..', whitespace or a control character is refused outright.
+ *
+ * Two candidates because vendors are evenly split on the leading 'v': the
+ * version as written, and the same with a 'v' added or removed. Collapsed to
+ * one when that would be a duplicate (an already-'v'-prefixed version has
+ * nothing to add, and vice versa).
+ */
+function staxx_release_notes_urls(string $project, string $version): array {
+  if (!preg_match('#^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$#', $project, $m)) {
+    return [];
+  }
+  $owner = $m[1];
+  $name  = $m[2];
+
+  if ($version === '' || preg_match('#[/\x00-\x1f\x7f]|\.\.|\s#', $version)) return [];
+
+  $alt = (strpos($version, 'v') === 0) ? substr($version, 1) : 'v'.$version;
+  $tags = ($alt === $version) ? [$version] : [$version, $alt];
+
+  $urls = [];
+  foreach ($tags as $tag) {
+    $urls[] = 'https://api.github.com/repos/'.$owner.'/'.$name.'/releases/tags/'.rawurlencode($tag);
+  }
+  return $urls;
+}
+
+/**
+ * Cap a release body at STAXX_NOTES_MAX, cut at the last line break before
+ * the cap so it never stops mid-word — falling back to a hard cut only when
+ * the window has no break at all. Pure; the only change made to the text
+ * itself is normalising line endings, because it is the vendor's own words
+ * and altering them further would make the notes a lie about what was
+ * written.
+ *
+ * @return array{notes: string, cut: bool}
+ */
+function staxx_release_notes_trim(string $body): array {
+  $text = str_replace(["\r\n", "\r"], "\n", $body);
+  if (strlen($text) <= STAXX_NOTES_MAX) return ['notes' => $text, 'cut' => false];
+
+  $window = substr($text, 0, STAXX_NOTES_MAX);
+  $break  = strrpos($window, "\n");
+  if ($break !== false) return ['notes' => substr($window, 0, $break), 'cut' => true];
+
+  // No line break to cut at, so the cap lands wherever it lands — and a cap
+  // counted in bytes can land in the middle of a multi-byte character. That is
+  // not merely untidy: the record is stored as JSON, json_encode() returns
+  // false outright on a malformed string, and staxx_record_write_index() would
+  // then fail the whole write silently, taking this stack's compose history
+  // down with it. Drop any trailing incomplete sequence.
+  while ($window !== '' && (ord($window[strlen($window) - 1]) & 0xc0) === 0x80) {
+    $window = substr($window, 0, -1);
+  }
+  if ($window !== '' && (ord($window[strlen($window) - 1]) & 0x80) !== 0) {
+    $window = substr($window, 0, -1);
+  }
+  return ['notes' => $window, 'cut' => true];
+}
+
+/**
+ * Fetch a GitHub release's notes for one version. The only part of this
+ * trio that touches the network — everything else is provably pure.
+ * Returns a blank, uncut result on anything at all going wrong: no network,
+ * DNS, a 404 on both the 'v' and bare-version candidates, a body that isn't
+ * JSON. Callers never need to distinguish "no notes" from "fetch failed".
+ *
+ * GitHub refuses an unauthenticated request outright without a User-Agent
+ * header — this is not guessable from the code, so it is recorded here.
+ *
+ * Markdown is deliberately not converted: there are no client-side libraries
+ * in this project, and showing the vendor's text exactly as written is the
+ * honest presentation of it.
+ *
+ * @return array{notes: string, url: string, cut: bool}
+ */
+function staxx_release_notes_fetch(string $project, string $version): array {
+  $empty = ['notes' => '', 'url' => '', 'cut' => false];
+
+  foreach (staxx_release_notes_urls($project, $version) as $url) {
+    $data = staxx_hub_json($url, ['User-Agent: StaXX'], 6, 8);
+    if (!is_array($data)) continue;
+    $body = (string)($data['body'] ?? '');
+    if ($body === '') continue;
+
+    $trim = staxx_release_notes_trim($body);
+    return [
+      'notes' => $trim['notes'],
+      'url'   => is_string($data['html_url'] ?? null) ? $data['html_url'] : '',
+      'cut'   => $trim['cut'],
+    ];
+  }
+
+  return $empty;
+}
+
+/**
  * The tag half of an image reference, 'latest' when none is written — the
  * same default Docker itself applies.
  */
@@ -983,13 +1086,15 @@ function staxx_update_check(string $scope, bool $force): array {
   // not looked at every stack and would delete what it simply did not visit.
   //
   // And only while the stack root can actually be read. staxx_scan_stacks()
-  // returns an empty list both when there are no stacks and when it cannot
-  // look at all — an unmounted pool, an array that is not started — and those
-  // two must never be treated alike. This pass runs from cron regardless of
-  // array state, so without the is_dir() below the first check after a reboot
-  // would quietly delete every stack's history on the grounds that no stack
-  // exists.
-  if ($scope === 'all' && is_dir(staxx_stack_root())) {
+  // used to return an empty list both when there are no stacks and when it
+  // cannot look at all — an unmounted pool, an array that is not started —
+  // and those two must never be treated alike. This pass runs from cron
+  // regardless of array state, so without staxx_stacks_visible() below the
+  // first check after a reboot would quietly delete every stack's history on
+  // the grounds that no stack exists. staxx_stacks_visible() replaces the
+  // is_dir() this guard used to run by hand: it also catches a root that
+  // exists but will not scandir(), which is_dir() alone reports as fine.
+  if ($scope === 'all' && staxx_stacks_visible()) {
     $live = staxx_update_stack_files();
     foreach (array_keys($stacksState) as $known) {
       if (!isset($live[$known])) unset($stacksState[$known]);
@@ -1636,16 +1741,20 @@ function staxx_watch_active_findings(array $entry): array {
  * PLAN_68 Part C: an empty answer must carry why it is empty.
  * staxx_scan_stacks() reads empty both when there genuinely are no stacks
  * and when it cannot look at all — an unmounted pool, an array not started —
- * and this report must never present the second as the first. is_dir() is
- * the same cheap test the six-hourly prune above already uses for exactly
- * this reason.
+ * and this report must never present the second as the first.
+ * staxx_stacks_visible() is the same cheap test the six-hourly prune above
+ * uses for exactly this reason, replacing the is_dir() this guard used to
+ * run by hand, which reports an unreadable-but-present root as fine.
  *
  * @return array{ok:bool, reason:string, items:array}
  */
 function staxx_watch_report(): array {
-  if (!is_dir(staxx_stack_root())) {
+  if (!staxx_stacks_visible()) {
+    // The scan's own reason, not a guessed one: "the array is not started" is
+    // the usual cause but not the only one, and telling somebody to start an
+    // array that is already running would send them looking in the wrong place.
     return ['ok' => false, 'items' => [],
-      'reason' => 'The array is not started, so StaXX cannot see the stacks or what has been found.'];
+      'reason' => staxx_scan_stacks()['error'].' StaXX cannot show what has been found until it can.'];
   }
 
   $items = [];

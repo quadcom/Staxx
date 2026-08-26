@@ -17,6 +17,17 @@
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
+// The per-stack record that PLAN_82 Part 1 moves image history into. The
+// central file below (staxx_update_history_push()/staxx_update_history())
+// stays as a second, un-migrated source for as long as anything is still
+// only recorded there — see staxx_update_cleanup()'s keep-set for why both
+// are read together rather than one replacing the other.
+require_once '/usr/local/emhttp/plugins/staxx/include/ImageHistory.php';
+// staxx_update_record_before_pull() looks up a project link so the release
+// notes it fetches (PLAN_82 Part 2) come from the right place. action.php
+// already requires this separately for its own use, but the cron passes
+// include only this file directly, so it has to be named here too.
+require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 // staxx_update_due() and the queue walk the grid in folder order, which lives
 // in Folders.php rather than anywhere Stacks.php or Updates.php already pull
 // in. action.php happens to require it first anyway, but scripts/update-check
@@ -305,6 +316,15 @@ function staxx_update_due(): array {
       $image = trim((string)($svcMeta['image'] ?? ''));
       if ($image === '') continue;
 
+      // A pinned image (repo:tag@sha256:...) can never move: pulling it
+      // fetches exactly the build it already names. Skipped here, on the
+      // acting list only — the checker still honestly reports "there is an
+      // update" for a pinned service, and that reporting path is untouched.
+      // Without this, an automatic update on a pinned service would recreate
+      // the same container every pass for ever, concluding nothing had
+      // changed and trying again the very next night.
+      if (strpos($image, '@') !== false) continue;
+
       $clock = staxx_update_clock($stack['name'], $svc, $image);
       if ($clock['due'] > 0 && $clock['due'] <= $now && $clock['why'] === '') {
         $out[] = ['stack' => $stack['name'], 'service' => $svc, 'image' => $image, 'due' => $clock['due']];
@@ -347,45 +367,174 @@ function staxx_update_hold(string $image, bool $on, string &$error): bool {
 /* ------------------------------------------------------------------- history -- */
 
 /**
- * Remember one service's fingerprint before an update runs — capped at the
- * retention setting, and never the same digest twice running, which is what
- * keeps a repeatedly-recreated container from filling the list with copies of
- * itself.
+ * Remember one service's fingerprint before an update runs, alongside the
+ * version name and where it came from (PLAN_82 Part 1) — both commonly
+ * absent, which is a normal answer, never a placeholder. Written straight
+ * into the stack's own record rather than the old central file: retention
+ * and the "never the same digest twice running" rule are staxx_image_
+ * history_push()'s job now, so they are enforced exactly once rather than
+ * risking two different answers from two places that both write.
+ *
+ * The old central file is left untouched here, on purpose. It still holds
+ * whatever an un-migrated stack recorded before this change shipped, and
+ * staxx_update_history() below reads both until a migration (or the lazy
+ * adopt on the update path) has moved a given stack's entries across.
  */
-function staxx_update_history_push(string $stack, string $service, string $digest): void {
+function staxx_update_history_push(string $stack, string $service, string $digest, array $meta = []): void {
   if ($digest === '') return;
-
-  $key     = $stack.'::'.$service;
-  $state   = staxx_update_state();
-  $history = (array)$state['history'];
-  $list    = (array)($history[$key] ?? []);
-
-  if (($list[0] ?? '') === $digest) return;
-
-  array_unshift($list, $digest);
-  $retain = staxx_update_settings()['retain'];
-  $history[$key] = array_slice($list, 0, max(0, $retain));
-
-  staxx_update_state_save(['history' => $history]);
+  staxx_image_history_push($stack, $service, $digest, $meta);
 }
 
+/**
+ * Record every service's fingerprint before a pull runs — whole stack when
+ * $service is '', one named service otherwise (a name not present in this
+ * stack's compose file simply matches nothing). Shared by the queue tick
+ * and a hand-pressed Update (PLAN_82 Part 2), so both leave something to
+ * roll back to even if the job itself never finishes. Best-effort
+ * throughout: nothing calling this has anywhere to show a failure, so an
+ * unreadable stack or a service with no local digest yet simply records
+ * nothing, exactly as it always has.
+ */
+function staxx_update_record_before_pull(string $stack, string $service = ''): void {
+  // Move anything this stack still has sitting in the old central file into
+  // its own record first — a side effect of the ordinary update path rather
+  // than a separate event, per PLAN_82 Part 1. Logged and carried on rather
+  // than blocking the record: a missed adopt just means the central file
+  // still has this stack's older entries, which staxx_update_history()
+  // already reads regardless.
+  $adoptError = '';
+  if (!staxx_image_history_adopt($stack, $adoptError) && $adoptError !== '') {
+    error_log('StaXX: image history adopt failed for '.$stack.': '.$adoptError);
+  }
+
+  $file = '';
+  foreach (staxx_list_stacks() as $s) {
+    if ($s['name'] === $stack) { $file = $s['file']; break; }
+  }
+  if ($file === '') return;
+
+  $meta = staxx_compose_meta($file);
+  if (!$meta['ok']) return;
+
+  $cachedImages = (array)(staxx_update_state()['images'] ?? []);
+
+  // A budget for the release-notes fetching below, and the reason it exists:
+  // the Update button calls this inside its own request, and every other
+  // network read in this plugin is deliberately kept out of a request (the
+  // update check detaches itself into a job for exactly this reason). One
+  // unreachable registry per service, at the fetch's own ceiling, would
+  // otherwise leave the button hanging for a minute on a many-service stack.
+  // Once the budget is gone the remaining services are still recorded, just
+  // without notes — the next update picks them up.
+  $notesUntil = time() + 12;
+
+  foreach ($meta['services'] as $svc => $svcMeta) {
+    if ($service !== '' && $svc !== $service) continue;
+
+    $image = trim((string)($svcMeta['image'] ?? ''));
+    if ($image === '') continue;
+    $local = staxx_image_local($image);
+    if (empty($local['digest'])) continue;
+
+    // The version and source about to be superseded — read from the labels
+    // cache staxx_image_remote()/staxx_update_labels_meta() already filled
+    // in, the same cache Links.php reads from. Never a fresh docker call,
+    // and never a placeholder when a label is simply absent, which is the
+    // normal case for plenty of images.
+    $cached = (array)($cachedImages[$image] ?? []);
+
+    // The checker's own "did this actually change" test. 'version' is
+    // overwritten with the *incoming* build on every check pass, and the
+    // outgoing one is kept separately as 'was' — so an entry describing the
+    // build being superseded must be stamped from 'was' when a change is
+    // under way, not from 'version', or it carries the name of its own
+    // replacement. Empty stays empty either way: absent is a normal answer
+    // for plenty of images, and nothing is ever substituted for it. Entries
+    // already on disk are not revisited — history is not retrospectively
+    // corrected.
+    $changed = ($cached['local'] ?? '') !== '' && ($cached['remote'] ?? '') !== ''
+             && $cached['local'] !== $cached['remote'];
+    $name = $changed ? (string)($cached['was'] ?? '') : (string)($cached['version'] ?? '');
+
+    $svcMetaOut = [];
+    if ($name !== '') $svcMetaOut['version'] = $name;
+    if (($cached['source'] ?? '') !== '') $svcMetaOut['source'] = (string)$cached['source'];
+
+    // Release notes: fetched at most once per version, right here, never
+    // again on view — so there is no cache to expire, only this one guard
+    // against paying for a second network call for the same entry. Needs a
+    // name, a project link, and a digest that is not already on record with
+    // notes; also skipped when the newest entry already carries this
+    // digest, since the push below would refuse it as a duplicate anyway.
+    if ($name !== '' && time() < $notesUntil) {
+      $links   = staxx_project_links($image, $meta['x'] ?? [], $meta['services'][$svc]['x'] ?? []);
+      $project = (string)($links['project'] ?? '');
+      if ($project !== '') {
+        $history = staxx_image_history($stack, $svc);
+        $skip = (($history[0]['digest'] ?? '') === $local['digest']);
+        foreach ($history as $entry) {
+          if ($skip) break;
+          if (($entry['digest'] ?? '') === $local['digest'] && ($entry['notes'] ?? '') !== '') $skip = true;
+        }
+        if (!$skip) {
+          $notes = staxx_release_notes_fetch($project, $name);
+          if (($notes['notes'] ?? '') !== '') {
+            $svcMetaOut['notes']    = (string)$notes['notes'];
+            $svcMetaOut['notesUrl'] = (string)($notes['url'] ?? '');
+            $svcMetaOut['notesCut'] = (bool)($notes['cut'] ?? false);
+          }
+        }
+      }
+    }
+
+    staxx_update_history_push($stack, $svc, $local['digest'], $svcMetaOut);
+  }
+}
+
+/**
+ * The rollback's reader: every digest recorded for this service, newest
+ * first, with no duplicates. Reads the new per-stack record AND whatever the
+ * old central file still holds for this key — a union, never a replacement,
+ * because a stack that has not been migrated (or adopted lazily on the
+ * update path) has its history nowhere else. New entries always come from
+ * the new store now, so putting its digests first is newest-first in
+ * practice, not just in theory.
+ */
 function staxx_update_history(string $stack, string $service): array {
-  $state = staxx_update_state();
-  return (array)($state['history'][$stack.'::'.$service] ?? []);
+  $new = staxx_image_history_digests($stack, $service);
+  $old = (array)(staxx_update_state()['history'][$stack.'::'.$service] ?? []);
+
+  $merged = $new;
+  foreach ($old as $digest) {
+    if (!in_array($digest, $merged, true)) $merged[] = $digest;
+  }
+  return $merged;
 }
 
 /* ------------------------------------------------------------------- roll back -- */
 
 /**
- * Point one service's image back at the version recorded just before its
- * last update, and bring it up. Never edits the compose file — the tag
- * itself is re-pointed with `docker tag`, and the existing 'recreate' verb
- * (already scoped to a single service the same way every other job is) does
- * the rest.
+ * Point one service's image back at a version it has run before, and bring
+ * it up. With no $target that is the one recorded just before its last
+ * update; with one, any version this service itself recorded — which the
+ * Versions tab needs, since it lists them all rather than only the newest.
+ *
+ * The compose file is the authority: the browser-side editor has already
+ * rewritten this service's image line to carry the digest, and this
+ * function's job is to check that edit and save it through the normal path,
+ * rather than to write YAML itself — the only round-trip-safe compose editor
+ * is the browser's, and PHP must not grow a second one. $yaml is therefore
+ * required in practice; an empty one is refused rather than falling back to
+ * anything. See the checks below for why the supplied text is re-parsed
+ * rather than trusted.
+ *
+ * $note reports a save whose previous version could not be kept. It matters
+ * here more than most places: what makes a pin acceptable is that it can be
+ * undone from the file history, so a pin saved without one has to say so.
  *
  * @return string a job id, or '' with $error set on refusal
  */
-function staxx_update_rollback(string $stack, string $service, string &$error): string {
+function staxx_update_rollback(string $stack, string $service, string &$error, string $target = '', string $yaml = '', ?string &$note = null): string {
   $error = '';
 
   if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
@@ -408,10 +557,72 @@ function staxx_update_rollback(string $stack, string $service, string &$error): 
     return '';
   }
 
-  $previous = staxx_update_history($stack, $service)[0] ?? '';
-  if ($previous === '') {
-    $error = 'There is no earlier version recorded for this service, so it cannot be rolled back.';
+  $history = staxx_update_history($stack, $service);
+  if ($target === '') {
+    $previous = $history[0] ?? '';
+    if ($previous === '') {
+      $error = 'There is no earlier version recorded for this service, so it cannot be rolled back.';
+      return '';
+    }
+  } else {
+    // A shape check on $target (does it look like "algo:hex"?) is not a
+    // substitute for this: without confirming it against this service's OWN
+    // recorded history, a request could re-tag this service's image to any
+    // digest present anywhere on the server, not just one it has actually run.
+    if (!in_array($target, $history, true)) {
+      $error = 'That version is not one recorded for this service, so it cannot be rolled back to.';
+      return '';
+    }
+    $previous = $target;
+  }
+
+  // This check sits ahead of the "is the image actually on disk" check
+  // below, even though both are pure checks with no side effects and could
+  // run in either order. Reachability is why: put after the presence check,
+  // this could only ever be exercised on a machine that already has a real
+  // matching image pulled — untestable from fixtures alone, and any test
+  // that arranged one would then fall through into the save and the job
+  // below, which a test run must never do. Here, every refusal is reachable
+  // with fixtures and none of them reach anything that writes.
+  //
+  // A save that claims to be a rollback while actually carrying an
+  // unrelated edit is the exact failure this project cares about most, so
+  // the text the browser posted is never trusted at face value: it is
+  // parsed properly and checked to actually name the version this call was
+  // asked to roll back to. A plain strpos() on the raw text would not do —
+  // the digest could just as easily appear inside a comment.
+  // No file text, no rollback. The old behaviour re-pointed the image's local
+  // TAG instead of editing the file, and both halves of that were wrong: a tag
+  // is per-machine, so it rolled back every other stack sharing the image the
+  // next time anything recreated them, and the file still said `latest`, so any
+  // deliberate pull undid it. It is refused rather than kept as a fallback,
+  // because a rollback that quietly does the weaker thing is worse than one
+  // that says it cannot — and a path no caller uses is a footgun waiting for
+  // the next person who passes four arguments.
+  if ($yaml === '') {
+    $error = 'A rollback now pins the compose file, and no file text was supplied, so nothing was changed.';
     return '';
+  }
+
+  {
+    $tmp = tempnam(sys_get_temp_dir(), 'staxx-rb-');
+    if ($tmp === false) {
+      $error = 'Could not check the supplied file, so nothing was changed.';
+      return '';
+    }
+    file_put_contents($tmp, $yaml);
+    $checkMeta = staxx_compose_meta($tmp);
+    @unlink($tmp);
+
+    if (!$checkMeta['ok'] || !isset($checkMeta['services'][$service])) {
+      $error = 'The supplied file could not be checked, so nothing was changed.';
+      return '';
+    }
+    $checkImage = (string)($checkMeta['services'][$service]['image'] ?? '');
+    if (strpos($checkImage, '@'.$previous) === false) {
+      $error = 'The supplied file does not pin this service to the requested version, so nothing was changed.';
+      return '';
+    }
   }
 
   $repo = staxx_hub_repo_path($image);
@@ -428,19 +639,23 @@ function staxx_update_rollback(string $stack, string $service, string &$error): 
     return '';
   }
 
-  $tagCode = 1;
-  staxx_sh(
-    staxx_docker_bin().' tag '.escapeshellarg($repo.'@'.$previous).' '.escapeshellarg(trim($image)).' 2>&1',
-    15, $tagCode
-  );
-  if ($tagCode !== 0) {
-    $error = 'Could not point the image tag back at the previous version.';
+  // The file is the authority, so this is a save like any other — it lands in
+  // the same edit history, which is what makes the pin undoable and the whole
+  // reason the edit is saved here rather than left in the browser. Nothing
+  // runs `docker tag`: see the refusal above for why that came out.
+  //
+  // $note carries "the file was saved but its previous version could not be
+  // kept". That has to reach the person, because the confirmation they just
+  // agreed to promised the old file would be in History.
+  if (!staxx_save_stack($stack, $yaml, $error, $note)) {
     return '';
   }
 
   // Remember the version this rolled back FROM as this image's skip
   // fingerprint, so the clock does not immediately try to reinstall the very
-  // update just backed out of.
+  // update just backed out of. Belt-and-braces on the $yaml path — the file
+  // itself is what stops the next update now — but it is also what silences
+  // the "an update is available" nag for a version deliberately declined.
   $state  = staxx_update_state();
   $images = (array)$state['images'];
   if (isset($images[$image]) && ($images[$image]['remote'] ?? '') !== '') {
@@ -449,6 +664,101 @@ function staxx_update_rollback(string $stack, string $service, string &$error): 
   }
 
   return staxx_start_job($stack, 'recreate', $error, $service);
+}
+
+/**
+ * Release a pin: put a service's image back to plain "repo:tag", with
+ * everything from the first "@" removed. The mirror of
+ * staxx_update_rollback() above, minus the parts that pin something — no
+ * history lookup, and deliberately no job at the end. See point 6 below for
+ * why.
+ *
+ * As with a rollback, the file is the authority: the browser has already
+ * rewritten the image line and this function's job is to check that edit,
+ * not to write YAML itself.
+ *
+ * @return bool true on success, false with $error set on refusal
+ */
+function staxx_update_unpin(string $stack, string $service, string $yaml, string &$error, ?string &$note = null): bool {
+  $error = '';
+
+  if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return false; }
+
+  $file = '';
+  foreach (staxx_list_stacks() as $s) {
+    if ($s['name'] === $stack) { $file = $s['file']; break; }
+  }
+  if ($file === '') { $error = 'No compose file found in this stack.'; return false; }
+
+  $meta = staxx_compose_meta($file);
+  if (!$meta['ok'] || !isset($meta['services'][$service])) {
+    $error = 'No service called "'.$service.'" in this stack.';
+    return false;
+  }
+
+  $image = trim((string)($meta['services'][$service]['image'] ?? ''));
+  if ($image === '') {
+    $error = 'This service has no image set, so there is nothing to release.';
+    return false;
+  }
+
+  $at = strpos($image, '@');
+  if ($at === false) {
+    $error = 'This service is not pinned to a version, so there is nothing to release.';
+    return false;
+  }
+  $unpinned = substr($image, 0, $at);
+
+  // The supplied text must turn the pin into exactly the same image with the
+  // "@sha256:..." removed — nothing else. Without this, "release" would be a
+  // way to change a service's image to anything at all, under cover of an
+  // action whose confirmation dialog only ever tells the person a pin is
+  // being lifted. As with a rollback, the text is parsed properly rather
+  // than trusted, so a digest (or anything else) hiding inside a comment
+  // cannot pass a plain string search.
+  $tmp = tempnam(sys_get_temp_dir(), 'staxx-up-');
+  if ($tmp === false) {
+    $error = 'Could not check the supplied file, so nothing was changed.';
+    return false;
+  }
+  file_put_contents($tmp, $yaml);
+  $checkMeta = staxx_compose_meta($tmp);
+  @unlink($tmp);
+
+  if (!$checkMeta['ok'] || !isset($checkMeta['services'][$service])) {
+    $error = 'The supplied file could not be checked, so nothing was changed.';
+    return false;
+  }
+  $checkImage = trim((string)($checkMeta['services'][$service]['image'] ?? ''));
+  if ($checkImage !== $unpinned) {
+    $error = 'The supplied file does not release this service to its unpinned image, so nothing was changed.';
+    return false;
+  }
+
+  if (!staxx_save_stack($stack, $yaml, $error, $note)) {
+    return false;
+  }
+
+  // The "don't offer me that version again" fingerprint written at pin time
+  // sits under the image key as it existed BEFORE the pin — see
+  // staxx_update_state()['images'] in Updates.php, keyed by the image string
+  // exactly as the compose file reads. Pinning added a fresh entry under the
+  // pinned name and left this one behind; releasing puts the file back to
+  // the unpinned name, so if this stale entry is not cleared here it comes
+  // back to life and silently suppresses the very update the release was
+  // meant to resume. Cleared under $unpinned, deliberately not $image.
+  $state  = staxx_update_state();
+  $images = (array)$state['images'];
+  if (isset($images[$unpinned]['skip'])) {
+    unset($images[$unpinned]['skip']);
+    staxx_update_state_save(['images' => $images]);
+  }
+
+  // No pull, no recreate, no job: releasing a pin changes only the file. The
+  // next check pass decides on its own whether the now-unpinned image is
+  // due anything, on the normal clock and policy — this function does not
+  // pre-empt that.
+  return true;
 }
 
 /* -------------------------------------------------------------------- cleanup -- */
@@ -464,6 +774,55 @@ function staxx_update_rollback(string $stack, string $service, string &$error): 
  *
  * @return array{removed: string[], kept: int}
  */
+/**
+ * Every digest worth keeping, grouped by repository: the live pointer for
+ * each known image, plus whatever any service's history still remembers.
+ *
+ * Pulled out of staxx_update_cleanup() so it can be proved directly rather
+ * than re-implemented in a test and asserted about. This is the list that
+ * decides what `docker rmi` is allowed to touch, so "the test builds the
+ * same union by hand and it matches" proves the test, not the code.
+ *
+ * The history half is the UNION of the per-stack records and whatever the
+ * old central file still holds. Reading only one of the two would mean a
+ * digest a rollback still needs — whichever source went un-read — looks
+ * unused and gets removed. That exact bug has been found in this codebase
+ * once already; do not "tidy away" either half while anything is still
+ * recorded only there.
+ */
+function staxx_update_keep_digests(): array {
+  $state  = staxx_update_state();
+  $images = (array)$state['images'];
+
+  $keep = [];
+  foreach ($images as $ref => $entry) {
+    $repo = staxx_hub_repo_path($ref);
+    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
+    if (!empty($entry['local'])) $keep[$repo][] = $entry['local'];
+  }
+
+  $historyKeys = array_unique(array_merge(
+    array_keys(staxx_image_history_all()),
+    array_keys((array)$state['history'])
+  ));
+  foreach ($historyKeys as $key) {
+    [$stack, $service] = array_pad(explode('::', $key, 2), 2, '');
+    $file = '';
+    foreach (staxx_list_stacks() as $s) {
+      if ($s['name'] === $stack) { $file = $s['file']; break; }
+    }
+    if ($file === '') continue;
+    $meta = staxx_compose_meta($file);
+    $ref  = trim((string)($meta['services'][$service]['image'] ?? ''));
+    if ($ref === '') continue;
+    $repo = staxx_hub_repo_path($ref);
+    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
+    foreach (staxx_update_history($stack, $service) as $d) $keep[$repo][] = $d;
+  }
+
+  return $keep;
+}
+
 /**
  * Normalise a docker image id for comparison: strip an optional
  * 'sha256:' prefix and keep only the leading twelve characters, since
@@ -501,31 +860,27 @@ function staxx_update_cleanup(bool $dry, string &$error): array {
     return ['removed' => [], 'kept' => 0];
   }
 
-  $state  = staxx_update_state();
-  $images = (array)$state['images'];
+  // PLAN_68 Part C: the history-based half of the keep-set below matches each
+  // remembered digest back to a live stack by walking staxx_list_stacks() —
+  // and when the stack root cannot be seen, that list is empty, so every
+  // digest kept for a rollback reads as belonging to no stack at all and
+  // would be handed to `docker rmi` as if genuinely unused. Failing closed
+  // here is the same principle as the Docker check just above, for a root
+  // that is unmounted or unreadable rather than a daemon that is down.
+  // A dry run is guarded too, and deliberately. Its whole job is to tell
+  // somebody what WOULD be removed, and with the root unseen that list names
+  // rollback images as unused when they are not — a preview that is confidently
+  // wrong is worse than one that declines to answer, because the answer is
+  // what somebody decides on.
+  if (!staxx_stacks_visible()) {
+    $error = 'StaXX cannot see the stacks right now, so nothing was worked out or removed. '
+           . 'Check the array is started, then try again.';
+    return ['removed' => [], 'kept' => 0];
+  }
 
-  // Every digest worth keeping, per repository: the live pointer plus
-  // whatever history still remembers for any service using that repository.
-  $keep = [];
-  foreach ($images as $ref => $entry) {
-    $repo = staxx_hub_repo_path($ref);
-    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
-    if (!empty($entry['local'])) $keep[$repo][] = $entry['local'];
-  }
-  foreach ((array)$state['history'] as $key => $digests) {
-    [$stack, $service] = array_pad(explode('::', $key, 2), 2, '');
-    $file = '';
-    foreach (staxx_list_stacks() as $s) {
-      if ($s['name'] === $stack) { $file = $s['file']; break; }
-    }
-    if ($file === '') continue;
-    $meta = staxx_compose_meta($file);
-    $ref  = trim((string)($meta['services'][$service]['image'] ?? ''));
-    if ($ref === '') continue;
-    $repo = staxx_hub_repo_path($ref);
-    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($ref));
-    foreach ((array)$digests as $d) $keep[$repo][] = $d;
-  }
+  // The keep-set, built by its own function so it can be proved directly
+  // rather than re-derived by a test that would then be proving itself.
+  $keep = staxx_update_keep_digests();
 
   // Every image a container is actually using, by id, running or stopped —
   // never removed regardless of what the bookkeeping above says.
@@ -779,29 +1134,25 @@ function staxx_update_queue_tick(): array {
   $hasRunning = false;
   foreach ($items as $item) if (($item['state'] ?? '') === 'running') $hasRunning = true;
 
-  if (!$hasRunning && !($queue['stopped'] ?? false)) {
+  // PLAN_68 Part C: starting the next item looks the stack up by name in
+  // staxx_list_stacks() twice below — once to push its rollback fingerprint,
+  // once (inside staxx_start_job()) to actually run it — and an unreadable
+  // root makes that list empty, not merely stale. Skipping this tick
+  // entirely rather than proceeding means a stack that briefly can't be seen
+  // never has its update started without its "before" digest recorded, and
+  // never gets waved through staxx_start_job() against a root it cannot
+  // read. The item stays 'waiting' and is picked up on a later tick once the
+  // root is visible again — nothing here is lost, only delayed.
+  if (!$hasRunning && !($queue['stopped'] ?? false) && staxx_stacks_visible()) {
     foreach ($items as $i => &$item) {
       if (($item['state'] ?? '') !== 'waiting') continue;
 
-      // The fingerprint of every service in this stack is pushed onto its own
-      // history list before the pull runs — the same "before, not after"
-      // ordering Part C3 describes, so a roll back has something to roll
-      // back to even if the update job itself never finishes cleanly.
-      $file = '';
-      foreach (staxx_list_stacks() as $s) {
-        if ($s['name'] === $item['stack']) { $file = $s['file']; break; }
-      }
-      if ($file !== '') {
-        $meta = staxx_compose_meta($file);
-        if ($meta['ok']) {
-          foreach ($meta['services'] as $svc => $svcMeta) {
-            $image = trim((string)($svcMeta['image'] ?? ''));
-            if ($image === '') continue;
-            $local = staxx_image_local($image);
-            if (!empty($local['digest'])) staxx_update_history_push($item['stack'], $svc, $local['digest']);
-          }
-        }
-      }
+      // Every service in this stack has its fingerprint (and version, source
+      // and release notes, where known) recorded before the pull runs — the
+      // same "before, not after" ordering staxx_update_record_before_pull()
+      // documents, so a roll back has something to roll back to even if the
+      // update job itself never finishes cleanly.
+      staxx_update_record_before_pull($item['stack']);
 
       $jobError = '';
       $job = staxx_start_job($item['stack'], 'update', $jobError);

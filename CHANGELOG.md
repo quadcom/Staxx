@@ -4,6 +4,25 @@ What changed, newest first. Versions are dates, matching the plugin manifest.
 
 ---
 
+## Unreleased
+
+- Added the groundwork for filling in a stack's icon, description and links automatically: a new
+  internal step that writes those fields into a compose file as commented-out placeholders with a
+  short hint beside each, ready to uncomment and fill in.
+- Every new stack — from Community Applications, an imported template, Docker Hub, a local image,
+  or the blank starting point — now gets these fields written in automatically before you ever see
+  it. Pasting a whole compose file into a new stack does the same the moment it lands. An existing
+  stack with none of these fields shows a note in its editor offering to add them, and a new
+  "Add missing StaXX fields to every stack…" button in Settings does the same across every stack at
+  once, showing what would change before anything is written.
+- Setting the web interface port now removes the leftover "not set yet" comment for it, instead of
+  leaving a dead placeholder sitting above the real line.
+- A service that had none of these fields yet is left with an empty block until something is
+  uncommented into it, which reads as "nothing set" rather than a real setting — the metadata check
+  now accepts that shape at the container level. Measured directly against Docker Compose: an empty
+  or filled-in block never changes whether a running container is considered up to date with its
+  file.
+
 ## 2026.08.21 — released 2026-08-22
 
 The first version worth writing down. Nothing before this was packaged or tagged, so this entry

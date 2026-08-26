@@ -2157,6 +2157,67 @@
   border-left-color: var(--sm-line);
 }
 
+/* The "restart pending" chip (PLAN_71 stage 5) — sits right after the
+   update pill in the same status area (staxx_pending_chip_html() draws it
+   there; paintPendingChip() in stacks.js matches the order). Deliberately
+   grey-blue rather than the update pill's amber, or the accent colour
+   .staxx-driftmark/.staxx-imgmismatch use: a stack whose file has moved on
+   since it started is a normal mid-edit state, not a fault and not the
+   "look at this" language those two already carry, and "visually distinct,
+   never merged" (PLAN_71) means it must not read as another update pill
+   either. No token in this file gives a blue, so it is a literal here,
+   chosen to sit correctly on both light and dark themes the same way
+   --sm-muted/--sm-fill-2 already do. */
+.staxx-pendingchip {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.25rem 0.8rem;
+  border-radius: 1rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(90, 140, 180, 0.22);
+  color: rgb(120, 165, 205);
+}
+
+/* Always a real <button> (see staxx_pending_chip_html()) so it is pressable
+   — same trap as the update pill above: Unraid's own `.unapi button` rule
+   outranks a single class and would otherwise render this square and
+   colourless, and font size/weight has to be restated rather than left to
+   inherit, which would take the wrong size with it. */
+.staxx-scaffold button.staxx-pendingchip {
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 1.1rem;
+  font-weight: 600;
+  /* Restated, not inherited from the plain class above: `.unapi button` is a
+     class plus an element type, so it outranks that single class and squares
+     the ends off — the same trap the update pill's own --update rule had to
+     work around. */
+  border-radius: 1rem;
+  background: rgba(90, 140, 180, 0.22);
+  color: rgb(120, 165, 205);
+}
+
+.staxx-scaffold button.staxx-pendingchip:hover {
+  filter: brightness(1.15);
+}
+
+.staxx-scaffold button.staxx-pendingchip:focus-visible {
+  outline: 0.15rem solid rgb(120, 165, 205);
+  outline-offset: 0.1rem;
+}
+
+/* The icon-only form on a service row — same reasoning as .staxx-driftmark/
+   .staxx-imgmismatch above: one glyph is enough per row, and the full
+   sentence already lives in the panel this opens rather than needing to be
+   spelled out beside every service. */
+.staxx-pendingchip--service {
+  padding: 0.15rem 0.4rem;
+  font-size: 1rem;
+}
+
 /* The progress bar above the grid while "Update all" (or a folder's own
    "Update this folder") is running — painted entirely by
    paintUpdateQueue(), hidden the rest of the time. */
@@ -2214,6 +2275,19 @@
   display: inline-flex;
   align-items: center;
   color: var(--sm-accent);
+  font-size: 1.1rem;
+}
+
+/* The marker for a stack with at least one service pinned to an exact build
+   (see staxx_pin_mark_html()) — information, not a warning, so it takes
+   .staxx-sub's quiet grey rather than .staxx-driftmark/.staxx-imgmismatch's
+   accent colour just above. Same icon-only shape otherwise: the tooltip and
+   the .staxx-sr span inside it already carry the whole sentence. */
+.staxx-pinmark {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  color: var(--sm-muted);
   font-size: 1.1rem;
 }
 
@@ -2446,14 +2520,16 @@
  * the 52rem floor is there because a narrow desktop window would otherwise
  * take that half literally and leave a column too thin to fill in.
  *
- * :not([data-tab="manage"]) (PLAN_44 C1) because .staxx-modal-body stays in
- * the DOM, with its data-view untouched, the whole time Manage is showing —
- * it is only hidden by CSS, not removed — so without this exclusion these two
- * selectors would keep matching and squeeze the Manage tab, which always
- * wants the full width, into half a screen. */
+ * :not([data-tab="manage"]):not([data-tab="history"]):not([data-tab="versions"])
+ * (PLAN_44 C1, extended PLAN_68 Part A piece 3 and PLAN_82 Part 2 step 2)
+ * because .staxx-modal-body stays in the DOM, with its data-view untouched,
+ * the whole time Manage, History or Versions is showing — it is only hidden
+ * by CSS, not removed — so without this exclusion these two selectors would
+ * keep matching and squeeze whichever of those tabs is open, all three of
+ * which always want the full width, into half a screen. */
 @media not all and (max-width: 45rem) {
-  .staxx-modal:not([data-tab="manage"]):has(> .staxx-modal-body[data-view="form"]),
-  .staxx-modal:not([data-tab="manage"]):has(> .staxx-modal-body[data-view="yaml"]) {
+  .staxx-modal:not([data-tab="manage"]):not([data-tab="history"]):not([data-tab="versions"]):has(> .staxx-modal-body[data-view="form"]),
+  .staxx-modal:not([data-tab="manage"]):not([data-tab="history"]):not([data-tab="versions"]):has(> .staxx-modal-body[data-view="yaml"]) {
     width: clamp(52rem, 48vw, 84rem);
   }
 }
@@ -2691,30 +2767,44 @@
   background: transparent;
 }
 
-/* ---- modal: Configure/Manage tabs (PLAN_44 C1) ---- */
+/* ---- modal: Configure/Manage/History/Versions tabs (PLAN_44 C1, PLAN_68
+   Part A, PLAN_82 Part 2 step 2) ---- */
 
 /* Configure's own controls — the Form/Split/Compose segmented control — mean
-   nothing on Manage, so they hide with it. The file tab strip further down
-   needs no rule of its own: it lives inside .staxx-modal-body, which the next
-   rule already takes out of the layout entirely. */
-.staxx-modal[data-tab="manage"] .staxx-views {
+   nothing on Manage, History or Versions, so they hide with any of them. The
+   file tab strip further down needs no rule of its own: it lives inside
+   .staxx-modal-body, which the next rule already takes out of the layout
+   entirely. */
+.staxx-modal[data-tab="manage"] .staxx-views,
+.staxx-modal[data-tab="history"] .staxx-views,
+.staxx-modal[data-tab="versions"] .staxx-views {
   display: none;
 }
 
-.staxx-modal[data-tab="manage"] .staxx-modal-body {
+.staxx-modal[data-tab="manage"] .staxx-modal-body,
+.staxx-modal[data-tab="history"] .staxx-modal-body,
+.staxx-modal[data-tab="versions"] .staxx-modal-body {
   display: none;
 }
 
-/* The foot goes too. Every word in it is about writing the file — that
-   comments and ordering survive a save, and that a relative volume path puts
-   container data on the flash drive — alongside Undo and the two Save
-   buttons. None of that means anything while you are watching a container
-   run, and leaving a Save button under a pane that cannot edit anything is
-   an offer to do something the tab does not do. Editing lives one tab to the
-   left, and switching back is where saving belongs; an unsaved edit is not
-   lost by coming here, and pressing a run button with one outstanding asks
-   what to do about it (PLAN_44 C2). */
-.staxx-modal[data-tab="manage"] .staxx-modal-foot {
+/* The foot goes too, on all three tabs, and for the same reason: every word
+   in it is about writing the file — that comments and ordering survive a
+   save, and that a relative volume path puts container data on the flash
+   drive — alongside Undo and the two Save buttons. None of that means
+   anything while you are watching a container run, looking at a past
+   version of the file, or looking at which build of an image has run.
+   Leaving a Save button under a pane that cannot edit anything is an offer
+   to do something the tab does not do. Editing lives one tab to the left,
+   and switching back is where saving belongs; an unsaved edit is not lost by
+   coming here, and pressing a run button — or restoring a version — with
+   one outstanding asks what to do about it (PLAN_44 C2). History's own
+   Restore button lives inside #staxx-modal-history instead, because it acts
+   on the version chosen there, not on whatever the editor currently holds;
+   Versions' own "Put this back" is the same idea inside
+   #staxx-modal-versions. */
+.staxx-modal[data-tab="manage"] .staxx-modal-foot,
+.staxx-modal[data-tab="history"] .staxx-modal-foot,
+.staxx-modal[data-tab="versions"] .staxx-modal-foot {
   display: none;
 }
 
@@ -2731,6 +2821,310 @@
    gate on the way .staxx-modal-body has data-view. */
 .staxx-modal:not([data-tab="manage"]) .staxx-modal-manage {
   display: none;
+}
+
+/* ---- modal: History tab (PLAN_68 Part A piece 3) ----
+ *
+ * A fixed-width list of previous versions on the left, scrolling on its
+ * own, and the chosen version filling the rest, also scrolling on its own —
+ * so a long file never pushes a short list out of view or the other way
+ * round. #staxx-modal-history is empty markup until the history-panel agent
+ * fills it in (see StacksPage.php); every class below is a hook for that
+ * script, not something this pane pre-builds for itself.
+ *
+ * --sanitised is a modifier the script adds while Sanitise is on, which
+ * collapses the two-column layout to one so the "not available" notice
+ * (an ordinary .staxx-notice, the same pattern #staxx-sanitise-note already
+ * uses further up this dialog) can centre itself rather than sit pinned to
+ * the width of the list column that has nothing to show beside it. */
+.staxx-modal-history {
+  display: grid;
+  grid-template-columns: 18rem minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.staxx-modal-history--sanitised {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* The reverse of the pane block below it — same reasoning as
+   .staxx-modal-manage above: hidden by CSS rather than built hidden, because
+   this pane has no view of its own to gate on the way .staxx-modal-body has
+   data-view. */
+.staxx-modal:not([data-tab="history"]) .staxx-modal-history {
+  display: none;
+}
+
+/* The version list. A fixed width rather than a fraction of the dialog,
+   because what it holds — a timestamp or a short name — never needs more
+   room than this, and giving it a share of a wide desktop dialog would
+   waste exactly the space the compose file on the right wants most. */
+.staxx-history-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 0.1rem solid var(--sm-line);
+  background: var(--sm-fill-0);
+}
+
+.staxx-history-entry {
+  display: block;
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: none;
+  border-bottom: 0.1rem solid var(--sm-hairline);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.2rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staxx-history-entry:hover {
+  background: var(--sm-fill);
+}
+
+/* aria-current, not a class, for the version currently shown on the right —
+   the same "one of a set, this is the one you are looking at" relationship
+   .staxx-tab marks with aria-selected, but this list is not a tablist. */
+.staxx-history-entry[aria-current="true"] {
+  background: var(--sm-fill-2);
+  color: var(--sm-fg);
+  box-shadow: inset 0.2rem 0 0 var(--sm-accent);
+}
+
+/* Pinned to the bottom of the list column rather than living among the
+   entries, so it always acts on whichever entry is current without having
+   to travel with it. */
+.staxx-history-restore {
+  margin: 0.6rem;
+}
+
+/* The chosen version, read-only. white-space: pre (not pre-wrap), the same
+   as the compose editor's own textarea further up this sheet: a wrapped
+   YAML file misrepresents its own indentation, which is the one thing worth
+   checking in an old version. overflow: auto rather than overflow-x alone,
+   because unlike the editor this pane also has to scroll vertically on its
+   own, independently of the list beside it. */
+.staxx-history-content {
+  min-width: 0;
+  min-height: 0;
+  padding: 1rem 1.2rem;
+  overflow: auto;
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 1.2rem;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+/* The Sanitise notice takes the place of both columns above, so it is
+   centred in the space they would otherwise share rather than pinned to
+   the left column's width. */
+.staxx-history-sanitised {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+/* Below the same width this dialog goes full-screen at everywhere else
+   (see the @media not all and (max-width: 45rem) block above), a fixed
+   left column stops being a small fraction of the dialog and starts being
+   most of a phone screen — so the list moves above the version instead of
+   beside it, capped to a few rows so the version underneath still gets
+   most of the height. */
+@media (max-width: 45rem) {
+  .staxx-modal-history {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 12rem minmax(0, 1fr);
+  }
+
+  .staxx-history-list {
+    border-right: none;
+    border-bottom: 0.1rem solid var(--sm-line);
+  }
+}
+
+/* ---- modal: Versions tab (PLAN_82 Part 2 step 2) ----
+ *
+ * Same shape as History just above: a fixed-width list on the left, the
+ * chosen service's versions filling the rest, each scrolling on its own.
+ * #staxx-modal-versions is empty markup until stacks.js fills it in (see
+ * StacksPage.php); every class below is a hook for that script.
+ *
+ * --single is Versions' own equivalent of History's --sanitised modifier —
+ * the one-column collapse used for "not loaded yet", "failed to load" and
+ * "nothing recorded yet", none of which have a list worth showing beside
+ * them. Named differently because nothing here is about Sanitise: this tab
+ * has no notion of being unavailable while Sanitised on. */
+.staxx-modal-versions {
+  display: grid;
+  grid-template-columns: 18rem minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.staxx-modal-versions--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* The reverse of the pane block below it — same reasoning as
+   .staxx-modal-history above: hidden by CSS rather than built hidden,
+   because this pane has no view of its own to gate on the way
+   .staxx-modal-body has data-view. */
+.staxx-modal:not([data-tab="versions"]) .staxx-modal-versions {
+  display: none;
+}
+
+.staxx-versions-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 0.1rem solid var(--sm-line);
+  background: var(--sm-fill-0);
+}
+
+.staxx-versions-service {
+  display: block;
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: none;
+  border-bottom: 0.1rem solid var(--sm-hairline);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 1.2rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staxx-versions-service:hover {
+  background: var(--sm-fill);
+}
+
+/* aria-current, not a class, for the service currently shown on the right —
+   same reasoning as .staxx-history-entry[aria-current="true"]. */
+.staxx-versions-service[aria-current="true"] {
+  background: var(--sm-fill-2);
+  color: var(--sm-fg);
+  box-shadow: inset 0.2rem 0 0 var(--sm-accent);
+}
+
+.staxx-versions-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 1rem 1.2rem;
+  overflow-y: auto;
+}
+
+/* One recorded version. A plain card rather than a button, unlike the list
+   on the left — there is nothing to select here, only a link and a button
+   to act on. */
+.staxx-version-entry {
+  padding: 0.8rem 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+}
+
+/* The row currently running, marked plainly rather than left to be spotted
+   by the absence of a "Put this back" button. */
+.staxx-version-entry[aria-current="true"] {
+  border-color: var(--sm-accent);
+}
+
+.staxx-version-heading {
+  font-weight: 600;
+}
+
+.staxx-version-current {
+  margin-top: 0.4rem;
+  color: var(--sm-accent);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.staxx-version-rollback {
+  margin-top: 0.4rem;
+}
+
+/* Closed by default (native <details>) so a long version list stays
+   scannable — the vendor's own release text, shown only where it was
+   captured at pull time. */
+.staxx-version-notes {
+  margin-top: 0.4rem;
+  font-size: 1.1rem;
+}
+
+.staxx-version-notes > summary {
+  cursor: pointer;
+  color: var(--sm-accent);
+}
+
+/* Vendor prose can run long and carries long URLs with no natural break,
+   hence overflow-wrap rather than relying on whitespace alone. */
+.staxx-version-notes-body {
+  margin-top: 0.4rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--sm-muted);
+  font-size: 1.05rem;
+}
+
+.staxx-version-notes-cut {
+  margin-top: 0.3rem;
+  color: var(--sm-muted);
+  font-size: 1.05rem;
+}
+
+/* The band saying this service is held at one exact build. Stated rather than
+ * warned about — a pin is a decision somebody made on purpose, so it reads in
+ * the same accent as "running now" instead of an alarm colour. */
+.staxx-version-pinned {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--sm-line);
+  border-left: 3px solid var(--sm-accent);
+  border-radius: var(--sm-radius);
+  font-size: 1.2rem;
+}
+
+.staxx-version-unpin {
+  flex: 0 0 auto;
+}
+
+.staxx-versions-single {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+/* Same phone-width collapse as .staxx-modal-history — see its own comment
+   just above. */
+@media (max-width: 45rem) {
+  .staxx-modal-versions {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 12rem minmax(0, 1fr);
+  }
+
+  .staxx-versions-list {
+    border-right: none;
+    border-bottom: 0.1rem solid var(--sm-line);
+  }
 }
 
 /* ---- modal: body and the two panes ---- */
@@ -2830,6 +3224,23 @@
   padding: 0.8rem 1.4rem;
   border-bottom: 0.1rem solid var(--sm-line);
   color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+/* The "restart pending" line above the form (PLAN_71 stage 6) — same sibling
+   position and reasoning as .staxx-refnote just above (a fixed strip above
+   #staxx-form so it survives reparse()'s wholesale replace of the form's own
+   contents), but tinted with .staxx-pendingchip's own grey-blue rather than
+   .staxx-refnote's plain muted grey, so the two stay readable as separate
+   facts. Information only, the same as the chip: no button, and nothing
+   here may ever offer to restart anything. */
+.staxx-pendingnote {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.8rem 1.4rem;
+  border-bottom: 0.1rem solid var(--sm-line);
+  background: rgba(90, 140, 180, 0.12);
+  color: rgb(120, 165, 205);
   font-size: 1.2rem;
 }
 

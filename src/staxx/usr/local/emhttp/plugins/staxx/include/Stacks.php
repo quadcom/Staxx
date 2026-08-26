@@ -18,6 +18,7 @@
 ?>
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
 
 if (defined('STAXX_JOB_DIR')) return;
 
@@ -75,6 +76,11 @@ define('STAXX_EXEC_WRITE_MAX', 4096);
 const STAXX_COMPOSE_FILENAMES = [
   'compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
 ];
+
+// The hidden per-stack history folder (see Record.php). Never listed, never
+// reachable through the companion-file tools — a stack works exactly as it
+// does today whether or not this exists.
+define('STAXX_RECORD_DIR', '.staxx');
 
 // A companion file's size cap. The browser reads the file itself and posts
 // its content as an ordinary form field, so the whole thing sits in one POST
@@ -736,19 +742,43 @@ function staxx_compose_file_args(array $files): string {
  * Anything whose name this plugin could not act on is skipped rather than shown.
  * A row we cannot start, stop or delete is worse than no row.
  *
+ * PLAN_68 Part C: an empty 'stacks' array must never be read as "there are no
+ * stacks" when the real answer is "the root could not be looked at" — a
+ * missing directory (an unmounted pool, an array not started) and one that
+ * exists but will not scandir() both mean the same thing to a caller, and
+ * both are folded into 'ok' => false here so nobody downstream has to
+ * re-derive it from is_dir() by hand. 'ok' => true with empty arrays is the
+ * genuinely different case: the root was read and there is nothing in it.
+ *
  * @return array{stacks: array<int, array{rel:string, dir:string, folder:string, leaf:string}>,
- *               folders: string[]}
+ *               folders: string[], ok: bool, error: string}
  */
 function staxx_scan_stacks(bool $reset = false): array {
   static $cache = null;
-  if ($reset) { $cache = null; return ['stacks' => [], 'folders' => []]; }
+  if ($reset) { $cache = null; return ['stacks' => [], 'folders' => [], 'ok' => true, 'error' => '']; }
   if ($cache !== null) return $cache;
 
   $root = staxx_stack_root();
-  $out  = ['stacks' => [], 'folders' => []];
-  if (!is_dir($root)) return $cache = $out;
+  $out  = ['stacks' => [], 'folders' => [], 'ok' => true, 'error' => ''];
+  if (!is_dir($root)) {
+    $out['ok']    = false;
+    $out['error'] = 'The stack folder does not exist or is not mounted right now.';
+    return $cache = $out;
+  }
 
-  foreach ((array)@scandir($root) as $entry) {
+  // is_dir() above only proves the path is a directory, not that it can be
+  // read — scandir() returns false, not an empty array, when it can't, and
+  // (array)@scandir(...) used to fold that silently into "no stacks". A pool
+  // that is mounted but unreadable (or drops out mid-request) hits this,
+  // not just a missing one.
+  $top = @scandir($root);
+  if ($top === false) {
+    $out['ok']    = false;
+    $out['error'] = 'The stack folder exists but could not be read.';
+    return $cache = $out;
+  }
+
+  foreach ($top as $entry) {
     if ($entry === '.' || $entry === '..') continue;
     if (!staxx_valid_name($entry)) continue;
 
@@ -801,6 +831,17 @@ function staxx_scan_stacks(bool $reset = false): array {
  */
 function staxx_scan_stacks_reset(): void {
   staxx_scan_stacks(true);
+}
+
+/**
+ * The same "could this even be looked at?" answer staxx_scan_stacks() carries
+ * in its own 'ok' key, for a caller holding only staxx_list_stacks()'s plain
+ * array — which has no room for the flag, since it's an empty list either
+ * way. Reads the same statically-cached scan, so calling this after
+ * staxx_list_stacks() in the same request costs nothing further.
+ */
+function staxx_stacks_visible(): bool {
+  return staxx_scan_stacks()['ok'];
 }
 
 /** Just the folder names, for the "move to folder" menu and the layout. */
@@ -1345,6 +1386,77 @@ function staxx_service_names(string $file, ?string &$error = null): array {
   return array_keys(staxx_compose_meta($file, $error)['services']);
 }
 
+/**
+ * PLAN_71 Stage 2 — one stack's resolved config fingerprints, service =>
+ * 64-hex hash, straight from `compose config --hash='*'`. This is the "file
+ * side" that a container's own `com.docker.compose.config-hash` label is
+ * compared against to say whether a restart is pending.
+ *
+ * Null means "unknown", never "everything agrees": compose not installed, a
+ * non-zero exit, or output nothing here recognises. An empty array is never
+ * returned for a failure, because downstream a match set with nothing in it
+ * reads as "nothing has changed".
+ *
+ * Cached the same way staxx_compose_meta() is — in memory for the request,
+ * and on disk under STAXX_META_DIR keyed by staxx_meta_cache_key(), so a
+ * touched-but-unchanged file costs nothing and only a real edit pays the
+ * ~66ms `compose config` takes. A distinct filename suffix (.hash.json)
+ * keeps this record from colliding with staxx_compose_meta()'s own.
+ */
+function staxx_service_hashes(string $file): ?array {
+  static $cache = [];
+
+  $files = staxx_compose_files($file);
+  if ($files === []) return null;
+  $key = implode("\0", $files);
+  if (isset($cache[$key])) return $cache[$key];
+
+  $diskPath = STAXX_META_DIR.'/'.md5($files[0]).'.hash.json';
+  $metaKey  = staxx_meta_cache_key($files);
+
+  if ($metaKey !== null) {
+    $stored = @json_decode((string)@file_get_contents($diskPath), true);
+    if (is_array($stored) && ($stored['key'] ?? null) === $metaKey && is_array($stored['meta'] ?? null)) {
+      return $cache[$key] = $stored['meta'];
+    }
+  }
+
+  $cmd = staxx_compose_cmd();
+  if ($cmd === '') return $cache[$key] = null;
+
+  $code = 1;
+  $out  = staxx_sh($cmd.' '.staxx_compose_file_args($files)." config --hash='*' 2>&1", 15, $code);
+  if ($code !== 0) return $cache[$key] = null;
+
+  $hashes = [];
+  foreach (explode("\n", $out) as $line) {
+    // "<service><whitespace><64-hex-hash>" — anything else on a line (a
+    // warning compose printed to stdout, a blank line) is ignored rather
+    // than treated as a service with a malformed name.
+    if (preg_match('/^(\S+)\s+([0-9a-f]{64})$/', trim($line), $m)) {
+      $hashes[$m[1]] = $m[2];
+    }
+  }
+  if ($hashes === []) return $cache[$key] = null;   // nothing parsed: unknown, not empty
+
+  if ($metaKey !== null) staxx_meta_cache_write($diskPath, $metaKey, $hashes);
+  return $cache[$key] = $hashes;
+}
+
+/**
+ * The newest modification time across every file that feeds this stack's
+ * config (main file, plus override if there is one) — "when the file was
+ * last changed", for the restart-pending panel.
+ */
+function staxx_compose_files_mtime(string $file): int {
+  $newest = 0;
+  foreach (staxx_compose_files($file) as $f) {
+    $mtime = @filemtime($f);
+    if ($mtime !== false && $mtime > $newest) $newest = $mtime;
+  }
+  return $newest;
+}
+
 /* ----------------------------------------------------------------- stacks -- */
 
 /**
@@ -1468,13 +1580,14 @@ function staxx_container_index(): array {
     if ($r['project'] === '') continue;             // not compose-managed
 
     $row = [
-      'id'      => $r['id'],
-      'name'    => $r['name'],
-      'state'   => $r['state'],
-      'status'  => $r['status'],
-      'image'   => $r['image'],
-      'project' => $r['project'],
-      'service' => $r['service'],
+      'id'         => $r['id'],
+      'name'       => $r['name'],
+      'state'      => $r['state'],
+      'status'     => $r['status'],
+      'image'      => $r['image'],
+      'project'    => $r['project'],
+      'service'    => $r['service'],
+      'configHash' => $r['configHash'] ?? '',
     ];
 
     $index['byProject'][$row['project']][] = $row;
@@ -2078,6 +2191,95 @@ function staxx_stack_containers(array $s): array {
   return $result;
 }
 
+/**
+ * PLAN_71 Stage 3 — "restart pending": does what is running still match what
+ * the file now says, service by service. Never a guess — state is '' (no
+ * chip) for every case this cannot judge, not just the ones it can prove
+ * match: a stopped stack, an unknown file, containers with no fingerprint.
+ *
+ * @param array $s one entry from staxx_list_stacks() (needs name, file)
+ * @return array{state:string, changed:string[], absent:string[], leftover:string[],
+ *               edited:int, services:array<string,string>}
+ */
+function staxx_restart_pending(array $s): array {
+  static $memo = [];
+  // Unlike staxx_stack_containers(), every caller here already has a real
+  // stack row, so the name is never absent — no null-key special case needed.
+  $key = (string)($s['name'] ?? '');
+  if (isset($memo[$key])) return $memo[$key];
+
+  $empty = ['state' => '', 'changed' => [], 'absent' => [], 'leftover' => [],
+            'edited' => 0, 'services' => []];
+
+  $containers = staxx_stack_containers($s);
+  $running = false;
+  foreach ($containers as $c) {
+    if (strtolower($c['state']) === 'running') { $running = true; break; }
+  }
+  // Nothing running means nothing can be running the wrong settings —
+  // no chip, by decision, not "no chip because it's unknown".
+  if (!$running) return $memo[$key] = $empty;
+
+  $hashes = $s['file'] !== '' ? staxx_service_hashes($s['file']) : null;
+  if ($hashes === null) return $memo[$key] = $empty;   // unknown, never a match
+
+  $services = [];
+  $changed  = [];
+  $absent   = [];
+  $leftover = [];
+
+  $seen = [];   // services a container was found for, so absent can be found by elimination
+  foreach ($containers as $c) {
+    $svc = (string)$c['service'];
+    if ($svc === '') {
+      // A container with no service label at all cannot be matched to a
+      // declared service; it is leftover noise this stack cannot name.
+      continue;
+    }
+    // A service running more than one copy (replicas) has a container each,
+    // all carrying the same fingerprint. The verdict is the service's, not the
+    // container's, so the first copy settles it and the rest are skipped —
+    // otherwise the panel names the same service twice.
+    if (isset($seen[$svc])) continue;
+    $seen[$svc] = true;
+
+    if (!array_key_exists($svc, $hashes)) {
+      $leftover[] = $svc;
+      $services[$svc] = 'leftover';
+      continue;
+    }
+
+    $fileHash = (string)$hashes[$svc];
+    $liveHash = (string)($c['configHash'] ?? '');
+    if ($fileHash === '' || $liveHash === '') {
+      $services[$svc] = 'unknown';
+    } elseif ($fileHash !== $liveHash) {
+      $changed[] = $svc;
+      $services[$svc] = 'changed';
+    } else {
+      $services[$svc] = 'match';
+    }
+  }
+
+  foreach (array_keys($hashes) as $svc) {
+    if (!isset($seen[$svc])) {
+      $absent[] = $svc;
+      $services[$svc] = 'absent';
+    }
+  }
+
+  $state = ($changed !== [] || $absent !== [] || $leftover !== []) ? 'pending' : '';
+
+  return $memo[$key] = [
+    'state'    => $state,
+    'changed'  => $changed,
+    'absent'   => $absent,
+    'leftover' => $leftover,
+    'edited'   => staxx_compose_files_mtime($s['file']),
+    'services' => $services,
+  ];
+}
+
 /** Can anything actually be started? Both halves have to be true. */
 function staxx_can_run(): bool {
   return staxx_compose()['available'] && staxx_docker_running();
@@ -2294,6 +2496,13 @@ function staxx_selftest(): array {
   $dirs  = count($scan['stacks']);
   $folds = count($scan['folders']);
 
+  // PLAN_68 Part C: a self-test that reports "0 stacks" while the array is
+  // down is a healthy nothing dressed up as a fact. $scan['ok'] is false for
+  // exactly the case an empty count cannot tell apart from a genuinely empty
+  // stack folder, so every count built from the scan below says so plainly
+  // instead of reporting zero.
+  $seen = $scan['ok'];
+
   // Pure PHP, like everything else here — no external command, so this stays
   // instant and checkable from the server with no browser.
   $awaitingReview = 0;
@@ -2404,9 +2613,9 @@ function staxx_selftest(): array {
     'free space'          => is_dir($root) && ($free = @disk_free_space($root)) !== false
                                ? round($free / 1048576).' MB'
                                : 'unknown',
-    'stacks found'        => (string)$dirs,
-    'folders found'       => (string)$folds,
-    'stacks awaiting review' => (string)$awaitingReview,
+    'stacks found'        => $seen ? (string)$dirs : 'UNKNOWN — '.$scan['error'],
+    'folders found'       => $seen ? (string)$folds : 'UNKNOWN — '.$scan['error'],
+    'stacks awaiting review' => $seen ? (string)$awaitingReview : 'UNKNOWN — the stacks could not be seen',
     'images pulling from a registry their template has left' => $movedReport,
     'unraid templates on disk'  => $templatesReport,
     'compose manager projects on disk' => $projectsReport,
@@ -2489,7 +2698,7 @@ function staxx_run_probe(string $key): array {
  * the whole promise of the project and it is enforced here by simply not
  * touching the string.
  */
-function staxx_save_stack(string $name, string $yaml, string &$error): bool {
+function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$note = null): bool {
   $error = '';
 
   if (!staxx_valid_path($name)) {
@@ -2533,6 +2742,21 @@ function staxx_save_stack(string $name, string $yaml, string &$error): bool {
   // Keep an existing file's name rather than imposing ours on it.
   $file = staxx_find_compose_file($dir);
   if ($file === '') $file = $dir.'/compose.yaml';
+
+  // Keep whatever is on disk right now before it is overwritten — this has
+  // to run after every check above (a refused save must not leave a version
+  // behind) and before the write below (or the version worth keeping is
+  // already gone). A failure here is never allowed to block the save itself;
+  // it just means this one save has no undo, and the person is told so at
+  // the time rather than finding out the day they go looking for it.
+  $recordNote = '';
+  // basename, not the path in $file — the record resolves the stack folder
+  // itself, and handing it a full path silently finds no file and keeps
+  // nothing while reporting success.
+  if (!staxx_record_capture($name, basename($file), $recordNote) && $recordNote !== '') {
+    if ($note !== null) $note = $recordNote;
+    error_log('StaXX: history not kept for '.$name.': '.$recordNote);
+  }
 
   // Temp-then-rename, same reasoning as staxx_settings_save(): a short write
   // on a full flash drive still reports success, so the byte count actually
@@ -3659,6 +3883,15 @@ function staxx_stack_file(string $rel, string $file, string &$error): string {
            . 'must be 63 characters or fewer, and may not be a compose file.';
     return '';
   }
+  // Compared case-sensitively, unlike a compose filename above: the risk
+  // there was a near-miss upload becoming a second file compose might
+  // actually read. Here the record directory's real path always comes from
+  // the constant itself, so a differently-cased name is just an ordinary
+  // file that happens to look similar — nothing to protect against.
+  if ($file === STAXX_RECORD_DIR) {
+    $error = 'That name is reserved for this stack\'s own history, and cannot be used here.';
+    return '';
+  }
 
   $dir = @realpath(staxx_stack_dir($rel));
   if ($dir === false || !is_dir($dir)) {
@@ -3691,6 +3924,9 @@ function staxx_list_files(string $rel, string &$error): ?array {
   $out = [];
   foreach ((array)@scandir($dir) as $name) {
     if ($name === '.' || $name === '..') continue;
+    // The history folder is bookkeeping, not a file anybody put there —
+    // see STAXX_RECORD_DIR and staxx_stack_file().
+    if ($name === STAXX_RECORD_DIR) continue;
 
     $path  = $dir.'/'.$name;
     $link  = is_link($path);
@@ -3814,6 +4050,22 @@ function staxx_write_file(string $rel, string $file, string $body, bool $isText,
   if (strlen($body) > STAXX_FILE_MAX) {
     $error = 'That file is over the '.round(STAXX_FILE_MAX / 1024).' KiB limit for a companion file.';
     return false;
+  }
+
+  // The compose file itself never reaches here — staxx_valid_filename()
+  // refuses those four names outright, so the editor cannot open it and the
+  // form's own save is the only door to it. What does reach here is the
+  // override, which is compose configuration every bit as much as the main
+  // file: it is authored by hand, saved straight over the top, and had no
+  // way back before this. Anything else in the folder is a companion file
+  // and is not this stack's compose history.
+  $mainPath = staxx_find_compose_file(dirname($path));
+  if ($mainPath !== ''
+      && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0) {
+    $recordNote = '';
+    if (!staxx_record_capture($rel, $file, $recordNote) && $recordNote !== '') {
+      error_log('StaXX: history not kept for '.$rel.'/'.$file.': '.$recordNote);
+    }
   }
 
   // Pid-suffixed, not a fixed name: two concurrent saves of the same

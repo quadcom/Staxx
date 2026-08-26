@@ -3710,6 +3710,52 @@
    * cover — a snapshot here restores the levels ensurePath *did* create if
    * that last write is what fails.
    */
+  // Retracts the commented placeholder meta-scaffold.js wrote for `key`,
+  // once a real line for it has just been written into the same block —
+  // otherwise a stack ends up with both a real `webui:` and a `# webui:`
+  // comment insisting it is unset. Mirrors that file's hasPlaceholder()/
+  // blockExtent() rather than importing them: this is the model's own
+  // structural-write path and must not depend on a form-side helper, and
+  // both sides are entangled enough with parser internals that copying the
+  // handful of lines is clearer than sharing them.
+  //
+  // `pair` must be freshly read — splice() re-parses, so whatever the
+  // caller held before its own insertChild() call is stale by the time this
+  // runs. Silently does nothing if there is no map, no matching placeholder,
+  // or removing it would leave the block with nothing under it at all: this
+  // is a tidy-up, not something a write can fail over.
+  function removePlaceholder(doc, pair, key) {
+    if (hasUnreadTail(doc)) return;
+    var map = pair.value;
+    if (!map || map.kind !== 'map') return;
+    var childIndent = map.indent;
+
+    // Same physical-extent walk as meta-scaffold's blockExtent(): from the
+    // line after the key to the last line still indented deeper than it —
+    // deliberately not pair.value.end, for the same reason given there.
+    var end = pair.start + 1, i = pair.start + 1;
+    while (i < doc.lines.length) {
+      var line = doc.lines[i];
+      if (!/^\s*$/.test(line)) {
+        var lead = line.match(/^[ \t]*/)[0].length;
+        if (lead <= pair.indent) break;
+        end = i + 1;
+      }
+      i++;
+    }
+    if (end - pair.start - 1 <= 1) return; // the block has nothing to spare
+
+    var prefix = pad(childIndent) + '#';
+    var re = new RegExp('^' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:');
+    for (i = pair.start + 1; i < end; i++) {
+      var line = doc.lines[i];
+      if (line.slice(0, prefix.length) !== prefix) continue;
+      if (!re.test(line.slice(prefix.length).replace(/^\s+/, ''))) continue;
+      splice(doc, i, 1, []);
+      return;
+    }
+  }
+
   function addNested(doc, form, service, path, value, bare) {
     var before = doc.lines.slice();
     var pair = ensurePath(doc, function () { return serviceMapOf(doc, service); },
@@ -3723,6 +3769,18 @@
     var at = insertChild(doc, pair, path[path.length - 1], value,
                          path.length === 1 ? 'x-unraid' : null, bare);
     if (at < 0) { doc.lines = before; splice(doc, 0, 0, []); }
+    // Placeholder retraction is scoped to a direct child of x-unraid
+    // (path.length 2 — today, only the webui writer). A field nested a
+    // level deeper still (update.mode, update.delay) has its scaffolded
+    // comment sitting at the OUTER x-unraid block's indent, not the inner
+    // one this just created, so finding it needs a different search — out
+    // of scope for this tidy-up until something actually writes one of
+    // those fields.
+    else if (path.length === 2 && path[0] === 'x-unraid') {
+      var fresh = ensurePath(doc, function () { return serviceMapOf(doc, service); },
+                            path.slice(0, -1), 'x-unraid');
+      if (fresh) removePlaceholder(doc, fresh, path[path.length - 1]);
+    }
     return at;
   }
 
@@ -4125,6 +4183,87 @@
   }
 
   /**
+   * Whether a set of stashed lines still looks like the one block it claims
+   * to be, shared by both writers that splice stashed lines back verbatim
+   * (network_stash and sections). Never throws — this runs on hand-editable
+   * data on every render path, and a check that can itself blow up the page
+   * is worse than the thing it is guarding against.
+   *
+   * `expectKey` names the key the block's first real line must be (e.g.
+   * 'networks'), or null/omitted to accept any single mapping key — a
+   * section entry's stored first line is whichever key was outermost when
+   * it was emptied, which is not always the last segment of the entry's own
+   * path, so it cannot be predicted the way network_stash's key can.
+   *
+   * The check that actually matters is the embedded-newline one: the
+   * document is `doc.lines.join('\n')` on the way out, so one array element
+   * holding its own newline becomes several real lines at whatever column
+   * its text says — including column zero, which is how a stashed "line"
+   * can close the current service and open a new one. Everything else here
+   * (tabs, one key at the base indent, deeper indent after it, a size cap)
+   * only matters once that hole is shut.
+   *
+   * `wantIndent`, when given, requires the key line to sit at exactly that
+   * column. network_stash splices its lines back at the indentation they
+   * were stored with, so a stash whose indent no longer matches the service
+   * lands mid-file and orphans everything below it — proved to mangle a
+   * file even with every other check above passing. Sections do not pass
+   * this: they store their lines with the indent stripped and re-pad on the
+   * way back, so their base indent is 0 by construction.
+   */
+  function stashLinesOk(lines, expectKey, wantIndent) {
+    try {
+      if (!Array.isArray(lines) || lines.length < 1 || lines.length > 200) return false;
+
+      var total = 0, i;
+      for (i = 0; i < lines.length; i++) {
+        var l = lines[i];
+        if (typeof l !== 'string') return false;
+        if (l.indexOf('\n') >= 0 || l.indexOf('\r') >= 0) return false;
+        total += l.length;
+        if (total > 20000) return false;
+        var lead = l.match(/^[ \t]*/)[0];
+        if (lead.indexOf('\t') >= 0) return false;
+      }
+
+      var keyRe = new RegExp('^(\\s*)(?:' +
+        (expectKey ? expectKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '[^\\s#][^:]*') +
+        ')\\s*:(\\s.*)?$');
+
+      var keyIdx = -1, baseIndent = -1;
+      for (i = 0; i < lines.length; i++) {
+        if (/^\s*$/.test(lines[i]) || /^\s*#/.test(lines[i])) continue;
+        var m = lines[i].match(keyRe);
+        if (!m) return false;
+        keyIdx = i;
+        baseIndent = m[1].length;
+        break;
+      }
+      if (keyIdx < 0) return false;
+      if (typeof wantIndent === 'number' && baseIndent !== wantIndent) return false;
+
+      // Nothing before the key line but blanks and comments (its own
+      // attached leading comments, which the capture deliberately keeps).
+      for (i = 0; i < keyIdx; i++) {
+        if (!/^\s*$/.test(lines[i]) && !/^\s*#/.test(lines[i])) return false;
+      }
+
+      // Everything after must sit strictly deeper than the key line — a
+      // comment included, since one at the base indent would attach to
+      // whatever follows rather than to this block.
+      for (i = keyIdx + 1; i < lines.length; i++) {
+        if (/^\s*$/.test(lines[i])) continue;
+        var thisIndent = lines[i].match(/^\s*/)[0].length;
+        if (thisIndent <= baseIndent) return false;
+      }
+
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
    * Reads back what setNetworkMode above stashed for one service, validated
    * the same way restoreNetworkStash validates before actually writing —
    * shared rather than copied so the note stacks.js shows beneath a
@@ -4148,7 +4287,8 @@
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
           typeof parsed.after === 'string' &&
           Array.isArray(parsed.lines) && parsed.lines.length &&
-          parsed.lines.every(function (l) { return typeof l === 'string'; })) {
+          parsed.lines.every(function (l) { return typeof l === 'string'; }) &&
+          stashLinesOk(parsed.lines, 'networks', svc.value.indent)) {
         return parsed;
       }
     } catch (e) { /* not our JSON */ }
@@ -4190,7 +4330,11 @@
       return { ok: false, error: 'The x-unraid block in this file is written in a way the form cannot change — edit it in the Compose view instead.' };
     }
 
-    if (!lines) return { ok: true, restored: false };
+    // hadStash but !lines means there was something there and it failed
+    // stashLinesOk — say so, rather than let a discarded stash look
+    // identical to a file that never had one.
+    if (!lines) return hadStash ? { ok: true, restored: false, discarded: true }
+                                 : { ok: true, restored: false };
 
     // Back where it was, using the key the stash recorded it followed — so a
     // set-aside and a restore leave the file in the order it was written in.
@@ -4647,6 +4791,16 @@
       return setSectionState(doc, form, service, key, null);
     }
 
+    // The entry's first stored line is whichever key stashSection found
+    // outermost when it emptied the block, not necessarily the last
+    // segment of `key` itself, so no particular name can be expected here
+    // — null accepts any single mapping key. A stash that fails this is
+    // dropped exactly like an empty one, rather than left as a second,
+    // unreadable copy sitting in the file.
+    if (!stashLinesOk(entry.lines, null)) {
+      return setSectionState(doc, form, service, key, null);
+    }
+
     var path = key.split('.');
     var svc = serviceMapOf(doc, service);
     if (!svc) return false;
@@ -4697,6 +4851,20 @@
     }
 
     return setSectionState(doc, form, service, key, null);
+  }
+
+  /**
+   * Whether restoreSection would actually restore what is stashed for one
+   * service/key, without doing the restore or the discard — the UI needs to
+   * warn before the entry is dropped, and restoreSection's own return value
+   * is a plain boolean existing callers already depend on. Returns null when
+   * there is nothing stashed (nothing to say), true or false otherwise.
+   */
+  function sectionStashOk(doc, service, key) {
+    var sections = readSections(doc);
+    var entry = sections[service] ? sections[service][key] : undefined;
+    if (!entry || !entry.lines || !entry.lines.length) return null;
+    return stashLinesOk(entry.lines, null);
   }
 
   /* =====================================================================
@@ -7480,6 +7648,114 @@
   }
 
   /* =====================================================================
+   * Pinning an image to a digest
+   *
+   * API.pinnedImageRef — turns an image reference plus a fingerprint (what
+   * `docker inspect` calls a digest) into the reference that pins it. Pure
+   * and requireable from node, unlike the front end that will call it, so
+   * this is the one place the rule can be proved rather than eyeballed —
+   * see tests/pin_image.js.
+   * ===================================================================== */
+
+  // The shape docker itself prints for a digest, and the only shape this
+  // project ever records — anything else is not a fingerprint worth
+  // trusting.
+  var DIGEST_RE = /^[a-z0-9+._-]+:[0-9a-f]{32,}$/;
+
+  /**
+   * pinnedImageRef(ref, digest) -> {ok, ref} or {ok:false, why}
+   *
+   * Never throws: an input this cannot make sense of comes back as a
+   * refusal, the same contract stashLinesOk() follows above.
+   */
+  function pinnedImageRef(ref, digest) {
+    try {
+      if (typeof digest !== 'string' || !DIGEST_RE.test(digest)) {
+        return { ok: false, why: 'This does not look like an image fingerprint. Pull the image again and try pinning once that finishes.' };
+      }
+
+      // Only a genuine string is a reference — a number or an object has no
+      // business being coerced into one (String(42) is "42", not empty, so
+      // it would otherwise sail through the emptiness check below).
+      ref = (typeof ref === 'string' ? ref : '').trim();
+      if (ref === '') {
+        return { ok: false, why: 'There is no image set on this service yet. Choose an image before pinning it.' };
+      }
+
+      // Split off any existing pin first. A digest itself contains a colon
+      // (e.g. "sha256:abcd…"), so the tag separator below must be found in
+      // the part before "@" — searching the whole string would sometimes
+      // find the colon inside an old digest instead of the real tag one.
+      var atIdx = ref.indexOf('@');
+      var base = atIdx >= 0 ? ref.slice(0, atIdx) : ref;
+
+      // Find the tag separator: the last ":" after the last "/" (or, with
+      // no "/" at all, the last ":" in the string). Everything before it is
+      // the repository part — this is the only way to tell a tag's colon
+      // apart from a registry port's, e.g. "myhost:5000/app/thing:1.2".
+      var lastSlash = base.lastIndexOf('/');
+      var searchFrom = lastSlash >= 0 ? lastSlash : 0;
+      var sepIdx = base.lastIndexOf(':');
+      if (sepIdx < searchFrom) sepIdx = -1;
+      var repoPart = sepIdx >= 0 ? base.slice(0, sepIdx) : base;
+
+      // The server reads the compose file literally and substitutes no
+      // variables at all, so a "${IMAGE}" or "ghcr.io/${OWNER}/app"
+      // repository cannot be resolved here — there is no way to confirm the
+      // chosen version actually exists before pinning it. A tag-only
+      // variable is fine: the repository is still literal, so every check
+      // above still means something.
+      if (repoPart.indexOf('$') >= 0) {
+        return { ok: false, why: 'The image name uses a variable StaXX cannot look up, so there is no way to confirm this version exists. Write the image name out in full to pin it.' };
+      }
+
+      // The tag is always kept, even once pinned: docker resolves by digest
+      // and ignores the tag, so keeping it costs nothing, lets a person
+      // reading the file see which stream this came from, and means getting
+      // back out of the pin later is "drop everything from the @" rather
+      // than "work out what the tag used to be".
+      return { ok: true, ref: base + '@' + digest };
+    } catch (e) {
+      return { ok: false, why: 'Something went wrong reading that image name. Try again.' };
+    }
+  }
+
+  /**
+   * unpinnedImageRef(ref) -> {ok, ref} or {ok:false, why}
+   *
+   * The mirror of pinnedImageRef() above: drops everything from the first
+   * "@" onward. Unlike pinning, releasing needs nothing looked up — there is
+   * no fingerprint to validate and no repository to resolve — so a tag that
+   * is a variable (e.g. "ghcr.io/app/thing:${TAG}@sha256:…") is not a reason
+   * to refuse here, even though it would be one for pinnedImageRef(). This
+   * is deliberate, not an oversight to "fix" into matching its sibling.
+   */
+  function unpinnedImageRef(ref) {
+    try {
+      // Only a genuine string is a reference — see the matching comment in
+      // pinnedImageRef() above for why coercion is not safe here.
+      ref = (typeof ref === 'string' ? ref : '').trim();
+      if (ref === '') {
+        return { ok: false, why: 'There is no image set on this service yet. Choose an image before releasing its pin.' };
+      }
+
+      var atIdx = ref.indexOf('@');
+      if (atIdx < 0) {
+        return { ok: false, why: 'This service is not pinned to a version, so there is nothing to release.' };
+      }
+
+      var base = ref.slice(0, atIdx).trim();
+      if (base === '') {
+        return { ok: false, why: 'That leaves no image name at all. Fix the image before removing its pin.' };
+      }
+
+      return { ok: true, ref: base };
+    } catch (e) {
+      return { ok: false, why: 'Something went wrong reading that image name. Try again.' };
+    }
+  }
+
+  /* =====================================================================
    * Exports
    * ===================================================================== */
 
@@ -7506,6 +7782,12 @@
     setNetworkMode: setNetworkMode,
     restoreNetworkStash: restoreNetworkStash,
     readNetworkStash: readNetworkStash,
+    // Shared by both stash writers — see its own comment.
+    stashLinesOk: stashLinesOk,
+    // PLAN_83: meta-scaffold.js writes a bare "x-unraid:" key the same way
+    // addSetting does, and needs the same well-formedness this file already
+    // gets internally.
+    insertChild: insertChild,
     // The row's sentinel value for "created outside this file" — stacks.js
     // needs the exact same string to build the dropdown option, and a second
     // literal there would be a bug waiting to happen.
@@ -7526,6 +7808,7 @@
     // dependency — condition: service_started written explicitly alongside
     // it, since a bare "name:" is null and compose refuses the file.
     addNested: addNested,
+    removePlaceholder: removePlaceholder,
     // PLAN_34 phase 3a: addNested's sibling for a top-level declaration
     // rather than a service.
     addDeclNested: addDeclNested,
@@ -7550,6 +7833,7 @@
     sectionHidden: sectionHidden,
     stashSection: stashSection,
     restoreSection: restoreSection,
+    sectionStashOk: sectionStashOk,
     setSectionState: setSectionState,
     // The editor overlay's one-line-at-a-time syntax tokeniser — see the
     // "Syntax highlighting" section above for the carry contract.
@@ -7596,7 +7880,12 @@
     varRefs: varRefs,
     // PLAN_15 phase 1: the dropdown value lists moved out of stacks.js's
     // CHOICES table — see the comment above VOCAB for what stayed behind.
-    vocab: vocab
+    vocab: vocab,
+    // Turns an image reference plus a fingerprint into the reference that
+    // pins it — see its own comment above for the rule and why it exists
+    // here rather than in the front end.
+    pinnedImageRef: pinnedImageRef,
+    unpinnedImageRef: unpinnedImageRef
   };
 
   if (typeof window !== 'undefined') window.StaxxYaml = API;

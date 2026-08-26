@@ -65,6 +65,7 @@ $jsFile  = STAXX_ROOT.'/javascript/stacks.js';
 $modelFile = STAXX_ROOT.'/javascript/compose-model.js';
 $caFile  = STAXX_ROOT.'/javascript/ca-convert.js';
 $imageFile = STAXX_ROOT.'/javascript/image-import.js';
+$scaffoldFile = STAXX_ROOT.'/javascript/meta-scaffold.js';
 // The Manage tab's own script and stylesheet (PLAN_44 phase 2) — written by a
 // separate agent in parallel with this file, so neither is guaranteed to exist
 // yet at any given moment. Guarded the same way the three scripts above are:
@@ -76,6 +77,7 @@ $jsTag   = $assets.'/javascript/stacks.js?v='.(is_file($jsFile) ? filemtime($jsF
 $modelTag = $assets.'/javascript/compose-model.js?v='.(is_file($modelFile) ? filemtime($modelFile) : '0');
 $caTag   = $assets.'/javascript/ca-convert.js?v='.(is_file($caFile) ? filemtime($caFile) : '0');
 $imageTag = $assets.'/javascript/image-import.js?v='.(is_file($imageFile) ? filemtime($imageFile) : '0');
+$scaffoldTag = $assets.'/javascript/meta-scaffold.js?v='.(is_file($scaffoldFile) ? filemtime($scaffoldFile) : '0');
 $manageJsTag  = $assets.'/javascript/manage.js?v='.(is_file($manageJsFile) ? filemtime($manageJsFile) : '0');
 $manageCssTag = $assets.'/sheets/manage.css?v='.(is_file($manageCssFile) ? filemtime($manageCssFile) : '0');
 $cssTag  = $assets.'/sheets/staxx.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
@@ -399,16 +401,35 @@ endif;
          running or stopped container — a shell, a log and a file browser —
          built by a separate agent into #staxx-modal-manage below. Which one
          shows is the .staxx-modal's own data-tab attribute, read by the
-         stylesheet (see the ~2129 comment there for the one trap it has to
+         stylesheet (see the ~2454 comment there for the one trap it has to
          dodge) and set by stacks.js's setTab(). Copies .staxx-tabstrip/
          .staxx-tab wholesale from the file-tab strip further down rather than
          .staxx-ca-tab, so the dialog is internally consistent with the one
-         tab strip it already had. -->
+         tab strip it already had.
+
+         History (PLAN_68 Part A piece 3) is a third peer here rather than a
+         control tucked inside Configure, because it is a property of the
+         file being edited, not of whatever the editor happens to be showing
+         right now — burying it behind Configure's own controls would hide it
+         exactly when somebody has clicked away from the file that has a
+         history. It is disabled (native `disabled`, not a class — see
+         .staxx-tab:disabled in the stylesheet) whenever Sanitise is on: an
+         old version holds the real, unhidden values, and showing it would
+         defeat Sanitise outright.
+
+         Versions (PLAN_82 Part 2 step 2) is a fourth peer, for the same
+         reason — which build of an image has actually run. Unlike History it
+         is never disabled under Sanitise: an image name and a version are
+         not values the author wrote, and are not hidden by it. -->
     <div class="staxx-tabstrip staxx-modal-tabstrip" role="tablist" aria-label="<?= _('Editor section') ?>">
       <button type="button" class="staxx-tab" id="staxx-tab-configure" role="tab"
               aria-selected="true" data-tab="configure"><?= _('Configure') ?></button>
       <button type="button" class="staxx-tab" id="staxx-tab-manage" role="tab"
               aria-selected="false" data-tab="manage"><?= _('Manage') ?></button>
+      <button type="button" class="staxx-tab" id="staxx-tab-history" role="tab"
+              aria-selected="false" data-tab="history"><?= _('History') ?></button>
+      <button type="button" class="staxx-tab" id="staxx-tab-versions" role="tab"
+              aria-selected="false" data-tab="versions"><?= _('Versions') ?></button>
     </div>
 
     <div class="staxx-notice staxx-modal-banner" id="staxx-sanitise-note" hidden>
@@ -591,8 +612,25 @@ endif;
          CurrentStack() in stacks.js. Shown only while data-tab="manage" on
          the dialog above; .staxx-modal-body stays in the DOM meanwhile
          rather than being hidden and re-shown, which is what the width-clamp
-         comment at staxx.css:~2129 has to work around. -->
+         comment at staxx.css:~2454 has to work around. -->
     <div class="staxx-modal-manage" id="staxx-modal-manage"></div>
+
+    <!-- Empty on purpose, same reasoning as #staxx-modal-manage above:
+         stacks.js fills this the first time the History tab is opened and
+         owns everything inside it — the list of previous versions, the
+         read-only version view, the Restore button, and (while Sanitise is
+         on) the "not available" notice in its place. Built on demand rather
+         than with the dialog, because most people never open this tab.
+         Shown only while data-tab="history" on the dialog above. -->
+    <div class="staxx-modal-history" id="staxx-modal-history"></div>
+
+    <!-- Empty on purpose, same reasoning as #staxx-modal-history above:
+         stacks.js fills this the first time the Versions tab is opened — the
+         service list, each one's recorded versions, and "Put this back".
+         Shown only while data-tab="versions" on the dialog above. Left
+         enabled under Sanitise, unlike History's own tab button just above —
+         see the tab strip comment further up for why. -->
+    <div class="staxx-modal-versions" id="staxx-modal-versions"></div>
 
     <div class="staxx-modal-foot">
       <div class="staxx-error" id="staxx-error" hidden></div>
@@ -602,6 +640,15 @@ endif;
            this is stacks.js's updateMissing()/createMissingFile(), not a
            second one-shot "paste bar" as PLAN_13 first sketched it. -->
       <button type="button" class="staxx-missing" id="staxx-missing" hidden></button>
+
+      <!-- PLAN_83: an existing stack opened with no StaXX presentation
+           fields (icon, links, description) at all. Same shape and job as
+           #staxx-missing above — clicking it scaffolds the text in the
+           editor via stacks.js's updateScaffoldNote()/its own click handler,
+           leaving the change unsaved like any other edit. Never shown for a
+           brand-new stack, which is scaffolded automatically before this
+           pane is painted. -->
+      <button type="button" class="staxx-missing" id="staxx-scaffold-note" hidden></button>
 
       <!-- Same shape and job as #staxx-missing above, but for a volume's
            HOST side rather than a file inside the stack: clicking it asks the
@@ -1171,6 +1218,13 @@ endif;
      Conditional for the same reason as the two above. -->
 <? if (is_file($imageFile)): ?>
 <script src="<?= $imageTag ?>"></script>
+<? endif; ?>
+<!-- PLAN_83: writes in the commented-out x-unraid fields a stack starts life
+     without. Reads window.StaxxYaml, so it must load after the compose model;
+     stacks.js reads window.StaxxMeta, so this must load before it. Conditional
+     for the same reason as the scripts above. -->
+<? if (is_file($scaffoldFile)): ?>
+<script src="<?= $scaffoldTag ?>"></script>
 <? endif; ?>
 <!-- The Manage tab (PLAN_44 Part D), a separate file for the same reason as
      the three above: a bad edit there costs the Manage tab, not the rest of

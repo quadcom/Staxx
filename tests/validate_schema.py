@@ -17,6 +17,8 @@ Requires: pyyaml, jsonschema.
 
 import json
 import pathlib
+import shutil
+import subprocess
 import sys
 
 import yaml
@@ -24,6 +26,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCHEMA_PATH = ROOT / "schema" / "x-unraid.schema.json"
+SCAFFOLD_PATH = ROOT / "src" / "staxx" / "usr" / "local" / "emhttp" / "plugins" / "staxx" / "javascript" / "meta-scaffold.js"
 EXAMPLES = sorted((ROOT / "examples").rglob("compose.y*ml"))
 
 
@@ -159,6 +162,15 @@ NEGATIVE = [
         "unknown key inside a service update block",
         service_doc(update={"mode": "off", "reason": "manual only"}),
     ),
+    (
+        # The stack-level block always gets a real "version: 1" written the
+        # moment it exists (see meta-scaffold.js), so unlike the service
+        # block it never legitimately parses as null — a null here means
+        # something actually wrote "x-unraid:" with nothing under it, which
+        # is not a shape this schema should wave through.
+        "stack x-unraid given as null",
+        {"x-unraid": None},
+    ),
 ]
 
 # (description, document) — each must PASS validation.
@@ -219,7 +231,45 @@ POSITIVE = [
             "db": {"logging": '{"after":null,"lines":[]}'},
         },
     }}),
+    # A brand-new service block, before anything in it has been uncommented,
+    # parses as null rather than an empty map. Measured on the test server
+    # against compose v2.40.3: `docker compose config --hash='*'` gives the
+    # identical service hash whether x-unraid is absent, null, or fully
+    # populated, since compose excludes every x- extension key from the
+    # config hash entirely — so a scaffolded, still-empty block can never
+    # make a running stack look out of date.
+    ("service x-unraid scaffolded but nothing uncommented yet (null)", {
+        "services": {"app": {"image": "nginx", "x-unraid": None}},
+    }),
 ]
+
+
+def scaffolded_document():
+    """Run a small compose file through the JS scaffolder and parse the
+    result, so the schema is checked against what StaXX actually writes, not
+    just a hand-typed guess at its shape. Returns None (with a printed note)
+    when node is not on PATH, rather than failing the whole suite over a
+    missing tool this file does not otherwise need."""
+    node = shutil.which("node")
+    if not node:
+        print("skip  scaffolded-file case: node not found on PATH\n")
+        return None
+
+    text = "services:\n  jellyfin:\n    image: jellyfin/jellyfin\n"
+    script = (
+        "const M = require(process.argv[1]);"
+        "process.stdout.write(M.scaffold(process.argv[2]).yaml);"
+    )
+    try:
+        result = subprocess.run(
+            [node, "-e", script, str(SCAFFOLD_PATH), text],
+            capture_output=True, text=True, check=True, timeout=30,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        print(f"skip  scaffolded-file case: node run failed ({exc})\n")
+        return None
+
+    return yaml.safe_load(result.stdout)
 
 
 def main() -> int:
@@ -246,6 +296,18 @@ def main() -> int:
                 print(f"        /{'/'.join(map(str, e.path))}: {e.message}")
         else:
             print(f"ok    example {rel}")
+
+    print()
+    scaffolded = scaffolded_document()
+    if scaffolded is not None:
+        errors = list(validator.iter_errors(scaffolded))
+        if errors:
+            failures += 1
+            print("FAIL  scaffolded compose file (see PLAN_83) fails its own schema")
+            for e in errors:
+                print(f"        /{'/'.join(map(str, e.path))}: {e.message}")
+        else:
+            print("ok    scaffolded compose file validates")
 
     print()
     for label, doc in POSITIVE:
