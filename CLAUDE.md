@@ -90,6 +90,11 @@ either calls a pure function with made-up data or asks a read-only question, so 
 pulls and removes nothing. The two that matter most are that a hash format is refused unless the
 self-test has actually proven it, and that the superseded-image chooser never picks an image without
 StaXX's own stamp on it — the one place StaXX deletes without asking;
+`releasenotes_live.php` is the one suite that talks to the network, so it is opt-in — it runs only
+with `STAXX_LIVE_NOTES=1` and needs no config keys, because it asks read-only questions and records
+nothing. It proves the notes lookup end to end against a real project, and pins the gap that a
+rolling tag finds no release at all, so those cases flip to green the day PLAN_82a lands. A failure
+there may mean the external repository changed rather than the code being wrong;
 `links.php` covers
 what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
 for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's
