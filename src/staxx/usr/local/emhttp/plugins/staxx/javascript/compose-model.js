@@ -559,6 +559,11 @@
                  'alone. This is usually caused by a line indented differently from the ones around it.'
       });
       doc.unreadTail = true;
+      // Which line, alongside the flag. Anything that refuses because of an
+      // unread tail can then say where it is rather than telling the person
+      // to go and look for it — the warning above already knows, and only
+      // the editor was showing it.
+      doc.unreadLine = tail;
     }
     return doc;
   }
@@ -603,6 +608,7 @@
     doc.sealed = next.sealed;
     doc.warnings = next.warnings;
     doc.unreadTail = next.unreadTail;
+    doc.unreadLine = next.unreadLine;
     return doc;
   }
 

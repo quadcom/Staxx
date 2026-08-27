@@ -268,7 +268,15 @@
       return refuse(result, 'This file could not be read as a compose file, so nothing was added.');
     }
     if (doc.unreadTail) {
-      return refuse(result, 'Part of this file could not be read, so nothing was added — fix the line the editor flags first.');
+      // Name the line. This refusal is shown on the settings page, away from
+      // the editor and its gutter mark, so "the line the editor flags" sent
+      // somebody looking for a fact the parser had already worked out.
+      if (typeof doc.unreadLine !== 'number') {
+        return refuse(result, 'Part of this file could not be read, so nothing was added — fix the line the editor flags first.');
+      }
+      return refuse(result, 'This file could not be read past line ' + (doc.unreadLine + 1) +
+        ', so nothing was added. That line is usually indented differently from the ones around ' +
+        'it — fix it in the Compose view first.');
     }
 
     var servicesPair = doc.root.pairs.services;
