@@ -1,14 +1,14 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
-<!ENTITY author               "TODO-AUTHOR">
+<!ENTITY author               "Quadcom">
 <!ENTITY version              "2026.08.26">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!-- TODO: point at the real repository before the first release. Left as an
      obvious placeholder so a premature publish fails loudly rather than
      silently fetching from somewhere unintended. -->
-<!ENTITY github               "TODO-OWNER/TODO-REPO">
+<!ENTITY github               "quadcom/Staxx">
 <!ENTITY branch               "main">
 
 <!ENTITY pkgARCH              "noarch">
@@ -34,7 +34,7 @@
          pluginURL="&pluginURL;"
          icon="cubes"
          min="7.2.0"
-         support="TODO-SUPPORT-THREAD"
+         support="https://staxxfb.quadcom.ca"
          project="https://github.com/&github;"
          readme="https://github.com/&github;#readme"
 >

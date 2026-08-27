@@ -100,7 +100,18 @@ if [[ "${UPDATE_PLG}" == "--update-plg" ]]; then
 
   # XML entities do not expand inside CDATA, so the cleanup block carries a
   # literal filename that has to be rewritten in step with the version entity.
-  sed -i -E "s|${NAME}-[0-9]{4}\.[0-9]{2}\.[0-9]{2}(\.[0-9]+)?-${ARCH}-${BUILD}\.txz|${PKG_NAME}.txz|g" "${PLG}"
+  # Matched on any version shape, not a dated one: that block keeps the named
+  # package and deletes every other, so a pattern that misses leaves the .plg
+  # naming the PREVIOUS release and deleting the one it just installed. Versions
+  # were dates up to 2026.08.26 and are numbered from 1.1.0, and a build script
+  # that silently only handles the old shape is exactly how that goes unnoticed.
+  sed -i -E "s|${NAME}-[0-9][0-9.]*-${ARCH}-${BUILD}\.txz|${PKG_NAME}.txz|g" "${PLG}"
+
+  # Cheap proof it landed, because the failure above is silent by nature.
+  if ! grep -q "${PKG_NAME}.txz" "${PLG}"; then
+    echo "error: the .plg cleanup block still does not name ${PKG_NAME}.txz — fix it by hand" >&2
+    exit 1
+  fi
 
   echo "    done. Review the diff before committing."
 else
