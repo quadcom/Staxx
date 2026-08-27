@@ -4621,6 +4621,13 @@
     }, 800);
   }
 
+  // Never assume reachability from a name match (PLAN_70 10.5): a
+  // 'service-name'/'container-name' candidate is only real when the server
+  // also named the shared network; 'port' and 'fixed-address' (PLAN_94 part
+  // B) need no network at all — see CrossLinks.php's own routes 2-4. Mirrors
+  // YAML.crossReachableCandidates() (compose-model.js) but also allows
+  // 'fixed-address', which that older, pure function predates and this plan
+  // is not touching that file to extend.
   function runCrossMatch(key, service, target, value) {
     var mySeq = ++crossSeq;
     call('link-match', { name: openedName, service: service, value: value }, 8000)
@@ -4633,15 +4640,34 @@
           applyCrossAdvice();
           return;
         }
+        // PLAN_94 part A — a real name, blocked by no shared network. Carried
+        // as its own reply rather than dropped, per CrossLinks.php's contract.
+        if (res.kind === 'unreachable') {
+          crossState[key] = { key: key, status: 'blocked', sourceService: service, sourceTarget: target,
+            reason: res.reason, blocked: res.blocked || null };
+          applyCrossAdvice();
+          return;
+        }
+        if (res.kind === 'none') {
+          // PLAN_94 part C — a "did you mean" question only, never a match:
+          // it is offered here and acted on only through applyCrossSuggestion(),
+          // which fills in the corrected name and lets this same check run
+          // again rather than confirming anything by itself.
+          if (res.suggestions && res.suggestions.length) {
+            crossState[key] = { key: key, status: 'suggestions', sourceService: service, sourceTarget: target,
+              suggestions: res.suggestions };
+          } else {
+            delete crossState[key];
+          }
+          applyCrossAdvice();
+          return;
+        }
         if (res.kind !== 'match' || !res.candidates || !res.candidates.length) {
           delete crossState[key];
           applyCrossAdvice();
           return;
         }
 
-        // Never assume reachability from a name match (PLAN_70 10.5) —
-        // YAML.crossReachableCandidates() carries the reasoning; see its
-        // own comment in compose-model.js.
         var reachable = YAML.crossReachableCandidates(res.candidates);
         if (!reachable.length) {
           crossState[key] = { key: key, status: 'unreachable', sourceService: service, sourceTarget: target, candidate: res.candidates[0] };
@@ -4649,11 +4675,11 @@
           return;
         }
         if (reachable.length > 1) {
-          crossState[key] = { key: key, status: 'pick', sourceService: service, sourceTarget: target, candidates: reachable };
+          crossState[key] = { key: key, status: 'pick', sourceService: service, sourceTarget: target, candidates: reachable, value: value };
           applyCrossAdvice();
           return;
         }
-        startCrossCredentials(key, service, target, reachable[0]);
+        startCrossCredentials(key, service, target, reachable[0], value);
       });
   }
 
@@ -4714,9 +4740,9 @@
   // The one place a value from another stack's file is ever asked for —
   // and only for the single target `candidate` names, never a survey (see
   // CrossLinks.php).
-  function startCrossCredentials(key, service, target, candidate) {
+  function startCrossCredentials(key, service, target, candidate, value) {
     var mySeq = ++crossSeq;
-    crossState[key] = { key: key, status: 'loading', sourceService: service, sourceTarget: target, candidate: candidate };
+    crossState[key] = { key: key, status: 'loading', sourceService: service, sourceTarget: target, candidate: candidate, value: value };
     applyCrossAdvice();
 
     call('link-creds', { stack: candidate.stack, service: candidate.service }, 8000)
@@ -4724,17 +4750,17 @@
         if (mySeq !== crossSeq || !MODEL) return;
         if (!creds || !creds.ok) {
           crossState[key] = { key: key, status: 'error', sourceService: service, sourceTarget: target, candidate: candidate,
-            message: (creds && creds.error) || 'That stack’s settings could not be read.' };
+            value: value, message: (creds && creds.error) || 'That stack’s settings could not be read.' };
           applyCrossAdvice();
           return;
         }
         if (!creds.known) {
           crossState[key] = { key: key, status: 'unknown-image', sourceService: service, sourceTarget: target, candidate: candidate,
-            image: creds.image, settingNames: creds.settingNames || [] };
+            value: value, image: creds.image, settingNames: creds.settingNames || [] };
           applyCrossAdvice();
           return;
         }
-        resolveCrossFields(key, service, target, candidate, creds.fields || {}, creds.image);
+        resolveCrossFields(key, service, target, candidate, creds.fields || {}, creds.image, value);
       });
   }
 
@@ -4747,7 +4773,7 @@
   // by the known-image path above and by applyCrossLearn() below, once a
   // person has just taught StaXX an image it did not recognise — same
   // shape, same rules, either way the target became known.
-  function resolveCrossFields(key, service, target, candidate, credsFields, image) {
+  function resolveCrossFields(key, service, target, candidate, credsFields, image, value) {
     var ownSlots = crossOwnSlotFields(service, crossServiceImage(service));
     var between = [{ service: service, environment: target }, { stack: candidate.stack, service: candidate.service }];
     var confirmed = MODEL.doc && YAML && typeof YAML.linkState === 'function' &&
@@ -4769,7 +4795,7 @@
     });
 
     crossState[key] = { key: key, status: 'ready', sourceService: service, sourceTarget: target, candidate: candidate,
-      image: image, writes: writes, drift: drift, unresolved: unresolved };
+      value: value, image: image, writes: writes, drift: drift, unresolved: unresolved };
     applyCrossAdvice();
   }
 
@@ -4782,6 +4808,27 @@
   function crossAcceptBtnHtml(key) {
     return ' <button type="button" class="staxx-declfix" data-cross-apply="1" data-cross-key="' + esc(key) + '" ' +
       'title="Writes these values into this service, undoably, and records the connection.">Fill these in</button>';
+  }
+
+  // PLAN_94 part A's offer — navigation only (crossGoToNetworkRow() below),
+  // never a write to either stack's file. Only rendered when the target's
+  // own network is known (crossAdviceHtml()'s 'blocked' case), so `network`
+  // here is always a string.
+  function crossGotoNetBtnHtml(key) {
+    return ' <button type="button" class="staxx-declfix" data-cross-gotonet="1" data-cross-key="' + esc(key) + '" ' +
+      'title="Takes you to this service’s own network row, so the network can be added there.">Add this network</button>';
+  }
+
+  // PLAN_94 part C — one button per suggestion, naming the stack, the
+  // service, and whether the two already share a network (a corrected name
+  // with no shared network is part A's case again, not a working address —
+  // see CrossLinks.php's own comment on 'suggestions').
+  function crossSuggestBtnHtml(key, idx, s) {
+    var netNote = s.network ? ', sharing the network "' + s.network + '"' : ', sharing no network with this stack';
+    return ' <button type="button" class="staxx-declfix" data-cross-suggest="1" ' +
+      'data-cross-key="' + esc(key) + '" data-cross-index="' + idx + '" ' +
+      'title="Fills this box in with &quot;' + esc(s.service) + '&quot;.">"' + esc(s.service) + '" in "' + esc(s.stack) + '"' +
+      esc(netNote) + '</button>';
   }
 
   // A dropdown over crossOwnFields() — the person points at the box, this
@@ -4807,6 +4854,24 @@
   function crossAdviceHtml(st) {
     var c = st.candidate;
     if (st.status === 'self') return esc(st.reason);
+
+    // PLAN_94 part A — the server's own sentence, ready to show as-is (see
+    // CrossLinks.php's reply-shape contract); the one addition here is the
+    // offer, which only exists to navigate to this SERVICE'S OWN network row
+    // — never a write to either file (crossGoToNetworkRow() below).
+    if (st.status === 'blocked') {
+      var out0 = esc(st.reason);
+      if (st.blocked && st.blocked.network) out0 += crossGotoNetBtnHtml(st.key);
+      return out0;
+    }
+    // PLAN_94 part C — a question, never a match: picking one only fills the
+    // corrected name back into this box (applyCrossSuggestion()) and lets
+    // this same check run again, exactly as if it had been typed.
+    if (st.status === 'suggestions') {
+      var out1 = 'Did you mean one of these?';
+      for (var s = 0; s < st.suggestions.length; s++) out1 += crossSuggestBtnHtml(st.key, s, st.suggestions[s]);
+      return out1;
+    }
 
     if (st.status === 'pick') {
       var out = 'This could be pointing at more than one place:';
@@ -4838,6 +4903,13 @@
     // 'ready'
     var lead = c.via === 'port'
       ? 'This reaches "' + esc(c.service) + '" in "' + esc(c.stack) + '" through this server’s own address and the port it publishes.'
+      // PLAN_94 part B — this is a statement about the file, not a
+      // reachability test (CrossLinks.php never pings anything), so the
+      // wording says "as long as", never "will".
+      : c.via === 'fixed-address'
+      ? '"' + esc(st.value) + '" is the address the service "' + esc(c.service) + '" in "' + esc(c.stack) + '" asks for. ' +
+        'It is on its own address on your network rather than behind Docker, so this will reach it as long as your ' +
+        'network allows traffic between the two.'
       : 'This is "' + esc(c.service) + '" in "' + esc(c.stack) + '", another stack on this server — they share the network "' + esc(c.network) + '".';
     var out2 = lead;
     if (st.writes.length) {
@@ -4980,16 +5052,71 @@
       });
   }
 
+  // PLAN_94 part A's offer, on the currently open stack only — finds this
+  // service's own network row (the same 'list'/'networks'/'networks' shape
+  // fromChoice()/switchServiceToMode() already key on) and lands on it the
+  // same way opening a stack at a given field does. Falls back to the
+  // service's own section when it has no network row yet at all (network_mode
+  // in use, say) — there is still somewhere to look, just not a row to focus.
+  function crossGoToNetworkRow(service) {
+    if (!MODEL) return;
+    if (modalBody.dataset.view === 'yaml') setView(defaultView());
+    var target = findFieldBy(function (f) {
+      return f.service === service && f.binder === 'list' && f.listKey === 'networks';
+    });
+    if (target) {
+      var idx = MODEL.fields.indexOf(target);
+      var row = formHost.querySelector('.staxx-fieldrow[data-row="' + idx + '"]');
+      if (row) {
+        row.scrollIntoView({ block: 'center' });
+        focusField(target.id, false);
+        var box = row.querySelector('[data-part="value"]:not([disabled])');
+        if (box) box.focus();
+        return;
+      }
+    }
+    var svcSection = formHost.querySelector('.staxx-svc[data-service="' + service.replace(/"/g, '\\"') + '"]');
+    if (svcSection) svcSection.scrollIntoView({ block: 'start' });
+  }
+
+  // PLAN_94 part C — writes the corrected name into THIS box through the
+  // ordinary commit() path, exactly as if it had been typed, so the normal
+  // matching runs again on its own rather than confirming anything here.
+  // Never touches any other stack's file, and never a credential.
+  function applyCrossSuggestion(st, sug) {
+    if (!MODEL) return;
+    var f = findFieldBy(function (fld) {
+      return fld.service === st.sourceService && fld.target === st.sourceTarget && fld.parts && fld.parts.value;
+    });
+    if (!f) return;
+    var idx = MODEL.fields.indexOf(f);
+    var row = formHost.querySelector('.staxx-fieldrow[data-row="' + idx + '"]');
+    var box = row && row.querySelector('[data-part="value"]');
+    if (!box) return;
+    box.value = sug.service;
+    commit(box);
+  }
+
   function crossBtnClick(event) {
-    var btn = event.target.closest('[data-cross-apply],[data-cross-pick],[data-cross-fillpick],[data-cross-learn]');
+    var btn = event.target.closest(
+      '[data-cross-apply],[data-cross-pick],[data-cross-fillpick],[data-cross-learn],[data-cross-gotonet],[data-cross-suggest]');
     if (!btn) return false;
     var st = crossState[btn.dataset.crossKey];
     if (!st) return true;
     var advice = btn.closest('[data-advice]');
 
+    if (btn.dataset.crossGotonet !== undefined) {
+      if (st.blocked && st.blocked.network) crossGoToNetworkRow(st.sourceService);
+      return true;
+    }
+    if (btn.dataset.crossSuggest !== undefined) {
+      var sug = st.suggestions && st.suggestions[Number(btn.dataset.crossIndex)];
+      if (sug) applyCrossSuggestion(st, sug);
+      return true;
+    }
     if (btn.dataset.crossPick !== undefined) {
       var chosen = st.candidates && st.candidates[Number(btn.dataset.crossIndex)];
-      if (chosen) startCrossCredentials(st.key, st.sourceService, st.sourceTarget, chosen);
+      if (chosen) startCrossCredentials(st.key, st.sourceService, st.sourceTarget, chosen, st.value);
       return true;
     }
     if (btn.dataset.crossFillpick !== undefined) {
@@ -19260,38 +19387,54 @@
       ? 'Free space not reported.' : bytes(opt.freeBytes) + ' free.';
   }
 
-  // The path box is editable — somebody may want a different folder than the
-  // one suggested. Whatever is typed there goes to relocate() as `dest`
-  // exactly as submitted; the existing path validator on the server is what
-  // actually checks it, and its refusal is shown verbatim, never reworded.
-  function storageOptionHtml(opt, idx) {
-    if (opt.kind === 'flash') {
-      return '<div class="staxx-field">' +
-        '<span>' + esc(opt.name) + ' (current location)</span>' +
-        '<div class="staxx-boxline">' +
-          '<code>' + esc(opt.path) + '</code>' +
-          '<button type="button" class="staxx-btn" data-storage-flash="1">Keep stacks on flash</button>' +
-        '</div>' +
-        '<span class="staxx-hint">' + storageKindLine(opt) + '</span>' +
-      '</div>';
-    }
+  // PLAN_93: one destination box rather than one block per candidate. The
+  // other candidates offered are links beside it — pressing one fills the
+  // box and runs through the exact same check as typing (see the delegated
+  // click handler below), never enabling the move button directly.
+  function storageDestPanelHtml(bestOpt, suggestions) {
+    var suggestionHtml = suggestions.length
+      ? '<p class="staxx-hint staxx-storage-suggestions">Or use: ' +
+          suggestions.map(function (o) {
+            return '<a href="#" class="staxx-storage-suggest" data-storage-suggest="' +
+              esc(o.path) + '">' + esc(o.path) + '</a>';
+          }).join(' · ') +
+        '</p>'
+      : '';
+
     // The button starts disabled — it is only turned on once relocate-check
     // has come back clean for whatever is currently in the box, including
     // the suggested path itself, checked once as soon as this is drawn.
     return '<div class="staxx-field">' +
-      '<span>' + esc(opt.name) + ' (' + esc(opt.kind) + ')</span>' +
-      '<div class="staxx-boxline">' +
-        '<input type="text" class="staxx-input" id="staxx-storage-path-' + idx + '" ' +
-             'spellcheck="false" value="' + esc(opt.path) + '">' +
-        '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-storage-move-' + idx +
-             '" data-storage-move="' + idx + '" disabled>Move stacks here</button>' +
+        '<span>Move them to</span>' +
+        '<div class="staxx-boxline">' +
+          '<input type="text" class="staxx-input" id="staxx-storage-path" ' +
+               'spellcheck="false" value="' + esc(bestOpt.path) + '">' +
+          '<button type="button" class="staxx-btn" id="staxx-storage-browse">Browse…</button>' +
+        '</div>' +
+        '<div class="staxx-boxline">' +
+          '<span class="staxx-hint" id="staxx-storage-check">Checking…</span>' +
+          '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-storage-move" disabled>Move stacks</button>' +
+        '</div>' +
       '</div>' +
-      '<span class="staxx-hint" id="staxx-storage-check-' + idx + '">Checking…</span>' +
-      '<span class="staxx-hint">' + storageKindLine(opt) + ' ' + storageFreeLine(opt) + '</span>' +
-    '</div>';
+      suggestionHtml +
+      '<p class="staxx-hint" id="staxx-storage-desc">' + storageKindLine(bestOpt) + ' ' + storageFreeLine(bestOpt) + '</p>';
   }
 
-  /* ---- checking a candidate path as it is typed, one state per option ----
+  // The kind/redundancy/free-space sentences describe whatever is currently
+  // in the box, never a fixed candidate. A typed or browsed path that
+  // matches none of the offered candidates gets no pool description at all —
+  // nothing here actually knows what that path is, so the check's own answer
+  // above it is the only claim made about it.
+  function updateStorageDesc(value) {
+    var line = document.getElementById('staxx-storage-desc');
+    if (!line) return;
+    var match = storageOptions && storageOptions.offered.filter(function (o) {
+      return o.kind !== 'flash' && o.path === value;
+    })[0];
+    line.innerHTML = match ? (storageKindLine(match) + ' ' + storageFreeLine(match)) : '';
+  }
+
+  /* ---- checking the destination path as it is typed --------------------
    *
    * Every rule that decides whether a path is acceptable lives on the server
    * (see staxx_relocate_refuse() in Relocate.php) — this only ever displays
@@ -19299,22 +19442,21 @@
    * press it to find out; the move itself re-checks everything again when it
    * actually runs, exactly as before, so nothing here is a security boundary.
    *
-   * Keyed by the option's index rather than a shared variable, so typing in
-   * one box can never disable or clear another's result. Each entry keeps a
-   * sequence number: a reply is only applied if it is still the most recent
-   * check sent for that box, so a slow answer to an old keystroke can never
-   * overwrite a newer one that already came back.
+   * One box now, so one state rather than one per candidate index — but the
+   * sequence number survives the collapse: a reply is only applied if it is
+   * still the most recent check sent, so a slow answer to an old keystroke
+   * can never overwrite a newer one that already came back.
    */
   var storageCheckState = {};
 
-  function storageCheckLine(idx) { return document.getElementById('staxx-storage-check-' + idx); }
-  function storageMoveBtn(idx)   { return document.getElementById('staxx-storage-move-' + idx); }
+  function storageCheckLine() { return document.getElementById('staxx-storage-check'); }
+  function storageMoveBtn()   { return document.getElementById('staxx-storage-move'); }
 
-  function runStorageCheck(idx, dest) {
-    var state = storageCheckState[idx] || (storageCheckState[idx] = {});
+  function runStorageCheck(dest) {
+    var state = storageCheckState;
     var seq = (state.seq || 0) + 1;
     state.seq = seq;
-    var btn = storageMoveBtn(idx), line = storageCheckLine(idx);
+    var btn = storageMoveBtn(), line = storageCheckLine();
     if (btn) btn.disabled = true;
     if (line) { line.textContent = 'Checking…'; line.classList.remove('staxx-error'); }
 
@@ -19339,12 +19481,12 @@
   // check rather than one per keystroke. The button is disabled the instant
   // typing happens, before the timer even fires, so a click cannot land
   // between a keystroke and the check it is waiting on.
-  function debounceStorageCheck(idx, dest) {
-    var state = storageCheckState[idx] || (storageCheckState[idx] = {});
+  function debounceStorageCheck(dest) {
+    var state = storageCheckState;
     if (state.timer) clearTimeout(state.timer);
-    var btn = storageMoveBtn(idx);
+    var btn = storageMoveBtn();
     if (btn) btn.disabled = true;
-    state.timer = setTimeout(function () { runStorageCheck(idx, dest); }, 400);
+    state.timer = setTimeout(function () { runStorageCheck(dest); }, 400);
   }
 
   // A pool visible in Unraid but not offered here, with no reason given,
@@ -19375,32 +19517,41 @@
         return;
       }
       storageOptions = res;
-      // A fresh set of options means a fresh set of boxes, so any check still
-      // pending from a previous time this dialog was open is dropped rather
-      // than left to land on whatever now happens to share its index.
-      Object.keys(storageCheckState).forEach(function (k) {
-        if (storageCheckState[k].timer) clearTimeout(storageCheckState[k].timer);
-      });
+      // A fresh set of options means a fresh box, so any check still pending
+      // from a previous time this dialog was open is dropped rather than
+      // left to land on the new box once it (re)appears under the same id.
+      if (storageCheckState.timer) clearTimeout(storageCheckState.timer);
       storageCheckState = {};
-      // Flash is offered last, and only ever behind the confirmation below —
-      // never given a plain "Move here" button like the others, since
+
+      // Flash is never offered as the destination box's starting value —
       // staying on flash is the one choice that needs a second, deliberate
-      // step before it takes effect.
-      var order = res.offered.map(function (o, i) { return i; })
-        .sort(function (a, b) { return (res.offered[a].kind === 'flash' ? 1 : 0) - (res.offered[b].kind === 'flash' ? 1 : 0); });
+      // step before it takes effect (see confirmStorageFlash below), so it
+      // keeps its own quieter button rather than sharing this one.
+      var flashOpt = res.offered.filter(function (o) { return o.kind === 'flash'; })[0];
+      var nonFlash = res.offered.filter(function (o) { return o.kind !== 'flash'; });
+      var bestOpt = nonFlash[0];
+
       storageBody.innerHTML =
         '<p class="staxx-hint">The current stacks folder is copied to the new location, checked ' +
         'byte for byte, and only removed from where it is now once that check has passed — ' +
         'nothing is deleted before the copy is proved good.</p>' +
-        order.map(function (i) { return storageOptionHtml(res.offered[i], i); }).join('') +
-        storageUnavailableHtml(res.unavailable);
+        // From res.current, not from the flash option: flash is only offered
+        // while the stacks are ON it, so keying this line off it would leave
+        // an already-moved install with nothing saying where its stacks are.
+        '<p class="staxx-hint">Now: <code>' + esc(res.current) + '</code>' +
+          (res.onFlash ? ' — the flash drive' : '') + '</p>' +
+        (bestOpt ? storageDestPanelHtml(bestOpt, nonFlash.slice(1)) : '') +
+        storageUnavailableHtml(res.unavailable) +
+        (flashOpt
+          ? '<div class="staxx-storage-flash-foot">' +
+              '<button type="button" class="staxx-btn staxx-storage-flash-btn" data-storage-flash="1">Keep stacks on the flash drive</button>' +
+            '</div>'
+          : '');
 
       // The suggested path is checked once as soon as the dialog is drawn,
       // so a suggestion that is already unusable says so immediately rather
       // than looking fine until someone touches the box.
-      order.forEach(function (i) {
-        if (res.offered[i].kind !== 'flash') runStorageCheck(i, res.offered[i].path);
-      });
+      if (bestOpt) runStorageCheck(bestOpt.path);
     });
   }
 
@@ -19476,25 +19627,43 @@
 
   if (storageModal) {
     storageBody.addEventListener('click', function (event) {
-      var moveBtn = event.target.closest('[data-storage-move]');
-      if (moveBtn) {
-        var idx = Number(moveBtn.dataset.storageMove);
-        var opt = storageOptions && storageOptions.offered[idx];
-        if (!opt) return;
-        var input = document.getElementById('staxx-storage-path-' + idx);
-        startStorageMove(input ? input.value : opt.path);
+      if (event.target.closest('#staxx-storage-move')) {
+        var input = document.getElementById('staxx-storage-path');
+        if (input) startStorageMove(input.value);
+        return;
+      }
+      if (event.target.closest('#staxx-storage-browse')) {
+        var box = document.getElementById('staxx-storage-path');
+        // pickerOpen writes the chosen folder into the box and, because it
+        // is outside the compose form host, dispatches its own input event —
+        // the listener just below reacts to that exactly as it would to
+        // typing, so there is no second re-check path to keep in step.
+        if (box) pickerOpen(box);
+        return;
+      }
+      var suggest = event.target.closest('[data-storage-suggest]');
+      if (suggest) {
+        event.preventDefault();
+        var sbox = document.getElementById('staxx-storage-path');
+        if (sbox) {
+          sbox.value = suggest.dataset.storageSuggest;
+          // A suggestion press must go through the same check as typing —
+          // never enable the move button directly — so it fills the box and
+          // fires the same input event typing would, rather than calling
+          // the check functions itself.
+          sbox.dispatchEvent(new Event('input', { bubbles: true }));
+          sbox.focus();
+        }
         return;
       }
       if (event.target.closest('[data-storage-flash]')) confirmStorageFlash();
     });
 
-    // Delegated so it covers every option box, present or redrawn — each box
-    // is told apart by the index in its own id, never by a shared variable,
-    // so editing one path can only ever affect that option's own state.
     storageBody.addEventListener('input', function (event) {
-      var input = event.target.closest('input[id^="staxx-storage-path-"]');
+      var input = event.target.closest('#staxx-storage-path');
       if (!input) return;
-      debounceStorageCheck(Number(input.id.slice('staxx-storage-path-'.length)), input.value);
+      debounceStorageCheck(input.value);
+      updateStorageDesc(input.value);
     });
 
     if (storageClose) storageClose.addEventListener('click', function () { storageModal.close(); });

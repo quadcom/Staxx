@@ -366,29 +366,172 @@ function staxx_crosslinks_is_this_server(string $host): bool {
   return $hostname !== false && $hostname !== '' && strcasecmp($host, $hostname) === 0;
 }
 
+/** Is $value shaped like an address literal — IPv4 or IPv6, no scheme, no
+ *  port? Used to gate PLAN_94 part B: staxx_crosslinks_split_host_port() only
+ *  ever pulls a host out of a URL or a "host:port" pair, so a bare address on
+ *  its own ("192.168.30.40", nothing else) needs checking directly instead. */
+function staxx_crosslinks_looks_like_address(string $value): bool {
+  return filter_var($value, FILTER_VALIDATE_IP) !== false;
+}
+
+/**
+ * Per service, the fixed address it declares on an EXTERNAL network —
+ * external because that is the only kind another stack could ever be told
+ * about at all, the same gate staxx_crosslinks_service_networks() applies —
+ * together with whether that network's driver is macvlan or ipvlan.
+ *
+ * The address itself comes straight out of this file's own `compose config`
+ * text, same as staxx_compose_meta()'s fixedIp. The DRIVER cannot: a real
+ * external network's own stanza conventionally carries nothing but
+ * `external: true` (and maybe a `name:` override) — see
+ * tests/fixtures/test-stacks/03-multi-tier for the shape Unraid's own br0.x
+ * networks take in practice — so there is no `driver:` line in the file to
+ * read. This asks Docker instead, via staxx_network_drivers(), the same live
+ * lookup staxx_service_net_kind() already relies on elsewhere to tell a
+ * bridge from a macvlan network. That is a question about what a network
+ * already IS, not a test of whether anything can reach it: no packet of any
+ * kind leaves this function, so PLAN_94's "nothing probes the network" still
+ * holds — it is the reachability itself that is never tested, not the
+ * metadata never consulted.
+ *
+ * Same "first one found wins" rule as staxx_compose_meta()'s own fixedIp: a
+ * service fixed to two addresses is not a case worth ranking.
+ *
+ * $drivers is the network-name => driver map to judge against, and exists so
+ * the server-side suite can prove this route offline: the alternative is
+ * creating real macvlan networks on the machine running the tests, which on
+ * the development box is somebody's live server.
+ *
+ * @return array<string, array{ip:string, vlan:bool}>
+ */
+function staxx_crosslinks_service_fixed_vlan(string $file, ?array $drivers = null): array {
+  $yaml = staxx_crosslinks_config_yaml($file);
+  if ($yaml === '') return [];
+  $flat = staxx_yaml_flatten($yaml);
+
+  $isExternal = [];   // top-level network key => true
+  $realName   = [];   // top-level network key => its own name: value, if any
+  foreach ($flat as $path => $value) {
+    $parts = explode("\0", $path);
+    if ($parts[0] !== 'networks' || count($parts) !== 3) continue;
+    if ($parts[2] === 'external' && $value === 'true') $isExternal[$parts[1]] = true;
+    elseif ($parts[2] === 'name' && $value !== '') $realName[$parts[1]] = $value;
+  }
+
+  $drivers = $drivers ?? staxx_network_drivers();
+  $out = [];
+  foreach ($flat as $path => $value) {
+    $parts = explode("\0", $path);
+    if ($parts[0] !== 'services' || count($parts) !== 5
+        || $parts[2] !== 'networks' || $parts[4] !== 'ipv4_address') continue;
+    $service = $parts[1];
+    $netKey  = $parts[3];
+    if (isset($out[$service]) || !isset($isExternal[$netKey])) continue;
+    $realNetName = $realName[$netKey] ?? $netKey;
+    $driver = $drivers[$realNetName] ?? '';
+    $out[$service] = ['ip' => $value, 'vlan' => ($driver === 'macvlan' || $driver === 'ipvlan')];
+  }
+  return $out;
+}
+
+/** Lower-cased with every non-alphanumeric character stripped, so
+ *  "sup-stack-db", "sup_stack_db" and "SupStackDB" all reduce to the same
+ *  string. PLAN_94 part C's first, safe fallback pass — see
+ *  staxx_crosslinks_match()'s own comment for the second, looser one. */
+function staxx_crosslinks_loose_name(string $s): string {
+  return strtolower(preg_replace('/[^A-Za-z0-9]/', '', $s));
+}
+
 /**
  * What could a value typed into a box, in $sourcePath's $sourceService, be
  * pointing at?
  *
- * See PLAN_70 10.1. Four routes, tried in this order:
+ * See PLAN_70 10.1 and PLAN_94. Up to five routes are tried, in this order:
  *
- *   1. the value equals another stack's service name, or its container_name,
+ *   1. localhost/127.0.0.1/::1 (or a URL/host:port naming one of them) —
+ *      checked first and returned alone: inside a container that address can
+ *      only ever mean the container itself, however the networks are
+ *      arranged.
+ *   2. the value equals another stack's service name, or its container_name,
  *      AND the two stacks share an external network — the only condition
- *      under which that name would actually resolve;
- *   2. the value (or a URL/host:port's host half) is this server's own
+ *      under which that name would actually resolve. (PLAN_94 part A: when
+ *      the name matches but the network does not, that is now its own reply
+ *      — see 'unreachable' below — rather than being dropped in silence.)
+ *   3. the value (or a URL/host:port's host half) is this server's own
  *      address or hostname, together with a port another stack publishes —
- *      no shared network needed for this route;
- *   3. localhost/127.0.0.1/::1 (or a URL/host:port naming one of them) get
- *      their own explicit answer, checked first and returned alone: inside a
- *      container that address can only ever mean the container itself.
+ *      no shared network needed for this route.
+ *   4. (PLAN_94 part B) the value is an address literal, with or without a
+ *      port, equal to another stack's service's OWN DECLARED fixed address —
+ *      but only where that address sits on a macvlan or ipvlan network. A
+ *      fixed address on a bridge network is invisible from outside that
+ *      network and must not match. The address itself always comes from the
+ *      file; the network's driver is asked of Docker (see
+ *      staxx_crosslinks_service_fixed_vlan()'s own comment for why a real
+ *      external network's file entry does not carry that itself). Nothing
+ *      here tests whether the two can actually reach each other — no packet
+ *      of any kind leaves this function.
+ *   5. (PLAN_94 part C) "did you mean" — only once routes 2-4 found nothing
+ *      reachable at all, not even an unreachable one. Ignoring separators and
+ *      case first; only if that also finds nothing, allow up to two
+ *      characters' difference, and only for a name longer than three
+ *      characters — below that, two characters is most of the name, so no
+ *      distance pass runs at all. At most three suggestions, ones that share
+ *      a network with the asker first.
  *
  * Returns NAMES, STACKS, NETWORKS AND PORTS ONLY. No value from any stack's
- * file appears anywhere in this function's return.
+ * file appears anywhere in this function's return, and no shared secret is
+ * ever touched here — staxx_crosslinks_credentials() is the one place a
+ * value comes back, and only for exactly one confirmed target.
+ *
+ * THE REPLY SHAPE — a contract with the browser, so every field it may rely
+ * on is spelled out here rather than left to be inferred from a diff:
+ *
+ *   kind === 'self'
+ *     A loopback address. 'reason' is a full sentence, ready to show as-is.
+ *     'candidates' is always [].
+ *
+ *   kind === 'match'
+ *     One or more real, reachable candidates. 'reason' is '' — the browser
+ *     already knows how to word each 'via'. Each candidate:
+ *       {stack, service,
+ *        via: 'service-name'|'container-name'|'port'|'fixed-address',
+ *        network?: string,   // 'service-name'/'container-name' only — the
+ *                             // network the two stacks actually share
+ *        port?: string}      // 'port' only — the published port matched
+ *     A candidate here is the only kind of reply
+ *     staxx_crosslinks_credentials() may be called against.
+ *
+ *   kind === 'unreachable'   (PLAN_94 part A — new; an old caller never sees
+ *                             this kind, so it cannot break on it)
+ *     A name matched a service in another stack, but the two stacks share no
+ *     network. 'reason' is a full sentence saying so and, where the target
+ *     service has one, naming the network that would connect them.
+ *     'candidates' is always []. A 'blocked' field carries the same facts
+ *     structured, for a browser that wants to build its own offer rather
+ *     than just show the sentence: {stack, service, network: string|null} —
+ *     network is the target service's own network (its first declared
+ *     external network; never a survey of every network it touches, and
+ *     never one that only exists inside a third stack), or null when it has
+ *     none to offer. Nothing here writes to the other stack's file, or to
+ *     this one's.
+ *
+ *   kind === 'none'
+ *     Nothing reachable, and no exact name exists anywhere either. 'reason'
+ *     is '' and 'candidates' is [], exactly as before this plan. A
+ *     'suggestions' field MAY also be present (PLAN_94 part C — an old
+ *     caller can safely ignore a field it has never heard of): at most 3
+ *     entries, each
+ *       {stack, service, via: 'service-name'|'container-name',
+ *        network: string|null}
+ *     network names what the two stacks already share, or null when they
+ *     share nothing. A suggestion is never a match: it cannot be acted on by
+ *     itself, it carries no credential, and confirming one still means
+ *     naming the target explicitly — exactly as typing it in directly does.
  *
  * @return array{kind:string, reason:string, candidates:array}
- *   kind is 'self' (loopback), 'match' or 'none'.
  */
-function staxx_crosslinks_match(string $sourcePath, string $sourceService, string $value): array {
+function staxx_crosslinks_match(string $sourcePath, string $sourceService, string $value,
+                                ?array $drivers = null): array {
   $value = trim($value);
   if ($value === '' || !staxx_valid_path($sourcePath)) {
     return ['kind' => 'none', 'reason' => '', 'candidates' => []];
@@ -421,9 +564,23 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
   // other: this is not fuzzy matching, and a shared SECRET is still compared
   // exactly, because two passwords differing in case are two passwords.
   $nameLower = array_map('strtolower', $nameCandidates);
+  $nameLoose = array_map('staxx_crosslinks_loose_name', $nameCandidates);
 
-  $candidates   = [];
-  $thisServer   = $hasHostPort && $port !== '' && staxx_crosslinks_is_this_server($host);
+  // Part B needs an address to compare whether or not the value happened to
+  // carry a port. split_host_port() only ever pulls a host out of a URL or a
+  // "host:port" pair, so a bare address on its own is checked directly.
+  $addressHost = '';
+  if ($hasHostPort && $host !== '' && staxx_crosslinks_looks_like_address($host)) {
+    $addressHost = $host;
+  } elseif (!$hasHostPort && staxx_crosslinks_looks_like_address($value)) {
+    $addressHost = $value;
+  }
+
+  $candidates = [];
+  $nearMiss   = null;   // part A — first exact name match with no shared network
+  $fuzzyLoose = [];     // part C pass 1 — separators and case ignored
+  $fuzzyNear  = [];     // part C pass 2 — up to 2 characters' difference
+  $thisServer = $hasHostPort && $port !== '' && staxx_crosslinks_is_this_server($host);
 
   foreach (staxx_list_stacks() as $stack) {
     if ($stack['name'] === $sourcePath || $stack['file'] === '') continue;
@@ -431,8 +588,13 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
     $meta = staxx_compose_meta($stack['file']);
     if (!$meta['ok']) continue;
 
+    // Read once per stack, not once per service: the flatten behind it is
+    // the same work whichever service asked for it.
+    $fixedByService = $addressHost !== ''
+      ? staxx_crosslinks_service_fixed_vlan($stack['file'], $drivers) : [];
+
     foreach ($meta['services'] as $svcName => $svc) {
-      // Route 1 — a name match, gated on a real shared network.
+      // Route 2 — a name match, gated on a real shared network.
       $via = null;
       if (in_array(strtolower($svcName), $nameLower, true)) {
         $via = 'service-name';
@@ -450,10 +612,16 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
             'via'     => $via,
             'network' => $shared[0],
           ];
+        } elseif ($nearMiss === null) {
+          // Part A: the name is real, it just cannot be reached from here —
+          // say so, naming the target's own network, rather than falling
+          // through to silence. First one found wins, same as everywhere
+          // else in this file that has to pick just one.
+          $nearMiss = ['stack' => $stack['name'], 'service' => $svcName, 'network' => $targetNets[0] ?? null];
         }
       }
 
-      // Route 2 — this server's address plus a port the service publishes.
+      // Route 3 — this server's address plus a port the service publishes.
       if ($thisServer) {
         $published = (string)($svc['firstPort']['published'] ?? '');
         if ($published !== '' && $published === $port) {
@@ -465,11 +633,84 @@ function staxx_crosslinks_match(string $sourcePath, string $sourceService, strin
           ];
         }
       }
+
+      // Route 4 (part B) — a declared fixed address, macvlan/ipvlan only.
+      if ($addressHost !== '') {
+        $fixed = $fixedByService[$svcName] ?? null;
+        if ($fixed !== null && $fixed['vlan'] && strcasecmp($fixed['ip'], $addressHost) === 0) {
+          $candidates[] = ['stack' => $stack['name'], 'service' => $svcName, 'via' => 'fixed-address'];
+        }
+      }
+
+      // Part C's fallback passes. Only worth trying for a name that did not
+      // already match exactly above — an exact match with no shared network
+      // is part A's case, not this one, and must not also turn into a
+      // "suggestion" for the very same target.
+      if ($via === null) {
+        $targets = [['service-name', $svcName]];
+        if ((string)$svc['container_name'] !== '') $targets[] = ['container-name', $svc['container_name']];
+
+        $fuzzyShared = null;   // resolved lazily, at most once per service
+        foreach ($targets as [$vk, $target]) {
+          $targetLoose = staxx_crosslinks_loose_name((string)$target);
+          if ($targetLoose === '') continue;
+          foreach (array_keys($nameCandidates) as $i) {
+            if ($nameLoose[$i] === '') continue;
+            if ($fuzzyShared === null) {
+              $fuzzyShared = array_values(array_intersect(
+                $sourceNets, staxx_crosslinks_service_networks($stack['file'])[$svcName] ?? []
+              ));
+            }
+            $entry = ['stack' => $stack['name'], 'service' => $svcName, 'via' => $vk,
+                      'network' => $fuzzyShared[0] ?? null];
+            if ($nameLoose[$i] === $targetLoose) {
+              $fuzzyLoose[] = $entry;
+            } elseif (strlen($nameLoose[$i]) > 3 && levenshtein($nameLoose[$i], $targetLoose) <= 2) {
+              // The THREE-OR-FEWER rule is on the name itself, separators
+              // stripped — "d_b" is really a two-letter name, and two
+              // characters' difference is most of it either way.
+              $fuzzyNear[] = $entry;
+            }
+          }
+        }
+      }
     }
   }
 
-  if ($candidates === []) return ['kind' => 'none', 'reason' => '', 'candidates' => []];
-  return ['kind' => 'match', 'reason' => '', 'candidates' => $candidates];
+  if ($candidates !== []) return ['kind' => 'match', 'reason' => '', 'candidates' => $candidates];
+
+  if ($nearMiss !== null) {
+    $network = $nearMiss['network'];
+    $reason = 'There is a service called "'.$nearMiss['service'].'" in the stack "'.$nearMiss['stack'].'", '
+            . 'but this stack and that one share no network, so this address cannot reach it. '
+            . ($network !== null
+                ? 'Adding this service to the network "'.$network.'" would.'
+                : 'That stack has no network of its own to add this one to, so a network would need '
+                . 'to be created and added to both before they could connect.');
+    return ['kind' => 'unreachable', 'reason' => $reason, 'candidates' => [], 'blocked' => $nearMiss];
+  }
+
+  $pool = $fuzzyLoose !== [] ? $fuzzyLoose : $fuzzyNear;
+  if ($pool === []) return ['kind' => 'none', 'reason' => '', 'candidates' => []];
+
+  // One service can match through both its name and its container_name —
+  // worth only one suggestion, not two of the three slots.
+  $seen   = [];
+  $unique = [];
+  foreach ($pool as $entry) {
+    $dupeKey = $entry['stack']."\0".$entry['service'];
+    if (isset($seen[$dupeKey])) continue;
+    $seen[$dupeKey] = true;
+    $unique[] = $entry;
+  }
+
+  // Same-network suggestions first, then everything else, in the order
+  // found — never re-sorted by anything this file cannot see.
+  $sameNetwork = array_values(array_filter($unique, fn($c) => $c['network'] !== null));
+  $other       = array_values(array_filter($unique, fn($c) => $c['network'] === null));
+  $suggestions = array_slice(array_merge($sameNetwork, $other), 0, 3);
+
+  return ['kind' => 'none', 'reason' => '', 'candidates' => [], 'suggestions' => $suggestions];
 }
 
 /** One service's live environment settings — name => current value, from

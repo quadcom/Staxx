@@ -26,6 +26,14 @@
  * cases matter more than the positive ones — a matcher that says yes when
  * the two containers cannot actually reach each other is worse than one that
  * says nothing at all.
+ *
+ * PLAN_94's fixed-address route (part B) needs to know a network's driver —
+ * a real external network's own file entry does not say what driver it is,
+ * which is why the production code asks Docker. This suite never asks
+ * Docker for real: staxx_crosslinks_match() takes an optional network-name
+ * => driver-name map, and every part-B case passes a fake one instead. This
+ * suite creates no Docker networks and removes none; it is read-only outside
+ * /tmp.
  */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
@@ -54,6 +62,12 @@ $mk = function (string $rel, string $yaml) use ($root): void {
   @exec('rm -rf '.escapeshellarg($dir));
   mkdir($dir, 0755, true);
   file_put_contents($dir.'/compose.yaml', $yaml);
+  // staxx_crosslinks_match() reads the stack list through staxx_scan_stacks(),
+  // which memoises its result in a static — so a fixture written after the
+  // first match call would otherwise be invisible for the rest of the run.
+  // Reset the cache on every fixture, not just the ones made so far, so a
+  // fixture added later in the file can never fall into that trap again.
+  staxx_scan_stacks_reset();
 };
 
 // appA and dbX share an external network — the positive name-match case.
@@ -87,8 +101,8 @@ services:
 YAML
 );
 
-// appB shares no external network with anything — the negative case for the
-// very same service name "db".
+// appB shares no external network with anything — the asker for the
+// no-shared-network negative case below.
 $mk('lk70-appB', <<<YAML
 services:
   app:
@@ -96,12 +110,16 @@ services:
 YAML
 );
 
+// The service is named "dbnoshare", not "db" — no other fixture uses that
+// name, so the near-miss case below (matching on it) can only ever resolve
+// to this one stack, instead of being equally true of lk70-dbX and depending
+// on which one the scan happens to find first.
 $mk('lk70-dbY', <<<YAML
 networks:
   lk70netB:
     external: true
 services:
-  db:
+  dbnoshare:
     image: mariadb:10.6
     networks:
       - lk70netB
@@ -174,9 +192,18 @@ ok('service name on a shared network matches', $r['kind'] === 'match'
               $r['candidates'], true),
   json_encode($r));
 
-// 2. same service name, no shared network — does not match.
-$r = staxx_crosslinks_match('lk70-appB', 'app', 'db');
-ok('the same name with no shared network does not match', $r['kind'] === 'none' && $r['candidates'] === [],
+// 2. a real name, no shared network — PLAN_94 part A: this used to be
+// dropped in silence (kind 'none', empty reason). It is now its own kind,
+// naming the stack, the service, and the network that would connect them.
+// The target name, "dbnoshare", belongs to no other fixture, so exactly one
+// stack can ever be the answer — the assertion does not depend on which of
+// several equally-valid matches the scan happens to find first.
+$r = staxx_crosslinks_match('lk70-appB', 'app', 'dbnoshare');
+ok('a real name with no shared network is reported as unreachable, not silence',
+  $r['kind'] === 'unreachable' && $r['candidates'] === []
+  && $r['blocked'] === ['stack' => 'lk70-dbY', 'service' => 'dbnoshare', 'network' => 'lk70netB']
+  && stripos($r['reason'], 'dbnoshare') !== false && stripos($r['reason'], 'lk70-dbY') !== false
+  && stripos($r['reason'], 'lk70netB') !== false,
   json_encode($r));
 
 // 3. container_name + shared network — matches.
@@ -204,10 +231,16 @@ ok('a service name in the wrong case still matches', $r['kind'] === 'match'
   json_encode($r));
 
 // 3c. the case-insensitive name match must not become a fuzzy one — a name
-// that merely resembles a real service is still nothing.
+// that merely resembles a real service is still nothing, and (PLAN_94 part C)
+// three characters or fewer gets no "did you mean" suggestion at all — "db2"
+// is very often a different database on purpose, per the plan's own trap.
 $r = staxx_crosslinks_match('lk70-appA', 'app', 'dbs');
-ok('a name that is merely similar still does not match', $r['kind'] === 'none' && $r['candidates'] === [],
-  json_encode($r));
+ok('a name that is merely similar still does not match', $r['kind'] === 'none' && $r['candidates'] === []
+  && ($r['suggestions'] ?? []) === [], json_encode($r));
+
+$r = staxx_crosslinks_match('lk70-appA', 'app', 'db1');
+ok('a three-character name gets no distance-based suggestion ("db1" is not offered as "db")',
+  $r['kind'] === 'none' && ($r['suggestions'] ?? []) === [], json_encode($r));
 
 // 4. this server's address plus a published port — matches.
 $r = staxx_crosslinks_match('lk70-appB', '', $hostIp.':25432');
@@ -239,6 +272,192 @@ ok('a URL with the host buried in it matches', $r['kind'] === 'match'
               $r['candidates'], true),
   json_encode($r));
 
+/* --------------------------------------------------- part A: no network to add ---- */
+
+// A name that is real, but the stack it lives in has no network of its own
+// either — there is nothing to offer, and the reply must say so rather than
+// naming a network that does not exist.
+$mk('lk70-noNet', <<<YAML
+services:
+  cache:
+    image: redis:7.2
+YAML
+);
+$r = staxx_crosslinks_match('lk70-appB', 'app', 'cache');
+ok('a real name with no network to offer on either side says so, not a network name',
+  $r['kind'] === 'unreachable' && $r['blocked']['network'] === null
+  && stripos($r['reason'], 'cache') !== false && stripos($r['reason'], 'lk70-noNet') !== false,
+  json_encode($r));
+
+/* ------------------------------------------------- part B: fixed addresses ---- */
+
+// No real Docker networks here — a fake driver map stands in for
+// staxx_network_drivers(), which is what the production code asks when the
+// map is omitted. External network stanzas in a real compose file do not
+// carry `driver:` themselves (see tests/fixtures/test-stacks/03-multi-tier
+// for the shape Unraid's own br0.x networks take), which is why the driver
+// is looked up separately rather than read from the file — and why this
+// suite can fake that lookup instead of asking Docker for real.
+$fakeDrivers = [
+  'lk70-vlan-test'       => 'macvlan',
+  'lk70-bridge-ext-test' => 'bridge',
+];
+
+$mk('lk70-vlanhost', <<<YAML
+networks:
+  lk70-vlan-test:
+    external: true
+services:
+  vlandb:
+    image: postgres:16
+    networks:
+      lk70-vlan-test:
+        ipv4_address: 192.0.2.2
+YAML
+);
+
+$mk('lk70-bridgeexthost', <<<YAML
+networks:
+  lk70-bridge-ext-test:
+    external: true
+services:
+  bridgedb:
+    image: postgres:16
+    networks:
+      lk70-bridge-ext-test:
+        ipv4_address: 192.0.2.10
+YAML
+);
+
+$r = staxx_crosslinks_match('lk70-appB', '', '192.0.2.2', $fakeDrivers);
+ok('a declared fixed address on a macvlan network matches, bare, no port',
+  $r['kind'] === 'match'
+  && in_array(['stack' => 'lk70-vlanhost', 'service' => 'vlandb', 'via' => 'fixed-address'],
+              $r['candidates'], true),
+  json_encode($r));
+
+$r = staxx_crosslinks_match('lk70-appB', '', '192.0.2.2:5432', $fakeDrivers);
+ok('the same fixed address with a port attached still matches',
+  $r['kind'] === 'match'
+  && in_array(['stack' => 'lk70-vlanhost', 'service' => 'vlandb', 'via' => 'fixed-address'],
+              $r['candidates'], true),
+  json_encode($r));
+
+// The trap: the very same shape of declaration, but the network is bridge —
+// reachable from nowhere outside itself, so it must not match however real
+// the fixed address is.
+$r = staxx_crosslinks_match('lk70-appB', '', '192.0.2.10', $fakeDrivers);
+ok('a declared fixed address on a bridge network does not match',
+  $r['kind'] !== 'match', json_encode($r));
+
+// A fixed address declared on a network that is not external at all (a
+// stack's own private network) is invisible to another stack regardless of
+// driver, and needs no real Docker network to prove: it is excluded before
+// the driver is ever asked about.
+$mk('lk70-privatevlan', <<<YAML
+services:
+  privdb:
+    image: postgres:16
+    networks:
+      privnet:
+        ipv4_address: 192.0.2.20
+networks:
+  privnet:
+    driver: macvlan
+YAML
+);
+$r = staxx_crosslinks_match('lk70-appB', '', '192.0.2.20', $fakeDrivers);
+ok('a fixed address on a non-external (private) network does not match',
+  $r['kind'] !== 'match', json_encode($r));
+
+// The loopback refusal still comes first: an address that also happens to be
+// this box's own loopback is never read as a fixed-address route.
+$r = staxx_crosslinks_match('lk70-appB', '', '127.0.0.1', $fakeDrivers);
+ok('loopback is still refused first, even though it is address-shaped',
+  $r['kind'] === 'self', json_encode($r));
+
+// The injection itself: with the map omitted, staxx_crosslinks_match() must
+// still work — it falls back to asking Docker for real (staxx_network_
+// drivers()), which on a box with no network by this name simply finds
+// nothing, so the fixed-address route reports no match. This pins the
+// parameter as genuinely optional, so a future change cannot quietly make it
+// required.
+$r = staxx_crosslinks_match('lk70-appB', '', '192.0.2.2');
+ok('omitting the driver map still works (falls back to asking Docker for real)',
+  $r['kind'] !== 'match', json_encode($r));
+
+/* --------------------------------------------------- part C: did you mean ---- */
+
+// Pass 1 — separators and case ignored, nothing else. "d_b" is not "db"
+// case-insensitively, so route 2 does not match it outright, but it is the
+// same name once separators are stripped.
+$r = staxx_crosslinks_match('lk70-appA', 'app', 'd_b');
+ok('separators and case ignored finds a name that does not match exactly',
+  $r['kind'] === 'none'
+  && in_array(['stack' => 'lk70-dbX', 'service' => 'db', 'via' => 'service-name', 'network' => 'lk70net'],
+              $r['suggestions'] ?? [], true),
+  json_encode($r));
+
+// Pass 2 — up to two characters' difference, tried only because pass 1 found
+// nothing. "lk70_company_sqlx" is one character longer than the real
+// container_name.
+$r = staxx_crosslinks_match('lk70-appA', 'app', 'lk70_company_sqlx');
+ok('up to two characters\' difference is offered only once the exact pass finds nothing',
+  $r['kind'] === 'none'
+  && in_array(['stack' => 'lk70-dbcn', 'service' => 'sqldb', 'via' => 'container-name', 'network' => 'lk70net'],
+              $r['suggestions'] ?? [], true),
+  json_encode($r));
+
+// A suggestion is never a match, and carries no credential — only the four
+// fields the contract promises.
+foreach (($r['suggestions'] ?? []) as $s) {
+  ok('a suggestion carries only stack/service/via/network, nothing else',
+    array_diff_key($s, ['stack' => 1, 'service' => 1, 'via' => 1, 'network' => 1]) === [], json_encode($s));
+}
+
+// At most three suggestions, and one sharing a network with the asker sorts
+// first. Four services reduce to the same name once separators and case are
+// ignored; only the first is on appA's own network.
+$mk('lk70-widgetA', <<<YAML
+networks:
+  lk70net:
+    external: true
+services:
+  widget-x:
+    image: alpine:3.20
+    networks:
+      - lk70net
+YAML
+);
+$mk('lk70-widgetB', <<<YAML
+services:
+  widget_x:
+    image: alpine:3.20
+YAML
+);
+// A capitalised name with no separator at all would fold to the query's own
+// lower-cased form and be caught by route 2's exact, case-insensitive check
+// (test 3b/'DB' above) rather than ever reaching this fallback — the dot
+// keeps it out of that path while still reducing to the same loose form.
+$mk('lk70-widgetC', <<<YAML
+services:
+  WIDGET.X:
+    image: alpine:3.20
+YAML
+);
+$mk('lk70-widgetD', <<<YAML
+services:
+  widget.x:
+    image: alpine:3.20
+YAML
+);
+$r = staxx_crosslinks_match('lk70-appA', 'app', 'widgetX');
+ok('at most three suggestions, the same-network one first',
+  $r['kind'] === 'none' && count($r['suggestions'] ?? []) === 3
+  && ($r['suggestions'][0]['stack'] ?? '') === 'lk70-widgetA'
+  && ($r['suggestions'][0]['network'] ?? null) === 'lk70net',
+  json_encode($r));
+
 /* --------------------------------------------------------------- refusals ---- */
 
 // An invalid stack path never produces a match, however the value is typed.
@@ -263,7 +482,7 @@ ok('credentials for a known image come back with the right values',
 // The one rule: a reply carries values for the NAMED target only. dbY uses
 // the same image and the same setting names with DIFFERENT values — proof
 // this is not quietly answering about the wrong stack.
-$c2 = staxx_crosslinks_credentials('lk70-dbY', 'db');
+$c2 = staxx_crosslinks_credentials('lk70-dbY', 'dbnoshare');
 ok('a second stack on the same image returns its OWN values, not the first\'s',
   $c2['ok'] === true && ($c2['fields']['password']['value'] ?? '') === 'ySecretTwo2!'
   && ($c2['fields']['password']['value'] ?? '') !== ($c['fields']['password']['value'] ?? ''),
@@ -383,6 +602,14 @@ YAML
 $c11 = staxx_crosslinks_credentials('lk70-unknownother', 'app');
 ok('a different, never-taught image stays unknown — nothing leaked from the one just taught',
   $c11['ok'] === true && $c11['known'] === false && !isset($c11['fields']), json_encode($c11));
+
+// PLAN_94 touches how a NAME is matched, never how a SECRET is compared —
+// case-insensitive name resolution (route 2, test 3b/'DB' above) still hands
+// back the password exactly as the file wrote it, byte for byte.
+$cCase = staxx_crosslinks_credentials('lk70-dbX', 'db');
+ok('the password behind a case-insensitively matched name is still returned exactly, unchanged',
+  $cCase['ok'] === true && ($cCase['fields']['password']['value'] ?? '') === 'xSecretOne1!',
+  json_encode($cCase));
 
 echo "\n".($fails === 0 ? "all checks passed\n" : "$fails check(s) FAILED\n");
 exit($fails === 0 ? 0 : 1);

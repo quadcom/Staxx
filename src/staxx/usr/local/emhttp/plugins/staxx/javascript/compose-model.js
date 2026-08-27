@@ -7799,7 +7799,11 @@
   // does not get to assume that stays true, so the check is made anyway.
   function crossReachableCandidates(candidates) {
     return (candidates || []).filter(function (c) {
-      return c && (c.via === 'port' || ((c.via === 'service-name' || c.via === 'container-name') && c.network));
+      // 'fixed-address' (PLAN_94 part B) needs no shared network: the service
+      // holds its own address on the LAN, so what carries the traffic is the
+      // network the server itself is on, not one Docker arranged.
+      return c && (c.via === 'port' || c.via === 'fixed-address' ||
+        ((c.via === 'service-name' || c.via === 'container-name') && c.network));
     });
   }
 

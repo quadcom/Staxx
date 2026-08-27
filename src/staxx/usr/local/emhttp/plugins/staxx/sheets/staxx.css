@@ -7818,6 +7818,37 @@
   font-size: 1.2rem;
 }
 
+/* ---- PLAN_93: the one-box storage chooser -------------------------------
+ * The other candidates, offered as links rather than rival buttons — a press
+ * only fills the destination box, it never moves anything on its own. */
+.staxx-storage-suggestions a.staxx-storage-suggest {
+  color: var(--sm-accent);
+  text-decoration: none;
+}
+
+.staxx-storage-suggestions a.staxx-storage-suggest:hover {
+  text-decoration: underline;
+}
+
+/* Right-aligned and visually quieter than the move button above it, so
+   "keep what's already there" never competes with the button that acts. */
+.staxx-storage-flash-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+.staxx-scaffold .staxx-storage-flash-btn {
+  border-color: transparent;
+  background: none;
+  color: var(--sm-muted);
+}
+
+.staxx-scaffold .staxx-storage-flash-btn:hover:not(:disabled) {
+  border-color: var(--sm-line);
+  color: inherit;
+}
+
 .staxx-confirm-meta {
   flex: none;
   color: var(--sm-muted);
