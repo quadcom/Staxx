@@ -51,7 +51,7 @@ node tests/stash_guard.js           # a set-aside may only hold the block it cla
 node tests/meta_scaffold.js         # the commented x-unraid fields a new stack starts with
 node tests/js_undeclared.js         # names assigned but declared nowhere
 node tests/words.js                 # the passphrase generator's word list — count, shape, uniqueness
-node tests/registry_note.js --selftest  # the registry-behaviour note generator's own cases
+node tests/registry_note.js         # the registry-behaviour note generator's own cases
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 ```

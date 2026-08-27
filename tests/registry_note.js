@@ -398,7 +398,12 @@ function runSelfTest() {
 
 function main() {
   var argv = process.argv.slice(2);
-  if (argv.indexOf('--selftest') !== -1) { runSelfTest(); return; }
+  // Bare, this runs its own cases. It sits in tests/ alongside every other
+  // suite, and the release gate runs each of them with no arguments — a file
+  // there that answers a bare run with a usage error fails the build for no
+  // reason at all. Generating a note is the deliberate act, so that is the one
+  // that needs arguments.
+  if (argv.length === 0 || argv.indexOf('--selftest') !== -1) { runSelfTest(); return; }
 
   var outIdx = argv.indexOf('--out');
   var outPath = DEFAULT_OUT;
