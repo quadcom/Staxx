@@ -21,8 +21,8 @@ permissions:
   contents: write
 
 concurrency:
-  # A rolling release is deleted and recreated, so two runs racing on the same
-  # tag can leave it published with no asset attached.
+  # Each run publishes its own uniquely-tagged release, so nothing here can
+  # collide — this just stops two builds of the same branch racing pointlessly.
   group: release-${{ github.ref_name }}
   cancel-in-progress: true
 
@@ -104,21 +104,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${GITHUB_REF_NAME}-latest"
-          PRERELEASE=""
-          [ "${GITHUB_REF_NAME}" != "main" ] && PRERELEASE="--prerelease"
+          # With immutable releases on, deleting a release still leaves its tag
+          # name permanently unusable — not even a fresh repo gets it back. So
+          # the tag can never be the same one twice; every build gets its own,
+          # run number and commit together so it stays both unique and readable.
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          TAG="${GITHUB_REF_NAME}-${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
 
-          # Delete and recreate rather than upload --clobber: the tag has to
-          # move to this commit too, and a release keeps pointing at the commit
-          # its tag was created on.
-          gh release delete "${TAG}" --yes --cleanup-tag || true
-
+          # Never the "latest" release GitHub shows by default — that slot
+          # belongs to the numbered v* releases, not a rolling build.
           gh release create "${TAG}" "${BUNDLE}.tar.gz" \
             --target "${GITHUB_SHA}" \
             --title "StaXX ${GITHUB_REF_NAME} (rolling)" \
-            ${PRERELEASE} \
+            --prerelease \
             --notes "$(cat <<EOF
-          Latest build of the \`${GITHUB_REF_NAME}\` branch. Replaced on every push — this link always points at the newest one.
+          Rolling build of the \`${GITHUB_REF_NAME}\` branch, built from ${GITHUB_SHA}.
 
           Install on the Unraid server:
 
@@ -128,7 +128,19 @@ jobs:
           \`\`\`
 
           Nothing under \`/usr/local/emhttp\` survives a reboot, so a reboot removes it. Settings on the flash drive are kept.
-
-          Built from ${GITHUB_SHA}.
           EOF
           )"
+
+          # Keep only the 5 newest rolling releases for this branch. Matched on
+          # the exact shape this workflow produces — branch, run number, short
+          # sha — not on the branch name and a dash, which a branch called
+          # main-something would also satisfy: this step DELETES, so the pattern
+          # has to be incapable of reaching a numbered v* release or another
+          # branch's builds. Runs after publishing, so a prune failure is a
+          # tidy-up miss and never a broken release.
+          gh release list --limit 200 --json tagName,createdAt \
+            --jq "sort_by(.createdAt) | reverse | .[] | select(.tagName | test(\"^${GITHUB_REF_NAME}-[0-9]+-[0-9a-f]{7}$\")) | .tagName" \
+            | tail -n +6 \
+            | while read -r old; do
+                gh release delete "${old}" --yes --cleanup-tag || true
+              done || true
