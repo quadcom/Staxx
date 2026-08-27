@@ -1,8 +1,8 @@
 # StaXX — Docker on Unraid, built on compose files
 
 > **Where this is up to.** In daily use on the author's own server and far enough along to judge on
-> its merits. Packaged from 1.1.0 and installable through Unraid's Plugin Manager, though not yet
-> in Community Applications — see [Limitations](#limitations).
+> its merits. Packaged from 1.1.0, but not yet published — the install below is the way in until
+> it is. See [Limitations](#limitations).
 >
 > Version 1.1.0 · [changelog](CHANGELOG.md)
 
@@ -38,34 +38,28 @@ underneath stays an ordinary compose file that still runs anywhere.
 
 ## The 60-second start
 
-In Unraid, go to **Plugins → Install Plugin**, paste this in, and press Install:
+Put the installer and the plugin folder on your flash drive:
 
 ```
-https://raw.githubusercontent.com/quadcom/Staxx/main/staxx.plg
+/boot/staxx-dev/
+    dev-install.sh
+    staxx/          <- src/staxx/usr/local/emhttp/plugins/staxx/
+```
+
+Then, over SSH:
+
+```sh
+bash /boot/staxx-dev/dev-install.sh
 ```
 
 Open **Docker → Stacks**. Make a folder under `/boot/config/plugins/staxx/stacks/`, drop a compose
 file in it, and it is there. Or press **Apps** and pick something.
 
-To remove it again, use **Plugins → Installed Plugins**. Your stacks and settings are left alone.
+To remove it again: `--remove` keeps your settings, `--purge` takes those too.
 
-<details>
-<summary>Running an unreleased build instead</summary>
-
-Every push builds a bundle you can install by hand. This is how to try something before it is
-released; it is replaced constantly and is not what most people want.
-
-```sh
-wget -O - https://github.com/quadcom/Staxx/releases/download/main-latest/staxx-main.tar.gz | tar -xzf - -C /boot
-bash /boot/staxx-main/dev-install.sh
-```
-
-Swap `main` for `dev` for the newest development build. Unlike a proper install, nothing put on
-the server this way survives a reboot — Unraid rebuilds that part of the system at boot, so run the
-installer again. Settings do survive; they live on the flash drive. `--remove` takes it off and
-keeps your settings, `--purge` takes those too.
-
-</details>
+Once StaXX is published this becomes a one-liner — Unraid's **Plugins → Install Plugin** box takes a
+plugin address directly, and Community Applications is not needed for that. It is not the way in yet
+because the project is not public.
 
 ## Contents
 
@@ -356,7 +350,7 @@ Everything above works today. None of this does yet.
 
 ## Limitations
 
-- Pre-alpha, and not in Community Applications — the plugin URL above is the way in.
+- Pre-alpha. It is installed by hand, is not published, and is not in Community Applications.
 - Requires Unraid 7.2 or later, and Docker Compose already on the server — StaXX does not install it.
 - Stacks start out on the flash drive. StaXX offers to move them, but until you take it up they sit
   on a drive with finite writes and no redundancy.
@@ -371,9 +365,10 @@ Everything above works today. None of this does yet.
 
 ## Installing
 
-See [The 60-second start](#the-60-second-start). A plugin installed through the Plugin Manager
-survives a reboot: the package is kept on the flash drive and put back each time the server starts.
-An unreleased build installed by hand does not, and has to be run again after a reboot.
+See [The 60-second start](#the-60-second-start). Nothing installed that way survives a reboot —
+Unraid rebuilds that part of the system at boot, so run the installer again. Your settings do
+survive; they live on the flash drive. A published plugin does survive one, because the package is
+kept on the flash drive and put back at every boot.
 
 ---
 
