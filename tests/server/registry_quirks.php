@@ -173,6 +173,40 @@ function check_registry(string $label, string $host, string $image): array {
     $row['digest_match'] = 'skip';
     return $row;
   }
+  // A NO-ANSWER, not a well-formed refusal: staxx_registry_digest() sets
+  // 'failed' whenever the request itself never completed (empty curl output,
+  // or a status it does not otherwise recognise) — unlike 'notfound' and
+  // 'limited' above, this is not the registry telling us something, it is us
+  // hearing nothing at all. Ask the docker CLI the same question before
+  // deciding what that means: if docker also gets nothing, this is the
+  // outage the rest of the suite already forgives; if docker succeeds, the
+  // registry is plainly reachable and StaXX's own route is the one that
+  // could not manage it — exactly the ghcr-shaped bug this suite exists to
+  // catch, so that stays a hard FAIL. Fetched here, once, so step 5 below
+  // (which needs the very same CLI answer for a working digest) never has to
+  // ask twice.
+  if ($digWhy === 'failed') {
+    $code = 1;
+    $cli = staxx_sh(
+      staxx_docker_bin().' buildx imagetools inspect '.escapeshellarg($image)
+        .' --format '.escapeshellarg('{{json .Manifest}}').' 2>&1',
+      20, $code
+    );
+    $cliData = $code === 0 ? json_decode($cli, true) : null;
+    $cliDigest = is_array($cliData) ? (string)($cliData['digest'] ?? '') : '';
+    if ($cliDigest !== '') {
+      ok("$label: header-only manifest request answers 200 with a well-formed index digest", false,
+         "StaXX got no answer at all, but docker buildx imagetools inspect reached $host fine — "
+        .'this is StaXX\'s own route failing, not a registry hiccup');
+      $row['digest_match'] = 'FAILED';
+    } else {
+      skip("$label: everything past the manifest request",
+           "neither StaXX nor docker could reach $host — the registry, this box's network, or the "
+          .'docker CLI itself, not the plugin');
+      $row['digest_match'] = 'unreachable';
+    }
+    return $row;
+  }
   ok("$label: header-only manifest request answers 200 with a well-formed index digest",
      ($first['status'] ?? 0) === 200
        && preg_match('/^sha256:[0-9a-f]{64}$/', (string)($first['digest'] ?? '')),
