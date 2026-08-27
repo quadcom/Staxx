@@ -7823,7 +7823,7 @@
    * with the marks, so nothing survives from one stack's editor into the
    * next.
    */
-  var pathCache = {};   // path string -> 'ok' | 'file' | 'missing' | 'skipped' | 'inuse'
+  var pathCache = {};   // path string -> 'ok' | 'file' | 'missing' | 'skipped' | 'inuse' | 'offroot'
   var pathHits  = [];   // last YAML.hostPaths() result: [{path, line, col, len}]
   var pathToken = 0;    // bumped by pathsReset() so a late reply cannot paint
 
@@ -8082,9 +8082,9 @@
 
   // The visible slice of bad host paths, drawn into the same layer as the
   // active-field band and the search hits above — see repaintMark()'s own
-  // comment for why one layer serves all of them. Only 'missing', 'file' and
-  // 'inuse' are ever drawn; 'ok', 'skipped', and any path the server has not
-  // answered for yet, are left alone.
+  // comment for why one layer serves all of them. Only 'missing', 'file',
+  // 'inuse' and 'offroot' are ever drawn; 'ok', 'skipped', and any path the
+  // server has not answered for yet, are left alone.
   function repaintPaths() {
     if (!pathHits.length) return;
 
@@ -8099,7 +8099,7 @@
     for (var i = 0; i < pathHits.length; i++) {
       var h = pathHits[i];
       var verdict = pathCache[h.path];
-      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse') continue;
+      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse' && verdict !== 'offroot') continue;
       if (h.line < firstLine || h.line > lastLine) continue;
 
       var box = document.createElement('div');
@@ -8120,7 +8120,7 @@
     for (var i = 0; i < pathHits.length; i++) {
       var h = pathHits[i];
       var verdict = pathCache[h.path];
-      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse') continue;
+      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse' && verdict !== 'offroot') continue;
       if (h.line === line && col >= h.col && col < h.col + h.len) {
         return { path: h.path, verdict: verdict };
       }
@@ -8135,6 +8135,15 @@
     if (mark.verdict === 'inuse') {
       return mark.path + ' already has files in it. Another container may already be using it. ' +
         'Starting this stack would point this container at that same data.';
+    }
+    if (mark.verdict === 'offroot') {
+      if (mark.path === '/boot' || mark.path.indexOf('/boot/') === 0) {
+        return mark.path + ' is on the flash drive, not the array. A container writing here wears ' +
+          'the flash drive out — move this to a folder under /mnt instead.';
+      }
+      return mark.path + ' is not on the array. If Docker creates this folder it lives in the ' +
+        'server’s own memory, so everything written there is lost the next time the server ' +
+        'restarts — move this to a folder under /mnt instead.';
     }
     return 'Nothing exists at ' + mark.path + ' on the server. Create the folder, or correct the path.';
   }

@@ -532,25 +532,71 @@ function staxx_path_verdict(string $target, string $root, bool $checkInUse = fal
 }
 
 /**
+ * ok | missing | offroot for an absolute path staxx_resolve_host_path() has
+ * already decided sits outside STAXX_BROWSE_ROOT (/mnt) — so this asks where
+ * it is rather than measuring it against any create-root.
+ *
+ * A location under one of the system mounts below is legitimate whatever its
+ * type — Adrian's own box bind-mounts a socket and a symlinked file from
+ * exactly this set — so existence is the only question, asked with
+ * file_exists() rather than is_dir()/realpath(): it follows a symlink (a
+ * broken one reads as "missing"), and never forces a directory-shaped answer
+ * onto a socket or a plain file. Never "file", never "inuse" — "inuse" needs
+ * a directory listing, and listing arbitrary places off the array is a
+ * disclosure with no benefit.
+ *
+ * Anywhere else is "offroot", whether or not it exists — existence alone
+ * would go quiet the moment Docker creates the missing folder, which is
+ * exactly when a mistyped /mnt path matters most. /boot is deliberately not
+ * on the list: it survives a reboot, so it isn't the "gone at next boot"
+ * problem this verdict is about, but it's flash storage a container
+ * shouldn't be writing to either — the browser gives it its own wording by
+ * checking the path text itself, not a verdict this function could return.
+ *
+ * The allowlist is matched on the lexically collapsed path so "/var/run"
+ * matches as written even though it is usually a symlink to "/run", and only
+ * on whole segments so "/etc" matches "/etc/localtime" but never "/etcetera".
+ */
+function staxx_offroot_verdict(string $target): string {
+  static $allowlist = ['/dev', '/sys', '/proc', '/run', '/var/run', '/etc'];
+
+  // Collapsed once and used for both the allowlist test and the stat: asking
+  // about a different string from the one just judged is how the two come to
+  // disagree — "/mnt/user/../../etc/x" is allowlisted as "/etc/x" and must be
+  // looked for there too, not at a spelling whose middle may not exist.
+  $lexical = staxx_lexical_path($target);
+  foreach ($allowlist as $prefix) {
+    if ($lexical === $prefix || strpos($lexical, $prefix.'/') === 0) {
+      return file_exists($lexical) ? 'ok' : 'missing';
+    }
+  }
+  return 'offroot';
+}
+
+/**
  * Turn one path exactly as written in a compose file into an absolute path,
  * and say which root it has to land inside. The single resolution step
  * staxx_check_paths() and the make-paths action both need done
  * identically, so what the editor underlines is exactly what the button can
  * create.
  *
- * An absolute path is returned as-is, checked against STAXX_BROWSE_ROOT
- * (/mnt) — the same root staxx_browse_dirs() confines itself to. A
- * relative one resolves against the stack's own folder, checked against the
- * stack root instead; that only has somewhere safe to resolve against when
- * $rel names a real stack, so an invalid $rel is left with nothing to resolve
+ * An absolute path that lexically collapses inside STAXX_BROWSE_ROOT (/mnt —
+ * the same root staxx_browse_dirs() confines itself to) is returned with that
+ * root, judged by staxx_path_verdict() exactly as before: create-eligible,
+ * full containment checks, "inuse" included. An absolute path anywhere else
+ * comes back with $root null — there is no create-root to measure it
+ * against, so it is left for staxx_check_paths() to judge by location instead
+ * (see staxx_offroot_verdict()). A relative path resolves against the
+ * stack's own folder, checked against the stack root instead — unchanged by
+ * any of this; that only has somewhere safe to resolve against when $rel
+ * names a real stack, so an invalid $rel is left with nothing to resolve
  * against rather than a guess at what it might have meant.
  *
  * Returns null for anything with nowhere sound to resolve against: a null
- * byte, an empty string, a root that failed to resolve, or a relative path
- * with no valid stack behind it. staxx_check_paths() turns that into
- * "skipped".
+ * byte, an empty string, or a relative path with no valid stack behind it.
+ * staxx_check_paths() turns that into "skipped".
  *
- * @return array{path:string, root:string}|null
+ * @return array{path:string, root:?string}|null
  */
 function staxx_resolve_host_path(string $p, string $rel): ?array {
   if (strpos($p, "\0") !== false) return null;
@@ -562,7 +608,19 @@ function staxx_resolve_host_path(string $p, string $rel): ?array {
     // has been through realpath(), so the root has to be too or the two are
     // not the same kind of string.
     $root = @realpath(STAXX_BROWSE_ROOT);
-    return $root === false ? null : ['path' => $trimmed, 'root' => $root];
+    // A /mnt that will not resolve means nothing can be placed against it, so
+    // nothing is judged at all. Falling through to the by-location branch
+    // instead would call every path on the machine "not on the array" the one
+    // time the array is the thing that is missing — every volume in every
+    // stack flagged at once, for a fault that is not in any of them.
+    if ($root === false) return null;
+
+    $inMnt = fn(string $real) => $real === $root || strpos($real, $root.'/') === 0;
+    if ($inMnt(staxx_lexical_path($trimmed))) return ['path' => $trimmed, 'root' => $root];
+
+    // Outside /mnt: not measured against a create-root at all —
+    // staxx_check_paths() judges it by location.
+    return ['path' => $trimmed, 'root' => null];
   }
 
   if (!staxx_valid_path($rel)) return null;
@@ -579,20 +637,28 @@ function staxx_resolve_host_path(string $p, string $rel): ?array {
  * source ("./data") against the stack's own folder.
  *
  * Every path here is arbitrary text someone is typing, so it is treated as
- * hostile — see staxx_resolve_host_path() for the containment rules.
- * Anything that fails to resolve is "skipped", not "missing" — see
- * staxx_path_verdict(). This does no shelling out and no directory
- * listing, only realpath()/is_dir() — one stat's worth of work per path.
+ * hostile — see staxx_resolve_host_path() for how it is placed. A path
+ * inside /mnt, or a relative one inside the stack root, is judged by
+ * staxx_path_verdict() exactly as it always was. An absolute path outside
+ * /mnt has no create-root to be judged against, so staxx_offroot_verdict()
+ * judges it by location instead: "ok" or "missing" under a known system
+ * mount, "offroot" everywhere else — flagged whether or not it exists,
+ * because Docker will have already created a mistyped one by the second
+ * start. Anything that fails to resolve at all is "skipped" — see
+ * staxx_resolve_host_path(). This does no shelling out and no directory
+ * listing, only file_exists()/realpath()/is_dir() — one stat's worth of
+ * work per path.
  *
  * $checkInUse asks staxx_path_verdict() to report an existing non-empty
  * folder as "inuse" rather than "ok" — pass true only for a stack being
  * created, where that folder is someone else's live data rather than the
  * stack's own. Off by default: an existing stack's volumes are expected to
- * be full of its own data, and flagging those would be noise.
+ * be full of its own data, and flagging those would be noise. Never asked
+ * of an offroot path — see staxx_offroot_verdict().
  *
  * @param string[] $paths host paths exactly as written in the compose file
  * @param string   $rel   the editing stack's own relative path, or ''
- * @return array<string, string> original path string => ok|file|missing|skipped|inuse
+ * @return array<string, string> original path string => ok|file|missing|skipped|inuse|offroot
  */
 function staxx_check_paths(array $paths, string $rel = '', bool $checkInUse = false): array {
   $unique = [];
@@ -605,7 +671,13 @@ function staxx_check_paths(array $paths, string $rel = '', bool $checkInUse = fa
   $out = [];
   foreach ($unique as $p) {
     $resolved = staxx_resolve_host_path($p, $rel);
-    $out[$p] = $resolved === null ? 'skipped' : staxx_path_verdict($resolved['path'], $resolved['root'], $checkInUse);
+    if ($resolved === null) {
+      $out[$p] = 'skipped';
+    } elseif ($resolved['root'] === null) {
+      $out[$p] = staxx_offroot_verdict($resolved['path']);
+    } else {
+      $out[$p] = staxx_path_verdict($resolved['path'], $resolved['root'], $checkInUse);
+    }
   }
   return $out;
 }
