@@ -1,0 +1,11 @@
+{
+  "suite": "registry_quirks.php",
+  "date": "2026-08-21",
+  "passes": 38,
+  "fails": 2,
+  "skips": 0,
+  "rows": [
+    { "registry": "docker.io", "challenge": "bearer", "token": "FAILED",
+      "304": "FAILED", "ratelimit": "FAILED", "digest_match": "FAILED", "digest_from": "?" }
+  ]
+}

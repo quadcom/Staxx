@@ -51,6 +51,7 @@ node tests/stash_guard.js           # a set-aside may only hold the block it cla
 node tests/meta_scaffold.js         # the commented x-unraid fields a new stack starts with
 node tests/js_undeclared.js         # names assigned but declared nowhere
 node tests/words.js                 # the passphrase generator's word list — count, shape, uniqueness
+node tests/registry_note.js --selftest  # the registry-behaviour note generator's own cases
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 ```
@@ -110,12 +111,19 @@ just one image; its allowance is the only tight one), printing a summary table o
 turned out to do. It carries the regression guard for the ghcr placeholder-scope fix, run against
 ghcr and codeberg's Gitea-hosted registry alike, and is worth a run whenever the registry code is
 touched, or before a release — an opt-in suite nobody runs is a suite that can rot unnoticed;
+set `STAXX_QUIRKS_JSON=/tmp/quirks.json` alongside it to also save what it measured;
 `registry_selfhosted.php` is PLAN_92 Stage 2 — opt-in behind `STAXX_SELFHOSTED=1`, needs
 `REGISTRY_TRUST` pointed at `127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002`, and is the only suite
 here that pulls anything: it starts and removes three throwaway registries on the box itself (open,
 password-protected, and a second implementation) to prove what a self-hosted registry does that a
 public one cannot show. Worth a run alongside `registry_quirks.php` whenever the registry code is
-touched, or before a release — the same "an opt-in suite nobody runs" trap applies twice over here;
+touched, or before a release — the same "an opt-in suite nobody runs" trap applies twice over here, and
+`STAXX_SELFHOSTED_JSON=/tmp/selfhosted.json` saves what it measured the same way. Hand those two
+files to `node tests/registry_note.js /tmp/quirks.json /tmp/selfhosted.json` to regenerate
+`tests/server/REGISTRY-BEHAVIOUR.md`, the written record of what each of the twelve registries turned
+out to do — regenerate it as part of running the suites rather than as a separate chore somebody
+forgets, and never hand-edit it, since the next run overwrites it. It refuses to write anything from
+a run that reported failures;
 `links.php` covers
 what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
 for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's

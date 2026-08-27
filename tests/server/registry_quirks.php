@@ -21,7 +21,12 @@
  * OPT-IN, same pattern as every other live suite here:
  *
  *     pscp tests/server/registry_quirks.php root@<box>:/tmp/
- *     plink … 'STAXX_QUIRKS=1 php /tmp/registry_quirks.php'
+ *     plink … 'STAXX_QUIRKS=1 STAXX_QUIRKS_JSON=/tmp/quirks.json php /tmp/registry_quirks.php'
+ *
+ * STAXX_QUIRKS_JSON is optional and off by default — unset, this suite writes
+ * nothing anywhere. Set to a path, it also dumps the summary rows as JSON,
+ * which feeds tests/registry_note.js to regenerate
+ * tests/server/REGISTRY-BEHAVIOUR.md.
  *
  * Needs NO config keys — no STACK_ROOT, no ARCHIVE_ROOT, no credentials.
  * Every question asked is read-only (a header-only manifest request or a
@@ -358,4 +363,31 @@ note('network cost of this run: at most '.$requests.' requests split across nine
    .'table above — shared with any real pulls on this box.');
 
 echo "\n".$passes.' passed, '.$fails.' FAILED, '.$skips.' skipped'."\n";
+
+/* ======================================================================= *
+ * OPT-IN JSON dump, PLAN_92b Part A. Unset (the default), this suite writes
+ * nothing anywhere — its "records nothing" property stays true. Set, it hands
+ * the same $summary rows already printed above to tests/registry_note.js,
+ * which regenerates tests/server/REGISTRY-BEHAVIOUR.md from them. A dump is
+ * never allowed to change what this run does or reports, so it happens last,
+ * and a failure to write it is a printed warning, not a failed run.
+ * ======================================================================= */
+$jsonPath = getenv('STAXX_QUIRKS_JSON');
+if (is_string($jsonPath) && $jsonPath !== '') {
+  $dump = [
+    'suite'   => 'registry_quirks.php',
+    'date'    => date('Y-m-d'),
+    'passes'  => $passes,
+    'fails'   => $fails,
+    'skips'   => $skips,
+    'rows'    => $summary,
+  ];
+  $written = @file_put_contents($jsonPath, json_encode($dump, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+  if ($written === false) {
+    note("could not write the JSON dump to $jsonPath — a clean run without a note is still a clean run");
+  } else {
+    note("wrote JSON dump to $jsonPath");
+  }
+}
+
 exit($fails ? 1 : 0);

@@ -31,10 +31,15 @@
  *       grep -q "^REGISTRY_TRUST=" $CFG \
  *         && sed -i "s#^REGISTRY_TRUST=.*#REGISTRY_TRUST=\"127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002\"#" $CFG \
  *         || echo "REGISTRY_TRUST=\"127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002\"" >> $CFG
- *       STAXX_SELFHOSTED=1 php /tmp/registry_selfhosted.php; RC=$?
+ *       STAXX_SELFHOSTED=1 STAXX_SELFHOSTED_JSON=/tmp/selfhosted.json php /tmp/registry_selfhosted.php; RC=$?
  *       cp /tmp/staxx-cfg.bak $CFG
  *       exit $RC
  *     '
+ *
+ * STAXX_SELFHOSTED_JSON is optional and off by default — unset, this suite
+ * writes nothing anywhere. Set to a path, it also dumps the summary rows as
+ * JSON, which feeds tests/registry_note.js to regenerate
+ * tests/server/REGISTRY-BEHAVIOUR.md.
  *
  * The update-state file this suite necessarily writes to (a blocked-host
  * note, PLAN_90's per-host memory) is redirected to /tmp via the same
@@ -159,8 +164,40 @@ register_shutdown_function(function () use (&$created, $docker, $baselineCount) 
   // seen every assertion including the teardown proof above, so a leaked
   // container or a wrong image count is never masked by an exit code the
   // rest of the script had already committed to before teardown ran.
-  global $fails, $passes, $skips;
+  global $fails, $passes, $skips, $summary;
   echo "\n".$passes.' passed, '.$fails.' FAILED, '.$skips.' skipped'."\n";
+
+  /* ===================================================================== *
+   * OPT-IN JSON dump, PLAN_92b Part A. Unset (the default), nothing is
+   * written — this suite's "records nothing" property stays true even here.
+   * This has to sit inside the shutdown function: the counts and $summary
+   * are only final once every case (including teardown's own) has run, and
+   * this closure is the sole exit() point for the whole suite. That also
+   * means a run that dies part-way still dumps whatever rows it had — left
+   * deliberate, because the non-zero fail count in that dump is exactly what
+   * stops the generator treating a broken run as a clean one.
+   * ===================================================================== */
+  $jsonPath = getenv('STAXX_SELFHOSTED_JSON');
+  if (is_string($jsonPath) && $jsonPath !== '') {
+    // $summary is assigned well after this closure is registered, so a fatal
+    // during setup reaches here with it never having existed at all.
+    $rows = is_array($summary ?? null) ? $summary : [];
+    $dump = [
+      'suite'   => 'registry_selfhosted.php',
+      'date'    => date('Y-m-d'),
+      'passes'  => $passes,
+      'fails'   => $fails,
+      'skips'   => $skips,
+      'rows'    => (object)$rows,
+    ];
+    $written = @file_put_contents($jsonPath, json_encode($dump, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    if ($written === false) {
+      note("could not write the JSON dump to $jsonPath — a clean run without a note is still a clean run");
+    } else {
+      note("wrote JSON dump to $jsonPath");
+    }
+  }
+
   exit($fails ? 1 : 0);
 });
 

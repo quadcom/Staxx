@@ -1,0 +1,27 @@
+{
+  "suite": "registry_quirks.php",
+  "date": "2026-08-20",
+  "passes": 40,
+  "fails": 0,
+  "skips": 1,
+  "rows": [
+    { "registry": "docker.io", "challenge": "bearer", "token": "yes",
+      "304": "yes", "ratelimit": "yes", "digest_match": "yes", "digest_from": "header" },
+    { "registry": "ghcr.io", "challenge": "bearer", "token": "yes",
+      "304": "no (200)", "ratelimit": "not sent", "digest_match": "yes", "digest_from": "header" },
+    { "registry": "lscr.io", "challenge": "bearer", "token": "yes",
+      "304": "no etag sent", "ratelimit": "not sent", "digest_match": "yes", "digest_from": "header" },
+    { "registry": "quay.io", "challenge": "unreachable", "token": "?",
+      "304": "?", "ratelimit": "?", "digest_match": "skip", "digest_from": "?" },
+    { "registry": "public.ecr.aws", "challenge": "bearer", "token": "yes",
+      "304": "no etag sent", "ratelimit": "not sent", "digest_match": "yes", "digest_from": "computed (no header)" },
+    { "registry": "mcr.microsoft.com", "challenge": "none", "token": "n/a",
+      "304": "yes", "ratelimit": "not sent", "digest_match": "yes", "digest_from": "header" },
+    { "registry": "registry.k8s.io", "challenge": "bearer", "token": "yes",
+      "304": "no (200)", "ratelimit": "not sent", "digest_match": "yes", "digest_from": "header" },
+    { "registry": "codeberg.org", "challenge": "bearer", "token": "yes",
+      "304": "yes", "ratelimit": "not sent", "digest_match": "yes", "digest_from": "header" },
+    { "registry": "registry.gitlab.com", "challenge": "bearer", "token": "yes",
+      "304": "yes", "ratelimit": "not sent", "digest_match": "yes", "digest_from": "header" }
+  ]
+}
