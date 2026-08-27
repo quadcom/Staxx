@@ -20,7 +20,7 @@ works.
 
 ## Verified on the test box
 
-Not "should work" — actually run at 192.168.200.88:
+Not "should work" — actually run on the test server:
 
 | Check | Result |
 |---|---|

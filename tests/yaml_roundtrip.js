@@ -1580,7 +1580,7 @@ var FIXTURE_10_ADVANCED = [
 
   // A literal port with no scheme host token and no trailing path.
   var src3 = 'services:\n  a:\n    image: alpine\n' +
-             '    x-unraid:\n      webui: "http://192.168.200.88:5000"\n';
+             '    x-unraid:\n      webui: "http://192.168.1.50:5000"\n';
   var f3 = Y.fieldById(Y.buildForm(Y.parse(src3)), 'a/setting/x-unraid.webui');
   ok('a literal port with no path reads as itself', f3.parts.value.value === '5000');
 

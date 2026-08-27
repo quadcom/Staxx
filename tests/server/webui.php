@@ -107,8 +107,8 @@ ok('literal port in the address wins outright — the mapping is not consulted (
      === 'http://10.0.0.5:80/');
 
 ok('literal port with a hard-coded host: unchanged, no mapping consulted',
-   staxx_webui_url(svc('http://192.168.200.88:5000', '', $port), $hostIp)
-     === 'http://192.168.200.88:5000');
+   staxx_webui_url(svc('http://192.168.1.50:5000', '', $port), $hostIp)
+     === 'http://192.168.1.50:5000');
 
 ok('literal port on a macvlan service with a live address: address substituted, port taken as written',
    staxx_webui_url(svc('http://[IP]:80/', '', ['target' => '8080', 'published' => '']), $hostIp,

@@ -2526,7 +2526,7 @@
   //
   //   http://[IP]:[PORT:8181]/     -> pre "http://[IP]:"        value "8181" post "/"
   //   http://[IP]:80/              -> pre "http://[IP]:"        value "80"   post "/"
-  //   http://192.168.200.88:5000   -> pre "http://192.168.200.88:" value "5000" post ""
+  //   http://192.168.1.50:5000   -> pre "http://192.168.1.50:" value "5000" post ""
   //   http://[IP]/admin            -> pre "http://[IP]:"        value ""     post "/admin"
   //
   // The whole "[PORT:…]" token counts as the port when one is there — writing
