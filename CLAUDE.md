@@ -95,7 +95,16 @@ with `STAXX_LIVE_NOTES=1` and needs no config keys, because it asks read-only qu
 nothing. It proves the notes lookup end to end against a real project, and pins the gap that a
 rolling tag finds no release at all, so those cases flip to green the day PLAN_82a lands. A failure
 there may mean the external repository changed rather than the code being wrong;
-`links.php` covers
+`updateeconomy.php` covers PLAN_90's registry economy — reference parsing including the ghcr/lscr
+no-rewrite rule, the OCI-index-first `Accept` list, the whole cadence table with its churn/floor/
+ceiling clamps, and the failed-image notice's wording once `fails` is already in state. It is
+offline (no stub of a registry exists in this repo, so anything that needs a real HTTP reply is
+left to `registry_live.php` below) and needs no config keys for most of it, but its row-notice
+section reads a real stack off `STACK_ROOT`, so that one key is pointed at `/tmp` and restored the
+same way `record.php` does; `registry_live.php` is `releasenotes_live.php`'s sibling for the same
+plan — opt-in behind `STAXX_LIVE_REGISTRY=1`, needs no config keys, and proves a real `304` against
+a real registry plus that the digest matches what the docker CLI reports, for a Hub, a ghcr and an
+lscr image; `links.php` covers
 what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
 for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's
 boot-start list, and points `STAXX_AUTOSTART_FILE` at `/tmp` so the real one is never touched. Each

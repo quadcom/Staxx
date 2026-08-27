@@ -291,7 +291,17 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   $rawSource = (string)($u['source'] ?? '');
   $source = preg_match('~^https?://~i', $rawSource) ? htmlspecialchars($rawSource) : '';
   $title  = (string)($u['tip'] ?? '');
-  $titleAttr = $title !== '' ? ' title="'.htmlspecialchars($title).'"' : '';
+  // PLAN_90 Stage 3b — the full explanation for a flagged image (repeated
+  // failure, not found, unsupported). A note describes one image, so a
+  // folder row (its updates are a queue, not one image — $pressable false)
+  // must never show one, whatever the caller happened to pass in.
+  $note = $pressable ? (string)($u['note'] ?? '') : '';
+  $noteAttr = $note !== '' ? ' data-update-note="'.htmlspecialchars($note).'"' : '';
+  // The note is appended to the existing tip rather than replacing it, so
+  // hovering still gives the version tip where there is one, plus why
+  // nothing is happening.
+  $titleBits = array_filter([$title, $note], function ($s) { return $s !== ''; });
+  $titleAttr = $titleBits ? ' title="'.htmlspecialchars(implode("\n\n", $titleBits)).'"' : '';
 
   // Only `update` becomes a real button, and only where a press has somewhere
   // to go. Every other state is text, and a button that can only ever do
@@ -308,6 +318,11 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   // updates poll has been round. paintPillClock() in stacks.js reads exactly
   // these, and `back` is what lets the row menu hide roll back when there is
   // nothing kept to roll back to.
+  // A noted pill (a chip's worth of "why" backed by a full sentence) gets
+  // its own modifier so it reads as more wrong than a plain quiet error,
+  // without inventing a new state — the state is still 'error'.
+  $cls .= $note !== '' ? ' staxx-updatepill--noted' : '';
+
   return '<'.$tag.' class="staxx-updatepill '.$cls.'"'.$typeAttr
        . ' data-update-state="'.htmlspecialchars($state).'"'
        . ' data-update-image="'.$image.'"'
@@ -317,6 +332,7 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
        . ' data-update-back="'.(!empty($u['back']) ? '1' : '0').'"'
        . ' data-update-why="'.htmlspecialchars((string)($u['why'] ?? '')).'"'
        . ' data-update-suggest="'.htmlspecialchars((string)($u['suggest'] ?? '')).'"'
+       . $noteAttr
        . $titleAttr.'>'.$label.'</'.$tag.'>';
 }
 

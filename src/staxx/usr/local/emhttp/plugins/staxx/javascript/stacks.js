@@ -15426,6 +15426,9 @@
       due:    parseInt(pill.dataset.updateDue || '0', 10) || 0,
       hold:   pill.dataset.updateHold === '1',
       why:    pill.dataset.updateWhy || '',
+      // PLAN_90 Stage 3b — the full sentence behind `why`'s short chip, for
+      // a flagged image (repeated failure, not found, unsupported).
+      note:   pill.dataset.updateNote || '',
       // The replacement tag staxx_tag_suggestions() already worked out, when
       // there is one — so a withdrawn-tag menu item can name it up front
       // instead of sending the reader in blind.
@@ -15479,7 +15482,14 @@
     }
     if (wantTag === 'BUTTON') pill.type = 'button';
 
+    // PLAN_90 Stage 3b — a note describes one image, so a folder row (its
+    // updates are a queue, not one image) must never carry one, whatever
+    // the reply happened to include — mirrors the $pressable guard in
+    // staxx_update_pill_html().
+    var note = (row && !row.dataset.folderRow) ? (entry.note || '') : '';
+
     var cls = UPDATE_PILL_CLASS[state] || '';
+    if (note) cls += (cls ? ' ' : '') + 'staxx-updatepill--noted';
     pill.className = 'staxx-updatepill' + (cls ? ' ' + cls : '');
     setData(pill, 'updateState', state);
     setData(pill, 'updateImage', entry.image || '');
@@ -15492,6 +15502,7 @@
     setData(pill, 'updateHold', entry.hold ? '1' : '0');
     setData(pill, 'updateBack', entry.back ? '1' : '0');
     setData(pill, 'updateWhy', entry.why || '');
+    if (note) setData(pill, 'updateNote', note); else delete pill.dataset.updateNote;
 
     var text = entry.label || state;
     if (entry.count > 1) text += ' (' + entry.count + ')';
@@ -15500,7 +15511,13 @@
     // something to say. Skipped when the label has not changed so a clock
     // ticking away between polls is not torn down and rebuilt every time.
     if (pill.staxxTxt !== text) { pill.textContent = text; pill.staxxTxt = text; }
-    if (entry.tip) pill.title = entry.tip; else pill.removeAttribute('title');
+    // The note is appended to the tip rather than replacing it, mirroring
+    // staxx_update_pill_html() — a stale tooltip after a recovery is worse
+    // than none, so this is rebuilt every time rather than only when new.
+    var titleBits = [];
+    if (entry.tip) titleBits.push(entry.tip);
+    if (note) titleBits.push(note);
+    if (titleBits.length) pill.title = titleBits.join('\n\n'); else pill.removeAttribute('title');
 
     paintPillClock(pill);
   }
