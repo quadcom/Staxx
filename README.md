@@ -3,7 +3,7 @@
 > **Where this is up to.** In daily use on the author's own server and far enough along to judge on
 > its merits, but not yet packaged — see [Limitations](#limitations).
 >
-> Version 2026.08.26 · [changelog](CHANGELOG.md)
+> Version 1.1.0 · [changelog](CHANGELOG.md)
 
 ## Why this exists
 
