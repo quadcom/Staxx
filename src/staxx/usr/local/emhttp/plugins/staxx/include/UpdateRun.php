@@ -460,13 +460,29 @@ function staxx_update_record_before_pull(string $stack, string $service = ''): v
     if ($name !== '') $svcMetaOut['version'] = $name;
     if (($cached['source'] ?? '') !== '') $svcMetaOut['source'] = (string)$cached['source'];
 
+    // The commit this outgoing build was made from, when the image labels say
+    // so. Recorded unconditionally — it costs no network call and no guard
+    // beyond its type — because it is the only thing the NEXT entry recorded
+    // for this service can compare against to say what went into a build
+    // whose tag never changes.
+    $revision = is_string($local['revision'] ?? null) ? (string)$local['revision'] : '';
+    if ($revision !== '') $svcMetaOut['revision'] = $revision;
+
     // Release notes: fetched at most once per version, right here, never
     // again on view — so there is no cache to expire, only this one guard
     // against paying for a second network call for the same entry. Needs a
-    // name, a project link, and a digest that is not already on record with
-    // notes; also skipped when the newest entry already carries this
-    // digest, since the push below would refuse it as a duplicate anyway.
-    if ($name !== '' && time() < $notesUntil) {
+    // project link and a digest that is not already on record with notes;
+    // also skipped when the newest entry already carries this digest, since
+    // the push below would refuse it as a duplicate anyway.
+    //
+    // Either a version name or a commit gets in here: an image whose version
+    // label is absent still has a history worth reading by commit, and that
+    // is exactly the rolling-tag case. The by-name lookup's own conditions
+    // are all still tested where they were, so widening the door changes
+    // nothing about when notes are fetched — only that the project link and
+    // the recorded history, both local reads, are looked up in a few more
+    // cases.
+    if (($name !== '' || $revision !== '') && time() < $notesUntil) {
       $links   = staxx_project_links($image, $meta['x'] ?? [], $meta['services'][$svc]['x'] ?? []);
       $project = (string)($links['project'] ?? '');
       if ($project !== '') {
@@ -476,12 +492,50 @@ function staxx_update_record_before_pull(string $stack, string $service = ''): v
           if ($skip) break;
           if (($entry['digest'] ?? '') === $local['digest'] && ($entry['notes'] ?? '') !== '') $skip = true;
         }
-        if (!$skip) {
+        if (!$skip && $name !== '') {
           $notes = staxx_release_notes_fetch($project, $name);
           if (($notes['notes'] ?? '') !== '') {
             $svcMetaOut['notes']    = (string)$notes['notes'];
             $svcMetaOut['notesUrl'] = (string)($notes['url'] ?? '');
             $svcMetaOut['notesCut'] = (bool)($notes['cut'] ?? false);
+          }
+        }
+
+        // The version name found nothing, but the build says which commit it
+        // came from — so ask the project about the commit instead. Same
+        // budget as above, deliberately: it is one ceiling on how long a
+        // record step may spend on the network, not one per question.
+        if (!$skip && !isset($svcMetaOut['notes']) && $revision !== '' && time() < $notesUntil) {
+          // A real release sitting on this very commit always beats a raw
+          // list of commits, so that is asked first. The entry's stored
+          // 'version' is deliberately left as it was: the notes link already
+          // names the release, and rewriting the version here would make the
+          // history disagree with the update chip for no gain.
+          $tag = staxx_release_tag_at_commit($project, $revision);
+          if ($tag !== '') {
+            $notes = staxx_release_notes_fetch($project, $tag);
+            if (($notes['notes'] ?? '') !== '') {
+              $svcMetaOut['notes']    = (string)$notes['notes'];
+              $svcMetaOut['notesUrl'] = (string)($notes['url'] ?? '');
+              $svcMetaOut['notesCut'] = (bool)($notes['cut'] ?? false);
+            }
+          }
+
+          // No release to name: what went into this build is then the commits
+          // between the previously recorded build and this one. That needs
+          // the previous entry's own commit, which is why it is stored — an
+          // entry recorded before this existed has none, and then there is
+          // simply nothing to say, which is the honest answer.
+          if (!isset($svcMetaOut['notes']) && time() < $notesUntil) {
+            $previous = is_string($history[0]['revision'] ?? null) ? (string)$history[0]['revision'] : '';
+            if ($previous !== '' && $previous !== $revision) {
+              $log = staxx_changelog_fetch($project, $previous, $revision);
+              if (!empty($log['changes'])) {
+                $svcMetaOut['changes']    = (array)$log['changes'];
+                $svcMetaOut['changesUrl'] = (string)($log['url'] ?? '');
+                $svcMetaOut['changesCut'] = (bool)($log['cut'] ?? false);
+              }
+            }
           }
         }
       }

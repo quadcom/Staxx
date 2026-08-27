@@ -63,6 +63,24 @@ function staxx_image_history_valid_entry($entry): bool {
   if (array_key_exists('notesUrl', $entry) && !is_string($entry['notesUrl'])) return false;
   if (array_key_exists('notesCut', $entry) && !is_bool($entry['notesCut'])) return false;
 
+  // What went into this build: the commit it was made from, and — when no
+  // release could be named — the commit subjects between the previously
+  // recorded build and this one. Optional on exactly the same terms as the
+  // notes keys above, since every entry recorded before PLAN_82a has none of
+  // them. 'changes' must be a plain list — asked with array_is_list() rather
+  // than by comparing keys against range(), because range(0, -1) counts
+  // DOWNWARDS and yields [0, -1], so the hand-rolled test rejects an empty
+  // list. Empty is a perfectly well-formed list and must validate.
+  if (array_key_exists('revision', $entry) && !is_string($entry['revision'])) return false;
+  if (array_key_exists('changes', $entry)) {
+    if (!is_array($entry['changes']) || !array_is_list($entry['changes'])) return false;
+    foreach ($entry['changes'] as $line) {
+      if (!is_string($line)) return false;
+    }
+  }
+  if (array_key_exists('changesUrl', $entry) && !is_string($entry['changesUrl'])) return false;
+  if (array_key_exists('changesCut', $entry) && !is_bool($entry['changesCut'])) return false;
+
   return true;
 }
 
@@ -84,7 +102,11 @@ function staxx_image_history_valid_map($images): bool {
   foreach ($images as $service => $list) {
     if (!is_string($service) || $service === '') return false;
     if (!is_array($list)) return false;
-    if (array_keys($list) !== range(0, count($list) - 1)) return false;
+    // array_is_list() rather than comparing keys against range(): range(0, -1)
+    // counts downwards and yields [0, -1], so the hand-rolled version rejects
+    // an empty list — which would have invalidated the whole map, and with it
+    // every other service's history, over a service key holding nothing.
+    if (!array_is_list($list)) return false;
     foreach ($list as $entry) {
       if (!staxx_image_history_valid_entry($entry)) return false;
     }
@@ -132,6 +154,19 @@ function staxx_image_history_push(string $stack, string $service, string $digest
   }
   if (is_string($meta['notesUrl'] ?? null) && $meta['notesUrl'] !== '') {
     $entry['notesUrl'] = $meta['notesUrl'];
+  }
+  // Same terms again for what went into the build. The commit is worth
+  // storing on its own even with no changes to show, because it is what the
+  // next recorded entry compares against.
+  if (is_string($meta['revision'] ?? null) && $meta['revision'] !== '') {
+    $entry['revision'] = $meta['revision'];
+  }
+  if (is_array($meta['changes'] ?? null) && $meta['changes'] !== []) {
+    $entry['changes'] = $meta['changes'];
+    $entry['changesCut'] = (bool)($meta['changesCut'] ?? false);
+  }
+  if (is_string($meta['changesUrl'] ?? null) && $meta['changesUrl'] !== '') {
+    $entry['changesUrl'] = $meta['changesUrl'];
   }
 
   // Written only if it would be read back. The reader validates the digest's

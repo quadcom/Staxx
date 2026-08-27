@@ -23,6 +23,13 @@ define('STAXX_UPDATE_STATE', $staxx_update_state_env !== false && $staxx_update_
 // for as long as the pass itself runs, and is worthless after a reboot.
 define('STAXX_UPDATE_DIR', '/tmp/staxx/updates');
 
+// Changelog caps, companions to STAXX_NOTES_MAX in Defines.php and there for
+// the same reason: the list is stored as JSON in a stack's own record, so
+// neither a project with a thousand commits between builds nor one absurd
+// commit message may bloat it. Lines, then bytes per line.
+define('STAXX_CHANGES_MAX', 50);
+define('STAXX_CHANGES_LINE_MAX', 200);
+
 // How long a remembered answer is trusted before it is asked again — six
 // hours, so three stacks sharing an image cost the registry one question a
 // day and not sixty.
@@ -149,8 +156,8 @@ function staxx_docker_inspector(): string {
 }
 
 /**
- * Version/source/created out of a config's OCI-ish labels — shared by every
- * route in staxx_image_remote(), since the label names are the same
+ * Version/source/created/revision out of a config's OCI-ish labels — shared
+ * by every route in staxx_image_remote(), since the label names are the same
  * regardless of how the config was fetched.
  */
 function staxx_update_labels_meta(array $labels): array {
@@ -171,7 +178,31 @@ function staxx_update_labels_meta(array $labels): array {
     if ($ts !== false) $out['created'] = $ts;
   }
 
+  // The commit this build came from, which is what makes a changelog between
+  // two builds possible at all. Only a commit-shaped value is kept: anything
+  // else gets spliced into a request path later and produces a lookup that
+  // silently never matches — the same shape of failure as the unpin bug,
+  // where a name that looked plausible made the whole feature do nothing.
+  $revision = (string)($labels['org.opencontainers.image.revision'] ?? '');
+  if (preg_match('/^[0-9a-f]{7,40}$/', $revision)) $out['revision'] = $revision;
+
   return $out;
+}
+
+/**
+ * Owner and repository name out of a project link, or [] when the link is
+ * not a GitHub one — a documentation site or a Docker Hub page gets [].
+ * Pure. Every address builder below asks this rather than carrying its own
+ * copy of the pattern, so what counts as a GitHub project cannot drift
+ * between them.
+ *
+ * @return array{0: string, 1: string}|array{}
+ */
+function staxx_github_project(string $project): array {
+  if (!preg_match('#^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$#', $project, $m)) {
+    return [];
+  }
+  return [$m[1], $m[2]];
 }
 
 /**
@@ -190,11 +221,9 @@ function staxx_update_labels_meta(array $labels): array {
  * nothing to add, and vice versa).
  */
 function staxx_release_notes_urls(string $project, string $version): array {
-  if (!preg_match('#^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$#', $project, $m)) {
-    return [];
-  }
-  $owner = $m[1];
-  $name  = $m[2];
+  $repo = staxx_github_project($project);
+  if ($repo === []) return [];
+  [$owner, $name] = $repo;
 
   if ($version === '' || preg_match('#[/\x00-\x1f\x7f]|\.\.|\s#', $version)) return [];
 
@@ -275,6 +304,143 @@ function staxx_release_notes_fetch(string $project, string $version): array {
   }
 
   return $empty;
+}
+
+/**
+ * GitHub's "compare two commits" API address, or '' when one cannot be
+ * built — pure, no network. Only a GitHub project link qualifies, and both
+ * ids must be commit-shaped, because both are spliced into the path.
+ *
+ * A commit compared with itself returns '' too: there is nothing between a
+ * build and the same build, and asking would spend an allowance to be told
+ * so.
+ */
+function staxx_compare_commits_url(string $project, string $from, string $to): string {
+  $repo = staxx_github_project($project);
+  if ($repo === []) return '';
+  [$owner, $name] = $repo;
+
+  if (!preg_match('/^[0-9a-f]{7,40}$/', $from)) return '';
+  if (!preg_match('/^[0-9a-f]{7,40}$/', $to)) return '';
+  if ($from === $to) return '';
+
+  return 'https://api.github.com/repos/'.$owner.'/'.$name
+       . '/compare/'.rawurlencode($from).'...'.rawurlencode($to);
+}
+
+/**
+ * The commit subjects between two builds — what actually went in since the
+ * last build seen. Returns the all-empty answer on anything at all going
+ * wrong, and makes no request when no address could be built, so callers
+ * never need to distinguish "nothing to show" from "the ask failed".
+ *
+ * Subject lines only, in the order the project gives them, never re-worded
+ * and never filtered. In particular merge commits are kept: a merge is noise
+ * in one project and the only signal in another, and picking between them is
+ * editorialising somebody else's history — the same reasoning that stops the
+ * notes trimmer touching a vendor's prose.
+ *
+ * @return array{changes: string[], url: string, cut: bool}
+ */
+function staxx_changelog_fetch(string $project, string $from, string $to): array {
+  $empty = ['changes' => [], 'url' => '', 'cut' => false];
+
+  $url = staxx_compare_commits_url($project, $from, $to);
+  if ($url === '') return $empty;
+
+  // Size-capped, unlike every other ask here: the answer carries each changed
+  // file's whole diff alongside the commit list, so the reply is far bigger
+  // than the question — 145 KB measured for nine commits, and GitHub's own
+  // ceiling is 250. Eight megabytes fits any realistic comparison and stops
+  // the pathological one being held in memory twice on a NAS.
+  $data = staxx_hub_json($url, ['User-Agent: StaXX'], 6, 8, 8 * 1024 * 1024);
+  if (!is_array($data)) return $empty;
+
+  $commits = is_array($data['commits'] ?? null) ? $data['commits'] : [];
+
+  $changes = [];
+  $cut     = false;
+  foreach ($commits as $commit) {
+    if (count($changes) >= STAXX_CHANGES_MAX) { $cut = true; break; }
+
+    $message = is_array($commit) ? (string)($commit['commit']['message'] ?? '') : '';
+    $nl      = strpos($message, "\n");
+    $subject = trim($nl === false ? $message : substr($message, 0, $nl));
+    if ($subject === '') continue;
+
+    if (strlen($subject) > STAXX_CHANGES_LINE_MAX) {
+      // Hard cut, no ellipsis, for the same reason the notes trimmer does not
+      // add one: the text is somebody else's words and a marker we invented
+      // would read as part of them. And a cap counted in bytes can land in
+      // the middle of a multi-byte character, which json_encode() refuses
+      // outright — taking the whole record write down with it. Drop any
+      // trailing incomplete sequence, exactly as staxx_release_notes_trim().
+      $subject = substr($subject, 0, STAXX_CHANGES_LINE_MAX);
+      while ($subject !== '' && (ord($subject[strlen($subject) - 1]) & 0xc0) === 0x80) {
+        $subject = substr($subject, 0, -1);
+      }
+      if ($subject !== '' && (ord($subject[strlen($subject) - 1]) & 0x80) !== 0) {
+        $subject = substr($subject, 0, -1);
+      }
+      if ($subject === '') continue;
+      $cut = true;
+    }
+
+    $changes[] = $subject;
+  }
+
+  // GitHub caps its own commits array at 250 and reports the real count
+  // separately, so a comparison spanning more than that arrives already
+  // shortened — say so rather than presenting a partial list as the whole.
+  $total = (int)($data['total_commits'] ?? 0);
+  if ($total > count($commits)) $cut = true;
+
+  if ($changes === []) return $empty;
+
+  return [
+    'changes' => $changes,
+    'url'     => is_string($data['html_url'] ?? null) ? $data['html_url'] : '',
+    'cut'     => $cut,
+  ];
+}
+
+/**
+ * The release tag sitting on one commit, or '' when none does — one request,
+ * '' with no request at all when the project link is not GitHub or the id is
+ * not commit-shaped.
+ *
+ * The tag LISTING is asked rather than the git ref API on purpose. An
+ * annotated tag does not point at a commit, it points at a tag object, so
+ * dereferencing one by hand costs a second lookup that is easy to get wrong
+ * and easy to not notice being wrong. This listing reports each tag's
+ * already-dereferenced commit, so the trap cannot be walked into and the
+ * whole thing stays at one request.
+ */
+function staxx_release_tag_at_commit(string $project, string $commit): string {
+  $repo = staxx_github_project($project);
+  if ($repo === []) return '';
+  [$owner, $name] = $repo;
+
+  if (!preg_match('/^[0-9a-f]{7,40}$/', $commit)) return '';
+
+  $data = staxx_hub_json(
+    'https://api.github.com/repos/'.$owner.'/'.$name.'/tags',
+    ['User-Agent: StaXX'], 6, 8
+  );
+  if (!is_array($data)) return '';
+
+  foreach ($data as $tag) {
+    if (!is_array($tag)) continue;
+    $sha = (string)($tag['commit']['sha'] ?? '');
+    // The label may carry a 7-character id where the API gives all 40, so
+    // this is a prefix match, and case-insensitive because neither side
+    // promises which it writes.
+    if ($sha === '' || stripos($sha, $commit) !== 0) continue;
+    $found = (string)($tag['name'] ?? '');
+    if ($found !== '') return $found;
+  }
+
+  return '';
 }
 
 /**
@@ -817,7 +983,7 @@ function staxx_update_refresh_local(string $stack, string $service = ''): bool {
     if (($entry['error'] ?? '') === 'not installed') unset($entry['error']);
     if (!empty($entry['built'])) unset($entry['built'], $entry['error']);
     // Up to date now, so the countdown running against that version has
-    // nothing left to fire on — cleared by the same three keys
+    // nothing left to fire on — cleared by the same four keys
     // staxx_update_check() clears, so the two can never disagree.
     if (($entry['remote'] ?? '') === $local['digest']) {
       unset($entry['seen'], $entry['was'], $entry['wasCreated'], $entry['seenDigest']);
@@ -1146,6 +1312,12 @@ function staxx_update_check(string $scope, bool $force): array {
     if (isset($remote['version'])) $existing['version'] = $remote['version'];
     if (isset($remote['source']))  $existing['source']  = $remote['source'];
     if (isset($remote['created'])) $existing['created'] = $remote['created'];
+    // No 'revision' is kept here on purpose, though the label is read. This
+    // entry's version/created describe the REMOTE build, and the commit is
+    // wanted for the one being replaced — which the record step re-reads from
+    // the local image anyway. A key here would be the wrong half of the pair
+    // under a name that does not say which half it is, and that is precisely
+    // how 'wasCreated' came to pair a stale date with a current build.
     $existing['asked'] = $now;
 
     $localDigest = $local['digest'] ?? '';

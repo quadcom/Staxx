@@ -35,8 +35,11 @@
  * THE RATE CEILING. GitHub allows 60 requests an hour to an unauthenticated
  * caller, counted per source address, and that ceiling is SHARED with the
  * plugin's own notes lookups on this machine. Each staxx_release_notes_fetch()
- * call tries up to two candidate addresses, so this file spends up to eight
- * requests per run. The count is printed at the end rather than assumed.
+ * call tries up to two candidate addresses (eight requests across this file);
+ * PLAN_82a's tag-at-commit lookup and commit comparison each spend one, and
+ * only when an address was actually built — four more. So this file spends up
+ * to twelve requests per run. The count is printed at the end rather than
+ * assumed.
  *
  * Because it depends on an external repository staying as it is, a failure
  * here may mean that repository changed — a release renamed, retagged or
@@ -80,6 +83,27 @@ function live_fetch(string $project, string $version): array {
   $requests += count(staxx_release_notes_urls($project, $version));
   return staxx_release_notes_fetch($project, $version);
 }
+
+/* PLAN_82a's two lookups, counted as they go like the fetch above. The tag
+ * listing is one request. The comparison is counted only when the pure builder
+ * would actually produce an address, so a refused pair costs nothing here just
+ * as it costs nothing there. */
+function live_tag(string $project, string $commit): string {
+  global $requests;
+  $requests += 1;
+  return staxx_release_tag_at_commit($project, $commit);
+}
+function live_changelog(string $project, string $from, string $to): array {
+  global $requests;
+  if (staxx_compare_commits_url($project, $from, $to) !== '') $requests += 1;
+  return staxx_changelog_fetch($project, $from, $to);
+}
+
+/* The two real values below were verified against the live API. If either
+ * stops matching, check the repository before chasing a bug in the plugin —
+ * a retag or a force-push moves them. */
+$tagCommit   = '339821b7e03255be641eebe1f66f1244f880c5ba'; // carries v1.0.0
+$imageCommit = 'a2c45e251a6fc97a85cdde047c63b8885e2793d5'; // what the image was built from
 
 /* ======================================================================= *
  * A — the release that exists. Tag v1.0.0, asked for both ways.
@@ -174,6 +198,85 @@ if ($code !== 0) {
      . 'declares about itself is a branch name, which is why no release can '
      . 'ever be found under it');
 }
+
+/* ======================================================================= *
+ * D — PLAN_82a: which release, if any, sits on a given commit
+ * (staxx_release_tag_at_commit()). Read-only, one request per question.
+ * ======================================================================= */
+
+$tagFound = live_tag($project, $tagCommit);
+ok('the commit v1.0.0 sits on resolves to that tag',
+   $tagFound === 'v1.0.0', var_export($tagFound, true));
+
+/* The one that matters: an image label carries a SHORT id, and the answer the
+ * tag listing gives is a full forty-character one. If the match were a plain
+ * equality the short form would never find anything. */
+$tagFromShort = live_tag($project, substr($tagCommit, 0, 7));
+ok('...and the first seven characters of that same id find it too, so a short '
+ . 'id from an image label still matches a full-length answer',
+   $tagFromShort === 'v1.0.0', var_export($tagFromShort, true));
+
+$tagOnImage = live_tag($project, $imageCommit);
+ok('the commit the image on this box was built from carries no tag, so nothing '
+ . 'is returned',
+   $tagOnImage === '', var_export($tagOnImage, true));
+
+note('this lookup uses the tag listing because that endpoint reports each '
+   . "tag's already-dereferenced commit, so the annotated-tag trap PLAN_82a "
+   . 'names — where a tag object points at itself rather than at the commit — '
+   . 'cannot be walked into at all');
+
+/* ======================================================================= *
+ * E — PLAN_82a: comparing two commits for the list of what went into a build
+ * (staxx_changelog_fetch()). Shape only — the commit subjects are somebody
+ * else's history and may be reworded or rewritten at any time.
+ * ======================================================================= */
+
+$log = live_changelog($project, $imageCommit, $tagCommit);
+
+$changes = $log['changes'] ?? null;
+ok('comparing the image\'s commit with the tagged one returns a list of changes',
+   is_array($changes) && $changes !== [],
+   is_array($changes) ? count($changes).' lines' : var_export($changes, true));
+
+if (is_array($changes)) {
+  $shapeOk = true;
+  foreach ($changes as $line) {
+    // Subject lines only: a body that leaked through would arrive as a line
+    // break inside one element, and would wreck any single-line display.
+    if (!is_string($line) || $line === '' || strpbrk($line, "\r\n") !== false) {
+      $shapeOk = false;
+      break;
+    }
+  }
+  ok('...and every one of them is a non-empty single-line string',
+     $shapeOk);
+  ok('...and the count is at or under the cap',
+     count($changes) <= STAXX_CHANGES_MAX,
+     count($changes).' of '.STAXX_CHANGES_MAX);
+  // Nine commits is well under both the local cap and GitHub's own 250-commit
+  // ceiling, so an uncut answer is the only honest one here.
+  ok('...and nothing was cut, since this comparison is well under both ceilings',
+     ($log['cut'] ?? null) === false, var_export($log['cut'] ?? null, true));
+}
+
+ok('...and its url points at the compare page for those two commits',
+   is_string($log['url'] ?? null)
+     && strpos((string)$log['url'], 'quadcom/feedlog-token/compare/') !== false,
+   (string)($log['url'] ?? ''));
+
+/* The same refusal the offline suite proves as a string, confirmed against the
+ * real project: a valid GitHub link is not enough on its own. */
+$selfCompare = live_changelog($project, $tagCommit, $tagCommit);
+ok('comparing a commit with itself gives the all-empty answer and makes no '
+ . 'request',
+   $selfCompare === ['changes' => [], 'url' => '', 'cut' => false],
+   json_encode($selfCompare));
+
+note('sections D and E together are the end-to-end proof of the rolling-tag '
+   . "route: the image's own tag names no release at all, and yet its commit "
+   . 'yields a real list of what went into that build — which is exactly what '
+   . 'section B has nothing to show');
 
 /* ---------------------------------------------------------------------- */
 
