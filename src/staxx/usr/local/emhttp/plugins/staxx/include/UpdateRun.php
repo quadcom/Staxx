@@ -1226,8 +1226,11 @@ function staxx_update_queue_tick(): array {
         $item['state'] = 'done';
         // The queue has no browser to prompt a refresh, so without this the
         // local digest stays at its pre-pull value and the same stack looks
-        // due again at the next tick, fifteen minutes from now.
-        staxx_update_refresh_local((string)($item['stack'] ?? ''));
+        // due again at the next tick, fifteen minutes from now. This also
+        // re-asks the registry when the disk still disagrees with the
+        // remembered answer, which is what stops a stale registry digest
+        // re-queueing the same stack every fifteen minutes forever.
+        staxx_update_refresh_after_run((string)($item['stack'] ?? ''));
       } else {
         $item['state'] = 'failed';
         $item['error'] = 'The update failed. Open the log for details.';

@@ -1,0 +1,15 @@
+{
+  "suite": "registry_selfhosted.php",
+  "date": "2026-08-20",
+  "passes": 21,
+  "fails": 0,
+  "skips": 0,
+  "rows": {
+    "open": { "registry": "open registry:2", "challenge": "none", "digest_match": "yes",
+              "304": "yes", "shape": "application/vnd.oci.image.index.v1+json" },
+    "zot":  { "registry": "zot", "challenge": "none", "digest_match": "yes",
+              "304": "yes", "shape": "application/vnd.oci.image.manifest.v1+json" },
+    "auth": { "registry": "auth registry:2", "challenge": "auth", "auth": "yes",
+              "never_ok": "yes", "remembered": "yes" }
+  }
+}

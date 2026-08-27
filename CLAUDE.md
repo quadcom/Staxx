@@ -51,6 +51,7 @@ node tests/stash_guard.js           # a set-aside may only hold the block it cla
 node tests/meta_scaffold.js         # the commented x-unraid fields a new stack starts with
 node tests/js_undeclared.js         # names assigned but declared nowhere
 node tests/words.js                 # the passphrase generator's word list — count, shape, uniqueness
+node tests/registry_note.js         # the registry-behaviour note generator's own cases
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 ```
@@ -95,6 +96,34 @@ with `STAXX_LIVE_NOTES=1` and needs no config keys, because it asks read-only qu
 nothing. It proves the notes lookup end to end against a real project, and pins the gap that a
 rolling tag finds no release at all, so those cases flip to green the day PLAN_82a lands. A failure
 there may mean the external repository changed rather than the code being wrong;
+`updateeconomy.php` covers PLAN_90's registry economy — reference parsing including the ghcr/lscr
+no-rewrite rule, the OCI-index-first `Accept` list, the whole cadence table with its churn/floor/
+ceiling clamps, and the failed-image notice's wording once `fails` is already in state. It is
+offline (no stub of a registry exists in this repo, so anything that needs a real HTTP reply is
+left to `registry_live.php` below) and needs no config keys for most of it, but its row-notice
+section reads a real stack off `STACK_ROOT`, so that one key is pointed at `/tmp` and restored the
+same way `record.php` does; `registry_live.php` is `releasenotes_live.php`'s sibling for the same
+plan — opt-in behind `STAXX_LIVE_REGISTRY=1`, needs no config keys, and proves a real `304` against
+a real registry plus that the digest matches what the docker CLI reports, for a Hub, a ghcr and an
+lscr image; `registry_quirks.php` is PLAN_92 Stage 1 — opt-in behind `STAXX_QUIRKS=1`, needs no
+config keys, and asks the same read-only questions of nine real public registries (Docker Hub gets
+just one image; its allowance is the only tight one), printing a summary table of what each one
+turned out to do. It carries the regression guard for the ghcr placeholder-scope fix, run against
+ghcr and codeberg's Gitea-hosted registry alike, and is worth a run whenever the registry code is
+touched, or before a release — an opt-in suite nobody runs is a suite that can rot unnoticed;
+set `STAXX_QUIRKS_JSON=/tmp/quirks.json` alongside it to also save what it measured;
+`registry_selfhosted.php` is PLAN_92 Stage 2 — opt-in behind `STAXX_SELFHOSTED=1`, needs
+`REGISTRY_TRUST` pointed at `127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002`, and is the only suite
+here that pulls anything: it starts and removes three throwaway registries on the box itself (open,
+password-protected, and a second implementation) to prove what a self-hosted registry does that a
+public one cannot show. Worth a run alongside `registry_quirks.php` whenever the registry code is
+touched, or before a release — the same "an opt-in suite nobody runs" trap applies twice over here, and
+`STAXX_SELFHOSTED_JSON=/tmp/selfhosted.json` saves what it measured the same way. Hand those two
+files to `node tests/registry_note.js /tmp/quirks.json /tmp/selfhosted.json` to regenerate
+`tests/server/REGISTRY-BEHAVIOUR.md`, the written record of what each of the twelve registries turned
+out to do — regenerate it as part of running the suites rather than as a separate chore somebody
+forgets, and never hand-edit it, since the next run overwrites it. It refuses to write anything from
+a run that reported failures;
 `links.php` covers
 what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
 for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's

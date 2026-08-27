@@ -646,6 +646,556 @@ function staxx_registry_config(string $image): array {
 }
 
 /**
+ * PLAN_90 Stage 1: the Accept list a manifest request must send, factored
+ * out to one definition so staxx_registry_digest() and
+ * staxx_registry_config() above can never drift apart. Order is
+ * load-bearing — the OCI/multi-architecture index has to come first, or a
+ * registry hands back a single-architecture manifest whose digest never
+ * matches the multi-architecture one docker reports locally, and every
+ * update pass invents a phantom update out of nothing.
+ */
+function staxx_registry_accept(): string {
+  return 'application/vnd.oci.image.index.v1+json,'
+        .'application/vnd.docker.distribution.manifest.list.v2+json,'
+        .'application/vnd.docker.distribution.manifest.v2+json';
+}
+
+/**
+ * A short, stable fingerprint of staxx_registry_accept(), stored alongside a
+ * remembered entity tag (PLAN_90 Stage 2) so that changing the Accept list
+ * later invalidates every stored tag instead of silently comparing it
+ * against a manifest shape it was never actually issued for.
+ */
+function staxx_registry_accept_id(): string {
+  return substr(sha1(staxx_registry_accept()), 0, 8);
+}
+
+/**
+ * Split an image reference into registry host, repository path, tag and
+ * digest — pure, no network, so it can be tested exhaustively. Docker Hub's
+ * own shorthands still apply (`postgres` -> docker.io + library/postgres).
+ *
+ * The host test is the same one staxx_image_registry() in Updates.php uses
+ * (a first path segment carrying a dot or a colon is a host name); the two
+ * agree deliberately; a caller that asks "which registry" and a caller that
+ * asks "split this reference" must never answer differently for the same
+ * string. Unlike staxx_hub_repo_path(), a host-qualified reference keeps its
+ * own host rather than being rewritten to Hub — that rewrite exists only so
+ * the form editor can read linuxserver's config labels off Hub, and reusing
+ * it here would ask the wrong registry for a digest comparison.
+ *
+ * Every value returned here is later spliced into a URL, so refusal is a
+ * security boundary, not tidiness. Anything that fails the shape checks
+ * comes back as every key '' — callers must test repo === '' for refusal
+ * rather than trust a partial answer.
+ *
+ * @return array{host:string, repo:string, tag:string, digest:string}
+ */
+function staxx_registry_ref(string $image): array {
+  $refused = ['host' => '', 'repo' => '', 'tag' => '', 'digest' => ''];
+
+  $ref = trim($image);
+  if ($ref === '') return $refused;
+
+  $digest = '';
+  if (preg_match('/@(sha256:[0-9a-f]{64})$/', $ref, $m)) {
+    $digest = $m[1];
+    $ref = substr($ref, 0, -strlen($m[0]));
+  }
+
+  // A tag sits after the last colon only when that colon comes after the
+  // last slash — otherwise it is a host's own port, e.g. reg.example.com:5000.
+  $slash = strrpos($ref, '/');
+  $colon = strrpos($ref, ':');
+  $tag = 'latest';
+  if ($colon !== false && ($slash === false || $colon > $slash)) {
+    $tag = substr($ref, $colon + 1);
+    $ref = substr($ref, 0, $colon);
+  }
+  // These land in a URL path segment, so a slash, whitespace or control
+  // character in a tag is refused rather than passed through.
+  if ($tag === '' || preg_match('/[\/\s\x00-\x1f]/', $tag)) return $refused;
+
+  $parts = explode('/', $ref);
+  $first = $parts[0];
+  if (strpos($first, '.') !== false || strpos($first, ':') !== false || $first === 'localhost') {
+    $host = strtolower($first);
+    $repo = implode('/', array_slice($parts, 1));
+  } else {
+    $host = 'docker.io';
+    $repo = $ref;
+  }
+
+  // Docker's own shorthand: a bare name on the implied default registry is
+  // an official image, kept under library/.
+  if ($host === 'docker.io' && $repo !== '' && strpos($repo, '/') === false) {
+    $repo = 'library/'.$repo;
+  }
+
+  if ($host === '' || $repo === '' || !preg_match('#^[a-z0-9._/-]+$#D', $repo)) return $refused;
+
+  return ['host' => $host, 'repo' => $repo, 'tag' => $tag, 'digest' => $digest];
+}
+
+/**
+ * The API host a registry host is actually reached at. Docker Hub's own
+ * host (docker.io) never answers registry requests itself — the registry
+ * lives at registry-1.docker.io — and every other host is used exactly as
+ * written, including a private or self-hosted registry.
+ */
+function staxx_registry_api_host(string $host): string {
+  return $host === 'docker.io' ? 'registry-1.docker.io' : $host;
+}
+
+/**
+ * Has this server's owner vouched for $host? REGISTRY_TRUST is a
+ * comma-separated list of exact host names (optionally host:port), matched
+ * case-folded and nothing else — deliberately no wildcard, no prefix or
+ * suffix matching, no subdomain inference. A host not named exactly is not
+ * trusted, full stop; that is the whole safety property this setting has.
+ */
+function staxx_registry_trusted(string $host): bool {
+  $list = trim((string)(staxx_cfg()['REGISTRY_TRUST'] ?? ''));
+  if ($list === '') return false;
+  $host = strtolower(trim($host));
+  foreach (explode(',', $list) as $entry) {
+    if (strtolower(trim($entry)) === $host) return true;
+  }
+  return false;
+}
+
+/**
+ * Per-host memo of which scheme actually answered staxx_registry_challenge()
+ * — https always, unless a trusted host only answered over plain http. Read
+ * with no argument; written by passing $set, which is also what is returned,
+ * so the challenge probe can record-and-return in one call. Same static-array
+ * shape as the other per-host caches in this file.
+ */
+function staxx_registry_scheme(string $host, string $set = ''): string {
+  static $scheme = [];
+  if ($set !== '') { $scheme[$host] = $set; return $set; }
+  return $scheme[$host] ?? 'https';
+}
+
+/** curl flags a trusted host earns: relaxed certificate checking only. */
+function staxx_registry_curl_opts(string $host): string {
+  return staxx_registry_trusted($host) ? ' -k' : '';
+}
+
+/**
+ * The authentication challenge one registry host answers with, parsed —
+ * realm, service, and whether it wants no authentication at all.
+ *
+ * Cached per HOST, deliberately, and that is the whole point of the
+ * function: the challenge on /v2/ is a property of the registry, not of any
+ * one repository, so folding it into the per-repository token cache cost one
+ * extra round trip per image — sixty of them on a sixty-container box, in
+ * the pass whose entire purpose is to stop making needless requests.
+ *
+ * $why is '' on success, 'auth' when the registry wants a scheme StaXX
+ * cannot speak, 'failed' for no network or a malformed challenge.
+ *
+ * The challenge's own scope is not returned: it is host-level, and at least
+ * one real registry fills it with a placeholder repository name. The caller
+ * builds the scope from the repository it actually wants.
+ *
+ * @return array{realm:string, service:string, open:bool}
+ */
+function staxx_registry_challenge(string $host, string &$why = null): array {
+  static $cache = [];
+  $why = '';
+  $empty = ['realm' => '', 'service' => '', 'open' => false];
+
+  if (isset($cache[$host])) { $why = $cache[$host]['why']; return $cache[$host]['challenge']; }
+
+  $keep = function (array $challenge, string $reason) use (&$cache, $host, &$why) {
+    $cache[$host] = ['challenge' => $challenge, 'why' => $reason];
+    $why = $reason;
+    return $challenge;
+  };
+
+  $apiHost = staxx_registry_api_host($host);
+  $trusted = staxx_registry_trusted($host);
+
+  $probe = staxx_sh(
+    'curl -sS -L --proto '.escapeshellarg('=https,http').' --max-time 6'.staxx_registry_curl_opts($host)
+      .' -D /dev/stdout -o /dev/null -X GET '.escapeshellarg('https://'.$apiHost.'/v2/'),
+    10
+  );
+  $scheme = 'https';
+  // Only a trusted host gets a second try, and only when https got no
+  // answer at all (a throwaway registry with no certificate) — an
+  // untrusted host's request count and behaviour are unchanged from today.
+  if ($probe === '' && $trusted) {
+    $scheme = 'http';
+    $probe = staxx_sh(
+      'curl -sS -L --proto '.escapeshellarg('=https,http').' --max-time 6 -D /dev/stdout -o /dev/null -X GET '
+        .escapeshellarg('http://'.$apiHost.'/v2/'),
+      10
+    );
+  }
+  staxx_registry_scheme($host, $scheme);
+  if ($probe === '') return $keep($empty, 'failed');
+
+  if (!preg_match('/^www-authenticate:\s*(.+)$/im', $probe, $hm)) {
+    // No challenge at all. A registry that serves /v2/ with no 401 needs no
+    // auth for an anonymous pull — the caller asks the manifest directly.
+    if (preg_match('#^HTTP/\S+\s+200#', trim($probe))) {
+      return $keep(['realm' => '', 'service' => '', 'open' => true], '');
+    }
+    return $keep($empty, 'failed');
+  }
+
+  $challenge = trim($hm[1]);
+  if (stripos($challenge, 'bearer') !== 0) return $keep($empty, 'auth');
+
+  $params = [];
+  if (preg_match_all('/(\w+)="([^"]*)"/', $challenge, $pm, PREG_SET_ORDER)) {
+    foreach ($pm as $p) $params[$p[1]] = $p[2];
+  }
+
+  // The realm is remote-controlled input about to become a URL. Refused
+  // outright unless it is itself https:// — a plain-http realm would leak
+  // the challenge, and no real registry uses one. This is a hostile-redirect
+  // guard, not a transport preference, so a trusted host's plain-http opt-in
+  // deliberately does not relax it.
+  $realm = (string)($params['realm'] ?? '');
+  if (!preg_match('#^https://#i', $realm)) return $keep($empty, 'failed');
+
+  return $keep([
+    'realm'   => $realm,
+    'service' => (string)($params['service'] ?? ''),
+    'open'    => false,
+  ], '');
+}
+
+/**
+ * Complete the OCI/Docker token challenge for one host+repo and return a
+ * bearer token, or '' when none is available or needed. Cached per
+ * host+repo for the life of the process, because a token costs as much as
+ * the manifest question itself and would otherwise be paid once per image,
+ * every pass, on a sixty-image box. The challenge it builds on is cached
+ * separately, per host — see staxx_registry_challenge().
+ *
+ * $why distinguishes the reasons a caller must treat differently:
+ *   ''      success — either a token was obtained, or the registry needs
+ *           none at all (an unauthenticated manifest request is expected
+ *           to work).
+ *   'auth'  the registry demands credentials StaXX does not have. Not a
+ *           failure to retry — the caller should fall through to the
+ *           docker CLI, which may hold credentials of its own.
+ *   'failed' anything else: no network, a malformed challenge, a token
+ *           endpoint that refused for an unrelated reason.
+ *
+ * The realm named in the challenge is remote-controlled input that becomes
+ * a URL. staxx_hub_json()'s own --proto guard is kept as a second line of
+ * defence but is deliberately not relied on alone: a realm that is not
+ * itself an https:// URL is refused outright, here, before it is ever
+ * built into a request.
+ */
+function staxx_registry_token(string $host, string $repo, string &$why = null): string {
+  static $cache = [];
+  $key = $host."\0".$repo;
+  if (isset($cache[$key])) { $why = $cache[$key]['why']; return $cache[$key]['token']; }
+
+  $why = '';
+  $store = function (string $token, string $why) use (&$cache, $key) {
+    $cache[$key] = ['token' => $token, 'why' => $why];
+    return $token;
+  };
+
+  $chWhy = '';
+  $challenge = staxx_registry_challenge($host, $chWhy);
+  if ($chWhy !== '') { $why = $chWhy; return $store('', $chWhy); }
+  // An open registry needs no bearer at all — an empty token with an empty
+  // reason means "ask the manifest directly", which is not a failure.
+  if (!empty($challenge['open'])) return $store('', '');
+
+  $realm   = (string)$challenge['realm'];
+  $service = (string)$challenge['service'];
+  // The scope is ALWAYS built from the repository actually being asked about,
+  // and the challenge's own scope is deliberately ignored. The challenge is a
+  // host-level answer, so any repository named in it is at best irrelevant
+  // and at worst a decoy: ghcr.io answers /v2/ with the literal placeholder
+  // scope "repository:user/image:pull", and trusting that asked for a token
+  // scoped to a repository called "user/image" — which the registry then
+  // rejected on the manifest request, reported as "needs credentials", for
+  // every ghcr and lscr image on the box. That is most of a typical Unraid
+  // server. This is also why the challenge may safely cache per host while
+  // the token caches per host+repo.
+  $scope   = 'repository:'.$repo.':pull';
+
+  $query = [];
+  if ($service !== '') $query['service'] = $service;
+  $query['scope'] = $scope;
+  $tokenUrl = $realm.(strpos($realm, '?') !== false ? '&' : '?').http_build_query($query);
+
+  // Only docker.io has a credential store here (HUB_USER/HUB_TOKEN, the
+  // same sign-in the settings page offers). No other host has one, so it is
+  // always asked unauthenticated — the challenge itself decides whether
+  // that is enough.
+  //
+  // -u is additionally gated on the resolved scheme being https, not merely
+  // on the host being docker.io. Nothing reaches this branch today — Hub is
+  // never http — but the day a per-host credential store exists, this stops
+  // a password going out over a plain-http wire.
+  $authFlag = '';
+  if ($host === 'docker.io' && staxx_registry_scheme($host) === 'https') {
+    $cfg  = staxx_cfg();
+    $user = trim((string)($cfg['HUB_USER'] ?? ''));
+    $pass = trim((string)($cfg['HUB_TOKEN'] ?? ''));
+    if ($user !== '' && $pass !== '') $authFlag = ' -u '.escapeshellarg($user.':'.$pass);
+  }
+
+  $tokOut = staxx_sh(
+    'curl -sS -L --proto '.escapeshellarg('=https,http').' --max-time 6'.$authFlag
+      .staxx_registry_curl_opts($host).' -w '
+      .escapeshellarg("\n%{http_code}").' '.escapeshellarg($tokenUrl),
+    10
+  );
+  $lines  = explode("\n", $tokOut);
+  $status = (int)trim((string)array_pop($lines));
+  $data   = json_decode(implode("\n", $lines), true);
+  $token  = is_array($data) ? (string)($data['token'] ?? $data['access_token'] ?? '') : '';
+
+  if ($token === '') {
+    $why = ($status === 401 || $status === 403) ? 'auth' : 'failed';
+    return $store('', $why);
+  }
+  return $store($token, '');
+}
+
+/**
+ * One header-only manifest request — the "has it changed?" question
+ * PLAN_90 Stage 2 spends instead of a full digest fetch every pass.
+ *
+ * @param string $etag sent back verbatim as If-None-Match, quotes and all.
+ *        Never synthesise this from a digest and never add or strip quotes
+ *        — registries are inconsistent about quoting and weak validators,
+ *        and on Docker Hub the entity tag happens to equal the index digest
+ *        only by coincidence; relying on that breaks elsewhere.
+ * @param string &$why '' on success, else 'limited', 'notfound', 'auth' or
+ *        'failed' — never a digest and never a guess.
+ * @return array{status:int, digest:string, etag:string, labels:array,
+ *               limit?:array{remaining?:int, limit?:int}}
+ *         status is the HTTP status (200, 304) or 0 when the request itself
+ *         never got an answer. A 304 carries no body and therefore no
+ *         labels — that is correct, not a gap, and callers must not read
+ *         the empty labels array as "the publisher removed them".
+ */
+function staxx_registry_digest(string $host, string $repo, string $tag, string $etag = '',
+                               string &$why = null): array {
+  $refuse = ['status' => 0, 'digest' => '', 'etag' => '', 'labels' => []];
+  $why = '';
+
+  $tokWhy = '';
+  $token  = staxx_registry_token($host, $repo, $tokWhy);
+  if ($tokWhy !== '') { $why = $tokWhy; return $refuse; }
+
+  $headers = ['Accept: '.staxx_registry_accept()];
+  if ($token !== '') $headers[] = 'Authorization: Bearer '.$token;
+  if ($etag !== '')  $headers[] = 'If-None-Match: '.$etag;
+
+  $apiHost = staxx_registry_api_host($host);
+  // The scheme is already known here — staxx_registry_token() above always
+  // runs the challenge probe first, which is the only place that decides it.
+  $url = staxx_registry_scheme($host).'://'.$apiHost.'/v2/'.$repo.'/manifests/'.rawurlencode($tag);
+  $curlOpts = staxx_registry_curl_opts($host);
+
+  $cmd = 'curl -sS -L --proto '.escapeshellarg('=https,http').' --max-time 8'.$curlOpts.' -D /dev/stdout -o /dev/null -X GET';
+  foreach ($headers as $h) $cmd .= ' -H '.escapeshellarg($h);
+  $cmd .= ' '.escapeshellarg($url);
+
+  $out = staxx_sh($cmd, 12);
+  if ($out === '') { $why = 'failed'; return $refuse; }
+
+  // -L follows redirects, so the header dump can hold more than one
+  // response; only the final block's status and headers describe what the
+  // manifest request actually answered.
+  $blocks = preg_split("/\r?\n\r?\n/", trim($out));
+  $last   = $blocks ? (string)end($blocks) : '';
+
+  $status = 0;
+  $head   = [];
+  foreach (explode("\n", $last) as $line) {
+    $line = trim($line, "\r\n ");
+    if ($line === '') continue;
+    if (preg_match('#^HTTP/\S+\s+(\d{3})#i', $line, $sm)) { $status = (int)$sm[1]; continue; }
+    $p = strpos($line, ':');
+    if ($p === false) continue;
+    $head[strtolower(trim(substr($line, 0, $p)))] = trim(substr($line, $p + 1));
+  }
+
+  if ($status === 304) return ['status' => 304, 'digest' => '', 'etag' => '', 'labels' => []];
+
+  if ($status === 429 || stripos($out, 'toomanyrequests') !== false || stripos($out, 'too many requests') !== false) {
+    $why = 'limited';
+    return $refuse;
+  }
+  if ($status === 404) { $why = 'notfound'; return $refuse; }
+  if ($status === 401 || $status === 403) { $why = 'auth'; return $refuse; }
+
+  if ($status !== 200) { $why = 'failed'; return $refuse; }
+
+  $digest = strtolower((string)($head['docker-content-digest'] ?? ''));
+  if (!preg_match('/^sha256:[0-9a-f]{64}$/', $digest)) {
+    // public.ecr.aws (Amazon's public gallery) answers 200 with neither a
+    // docker-content-digest nor an ETag -- confirmed on the box 2026-08-27.
+    // A manifest's digest is by definition the sha256 of its exact served
+    // bytes, so re-asking with the same Accept/bearer and piping the body
+    // straight into sha256sum reproduces it without the body ever becoming
+    // a PHP string (which could trim or re-encode it and change the hash).
+    // Measured against this same reference, the result matched
+    // `docker buildx imagetools inspect` byte-for-byte.
+    $shaCmd = 'curl -fsS -L --proto '.escapeshellarg('=https,http').' --max-time 8'.$curlOpts.' -X GET';
+    foreach ($headers as $h) $shaCmd .= ' -H '.escapeshellarg($h);
+    $shaCmd .= ' '.escapeshellarg($url).' | sha256sum';
+
+    $shaOut = staxx_sh($shaCmd, 12);
+    $hash   = strtolower(trim((string)strtok(trim($shaOut), " \t")));
+
+    // curl -f gives no output on an HTTP error, and sha256sum of nothing is
+    // still a valid-looking hash (the empty string's digest) -- both must
+    // read as a refusal, never as a real answer.
+    if ($hash === '' || $hash === 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+        || !preg_match('/^[0-9a-f]{64}$/', $hash)) {
+      $why = 'failed';
+      return $refuse;
+    }
+
+    return [
+      'status' => 200,
+      'digest' => 'sha256:'.$hash,
+      'etag'   => '', // no entity tag was ever sent for this registry
+      'labels' => [],
+      // Present only on this path — its absence means the header answered
+      // directly, which is how tests/server/registry_quirks.php tells the
+      // two apart in its summary table without a second request.
+      // Not called 'source': that key already means the project's own web
+      // address everywhere else in the update path, and the day this array is
+      // merged rather than read key by key, 'computed' would be shown to a
+      // user as a project link.
+      'digestFrom' => 'computed',
+    ];
+  }
+
+  $result = [
+    'status' => 200,
+    'digest' => $digest,
+    'etag'   => (string)($head['etag'] ?? ''),
+    'labels' => [],
+  ];
+
+  // Spent nowhere yet — PLAN_90 Stage 5 is what reads this. Kept to a
+  // couple of lines because nothing else touches it.
+  $limit = [];
+  if (isset($head['ratelimit-remaining'])) $limit['remaining'] = (int)explode(';', $head['ratelimit-remaining'])[0];
+  if (isset($head['ratelimit-limit']))     $limit['limit']     = (int)explode(';', $head['ratelimit-limit'])[0];
+  if ($limit !== []) $result['limit'] = $limit;
+
+  return $result;
+}
+
+/**
+ * Version/created/source labels from the config blob of the image actually
+ * named — the label counterpart to staxx_registry_digest(), asked only when
+ * that digest has genuinely moved (see staxx_registry_remote_http()). Unlike
+ * staxx_registry_config(), this works against ANY host staxx_registry_ref()
+ * can parse: it is the fix for PLAN_90's gap where a ghcr-hosted image's
+ * digest came from ghcr but its labels came from Docker Hub, and every other
+ * host got no labels at all. staxx_registry_config()'s Hub-only path and its
+ * lscr/ghcr->Hub rewrite are correct for the form editor and stay untouched;
+ * this function exists so update-checking can ask the registry named in the
+ * compose file instead.
+ *
+ * Same three-step walk staxx_registry_config() performs (index -> manifest ->
+ * config blob), but against staxx_registry_api_host($host) and reusing
+ * staxx_registry_token(), which is already cached per host+repo from the
+ * digest question this follows — so on the only path that matters (the
+ * digest just moved) this costs no extra handshake.
+ *
+ * Every failure — no token, no network, a non-JSON reply, no config digest —
+ * returns [] rather than raising anything. A caller losing labels must never
+ * turn into a caller losing the digest it already has.
+ *
+ * @return array<string,string> label name => value, or [] on any failure
+ */
+function staxx_registry_labels(string $host, string $repo, string $tag): array {
+  $tokenWhy = '';
+  $token = staxx_registry_token($host, $repo, $tokenWhy);
+  if ($tokenWhy !== '') return [];
+
+  $headers = [];
+  if ($token !== '') $headers[] = 'Authorization: Bearer '.$token;
+
+  $apiHost = staxx_registry_api_host($host);
+  // The scheme is already known — staxx_registry_token() above ran the
+  // challenge probe. staxx_hub_json() has no way to carry a relaxed-
+  // certificate flag, so a trusted host with a self-made certificate (rather
+  // than none at all) fails here and returns [] — losing labels only, never
+  // the digest, which is fetched by staxx_registry_digest() instead and does
+  // carry the flag. Not worth widening staxx_hub_json()'s signature for.
+  $scheme = staxx_registry_scheme($host);
+
+  $index = staxx_hub_json(
+    $scheme.'://'.$apiHost.'/v2/'.$repo.'/manifests/'.rawurlencode($tag),
+    array_merge(['Accept: '.staxx_registry_accept()], $headers),
+    6, 8
+  );
+  if ($index === null) return [];
+
+  $manifest = $index;
+  if (isset($index['manifests']) && is_array($index['manifests'])) {
+    $digest = '';
+    foreach ($index['manifests'] as $entry) {
+      $platform = is_array($entry['platform'] ?? null) ? $entry['platform'] : [];
+      if (($platform['architecture'] ?? '') === 'amd64' && ($platform['os'] ?? '') === 'linux') {
+        $digest = (string)($entry['digest'] ?? '');
+        break;
+      }
+    }
+    // No amd64/linux entry (attestation-only index, or an unusual registry) —
+    // fall back to the first one rather than giving up. Every other route in
+    // staxx_image_remote() reports against amd64, which is why amd64 is
+    // preferred above: pairing one architecture's labels with another's
+    // digest would be its own quiet bug.
+    if ($digest === '' && $index['manifests'] !== []) {
+      $digest = (string)($index['manifests'][0]['digest'] ?? '');
+    }
+    if ($digest === '') return [];
+
+    $manifest = staxx_hub_json(
+      $scheme.'://'.$apiHost.'/v2/'.$repo.'/manifests/'.$digest,
+      // Both single-image shapes, not just the OCI one. staxx_registry_config()
+      // asks for OCI alone and gets away with it because it only ever talks to
+      // Docker Hub, which serves it. This function exists to talk to registries
+      // nobody here has met, and one holding only Docker-format manifests would
+      // refuse an OCI-only request outright.
+      array_merge(['Accept: application/vnd.oci.image.manifest.v1+json,'
+                  .'application/vnd.docker.distribution.manifest.v2+json'], $headers),
+      6, 8
+    );
+    if ($manifest === null) return [];
+  }
+
+  $configDigest = (string)($manifest['config']['digest'] ?? '');
+  if ($configDigest === '') return [];
+
+  // A config blob is small (a few KB of JSON) — a caller that knows that
+  // says so, the same reasoning staxx_hub_repo() applies to a README.
+  $blob = staxx_hub_json(
+    $scheme.'://'.$apiHost.'/v2/'.$repo.'/blobs/'.$configDigest,
+    $headers, 6, 8, 256 * 1024
+  );
+  if ($blob === null) return [];
+
+  $config = is_array($blob['config'] ?? null) ? $blob['config'] : [];
+  $labels = is_array($config['Labels'] ?? null) ? $config['Labels'] : [];
+  if ($labels === [] && is_array($blob['Labels'] ?? null)) $labels = $blob['Labels'];
+  return $labels;
+}
+
+/**
  * The same three fields read straight off an image already pulled onto this
  * server — no network at all, so a locally-sourced image is never made to
  * wait on Docker Hub for something it can already answer itself.

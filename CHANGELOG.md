@@ -1,6 +1,43 @@
 # Changelog
 
-What changed, newest first. Versions are dates, matching the plugin manifest.
+What changed, newest first. Versions match the plugin manifest. From 1.1.0 they are
+numbered; everything before it was dated.
+
+---
+
+## 1.1.0 — released 2026-08-27
+
+The release that makes update checking trustworthy. StaXX now asks image registries directly
+instead of going through Docker, which means it asks the right one, asks far less often, and
+finally works for registries other than Docker Hub — including one you run yourself.
+
+- Update checks now go to the registry the compose file actually names. A container hosted on
+  ghcr or lscr was being asked about at Docker Hub, which wastes the one allowance that is
+  genuinely tight and would have given a wrong answer the day the two drifted apart. Version
+  numbers follow the same rule now, not just the fingerprint.
+- Checks are cheaper and better paced. StaXX asks "has this changed since last time?" rather
+  than "what is it?", so an unchanged container no longer re-reads everything about itself — three
+  questions per container per check became one. A container pinned to an exact version is never
+  asked at all, one on a numbered version waits a week, and only the moving tags keep the
+  six-hourly rate.
+- A container whose check keeps failing now says so, after five failures in a row, with how many
+  and over what period — and eases off to once a day, so a repository that has gone away stops
+  costing four questions daily. Every fortnight the shortcut is thrown away and the full question
+  asked again, so a registry with a broken answer cannot hide an update behind it forever.
+- Update checking now works against a registry on your own network, even without a proper
+  certificate. Name the host in Settings and only that host is reached over plain http, or trusted
+  on a certificate it made itself — no wildcards, nothing guessed, and a password is never sent to
+  a host reached in the clear.
+- Registries that behave unusually are handled rather than failing quietly. One serves nothing to
+  identify an image by, so its fingerprint is worked out from exactly what it sent; one needs no
+  sign-in at all; one asks you to sign in on a completely different address. All measured against
+  twelve real registries, and every fingerprint proved identical to what Docker itself reports.
+- The update badge is fixed twice over. It could only be pressed on the first draw of a row, so it
+  went dead the moment you used it — a repaint replaced the button with something unpressable. And
+  it came back after a successful update, because half of the comparison was still last night's
+  answer about a tag that had since moved. Where the two halves disagree, the registry is now asked
+  again, a few containers at a time; one that cannot be reached leaves the previous answer alone
+  rather than inventing a new one.
 
 ---
 

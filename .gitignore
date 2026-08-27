@@ -38,3 +38,15 @@ desktop.ini
 # Working plans — kept on disk while a piece is being built, not carried in the repository
 /PLAN.md
 /PLAN_*.md
+
+# Local Claude Code setup. .claude/ holds the feedlog skill, and that skill
+# carries the access token for Adrian's own feedback board — so this is
+# credential hygiene, not just tidiness. The board is also unreachable for
+# anyone cloning this plugin, so there is nothing here worth carrying.
+#
+# .mcp.json no longer exists: the board was reached through an MCP server
+# once, and is now a skill talking straight to it. The rule stays as a guard,
+# so a config file holding a token cannot be committed by accident if that
+# approach ever returns.
+/.claude/
+/.mcp.json

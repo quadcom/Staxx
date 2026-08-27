@@ -35,6 +35,26 @@ define('STAXX_CHANGES_LINE_MAX', 200);
 // day and not sixty.
 define('STAXX_UPDATE_ASK_TTL', 21600);
 
+// How many images one pass may ask about when there is NOTHING on record —
+// see the stampede guard in staxx_update_check(). Deliberately well under a
+// busy box's image count, so a memory that has gone missing rebuilds over
+// several passes instead of in one burst against an allowance shared with
+// the user's own pulls.
+define('STAXX_UPDATE_REBUILD_CAP', 20);
+
+// How long StaXX will keep asking the cheap "has it changed since <tag>?"
+// question before insisting on the full one instead.
+//
+// The cheap question is only as trustworthy as the tag the registry hands
+// back. Every registry tested makes that tag the content's own fingerprint,
+// so it is sound — but a registry that reused a stale tag would answer
+// "nothing changed" for ever and StaXX would believe it. That is the one
+// failure here that HIDES an update instead of complaining about it, so the
+// stored tag is deliberately thrown away this often and the whole question
+// asked from scratch. A fortnight costs one extra full ask per image per two
+// weeks, which is nothing against the saving.
+define('STAXX_UPDATE_FRESH_EVERY', 14 * 86400);
+
 /** The defaults every state array is filled against — never a partial array. */
 function staxx_update_state_defaults(): array {
   return [
@@ -49,6 +69,10 @@ function staxx_update_state_defaults(): array {
     // offer the Docker Hub sign-in when Docker Hub is one of them.
     'limitedBy' => [],
     'images'    => [],
+    // PLAN_90 Stage 1 — per registry host, whether the direct HTTP route
+    // works there at all, and whether a 304 has ever actually been seen —
+    // see staxx_update_host_blocked()/staxx_update_host_note().
+    'hosts'     => [],
     'history'   => [],
     // When the one-off baseline of "what is every service running right now"
     // was recorded into each stack's own history — 0 until it has. See
@@ -126,9 +150,13 @@ function staxx_update_state_save(array $state): bool {
 }
 
 /**
- * Which way this box can ask a registry about an image it does not already
- * have credentials baked in for by name — probed once, because trying each
- * route per image would be sixty pointless processes on a busy server.
+ * PLAN_90 Stage 1 — which docker CLI subcommand this box can use as the
+ * FALLBACK when the direct HTTP route (staxx_registry_token()/digest()) does
+ * not answer for a given image — probed once, because trying each route per
+ * image would be sixty pointless processes on a busy server. No longer picks
+ * the primary route: staxx_image_remote() always tries HTTP first, per
+ * image, and only reaches for this when that particular image's registry
+ * needs credentials StaXX does not have (the daemon might).
  * The answer is remembered in the state file so the next request (a fresh
  * PHP process, no static survives that) does not have to probe again, and
  * short-circuits on any non-empty stored value.
@@ -658,6 +686,119 @@ function staxx_image_registry(string $image): string {
 }
 
 /**
+ * PLAN_90 Stage 1 — whether the direct HTTP route has already proved itself
+ * unusable at this host (a challenge needing credentials StaXX does not
+ * have) recently enough that trying it again is pointless — a private or
+ * self-hosted registry the box has no token for must not be re-probed on
+ * every single image, every single pass. Same re-probe window as
+ * staxx_docker_inspector()'s own memory, and for the same reason: a
+ * transient failure right after the registry comes back up must not lock
+ * this box out of the fast route forever.
+ */
+function staxx_update_host_blocked(string $host): bool {
+  $hosts = (array)(staxx_update_state()['hosts'] ?? []);
+  $entry = $hosts[$host] ?? null;
+  if (!is_array($entry) || ($entry['http'] ?? true) !== false) return false;
+  return (time() - (int)($entry['at'] ?? 0)) < STAXX_UPDATE_ASK_TTL;
+}
+
+/**
+ * Merge a fact about one registry host into the small 'hosts' state block —
+ * 'http' (false once a credential challenge has been seen there, with a
+ * fresh 'at' stamp so staxx_update_host_blocked() can re-probe after the
+ * same window inspector_at uses) and 'saw304' (true forever once this box
+ * has actually seen this host honour a conditional request — nothing reads
+ * it yet, but it is the only way a future readout can tell the user which
+ * registries are actually saving them anything).
+ */
+function staxx_update_host_note(string $host, array $patch): void {
+  $hosts = (array)(staxx_update_state()['hosts'] ?? []);
+  $hosts[$host] = array_merge((array)($hosts[$host] ?? []), $patch);
+  staxx_update_state_save(['hosts' => $hosts]);
+}
+
+/**
+ * "5 hours", "2 days" — a duration in words, plain and small on purpose:
+ * this only ever fills a gap in one sentence (staxx_updates_pill_for_image()'s
+ * repeated-failure notice), so it does not need stacks.js's timeAgoWords()
+ * richness, just the same units.
+ */
+function staxx_time_span_words(int $seconds): string {
+  if ($seconds < 60) return 'less than a minute';
+  $mins = intdiv($seconds, 60);
+  if ($mins < 60) return $mins.' '.($mins === 1 ? 'minute' : 'minutes');
+  $hours = intdiv($mins, 60);
+  if ($hours < 24) return $hours.' '.($hours === 1 ? 'hour' : 'hours');
+  $days = intdiv($hours, 24);
+  return $days.' '.($days === 1 ? 'day' : 'days');
+}
+
+/**
+ * PLAN_90 Stage 3 — how long a remembered answer for this image is trusted
+ * before it is worth asking again. Pure: no network, no state read beyond
+ * the $entry the caller already has in hand, so it is cheaply testable and
+ * safe to call once per image every pass.
+ *
+ * A digest-pinned reference never reaches here — staxx_update_check() already
+ * handles that as 'pinned' before the cadence is ever asked about.
+ */
+function staxx_update_cadence(string $image, array $entry): int {
+  $floor   = STAXX_UPDATE_ASK_TTL; // 6 hours
+  $daily   = 86400;
+  $ceiling = 14 * 86400;
+
+  // Override 1 — no baseline yet, so there is nothing to compare a slower
+  // interval against. Ask promptly.
+  if ((int)($entry['asked'] ?? 0) === 0) return $floor;
+
+  // Override 2 — an errored image retries fast so it clears itself the
+  // moment the registry answers again, UNLESS Stage 3b has already flagged
+  // it as persistently dead (five ask failures in a row — staxx_image_remote()
+  // only counts the transient-or-unknown 'failed' reason toward this, never
+  // a rate refusal, a withdrawn tag, or a permanent 'not found'/'unsupported'
+  // answer), in which case daily is plenty.
+  if ((string)($entry['error'] ?? '') !== '') {
+    return ((int)($entry['fails'] ?? 0) >= 5) ? $daily : $floor;
+  }
+
+  $tag = (string)(staxx_registry_ref($image)['tag'] ?? '');
+  $rolling = ['latest', 'main', 'master', 'develop', 'nightly', 'edge', 'stable', 'beta', 'dev'];
+  if ($tag === '' || in_array(strtolower($tag), $rolling, true)) {
+    $interval = $floor;
+  } elseif (preg_match('/^v?[0-9]+(\.[0-9]+){0,4}(-[A-Za-z0-9]+)?$/', $tag)) {
+    $interval = 7 * 86400;
+  } else {
+    $interval = $daily;
+  }
+
+  // Churn modulation — 'moves' is a ring of at most the last 5 timestamps at
+  // which the digest actually changed (see staxx_update_check()'s decisive
+  // write). The two rules are mutually exclusive by construction: an image
+  // cannot have moved twice in the last 14 days and also have nothing newer
+  // than 90 days.
+  $now = time();
+  $newestMove = 0;
+  $recentMoves = 0;
+  foreach ((array)($entry['moves'] ?? []) as $m) {
+    $m = (int)$m;
+    if ($m > $newestMove) $newestMove = $m;
+    if ($now - $m < 14 * 86400) $recentMoves++;
+  }
+  if ($recentMoves >= 2) {
+    $interval = $floor;
+  } elseif ($newestMove > 0 && ($now - $newestMove) > 90 * 86400) {
+    // Only stretched on evidence. An empty ring is not proof of a quiet
+    // image, it is proof of a short memory — every image has one the pass
+    // after it is first recorded, and stretching on that would quietly halve
+    // how often a rolling tag is checked, which is not what the tag shape
+    // above promises.
+    $interval *= 2;
+  }
+
+  return max($floor, min($interval, $ceiling));
+}
+
+/**
  * What the registry currently has for one image reference — digest, version,
  * source and creation time, every key present only when actually known.
  * Returns [] on any failure at all: a failure must never be mistaken for
@@ -667,11 +808,53 @@ function staxx_image_registry(string $image): string {
  * Docker Hub's hourly ceiling can stop asking instead of burning the rest of
  * it. $tags is filled with the repository's tag list only when $why comes
  * back 'tagmissing', so the caller can store it without asking again.
+ *
+ * PLAN_90 Stage 1/2 — the direct HTTP route is tried first, per image, using
+ * $prev (this image's own stored state) to send a conditional request when
+ * one is safe to send. Only when that route cannot be used at all — a
+ * credential challenge this box cannot answer, or a host already remembered
+ * as one where that keeps happening — does control fall through to the
+ * docker CLI, exactly as it behaved before this route existed. A private or
+ * self-hosted registry is a first-class case here, not an afterthought: the
+ * daemon may hold credentials StaXX itself does not.
+ *
+ * $prev['etag']/$prev['accept'] are only trusted when the Accept list they
+ * were recorded against still matches staxx_registry_accept_id() — a
+ * changed list would otherwise compare a stored tag against the wrong
+ * manifest shape and silently miss a real update.
  */
-function staxx_image_remote(string $image, string &$why = null, ?array &$tags = null): array {
-  $why   = '';
-  $ref   = escapeshellarg($image);
+function staxx_image_remote(string $image, string &$why = null, ?array &$tags = null, array $prev = []): array {
+  $why = '';
+  $ref = staxx_registry_ref($image);
+  $host = (string)($ref['host'] ?? '');
+  $repo = (string)($ref['repo'] ?? '');
+  $tag  = (string)($ref['tag']  ?? '');
+  if ($repo === '') { $why = 'unsupported'; return []; }
+
+  $triedHttp = false;
+  if (!staxx_update_host_blocked($host)) {
+    $triedHttp = true;
+    $result = staxx_registry_remote_http($host, $repo, $tag, $image, $why, $tags, $prev);
+    // 'auth' is the one answer that means "try the CLI instead", because the
+    // daemon may hold credentials this box's own token handshake does not.
+    // Every other answer here — including a plain network failure — is this
+    // route's final word: retrying the same question through a different
+    // door would not change what the registry just said.
+    if ($why !== 'auth') return $result;
+    staxx_update_host_note($host, ['http' => false, 'at' => time()]);
+  }
+
+  // Fallback — the docker CLI, using whichever subcommand this box actually
+  // has. 'hub' means neither exists, i.e. no CLI route at all: HTTP was this
+  // image's only chance, and it has already been spent above.
   $route = staxx_docker_inspector();
+  if ($route !== 'imagetools' && $route !== 'manifest') {
+    $why = 'unsupported';
+    return [];
+  }
+
+  $why = '';
+  $refArg = escapeshellarg($image);
 
   if ($route === 'imagetools') {
     // Docker prints a 429 refusal to stderr, and staxx_sh() throws stderr away
@@ -680,7 +863,7 @@ function staxx_image_remote(string $image, string &$why = null, ?array &$tags = 
     // Requests" instead of an empty string. This inner redirect lands on the
     // inner shell's own stdout, so the outer discard never touches it.
     $out = staxx_sh(
-      staxx_docker_bin().' buildx imagetools inspect '.$ref
+      staxx_docker_bin().' buildx imagetools inspect '.$refArg
         .' --format '.escapeshellarg('{"manifest":{{json .Manifest}},"image":{{json .Image}}}')
         .' 2>&1',
       20
@@ -714,78 +897,122 @@ function staxx_image_remote(string $image, string &$why = null, ?array &$tags = 
     return ['digest' => $digest] + staxx_update_labels_meta($labels);
   }
 
-  if ($route === 'manifest') {
-    // 2>&1 here for the same reason as the imagetools route above.
-    $out  = staxx_sh(staxx_docker_bin().' manifest inspect --verbose '.$ref.' 2>&1', 20);
-    $data = json_decode($out, true);
-    if (!is_array($data)) { $why = staxx_remote_failure_reason($out, $image, $tags); return []; }
+  // Only 'manifest' left — imagetools was handled and returned above, and
+  // the guard just before this block already refused anything else.
+  // 2>&1 here for the same reason as the imagetools route above.
+  $out  = staxx_sh(staxx_docker_bin().' manifest inspect --verbose '.$refArg.' 2>&1', 20);
+  $data = json_decode($out, true);
+  if (!is_array($data)) { $why = staxx_remote_failure_reason($out, $image, $tags); return []; }
 
-    // A multi-architecture index decodes to a JSON list, not an object — that
-    // reply has no index digest in it at all, only one Descriptor per
-    // architecture, and reporting one of those as THE digest would compare a
-    // single-arch fingerprint against a multi-arch RepoDigests entry and
-    // invent a phantom update. So a list is refused outright rather than
-    // guessed at — see PLAN_45's digest-comparison risk. Permanent for this
-    // image on this route, so it is 'unsupported' rather than a transient fail.
-    if (staxx_array_is_list($data)) { $why = 'unsupported'; return []; }
+  // A multi-architecture index decodes to a JSON list, not an object — that
+  // reply has no index digest in it at all, only one Descriptor per
+  // architecture, and reporting one of those as THE digest would compare a
+  // single-arch fingerprint against a multi-arch RepoDigests entry and
+  // invent a phantom update. So a list is refused outright rather than
+  // guessed at — see PLAN_45's digest-comparison risk. Permanent for this
+  // image on this route, so it is 'unsupported' rather than a transient fail.
+  if (staxx_array_is_list($data)) { $why = 'unsupported'; return []; }
 
-    $digest = (string)($data['Descriptor']['digest'] ?? '');
-    if ($digest === '') { $why = staxx_remote_failure_reason($out, $image, $tags); return []; }
+  $digest = (string)($data['Descriptor']['digest'] ?? '');
+  if ($digest === '') { $why = staxx_remote_failure_reason($out, $image, $tags); return []; }
 
-    // No labels available on this route.
-    return ['digest' => $digest];
+  // No labels available on this route.
+  return ['digest' => $digest];
+}
+
+/**
+ * PLAN_90 Stage 1/2 — the direct HTTP half of staxx_image_remote(): one
+ * conditional manifest request, and only when that actually returns a fresh
+ * body does it go on to ask for labels. Split out of staxx_image_remote()
+ * itself only so that function's CLI-fallback shape does not have to nest
+ * around it — this is not meant to be called from anywhere else.
+ *
+ * Step zero of PLAN_90 measured that Docker Hub counts a 304 exactly like a
+ * 200, so this saves no requests against Hub's own ceiling — what it saves
+ * is the label chain: a `304` genuinely cannot carry a body, so there is
+ * nothing to read labels from, and the three requests that used to follow
+ * every digest check (token, index manifest, config blob) are skipped
+ * entirely. That is the whole saving, and it is real: two thirds of the
+ * counted requests per unchanged image, gone.
+ */
+function staxx_registry_remote_http(
+  string $host, string $repo, string $tag, string $image,
+  string &$why, ?array &$tags, array $prev
+): array {
+  $why = '';
+
+  $tokenWhy = '';
+  $token = staxx_registry_token($host, $repo, $tokenWhy);
+  if ($token === '') { $why = $tokenWhy !== '' ? $tokenWhy : 'failed'; return []; }
+
+  // Only trust a stored entity tag while it was recorded against the same
+  // Accept list this ask is about to send — a changed list would otherwise
+  // compare a stored tag against a manifest shape it was never validated
+  // against, and a mismatched 304 would carry over the wrong digest.
+  $acceptId = staxx_registry_accept_id();
+  $etag = ($prev['accept'] ?? '') === $acceptId ? (string)($prev['etag'] ?? '') : '';
+  // ...and only while the last full, unconditional ask is recent enough. See
+  // STAXX_UPDATE_FRESH_EVERY: this is what stops a registry with a broken
+  // entity tag hiding a real update behind an endless run of 304s.
+  if ($etag !== '' && (time() - (int)($prev['fresh'] ?? 0)) > STAXX_UPDATE_FRESH_EVERY) {
+    $etag = '';
   }
 
-  // hub: only for images staxx_hub_repo_path() accepts — a reference it
-  // rejects can never be answered by this route, on this box or any other.
-  $repo = staxx_hub_repo_path($image);
-  if ($repo === '') { $why = 'unsupported'; return []; }
+  $digestWhy = '';
+  $result = staxx_registry_digest($host, $repo, $tag, $etag, $digestWhy);
+  $status = (int)($result['status'] ?? 0);
 
-  $tag = 'latest';
-  $trimmed = trim($image);
-  $slash = strrpos($trimmed, '/');
-  $colon = strrpos($trimmed, ':');
-  if ($colon !== false && ($slash === false || $colon > $slash)) $tag = substr($trimmed, $colon + 1);
+  if ($status === 304) {
+    staxx_update_host_note($host, ['saw304' => true]);
+    return ['unchanged' => true];
+  }
 
-  $token = staxx_hub_json(
-    'https://auth.docker.io/token?service=registry.docker.io&scope=repository:'.$repo.':pull',
-    [], 6, 8
-  );
-  if ($token === null || (string)($token['token'] ?? '') === '') { $why = 'failed'; return []; }
-  $bearer = 'Authorization: Bearer '.$token['token'];
-
-  // The same Accept list staxx_registry_config() sends for the manifest
-  // request, so the digest header matches whichever shape the registry
-  // actually served.
-  $accept = 'Accept: application/vnd.oci.image.index.v1+json,'
-          . 'application/vnd.docker.distribution.manifest.list.v2+json,'
-          . 'application/vnd.docker.distribution.manifest.v2+json';
-
-  $url = 'https://registry-1.docker.io/v2/'.$repo.'/manifests/'.rawurlencode($tag);
-  $cmd = 'curl -sS -L --max-time 8 -D /dev/stdout -o /dev/null -X GET'
-       . ' -H '.escapeshellarg($bearer)
-       . ' -H '.escapeshellarg($accept)
-       . ' '.escapeshellarg($url);
-  $headers = staxx_sh($cmd, 12);
-
-  $digest = '';
-  foreach (explode("\n", $headers) as $line) {
-    if (preg_match('/^docker-content-digest:\s*(sha256:[0-9a-f]{64})/i', trim($line), $m)) {
-      $digest = $m[1];
-      break;
+  if ($status !== 200) {
+    $why = $digestWhy !== '' ? $digestWhy : 'failed';
+    // A plain 404 is ambiguous between "gone for good" and "the tag itself
+    // moved" — the same distinction staxx_remote_failure_reason() already
+    // draws for the CLI routes, reused here rather than duplicated so a
+    // withdrawn tag tells the same better story on every route.
+    if ($why === 'notfound' && $image !== '') {
+      $registryTags = staxx_registry_tags($image);
+      if ($registryTags !== [] && !in_array(staxx_image_tag_part($image), $registryTags, true)) {
+        $tags = $registryTags;
+        $why = 'tagmissing';
+      }
     }
+    return [];
   }
-  // The status line is the same headers reply the digest search above just
-  // walked — a 429 there never carries a docker-content-digest, so checking
-  // it only on failure is enough.
-  if ($digest === '') { $why = staxx_remote_failure_reason($headers, $image, $tags); return []; }
 
-  // Labels come from the config blob path already built for the form editor —
-  // no point re-walking index/manifest/blob a second time just to get them.
-  $labels = staxx_registry_config($image)['labels'] ?? [];
-  $labels = is_array($labels) ? $labels : [];
+  $digest = (string)($result['digest'] ?? '');
+  if ($digest === '') { $why = 'failed'; return []; }
 
-  return ['digest' => $digest] + staxx_update_labels_meta($labels);
+  // The registry answered fresh (either it does not honour If-None-Match, or
+  // there was nothing stored yet to send) but the digest is exactly what was
+  // already on record — nothing has actually moved, so there is nothing for
+  // a label re-fetch to have changed either. Treated as the plain digest+etag
+  // answer below, just without spending anything on labels no one asked for.
+  $prevRemote = (string)($prev['remote'] ?? '');
+  // 'fresh' true means this answer came from a full ask with no stored
+  // entity tag sent — the caller stamps the clock that governs when the next
+  // one is due.
+  $out = ['digest' => $digest, 'etag' => (string)($result['etag'] ?? ''), 'accept' => $acceptId,
+          'fresh' => $etag === ''];
+  if ($prevRemote !== '' && $prevRemote === $digest) return $out;
+
+  // The digest has genuinely moved, so the version labels are worth the
+  // extra requests — and they have to be asked for separately, because
+  // staxx_registry_digest() is a header-only question and deliberately never
+  // walks index→manifest→config-blob itself. This is the chain Stage 2 exists
+  // to SKIP on every unchanged image; reaching it means something changed.
+  //
+  // staxx_registry_labels() asks the SAME registry the digest above came
+  // from — host, repo and tag, no rewriting. staxx_registry_config() is
+  // Docker Hub's own path and would answer a ghcr/lscr image's labels from
+  // Hub, and every other host's not at all; that was fine for the form
+  // editor, which only ever wants Hub's opinion, but wrong here, where a
+  // compose file naming ghcr must never be answered by Hub about anything.
+  $labels = staxx_registry_labels($host, $repo, $tag);
+  return $out + staxx_update_labels_meta($labels);
 }
 
 /**
@@ -933,20 +1160,19 @@ function staxx_update_unlock(): void {
 }
 
 /**
- * Re-read what is actually on disk for one stack's images and fold the
- * answer into the state file. No network: the registry's half is left
- * exactly as the last check pass found it, and only the local half is
- * corrected.
- *
- * Called after anything that can change which image a container runs on —
- * a pull, an update, a rebuild, a rollback. Without it the pill goes on
- * comparing the digest that was on disk BEFORE the pull against the
- * registry's, so an update that plainly succeeded still reads as pending
- * until the six-hourly check pass comes round again.
+ * Work out the truth again for one stack's images after a job has just
+ * changed it — a pull, an update, a rebuild, a rollback. First re-reads what
+ * is actually on disk, same as before. But a corrected local digest can
+ * still disagree with a REMEMBERED registry answer that has since gone
+ * stale — the tag moved, or moved back, since the last six-hourly check —
+ * and leaving that half untouched is how "update ready" survives installing
+ * the update. So where the two still disagree after the local half is
+ * fixed, the registry is asked again (capped, see below) and folded in the
+ * same way the check pass does.
  *
  * @return bool whether anything was actually corrected
  */
-function staxx_update_refresh_local(string $stack, string $service = ''): bool {
+function staxx_update_refresh_after_run(string $stack, string $service = ''): bool {
   if (!staxx_valid_path($stack)) return false;
 
   $file = staxx_find_compose_file(staxx_stack_dir($stack));
@@ -997,6 +1223,76 @@ function staxx_update_refresh_local(string $stack, string $service = ''): bool {
     $dirty = true;
   }
 
+  // Second pass: still disagreeing after the local digest above was fixed
+  // means the REGISTRY half may be the stale one. Left alone, an update that
+  // plainly succeeded keeps reading as pending until the next six-hourly
+  // check pass. Capped at 4 re-asks per call — each is a network round trip
+  // with its own 20-second ceiling, and the page is waiting on this request,
+  // so a stack with a dozen services must not turn one click into a
+  // two-minute page load.
+  $toReask = [];
+  foreach ($meta['services'] as $svc => $svcMeta) {
+    if ($service !== '' && $svc !== $service) continue;
+
+    $image = trim((string)($svcMeta['image'] ?? ''));
+    if ($image === '' || !isset($images[$image]) || isset($toReask[$image])) continue;
+
+    $entry  = $images[$image];
+    $local  = (string)($entry['local'] ?? '');
+    $remote = (string)($entry['remote'] ?? '');
+    if ($local === '' || $remote === '' || $local === $remote) continue;
+
+    $toReask[$image] = true;
+  }
+
+  $reasked = 0;
+  foreach (array_keys($toReask) as $image) {
+    if ($reasked >= 4) break;
+    $reasked++;
+
+    $why   = '';
+    $freshTags = null;
+    $entry = $images[$image];
+    $fresh = staxx_image_remote($image, $why, $freshTags, $entry);
+    // A registry that could not be reached leaves the previous answer
+    // standing — nothing invented, nothing cleared, no new error recorded
+    // here; staxx_update_check() already owns error reporting for that.
+    if ($fresh === []) continue;
+
+    // A 304 confirms the remote digest already on record is still current —
+    // the disagreement this loop exists to chase is real, not stale data, so
+    // there is nothing to fix here. Still worth stamping 'asked': the check
+    // pass's own cadence counts from this answer, not from whenever it last
+    // happened to ask.
+    if (!empty($fresh['unchanged'])) {
+      $entry['asked'] = time();
+      $images[$image] = $entry;
+      $dirty = true;
+      continue;
+    }
+
+    $entry['remote'] = $fresh['digest'] ?? '';
+    if (isset($fresh['etag']))    $entry['etag']    = $fresh['etag'];
+    if (isset($fresh['accept']))  $entry['accept']  = $fresh['accept'];
+    if (!empty($fresh['fresh']))  $entry['fresh']   = time();
+    if (isset($fresh['version'])) $entry['version'] = $fresh['version'];
+    if (isset($fresh['source']))  $entry['source']  = $fresh['source'];
+    if (isset($fresh['created'])) $entry['created'] = $fresh['created'];
+    // Stamped so the check pass's own six-hour TTL counts from this answer,
+    // not from whenever it last happened to ask.
+    $entry['asked'] = time();
+
+    // Up to date now — cleared by the same four keys the first pass and
+    // staxx_update_check() clear, so the countdown cannot outlive the
+    // thing it was counting towards.
+    if (($entry['local'] ?? '') === $entry['remote']) {
+      unset($entry['seen'], $entry['was'], $entry['wasCreated'], $entry['seenDigest']);
+    }
+
+    $images[$image] = $entry;
+    $dirty = true;
+  }
+
   if ($dirty) staxx_update_state_save(['images' => $images]);
   staxx_update_unlock();
   return $dirty;
@@ -1019,10 +1315,10 @@ function staxx_php_bin(): string {
  * The whole check pass: ask the registry about every distinct image in
  * scope, one at a time, and fold the answers into the state file.
  *
- * @return array{asked:int, skipped:int, updates:int, failed:int, built:int, missing:int, tagmissing:int, unchecked:int, pinned:int, ok:bool, error:string, limited:bool}
+ * @return array{asked:int, skipped:int, updates:int, failed:int, built:int, missing:int, tagmissing:int, unchecked:int, pinned:int, unchanged:int, ok:bool, error:string, limited:bool}
  */
 function staxx_update_check(string $scope, bool $force): array {
-  $result = ['asked' => 0, 'skipped' => 0, 'updates' => 0, 'failed' => 0, 'built' => 0, 'missing' => 0, 'tagmissing' => 0, 'unchecked' => 0, 'pinned' => 0, 'ok' => true, 'error' => '', 'limited' => false];
+  $result = ['asked' => 0, 'skipped' => 0, 'updates' => 0, 'failed' => 0, 'built' => 0, 'missing' => 0, 'tagmissing' => 0, 'unchecked' => 0, 'pinned' => 0, 'unchanged' => 0, 'ok' => true, 'error' => '', 'limited' => false];
 
   $lockError = '';
   if (!staxx_update_lock($lockError)) {
@@ -1076,19 +1372,46 @@ function staxx_update_check(string $scope, bool $force): array {
   $watchBudget = 20;
   $limitedRegistries = [];
   $unchecked = [];
-  // The 'hub' route sends every question it can answer to Docker Hub whatever
-  // host the reference names, so on that route the host in the reference is
-  // not who actually refuses.
-  $hubRoute = staxx_docker_inspector() === 'hub';
+  // PLAN_90's stampede guard. An empty record with stacks still on disk is
+  // what a data folder that was not mounted at boot looks like: every image
+  // reads as never-asked at once. Ask a handful and leave the rest entirely
+  // alone — no state, no 'asked' stamp — so the next pass reaches them
+  // first, exactly as the rate stand-down below already relies on. A forced
+  // pass is the user asking on purpose and is never capped.
+  $rebuildCap = (!$force && $images === [] && count($refs) > STAXX_UPDATE_REBUILD_CAP)
+    ? STAXX_UPDATE_REBUILD_CAP : 0;
+  if ($rebuildCap > 0) {
+    echo 'nothing on record for '.count($refs).' images — asking '.$rebuildCap
+       . " this pass and the rest on the next
+";
+  }
+  // PLAN_90 Stage 1 — the HTTP route now asks each image's own registry
+  // directly (no more funnelling everything through Hub), so the host that
+  // actually answers is always the one the reference names.
   foreach ($refs as $image => $rows) {
     $existing = $images[$image] ?? [];
 
-    if (!$force && ($existing['asked'] ?? 0) > 0 && ($now - (int)$existing['asked']) < STAXX_UPDATE_ASK_TTL) {
+    // PLAN_90 Stage 3 — the flat six-hour TTL is now a computed interval:
+    // a version-numbered tag waits a week, a rolling one still asks every
+    // six hours, and an image that keeps actually changing is asked sooner
+    // than one that has not moved in months. staxx_update_cadence() is pure,
+    // so recomputing it here every pass costs nothing and self-heals if the
+    // entry it reads (moves, error, fails) has changed since the last ask.
+    if (!$force && ($existing['asked'] ?? 0) > 0
+        && ($now - (int)$existing['asked']) < staxx_update_cadence($image, $existing)) {
       $result['skipped']++;
       continue;
     }
 
-    $registry = $hubRoute ? 'docker.io' : staxx_image_registry($image);
+    // The stampede guard, spending only real asks: a digest-pinned image
+    // costs nothing and is not counted against it.
+    if ($rebuildCap > 0 && $result['asked'] >= $rebuildCap) {
+      $result['unchecked']++;
+      $unchecked[] = $image;
+      continue;
+    }
+
+    $registry = staxx_image_registry($image);
     // This registry has already refused once this pass, so asking again would
     // only spend an allowance that is gone — and every other registry carries
     // on being asked, which is the whole point. Left entirely alone: no state
@@ -1209,8 +1532,56 @@ function staxx_update_check(string $scope, bool $force): array {
       }
       $result['pinned']++;
     } else {
-      $remote = staxx_image_remote($image, $why, $tags);
+      $remote = staxx_image_remote($image, $why, $tags, $existing);
       $result['asked']++;
+    }
+
+    // PLAN_90 Stage 2 — the registry confirmed nothing has moved. 'asked' and
+    // the computed cadence are the only things this touches: remote, version,
+    // created and every countdown key stay exactly as they were, because an
+    // unmoved image cannot have changed labels either — and re-deriving the
+    // local-vs-remote comparison here, on a path with no fresh digest to
+    // compare, is exactly the kind of thing that would restart a 'seen'
+    // countdown that must only ever start once per real update.
+    if (!empty($remote['unchanged'])) {
+      $storedRemote = (string)($existing['remote'] ?? '');
+      // The shortcut is only honest while the LOCAL side is also where it was
+      // left. A 304 says the registry has not moved; it says nothing about an
+      // image that has since been removed, rebuilt, or pulled by hand, and
+      // taking the cheap path anyway would leave the row claiming to be up to
+      // date with nothing installed.
+      $localSame = $local !== [] && empty($local['built'])
+                && (string)($local['digest'] ?? '') === (string)($existing['local'] ?? '');
+
+      if ($storedRemote !== '' && $localSame) {
+        unset($existing['error']);
+        $existing['fails'] = 0;
+        unset($existing['failedSince']);
+        $existing['asked'] = $now;
+        $existing['nextDue'] = $now + staxx_update_cadence($image, $existing);
+        $images[$image] = $existing;
+        $result['unchanged']++;
+        echo $image." — unchanged since last check\n";
+        continue;
+      }
+
+      // Something on this box has changed even though the registry has not.
+      // A 304 still tells us the remote digest is exactly the one already on
+      // record, so carry it forward — with the labels it was recorded
+      // alongside — and let the ordinary comparison below run properly
+      // rather than reporting a stale answer.
+      if ($storedRemote === '') {
+        // A 304 with nothing stored to stand on should be impossible: the
+        // entity tag that earned it came from a stored answer. Refuse rather
+        // than invent a digest.
+        $remote = [];
+        $why = 'failed';
+      } else {
+        $remote = ['digest' => $storedRemote];
+        foreach (['version', 'source', 'created'] as $carry) {
+          if (isset($existing[$carry])) $remote[$carry] = $existing[$carry];
+        }
+      }
     }
 
     if ($remote === [] && $why === 'limited') {
@@ -1244,12 +1615,30 @@ function staxx_update_check(string $scope, bool $force): array {
         unset($existing['tags'], $existing['suggest']);
       }
 
-      // A withdrawn tag or a missing repository will not fix itself between
-      // now and the next pass — stamp 'asked' so it honours the same
-      // six-hour memory a successful check gets, instead of being re-asked
-      // every single pass for ever. 'failed' and 'limited' are transient and
-      // must keep retrying promptly, so they are left unstamped.
-      if ($why === 'notfound' || $why === 'tagmissing') $existing['asked'] = $now;
+      // A withdrawn tag, a missing repository, or an image this box simply
+      // cannot check will not fix themselves between now and the next pass —
+      // stamp 'asked' so each honours the same remembered-answer window a
+      // successful check gets, instead of being re-asked every single pass
+      // for ever. 'unsupported' joins this list under PLAN_90 — previously
+      // left unstamped and so re-asked forever, which is pure waste for a
+      // permanent answer. 'failed' and 'limited' are transient and must keep
+      // retrying promptly, so they are left unstamped.
+      $stamped = $why === 'notfound' || $why === 'tagmissing' || $why === 'unsupported';
+      if ($stamped) $existing['asked'] = $now;
+
+      // PLAN_90 Stage 3b — only the transient-or-unknown 'failed' reason
+      // counts toward the consecutive-failure notice. 'notfound' and
+      // 'unsupported' are their own permanent, immediate answers (see
+      // staxx_updates_pill_for_image()) and gain nothing from a count;
+      // 'tagmissing' already tells a better story via its tag shortlist.
+      if ($why === 'failed') {
+        $existing['fails'] = (int)($existing['fails'] ?? 0) + 1;
+        if (empty($existing['failedSince'])) $existing['failedSince'] = $now;
+      }
+
+      // Only when 'asked' was actually stamped just now — a due time must
+      // track the ask it was computed for, not linger from an older one.
+      if ($stamped) $existing['nextDue'] = $now + staxx_update_cadence($image, $existing);
 
       $images[$image] = $existing;
 
@@ -1316,6 +1705,17 @@ function staxx_update_check(string $scope, bool $force): array {
     if (isset($remote['version'])) $existing['version'] = $remote['version'];
     if (isset($remote['source']))  $existing['source']  = $remote['source'];
     if (isset($remote['created'])) $existing['created'] = $remote['created'];
+    // PLAN_90 Stage 2 — the entity tag and the Accept fingerprint it was
+    // recorded against, so the next ask can send a conditional request. Only
+    // the HTTP route provides these; a CLI-route answer clears them rather
+    // than leaving a stale tag behind that no longer describes anything this
+    // route actually checked.
+    if (isset($remote['etag']))   $existing['etag']   = $remote['etag'];   else unset($existing['etag']);
+    if (isset($remote['accept'])) $existing['accept'] = $remote['accept']; else unset($existing['accept']);
+    // Only stamped when the ask actually went out in full — a 304, or an
+    // answer carried forward from one, must leave this alone or the fortnight
+    // would never elapse.
+    if (!empty($remote['fresh'])) $existing['fresh'] = $now;
     // No 'revision' is kept here on purpose, though the label is read. This
     // entry's version/created describe the REMOTE build, and the commit is
     // wanted for the one being replaced — which the record step re-reads from
@@ -1323,6 +1723,10 @@ function staxx_update_check(string $scope, bool $force): array {
     // under a name that does not say which half it is, and that is precisely
     // how 'wasCreated' came to pair a stale date with a current build.
     $existing['asked'] = $now;
+    // A successful ask, whatever it found — the consecutive-failure notice
+    // only ever describes an ongoing problem, never a historical one.
+    $existing['fails'] = 0;
+    unset($existing['failedSince']);
 
     $localDigest = $local['digest'] ?? '';
     $changed = $localDigest !== '' && $existing['remote'] !== '' && $localDigest !== $existing['remote'];
@@ -1350,6 +1754,14 @@ function staxx_update_check(string $scope, bool $force): array {
         $existing['wasCreated'] = $local['created'] ?? '';
         $existing['seen']       = $now;
         $existing['seenDigest'] = $existing['remote'];
+        // PLAN_90 Stage 3 — the digest genuinely changed, which is the one
+        // event staxx_update_cadence() actually cares about: a ring of the
+        // last 5 such moments, oldest trimmed off the front, is how it tells
+        // a churny rolling tag from one that has sat still for months.
+        $moves = (array)($existing['moves'] ?? []);
+        $moves[] = $now;
+        if (count($moves) > 5) $moves = array_slice($moves, -5);
+        $existing['moves'] = array_values($moves);
         // A genuinely newer version has turned up — someone cancelling the
         // last one they saw must not be silently opted out of every version
         // that comes after it.
@@ -1368,6 +1780,13 @@ function staxx_update_check(string $scope, bool $force): array {
       unset($existing['seen'], $existing['was'], $existing['wasCreated'], $existing['seenDigest']);
       echo $image.($skipped ? ' — update skipped, staying quiet' : ' — up to date')."\n";
     }
+
+    // PLAN_90 Stage 3 — every path that reaches here just stamped 'asked'
+    // above, so this is the one place that needs to compute nextDue: it
+    // covers a fresh update, a still-pending one and plain "up to date"
+    // alike, using the entry as it stands right now (including the 'moves'
+    // ring just appended to, if this pass is what changed it).
+    $existing['nextDue'] = $now + staxx_update_cadence($image, $existing);
 
     $images[$image] = $existing;
   }
@@ -1586,14 +2005,43 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
   }
 
   if ($error !== '') {
-    $tip = $error === 'rate limited'
-      ? 'Checking was refused because too many questions were asked recently. Wait a while '
-      . 'and check again, or sign in to Docker Hub under Settings to raise the limit.'
-      : ($error === 'not found in the registry'
-        ? 'The registry no longer has this image, so it cannot be compared. Check the image '
-        . 'name is still correct.'
-        : 'This image could not be checked last time. Try checking again.');
-    return ['state' => 'error', 'label' => 'could not check', 'source' => $source, 'tip' => $tip];
+    // PLAN_90 Stage 3b — 'why' is the short chip already shown beside the
+    // pill (StacksTable.php renders it as a data attribute, terse on
+    // purpose); 'note' is the full sentence, meant for a title attribute,
+    // that says what is actually going on and what to do about it. Only
+    // 'unsupported' and a run of five straight 'failed' asks get one — a
+    // rate refusal and an ordinary early failure are not yet worth a notice.
+    $why  = '';
+    $note = '';
+    if ($error === 'rate limited') {
+      $tip = 'Checking was refused because too many questions were asked recently. Wait a while '
+           . 'and check again, or sign in to Docker Hub under Settings to raise the limit.';
+    } elseif ($error === 'not found in the registry') {
+      $why  = 'not found';
+      $note = 'The registry has no repository at this address. Check the image name in the '
+            . 'compose file, or whether the publisher has moved it.';
+      $tip  = $note;
+    } elseif ($error === 'cannot be checked here') {
+      // Never phrased as a failure of the image — this box's own limits, not
+      // the publisher's, so no "try again" is offered because trying again
+      // cannot change the answer.
+      $why  = 'cannot check';
+      $note = 'StaXX cannot check this image for updates on this server.';
+      $tip  = $note;
+    } else {
+      $tip = 'This image could not be checked last time. Try checking again.';
+      $fails = (int)($entry['fails'] ?? 0);
+      if ($fails >= 5) {
+        $why = 'check failing';
+        $since = (int)($entry['failedSince'] ?? 0);
+        $span  = $since > 0 ? staxx_time_span_words(max(0, time() - $since)) : 'a while';
+        $note  = 'StaXX has tried to check this image for updates '.$fails.' times over the past '
+               . $span.' and the registry has not answered. Check that the repository still '
+               . 'exists and that this server can reach it.';
+      }
+    }
+    return ['state' => 'error', 'label' => 'could not check', 'source' => $source, 'tip' => $tip,
+             'why' => $why, 'note' => $note];
   }
 
   $local  = (string)($entry['local']  ?? '');

@@ -2154,6 +2154,17 @@
   font-weight: 400;
 }
 
+/* PLAN_90 Stage 3b — an error pill with a full sentence behind it (a
+   repeated failure, a repository gone, or a check StaXX cannot run here).
+   Still the quiet fill above, not the full alarm colour .staxx-pill--bad
+   uses — this is the mildest step that still reads as "wrong": a thin
+   danger-coloured border and matching text, so it stands out from a plain
+   error pill without shouting. */
+.staxx-updatepill--noted {
+  border: 0.1rem solid var(--sm-danger);
+  color: var(--sm-danger);
+}
+
 /* The clock chip inside an "update" pill (PLAN_45 phase 4-8) — a counting-
    down figure, or the server's own sentence for why nothing is going to
    happen right now, painted by the page's one shared clock rather than a

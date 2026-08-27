@@ -15426,6 +15426,9 @@
       due:    parseInt(pill.dataset.updateDue || '0', 10) || 0,
       hold:   pill.dataset.updateHold === '1',
       why:    pill.dataset.updateWhy || '',
+      // PLAN_90 Stage 3b — the full sentence behind `why`'s short chip, for
+      // a flagged image (repeated failure, not found, unsupported).
+      note:   pill.dataset.updateNote || '',
       // The replacement tag staxx_tag_suggestions() already worked out, when
       // there is one — so a withdrawn-tag menu item can name it up front
       // instead of sending the reader in blind.
@@ -15444,8 +15447,12 @@
   // (a row that just became up to date must lose it, not show it empty);
   // anything else creates it in the row's status area the first time it is
   // needed. The element built here must come out byte-for-byte the same as
-  // staxx_update_pill_html() — same class, same three data attributes — so a
-  // pill born in the browser is indistinguishable from one the server drew.
+  // staxx_update_pill_html() — same class, same three data attributes, and
+  // the same tag — so a pill born in the browser is indistinguishable from
+  // one the server drew. The tag matters as much as the markup: a span pill
+  // cannot be pressed, because the page's click handling only looks at
+  // buttons, so a repaint that downgrades a button to a span silently kills
+  // the update action.
   function paintUpdatePill(row, entry) {
     var host = updatePillHost(row);
     if (!host) return;
@@ -15457,12 +15464,32 @@
       if (pill) pill.parentNode.removeChild(pill);
       return;
     }
+    // Mirrors staxx_update_pill_html(): only an 'update' pill on a pressable
+    // row (not a folder row) is a button; everything else is inert.
+    var wantTag = (state === 'update' && row && !row.dataset.folderRow) ? 'BUTTON' : 'SPAN';
+    if (pill && pill.tagName !== wantTag) {
+      // A stale button/span left behind by a fresh page render must not be
+      // reused across a tag change — replace it rather than repurpose it,
+      // and start its label cache clean so the new element's text always
+      // gets (re)written below instead of trusting a value from the old one.
+      var fresh = document.createElement(wantTag.toLowerCase());
+      pill.parentNode.replaceChild(fresh, pill);
+      pill = fresh;
+    }
     if (!pill) {
-      pill = document.createElement('span');
+      pill = document.createElement(wantTag.toLowerCase());
       host.appendChild(pill);
     }
+    if (wantTag === 'BUTTON') pill.type = 'button';
+
+    // PLAN_90 Stage 3b — a note describes one image, so a folder row (its
+    // updates are a queue, not one image) must never carry one, whatever
+    // the reply happened to include — mirrors the $pressable guard in
+    // staxx_update_pill_html().
+    var note = (row && !row.dataset.folderRow) ? (entry.note || '') : '';
 
     var cls = UPDATE_PILL_CLASS[state] || '';
+    if (note) cls += (cls ? ' ' : '') + 'staxx-updatepill--noted';
     pill.className = 'staxx-updatepill' + (cls ? ' ' + cls : '');
     setData(pill, 'updateState', state);
     setData(pill, 'updateImage', entry.image || '');
@@ -15475,6 +15502,7 @@
     setData(pill, 'updateHold', entry.hold ? '1' : '0');
     setData(pill, 'updateBack', entry.back ? '1' : '0');
     setData(pill, 'updateWhy', entry.why || '');
+    if (note) setData(pill, 'updateNote', note); else delete pill.dataset.updateNote;
 
     var text = entry.label || state;
     if (entry.count > 1) text += ' (' + entry.count + ')';
@@ -15483,7 +15511,13 @@
     // something to say. Skipped when the label has not changed so a clock
     // ticking away between polls is not torn down and rebuilt every time.
     if (pill.staxxTxt !== text) { pill.textContent = text; pill.staxxTxt = text; }
-    if (entry.tip) pill.title = entry.tip; else pill.removeAttribute('title');
+    // The note is appended to the tip rather than replacing it, mirroring
+    // staxx_update_pill_html() — a stale tooltip after a recovery is worse
+    // than none, so this is rebuilt every time rather than only when new.
+    var titleBits = [];
+    if (entry.tip) titleBits.push(entry.tip);
+    if (note) titleBits.push(note);
+    if (titleBits.length) pill.title = titleBits.join('\n\n'); else pill.removeAttribute('title');
 
     paintPillClock(pill);
   }
@@ -18632,6 +18666,14 @@
             'token that leaked could look, but never change or delete anything. It is kept in this ' +
             "plugin's settings file on the flash drive, readable only by the administrator account. " +
             'Leave both fields blank to sign out.'
+    },
+    {
+      key: 'REGISTRY_TRUST', control: 'text', label: 'Registries you run yourself',
+      help: 'Name a registry here and StaXX will trust that machine\'s own certificate, or talk to ' +
+            'it without any encryption at all if it has not been given one — so only name a registry ' +
+            'you actually run, never someone else\'s. Separate several with a comma, e.g. ' +
+            'registry.home.lan, 192.168.1.20:5000. A password is never sent to a registry reached ' +
+            'without encryption. Leave blank to trust nothing but the public internet as normal.'
     }
   ];
   SETTINGS_ROWS.forEach(function (row) {

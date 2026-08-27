@@ -80,6 +80,9 @@ function staxx_settings_keys(): array {
     // is read here for reload purposes — see the $reload list further down.
     'HUB_USER'            => ['type' => 'text', 'default' => ''],
     'HUB_TOKEN'           => ['type' => 'text', 'default' => ''],
+    // PLAN_92a Part A — registries this server's owner runs and vouches for.
+    // Not read at page load, so not in $reload below.
+    'REGISTRY_TRUST'      => ['type' => 'hosts', 'default' => ''],
     // When to check images for updates (PLAN_45 Part F). Neither key is read
     // at page load, so neither belongs in the $reload list below — the panel
     // just closes on save.
@@ -334,6 +337,25 @@ function staxx_settings_validate(string $key, array $spec, string $v, string &$e
       return '';
     }
     return $v;
+  }
+
+  if ($spec['type'] === 'hosts') {
+    // Empty is always accepted — no registry is trusted. Otherwise every
+    // comma-separated entry must be a bare host, optionally with a port; no
+    // scheme, no path, no wildcard — deliberately, since this list is a
+    // safety boundary, not a convenience.
+    if (trim($v) === '') return '';
+    $hosts = [];
+    foreach (explode(',', $v) as $entry) {
+      $entry = strtolower(trim($entry));
+      if (!preg_match('/^[a-z0-9.-]+(:\d{1,5})?$/', $entry)) {
+        $error = 'Enter "'.$key.'" as a comma-separated list of host names StaXX should trust, '
+               . 'such as registry.home.lan or 192.168.1.20:5000 — no scheme and no wildcard.';
+        return '';
+      }
+      $hosts[] = $entry;
+    }
+    return implode(',', $hosts);
   }
 
   if (!in_array($v, $spec['choices'], true)) {

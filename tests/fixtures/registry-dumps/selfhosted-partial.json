@@ -1,0 +1,11 @@
+{
+  "suite": "registry_selfhosted.php",
+  "date": "2026-08-22",
+  "passes": 14,
+  "fails": 0,
+  "skips": 7,
+  "rows": {
+    "open": { "registry": "open registry:2", "challenge": "none", "digest_match": "yes",
+              "304": "yes", "shape": "application/vnd.oci.image.index.v1+json" }
+  }
+}
