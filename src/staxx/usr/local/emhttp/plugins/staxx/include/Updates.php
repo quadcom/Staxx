@@ -38,6 +38,9 @@ function staxx_update_state_defaults(): array {
     'inspector_at' => 0,
     'paused'    => false,
     'limited'   => false, // drives the page's rate-limited notice; cleared by the next pass that isn't refused
+    // Which registries did the refusing, so the notice can name them and only
+    // offer the Docker Hub sign-in when Docker Hub is one of them.
+    'limitedBy' => [],
     'images'    => [],
     'history'   => [],
     'bases'     => [],
@@ -469,6 +472,22 @@ function staxx_remote_failure_reason(string $out, string $image = '', ?array &$t
 }
 
 /**
+ * Which registry an image reference is actually asked of — Docker Hub is the
+ * implied default, and everything else names its own host as the first path
+ * segment. A rate-limit refusal must only silence the registry that actually
+ * refused, never the whole pass, so staxx_update_check() needs to know which
+ * one that is for each image.
+ */
+function staxx_image_registry(string $image): string {
+  $ref = preg_replace('/@sha256:[0-9a-f]+$/', '', trim($image));
+  $first = explode('/', $ref)[0];
+  // A first segment carrying a dot or a colon is a host name; anything else
+  // is Docker Hub's implied default.
+  return (strpos($first, '.') !== false || strpos($first, ':') !== false)
+    ? strtolower($first) : 'docker.io';
+}
+
+/**
  * What the registry currently has for one image reference — digest, version,
  * source and creation time, every key present only when actually known.
  * Returns [] on any failure at all: a failure must never be mistaken for
@@ -830,10 +849,10 @@ function staxx_php_bin(): string {
  * The whole check pass: ask the registry about every distinct image in
  * scope, one at a time, and fold the answers into the state file.
  *
- * @return array{asked:int, skipped:int, updates:int, failed:int, built:int, missing:int, tagmissing:int, ok:bool, error:string, limited:bool}
+ * @return array{asked:int, skipped:int, updates:int, failed:int, built:int, missing:int, tagmissing:int, unchecked:int, pinned:int, ok:bool, error:string, limited:bool}
  */
 function staxx_update_check(string $scope, bool $force): array {
-  $result = ['asked' => 0, 'skipped' => 0, 'updates' => 0, 'failed' => 0, 'built' => 0, 'missing' => 0, 'tagmissing' => 0, 'ok' => true, 'error' => '', 'limited' => false];
+  $result = ['asked' => 0, 'skipped' => 0, 'updates' => 0, 'failed' => 0, 'built' => 0, 'missing' => 0, 'tagmissing' => 0, 'unchecked' => 0, 'pinned' => 0, 'ok' => true, 'error' => '', 'limited' => false];
 
   $lockError = '';
   if (!staxx_update_lock($lockError)) {
@@ -860,7 +879,6 @@ function staxx_update_check(string $scope, bool $force): array {
   $newlyFound = 0; // images whose 'seen' clock started fresh THIS pass, for the "found" notification
 
   $refs = staxx_update_images($scope);
-  $total = count($refs);
   // PLAN_62 Stage 2 — a real file on disk to compare the author's example
   // against, keyed by stack name so the loop below can look one up per image
   // from $rows without re-walking every stack's folder each time.
@@ -886,11 +904,28 @@ function staxx_update_check(string $scope, bool $force): array {
   // short of it rather than retrying into a wall. Spent by staxx_watch_check()
   // below, never reset mid-pass.
   $watchBudget = 20;
+  $limitedRegistries = [];
+  $unchecked = [];
+  // The 'hub' route sends every question it can answer to Docker Hub whatever
+  // host the reference names, so on that route the host in the reference is
+  // not who actually refuses.
+  $hubRoute = staxx_docker_inspector() === 'hub';
   foreach ($refs as $image => $rows) {
     $existing = $images[$image] ?? [];
 
     if (!$force && ($existing['asked'] ?? 0) > 0 && ($now - (int)$existing['asked']) < STAXX_UPDATE_ASK_TTL) {
       $result['skipped']++;
+      continue;
+    }
+
+    $registry = $hubRoute ? 'docker.io' : staxx_image_registry($image);
+    // This registry has already refused once this pass, so asking again would
+    // only spend an allowance that is gone — and every other registry carries
+    // on being asked, which is the whole point. Left entirely alone: no state
+    // written and no 'asked' stamp, so the next pass reaches these first.
+    if (isset($limitedRegistries[$registry])) {
+      $result['unchecked']++;
+      $unchecked[] = $image;
       continue;
     }
 
@@ -991,21 +1026,33 @@ function staxx_update_check(string $scope, bool $force): array {
 
     $why    = '';
     $tags   = null;
-    $remote = staxx_image_remote($image, $why, $tags);
     $local  = staxx_image_local($image);
-    $result['asked']++;
+
+    // repo:tag@sha256:<digest> names one exact build — the registry can only
+    // ever answer with the digest already written in the reference, so
+    // asking is guaranteed waste, and on a limited allowance that waste is
+    // what stops a real image being checked.
+    if (preg_match('/@(sha256:[0-9a-f]{64})$/', $image, $pm)) {
+      $remote = ['digest' => $pm[1]];
+      foreach (['version', 'source', 'created'] as $carry) {
+        if (isset($local[$carry])) $remote[$carry] = $local[$carry];
+      }
+      $result['pinned']++;
+    } else {
+      $remote = staxx_image_remote($image, $why, $tags);
+      $result['asked']++;
+    }
 
     if ($remote === [] && $why === 'limited') {
-      // The ceiling is already hit — every remaining image is left entirely
-      // alone (no state written) rather than spending more of an allowance
-      // that will just be refused again.
+      // Only this registry stands down for the rest of the pass — everything
+      // asked of a different registry keeps going.
       $existing['error'] = 'rate limited';
       $images[$image] = $existing;
       $limited = true;
-      echo $image." — rate limited, stopping this pass\n";
-      $left = $total - $result['asked'] - $result['skipped'];
-      if ($left > 0) echo $left.' image'.($left === 1 ? '' : 's')." left unchecked this pass\n";
-      break;
+      $limitedRegistries[$registry] = true;
+      echo $image.' — '.$registry." is limiting how often this server may ask; "
+         . "skipping the rest of its images this pass\n";
+      continue;
     }
 
     if ($remote === []) {
@@ -1141,13 +1188,29 @@ function staxx_update_check(string $scope, bool $force): array {
     $images[$image] = $existing;
   }
 
+  // Silence here would read as "everything was checked" — the exact thing
+  // that made a stale answer look like a current one.
+  if ($unchecked !== []) {
+    echo count($unchecked).' image'.(count($unchecked) === 1 ? '' : 's')
+       . " left unchecked this pass:\n";
+    foreach ($unchecked as $skippedImage) echo '  '.$skippedImage."\n";
+  }
+
   $result['limited'] = $limited;
   $result['ok'] = $result['failed'] === 0 && !$limited;
   // The rate-limited sentence takes precedence over the failed-images summary
   // when both apply, and is what the grid's last-checked line will show.
-  $result['error'] = $limited
-    ? 'Docker Hub is limiting how often this server may ask about images. Sign in under Settings to raise the limit, or try again in an hour.'
-    : ($result['failed'] > 0 ? 'Could not check: '.implode(', ', $failedNames) : '');
+  if ($limited) {
+    $refusers = array_keys($limitedRegistries);
+    $names = count($refusers) === 1 ? $refusers[0] : implode(' and ', $refusers);
+    $result['error'] = $names.(count($refusers) === 1 ? ' is' : ' are')
+      . ' limiting how often this server may ask about images. '
+      . (in_array('docker.io', $refusers, true)
+          ? 'Sign in under Settings to raise the limit, or try again in an hour.'
+          : 'Try again in an hour.');
+  } else {
+    $result['error'] = $result['failed'] > 0 ? 'Could not check: '.implode(', ', $failedNames) : '';
+  }
 
   // A stack that has been removed or renamed leaves findings behind, and
   // Stage 4's report is built from this file alone — so without this it would
@@ -1176,6 +1239,7 @@ function staxx_update_check(string $scope, bool $force): array {
     'ok'       => $result['ok'],
     'error'    => $result['error'],
     'limited'  => $limited,
+    'limitedBy' => array_keys($limitedRegistries),
     'images'   => $images,
     'rebuilds' => $rebuilds,
     'stacks'   => $stacksState,
