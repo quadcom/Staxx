@@ -394,8 +394,16 @@ function staxx_update_history_push(string $stack, string $service, string $diges
  * throughout: nothing calling this has anywhere to show a failure, so an
  * unreadable stack or a service with no local digest yet simply records
  * nothing, exactly as it always has.
+ *
+ * $lookups false means record the local facts only — digest, version, source
+ * and commit — and make no outbound request whatsoever. That exists for the
+ * one-off baseline seeding below: the notes budget further down is 12 seconds
+ * *per call*, so eighty-odd stacks would be up to seventeen minutes of network
+ * time and hundreds of requests against a ceiling of sixty an hour. A baseline
+ * only answers "which build am I running"; notes and commit lists arrive with
+ * the next real update, which is soon enough.
  */
-function staxx_update_record_before_pull(string $stack, string $service = ''): void {
+function staxx_update_record_before_pull(string $stack, string $service = '', bool $lookups = true): void {
   // Move anything this stack still has sitting in the old central file into
   // its own record first — a side effect of the ordinary update path rather
   // than a separate event, per PLAN_82 Part 1. Logged and carried on rather
@@ -460,13 +468,32 @@ function staxx_update_record_before_pull(string $stack, string $service = ''): v
     if ($name !== '') $svcMetaOut['version'] = $name;
     if (($cached['source'] ?? '') !== '') $svcMetaOut['source'] = (string)$cached['source'];
 
+    // The commit this outgoing build was made from, when the image labels say
+    // so. Recorded unconditionally — it costs no network call and no guard
+    // beyond its type — because it is the only thing the NEXT entry recorded
+    // for this service can compare against to say what went into a build
+    // whose tag never changes.
+    $revision = is_string($local['revision'] ?? null) ? (string)$local['revision'] : '';
+    if ($revision !== '') $svcMetaOut['revision'] = $revision;
+
     // Release notes: fetched at most once per version, right here, never
     // again on view — so there is no cache to expire, only this one guard
     // against paying for a second network call for the same entry. Needs a
-    // name, a project link, and a digest that is not already on record with
-    // notes; also skipped when the newest entry already carries this
-    // digest, since the push below would refuse it as a duplicate anyway.
-    if ($name !== '' && time() < $notesUntil) {
+    // project link and a digest that is not already on record with notes;
+    // also skipped when the newest entry already carries this digest, since
+    // the push below would refuse it as a duplicate anyway.
+    //
+    // Either a version name or a commit gets in here: an image whose version
+    // label is absent still has a history worth reading by commit, and that
+    // is exactly the rolling-tag case. The by-name lookup's own conditions
+    // are all still tested where they were, so widening the door changes
+    // nothing about when notes are fetched — only that the project link and
+    // the recorded history, both local reads, are looked up in a few more
+    // cases.
+    // $lookups gates the whole block, not each fetch inside it: the project
+    // link is resolved in here too, and a baseline pass must not even ask
+    // that much.
+    if ($lookups && ($name !== '' || $revision !== '') && time() < $notesUntil) {
       $links   = staxx_project_links($image, $meta['x'] ?? [], $meta['services'][$svc]['x'] ?? []);
       $project = (string)($links['project'] ?? '');
       if ($project !== '') {
@@ -476,7 +503,7 @@ function staxx_update_record_before_pull(string $stack, string $service = ''): v
           if ($skip) break;
           if (($entry['digest'] ?? '') === $local['digest'] && ($entry['notes'] ?? '') !== '') $skip = true;
         }
-        if (!$skip) {
+        if (!$skip && $name !== '') {
           $notes = staxx_release_notes_fetch($project, $name);
           if (($notes['notes'] ?? '') !== '') {
             $svcMetaOut['notes']    = (string)$notes['notes'];
@@ -484,11 +511,87 @@ function staxx_update_record_before_pull(string $stack, string $service = ''): v
             $svcMetaOut['notesCut'] = (bool)($notes['cut'] ?? false);
           }
         }
+
+        // The version name found nothing, but the build says which commit it
+        // came from — so ask the project about the commit instead. Same
+        // budget as above, deliberately: it is one ceiling on how long a
+        // record step may spend on the network, not one per question.
+        if (!$skip && !isset($svcMetaOut['notes']) && $revision !== '' && time() < $notesUntil) {
+          // A real release sitting on this very commit always beats a raw
+          // list of commits, so that is asked first. The entry's stored
+          // 'version' is deliberately left as it was: the notes link already
+          // names the release, and rewriting the version here would make the
+          // history disagree with the update chip for no gain.
+          $tag = staxx_release_tag_at_commit($project, $revision);
+          if ($tag !== '') {
+            $notes = staxx_release_notes_fetch($project, $tag);
+            if (($notes['notes'] ?? '') !== '') {
+              $svcMetaOut['notes']    = (string)$notes['notes'];
+              $svcMetaOut['notesUrl'] = (string)($notes['url'] ?? '');
+              $svcMetaOut['notesCut'] = (bool)($notes['cut'] ?? false);
+            }
+          }
+
+          // No release to name: what went into this build is then the commits
+          // between the previously recorded build and this one. That needs
+          // the previous entry's own commit, which is why it is stored — an
+          // entry recorded before this existed has none, and then there is
+          // simply nothing to say, which is the honest answer.
+          if (!isset($svcMetaOut['notes']) && time() < $notesUntil) {
+            $previous = is_string($history[0]['revision'] ?? null) ? (string)$history[0]['revision'] : '';
+            if ($previous !== '' && $previous !== $revision) {
+              $log = staxx_changelog_fetch($project, $previous, $revision);
+              if (!empty($log['changes'])) {
+                $svcMetaOut['changes']    = (array)$log['changes'];
+                $svcMetaOut['changesUrl'] = (string)($log['url'] ?? '');
+                $svcMetaOut['changesCut'] = (bool)($log['cut'] ?? false);
+              }
+            }
+          }
+        }
       }
     }
 
     staxx_update_history_push($stack, $svc, $local['digest'], $svcMetaOut);
   }
+}
+
+/**
+ * Give every stack a starting point in its own history, once. Until this ran,
+ * a stack only got an entry the first time one of its images was updated, so
+ * the Versions tab was empty on almost everything and filled up over months.
+ * Everything recorded here is already on the machine — the images' own labels
+ * and digests — so this pulls nothing and touches no container.
+ *
+ * Deliberately once per install, not once per pass: it parses every compose
+ * file and inspects every service's image, which is well over a hundred
+ * shell-outs on a busy box. The timestamp under 'seeded' is what stops it
+ * happening again, and staxx_image_history_push() refuses a digest that is
+ * already newest anyway, so a repeat would be harmless — just wasteful.
+ *
+ * An unreadable stack root gives an EMPTY list rather than an error, so it is
+ * tested for first: seeding against nothing and then filing the marker would
+ * quietly cost every stack its baseline for good.
+ */
+function staxx_update_seed_history(): array {
+  $out = ['stacks' => 0, 'ok' => true, 'error' => ''];
+
+  if ((int)(staxx_update_state()['seeded'] ?? 0) > 0) return $out;
+
+  if (!staxx_stacks_visible()) {
+    $out['ok']    = false;
+    $out['error'] = 'The stack folder could not be read, so nothing was recorded yet. '
+                  . 'This runs again on the next check.';
+    return $out;
+  }
+
+  foreach (staxx_list_stacks() as $s) {
+    staxx_update_record_before_pull((string)$s['name'], '', false);
+    $out['stacks']++;
+  }
+
+  staxx_update_state_save(['seeded' => time()]);
+  return $out;
 }
 
 /**

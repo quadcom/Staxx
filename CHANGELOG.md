@@ -4,7 +4,7 @@ What changed, newest first. Versions are dates, matching the plugin manifest.
 
 ---
 
-## Unreleased
+## 2026.08.26 — released 2026-08-26
 
 - Added the groundwork for filling in a stack's icon, description and links automatically: a new
   internal step that writes those fields into a compose file as commented-out placeholders with a
@@ -22,6 +22,44 @@ What changed, newest first. Versions are dates, matching the plugin manifest.
   now accepts that shape at the container level. Measured directly against Docker Compose: an empty
   or filled-in block never changes whether a running container is considered up to date with its
   file.
+
+- A stack now owns its icon instead of guessing it afresh on every render: the picture is copied in
+  beside the compose file and its name written into that service's own settings. So a stack keeps its
+  look when the folder is copied to another machine, and a change to the icon collection cannot
+  silently alter how it appears. Only where nothing was chosen by hand, one stack at a time through
+  the ordinary save — so each file keeps its previous version and the page says what it changed —
+  and there is a switch to turn the whole thing off.
+- The editor now shows each service's own icon in its heading, at a size worth looking at, since that
+  is the screen where an icon is chosen. A service with nothing recorded shows a letters tile rather
+  than a guess, which is the useful signal, and the tile links out to the icon collection.
+- An icon address copied from a file's page on GitHub now works. It is turned into the address of the
+  picture itself before anything is fetched, instead of quietly failing — the page is HTML, not an
+  image — and then never being retried.
+- The note offering to add missing StaXX fields now names which ones are missing, in words rather
+  than setting names, instead of claiming a file has none of them when it plainly holds several.
+- A stack no longer reports its own container as the thing already using a port it wants. Which
+  containers belong to the stack being edited is now read from the label Docker records, not guessed
+  from container names — a guess that never matched a stack converted from an Unraid template, since
+  those name their containers outright.
+- A password can now be made up for you in the box that needs it, as a passphrase or a random string,
+  and turned into the hashed form some containers ask for. The hashing runs in StaXX's own tiny
+  container, built only when asked, with no volume, no port and no network, and the password is
+  handed to it on its input stream rather than on a command line anyone listing processes could read.
+  Four hash formats, each refused until a self-test has proved it works on this machine.
+- StaXX now notices when two services in one stack share a password or a folder, or name each other,
+  and asks whether that is deliberate. Say yes and the answer is kept in the stack's own file, so it
+  travels with it; from then on, changing one side writes the other to match, both boxes and the file
+  together inside a single Undo.
+- The buttons on the offer to point a new stack at a database living in another stack now work. They
+  did nothing at all before, and said nothing about why.
+- A container's name is now recognised whatever case it is written in, the same way Docker itself
+  resolves it, both for a container in another stack and one named inside the same file. This is not
+  loose matching: a shared password is still compared exactly, because two passwords differing only
+  in case are two passwords.
+- An update that has been installed is now noticed at once. The "update ready" badge was drawn from a
+  remembered comparison that nothing refreshed after a pull, so an update that plainly succeeded kept
+  reading as pending until the next scheduled check came round. The automatic update queue had the
+  same blind spot, and could re-apply a stack it had already finished every fifteen minutes.
 
 ## 2026.08.21 — released 2026-08-22
 

@@ -1,18 +1,39 @@
 <?php
 /* staxx_make_path() and staxx_check_paths(), checked against the real
- * installed Stacks.php.
+ * installed Stacks.php. PLAN_89 changed staxx_check_paths(): outside /mnt, a
+ * path is now judged by where it is, not only by whether it exists — see the
+ * allowlist and 'offroot' cases below.
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine:
+ * Runs ON THE SERVER — there is no PHP on the dev machine. The relative-path
+ * case near the end needs STACK_ROOT pointed at a scratch folder under /tmp,
+ * so a stack root that happens to sit under /boot (the default) can be
+ * proven not to leak the new off-root wording onto relative paths.
+ * staxx_cfg() memoises on first read, so STACK_ROOT has to be seeded into
+ * the config file BEFORE php runs, not changed from inside this script:
  *
  *     pscp tests/server/paths.php root@<box>:/tmp/
- *     plink … "php /tmp/paths.php"
+ *     plink … '
+ *       CFG=/boot/config/plugins/staxx/staxx.cfg
+ *       cp $CFG /tmp/cfg.bak
+ *       grep -q "^STACK_ROOT=" $CFG \
+ *         && sed -i "s#^STACK_ROOT=.*#STACK_ROOT=\"/tmp/zzb1test-paths-stackroot\"#" $CFG \
+ *         || echo "STACK_ROOT=\"/tmp/zzb1test-paths-stackroot\"" >> $CFG
+ *       php /tmp/paths.php; RC=$?
+ *       cp /tmp/cfg.bak $CFG
+ *       diff -q /tmp/cfg.bak $CFG
+ *       exit $RC
+ *     '
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
  * removes its own folder, "zzb1test-paths", under /mnt/user/appdata — the
  * real Docker application data share, assumed to already exist on any box
  * that has installed an app through Community Applications. Also makes and
- * removes one folder under /tmp, outside /mnt, to stand in for a symlink's
- * target. */
+ * removes two folders under /tmp, outside /mnt: one to stand in for a
+ * symlink's target, and one, "zzb1test-paths-offroot", to prove an
+ * off-allowlist path is still flagged after something (Docker, in the real
+ * bug) has already created it. The relative-path case makes its own stack,
+ * "zzb1relstack", under the scratch STACK_ROOT above, and removes it before
+ * the run ends. */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
@@ -29,10 +50,27 @@ if (!is_dir($appdata)) {
   exit(1);
 }
 
-$base    = $appdata.'/zzb1test-paths';
-$outside = '/tmp/zzb1test-paths-outside';
+// The relative-path section near the end mkdir()s and rm -rf's a folder
+// under the stack root. If the wrapper's STACK_ROOT seed did not take, that
+// root is Adrian's real one — so refuse outright rather than risk it, before
+// anything at all is created.
+$relStackRoot = staxx_stack_root();
+if ($relStackRoot !== '/tmp/zzb1test-paths-stackroot') {
+  echo "FAIL   the temporary stack root is not in place (got $relStackRoot) — refusing to touch it\n";
+  exit(1);
+}
+
+$base           = $appdata.'/zzb1test-paths';
+$outside        = '/tmp/zzb1test-paths-outside';
+$offrootScratch = '/tmp/zzb1test-paths-offroot';
+$relStackDir    = $relStackRoot.'/zzb1relstack';
 @exec('rm -rf '.escapeshellarg($base));
 @exec('rm -rf '.escapeshellarg($outside));
+@exec('rm -rf '.escapeshellarg($offrootScratch));
+// Only ever the one stack folder inside it, never $relStackRoot itself — if
+// the wrapper's STACK_ROOT seed did not take, $relStackRoot is Adrian's real
+// stack root, and an rm -rf there would be catastrophic.
+@exec('rm -rf '.escapeshellarg($relStackDir));
 
 mkdir($base, 0751, true);
 // Unraid's nobody:users, chosen deliberately unlike root (which is running
@@ -124,8 +162,81 @@ foreach ([true, false] as $flag) {
   $r = staxx_check_paths([$missingPath, $filePath, '/etc/passwd'], '', $flag);
   ok("missing folder stays \"missing\" ($note)", $r[$missingPath] === 'missing', $r[$missingPath]);
   ok("a file stays \"file\" ($note)",            $r[$filePath] === 'file',       $r[$filePath]);
-  ok("outside /mnt stays \"skipped\" ($note)",   $r['/etc/passwd'] === 'skipped', $r['/etc/passwd']);
+  // PLAN_89 inverts this one: /etc is on the allowlist and /etc/passwd
+  // exists, so it is now reported rather than waved through unseen.
+  ok("outside /mnt but allowlisted and existing is now \"ok\" ($note)",
+     $r['/etc/passwd'] === 'ok', $r['/etc/passwd']);
 }
+
+/* -------------------------------------------------- staxx_check_paths() outside /mnt --
+ *
+ * PLAN_89: outside /mnt, a path is judged by where it is, not only by
+ * whether it exists. A small allowlist of system locations stays silent
+ * (the Docker socket, /etc/localtime, /sys/class/hwmon — real mounts on
+ * Adrian's own stacks); everywhere else outside /mnt is 'offroot', whether
+ * or not it exists — existence can't be trusted, because Docker creates a
+ * missing bind-mount target on first start. */
+
+$sockPath  = '/var/run/docker.sock';
+$clockPath = '/etc/localtime';
+$hwmonPath = '/sys/class/hwmon';
+$rAllow = staxx_check_paths([$sockPath, $clockPath, $hwmonPath]);
+ok('a socket outside /mnt on the allowlist is "ok"', $rAllow[$sockPath] === 'ok', $rAllow[$sockPath]);
+ok('and specifically not "file" — the regression this guards',
+   $rAllow[$sockPath] !== 'file', $rAllow[$sockPath]);
+ok('a symlinked file outside /mnt on the allowlist is "ok"',
+   $rAllow[$clockPath] === 'ok', $rAllow[$clockPath]);
+ok('a directory outside /mnt on the allowlist is "ok"',
+   $rAllow[$hwmonPath] === 'ok', $rAllow[$hwmonPath]);
+
+$missingAllow = '/etc/zzb1test-missing-allowlisted';
+$rMissingAllow = staxx_check_paths([$missingAllow]);
+ok('a missing path under an allowlisted prefix is "missing"',
+   $rMissingAllow[$missingAllow] === 'missing', $rMissingAllow[$missingAllow]);
+
+$missingOffroot = '/appdata/zzb1test-paths-nope/deeper';
+$rMissingOffroot = staxx_check_paths([$missingOffroot]);
+ok('a missing path outside /mnt and off the allowlist is "offroot"',
+   $rMissingOffroot[$missingOffroot] === 'offroot', $rMissingOffroot[$missingOffroot]);
+
+mkdir($offrootScratch, 0755, true);
+$rExistingOffroot = staxx_check_paths([$offrootScratch]);
+ok('an EXISTING path outside /mnt and off the allowlist is still "offroot" — '.
+   'proves the fix survives Docker having already created the folder',
+   $rExistingOffroot[$offrootScratch] === 'offroot', $rExistingOffroot[$offrootScratch]);
+@exec('rm -rf '.escapeshellarg($offrootScratch));
+
+$bootPath = '/boot/config';
+$rBoot = staxx_check_paths([$bootPath]);
+ok('/boot is NOT allowlisted — an absolute /boot path is "offroot" even though it exists',
+   $rBoot[$bootPath] === 'offroot', $rBoot[$bootPath]);
+
+$nearMiss = '/etcetera';
+$rNearMiss = staxx_check_paths([$nearMiss]);
+ok('a near-miss beginning "/etc" does not match the allowlist by prefix',
+   $rNearMiss[$nearMiss] === 'offroot', $rNearMiss[$nearMiss]);
+
+$rInUseOutside = staxx_check_paths(['/etc'], '', true);
+ok('isNew never turns an outside-/mnt path into "inuse", even a full directory',
+   $rInUseOutside['/etc'] === 'ok', $rInUseOutside['/etc']);
+
+/* ------------------------------ relative paths are untouched by any of this --
+ *
+ * STACK_ROOT defaults to a path under /boot, so on a default install every
+ * relative volume path resolves under the flash drive. The allowlist above
+ * is only for an ABSOLUTE path written as "/boot…" in the file — a relative
+ * path must not pick up the flash wording just because its root happens to
+ * live there. The wrapper in the header points STACK_ROOT at a /tmp folder
+ * for this run so that can be proven without going near Adrian's real
+ * stacks or the real flash drive. */
+
+mkdir($relStackDir.'/data', 0755, true);
+$rRel = staxx_check_paths(['./data', './does-not-exist'], 'zzb1relstack');
+ok('a relative path under a flash-rooted stack still resolves normally: existing is "ok"',
+   $rRel['./data'] === 'ok', $rRel['./data']);
+ok('a relative path under a flash-rooted stack still resolves normally: missing is "missing"',
+   $rRel['./does-not-exist'] === 'missing', $rRel['./does-not-exist']);
+@exec('rm -rf '.escapeshellarg($relStackDir));
 
 /* -------------------------------------------------------------------------- cleanup */
 

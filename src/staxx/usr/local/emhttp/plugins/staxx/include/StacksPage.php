@@ -184,12 +184,24 @@ endif;
        accent colour, which is what --hint--warn below also uses for "worth
        a look, not broken"; --bad exists precisely to override that to red for
        the two "act now" conditions above, which this is not. -->
-  <? if (!empty($updateState['limited'])): ?>
+  <? if (!empty($updateState['limited'])):
+    // Any registry can be the one refusing, not only Docker Hub — so the
+    // notice names whoever did, and the sign-in offer below is shown only
+    // when Docker Hub is among them, because it helps with nothing else.
+    // A state file written before this was recorded has no list at all;
+    // Docker Hub was the only thing that could refuse back then.
+    $refusers = (array)($updateState['limitedBy'] ?? []);
+    if ($refusers === []) $refusers = ['docker.io'];
+  ?>
     <div class="staxx-notice">
       <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
       <div>
-        <strong><?= _('Docker Hub has stopped answering questions about images from this server for now.') ?></strong>
+        <strong><?= htmlspecialchars(implode(' and ', $refusers)) ?> <?= _('stopped answering questions about images from this server for now. Anything it was not asked about still shows the answer it gave last time.') ?></strong>
+        <? if (in_array('docker.io', $refusers, true)): ?>
         <?= _('Signing in to a Docker Hub account in the') ?> <button type="button" id="staxx-open-hub-settings" class="staxx-link-btn"><?= _('settings panel') ?></button> <?= _('raises the limit, or you can just leave it to try again later.') ?>
+        <? else: ?>
+        <?= _('The next check will ask again.') ?>
+        <? endif; ?>
       </div>
     </div>
   <? endif; ?>

@@ -369,15 +369,28 @@ function staxx_docker_images(): array {
  * @param  string[] $headers    each a whole "Name: value" line
  * @param  int      $maxTime    curl's own --max-time, seconds
  * @param  int      $shSeconds  staxx_sh()'s hard limit, seconds
+ * @param  int      $maxBytes   refuse a body larger than this; 0 for no limit
  * @return array|null decoded body, or null on anything wrong at all —
- *                     no network, DNS, a non-JSON body, an HTTP error
+ *                     no network, DNS, a non-JSON body, an HTTP error, a
+ *                     body over $maxBytes
  */
-function staxx_hub_json(string $url, array $headers = [], int $maxTime = 8, int $shSeconds = 12): ?array {
+function staxx_hub_json(string $url, array $headers = [], int $maxTime = 8, int $shSeconds = 12,
+                        int $maxBytes = 0): ?array {
   // --proto bounds the transport whatever the caller passes: a token realm
   // read out of a remote registry's own reply reaches this function, and
   // without this a hostile registry could name file:// or any other scheme
   // curl happens to support and have the server read it back.
   $cmd = 'curl -fsSL --proto \'=https,http\' --max-time '.$maxTime;
+
+  // Some answers are far bigger than the question. GitHub's commit-comparison
+  // reply carries every changed file's whole diff alongside the commit list,
+  // so asking "which commits" downloads the code as well — 145 KB for nine
+  // commits, measured, and its ceiling is 250. The whole body is held in
+  // memory by staxx_sh() and then again by json_decode(), on a machine whose
+  // webGUI has to stay responsive, so a caller that knows its answer should
+  // be small says so and curl refuses a bigger one outright.
+  if ($maxBytes > 0) $cmd .= ' --max-filesize '.$maxBytes;
+
   foreach ($headers as $header) $cmd .= ' -H '.escapeshellarg($header);
   $cmd .= ' '.escapeshellarg($url);
 

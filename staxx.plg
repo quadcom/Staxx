@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "TODO-AUTHOR">
-<!ENTITY version              "2026.08.21">
+<!ENTITY version              "2026.08.26">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!-- TODO: point at the real repository before the first release. Left as an
@@ -40,6 +40,16 @@
 >
 
 <CHANGES>
+###2026.08.26
+- A stack now records its own icon beside its compose file, so it keeps its look when copied
+  to another machine. The editor shows each service's icon where you choose it.
+- A password can be made up for you, and turned into the hashed form some containers want,
+  without it ever being written anywhere but the box you are filling in.
+- Two services that share a password or folder, or name each other, are now noticed and kept
+  in step once you confirm it is deliberate.
+- Fixes: a stack no longer reports its own container as using a port it wants; a container
+  name is recognised in any case; an icon address copied from GitHub's file page now works;
+  and an update that has been installed is noticed at once rather than still looking pending.
 ###2026.08.21
 - Stacks can now be started, stopped and restarted, and their settings edited as a form —
   the core stack management this plugin exists to provide.
@@ -138,8 +148,12 @@ echo ""
 <FILE Run="/bin/bash">
 <INLINE>
 <![CDATA[
+# The package name is written out in full rather than as &packageFile;: this is
+# a CDATA block, where XML does not expand an entity reference, so the entity
+# would reach the shell literally, match nothing, and delete the package that
+# was just installed. It has to be bumped by hand at every release.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-2026.08.21-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-2026.08.26-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>

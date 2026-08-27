@@ -23,6 +23,13 @@ define('STAXX_UPDATE_STATE', $staxx_update_state_env !== false && $staxx_update_
 // for as long as the pass itself runs, and is worthless after a reboot.
 define('STAXX_UPDATE_DIR', '/tmp/staxx/updates');
 
+// Changelog caps, companions to STAXX_NOTES_MAX in Defines.php and there for
+// the same reason: the list is stored as JSON in a stack's own record, so
+// neither a project with a thousand commits between builds nor one absurd
+// commit message may bloat it. Lines, then bytes per line.
+define('STAXX_CHANGES_MAX', 50);
+define('STAXX_CHANGES_LINE_MAX', 200);
+
 // How long a remembered answer is trusted before it is asked again — six
 // hours, so three stacks sharing an image cost the registry one question a
 // day and not sixty.
@@ -38,8 +45,15 @@ function staxx_update_state_defaults(): array {
     'inspector_at' => 0,
     'paused'    => false,
     'limited'   => false, // drives the page's rate-limited notice; cleared by the next pass that isn't refused
+    // Which registries did the refusing, so the notice can name them and only
+    // offer the Docker Hub sign-in when Docker Hub is one of them.
+    'limitedBy' => [],
     'images'    => [],
     'history'   => [],
+    // When the one-off baseline of "what is every service running right now"
+    // was recorded into each stack's own history — 0 until it has. See
+    // staxx_update_seed_history() in UpdateRun.php for why it runs once.
+    'seeded'    => 0,
     'bases'     => [],
     'rebuilds'  => [],
     // PLAN_62 — Stage 2's findings, keyed by stack then by image. Discovery
@@ -146,8 +160,8 @@ function staxx_docker_inspector(): string {
 }
 
 /**
- * Version/source/created out of a config's OCI-ish labels — shared by every
- * route in staxx_image_remote(), since the label names are the same
+ * Version/source/created/revision out of a config's OCI-ish labels — shared
+ * by every route in staxx_image_remote(), since the label names are the same
  * regardless of how the config was fetched.
  */
 function staxx_update_labels_meta(array $labels): array {
@@ -168,7 +182,31 @@ function staxx_update_labels_meta(array $labels): array {
     if ($ts !== false) $out['created'] = $ts;
   }
 
+  // The commit this build came from, which is what makes a changelog between
+  // two builds possible at all. Only a commit-shaped value is kept: anything
+  // else gets spliced into a request path later and produces a lookup that
+  // silently never matches — the same shape of failure as the unpin bug,
+  // where a name that looked plausible made the whole feature do nothing.
+  $revision = (string)($labels['org.opencontainers.image.revision'] ?? '');
+  if (preg_match('/^[0-9a-f]{7,40}$/', $revision)) $out['revision'] = $revision;
+
   return $out;
+}
+
+/**
+ * Owner and repository name out of a project link, or [] when the link is
+ * not a GitHub one — a documentation site or a Docker Hub page gets [].
+ * Pure. Every address builder below asks this rather than carrying its own
+ * copy of the pattern, so what counts as a GitHub project cannot drift
+ * between them.
+ *
+ * @return array{0: string, 1: string}|array{}
+ */
+function staxx_github_project(string $project): array {
+  if (!preg_match('#^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$#', $project, $m)) {
+    return [];
+  }
+  return [$m[1], $m[2]];
 }
 
 /**
@@ -187,11 +225,9 @@ function staxx_update_labels_meta(array $labels): array {
  * nothing to add, and vice versa).
  */
 function staxx_release_notes_urls(string $project, string $version): array {
-  if (!preg_match('#^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$#', $project, $m)) {
-    return [];
-  }
-  $owner = $m[1];
-  $name  = $m[2];
+  $repo = staxx_github_project($project);
+  if ($repo === []) return [];
+  [$owner, $name] = $repo;
 
   if ($version === '' || preg_match('#[/\x00-\x1f\x7f]|\.\.|\s#', $version)) return [];
 
@@ -272,6 +308,143 @@ function staxx_release_notes_fetch(string $project, string $version): array {
   }
 
   return $empty;
+}
+
+/**
+ * GitHub's "compare two commits" API address, or '' when one cannot be
+ * built — pure, no network. Only a GitHub project link qualifies, and both
+ * ids must be commit-shaped, because both are spliced into the path.
+ *
+ * A commit compared with itself returns '' too: there is nothing between a
+ * build and the same build, and asking would spend an allowance to be told
+ * so.
+ */
+function staxx_compare_commits_url(string $project, string $from, string $to): string {
+  $repo = staxx_github_project($project);
+  if ($repo === []) return '';
+  [$owner, $name] = $repo;
+
+  if (!preg_match('/^[0-9a-f]{7,40}$/', $from)) return '';
+  if (!preg_match('/^[0-9a-f]{7,40}$/', $to)) return '';
+  if ($from === $to) return '';
+
+  return 'https://api.github.com/repos/'.$owner.'/'.$name
+       . '/compare/'.rawurlencode($from).'...'.rawurlencode($to);
+}
+
+/**
+ * The commit subjects between two builds — what actually went in since the
+ * last build seen. Returns the all-empty answer on anything at all going
+ * wrong, and makes no request when no address could be built, so callers
+ * never need to distinguish "nothing to show" from "the ask failed".
+ *
+ * Subject lines only, in the order the project gives them, never re-worded
+ * and never filtered. In particular merge commits are kept: a merge is noise
+ * in one project and the only signal in another, and picking between them is
+ * editorialising somebody else's history — the same reasoning that stops the
+ * notes trimmer touching a vendor's prose.
+ *
+ * @return array{changes: string[], url: string, cut: bool}
+ */
+function staxx_changelog_fetch(string $project, string $from, string $to): array {
+  $empty = ['changes' => [], 'url' => '', 'cut' => false];
+
+  $url = staxx_compare_commits_url($project, $from, $to);
+  if ($url === '') return $empty;
+
+  // Size-capped, unlike every other ask here: the answer carries each changed
+  // file's whole diff alongside the commit list, so the reply is far bigger
+  // than the question — 145 KB measured for nine commits, and GitHub's own
+  // ceiling is 250. Eight megabytes fits any realistic comparison and stops
+  // the pathological one being held in memory twice on a NAS.
+  $data = staxx_hub_json($url, ['User-Agent: StaXX'], 6, 8, 8 * 1024 * 1024);
+  if (!is_array($data)) return $empty;
+
+  $commits = is_array($data['commits'] ?? null) ? $data['commits'] : [];
+
+  $changes = [];
+  $cut     = false;
+  foreach ($commits as $commit) {
+    if (count($changes) >= STAXX_CHANGES_MAX) { $cut = true; break; }
+
+    $message = is_array($commit) ? (string)($commit['commit']['message'] ?? '') : '';
+    $nl      = strpos($message, "\n");
+    $subject = trim($nl === false ? $message : substr($message, 0, $nl));
+    if ($subject === '') continue;
+
+    if (strlen($subject) > STAXX_CHANGES_LINE_MAX) {
+      // Hard cut, no ellipsis, for the same reason the notes trimmer does not
+      // add one: the text is somebody else's words and a marker we invented
+      // would read as part of them. And a cap counted in bytes can land in
+      // the middle of a multi-byte character, which json_encode() refuses
+      // outright — taking the whole record write down with it. Drop any
+      // trailing incomplete sequence, exactly as staxx_release_notes_trim().
+      $subject = substr($subject, 0, STAXX_CHANGES_LINE_MAX);
+      while ($subject !== '' && (ord($subject[strlen($subject) - 1]) & 0xc0) === 0x80) {
+        $subject = substr($subject, 0, -1);
+      }
+      if ($subject !== '' && (ord($subject[strlen($subject) - 1]) & 0x80) !== 0) {
+        $subject = substr($subject, 0, -1);
+      }
+      if ($subject === '') continue;
+      $cut = true;
+    }
+
+    $changes[] = $subject;
+  }
+
+  // GitHub caps its own commits array at 250 and reports the real count
+  // separately, so a comparison spanning more than that arrives already
+  // shortened — say so rather than presenting a partial list as the whole.
+  $total = (int)($data['total_commits'] ?? 0);
+  if ($total > count($commits)) $cut = true;
+
+  if ($changes === []) return $empty;
+
+  return [
+    'changes' => $changes,
+    'url'     => is_string($data['html_url'] ?? null) ? $data['html_url'] : '',
+    'cut'     => $cut,
+  ];
+}
+
+/**
+ * The release tag sitting on one commit, or '' when none does — one request,
+ * '' with no request at all when the project link is not GitHub or the id is
+ * not commit-shaped.
+ *
+ * The tag LISTING is asked rather than the git ref API on purpose. An
+ * annotated tag does not point at a commit, it points at a tag object, so
+ * dereferencing one by hand costs a second lookup that is easy to get wrong
+ * and easy to not notice being wrong. This listing reports each tag's
+ * already-dereferenced commit, so the trap cannot be walked into and the
+ * whole thing stays at one request.
+ */
+function staxx_release_tag_at_commit(string $project, string $commit): string {
+  $repo = staxx_github_project($project);
+  if ($repo === []) return '';
+  [$owner, $name] = $repo;
+
+  if (!preg_match('/^[0-9a-f]{7,40}$/', $commit)) return '';
+
+  $data = staxx_hub_json(
+    'https://api.github.com/repos/'.$owner.'/'.$name.'/tags',
+    ['User-Agent: StaXX'], 6, 8
+  );
+  if (!is_array($data)) return '';
+
+  foreach ($data as $tag) {
+    if (!is_array($tag)) continue;
+    $sha = (string)($tag['commit']['sha'] ?? '');
+    // The label may carry a 7-character id where the API gives all 40, so
+    // this is a prefix match, and case-insensitive because neither side
+    // promises which it writes.
+    if ($sha === '' || stripos($sha, $commit) !== 0) continue;
+    $found = (string)($tag['name'] ?? '');
+    if ($found !== '') return $found;
+  }
+
+  return '';
 }
 
 /**
@@ -466,6 +639,22 @@ function staxx_remote_failure_reason(string $out, string $image = '', ?array &$t
     return 'notfound';
   }
   return 'failed';
+}
+
+/**
+ * Which registry an image reference is actually asked of — Docker Hub is the
+ * implied default, and everything else names its own host as the first path
+ * segment. A rate-limit refusal must only silence the registry that actually
+ * refused, never the whole pass, so staxx_update_check() needs to know which
+ * one that is for each image.
+ */
+function staxx_image_registry(string $image): string {
+  $ref = preg_replace('/@sha256:[0-9a-f]+$/', '', trim($image));
+  $first = explode('/', $ref)[0];
+  // A first segment carrying a dot or a colon is a host name; anything else
+  // is Docker Hub's implied default.
+  return (strpos($first, '.') !== false || strpos($first, ':') !== false)
+    ? strtolower($first) : 'docker.io';
 }
 
 /**
@@ -798,10 +987,10 @@ function staxx_update_refresh_local(string $stack, string $service = ''): bool {
     if (($entry['error'] ?? '') === 'not installed') unset($entry['error']);
     if (!empty($entry['built'])) unset($entry['built'], $entry['error']);
     // Up to date now, so the countdown running against that version has
-    // nothing left to fire on — cleared by the same three keys
+    // nothing left to fire on — cleared by the same four keys
     // staxx_update_check() clears, so the two can never disagree.
     if (($entry['remote'] ?? '') === $local['digest']) {
-      unset($entry['seen'], $entry['was'], $entry['seenDigest']);
+      unset($entry['seen'], $entry['was'], $entry['wasCreated'], $entry['seenDigest']);
     }
 
     $images[$image] = $entry;
@@ -830,10 +1019,10 @@ function staxx_php_bin(): string {
  * The whole check pass: ask the registry about every distinct image in
  * scope, one at a time, and fold the answers into the state file.
  *
- * @return array{asked:int, skipped:int, updates:int, failed:int, built:int, missing:int, tagmissing:int, ok:bool, error:string, limited:bool}
+ * @return array{asked:int, skipped:int, updates:int, failed:int, built:int, missing:int, tagmissing:int, unchecked:int, pinned:int, ok:bool, error:string, limited:bool}
  */
 function staxx_update_check(string $scope, bool $force): array {
-  $result = ['asked' => 0, 'skipped' => 0, 'updates' => 0, 'failed' => 0, 'built' => 0, 'missing' => 0, 'tagmissing' => 0, 'ok' => true, 'error' => '', 'limited' => false];
+  $result = ['asked' => 0, 'skipped' => 0, 'updates' => 0, 'failed' => 0, 'built' => 0, 'missing' => 0, 'tagmissing' => 0, 'unchecked' => 0, 'pinned' => 0, 'ok' => true, 'error' => '', 'limited' => false];
 
   $lockError = '';
   if (!staxx_update_lock($lockError)) {
@@ -860,7 +1049,6 @@ function staxx_update_check(string $scope, bool $force): array {
   $newlyFound = 0; // images whose 'seen' clock started fresh THIS pass, for the "found" notification
 
   $refs = staxx_update_images($scope);
-  $total = count($refs);
   // PLAN_62 Stage 2 — a real file on disk to compare the author's example
   // against, keyed by stack name so the loop below can look one up per image
   // from $rows without re-walking every stack's folder each time.
@@ -886,11 +1074,28 @@ function staxx_update_check(string $scope, bool $force): array {
   // short of it rather than retrying into a wall. Spent by staxx_watch_check()
   // below, never reset mid-pass.
   $watchBudget = 20;
+  $limitedRegistries = [];
+  $unchecked = [];
+  // The 'hub' route sends every question it can answer to Docker Hub whatever
+  // host the reference names, so on that route the host in the reference is
+  // not who actually refuses.
+  $hubRoute = staxx_docker_inspector() === 'hub';
   foreach ($refs as $image => $rows) {
     $existing = $images[$image] ?? [];
 
     if (!$force && ($existing['asked'] ?? 0) > 0 && ($now - (int)$existing['asked']) < STAXX_UPDATE_ASK_TTL) {
       $result['skipped']++;
+      continue;
+    }
+
+    $registry = $hubRoute ? 'docker.io' : staxx_image_registry($image);
+    // This registry has already refused once this pass, so asking again would
+    // only spend an allowance that is gone — and every other registry carries
+    // on being asked, which is the whole point. Left entirely alone: no state
+    // written and no 'asked' stamp, so the next pass reaches these first.
+    if (isset($limitedRegistries[$registry])) {
+      $result['unchecked']++;
+      $unchecked[] = $image;
       continue;
     }
 
@@ -991,21 +1196,33 @@ function staxx_update_check(string $scope, bool $force): array {
 
     $why    = '';
     $tags   = null;
-    $remote = staxx_image_remote($image, $why, $tags);
     $local  = staxx_image_local($image);
-    $result['asked']++;
+
+    // repo:tag@sha256:<digest> names one exact build — the registry can only
+    // ever answer with the digest already written in the reference, so
+    // asking is guaranteed waste, and on a limited allowance that waste is
+    // what stops a real image being checked.
+    if (preg_match('/@(sha256:[0-9a-f]{64})$/', $image, $pm)) {
+      $remote = ['digest' => $pm[1]];
+      foreach (['version', 'source', 'created'] as $carry) {
+        if (isset($local[$carry])) $remote[$carry] = $local[$carry];
+      }
+      $result['pinned']++;
+    } else {
+      $remote = staxx_image_remote($image, $why, $tags);
+      $result['asked']++;
+    }
 
     if ($remote === [] && $why === 'limited') {
-      // The ceiling is already hit — every remaining image is left entirely
-      // alone (no state written) rather than spending more of an allowance
-      // that will just be refused again.
+      // Only this registry stands down for the rest of the pass — everything
+      // asked of a different registry keeps going.
       $existing['error'] = 'rate limited';
       $images[$image] = $existing;
       $limited = true;
-      echo $image." — rate limited, stopping this pass\n";
-      $left = $total - $result['asked'] - $result['skipped'];
-      if ($left > 0) echo $left.' image'.($left === 1 ? '' : 's')." left unchecked this pass\n";
-      break;
+      $limitedRegistries[$registry] = true;
+      echo $image.' — '.$registry." is limiting how often this server may ask; "
+         . "skipping the rest of its images this pass\n";
+      continue;
     }
 
     if ($remote === []) {
@@ -1099,6 +1316,12 @@ function staxx_update_check(string $scope, bool $force): array {
     if (isset($remote['version'])) $existing['version'] = $remote['version'];
     if (isset($remote['source']))  $existing['source']  = $remote['source'];
     if (isset($remote['created'])) $existing['created'] = $remote['created'];
+    // No 'revision' is kept here on purpose, though the label is read. This
+    // entry's version/created describe the REMOTE build, and the commit is
+    // wanted for the one being replaced — which the record step re-reads from
+    // the local image anyway. A key here would be the wrong half of the pair
+    // under a name that does not say which half it is, and that is precisely
+    // how 'wasCreated' came to pair a stale date with a current build.
     $existing['asked'] = $now;
 
     $localDigest = $local['digest'] ?? '';
@@ -1117,6 +1340,14 @@ function staxx_update_check(string $scope, bool $force): array {
       // digest (one 'seen' has not already been recorded against) resets it.
       if (($existing['seenDigest'] ?? '') !== $existing['remote']) {
         $existing['was']        = $images[$image]['version'] ?? ($existing['was'] ?? '');
+        // The running image's own build date — 'created' on $existing is the
+        // REMOTE image's date and is overwritten every pass, so it cannot
+        // serve as "before". $local is what 'was' is being read alongside,
+        // so its date is the honest "before" to pair with it. No falling back
+        // to a remembered one, unlike 'was' above: a date kept from an
+        // earlier cycle describes whatever was running then, and pairing that
+        // with today's "after" would state a time this image was never built.
+        $existing['wasCreated'] = $local['created'] ?? '';
         $existing['seen']       = $now;
         $existing['seenDigest'] = $existing['remote'];
         // A genuinely newer version has turned up — someone cancelling the
@@ -1134,20 +1365,36 @@ function staxx_update_check(string $scope, bool $force): array {
         echo $image." — update still pending\n";
       }
     } else {
-      unset($existing['seen'], $existing['was'], $existing['seenDigest']);
+      unset($existing['seen'], $existing['was'], $existing['wasCreated'], $existing['seenDigest']);
       echo $image.($skipped ? ' — update skipped, staying quiet' : ' — up to date')."\n";
     }
 
     $images[$image] = $existing;
   }
 
+  // Silence here would read as "everything was checked" — the exact thing
+  // that made a stale answer look like a current one.
+  if ($unchecked !== []) {
+    echo count($unchecked).' image'.(count($unchecked) === 1 ? '' : 's')
+       . " left unchecked this pass:\n";
+    foreach ($unchecked as $skippedImage) echo '  '.$skippedImage."\n";
+  }
+
   $result['limited'] = $limited;
   $result['ok'] = $result['failed'] === 0 && !$limited;
   // The rate-limited sentence takes precedence over the failed-images summary
   // when both apply, and is what the grid's last-checked line will show.
-  $result['error'] = $limited
-    ? 'Docker Hub is limiting how often this server may ask about images. Sign in under Settings to raise the limit, or try again in an hour.'
-    : ($result['failed'] > 0 ? 'Could not check: '.implode(', ', $failedNames) : '');
+  if ($limited) {
+    $refusers = array_keys($limitedRegistries);
+    $names = count($refusers) === 1 ? $refusers[0] : implode(' and ', $refusers);
+    $result['error'] = $names.(count($refusers) === 1 ? ' is' : ' are')
+      . ' limiting how often this server may ask about images. '
+      . (in_array('docker.io', $refusers, true)
+          ? 'Sign in under Settings to raise the limit, or try again in an hour.'
+          : 'Try again in an hour.');
+  } else {
+    $result['error'] = $result['failed'] > 0 ? 'Could not check: '.implode(', ', $failedNames) : '';
+  }
 
   // A stack that has been removed or renamed leaves findings behind, and
   // Stage 4's report is built from this file alone — so without this it would
@@ -1176,6 +1423,7 @@ function staxx_update_check(string $scope, bool $force): array {
     'ok'       => $result['ok'],
     'error'    => $result['error'],
     'limited'  => $limited,
+    'limitedBy' => array_keys($limitedRegistries),
     'images'   => $images,
     'rebuilds' => $rebuilds,
     'stacks'   => $stacksState,
@@ -1239,8 +1487,22 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
   // or even Links.php alone here would leave one or both function_exists()
   // tests false for every out-of-band pass, which is exactly the dead-code
   // trap PLAN_61 warns about and PLAN_62 repeats verbatim.
+  //
+  // UpdateRun.php on top of that, for staxx_update_seed_history() below —
+  // Watch.php's chain does not reach it, and this is a fresh process, so
+  // there is no cycle to create. Named with require_once so its own guard
+  // and the shared files it pulls in stay loaded exactly once.
+  //
+  // The one-off baseline runs BEFORE the check, so a box that has never
+  // recorded anything has a starting point in every stack's history from the
+  // first pass. It costs no network at all (hence the false), and returns
+  // zero stacks instantly once it has run.
   $php = staxx_php_bin().' -r '.escapeshellarg(
     'require '.var_export(__DIR__.'/Watch.php', true).'; '
+    .'require_once '.var_export(__DIR__.'/UpdateRun.php', true).'; '
+    .'$s = staxx_update_seed_history(); '
+    .'if ($s["stacks"] > 0) echo "recorded the build now running in ".$s["stacks"]." stack".($s["stacks"] === 1 ? "" : "s")."\n"; '
+    .'elseif (!$s["ok"]) echo "the stack folder could not be read, so nothing was recorded this time\n"; '
     .'$r = staxx_update_check('.var_export($scope, true).', '.($force ? 'true' : 'false').'); '
     .'echo "\nchecked ".$r["asked"]." asked, ".$r["skipped"]." skipped, "'
     .'.$r["updates"]." updates, ".$r["failed"]." failed\n";'
@@ -1355,8 +1617,25 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
   if ($local !== $remote && !$skipped) {
     $was = (string)($entry['was'] ?? '');
     $ver = (string)($entry['version'] ?? '');
-    $label = ($was !== '' && $ver !== '') ? $was.' → '.$ver : 'update ready';
-    $tip = ($was !== '' && $ver !== '')
+
+    // A moving tag (e.g. "main") reports the same name for the running build
+    // and the new one — the name alone cannot say anything changed. Only the
+    // build dates can say that, and only when both are actually known; with
+    // either missing this falls through to the plain "update ready" below
+    // rather than printing a claim it cannot back up.
+    if ($was !== '' && $ver !== '' && $was === $ver
+        && !empty($entry['wasCreated']) && !empty($entry['created'])) {
+      $whenWas = date('j M, H:i', (int)$entry['wasCreated']);
+      $whenNew = date('j M, H:i', (int)$entry['created']);
+      return ['state' => 'update', 'label' => $ver.' · new build', 'source' => $source,
+               'tip' => 'This tag always points at the newest build, so its name never changes. '
+                      . 'The one running was built '.$whenWas.', and the new one was built '.$whenNew.'. '
+                      . 'Press this to fetch it and rebuild the container on it.',
+               'version' => $ver, 'was' => $was];
+    }
+
+    $label = ($was !== '' && $ver !== '' && $was !== $ver) ? $was.' → '.$ver : 'update ready';
+    $tip = ($was !== '' && $ver !== '' && $was !== $ver)
       ? 'A newer version, '.$ver.', is available; this is currently running '.$was.'. '
       . 'Press this to fetch it and rebuild the container on it.'
       : 'A newer version of this image is available. Press this to fetch it and rebuild the '

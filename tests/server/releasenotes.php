@@ -333,7 +333,15 @@ if ($fixtureImage === '') {
   // 1. changed = true (local !== remote, both non-empty) → the outgoing
   // entry is stamped from 'was', not 'version'.
   b6_wipe();
-  b6_make_stack_raw('zzb6changed', "services:\n  web:\n    image: $fixtureImage\n");
+  // The project link is pinned to an address that is not GitHub, and that is
+  // not decoration. Without one, staxx_project_links() falls back to the
+  // image's own source label — a real repository — so this case quietly
+  // reached the network to be told nothing matched. It only became visible
+  // once the commit route started finding a release there, but the request
+  // was always going out, which this file's header promises never happens.
+  b6_make_stack_raw('zzb6changed',
+    "services:\n  web:\n    image: $fixtureImage\n"
+    ."    x-unraid:\n      project: https://staxxtest-nonexistent-host.invalid/some/repo\n");
   staxx_update_state_save(['images' => [
     $fixtureImage => [
       'local' => dg('e-local'), 'remote' => dg('e-remote'),
@@ -357,7 +365,10 @@ if ($fixtureImage === '') {
   // that only tries one of them proves nothing — this is exactly the trap
   // the unpin work hit.
   b6_wipe();
-  b6_make_stack_raw('zzb6unchanged', "services:\n  web:\n    image: $fixtureImage\n");
+  // Pinned away from GitHub for the same reason as the case above.
+  b6_make_stack_raw('zzb6unchanged',
+    "services:\n  web:\n    image: $fixtureImage\n"
+    ."    x-unraid:\n      project: https://staxxtest-nonexistent-host.invalid/some/repo\n");
   staxx_update_state_save(['images' => [
     $fixtureImage => [
       'local' => dg('e-same'), 'remote' => dg('e-same'),
@@ -402,6 +413,300 @@ ok('the fetch returns the all-empty answer for a project with no candidates',
 // notes can be fetched" case).
 note('no network call was made anywhere in this file — every project link '
    . 'used either fails the GitHub check outright or was never supplied');
+
+/* ======================================================================= *
+ * G — PLAN_82a: the comparison URL builder, staxx_compare_commits_url().
+ * Pure, so every case here is safe in the offline suite: nothing is ever
+ * asked, only built. The two ids are spliced into a request path, so the
+ * shape guard is the only thing standing between a label on somebody else's
+ * image and a request to an address of their choosing.
+ * ======================================================================= */
+
+$cFrom = 'e3f1a9c4b28d5607fa1b3ce9d0847f26ab5c1d90';
+$cTo   = 'bc07d5e19af3428d6710c2b58e94fd0a3671e2c8';
+$cShortFrom = substr($cFrom, 0, 7);
+$cShortTo   = substr($cTo, 0, 7);
+
+ok('a GitHub project and two full commit ids gives the compare address',
+   staxx_compare_commits_url($gh, $cFrom, $cTo)
+     === 'https://api.github.com/repos/example/project/compare/'.$cFrom.'...'.$cTo,
+   staxx_compare_commits_url($gh, $cFrom, $cTo));
+
+// Seven characters is the floor, and it is the length a short id on an image
+// label actually takes — so it has to be accepted at BOTH ends, not just one.
+ok('a seven-character short id is accepted at both ends',
+   staxx_compare_commits_url($gh, $cShortFrom, $cShortTo)
+     === 'https://api.github.com/repos/example/project/compare/'.$cShortFrom.'...'.$cShortTo,
+   staxx_compare_commits_url($gh, $cShortFrom, $cShortTo));
+
+ok('six characters — just under the floor — is refused',
+   staxx_compare_commits_url($gh, substr($cFrom, 0, 6), $cTo) === '');
+ok('...and at the other end too',
+   staxx_compare_commits_url($gh, $cFrom, substr($cTo, 0, 6)) === '');
+
+ok('forty-one characters — just over the ceiling — is refused',
+   staxx_compare_commits_url($gh, $cFrom.'a', $cTo) === '');
+ok('...and at the other end too',
+   staxx_compare_commits_url($gh, $cFrom, $cTo.'a') === '');
+
+ok('an id containing a non-hex letter is refused',
+   staxx_compare_commits_url($gh, substr($cFrom, 0, 39).'g', $cTo) === '');
+// Upper case is hex to a human but not to the guard, and a lenient guard here
+// is a lenient guard everywhere — so the strictness is asserted, not assumed.
+ok('an id containing an upper-case A is refused',
+   staxx_compare_commits_url($gh, substr($cFrom, 0, 39).'A', $cTo) === '');
+
+ok('the same commit at both ends gives nothing — there is nothing between a '
+ . 'commit and itself',
+   staxx_compare_commits_url($gh, $cFrom, $cFrom) === '');
+
+ok('a documentation-site link gives no compare address',
+   staxx_compare_commits_url('https://docs.example.test/project', $cFrom, $cTo) === '');
+ok('a Docker Hub link gives no compare address',
+   staxx_compare_commits_url('https://hub.docker.com/r/example/project', $cFrom, $cTo) === '');
+
+ok('an empty project gives no compare address',
+   staxx_compare_commits_url('', $cFrom, $cTo) === '');
+ok('an empty from gives no compare address',
+   staxx_compare_commits_url($gh, '', $cTo) === '');
+ok('an empty to gives no compare address',
+   staxx_compare_commits_url($gh, $cFrom, '') === '');
+
+// The case that matters most. Both ids land inside a request path, so a `..`
+// or a `/` that survived the guard would let a crafted image label steer the
+// request at an address of somebody else's choosing.
+$traversals = [
+  'a bare ..'                 => '..',
+  'a .. dressed as an id'     => '..'.substr($cFrom, 0, 38),
+  'a slash inside an id'      => substr($cFrom, 0, 20).'/'.substr($cTo, 0, 19),
+  'a slashed .. inside an id' => substr($cFrom, 0, 7).'/../'.substr($cTo, 0, 7),
+];
+foreach ($traversals as $label => $bad) {
+  ok('path traversal is refused: '.$label.' as the from id',
+     staxx_compare_commits_url($gh, $bad, $cTo) === '', $bad);
+  ok('path traversal is refused: '.$label.' as the to id',
+     staxx_compare_commits_url($gh, $cFrom, $bad) === '', $bad);
+}
+
+/* ======================================================================= *
+ * H — PLAN_82a's two fetchers, with no network. Same device as section F:
+ * a project link that is not a GitHub link at all means no candidate address
+ * is ever built, so neither function has anything to ask.
+ * ======================================================================= */
+
+ok('a non-GitHub project link gives no compare address either (so no curl '
+ . 'call is ever made)',
+   staxx_compare_commits_url($fakeProject, $cFrom, $cTo) === '');
+
+ok('the tag-at-commit lookup returns nothing for a non-GitHub link, and being '
+ . 'a non-GitHub link it cannot have asked',
+   staxx_release_tag_at_commit($fakeProject, $cFrom) === '',
+   var_export(staxx_release_tag_at_commit($fakeProject, $cFrom), true));
+
+$emptyChanges = ['changes' => [], 'url' => '', 'cut' => false];
+
+$changelogNonGh = staxx_changelog_fetch($fakeProject, $cFrom, $cTo);
+ok('the changelog fetch returns the all-empty answer for a non-GitHub link',
+   $changelogNonGh === $emptyChanges,
+   json_encode($changelogNonGh));
+
+// This is the case that proves the refusal happens BEFORE the network, not
+// after it: the project link here is a perfectly good GitHub one, so the
+// GitHub check passes — and still nothing is asked, because the URL builder
+// refuses the identical ids first and leaves the fetcher with no address to
+// call. That is what keeps this case safe in the offline suite.
+$changelogSameId = staxx_changelog_fetch($gh, $cFrom, $cFrom);
+ok('a real GitHub link with identical ids still gives the all-empty answer — '
+ . 'the builder refuses first, so no request is made',
+   $changelogSameId === $emptyChanges,
+   json_encode($changelogSameId));
+
+/* ======================================================================= *
+ * I — PLAN_82a's four new optional keys on an image-history entry:
+ * revision, changes, changesUrl, changesCut. Validated the same
+ * all-or-nothing way as the notes keys in section C, and asserted the same
+ * way, because one wrong key must take its whole map down rather than being
+ * quietly dropped.
+ * ======================================================================= */
+
+$noChanges = entryBase();
+ok('an entry with none of the four changelog keys validates — absent is valid',
+   staxx_image_history_valid_entry($noChanges));
+ok('...and validates as a whole map too',
+   staxx_image_history_valid_map(['web' => [$noChanges]]));
+
+$badRevision = entryBase();
+$badRevision['revision'] = 12345; // not a string
+ok('a non-string revision invalidates the entry on its own',
+   !staxx_image_history_valid_entry($badRevision));
+ok('...and takes its whole map down with it too',
+   !staxx_image_history_valid_map(['web' => [entryBase(), $badRevision]]));
+
+$changesString = entryBase();
+$changesString['changes'] = 'Fixed a bug.'; // a string, not a list
+ok('changes given as a string rather than an array invalidates',
+   !staxx_image_history_valid_entry($changesString));
+ok('...and its map',
+   !staxx_image_history_valid_map(['web' => [$changesString]]));
+
+$changesMixed = entryBase();
+$changesMixed['changes'] = ['Fixed a bug.', 42];
+ok('changes containing a non-string element invalidates',
+   !staxx_image_history_valid_entry($changesMixed));
+ok('...and its map',
+   !staxx_image_history_valid_map(['web' => [$changesMixed]]));
+
+// Both non-list shapes, because they fail differently: string keys never
+// looked like a list, whereas a gap in the numeric keys is the one that
+// survives a careless is_array() check and then writes JSON as an object.
+$changesKeyed = entryBase();
+$changesKeyed['changes'] = ['first' => 'Fixed a bug.', 'second' => 'Added a feature.'];
+ok('changes keyed by strings rather than a plain list invalidates',
+   !staxx_image_history_valid_entry($changesKeyed));
+
+$changesGap = entryBase();
+$changesGap['changes'] = [0 => 'Fixed a bug.', 2 => 'Added a feature.'];
+ok('changes with a gap in its numbering is not a list, and invalidates',
+   !staxx_image_history_valid_entry($changesGap));
+ok('...and its map',
+   !staxx_image_history_valid_map(['web' => [$changesGap]]));
+
+$badChangesCut = entryBase();
+$badChangesCut['changesCut'] = 'yes'; // not a bool
+ok('a non-bool changesCut invalidates the entry',
+   !staxx_image_history_valid_entry($badChangesCut));
+
+$badChangesUrl = entryBase();
+$badChangesUrl['changesUrl'] = ['https://example.test/compare']; // not a string
+ok('a non-string changesUrl invalidates the entry',
+   !staxx_image_history_valid_entry($badChangesUrl));
+ok('...and its map',
+   !staxx_image_history_valid_map(['web' => [$badChangesUrl]]));
+
+$allFour = entryBase();
+$allFour['revision']   = $cFrom;
+$allFour['changes']    = ['Fixed a bug.', 'Added a feature.'];
+$allFour['changesUrl'] = 'https://github.com/example/project/compare/'.$cFrom.'...'.$cTo;
+$allFour['changesCut'] = false;
+ok('all four changelog keys present and correctly typed validates',
+   staxx_image_history_valid_entry($allFour));
+ok('...and validates as a map',
+   staxx_image_history_valid_map(['web' => [$allFour]]));
+
+// An empty list is a well-formed list — "we looked and there was nothing" has
+// to be storable, or the recorder is forced to lie by omission.
+$emptyList = entryBase();
+$emptyList['changes'] = [];
+ok('an empty changes list validates — it is a well-formed list',
+   staxx_image_history_valid_entry($emptyList));
+ok('...and validates as a map',
+   staxx_image_history_valid_map(['web' => [$emptyList]]));
+
+note('sections G to I made no network call either: every changelog case above '
+   . 'is a pure function call, or a link that is not a GitHub link at all, or '
+   . 'a GitHub link whose ids the builder refuses before anything is asked');
+
+/* ======================================================================= *
+ * J — the one-off baseline: recording what every service is running now,
+ * without asking anything of the network.
+ *
+ * staxx_update_record_before_pull()'s third argument turns every outbound
+ * request off; staxx_update_seed_history() is the walk over every stack that
+ * uses it, once per install.
+ *
+ * The first case here is the proof that the switch really does keep this
+ * file's no-network promise: the service is given a project link that IS a
+ * real GitHub address, and a version name to look up — everything the notes
+ * fetch needs. With the lookups off, not one notes key comes back, which
+ * could only happen if nothing was asked.
+ * ======================================================================= */
+
+if ($fixtureImage === '') {
+  note('no locally cached, registry-pulled image was found on this box — the '
+     . 'baseline cases below need one to record anything at all, and are '
+     . 'skipped rather than faked');
+} else {
+  b6_wipe();
+  b6_make_stack_raw('zzb6seed',
+    "services:\n  web:\n    image: $fixtureImage\n"
+    ."    x-unraid:\n      project: https://github.com/example/project\n");
+  staxx_update_state_save(['images' => [
+    $fixtureImage => [
+      'local' => dg('j-same'), 'remote' => dg('j-same'),
+      'version' => 'SEED-VERSION', 'source' => 'https://github.com/example/project',
+    ],
+  ]]);
+
+  staxx_update_record_before_pull('zzb6seed', '', false);
+  $seedEntry = staxx_image_history('zzb6seed', 'web')[0] ?? null;
+
+  ok('with the lookups off, a service whose project link is a real GitHub '
+   . 'address still records no notes keys at all — so nothing was asked',
+     is_array($seedEntry)
+       && !array_key_exists('notes', $seedEntry)
+       && !array_key_exists('notesUrl', $seedEntry)
+       && !array_key_exists('notesCut', $seedEntry)
+       && !array_key_exists('changes', $seedEntry)
+       && !array_key_exists('changesUrl', $seedEntry)
+       && !array_key_exists('changesCut', $seedEntry),
+     $seedEntry === null ? '(nothing recorded)' : json_encode($seedEntry));
+
+  ok('...and the local facts are all still there: the digest it is running',
+     is_array($seedEntry)
+       && ($seedEntry['digest'] ?? '') === (string)(staxx_image_local($fixtureImage)['digest'] ?? 'x'),
+     $seedEntry === null ? '(nothing recorded)' : json_encode($seedEntry));
+  ok('...the version name it was given',
+     is_array($seedEntry) && ($seedEntry['version'] ?? null) === 'SEED-VERSION');
+  ok('...and where the image says it came from',
+     is_array($seedEntry)
+       && ($seedEntry['source'] ?? null) === 'https://github.com/example/project');
+
+  // Safe to run twice: the recorder refuses a digest that is already the
+  // newest one on file, which is the whole reason a re-run costs nothing.
+  staxx_update_record_before_pull('zzb6seed', '', false);
+  ok('recording the same build twice in a row leaves one entry, not two',
+     count(staxx_image_history('zzb6seed', 'web')) === 1,
+     json_encode(staxx_image_history('zzb6seed', 'web')));
+
+  /* An unreadable stack root gives an empty list, not an error, so seeding
+   * against it would record nothing and then mark itself done for ever.
+   * Simulated by removing the temporary root outright and clearing the
+   * cached scan — staxx_scan_stacks() answers "the stack folder does not
+   * exist" to that, which is the same 'ok' false the real case gives. */
+  @exec('rm -rf '.escapeshellarg($root));
+  staxx_scan_stacks_reset();
+  $blind = staxx_update_seed_history();
+  ok('with the stack folder unreadable, seeding walks nothing and says so',
+     $blind['ok'] === false && $blind['stacks'] === 0 && $blind['error'] !== '',
+     json_encode($blind));
+  ok('...and above all files no "already done" marker, so the baseline is '
+   . 'not lost for good',
+     (int)(staxx_update_state()['seeded'] ?? 0) === 0);
+
+  // Now with the root back, and one stack in it to record.
+  b6_wipe();
+  b6_make_stack_raw('zzb6seed', "services:\n  web:\n    image: $fixtureImage\n");
+  staxx_update_state_save(['images' => [
+    $fixtureImage => ['local' => dg('j-same'), 'remote' => dg('j-same'), 'version' => 'SEED-VERSION'],
+  ]]);
+
+  $first = staxx_update_seed_history();
+  ok('seeding a readable root walks the stacks it can see',
+     $first['ok'] === true && $first['stacks'] >= 1,
+     json_encode($first));
+  ok('...and files the "already done" marker',
+     (int)(staxx_update_state()['seeded'] ?? 0) > 0);
+
+  $second = staxx_update_seed_history();
+  ok('a second call reports nothing walked, because the marker stops it',
+     $second['ok'] === true && $second['stacks'] === 0,
+     json_encode($second));
+
+  note('section J made no network call either — that is exactly what its '
+     . 'first case is there to prove');
+
+  b6_wipe();
+}
 
 /* ---------------------------------------------------------------------- */
 
