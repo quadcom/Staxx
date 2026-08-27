@@ -748,6 +748,41 @@ function staxx_registry_api_host(string $host): string {
 }
 
 /**
+ * Has this server's owner vouched for $host? REGISTRY_TRUST is a
+ * comma-separated list of exact host names (optionally host:port), matched
+ * case-folded and nothing else — deliberately no wildcard, no prefix or
+ * suffix matching, no subdomain inference. A host not named exactly is not
+ * trusted, full stop; that is the whole safety property this setting has.
+ */
+function staxx_registry_trusted(string $host): bool {
+  $list = trim((string)(staxx_cfg()['REGISTRY_TRUST'] ?? ''));
+  if ($list === '') return false;
+  $host = strtolower(trim($host));
+  foreach (explode(',', $list) as $entry) {
+    if (strtolower(trim($entry)) === $host) return true;
+  }
+  return false;
+}
+
+/**
+ * Per-host memo of which scheme actually answered staxx_registry_challenge()
+ * — https always, unless a trusted host only answered over plain http. Read
+ * with no argument; written by passing $set, which is also what is returned,
+ * so the challenge probe can record-and-return in one call. Same static-array
+ * shape as the other per-host caches in this file.
+ */
+function staxx_registry_scheme(string $host, string $set = ''): string {
+  static $scheme = [];
+  if ($set !== '') { $scheme[$host] = $set; return $set; }
+  return $scheme[$host] ?? 'https';
+}
+
+/** curl flags a trusted host earns: relaxed certificate checking only. */
+function staxx_registry_curl_opts(string $host): string {
+  return staxx_registry_trusted($host) ? ' -k' : '';
+}
+
+/**
  * The authentication challenge one registry host answers with, parsed —
  * realm, service, and whether it wants no authentication at all.
  *
@@ -780,11 +815,26 @@ function staxx_registry_challenge(string $host, string &$why = null): array {
   };
 
   $apiHost = staxx_registry_api_host($host);
+  $trusted = staxx_registry_trusted($host);
+
   $probe = staxx_sh(
-    'curl -sS -L --proto '.escapeshellarg('=https,http').' --max-time 6 -D /dev/stdout -o /dev/null -X GET '
-      .escapeshellarg('https://'.$apiHost.'/v2/'),
+    'curl -sS -L --proto '.escapeshellarg('=https,http').' --max-time 6'.staxx_registry_curl_opts($host)
+      .' -D /dev/stdout -o /dev/null -X GET '.escapeshellarg('https://'.$apiHost.'/v2/'),
     10
   );
+  $scheme = 'https';
+  // Only a trusted host gets a second try, and only when https got no
+  // answer at all (a throwaway registry with no certificate) — an
+  // untrusted host's request count and behaviour are unchanged from today.
+  if ($probe === '' && $trusted) {
+    $scheme = 'http';
+    $probe = staxx_sh(
+      'curl -sS -L --proto '.escapeshellarg('=https,http').' --max-time 6 -D /dev/stdout -o /dev/null -X GET '
+        .escapeshellarg('http://'.$apiHost.'/v2/'),
+      10
+    );
+  }
+  staxx_registry_scheme($host, $scheme);
   if ($probe === '') return $keep($empty, 'failed');
 
   if (!preg_match('/^www-authenticate:\s*(.+)$/im', $probe, $hm)) {
@@ -806,7 +856,9 @@ function staxx_registry_challenge(string $host, string &$why = null): array {
 
   // The realm is remote-controlled input about to become a URL. Refused
   // outright unless it is itself https:// — a plain-http realm would leak
-  // the challenge, and no real registry uses one.
+  // the challenge, and no real registry uses one. This is a hostile-redirect
+  // guard, not a transport preference, so a trusted host's plain-http opt-in
+  // deliberately does not relax it.
   $realm = (string)($params['realm'] ?? '');
   if (!preg_match('#^https://#i', $realm)) return $keep($empty, 'failed');
 
@@ -882,8 +934,13 @@ function staxx_registry_token(string $host, string $repo, string &$why = null): 
   // same sign-in the settings page offers). No other host has one, so it is
   // always asked unauthenticated — the challenge itself decides whether
   // that is enough.
+  //
+  // -u is additionally gated on the resolved scheme being https, not merely
+  // on the host being docker.io. Nothing reaches this branch today — Hub is
+  // never http — but the day a per-host credential store exists, this stops
+  // a password going out over a plain-http wire.
   $authFlag = '';
-  if ($host === 'docker.io') {
+  if ($host === 'docker.io' && staxx_registry_scheme($host) === 'https') {
     $cfg  = staxx_cfg();
     $user = trim((string)($cfg['HUB_USER'] ?? ''));
     $pass = trim((string)($cfg['HUB_TOKEN'] ?? ''));
@@ -891,7 +948,8 @@ function staxx_registry_token(string $host, string $repo, string &$why = null): 
   }
 
   $tokOut = staxx_sh(
-    'curl -sS -L --proto '.escapeshellarg('=https,http').' --max-time 6'.$authFlag.' -w '
+    'curl -sS -L --proto '.escapeshellarg('=https,http').' --max-time 6'.$authFlag
+      .staxx_registry_curl_opts($host).' -w '
       .escapeshellarg("\n%{http_code}").' '.escapeshellarg($tokenUrl),
     10
   );
@@ -939,9 +997,12 @@ function staxx_registry_digest(string $host, string $repo, string $tag, string $
   if ($etag !== '')  $headers[] = 'If-None-Match: '.$etag;
 
   $apiHost = staxx_registry_api_host($host);
-  $url = 'https://'.$apiHost.'/v2/'.$repo.'/manifests/'.rawurlencode($tag);
+  // The scheme is already known here — staxx_registry_token() above always
+  // runs the challenge probe first, which is the only place that decides it.
+  $url = staxx_registry_scheme($host).'://'.$apiHost.'/v2/'.$repo.'/manifests/'.rawurlencode($tag);
+  $curlOpts = staxx_registry_curl_opts($host);
 
-  $cmd = 'curl -sS -L --proto '.escapeshellarg('=https,http').' --max-time 8 -D /dev/stdout -o /dev/null -X GET';
+  $cmd = 'curl -sS -L --proto '.escapeshellarg('=https,http').' --max-time 8'.$curlOpts.' -D /dev/stdout -o /dev/null -X GET';
   foreach ($headers as $h) $cmd .= ' -H '.escapeshellarg($h);
   $cmd .= ' '.escapeshellarg($url);
 
@@ -986,7 +1047,7 @@ function staxx_registry_digest(string $host, string $repo, string $tag, string $
     // a PHP string (which could trim or re-encode it and change the hash).
     // Measured against this same reference, the result matched
     // `docker buildx imagetools inspect` byte-for-byte.
-    $shaCmd = 'curl -fsS -L --proto '.escapeshellarg('=https,http').' --max-time 8 -X GET';
+    $shaCmd = 'curl -fsS -L --proto '.escapeshellarg('=https,http').' --max-time 8'.$curlOpts.' -X GET';
     foreach ($headers as $h) $shaCmd .= ' -H '.escapeshellarg($h);
     $shaCmd .= ' '.escapeshellarg($url).' | sha256sum';
 
@@ -1068,9 +1129,16 @@ function staxx_registry_labels(string $host, string $repo, string $tag): array {
   if ($token !== '') $headers[] = 'Authorization: Bearer '.$token;
 
   $apiHost = staxx_registry_api_host($host);
+  // The scheme is already known — staxx_registry_token() above ran the
+  // challenge probe. staxx_hub_json() has no way to carry a relaxed-
+  // certificate flag, so a trusted host with a self-made certificate (rather
+  // than none at all) fails here and returns [] — losing labels only, never
+  // the digest, which is fetched by staxx_registry_digest() instead and does
+  // carry the flag. Not worth widening staxx_hub_json()'s signature for.
+  $scheme = staxx_registry_scheme($host);
 
   $index = staxx_hub_json(
-    'https://'.$apiHost.'/v2/'.$repo.'/manifests/'.rawurlencode($tag),
+    $scheme.'://'.$apiHost.'/v2/'.$repo.'/manifests/'.rawurlencode($tag),
     array_merge(['Accept: '.staxx_registry_accept()], $headers),
     6, 8
   );
@@ -1097,7 +1165,7 @@ function staxx_registry_labels(string $host, string $repo, string $tag): array {
     if ($digest === '') return [];
 
     $manifest = staxx_hub_json(
-      'https://'.$apiHost.'/v2/'.$repo.'/manifests/'.$digest,
+      $scheme.'://'.$apiHost.'/v2/'.$repo.'/manifests/'.$digest,
       // Both single-image shapes, not just the OCI one. staxx_registry_config()
       // asks for OCI alone and gets away with it because it only ever talks to
       // Docker Hub, which serves it. This function exists to talk to registries
@@ -1116,7 +1184,7 @@ function staxx_registry_labels(string $host, string $repo, string $tag): array {
   // A config blob is small (a few KB of JSON) — a caller that knows that
   // says so, the same reasoning staxx_hub_repo() applies to a README.
   $blob = staxx_hub_json(
-    'https://'.$apiHost.'/v2/'.$repo.'/blobs/'.$configDigest,
+    $scheme.'://'.$apiHost.'/v2/'.$repo.'/blobs/'.$configDigest,
     $headers, 6, 8, 256 * 1024
   );
   if ($blob === null) return [];

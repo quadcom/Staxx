@@ -18666,6 +18666,14 @@
             'token that leaked could look, but never change or delete anything. It is kept in this ' +
             "plugin's settings file on the flash drive, readable only by the administrator account. " +
             'Leave both fields blank to sign out.'
+    },
+    {
+      key: 'REGISTRY_TRUST', control: 'text', label: 'Registries you run yourself',
+      help: 'Name a registry here and StaXX will trust that machine\'s own certificate, or talk to ' +
+            'it without any encryption at all if it has not been given one — so only name a registry ' +
+            'you actually run, never someone else\'s. Separate several with a comma, e.g. ' +
+            'registry.home.lan, 192.168.1.20:5000. A password is never sent to a registry reached ' +
+            'without encryption. Leave blank to trust nothing but the public internet as normal.'
     }
   ];
   SETTINGS_ROWS.forEach(function (row) {

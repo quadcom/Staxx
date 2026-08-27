@@ -109,7 +109,14 @@ config keys, and asks the same read-only questions of nine real public registrie
 just one image; its allowance is the only tight one), printing a summary table of what each one
 turned out to do. It carries the regression guard for the ghcr placeholder-scope fix, run against
 ghcr and codeberg's Gitea-hosted registry alike, and is worth a run whenever the registry code is
-touched, or before a release — an opt-in suite nobody runs is a suite that can rot unnoticed; `links.php` covers
+touched, or before a release — an opt-in suite nobody runs is a suite that can rot unnoticed;
+`registry_selfhosted.php` is PLAN_92 Stage 2 — opt-in behind `STAXX_SELFHOSTED=1`, needs
+`REGISTRY_TRUST` pointed at `127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002`, and is the only suite
+here that pulls anything: it starts and removes three throwaway registries on the box itself (open,
+password-protected, and a second implementation) to prove what a self-hosted registry does that a
+public one cannot show. Worth a run alongside `registry_quirks.php` whenever the registry code is
+touched, or before a release — the same "an opt-in suite nobody runs" trap applies twice over here;
+`links.php` covers
 what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
 for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's
 boot-start list, and points `STAXX_AUTOSTART_FILE` at `/tmp` so the real one is never touched. Each
