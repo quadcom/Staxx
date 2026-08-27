@@ -513,6 +513,73 @@ if ($singleImageStack === null) {
   }
 }
 
+/* ------------------------------------- 20. the moving-tag "same name" pill */
+
+// A moving tag (e.g. "main") bakes the same version string into every build,
+// so 'was' and 'version' read identical even though the digest changed —
+// the whole reason this label exists. Both build dates known: the label
+// names the tag once and says a new build exists, and the tip gives both
+// times so a same-day rebuild is still legible.
+$wasWhen = strtotime('2026-08-26 23:23:00');
+$newWhen = strtotime('2026-08-26 23:49:00');
+$movingImage = 'staxx-test/moving-tag:main';
+$state = staxx_update_state();
+$state['images'][$movingImage] = [
+  'local' => 'sha256:aaa', 'remote' => 'sha256:bbb',
+  'was' => 'main', 'version' => 'main',
+  'wasCreated' => $wasWhen, 'created' => $newWhen,
+];
+staxx_update_state_save($state);
+
+$movingPill = staxx_updates_pill_for_image($movingImage, staxx_update_state()['images']);
+ok('moving tag: both dates known reports state "update"', $movingPill['state'] === 'update', $movingPill['state']);
+ok('moving tag: label names the tag once and says a new build exists',
+   $movingPill['label'] === 'main · new build', $movingPill['label']);
+ok('moving tag: tip names the running build\'s time',
+   strpos($movingPill['tip'], date('j M, H:i', $wasWhen)) !== false, $movingPill['tip']);
+ok('moving tag: tip names the new build\'s time',
+   strpos($movingPill['tip'], date('j M, H:i', $newWhen)) !== false, $movingPill['tip']);
+
+// Same identical-name case, but one build date is missing — never print
+// "new build" with nothing to back it up; fall back to the plain label.
+$state = staxx_update_state();
+$state['images'][$movingImage] = [
+  'local' => 'sha256:aaa', 'remote' => 'sha256:bbb',
+  'was' => 'main', 'version' => 'main',
+  'created' => $newWhen, // no wasCreated
+];
+staxx_update_state_save($state);
+
+$noDatePill = staxx_updates_pill_for_image($movingImage, staxx_update_state()['images']);
+ok('moving tag: a missing build date falls back to "update ready"',
+   $noDatePill['label'] === 'update ready', $noDatePill['label']);
+ok('moving tag: the fallback never claims a new build with no dates',
+   strpos($noDatePill['label'], 'new build') === false, $noDatePill['label']);
+
+// Different version strings must still read as the plain arrow, even when
+// both build dates happen to be known — this is the regression this whole
+// feature must never cause.
+$state = staxx_update_state();
+$state['images'][$movingImage] = [
+  'local' => 'sha256:aaa', 'remote' => 'sha256:bbb',
+  'was' => '1.0', 'version' => '1.1',
+  'wasCreated' => $wasWhen, 'created' => $newWhen,
+];
+staxx_update_state_save($state);
+
+$arrowPill = staxx_updates_pill_for_image($movingImage, staxx_update_state()['images']);
+ok('different versions: label is still the plain arrow, unchanged',
+   $arrowPill['label'] === '1.0 → 1.1', $arrowPill['label']);
+
+// No version strings at all (neither label ever populated) must still read
+// as the original generic "update ready", unchanged.
+$state = staxx_update_state();
+$state['images'][$movingImage] = ['local' => 'sha256:aaa', 'remote' => 'sha256:bbb'];
+staxx_update_state_save($state);
+
+$blankPill = staxx_updates_pill_for_image($movingImage, staxx_update_state()['images']);
+ok('no version strings: label is "update ready", unchanged', $blankPill['label'] === 'update ready', $blankPill['label']);
+
 printf("\n%s — %d failure%s, %d skipped\n",
        $fails ? 'FAILED' : 'passed', $fails, $fails === 1 ? '' : 's', $skips);
 exit($fails ? 1 : 0);

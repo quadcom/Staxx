@@ -820,7 +820,7 @@ function staxx_update_refresh_local(string $stack, string $service = ''): bool {
     // nothing left to fire on — cleared by the same three keys
     // staxx_update_check() clears, so the two can never disagree.
     if (($entry['remote'] ?? '') === $local['digest']) {
-      unset($entry['seen'], $entry['was'], $entry['seenDigest']);
+      unset($entry['seen'], $entry['was'], $entry['wasCreated'], $entry['seenDigest']);
     }
 
     $images[$image] = $entry;
@@ -1164,6 +1164,14 @@ function staxx_update_check(string $scope, bool $force): array {
       // digest (one 'seen' has not already been recorded against) resets it.
       if (($existing['seenDigest'] ?? '') !== $existing['remote']) {
         $existing['was']        = $images[$image]['version'] ?? ($existing['was'] ?? '');
+        // The running image's own build date — 'created' on $existing is the
+        // REMOTE image's date and is overwritten every pass, so it cannot
+        // serve as "before". $local is what 'was' is being read alongside,
+        // so its date is the honest "before" to pair with it. No falling back
+        // to a remembered one, unlike 'was' above: a date kept from an
+        // earlier cycle describes whatever was running then, and pairing that
+        // with today's "after" would state a time this image was never built.
+        $existing['wasCreated'] = $local['created'] ?? '';
         $existing['seen']       = $now;
         $existing['seenDigest'] = $existing['remote'];
         // A genuinely newer version has turned up — someone cancelling the
@@ -1181,7 +1189,7 @@ function staxx_update_check(string $scope, bool $force): array {
         echo $image." — update still pending\n";
       }
     } else {
-      unset($existing['seen'], $existing['was'], $existing['seenDigest']);
+      unset($existing['seen'], $existing['was'], $existing['wasCreated'], $existing['seenDigest']);
       echo $image.($skipped ? ' — update skipped, staying quiet' : ' — up to date')."\n";
     }
 
@@ -1419,8 +1427,25 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
   if ($local !== $remote && !$skipped) {
     $was = (string)($entry['was'] ?? '');
     $ver = (string)($entry['version'] ?? '');
-    $label = ($was !== '' && $ver !== '') ? $was.' → '.$ver : 'update ready';
-    $tip = ($was !== '' && $ver !== '')
+
+    // A moving tag (e.g. "main") reports the same name for the running build
+    // and the new one — the name alone cannot say anything changed. Only the
+    // build dates can say that, and only when both are actually known; with
+    // either missing this falls through to the plain "update ready" below
+    // rather than printing a claim it cannot back up.
+    if ($was !== '' && $ver !== '' && $was === $ver
+        && !empty($entry['wasCreated']) && !empty($entry['created'])) {
+      $whenWas = date('j M, H:i', (int)$entry['wasCreated']);
+      $whenNew = date('j M, H:i', (int)$entry['created']);
+      return ['state' => 'update', 'label' => $ver.' · new build', 'source' => $source,
+               'tip' => 'This tag always points at the newest build, so its name never changes. '
+                      . 'The one running was built '.$whenWas.', and the new one was built '.$whenNew.'. '
+                      . 'Press this to fetch it and rebuild the container on it.',
+               'version' => $ver, 'was' => $was];
+    }
+
+    $label = ($was !== '' && $ver !== '' && $was !== $ver) ? $was.' → '.$ver : 'update ready';
+    $tip = ($was !== '' && $ver !== '' && $was !== $ver)
       ? 'A newer version, '.$ver.', is available; this is currently running '.$was.'. '
       . 'Press this to fetch it and rebuild the container on it.'
       : 'A newer version of this image is available. Press this to fetch it and rebuild the '
