@@ -1091,7 +1091,12 @@
 
   function paintGutter() {
     var n = lineCount(yamlPane.value);
-    if (n === gutterLines) return;   // most keystrokes change no line count
+    // The line count alone is not enough to call this done. Form view hides
+    // the pane (display: none), so a call made from there measures the gutter
+    // as zero wide and leaves the textarea at left: 0 — under the numbers.
+    // Without the second test the count would already match on the way back
+    // and the early return would keep that wrong placement for ever.
+    if (n === gutterLines && parseFloat(yamlPane.style.left) > 0) return;
     gutterLines = n;
 
     var out = [];
@@ -1292,7 +1297,7 @@
       // moved on scroll and so has to subtract scrollTop itself, whereas this
       // layer is inside the gutter and syncGutter() translates it.
       dot.style.top = (PAD_T + (item.line + 0.5) * LINE_H) + 'px';
-      dot.title = item.message;
+      dot.title = item.message || '';   // a missing message must never print the word "undefined"
       yamlDots.appendChild(dot);
     }
   }
@@ -3987,25 +3992,38 @@
     // movedSpots is compose-file-only too — a companion file has no Image
     // setting of its own to have moved.
     if (composeActive && movedSpots.length) {
-      list = list.concat(movedSpots.map(function (m) { return { line: m.line, level: 'warn' }; }));
+      // .fact is the same object movedAdvice carries (applyMovedAdvice()) —
+      // .reason is the plain sentence adviceText() wraps in HTML, so the
+      // plain source is what the tooltip wants, not the wrapped version.
+      list = list.concat(movedSpots.map(function (m) { return { line: m.line, level: 'warn', message: m.fact.reason }; }));
     }
     // clashSpots (PLAN_65), same reasoning.
     if (composeActive && clashSpots.length) {
-      list = list.concat(clashSpots.map(function (m) { return { line: m.line, level: 'warn' }; }));
+      // Same wording paintClashSummary() leads with, built here rather than
+      // shared — that function's shape is "first hit plus a count", which a
+      // single marker's tooltip does not want.
+      list = list.concat(clashSpots.map(function (h) {
+        return { line: h.line, level: 'warn', message: h.kind === 'port'
+          ? 'Port ' + h.mine + '/' + h.proto + ' is already used by "' + h.container + '".'
+          : '"' + h.mine + '" is already used by "' + h.container + '".' };
+      }));
     }
     // linkSpots (PLAN_70 stage 2), same reasoning. paintDots() only knows
     // two dot colours (warn/error) — 'warn' is the closer of the two even
     // though a connection is not itself a problem, since the underline and
     // row marking are what actually carry the "this is not a clash" tone.
     if (composeActive && linkSpots.length) {
-      list = list.concat(linkSpots.map(function (m) { return { line: m.line, level: 'warn' }; }));
+      // .title, not .text — .text is the escaped/HTML sentence the hover
+      // panel's innerHTML wants (applyLinkAdvice()); title is a plain
+      // attribute and cannot hold either the tags or the escaped entities.
+      list = list.concat(linkSpots.map(function (m) { return { line: m.line, level: 'warn', message: m.title }; }));
     }
     // crossSpots (PLAN_70 stage 5), same reasoning. A gutter dot only — no
     // underline layer for these, unlike linkSpots above, since the field's
     // own note (Form view) is already where every action for this feature
     // lives; the dot is just a way to notice it from the Compose view too.
     if (composeActive && crossSpots.length) {
-      list = list.concat(crossSpots.map(function (m) { return { line: m.line, level: 'warn' }; }));
+      list = list.concat(crossSpots.map(function (m) { return { line: m.line, level: 'warn', message: m.title }; }));
     }
     paintDots(list);
   }
@@ -4194,6 +4212,20 @@
       : 'This looks like it names "' + esc(other.service) + '", another part of this stack.';
   }
 
+  // One of our own HTML sentences as plain text, for a title attribute —
+  // which shows tags and entities literally rather than rendering them.
+  // Wording is never duplicated for this: a second copy of a sentence is a
+  // second copy to keep in step, and the two drift the first time one is
+  // reworded. esc() is the only escaper these strings go through and it
+  // produces just the four entities below, so the inverse is exact. "&amp;"
+  // must be undone last or "&amp;lt;" would come back as "<".
+  function plainFromHtml(html) {
+    return String(html === undefined || html === null ? '' : html)
+      .replace(/<[^>]*>/g, '')
+      .replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&');
+  }
+
   // The confirm/reject buttons beside an UNCONFIRMED connection's own
   // sentence (PLAN_70 stage 3 section 5) — "these are linked" and "not
   // related". A confirmed pair never reaches here at all any more — it
@@ -4338,7 +4370,11 @@
     conns.forEach(function (c) {
       var state = c.certainty === 'declared' ? null : (canRecord ? YAML.linkState(MODEL.doc, c.kind, c.between) : null);
       if (state === 'rejected') return;   // silent — see the docblock above linkButtonsHtml()
-      visible.push(c);
+      // A CONFIRMED connection collapses to the field-level mark (§11.4) and
+      // must drop out of the top note too, or it never stops showing once
+      // confirmed — 'declared' resolves state to null, not 'confirmed', so
+      // it stays in unaffected.
+      if (state !== 'confirmed') visible.push(c);
 
       // §11.1: "password" is only ever said where the FILE marks one of the
       // two boxes sensitive (the -!S note marker) — never inferred from the
@@ -4362,14 +4398,17 @@
         if (state === 'confirmed') {
           f.linkAdvice.push(linkMarkHtml(c, p[2]));
           var markSpot = linkSpotFor(f);
-          if (markSpot) linkSpots.push({ line: markSpot.line, col: markSpot.col, len: markSpot.len,
-            text: 'Linked to "' + p[2].service + '"’s "' + (p[2].environment || p[2].volume || '') + '"' });
+          if (markSpot) {
+            var markText = 'Linked to "' + p[2].service + '"’s "' + (p[2].environment || p[2].volume || '') + '"';
+            linkSpots.push({ line: markSpot.line, col: markSpot.col, len: markSpot.len, text: markText, title: markText });
+          }
           return;
         }
         var sentence = linkAdviceText(c, p[1], p[2], state, isPassword);
         f.linkAdvice.push(sentence + linkButtonsHtml(c));
         var spot = linkSpotFor(f);
-        if (spot) linkSpots.push({ line: spot.line, col: spot.col, len: spot.len, text: sentence });
+        if (spot) linkSpots.push({ line: spot.line, col: spot.col, len: spot.len, text: sentence,
+          title: plainFromHtml(sentence) });
       });
     });
 
@@ -4841,7 +4880,13 @@
         if (!st) continue;
         f.crossAdvice = crossAdviceHtml(st);
         var spot = linkSpotFor(f);
-        if (spot) crossSpots.push({ line: spot.line, col: spot.col, len: spot.len });
+        // The same advice the form note shows, as plain text — a title
+        // attribute cannot render the buttons and pickers crossAdviceHtml()
+        // builds, and wording this a second time by hand would go stale and
+        // was already wrong for the "points at itself" case, which carries
+        // its reason nowhere else.
+        if (spot) crossSpots.push({ line: spot.line, col: spot.col, len: spot.len,
+          title: plainFromHtml(f.crossAdvice) });
       }
     }
 
@@ -7590,7 +7635,7 @@
       title: 'Replace the value in ' + pwgenTargetLabel(el) + '?',
       bodyHtml: '<p>It already holds <code>' + esc(was) + '</code>.</p>',
       goLabel: 'Replace'
-    }).then(function (go) { if (go) doFill(); });
+    }).then(function (go) { if (go) { closeConfirm(); doFill(); } });
   }
 
   if (pwgenFill) {
@@ -14233,7 +14278,9 @@
   // outside the editor dialog.
   document.addEventListener('keydown', function (event) {
     if (!findBar || !modal.open || modalBody.dataset.view === 'form') return;
-    var lower = event.key.toLowerCase();
+    // event.key can be undefined on a synthetic keydown (password managers
+    // and some extensions dispatch a plain Event), which would otherwise throw.
+    var lower = String(event.key || '').toLowerCase();
     if (!(event.ctrlKey || event.metaKey) || (lower !== 'f' && lower !== 'h')) return;
     event.preventDefault();
     openFind(lower === 'h' ? 'replace' : 'find');
@@ -16152,6 +16199,7 @@
                    goLabel: 'Add link' })
         .then(function (go) {
           if (!go) return;
+          closeConfirm();
           writeProjectLink(stack, service, project, support, label);
         });
     });
