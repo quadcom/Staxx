@@ -55,6 +55,8 @@ bash /boot/staxx-main/dev-install.sh
 Open **Docker → Stacks**. Make a folder under `/boot/config/plugins/staxx/stacks/`, drop a compose
 file in it, and it is there. Or press **Apps** and pick something.
 
+New to the page? The [user guide](docs/guide/README.md) explains what you are looking at.
+
 To remove it again, run the same script with `--remove`, which keeps your settings, or `--purge`,
 which takes those too.
 

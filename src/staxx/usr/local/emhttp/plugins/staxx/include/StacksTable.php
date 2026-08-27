@@ -1097,8 +1097,9 @@ function staxx_pending_service_chip_html(string $kind): string {
  * The small marker beside the image column when the compose file asks for one
  * image and the running container is another — a save that has not yet been
  * followed by a start or restart. Deliberately its own class rather than
- * staxx_drift_mark_html()'s: that one means an Unraid template moved on since
- * import, an unrelated fact, and sharing a class would blur the two together.
+ * staxx_drift_mark_html()'s: that one means the Compose Manager project this
+ * stack was copied from has changed since, an unrelated fact, and sharing a
+ * class would blur the two together.
  *
  * Rendered here AND repainted by applyState() in stacks.js on every state
  * poll, so the marker is right on the very first paint and stays right

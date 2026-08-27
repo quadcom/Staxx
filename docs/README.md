@@ -141,6 +141,7 @@ works. Plugin first, formal proposal later.
 | [glossary.md](glossary.md) | Plain definitions of every term used across the project | Anything below reads as jargon |
 | [feasibility.md](feasibility.md) | Whether all this is actually possible, and the evidence for it | You want to know what is proven versus assumed, and where the risks are |
 | [x-unraid-schema.md](x-unraid-schema.md) | The exact format of the extra information that makes the form friendly | You are writing that information by hand, or building something that generates it |
+| [guide/README.md](guide/README.md) | What StaXX shows you once it is installed and running | You want to know what a badge or setting on the page actually means |
 
 The main [README](../README.md) covers the repository itself — its layout and how to build it.
 

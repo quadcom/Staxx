@@ -18568,7 +18568,13 @@
         ['daily',  'Every day'],
         ['weekly', 'Once a week']
       ],
-      help: 'How often to check. Leaving this off means nothing is ever looked up.'
+      // A real anchor, not a bare address: settingsFieldHtml() writes .help
+      // straight into the hint span without escaping it, the same way the
+      // flash-drive hint below carries its own button.
+      help: 'How often to check. Leaving this off means nothing is ever looked up. ' +
+            '<a href="https://github.com/quadcom/Staxx/blob/main/docs/guide/updates.md" ' +
+            'target="_blank" rel="noopener">What checking does, and why some images are asked ' +
+            'about more often than others</a>.'
     },
     {
       key: 'UPDATE_CHECK_TIME', control: 'time', label: 'Time of day to check',
@@ -19991,6 +19997,13 @@
     }
     addBootMenuItem(d, name, '');
     addBootWaitField(d, 'stack', name);
+
+    // Same window.open() pattern as "What changed" above — an outward link,
+    // not an action, so it sits with the informational items rather than
+    // among the run/stop/update verbs.
+    menuItem('What do these marks mean?', 'question-circle', function () {
+      window.open('https://github.com/quadcom/Staxx/blob/main/docs/guide/marks.md', '_blank', 'noopener');
+    });
 
     menuSeparator();
     menuItem('Remove stack', 'trash-o', function () { removeStack(name, label); }, { danger: true });
