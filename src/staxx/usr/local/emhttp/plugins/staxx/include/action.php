@@ -860,12 +860,14 @@ switch ($action) {
     // The page names the stack it has just pulled, updated, rebuilt or
     // rolled back, so the pill it is about to repaint is compared against
     // what is on disk now rather than what was there before the job ran.
-    // Silent on refusal: an invalid or unknown name here only means the
-    // pills stay as they were, which is not worth failing a whole refresh
-    // over. Never a whole-machine sweep — one docker question per service of
-    // one stack is cheap, sixty is not.
+    // If the disk still disagrees with the remembered registry answer, that
+    // half is re-asked too — a remembered digest can go stale between check
+    // passes, and this is why the refresh stays scoped to the one stack the
+    // page named rather than becoming a whole-machine sweep. Silent on
+    // refusal: an invalid or unknown name here only means the pills stay as
+    // they were, which is not worth failing a whole refresh over.
     $touched = (string)($_POST['stack'] ?? '');
-    if ($touched !== '') staxx_update_refresh_local($touched, (string)($_POST['service'] ?? ''));
+    if ($touched !== '') staxx_update_refresh_after_run($touched, (string)($_POST['service'] ?? ''));
 
     $rows = [];
     foreach (staxx_list_stacks() as $s) {

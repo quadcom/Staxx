@@ -15444,8 +15444,12 @@
   // (a row that just became up to date must lose it, not show it empty);
   // anything else creates it in the row's status area the first time it is
   // needed. The element built here must come out byte-for-byte the same as
-  // staxx_update_pill_html() — same class, same three data attributes — so a
-  // pill born in the browser is indistinguishable from one the server drew.
+  // staxx_update_pill_html() — same class, same three data attributes, and
+  // the same tag — so a pill born in the browser is indistinguishable from
+  // one the server drew. The tag matters as much as the markup: a span pill
+  // cannot be pressed, because the page's click handling only looks at
+  // buttons, so a repaint that downgrades a button to a span silently kills
+  // the update action.
   function paintUpdatePill(row, entry) {
     var host = updatePillHost(row);
     if (!host) return;
@@ -15457,10 +15461,23 @@
       if (pill) pill.parentNode.removeChild(pill);
       return;
     }
+    // Mirrors staxx_update_pill_html(): only an 'update' pill on a pressable
+    // row (not a folder row) is a button; everything else is inert.
+    var wantTag = (state === 'update' && row && !row.dataset.folderRow) ? 'BUTTON' : 'SPAN';
+    if (pill && pill.tagName !== wantTag) {
+      // A stale button/span left behind by a fresh page render must not be
+      // reused across a tag change — replace it rather than repurpose it,
+      // and start its label cache clean so the new element's text always
+      // gets (re)written below instead of trusting a value from the old one.
+      var fresh = document.createElement(wantTag.toLowerCase());
+      pill.parentNode.replaceChild(fresh, pill);
+      pill = fresh;
+    }
     if (!pill) {
-      pill = document.createElement('span');
+      pill = document.createElement(wantTag.toLowerCase());
       host.appendChild(pill);
     }
+    if (wantTag === 'BUTTON') pill.type = 'button';
 
     var cls = UPDATE_PILL_CLASS[state] || '';
     pill.className = 'staxx-updatepill' + (cls ? ' ' + cls : '');

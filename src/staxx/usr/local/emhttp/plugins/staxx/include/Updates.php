@@ -933,20 +933,19 @@ function staxx_update_unlock(): void {
 }
 
 /**
- * Re-read what is actually on disk for one stack's images and fold the
- * answer into the state file. No network: the registry's half is left
- * exactly as the last check pass found it, and only the local half is
- * corrected.
- *
- * Called after anything that can change which image a container runs on —
- * a pull, an update, a rebuild, a rollback. Without it the pill goes on
- * comparing the digest that was on disk BEFORE the pull against the
- * registry's, so an update that plainly succeeded still reads as pending
- * until the six-hourly check pass comes round again.
+ * Work out the truth again for one stack's images after a job has just
+ * changed it — a pull, an update, a rebuild, a rollback. First re-reads what
+ * is actually on disk, same as before. But a corrected local digest can
+ * still disagree with a REMEMBERED registry answer that has since gone
+ * stale — the tag moved, or moved back, since the last six-hourly check —
+ * and leaving that half untouched is how "update ready" survives installing
+ * the update. So where the two still disagree after the local half is
+ * fixed, the registry is asked again (capped, see below) and folded in the
+ * same way the check pass does.
  *
  * @return bool whether anything was actually corrected
  */
-function staxx_update_refresh_local(string $stack, string $service = ''): bool {
+function staxx_update_refresh_after_run(string $stack, string $service = ''): bool {
   if (!staxx_valid_path($stack)) return false;
 
   $file = staxx_find_compose_file(staxx_stack_dir($stack));
@@ -990,6 +989,60 @@ function staxx_update_refresh_local(string $stack, string $service = ''): bool {
     // nothing left to fire on — cleared by the same four keys
     // staxx_update_check() clears, so the two can never disagree.
     if (($entry['remote'] ?? '') === $local['digest']) {
+      unset($entry['seen'], $entry['was'], $entry['wasCreated'], $entry['seenDigest']);
+    }
+
+    $images[$image] = $entry;
+    $dirty = true;
+  }
+
+  // Second pass: still disagreeing after the local digest above was fixed
+  // means the REGISTRY half may be the stale one. Left alone, an update that
+  // plainly succeeded keeps reading as pending until the next six-hourly
+  // check pass. Capped at 4 re-asks per call — each is a network round trip
+  // with its own 20-second ceiling, and the page is waiting on this request,
+  // so a stack with a dozen services must not turn one click into a
+  // two-minute page load.
+  $toReask = [];
+  foreach ($meta['services'] as $svc => $svcMeta) {
+    if ($service !== '' && $svc !== $service) continue;
+
+    $image = trim((string)($svcMeta['image'] ?? ''));
+    if ($image === '' || !isset($images[$image]) || isset($toReask[$image])) continue;
+
+    $entry  = $images[$image];
+    $local  = (string)($entry['local'] ?? '');
+    $remote = (string)($entry['remote'] ?? '');
+    if ($local === '' || $remote === '' || $local === $remote) continue;
+
+    $toReask[$image] = true;
+  }
+
+  $reasked = 0;
+  foreach (array_keys($toReask) as $image) {
+    if ($reasked >= 4) break;
+    $reasked++;
+
+    $why   = '';
+    $fresh = staxx_image_remote($image, $why);
+    // A registry that could not be reached leaves the previous answer
+    // standing — nothing invented, nothing cleared, no new error recorded
+    // here; staxx_update_check() already owns error reporting for that.
+    if ($fresh === []) continue;
+
+    $entry = $images[$image];
+    $entry['remote'] = $fresh['digest'] ?? '';
+    if (isset($fresh['version'])) $entry['version'] = $fresh['version'];
+    if (isset($fresh['source']))  $entry['source']  = $fresh['source'];
+    if (isset($fresh['created'])) $entry['created'] = $fresh['created'];
+    // Stamped so the check pass's own six-hour TTL counts from this answer,
+    // not from whenever it last happened to ask.
+    $entry['asked'] = time();
+
+    // Up to date now — cleared by the same four keys the first pass and
+    // staxx_update_check() clear, so the countdown cannot outlive the
+    // thing it was counting towards.
+    if (($entry['local'] ?? '') === $entry['remote']) {
       unset($entry['seen'], $entry['was'], $entry['wasCreated'], $entry['seenDigest']);
     }
 
