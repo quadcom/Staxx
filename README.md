@@ -38,28 +38,29 @@ underneath stays an ordinary compose file that still runs anywhere.
 
 ## The 60-second start
 
-Put the installer and the plugin folder on your flash drive:
+Download the latest **main** build from [Releases](https://github.com/quadcom/Staxx/releases),
+extract it to a folder on your server, and run the install script inside it. Every push to main
+builds one, so the newest is always at the top of that page.
 
-```
-/boot/staxx-dev/
-    dev-install.sh
-    staxx/          <- src/staxx/usr/local/emhttp/plugins/staxx/
-```
-
-Then, over SSH:
+The flash drive is the sensible place to put it — `/boot/` — because what gets installed does not
+survive a reboot and you will want the folder again. Anywhere will work; the script finds its own
+way.
 
 ```sh
-bash /boot/staxx-dev/dev-install.sh
+cd /boot
+tar -xzf ~/staxx-main.tar.gz          # wherever you put the download
+bash /boot/staxx-main/dev-install.sh
 ```
 
 Open **Docker → Stacks**. Make a folder under `/boot/config/plugins/staxx/stacks/`, drop a compose
 file in it, and it is there. Or press **Apps** and pick something.
 
-To remove it again: `--remove` keeps your settings, `--purge` takes those too.
+To remove it again, run the same script with `--remove`, which keeps your settings, or `--purge`,
+which takes those too.
 
-Once StaXX is published this becomes a one-liner — Unraid's **Plugins → Install Plugin** box takes a
-plugin address directly, and Community Applications is not needed for that. It is not the way in yet
-because the project is not public.
+Once StaXX is published none of this is needed — Unraid's **Plugins → Install Plugin** box takes a
+plugin address directly, and Community Applications is not required for that. It is not the way in
+yet because the project is not public.
 
 ## Contents
 
