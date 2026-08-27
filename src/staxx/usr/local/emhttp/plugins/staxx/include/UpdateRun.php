@@ -394,8 +394,16 @@ function staxx_update_history_push(string $stack, string $service, string $diges
  * throughout: nothing calling this has anywhere to show a failure, so an
  * unreadable stack or a service with no local digest yet simply records
  * nothing, exactly as it always has.
+ *
+ * $lookups false means record the local facts only — digest, version, source
+ * and commit — and make no outbound request whatsoever. That exists for the
+ * one-off baseline seeding below: the notes budget further down is 12 seconds
+ * *per call*, so eighty-odd stacks would be up to seventeen minutes of network
+ * time and hundreds of requests against a ceiling of sixty an hour. A baseline
+ * only answers "which build am I running"; notes and commit lists arrive with
+ * the next real update, which is soon enough.
  */
-function staxx_update_record_before_pull(string $stack, string $service = ''): void {
+function staxx_update_record_before_pull(string $stack, string $service = '', bool $lookups = true): void {
   // Move anything this stack still has sitting in the old central file into
   // its own record first — a side effect of the ordinary update path rather
   // than a separate event, per PLAN_82 Part 1. Logged and carried on rather
@@ -482,7 +490,10 @@ function staxx_update_record_before_pull(string $stack, string $service = ''): v
     // nothing about when notes are fetched — only that the project link and
     // the recorded history, both local reads, are looked up in a few more
     // cases.
-    if (($name !== '' || $revision !== '') && time() < $notesUntil) {
+    // $lookups gates the whole block, not each fetch inside it: the project
+    // link is resolved in here too, and a baseline pass must not even ask
+    // that much.
+    if ($lookups && ($name !== '' || $revision !== '') && time() < $notesUntil) {
       $links   = staxx_project_links($image, $meta['x'] ?? [], $meta['services'][$svc]['x'] ?? []);
       $project = (string)($links['project'] ?? '');
       if ($project !== '') {
@@ -543,6 +554,44 @@ function staxx_update_record_before_pull(string $stack, string $service = ''): v
 
     staxx_update_history_push($stack, $svc, $local['digest'], $svcMetaOut);
   }
+}
+
+/**
+ * Give every stack a starting point in its own history, once. Until this ran,
+ * a stack only got an entry the first time one of its images was updated, so
+ * the Versions tab was empty on almost everything and filled up over months.
+ * Everything recorded here is already on the machine — the images' own labels
+ * and digests — so this pulls nothing and touches no container.
+ *
+ * Deliberately once per install, not once per pass: it parses every compose
+ * file and inspects every service's image, which is well over a hundred
+ * shell-outs on a busy box. The timestamp under 'seeded' is what stops it
+ * happening again, and staxx_image_history_push() refuses a digest that is
+ * already newest anyway, so a repeat would be harmless — just wasteful.
+ *
+ * An unreadable stack root gives an EMPTY list rather than an error, so it is
+ * tested for first: seeding against nothing and then filing the marker would
+ * quietly cost every stack its baseline for good.
+ */
+function staxx_update_seed_history(): array {
+  $out = ['stacks' => 0, 'ok' => true, 'error' => ''];
+
+  if ((int)(staxx_update_state()['seeded'] ?? 0) > 0) return $out;
+
+  if (!staxx_stacks_visible()) {
+    $out['ok']    = false;
+    $out['error'] = 'The stack folder could not be read, so nothing was recorded yet. '
+                  . 'This runs again on the next check.';
+    return $out;
+  }
+
+  foreach (staxx_list_stacks() as $s) {
+    staxx_update_record_before_pull((string)$s['name'], '', false);
+    $out['stacks']++;
+  }
+
+  staxx_update_state_save(['seeded' => time()]);
+  return $out;
 }
 
 /**

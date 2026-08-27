@@ -333,7 +333,15 @@ if ($fixtureImage === '') {
   // 1. changed = true (local !== remote, both non-empty) → the outgoing
   // entry is stamped from 'was', not 'version'.
   b6_wipe();
-  b6_make_stack_raw('zzb6changed', "services:\n  web:\n    image: $fixtureImage\n");
+  // The project link is pinned to an address that is not GitHub, and that is
+  // not decoration. Without one, staxx_project_links() falls back to the
+  // image's own source label — a real repository — so this case quietly
+  // reached the network to be told nothing matched. It only became visible
+  // once the commit route started finding a release there, but the request
+  // was always going out, which this file's header promises never happens.
+  b6_make_stack_raw('zzb6changed',
+    "services:\n  web:\n    image: $fixtureImage\n"
+    ."    x-unraid:\n      project: https://staxxtest-nonexistent-host.invalid/some/repo\n");
   staxx_update_state_save(['images' => [
     $fixtureImage => [
       'local' => dg('e-local'), 'remote' => dg('e-remote'),
@@ -357,7 +365,10 @@ if ($fixtureImage === '') {
   // that only tries one of them proves nothing — this is exactly the trap
   // the unpin work hit.
   b6_wipe();
-  b6_make_stack_raw('zzb6unchanged', "services:\n  web:\n    image: $fixtureImage\n");
+  // Pinned away from GitHub for the same reason as the case above.
+  b6_make_stack_raw('zzb6unchanged',
+    "services:\n  web:\n    image: $fixtureImage\n"
+    ."    x-unraid:\n      project: https://staxxtest-nonexistent-host.invalid/some/repo\n");
   staxx_update_state_save(['images' => [
     $fixtureImage => [
       'local' => dg('e-same'), 'remote' => dg('e-same'),
@@ -594,6 +605,108 @@ ok('...and validates as a map',
 note('sections G to I made no network call either: every changelog case above '
    . 'is a pure function call, or a link that is not a GitHub link at all, or '
    . 'a GitHub link whose ids the builder refuses before anything is asked');
+
+/* ======================================================================= *
+ * J — the one-off baseline: recording what every service is running now,
+ * without asking anything of the network.
+ *
+ * staxx_update_record_before_pull()'s third argument turns every outbound
+ * request off; staxx_update_seed_history() is the walk over every stack that
+ * uses it, once per install.
+ *
+ * The first case here is the proof that the switch really does keep this
+ * file's no-network promise: the service is given a project link that IS a
+ * real GitHub address, and a version name to look up — everything the notes
+ * fetch needs. With the lookups off, not one notes key comes back, which
+ * could only happen if nothing was asked.
+ * ======================================================================= */
+
+if ($fixtureImage === '') {
+  note('no locally cached, registry-pulled image was found on this box — the '
+     . 'baseline cases below need one to record anything at all, and are '
+     . 'skipped rather than faked');
+} else {
+  b6_wipe();
+  b6_make_stack_raw('zzb6seed',
+    "services:\n  web:\n    image: $fixtureImage\n"
+    ."    x-unraid:\n      project: https://github.com/example/project\n");
+  staxx_update_state_save(['images' => [
+    $fixtureImage => [
+      'local' => dg('j-same'), 'remote' => dg('j-same'),
+      'version' => 'SEED-VERSION', 'source' => 'https://github.com/example/project',
+    ],
+  ]]);
+
+  staxx_update_record_before_pull('zzb6seed', '', false);
+  $seedEntry = staxx_image_history('zzb6seed', 'web')[0] ?? null;
+
+  ok('with the lookups off, a service whose project link is a real GitHub '
+   . 'address still records no notes keys at all — so nothing was asked',
+     is_array($seedEntry)
+       && !array_key_exists('notes', $seedEntry)
+       && !array_key_exists('notesUrl', $seedEntry)
+       && !array_key_exists('notesCut', $seedEntry)
+       && !array_key_exists('changes', $seedEntry)
+       && !array_key_exists('changesUrl', $seedEntry)
+       && !array_key_exists('changesCut', $seedEntry),
+     $seedEntry === null ? '(nothing recorded)' : json_encode($seedEntry));
+
+  ok('...and the local facts are all still there: the digest it is running',
+     is_array($seedEntry)
+       && ($seedEntry['digest'] ?? '') === (string)(staxx_image_local($fixtureImage)['digest'] ?? 'x'),
+     $seedEntry === null ? '(nothing recorded)' : json_encode($seedEntry));
+  ok('...the version name it was given',
+     is_array($seedEntry) && ($seedEntry['version'] ?? null) === 'SEED-VERSION');
+  ok('...and where the image says it came from',
+     is_array($seedEntry)
+       && ($seedEntry['source'] ?? null) === 'https://github.com/example/project');
+
+  // Safe to run twice: the recorder refuses a digest that is already the
+  // newest one on file, which is the whole reason a re-run costs nothing.
+  staxx_update_record_before_pull('zzb6seed', '', false);
+  ok('recording the same build twice in a row leaves one entry, not two',
+     count(staxx_image_history('zzb6seed', 'web')) === 1,
+     json_encode(staxx_image_history('zzb6seed', 'web')));
+
+  /* An unreadable stack root gives an empty list, not an error, so seeding
+   * against it would record nothing and then mark itself done for ever.
+   * Simulated by removing the temporary root outright and clearing the
+   * cached scan — staxx_scan_stacks() answers "the stack folder does not
+   * exist" to that, which is the same 'ok' false the real case gives. */
+  @exec('rm -rf '.escapeshellarg($root));
+  staxx_scan_stacks_reset();
+  $blind = staxx_update_seed_history();
+  ok('with the stack folder unreadable, seeding walks nothing and says so',
+     $blind['ok'] === false && $blind['stacks'] === 0 && $blind['error'] !== '',
+     json_encode($blind));
+  ok('...and above all files no "already done" marker, so the baseline is '
+   . 'not lost for good',
+     (int)(staxx_update_state()['seeded'] ?? 0) === 0);
+
+  // Now with the root back, and one stack in it to record.
+  b6_wipe();
+  b6_make_stack_raw('zzb6seed', "services:\n  web:\n    image: $fixtureImage\n");
+  staxx_update_state_save(['images' => [
+    $fixtureImage => ['local' => dg('j-same'), 'remote' => dg('j-same'), 'version' => 'SEED-VERSION'],
+  ]]);
+
+  $first = staxx_update_seed_history();
+  ok('seeding a readable root walks the stacks it can see',
+     $first['ok'] === true && $first['stacks'] >= 1,
+     json_encode($first));
+  ok('...and files the "already done" marker',
+     (int)(staxx_update_state()['seeded'] ?? 0) > 0);
+
+  $second = staxx_update_seed_history();
+  ok('a second call reports nothing walked, because the marker stops it',
+     $second['ok'] === true && $second['stacks'] === 0,
+     json_encode($second));
+
+  note('section J made no network call either — that is exactly what its '
+     . 'first case is there to prove');
+
+  b6_wipe();
+}
 
 /* ---------------------------------------------------------------------- */
 

@@ -50,6 +50,10 @@ function staxx_update_state_defaults(): array {
     'limitedBy' => [],
     'images'    => [],
     'history'   => [],
+    // When the one-off baseline of "what is every service running right now"
+    // was recorded into each stack's own history — 0 until it has. See
+    // staxx_update_seed_history() in UpdateRun.php for why it runs once.
+    'seeded'    => 0,
     'bases'     => [],
     'rebuilds'  => [],
     // PLAN_62 — Stage 2's findings, keyed by stack then by image. Discovery
@@ -1483,8 +1487,22 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
   // or even Links.php alone here would leave one or both function_exists()
   // tests false for every out-of-band pass, which is exactly the dead-code
   // trap PLAN_61 warns about and PLAN_62 repeats verbatim.
+  //
+  // UpdateRun.php on top of that, for staxx_update_seed_history() below —
+  // Watch.php's chain does not reach it, and this is a fresh process, so
+  // there is no cycle to create. Named with require_once so its own guard
+  // and the shared files it pulls in stay loaded exactly once.
+  //
+  // The one-off baseline runs BEFORE the check, so a box that has never
+  // recorded anything has a starting point in every stack's history from the
+  // first pass. It costs no network at all (hence the false), and returns
+  // zero stacks instantly once it has run.
   $php = staxx_php_bin().' -r '.escapeshellarg(
     'require '.var_export(__DIR__.'/Watch.php', true).'; '
+    .'require_once '.var_export(__DIR__.'/UpdateRun.php', true).'; '
+    .'$s = staxx_update_seed_history(); '
+    .'if ($s["stacks"] > 0) echo "recorded the build now running in ".$s["stacks"]." stack".($s["stacks"] === 1 ? "" : "s")."\n"; '
+    .'elseif (!$s["ok"]) echo "the stack folder could not be read, so nothing was recorded this time\n"; '
     .'$r = staxx_update_check('.var_export($scope, true).', '.($force ? 'true' : 'false').'); '
     .'echo "\nchecked ".$r["asked"]." asked, ".$r["skipped"]." skipped, "'
     .'.$r["updates"]." updates, ".$r["failed"]." failed\n";'
