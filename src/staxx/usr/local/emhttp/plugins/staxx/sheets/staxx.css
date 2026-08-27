@@ -3237,6 +3237,53 @@
   font-size: 1.05rem;
 }
 
+/* The commit list shown where an image publishes no named release. Same
+   idiom as the notes block above, but the body holds a list rather than
+   prose, so the scroll box lives here and the wrapping rules sit on the
+   items. */
+.staxx-version-commits {
+  margin-top: 0.4rem;
+  font-size: 1.1rem;
+}
+
+.staxx-version-commits > summary {
+  cursor: pointer;
+  color: var(--sm-accent);
+}
+
+.staxx-version-commits-body {
+  margin-top: 0.4rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  color: var(--sm-muted);
+  font-size: 1.05rem;
+}
+
+.staxx-version-commits-why {
+  margin: 0 0 0.4rem;
+}
+
+/* The bullet is dropped and the indent with it: the versions pane can be
+   narrow, and a default list indent pushes a long subject off the edge.
+   A subject can carry an unbroken token (a branch name, a URL), hence
+   overflow-wrap. */
+.staxx-version-commits-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.staxx-version-commits-list > li {
+  margin-bottom: 0.2rem;
+  overflow-wrap: anywhere;
+}
+
+.staxx-version-commits-cut {
+  margin-top: 0.3rem;
+  color: var(--sm-muted);
+  font-size: 1.05rem;
+}
+
 /* The band saying this service is held at one exact build. Stated rather than
  * warned about — a pin is a decision somebody made on purpose, so it reads in
  * the same accent as "running now" instead of an alarm colour. */

@@ -17908,9 +17908,43 @@
       notesHtml = '<details class="staxx-version-notes"><summary>' + esc('What changed') + '</summary>' +
         '<div class="staxx-version-notes-body">' + esc(v.notes) + '</div>' + cutHtml + '</details>';
     }
+    // The fallback for an image whose tag never moves, so there is no named
+    // release to look up: the commit subjects that went into the build.
+    // Shown only when there are no notes — a release the project wrote itself
+    // is the better answer, and two "what changed" sections on one row is
+    // worse than one. Every line is somebody else's text, so each goes
+    // through esc() on its own.
+    // v.revision (the commit the build came from) is deliberately never
+    // drawn: a bare 40-character hex string is noise nobody can act on. It is
+    // kept so a comparison can be asked for, not to be read.
+    var commitsHtml = '';
+    if (!v.notes && v.changes && v.changes.length) {
+      var changesCutHtml = '';
+      if (v.changesCut) {
+        var changesLink = safeUpdateSource(v.changesUrl);
+        changesCutHtml = '<div class="staxx-version-commits-cut">' +
+          (changesLink
+            ? esc('Shortened — ') + '<a href="' + esc(changesLink) + '" target="_blank" rel="noopener">' +
+              esc('see the rest') + '</a>'
+            : esc('Shortened.')) +
+          '</div>';
+      }
+      var items = '';
+      for (var c = 0; c < v.changes.length; c++) {
+        items += '<li>' + esc(v.changes[c]) + '</li>';
+      }
+      commitsHtml = '<details class="staxx-version-commits"><summary>' +
+        esc('Commits in this build') + '</summary>' +
+        '<div class="staxx-version-commits-body">' +
+        '<p class="staxx-version-commits-why">' +
+        esc('The project published no release under this build’s name, so this is the raw list of ' +
+          'commits that went into it.') + '</p>' +
+        '<ul class="staxx-version-commits-list">' + items + '</ul>' +
+        '</div>' + changesCutHtml + '</details>';
+    }
     return '<div class="staxx-version-entry"' + (isCurrent ? ' aria-current="true"' : '') + '>' +
       '<div class="staxx-version-heading">' + heading + '</div>' + metaHtml + sourceHtml + notesHtml +
-      actionHtml + '</div>';
+      commitsHtml + actionHtml + '</div>';
   }
 
   // A service is pinned when its image line names an exact fingerprint,
