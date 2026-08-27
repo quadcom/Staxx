@@ -104,7 +104,12 @@ section reads a real stack off `STACK_ROOT`, so that one key is pointed at `/tmp
 same way `record.php` does; `registry_live.php` is `releasenotes_live.php`'s sibling for the same
 plan — opt-in behind `STAXX_LIVE_REGISTRY=1`, needs no config keys, and proves a real `304` against
 a real registry plus that the digest matches what the docker CLI reports, for a Hub, a ghcr and an
-lscr image; `links.php` covers
+lscr image; `registry_quirks.php` is PLAN_92 Stage 1 — opt-in behind `STAXX_QUIRKS=1`, needs no
+config keys, and asks the same read-only questions of nine real public registries (Docker Hub gets
+just one image; its allowance is the only tight one), printing a summary table of what each one
+turned out to do. It carries the regression guard for the ghcr placeholder-scope fix, run against
+ghcr and codeberg's Gitea-hosted registry alike, and is worth a run whenever the registry code is
+touched, or before a release — an opt-in suite nobody runs is a suite that can rot unnoticed; `links.php` covers
 what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
 for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's
 boot-start list, and points `STAXX_AUTOSTART_FILE` at `/tmp` so the real one is never touched. Each

@@ -977,7 +977,46 @@ function staxx_registry_digest(string $host, string $repo, string $tag, string $
   if ($status !== 200) { $why = 'failed'; return $refuse; }
 
   $digest = strtolower((string)($head['docker-content-digest'] ?? ''));
-  if (!preg_match('/^sha256:[0-9a-f]{64}$/', $digest)) { $why = 'failed'; return $refuse; }
+  if (!preg_match('/^sha256:[0-9a-f]{64}$/', $digest)) {
+    // public.ecr.aws (Amazon's public gallery) answers 200 with neither a
+    // docker-content-digest nor an ETag -- confirmed on the box 2026-08-27.
+    // A manifest's digest is by definition the sha256 of its exact served
+    // bytes, so re-asking with the same Accept/bearer and piping the body
+    // straight into sha256sum reproduces it without the body ever becoming
+    // a PHP string (which could trim or re-encode it and change the hash).
+    // Measured against this same reference, the result matched
+    // `docker buildx imagetools inspect` byte-for-byte.
+    $shaCmd = 'curl -fsS -L --proto '.escapeshellarg('=https,http').' --max-time 8 -X GET';
+    foreach ($headers as $h) $shaCmd .= ' -H '.escapeshellarg($h);
+    $shaCmd .= ' '.escapeshellarg($url).' | sha256sum';
+
+    $shaOut = staxx_sh($shaCmd, 12);
+    $hash   = strtolower(trim((string)strtok(trim($shaOut), " \t")));
+
+    // curl -f gives no output on an HTTP error, and sha256sum of nothing is
+    // still a valid-looking hash (the empty string's digest) -- both must
+    // read as a refusal, never as a real answer.
+    if ($hash === '' || $hash === 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+        || !preg_match('/^[0-9a-f]{64}$/', $hash)) {
+      $why = 'failed';
+      return $refuse;
+    }
+
+    return [
+      'status' => 200,
+      'digest' => 'sha256:'.$hash,
+      'etag'   => '', // no entity tag was ever sent for this registry
+      'labels' => [],
+      // Present only on this path — its absence means the header answered
+      // directly, which is how tests/server/registry_quirks.php tells the
+      // two apart in its summary table without a second request.
+      // Not called 'source': that key already means the project's own web
+      // address everywhere else in the update path, and the day this array is
+      // merged rather than read key by key, 'computed' would be shown to a
+      // user as a project link.
+      'digestFrom' => 'computed',
+    ];
+  }
 
   $result = [
     'status' => 200,
