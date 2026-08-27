@@ -8137,13 +8137,17 @@
         'Starting this stack would point this container at that same data.';
     }
     if (mark.verdict === 'offroot') {
+      // "under /mnt" rather than "on the array": a pool — ZFS or otherwise —
+      // is not the array, and is a perfectly good place for a volume. Saying
+      // array would tell anyone keeping their data on a pool, which is most
+      // people, to move something that was already where it should be.
       if (mark.path === '/boot' || mark.path.indexOf('/boot/') === 0) {
-        return mark.path + ' is on the flash drive, not the array. A container writing here wears ' +
-          'the flash drive out — move this to a folder under /mnt instead.';
+        return mark.path + ' is on the flash drive. A container writing here wears the flash ' +
+          'drive out — move this under /mnt, where your shares, disks and pools live.';
       }
-      return mark.path + ' is not on the array. If Docker creates this folder it lives in the ' +
-        'server’s own memory, so everything written there is lost the next time the server ' +
-        'restarts — move this to a folder under /mnt instead.';
+      return mark.path + ' is not under /mnt, where your shares, disks and pools live. If Docker ' +
+        'creates this folder it lives in the server’s own memory, so everything written there is ' +
+        'lost the next time the server restarts — move it under /mnt instead.';
     }
     return 'Nothing exists at ' + mark.path + ' on the server. Create the folder, or correct the path.';
   }

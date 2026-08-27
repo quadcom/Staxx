@@ -610,9 +610,9 @@ function staxx_resolve_host_path(string $p, string $rel): ?array {
     $root = @realpath(STAXX_BROWSE_ROOT);
     // A /mnt that will not resolve means nothing can be placed against it, so
     // nothing is judged at all. Falling through to the by-location branch
-    // instead would call every path on the machine "not on the array" the one
-    // time the array is the thing that is missing — every volume in every
-    // stack flagged at once, for a fault that is not in any of them.
+    // instead would report every path on the machine as off-root the one time
+    // /mnt is the thing that is missing — every volume in every stack flagged
+    // at once, for a fault that is not in any of them.
     if ($root === false) return null;
 
     $inMnt = fn(string $real) => $real === $root || strpos($real, $root.'/') === 0;
