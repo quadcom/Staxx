@@ -39,6 +39,10 @@ desktop.ini
 /PLAN.md
 /PLAN_*.md
 
+# The running list of things to check on screen — a working note that changes with
+# whatever was built that day, and is finished with once it has been walked through.
+/MANUAL-TESTS.md
+
 # Local Claude Code setup. .claude/ holds the feedlog skill, and that skill
 # carries the access token for Adrian's own feedback board — so this is
 # credential hygiene, not just tidiness. The board is also unreachable for
