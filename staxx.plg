@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "1.1.0">
+<!ENTITY version              "1.2.0">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!-- TODO: point at the real repository before the first release. Left as an
@@ -153,7 +153,7 @@ echo ""
 # would reach the shell literally, match nothing, and delete the package that
 # was just installed. It has to be bumped by hand at every release.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-1.1.0-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-1.2.0-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>

@@ -4,7 +4,7 @@
 > its merits. Packaged from 1.1.0, but not yet published — the install below is the way in until
 > it is. See [Limitations](#limitations).
 >
-> Version 1.1.0 · [changelog](CHANGELOG.md)
+> Version 1.2.0 · [changelog](CHANGELOG.md)
 
 ## Why this exists
 

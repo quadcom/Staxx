@@ -5,6 +5,78 @@ numbered; everything before it was dated.
 
 ---
 
+## 1.2.0 — released 2026-08-28
+
+The release that gives StaXX one home. Everything it keeps — your stacks, the zips of ones you
+have removed, its own settings and the icons it has downloaded — now lives in a single folder you
+choose, instead of being spread across the flash drive in places nobody could reasonably find. The
+flash drive keeps three lines, and only because they have to be readable before your disks have
+started.
+
+- **One folder, chosen by you.** The stacks folder and the archive folder used to be two separate
+  settings. They are now one data store, with `stacks`, `archives` and `config` inside it under
+  fixed names. Opening the settings shows the store and the three folders beneath it, so there is
+  nothing to guess at.
+- **StaXX now asks where its data should go, and explains the choice.** Nothing is written anywhere
+  until you have chosen — the flash drive is no longer a silent default. The screen suggests the
+  folder beside wherever your application data already lives and shows its working: which pool,
+  whether Unraid reports it as redundant, and how much room is free. Eight reasons sit collapsed to
+  a line each, so you can accept the suggestion in one press or read why a pool beats the share
+  layer, why an array disk or a network mount is a poor home, what Unraid's mover would do to the
+  wrong choice, and that nothing is backing any of it up until you say so.
+- **It will not let you choose badly while your disks are still starting.** A machine that has only
+  just powered on can show the flash drive as the only visible option, which is exactly the trap
+  this exists to remove. StaXX says the disks are still coming up, offers nothing selectable, and
+  invites you to look again shortly.
+- **Pointing it at a folder that already holds something tells you what is there first.** A folder
+  StaXX already manages is adopted and its stacks listed. A pile of ordinary compose files is
+  adopted too, with the plain statement that nothing has been filled in for them yet — no icons
+  matched, nothing described — and that they will run exactly as they are.
+- **Moving the store moves all of it**, verified file by file, with the copy checked byte for byte
+  before anything is switched over and the original left untouched until it has been. A large move
+  now reports where it has got to instead of appearing to hang. Nothing is sampled or skipped: the
+  zip of a removed stack is the only copy of it, and there is no re-fetching that.
+- **Almost nothing is left on the flash drive.** Three lines remain — where the store is, and the
+  two settings deciding where StaXX appears in the menus — because those have to be readable before
+  your array is up, or when StaXX itself is not working. That means Unraid's own settings page for
+  StaXX keeps working as the way back to the ordinary Docker menu, whatever else has gone wrong. A
+  new [Where StaXX keeps its things](docs/guide/where-things-live.md) page explains all of it.
+- **While your array is starting, StaXX says so** rather than looking normal. Its settings are on a
+  pool that has not mounted yet, so it shows the shipped defaults for a moment and tells you that is
+  what you are looking at. Nothing is lost and it corrects itself.
+- **Nothing was backing your compose files up, and now StaXX says so.** The Appdata Backup plugin
+  most servers run works from each container's volume mappings, and StaXX's own folder is not one —
+  so sitting inside appdata was never enough. StaXX reads that plugin's settings and tells you
+  whether its folder is listed, hands over the path and a link to the right field, then watches for
+  it to appear. It never writes to another plugin's settings, and it only ever says "listed", never
+  "backed up". After a move it also points out the old entry now naming a folder that no longer
+  exists, which would otherwise let a backup report success while copying nothing.
+- **Where the stacks may live is stricter, and explained.** One rule now decides what counts as a
+  risky location, because the bug behind this was two places disagreeing: the suggestions checked
+  whether Unraid's mover would empty a share and a typed path did not, so a share about to be
+  drained onto the array came back as usable. A new setting decides whether that rule refuses or
+  merely warns. Two refusals ignore it, being risks nobody accepts on purpose — a location that
+  lives in memory loses everything at the next reboot, and a whole share as the stacks folder makes
+  every folder in it read as a stack.
+- **The folder browser now knows what it is choosing for.** Picking where the stacks live shows
+  array disks, unassigned drives and network mounts greyed out with the reason rather than hidden,
+  and its Create button no longer quietly makes a new Unraid share. Choosing a volume path for a
+  container is unchanged.
+- **StaXX can now fill in a stack's icon, description, category, links and web address for you** —
+  and shows where each answer came from before writing anything. A field that is empty is filled and
+  named afterwards; one that disagrees with what was found is shown beside it with neither chosen
+  for you; the icon is shown as two pictures, because you cannot judge an icon by its name. Nothing
+  is remembered between runs, so the compose file stays the only source of truth.
+- **A service held back by a compose profile now says so.** StaXX does not pass profiles when it
+  starts a stack, so such a service is skipped — with no error and no mark on the row, because
+  compose is doing exactly as it was asked. The field now says what will happen.
+- **A name matching another stack now says why it did not connect.** Previously it was dropped in
+  silence; it now names the stack, the service and the network that would have to join them. A
+  container holding its own address on your network is recognised when that address is typed, worded
+  as depending on the network allowing it, because StaXX cannot see your router.
+
+---
+
 ## 1.1.0 — released 2026-08-27
 
 The release that makes update checking trustworthy. StaXX now asks image registries directly
