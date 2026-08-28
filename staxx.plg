@@ -40,6 +40,37 @@
 >
 
 <CHANGES>
+###1.2.0
+- Everything StaXX keeps now lives in one folder you choose: your stacks, the zips of ones
+  you have removed, its own settings and the icons it has downloaded. The flash drive keeps
+  three lines, and only because they must be readable before your array has started.
+- StaXX asks where its data should go on first run and explains the choice, suggesting the
+  folder beside your existing application data and showing which pool it is on, whether
+  Unraid reports it as redundant, and how much room is free. It will not offer you a choice
+  while the disks are still coming up, when the flash drive may be all it can see.
+- Moving the store now moves all of it, checked byte for byte, reporting progress as it goes,
+  and leaving the original untouched until the copy has been verified.
+- StaXX now says whether its folder is listed in the Appdata Backup plugin. Its own folder is
+  not a container volume, so being inside appdata was never enough to be backed up.
+- Where the stacks may live is stricter and explained, with one rule deciding what counts as
+  risky, and the folder browser greys out the places they cannot go with the reason.
+- A stack's icon, description, category, links and web address can now be filled in for you,
+  showing where each answer came from before anything is written.
+- Fixes: a service held back by a compose profile now says so instead of silently not
+  starting; a name matching another stack now says which network would have to join them.
+###1.1.0
+- Update checks now go to the registry the compose file actually names, so a container hosted
+  somewhere other than Docker Hub is asked about at the right place, and version numbers
+  follow the same rule as the fingerprint.
+- Checks are cheaper and better paced: three questions per container became one, a container
+  pinned to an exact version is never asked at all, and only moving tags keep the fast rate.
+- Update checking now works against a registry on your own network, even without a proper
+  certificate. Only the host you name is reached that way, and a password is never sent in
+  the clear.
+- A container whose check keeps failing says so and eases off, rather than quietly costing
+  four questions a day forever.
+- Fixes: the update button went dead after the first press, and could reappear after a
+  successful update because half the comparison was still the previous night's answer.
 ###2026.08.26
 - A stack now records its own icon beside its compose file, so it keeps its look when copied
   to another machine. The editor shows each service's icon where you choose it.
