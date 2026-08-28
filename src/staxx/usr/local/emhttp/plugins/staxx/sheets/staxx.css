@@ -7890,6 +7890,172 @@
   font-size: 1.2rem;
 }
 
+/* ---- PLAN_84: "fill in this stack's details" ------------------------------ */
+
+/* Its own dialog (.staxx-confirm.staxx-detail — see StacksPage.php's own
+   comment beside the markup for why), so only what genuinely differs from
+   .staxx-confirm needs a rule here: everything else — the frame, the head,
+   the foot, the message line — is already .staxx-confirm-*. */
+
+.staxx-detail {
+  width: min(58rem, 94vw);
+}
+
+.staxx-detail-body p {
+  margin: 0 0 0.8rem;
+  font-size: 1.3rem;
+  line-height: 1.5;
+}
+
+/* One row per field in conflict. Grid rather than flex so the field label
+   has a fixed column and the two value columns stay level with each other;
+   collapses to a single column below 45rem (the same breakpoint the
+   editor's own Split view drops at) so a phone-width viewport stacks the
+   three pieces instead of forcing the row — and so the page — to scroll
+   sideways. */
+.staxx-detail-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  margin: 0 0 1rem;
+}
+
+.staxx-detail-row {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.8rem;
+  padding: 0.8rem;
+  border: 0.1rem solid var(--sm-hairline);
+  border-radius: 0.4rem;
+}
+
+@media (max-width: 45rem) {
+  .staxx-detail-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.staxx-detail-field {
+  font-weight: 700;
+  align-self: start;
+}
+
+.staxx-detail-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  border: 0.1rem solid transparent;
+  border-radius: 0.3rem;
+  cursor: pointer;
+  min-width: 0;
+}
+
+/* Neither side is pre-chosen (PLAN_84's own rule) — the highlight only
+   appears once a column has actually been picked, never by default. */
+.staxx-detail-col:has(input:checked) {
+  border-color: var(--sm-accent);
+  background: color-mix(in srgb, var(--sm-accent) 10%, transparent);
+}
+
+.staxx-detail-collabel {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.1rem;
+  color: var(--sm-muted);
+  font-weight: 600;
+}
+
+.staxx-detail-colbody {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.staxx-detail-colbody code {
+  display: block;
+  overflow-wrap: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.2rem;
+}
+
+.staxx-detail-why {
+  margin: 0.3rem 0 0;
+  font-size: 1.1rem;
+  color: var(--sm-muted);
+}
+
+.staxx-detail-tier {
+  display: inline-block;
+  margin-top: 0.3rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: color-mix(in srgb, var(--sm-muted) 20%, transparent);
+  color: var(--sm-muted);
+}
+
+/* stated (the publisher's own word) reads as the most trustworthy of the
+   three, claimed as a middling third-party say-so, guess as the least — the
+   same three-tier distinction the plan's own resolver documentation draws. */
+.staxx-detail-tier--stated {
+  background: color-mix(in srgb, var(--sm-good) 20%, transparent);
+  color: var(--sm-good);
+}
+
+.staxx-detail-tier--guess {
+  background: color-mix(in srgb, var(--sm-accent) 20%, transparent);
+  color: var(--sm-accent);
+}
+
+.staxx-detail-iconimg {
+  display: block;
+  width: 3.2rem;
+  height: 3.2rem;
+  object-fit: contain;
+  margin-bottom: 0.3rem;
+}
+
+.staxx-detail-iconfa {
+  display: block;
+  font-size: 2.4rem;
+  margin-bottom: 0.3rem;
+}
+
+.staxx-detail-noicon {
+  display: block;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  font-style: italic;
+}
+
+/* PLAN_84 phase 5 — "Not now" beside the offer bar's own "Review" (the bar
+   itself, #staxx-scaffold-note). A separate small control rather than
+   reshaping that bar into a two-part row: every other .staxx-missing bar in
+   this footer is one plain click target, and this is the only state that
+   ever needs a second one. */
+.staxx-scaffold-dismiss {
+  display: block;
+  margin: -0.8rem 0 1.2rem auto;
+  padding: 0.2rem 0.6rem;
+  border: 0;
+  background: none;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.staxx-scaffold-dismiss:hover {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.staxx-scaffold-dismiss[hidden] {
+  display: none;
+}
+
 /* ---- Settings panel ------------------------------------------------------ */
 
 /* The eighth dialog. Same recipe as .staxx-confirm — its own class, its

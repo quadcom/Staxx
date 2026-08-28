@@ -1153,10 +1153,12 @@ function staxx_yaml_flatten(string $yaml): array {
  *
  * Only the first entry under each service is read; the rest are skipped once
  * found, deliberately — see PLAN_39 for why the first port is the one that
- * matters.
+ * matters. They are still COUNTED, though (PLAN_84): a guess at a web
+ * address is only safe when the port it names is the service's only one.
  *
- * @return array<string, array{target:string, published:string}> service name
- *         => its first port. A service that publishes none has no entry.
+ * @return array<string, array{target:string, published:string, count:int}>
+ *         service name => its first port, plus how many it publishes in all.
+ *         A service that publishes none has no entry.
  */
 function staxx_first_ports(string $yaml): array {
   $out = [];
@@ -1169,14 +1171,15 @@ function staxx_first_ports(string $yaml): array {
   $portsIndent = null;      // indent of the 'ports:' key itself
   $itemIndent  = null;      // indent of the '- ' that opened the first item
   $donePorts   = false;     // first item already read; ignore any more
+  $count       = 0;         // how many items this service's ports: holds
   $target = ''; $published = '';
 
   // Saved whenever we are about to leave the ports block, however that
   // happens — a sibling key, the next service, or the end of services: — so
   // it only needs writing in one place.
-  $save = function () use (&$out, &$service, &$target, &$published) {
+  $save = function () use (&$out, &$service, &$target, &$published, &$count) {
     if ($service !== null && $target !== '') {
-      $out[$service] = ['target' => $target, 'published' => $published];
+      $out[$service] = ['target' => $target, 'published' => $published, 'count' => $count];
     }
   };
 
@@ -1200,7 +1203,7 @@ function staxx_first_ports(string $yaml): array {
       $save();
       $service     = rtrim($body, ':');
       $inPorts     = false; $portsIndent = null; $itemIndent = null;
-      $donePorts   = false; $target = ''; $published = '';
+      $donePorts   = false; $count = 0; $target = ''; $published = '';
       continue;
     }
 
@@ -1211,20 +1214,28 @@ function staxx_first_ports(string $yaml): array {
       $save();
       $inPorts     = ($body === 'ports:');
       $portsIndent = $indent;
-      $itemIndent  = null; $donePorts = false;
+      $itemIndent  = null; $donePorts = false; $count = 0;
       $target = ''; $published = '';
       continue;
     }
 
-    if (!$inPorts || $indent <= $portsIndent || $donePorts) continue;
+    if (!$inPorts || $indent <= $portsIndent) continue;
 
     $isItem = strncmp($body, '- ', 2) === 0 || $body === '-';
+
+    // Counting continues past the first item even though reading stops
+    // there: PLAN_84's web-address guess needs to know whether the port it
+    // found is the ONLY one, and a service publishing two is exactly the
+    // coin toss that rule refuses. Tallied here rather than by a second
+    // walk of the same text — one reader, one answer.
+    if ($isItem && ($itemIndent === null || $indent === $itemIndent)) $count++;
+    if ($donePorts) continue;
 
     if ($isItem) {
       if ($itemIndent === null) {
         $itemIndent = $indent;               // the first item — read it
       } elseif ($indent === $itemIndent) {
-        $donePorts = true;                   // a second item — stop here
+        $donePorts = true;                   // a second item — stop reading
         continue;
       }
       $body = ltrim(substr($body, 1));       // drop the leading '-'
@@ -1248,7 +1259,7 @@ function staxx_first_ports(string $yaml): array {
 // key, so a plugin update cannot serve an answer the old parser computed —
 // without this a stale shape would sit there looking valid forever, since
 // nothing else about the compose file need have changed.
-const STAXX_META_VERSION = 3;
+const STAXX_META_VERSION = 4;
 
 /**
  * A hash of everything that can change what compose would report for a
@@ -1320,7 +1331,7 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
  * @return array{ok:bool, error:?string, x:array<string,string>,
  *                services:array<string,array{image:string, container_name:string,
  *                                            x:array<string,string>, fixedIp:string,
- *                                            firstPort:array{target?:string,published?:string},
+ *                                            firstPort:array{target?:string,published?:string,count?:int},
  *                                            netMode:string}>}
  */
 function staxx_compose_meta(string $file, ?string &$error = null): array {

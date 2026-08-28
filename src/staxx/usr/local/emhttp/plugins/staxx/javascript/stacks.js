@@ -178,6 +178,10 @@
   var errorBox    = document.getElementById('staxx-error');
   var missingNote = document.getElementById('staxx-missing');
   var scaffoldNote = document.getElementById('staxx-scaffold-note');
+  // PLAN_84 phase 5 — "Not now" beside the offer bar's own "Review": only
+  // ever shown alongside the quiet automatic lookup's own found-something
+  // state, see showDetailOfferBar() further down.
+  var scaffoldDismiss = document.getElementById('staxx-scaffold-dismiss');
   var makePathsNote = document.getElementById('staxx-makepaths');
   var inUseNote     = document.getElementById('staxx-inusepaths');
 
@@ -208,6 +212,17 @@
   // rest of this dialog already is, and hidden except when a caller passes
   // askConfirm() an extraLabel.
   var confirmExtra  = document.getElementById('staxx-confirm-extra');
+
+  // PLAN_84 phase 3 — the "fill in this stack's details" chooser. Its own
+  // dialog rather than a shape squeezed into #staxx-confirm above — see the
+  // comment in StacksPage.php beside its markup for why.
+  var detailModal   = document.getElementById('staxx-detail-modal');
+  var detailBody    = document.getElementById('staxx-detail-body');
+  var detailMsg     = document.getElementById('staxx-detail-msg');
+  var detailCancel  = document.getElementById('staxx-detail-cancel');
+  var detailGo      = document.getElementById('staxx-detail-go');
+  var detailPlaceholders = document.getElementById('staxx-detail-placeholders');
+  var detailBtn     = document.getElementById('staxx-detail-btn');
 
   // The Settings panel. May be null on a stale page — guarded the same way
   // confirmModal is above; openSettings() itself is a no-op without it.
@@ -921,6 +936,19 @@
                                 // sends it back so the server can refuse a write that would
                                 // overwrite a change made elsewhere since (see PLAN_60 3.1)
   var serviceRenamed = false;  // a pencil rename happened this session — offer a recreate after save
+
+  // PLAN_84 phase 5 — "fill in this stack's details". detailSeen tracks which
+  // image (tag stripped) has already been looked up for each service THIS
+  // editing session, so a tag-only change never re-triggers the automatic
+  // lookup and a genuinely different image always does. detailCache holds
+  // the last successful answer so "Not now" (or simply not clicking the
+  // offer bar) does not cost a second network round trip when the manual
+  // button or row-menu item is pressed afterwards. Both reset in
+  // openEditor() — yesterday's stack's answer means nothing against today's.
+  var detailSeen  = {};
+  var detailCache = null;
+  var detailBusy  = false;
+  var detailLookupTimer = null;
 
   // History (PLAN_68 Part A piece 3) — this stack's kept versions. Reset on
   // every open (see openEditor() below) so a leftover list or selection from
@@ -3846,31 +3874,42 @@
     if (missing.length) createMissingFile(missing[0]);
   });
 
-  // PLAN_83: an existing stack with no StaXX presentation fields at all.
-  // Never shown for a brand-new stack — openEditor() already scaffolds that
-  // text before this pane is painted, so needsScaffold() is already false by
-  // the time reparse() first runs. Skipped on a companion file for the same
-  // reason updateMissing() has nothing to say about one either.
-  // Plain words for the field names, because the note is read by someone who
-  // is not going to look up what `readme` or `update` means in the schema.
-  var SCAFFOLD_WORDS = {
-    icon: 'an icon', overview: 'a description', category: 'a category',
-    project: 'a project page', support: 'a support page',
-    readme: 'a documentation page', author: 'an author',
-    update: 'an update policy', webui: 'a web page address'
-  };
+  // PLAN_83/PLAN_84: the editor's one offer bar for "this stack's presentation
+  // fields are not filled in". PLAN_84 phase 6 replaced the "run the full
+  // placeholder writer and throw the result away" check that used to decide
+  // whether this shows with a read-only one — missingFields() — that shares
+  // its is-it-missing rule with the writer instead of re-deriving it, and
+  // PLAN_84 phase 5 gave the bar a second job: on a stack with no real
+  // details at all, it offers the network lookup ("fill in details") rather
+  // than bare placeholders, since placeholders alone leave that stack looking
+  // exactly as empty as before. Words for the field names come from
+  // StaxxMeta's own field tables (each entry's `word`), not a hard-coded
+  // table here, so the bar's wording and the tables it describes cannot
+  // drift apart — see scaffoldWord() below.
+  var scaffoldWordMap = null;
+  function scaffoldWord(key) {
+    if (!scaffoldWordMap) {
+      scaffoldWordMap = {};
+      if (window.StaxxMeta) {
+        window.StaxxMeta.stackFields.concat(window.StaxxMeta.serviceFields).forEach(function (f) {
+          scaffoldWordMap[f.key] = f.word;
+        });
+      }
+    }
+    return scaffoldWordMap[key] || key;
+  }
 
-  function scaffoldWords(added) {
+  function scaffoldWords(missing) {
     var seen = {};
     var out  = [];
     var take = function (key) {
       if (key === 'version' || seen[key]) return;
       seen[key] = true;
-      out.push(SCAFFOLD_WORDS[key] || key);
+      out.push(scaffoldWord(key));
     };
-    (added.stack || []).forEach(take);
-    Object.keys(added.services || {}).forEach(function (svc) {
-      (added.services[svc] || []).forEach(take);
+    (missing.stack || []).forEach(take);
+    Object.keys(missing.services || {}).forEach(function (svc) {
+      (missing.services[svc] || []).forEach(take);
     });
 
     if (out.length > 4) {
@@ -3884,40 +3923,67 @@
 
   function updateScaffoldNote() {
     if (!scaffoldNote) return;
-    // scaffold() rather than needsScaffold(): the same work either way — the
-    // latter only throws the answer away — and what it would add is what
-    // decides which of the two sentences below is true.
-    var plan = window.StaxxMeta ? window.StaxxMeta.scaffold(currentText()) : null;
-    if (fileOpen !== null || !plan || !plan.changed) {
+    // Read-only, and against the parse reparse() already just built — see
+    // PLAN_84 phase 6's own comment in meta-scaffold.js for why this can
+    // never disagree with what scaffold()/the lookup would actually do.
+    var plan = (window.StaxxMeta && MODEL && MODEL.doc)
+      ? window.StaxxMeta.missingFields(MODEL.doc) : null;
+    if (fileOpen !== null || !plan || plan.error || !plan.changed) {
       scaffoldNote.hidden = true;
       scaffoldNote.textContent = '';
+      scaffoldNote.dataset.mode = '';
+      if (scaffoldDismiss) scaffoldDismiss.hidden = true;
       return;
     }
 
-    // 'version' is only ever added alongside a brand new x-unraid block, so it
-    // is what separates "there is nothing here" from "some of it is missing".
-    // Claiming the former when a file plainly holds an icon, a category and an
-    // overview reads as the page not having looked.
-    var added = plan.added || {};
-    var fresh = (added.stack || []).indexOf('version') >= 0;
-    scaffoldNote.textContent = fresh
-      ? 'This stack has no StaXX fields for its icon, links and description. Add them?'
-      : 'This stack is missing some StaXX fields — ' + scaffoldWords(added) + '. Add them?';
+    // A quiet background lookup may already have found something for this
+    // stack this session (see showDetailOfferBar()) — that offer stays put
+    // rather than being recomputed away under it on the very next settle.
+    // Anything that actually changes the file invalidates it (openEditor()
+    // clears detailCache on every fresh open, and there is no path back to
+    // "fresh"/"missing some fields" without a real edit happening first).
+    if (scaffoldNote.dataset.mode === 'lookup-found' && detailCache && detailCache.name === openedName) {
+      return;
+    }
+
+    // No root x-unraid block at all is "nothing here" — the moment the
+    // lookup is worth offering instead of bare placeholders, since a stack
+    // this empty has never had anything written for it by any route.
+    if (plan.fresh) {
+      scaffoldNote.textContent = 'This stack has no StaXX details yet — icon, links, description and ' +
+        'the rest. Look them up from the image, its catalogue entry and its own page?';
+      scaffoldNote.dataset.mode = 'lookup';
+    } else {
+      scaffoldNote.textContent = 'This stack is missing some StaXX fields — ' +
+        scaffoldWords(plan.missing) + '. Add placeholders for them?';
+      scaffoldNote.dataset.mode = 'placeholders';
+    }
     scaffoldNote.hidden = false;
+    if (scaffoldDismiss) scaffoldDismiss.hidden = true;
   }
 
   if (scaffoldNote) scaffoldNote.addEventListener('click', function () {
-    if (!window.StaxxMeta) return;
-    var scaffolded = window.StaxxMeta.scaffold(currentText());
-    if (scaffolded.error || !scaffolded.changed) { updateScaffoldNote(); return; }
-    pushUndo('adding the StaXX fields');
-    yamlPane.value = scaffolded.yaml;
-    paintGutter();
-    paintInk();
-    activeField = null;
-    reparse();
-    updateUndo();
-    setYamlStatus('Added the StaXX fields for icon, links and description.');
+    // PLAN_84 phase 5: both the "nothing here yet" bar and the automatic
+    // lookup's own "found something" bar open the same chooser —
+    // runDetailLookup() itself reuses a cached answer rather than asking
+    // again, which is what makes the found-bar's click free once the quiet
+    // lookup has already run.
+    if (scaffoldNote.dataset.mode === 'lookup' || scaffoldNote.dataset.mode === 'lookup-found') {
+      runDetailLookup(openedName, stackLabel(openedName));
+      return;
+    }
+    applyPlaceholdersFor(openedName, stackLabel(openedName));
+  });
+
+  if (scaffoldDismiss) scaffoldDismiss.addEventListener('click', function (event) {
+    event.stopPropagation();
+    // "Not now" only ever hides the bar — detailCache is untouched, so the
+    // manual button or row-menu item afterwards reuses this answer instead
+    // of paying for the lookup a second time.
+    scaffoldDismiss.hidden = true;
+    scaffoldNote.hidden = true;
+    scaffoldNote.textContent = '';
+    scaffoldNote.dataset.mode = '';
   });
 
   // A file the parser cannot read as a mapping at all has no services, which
@@ -5352,6 +5418,7 @@
     updateRequired();
     updateMissing();
     updateScaffoldNote();
+    checkImageSettle();   // PLAN_84 phase 5 — the automatic "fill in details" trigger
     relint();
     checkHostPaths();   // ask the server about any volume host path not already cached
     scheduleCheck();    // ask the server whether compose itself accepts this file (own, longer debounce)
@@ -12065,6 +12132,15 @@
     // the current `read` reply carried.
     serviceIcons = icons || {};
 
+    // PLAN_84 phase 5 — yesterday's stack's image lookup means nothing
+    // against today's stack; a fresh session always re-asks once, which is
+    // the "never looked up before" rule in practice.
+    detailSeen  = {};
+    detailCache = null;
+    detailBusy  = false;
+    if (detailLookupTimer) { clearTimeout(detailLookupTimer); detailLookupTimer = null; }
+    if (detailModal && detailModal.open) detailModal.close();
+
     // Yesterday's tabs are meaningless against today's stack — cleared before
     // the fresh listing arrives (or, for a new stack with no folder yet, before
     // renderTabs() below draws the bare compose tab and leaves it at that).
@@ -16316,103 +16392,577 @@
     });
   }
 
-  // Why a link was believed, in the words that belong in front of someone —
-  // 'derived' is the one case that is a guess rather than something anyone
-  // actually stated, and the wording has to say so rather than presenting it
-  // as fact. Keyed on staxx_project_links()'s own 'from' values.
+  // Why a value was believed, in the words that belong in front of someone —
+  // used only as a fallback when a reply carries no `why` sentence of its
+  // own, which today's `detail` replies always do — this is a safety net,
+  // not the normal path. 'derived'/'registry' are the old per-service
+  // project-link feature's own keys (PLAN_55); the rest are
+  // staxx_detail_discover()'s (PLAN_84) — see staxx_detail_answer()'s
+  // callers in Detail.php for the full list of `from` values it can send.
   var LINK_FROM_SENTENCE = {
-    label:    'This was found in the image’s own published details.',
-    catalog:  'This was found in the Community Applications listing for this container.',
-    derived:  'This was worked out from the image’s own address, which is a reasonable ' +
-              'guess rather than something its publisher actually stated.',
-    registry: 'This points at the registry page for the image, since it is one of the ' +
-              'well-known base images whose registry page is its home.'
+    label:      'This was found in the image’s own published details.',
+    catalog:    'This was found in the Community Applications listing for this container.',
+    derived:    'This was worked out from the image’s own address, which is a reasonable ' +
+                'guess rather than something its publisher actually stated.',
+    registry:   'This points at the registry page for the image, since it is one of the ' +
+                'well-known base images whose registry page is its home.',
+    template:   'This was found in a local Unraid template for this image.',
+    matcher:    'This was worked out from the image’s own name, which is a reasonable guess ' +
+                'rather than something its publisher actually stated.',
+    hub:        'This was found on the image’s own Docker Hub page.',
+    ports:      'This was worked out from the port this stack itself publishes.',
+    'image-port': 'This was worked out from the one port the image itself declares.'
   };
 
-  // Row-menu action, service rows only (PLAN_55 part B3): asks the server to
-  // work out where this container's software comes from, then previews the
-  // exact lines that would be added before writing anything. `from` is what
-  // picks the sentence above, and 'stored' — already sitting in the file —
-  // is answered without ever reaching the write step, since writing it again
-  // would duplicate the key rather than change anything.
-  function findProjectLink(stack, service, label) {
-    call('links', { name: stack, service: service }).then(function (res) {
-      if (!res.ok) { failed('Could not look up a project link', res.error); return; }
+  // Plain field label for the chooser's left-hand column, built off the
+  // same field tables the offer bar's own wording reads (see scaffoldWord()
+  // above) rather than a second copy of what each key means — "a web page
+  // address" becomes "Web page address".
+  function fieldLabel(key) {
+    var w = scaffoldWord(key).replace(/^(a|an)\s+/, '');
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }
 
-      // A stranger's text, off a label or a community listing — never opened
-      // or written unless it looks like a genuine link, the same guard the
-      // update pill's own "what changed" link uses.
-      var project = safeUpdateSource(res.project);
-      var support = safeUpdateSource(res.support);
+  // PLAN_84 phase 5's trigger comparison: an image with its digest pin and
+  // its tag both stripped, so "jellyfin/jellyfin" -> "jellyfin/jellyfin:10.9"
+  // reads as unchanged (never re-triggers) while a different publisher's
+  // image reads as new (always does). repoOf() below already carries the
+  // tag-splitting rule the tag-suggestion box relies on — reused rather than
+  // rewritten, per compose-model.js having no ready-made export of its own
+  // for this (it strips a pin, via unpinnedImageRef, but not a tag).
+  function imageRepoKey(value) {
+    var v = String(value || '').trim();
+    var at = v.indexOf('@');
+    if (at >= 0) v = v.slice(0, at);
+    return repoOf(v);
+  }
 
-      if (!project && !support) {
-        failed('No project link found',
-               'Nothing here says where "' + service + '" comes from — not this file, the ' +
-               'image itself, or the Community Applications listing — so there is nothing ' +
-               'to add.');
-        return;
-      }
+  // A found icon's picture, before it is ever written — the dialog is the
+  // one place a guessed icon is seen rather than only reported (PLAN_84's
+  // whole reason for putting the icon in the chooser at all).
+  //
+  // The address comes from the SERVER, in the discovery reply's own
+  // `preview`/`answer_preview`, resolved by the very code that resolves
+  // every other icon this page draws — never guessed here against a public
+  // CDN. Two reasons that matters: a guessed address that quietly fails to
+  // load removes the one safeguard the icon has, since the comparison being
+  // looked at is the whole point of the row; and this page deliberately
+  // reaches nothing but its own server, so the icon cache stays the single
+  // place that decides where a picture comes from.
+  function iconPreviewHtml(value, preview) {
+    value   = String(value || '').trim();
+    preview = preview || {};
+    if (!value) return '<span class="staxx-detail-noicon">' + esc('No icon set.') + '</span>';
+    if (preview.fa) {
+      return '<i class="fa ' + esc(preview.fa) + ' staxx-detail-iconfa" aria-hidden="true"></i>';
+    }
+    if (preview.url) {
+      return '<img class="staxx-detail-iconimg" alt="" src="' + esc(preview.url) + '">';
+    }
+    // The server could not produce a picture — say so, rather than showing
+    // a broken image or pretending the name is one.
+    return '<span class="staxx-detail-noicon">' +
+      esc('No picture could be loaded for this one.') + '</span>';
+  }
 
-      if (res.from === 'stored') {
-        failed('Already recorded',
-               'This service already has a project link saved in its compose file, so there ' +
-               'is nothing new to add.');
-        return;
-      }
+  // One conflict row's "found" side: the value, the plain sentence saying
+  // where it came from (falling back to LINK_FROM_SENTENCE, see above), and
+  // the one-word tier marker.
+  function detailFoundHtml(key, entry, preview) {
+    var sentence = entry.why || LINK_FROM_SENTENCE[entry.from] || '';
+    var body = key === 'icon'
+      ? iconPreviewHtml(entry.value, preview) + '<code>' + esc(entry.value) + '</code>'
+      : '<code>' + esc(entry.value) + '</code>';
+    return body +
+      (sentence ? '<p class="staxx-detail-why">' + esc(sentence) + '</p>' : '') +
+      '<span class="staxx-detail-tier staxx-detail-tier--' + esc(entry.tier || '') + '">' + esc(entry.tier || '') + '</span>';
+  }
 
-      var lines = [];
-      if (project) lines.push('project: ' + project);
-      if (support) lines.push('support: ' + support);
+  function detailCurrentHtml(key, value, preview) {
+    return key === 'icon'
+      ? iconPreviewHtml(value, preview) + '<code>' + esc(value) + '</code>'
+      : '<code>' + esc(value) + '</code>';
+  }
 
-      var sentence = LINK_FROM_SENTENCE[res.from] || 'This was found for this container.';
-      var bodyHtml = '<p>' + esc(sentence) + '</p>' +
-        '<p>These lines would be added to this service’s own settings:</p>' +
-        '<p><code>' + lines.map(esc).join('<br>') + '</code></p>';
+  function detailRowLabel(row) {
+    return fieldLabel(row.key) + (row.scope === 'service' ? ' (' + row.service + ')' : '');
+  }
 
-      askConfirm({ title: 'Add a project link to "' + label + '"?', bodyHtml: bodyHtml,
-                   goLabel: 'Add link' })
-        .then(function (go) {
-          if (!go) return;
-          closeConfirm();
-          writeProjectLink(stack, service, project, support, label);
-        });
+  // Neither side is pre-chosen (PLAN_84's own rule 3: a default is how a
+  // decision gets made without being read) — both radios start unchecked,
+  // and detailUpdateGoState() below is what keeps Apply disabled until every
+  // row has one.
+  function detailConflictRowHtml(row, idx) {
+    var name = 'staxx-detail-choice-' + idx;
+    return '<div class="staxx-detail-row" data-detail-idx="' + idx + '">' +
+      '<div class="staxx-detail-field">' + esc(detailRowLabel(row)) + '</div>' +
+      '<label class="staxx-detail-col staxx-detail-col--current">' +
+        '<span class="staxx-detail-collabel"><input type="radio" name="' + name + '" value="keep"> ' +
+        esc('What’s there') + '</span>' +
+        '<span class="staxx-detail-colbody">' + detailCurrentHtml(row.key, row.current, row.preview) + '</span>' +
+      '</label>' +
+      '<label class="staxx-detail-col staxx-detail-col--found">' +
+        '<span class="staxx-detail-collabel"><input type="radio" name="' + name + '" value="found"> ' +
+        esc('What was found') + '</span>' +
+        '<span class="staxx-detail-colbody">' + detailFoundHtml(row.key, row.answer, row.answerPreview) + '</span>' +
+      '</label>' +
+    '</div>';
+  }
+
+  function closeDetailModal() {
+    if (detailModal && detailModal.open) detailModal.close();
+    if (detailMsg) detailMsg.textContent = '';
+  }
+
+  if (detailModal) {
+    // A cached picture the server named but the browser still cannot load —
+    // the file evicted between the reply and the render, say. Said in words
+    // rather than left as a broken-image box. There is no extension retry
+    // chain here on purpose: the server already worked out which file
+    // exists, so a second guess from this side could only be wrong.
+    // Delegated once on the body, since its content is rebuilt every render.
+    detailBody.addEventListener('error', function (e) {
+      var img = e.target;
+      if (!img || img.tagName !== 'IMG' || !img.classList.contains('staxx-detail-iconimg')) return;
+      var span = document.createElement('span');
+      span.className = 'staxx-detail-noicon';
+      span.textContent = 'No picture could be loaded for this one.';
+      if (img.parentNode) img.parentNode.replaceChild(span, img);
+    }, true);
+
+    detailCancel.addEventListener('click', function () {
+      if (detailBusy) return;
+      closeDetailModal();
+    });
+    detailModal.addEventListener('cancel', function (event) {
+      if (detailBusy) event.preventDefault();
+    });
+    // Same backdrop hit-test #staxx-confirm uses above — <dialog> fires no
+    // backdrop click of its own.
+    detailModal.addEventListener('click', function (event) {
+      if (event.target !== detailModal || detailBusy) return;
+      var r = detailModal.getBoundingClientRect();
+      if (event.clientX < r.left || event.clientX > r.right ||
+          event.clientY < r.top  || event.clientY > r.bottom) closeDetailModal();
     });
   }
 
-  // The write half of findProjectLink() above: reads the file fresh (never
-  // the editor's own copy, which may not even be open), adds the two
-  // settings through the compose model — the one editor that can insert a
-  // line without disturbing anything else already in the file — and saves
-  // through the same 'save' action every ordinary edit uses, so a hand-
-  // authored file's comments, ordering and anchors survive exactly as the
-  // round-trip promise requires.
-  function writeProjectLink(stack, service, project, support, label) {
-    if (!YAML || typeof YAML.parse !== 'function') {
-      failed('Could not save the link', 'The part of the page that edits compose files safely did not load.');
+  // Live counter and the Apply gate — recomputed on every radio change
+  // rather than once, so "Keep 2, replace 1" always reflects what is
+  // actually checked right now.
+  function detailUpdateGoState(conflictCount, toWriteCount) {
+    var rows = detailBody.querySelectorAll('.staxx-detail-row');
+    var answered = 0, keep = 0, replace = 0;
+    Array.prototype.forEach.call(rows, function (rowEl) {
+      var checked = rowEl.querySelector('input[type=radio]:checked');
+      if (checked) { answered++; if (checked.value === 'keep') keep++; else replace++; }
+    });
+    detailGo.disabled = answered < conflictCount;
+    if (conflictCount) {
+      detailMsg.textContent = 'Keep ' + keep + ', replace ' + replace +
+        (answered < conflictCount ? ' — ' + (conflictCount - answered) + ' more to decide.' : '.') +
+        (toWriteCount ? ' ' + toWriteCount + ' more will just be written in.' : '');
+    } else {
+      detailMsg.textContent = toWriteCount
+        ? toWriteCount + ' field' + (toWriteCount === 1 ? '' : 's') + ' will be written in.' : '';
+    }
+  }
+
+  // The chooser's body: only conflicts get a row (an empty field with a
+  // value found is written without asking — see PLAN_84's own rule 2) and
+  // anything skipped is named, never offered as a choice.
+  function detailRenderChooser(name, label, conflicts, toWrite, skipped) {
+    var html = '';
+    if (toWrite.length) {
+      html += '<p>' + esc(toWrite.length === 1
+        ? 'This field is empty and a value was found for it, so it will be written in without asking:'
+        : toWrite.length + ' fields are empty and a value was found for each, so they will be ' +
+          'written in without asking:') + '</p>';
+      html += '<ul class="staxx-confirm-list">' + toWrite.map(function (row) {
+        return '<li><code>' + esc(detailRowLabel(row)) + '</code>' +
+          '<span class="staxx-confirm-meta">' + esc(row.answer.value) + '</span></li>';
+      }).join('') + '</ul>';
+    }
+    if (conflicts.length) {
+      html += '<p>' + esc(conflicts.length === 1
+        ? 'This field already holds a value, and a different one was found. Choose which to keep:'
+        : conflicts.length + ' fields already hold a value, and a different one was found for ' +
+          'each. Choose which to keep for every one before applying:') + '</p>';
+      html += '<div class="staxx-detail-rows">' +
+        conflicts.map(detailConflictRowHtml).join('') + '</div>';
+    }
+    if (skipped.length) {
+      html += '<p>' + esc('Not offered, because it could not be written safely:') + '</p>' +
+        '<ul class="staxx-confirm-list">' +
+        skipped.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ul>';
+    }
+
+    detailBody.innerHTML = html;
+
+    detailBody.onchange = function (e) {
+      if (e.target && e.target.type === 'radio') detailUpdateGoState(conflicts.length, toWrite.length);
+    };
+    detailUpdateGoState(conflicts.length, toWrite.length);
+
+    detailGo.onclick = function () {
+      if (detailGo.disabled || detailBusy) return;
+      var decisions = toWrite.map(function (row) {
+        return { scope: row.scope, service: row.service, key: row.key, value: row.answer.value, mode: 'add' };
+      });
+      var rows = detailBody.querySelectorAll('.staxx-detail-row');
+      Array.prototype.forEach.call(rows, function (rowEl, idx) {
+        var row = conflicts[idx];
+        var checked = rowEl.querySelector('input[type=radio]:checked');
+        if (checked && checked.value === 'found') {
+          decisions.push({ scope: row.scope, service: row.service, key: row.key, value: row.answer.value, mode: 'replace' });
+        }
+      });
+      applyDetailDecisions(name, label, decisions, skipped);
+    };
+
+    detailPlaceholders.onclick = function () {
+      if (detailBusy) return;
+      closeDetailModal();
+      applyPlaceholdersFor(name, label);
+    };
+
+    detailMsg.textContent = '';
+    if (!detailModal.open) detailModal.showModal();
+    detailCancel.focus({ preventScroll: true });
+  }
+
+  // Sorts one `detail` reply into: written-without-asking (empty field, a
+  // value found), conflicts (a different value found for a field that
+  // already holds one — the only thing the dialog actually asks about), and
+  // skipped (found but not offered — named in the summary only). An
+  // identical value is never a conflict at all — the server already
+  // suppresses it by sending `answer: null` — so there is nothing here that
+  // re-checks that rule; there is simply nothing to sort in that case.
+  function openDetailChooser(name, label, res) {
+    var conflicts = [], toWrite = [], skipped = [];
+
+    function collect(scope, service, key, entry) {
+      if (!entry) return;
+      if (entry.skipped) { skipped.push(entry.skipped); return; }
+      if (!entry.answer) return;
+      var row = {
+        scope: scope, service: service, key: key,
+        current: entry.current || '', answer: entry.answer,
+        // Only the icon field carries these; every other row ignores them.
+        // Resolved on the server (see Detail.php's icon preview) so this
+        // page never has to work out where a picture lives.
+        preview: entry.preview || null, answerPreview: entry.answer_preview || null
+      };
+      if (row.current) conflicts.push(row); else toWrite.push(row);
+    }
+
+    Object.keys(res.stack || {}).forEach(function (key) { collect('stack', null, key, res.stack[key]); });
+    Object.keys(res.services || {}).forEach(function (svc) {
+      Object.keys(res.services[svc] || {}).forEach(function (key) { collect('service', svc, key, res.services[svc][key]); });
+    });
+
+    if (!conflicts.length && !toWrite.length) {
+      var msg = 'Nothing here — the image, its catalogue entry and its own page — offered anything ' +
+        'different from what "' + label + '" already holds.';
+      if (skipped.length) msg += '\n\nSkipped:\n' + skipped.map(function (s) { return '- ' + s; }).join('\n');
+      openLogDialog('Nothing new found', msg);
       return;
     }
-    call('read', { name: stack }).then(function (res) {
-      if (!res.ok) { failed('Could not save the link', res.error); return; }
 
-      var doc = YAML.parse(res.body);
-      var ok = true;
-      if (project) ok = YAML.addNested(doc, null, service, ['x-unraid', 'project'], project) >= 0;
-      if (ok && support) ok = YAML.addNested(doc, null, service, ['x-unraid', 'support'], support) >= 0;
+    detailRenderChooser(name, label, conflicts, toWrite, skipped);
+  }
 
-      if (!ok) {
-        // Never falls back to rebuilding the file — an insert that cannot be
-        // done safely is refused outright, the same rule every other model
-        // write in this file already follows.
-        failed('Could not save the link',
-               'This service’s settings could not be added to safely, so nothing was changed.');
-        return;
+  // PLAN_84 phase 4 — every decision applied to ONE in-memory document,
+  // snapshot-and-abandon-on-any-failure: `text` is only ever read from, a
+  // fresh parse is where every write lands, and nothing from that parse is
+  // used unless every single write in the batch succeeded. `mode` picks
+  // addNested/addRootNested (a field being added fresh — an empty box, or
+  // one the chooser was never shown for at all) from
+  // replaceNested/replaceRootNested (a field the chooser answered "found"
+  // for, replacing a value that was already there) — never the wrong one,
+  // since add now refuses an existing key and replace refuses an absent one.
+  function applyDetailWrites(doc, decisions) {
+    for (var i = 0; i < decisions.length; i++) {
+      var d = decisions[i];
+      var path = ['x-unraid', d.key];
+      var ok;
+      if (d.scope === 'stack') {
+        ok = d.mode === 'replace'
+          ? YAML.replaceRootNested(doc, null, path, d.value)
+          : YAML.addRootNested(doc, null, path, d.value) >= 0;
+      } else {
+        ok = d.mode === 'replace'
+          ? YAML.replaceNested(doc, null, d.service, path, d.value)
+          : YAML.addNested(doc, null, d.service, path, d.value) >= 0;
       }
+      if (!ok) {
+        return { ok: false, error: 'The value for "' + detailRowLabel(d) +
+          '" could not be written safely, so nothing from this run was changed.' };
+      }
+    }
+    return { ok: true };
+  }
 
-      call('save', { name: res.name, body: YAML.serialise(doc), 'new': '0',
+  // Runs the whole batch against one piece of text and returns the text to
+  // write back — never a partial result (see applyDetailWrites() above).
+  //
+  // PLAN_84 phase 4's one exception: a file with no root x-unraid block at
+  // all refuses every stack-level add outright (addRootNested has nowhere to
+  // put it), so the placeholder writer runs FIRST here to create that block
+  // — the only thing that knows to put a new one before the services
+  // section rather than at the end of the file. Its placeholders are
+  // ordinary commented lines, not real keys, so addRootNested/addNested
+  // still see the field as absent and write it as usual — and each already
+  // retracts the stale placeholder comment for the key it just wrote (see
+  // addNested's own comment in compose-model.js), so nothing here has to
+  // track that separately. The placeholder writer runs again at the very
+  // end, for whatever answer this run still leaves missing — its own
+  // idempotence (a real key or an existing placeholder both already count as
+  // "not missing") is what makes running it twice here harmless.
+  function buildDetailWriteText(text, decisions) {
+    var working = text;
+    if (window.StaxxMeta) {
+      var check = window.StaxxMeta.missingFields(text);
+      if (!check.error && check.fresh) {
+        var pre = window.StaxxMeta.scaffold(text);
+        if (pre.error) return { ok: false, error: pre.error };
+        working = pre.yaml;
+      }
+    }
+
+    var doc = YAML.parse(working);
+    var result = applyDetailWrites(doc, decisions);
+    if (!result.ok) return result;
+
+    var afterWrites = YAML.serialise(doc);
+    if (!window.StaxxMeta) return { ok: true, yaml: afterWrites, applied: decisions };
+
+    var post = window.StaxxMeta.scaffold(afterWrites);
+    return { ok: true, yaml: post.error ? afterWrites : post.yaml, applied: decisions };
+  }
+
+  function detailSummaryText(applied, skipped) {
+    var lines = [];
+    if (applied && applied.length) {
+      lines.push(applied.length + ' field' + (applied.length === 1 ? '' : 's') +
+                 (applied.length === 1 ? ' was' : ' were') + ' written:');
+      applied.forEach(function (d) {
+        lines.push('- ' + detailRowLabel(d) + (d.mode === 'replace' ? ' (replaced): ' : ' (added): ') + d.value);
+      });
+    } else {
+      lines.push('Nothing was written.');
+    }
+    if (skipped && skipped.length) {
+      lines.push('');
+      lines.push('Skipped:');
+      skipped.forEach(function (s) { lines.push('- ' + s); });
+    }
+    return lines.join('\n');
+  }
+
+  // The one write for the whole run — editor-open case goes through
+  // pushUndo()/yamlPane/reparse(), the same undoable-edit path the
+  // placeholder click handler already uses, so the file the person was
+  // looking at updates in place with one undo entry for everything this run
+  // touched. Editor-closed case (the row menu, on a stack that is not open)
+  // reads fresh and saves once, mirroring writeProjectLink()'s old shape —
+  // one history entry either way, never one per field.
+  function applyDetailDecisions(name, label, decisions, skipped) {
+    if (!decisions.length) { closeDetailModal(); return; }
+    detailBusy = true;
+    detailGo.disabled = true;
+    detailMsg.textContent = 'Working…';
+
+    var isOpenHere = modal.open && openedName === name && fileOpen === null;
+
+    function fail(message) {
+      detailBusy = false;
+      detailGo.disabled = false;
+      detailMsg.textContent = message;
+    }
+
+    function done(applied) {
+      detailBusy = false;
+      closeDetailModal();
+      openLogDialog('Filled in details for "' + label + '"', detailSummaryText(applied, skipped));
+    }
+
+    if (isOpenHere) {
+      var built = buildDetailWriteText(currentText(), decisions);
+      if (!built.ok) { fail(built.error); return; }
+      pushUndo('filling in this stack’s details');
+      yamlPane.value = built.yaml;
+      paintGutter();
+      paintInk();
+      activeField = null;
+      reparse();
+      updateUndo();
+      setYamlStatus('Filled in this stack’s details.');
+      done(built.applied);
+      return;
+    }
+
+    call('read', { name: name }).then(function (res) {
+      if (!res.ok) { fail(res.error); return; }
+      var built = buildDetailWriteText(res.body, decisions);
+      if (!built.ok) { fail(built.error); return; }
+      call('save', { name: res.name, body: built.yaml, 'new': '0',
                       fingerprint: res.fingerprint }).then(function (r) {
-        if (!r.ok) { failed('Could not save the link', r.error); return; }
+        if (!r.ok) { fail(r.error); return; }
+        refreshRows();
+        done(built.applied);
+      });
+    });
+  }
+
+  // Today's placeholders-only behaviour, reachable both from the editor's
+  // own offer bar/click handler and from the chooser's third button — one
+  // capability, two doors onto it, per PLAN_84 phase 3's own instruction not
+  // to make this a second dialog's worth of code.
+  function applyPlaceholdersFor(name, label) {
+    if (!window.StaxxMeta) return;
+    var isOpenHere = modal.open && openedName === name && fileOpen === null;
+    if (isOpenHere) {
+      var scaffolded = window.StaxxMeta.scaffold(currentText());
+      if (scaffolded.error || !scaffolded.changed) { updateScaffoldNote(); return; }
+      pushUndo('adding the StaXX fields');
+      yamlPane.value = scaffolded.yaml;
+      paintGutter();
+      paintInk();
+      activeField = null;
+      reparse();
+      updateUndo();
+      setYamlStatus('Added the StaXX fields for icon, links and description.');
+      return;
+    }
+    call('read', { name: name }).then(function (res) {
+      if (!res.ok) { failed('Could not add the StaXX fields', res.error); return; }
+      var scaffolded = window.StaxxMeta.scaffold(res.body);
+      if (scaffolded.error) { failed('Could not add the StaXX fields', scaffolded.error); return; }
+      if (!scaffolded.changed) return;
+      call('save', { name: res.name, body: scaffolded.yaml, 'new': '0',
+                      fingerprint: res.fingerprint }).then(function (r) {
+        if (!r.ok) { failed('Could not add the StaXX fields', r.error); return; }
         refreshRows();
       });
+    });
+  }
+
+  // The one discover round trip every trigger funnels through — the manual
+  // button, the row-menu item, the editor's own offer bar, and (indirectly,
+  // via the cache below) the quiet automatic lookup — so there is exactly
+  // one path from "look this stack up" to the chooser opening, whichever
+  // door it came through. Reuses a still-fresh answer rather than asking
+  // again — this is what makes "Not now" free to press later (see
+  // runDetailLookupQuiet() below).
+  function runDetailLookup(name, label) {
+    if (!name || detailBusy) return;
+    if (detailCache && detailCache.name === name) { openDetailChooser(name, label, detailCache.res); return; }
+    detailBusy = true;
+    call('detail', { name: name }, 30000).then(function (res) {
+      detailBusy = false;
+      if (!res.ok) { failed('Could not look up this stack’s details', res.error); return; }
+      detailCache = { name: name, res: res };
+      openDetailChooser(name, label, res);
+    });
+  }
+
+  // Whether a `detail` reply is worth mentioning at all — nothing found and
+  // nothing skipped means silence, not a bar nobody needed.
+  function detailHasAnything(res) {
+    var any = false;
+    function check(entry) { if (entry && (entry.answer || entry.skipped)) any = true; }
+    Object.keys(res.stack || {}).forEach(function (k) { check(res.stack[k]); });
+    Object.keys(res.services || {}).forEach(function (svc) {
+      Object.keys(res.services[svc] || {}).forEach(function (k) { check(res.services[svc][k]); });
+    });
+    return any;
+  }
+
+  // PLAN_84 phase 5's automatic trigger, the quiet half: called only from
+  // checkImageSettle() below, once a service's image has genuinely settled
+  // on something never looked up this session. No dialog opens on its own —
+  // the answer is only ever offered through the bar, see showDetailOfferBar().
+  function runDetailLookupQuiet() {
+    if (detailBusy || !openedName || !modal.open || fileOpen !== null) return;
+    var forName = openedName;
+    detailBusy = true;
+    call('detail', { name: forName }, 30000).then(function (res) {
+      detailBusy = false;
+      // The editor may have moved on to a different stack (or closed) while
+      // this was in flight — an answer for yesterday's stack is meaningless
+      // against today's, same reasoning as openEditor()'s own reset.
+      if (!modal.open || openedName !== forName) return;
+      if (!res.ok || !detailHasAnything(res)) return;   // a quiet failure never nags
+      detailCache = { name: forName, res: res };
+      showDetailOfferBar(forName);
+    });
+  }
+
+  // The bar's "found something" state — "Review" is the bar itself
+  // (dataset.mode 'lookup-found' is handled by the existing click handler
+  // above, which reuses the cached answer rather than asking again); "Not
+  // now" is the small dismiss button beside it, which only hides the bar —
+  // the cached answer is untouched, so the manual button afterwards is free.
+  function showDetailOfferBar(name) {
+    if (!scaffoldNote || openedName !== name || fileOpen !== null) return;
+    if (!detailCache || detailCache.name !== name) return;
+    scaffoldNote.dataset.mode = 'lookup-found';
+    scaffoldNote.textContent = 'Some details were found for this stack from its image, catalogue ' +
+      'entry and own page — review them?';
+    scaffoldNote.hidden = false;
+    if (scaffoldDismiss) scaffoldDismiss.hidden = false;
+  }
+
+  // Debounced the same 400ms the compose pane's own settle timer uses (see
+  // yamlPane's 'input' handler above) — reparse() already only runs once
+  // something has settled, but a form edit and a paste can both land here in
+  // the same tick as a compose-pane debounce elsewhere, so this gets its own
+  // short pause rather than assuming reparse() itself is the only caller.
+  function queueDetailLookup() {
+    if (detailLookupTimer) clearTimeout(detailLookupTimer);
+    detailLookupTimer = setTimeout(function () {
+      detailLookupTimer = null;
+      runDetailLookupQuiet();
+    }, 400);
+  }
+
+  // PLAN_84 phase 5 — the automatic trigger itself. Called from reparse(),
+  // which only ever runs after something has settled (a pause in typing, a
+  // structural edit, a file just loading) — this is deliberately NOT hung
+  // off a keystroke of its own, because every prefix of an image name looks
+  // like a valid one and firing per character would burst a lookup for
+  // names nobody meant. detailSeen (per service, reset on openEditor())
+  // is what makes a tag-only change a no-op and a genuinely different image
+  // always fire: compared with the tag AND any digest pin stripped, so
+  // "jellyfin/jellyfin" -> "jellyfin/jellyfin:10.9" never re-triggers.
+  function checkImageSettle() {
+    if (!MODEL || !MODEL.fields || fileOpen !== null) return;
+    var anyNew = false;
+    MODEL.fields.forEach(function (f) {
+      if (f.binder !== 'setting' || f.target !== 'image' || !f.parts || !f.parts.value) return;
+      var repo = imageRepoKey(f.parts.value.value);
+      if (!repo || detailSeen[f.service] === repo) return;
+      detailSeen[f.service] = repo;
+      anyNew = true;
+    });
+    if (anyNew) queueDetailLookup();
+  }
+
+  // No bulk or scheduled version of this feature exists, and none is added
+  // here: a network lookup per stack across forty stacks is minutes behind
+  // one modal, and a confirmation listing two hundred guesses is one nobody
+  // reads — the safety mechanism the chooser is would become a rubber stamp.
+  // If bulk is ever wanted it belongs as its own detached background job
+  // with every stack still confirmed separately, not a loop wrapped around
+  // runDetailLookup() above. PLAN_86's icon-adoption sweep is a different,
+  // narrower thing (one already-guessed icon, already vetted by the matcher,
+  // written with no per-field choice) and is not what this refusal is about.
+
+  if (detailBtn) {
+    detailBtn.addEventListener('click', function () {
+      if (!openedName) return;
+      runDetailLookup(openedName, stackLabel(openedName));
     });
   }
 
@@ -20115,7 +20665,14 @@
       menuSeparator();
     }
 
-    if (hasFile) menuItem('Edit compose file', 'pencil', function () { editStack(name, label); });
+    if (hasFile) {
+      menuItem('Edit compose file', 'pencil', function () { editStack(name, label); });
+      // PLAN_84 phase 5 — the same discover-then-chooser flow the editor's
+      // own manual button and offer bar open, reachable without opening the
+      // editor first. Replaces the old per-service "Find the project
+      // link…" item, which only ever wrote two of the fields this covers.
+      menuItem('Fill in details…', 'magic', function () { runDetailLookup(name, label); });
+    }
 
     // The section shows even with no folders yet — "New folder" is what it is
     // for at that point, and it was the one moment it used to be missing.
@@ -20318,11 +20875,11 @@
       hint: !exists ? 'This container has not been created yet' : ''
     });
 
-    // Service rows only — a project link belongs to one image, and images
-    // are per service. Read-only until the confirmation below is answered.
-    menuItem('Find the project link…', 'link', function () {
-      findProjectLink(stack, service, stackLabel(stack));
-    });
+    // PLAN_84 replaces this item with "Fill in details…" on the stack menu
+    // (see buildStackMenu, beside "Edit compose file") — that flow covers
+    // the whole stack, not just this one service's project link, and its
+    // provenance sentences (LINK_FROM_SENTENCE above) are this item's own,
+    // kept and extended rather than duplicated.
 
     menuSeparator();
 

@@ -34,26 +34,31 @@
    * read, so a tally and a check never describe two different lists.
    * ===================================================================== */
 
+  // `word` is the plain-English name of the field, spoken in the offer bar
+  // (stacks.js's SCAFFOLD_WORDS used to hard-code these itself — now it
+  // reads them from here, so there is one place, not two, that can drift
+  // from what a field is actually called). `version` carries none: it is
+  // a real default rather than something offered, so it is never named.
   var STACK_FIELDS = [
-    { key: 'icon', hint: 'a selfh.st name, ./icon.png, a URL, or fa-database' },
-    { key: 'overview', block: 'What this stack is for.' },
-    { key: 'category', hint: 'Unraid category, e.g. MediaApp:Video' },
-    { key: 'project', hint: 'the project home page' },
-    { key: 'support', hint: 'forum thread or issue tracker' },
-    { key: 'readme', hint: 'documentation page' },
-    { key: 'author', hint: '' },
-    { key: 'update', nested: [
+    { key: 'icon', word: 'an icon', hint: 'a selfh.st name, ./icon.png, a URL, or fa-database' },
+    { key: 'overview', word: 'a description', block: 'What this stack is for.' },
+    { key: 'category', word: 'a category', hint: 'Unraid category, e.g. MediaApp:Video' },
+    { key: 'project', word: 'a project page', hint: 'the project home page' },
+    { key: 'support', word: 'a support page', hint: 'forum thread or issue tracker' },
+    { key: 'readme', word: 'a documentation page', hint: 'documentation page' },
+    { key: 'author', word: 'an author', hint: '' },
+    { key: 'update', word: 'an update policy', nested: [
         { key: 'mode', value: 'notify', hint: 'off, notify or auto' },
         { key: 'delay', value: '24', hint: 'hours to wait before auto applies one' }
       ] }
   ];
 
   var SERVICE_FIELDS = [
-    { key: 'icon', hint: 'overrides the stack icon for this service' },
-    { key: 'overview', block: 'What this container does.' },
-    { key: 'project', hint: 'the page for this service, when it differs' },
-    { key: 'support', hint: 'the support page for this service' },
-    { key: 'webui', hint: 'e.g. http://[IP]:8096/' }
+    { key: 'icon', word: 'an icon', hint: 'overrides the stack icon for this service' },
+    { key: 'overview', word: 'a description', block: 'What this container does.' },
+    { key: 'project', word: 'a project page', hint: 'the page for this service, when it differs' },
+    { key: 'support', word: 'a support page', hint: 'the support page for this service' },
+    { key: 'webui', word: 'a web page address', hint: 'e.g. http://[IP]:8096/' }
   ];
 
   /* =====================================================================
@@ -155,6 +160,16 @@
     return true;
   }
 
+  // The one is-it-missing rule, shared by the writer (appendMissing) and the
+  // read-only check (missingFields) below — see CLAUDE.md's "never lose what
+  // the author wrote": a real key or an already-commented placeholder both
+  // count as "already offered", and this is the only place that decides it.
+  function fieldMissing(doc, pair, childIndent, key) {
+    if (pair.value.pairs[key]) return false;
+    if (hasPlaceholder(doc, pair, childIndent, key)) return false;
+    return true;
+  }
+
   /* =====================================================================
    * Writing
    * ===================================================================== */
@@ -172,8 +187,7 @@
       names.push('version');
     }
     fields.forEach(function (f) {
-      if (map.pairs[f.key]) return;
-      if (hasPlaceholder(doc, pair, childIndent, f.key)) return;
+      if (!fieldMissing(doc, pair, childIndent, f.key)) return;
       lines = lines.concat(renderField(f, childIndent));
       names.push(f.key);
     });
@@ -250,43 +264,45 @@
     return result;
   }
 
-  function scaffold(yamlText) {
-    var result = { yaml: yamlText, added: { stack: [], services: {} }, skipped: [], changed: false, error: '' };
-    var doc = Yaml.parse(yamlText);
-
+  // Everything both scaffold() and missingFields() need to agree on before
+  // either can do anything with the file: is it readable at all, and does it
+  // have the shapes ("services:" a map, any "x-unraid" a map) both of them
+  // rely on. One copy means the two can never refuse differently for the
+  // same file.
+  function parseGuard(doc) {
     if (doc.root.kind !== 'map') {
       var reason = doc.root.reason;
       if (reason === 'multi-doc') {
-        return refuse(result, 'This file holds more than one YAML document, separated by a "---" line, so nothing was added — split it into separate files first.');
+        return { error: 'This file holds more than one YAML document, separated by a "---" line, so nothing was added — split it into separate files first.' };
       }
       if (reason === 'tab-indent') {
-        return refuse(result, 'This file uses tab characters to indent, which cannot be read reliably, so nothing was added — replace the tabs with spaces first.');
+        return { error: 'This file uses tab characters to indent, which cannot be read reliably, so nothing was added — replace the tabs with spaces first.' };
       }
       if (reason === 'directive') {
-        return refuse(result, 'This file opens with a YAML directive that cannot be read here, so nothing was added.');
+        return { error: 'This file opens with a YAML directive that cannot be read here, so nothing was added.' };
       }
-      return refuse(result, 'This file could not be read as a compose file, so nothing was added.');
+      return { error: 'This file could not be read as a compose file, so nothing was added.' };
     }
     if (doc.unreadTail) {
       // Name the line. This refusal is shown on the settings page, away from
       // the editor and its gutter mark, so "the line the editor flags" sent
       // somebody looking for a fact the parser had already worked out.
       if (typeof doc.unreadLine !== 'number') {
-        return refuse(result, 'Part of this file could not be read, so nothing was added — fix the line the editor flags first.');
+        return { error: 'Part of this file could not be read, so nothing was added — fix the line the editor flags first.' };
       }
-      return refuse(result, 'This file could not be read past line ' + (doc.unreadLine + 1) +
+      return { error: 'This file could not be read past line ' + (doc.unreadLine + 1) +
         ', so nothing was added. That line is usually indented differently from the ones around ' +
-        'it — fix it in the Compose view first.');
+        'it — fix it in the Compose view first.' };
     }
 
     var servicesPair = doc.root.pairs.services;
     if (!servicesPair || !servicesPair.value || servicesPair.value.kind !== 'map') {
-      return refuse(result, 'This file has no services for StaXX to add fields to, so nothing was added — add at least one service first.');
+      return { error: 'This file has no services for StaXX to add fields to, so nothing was added — add at least one service first.' };
     }
 
     var rootXu = doc.root.pairs['x-unraid'];
     if (rootXu && (!rootXu.value || rootXu.value.kind !== 'map')) {
-      return refuse(result, 'The x-unraid block at the top of this file is not a plain list of settings, so nothing was added — fix it in the Compose view first.');
+      return { error: 'The x-unraid block at the top of this file is not a plain list of settings, so nothing was added — fix it in the Compose view first.' };
     }
 
     // The file's own indent step, read off where its service names sit
@@ -295,9 +311,20 @@
     var step = servicesPair.value.indent - servicesPair.indent;
     if (step <= 0) step = 2;
 
+    return { servicesPair: servicesPair, rootXu: rootXu, step: step };
+  }
+
+  function scaffold(yamlText) {
+    var result = { yaml: yamlText, added: { stack: [], services: {} }, skipped: [], changed: false, error: '' };
+    var doc = Yaml.parse(yamlText);
+
+    var guard = parseGuard(doc);
+    if (guard.error) return refuse(result, guard.error);
+    var servicesPair = guard.servicesPair, rootXu = guard.rootXu, step = guard.step;
+
     if (rootXu) {
       appendMissing(doc, rootXu, STACK_FIELDS, rootXu.value.indent, true, result.added.stack);
-    } else if (!doc.unreadTail) {
+    } else {
       scaffoldNewRoot(doc, servicesPair, step, result.added.stack);
     }
 
@@ -316,15 +343,86 @@
     return result;
   }
 
-  // Cheap enough for the editor to call on open without doing the work
-  // twice — deliberately not a second copy of the missing-field rules.
+  function stackMissing(doc, rootXu) {
+    var names = [];
+    if (!rootXu.value.pairs.version) names.push('version');
+    STACK_FIELDS.forEach(function (f) {
+      if (fieldMissing(doc, rootXu, rootXu.value.indent, f.key)) names.push(f.key);
+    });
+    return names;
+  }
+
+  // No block at all: every field would be offered, unconditionally — the
+  // same thing scaffoldNewRoot() writes, just not written.
+  function allFieldKeys(fields) {
+    return fields.map(function (f) { return f.key; });
+  }
+
+  function serviceMissing(doc, xu) {
+    if (!xu) return allFieldKeys(SERVICE_FIELDS);
+    var names = [];
+    SERVICE_FIELDS.forEach(function (f) {
+      if (fieldMissing(doc, xu, xu.value.indent, f.key)) names.push(f.key);
+    });
+    return names;
+  }
+
+  // Read-only twin of scaffold(): says what WOULD be added, without
+  // splicing a single line, so the editor can ask "should the offer bar
+  // show" on every settled keystroke without redoing the placeholder work
+  // it is about to throw away. Takes either a YAML string or a document this
+  // caller already parsed (an already-parsed document is never a string, so
+  // that one check is enough to tell them apart). Every "is this field
+  // missing" answer comes from fieldMissing() — the same predicate
+  // appendMissing() uses to decide what to write — so the two can never
+  // disagree about what a file is missing.
+  function missingFields(docOrText) {
+    var doc = typeof docOrText === 'string' ? Yaml.parse(docOrText) : docOrText;
+    var result = { missing: { stack: [], services: {} }, skipped: [], changed: false, error: '', fresh: false };
+
+    var guard = parseGuard(doc);
+    if (guard.error) return refuse(result, guard.error);
+    var servicesPair = guard.servicesPair, rootXu = guard.rootXu;
+
+    if (rootXu) {
+      result.missing.stack = stackMissing(doc, rootXu);
+    } else {
+      // No root x-unraid block at all — the "fresh" case the offer bar's
+      // wording depends on. scaffoldNewRoot() would add version plus every
+      // stack field, so that is what "missing" lists here too.
+      result.fresh = true;
+      result.missing.stack = ['version'].concat(allFieldKeys(STACK_FIELDS));
+    }
+
+    servicesPair.value.keys.forEach(function (name) {
+      var svc = servicesPair.value.pairs[name];
+      if (!svc || !svc.value || svc.value.kind !== 'map') {
+        result.skipped.push('The "' + name + '" service is not written as a plain block, so its StaXX fields were not added.');
+        return;
+      }
+      var xu = svc.value.pairs['x-unraid'];
+      if (xu && (!xu.value || xu.value.kind !== 'map')) {
+        result.skipped.push('The x-unraid block in "' + name + '" is not a plain list of settings, so its fields were not added.');
+        return;
+      }
+      var list = serviceMissing(doc, xu);
+      if (list.length) result.missing.services[name] = list;
+    });
+
+    result.changed = !!(result.missing.stack.length || Object.keys(result.missing.services).length);
+    return result;
+  }
+
+  // Cheap enough for the editor to call on every settled keystroke: reuses
+  // whatever parse the caller already has, and never splices a line.
   function needsScaffold(yamlText) {
-    return scaffold(yamlText).changed;
+    return missingFields(yamlText).changed;
   }
 
   var API = {
     scaffold: scaffold,
     needsScaffold: needsScaffold,
+    missingFields: missingFields,
     stackFields: STACK_FIELDS,
     serviceFields: SERVICE_FIELDS
   };

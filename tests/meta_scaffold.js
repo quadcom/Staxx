@@ -340,6 +340,104 @@ console.log('\nI. Whole fixtures corpus');
 })();
 
 /* =========================================================================
+ * J. missingFields() agrees with scaffold() — the rule the whole change
+ * stands on. Same field names, same services, same error, same "fresh"
+ * answer, for every hand-written case below and for the entire fixture
+ * corpus (one loop, so a new fixture is covered for free).
+ * ========================================================================= */
+
+console.log('\nJ. missingFields() agrees with scaffold()');
+
+// Compares one scaffold() result against one missingFields() result over the
+// same input text and reports every mismatch under one label, so a failure
+// names exactly what disagreed instead of just "not equal".
+function assertAgree(name, text) {
+  var s = M.scaffold(text);
+  var m = M.missingFields(text);
+
+  ok(name + ': error text matches', s.error === m.error, JSON.stringify([s.error, m.error]));
+  if (s.error) return;
+
+  ok(name + ': stack fields match', JSON.stringify(s.added.stack) === JSON.stringify(m.missing.stack),
+     JSON.stringify([s.added.stack, m.missing.stack]));
+  ok(name + ': service fields match', JSON.stringify(s.added.services) === JSON.stringify(m.missing.services),
+     JSON.stringify([s.added.services, m.missing.services]));
+  ok(name + ': skipped list matches', JSON.stringify(s.skipped) === JSON.stringify(m.skipped),
+     JSON.stringify([s.skipped, m.skipped]));
+  ok(name + ': changed flag matches', s.changed === m.changed);
+
+  var rootXu = Y.parse(text).root.pairs && Y.parse(text).root.pairs['x-unraid'];
+  var expectFresh = !rootXu;
+  ok(name + ': fresh flag correct', m.fresh === expectFresh, 'fresh=' + m.fresh);
+}
+
+assertAgree('J1 no x-unraid at all', 'services:\n  web:\n    image: nginx\n');
+
+assertAgree('J2 partial root block',
+  'x-unraid:\n  version: 1\n  icon: fa-database\n\nservices:\n  web:\n    image: nginx\n');
+
+assertAgree('J3 full root block already scaffolded',
+  M.scaffold('services:\n  web:\n    image: nginx\n').yaml);
+
+assertAgree('J4 service with some fields already set',
+  'services:\n' +
+  '  web:\n' +
+  '    image: nginx\n' +
+  '    x-unraid:\n' +
+  '      icon: fa-database\n' +
+  '      webui: http://[IP]:80/\n');
+
+assertAgree('J5 commented placeholders already present',
+  'x-unraid:\n' +
+  '  version: 1\n' +
+  '  # icon:            already offered\n' +
+  '\n' +
+  'services:\n' +
+  '  web:\n' +
+  '    image: nginx\n');
+
+assertAgree('J6 unreadable — multi-doc',
+  'services:\n  a:\n    image: x\n---\nservices:\n  b:\n    image: y\n');
+assertAgree('J7 unreadable — tab-indent', 'services:\n\tweb:\n\t\timage: nginx\n');
+assertAgree('J8 unreadable — no services key', 'x-unraid:\n  version: 1\nvolumes:\n  data:\n');
+assertAgree('J9 unreadable — bad tail indent',
+  'services:\n  web:\n    image: nginx\n    environment:\n        TZ: UTC\n       BAD: less indented than the line above\n');
+
+(function () {
+  var base = path.join(__dirname, 'fixtures/test-stacks');
+  var dirs = fs.readdirSync(base).filter(function (d) {
+    return fs.statSync(path.join(base, d)).isDirectory();
+  });
+  dirs.forEach(function (d) {
+    var file = path.join(base, d, 'compose.yaml');
+    if (!fs.existsSync(file)) return;
+    var text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    assertAgree(d, text);
+  });
+})();
+
+/* =========================================================================
+ * K. missingFields() reuses an already-parsed document, and never edits it
+ * ========================================================================= */
+
+console.log('\nK. missingFields() given a document, not text');
+
+(function () {
+  var text = 'x-unraid:\n  version: 1\n  icon: fa-database\n\nservices:\n  web:\n    image: nginx\n';
+  var doc = Y.parse(text);
+  var fromText = M.missingFields(text);
+  var fromDoc = M.missingFields(doc);
+
+  ok('K1 same answer from a doc as from text',
+     JSON.stringify(fromText.missing) === JSON.stringify(fromDoc.missing));
+
+  var before = Y.serialise(doc);
+  M.missingFields(doc);
+  var after = Y.serialise(doc);
+  ok('K2 the document handed in is not modified', before === after);
+})();
+
+/* =========================================================================
  * Summary
  * ========================================================================= */
 

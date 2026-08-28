@@ -488,6 +488,16 @@ endif;
             </div>
           </div>
         </div>
+        <!-- PLAN_84 phase 5: the manual trigger for "fill in this stack's
+             details", in the same bar as the other whole-file actions so it
+             is reachable regardless of where the editor is scrolled. The
+             editor's own offer bar (#staxx-scaffold-note) surfaces the same
+             flow unasked once a stack's image has settled; this is for
+             running it again, or for a stack that never triggered it. -->
+        <button type="button" class="staxx-btn" id="staxx-detail-btn"
+                title="<?= _('Look up this stack’s icon, links, description and more from the image itself, its catalogue entry and its own page') ?>">
+          <i class="fa fa-magic" aria-hidden="true"></i> <?= _('Fill in details') ?>
+        </button>
         <!-- Positioning wrapper only, same job as .staxx-sections above the
              Sections button: the panel hangs from this box, not from the
              button itself, so it can sit flush against the button's edge
@@ -761,14 +771,20 @@ endif;
            second one-shot "paste bar" as PLAN_13 first sketched it. -->
       <button type="button" class="staxx-missing" id="staxx-missing" hidden></button>
 
-      <!-- PLAN_83: an existing stack opened with no StaXX presentation
-           fields (icon, links, description) at all. Same shape and job as
-           #staxx-missing above — clicking it scaffolds the text in the
-           editor via stacks.js's updateScaffoldNote()/its own click handler,
-           leaving the change unsaved like any other edit. Never shown for a
-           brand-new stack, which is scaffolded automatically before this
-           pane is painted. -->
+      <!-- PLAN_83/PLAN_84: one bar for both "this stack has no StaXX
+           presentation fields at all" and "a settled image was just looked
+           up quietly in the background" — see stacks.js's
+           updateScaffoldNote(). Clicking it opens whichever flow applies
+           (placeholders, or the "fill in details" chooser); nothing is
+           written until that flow finishes. #staxx-scaffold-dismiss is only
+           ever shown alongside it for the background-lookup case — "Not
+           now": it hides the bar without discarding what was found, so
+           pressing the manual button afterwards does not pay for the lookup
+           twice. Never shown for a brand-new stack, which is scaffolded
+           automatically before this pane is painted. -->
       <button type="button" class="staxx-missing" id="staxx-scaffold-note" hidden></button>
+      <button type="button" class="staxx-scaffold-dismiss" id="staxx-scaffold-dismiss"
+              title="<?= _('Not now') ?>" hidden>&times;</button>
 
       <!-- Same shape and job as #staxx-missing above, but for a volume's
            HOST side rather than a file inside the stack: clicking it asks the
@@ -1137,6 +1153,41 @@ endif;
              alone and never sees it. -->
         <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-confirm-extra" hidden></button>
         <button type="button" class="staxx-btn staxx-btn--danger" id="staxx-confirm-go"><?= _('Delete stack') ?></button>
+      </div>
+    </div>
+
+  </dialog>
+
+  <!-- ---------------------------------------------------- fill in details -- -->
+
+  <!-- PLAN_84. Its own dialog rather than a shape squeezed into
+       #staxx-confirm: this one needs a per-row choice (two pictures for the
+       icon row), a live "Keep N, replace N" count, a Go button that starts
+       disabled and stays that way until every conflict has an answer, and a
+       third button beside Cancel/Go for the placeholders-only fallback —
+       none of which #staxx-confirm's plain yes/no shape offers, and bending
+       it to fit would have left every other caller carrying weight it never
+       uses. Same recipe as #staxx-confirm otherwise (fixed head/foot, a
+       scrolling body between them), so it reuses that dialog's own classes
+       for the parts that are identical and adds staxx-detail-* only for what
+       is genuinely new. Script fills the body and wires the buttons; the
+       markup below is only the frame. -->
+  <dialog class="staxx-confirm staxx-detail" id="staxx-detail-modal" aria-labelledby="staxx-detail-title">
+
+    <div class="staxx-confirm-head">
+      <h3 class="staxx-confirm-title" id="staxx-detail-title"><?= _('Fill in this stack’s details') ?></h3>
+    </div>
+
+    <div class="staxx-confirm-body staxx-detail-body" id="staxx-detail-body"></div>
+
+    <div class="staxx-confirm-foot">
+      <p class="staxx-confirm-msg" id="staxx-detail-msg" role="status" aria-live="polite"></p>
+      <div class="staxx-buttons staxx-buttons--inline">
+        <button type="button" class="staxx-btn" id="staxx-detail-cancel"><?= _('Cancel') ?></button>
+        <!-- Today's placeholders-only behaviour, offered from the same
+             dialog rather than a second one — see PLAN_84 Phase 3. -->
+        <button type="button" class="staxx-btn" id="staxx-detail-placeholders"><?= _('Just add placeholders') ?></button>
+        <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-detail-go" disabled><?= _('Apply') ?></button>
       </div>
     </div>
 

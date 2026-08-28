@@ -9708,6 +9708,154 @@ console.log('\nAN. The icon-adoption write (x-unraid: icon:)');
      JSON.stringify({ warnings: reparsed.warnings, unreadTail: reparsed.unreadTail }));
 })();
 
+/* =========================================================================
+ * AO. PLAN_84 phase 1 — the duplicate-key refusal, the in-place replace
+ *     writer (replaceNested/replaceRootNested), and the top-level writer
+ *     (addRootNested). See PLAN_84.md's "four defects found while planning"
+ *     for why these three exist: without them, the chooser this phase is a
+ *     prerequisite for would have no safe way to fill in a stack's icon,
+ *     description, category, author or documentation link.
+ * ========================================================================= */
+
+console.log('\nAO. PLAN_84 phase 1 — duplicate refusal, replace-in-place, top-level writer');
+
+(function () {
+  // Case 1: a service's x-unraid: block already holds `project` — a second
+  // write is refused, not a second copy.
+  var src = 'services:\n  web:\n    image: nginx\n' +
+            '    x-unraid:\n      project: https://a.example/\n';
+  var doc = Y.parse(src);
+  var at = Y.addNested(doc, null, 'web', ['x-unraid', 'project'], 'https://b.example/');
+  ok('addNested refuses a key the block already holds', at === -1, at);
+  ok('the file is byte-identical after the refusal', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // Case 2: same refusal at the document root.
+  var src = 'x-unraid:\n  icon: cloudbeaver.png\n' +
+            'services:\n  web:\n    image: nginx\n';
+  var doc = Y.parse(src);
+  var at = Y.addRootNested(doc, null, ['x-unraid', 'icon'], 'other.png');
+  ok('addRootNested refuses a key the root block already holds', at === -1, at);
+  ok('the file is byte-identical after the refusal', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // Case 3: a genuinely new top-level field lands inside the root x-unraid:
+  // block, beside the key already there — not at the end of the file, and
+  // not inside services:.
+  var src  = 'x-unraid:\n  icon: cloudbeaver.png\n' +
+             'services:\n  web:\n    image: nginx\n';
+  var want = 'x-unraid:\n  icon: cloudbeaver.png\n  description: A media server\n' +
+             'services:\n  web:\n    image: nginx\n';
+  var doc = Y.parse(src);
+  var at = Y.addRootNested(doc, null, ['x-unraid', 'description'], 'A media server');
+  ok('the insert succeeds', at >= 0, at);
+  ok('description: joins icon: inside the root block, ahead of services:',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+
+  var reparsed = Y.parse(Y.serialise(doc));
+  ok('the result re-parses clean — no warnings, no unread tail',
+     reparsed.warnings.length === 0 && !reparsed.unreadTail,
+     JSON.stringify({ warnings: reparsed.warnings, unreadTail: reparsed.unreadTail }));
+})();
+
+(function () {
+  // Case 4: a file with no root x-unraid: block at all. Creating one here
+  // would risk planting it at the end of the file, behind services: — only
+  // the placeholder writer (PLAN_84 phase 4) knows how to put it ahead of
+  // services:, so this refuses instead, leaving the file untouched.
+  var src = 'services:\n  web:\n    image: nginx\n';
+  var doc = Y.parse(src);
+  var at = Y.addRootNested(doc, null, ['x-unraid', 'description'], 'A media server');
+  ok('addRootNested refuses when there is no root x-unraid: block yet', at === -1, at);
+  ok('the file is byte-identical after the refusal', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // Case 6: replaceNested rewrites one value and nothing else, keeping the
+  // comment beside it.
+  var src  = 'services:\n  web:\n    image: nginx\n' +
+             '    x-unraid:\n      project: https://a.example/  # the old one\n';
+  var want = 'services:\n  web:\n    image: nginx\n' +
+             '    x-unraid:\n      project: https://b.example/  # the old one\n';
+  var doc = Y.parse(src);
+  var done = Y.replaceNested(doc, null, 'web', ['x-unraid', 'project'], 'https://b.example/');
+  ok('replaceNested reports success', done === true, done);
+  ok('only the value changed — the comment rode along untouched',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+
+  var reparsed = Y.parse(Y.serialise(doc));
+  ok('the result re-parses clean — no warnings, no unread tail',
+     reparsed.warnings.length === 0 && !reparsed.unreadTail,
+     JSON.stringify({ warnings: reparsed.warnings, unreadTail: reparsed.unreadTail }));
+})();
+
+(function () {
+  // Case 7: replaceNested on a key that is not there at all is refused.
+  var src = 'services:\n  web:\n    image: nginx\n    x-unraid:\n      project: https://a.example/\n';
+  var doc = Y.parse(src);
+  var done = Y.replaceNested(doc, null, 'web', ['x-unraid', 'support'], 'https://a.example/support');
+  ok('replaceNested refuses an absent key', done === false, done);
+  ok('the file is byte-identical after the refusal', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // Case 8: the file changed underneath the spot between reading it and
+  // writing — the same PLAN_66 hazard writeScalar's other callers already
+  // guard against. Mutating doc.lines directly (rather than through splice())
+  // is what stands in for "something else edited the document meanwhile".
+  var src = 'services:\n  web:\n    image: nginx\n    x-unraid:\n      project: https://a.example/\n';
+  var doc = Y.parse(src);
+  doc.lines[4] = '      project: https://a-moved.example/';
+  var done = Y.replaceNested(doc, null, 'web', ['x-unraid', 'project'], 'https://b.example/');
+  ok('replaceNested refuses once the spot has gone stale', done === false, done);
+  ok('doc.staleWrite tells the caller which of the two refusals this was', doc.staleWrite === true, doc.staleWrite);
+})();
+
+(function () {
+  // Case 9: a value containing a line break cannot be written on one line —
+  // emitScalar()'s own refusal, not a second check here.
+  var src = 'services:\n  web:\n    image: nginx\n    x-unraid:\n      project: https://a.example/\n';
+  var doc = Y.parse(src);
+  var done = Y.replaceNested(doc, null, 'web', ['x-unraid', 'project'], 'first line\nsecond line');
+  ok('replaceNested refuses a value with a line break', done === false, done);
+  ok('the file is byte-identical after the refusal', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // Case 10: quoting style is preserved — a single-quoted value stays
+  // single-quoted.
+  var src  = "services:\n  web:\n    image: nginx\n" +
+             "    x-unraid:\n      project: 'https://a.example/'\n";
+  var want = "services:\n  web:\n    image: nginx\n" +
+             "    x-unraid:\n      project: 'https://b.example/'\n";
+  var doc = Y.parse(src);
+  var done = Y.replaceNested(doc, null, 'web', ['x-unraid', 'project'], 'https://b.example/');
+  ok('replaceNested reports success', done === true, done);
+  ok('the single-quoted style survives the rewrite',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+})();
+
+(function () {
+  // replaceRootNested is replaceNested's root-scoped sibling, sharing the
+  // same body — proved once here rather than repeating every case above.
+  var src  = 'x-unraid:\n  project: https://a.example/  # the repo\n' +
+             'services:\n  web:\n    image: nginx\n';
+  var want = 'x-unraid:\n  project: https://b.example/  # the repo\n' +
+             'services:\n  web:\n    image: nginx\n';
+  var doc = Y.parse(src);
+  var done = Y.replaceRootNested(doc, null, ['x-unraid', 'project'], 'https://b.example/');
+  ok('replaceRootNested reports success', done === true, done);
+  ok('only the root value changed, comment and all',
+     Y.serialise(doc) === want, firstDiff(want, Y.serialise(doc)));
+
+  var reparsed = Y.parse(Y.serialise(doc));
+  ok('the result re-parses clean — no warnings, no unread tail',
+     reparsed.warnings.length === 0 && !reparsed.unreadTail,
+     JSON.stringify({ warnings: reparsed.warnings, unreadTail: reparsed.unreadTail }));
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

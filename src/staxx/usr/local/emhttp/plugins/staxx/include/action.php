@@ -54,6 +54,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Detail.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Relocate.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
@@ -973,6 +974,36 @@ switch ($action) {
     $image = (string)$meta['services'][$service]['image'];
     $links = staxx_project_links($image, $meta['x'], $meta['services'][$service]['x']);
     staxx_reply(['ok' => true, 'name' => $name, 'service' => $service] + $links);
+
+  /* ---- PLAN_84 Phase 2 — "fill in this stack's details", discovery only ----
+   *
+   * Answers what the server can find out about a stack's presentation
+   * fields (icon, description, category, author, links, web page address)
+   * without writing anything. The write itself stays a separate call the
+   * browser makes once the person has looked at the chooser and decided,
+   * for three reasons: the compose-editing logic and its whole test corpus
+   * live in the browser; the save path already carries the conflict check
+   * and the history record every other write already goes through; and the
+   * existing project-link feature (the 'links' case above) already proves
+   * this exact discover-then-write pattern end to end. A second writer in
+   * PHP here would be the "second, cruder reader" the codebase's own rules
+   * (CLAUDE.md) explicitly refuse.
+   *
+   * Bounded because this may reach the network: staxx_detail_discover()
+   * carries its own overall deadline, checked before every network step,
+   * and every shell-out it makes goes through staxx_sh(), which already
+   * wraps everything in `timeout` — a page that waits forever on docker is
+   * worse than one that fails visibly.
+   *
+   * The 'links' case above is untouched and becomes dead once PLAN_84
+   * Phase 5 removes the row-menu item that calls it — not removed here,
+   * because stacks.js still calls it and another agent owns that file.
+   */
+  case 'detail':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    staxx_reply(staxx_detail_discover($name));
 
   /* ---- PLAN_70 stage 5 — what could a typed value be pointing at? ----
    *

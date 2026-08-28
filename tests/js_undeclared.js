@@ -26,7 +26,10 @@ var FILES = [
   'src/staxx/usr/local/emhttp/plugins/staxx/javascript/manage.js',
   'src/staxx/usr/local/emhttp/plugins/staxx/javascript/ca-convert.js',
   'src/staxx/usr/local/emhttp/plugins/staxx/javascript/image-import.js',
-  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/db-images.js'
+  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/db-images.js',
+  // Strict mode like the rest, and it splices lines into a live document —
+  // an undeclared name here kills the editor's offer bar silently (PLAN_84).
+  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/meta-scaffold.js'
 ];
 
 var KEYWORD = /^(?:if|for|while|do|else|return|case|switch|try|catch|typeof|new|delete|void|in|of|instanceof|null|true|false|this|function|var|let|const)$/;

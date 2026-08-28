@@ -3603,6 +3603,14 @@
     }
 
     var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
+    // A second copy of the same key is a corrupted file — compose (and any
+    // human reading it) only ever sees the last one. Every caller here was
+    // already trusting the key it named stayed absent (freeName, a form
+    // field's own p.spot check, a pair just created); the one place that was
+    // not true is x-unraid's own presentation fields, which the form does not
+    // model at all — the project-link feature was only saved from this by a
+    // separate "already recorded" check on the server (PLAN_84).
+    if (map && map.pairs[key]) return -1;
     // The parent's own children decide the column. A file that nests by four must
     // not have a two-space step forced into it — the line lands at a depth that
     // belongs to nothing and compose refuses the file.
@@ -3827,6 +3835,91 @@
     var at = insertChild(doc, pair, path[path.length - 1], value, null, bare);
     if (at < 0) { doc.lines = before; splice(doc, 0, 0, []); }
     return at;
+  }
+
+  /** The document root, wearing a pair's shape — ensurePath/insertChild both
+   * walk a pair, and the root itself is not one. addDeclared() and
+   * writeSectionEntry() already build this same { indent: -2, value:
+   * doc.root, end: doc.root.end } object inline for the identical reason;
+   * this is that object given a name so addRootNested/replaceRootNested
+   * below (PLAN_84) do not need a third copy of it.
+   */
+  function rootPair(doc) {
+    return doc.root && doc.root.kind === 'map'
+           ? { indent: -2, value: doc.root, end: doc.root.end } : null;
+  }
+
+  /**
+   * addNested's sibling resolving against the document root rather than a
+   * service — PLAN_84 phase 1. Nothing before this could write a top-level
+   * x-unraid key at all: the icon, description, category, author and
+   * documentation link have nowhere to go until one exists. Same
+   * snapshot-and-rollback, same "level is scalar/opaque/sealed -> refuse"
+   * guard as addNested/addDeclNested, and the same placeholder retraction for
+   * a direct child of x-unraid.
+   *
+   * Refuses outright when the root has no x-unraid: block yet, rather than
+   * creating one here: a fresh block has to land ahead of services:, which
+   * only the placeholder writer knows how to do (PLAN_84 phase 4). Creating
+   * it in the wrong place — at the end of the file, behind everything it is
+   * meant to describe — would be a worse failure than refusing.
+   */
+  function addRootNested(doc, form, path, value, bare) {
+    if (!doc.root || doc.root.kind !== 'map' || !doc.root.pairs['x-unraid']) return -1;
+    var before = doc.lines.slice();
+    var pair = ensurePath(doc, function () { return rootPair(doc); }, path.slice(0, -1));
+    if (!pair || (pair.value && pair.value.kind !== 'map')) return -1;
+    var at = insertChild(doc, pair, path[path.length - 1], value, null, bare);
+    if (at < 0) { doc.lines = before; splice(doc, 0, 0, []); }
+    else if (path.length === 2 && path[0] === 'x-unraid') {
+      var fresh = ensurePath(doc, function () { return rootPair(doc); }, path.slice(0, -1));
+      if (fresh) removePlaceholder(doc, fresh, path[path.length - 1]);
+    }
+    return at;
+  }
+
+  /**
+   * Shared body for replaceNested/replaceRootNested (PLAN_84 phase 1b) — the
+   * in-place value writer the form's own presentation fields never needed
+   * until now (project, author, description, icon and category are not form
+   * fields at all, so the ordinary setPart()/writeScalar() path can never
+   * reach them). `getPair` is the same seam ensurePath already takes, so
+   * this needs no service/root variant of its own.
+   *
+   * Requires the key to already exist and hold a plain scalar — refuses
+   * (false) on an absent leaf, or on anything the parser could not treat as
+   * an ordinary value (a map/seq in its place, or an anchor, alias or flow
+   * value it had to seal): writing over any of those is exactly the
+   * corruption the rest of this file exists to prevent. writeScalar() itself
+   * carries the stale-spot guard (spotStale()) and sets doc.staleWrite, so a
+   * file that moved underneath this since it was read is refused there, with
+   * the caller able to tell that refusal apart from this one.
+   */
+  function replaceScalarAt(doc, getPair, path, value) {
+    var pair = getPair();
+    for (var i = 0; pair && i < path.length - 1; i++) {
+      var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
+      pair = map ? map.pairs[path[i]] : null;
+    }
+    var parent = pair && pair.value && pair.value.kind === 'map' ? pair.value : null;
+    var leaf = parent ? parent.pairs[path[path.length - 1]] : null;
+    if (!leaf || !leaf.value || leaf.value.kind !== 'scalar') return false;
+
+    // Preserve the line's existing quoting style. emitScalar() only ever
+    // refuses a value for carrying a line break — checked before it looks at
+    // style at all — so there is no style mismatch a 'plain' retry could
+    // rescue; none is attempted.
+    return writeScalar(doc, scalarSpot(leaf.value), value, leaf.value.style);
+  }
+
+  /** replaceScalarAt against a service's own x-unraid block. */
+  function replaceNested(doc, form, service, path, value) {
+    return replaceScalarAt(doc, function () { return serviceMapOf(doc, service); }, path, value);
+  }
+
+  /** replaceScalarAt against the document root's x-unraid block. */
+  function replaceRootNested(doc, form, path, value) {
+    return replaceScalarAt(doc, function () { return rootPair(doc); }, path, value);
   }
 
   // Builds the canonical flow-list text for healthcheck.test — the one shape
@@ -8519,6 +8612,16 @@
     // PLAN_34 phase 3a: addNested's sibling for a top-level declaration
     // rather than a service.
     addDeclNested: addDeclNested,
+    // PLAN_84 phase 1: addNested's sibling for the document root, so the
+    // stack-level x-unraid fields (icon, description, category, author,
+    // documentation link) have somewhere to be written at all.
+    addRootNested: addRootNested,
+    // PLAN_84 phase 1: rewrites one existing x-unraid value in place —
+    // service-scoped and root-scoped — keeping its line's own comment and
+    // position. The ability the "fill in this stack's details" chooser needs
+    // and no existing writer had, because these fields are not form fields.
+    replaceNested: replaceNested,
+    replaceRootNested: replaceRootNested,
     // PLAN_34 phase 5: turns a service's networks: from a list of names into
     // a map of them, so an entry gains somewhere to hang a fixed or hardware
     // address — see the function's own comment for why it is whole-block.

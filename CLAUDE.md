@@ -124,6 +124,17 @@ files to `node tests/registry_note.js /tmp/quirks.json /tmp/selfhosted.json` to 
 out to do — regenerate it as part of running the suites rather than as a separate chore somebody
 forgets, and never hand-edit it, since the next run overwrites it. It refuses to write anything from
 a run that reported failures;
+`detail.php` covers PLAN_84 Phase 2's resolver — what the server can find out about a stack's icon,
+description, category, author and links — and needs `STACK_ROOT` pointed at `/tmp/zzdetail-root`
+and `IMAGE_LOOKUP` forced to `"false"`, both refused-without like every other key here; forcing the
+network setting off, rather than merely not needing it, is what keeps this suite from ever touching
+the network at all, since every fixture image is fictional and local inspect always then comes back
+empty. Its negative cases matter most: nothing is invented for an unknown image, a non-`https` value
+is discarded at every link field, an ambiguous icon name yields nothing, a value identical to one
+already stored is never offered again while a genuinely different found value now surfaces as a
+conflict honestly labelled by its real source, and no catalogue or template value is ever labelled
+`stated` — asserted as one invariant over every case's output, alongside every value passing the
+schema's own pattern;
 `links.php` covers
 what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
 for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's
