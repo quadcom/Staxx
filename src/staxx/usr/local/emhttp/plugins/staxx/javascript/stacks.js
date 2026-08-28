@@ -236,7 +236,7 @@
   // apply to it: nothing here is a setting, only a report and a button.
   var settingsCryptBox = document.getElementById('staxx-crypt-state');
 
-  // PLAN_68 Part B — where the stacks folder should live. May be null on a
+  // PLAN_68 Part B — where the data store should live. May be null on a
   // stale page, guarded the same way settingsModal is above.
   var storageModal = document.getElementById('staxx-storage-dlg');
   var storageBody  = document.getElementById('staxx-storage-body');
@@ -19133,19 +19133,12 @@
             'and becomes the default landing tab; nothing is replaced either way.'
     },
     {
-      key: 'STACK_ROOT', control: 'path', label: 'Stack directory',
-      help: 'Root directory holding stack definitions, one subdirectory per stack. A storage pool ' +
-            'is mounted before Docker itself even starts, so keeping this on the flash device buys ' +
-            'nothing and only wears out the drive; a pool reporting a mirror is already redundant. ' +
-            'A path straight on a pool also skips Unraid\'s share layer, which a path under ' +
-            '/mnt/user does not.'
-    },
-    {
-      key: 'ARCHIVE_ROOT', control: 'path', label: 'Archive folder',
-      help: 'Removing a stack never deletes it — its whole folder is zipped up and kept here ' +
-            'instead. It must not be inside the stack directory above, or the zip itself would be ' +
-            'read back as a stack. Flash is a poor place for a growing pile of zip files, which is ' +
-            'why this defaults to a folder under appdata.'
+      key: 'STORE_ROOT', control: 'path', label: 'Data store',
+      help: 'The one folder holding everything StaXX keeps: your stacks and the archived copies of ' +
+            'ones you have removed. A storage pool is mounted before Docker itself even starts, so ' +
+            'keeping this on the flash device buys nothing and only wears out the drive; a pool ' +
+            'reporting a mirror is already redundant. A path straight on a pool also skips Unraid\'s ' +
+            'share layer, which a path under /mnt/user does not.'
     },
     {
       key: 'TAKEOVER_DOCKER_TAB', control: 'choice', label: 'Docker menu',
@@ -19457,32 +19450,48 @@
     // ways — this line and the banner both open the same #staxx-storage-dlg,
     // never a second chooser of its own.
     //
-    // Shown for STACK_ROOT wherever the stacks currently live, not only while
-    // they are on flash. The banner is a one-time nudge off flash and is right
+    // Shown for STORE_ROOT wherever the store currently lives, not only while
+    // it is on flash. The banner is a one-time nudge off flash and is right
     // to disappear once that is done, but this line is the only remaining door
     // to the chooser, and gating it on flash too left an already-moved install
     // with no way to move again — while the move itself has never cared where
     // it starts from.
     var onFlash    = (value === '/boot' || value.indexOf('/boot/') === 0);
-    /* Two links, both always there for the stacks folder. The backup one is
+    /* Two links, both always there for the data store. The backup one is
      * the always-on way in: most people never relocate anything, since the
      * default location is already inside appdata, so an offer made only after
      * a move would never reach the very people whose store is in no backup.
      * It is a link rather than a warning because it has nothing to report
      * until it has asked — and the dialog it opens says the good news too. */
-    var storageLine = row.key === 'STACK_ROOT'
+    var storageLine = row.key === 'STORE_ROOT'
       ? '<p class="staxx-hint">' +
-        (onFlash ? 'Stacks are on the flash drive. ' : '') +
+        (onFlash ? 'The data store is on the flash drive. ' : '') +
         '<button type="button" class="staxx-link-btn" id="staxx-open-storage-settings">' +
-        (onFlash ? 'Move them somewhere else' : 'Move the stacks folder') + '</button>' +
+        (onFlash ? 'Move it somewhere else' : 'Move the data store') + '</button>' +
         ' · <button type="button" class="staxx-link-btn" id="staxx-open-backup-check">' +
         'Check these are in your backup</button></p>'
+      : '';
+    // PLAN_97: stacks and archives are no longer separate settings — they are
+    // fixed subfolders of the one store, shown here so nobody has to guess
+    // what choosing a store actually does, or mistake them for a second
+    // choice. Greyed out because there is nothing to edit: typing a different
+    // value here would do nothing, since only the store path itself is saved.
+    var derivedLine = row.key === 'STORE_ROOT'
+      ? '<div class="staxx-field">' +
+          '<span></span>' +
+          (value
+            ? '<span class="staxx-hint">' +
+                '<code>' + esc(value) + '/stacks</code> — the compose files<br>' +
+                '<code>' + esc(value) + '/archives</code> — removed stacks\' zips' +
+              '</span>'
+            : '<span class="staxx-hint">No data store has been chosen yet.</span>') +
+        '</div>'
       : '';
     return head + '<div class="staxx-field">' +
              '<span>' + esc(row.label) + '</span>' +
              control +
              '<span class="staxx-hint">' + row.help + '</span>' +
-           '</div>' + storageLine;
+           '</div>' + derivedLine + storageLine;
   }
 
   function settingsControlValue(row) {
@@ -19878,11 +19887,10 @@
       var btn = event.target.closest('[data-browse]');
       if (btn) {
         var input = document.getElementById(btn.dataset.browse);
-        /* Only the stacks folder gets the narrowed view. The archive folder
-         * comes through this same handler and deliberately keeps the full one:
-         * an unassigned drive is a reasonable home for zips of removed stacks,
-         * and the validator allows it there. */
-        if (input) pickerOpen(input, btn.dataset.browse === 'staxx-setting-stack-root' ? 'stacks' : '');
+        // The one folder setting there is now — the data store — gets the
+        // narrowed view, the same filtering the folder picker has always
+        // applied to a stack-holding root.
+        if (input) pickerOpen(input, btn.dataset.browse === 'staxx-setting-store-root' ? 'stacks' : '');
         return;
       }
       if (event.target.closest('#staxx-scaffold-sweep')) {
@@ -19897,7 +19905,7 @@
         openBackupDialog('');
         return;
       }
-      // The STACK_ROOT row's own way back to the storage chooser (PLAN_68
+      // The STORE_ROOT row's own way back to the storage chooser (PLAN_68
       // section 5). Stepping sideways into another dialog still loses
       // anything typed in this panel, so it asks first — the same question
       // Close asks, worded for this case, because "discard" reads oddly when
@@ -19909,8 +19917,8 @@
         if (!settingsDirty()) { settingsModal.close(); openStorageChooser(); return; }
         askConfirm({
           title: 'Discard changes?',
-          bodyHtml: '<p>Settings has changes that have not been saved. Choosing where stacks ' +
-                    'live closes this panel and loses them.</p>',
+          bodyHtml: '<p>Settings has changes that have not been saved. Choosing where the data ' +
+                    'store lives closes this panel and loses them.</p>',
           goLabel: 'Discard and choose'
         }).then(function (go) {
           closeConfirm();
@@ -19958,14 +19966,15 @@
   }
 
   /* ---------------------------------------------------- storage chooser --
-   * PLAN_68 Part B: the one-time offer to move the stacks folder off the
-   * flash drive, and the dialog it opens onto — reached from the page banner
-   * above and from the settings panel's own "Move them somewhere else" line
-   * (see settingsFieldHtml()'s STACK_ROOT case). Three server actions carry
-   * this: storage-options (read-only), relocate (starts the move as a job —
-   * followed with the same track()/tickJobs() every other job here uses) and
-   * store-choice (remembers ask/chosen/declined so nothing here ever nags
-   * twice).
+   * PLAN_68 Part B: the dialog that moves the data store off the flash
+   * drive — reached from the settings panel's own "Move the data store" line
+   * (see settingsFieldHtml()'s STORE_ROOT case). Two server actions carry
+   * this: storage-options (read-only) and relocate (starts the move as a
+   * job — followed with the same track()/tickJobs() every other job here
+   * uses). PLAN_97 retired the one-time flash banner and the store-choice
+   * action that remembered whether it had been answered — with the store
+   * shipping blank rather than defaulting to flash, there is nothing left
+   * for a one-time nudge to nag about.
    */
 
   // The last storage-options reply, kept only so the "Move here" and "Keep
@@ -19993,10 +20002,10 @@
     }
     if (opt.kind === 'overlay') {
       return 'Works, but goes through Unraid’s share layer — if the pool behind it ever ' +
-        'fills, a new stack could quietly land on the array instead. A pool path is reached ' +
+        'fills, the data store could quietly land on the array instead. A pool path is reached ' +
         'directly and is the better choice, ideally a redundant one.';
     }
-    return 'Where your stacks already are.';
+    return 'Where the data store already is.';
   }
 
   function storageFreeLine(opt) {
@@ -20010,7 +20019,7 @@
   // click handler below), never enabling the move button directly.
   function storageDestPanelHtml(bestOpt, suggestions) {
     // bestOpt may be null — every pool can be unavailable, or the only ones
-    // left can be where the stacks already are. The box still has to be
+    // left can be where the data store already is. The box still has to be
     // drawn, empty: typing or browsing a path is the whole way out of that
     // case, and without a box there was no way to move at all.
     var prefill = bestOpt ? bestOpt.path : '';
@@ -20027,7 +20036,7 @@
     // has come back clean for whatever is currently in the box, including
     // the suggested path itself, checked once as soon as this is drawn.
     return '<div class="staxx-field">' +
-        '<span>Move them to</span>' +
+        '<span>Move it to</span>' +
         '<div class="staxx-boxline">' +
           '<input type="text" class="staxx-input" id="staxx-storage-path" ' +
                'spellcheck="false" value="' + esc(prefill) + '">' +
@@ -20036,7 +20045,7 @@
         '<div class="staxx-boxline">' +
           '<span class="staxx-hint" id="staxx-storage-check">' +
             (bestOpt ? 'Checking…' : 'Type a path, or use Browse…') + '</span>' +
-          '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-storage-move" disabled>Move stacks</button>' +
+          '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-storage-move" disabled>Move the data store</button>' +
         '</div>' +
       '</div>' +
       // The description sits directly under the box, ABOVE the alternatives,
@@ -20365,19 +20374,19 @@
       var bestOpt = nonFlash[0];
 
       storageBody.innerHTML =
-        '<p class="staxx-hint">The current stacks folder is copied to the new location, checked ' +
+        '<p class="staxx-hint">The current data store is copied to the new location, checked ' +
         'byte for byte, and only removed from where it is now once that check has passed — ' +
         'nothing is deleted before the copy is proved good.</p>' +
         // From res.current, not from the flash option: flash is only offered
-        // while the stacks are ON it, so keying this line off it would leave
-        // an already-moved install with nothing saying where its stacks are.
+        // while the store is ON it, so keying this line off it would leave
+        // an already-moved install with nothing saying where its data is.
         '<p class="staxx-hint">Now: <code>' + esc(res.current) + '</code>' +
           (res.onFlash ? ' — the flash drive' : '') + '</p>' +
         storageDestPanelHtml(bestOpt || null, bestOpt ? nonFlash.slice(1) : []) +
         storageUnavailableHtml(res.unavailable) +
         (flashOpt
           ? '<div class="staxx-storage-flash-foot">' +
-              '<button type="button" class="staxx-btn staxx-storage-flash-btn" data-storage-flash="1">Keep stacks on the flash drive</button>' +
+              '<button type="button" class="staxx-btn staxx-storage-flash-btn" data-storage-flash="1">Keep the data store on the flash drive</button>' +
             '</div>'
           : '');
 
@@ -20400,18 +20409,18 @@
         return;
       }
       storageModal.close();
-      openLogDialog('Moving stacks', 'Working…');
+      openLogDialog('Moving the data store', 'Working…');
 
       // relocate only STARTS the job and answers straight away — the actual
       // copy-verify-switch-delete runs inside it, so success can only be
       // known once the job itself reports its exit code, never from this
       // reply. A non-zero exit leaves the log open with whatever the job
-      // said went wrong; the stacks are still exactly where they were.
+      // said went wrong; the data store is still exactly where it was.
       track(res.job, {
         show: true,
         done: function (job) {
           if (job.exit !== 0) return;
-          // The stacks folder just changed under it, so every row and path
+          // The data store just changed under it, so every row and path
           // already drawn on this page describes a location that no longer
           // exists — reloaded only now that the job has actually finished,
           // never merely because it started.
@@ -20419,11 +20428,9 @@
            * has just invalidated any entry naming the old path, and reloading
            * first would take that dialog down with the page before it could
            * be read — the one moment it matters most. */
-          call('store-choice', { choice: 'chosen' }).then(function () {
-            if (!backupModal) { location.reload(); return; }
-            backupModal.addEventListener('close', function () { location.reload(); }, { once: true });
-            openBackupDialog(oldRoot);
-          });
+          if (!backupModal) { location.reload(); return; }
+          backupModal.addEventListener('close', function () { location.reload(); }, { once: true });
+          openBackupDialog(oldRoot);
         }
       });
     });
@@ -20433,31 +20440,30 @@
   // dialog: a checkbox, then a button, both asked fresh every time. Skipped
   // when the box was not booted from removable flash at all (Unraid's newer
   // internal-drive boot) — lecturing about wear and redundancy that do not
-  // apply here would just teach people to stop reading these.
+  // apply here would just teach people to stop reading these. Nothing is
+  // saved by answering this — the store already points at flash, so there is
+  // nothing to switch — it only closes the dialog once the choice has been
+  // acknowledged, PLAN_97 having retired the banner and remembered choice
+  // this used to clear.
   function confirmStorageFlash() {
     var flash = storageOptions && storageOptions.offered.filter(function (o) { return o.kind === 'flash'; })[0];
     var removable = flash ? flash.removable : null;
     var gated = removable !== false;
 
     askConfirm({
-      title: 'Keep stacks on the flash drive?',
+      title: 'Keep the data store on the flash drive?',
       bodyHtml: gated
         ? '<p>Flash storage can only be written a limited number of times before it wears out, and ' +
           'it is the least redundant thing in the machine.</p>' +
           '<label class="staxx-sectionrow"><input type="checkbox" id="staxx-storage-flash-ack"> ' +
-          'I understand, and want to keep stacks on the flash drive.</label>'
+          'I understand, and want to keep the data store on the flash drive.</label>'
         : '<p>This server boots from an internal drive rather than removable flash, so the usual ' +
           'flash wear and redundancy risk does not apply here.</p>',
       goLabel: 'Keep on flash'
     }).then(function (go) {
       closeConfirm();
       if (!go) return;
-      call('store-choice', { choice: 'chosen' }).then(function (res) {
-        if (!res.ok) { failed('Could not save your choice', res.error); return; }
-        if (storageModal && storageModal.open) storageModal.close();
-        var banner = document.getElementById('staxx-storage-banner');
-        if (banner) banner.remove();
-      });
+      if (storageModal && storageModal.open) storageModal.close();
     });
 
     // Same override confirmClash() makes above: only this question gates its
@@ -20525,20 +20531,10 @@
     });
   }
 
-  var storageBannerOpen = document.getElementById('staxx-storage-banner-open');
-  if (storageBannerOpen) storageBannerOpen.addEventListener('click', openStorageChooser);
-
-  // "Not now" is remembered so the banner never asks twice — see PLAN_68
-  // section 5. The settings panel's own line for STACK_ROOT is the only way
-  // back to the chooser once this is clicked.
-  var storageBannerDecline = document.getElementById('staxx-storage-banner-decline');
-  if (storageBannerDecline) storageBannerDecline.addEventListener('click', function () {
-    call('store-choice', { choice: 'declined' }).then(function (res) {
-      var banner = document.getElementById('staxx-storage-banner');
-      if (!res.ok) { failed('Could not save your choice', res.error); return; }
-      if (banner) banner.remove();
-    });
-  });
+  // PLAN_97 retired the one-time flash banner and the store-choice action
+  // that remembered whether it had been answered — the settings panel's own
+  // "Move the data store" line (see settingsFieldHtml()'s STORE_ROOT case)
+  // is now the only door to this chooser.
 
   /* --------------------------------------------------------- context menu -- */
 

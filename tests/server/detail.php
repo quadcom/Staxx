@@ -2,11 +2,11 @@
 /* PLAN_84 Phase 2 — staxx_detail_discover() and the helpers behind it,
  * checked against the real installed Detail.php.
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STACK_ROOT
- * pointed at /tmp/zzdetail-root and IMAGE_LOOKUP forced to "false", both set
+ * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STORE_ROOT
+ * pointed at /tmp/zzdetail-store and IMAGE_LOOKUP forced to "false", both set
  * in the real config file BEFORE php starts (staxx_cfg() memoises on first
  * read, so changing either from inside this script is already too late —
- * same reasoning tests/server/record.php gives for STACK_ROOT/ARCHIVE_ROOT).
+ * same reasoning tests/server/record.php gives for STORE_ROOT).
  * Forcing IMAGE_LOOKUP off is deliberate, not incidental: with it off, every
  * network step in Detail.php (the registry chain, the Docker Hub request)
  * is skipped outright, so this suite never touches the network at all and
@@ -18,8 +18,9 @@
  *     plink … '
  *       CFG=/boot/config/plugins/staxx/staxx.cfg
  *       cp $CFG /tmp/cfg.bak
- *       sed -i "s#^STACK_ROOT=.*#STACK_ROOT=\"/tmp/zzdetail-root\"#" $CFG
- *       grep -q "^STACK_ROOT=" $CFG || echo "STACK_ROOT=\"/tmp/zzdetail-root\"" >> $CFG
+ *       grep -q "^STORE_ROOT=" $CFG \
+ *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzdetail-store\"#" $CFG \
+ *         || echo "STORE_ROOT=\"/tmp/zzdetail-store\"" >> $CFG
  *       sed -i "s#^IMAGE_LOOKUP=.*#IMAGE_LOOKUP=\"false\"#" $CFG
  *       grep -q "^IMAGE_LOOKUP=" $CFG || echo "IMAGE_LOOKUP=\"false\"" >> $CFG
  *       php /tmp/detail.php; RC=$?
@@ -79,7 +80,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Detail.php';
 
-if (staxx_stack_root() !== '/tmp/zzdetail-root') {
+if (staxx_stack_root() !== '/tmp/zzdetail-store/stacks') {
   echo "FAIL   the temporary stack root is not in place (got ".staxx_stack_root().")\n";
   exit(1);
 }

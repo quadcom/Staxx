@@ -18,14 +18,14 @@
  *     Apps dialog also reads. This file has no env-var override, so the test
  *     writes a small fixture over it directly and restores whatever was
  *     there (or removes it, if there was nothing) before exiting.
- *   - STACK_ROOT in the real /boot/config/plugins/staxx/staxx.cfg, the same
+ *   - STORE_ROOT in the real /boot/config/plugins/staxx/staxx.cfg, the same
  *     production file — it has no env-var override either. Pointed at a
- *     throwaway /tmp stack for the few checks that need a real compose file
+ *     throwaway /tmp store for the few checks that need a real compose file
  *     (staxx_updates_moved_for_stack() reads a stack's services off disk),
  *     then put back exactly as it was.
  *
  * NEVER pulls, starts, or stops a container, and never touches the real
- * stacks under the production STACK_ROOT.
+ * stacks under the production data store.
  *
  * What this does NOT test: the network-proving step itself — asking the new
  * registry for its tag list and checking the tag in use is actually there.
@@ -50,10 +50,10 @@ function ok(string $what, bool $pass, string $note = ''): void {
   printf("%-6s %s%s\n", $pass ? 'ok' : 'FAIL', $what, $note !== '' ? '  ('.$note.')' : '');
 }
 
-$scratch  = '/tmp/staxx-moves-test.json';
-$caIndex  = '/tmp/staxx/ca/index.json';
-$cfgFile  = '/boot/config/plugins/staxx/staxx.cfg';
-$testRoot = '/tmp/staxx-moves-test-root';
+$scratch   = '/tmp/staxx-moves-test.json';
+$caIndex   = '/tmp/staxx/ca/index.json';
+$cfgFile   = '/boot/config/plugins/staxx/staxx.cfg';
+$testStore = '/tmp/staxx-moves-test-store';
 
 @unlink($scratch);
 putenv('STAXX_UPDATE_STATE='.$scratch);
@@ -61,7 +61,7 @@ putenv('STAXX_UPDATE_STATE='.$scratch);
 $caBackup  = @file_get_contents($caIndex);       // false if it did not exist
 $cfgBackup = @file_get_contents($cfgFile);        // false if it did not exist
 
-register_shutdown_function(function () use ($scratch, $caIndex, $cfgFile, $testRoot, $caBackup, $cfgBackup) {
+register_shutdown_function(function () use ($scratch, $caIndex, $cfgFile, $testStore, $caBackup, $cfgBackup) {
   @unlink($scratch);
   $lock = (defined('STAXX_UPDATE_DIR') ? STAXX_UPDATE_DIR : '/tmp/staxx/updates').'/lock';
   if (is_dir($lock)) @rmdir($lock);
@@ -69,23 +69,24 @@ register_shutdown_function(function () use ($scratch, $caIndex, $cfgFile, $testR
   if ($caBackup === false) { @unlink($caIndex); } else { @file_put_contents($caIndex, $caBackup); }
   if ($cfgBackup === false) { @unlink($cfgFile); } else { @file_put_contents($cfgFile, $cfgBackup); }
 
-  @exec('rm -rf '.escapeshellarg($testRoot));
-  echo "scratch state, catalogue index and STACK_ROOT restored\n";
+  @exec('rm -rf '.escapeshellarg($testStore));
+  echo "scratch state, catalogue index and STORE_ROOT restored\n";
 });
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 
-// ---- point STACK_ROOT at a throwaway tree, before staxx_cfg() is ever asked ----
+// ---- point STORE_ROOT at a throwaway tree, before staxx_cfg() is ever asked ----
 // staxx_cfg() memoises on first call, so this has to happen before anything
 // in this file reads it — nothing above does; requiring Links.php only
 // defines functions and constants.
-@exec('rm -rf '.escapeshellarg($testRoot));
-mkdir($testRoot, 0755, true);
+@exec('rm -rf '.escapeshellarg($testStore));
+mkdir($testStore, 0755, true);
 $cfgLines = $cfgBackup !== false ? preg_split('/\r?\n/', $cfgBackup) : [];
-$cfgLines = array_values(array_filter($cfgLines, fn($l) => strpos(trim((string)$l), 'STACK_ROOT=') !== 0));
-$cfgLines[] = 'STACK_ROOT="'.$testRoot.'"';
+$cfgLines = array_values(array_filter($cfgLines, fn($l) => strpos(trim((string)$l), 'STORE_ROOT=') !== 0));
+$cfgLines[] = 'STORE_ROOT="'.$testStore.'"';
 file_put_contents($cfgFile, implode("\n", $cfgLines)."\n");
 
+$testRoot = $testStore.'/stacks'; // staxx_stack_root(), derived
 ok('the throwaway stack root is now in force', staxx_stack_root() === $testRoot, staxx_stack_root());
 
 // ---- a small catalogue-index fixture ----

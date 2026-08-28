@@ -231,6 +231,33 @@ $error  = '';
 staxx_log_reap();
 staxx_exec_reap();
 
+/* PLAN_97 Phase 1 — nothing may run with an unchosen data store.
+ *
+ * Almost every action below eventually resolves a path under the stack root
+ * or the archive root, and both are '' until STORE_ROOT is chosen. Rather
+ * than teach every one of those call sites to cope with an empty root, one
+ * refusal here stands in for all of them. The exceptions are actions that
+ * never touch either folder: the settings panel itself (which is how a store
+ * gets chosen in the first place), the folder picker and the general-purpose
+ * lookups a stack editor also happens to use, and the crypt/self-test helpers,
+ * which build their own throwaway container and read nothing from a stack's
+ * folder.
+ */
+$staxxSafeWithoutStore = [
+  'settings', 'settings-save', 'storage-options',
+  'browse', 'browse-mkdir', 'timezones', 'devices', 'networks',
+  'images', 'tags', 'hub-search', 'image-facts',
+  'ca-refresh', 'ca-search', 'ca-home', 'ca-app',
+  'probe', 'webui-test', 'ping',
+  'crypt-state', 'crypt-build', 'crypt-rebuild', 'crypt-hash',
+];
+if (!staxx_store_ready() && !in_array($action, $staxxSafeWithoutStore, true)) {
+  staxx_reply([
+    'ok'    => false,
+    'error' => 'No data store has been chosen yet. Choose one on the settings panel before doing anything with stacks.',
+  ]);
+}
+
 switch ($action) {
 
   // ---- read one stack's compose file, for the editor ----
@@ -1921,12 +1948,12 @@ switch ($action) {
     staxx_reply(['ok' => true, 'settings' => $saved, 'reload' => $reload]);
 
   /* ---------------------------------------------------- moving the stacks --
-   * PLAN_68 Part B piece 4: the one-time offer to move stacks off the flash
-   * drive, and the remembered answer to it. See Relocate.php for the move
-   * itself and the storage-options reader; nothing here re-implements either.
+   * Relocating the data store to a new location. See Relocate.php for the
+   * move itself and the storage-options reader; nothing here re-implements
+   * either.
    */
 
-  /* ---- what could the stacks folder move to, and has this been settled ----
+  /* ---- what could the stacks folder move to ----
    *
    * Read-only. 'onFlash' is true when the CURRENT stacks folder is /boot or
    * sits under it — the same test staxx_storage_options() itself makes when
@@ -1939,7 +1966,6 @@ switch ($action) {
       'ok'          => true,
       'current'     => $current,
       'onFlash'     => $current === '/boot' || strpos($current, '/boot/') === 0,
-      'choice'      => staxx_settings_read()['STORAGE_CHOICE'],
       'offered'     => $options['offered'],
       'unavailable' => $options['unavailable'],
     ]);
@@ -2000,23 +2026,6 @@ switch ($action) {
     $job = staxx_relocate_start((string)($_POST['dest'] ?? ''), $error);
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'job' => $job]);
-
-  /* ---- remember that the storage question has been settled ----
-   *
-   * Only 'chosen' or 'declined' are ever accepted here — never 'ask', which
-   * is the untouched default and must never be written back by this action.
-   * Written through staxx_settings_save() so the allowlist check and the
-   * atomic write are not duplicated here.
-   */
-  case 'store-choice':
-    $choice = (string)($_POST['choice'] ?? '');
-    if ($choice !== 'chosen' && $choice !== 'declined') {
-      staxx_reply(['ok' => false, 'error' => 'Choice must be "chosen" or "declined".']);
-    }
-    if (!staxx_settings_save(['STORAGE_CHOICE' => $choice], $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
-    }
-    staxx_reply(['ok' => true]);
 
   /* ---- everything that could be imported: templates, projects, loose ----
    *

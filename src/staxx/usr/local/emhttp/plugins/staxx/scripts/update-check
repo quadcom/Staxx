@@ -15,6 +15,15 @@ PLUGIN_DIR="/usr/local/emhttp/plugins/staxx"
 CFG="/boot/config/plugins/staxx/staxx.cfg"
 LOG_DIR="/tmp/staxx/updates"
 
+# No data store means no stacks, so there is nothing to check, apply or clean
+# up. Exit before any work starts — no log directory, no lock, nothing —
+# rather than running a pass over an empty list every time the cron entry
+# fires.
+store_root=$(sed -n 's/^[[:space:]]*STORE_ROOT[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" 2>/dev/null | tail -n1 || true)
+if [[ -z "${store_root}" ]]; then
+  exit 0
+fi
+
 # Allowlisted before anything else touches the filesystem. LOG below is built
 # straight from this argument, and building it before this check meant
 # `update-check ../../../etc/foo` truncated that file rather than a log of

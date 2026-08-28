@@ -115,10 +115,15 @@ function staxx_private_dir(string $dir): bool {
 
 /* ------------------------------------------------------------------ paths -- */
 
+/**
+ * '' when no data store has been chosen — callers must check
+ * staxx_store_ready() rather than treating an empty string as a workable
+ * path. There is no flash fallback any more: blank has to mean "not chosen"
+ * so the first-run dialog and its gates can key off it.
+ */
 function staxx_stack_root(): string {
-  $root = trim((string)(staxx_cfg()['STACK_ROOT'] ?? ''));
-  if ($root === '') $root = STAXX_CFG_DIR.'/stacks';
-  return rtrim($root, '/');
+  $store = staxx_store_root();
+  return $store === '' ? '' : $store.'/stacks';
 }
 
 /**
@@ -2957,7 +2962,7 @@ function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$
   // Owner-only: a compose file can hold every password the containers it
   // describes were given. This is moot on /boot — that filesystem takes its
   // mode from how it is mounted, whatever chmod says — but it matters the
-  // moment STACK_ROOT is pointed at an array share, which the setting invites.
+  // moment the data store is pointed at an array share, which the setting invites.
   @chmod($tmp, 0600);
   if (!@rename($tmp, $file)) {
     @unlink($tmp);

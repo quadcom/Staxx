@@ -21,7 +21,7 @@
  * idiom as tests/server/record.php: seed it before PHP starts (staxx_cfg()
  * memoises on first read, so changing the file mid-run is too late), and
  * put it back after. staxx_cfg() reads the file this script cannot pass an
- * override for, unlike STACK_ROOT/ARCHIVE_ROOT — there is no key here that
+ * override for, unlike STORE_ROOT — there is no key here that
  * substitutes for it.
  *
  *     pscp tests/server/registry_selfhosted.php root@<box>:/tmp/

@@ -1,21 +1,27 @@
 <?PHP
-/* StaXX — moving the stacks folder from one location to another, safely.
+/* StaXX — moving the data store from one location to another, safely.
  * Copyright 2026, StaXX contributors.
  *
  * PLAN_68 Part B: the flash drive has finite write cycles and no redundancy,
  * so a stack's home may need to move to a pool or the overlay. This is the
- * machinery that does the moving. No page and no endpoint reach it yet — it
- * exists here, on its own, so it can be proved correct before anything can
- * reach it by accident.
+ * machinery that does the moving, reached from the settings panel's storage
+ * chooser via action.php's relocate-check and relocate actions.
  *
  * The shape is fixed and does not change per stack: fingerprint the source,
  * prove the destination can hold the same shape with a trial run of empty
  * placeholders, copy everything, verify everything against what actually
- * landed on disk, switch the stacks folder setting — the point after which
+ * landed on disk, switch the data store setting — the point after which
  * the move cannot be undone by discarding the copy — then remove the old
  * folders. Never a rename: across two
  * filesystems that is already a copy and a delete with no gate in between,
  * which is exactly what this file exists to add.
+ *
+ * PLAN_97 Phase 1: this still only moves the stacks tree — everything below
+ * reads and writes staxx_stack_root() alone. The data store also holds an
+ * archives folder and, from Phase 4, StaXX's own settings and state; PLAN_97
+ * Phase 3 is what teaches this file to move those alongside the stacks, so
+ * a relocation actually moves the whole store rather than one piece of it.
+ * Recorded here rather than left to look finished.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License version 2,
@@ -29,12 +35,14 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
 if (defined('STAXX_RELOCATE_LOADED')) return;
 define('STAXX_RELOCATE_LOADED', true);
 
-// The folder name suggested inside an existing share. Named for the plugin
-// rather than called "stacks", because it is offered inside somebody's real
+// The folder name suggested inside an existing share, for the data store as
+// a whole — never "stacks", because it is offered inside somebody's real
 // appdata share and "stacks" is a name other compose tools plausibly already
 // own there — a suggestion that collides is refused later for holding
 // something, which is safe but a poor thing to offer in the first place.
-define('STAXX_STACKS_FOLDER', 'staxx-stacks');
+// PLAN_97: the suggestion names the store, not a "stacks" subfolder of it,
+// because the share above it already carries the StaXX name.
+define('STAXX_STORE_FOLDER', 'staxx');
 
 /**
  * Is this a symlink's target reachable, and does it lie outside the stacks
@@ -56,7 +64,7 @@ function staxx_relocate_link_outside(string $linkDir, string $target, string $ro
 }
 
 /**
- * Is this destination acceptable? Reuses the existing STACK_ROOT path
+ * Is this destination acceptable? Reuses the existing STORE_ROOT path
  * validator rather than writing a second one — it already refuses a
  * relative path, "..", anywhere outside /mnt/ or the plugin's own config
  * folder, a missing parent, and a path that would land on a memory
@@ -73,9 +81,24 @@ function staxx_relocate_link_outside(string $linkDir, string $target, string $ro
 function staxx_relocate_refuse(string $destInput, string &$error, string &$notice = null): string {
   $notice = '';
   $error  = '';
+
+  /* PLAN_97 Phase 1 refuses every relocation outright, and Phase 3 lifts this.
+   *
+   * Everything below still moves the stacks tree alone, but the setting it
+   * writes at the end is now STORE_ROOT — so a run would copy the stacks to
+   * the destination and then record that destination as the store, leaving
+   * StaXX looking one folder deeper, at <dest>/stacks, and finding nothing.
+   * Refused here rather than in the endpoint because both the live check and
+   * the run itself come through this one function, so neither can slip past.
+   */
+  $error = 'Moving the data store is not available in this build yet — it can move the stacks '
+         . 'but not the archives beside them, so it would leave the two apart. Set the location '
+         . 'on the settings panel instead.';
+  return '';
+
   $source = staxx_stack_root();
 
-  $norm = staxx_settings_validate_path('STACK_ROOT', $destInput, $error);
+  $norm = staxx_settings_validate_path('STORE_ROOT', $destInput, $error);
   if ($error !== '') return '';
 
   if ($norm === $source || strpos($norm, $source.'/') === 0) {
@@ -145,8 +168,8 @@ function staxx_relocate_refuse(string $destInput, string &$error, string &$notic
    *
    * A share named for StaXX is the exception, and the case worth encouraging:
    * somebody who made a share for this deliberately means its root, and
-   * nesting a second folder called staxx-stacks inside a share called staxx
-   * would be silly.
+   * nesting a second folder called staxx inside a share called staxx would
+   * be silly.
    *
    * Refused with the exact path to use instead rather than quietly rewritten —
    * a destination that changes under somebody's typing is worse than one that
@@ -155,7 +178,7 @@ function staxx_relocate_refuse(string $destInput, string &$error, string &$notic
    */
   if (preg_match('#^/mnt/[^/]+/([^/]+)$#', $norm, $m) && stripos($m[1], 'staxx') === false) {
     $error = 'That is the whole of the "'.$m[1].'" share, and every folder in it would be read '
-           . 'as a stack. Use a folder inside it instead — '.$norm.'/'.STAXX_STACKS_FOLDER
+           . 'as a stack. Use a folder inside it instead — '.$norm.'/'.STAXX_STORE_FOLDER
            . ' — so the share can go on being used for what it is for.';
     return '';
   }
@@ -574,11 +597,11 @@ function staxx_relocate_run(string $destInput, callable $log, string &$error): b
   }
   $log('Every file verified — the same files, the same sizes, the same content.');
 
-  $log('Switching the stacks folder setting to the new location.');
+  $log('Switching the data store setting to the new location.');
   $saveError = '';
-  if (!staxx_settings_save(['STACK_ROOT' => $dest], $saveError)) {
+  if (!staxx_settings_save(['STORE_ROOT' => $dest], $saveError)) {
     staxx_relocate_cleanup($dest, $destExisted);
-    $error = 'Could not switch the stacks folder setting ('.$saveError.'), so the copy has been '
+    $error = 'Could not switch the data store setting ('.$saveError.'), so the copy has been '
            . 'removed and nothing has changed. Your stacks are still where they were.';
     $log($error);
     return false;
@@ -715,7 +738,7 @@ function staxx_storage_share_reason(string $sharesDir, string $shareName, string
 }
 
 /**
- * What locations could the stacks folder actually move to, read entirely
+ * What locations could the data store actually move to, read entirely
  * from Unraid's own records — never a guess dressed up as an option.
  *
  * A pool is only ever offered when it is genuinely mounted, holds an
@@ -724,7 +747,7 @@ function staxx_storage_share_reason(string $sharesDir, string $shareName, string
  * inventing a share is refused everywhere else in this plugin, and this is
  * no exception), and that share's own policy keeps files on this pool
  * rather than letting the mover carry them onto the array. Every candidate
- * path still has to pass the existing STACK_ROOT validator, which is what
+ * path still has to pass the existing STORE_ROOT validator, which is what
  * actually refuses a memory filesystem, a missing parent or anything
  * outside /mnt — nothing here re-implements that check.
  *
@@ -780,7 +803,7 @@ function staxx_storage_options(string $disksIni = '/var/local/emhttp/disks.ini',
       // location this whole feature exists to move people away from.
       if ($currentRoot !== '/boot' && strpos($currentRoot, '/boot/') !== 0) continue;
       $err  = '';
-      $norm = staxx_settings_validate_path('STACK_ROOT', $currentRoot, $err);
+      $norm = staxx_settings_validate_path('STORE_ROOT', $currentRoot, $err);
       if ($norm === '') { $unavailable[] = ['kind' => 'flash', 'name' => 'flash', 'reason' => $err]; continue; }
       $removableRaw = $info['removable'] ?? null;
       $flash = [
@@ -846,7 +869,7 @@ function staxx_storage_options(string $disksIni = '/var/local/emhttp/disks.ini',
       // validator refuses a path whose parent does not already exist, so
       // anything nested deeper would be refused on every single install.
       $err  = '';
-      $norm = staxx_settings_validate_path('STACK_ROOT', $folder.'/'.STAXX_STACKS_FOLDER, $err);
+      $norm = staxx_settings_validate_path('STORE_ROOT', $folder.'/'.STAXX_STORE_FOLDER, $err);
       if ($norm === '') { $whyNot[] = $err; continue; }
 
       $found[] = ['share' => $entry, 'path' => $norm];
@@ -894,7 +917,7 @@ function staxx_storage_options(string $disksIni = '/var/local/emhttp/disks.ini',
   $overlay = null;
   $appdataRoot = rtrim(staxx_appdata_root(), '/');
   $err  = '';
-  $norm = staxx_settings_validate_path('STACK_ROOT', $appdataRoot.'/'.STAXX_STACKS_FOLDER, $err);
+  $norm = staxx_settings_validate_path('STORE_ROOT', $appdataRoot.'/'.STAXX_STORE_FOLDER, $err);
   if ($norm === '') {
     $unavailable[] = ['kind' => 'overlay', 'name' => $shareName, 'reason' => $err];
   } else {

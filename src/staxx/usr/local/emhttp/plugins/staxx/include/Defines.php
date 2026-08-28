@@ -144,15 +144,39 @@ function staxx_placement_risk(string $path): string {
 }
 
 /**
- * Where a removed stack's zip goes. The setting if one is configured,
- * otherwise a fixed folder under wherever Unraid keeps appdata — so a blank
- * ARCHIVE_ROOT still lands somewhere sensible on any box, rather than
- * inventing a path that might not exist there.
+ * The one folder StaXX keeps everything in — stacks, archives and (from
+ * Phase 4) its own settings and state. A single setting rather than one per
+ * folder, because that is one place somebody can open and understand, and
+ * because the folder names beneath it are fixed rather than configured.
+ *
+ * '' means nobody has chosen where StaXX's data lives yet. That is not a
+ * missing default to paper over — it is the signal the first-run dialog and
+ * every gate ahead of a derived folder key off, so it must never be turned
+ * into a fallback path here.
+ */
+function staxx_store_root(): string {
+  $v = trim((string)(staxx_cfg()['STORE_ROOT'] ?? ''));
+  return $v === '' ? '' : rtrim($v, '/');
+}
+
+/**
+ * Has a data store been chosen? The gate every call site ahead of a derived
+ * folder (staxx_stack_root(), staxx_archive_root(), and the config folder
+ * from Phase 4) checks before touching it, so "unchosen" never reaches code
+ * that assumes a real path.
+ */
+function staxx_store_ready(): bool {
+  return staxx_store_root() !== '';
+}
+
+/**
+ * Where a removed stack's zip goes. '' when no store has been chosen —
+ * callers must check staxx_store_ready() rather than treating an empty
+ * string as a workable path.
  */
 function staxx_archive_root(): string {
-  $v = trim((string)(staxx_cfg()['ARCHIVE_ROOT'] ?? ''));
-  if ($v !== '') return rtrim($v, '/');
-  return rtrim(staxx_appdata_root().'staxx/archives', '/');
+  $store = staxx_store_root();
+  return $store === '' ? '' : $store.'/archives';
 }
 
 /**

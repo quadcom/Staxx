@@ -3,22 +3,19 @@
  * read-only check in Backup.php, against the real installed file.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. It needs
- * STACK_ROOT and ARCHIVE_ROOT pointed at scratch paths under /tmp, because
- * staxx_backup_owned_paths() reads both and the fixtures below are written
- * against those values. staxx_cfg() memoises on first read, so they have to
- * be seeded into the config file BEFORE php runs:
+ * STORE_ROOT pointed at a scratch path under /tmp, because
+ * staxx_backup_owned_paths() derives both folders from it and the fixtures
+ * below are written against those values. staxx_cfg() memoises on first
+ * read, so it has to be seeded into the config file BEFORE php runs:
  *
  *     pscp tests/server/backup.php root@<box>:/tmp/
  *
  *     plink -ssh -batch -pw <pw> root@<box> '
  *       CFG=/boot/config/plugins/staxx/staxx.cfg
  *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STACK_ROOT=" $CFG \
- *         && sed -i "s#^STACK_ROOT=.*#STACK_ROOT=\"/tmp/bk-root\"#" $CFG \
- *         || echo "STACK_ROOT=\"/tmp/bk-root\"" >> $CFG
- *       grep -q "^ARCHIVE_ROOT=" $CFG \
- *         && sed -i "s#^ARCHIVE_ROOT=.*#ARCHIVE_ROOT=\"/tmp/bk-archives\"#" $CFG \
- *         || echo "ARCHIVE_ROOT=\"/tmp/bk-archives\"" >> $CFG
+ *       grep -q "^STORE_ROOT=" $CFG \
+ *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/bk-store\"#" $CFG \
+ *         || echo "STORE_ROOT=\"/tmp/bk-store\"" >> $CFG
  *       php /tmp/backup.php; RC=$?
  *       cp /tmp/cfg.bak $CFG
  *       diff -q /tmp/cfg.bak $CFG && echo CONFIG_IDENTICAL
@@ -46,11 +43,11 @@ function ok(string $what, bool $pass, string $note = ''): void {
   printf("%-6s %s%s\n", $pass ? 'ok' : 'FAIL', $what, $note !== '' ? '  ('.$note.')' : '');
 }
 
-if (staxx_stack_root() !== '/tmp/bk-root') {
+if (staxx_stack_root() !== '/tmp/bk-store/stacks') {
   echo "FAIL   the temporary stack root is not in place (got ".staxx_stack_root().")\n";
   exit(1);
 }
-if (staxx_archive_root() !== '/tmp/bk-archives') {
+if (staxx_archive_root() !== '/tmp/bk-store/archives') {
   echo "FAIL   the temporary archive root is not in place (got ".staxx_archive_root().")\n";
   exit(1);
 }
@@ -99,7 +96,7 @@ ok('coverage is silent for all of those too',
    && staxx_backup_coverage(fixture('renamed2', '{"extraFiles": []}')) === null);
 
 ok('the single-path question is silent for those too',
-   staxx_backup_lists_path('/tmp/bk-root', $dir.'/absent.json') === null);
+   staxx_backup_lists_path('/tmp/bk-store/stacks', $dir.'/absent.json') === null);
 
 /* ------------------------------------------------------------- what counts --
  * A list that reads fine, and what it does and does not cover. */
@@ -117,14 +114,14 @@ ok('with nothing listed, both owned paths are missing',
 
 // Their settings page stores this list with Windows line endings and trailing
 // slashes, so the real file's shape has to be understood, not just a tidy one.
-$crlf = fixture('crlf', json_encode(['includeFiles' => ["/tmp/bk-root/\r", "/tmp/bk-archives/\r"]]));
+$crlf = fixture('crlf', json_encode(['includeFiles' => ["/tmp/bk-store/stacks/\r", "/tmp/bk-store/archives/\r"]]));
 $cov  = staxx_backup_coverage($crlf);
 ok('CRLF and trailing slashes are still a match',
    $cov !== null && $cov['missing'] === [],
    $cov === null ? 'null' : implode(' + ', $cov['missing']));
 
 // The same list handed over as one textarea-shaped string rather than a list.
-$asString = fixture('asstring', json_encode(['includeFiles' => "/tmp/bk-root/\r\n/tmp/bk-archives/"]));
+$asString = fixture('asstring', json_encode(['includeFiles' => "/tmp/bk-store/stacks/\r\n/tmp/bk-store/archives/"]));
 $cov = staxx_backup_coverage($asString);
 ok('a single CRLF-separated string is read the same way',
    $cov !== null && $cov['missing'] === [],
@@ -136,12 +133,12 @@ ok('a listed parent folder covers what is inside it',
    $cov !== null && $cov['missing'] === [],
    $cov === null ? 'null' : implode(' + ', $cov['missing']));
 
-$partial = fixture('partial', '{"includeFiles": ["/tmp/bk-root"]}');
+$partial = fixture('partial', '{"includeFiles": ["/tmp/bk-store/stacks"]}');
 $cov = staxx_backup_coverage($partial);
 ok('one listed and one not is reported as exactly that',
-   $cov !== null && $cov['listed'] === ['/tmp/bk-root'] && $cov['missing'] === ['/tmp/bk-archives']);
+   $cov !== null && $cov['listed'] === ['/tmp/bk-store/stacks'] && $cov['missing'] === ['/tmp/bk-store/archives']);
 
-$near = fixture('near', '{"includeFiles": ["/tmp/bk-root-other", "/tmp/bk-rootx"]}');
+$near = fixture('near', '{"includeFiles": ["/tmp/bk-store/stacks-other", "/tmp/bk-store/stacksx"]}');
 $cov = staxx_backup_coverage($near);
 ok('a path that merely starts the same is not a match',
    $cov !== null && $cov['listed'] === [] && count($cov['missing']) === 2);
@@ -170,26 +167,30 @@ ok('a different tail on the share layer is not a match',
    !staxx_backup_covers_one('/mnt/user/appdata/something-else', '/mnt/m2cache/appdata/staxx-stacks'));
 
 ok('a path outside /mnt is compared literally and nothing else',
-   staxx_backup_covers_one('/tmp/bk-root', '/tmp/bk-root/inner')
-   && !staxx_backup_covers_one('/tmp/other', '/tmp/bk-root'));
+   staxx_backup_covers_one('/tmp/bk-store/stacks', '/tmp/bk-store/stacks/inner')
+   && !staxx_backup_covers_one('/tmp/other', '/tmp/bk-store/stacks'));
 
 /* ----------------------------------------------------- the owned-path set --
- * Two siblings today; one path once the store consolidation lands and the
- * archive folder sits inside the stacks folder. That collapse has to happen
- * here rather than in every caller. */
+ * PLAN_97 landed the store consolidation, and the actual shape it produced
+ * is two SIBLINGS under one store — "<store>/stacks" and "<store>/archives"
+ * — never one nested inside the other, so this still returns two entries
+ * rather than the one an earlier draft of this comment expected. The
+ * collapse rule below is kept as a defensive check on the algorithm itself,
+ * proven directly with a genuinely nested pair, in case the archive folder
+ * ever does end up inside the stacks folder by accident. */
 
 echo "\n-- which folders StaXX says it owns --\n";
 
 $owned = staxx_backup_owned_paths();
-ok('two siblings are two entries',
-   $owned === ['/tmp/bk-archives', '/tmp/bk-root'], implode(' + ', $owned));
+ok('the stacks and archive folders are two sibling entries',
+   $owned === ['/tmp/bk-store/archives', '/tmp/bk-store/stacks'], implode(' + ', $owned));
 
 // Proven directly rather than by moving the real config: the collapse rule is
 // what matters, and it is the same rule whatever the two paths happen to be.
 ok('a nested pair collapses to the one that contains the other',
    (function () {
-     // /tmp/bk-root and /tmp/bk-root/archives — the shape after consolidation.
-     $paths = ['/tmp/bk-root', '/tmp/bk-root/archives'];
+     // A genuinely nested pair — not the real store shape, which is siblings.
+     $paths = ['/tmp/bk-store', '/tmp/bk-store/stray-nested'];
      $out = [];
      foreach ($paths as $p) {
        $inside = false;
@@ -198,7 +199,7 @@ ok('a nested pair collapses to the one that contains the other',
        }
        if (!$inside) $out[] = $p;
      }
-     return $out === ['/tmp/bk-root'];
+     return $out === ['/tmp/bk-store'];
    })());
 
 /* ------------------------------------------------- the stale old entry -----
@@ -208,9 +209,9 @@ ok('a nested pair collapses to the one that contains the other',
 
 echo "\n-- is an old path still listed --\n";
 
-$stale = fixture('stale', '{"includeFiles": ["/tmp/bk-old-root", "/tmp/bk-root"]}');
+$stale = fixture('stale', '{"includeFiles": ["/tmp/bk-old-store/stacks", "/tmp/bk-store/stacks"]}');
 ok('an old path still in the list is reported as still there',
-   staxx_backup_lists_path('/tmp/bk-old-root', $stale) === true);
+   staxx_backup_lists_path('/tmp/bk-old-store/stacks', $stale) === true);
 ok('a path genuinely absent is reported false, not null',
    staxx_backup_lists_path('/tmp/bk-never', $stale) === false);
 ok('an empty path is no claim rather than a false one',

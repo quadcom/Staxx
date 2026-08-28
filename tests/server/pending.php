@@ -7,7 +7,7 @@
  *
  * Takes no config keys and changes nothing. That is deliberate: the synthetic
  * cases below are handed explicit file paths under /tmp, so none of them needs
- * STACK_ROOT moved — and on a live server moving it, even for one command,
+ * the store root moved — and on a live server moving it, even for one command,
  * makes every real stack vanish from the webGUI for as long as it is moved.
  * The sweep over the real stacks at the end only reads.
  *

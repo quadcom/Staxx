@@ -28,7 +28,7 @@
  * which feeds tests/registry_note.js to regenerate
  * tests/server/REGISTRY-BEHAVIOUR.md.
  *
- * Needs NO config keys — no STACK_ROOT, no ARCHIVE_ROOT, no credentials.
+ * Needs NO config keys — no STORE_ROOT, no credentials.
  * Every question asked is read-only (a header-only manifest request or a
  * token fetch); nothing is pulled, started, or written. `docker buildx
  * imagetools inspect`, used to cross-check one digest per registry, is

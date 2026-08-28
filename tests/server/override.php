@@ -3,13 +3,14 @@
  * staxx_compose_file_args(), the strict pairing rule, and how it feeds
  * staxx_stack_extras(), staxx_archive_stack() and staxx_validate_compose().
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine. Stacks live on
- * /boot by default, so this run needs STACK_ROOT pointed at /tmp instead —
- * the CALLER sets that and puts the config back, same as links.php:
+ * Runs ON THE SERVER — there is no PHP on the dev machine. STORE_ROOT ships
+ * blank, so without seeding it there is no stack root to test against at
+ * all — this run needs it pointed at /tmp instead, the CALLER sets that and
+ * puts the config back, same as links.php:
  *
  *     CFG=/boot/config/plugins/staxx/staxx.cfg
  *     cp $CFG /tmp/cfg.bak
- *     sed -i 's#^STACK_ROOT=.*#STACK_ROOT="/tmp/b1-override"#' $CFG
+ *     sed -i 's#^STORE_ROOT=.*#STORE_ROOT="/tmp/b1-override"#' $CFG
  *     php /tmp/override.php; RC=$?
  *     cp /tmp/cfg.bak $CFG
  *     exit $RC
@@ -30,7 +31,7 @@ function ok(string $what, bool $pass, string $note = ''): void {
 }
 
 $root = staxx_stack_root();
-if ($root !== '/tmp/b1-override') {
+if ($root !== '/tmp/b1-override/stacks') {
   echo "FAIL   the temporary stack root is not in place (got $root)\n";
   exit(1);
 }

@@ -7,10 +7,10 @@
  * tests/server/releasenotes.php instead, alongside everything else that
  * plan step added.
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STACK_ROOT
- * pointed at /tmp/b3-root and UPDATE_RETAIN at "3" (so the retention cases
+ * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STORE_ROOT
+ * pointed at /tmp/b3-store and UPDATE_RETAIN at "3" (so the retention cases
  * below assert on a small, exact number rather than the real default), the
- * same way tests/server/record.php points STACK_ROOT at /tmp/b2-root —
+ * same way tests/server/record.php points STORE_ROOT at /tmp/b2-store —
  * never the real stack root. staxx_cfg() memoises the first time it is
  * read, so both keys are seeded into the config file BEFORE php runs, not
  * changed from inside this script — by the time this file's first line
@@ -20,8 +20,9 @@
  *     plink … '
  *       CFG=/boot/config/plugins/staxx/staxx.cfg
  *       cp $CFG /tmp/cfg.bak
- *       sed -i "s#^STACK_ROOT=.*#STACK_ROOT=\"/tmp/b3-root\"#" $CFG
- *       grep -q "^STACK_ROOT=" $CFG || echo "STACK_ROOT=\"/tmp/b3-root\"" >> $CFG
+ *       grep -q "^STORE_ROOT=" $CFG \
+ *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/b3-store\"#" $CFG \
+ *         || echo "STORE_ROOT=\"/tmp/b3-store\"" >> $CFG
  *       sed -i "s#^UPDATE_RETAIN=.*#UPDATE_RETAIN=\"3\"#" $CFG
  *       grep -q "^UPDATE_RETAIN=" $CFG || echo "UPDATE_RETAIN=\"3\"" >> $CFG
  *       php /tmp/imagehistory.php; RC=$?
@@ -78,7 +79,7 @@ function dg(string $label): string {
   return 'sha256:'.substr(hash('sha256', $label), 0, 64);
 }
 
-if (staxx_stack_root() !== '/tmp/b3-root') {
+if (staxx_stack_root() !== '/tmp/b3-store/stacks') {
   echo "FAIL   the temporary stack root is not in place (got ".staxx_stack_root().")\n";
   exit(1);
 }

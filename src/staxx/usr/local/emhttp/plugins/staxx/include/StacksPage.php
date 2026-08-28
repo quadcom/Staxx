@@ -25,9 +25,38 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 // database images table to the browser below — see db-images.json's own
 // header for why there is now one copy read by both sides.
 require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
-// Only for staxx_settings_read(), to read the remembered PLAN_68 Part B
-// storage-choice below — nothing else here writes a setting.
-require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
+
+// PLAN_97 Phase 1: nothing below this point may run with an unchosen data
+// store — staxx_list_stacks(), staxx_autostart_sync() and staxx_folder_layout()
+// all read a folder that does not exist yet when STORE_ROOT is blank. Gate
+// here, before any of them are called, rather than teaching each one to cope
+// with "there isn't one". The dialog that explains the choice is Phase 2;
+// this is only the placeholder that stops the table trying to render without
+// a floor under it.
+if (!staxx_store_ready()) {
+  // The page's own stylesheet, emitted here because this branch returns long
+  // before the asset tags further down are reached — without it the panel
+  // renders with no styling at all. filemtime() for the same reason it is
+  // carried below: an edited stylesheet otherwise sits in the browser cache
+  // and looks exactly like a change that did not work.
+  $noStoreCss = STAXX_ROOT.'/sheets/staxx.css';
+  ?>
+  <link rel="stylesheet" href="/plugins/<?= STAXX_PLUGIN ?>/sheets/staxx.css?v=<?= is_file($noStoreCss) ? filemtime($noStoreCss) : '0' ?>">
+  <div class="staxx-scaffold unapi">
+    <div class="staxx-notice" id="staxx-no-store">
+      <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+      <div>
+        <strong><?= _('No data store has been chosen yet.') ?></strong>
+        <?= _('StaXX needs one folder to keep stacks and their archives in before it can show anything here. Choose one on the settings page to continue.') ?>
+        <div class="staxx-buttons staxx-buttons--inline">
+          <a class="staxx-btn staxx-btn--primary" href="/Settings/staxx.settings"><?= _('Go to Settings') ?></a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <?
+  return;
+}
 
 $compose       = staxx_compose();
 $dockerRunning = staxx_docker_running();
@@ -46,13 +75,6 @@ $rows          = staxx_folder_layout($stacks);
 $folders       = staxx_folder_names();
 $root          = staxx_stack_root();
 $canRun        = $compose['available'] && $dockerRunning;
-// PLAN_68 Part B: the same "is this on flash" test the volume-path warning
-// below already makes, reused rather than asked a second way. Read straight
-// from the settings allowlist's own getter rather than staxx_cfg() directly,
-// so a config predating this key still gets the right default ('ask') and a
-// masked/coerced value is never possible here either.
-$onFlash       = strpos($root, '/boot/') === 0;
-$storageChoice = staxx_settings_read()['STORAGE_CHOICE'];
 
 $stackCount     = count(array_filter(array_keys($projects), fn($p) => $p !== ''));
 $unmanagedCount = count($projects[''] ?? []);
@@ -229,25 +251,6 @@ endif;
       <div>
         <strong><?= _('The boot-start list could not be updated.') ?></strong>
         <?= htmlspecialchars($syncError) ?>
-      </div>
-    </div>
-  <? endif; ?>
-
-  <!-- PLAN_68 Part B: a one-time offer, not a standing warning — shown only
-       while the stacks folder is still on flash AND nobody has answered this
-       yet. "Not now" (wired in stacks.js) writes STORAGE_CHOICE=declined so
-       this never asks twice; the settings panel's own line for STACK_ROOT is
-       the way back for anyone who changes their mind, per PLAN_68 section 5. -->
-  <? if ($onFlash && $storageChoice === 'ask'): ?>
-    <div class="staxx-notice" id="staxx-storage-banner">
-      <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
-      <div>
-        <strong><?= _('Your stacks are stored on the USB flash drive.') ?></strong>
-        <?= _('Flash storage can only be written a limited number of times before it wears out, and it is the least redundant thing in the machine. A drive pool is available before Docker even starts, so nothing is gained by staying on flash.') ?>
-        <div class="staxx-buttons staxx-buttons--inline">
-          <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-storage-banner-open"><?= _('Choose a location') ?></button>
-          <button type="button" class="staxx-btn" id="staxx-storage-banner-decline"><?= _('Not now') ?></button>
-        </div>
       </div>
     </div>
   <? endif; ?>
@@ -1227,8 +1230,9 @@ endif;
 
   <!-- ------------------------------------------------------------ storage -- -->
 
-  <!-- PLAN_68 Part B: the chooser behind both the one-time banner above and
-       the settings panel's own "Move it" line. Reuses every .staxx-settings
+  <!-- The chooser behind the settings panel's own "Move it" line (relocation,
+       not first-run choice — PLAN_97 covers that separately). Reuses every
+       .staxx-settings
        class rather than a stylesheet of its own — this is the same shape of
        dialog, a list of fields and a Close button, so a second look and a
        second animation would only be two ways of saying the same thing. The

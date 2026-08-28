@@ -105,10 +105,13 @@ if [[ -d "${PLUGIN_DIR}" ]]; then
   fi
 fi
 
-# Stack directory must exist before anything tries to enumerate it.
-stack_root=$(sed -n 's/^[[:space:]]*STACK_ROOT[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" 2>/dev/null | tail -n1 || true)
-if [[ -n "${stack_root}" ]]; then
-  mkdir -p "${stack_root}"
+# The data store's two fixed-name folders must exist before anything tries to
+# enumerate them. Blank means nobody has chosen a store yet — do nothing at
+# all, and do not fail: a settings save has to succeed on a box that has not
+# chosen one, since choosing it IS a settings save.
+store_root=$(sed -n 's/^[[:space:]]*STORE_ROOT[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" 2>/dev/null | tail -n1 || true)
+if [[ -n "${store_root}" ]]; then
+  mkdir -p "${store_root}/stacks" "${store_root}/archives"
 fi
 
 # Docker Hub sign-in, so image-update checking does not run into Docker Hub's

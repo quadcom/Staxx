@@ -58,6 +58,11 @@ define('STAXX_STATS_SCRIPT', STAXX_ROOT.'/scripts/stats-collector.sh');
  * sampling — there is nothing to shut down and nothing left behind.
  */
 function staxx_stats_touch(): void {
+  // No data store means no stacks, so there is nothing for the collector to
+  // sample — exit quietly rather than starting a background process to
+  // watch an empty list.
+  if (!staxx_store_ready()) return;
+
   if (!is_dir(STAXX_STATS_DIR)) @mkdir(STAXX_STATS_DIR, 0755, true);
   @file_put_contents(STAXX_STATS_DIR.'/watch', (string)time());
 

@@ -7,7 +7,7 @@
  *
  * Never touches a real stack folder: every case below hands
  * staxx_icon_adopt() an explicit /tmp directory to copy INTO, rather than
- * moving STACK_ROOT — the same reason tests/server/pending.php gives for
+ * moving the store root — the same reason tests/server/pending.php gives for
  * avoiding that (moving it, even for one command, makes every real stack
  * vanish from the webGUI for as long as it is moved).
  *
@@ -20,7 +20,7 @@
  * self-cleans even on failure.
  *
  * What this does NOT cover: staxx_icon_adopt_sweep()'s own walk over
- * staxx_scan_stacks(), because that reads the real STACK_ROOT with no way
+ * staxx_scan_stacks(), because that reads the real store root with no way
  * to point it elsewhere short of moving it — precisely what this file
  * exists to avoid doing on a live server. What IS checked instead, at the
  * level reachable without moving anything, is the field the walk skips on:

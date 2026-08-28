@@ -1,21 +1,22 @@
 <?php
 /* The link half of the companion-file helpers, which files.php cannot reach.
  *
- * Stacks live on /boot by default, which is vfat and cannot hold a symlink at
- * all — symlink() there simply fails, so every link case would pass for the
- * wrong reason. This run needs STACK_ROOT pointed at /tmp/b1-root instead, and
- * ARCHIVE_ROOT at /tmp/b1-archives so the archive case has somewhere to write
- * that isn't the box's real appdata; the CALLER sets both and puts them back,
- * which the script only reads and refuses to run if either is not in place.
+ * A data store left on flash is vfat and cannot hold a symlink at all —
+ * symlink() there simply fails, so every link case would pass for the wrong
+ * reason if this ran against a store still sitting there (or an unchosen
+ * one, which has no stacks folder at all). This run needs STORE_ROOT pointed
+ * at /tmp/b1-store instead, so the derived stacks and archive folders both
+ * land somewhere real that isn't the box's own appdata; the CALLER sets it
+ * and puts it back, which the script only reads and refuses to run if it is
+ * not in place.
  *
  * Runs ON THE SERVER, and the caller must restore the config whatever happens:
  *
  *     CFG=/boot/config/plugins/staxx/staxx.cfg
  *     cp $CFG /tmp/cfg.bak
- *     sed -i 's#^STACK_ROOT=.*#STACK_ROOT="/tmp/b1-root"#' $CFG
- *     grep -q '^ARCHIVE_ROOT=' $CFG \
- *       && sed -i 's#^ARCHIVE_ROOT=.*#ARCHIVE_ROOT="/tmp/b1-archives"#' $CFG \
- *       || echo 'ARCHIVE_ROOT="/tmp/b1-archives"' >> $CFG
+ *     grep -q '^STORE_ROOT=' $CFG \
+ *       && sed -i 's#^STORE_ROOT=.*#STORE_ROOT="/tmp/b1-store"#' $CFG \
+ *       || echo 'STORE_ROOT="/tmp/b1-store"' >> $CFG
  *     php /tmp/links.php; RC=$?
  *     cp /tmp/cfg.bak $CFG
  *     exit $RC
@@ -37,12 +38,12 @@ function ok(string $what, bool $pass, string $note = ''): void {
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
 $root = staxx_stack_root();
-if ($root !== '/tmp/b1-root') {
+if ($root !== '/tmp/b1-store/stacks') {
   echo "FAIL   the temporary stack root is not in place (got $root)\n";
   exit(1);
 }
 $archiveRoot = staxx_archive_root();
-if ($archiveRoot !== '/tmp/b1-archives') {
+if ($archiveRoot !== '/tmp/b1-store/archives') {
   echo "FAIL   the temporary archive root is not in place (got $archiveRoot)\n";
   exit(1);
 }
@@ -51,7 +52,7 @@ mkdir($archiveRoot, 0755, true);
 
 $rel = 'linky';
 $dir = $root.'/'.$rel;
-@exec('rm -rf /tmp/b1-root /tmp/b1-outside');
+@exec('rm -rf /tmp/b1-store/stacks /tmp/b1-outside');
 mkdir($dir, 0755, true);
 file_put_contents($dir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
 
@@ -141,7 +142,7 @@ ok('its target still holds its files',
 
 @exec('rm -rf /tmp/b1-outside2');
 
-@exec('rm -rf /tmp/b1-root /tmp/b1-outside '.escapeshellarg($archiveRoot));
+@exec('rm -rf /tmp/b1-store/stacks /tmp/b1-outside '.escapeshellarg($archiveRoot));
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

@@ -8,14 +8,15 @@
  * that each door is shut, and the route each real project would take is
  * printed for a human to read rather than asserted.
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine. Stacks live on
- * /boot by default, so this run needs STACK_ROOT pointed at /tmp instead —
- * the CALLER sets that and puts the config back, same as override.php:
+ * Runs ON THE SERVER — there is no PHP on the dev machine. STORE_ROOT ships
+ * blank, so without seeding it there is no stack root to test against at
+ * all — this run needs it pointed at /tmp instead, the CALLER sets that and
+ * puts the config back, same as override.php:
  *
  *     CFG=/boot/config/plugins/staxx/staxx.cfg
  *     cp $CFG /tmp/cfg.bak
- *     sed -i 's#^STACK_ROOT=.*#STACK_ROOT="/tmp/b1-takeover"#' $CFG
- *     mkdir -p /tmp/b1-takeover
+ *     sed -i 's#^STORE_ROOT=.*#STORE_ROOT="/tmp/b1-takeover"#' $CFG
+ *     mkdir -p /tmp/b1-takeover/stacks
  *     php /tmp/takeover.php; RC=$?
  *     cp /tmp/cfg.bak $CFG
  *     exit $RC

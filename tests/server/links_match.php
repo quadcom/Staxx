@@ -7,16 +7,18 @@
  *
  *   php /tmp/links_match.php
  *
- * Needs STACK_ROOT pointed at /tmp/lk70-root, the same way tests/server/
- * files.php points it at /tmp/b1-root — every fixture here is a synthetic
- * stack under that root, so the real stacks on the box are never read or
- * touched. The caller sets STACK_ROOT and puts the config back:
+ * Needs STORE_ROOT pointed at /tmp/lk70-store, the same way tests/server/
+ * files.php points it at /tmp/b1-store — every fixture here is a synthetic
+ * stack under that store's stacks folder, so the real stacks on the box are
+ * never read or touched. The caller sets STORE_ROOT and puts the config back:
  *
  *     pscp tests/server/links_match.php root@<box>:/tmp/
  *     plink … '
  *       CFG=/boot/config/plugins/staxx/staxx.cfg
  *       cp $CFG /tmp/cfg.bak
- *       sed -i "s#^STACK_ROOT=.*#STACK_ROOT=\"/tmp/lk70-root\"#" $CFG
+ *       grep -q "^STORE_ROOT=" $CFG \
+ *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/lk70-store\"#" $CFG \
+ *         || echo "STORE_ROOT=\"/tmp/lk70-store\"" >> $CFG
  *       php /tmp/links_match.php; RC=$?
  *       cp /tmp/cfg.bak $CFG
  *       exit $RC
@@ -45,7 +47,7 @@ function ok(string $what, bool $pass, string $note = ''): void {
   printf("%-6s %s%s\n", $pass ? 'ok' : 'FAIL', $what, $note !== '' ? '  ('.$note.')' : '');
 }
 
-if (staxx_stack_root() !== '/tmp/lk70-root') {
+if (staxx_stack_root() !== '/tmp/lk70-store/stacks') {
   echo "FAIL   the temporary stack root is not in place (got ".staxx_stack_root().")\n";
   exit(1);
 }

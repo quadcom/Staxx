@@ -14,7 +14,9 @@
 ?>
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
-// For staxx_stack_root(), which the ARCHIVE_ROOT validator checks against.
+// For staxx_stack_root(), which the STORE_ROOT validator checks a proposed
+// store against, so a new store can never be pointed inside the current one's
+// own stacks or archives folder.
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
 if (defined('STAXX_SETTINGS_LOADED')) return;
@@ -37,9 +39,7 @@ const STAXX_HUB_TOKEN_MASK = '********';
  * `number` is a whole number, its range given by `min` and `max` in the spec.
  * Keep the defaults here matching default.cfg — they are not read from that
  * file, because the whole point is a value the browser can trust even if a
- * user's cfg predates a key or default.cfg itself failed to parse. The one
- * exception is ARCHIVE_ROOT: its default is computed, not a literal, because
- * the right answer depends on where this box's appdata actually lives.
+ * user's cfg predates a key or default.cfg itself failed to parse.
  *
  * @return array<string, array{type:string, default:string, choices?:string[], min?:int, max?:int}>
  */
@@ -54,13 +54,12 @@ function staxx_settings_keys(): array {
     // config this has shipped to; 'prompt' is simply added beside them —
     // read as an oversight only if you don't know that.
     'CATCH_INSTALLS'      => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'prompt', 'false']],
-    'STACK_ROOT'          => ['type' => 'path',   'default' => '/boot/config/plugins/staxx/stacks'],
-    'ARCHIVE_ROOT'        => ['type' => 'path',   'default' => staxx_archive_root()],
-    // PLAN_68 Part B piece 4 — has the person settled where stacks live?
-    // Set once, automatically, the same shape as SHELL_WARNED below. 'ask'
-    // is never posted back by the store-choice action deliberately: nothing
-    // may put the question back except a person editing the setting by hand.
-    'STORAGE_CHOICE'      => ['type' => 'choice', 'default' => 'ask', 'choices' => ['ask', 'chosen', 'declined']],
+    // Where StaXX keeps everything — the stacks, the archived zips, and (from
+    // Phase 4) its own settings and state. Ships blank on purpose: blank is
+    // how the plugin knows nobody has chosen yet, and is what the first-run
+    // dialog keys off. Nothing is offered as a default here, because any
+    // default would put data somewhere before anybody agreed to it.
+    'STORE_ROOT'          => ['type' => 'path',   'default' => ''],
     /* Does the folder picker narrow itself down when choosing where the
      * stacks live, and are the placement rules refusals or warnings?
      *
@@ -166,9 +165,8 @@ function staxx_settings_char_rule(string $key): string {
 
 /**
  * Is this path setting acceptable, and if so what should actually be stored?
- * Shared by STACK_ROOT and ARCHIVE_ROOT — the rules are identical bar one
- * extra check that only makes sense for the archive folder (below), and the
- * wording, which names the field in plain words rather than its cfg key.
+ * One key now, STORE_ROOT, so every rule below applies unconditionally —
+ * there is no second, laxer key that used to skip some of them.
  *
  * Checked against the value as submitted, before any trimming, so that "/"
  * is judged on what it actually is rather than on what rtrim() would turn it
@@ -214,7 +212,7 @@ function staxx_path_in_memory(string $path): bool {
 }
 
 function staxx_settings_validate_path(string $key, string $v, string &$error): string {
-  $label = ['STACK_ROOT' => 'stacks folder', 'ARCHIVE_ROOT' => 'archive folder'][$key] ?? 'folder';
+  $label = 'data store';
 
   if ($v === '') {
     $error = 'Enter a path for the '.$label.' — it cannot be left blank.';
@@ -242,60 +240,48 @@ function staxx_settings_validate_path(string $key, string $v, string &$error): s
   // has real content left afterwards ("/mnt/" -> "/mnt", never "").
   $norm = rtrim($v, '/');
 
-  // The stacks folder and the archive folder must never overlap, in either
-  // direction: an archive inside the stacks tree would be read back as a
-  // stack or a folder (the model has no way to tell a zip apart from
-  // either), and a stacks folder inside the archive tree would read every
-  // old zip as a stack the moment it landed there.
-  if ($key === 'ARCHIVE_ROOT') {
-    $stackRoot = staxx_stack_root();
-    if ($norm === $stackRoot || strpos($norm, $stackRoot.'/') === 0) {
-      $error = 'The archive folder cannot be the stacks folder, or sit inside it — '
-             . 'a zip file there would be mistaken for a stack. Choose a location outside it.';
-      return '';
-    }
-  }
-  if ($key === 'STACK_ROOT') {
+  // A new store must never sit inside the current one's own stacks or
+  // archives folder: nesting it there is how an archive zip gets read back
+  // as a stack, or a stack folder gets read back as an archive. Guarded on
+  // staxx_store_ready() because an unchosen store has neither folder to
+  // collide with.
+  if (staxx_store_ready()) {
+    $stackRoot   = staxx_stack_root();
     $archiveRoot = staxx_archive_root();
-    if ($norm === $archiveRoot || strpos($norm, $archiveRoot.'/') === 0) {
-      $error = 'The stacks folder cannot be the archive folder, or sit inside it — '
-             . 'an old zip there would be mistaken for a stack. Choose a location outside it.';
+    if ($norm === $stackRoot || strpos($norm, $stackRoot.'/') === 0
+        || $norm === $archiveRoot || strpos($norm, $archiveRoot.'/') === 0) {
+      $error = 'The data store cannot be the current stacks folder or the current archive '
+             . 'folder, or sit inside either — a zip file there would be mistaken for a stack. '
+             . 'Choose a location outside them.';
       return '';
     }
   }
 
-  /* The stacks folder may only live on a pool or inside a share. Refused
-   * here rather than merely discouraged in the chooser, because the chooser
-   * is not the only way in — every saved value passes through this function.
+  /* The data store may only live on a pool or inside a share. Refused here
+   * rather than merely discouraged in the chooser, because the chooser is
+   * not the only way in — every saved value passes through this function.
    *
    * /mnt/diskN and /mnt/user0 are the array's own paths: one array disk has
    * no redundancy of its own, and writing straight to it goes behind the
    * array's placement rules instead of through them. /mnt/disks and
    * /mnt/remotes are unassigned drives and network mounts, either of which
-   * can simply be absent at the next boot with the stacks inside it.
+   * can simply be absent at the next boot with the data inside it.
    *
-   * STACK_ROOT only. ARCHIVE_ROOT comes through the same function, and an
-   * unassigned drive is a reasonable home for zips of removed stacks. An
-   * existing setting is never re-validated on read, so this refusal cannot
-   * lock anyone out of an install they already have.
-   */
-  /* Enforced only while the placement rules are set to guide. Turned to
+   * Enforced only while the placement rules are set to guide. Turned to
    * 'open', the same risk is reported as a warning beside the destination box
    * instead — staxx_placement_risk() is the single place that decides what
    * counts as risky, so the two modes cannot drift apart.
    *
    * The memory-filesystem refusal below is NOT behind this switch: losing the
-   * stacks at the next reboot is not a risk anybody accepts on purpose.
+   * data at the next reboot is not a risk anybody accepts on purpose.
    *
-   * STACK_ROOT only. ARCHIVE_ROOT comes through the same function, and an
-   * unassigned drive is a reasonable home for zips of removed stacks. An
-   * existing setting is never re-validated on read, so this refusal cannot
+   * An existing setting is never re-validated on read, so this refusal cannot
    * lock anyone out of an install they already have.
    */
-  if ($key === 'STACK_ROOT' && $underMnt && staxx_placement_guided()) {
+  if ($underMnt && staxx_placement_guided()) {
     $risk = staxx_placement_risk($norm);
     if ($risk !== '') {
-      $error = 'The stacks folder cannot go here — '.$risk.'. Choose a folder inside a share, '
+      $error = 'The data store cannot go here — '.$risk.'. Choose a folder inside a share, '
              . 'or on a cache pool, such as /mnt/user/appdata. If you mean to do this anyway, '
              . 'set the placement rules to "open" in Settings.';
       return '';
@@ -344,10 +330,11 @@ function staxx_settings_validate_path(string $key, string $v, string &$error): s
 
 /**
  * Validate one submitted value against its spec. Returns the value to store
- * (which may differ from $v — STACK_ROOT is normalised), or '' with $error
+ * (which may differ from $v — STORE_ROOT is normalised), or '' with $error
  * set when it is refused. A refused '' is never itself a valid stored value:
- * every spec here has a non-empty default and STACK_ROOT is refused outright
- * when empty, so an empty return unambiguously means "look at $error".
+ * a blank STORE_ROOT is only meaningful as a stored state — it means nobody
+ * has chosen yet — never as something submitted, so a save is refused outright
+ * when it is empty, and an empty return unambiguously means "look at $error".
  */
 function staxx_settings_validate(string $key, array $spec, string $v, string &$error): string {
   // Split into three plain checks rather than one dense regex — a quote or a
@@ -425,11 +412,9 @@ function staxx_settings_validate(string $key, array $spec, string $v, string &$e
  * because saving most settings and refusing one would leave the cfg in
  * a state nobody chose.
  *
- * $reload is set true when HEADER_MENU, TAKEOVER_DOCKER_TAB or STACK_ROOT
+ * $reload is set true when HEADER_MENU, TAKEOVER_DOCKER_TAB or STORE_ROOT
  * actually changed value — those three are read only at page load, so only
  * they need the browser to reload rather than just close the panel.
- * ARCHIVE_ROOT is deliberately not in that list: it is read fresh on every
- * removal, not cached at page load.
  *
  * $saved gets the full settings map as it now stands on disk. The
  * obvious way to get that back — call staxx_settings_read() again — does
@@ -528,25 +513,6 @@ function staxx_settings_save(
     $overlay[$key] = $stored;
   }
 
-  // The per-key checks inside staxx_settings_validate_path() each compare
-  // against the OTHER path read fresh off disk — right for an ordinary
-  // single-key change, and for Relocate.php's direct call, which only ever
-  // has one of the two to check. But a save that posts both paths at once
-  // compares each new value against the other's now-stale old value, so two
-  // new paths that overlap each other pass both checks. This is the
-  // authoritative check: it compares the two values this save will actually
-  // leave in force. Both are already normalised (the validator rtrims, and
-  // both resolvers rtrim too), so nothing further is done to them here.
-  $newStackRoot   = $overlay['STACK_ROOT']   ?? staxx_stack_root();
-  $newArchiveRoot = $overlay['ARCHIVE_ROOT'] ?? staxx_archive_root();
-  if ($newStackRoot === $newArchiveRoot
-      || strpos($newStackRoot, $newArchiveRoot.'/') === 0
-      || strpos($newArchiveRoot, $newStackRoot.'/') === 0) {
-    $error = 'The stacks folder and the archive folder cannot be the same, or sit inside one '
-           . 'another — choose two locations that do not overlap.';
-    return false;
-  }
-
   // The write itself — read-merge-atomic-rename — is shared with
   // include/CrossLinks.php's staxx_crosslinks_learn(); see
   // staxx_cfg_write_keys()'s own comment just above this function for why.
@@ -561,7 +527,7 @@ function staxx_settings_save(
   // way, so mask it again here exactly as staxx_settings_read() does.
   if (isset($saved['HUB_TOKEN'])) $saved['HUB_TOKEN'] = $saved['HUB_TOKEN'] !== '' ? STAXX_HUB_TOKEN_MASK : '';
 
-  foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STACK_ROOT'] as $key) {
+  foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STORE_ROOT'] as $key) {
     if ($saved[$key] !== $before[$key]) { $reload = true; break; }
   }
 

@@ -340,7 +340,7 @@ ok('an invalid stack path is refused', $r === '' && stripos($err, 'invalid') !==
 // staxx_cfg() caches its answer for the life of this one PHP process, so the
 // off state cannot be flipped and re-checked within this same run — the same
 // reason links.php/override.php/takeover.php each need their own dedicated
-// invocation with STACK_ROOT sed-replaced beforehand. Whichever way this box
+// invocation with STORE_ROOT sed-replaced beforehand. Whichever way this box
 // is currently configured, the assertion below matches it; to prove the
 // *other* branch, edit the real cfg first:
 //

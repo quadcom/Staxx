@@ -3,24 +3,30 @@
  * refusal, archiving a locked stack, and that a rename or a folder move keeps
  * the lock.
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine. The archive cases
- * need ARCHIVE_ROOT pointed at /tmp/b1-archives, or the zips would land in the
- * box's real appdata; the CALLER sets that and puts the config back, the same
- * way tests/server/files.php does:
+ * Runs ON THE SERVER — there is no PHP on the dev machine. The archive case
+ * needs a real zip to land somewhere other than the box's real archive
+ * folder — and since PLAN_97 that folder is derived from the same store as
+ * the stacks, the two can no longer be pointed in different directions the
+ * way this file once did with ARCHIVE_ROOT alone. So the whole store is
+ * redirected: STORE_ROOT is pointed at /tmp/zzc1-store, and every fixture
+ * stack this file creates lives under the derived stacks folder inside it,
+ * not on the box's real store. The CALLER sets it and puts the config back,
+ * the same way tests/server/files.php does:
  *
  *     pscp tests/server/review.php root@<box>:/tmp/
  *     plink … '
  *       CFG=/boot/config/plugins/staxx/staxx.cfg
  *       cp $CFG /tmp/cfg.bak
- *       grep -q "^ARCHIVE_ROOT=" $CFG  *         && sed -i "s#^ARCHIVE_ROOT=.*#ARCHIVE_ROOT=\"/tmp/b1-archives\"#" $CFG  *         || echo "ARCHIVE_ROOT=\"/tmp/b1-archives\"" >> $CFG
+ *       grep -q "^STORE_ROOT=" $CFG \
+ *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzc1-store\"#" $CFG \
+ *         || echo "STORE_ROOT=\"/tmp/zzc1-store\"" >> $CFG
  *       php /tmp/review.php; RC=$?
  *       cp /tmp/cfg.bak $CFG
  *       exit $RC
  *     '
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
- * removes its own stacks, all named "zzc1…" so they cannot collide with
- * files.php's "zzb1test", under whatever the stack root is.
+ * removes its own stacks, all named "zzc1…", under the scratch stacks folder.
  *
  * MUST NEVER RUN DOCKER. staxx_start_job() detaches a real compose command
  * the moment it is called, so the only verb walk done against a genuine,
@@ -48,6 +54,10 @@ function ok(string $what, bool $pass, string $note = ''): void {
 /* ------------------------------------------------------------ fixtures --- */
 
 $root = staxx_stack_root();
+if ($root !== '/tmp/zzc1-store/stacks') {
+  echo "FAIL   the temporary store is not in place (got $root) — refusing to touch the real stacks\n";
+  exit(1);
+}
 
 $lockedRel    = 'zzc1lock';
 $plainRel     = 'zzc1plain';
@@ -218,7 +228,7 @@ ok('an ordinary file is flagged review => false', ($byName['aardvark.txt']['revi
 // archiving one must never tear them down — the lock is what skips the
 // compose "down" entirely. Nothing here can reach Docker for that reason.
 $archiveRoot = staxx_archive_root();
-if ($archiveRoot !== '/tmp/b1-archives') {
+if ($archiveRoot !== '/tmp/zzc1-store/archives') {
   echo "FAIL   the temporary archive root is not in place (got $archiveRoot)
 ";
   exit(1);

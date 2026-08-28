@@ -43,10 +43,10 @@ file reads in the form rather than anything that happens once it runs — and
 `19-missing-network` is a file compose refuses outright, which is the whole point
 of it.
 
-**A symlink inside a stack folder has no fixture here, and cannot have one.** Stacks
-live on `/boot` by default, which is vfat and cannot hold a symlink at all —
-`symlink()` there simply fails. That case is covered instead by
-`tests/server/links.php`, which points `STACK_ROOT` at `/tmp` for the length of one
+**A symlink inside a stack folder has no fixture here, and cannot have one.** A data
+store left unchosen on flash rather than a share or pool is vfat and cannot hold a
+symlink at all — `symlink()` there simply fails. That case is covered instead by
+`tests/server/links.php`, which points `STORE_ROOT` at `/tmp` for the length of one
 run. It is worth knowing about, because deleting a stack walks the folder, and a
 symlink followed rather than unlinked would take a real share with it.
 

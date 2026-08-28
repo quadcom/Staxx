@@ -26,7 +26,7 @@
  *     pscp tests/server/releasenotes_live.php root@<box>:/tmp/
  *     plink … 'STAXX_LIVE_NOTES=1 php /tmp/releasenotes_live.php'
  *
- * Needs NO config keys at all — no STACK_ROOT, no ARCHIVE_ROOT — and restores
+ * Needs NO config keys at all — no STORE_ROOT — and restores
  * nothing on the way out, because it changes nothing. It creates no stacks,
  * writes no file, and never calls staxx_update_record_before_pull() or any
  * other function that records state. Every question it asks is read-only, and

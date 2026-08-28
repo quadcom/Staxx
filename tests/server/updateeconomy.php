@@ -4,18 +4,18 @@
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. Almost every
  * case needs no config key at all, but the row-notice section (D) calls
- * staxx_updates_for_row(), which reads a real stack off STACK_ROOT — and
- * that has no env-var override the way STAXX_UPDATE_STATE does, so it has
- * to be pointed at /tmp the way tests/server/record.php and files.php do
- * theirs: sed the real config file, run, then put it back — never /boot,
- * which is vfat and would make section D's fixture directory create for
- * the wrong reason:
+ * staxx_updates_for_row(), which reads a real stack off the stacks folder —
+ * derived from STORE_ROOT, which has no env-var override the way
+ * STAXX_UPDATE_STATE does, so it has to be pointed at /tmp the way
+ * tests/server/record.php and files.php do theirs: sed the real config
+ * file, run, then put it back — never /boot, which is vfat and would make
+ * section D's fixture directory create for the wrong reason:
  *
  *     pscp tests/server/updateeconomy.php root@<box>:/tmp/
  *     plink … '
  *       CFG=/boot/config/plugins/staxx/staxx.cfg
  *       cp $CFG /tmp/cfg.bak
- *       sed -i "s#^STACK_ROOT=.*#STACK_ROOT=\"/tmp/staxx-updateeconomy-stacks-root\"#" $CFG
+ *       sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/staxx-updateeconomy-store\"#" $CFG
  *       php /tmp/updateeconomy.php; RC=$?
  *       cp /tmp/cfg.bak $CFG
  *       diff -q /tmp/cfg.bak $CFG && echo "config restored, byte-identical"
@@ -332,16 +332,16 @@ note('the two SABOTAGE PINS above are: the exact-string Accept-list assertion '
  *
  * staxx_updates_for_row() looks the image up via the stack's own compose
  * file, so a real stack fixture is needed under the temporary stack root —
- * unlike the rest of this suite, this section DOES need STACK_ROOT pointed
+ * unlike the rest of this suite, this section DOES need STORE_ROOT pointed
  * off /boot, or a fixture directory can't be created safely. Kept local to
  * this section and cleaned up immediately after.
  * ======================================================================= */
 
-$stackScratchRoot = '/tmp/staxx-updateeconomy-stacks-root';
+$stackScratchRoot = '/tmp/staxx-updateeconomy-store/stacks';
 if (staxx_stack_root() !== $stackScratchRoot) {
   echo "FAIL   the temporary stack root is not in place (got ".staxx_stack_root()."); "
-     . "section D needs the real config's STACK_ROOT sed'd to $stackScratchRoot before this "
-     . "file runs — see the header for the exact command\n";
+     . "section D needs the real config's STORE_ROOT sed'd to /tmp/staxx-updateeconomy-store "
+     . "before this file runs — see the header for the exact command\n";
   exit(1);
 }
 @exec('rm -rf '.escapeshellarg($stackScratchRoot));

@@ -4,9 +4,9 @@
  * and staxx_update_due()/staxx_update_clock() (include/UpdateRun.php) which
  * decide what an automatic pass may act on and what it reports.
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STACK_ROOT
- * pointed at /tmp/b5-root, the same way tests/server/rollback.php points it
- * at /tmp/b4-root — never the real stack root. staxx_cfg() memoises the
+ * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STORE_ROOT
+ * pointed at /tmp/b5-store, the same way tests/server/rollback.php points it
+ * at /tmp/b4-store — never the real stack root. staxx_cfg() memoises the
  * first time it is read, so the key is seeded into the config file BEFORE
  * php runs, not changed from inside this script.
  *
@@ -14,8 +14,9 @@
  *     plink … '
  *       CFG=/boot/config/plugins/staxx/staxx.cfg
  *       cp $CFG /tmp/cfg.bak
- *       sed -i "s#^STACK_ROOT=.*#STACK_ROOT=\"/tmp/b5-root\"#" $CFG
- *       grep -q "^STACK_ROOT=" $CFG || echo "STACK_ROOT=\"/tmp/b5-root\"" >> $CFG
+ *       grep -q "^STORE_ROOT=" $CFG \
+ *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/b5-store\"#" $CFG \
+ *         || echo "STORE_ROOT=\"/tmp/b5-store\"" >> $CFG
  *       php /tmp/unpin.php; RC=$?
  *       cp /tmp/cfg.bak $CFG
  *       exit $RC
@@ -68,7 +69,7 @@ function dg(string $label): string {
   return 'sha256:'.substr(hash('sha256', $label), 0, 64);
 }
 
-if (staxx_stack_root() !== '/tmp/b5-root') {
+if (staxx_stack_root() !== '/tmp/b5-store/stacks') {
   echo "FAIL   the temporary stack root is not in place (got ".staxx_stack_root().")\n";
   exit(1);
 }

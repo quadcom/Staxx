@@ -2,24 +2,23 @@
 /* PLAN_68 Part A — the per-stack record (edit history) in include/Record.php,
  * plus the two capture doors wired into Stacks.php.
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STACK_ROOT
- * pointed at /tmp/b2-root and ARCHIVE_ROOT at /tmp/b2-archives, the same way
- * tests/server/files.php does it — never the real ones, and never /boot,
- * which is vfat and would make several of the failure cases below pass for
- * the wrong reason (a plain file can't stand in for a directory there, and
- * permissions are ignored). staxx_cfg() memoises the first time it is read,
- * so both keys are seeded into the config file BEFORE php runs, not changed
- * from inside this script — by the time this file's first line executes it
- * is already too late to move the root out from under it.
+ * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STORE_ROOT
+ * pointed at /tmp/b2-store, the same way tests/server/files.php does it —
+ * never the real store, and never /boot, which is vfat and would make
+ * several of the failure cases below pass for the wrong reason (a plain file
+ * can't stand in for a directory there, and permissions are ignored).
+ * staxx_cfg() memoises the first time it is read, so the key is seeded into
+ * the config file BEFORE php runs, not changed from inside this script — by
+ * the time this file's first line executes it is already too late to move
+ * the store out from under it.
  *
  *     pscp tests/server/record.php root@<box>:/tmp/
  *     plink … '
  *       CFG=/boot/config/plugins/staxx/staxx.cfg
  *       cp $CFG /tmp/cfg.bak
- *       sed -i "s#^STACK_ROOT=.*#STACK_ROOT=\"/tmp/b2-root\"#" $CFG
- *       grep -q "^ARCHIVE_ROOT=" $CFG \
- *         && sed -i "s#^ARCHIVE_ROOT=.*#ARCHIVE_ROOT=\"/tmp/b2-archives\"#" $CFG \
- *         || echo "ARCHIVE_ROOT=\"/tmp/b2-archives\"" >> $CFG
+ *       grep -q "^STORE_ROOT=" $CFG \
+ *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/b2-store\"#" $CFG \
+ *         || echo "STORE_ROOT=\"/tmp/b2-store\"" >> $CFG
  *       php /tmp/record.php; RC=$?
  *       cp /tmp/cfg.bak $CFG
  *       exit $RC
@@ -40,11 +39,11 @@ function ok(string $what, bool $pass, string $note = ''): void {
   printf("%-6s %s%s\n", $pass ? 'ok' : 'FAIL', $what, $note !== '' ? '  ('.$note.')' : '');
 }
 
-if (staxx_stack_root() !== '/tmp/b2-root') {
+if (staxx_stack_root() !== '/tmp/b2-store/stacks') {
   echo "FAIL   the temporary stack root is not in place (got ".staxx_stack_root().")\n";
   exit(1);
 }
-if (staxx_archive_root() !== '/tmp/b2-archives') {
+if (staxx_archive_root() !== '/tmp/b2-store/archives') {
   echo "FAIL   the temporary archive root is not in place (got ".staxx_archive_root().")\n";
   exit(1);
 }

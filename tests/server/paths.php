@@ -5,19 +5,19 @@
  * allowlist and 'offroot' cases below.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. The relative-path
- * case near the end needs STACK_ROOT pointed at a scratch folder under /tmp,
- * so a stack root that happens to sit under /boot (the default) can be
- * proven not to leak the new off-root wording onto relative paths.
- * staxx_cfg() memoises on first read, so STACK_ROOT has to be seeded into
- * the config file BEFORE php runs, not changed from inside this script:
+ * case near the end needs STORE_ROOT pointed at a scratch folder under /tmp,
+ * so relative volume paths can be proven not to leak the off-root wording
+ * regardless of where the store happens to sit. staxx_cfg() memoises on
+ * first read, so STORE_ROOT has to be seeded into the config file BEFORE php
+ * runs, not changed from inside this script:
  *
  *     pscp tests/server/paths.php root@<box>:/tmp/
  *     plink … '
  *       CFG=/boot/config/plugins/staxx/staxx.cfg
  *       cp $CFG /tmp/cfg.bak
- *       grep -q "^STACK_ROOT=" $CFG \
- *         && sed -i "s#^STACK_ROOT=.*#STACK_ROOT=\"/tmp/zzb1test-paths-stackroot\"#" $CFG \
- *         || echo "STACK_ROOT=\"/tmp/zzb1test-paths-stackroot\"" >> $CFG
+ *       grep -q "^STORE_ROOT=" $CFG \
+ *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/zzb1test-paths-store\"#" $CFG \
+ *         || echo "STORE_ROOT=\"/tmp/zzb1test-paths-store\"" >> $CFG
  *       php /tmp/paths.php; RC=$?
  *       cp /tmp/cfg.bak $CFG
  *       diff -q /tmp/cfg.bak $CFG
@@ -32,7 +32,7 @@
  * symlink's target, and one, "zzb1test-paths-offroot", to prove an
  * off-allowlist path is still flagged after something (Docker, in the real
  * bug) has already created it. The relative-path case makes its own stack,
- * "zzb1relstack", under the scratch STACK_ROOT above, and removes it before
+ * "zzb1relstack", under the scratch store above, and removes it before
  * the run ends. */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
@@ -51,11 +51,11 @@ if (!is_dir($appdata)) {
 }
 
 // The relative-path section near the end mkdir()s and rm -rf's a folder
-// under the stack root. If the wrapper's STACK_ROOT seed did not take, that
+// under the stack root. If the wrapper's STORE_ROOT seed did not take, that
 // root is Adrian's real one — so refuse outright rather than risk it, before
 // anything at all is created.
 $relStackRoot = staxx_stack_root();
-if ($relStackRoot !== '/tmp/zzb1test-paths-stackroot') {
+if ($relStackRoot !== '/tmp/zzb1test-paths-store/stacks') {
   echo "FAIL   the temporary stack root is not in place (got $relStackRoot) — refusing to touch it\n";
   exit(1);
 }
@@ -68,7 +68,7 @@ $relStackDir    = $relStackRoot.'/zzb1relstack';
 @exec('rm -rf '.escapeshellarg($outside));
 @exec('rm -rf '.escapeshellarg($offrootScratch));
 // Only ever the one stack folder inside it, never $relStackRoot itself — if
-// the wrapper's STACK_ROOT seed did not take, $relStackRoot is Adrian's real
+// the wrapper's STORE_ROOT seed did not take, $relStackRoot is Adrian's real
 // stack root, and an rm -rf there would be catastrophic.
 @exec('rm -rf '.escapeshellarg($relStackDir));
 
@@ -222,13 +222,14 @@ ok('isNew never turns an outside-/mnt path into "inuse", even a full directory',
 
 /* ------------------------------ relative paths are untouched by any of this --
  *
- * STACK_ROOT defaults to a path under /boot, so on a default install every
- * relative volume path resolves under the flash drive. The allowlist above
- * is only for an ABSOLUTE path written as "/boot…" in the file — a relative
- * path must not pick up the flash wording just because its root happens to
- * live there. The wrapper in the header points STACK_ROOT at a /tmp folder
- * for this run so that can be proven without going near Adrian's real
- * stacks or the real flash drive. */
+ * A blank STORE_ROOT now means no store has been chosen at all — it no
+ * longer falls back to a path under /boot the way it once did — so this case
+ * proves something different from what it used to: a relative volume path
+ * must resolve normally under whatever store the wrapper seeded, and must
+ * never pick up the "/boot…" allowlist wording just because a stack root
+ * happens to sit somewhere the allowlist also matches. The wrapper in the
+ * header points STORE_ROOT at a /tmp folder for this run so that can be
+ * proven without going near Adrian's real stacks or the real flash drive. */
 
 mkdir($relStackDir.'/data', 0755, true);
 $rRel = staxx_check_paths(['./data', './does-not-exist'], 'zzb1relstack');

@@ -80,7 +80,7 @@ there. `files.php` covers the companion-file helpers and the archive confirmatio
 versions kept for a rollback, including the keep-set that decides what may be deleted;
 `pending.php` covers the restart-pending comparison — whether what is running still matches what the
 file now says — and above all its refusals; it needs no config keys and changes nothing, because the
-cases it builds are handed explicit `/tmp` paths rather than moving `STACK_ROOT`;
+cases it builds are handed explicit `/tmp` paths rather than moving `STORE_ROOT`;
 `unpin.php` covers releasing a pin, including the one trap in it: the declined-version
 fingerprint is filed under the image's UNPINNED name, so clearing the pinned one instead makes the
 whole feature silently do nothing;
@@ -101,7 +101,7 @@ no-rewrite rule, the OCI-index-first `Accept` list, the whole cadence table with
 ceiling clamps, and the failed-image notice's wording once `fails` is already in state. It is
 offline (no stub of a registry exists in this repo, so anything that needs a real HTTP reply is
 left to `registry_live.php` below) and needs no config keys for most of it, but its row-notice
-section reads a real stack off `STACK_ROOT`, so that one key is pointed at `/tmp` and restored the
+section reads a real stack off the stacks folder, so `STORE_ROOT` is pointed at `/tmp` and restored the
 same way `record.php` does; `registry_live.php` is `releasenotes_live.php`'s sibling for the same
 plan — opt-in behind `STAXX_LIVE_REGISTRY=1`, needs no config keys, and proves a real `304` against
 a real registry plus that the digest matches what the docker CLI reports, for a Hub, a ghcr and an
@@ -125,7 +125,7 @@ out to do — regenerate it as part of running the suites rather than as a separ
 forgets, and never hand-edit it, since the next run overwrites it. It refuses to write anything from
 a run that reported failures;
 `detail.php` covers PLAN_84 Phase 2's resolver — what the server can find out about a stack's icon,
-description, category, author and links — and needs `STACK_ROOT` pointed at `/tmp/zzdetail-root`
+description, category, author and links — and needs `STORE_ROOT` pointed at `/tmp/zzdetail-store`
 and `IMAGE_LOOKUP` forced to `"false"`, both refused-without like every other key here; forcing the
 network setting off, rather than merely not needing it, is what keeps this suite from ever touching
 the network at all, since every fixture image is fictional and local inspect always then comes back
@@ -136,12 +136,13 @@ conflict honestly labelled by its real source, and no catalogue or template valu
 `stated` — asserted as one invariant over every case's output, alongside every value passing the
 schema's own pattern;
 `links.php` covers
-what happens when a stack folder holds a symlink, and needs `STACK_ROOT` pointed at `/tmp/b1-root`
-for the run because /boot is vfat and cannot hold one; `autostart.php` covers the bridge to Unraid's
-boot-start list, and points `STAXX_AUTOSTART_FILE` at `/tmp` so the real one is never touched. Each
-file's header gives the exact commands. `files.php`, `links.php` and `record.php` all point `ARCHIVE_ROOT`
-(the config key for where a removed stack's zip goes) at a `/tmp` folder, the same way, and each
-refuses to run without it — leaving it out is a first-line abort, not a wrong answer.
+what happens when a stack folder holds a symlink, and needs `STORE_ROOT` pointed at `/tmp/b1-store`
+for the run because a store left on flash is vfat and cannot hold one; `autostart.php` covers the
+bridge to Unraid's boot-start list, and points `STAXX_AUTOSTART_FILE` at `/tmp` so the real one is
+never touched. Each file's header gives the exact commands. `files.php`, `links.php` and
+`record.php` all point `STORE_ROOT` (the one config key the stacks folder and the archive folder
+both derive from) at a `/tmp` folder, the same way, and each refuses to run without it — leaving it
+out is a first-line abort, not a wrong answer.
 
 `validate_schema.py` has no runner or framework. It prints one line per case and exits non-zero on
 failure; its negative cases (what the schema must *reject*) matter more than the positive ones.
@@ -231,8 +232,10 @@ fragile.
 A stack is **a directory containing a compose file, and nothing else**. No database, no index, no
 metadata sidecar. Drop a compose file in a folder and it is a stack; delete the folder and it is
 gone. The compose file is the source of truth, so anything kept alongside it is a second copy that
-can disagree with it. Root defaults to `/boot/config/plugins/staxx/stacks`, overridable via
-`STACK_ROOT`.
+can disagree with it. Stacks live at `<store>/stacks`, derived from the one `STORE_ROOT` setting —
+which ships **blank**, meaning nobody has chosen where StaXX keeps its data yet. Blank is not a
+default to fall back from: `staxx_stack_root()` and `staxx_archive_root()` both return `''`, and
+`staxx_store_ready()` is the gate every call site ahead of a derived folder checks.
 
 Stacks self-group by `com.docker.compose.project`, the label compose stamps on every container it
 creates. Containers without it (Unraid templates, hand-created) collect under `''`.

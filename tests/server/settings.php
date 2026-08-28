@@ -31,8 +31,8 @@ $keys = staxx_settings_keys();
 // added, which means it fails for the one reason that is never interesting
 // while proving nothing about WHICH keys are there — this list is the thing
 // worth asserting, and a key disappearing from it is a real regression.
-foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STACK_ROOT', 'ARCHIVE_ROOT',
-          'STORAGE_CHOICE', 'ICON_FETCH', 'IMAGE_LOOKUP', 'SHELL_ENABLED',
+foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STORE_ROOT',
+          'ICON_FETCH', 'IMAGE_LOOKUP', 'SHELL_ENABLED',
           'SHELL_WARNED', 'HUB_USER', 'HUB_TOKEN', 'UPDATE_CHECK',
           'UPDATE_CHECK_TIME', 'UPDATE_MODE', 'UPDATE_DELAY_HOURS',
           'UPDATE_WINDOW', 'UPDATE_WINDOW_START', 'UPDATE_WINDOW_END',
@@ -49,6 +49,23 @@ ok('read returns exactly the allowlisted keys',
    implode(',', array_diff(array_keys($read), array_keys($keys)))
    . '|' . implode(',', array_diff(array_keys($keys), array_keys($read))));
 
+/* ------------------------------------------------- the derived folders ---- */
+// staxx_stack_root() and staxx_archive_root() no longer read a setting of
+// their own — they derive from STORE_ROOT, read once for the whole box. What
+// this box actually has right now decides which of the two shapes gets
+// proved: blank means neither folder is knowable yet, and both must say so
+// by returning '' rather than guessing at a flash-drive default the way the
+// old fallback did; chosen means both derive cleanly underneath it.
+if (staxx_store_ready()) {
+  $store = staxx_store_root();
+  ok('a chosen store is not blank', $store !== '');
+  ok('the stacks folder derives as <store>/stacks', staxx_stack_root() === $store.'/stacks');
+  ok('the archive folder derives as <store>/archives', staxx_archive_root() === $store.'/archives');
+} else {
+  ok('an unchosen store leaves the stacks folder blank', staxx_stack_root() === '');
+  ok('an unchosen store leaves the archive folder blank', staxx_archive_root() === '');
+}
+
 /* --------------------------------------------------------- validator ---- */
 
 // Validated directly, with no write involved — staxx_settings_validate()
@@ -57,13 +74,13 @@ ok('read returns exactly the allowlisted keys',
 $err = '';
 $badRoots = ['', '..', 'relative/path', '/', '/etc', '/mnt/../etc'];
 foreach ($badRoots as $bad) {
-  $v = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], $bad, $err);
-  ok('rejects STACK_ROOT '.var_export($bad, true), $v === '' && $err !== '', $err);
+  $v = staxx_settings_validate('STORE_ROOT', $keys['STORE_ROOT'], $bad, $err);
+  ok('rejects STORE_ROOT '.var_export($bad, true), $v === '' && $err !== '', $err);
 }
 
 $err = '';
-$v = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], '/mnt/user"quote', $err);
-ok('rejects a STACK_ROOT containing a quote', $v === '' && $err !== '', $err);
+$v = staxx_settings_validate('STORE_ROOT', $keys['STORE_ROOT'], '/mnt/user"quote', $err);
+ok('rejects a STORE_ROOT containing a quote', $v === '' && $err !== '', $err);
 
 $err = '';
 $v = staxx_settings_validate('HEADER_MENU', $keys['HEADER_MENU'], 'yes', $err);
@@ -79,15 +96,15 @@ ok('rejects ICON_FETCH ""', $v === '' && $err !== '', $err);
 // next reboot, and the validator now refuses it — see the cases below.
 $err  = '';
 $good = '/mnt/user/appdata/zzb1-settings-test-'.getmypid();
-$v    = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], $good, $err);
-ok('accepts a STACK_ROOT under a real share whose parent exists', $v === $good, $err);
+$v    = staxx_settings_validate('STORE_ROOT', $keys['STORE_ROOT'], $good, $err);
+ok('accepts a STORE_ROOT under a real share whose parent exists', $v === $good, $err);
 
 // The refusal staxx_path_in_memory() exists for. Such a path looks entirely
 // normal and is writable right now, which is exactly why nothing else in the
 // validator can catch it: the loss happens at the next reboot.
 $err = '';
-$v = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], '/mnt/zzb1-notashare', $err);
-ok('refuses a STACK_ROOT that would land on a filesystem living in memory',
+$v = staxx_settings_validate('STORE_ROOT', $keys['STORE_ROOT'], '/mnt/zzb1-notashare', $err);
+ok('refuses a STORE_ROOT that would land on a filesystem living in memory',
    $v === '' && strpos($err, 'lives in memory') !== false, $err);
 
 ok('/mnt itself is reported as living in memory', staxx_path_in_memory('/mnt'));
@@ -102,35 +119,51 @@ if (is_dir('/mnt/disks')) {
   echo "SKIP   /mnt/disks case — Unassigned Devices is not installed on this box\n";
 }
 
-// The archive folder shares every rule above, plus one of its own: a zip
-// inside the stacks tree would be read back as a stack or a folder.
-$err = '';
-$v = staxx_settings_validate('ARCHIVE_ROOT', $keys['ARCHIVE_ROOT'], staxx_stack_root(), $err);
-ok('rejects an ARCHIVE_ROOT that IS the stacks folder', $v === '' && $err !== '', $err);
-$err = '';
-$v = staxx_settings_validate('ARCHIVE_ROOT', $keys['ARCHIVE_ROOT'],
-                             staxx_stack_root().'/archives', $err);
-ok('rejects an ARCHIVE_ROOT inside the stacks folder', $v === '' && $err !== '', $err);
-$err  = '';
-// Under a real share, not directly under /mnt: see the STACK_ROOT cases above.
-$good = '/mnt/user/appdata/zzb1-archive-test-'.getmypid();
-$v = staxx_settings_validate('ARCHIVE_ROOT', $keys['ARCHIVE_ROOT'], $good, $err);
-ok('accepts an ARCHIVE_ROOT outside it', $v === $good, $err);
+// One key now, so the old two-key overlap ("ARCHIVE_ROOT cannot be the
+// stacks folder" and its mirror) is gone. What replaces it: a PROPOSED new
+// store must not be, or sit inside, the CURRENT store's own stacks or
+// archives folder — nesting it there is how an archive zip gets read back
+// as a stack, or a stack folder gets read back as an archive.
+//
+// Proven against whatever this box's real current store already is —
+// staxx_cfg() memoises on first read (staxx_settings_read() above already
+// triggered it), so a save made from inside this same process can never
+// change what staxx_store_root() reports for the rest of the run; the only
+// honest "current store" to test against is the one this process started
+// with. staxx_store_ready() is the guard: on a fresh box where STORE_ROOT
+// ships blank and nothing has chosen one yet, there is no current store to
+// collide with, and these cases are skipped rather than faked.
+if (staxx_store_ready()) {
+  $err = '';
+  $v = staxx_settings_validate_path('STORE_ROOT', staxx_stack_root(), $err);
+  ok('rejects a new store that IS the current stacks folder', $v === '' && $err !== '', $err);
 
-// The same rule in the other direction: a stacks folder must not be the
-// archive folder, or sit inside it, or an old zip would be read back as a
-// stack the moment it landed there.
-$err = '';
-$v = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], staxx_archive_root(), $err);
-ok('rejects a STACK_ROOT that IS the archive folder', $v === '' && $err !== '', $err);
-$err = '';
-$v = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'],
-                             staxx_archive_root().'/nested', $err);
-ok('rejects a STACK_ROOT inside the archive folder', $v === '' && $err !== '', $err);
-$err  = '';
-$good = '/mnt/user/appdata/zzb1-stack-test-'.getmypid();
-$v = staxx_settings_validate('STACK_ROOT', $keys['STACK_ROOT'], $good, $err);
-ok('accepts a STACK_ROOT outside the archive folder', $v === $good, $err);
+  $err = '';
+  $v = staxx_settings_validate_path('STORE_ROOT', staxx_stack_root().'/nested', $err);
+  ok('rejects a new store nested inside the current stacks folder', $v === '' && $err !== '', $err);
+
+  $err = '';
+  $v = staxx_settings_validate_path('STORE_ROOT', staxx_archive_root(), $err);
+  ok('rejects a new store that IS the current archive folder', $v === '' && $err !== '', $err);
+
+  $err = '';
+  $v = staxx_settings_validate_path('STORE_ROOT', staxx_archive_root().'/nested', $err);
+  ok('rejects a new store nested inside the current archive folder', $v === '' && $err !== '', $err);
+
+  $err  = '';
+  $good = '/mnt/user/appdata/zzb1-settings-new-store-'.getmypid();
+  $v = staxx_settings_validate_path('STORE_ROOT', $good, $err);
+  ok('accepts a new store that sits beside the current one, not inside it', $v === $good, $err);
+} else {
+  echo "SKIP   the current-store overlap cases — no store is chosen on this box yet\n";
+
+  // With no store chosen at all there is nothing to collide with, so the
+  // refusal must not fire — an otherwise sensible path is accepted outright.
+  $err  = '';
+  $good = '/mnt/user/appdata/zzb1-settings-unchosen-'.getmypid();
+  $v = staxx_settings_validate_path('STORE_ROOT', $good, $err);
+  ok('accepts any sensible path when no store is chosen yet — nothing to overlap', $v === $good, $err);
+}
 
 foreach ($keys as $k => $spec) {
   if ($spec['type'] !== 'choice') continue;
@@ -140,14 +173,6 @@ foreach ($keys as $k => $spec) {
     ok('accepts '.$k.'='.$choice, $v === $choice, $err);
   }
 }
-
-// PLAN_68 Part B piece 4 — the three settled-state values are already proven
-// accepted by the generic choices loop just above; what is worth proving on
-// top is that nothing outside the three gets in, since a typo here would
-// silently create a fourth state the rest of the plugin does not know about.
-$err = '';
-$v = staxx_settings_validate('STORAGE_CHOICE', $keys['STORAGE_CHOICE'], 'later', $err);
-ok('rejects STORAGE_CHOICE "later"', $v === '' && $err !== '', $err);
 
 $err = '';
 $v = staxx_settings_validate('UPDATE_CHECK', $keys['UPDATE_CHECK'], 'hourly', $err);
@@ -216,60 +241,28 @@ ok('file is untouched by a refused save', file_get_contents($cfgFile) === $befor
 $tmpGlob = glob($cfgFile.'.tmp-*');
 ok('no temp file left behind after a refusal', $tmpGlob === [] || $tmpGlob === false);
 
-// A save that changes BOTH paths in the same request must be checked against
-// each other's NEW value, not the stale one still on disk — the per-key
-// validator alone compares each posted value against the other's old value,
-// which two new paths that only overlap each other would sail through.
-//
-// The nested folders are created for real first, and every refusal below
-// asserts on the MESSAGE. Without both, these cases pass for the wrong
-// reason: a path whose parent does not exist is refused by the older
-// "that folder does not exist" rule long before the overlap check is
-// reached, and a test that only asks "was it refused?" cannot tell the two
-// apart.
-$pairStack  = '/mnt/user/appdata/zzb1-pair-stack-'.getmypid();
-$pairNested = $pairStack.'/archive';
-@mkdir($pairNested, 0755, true);
-$overlapMsg = 'cannot be the same, or sit inside one another';
-
-$before = file_get_contents($cfgFile);
+// One key now, so the old "two paths posted together must be checked against
+// each other's NEW value" case is gone — there is only ever one path in a
+// single save, and it is checked against the on-disk current store, proven
+// above. What is still worth proving here is that a genuine save to a fresh,
+// non-overlapping location actually succeeds and reaches the file.
+$pairOkStore = '/mnt/user/appdata/zzb1-settings-save-store-'.getmypid();
 $err = ''; $reload = null; $saved = null;
-$okPair = staxx_settings_save(['STACK_ROOT' => $pairStack, 'ARCHIVE_ROOT' => $pairNested], $err, $reload, $saved);
-ok('save refuses a new ARCHIVE_ROOT nested inside a new STACK_ROOT', !$okPair, $err);
-ok('...and refuses it for the overlap, not for a missing folder',
-   strpos($err, $overlapMsg) !== false, $err);
-ok('file is untouched by that refused pair save', file_get_contents($cfgFile) === $before);
-
-$pairArchive = '/mnt/user/appdata/zzb1-pair-archive-'.getmypid();
-$pairNested2 = $pairArchive.'/stacks';
-@mkdir($pairNested2, 0755, true);
-
-$before = file_get_contents($cfgFile);
-$err = ''; $reload = null; $saved = null;
-$okPair2 = staxx_settings_save(['ARCHIVE_ROOT' => $pairArchive, 'STACK_ROOT' => $pairNested2], $err, $reload, $saved);
-ok('save refuses a new STACK_ROOT nested inside a new ARCHIVE_ROOT', !$okPair2, $err);
-ok('...and refuses that one for the overlap too',
-   strpos($err, $overlapMsg) !== false, $err);
-ok('file is untouched by the reverse refused pair save', file_get_contents($cfgFile) === $before);
-
-$pairOkStack   = '/mnt/user/appdata/zzb1-pair-ok-stack-'.getmypid();
-$pairOkArchive = '/mnt/user/appdata/zzb1-pair-ok-archive-'.getmypid();
-$err = ''; $reload = null; $saved = null;
-$okPair3 = staxx_settings_save(['STACK_ROOT' => $pairOkStack, 'ARCHIVE_ROOT' => $pairOkArchive], $err, $reload, $saved);
-ok('save accepts both paths changed at once when they do not overlap', $okPair3, $err);
+$okStore = staxx_settings_save(['STORE_ROOT' => $pairOkStore], $err, $reload, $saved);
+ok('save accepts a fresh, non-overlapping data store', $okStore, $err);
+ok('...and the new value comes back in $saved', ($saved['STORE_ROOT'] ?? '') === $pairOkStore);
+// STORE_ROOT is one of the three page-affecting keys (see staxx_settings_save()'s
+// own comment) — changing it must ask for a reload, the same as HEADER_MENU
+// or TAKEOVER_DOCKER_TAB.
+ok('changing STORE_ROOT asks for a reload', $reload === true, $err);
 
 // Cleared on the way out rather than here. The accepted save above leaves
-// STACK_ROOT naming a throwaway path for the rest of this process — staxx_cfg()
+// STORE_ROOT naming a throwaway path for the rest of this process — staxx_cfg()
 // memoises, so it cannot be put back mid-run — and the folder gets created on
 // demand by whatever asks for it next. Removing it inline just means it comes
-// straight back. Every one of these is empty, so rmdir is the safe call: it
-// refuses outright if anything unexpected turns out to be inside.
-register_shutdown_function(function () use (
-  $pairStack, $pairNested, $pairArchive, $pairNested2, $pairOkStack, $pairOkArchive
-) {
-  foreach ([$pairNested, $pairStack, $pairNested2, $pairArchive,
-            $pairOkStack, $pairOkArchive] as $d) @rmdir($d);
-});
+// straight back. It is empty, so rmdir is the safe call: it refuses outright
+// if anything unexpected turns out to be inside.
+register_shutdown_function(function () use ($pairOkStore) { @rmdir($pairOkStore); });
 
 // Worth knowing when reading a failure here: staxx_cfg() caches the parsed
 // config in a per-request static, and this whole file is one request. So the
@@ -300,19 +293,15 @@ ok('changing TAKEOVER_DOCKER_TAB asks for a reload', $reload === true, $err);
 // function restores the original file regardless.
 staxx_settings_save(['TAKEOVER_DOCKER_TAB' => $after['TAKEOVER_DOCKER_TAB'] ?? 'false'], $err, $reload, $saved);
 
-/* ------------------------------------ where the stacks may NOT live -------
- * The stacks folder is allowed on a pool or inside a share, and nowhere else
+/* ------------------------------------ where the data store may NOT live ---
+ * The data store is allowed on a pool or inside a share, and nowhere else
  * under /mnt. Refused in the validator rather than only discouraged in the
  * chooser, because every saved value comes through here whatever route it
- * took.
+ * took. One key now, so this rule applies unconditionally — there is no
+ * second, laxer key (the old ARCHIVE_ROOT) that used to skip it.
  *
  * Read-only cases: each calls the validator directly and writes nothing, so
- * none of these touch the real config.
- *
- * ARCHIVE_ROOT deliberately keeps all of these, which is why it is asserted
- * rather than left implied — an unassigned drive is a reasonable home for zips
- * of removed stacks, and sharing one function with STACK_ROOT must not quietly
- * impose the stricter rule on it. */
+ * none of these touch the real config. */
 
 $refused = [
   '/mnt/disk3/stacks'        => 'a single array disk',
@@ -323,28 +312,22 @@ $refused = [
 ];
 foreach ($refused as $path => $what) {
   $err = '';
-  $got = staxx_settings_validate_path('STACK_ROOT', $path, $err);
-  ok('the stacks folder is refused on '.$what.' ('.$path.')',
+  $got = staxx_settings_validate_path('STORE_ROOT', $path, $err);
+  ok('the data store is refused on '.$what.' ('.$path.')',
      $got === '' && $err !== '', $err);
   // A refusal has to say where to go instead, not just "no".
   ok('...and the refusal names somewhere to put it instead',
      strpos($err, 'share') !== false || strpos($err, 'pool') !== false, $err);
 }
 
-// The same path, as an archive folder, must NOT hit the new rule. It may still
-// be refused for an older reason (a parent that does not exist on this box),
-// so what is asserted is the absence of THIS refusal, not blanket acceptance.
-$err = '';
-staxx_settings_validate_path('ARCHIVE_ROOT', '/mnt/disks/mydrive/staxx-archives', $err);
-ok('an archive folder is not caught by the stacks-only rule',
-   strpos($err, 'unassigned drive') === false, $err);
-
-// The paths that must keep working, so the refusals cannot have been written
-// too broadly. The second is wherever this box actually keeps its stacks.
-foreach (['/mnt/user/appdata/staxx-stacks', staxx_stack_root()] as $good) {
+// The paths that must keep working, so the refusals above cannot have been
+// written too broadly. Deliberately NOT this box's real current stack root —
+// that now trips the overlap refusal proven earlier instead, for an entirely
+// different reason, and would make this case mean the wrong thing.
+foreach (['/mnt/user/appdata/staxx'] as $good) {
   $err = '';
   ok('still accepted: '.$good,
-     staxx_settings_validate_path('STACK_ROOT', $good, $err) !== '', $err);
+     staxx_settings_validate_path('STORE_ROOT', $good, $err) !== '', $err);
 }
 
 /* The near misses. "disk" with no number is a share name; a share called
@@ -355,7 +338,7 @@ foreach (['/mnt/user/appdata/staxx-stacks', staxx_stack_root()] as $good) {
  * parent-must-exist check on any given box. */
 foreach (['/mnt/user/disk/x', '/mnt/user/disks-archive/x', '/mnt/user/remotes-old/x'] as $good) {
   $err = '';
-  staxx_settings_validate_path('STACK_ROOT', $good, $err);
+  staxx_settings_validate_path('STORE_ROOT', $good, $err);
   ok('a share whose name merely starts like a disk is not refused for it: '.$good,
      strpos($err, 'no redundancy of its own') === false
      && strpos($err, 'missing at the next boot') === false, $err);

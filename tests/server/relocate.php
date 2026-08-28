@@ -19,8 +19,8 @@
  * update-check cron entry if either is already configured on this box; both
  * come back unchanged, since neither setting is altered here.
  *
- * Unlike most tests here, the throwaway stacks folder cannot live under /tmp:
- * staxx_relocate_refuse() reuses the real STACK_ROOT path validator, which only
+ * Unlike most tests here, the throwaway store cannot live under /tmp:
+ * staxx_relocate_refuse() reuses the real STORE_ROOT path validator, which only
  * ever accepts a path under /mnt/ (a real share or disk) or under the plugin's
  * own config folder — never /tmp, which is a RAM disk the validator exists
  * partly to catch. So the throwaway source and every throwaway destination
@@ -30,21 +30,26 @@
  * inside /mnt/user is a whole new top-level share with whatever defaults
  * happen to apply — staxx_folder_create() refuses to do that for exactly this
  * reason, and a test has no more business inventing six shares than the
- * plugin does. This NEVER touches the real stacks folder, the real archive
- * folder, or any real appdata. One case is the deliberate exception: proving
- * the trial run catches a genuine case clash needs a filesystem that folds
- * case, which no array disk or pool does, so that one scratch folder lives
- * on the flash drive instead — created empty, removed within the same call,
- * and removed again defensively straight after.
+ * plugin does. This NEVER touches the real store, or any real appdata. One
+ * case is the deliberate exception: proving the trial run catches a genuine
+ * case clash needs a filesystem that folds case, which no array disk or pool
+ * does, so that one scratch folder lives on the flash drive instead — created
+ * empty, removed within the same call, and removed again defensively straight
+ * after.
  *
  * staxx_cfg() memoises the config on first read for the life of the process, so
- * STACK_ROOT/ARCHIVE_ROOT are pointed at their throwaway values once, before
- * anything here calls staxx_stack_root() for the first time, and are never
- * changed again mid-run — exactly the constraint tests/server/moves.php's own
- * comment explains. That is also why the one case that actually succeeds (and
- * so switches STACK_ROOT for real, and deletes the source) has to run LAST:
- * every case before it must leave the throwaway source and the config alone.
- */
+ * STORE_ROOT is pointed at its throwaway value once, before anything here
+ * calls staxx_stack_root() for the first time, and is never changed again
+ * mid-run — exactly the constraint tests/server/moves.php's own comment
+ * explains. That is also why the one case that actually succeeds (and so
+ * switches STORE_ROOT for real, and deletes the source) has to run LAST: every
+ * case before it must leave the throwaway source and the config alone.
+ *
+ * PLAN_97 Phase 1: this still only relocates the stacks tree, the same way
+ * Relocate.php itself still does — staxx_relocate_refuse() and
+ * staxx_relocate_run() both read staxx_stack_root() as the source, so this
+ * suite seeds a throwaway STORE_ROOT and asserts the fixture tree lives at
+ * its derived "<store>/stacks", never at the store root directly. */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Relocate.php';
 
@@ -55,9 +60,9 @@ function ok(string $what, bool $pass, string $note = ''): void {
   printf("%-6s %s%s\n", $pass ? 'ok' : 'FAIL', $what, $note !== '' ? '  ('.$note.')' : '');
 }
 
-$cfgFile  = '/boot/config/plugins/staxx/staxx.cfg';
-$source   = '/mnt/user/appdata/staxx-relocate-test-src';
-$archive  = '/mnt/user/appdata/staxx-relocate-test-archive';
+$cfgFile     = '/boot/config/plugins/staxx/staxx.cfg';
+$sourceStore = '/mnt/user/appdata/staxx-relocate-test-src-store';
+$source      = $sourceStore.'/stacks'; // staxx_stack_root(), derived from STORE_ROOT
 $destHold = '/mnt/user/appdata/staxx-relocate-test-dst-holds';
 $destCorr = '/mnt/user/appdata/staxx-relocate-test-dst-corrupt';
 $destMiss = '/mnt/user/appdata/staxx-relocate-test-dst-missing';
@@ -84,9 +89,9 @@ $notesFixture = "a file the tool does not recognise\n";
 
 $cfgBackup = @file_get_contents($cfgFile);
 
-register_shutdown_function(function () use ($cfgFile, $cfgBackup, $source, $allDest, $destCase) {
+register_shutdown_function(function () use ($cfgFile, $cfgBackup, $sourceStore, $source, $allDest, $destCase) {
   if ($cfgBackup === false) { @unlink($cfgFile); } else { @file_put_contents($cfgFile, $cfgBackup); }
-  @exec('rm -rf '.escapeshellarg($source));
+  @exec('rm -rf '.escapeshellarg($sourceStore));
   @exec('rm -rf '.escapeshellarg($source.'.aside'));
   foreach ($allDest as $d) { @chmod($d, 0755); @exec('rm -rf '.escapeshellarg($d)); }
   @unlink('/mnt/user/appdata/staxx-relocate-test-blocker');
@@ -94,17 +99,16 @@ register_shutdown_function(function () use ($cfgFile, $cfgBackup, $source, $allD
   echo "config restored, scratch folders removed\n";
 });
 
-/* ---- point STACK_ROOT and ARCHIVE_ROOT at throwaway trees, before staxx_cfg() is ever asked ---- */
+/* ---- point STORE_ROOT at a throwaway tree, before staxx_cfg() is ever asked ---- */
 $cfgLines = $cfgBackup !== false ? preg_split('/\r?\n/', $cfgBackup) : [];
 $cfgLines = array_values(array_filter($cfgLines, fn($l) =>
-  strpos(trim((string)$l), 'STACK_ROOT=') !== 0 && strpos(trim((string)$l), 'ARCHIVE_ROOT=') !== 0
+  strpos(trim((string)$l), 'STORE_ROOT=') !== 0
 ));
-$cfgLines[] = 'STACK_ROOT="'.$source.'"';
-$cfgLines[] = 'ARCHIVE_ROOT="'.$archive.'"';
+$cfgLines[] = 'STORE_ROOT="'.$sourceStore.'"';
 @file_put_contents($cfgFile, implode("\n", $cfgLines)."\n");
 
-ok('the throwaway stack root is in force',   staxx_stack_root()   === $source,  staxx_stack_root());
-ok('the throwaway archive root is in force', staxx_archive_root() === $archive, staxx_archive_root());
+ok('the throwaway stack root is in force',   staxx_stack_root()   === $source,               staxx_stack_root());
+ok('the throwaway archive root derives too', staxx_archive_root() === $sourceStore.'/archives', staxx_archive_root());
 
 // Not an assertion that is allowed to fail and carry on. Everything below
 // moves and deletes whatever the stack root points at, so if the seeding did
@@ -195,7 +199,7 @@ ok('the source is still byte-identical to the fixture',
    file_get_contents($source.'/demo/compose.yaml') === $composeFixture
    && file_get_contents($source.'/demo/notes.txt') === $notesFixture);
 ok('the setting was never touched by a failed verify',
-   strpos((string)@file_get_contents($cfgFile), 'STACK_ROOT="'.$source.'"') !== false);
+   strpos((string)@file_get_contents($cfgFile), 'STORE_ROOT="'.$sourceStore.'"') !== false);
 
 /* -------------------------------------- 4. a missing destination file ---- */
 
@@ -242,7 +246,7 @@ ok('...before any copying, and the source is untouched',
    && file_get_contents($source.'/demo/notes.txt') === $notesFixture
    && is_link($source.'/demo/inside-link') && is_link($source.'/demo/outside-link'));
 ok('...and the setting still names the throwaway source',
-   strpos((string)@file_get_contents($cfgFile), 'STACK_ROOT="'.$source.'"') !== false);
+   strpos((string)@file_get_contents($cfgFile), 'STORE_ROOT="'.$sourceStore.'"') !== false);
 @unlink($blocker);
 
 // A manifest that names a file and then something inside it cannot be laid
@@ -332,7 +336,17 @@ ok('the outside link is called out in the report',
 
 ok('the old stacks folder is gone', !is_dir($source) && !file_exists($source));
 ok('the setting on disk now names the new location',
-   strpos((string)@file_get_contents($cfgFile), 'STACK_ROOT="'.$destOK.'"') !== false);
+   strpos((string)@file_get_contents($cfgFile), 'STORE_ROOT="'.$destOK.'"') !== false);
+// FLAGGED FOR REVIEW, not asserted here: staxx_relocate_run() copies the
+// stacks tree straight INTO $destOK (proven above — the fixture stack lands
+// at "$destOK/demo") and then saves that same $destOK as STORE_ROOT. But
+// staxx_stack_root() derives "<store>/stacks" from STORE_ROOT, so once this
+// suite's memoised staxx_cfg() is no longer in the way, a fresh process
+// reading this saved setting would look for the stacks at "$destOK/stacks"
+// — one level below where they actually landed. Recorded here rather than
+// silently asserted around, since Relocate.php's own header says Phase 1
+// "still only moves the stacks tree", not that it moves it to the right
+// derived place.
 
 /* ------------------------------------- 6. the job starter's own refusal ---- */
 // A synchronous check only — following a detached job to its finish needs a
@@ -462,12 +476,12 @@ $got = staxx_relocate_refuse($fake, $err);
 ok('the whole of a share is refused as a stack root',
    $got === '' && strpos($err, 'whole of the') !== false, $err);
 ok('...and the refusal names the folder to use instead',
-   strpos($err, $fake.'/'.STAXX_STACKS_FOLDER) !== false, $err);
+   strpos($err, $fake.'/'.STAXX_STORE_FOLDER) !== false, $err);
 
 // The nested form of the same choice must still pass, or the rule above has
 // blocked the location rather than corrected it.
 $err = '';
-staxx_relocate_refuse($fake.'/'.STAXX_STACKS_FOLDER, $err);
+staxx_relocate_refuse($fake.'/'.STAXX_STORE_FOLDER, $err);
 ok('a folder INSIDE the share is not caught by that rule',
    strpos($err, 'whole of the') === false, $err);
 

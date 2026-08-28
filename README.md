@@ -384,8 +384,7 @@ Everything here has a switch on the settings page, so this is reference only. Th
 
 | Key | Default | What it does |
 |---|---|---|
-| `STACK_ROOT` | `/boot/config/plugins/staxx/stacks` | Where your stacks are kept. StaXX offers to move them off the flash drive for you. |
-| `ARCHIVE_ROOT` | *(blank)* | Where a removed stack's zip goes. Blank means a folder under appdata. |
+| `STORE_ROOT` | *(blank)* | The one folder StaXX keeps everything in. Your stacks sit in `stacks` inside it, and the zip of a removed stack in `archives`. Blank means you have not chosen yet, and StaXX asks before it puts anything anywhere. |
 
 **Where StaXX appears**
 

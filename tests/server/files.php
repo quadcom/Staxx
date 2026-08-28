@@ -1,21 +1,19 @@
 <?php
 /* The companion-file helpers, checked against the real installed Stacks.php.
  *
- * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STACK_ROOT
- * pointed at /tmp/b1-root and ARCHIVE_ROOT at /tmp/b1-archives, the same way
- * tests/server/links.php does — STACK_ROOT because the permission case near
- * the end has to land on a real filesystem, not /boot's vfat, which takes its
- * mode from the mount and would pass that case for the wrong reason; the
- * caller sets both and puts the config back:
+ * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STORE_ROOT
+ * pointed at /tmp/b1-store, the same way tests/server/links.php does — a real
+ * filesystem, not /boot's vfat, which takes its mode from the mount and would
+ * pass the permission case near the end for the wrong reason; the caller sets
+ * it and puts the config back:
  *
  *     pscp tests/server/files.php root@<box>:/tmp/
  *     plink … '
  *       CFG=/boot/config/plugins/staxx/staxx.cfg
  *       cp $CFG /tmp/cfg.bak
- *       sed -i "s#^STACK_ROOT=.*#STACK_ROOT=\"/tmp/b1-root\"#" $CFG
- *       grep -q "^ARCHIVE_ROOT=" $CFG \
- *         && sed -i "s#^ARCHIVE_ROOT=.*#ARCHIVE_ROOT=\"/tmp/b1-archives\"#" $CFG \
- *         || echo "ARCHIVE_ROOT=\"/tmp/b1-archives\"" >> $CFG
+ *       grep -q "^STORE_ROOT=" $CFG \
+ *         && sed -i "s#^STORE_ROOT=.*#STORE_ROOT=\"/tmp/b1-store\"#" $CFG \
+ *         || echo "STORE_ROOT=\"/tmp/b1-store\"" >> $CFG
  *       php /tmp/files.php; RC=$?
  *       cp /tmp/cfg.bak $CFG
  *       exit $RC
@@ -41,7 +39,7 @@ function ok(string $what, bool $pass, string $note = ''): void {
   printf("%-6s %s%s\n", $pass ? 'ok' : 'FAIL', $what, $note !== '' ? '  ('.$note.')' : '');
 }
 
-if (staxx_stack_root() !== '/tmp/b1-root') {
+if (staxx_stack_root() !== '/tmp/b1-store/stacks') {
   echo "FAIL   the temporary stack root is not in place (got ".staxx_stack_root().")\n";
   exit(1);
 }
@@ -82,7 +80,7 @@ ok('saves a new stack', staxx_save_stack($saveRel, $saveYaml, $err), $err);
 $saveFile = $saveDir.'/compose.yaml';
 ok('the file exists', file_exists($saveFile));
 ok('the content landed byte-for-byte', file_get_contents($saveFile) === $saveYaml);
-// The stack root is pinned at /tmp/b1-root for this run (a real filesystem,
+// The stack root is pinned at /tmp/b1-store/stacks for this run (a real filesystem,
 // not /boot's vfat, which ignores chmod entirely) — precisely so this case
 // means something rather than passing for the wrong reason.
 ok('it is not world-readable', (fileperms($saveFile) & 0777) === 0600,
@@ -201,8 +199,8 @@ foreach ((array)$extras as $e) {
 ok('extras refuses a missing stack', staxx_stack_extras('nosuchstack', $err) === null, $err);
 
 /* ---------------------------------------------------------- share-perms -- */
-// ARCHIVE_ROOT is pinned at /tmp for this whole file, so every archive case
-// below exercises staxx_share_perms() as a no-op by construction — a test
+// The archive folder is pinned under /tmp for this whole file, so every
+// archive case below exercises staxx_share_perms() as a no-op by construction — a test
 // asserting nobody:users ownership here would never be able to fail. What
 // IS meaningful without touching /mnt is the guard itself: a path outside
 // /mnt/ must come back untouched.
@@ -222,7 +220,7 @@ unlink($permFile);
 // first case needs, so there is no reason to build a second fixture for it.
 
 $archiveRoot = staxx_archive_root();
-if ($archiveRoot !== '/tmp/b1-archives') {
+if ($archiveRoot !== '/tmp/b1-store/archives') {
   echo "FAIL   the temporary archive root is not in place (got $archiveRoot)\n";
   exit(1);
 }
@@ -313,7 +311,7 @@ if (basename($collArchive) !== basename($claimed)
 ok('the stack folder is gone', !is_dir($collDir));
 
 /* An archive folder that cannot even be created refuses, leaving the stack
- * exactly as it was. staxx_archive_root() is fixed to /tmp/b1-archives for
+ * exactly as it was. staxx_archive_root() is fixed to /tmp/b1-store/archives for
  * this whole run (see the header), so the folder itself is swapped out for a
  * plain file to make that path uncreatable, then put back afterwards. */
 
@@ -355,9 +353,9 @@ ok('newest first', ($list[0]['mtime'] ?? 0) >= ($list[count($list) - 1]['mtime']
 /* ------------------------------------- PLAN_68 Part C: cannot look vs nothing -- */
 // staxx_scan_stacks() must never let "the root could not be read" come back
 // looking like "the root has nothing in it" — see PLAN_68 Part C. Run last,
-// in this file, because it already owns a real scratch STACK_ROOT it can
+// in this file, because it already owns a real scratch STORE_ROOT it can
 // safely take away and give back; tests/server/updates.php and updaterun.php
-// cannot do the same without either touching Adrian's real config (STACK_ROOT
+// cannot do the same without either touching Adrian's real config (STORE_ROOT
 // has no env-var override, unlike STAXX_UPDATE_STATE/STAXX_AUTOSTART_FILE) or
 // spawning a subprocess, and this file already has everything both of those
 // would need to fake.

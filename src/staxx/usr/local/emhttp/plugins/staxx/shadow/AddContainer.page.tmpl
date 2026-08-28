@@ -136,7 +136,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
   // never read on the decline link, which carries no such field at all.
   $staxx_set_always = $staxx_convert && ($_GET['staxx_always'] ?? '') === '1';
 
-  if ($xmlTemplate === '') {
+  // PLAN_97 Phase 1: no data store means nowhere for a caught install to
+  // land — a catch with nowhere to put it fails somewhere much deeper and
+  // less explicably than just handing this back to Unraid. Treated exactly
+  // like CATCH_INSTALLS="false" for every route below, including the manual
+  // and edit-offer ones that do not otherwise consult that setting.
+  require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+  if (!staxx_store_ready()) {
+    $staxx_passthrough = true;
+  } elseif ($xmlTemplate === '') {
     // Add Container pressed by hand, with no CA install behind it at all.
     // Still answers to CATCH_INSTALLS=prompt below — there is just nothing
     // to name on the offer page in that case.
@@ -209,11 +217,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
   // than catching outright, on a first visit only ($staxx_convert is how a
   // second visit, after choosing to proceed, is told apart from a first).
   if (!$staxx_passthrough && !$staxx_show_edit_offer && !$staxx_convert && $staxx_offer_type !== '') {
-    // Reading the setting needs Defines.php, which nothing above this point
-    // loads — a request already on doubt (unknown type, vanished file) never
-    // reaches here, so it never loads it either, matching the file header's
-    // rule that nothing of ours runs on a pass-through.
-    require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+    // Defines.php is already loaded by the store-readiness check above —
+    // reaching here at all means that check passed, since it forces
+    // $staxx_passthrough = true otherwise.
     if ((staxx_cfg()['CATCH_INSTALLS'] ?? 'true') === 'prompt') {
       $staxx_show_edit_offer = true;
     }

@@ -12,7 +12,7 @@
  * removes its own stacks, all named "zzd1…" so they cannot collide with
  * review.php's "zzc1…" or files.php's "zzb1test", under whatever the stack
  * root is — same approach both of those already take, rather than pointing
- * STACK_ROOT anywhere special.
+ * STORE_ROOT anywhere special.
  *
  * MUST NEVER RUN DOCKER in the sense of a command that touches a real
  * container: nothing here calls stop, start, rename, rm or compose up/down

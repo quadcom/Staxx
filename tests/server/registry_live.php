@@ -18,7 +18,7 @@
  *     pscp tests/server/registry_live.php root@<box>:/tmp/
  *     plink … 'STAXX_LIVE_REGISTRY=1 php /tmp/registry_live.php'
  *
- * Needs NO config keys at all — no STACK_ROOT, no ARCHIVE_ROOT, no
+ * Needs NO config keys at all — no STORE_ROOT, no
  * STAXX_UPDATE_STATE. It creates no stacks, writes no state file and never
  * calls staxx_update_state_save() or any other function that records
  * anything. Every question it asks is read-only — a header-only manifest

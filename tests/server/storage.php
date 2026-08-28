@@ -9,14 +9,14 @@
  *
  * Prints one line per case and exits non-zero on any failure.
  *
- * NEVER touches /boot/config/shares or the real STACK_ROOT/ARCHIVE_ROOT
+ * NEVER touches /boot/config/shares or the real STORE_ROOT
  * setting — every fixture disks.ini and share .cfg lives under /tmp, passed
  * straight to staxx_storage_options()'s own $disksIni/$sharesDir parameters,
  * the same reasoning tests/server/watch.php gives for
  * staxx_watch_template_claims()'s directory argument. The one thing that
  * does have to be real is where each fixture pool's "existing top-level
  * folder" lives, because staxx_storage_options() calls is_dir() and the real
- * STACK_ROOT path validator on it — a memory-filesystem path would be
+ * STORE_ROOT path validator on it — a memory-filesystem path would be
  * (correctly) refused, and /tmp is exactly that. So each fixture pool's
  * folder is a fresh, uniquely-named scratch directory nested INSIDE the
  * real appdata share (/mnt/user/appdata/staxx-storage-test/...), never a

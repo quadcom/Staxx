@@ -67,30 +67,31 @@ register_shutdown_function(function () use ($scratch) {
   echo "scratch state removed\n";
 });
 
-/* ---------- STACK_ROOT, pointed at a throwaway tree before ANY include ----
+/* ---------- STORE_ROOT, pointed at a throwaway tree before ANY include ----
  * Section 6 below reads a stack off disk, and there is no env override for
- * the stack root, so the real cfg file is rewritten and put back on exit —
- * the same trick tests/server/moves.php uses. It has to happen up here,
- * before the first require: staxx_cfg() memoises on its first call, and any
- * plugin file included above this point would make that call. Nothing in
- * sections 0-5 reads a stack, so redirecting the root this early costs them
- * nothing. */
-$cfgFile  = '/boot/config/plugins/staxx/staxx.cfg';
-$testRoot = '/tmp/staxx-watch-test-root';
+ * the store, so the real cfg file is rewritten and put back on exit — the
+ * same trick tests/server/moves.php uses. It has to happen up here, before
+ * the first require: staxx_cfg() memoises on its first call, and any plugin
+ * file included above this point would make that call. Nothing in sections
+ * 0-5 reads a stack, so redirecting the root this early costs them nothing. */
+$cfgFile   = '/boot/config/plugins/staxx/staxx.cfg';
+$testStore = '/tmp/staxx-watch-test-store';
 $cfgBackup = @file_get_contents($cfgFile);
 
-register_shutdown_function(function () use ($cfgFile, $testRoot, $cfgBackup) {
+register_shutdown_function(function () use ($cfgFile, $testStore, $cfgBackup) {
   if ($cfgBackup === false) { @unlink($cfgFile); } else { @file_put_contents($cfgFile, $cfgBackup); }
-  @exec('rm -rf '.escapeshellarg($testRoot));
-  echo "STACK_ROOT restored\n";
+  @exec('rm -rf '.escapeshellarg($testStore));
+  echo "STORE_ROOT restored\n";
 });
 
-@exec('rm -rf '.escapeshellarg($testRoot));
-mkdir($testRoot, 0755, true);
+@exec('rm -rf '.escapeshellarg($testStore));
+mkdir($testStore, 0755, true);
 $cfgLines = $cfgBackup !== false ? preg_split('/\r?\n/', $cfgBackup) : [];
-$cfgLines = array_values(array_filter($cfgLines, fn($l) => strpos(trim((string)$l), 'STACK_ROOT=') !== 0));
-$cfgLines[] = 'STACK_ROOT="'.$testRoot.'"';
+$cfgLines = array_values(array_filter($cfgLines, fn($l) => strpos(trim((string)$l), 'STORE_ROOT=') !== 0));
+$cfgLines[] = 'STORE_ROOT="'.$testStore.'"';
 file_put_contents($cfgFile, implode("\n", $cfgLines)."\n");
+
+$testRoot = $testStore.'/stacks'; // staxx_stack_root(), derived
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Watch.php';
 

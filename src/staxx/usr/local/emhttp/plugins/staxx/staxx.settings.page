@@ -16,8 +16,8 @@ $plugin = 'staxx';
 $cfg    = parse_plugin_cfg($plugin);
 
 // Settings now live on the Stacks page itself, in a panel with an explanation
-// beside every control. This page is a signpost to it — except for the stack
-// directory below, which stays here on purpose; see the comment on that field.
+// beside every control. This page is a signpost to it — except for the data
+// store field below, which stays here on purpose; see the comment on it.
 // Both halves are the page's FILE BASENAME, not its Title: PageBuilder keys
 // every page by basename ($page['name'] = basename($entry, '.page')) and that
 // is what the URL segment is. The header button is StaXX.page, so /StaXX; the
@@ -64,11 +64,12 @@ _(Docker menu)_:
 > Only change this here if you cannot reach the settings panel in the app and need to put the
 > Docker menu back.
 
-_(Stack directory)_:
-: <input type="text" name="STACK_ROOT" value="<?=htmlspecialchars($cfg['STACK_ROOT'] ?? '')?>" spellcheck="false" <?=$nofill?>>
+_(Data store)_:
+: <input type="text" name="STORE_ROOT" value="<?=htmlspecialchars($cfg['STORE_ROOT'] ?? '')?>" spellcheck="false" <?=$nofill?>>
 
-> Only set this here if you have moved where stacks are stored by hand and the StaXX page can no
-> longer find them. The normal way to change it is the settings panel in the app.
+> This is the one folder where StaXX keeps everything — stacks, their archives and its own
+> settings. The normal way to set it is the panel in the app; only use this box if that page cannot
+> be reached.
 
 &nbsp;
 : <span class="buttons-spaced">
