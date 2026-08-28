@@ -16,12 +16,12 @@
  * filesystems that is already a copy and a delete with no gate in between,
  * which is exactly what this file exists to add.
  *
- * PLAN_97 Phase 1: this still only moves the stacks tree — everything below
- * reads and writes staxx_stack_root() alone. The data store also holds an
- * archives folder and, from Phase 4, StaXX's own settings and state; PLAN_97
- * Phase 3 is what teaches this file to move those alongside the stacks, so
- * a relocation actually moves the whole store rather than one piece of it.
- * Recorded here rather than left to look finished.
+ * PLAN_97 Phase 3: this moves the whole data store as one tree — the
+ * scan/trial/copy/verify machinery below knows nothing about stacks,
+ * archives or config specifically, so teaching it the store root instead of
+ * the stacks folder alone is what carries all three along for free. Phase 4
+ * adds StaXX's own settings and state to that same store, and needs no
+ * change here because of it.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License version 2,
@@ -45,8 +45,8 @@ define('STAXX_RELOCATE_LOADED', true);
 define('STAXX_STORE_FOLDER', 'staxx');
 
 /**
- * Is this a symlink's target reachable, and does it lie outside the stacks
- * tree? Answered only to note it in the report — the move never follows a
+ * Is this a symlink's target reachable, and does it lie outside the data
+ * store's tree? Answered only to note it in the report — the move never follows a
  * link either way, so this changes nothing about what gets copied, only
  * what the person is told about afterwards.
  *
@@ -69,7 +69,7 @@ function staxx_relocate_link_outside(string $linkDir, string $target, string $ro
  * relative path, "..", anywhere outside /mnt/ or the plugin's own config
  * folder, a missing parent, and a path that would land on a memory
  * filesystem and vanish at the next reboot. What is added here is specific
- * to a move: the destination must not be the current stacks folder, sit
+ * to a move: the destination must not be the current data store, sit
  * inside it, or contain it, and it must not already hold anything.
  *
  * Free space is deliberately not checked here — it depends on the measured
@@ -82,31 +82,17 @@ function staxx_relocate_refuse(string $destInput, string &$error, string &$notic
   $notice = '';
   $error  = '';
 
-  /* PLAN_97 Phase 1 refuses every relocation outright, and Phase 3 lifts this.
-   *
-   * Everything below still moves the stacks tree alone, but the setting it
-   * writes at the end is now STORE_ROOT — so a run would copy the stacks to
-   * the destination and then record that destination as the store, leaving
-   * StaXX looking one folder deeper, at <dest>/stacks, and finding nothing.
-   * Refused here rather than in the endpoint because both the live check and
-   * the run itself come through this one function, so neither can slip past.
-   */
-  $error = 'Moving the data store is not available in this build yet — it can move the stacks '
-         . 'but not the archives beside them, so it would leave the two apart. Set the location '
-         . 'on the settings panel instead.';
-  return '';
-
-  $source = staxx_stack_root();
+  $source = staxx_store_root();
 
   $norm = staxx_settings_validate_path('STORE_ROOT', $destInput, $error);
   if ($error !== '') return '';
 
   if ($norm === $source || strpos($norm, $source.'/') === 0) {
-    $error = 'The new location is the current stacks folder, or sits inside it. Choose somewhere else.';
+    $error = 'The new location is the current data store, or sits inside it. Choose somewhere else.';
     return '';
   }
   if (strpos($source, $norm.'/') === 0) {
-    $error = 'The new location would contain the current stacks folder, which would put the '
+    $error = 'The new location would contain the current data store, which would put the '
            . 'old folder inside the new one. Choose somewhere else.';
     return '';
   }
@@ -221,25 +207,25 @@ function staxx_relocate_share_layer_form(string $path): string {
 }
 
 /**
- * Walk the stacks folder and build a flat manifest of everything in it — not
- * just the stacks it recognises, but whatever else sits in the tree, so the
- * move can copy the whole thing wholesale. A directory, a file and a
- * symlink are recorded differently because they are verified differently: a
- * symlink is never opened, only its target string is kept.
+ * Walk the data store and build a flat manifest of everything in it — every
+ * file under stacks, archives and config alike, not just the ones StaXX
+ * recognises, so the move can copy the whole tree wholesale. A directory, a
+ * file and a symlink are recorded differently because they are verified
+ * differently: a symlink is never opened, only its target string is kept.
  *
  * Fails on an UNREADABLE tree, never on an empty one. An unmounted pool or
  * an array that has not started can look exactly like an empty folder from
  * here, and reading that as "there is nothing to move" would let the real
- * stacks folder vanish out from under it. A folder that genuinely has
- * nothing in it is not this case — it reads fine and comes back with an
- * empty manifest, which staxx_relocate_run() moves without complaint.
+ * store vanish out from under it. A folder that genuinely has nothing in it
+ * is not this case — it reads fine and comes back with an empty manifest,
+ * which staxx_relocate_run() moves without complaint.
  *
  * @return array<string, array{type:string, size:int, sha256:string, target:string}>|null
  */
 function staxx_relocate_scan(string $root, string &$error): ?array {
   $error = '';
   if (!is_dir($root)) {
-    $error = 'The stacks folder could not be found, so it could not be looked at. Nothing was moved.';
+    $error = 'The data store could not be found, so it could not be looked at. Nothing was moved.';
     return null;
   }
 
@@ -248,7 +234,7 @@ function staxx_relocate_scan(string $root, string &$error): ?array {
     if ($error !== '') return;
     $entries = @scandir($dir);
     if ($entries === false) {
-      $error = 'The stacks folder could not be read all the way through — a permission problem, '
+      $error = 'The data store could not be read all the way through — a permission problem, '
              . 'or a pool that is not actually mounted — so it could not be looked at properly. '
              . 'Nothing was moved.';
       return;
@@ -385,15 +371,46 @@ function staxx_relocate_trial(array $manifest, string $dest, string &$error): bo
 }
 
 /**
- * Copy the whole stacks tree to the new location, wholesale — every file the
- * tool understands and every file it does not, because a stack is a
- * directory and whatever else is in it has to travel too. A symlink is
- * recreated as a symlink pointing at the exact same text; it is never
- * followed, since that would turn a link the author wrote into a copy of
- * whatever it happens to point at, possibly enormous, possibly outside the
- * tree entirely.
+ * Report progress during a copy or verify pass without flooding the job log
+ * — every whole-percent change, or every 200 files if the percentage has not
+ * moved, whichever comes first. A store with an archive folder holding
+ * thousands of small zips must produce dozens of lines here, not thousands,
+ * since $log's lines are what somebody watches to know the run has not hung.
+ *
+ * $rel names the file just handled, relative to the store root, so its
+ * leading segment ("stacks", "archives" or "config") is what tells the
+ * reader which part of the store is currently being worked through — a raw
+ * file count means nothing on its own.
  */
-function staxx_relocate_copy_tree(string $src, string $dst, string &$error): bool {
+function staxx_relocate_progress(?callable $log, array &$progress, string $rel, string $verb): void {
+  if ($log === null || $progress['total'] <= 0) return;
+  $done = ++$progress['done'];
+  $pct  = (int)floor(($done * 100) / $progress['total']);
+  if ($pct === $progress['pct'] && $done % 200 !== 0) return;
+  $progress['pct'] = $pct;
+
+  $slash  = strpos($rel, '/');
+  $folder = $slash === false ? $rel : substr($rel, 0, $slash);
+  $log($verb.' '.$folder.', '.$pct.'% ('.$done.' of '.$progress['total'].' files).');
+}
+
+/**
+ * Copy the whole data store to the new location, wholesale — every file the
+ * tool understands and every file it does not, because a stack is a
+ * directory and whatever else is in it has to travel too, and the same goes
+ * for the archives and config folders beside it. A symlink is recreated as a
+ * symlink pointing at the exact same text; it is never followed, since that
+ * would turn a link the author wrote into a copy of whatever it happens to
+ * point at, possibly enormous, possibly outside the tree entirely.
+ *
+ * $rel is the path so far, relative to the store root, threaded through the
+ * recursion so progress reports can say which folder is currently being
+ * copied; $progress carries the running file count between calls and across
+ * the recursion, and defaults to a fresh, disabled counter so an existing
+ * call with no logger still works unchanged.
+ */
+function staxx_relocate_copy_tree(string $src, string $dst, string &$error, ?callable $log = null,
+                                   string $rel = '', array &$progress = ['done' => 0, 'total' => 0, 'pct' => -1]): bool {
   $error = '';
   if (!is_dir($dst) && !@mkdir($dst, 0755, true)) {
     $error = 'Could not create the folder "'.$dst.'".';
@@ -408,8 +425,9 @@ function staxx_relocate_copy_tree(string $src, string $dst, string &$error): boo
 
   foreach ($entries as $name) {
     if ($name === '.' || $name === '..') continue;
-    $from = $src.'/'.$name;
-    $to   = $dst.'/'.$name;
+    $from    = $src.'/'.$name;
+    $to      = $dst.'/'.$name;
+    $relPath = $rel === '' ? $name : $rel.'/'.$name;
 
     if (is_link($from)) {
       $target = @readlink($from);
@@ -420,13 +438,14 @@ function staxx_relocate_copy_tree(string $src, string $dst, string &$error): boo
       continue;
     }
     if (is_dir($from)) {
-      if (!staxx_relocate_copy_tree($from, $to, $error)) return false;
+      if (!staxx_relocate_copy_tree($from, $to, $error, $log, $relPath, $progress)) return false;
       continue;
     }
     if (!@copy($from, $to)) {
       $error = 'Could not copy "'.$name.'" to the new location.';
       return false;
     }
+    staxx_relocate_progress($log, $progress, $relPath, 'Copying');
   }
 
   return true;
@@ -439,11 +458,21 @@ function staxx_relocate_copy_tree(string $src, string $dst, string &$error): boo
  * must never be described as though it were. A file's content is rehashed
  * here; a symlink's target string is compared, not followed.
  *
+ * Nothing here is skipped or sampled — PLAN_97's decision, because an
+ * archive is the only copy of a removed stack and nothing lost there can be
+ * re-fetched the way a stack's own compose file sometimes could be. $log
+ * reports progress as it goes, since a large archive folder makes a full
+ * verify slow enough that a silent run would look hung.
+ *
  * @param array<string, array{type:string, size:int, sha256:string, target:string}> $manifest
  * @return string[] one line per problem found; empty means the copy verified clean
  */
-function staxx_relocate_verify(array $manifest, string $dst): array {
+function staxx_relocate_verify(array $manifest, string $dst, ?callable $log = null): array {
   $problems = [];
+
+  $total = 0;
+  foreach ($manifest as $info) if ($info['type'] === 'file') $total++;
+  $progress = ['done' => 0, 'total' => $total, 'pct' => -1];
 
   foreach ($manifest as $rel => $info) {
     $path = $dst.'/'.$rel;
@@ -462,7 +491,10 @@ function staxx_relocate_verify(array $manifest, string $dst): array {
       continue;
     }
 
-    // A plain file.
+    // A plain file, checked in full: size first, since a mismatch there
+    // means the content check below would fail anyway and reading the whole
+    // file to prove it would just be slower.
+    staxx_relocate_progress($log, $progress, $rel, 'Checking');
     if (is_link($path) || !is_file($path)) { $problems[] = $rel.': is missing at the new location.'; continue; }
     $size = @filesize($path);
     if ($size !== $info['size']) {
@@ -503,23 +535,28 @@ function staxx_relocate_cleanup(string $dest, bool $keepFolder = false): void {
 }
 
 /**
- * Move every stack, wholesale, to a new location.
+ * Move the whole data store, wholesale, to a new location — stacks,
+ * archives and config alike, since they are all one tree now and this
+ * neither knows nor needs to know that they used to be separate settings.
  *
  * The order is fixed and is the whole point of this file: copy, verify,
  * switch the setting, delete. Everything before the setting switch is
  * reversible by simply discarding the copy — a failed copy or a failed
  * verify removes the partial copy and leaves the source untouched. Once the
- * setting is switched, the stacks are already live at the new location, so a
- * failure removing the old folders is reported, not treated as the move
+ * setting is switched, the store is already live at the new location, so a
+ * failure removing the old folder is reported, not treated as the move
  * having failed.
  *
  * $log is called once per line of progress, in full sentences — the
  * detached script echoes each line straight into its job log; the test
- * suite passes a closure that collects them into an array instead.
+ * suite passes a closure that collects them into an array instead. Verifying
+ * a large store byte for byte is the slow part, so the copy and verify
+ * passes report their own progress through the same callable rather than
+ * going quiet until either one finishes.
  */
 function staxx_relocate_run(string $destInput, callable $log, string &$error): bool {
   $error  = '';
-  $source = staxx_stack_root();
+  $source = staxx_store_root();
 
   $log('Checking the new location.');
   $dest = staxx_relocate_refuse($destInput, $error);
@@ -531,7 +568,7 @@ function staxx_relocate_run(string $destInput, callable $log, string &$error): b
   // that to report our own failure would be destroying something of theirs.
   $destExisted = is_dir($dest);
 
-  $log('Looking at the current stacks folder.');
+  $log('Looking at the current data store.');
   $manifest = staxx_relocate_scan($source, $error);
   if ($manifest === null) { $log('Refused: '.$error); return false; }
 
@@ -546,9 +583,10 @@ function staxx_relocate_run(string $destInput, callable $log, string &$error): b
       if (staxx_relocate_link_outside($linkDir, $info['target'], $rootReal)) $outsideLinks[] = $rel;
     }
   }
-  $log('Found '.$fileCount.' file(s) totalling '.$totalSize.' byte(s) to move.');
+  $log('Found '.$fileCount.' file(s) totalling '.$totalSize.' byte(s) to move, across the stacks, '
+     . 'archives and config folders.');
   foreach ($outsideLinks as $rel) {
-    $log('Note: "'.$rel.'" is a link pointing outside the stacks folder — its target is not being moved.');
+    $log('Note: "'.$rel.'" is a link pointing outside the data store — its target is not being moved.');
   }
 
   $spaceCheckPath = is_dir($dest) ? $dest : dirname($dest);
@@ -572,13 +610,14 @@ function staxx_relocate_run(string $destInput, callable $log, string &$error): b
     // every other failure here follows applies to this one too.
     staxx_relocate_cleanup($dest, $destExisted);
     $log('Refused: '.$error);
-    $log('Nothing was copied, and the current stacks folder was not touched.');
+    $log('Nothing was copied, and the current data store was not touched.');
     return false;
   }
   $log('The new location can hold everything. Nothing has been copied yet.');
 
-  $log('Copying every stack to the new location.');
-  if (!staxx_relocate_copy_tree($source, $dest, $error)) {
+  $log('Copying the data store to the new location.');
+  $copyProgress = ['done' => 0, 'total' => $fileCount, 'pct' => -1];
+  if (!staxx_relocate_copy_tree($source, $dest, $error, $log, '', $copyProgress)) {
     $log('The copy failed: '.$error);
     staxx_relocate_cleanup($dest, $destExisted);
     $log('The partial copy has been removed. Nothing at the current location was touched.');
@@ -586,12 +625,12 @@ function staxx_relocate_run(string $destInput, callable $log, string &$error): b
   }
 
   $log('Checking every file matches, byte for byte.');
-  $problems = staxx_relocate_verify($manifest, $dest);
+  $problems = staxx_relocate_verify($manifest, $dest, $log);
   if ($problems) {
     foreach ($problems as $p) $log('Verification problem: '.$p);
     staxx_relocate_cleanup($dest, $destExisted);
     $error = 'Verification found '.count($problems).' problem(s) with the copy; see the lines above. '
-           . 'The current stacks folder was left untouched and the partial copy was removed.';
+           . 'The current data store was left untouched and the partial copy was removed.';
     $log($error);
     return false;
   }
@@ -602,23 +641,23 @@ function staxx_relocate_run(string $destInput, callable $log, string &$error): b
   if (!staxx_settings_save(['STORE_ROOT' => $dest], $saveError)) {
     staxx_relocate_cleanup($dest, $destExisted);
     $error = 'Could not switch the data store setting ('.$saveError.'), so the copy has been '
-           . 'removed and nothing has changed. Your stacks are still where they were.';
+           . 'removed and nothing has changed. Your data is still where it was.';
     $log($error);
     return false;
   }
-  $log('The stacks folder is now "'.$dest.'". Your stacks are already live there.');
+  $log('The data store is now "'.$dest.'". Your stacks and archives are already live there.');
 
-  $log('Removing the old folders.');
+  $log('Removing the old folder.');
   $oldReal = @realpath($source);
   if ($oldReal === false || !staxx_rmtree($oldReal, $oldReal)) {
-    // The commit point has already passed — the stacks are safe at the new
+    // The commit point has already passed — the data is safe at the new
     // location, so a failure here is a tidy-up left undone, not a failed move.
-    $log('Could not fully remove the old folder at "'.$source.'". Your stacks are safe at the new '
+    $log('Could not fully remove the old folder at "'.$source.'". Your data is safe at the new '
        . 'location; remove "'.$source.'" by hand once you have checked it is no longer needed.');
     return true;
   }
 
-  $log('Done. Your stacks are now at "'.$dest.'", and the old folder has been removed.');
+  $log('Done. The data store is now at "'.$dest.'", and the old folder has been removed.');
   return true;
 }
 
@@ -663,7 +702,7 @@ function staxx_relocate_start(string $destInput, string &$error): string {
 
 /**
  * PLAN_68 Part B, piece 3: what locations a person could actually move the
- * stacks folder to. Reads Unraid's own disk state rather than guessing at
+ * data store to. Reads Unraid's own disk state rather than guessing at
  * it — nothing here invents a share, a filesystem, or a redundancy claim
  * that was not read from somewhere. No chooser and no page reach this yet;
  * it only answers "what is there", the same one-piece-at-a-time approach
@@ -790,7 +829,7 @@ function staxx_storage_options(string $disksIni = '/var/local/emhttp/disks.ini',
   }
 
   $shareName   = basename(rtrim(staxx_appdata_root(), '/'));
-  $currentRoot = staxx_stack_root();
+  $currentRoot = staxx_store_root();
   $pools       = [];
   $flash       = null;
 
@@ -798,7 +837,7 @@ function staxx_storage_options(string $disksIni = '/var/local/emhttp/disks.ini',
     $type = trim((string)($info['type'] ?? ''), '"');
 
     if ($type === 'Flash') {
-      // Offered only as where the stacks folder already is — never a flash
+      // Offered only as where the data store already is — never a flash
       // path invented from nothing, since that would be inventing the one
       // location this whole feature exists to move people away from.
       if ($currentRoot !== '/boot' && strpos($currentRoot, '/boot/') !== 0) continue;

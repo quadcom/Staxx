@@ -260,9 +260,16 @@ ok('changing STORE_ROOT asks for a reload', $reload === true, $err);
 // STORE_ROOT naming a throwaway path for the rest of this process — staxx_cfg()
 // memoises, so it cannot be put back mid-run — and the folder gets created on
 // demand by whatever asks for it next. Removing it inline just means it comes
-// straight back. It is empty, so rmdir is the safe call: it refuses outright
-// if anything unexpected turns out to be inside.
-register_shutdown_function(function () use ($pairOkStore) { @rmdir($pairOkStore); });
+// straight back.
+//
+// rmdir() alone was not enough and left folders behind on a real box: whatever
+// next asks for the store makes its stacks and archives folders inside it, and
+// rmdir refuses a folder that is not empty — so the scratch path survived every
+// run, in Adrian's real appdata share. Removed whole instead, exactly the way
+// store.php and relocate.php remove theirs, and only ever this one built path.
+register_shutdown_function(function () use ($pairOkStore) {
+  @exec('rm -rf '.escapeshellarg($pairOkStore));
+});
 
 // Worth knowing when reading a failure here: staxx_cfg() caches the parsed
 // config in a per-request static, and this whole file is one request. So the

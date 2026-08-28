@@ -157,9 +157,30 @@ file are backed up and restored the same way `settings.php`'s are. Its two negat
 most: a folder holding a `stacks` folder next to an `archives` folder reads as StaXX's own even
 before any stack inside it has its own hidden record, and a bare pile of compose files with no
 hidden record and no `archives` folder never reads as one. Running creation twice over the same
-folder proves adopting an existing store disturbs nothing already inside it. It also records one
-gap worth a look: a store whose three folders exist but hold nothing yet reads as neither empty nor
-its own, because nothing inside `stacks/` gives the inspector anything to find.
+folder proves adopting an existing store disturbs nothing already inside it, and a store whose three
+folders exist but hold nothing yet — exactly what creating one leaves behind — still reads as
+StaXX's own rather than as somebody else's folder, which is what stops the first-run screen warning
+a person off the store they chose a moment ago.
+
+`relocate.php` covers PLAN_97 Phase 3's Relocate.php — relocation now moves the whole data store
+as one tree, not the stacks folder alone, so the fixture it builds is a whole store: two stacks
+under `stacks` (one carrying its own hidden `.staxx` record folder), a file under `archives`
+standing in for a removed stack's zip, and a note under `config`. The Phase 1 blanket refusal is
+gone, so a clean destination is accepted rather than turned away outright, and a destination is
+still refused both for being the store itself and for sitting inside its `stacks` or `archives`
+folders. Its cases that matter most: all three folders and the hidden record folder arrive intact,
+the archive travels byte for byte since it is the only copy of a removed stack, and the fixed order
+— trial run, copy, verify, only then switch the setting, only then delete the original — is proved
+rather than assumed: a failure injected at the verify step is checked against the config file on
+disk, not the process's own memoised copy, so it actually proves `STORE_ROOT` was never touched. A
+failed trial or copy also leaves the destination exactly as it was found, whether that means absent
+or present-and-empty. It needs `STORE_ROOT` seeded to a scratch value first, the same
+first-line-abort-if-missing rule as the other suites, and lives under the real appdata share for the
+same "the store's own placement rules refuse anything outside a real share or pool" reason
+`store.php` does, with one exception: the case-clash cases need a filesystem that folds case, which
+only the flash drive offers, so those live there instead, briefly. The one case that actually
+succeeds runs last, since it is the only one that switches the real config and deletes the throwaway
+source — everything before it must leave both alone.
 
 `validate_schema.py` has no runner or framework. It prints one line per case and exits non-zero on
 failure; its negative cases (what the schema must *reject*) matter more than the positive ones.

@@ -1,13 +1,15 @@
 <?PHP
-/* StaXX — moves the stacks folder to a new location.
+/* StaXX — moves the whole data store to a new location.
  * Copyright 2026, StaXX contributors.
  *
  * Launched detached by staxx_relocate_start() (see include/Relocate.php),
- * never by a page render: copying somebody's whole stacks folder can take a
- * long time, and a web request that waited for it would simply time out.
- * Can also be run by hand on the server —
- *   php /usr/local/emhttp/plugins/staxx/scripts/relocate.php /mnt/user/appdata/staxx-stacks
- * — which is the easiest way to see what a run actually does; every step
+ * never by a page render: copying somebody's whole data store — stacks,
+ * archives and config alike — can take a long time, and a web request that
+ * waited for it would simply time out. Can also be run by hand on the
+ * server —
+ *   php /usr/local/emhttp/plugins/staxx/scripts/relocate.php /mnt/user/appdata/staxx
+ * — which is the easiest way to see what a run actually does; every step,
+ * and every so often the progress through the copy and verify passes,
  * prints one line.
  *
  * Re-validates its own argument from scratch (staxx_relocate_run() calls

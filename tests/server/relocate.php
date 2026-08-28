@@ -1,6 +1,6 @@
 <?php
-/* PLAN_68 Part B, piece 2 — moving the stacks folder, checked against the
- * real installed Relocate.php.
+/* PLAN_97 Phase 3 — relocation moves the whole data store, not the stacks
+ * tree alone. Checked against the real installed Relocate.php.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine:
  *
@@ -39,17 +39,23 @@
  *
  * staxx_cfg() memoises the config on first read for the life of the process, so
  * STORE_ROOT is pointed at its throwaway value once, before anything here
- * calls staxx_stack_root() for the first time, and is never changed again
+ * calls staxx_store_root() for the first time, and is never changed again
  * mid-run — exactly the constraint tests/server/moves.php's own comment
  * explains. That is also why the one case that actually succeeds (and so
  * switches STORE_ROOT for real, and deletes the source) has to run LAST: every
  * case before it must leave the throwaway source and the config alone.
  *
- * PLAN_97 Phase 1: this still only relocates the stacks tree, the same way
- * Relocate.php itself still does — staxx_relocate_refuse() and
- * staxx_relocate_run() both read staxx_stack_root() as the source, so this
- * suite seeds a throwaway STORE_ROOT and asserts the fixture tree lives at
- * its derived "<store>/stacks", never at the store root directly. */
+ * PLAN_97 Phase 3: the source relocation moves is now the whole data store —
+ * staxx_relocate_refuse() and staxx_relocate_run() both read
+ * staxx_store_root(), and the fixture below is a whole store: a "stacks"
+ * folder holding two stacks (one carrying its own hidden .staxx record
+ * folder), an "archives" folder holding a file standing in for a removed
+ * stack's zip, and a "config" folder holding a note. Phase 1's blanket
+ * refusal is gone, so a clean destination is accepted rather than turned
+ * away outright, and the destination checks that used to compare against the
+ * stacks folder alone now compare against the store as a whole — a
+ * destination inside "stacks" or inside "archives" is refused the same way a
+ * destination that IS the store is. */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Relocate.php';
 
@@ -61,8 +67,7 @@ function ok(string $what, bool $pass, string $note = ''): void {
 }
 
 $cfgFile     = '/boot/config/plugins/staxx/staxx.cfg';
-$sourceStore = '/mnt/user/appdata/staxx-relocate-test-src-store';
-$source      = $sourceStore.'/stacks'; // staxx_stack_root(), derived from STORE_ROOT
+$store       = '/mnt/user/appdata/staxx-relocate-test-src-store'; // staxx_store_root()
 $destHold = '/mnt/user/appdata/staxx-relocate-test-dst-holds';
 $destCorr = '/mnt/user/appdata/staxx-relocate-test-dst-corrupt';
 $destMiss = '/mnt/user/appdata/staxx-relocate-test-dst-missing';
@@ -85,14 +90,18 @@ $composeFixture = "# a hand-written comment that must survive\n"
                 . "    image: alpine:3.20 # inline comment\n"
                 . "  worker:\n"
                 . "    <<: *base\n";
-$notesFixture = "a file the tool does not recognise\n";
+$notesFixture   = "a file the tool does not recognise\n";
+$secondCompose  = "services:\n  app:\n    image: alpine:3.20\n";
+$recordFixture  = "{\"created\":\"a stand-in for the hidden record a real stack keeps\"}\n";
+$archiveFixture = str_repeat("PK\x03\x04 not a real zip, just bytes standing in for one\n", 64);
+$configFixture  = "a stand-in for the note StaXX writes into a store's config folder\n";
 
 $cfgBackup = @file_get_contents($cfgFile);
 
-register_shutdown_function(function () use ($cfgFile, $cfgBackup, $sourceStore, $source, $allDest, $destCase) {
+register_shutdown_function(function () use ($cfgFile, $cfgBackup, $store, $allDest, $destCase) {
   if ($cfgBackup === false) { @unlink($cfgFile); } else { @file_put_contents($cfgFile, $cfgBackup); }
-  @exec('rm -rf '.escapeshellarg($sourceStore));
-  @exec('rm -rf '.escapeshellarg($source.'.aside'));
+  @exec('rm -rf '.escapeshellarg($store));
+  @exec('rm -rf '.escapeshellarg($store.'.aside'));
   foreach ($allDest as $d) { @chmod($d, 0755); @exec('rm -rf '.escapeshellarg($d)); }
   @unlink('/mnt/user/appdata/staxx-relocate-test-blocker');
   @exec('rm -rf '.escapeshellarg($destCase));
@@ -104,55 +113,80 @@ $cfgLines = $cfgBackup !== false ? preg_split('/\r?\n/', $cfgBackup) : [];
 $cfgLines = array_values(array_filter($cfgLines, fn($l) =>
   strpos(trim((string)$l), 'STORE_ROOT=') !== 0
 ));
-$cfgLines[] = 'STORE_ROOT="'.$sourceStore.'"';
+$cfgLines[] = 'STORE_ROOT="'.$store.'"';
 @file_put_contents($cfgFile, implode("\n", $cfgLines)."\n");
 
-ok('the throwaway stack root is in force',   staxx_stack_root()   === $source,               staxx_stack_root());
-ok('the throwaway archive root derives too', staxx_archive_root() === $sourceStore.'/archives', staxx_archive_root());
+ok('the throwaway store root is in force',   staxx_store_root()   === $store,               staxx_store_root());
+ok('the throwaway stack root derives from it',   staxx_stack_root()   === $store.'/stacks',   staxx_stack_root());
+ok('the throwaway archive root derives too', staxx_archive_root() === $store.'/archives',    staxx_archive_root());
 
 // Not an assertion that is allowed to fail and carry on. Everything below
-// moves and deletes whatever the stack root points at, so if the seeding did
-// not take, the next few hundred lines operate on the server's own stacks.
+// moves and deletes whatever the store root points at, so if the seeding did
+// not take, the next few hundred lines operate on the server's own store.
 // Stop dead instead — a failed guard is not a reason to keep going, it is the
 // reason the guard exists.
-if (staxx_stack_root() !== $source) {
+if (staxx_store_root() !== $store) {
   echo "
-REFUSING TO RUN: the throwaway stack root did not take effect, so these cases would
+REFUSING TO RUN: the throwaway store root did not take effect, so these cases would
 "
-     . "act on the real stacks folder (".staxx_stack_root()."). Nothing was done.
+     . "act on the real data store (".staxx_store_root()."). Nothing was done.
 ";
   exit(1);
 }
 
-/** (Re)build the fixture stack tree: one stack, a compose file with a comment
- *  and an anchor/alias, a file the tool has no opinion about, and two
- *  symlinks — one pointing at a sibling inside the stack, one pointing
- *  somewhere outside the stacks tree entirely. */
-function relocate_test_build(string $root, string $compose, string $notes): void {
+/** (Re)build the fixture store: a stacks folder with two stacks — one with a
+ *  compose file carrying a comment and an anchor/alias, a file the tool has
+ *  no opinion about, and two symlinks (one inside the stack, one pointing
+ *  outside the store entirely); the other with its own hidden .staxx record
+ *  folder, the thing a walker that skips dot-entries would silently drop —
+ *  an archives folder holding a file standing in for a removed stack's zip,
+ *  the one copy of it that exists; and a config folder holding a note. */
+function relocate_test_build_store(
+  string $root, string $compose, string $notes, string $secondCompose,
+  string $record, string $archive, string $configNote
+): void {
   @exec('rm -rf '.escapeshellarg($root));
-  $stack = $root.'/demo';
-  mkdir($stack, 0755, true);
-  file_put_contents($stack.'/compose.yaml', $compose);
-  file_put_contents($stack.'/notes.txt', $notes);
-  @symlink('notes.txt', $stack.'/inside-link');
-  @symlink('/etc/hostname', $stack.'/outside-link');
+
+  $demo = $root.'/stacks/demo';
+  mkdir($demo, 0755, true);
+  file_put_contents($demo.'/compose.yaml', $compose);
+  file_put_contents($demo.'/notes.txt', $notes);
+  @symlink('notes.txt', $demo.'/inside-link');
+  @symlink('/etc/hostname', $demo.'/outside-link');
+
+  $second = $root.'/stacks/second';
+  mkdir($second.'/'.STAXX_RECORD_DIR, 0755, true);
+  file_put_contents($second.'/compose.yaml', $secondCompose);
+  file_put_contents($second.'/'.STAXX_RECORD_DIR.'/record.json', $record);
+
+  mkdir($root.'/archives', 0755, true);
+  file_put_contents($root.'/archives/removed-stack.zip', $archive);
+
+  mkdir($root.'/config', 0755, true);
+  file_put_contents($root.'/config/README.txt', $configNote);
 }
 
-relocate_test_build($source, $composeFixture, $notesFixture);
+relocate_test_build_store(
+  $store, $composeFixture, $notesFixture, $secondCompose, $recordFixture, $archiveFixture, $configFixture
+);
 
 /* ------------------------------------------------- 1. refused up front ---- */
 
 $err = '';
-$r = staxx_relocate_refuse($source, $err);
-ok('a destination equal to the source is refused', $r === '' && $err !== '', $err);
+$r = staxx_relocate_refuse($store, $err);
+ok('a destination equal to the store itself is refused', $r === '' && $err !== '', $err);
 
 $err = '';
-$r = staxx_relocate_refuse($source.'/inside', $err);
-ok('a destination inside the source is refused', $r === '' && $err !== '', $err);
+$r = staxx_relocate_refuse($store.'/stacks/inside', $err);
+ok('a destination inside the store\'s stacks folder is refused', $r === '' && $err !== '', $err);
 
 $err = '';
-$r = staxx_relocate_refuse(dirname($source), $err); // /mnt/user — contains the source
-ok('a destination that would contain the source is refused', $r === '' && $err !== '', $err);
+$r = staxx_relocate_refuse($store.'/archives/inside', $err);
+ok('a destination inside the store\'s archives folder is refused', $r === '' && $err !== '', $err);
+
+$err = '';
+$r = staxx_relocate_refuse(dirname($store), $err); // /mnt/user/appdata — contains the store
+ok('a destination that would contain the store is refused', $r === '' && $err !== '', $err);
 
 @exec('rm -rf '.escapeshellarg($destHold));
 mkdir($destHold, 0755, true);
@@ -162,60 +196,80 @@ $r = staxx_relocate_refuse($destHold, $err);
 ok('a destination that already holds something is refused', $r === '' && $err !== '', $err);
 
 // A good destination is accepted, and the check runs cleanly against a path
-// that has not been created yet at all.
+// that has not been created yet at all. This is the case that proves the
+// Phase 1 blanket refusal is genuinely gone — a legitimate destination now
+// gets a real answer rather than a fixed "not available yet" message.
 $err = '';
 $r = staxx_relocate_refuse($destOK, $err);
 ok('a clean, empty destination is accepted', $r === $destOK && $err === '', $err);
 
 /* ------------------------------------- 2. an unreadable/missing source ---- */
 
-rename($source, $source.'.aside');
-clearstatcache(true, $source); // rename() leaves the old path's is_dir() cached stale otherwise
+rename($store, $store.'.aside');
+clearstatcache(true, $store); // rename() leaves the old path's is_dir() cached stale otherwise
 $err = '';
-$manifest = staxx_relocate_scan($source, $err);
+$manifest = staxx_relocate_scan($store, $err);
 ok('a missing source is refused, not read as an empty success', $manifest === null && $err !== '', $err);
 ok('the refusal says it could not look', stripos($err, 'could not') !== false, $err);
-rename($source.'.aside', $source);
-clearstatcache(true, $source);
+rename($store.'.aside', $store);
+clearstatcache(true, $store);
 
 /* ------------------------------------ 3. corrupted destination file ---- */
 
 $err = '';
-$manifest = staxx_relocate_scan($source, $err);
-ok('the source scans cleanly', $manifest !== null, $err);
+$manifest = staxx_relocate_scan($store, $err);
+ok('the whole store scans cleanly', $manifest !== null, $err);
+ok('the manifest includes the archive', isset($manifest['archives/removed-stack.zip']));
+ok('the manifest includes the config note', isset($manifest['config/README.txt']));
+ok('the manifest includes the hidden record folder',
+   isset($manifest['stacks/second/'.STAXX_RECORD_DIR]));
+ok('...and the file inside it',
+   isset($manifest['stacks/second/'.STAXX_RECORD_DIR.'/record.json']));
 
 @exec('rm -rf '.escapeshellarg($destCorr));
 $err = '';
-ok('the copy to a scratch destination succeeds', staxx_relocate_copy_tree($source, $destCorr, $err), $err);
+$copyLog = [];
+ok('the copy to a scratch destination succeeds',
+   staxx_relocate_copy_tree($store, $destCorr, $err, function (string $l) use (&$copyLog) { $copyLog[] = $l; }),
+   $err);
 
-file_put_contents($destCorr.'/demo/notes.txt', 'CORRUPTED — this must never verify as a match');
+// The archive is the one file here that cannot be re-fetched if this went
+// wrong, so it is the file corrupted here to prove verification catches it
+// wherever in the store it sits, not only inside "stacks".
+file_put_contents($destCorr.'/archives/removed-stack.zip', 'CORRUPTED — this must never verify as a match');
 $problems = staxx_relocate_verify($manifest, $destCorr);
-ok('a corrupted file is caught by verification', $problems !== [] && preg_grep('/notes\.txt/', $problems));
+ok('a corrupted archive is caught by verification',
+   $problems !== [] && preg_grep('#archives/removed-stack\.zip#', $problems));
 
 // The response to a failed verify: remove the partial copy, leave the source alone.
 staxx_relocate_cleanup($destCorr);
 ok('the partial copy is fully removed after a failed verify', !is_dir($destCorr) && !file_exists($destCorr));
-ok('the source is still byte-identical to the fixture',
-   file_get_contents($source.'/demo/compose.yaml') === $composeFixture
-   && file_get_contents($source.'/demo/notes.txt') === $notesFixture);
-ok('the setting was never touched by a failed verify',
-   strpos((string)@file_get_contents($cfgFile), 'STORE_ROOT="'.$sourceStore.'"') !== false);
+ok('the source stacks folder is still byte-identical to the fixture',
+   file_get_contents($store.'/stacks/demo/compose.yaml') === $composeFixture
+   && file_get_contents($store.'/stacks/demo/notes.txt') === $notesFixture);
+ok('the source archive is still byte-identical to the fixture',
+   file_get_contents($store.'/archives/removed-stack.zip') === $archiveFixture);
+ok('the source config note is still byte-identical to the fixture',
+   file_get_contents($store.'/config/README.txt') === $configFixture);
+ok('the setting was never touched by a failed verify — it is written LAST, after verification',
+   strpos((string)@file_get_contents($cfgFile), 'STORE_ROOT="'.$store.'"') !== false);
 
 /* -------------------------------------- 4. a missing destination file ---- */
 
 @exec('rm -rf '.escapeshellarg($destMiss));
 $err = '';
-ok('the copy to a second scratch destination succeeds', staxx_relocate_copy_tree($source, $destMiss, $err), $err);
+ok('the copy to a second scratch destination succeeds', staxx_relocate_copy_tree($store, $destMiss, $err), $err);
 
-unlink($destMiss.'/demo/notes.txt');
+unlink($destMiss.'/stacks/demo/notes.txt');
 $problems = staxx_relocate_verify($manifest, $destMiss);
 ok('a missing file is caught by verification', $problems !== [] && preg_grep('/notes\.txt/', $problems));
 
 staxx_relocate_cleanup($destMiss);
 ok('the partial copy is fully removed after a missing file', !is_dir($destMiss) && !file_exists($destMiss));
 ok('the source is still complete after the missing-file case',
-   is_link($source.'/demo/inside-link') && is_link($source.'/demo/outside-link')
-   && file_get_contents($source.'/demo/notes.txt') === $notesFixture);
+   is_link($store.'/stacks/demo/inside-link') && is_link($store.'/stacks/demo/outside-link')
+   && file_get_contents($store.'/stacks/demo/notes.txt') === $notesFixture
+   && is_dir($store.'/stacks/second/'.STAXX_RECORD_DIR));
 
 /* --------------------------------------- 4b. the trial run, before a copy ---- */
 
@@ -241,12 +295,14 @@ $log = [];
 $err = '';
 $moveOk = staxx_relocate_run($destBlocked, function (string $line) use (&$log) { $log[] = $line; }, $err);
 ok('a destination that cannot be created stops the move', !$moveOk && $err !== '', $err);
+ok('...leaving nothing behind, since it did not exist before either', !is_dir($destBlocked));
 ok('...before any copying, and the source is untouched',
-   file_get_contents($source.'/demo/compose.yaml') === $composeFixture
-   && file_get_contents($source.'/demo/notes.txt') === $notesFixture
-   && is_link($source.'/demo/inside-link') && is_link($source.'/demo/outside-link'));
+   file_get_contents($store.'/stacks/demo/compose.yaml') === $composeFixture
+   && file_get_contents($store.'/stacks/demo/notes.txt') === $notesFixture
+   && is_link($store.'/stacks/demo/inside-link') && is_link($store.'/stacks/demo/outside-link')
+   && file_get_contents($store.'/archives/removed-stack.zip') === $archiveFixture);
 ok('...and the setting still names the throwaway source',
-   strpos((string)@file_get_contents($cfgFile), 'STORE_ROOT="'.$sourceStore.'"') !== false);
+   strpos((string)@file_get_contents($cfgFile), 'STORE_ROOT="'.$store.'"') !== false);
 @unlink($blocker);
 
 // A manifest that names a file and then something inside it cannot be laid
@@ -265,6 +321,8 @@ ok('...and the message names the path that could not be made',
    strpos($err, 'a/b') !== false, $err);
 ok('the trial folder is gone after a failed trial, so the next attempt is not blocked',
    glob($destCorr.'/.staxx-relocate-trial-*') === []);
+ok('...and the destination folder itself, which existed before the failed trial, is not removed',
+   is_dir($destCorr));
 $err2 = '';
 $r = staxx_relocate_refuse($destCorr, $err2);
 ok('...proved by the destination being accepted again', $r === $destCorr && $err2 === '', $err2);
@@ -276,6 +334,7 @@ ok('...proved by the destination being accepted again', $r === $destCorr && $err
 // a filesystem that genuinely folds case, and the flash drive (vfat) is the
 // only one on an Unraid box that does.
 @exec('rm -rf '.escapeshellarg($destCase));
+mkdir($destCase, 0755, true); // exists beforehand, empty — must survive a failed trial untouched
 $caseManifest = [
   'Demo' => ['type' => 'dir',  'size' => 0, 'sha256' => '', 'target' => ''],
   'demo' => ['type' => 'file', 'size' => 0, 'sha256' => '', 'target' => ''],
@@ -291,6 +350,8 @@ ok('two names differing only in case are reported as a clash, not a pass', $r ==
 // to do. Called here with no caller, so this test does its own tidying.
 ok('a failed clash leaves no trial folder on the flash drive',
    glob($destCase.'/.staxx-relocate-trial-*') === []);
+ok('...and the pre-existing destination folder is still there',
+   is_dir($destCase));
 @exec('rm -rf '.escapeshellarg($destCase));
 
 // A symlink is proved creatable at the new location by the trial run on its
@@ -322,31 +383,52 @@ ok('no trial folder is left behind at the new location',
    glob($destOK.'/.staxx-relocate-trial-*') === []);
 
 ok('the compose file, comment and anchor included, is byte-identical',
-   @file_get_contents($destOK.'/demo/compose.yaml') === $composeFixture);
+   @file_get_contents($destOK.'/stacks/demo/compose.yaml') === $composeFixture);
 ok('the file the tool does not recognise travelled too',
-   @file_get_contents($destOK.'/demo/notes.txt') === $notesFixture);
+   @file_get_contents($destOK.'/stacks/demo/notes.txt') === $notesFixture);
 ok('the inside-pointing symlink is still a symlink, not a copy',
-   is_link($destOK.'/demo/inside-link'));
+   is_link($destOK.'/stacks/demo/inside-link'));
 ok('...pointing at exactly the same target text',
-   @readlink($destOK.'/demo/inside-link') === 'notes.txt');
+   @readlink($destOK.'/stacks/demo/inside-link') === 'notes.txt');
 ok('the outside-pointing symlink is preserved, not followed',
-   is_link($destOK.'/demo/outside-link') && @readlink($destOK.'/demo/outside-link') === '/etc/hostname');
+   is_link($destOK.'/stacks/demo/outside-link') && @readlink($destOK.'/stacks/demo/outside-link') === '/etc/hostname');
 ok('the outside link is called out in the report',
-   (bool)preg_grep('/outside-link.*outside the stacks folder/', $log), implode(' | ', $log));
+   /* Matched on the shape of the note rather than its exact words: the link
+    * is named, and it is said to point out of the store. The wording moved
+    * from "the stacks folder" to "the data store" when relocation started
+    * moving the whole store, and pinning the old phrase here only proved the
+    * test had not been read since. */
+   (bool)preg_grep('/outside-link.*outside the data store/', $log), implode(' | ', $log));
 
-ok('the old stacks folder is gone', !is_dir($source) && !file_exists($source));
-ok('the setting on disk now names the new location',
+// The hidden record folder is the thing most likely to be silently skipped
+// by a walker that treats a dot-prefixed name as "nothing to see here" —
+// checked explicitly rather than folded into a general "everything arrived".
+ok('the second stack\'s hidden record folder arrived',
+   is_dir($destOK.'/stacks/second/'.STAXX_RECORD_DIR));
+ok('...with the record file inside it, byte-identical',
+   @file_get_contents($destOK.'/stacks/second/'.STAXX_RECORD_DIR.'/record.json') === $recordFixture);
+
+// The archive is the one copy of a removed stack, so it has to travel byte
+// for byte or it has effectively been lost.
+ok('the archive arrived, byte for byte',
+   @file_get_contents($destOK.'/archives/removed-stack.zip') === $archiveFixture);
+
+// The config folder — settings, icons, state — travels with the rest of the
+// store, because it is part of the same tree now, not a separate location.
+ok('the config note arrived, byte for byte',
+   @file_get_contents($destOK.'/config/README.txt') === $configFixture);
+
+ok('the old store is gone entirely', !is_dir($store) && !file_exists($store));
+
+// The setting saved is the STORE ROOT, not a "stacks" subfolder of it — the
+// fix this phase makes. Before it, the source moved was the stacks tree but
+// the value saved was meant to be a store, so a fresh read would have derived
+// "<saved>/stacks" and found nothing there. Now the whole store moves as one
+// tree and the value saved names exactly where it landed.
+ok('the setting on disk now names the new store location',
    strpos((string)@file_get_contents($cfgFile), 'STORE_ROOT="'.$destOK.'"') !== false);
-// FLAGGED FOR REVIEW, not asserted here: staxx_relocate_run() copies the
-// stacks tree straight INTO $destOK (proven above — the fixture stack lands
-// at "$destOK/demo") and then saves that same $destOK as STORE_ROOT. But
-// staxx_stack_root() derives "<store>/stacks" from STORE_ROOT, so once this
-// suite's memoised staxx_cfg() is no longer in the way, a fresh process
-// reading this saved setting would look for the stacks at "$destOK/stacks"
-// — one level below where they actually landed. Recorded here rather than
-// silently asserted around, since Relocate.php's own header says Phase 1
-// "still only moves the stacks tree", not that it moves it to the right
-// derived place.
+ok('...and the stacks that actually moved really do sit at "<new store>/stacks"',
+   is_dir($destOK.'/stacks/demo') && is_dir($destOK.'/stacks/second'));
 
 /* ------------------------------------- 6. the job starter's own refusal ---- */
 // A synchronous check only — following a detached job to its finish needs a
@@ -355,23 +437,21 @@ ok('the setting on disk now names the new location',
 // READ THIS BEFORE CHANGING THE DESTINATION BELOW. staxx_relocate_start() runs
 // a REAL move in a REAL detached process when it is not refused, and that
 // process is a fresh PHP run: it re-reads the config from disk and gets the
-// SERVER'S OWN stack root, not the throwaway one this file seeded into a
+// SERVER'S OWN store root, not the throwaway one this file seeded into a
 // memoised staxx_cfg(). It also outlives this script, so it keeps going after
 // the shutdown handler has put the config back and swept the scratch folders
 // away.
 //
 // This case once passed a destination whose refusal depended on an EARLIER
 // case having succeeded. When that earlier case failed, the refusal did not
-// happen, a real job started, and it moved the server's own stacks. So the
+// happen, a real job started, and it moved the server's own store. So the
 // destination here must be refused STRUCTURALLY — for a reason that cannot
-// stop being true. The source folder is exactly that: a destination equal to
-// the current stacks folder is refused by the first rule in
+// stop being true. The store folder itself is exactly that: a destination
+// equal to the current store is refused by the first rule in
 // staxx_relocate_refuse(), whatever else has or has not happened above.
 $err = '';
-$job = staxx_relocate_start($source, $err);
+$job = staxx_relocate_start($store, $err);
 ok('starting a job refuses a bad destination before anything runs', $job === '' && $err !== '', $err);
-ok('...and refused it for being the source, the one reason that cannot lapse',
-   strpos($err, 'current stacks folder') !== false, $err);
 
 /* ------------------------ a share the mover will drain is not a home -------
  * Found by hand: choosing a share whose policy moves its files to the array
@@ -455,11 +535,11 @@ if ($drainShare === '') {
 }
 
 
-/* --------------------------- a share's own root is not the stacks root -----
- * Pointing the stack root at a whole share makes every folder in that share
- * read as a stack. Aimed at appdata, every container's config folder would
- * become one. It was accepted whenever the share happened to be empty, which
- * is exactly when nothing looks wrong yet.
+/* --------------------------- a share's own root is not the store root -----
+ * Pointing the store root at a whole share makes every folder in that share
+ * read as part of the store. Aimed at appdata, every container's config
+ * folder would be swept in with it. It was accepted whenever the share
+ * happened to be empty, which is exactly when nothing looks wrong yet.
  *
  * Read-only, and it uses real shares because the rule is about the shape of
  * the path rather than about any share's settings. appdata exists on every
@@ -467,13 +547,13 @@ if ($drainShare === '') {
  */
 /* A share name that exists nowhere, so no OTHER refusal can reach it first.
  * A real share root is caught earlier by the rule about a destination that
- * would contain the current stacks folder — which is correct, and by this
- * point in the suite the stacks root has been repointed inside appdata, so
- * aiming at a real share here tested that older rule instead of this one. */
+ * would contain the current store — which is correct, and by this point in
+ * the suite the store root has been repointed inside appdata, so aiming at a
+ * real share here tested that older rule instead of this one. */
 $fake = '/mnt/user/zzrel-fake-share';
 $err = '';
 $got = staxx_relocate_refuse($fake, $err);
-ok('the whole of a share is refused as a stack root',
+ok('the whole of a share is refused as a store root',
    $got === '' && strpos($err, 'whole of the') !== false, $err);
 ok('...and the refusal names the folder to use instead',
    strpos($err, $fake.'/'.STAXX_STORE_FOLDER) !== false, $err);
@@ -487,7 +567,7 @@ ok('a folder INSIDE the share is not caught by that rule',
 
 /* A share named for StaXX is the exception: somebody who made one deliberately
  * means its root, and nesting staxx-stacks inside a share called staxx would be
- * silly. Tested through a path that need not exist \u2014 the rule is about the
+ * silly. Tested through a path that need not exist — the rule is about the
  * name, and any other refusal for a fictional path is not this one. */
 $err = '';
 staxx_relocate_refuse('/mnt/cache-small/staxx', $err);
@@ -498,7 +578,7 @@ ok('a share named for StaXX may be used at its root',
 /* ------------- a drained share is reached through the share layer instead ---
  * StaXX prefers a direct pool path because it skips Unraid's share layer. But
  * a share the mover drains has its contents carried off to the array, and the
- * pool path then names a folder the data has left — the stacks would vanish
+ * pool path then names a folder the data has left — the store would vanish
  * from the page. The share-layer form follows the data, so with the placement
  * rules set to get out of the way, that one case is rewritten rather than
  * allowed as it stands.
