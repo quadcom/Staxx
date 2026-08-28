@@ -52,8 +52,12 @@ tar -xzf ~/staxx-main.tar.gz          # wherever you put the download
 bash /boot/staxx-main/dev-install.sh
 ```
 
-Open **Docker → Stacks**. Make a folder under `/boot/config/plugins/staxx/stacks/`, drop a compose
-file in it, and it is there. Or press **Apps** and pick something.
+Open **Docker → Stacks**. The first thing it does is ask where it should keep its data — one folder
+holding your stacks, the zips of any you remove, and its own settings. It suggests a sensible place
+and explains the choice; take the suggestion if you are in a hurry.
+
+After that, make a folder inside the `stacks` folder of the place you chose, drop a compose file in
+it, and it is there. Or press **Apps** and pick something.
 
 New to the page? The [user guide](docs/guide/README.md) explains what you are looking at.
 
@@ -377,8 +381,14 @@ kept on the flash drive and put back at every boot.
 
 ## Configuration (optional)
 
-Everything here has a switch on the settings page, so this is reference only. The file is
-`/boot/config/plugins/staxx/staxx.cfg`.
+Everything here has a switch on the settings page, so this is reference only.
+
+Your settings live in `staxx.cfg` inside the `config` folder of your data store — wherever you chose
+to put it. Three lines stay on the flash drive, in `/boot/config/plugins/staxx/staxx.cfg`: where the
+data store is, and the two settings deciding where StaXX appears in the menus. Those three have to be
+readable before your array has started, or when StaXX itself is not working, which is also what makes
+Unraid's own settings page for StaXX a reliable way back. See
+[Where StaXX keeps its things](docs/guide/where-things-live.md).
 
 **Where things live**
 

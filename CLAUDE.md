@@ -223,8 +223,28 @@ Nothing under `/usr/local/emhttp` survives a reboot — that tree is rebuilt at 
 the panic button if a change breaks the webGUI. Settings do survive; they live on the flash drive
 at `/boot/config/plugins/staxx/`.
 
-`pkg_build.sh` builds the real `.txz` package and is only needed for a release. It must run on
-Linux, since the package carries Unix permissions and ownership.
+## How StaXX is actually delivered right now
+
+**This is pre-alpha and deliberately not on Community Applications.** Adrian offers it as a test
+case people install by hand, and that shapes what a "release" means here — so do not go looking for
+Unraid's packaging chain to be complete, and do not do work to complete it unasked.
+
+**A release is a zip of the plugin folder, the installer script, and instructions for running it.**
+That is the whole of it. Point anybody asking at that, not at Unraid's plugin manager.
+
+**The Unraid-specific packaging rules therefore do not apply yet.** `pkg_build.sh` builds the real
+`.txz`, and `staxx.plg` carries a version, two checksums and a `packageURL` pointing at a GitHub
+release asset — none of which is currently the route anybody installs by. Keeping the manifest
+truthful is still worth doing (its `CHANGES` block is the release notes Unraid would show, and the
+version should match `CHANGELOG.md`), but **building a package, stamping checksums and publishing a
+tagged release are not steps in shipping a change** at this stage. Treat them as work for the day
+the project goes public, and ask before doing any of it.
+
+Two facts worth not rediscovering: `pkg_build.sh` must run on Linux, since the package carries Unix
+permissions and ownership; and the existing `v1.1.0` GitHub release is a **draft**, so its asset has
+never been publicly downloadable. CI publishes a rolling pre-release per push carrying
+`staxx-main.tar.gz` — that is the tarball the by-hand install route uses, and it is a different
+thing from the `.txz`.
 
 ## Verifying a change with no browser
 
