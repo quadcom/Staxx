@@ -56,6 +56,41 @@ else
   rm -f "${TAKEOVER_MARKER}"
 fi
 
+# PLAN_97 Phase 4: STORE_ROOT, HEADER_MENU and TAKEOVER_DOCKER_TAB are the
+# only three keys left in the flash file — everything else this script reads
+# below now lives in the store's own config file, because that is where the
+# rest of the settings moved. STORE_ROOT itself has to stay on flash: you
+# cannot read the house's address from inside the house.
+store_root=$(sed -n 's/^[[:space:]]*STORE_ROOT[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" 2>/dev/null | tail -n1 || true)
+
+# The store's two fixed-name folders must exist before anything tries to
+# enumerate them — but only once the store itself is actually there. A pool
+# that has not mounted yet still shows its mountpoint as an ordinary empty
+# directory, so testing for the store root itself (rather than just a
+# non-blank setting) stops this from creating a phantom copy of the tree on
+# the root filesystem underneath an unmounted pool, which a real mount would
+# then silently hide behind.
+if [[ -n "${store_root}" && -d "${store_root}" ]]; then
+  mkdir -p "${store_root}/stacks" "${store_root}/archives"
+fi
+
+# Everything below this line that used to read "${CFG}" now reads the store's
+# own config file instead. This script re-runs on every boot, which is
+# exactly when a store on a pool may not have mounted yet — reading a missing
+# file as blank and then acting on that (deleting the install-catching shadow
+# page, signing out of Docker Hub, rewriting the cron schedule to shipped
+# defaults) would silently undo somebody's settings on every reboot. So a
+# store that cannot be read right now is treated the same way "Docker is not
+# up yet" already is further down: skip the section and leave whatever is on
+# disk exactly as it is, and never abort — a settings save has to succeed
+# even mid-boot.
+store_cfg=""
+store_cfg_readable="false"
+if [[ -n "${store_root}" && -f "${store_root}/config/${PLUGIN}.cfg" ]]; then
+  store_cfg="${store_root}/config/${PLUGIN}.cfg"
+  store_cfg_readable="true"
+fi
+
 # Whether Add Container installs from Unraid's Apps page (and Add Container
 # pressed by hand) are caught and brought into StaXX. Defaults true, unlike
 # the two markers above, so a config predating this key still catches installs.
@@ -63,8 +98,8 @@ fi
 # it decides what to show), false (Unraid's own route). The shadow is
 # installed for true AND prompt, and removed only for false.
 catch_installs="true"
-if [[ -f "${CFG}" ]]; then
-  catch_installs=$(sed -n 's/^[[:space:]]*CATCH_INSTALLS[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+if [[ "${store_cfg_readable}" == "true" ]]; then
+  catch_installs=$(sed -n 's/^[[:space:]]*CATCH_INSTALLS[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
   catch_installs="${catch_installs:-true}"
 fi
 
@@ -91,27 +126,23 @@ if [[ -d "${PLUGIN_DIR}" ]]; then
   # AddContainer.page has no marker file: nothing's .page Cond needs to know
   # about this setting, since the file being there at all is what does the
   # catching — same mechanism as Docker.page above, just with no Cond to feed.
-  add_container_live="${PLUGIN_DIR}/AddContainer.page"
-  add_container_shadow="${PLUGIN_DIR}/shadow/AddContainer.page.tmpl"
-  if [[ "${catch_installs}" == "true" || "${catch_installs}" == "prompt" ]]; then
-    if [[ -f "${add_container_shadow}" ]]; then
-      cp "${add_container_shadow}" "${add_container_live}"
+  # CATCH_INSTALLS now lives in the store, so an unreadable store (see above)
+  # must leave this file exactly as it is rather than reading the setting as
+  # its default and cp'ing or rm'ing it out from under whatever is running.
+  if [[ "${store_cfg_readable}" == "true" ]]; then
+    add_container_live="${PLUGIN_DIR}/AddContainer.page"
+    add_container_shadow="${PLUGIN_DIR}/shadow/AddContainer.page.tmpl"
+    if [[ "${catch_installs}" == "true" || "${catch_installs}" == "prompt" ]]; then
+      if [[ -f "${add_container_shadow}" ]]; then
+        cp "${add_container_shadow}" "${add_container_live}"
+      else
+        echo "warning: ${add_container_shadow} is missing, so installs are not being caught." >&2
+        rm -f "${add_container_live}"
+      fi
     else
-      echo "warning: ${add_container_shadow} is missing, so installs are not being caught." >&2
       rm -f "${add_container_live}"
     fi
-  else
-    rm -f "${add_container_live}"
   fi
-fi
-
-# The data store's two fixed-name folders must exist before anything tries to
-# enumerate them. Blank means nobody has chosen a store yet — do nothing at
-# all, and do not fail: a settings save has to succeed on a box that has not
-# chosen one, since choosing it IS a settings save.
-store_root=$(sed -n 's/^[[:space:]]*STORE_ROOT[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" 2>/dev/null | tail -n1 || true)
-if [[ -n "${store_root}" ]]; then
-  mkdir -p "${store_root}/stacks" "${store_root}/archives"
 fi
 
 # Docker Hub sign-in, so image-update checking does not run into Docker Hub's
@@ -119,14 +150,19 @@ fi
 # Runs on every settings save AND on every boot (install re-runs this), so it
 # has to survive Docker not being up yet: nothing here may abort the script,
 # because a settings save must succeed even while Docker is still starting.
+# HUB_USER/HUB_TOKEN now live in the store, so an unreadable store gets the
+# same treatment as Docker not being up: skip the whole decision rather than
+# read the setting as blank and sign out a sign-in that is still configured.
 hub_user=""
 hub_token=""
-if [[ -f "${CFG}" ]]; then
-  hub_user=$(sed -n 's/^[[:space:]]*HUB_USER[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
-  hub_token=$(sed -n 's/^[[:space:]]*HUB_TOKEN[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+if [[ "${store_cfg_readable}" == "true" ]]; then
+  hub_user=$(sed -n 's/^[[:space:]]*HUB_USER[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
+  hub_token=$(sed -n 's/^[[:space:]]*HUB_TOKEN[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
 fi
 
-if ! command -v docker >/dev/null 2>&1 || ! timeout -k 2 10 docker info >/dev/null 2>&1; then
+if [[ "${store_cfg_readable}" != "true" ]]; then
+  : # Store not reachable yet — leave the sign-in state exactly as it is.
+elif ! command -v docker >/dev/null 2>&1 || ! timeout -k 2 10 docker info >/dev/null 2>&1; then
   # Docker not up yet: leave the marker exactly as it is, so nothing is lost
   # and the next save (or the boot's own retry) picks up where this left off.
   # Only worth saying to someone who actually configured a sign-in; on every
@@ -159,83 +195,96 @@ fi
 # So the file has to live on the flash drive, and — because that has finite
 # write cycles and this script runs on every settings save AND every boot —
 # only gets rewritten when its content actually changes.
+#
+# UPDATE_CHECK/UPDATE_CHECK_TIME/UPDATE_CLEANUP now live in the store. A store
+# that has been chosen but cannot be read right now (pool not mounted yet)
+# must not rewrite this file to shipped defaults — that would silently drop
+# back to "daily at 04:00" every reboot until the pool catches up. Only a
+# genuinely unchosen store (store_root blank) falls through to the defaults
+# below, which matches today: there are no stacks to check either way.
+skip_cron_rewrite="false"
 update_check="daily"
 update_check_time="04:00"
 update_cleanup="off"
-if [[ -f "${CFG}" ]]; then
-  update_check=$(sed -n 's/^[[:space:]]*UPDATE_CHECK[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+if [[ "${store_cfg_readable}" == "true" ]]; then
+  update_check=$(sed -n 's/^[[:space:]]*UPDATE_CHECK[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
   update_check="${update_check:-daily}"
-  update_check_time=$(sed -n 's/^[[:space:]]*UPDATE_CHECK_TIME[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+  update_check_time=$(sed -n 's/^[[:space:]]*UPDATE_CHECK_TIME[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
   update_check_time="${update_check_time:-04:00}"
-  update_cleanup=$(sed -n 's/^[[:space:]]*UPDATE_CLEANUP[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${CFG}" | tail -n1)
+  update_cleanup=$(sed -n 's/^[[:space:]]*UPDATE_CLEANUP[[:space:]]*=[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "${store_cfg}" | tail -n1)
   update_cleanup="${update_cleanup:-off}"
+elif [[ -n "${store_root}" ]]; then
+  skip_cron_rewrite="true"
+  echo "The data store is not reachable yet, so the existing image-update schedule was left as it is."
 fi
 
 CRON_FILE="${CFG_DIR}/${PLUGIN}.cron"
 
-# No "root" user field on any line here — *.cron files are concatenated
-# straight into a user crontab by update_cron, not read as /etc/cron.d-style
-# system crontabs, so a leading user field would be read as part of the
-# command.
-#
-# The apply pass is always present, check on or off: it is what presses the
-# button on a clock that reaches zero while nobody has the page open, and it
-# costs no network, so there is nothing to gate it on.
-cron_lines=(
-  "# StaXX — image-update passes, written by apply_settings. Do not edit; it is rewritten on every settings save and every boot."
-  "*/15 * * * * ${PLUGIN_DIR}/scripts/update-check apply &> /dev/null"
-)
+if [[ "${skip_cron_rewrite}" != "true" ]]; then
+  # No "root" user field on any line here — *.cron files are concatenated
+  # straight into a user crontab by update_cron, not read as /etc/cron.d-style
+  # system crontabs, so a leading user field would be read as part of the
+  # command.
+  #
+  # The apply pass is always present, check on or off: it is what presses the
+  # button on a clock that reaches zero while nobody has the page open, and it
+  # costs no network, so there is nothing to gate it on.
+  cron_lines=(
+    "# StaXX — image-update passes, written by apply_settings. Do not edit; it is rewritten on every settings save and every boot."
+    "*/15 * * * * ${PLUGIN_DIR}/scripts/update-check apply &> /dev/null"
+  )
 
-if [[ "${update_check}" == "off" ]]; then
-  echo "Image-update checking is off."
-else
-  # HH:MM, range-checked (00-23 and 00-59), not just shape-checked — the
-  # earlier pattern accepted "99:99" and would have written "99 99 * * *"
-  # into a file update_cron concatenates into root's crontab alongside every
-  # other plugin's jobs. A value that fails either check falls back to the
-  # default rather than writing a malformed line — one bad line can make cron
-  # reject the whole file, taking every other job on the box down with it.
-  # Same pattern Settings.php already validates the setting with.
-  if [[ "${update_check_time}" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]]; then
-    cron_hour="${BASH_REMATCH[1]}"
-    cron_minute="${BASH_REMATCH[2]}"
+  if [[ "${update_check}" == "off" ]]; then
+    echo "Image-update checking is off."
   else
-    cron_hour="04"
-    cron_minute="00"
+    # HH:MM, range-checked (00-23 and 00-59), not just shape-checked — the
+    # earlier pattern accepted "99:99" and would have written "99 99 * * *"
+    # into a file update_cron concatenates into root's crontab alongside every
+    # other plugin's jobs. A value that fails either check falls back to the
+    # default rather than writing a malformed line — one bad line can make cron
+    # reject the whole file, taking every other job on the box down with it.
+    # Same pattern Settings.php already validates the setting with.
+    if [[ "${update_check_time}" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]]; then
+      cron_hour="${BASH_REMATCH[1]}"
+      cron_minute="${BASH_REMATCH[2]}"
+    else
+      cron_hour="04"
+      cron_minute="00"
+    fi
+    # cron takes "4", not "04" — a leading zero on the minute in particular has
+    # bitten people, so both are stripped explicitly rather than trusted to
+    # whichever cron happens to be running this.
+    cron_hour="${cron_hour#0}"
+    cron_minute="${cron_minute#0}"
+    cron_hour="${cron_hour:-0}"
+    cron_minute="${cron_minute:-0}"
+
+    if [[ "${update_check}" == "weekly" ]]; then
+      cron_dow="0"       # Sunday
+      when="weekly, Sunday at ${update_check_time}"
+    else
+      cron_dow="*"
+      when="daily at ${update_check_time}"
+    fi
+
+    cron_lines+=("${cron_minute} ${cron_hour} * * ${cron_dow} ${PLUGIN_DIR}/scripts/update-check check &> /dev/null")
+    echo "Image-update checking will run ${when}."
   fi
-  # cron takes "4", not "04" — a leading zero on the minute in particular has
-  # bitten people, so both are stripped explicitly rather than trusted to
-  # whichever cron happens to be running this.
-  cron_hour="${cron_hour#0}"
-  cron_minute="${cron_minute#0}"
-  cron_hour="${cron_hour:-0}"
-  cron_minute="${cron_minute:-0}"
 
-  if [[ "${update_check}" == "weekly" ]]; then
-    cron_dow="0"       # Sunday
-    when="weekly, Sunday at ${update_check_time}"
-  else
-    cron_dow="*"
-    when="daily at ${update_check_time}"
+  if [[ "${update_cleanup}" == "weekly" ]]; then
+    # A fixed, quiet time — this is not user-configurable the way the check
+    # time is, so there is no value to read and validate here.
+    cron_lines+=("30 3 * * 0 ${PLUGIN_DIR}/scripts/update-check cleanup &> /dev/null")
+    echo "Image cleanup will run weekly, Sunday at 03:30."
   fi
 
-  cron_lines+=("${cron_minute} ${cron_hour} * * ${cron_dow} ${PLUGIN_DIR}/scripts/update-check check &> /dev/null")
-  echo "Image-update checking will run ${when}."
-fi
+  cron_content=$(printf '%s\n' "${cron_lines[@]}")
 
-if [[ "${update_cleanup}" == "weekly" ]]; then
-  # A fixed, quiet time — this is not user-configurable the way the check
-  # time is, so there is no value to read and validate here.
-  cron_lines+=("30 3 * * 0 ${PLUGIN_DIR}/scripts/update-check cleanup &> /dev/null")
-  echo "Image cleanup will run weekly, Sunday at 03:30."
-fi
-
-cron_content=$(printf '%s\n' "${cron_lines[@]}")
-
-# Compare before writing: the flash drive has finite write cycles, and this
-# script runs on every settings save and every boot.
-if [[ ! -f "${CRON_FILE}" ]] || [[ "$(cat "${CRON_FILE}")" != "${cron_content}" ]]; then
-  printf '%s\n' "${cron_content}" > "${CRON_FILE}"
+  # Compare before writing: the flash drive has finite write cycles, and this
+  # script runs on every settings save and every boot.
+  if [[ ! -f "${CRON_FILE}" ]] || [[ "$(cat "${CRON_FILE}")" != "${cron_content}" ]]; then
+    printf '%s\n' "${cron_content}" > "${CRON_FILE}"
+  fi
 fi
 
 # Collects every plugin's *.cron file (ours included) into root's crontab —

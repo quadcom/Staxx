@@ -38,9 +38,10 @@
  * inspect` call — always safe and always local, never a pull — comes back
  * empty every time, deterministically, regardless of what is actually
  * pulled on this box. The Community Applications cache (no config override;
- * always /tmp/staxx/ca/…) and the icon collection's index (on the flash
- * device, no override either) are both backed up, replaced with a small
- * fixture, and restored, including after a fatal error — the same trick
+ * always /tmp/staxx/ca/…) and the icon collection's index (inside the
+ * scratch STORE_ROOT's config folder, no override of its own — it moves
+ * with the store since PLAN_97 Phase 4) are both backed up, replaced with a
+ * small fixture, and restored, including after a fatal error — the same trick
  * tests/server/project-links.php already uses for the CA cache.
  *
  * WHAT THIS FILE CANNOT REACH, AND WHY (see the report handed back with
@@ -160,12 +161,15 @@ file_put_contents($caIndex, json_encode([
 
 /* --------------------------------------------- icon index fixture -- */
 
-$iconIndexPath = STAXX_ICON_INDEX;
+// Both are now functions of the data store rather than flash constants
+// (PLAN_97 Phase 4) — the scratch STORE_ROOT set up above puts them under
+// /tmp/zzdetail-store/config, same as everywhere else in this fixture.
+$iconIndexPath = staxx_icon_index_file();
 $iconIndexBak = '/tmp/zzdetail-icon-index.bak';
 $hadIconIndex = is_file($iconIndexPath);
 if ($hadIconIndex) copy($iconIndexPath, $iconIndexBak);
 
-if (!is_dir(STAXX_ICON_STORE)) @mkdir(STAXX_ICON_STORE, 0755, true);
+if (!is_dir(staxx_icon_store_dir())) @mkdir(staxx_icon_store_dir(), 0755, true);
 file_put_contents($iconIndexPath, json_encode([
   'refs' => [
     'uniquewidgetzz' => 's',

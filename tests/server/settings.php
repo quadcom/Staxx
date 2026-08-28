@@ -9,11 +9,18 @@
  *
  * Prints one line per case and exits non-zero on any failure.
  *
- * THIS TEST WRITES TO THE REAL CONFIG FILE. Adrian runs this on his
- * production server, so the writer tests back up
- * /boot/config/plugins/staxx/staxx.cfg before touching it and
- * restore it afterwards — including on a failing exit, via a shutdown
- * function, so a crash partway through cannot leave his settings changed. */
+ * THIS TEST WRITES TO THE REAL CONFIG. Adrian runs this on his production
+ * server, and PLAN_97 Phase 4 split that config in two: the flash pointer
+ * file (/boot/config/plugins/staxx/staxx.cfg, holding only STORE_ROOT and
+ * the two menu keys) and, wherever this box's own STORE_ROOT already points,
+ * the data store's own settings file. The writer tests back up BOTH before
+ * touching either and restore both afterwards — including on a failing
+ * exit, via a shutdown function, so a crash partway through cannot leave
+ * his settings changed. The three-child section further down additionally
+ * proves how staxx_cfg() layers a flash file, a store file and the shipped
+ * defaults together, using scratch flash-file states of its own rather than
+ * this box's real one, since staxx_cfg() memoises for the life of a process
+ * and a genuinely fresh state needs a genuinely fresh one. */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
 
@@ -202,23 +209,48 @@ $cfgFile = STAXX_CFG;
 $backup  = @file_get_contents($cfgFile); // false if the file does not exist yet
 $hadFile = $backup !== false;
 
+// PLAN_97 Phase 4 split the config in two: a save can now also land in the
+// STORE's own settings file, wherever this box's real STORE_ROOT already
+// points. Backed up and restored exactly like the flash file, and by the
+// same shutdown function, so a case further down that posts a non-flash key
+// (ICON_FETCH, still used below for the reload check) cannot leave a real
+// setting changed on a box that already has a store — whether or not it
+// actually gets reached depends on this box's live state, which this suite
+// does not get to choose, so covering it here rather than assuming it away
+// is the only safe option. '' when no store is chosen: nothing to back up.
+$storeFile    = staxx_settings_file();
+$storeBackup  = $storeFile !== '' ? @file_get_contents($storeFile) : false;
+$storeHadFile = $storeBackup !== false;
+
 function staxx_test_restore_cfg(): void {
-  global $cfgFile, $backup, $hadFile;
+  global $cfgFile, $backup, $hadFile, $storeFile, $storeBackup, $storeHadFile;
   if ($hadFile) file_put_contents($cfgFile, $backup);
   else @unlink($cfgFile);
+  if ($storeFile !== '') {
+    if ($storeHadFile) file_put_contents($storeFile, $storeBackup);
+    else @unlink($storeFile);
+  }
 }
 register_shutdown_function('staxx_test_restore_cfg');
 
 // A marker key untouched by the allowlist, so its survival proves unknown
-// keys are preserved rather than dropped.
+// keys are preserved rather than dropped. Posted alongside a FLASH key
+// (TAKEOVER_DOCKER_TAB) rather than a store one: this case has to succeed
+// whether or not this box currently has a reachable store, and a store key
+// would be refused outright on a box where the store is not reachable right
+// now — see the "unreachable, refused" case further down for that behaviour
+// proven on purpose instead.
 $marker = 'ZZB1TEST_UNKNOWN_KEY="keep-me"';
 $seed   = ($hadFile ? rtrim((string)$backup, "\n")."\n" : '').$marker."\n";
 file_put_contents($cfgFile, $seed);
 
+$curTakeover  = trim((string)(@parse_ini_file($cfgFile)['TAKEOVER_DOCKER_TAB'] ?? 'false'));
+$flipTakeover = $curTakeover === 'true' ? 'false' : 'true';
+
 $err = ''; $reload = null; $saved = null;
 $posted = [
-  'action'     => 'settings-save', // not an allowlisted key — must be ignored, not error
-  'ICON_FETCH' => 'false',
+  'action'              => 'settings-save', // not an allowlisted key — must be ignored, not error
+  'TAKEOVER_DOCKER_TAB' => $flipTakeover,
 ];
 $okSave = staxx_settings_save($posted, $err, $reload, $saved);
 ok('save with an unknown posted key succeeds', $okSave, $err);
@@ -226,7 +258,7 @@ ok('unknown posted key is not in the saved map', $okSave && !array_key_exists('a
 
 $after = @parse_ini_file($cfgFile) ?: [];
 ok('the unknown cfg key survives the write', ($after['ZZB1TEST_UNKNOWN_KEY'] ?? '') === 'keep-me');
-ok('the submitted key was actually written', ($after['ICON_FETCH'] ?? '') === 'false');
+ok('the submitted key was actually written', ($after['TAKEOVER_DOCKER_TAB'] ?? '') === $flipTakeover);
 
 $tmpGlob = glob($cfgFile.'.tmp-*');
 ok('no temp file left behind', $tmpGlob === [] || $tmpGlob === false, implode(',', (array)$tmpGlob));
@@ -292,13 +324,19 @@ ok('a non-page-affecting change does not ask for a reload', $reload === false, $
 // builds the shadow-page mechanism, so toggling it here has no live effect —
 // but it is still one of the three keys staxx_settings_save() treats as
 // page-affecting, so it proves the same reload logic just as well.
+// Flipped against $curTakeover, the value read before ANY save in this run —
+// not against $after, which is what the file holds now. This is the very trap
+// the note above describes: staxx_settings_save() decides "did this change?"
+// against the memoised original, so flipping relative to the current file
+// hands it back the value it already believes is in force, and it correctly
+// reports no change. Reading that as a broken reload flag would have been
+// exactly the wrong conclusion.
 $err = ''; $reload = null; $saved = null;
-$targetTakeover = ($after['TAKEOVER_DOCKER_TAB'] ?? 'false') === 'true' ? 'false' : 'true';
-staxx_settings_save(['TAKEOVER_DOCKER_TAB' => $targetTakeover], $err, $reload, $saved);
+staxx_settings_save(['TAKEOVER_DOCKER_TAB' => $flipTakeover], $err, $reload, $saved);
 ok('changing TAKEOVER_DOCKER_TAB asks for a reload', $reload === true, $err);
 // Put it back so the restore below has less to undo, though the shutdown
 // function restores the original file regardless.
-staxx_settings_save(['TAKEOVER_DOCKER_TAB' => $after['TAKEOVER_DOCKER_TAB'] ?? 'false'], $err, $reload, $saved);
+staxx_settings_save(['TAKEOVER_DOCKER_TAB' => $curTakeover], $err, $reload, $saved);
 
 /* ------------------------------------ where the data store may NOT live ---
  * The data store is allowed on a pool or inside a share, and nowhere else
@@ -351,8 +389,196 @@ foreach (['/mnt/user/disk/x', '/mnt/user/disks-archive/x', '/mnt/user/remotes-ol
      && strpos($err, 'missing at the next boot') === false, $err);
 }
 
+/* ---------------------------- PLAN_97 Phase 4 — the flash/store split ---
+ * staxx_cfg() memoises for the life of one process, and this script is
+ * already several hundred lines into being one — its own STORE_ROOT was
+ * cached the moment staxx_settings_keys()/read() first ran, at the very top
+ * of this file. Proving how three DIFFERENT flash-file states get layered
+ * needs three genuinely fresh processes, the same as three separate page
+ * loads would give for free. staxx_test_child() gives each one its own
+ * flash file, runs a small throwaway script in a real child `php` process,
+ * and puts the flash file straight back to whatever this process had it as
+ * a moment before — so nothing here can leak into the read-only tests still
+ * to come, or survive past this section at all. */
+
+function staxx_test_child(string $flashIni, string $php): array {
+  global $cfgFile;
+  $prior    = @file_get_contents($cfgFile);
+  $hadPrior = $prior !== false;
+  file_put_contents($cfgFile, $flashIni);
+
+  $tmp  = tempnam(sys_get_temp_dir(), 'zzb1settingschild');
+  file_put_contents($tmp, "<?php\n".$php);
+  $code = 1;
+  $out  = staxx_sh('php '.escapeshellarg($tmp), 15, $code);
+  @unlink($tmp);
+
+  if ($hadPrior) file_put_contents($cfgFile, $prior);
+  else @unlink($cfgFile);
+
+  return [$out, $code];
+}
+
+// Child 1 — a store that is chosen AND reachable: the layering order, the
+// flash file's filter to just the three keys, and (since this is the one
+// state where a non-flash key can actually be saved) the positive save
+// split and the STORE_ROOT-plus-another-key refusal, all in the one process
+// so the split save's own result is what the refusal case is checked
+// against.
+$storeDir1 = '/tmp/zzb1-settings-child1-'.getmypid();
+@exec('rm -rf '.escapeshellarg($storeDir1));
+mkdir($storeDir1.'/config', 0755, true);
+file_put_contents($storeDir1.'/config/staxx.cfg',
+  'ICON_FETCH="false"'."\n"
+  .'UPDATE_CHECK="weekly"'."\n"
+  .'TAKEOVER_DOCKER_TAB="storeval"'."\n");
+register_shutdown_function(function () use ($storeDir1) {
+  @exec('rm -rf '.escapeshellarg($storeDir1));
+});
+
+$flashIni1 = 'STORE_ROOT="'.$storeDir1.'"'."\n"
+           . 'HEADER_MENU="true"'."\n"
+           // A non-flash key, sitting in the flash file with a value that
+           // differs from both the shipped default and the store's own —
+           // it must be ignored outright, not merely lose a tie-break.
+           . 'ICON_FETCH="bogus-should-be-ignored"'."\n";
+
+$child1 = <<<'EOT'
+require '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+$fails = 0;
+function check($cond, $label) { global $fails; if (!$cond) { echo "FAIL child: $label\n"; $fails++; } }
+
+$c = staxx_cfg();
+check(($c['HEADER_MENU'] ?? null) === 'true', 'a flash key overrides both the store and the default');
+check(($c['ICON_FETCH'] ?? null) === 'false', 'the store value wins; the stray flash-file entry for a non-flash key is ignored entirely');
+check(($c['UPDATE_CHECK'] ?? null) === 'weekly', 'the store overrides the shipped default when the flash file says nothing');
+check(($c['TAKEOVER_DOCKER_TAB'] ?? null) === 'storeval', 'the store value is used for a flash key too, when the flash file itself has no opinion');
+check(($c['CATCH_INSTALLS'] ?? null) === 'true', 'the shipped default flows through untouched when nothing overrides it');
+check(staxx_store_reachable() === true, 'a present, readable store reads as reachable');
+check(staxx_settings_degraded() === false, 'a reachable store is never reported as degraded');
+
+require '/usr/local/emhttp/plugins/staxx/include/Settings.php';
+
+// The positive split: a flash key and a non-flash key saved in the same
+// call must land in the two different files, each holding only its own kind.
+$err = ''; $reload = null; $saved = null;
+$ok = staxx_settings_save(['HEADER_MENU' => 'false', 'ICON_FETCH' => 'true'], $err, $reload, $saved);
+check($ok, 'a save mixing a flash and a non-flash key succeeds while the store is reachable: '.$err);
+
+$flashText = (string)@file_get_contents(STAXX_CFG);
+$storeText = (string)@file_get_contents(staxx_settings_file());
+check(strpos($flashText, 'HEADER_MENU="false"') !== false, 'the flash key landed in the flash file');
+// The flash file already held a stray ICON_FETCH line from the fixture above
+// (planted to prove it gets IGNORED on read) — cfg_write_keys() rightly
+// leaves keys it does not know about alone, so its mere presence proves
+// nothing here. What proves the split is that the NEW value never reached
+// it: the save routed ICON_FETCH to the store file, not this one.
+check(strpos($flashText, 'ICON_FETCH="true"') === false, 'the save did not write the non-flash key into the flash file');
+check(strpos($storeText, 'ICON_FETCH="true"') !== false, 'the non-flash key landed in the store file');
+check(strpos($storeText, 'HEADER_MENU') === false, 'the flash key did NOT land in the store file');
+
+// Moving the store in the same save as another setting is refused, and
+// nothing at all is written — checked against the two files exactly as the
+// split save above left them.
+$flashBefore = $flashText;
+$storeBefore = $storeText;
+$err = ''; $reload = null; $saved = null;
+$newStore = '/mnt/user/appdata/zzb1-settings-storepair-'.getmypid();
+$ok2 = staxx_settings_save(['STORE_ROOT' => $newStore, 'ICON_FETCH' => 'false'], $err, $reload, $saved);
+check(!$ok2 && $err !== '', 'moving STORE_ROOT alongside another key is refused: '.$err);
+check(strpos($err, 'moved') !== false, 'the refusal explains it is the combination that is the problem');
+check((string)@file_get_contents(STAXX_CFG) === $flashBefore, 'the flash file is untouched by the refused save');
+check((string)@file_get_contents(staxx_settings_file()) === $storeBefore, 'the store file is untouched by the refused save');
+
+exit($fails ? 1 : 0);
+EOT;
+
+[$out1, $code1] = staxx_test_child($flashIni1, $child1);
+if (trim($out1) !== '') echo $out1;
+ok('Phase 4 child 1 (reachable store: layering, filtering, save split, store-move refusal)', $code1 === 0);
+
+// Child 2 — a store that is chosen but NOT reachable (the folder was never
+// created): the degraded state, the refusal with nothing written, the
+// unchanged repost that must NOT be refused, and the emergency route.
+$storeDir2 = '/tmp/zzb1-settings-child2-'.getmypid(); // deliberately never created
+$flashIni2 = 'STORE_ROOT="'.$storeDir2.'"'."\n"
+           . 'HEADER_MENU="false"'."\n"
+           . 'TAKEOVER_DOCKER_TAB="false"'."\n";
+
+$child2 = <<<'EOT'
+require '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+$fails = 0;
+function check($cond, $label) { global $fails; if (!$cond) { echo "FAIL child: $label\n"; $fails++; } }
+
+check(staxx_store_ready() === true, 'a non-blank STORE_ROOT still reads as chosen even though it cannot be reached');
+check(staxx_store_reachable() === false, 'a chosen but missing store reads as not reachable');
+check(staxx_settings_degraded() === true, 'chosen-but-missing is the one degraded state');
+
+require '/usr/local/emhttp/plugins/staxx/include/Settings.php';
+
+$flashBefore = (string)@file_get_contents(STAXX_CFG);
+$before = staxx_settings_read();
+check(($before['ICON_FETCH'] ?? null) === 'true', 'a degraded read falls back to the shipped default');
+
+// A non-flash key that actually changes value has nowhere to go and is
+// refused, writing nothing at all.
+$err = ''; $reload = null; $saved = null;
+$ok = staxx_settings_save(['ICON_FETCH' => 'false'], $err, $reload, $saved);
+check(!$ok && $err !== '', 'a changed non-flash key is refused while the store cannot be reached: '.$err);
+check((string)@file_get_contents(STAXX_CFG) === $flashBefore, 'the flash file is untouched by the refusal');
+check(!is_dir(staxx_config_root()), 'nothing was created for the store either');
+
+// The very same key, reposted UNCHANGED, is not a save attempt at all —
+// this is what lets a settings page that posts every field on every save
+// still use the emergency route below.
+$err = ''; $reload = null; $saved = null;
+$ok2 = staxx_settings_save(['ICON_FETCH' => 'true'], $err, $reload, $saved);
+check($ok2 && $err === '', 'reposting an unchanged non-flash key is not refused: '.$err);
+
+// The emergency route itself: a flash key still saves.
+$err = ''; $reload = null; $saved = null;
+$ok3 = staxx_settings_save(['HEADER_MENU' => 'true'], $err, $reload, $saved);
+check($ok3, 'a flash key still saves while the store cannot be reached: '.$err);
+check(strpos((string)@file_get_contents(STAXX_CFG), 'HEADER_MENU="true"') !== false,
+  'the flash key change actually reached the flash file');
+
+exit($fails ? 1 : 0);
+EOT;
+
+[$out2, $code2] = staxx_test_child($flashIni2, $child2);
+if (trim($out2) !== '') echo $out2;
+ok('Phase 4 child 2 (unreachable store: refusal, unchanged repost, emergency route)', $code2 === 0);
+@exec('rm -rf '.escapeshellarg($storeDir2)); // nothing should have made it, but leave no trace either way
+
+// Child 3 — nothing chosen at all: blank is the first-run state, not degraded.
+$flashIni3 = 'STORE_ROOT=""'."\n".'HEADER_MENU="false"'."\n".'TAKEOVER_DOCKER_TAB="false"'."\n";
+
+$child3 = <<<'EOT'
+require '/usr/local/emhttp/plugins/staxx/include/Defines.php';
+$fails = 0;
+function check($cond, $label) { global $fails; if (!$cond) { echo "FAIL child: $label\n"; $fails++; } }
+check(staxx_store_ready() === false, 'a blank STORE_ROOT reads as not chosen');
+check(staxx_store_reachable() === false, 'nothing is reachable when nothing has been chosen');
+check(staxx_settings_degraded() === false, 'unchosen is the first-run state, not degraded');
+exit($fails ? 1 : 0);
+EOT;
+
+[$out3, $code3] = staxx_test_child($flashIni3, $child3);
+if (trim($out3) !== '') echo $out3;
+ok('Phase 4 child 3 (no store chosen: unchosen, not degraded)', $code3 === 0);
 
 staxx_test_restore_cfg();
+
+// Prove the restore actually happened rather than trusting the shutdown
+// function blindly — this suite rewrites the real flash file, and now the
+// real store's settings file too, more than any other on Adrian's own
+// production server.
+ok('the flash file matches what it held before this run',
+   @file_get_contents($cfgFile) === $backup);
+if ($storeFile !== '') {
+  ok('the store settings file matches what it held before this run',
+     @file_get_contents($storeFile) === $storeBackup);
+}
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

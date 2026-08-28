@@ -13,7 +13,21 @@ if (defined('STAXX_PLUGIN')) return;
 define('STAXX_PLUGIN',  'staxx');
 define('STAXX_ROOT',    '/usr/local/emhttp/plugins/'.STAXX_PLUGIN);
 define('STAXX_CFG_DIR', '/boot/config/plugins/'.STAXX_PLUGIN);
+
+// PLAN_97 Phase 4 narrowed this from "the settings file" to "the flash
+// pointer file": it now holds only the three keys STAXX_FLASH_KEYS names.
+// Everything else lives in staxx_settings_file(), inside the data store.
+// Kept on flash, and kept this small, because these are the only settings
+// that must be readable before the array is up, or when the store itself
+// cannot be reached — STORE_ROOT names the store, and the other two decide
+// where StaXX's menu appears, including the emergency route back to
+// Unraid's own Docker tab when StaXX's page cannot be reached at all.
 define('STAXX_CFG',     STAXX_CFG_DIR.'/'.STAXX_PLUGIN.'.cfg');
+
+// The only keys the flash pointer file may hold. One list, so Defines.php,
+// Settings.php and scripts/apply_settings all agree on what "a flash key"
+// means rather than each hard-coding its own copy that could drift apart.
+define('STAXX_FLASH_KEYS', ['STORE_ROOT', 'HEADER_MENU', 'TAKEOVER_DOCKER_TAB']);
 
 // Release-notes cap, characters. A stack's own record must not quietly grow
 // by a megabyte of vendor prose because one release included a full changelog.
@@ -180,8 +194,51 @@ function staxx_archive_root(): string {
 }
 
 /**
- * Read the plugin config, falling back to the shipped defaults for any key the
- * user's config predates. Returns a flat key => string map.
+ * Where StaXX writes everything for itself — settings, icons, state. ''
+ * when no store has been chosen, same as staxx_stack_root() and
+ * staxx_archive_root().
+ */
+function staxx_config_root(): string {
+  $store = staxx_store_root();
+  return $store === '' ? '' : $store.'/config';
+}
+
+/** The real settings file, inside the store. '' when no store is chosen. */
+function staxx_settings_file(): string {
+  $root = staxx_config_root();
+  return $root === '' ? '' : $root.'/'.STAXX_PLUGIN.'.cfg';
+}
+
+/**
+ * Is the store not just chosen, but actually there right now? Different
+ * from staxx_store_ready(), which only asks whether a value has been typed
+ * in — a store on a pool is simply not there yet while the array is still
+ * coming up, and a caller that needs to read or write real settings has to
+ * tell that apart from "nobody has chosen one".
+ */
+function staxx_store_reachable(): bool {
+  $root = staxx_store_root();
+  return $root !== '' && is_dir($root) && is_readable($root);
+}
+
+/**
+ * Is StaXX quietly running on shipped defaults instead of the settings the
+ * user actually chose? True only once a store exists to disagree with —
+ * an unchosen store isn't "degraded", it's the first-run state, which is a
+ * different message with a different remedy.
+ */
+function staxx_settings_degraded(): bool {
+  return staxx_store_ready() && !staxx_store_reachable();
+}
+
+/**
+ * Read the plugin config: the shipped defaults, then the store's own
+ * settings file (once the store is reachable), then the flash pointer file
+ * — but only the three keys STAXX_FLASH_KEYS names are taken from flash.
+ * Later layers override earlier ones. Any other key found in the flash file
+ * is ignored rather than obeyed, so a stale key an older build left behind,
+ * or a hand edit, cannot quietly override the real setting sitting in the
+ * store. Returns a flat key => string map.
  */
 function staxx_cfg(): array {
   static $cfg = null;
@@ -194,9 +251,24 @@ function staxx_cfg(): array {
   // ${...}, so an unquoted "ICON_FETCH=false" came back as PHP false, and
   // (string) that is '' rather than the literal word "false" every reader
   // here compares against — leaving a setting switched off read as still on.
+  // The same reasoning applies to the store's settings file below, which is
+  // written the same way and can carry the same hand edits.
   $defaults = @parse_ini_file(STAXX_ROOT.'/default.cfg', false, INI_SCANNER_RAW) ?: [];
-  $user     = @parse_ini_file(STAXX_CFG, false, INI_SCANNER_RAW) ?: [];
-  return $cfg = array_merge($defaults, $user);
+
+  $flashRaw = @parse_ini_file(STAXX_CFG, false, INI_SCANNER_RAW) ?: [];
+  $flash    = array_intersect_key($flashRaw, array_flip(STAXX_FLASH_KEYS));
+
+  // The store's own path is worked out from the flash file directly here,
+  // rather than by calling staxx_store_root()/staxx_settings_file() — those
+  // read STORE_ROOT through this very function, and calling them while it is
+  // still building its own cache would recurse forever.
+  $store    = [];
+  $storeRoot = rtrim(trim((string)($flashRaw['STORE_ROOT'] ?? '')), '/');
+  if ($storeRoot !== '' && is_dir($storeRoot) && is_readable($storeRoot)) {
+    $store = @parse_ini_file($storeRoot.'/config/'.STAXX_PLUGIN.'.cfg', false, INI_SCANNER_RAW) ?: [];
+  }
+
+  return $cfg = array_merge($defaults, $store, $flash);
 }
 
 function staxx_cfg_bool(string $key): bool {

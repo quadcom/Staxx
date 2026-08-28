@@ -19,9 +19,9 @@
  * reads other stacks' files and never writes to any of them — nothing in
  * this file opens a STACK'S OWN file for writing. staxx_crosslinks_learn()
  * is the one exception worth naming explicitly: it writes, but only to
- * this installation's own settings (STAXX_CFG on flash), never to any
- * stack's compose file — see its own comment for why that is not the same
- * thing.
+ * this installation's own settings (the store's settings file, PLAN_97
+ * Phase 4 — see staxx_settings_file()), never to any stack's compose file —
+ * see its own comment for why that is not the same thing.
  *
  * THE IMAGES TABLE lives in data/db-images.json, read below with json_decode
  * and cached the way include/Icons.php caches its own index — the one copy
@@ -35,8 +35,9 @@
 ?>
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
-// For staxx_cfg_write_keys() and staxx_cfg() — the learned-images table
-// below is kept as this installation's own setting, not a second store.
+// For staxx_cfg_write_keys(), staxx_cfg() and staxx_settings_file() — the
+// learned-images table below is kept as this installation's own setting,
+// not a second store.
 require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
 
 if (defined('STAXX_CROSSLINKS_LOADED')) return;
@@ -136,11 +137,12 @@ function staxx_crosslinks_lookup_image(string $ref, array $entries): ?array {
  * One installation's own answers for images the shipped table does not
  * recognise (PLAN_70 10.2's "otherwise, ask once") — keyed by the same
  * normalised image name staxx_crosslinks_lookup_image() matches against.
- * Kept as an ordinary StaXX setting (STAXX_CFG, via staxx_cfg()), the same
- * file every other installation-wide preference already lives in, never in
- * any one stack's file — a write there is exactly what PLAN_70 10.5
- * forbids, and the answer is really about the image, not any one stack, so
- * every future stack running it benefits from one person's click.
+ * Kept as an ordinary StaXX setting — the store's settings file, via
+ * staxx_cfg() — the same file every other installation-wide preference
+ * already lives in, never in any one stack's file — a write there is
+ * exactly what PLAN_70 10.5 forbids, and the answer is really about the
+ * image, not any one stack, so every future stack running it benefits from
+ * one person's click.
  *
  * The value itself is base64-wrapped JSON in a single cfg key:
  * staxx_cfg_write_keys() writes a plain KEY="value" line with no escaping,
@@ -157,11 +159,15 @@ function staxx_crosslinks_learned_table(): array {
   // caches per-request in a static, so a learn() and a credentials() call
   // in the very same request — exactly what tests/server/links_match.php
   // does — would otherwise see whatever this key held BEFORE the write
-  // that just happened. staxx_cfg_write_keys() already reads STAXX_CFG the
-  // same raw way internally; this is that same, cheap, uncached read, not
-  // a second mechanism — this key has no default.cfg entry for staxx_cfg()
-  // to usefully merge in anyway.
-  $cfg = @parse_ini_file(STAXX_CFG, false, INI_SCANNER_RAW) ?: [];
+  // that just happened. staxx_cfg_write_keys() already reads the settings
+  // file the same raw way internally; this is that same, cheap, uncached
+  // read, not a second mechanism — this key has no default.cfg entry for
+  // staxx_cfg() to usefully merge in anyway. Nothing is learned while the
+  // store cannot be reached, same as any other setting from Phase 4 on.
+  $file = staxx_settings_file();
+  $cfg  = $file !== '' && staxx_store_reachable()
+        ? (@parse_ini_file($file, false, INI_SCANNER_RAW) ?: [])
+        : [];
   $raw = (string)($cfg[STAXX_DB_IMAGES_LEARNED_KEY] ?? '');
   if ($raw === '') return [];
   $json = base64_decode($raw, true);
@@ -864,7 +870,12 @@ function staxx_crosslinks_learn(string $stackPath, string $service, array $field
     $error = 'That could not be saved.';
     return ['ok' => false, 'error' => $error];
   }
-  if (!staxx_cfg_write_keys([STAXX_DB_IMAGES_LEARNED_KEY => base64_encode($json)], $error)) {
+  if (!staxx_store_reachable()) {
+    $error = 'This cannot be remembered right now because the data store cannot be reached — '
+           . 'wait for it to come back, or fix the data store location in Settings, then try again.';
+    return ['ok' => false, 'error' => $error];
+  }
+  if (!staxx_cfg_write_keys(staxx_settings_file(), [STAXX_DB_IMAGES_LEARNED_KEY => base64_encode($json)], $error)) {
     return ['ok' => false, 'error' => $error];
   }
 

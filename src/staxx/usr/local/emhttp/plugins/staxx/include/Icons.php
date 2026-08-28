@@ -33,16 +33,23 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 const STAXX_ICON_CDN = 'https://cdn.jsdelivr.net/gh/selfhst/icons';
 
 /**
- * The keeper, on the flash device.
+ * The keeper: <store>/config/icons, inside StaXX's own data store — a
+ * function rather than a constant because there may not be one yet. '' means
+ * no store has been chosen, and every caller below checks for that rather
+ * than building a path out of an empty string, which would otherwise be a
+ * real, writable-looking directory at the root of the filesystem.
  *
- * Unraid puts its own container icons on the Docker vdisk instead. Flash is
- * used here because it is always mounted: /var/lib/docker is not, when Docker
- * is stopped, and writing there while it is stopped puts the file into RAM
+ * Unraid puts its own container icons on the Docker vdisk instead; this
+ * plugin does not, because /var/lib/docker is not mounted when Docker is
+ * stopped, and writing there while it is stopped puts the file into RAM
  * without saying so — it then vanishes at the next reboot and every icon is
- * downloaded again. A cached icon is about a kilobyte of SVG, so a few hundred
- * of them are no burden on the flash device.
+ * downloaded again. A cached icon is about a kilobyte of SVG, so a few
+ * hundred of them are no burden on the store's own pool.
  */
-const STAXX_ICON_STORE = STAXX_CFG_DIR.'/icons';
+function staxx_icon_store_dir(): string {
+  $cfg = staxx_config_root();
+  return $cfg === '' ? '' : $cfg.'/icons';
+}
 
 /**
  * The copy the browser actually loads.
@@ -54,9 +61,13 @@ const STAXX_ICON_STORE = STAXX_CFG_DIR.'/icons';
 const STAXX_ICON_SERVE = '/var/local/emhttp/plugins/'.STAXX_PLUGIN.'/icons';
 const STAXX_ICON_BASE  = '/state/plugins/'.STAXX_PLUGIN.'/icons';
 
-/** The reduced collection index. Underscore-prefixed so it can never collide
+/** The reduced collection index, inside the icon store above — '' when there
+ *  is nowhere to keep it yet. Underscore-prefixed so it can never collide
  *  with an icon file: no reference in the collection starts with one. */
-const STAXX_ICON_INDEX = STAXX_ICON_STORE.'/_index.json';
+function staxx_icon_index_file(): string {
+  $dir = staxx_icon_store_dir();
+  return $dir === '' ? '' : $dir.'/_index.json';
+}
 
 /** How stale the index may get before it is fetched again. */
 const STAXX_ICON_INDEX_TTL = 7 * 86400;
@@ -80,7 +91,8 @@ const STAXX_ICON_MISS_TTL = 6 * 3600;
  * before staxx_icon_evict() removes it. Its ref is keyed on the source
  * file's own path and mtime, so a re-downloaded Unraid icon writes a fresh
  * copy under a new name every time and never revisits the old one — nothing
- * else in the plugin ever cleans that up.
+ * else in the plugin ever cleans that up, and it would otherwise accumulate
+ * in the store forever.
  */
 const STAXX_ICON_EVICT_DAYS = 30;
 
@@ -146,7 +158,8 @@ function staxx_icon_index(): array {
 
   $index = ['refs' => [], 'alias' => [], 'order' => []];
 
-  $raw = @file_get_contents(STAXX_ICON_INDEX);
+  $file = staxx_icon_index_file();
+  $raw  = $file === '' ? false : @file_get_contents($file);
   if ($raw === false) return $index;
 
   $data = json_decode($raw, true);
@@ -161,9 +174,16 @@ function staxx_icon_index(): array {
   return $index;
 }
 
-/** True when the index is missing or old enough to be worth fetching again. */
+/**
+ * True when the index is missing or old enough to be worth fetching again.
+ * With nowhere to keep it yet, there is nothing worth asking for — a fetch
+ * that cannot be saved is just a wasted request that will read as stale again
+ * next time anyway — so this reads false rather than true.
+ */
 function staxx_icon_index_stale(): bool {
-  $when = @filemtime(STAXX_ICON_INDEX);
+  $file = staxx_icon_index_file();
+  if ($file === '') return false;
+  $when = @filemtime($file);
   return $when === false || (time() - $when) > STAXX_ICON_INDEX_TTL;
 }
 
@@ -174,6 +194,8 @@ function staxx_icon_index_stale(): bool {
  */
 function staxx_icon_index_refresh(): bool {
   if (!staxx_icon_fetching()) return false;
+  $file = staxx_icon_index_file();
+  if ($file === '') return false;
 
   $raw = staxx_icon_get(STAXX_ICON_CDN.'/index.json', 20);
   if ($raw === null) return false;
@@ -212,7 +234,7 @@ function staxx_icon_index_refresh(): bool {
   // Sorted on the way in, so no page render ever pays to sort it.
   ksort($refs);
 
-  return staxx_icon_write(STAXX_ICON_INDEX,
+  return staxx_icon_write($file,
     (string)json_encode(['refs' => $refs, 'alias' => $alias]));
 }
 
@@ -350,6 +372,7 @@ function staxx_icon_match(string $image, string $service = '', string $stack = '
 
 /** Write a file, creating its directory, without ever leaving a half file. */
 function staxx_icon_write(string $path, string $body): bool {
+  if ($path === '') return false; // no destination — never write to whatever dirname('') resolves to
   $dir = dirname($path);
   if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) return false;
 
@@ -430,19 +453,24 @@ function staxx_icon_raw_url(string $url): string {
 /**
  * Where the browser can load a cached icon from, or '' if it is not cached.
  *
- * The served copy lives in RAM and therefore disappears at every reboot, while
- * the keeper on flash does not. Rather than a boot script to put them back,
- * that is repaired here the first time each icon is asked for: a local copy of
- * a one-kilobyte file is not worth arranging anything more elaborate around.
+ * The served copy lives in RAM and therefore disappears at every reboot,
+ * while the durable keeper in the data store does not. Rather than a boot
+ * script to put them back, that is repaired here the first time each icon is
+ * asked for: a local copy of a one-kilobyte file is not worth arranging
+ * anything more elaborate around. With no store chosen (or not reachable
+ * yet), only the RAM copy can ever be found — a missing icon this boot, not
+ * an error.
  */
 function staxx_icon_url(string $ref): string {
   if (!staxx_icon_safe_ref($ref)) return '';
+  $store = staxx_icon_store_dir();
 
   foreach (STAXX_ICON_EXTS as $ext) {
     $served = STAXX_ICON_SERVE.'/'.$ref.'.'.$ext;
     if (is_file($served)) return STAXX_ICON_BASE.'/'.$ref.'.'.$ext;
 
-    $kept = STAXX_ICON_STORE.'/'.$ref.'.'.$ext;
+    if ($store === '') continue;
+    $kept = $store.'/'.$ref.'.'.$ext;
     if (is_file($kept)) {
       // Touched here, not on the (far more frequent) RAM-copy hit above: this
       // still runs about once per boot for anything actually displayed —
@@ -464,25 +492,26 @@ function staxx_icon_url(string $ref): string {
  * with $error set to a sentence.
  *
  * Never fetches anything — the icon must already be in STAXX_ICON_SERVE or
- * STAXX_ICON_STORE, found the same way staxx_icon_url() looks for one. Safe
+ * the icon store, found the same way staxx_icon_url() looks for one. Safe
  * to call twice: a file already there with identical contents is treated as
  * success, having written nothing.
  *
- * The stack root is normally on the flash drive, where every file comes out
- * owner-only whatever mode is asked for — that is the drive, not a bug, so
- * this does not try to chmod anything looser.
+ * The stack root may itself be on the flash drive, where every file comes
+ * out owner-only whatever mode is asked for — that is the drive, not a bug,
+ * so this does not try to chmod anything looser.
  */
 function staxx_icon_adopt(string $ref, string $dir, string &$error): string {
   $error = '';
   if (!staxx_icon_safe_ref($ref)) { $error = 'That is not a valid icon reference.'; return ''; }
 
+  $store  = staxx_icon_store_dir();
   $source = '';
   $ext    = '';
   foreach (STAXX_ICON_EXTS as $candidate) {
     $served = STAXX_ICON_SERVE.'/'.$ref.'.'.$candidate;
-    $kept   = STAXX_ICON_STORE.'/'.$ref.'.'.$candidate;
+    $kept   = $store === '' ? '' : $store.'/'.$ref.'.'.$candidate;
     if (is_file($served)) { $source = $served; $ext = $candidate; break; }
-    if (is_file($kept))   { $source = $kept;   $ext = $candidate; break; }
+    if ($kept !== '' && is_file($kept)) { $source = $kept; $ext = $candidate; break; }
   }
   if ($source === '') { $error = 'This icon has not been downloaded yet.'; return ''; }
 
@@ -541,15 +570,22 @@ function staxx_icon_is_picture(string $ext, string $body): bool {
   }
 }
 
-/** Store one icon under $ref, in both places. */
+/**
+ * Store one icon under $ref. The RAM copy is what actually displays this
+ * boot, so it is written first and is what this function's return value
+ * reports; the durable copy in the data store is best-effort on top of
+ * that — with no store chosen or reachable yet, re-fetching next boot is a
+ * cosmetic inconvenience, not a reason to refuse to show the icon now.
+ */
 function staxx_icon_store(string $ref, string $ext, string $body): bool {
   if (!staxx_icon_safe_ref($ref)) return false;
   if (!in_array($ext, STAXX_ICON_EXTS, true)) return false;
   if (!staxx_icon_is_picture($ext, $body)) return false;
 
-  if (!staxx_icon_write(STAXX_ICON_STORE.'/'.$ref.'.'.$ext, $body)) return false;
-  staxx_icon_write(STAXX_ICON_SERVE.'/'.$ref.'.'.$ext, $body);
-  return true;
+  $ok = staxx_icon_write(STAXX_ICON_SERVE.'/'.$ref.'.'.$ext, $body);
+  $store = staxx_icon_store_dir();
+  if ($store !== '') staxx_icon_write($store.'/'.$ref.'.'.$ext, $body);
+  return $ok;
 }
 
 /**
@@ -691,27 +727,30 @@ function staxx_icon_fetch(string $ref, string $remote = ''): string {
 
 /**
  * Remove local icon copies nobody has asked for in STAXX_ICON_EVICT_DAYS —
- * see the constant's own comment for why they otherwise accumulate on the
- * flash device forever. Only "local-*" files are ever considered: a
- * catalogue icon's ref never changes, so nothing about it can go orphaned
- * the same way.
+ * see the constant's own comment for why they otherwise accumulate in the
+ * store forever. Only "local-*" files are ever considered: a catalogue
+ * icon's ref never changes, so nothing about it can go orphaned the same way.
  *
  * Gated behind its own marker file so this only actually scans the icon
- * store about once a day, not on every sweep tick.
+ * store about once a day, not on every sweep tick. A no-op with no store
+ * chosen or reachable yet — nothing durable exists for it to clean up.
  */
 function staxx_icon_evict(): void {
-  $marker = STAXX_ICON_STORE.'/.last-evict';
+  $store = staxx_icon_store_dir();
+  if ($store === '') return;
+
+  $marker = $store.'/.last-evict';
   if (is_file($marker) && (int)@filemtime($marker) > time() - 86400) return;
 
   $cutoff = time() - STAXX_ICON_EVICT_DAYS * 86400;
-  foreach ((array)@glob(STAXX_ICON_STORE.'/local-*') as $path) {
+  foreach ((array)@glob($store.'/local-*') as $path) {
     if ((int)@filemtime($path) >= $cutoff) continue;
     @unlink($path);
     $served = STAXX_ICON_SERVE.'/'.basename($path);
     if (is_file($served)) @unlink($served);
   }
 
-  if (!is_dir(STAXX_ICON_STORE)) @mkdir(STAXX_ICON_STORE, 0755, true);
+  if (!is_dir($store)) @mkdir($store, 0755, true);
   @touch($marker);
 }
 

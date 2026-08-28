@@ -32,7 +32,19 @@ define('STAXX_CRYPT_LOADED', true);
 // STAXX_CRYPT_CONTAINER is defined in Defines.php, not here: the shared
 // `docker ps` reader there has to leave this container out of every list it
 // feeds, and this file requires that one.
-define('STAXX_CRYPT_SELFTEST_FILE', STAXX_CFG_DIR.'/crypt-selftest.json');
+
+/**
+ * Where the proven-hash-formats record lives: <store>/config/crypt-selftest.json,
+ * or '' when no data store has been chosen yet — a function rather than a
+ * constant because that answer can change, and every caller below checks
+ * for '' rather than building a path out of it. This record gates which
+ * hash formats are trusted at all (staxx_crypt_state()), so an unreadable
+ * or absent file must always be read as "nothing proven" — never as a pass.
+ */
+function staxx_crypt_selftest_file(): string {
+  $cfg = staxx_config_root();
+  return $cfg === '' ? '' : $cfg.'/crypt-selftest.json';
+}
 // A fixed, known, throwaway password used only to prove each format comes
 // out right — never shown anywhere, never a real secret, so it is fine to
 // keep it as a literal here.
@@ -124,7 +136,11 @@ function staxx_crypt_container_status(): string {
  */
 function staxx_crypt_selftest_read(): array {
   $empty = ['recipeId' => '', 'at' => 0, 'formats' => [], 'argon2Method' => ''];
-  $raw = @file_get_contents(STAXX_CRYPT_SELFTEST_FILE);
+  $file = staxx_crypt_selftest_file();
+  // No store chosen, or the store's pool is not up yet: both read exactly
+  // like a missing file below, and both must, since "the record cannot be
+  // read" and "nothing has ever passed" have to mean the same thing here.
+  $raw = $file === '' ? false : @file_get_contents($file);
   if ($raw === false) return $empty;
   $data = json_decode($raw, true);
   if (!is_array($data) || !is_string($data['recipeId'] ?? null) || !is_int($data['at'] ?? null)
@@ -144,13 +160,16 @@ function staxx_crypt_selftest_read(): array {
 }
 
 function staxx_crypt_selftest_write(array $result): bool {
-  if (!is_dir(STAXX_CFG_DIR) && !@mkdir(STAXX_CFG_DIR, 0755, true)) return false;
+  $file = staxx_crypt_selftest_file();
+  if ($file === '') return false; // nowhere to keep it — caller reports this as the self-test not being recorded
+  $dir = dirname($file);
+  if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
   $json = json_encode($result, JSON_PRETTY_PRINT);
   if ($json === false) return false;
-  $tmp = STAXX_CRYPT_SELFTEST_FILE.'.tmp-'.getmypid();
+  $tmp = $file.'.tmp-'.getmypid();
   if (@file_put_contents($tmp, $json) === false) { @unlink($tmp); return false; }
   @chmod($tmp, 0600);
-  if (!@rename($tmp, STAXX_CRYPT_SELFTEST_FILE)) { @unlink($tmp); return false; }
+  if (!@rename($tmp, $file)) { @unlink($tmp); return false; }
   return true;
 }
 

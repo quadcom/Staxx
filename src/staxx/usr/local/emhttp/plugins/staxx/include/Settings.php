@@ -423,22 +423,27 @@ function staxx_settings_validate(string $key, array $spec, string $v, string &$e
  * caller builds it directly from what was validated instead.
  */
 /**
- * Merges $overlay into whatever STAXX_CFG already holds on disk and writes
- * it back atomically — unknown keys survive untouched, so a key nothing
- * here validates against (STORAGE_CHOICE from an older build, or
- * CrossLinks.php's own learned-images key, DB_IMAGES_LEARNED) is never
- * dropped by a write that does not know about it. The one place this
- * plugin ever writes its own config file; staxx_settings_save() below and
- * include/CrossLinks.php's staxx_crosslinks_learn() both go through it
- * rather than each holding their own copy of the read-merge-rename dance.
+ * Merges $overlay into whatever $file already holds on disk and writes it
+ * back atomically — unknown keys survive untouched, so a key nothing here
+ * validates against (an older build's stray key, or CrossLinks.php's own
+ * learned-images key, DB_IMAGES_LEARNED) is never dropped by a write that
+ * does not know about it. The one place this plugin ever writes an ini
+ * file of its own; staxx_settings_save() below and include/CrossLinks.php's
+ * staxx_crosslinks_learn() both go through it — one call per file, the
+ * flash pointer or the store's settings file — rather than each holding
+ * their own copy of the read-merge-rename dance.
+ *
+ * The caller decides which file: this function has no opinion on flash
+ * versus store, so it is exactly as safe to point at either.
  *
  * @return bool
  */
-function staxx_cfg_write_keys(array $overlay, ?string &$error = null): bool {
+function staxx_cfg_write_keys(string $file, array $overlay, ?string &$error = null): bool {
   $error = '';
 
-  if (!is_dir(STAXX_CFG_DIR) && !@mkdir(STAXX_CFG_DIR, 0755, true)) {
-    $error = 'Could not create '.STAXX_CFG_DIR.'.';
+  $dir = dirname($file);
+  if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+    $error = 'Could not create '.$dir.'.';
     return false;
   }
 
@@ -446,9 +451,9 @@ function staxx_cfg_write_keys(array $overlay, ?string &$error = null): bool {
   // error — never an empty array — so `?: []` cannot tell "nothing there
   // yet" apart from "could not be read", and would otherwise silently drop
   // every key this write does not know about.
-  $raw = @parse_ini_file(STAXX_CFG, false, INI_SCANNER_RAW);
-  if ($raw === false && is_file(STAXX_CFG)) {
-    $error = 'Could not read '.STAXX_CFG.' — it may have a syntax error. Fix it by hand, '
+  $raw = @parse_ini_file($file, false, INI_SCANNER_RAW);
+  if ($raw === false && is_file($file)) {
+    $error = 'Could not read '.$file.' — it may have a syntax error. Fix it by hand, '
            . 'or remove it and let StaXX recreate it, before saving again.';
     return false;
   }
@@ -461,21 +466,20 @@ function staxx_cfg_write_keys(array $overlay, ?string &$error = null): bool {
     $lines[] = $key.'="'.$value.'"';
   }
 
-  $tmp = STAXX_CFG.'.tmp-'.getmypid();
+  $tmp = $file.'.tmp-'.getmypid();
   if (@file_put_contents($tmp, implode("\n", $lines)."\n") === false) {
     @unlink($tmp); // a partial write is possible even though the call reported failure
     $error = 'Could not write '.$tmp.'.';
     return false;
   }
-  // Intent is owner-only, since this file can hold the Docker Hub token
-  // (HUB_TOKEN) in the clear — but the config lives on the flash drive,
-  // which is vfat and has no concept of Unix permissions, so this call is a
-  // no-op there: every file on that mount is already owner-only regardless
-  // of what chmod reports. The mount is the real protection, not this call;
-  // it is kept so the file still gets a real 0600 if STAXX_CFG is ever
-  // pointed somewhere off the flash drive, such as in the test suite.
+  // Intent is owner-only, since a settings file can hold the Docker Hub
+  // token (HUB_TOKEN) in the clear — but the flash pointer lives on a vfat
+  // mount with no concept of Unix permissions, so this call is a no-op
+  // there: every file on that mount is already owner-only regardless of
+  // what chmod reports. The store's settings file is off flash, though, so
+  // this is what actually protects that one.
   @chmod($tmp, 0600);
-  if (!@rename($tmp, STAXX_CFG)) {
+  if (!@rename($tmp, $file)) {
     @unlink($tmp);
     $error = 'Could not save the settings file — the temporary file could not be put in place.';
     return false;
@@ -489,9 +493,11 @@ function staxx_settings_save(
   $error  = '';
   $reload = false;
 
-  $keys    = staxx_settings_keys();
-  $before  = staxx_settings_read();
-  $overlay = [];
+  $keys        = staxx_settings_keys();
+  $before      = staxx_settings_read();
+  $reachable   = staxx_store_reachable();
+  $flashOverlay = [];
+  $storeOverlay = [];
 
   // Validate everything first. One bad value must save none of them.
   foreach ($keys as $key => $spec) {
@@ -510,21 +516,70 @@ function staxx_settings_save(
     // beforehand would let it slip through unnoticed.
     $stored = staxx_settings_validate($key, $spec, $raw, $error);
     if ($error !== '') return false;
-    $overlay[$key] = $stored;
+
+    if (in_array($key, STAXX_FLASH_KEYS, true)) {
+      $flashOverlay[$key] = $stored;
+      continue;
+    }
+
+    // Everything else lives in the store's own settings file, which can
+    // only be written while the store can actually be reached. The settings
+    // page posts every field on every save, not just the one somebody
+    // touched, so a value that has not actually changed is not a save
+    // attempt and is quietly skipped rather than refused — that is what
+    // keeps the emergency route (flipping a flash key while the store is
+    // unreachable) usable at all.
+    if (!$reachable) {
+      if ($stored === $before[$key]) continue;
+      $error = 'The data store cannot be reached right now, so "'.$key.'" cannot be saved — only '
+             . 'the data store location and the two menu settings can be changed until it comes '
+             . 'back. Wait for the array (or the store\'s pool) to finish starting, then try again.';
+      return false;
+    }
+    $storeOverlay[$key] = $stored;
   }
 
-  // The write itself — read-merge-atomic-rename — is shared with
-  // include/CrossLinks.php's staxx_crosslinks_learn(); see
-  // staxx_cfg_write_keys()'s own comment just above this function for why.
-  if (!staxx_cfg_write_keys($overlay, $error)) {
+  /* Moving the store and changing something else in the same save cannot be
+   * done coherently, so it is refused rather than half-done. staxx_cfg()
+   * memoises for the life of the request, so staxx_settings_file() below
+   * still names the OLD store — the other settings would be written there
+   * while the pointer moved to the new one, and the store actually in use
+   * afterwards would never have seen them. Pointing STORE_ROOT somewhere
+   * else on its own is a different, coherent thing: that store brings its
+   * own settings with it, which is exactly what adopting one means. */
+  if (isset($flashOverlay['STORE_ROOT'])
+      && $flashOverlay['STORE_ROOT'] !== $before['STORE_ROOT']
+      && $storeOverlay !== []) {
+    $error = 'The data store cannot be moved in the same save as another setting, because the '
+           . 'other settings live inside the store itself. Change the location on its own, or '
+           . 'use the move on the settings panel, which copies everything across first.';
+    return false;
+  }
+
+  /* Two files, two writers: the three flash keys go to the pointer file on
+   * flash, everything else to the store's own settings file. The store
+   * write is skipped entirely rather than attempted with an empty overlay —
+   * there is nothing to say when the store is unreachable, and nothing to
+   * write when nothing changed.
+   *
+   * The store is written FIRST. A failed write there then leaves nothing
+   * changed at all, where writing flash first would leave the pointer or
+   * the menu already moved with the rest of the save never landing. */
+  if ($storeOverlay !== []) {
+    if (!staxx_cfg_write_keys(staxx_settings_file(), $storeOverlay, $error)) {
+      return false;
+    }
+  }
+  if (!staxx_cfg_write_keys(STAXX_CFG, $flashOverlay, $error)) {
     return false;
   }
 
   $saved = $before;
-  foreach ($overlay as $key => $value) $saved[$key] = $value;
-  // $overlay['HUB_TOKEN'], when present, is the real new token in the clear —
-  // it has to be, to be written above. It must not reach the browser that
-  // way, so mask it again here exactly as staxx_settings_read() does.
+  foreach ($flashOverlay as $key => $value) $saved[$key] = $value;
+  foreach ($storeOverlay as $key => $value) $saved[$key] = $value;
+  // $storeOverlay['HUB_TOKEN'], when present, is the real new token in the
+  // clear — it has to be, to be written above. It must not reach the browser
+  // that way, so mask it again here exactly as staxx_settings_read() does.
   if (isset($saved['HUB_TOKEN'])) $saved['HUB_TOKEN'] = $saved['HUB_TOKEN'] !== '' ? STAXX_HUB_TOKEN_MASK : '';
 
   foreach (['HEADER_MENU', 'TAKEOVER_DOCKER_TAB', 'STORE_ROOT'] as $key) {

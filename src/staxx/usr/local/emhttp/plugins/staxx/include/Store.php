@@ -116,35 +116,65 @@ function staxx_store_inspect(string $path): array {
   $scanDir = $hasStore ? $stacksDir : $norm;
   $found   = [];
   $ownedByStaxx = $hasStore;
+
+  /* Counted the same way the stack model itself decides: a directory holding
+   * a compose file IS a stack, and a directory that holds none but contains
+   * directories that do is a FOLDER, whose children are stacks named
+   * "Media/jellyfin". One level down and no further, exactly as everywhere
+   * else — a stack cannot contain another stack.
+   *
+   * Looking only at the top level, as this first did, reported a real store
+   * of eighty compose files as holding four, because everything filed into a
+   * folder was invisible to it. Undercounting here is worse than it sounds:
+   * this is the screen that tells somebody whether the folder they are about
+   * to adopt is the one with their stacks in it. */
+  $isStack = function (string $dir): bool {
+    foreach (STAXX_COMPOSE_FILENAMES as $name) {
+      if (is_file($dir.'/'.$name)) return true;
+    }
+    return false;
+  };
+  $note = function (string $dir) use (&$ownedByStaxx): void {
+    if (is_dir($dir.'/'.STAXX_RECORD_DIR)) $ownedByStaxx = true;
+  };
+
   foreach ((array)@scandir($scanDir) as $entry) {
     if ($entry === '.' || $entry === '..' || $entry[0] === '.') continue;
     $dir = $scanDir.'/'.$entry;
     if (!is_dir($dir)) continue;
 
-    $hasCompose = false;
-    foreach (STAXX_COMPOSE_FILENAMES as $name) {
-      if (is_file($dir.'/'.$name)) { $hasCompose = true; break; }
+    if ($isStack($dir)) {
+      $found[] = $entry;
+      $note($dir);
+      continue;
     }
-    if (!$hasCompose) continue;
 
-    $found[] = $entry;
-    if (is_dir($dir.'/'.STAXX_RECORD_DIR)) $ownedByStaxx = true;
+    foreach ((array)@scandir($dir) as $child) {
+      if ($child === '.' || $child === '..' || $child[0] === '.') continue;
+      $sub = $dir.'/'.$child;
+      if (!is_dir($sub) || !$isStack($sub)) continue;
+      $found[] = $entry.'/'.$child;
+      $note($sub);
+    }
   }
 
   if ($found !== []) {
-    $count  = count($found);
-    $shown  = array_slice($found, 0, STAXX_STORE_INSPECT_CAP);
-    $more   = $count - count($shown);
-    $suffix = $more > 0 ? ' (and '.$more.' more)' : '';
+    $count = count($found);
+    $shown = array_slice($found, 0, STAXX_STORE_INSPECT_CAP);
+    $more  = $count - count($shown);
+    /* The count is already the whole total, so this qualifies the LIST below
+     * it, never the number — written the other way round it read as "84
+     * stacks (and 59 more)", which looks like a total of 143. */
+    $suffix = $more > 0 ? ' The first '.count($shown).' are listed here.' : '';
 
     if ($ownedByStaxx) {
-      $detail = 'This is already a StaXX store, holding '.$count.' stack'.($count === 1 ? '' : 's').$suffix.'.';
+      $detail = 'This is already a StaXX store, holding '.$count.' stack'.($count === 1 ? '' : 's').'.'.$suffix;
       return ['state' => 'staxx', 'stacks' => $shown, 'detail' => $detail];
     }
 
-    $detail = 'This folder holds '.$count.' compose file'.($count === 1 ? '' : 's').$suffix.', but none '
+    $detail = 'This folder holds '.$count.' compose file'.($count === 1 ? '' : 's').', but none '
             . 'were written by StaXX — nothing has been described or given an icon yet. They will run '
-            . 'exactly as they are.';
+            . 'exactly as they are.'.$suffix;
     return ['state' => 'compose', 'stacks' => $shown, 'detail' => $detail];
   }
 

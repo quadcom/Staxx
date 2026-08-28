@@ -152,8 +152,12 @@ first-line-abort-if-missing rule as the other suites, but that value is never a 
 for the read-only inspector all live under `/tmp`, but the creation cases cannot: the store's own
 placement rules refuse anything outside a real share or pool, so those live under a disposable
 folder nested inside the real appdata share, cleaned up on every exit path the way
-`tests/server/storage.php` already does for its pool fixtures, and its writes to the real config
-file are backed up and restored the same way `settings.php`'s are. Its two negative cases matter
+`tests/server/storage.php` already does for its pool fixtures, and its one write to the real flash
+file is backed up and restored the same way `settings.php`'s is — `settings.php` itself backs up
+both halves of the config since PLAN_97 Phase 4 split it in two (the flash pointer file and, once a
+store exists, its own settings file inside `<store>/config`), and proves how the two layer together
+with the shipped defaults, using scratch flash-file states rather than this box's real one. Its two
+negative cases matter
 most: a folder holding a `stacks` folder next to an `archives` folder reads as StaXX's own even
 before any stack inside it has its own hidden record, and a bare pile of compose files with no
 hidden record and no `archives` folder never reads as one. Running creation twice over the same

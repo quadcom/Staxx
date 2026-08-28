@@ -164,7 +164,14 @@ endif;
      page — uppercasing our menu labels, giving each item a 10px margin, and
      painting the row icons as 86px orange gradient slabs. Specificity alone
      cannot undo those, because the :hover variants outrank a plain class.
-     Nothing in Unraid's JavaScript or PHP reads this class. -->
+     Nothing in Unraid's JavaScript or PHP reads this class.
+
+     data-store-reachable (PLAN_97 Phase 4): read by the settings panel so it
+     can say a save will be refused rather than let somebody find out by
+     trying. This page is only ever reached with the store reachable OR
+     degraded-and-said-so above (staxx_settings_degraded()'s notice), so this
+     only turns false mid-visit if the store drops out from under an open
+     tab. -->
 <div class="staxx-scaffold unapi"
      data-csrf="<?= htmlspecialchars($csrf) ?>"
      data-endpoint="<?= $assets ?>/include/action.php"
@@ -173,6 +180,7 @@ endif;
          fn($f) => ['id' => $f, 'name' => $f], $folders
      )), ENT_QUOTES) ?>"
      data-appdata="<?= htmlspecialchars(staxx_appdata_root()) ?>"
+     data-store-reachable="<?= staxx_store_reachable() ? '1' : '0' ?>"
      <? if ($dbImagesTable['ok']): ?>data-db-images="<?= htmlspecialchars(json_encode(['images' => $dbImagesTable['entries']]), ENT_QUOTES) ?>"<? endif; ?>>
 
   <!-- Only conditions that need acting on get a banner here. The standing
@@ -181,6 +189,24 @@ endif;
 
        Deliberately not Unraid's .notice class. Borrowing a stock class means
        inheriting layout rules we do not control and cannot see change. -->
+  <? if (staxx_settings_degraded()): ?>
+    <!-- PLAN_97 Phase 4: the store is chosen but not there right now — almost
+         always the array still starting, since the store normally lives on a
+         pool. This is NOT the first-run panel above: a store already exists
+         and must not be replaced, so this says wait rather than offering a
+         chooser. Settings, icons and state all live in the store now, so
+         nothing here can be read; what is on screen is the shipped defaults
+         rather than what was actually chosen. Nothing is lost — it comes
+         back on its own once the store is reachable again. -->
+    <div class="staxx-notice">
+      <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+      <div>
+        <strong><?= _('StaXX cannot reach its data store right now.') ?></strong>
+        <?= _('Its settings live there, so what is shown here is the shipped defaults rather than what you chose. Nothing has been lost — this puts itself right once the array finishes starting.') ?>
+      </div>
+    </div>
+  <? endif; ?>
+
   <? if ($csrf === ''): ?>
     <!-- Unraid's own CSRF check rejects every POST this page makes once
          csrf_token is missing from var.ini, and it does so silently from

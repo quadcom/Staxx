@@ -12,6 +12,9 @@ This guide is written in English only.
   images get checked more often than others, and what happens when you press it.
 - **[What the marks mean](marks.md)** — a quick key to every mark on the stack list: running state,
   restart pending, pinned, and the rest.
+- **[Where StaXX keeps its things](where-things-live.md)** — what lives in the data store versus the
+  three lines on the flash drive, and the three ways to change where StaXX appears if you cannot
+  reach its page.
 
 ## Not written yet
 

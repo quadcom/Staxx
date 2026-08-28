@@ -10,17 +10,34 @@
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
-if (defined('STAXX_UPDATE_STATE')) return;
+if (defined('STAXX_UPDATES_LOADED')) return;
+define('STAXX_UPDATES_LOADED', true);
 
-// Same env-override trick as STAXX_AUTOSTART_FILE, so a server test can point
-// this at /tmp without ever touching the real flash file.
-$staxx_update_state_env = getenv('STAXX_UPDATE_STATE');
-define('STAXX_UPDATE_STATE', $staxx_update_state_env !== false && $staxx_update_state_env !== ''
-  ? $staxx_update_state_env
-  : STAXX_CFG_DIR.'/updates.json');
+/**
+ * Where the update-check state lives: <store>/config/updates.json, or ''
+ * when no data store has been chosen — a function rather than a constant
+ * because that answer can change (and must never be a bare path built from
+ * an empty string, which would otherwise be a real, writable-looking
+ * directory at the root of the filesystem). The env override — same trick
+ * STAXX_AUTOSTART_FILE uses, so a server test can point this at /tmp
+ * without ever touching the real file — is read once and always wins,
+ * store or no store.
+ */
+function staxx_update_state_file(): string {
+  static $override = null;
+  if ($override === null) {
+    $env = getenv('STAXX_UPDATE_STATE');
+    $override = ($env !== false && $env !== '') ? $env : '';
+  }
+  if ($override !== '') return $override;
 
-// The check pass's lock lives here, not on flash — it is only ever meaningful
-// for as long as the pass itself runs, and is worthless after a reboot.
+  $cfg = staxx_config_root();
+  return $cfg === '' ? '' : $cfg.'/updates.json';
+}
+
+// The check pass's lock lives here, not in the data store — it is only ever
+// meaningful for as long as the pass itself runs, and is worthless after a
+// reboot.
 define('STAXX_UPDATE_DIR', '/tmp/staxx/updates');
 
 // Changelog caps, companions to STAXX_NOTES_MAX in Defines.php and there for
@@ -111,7 +128,8 @@ function staxx_update_state(): array {
   if ($cached !== null) return $cached;
 
   $defaults = staxx_update_state_defaults();
-  $raw      = @file_get_contents(STAXX_UPDATE_STATE);
+  $file     = staxx_update_state_file();
+  $raw      = $file === '' ? false : @file_get_contents($file);
   $data     = $raw === false ? null : json_decode($raw, true);
   $result   = is_array($data) ? array_merge($defaults, $data) : $defaults;
 
@@ -131,19 +149,22 @@ function staxx_update_state_save(array $state): bool {
   $encoded = json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
   if ($encoded === false) return false;
 
-  $current = @file_get_contents(STAXX_UPDATE_STATE);
+  $file = staxx_update_state_file();
+  if ($file === '') return false; // nowhere to keep it yet — the cached copy above still serves this request
+
+  $current = @file_get_contents($file);
   if ($current !== false && $current === $encoded) {
     staxx_update_state_cache($merged);
     return true;
   }
 
-  $dir = dirname(STAXX_UPDATE_STATE);
+  $dir = dirname($file);
   if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
 
-  $tmp = $dir.'/.'.basename(STAXX_UPDATE_STATE).'.'.getmypid().'.tmp';
+  $tmp = $dir.'/.'.basename($file).'.'.getmypid().'.tmp';
   if (@file_put_contents($tmp, $encoded) === false) return false;
-  if (!@rename($tmp, STAXX_UPDATE_STATE)) { @unlink($tmp); return false; }
-  @chmod(STAXX_UPDATE_STATE, 0600);
+  if (!@rename($tmp, $file)) { @unlink($tmp); return false; }
+  @chmod($file, 0600);
 
   staxx_update_state_cache($merged);
   return true;

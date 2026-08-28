@@ -83,8 +83,8 @@ if (staxx_stack_root() !== '/tmp/b6-store/stacks') {
   echo "FAIL   the temporary stack root is not in place (got ".staxx_stack_root().")\n";
   exit(1);
 }
-if (STAXX_UPDATE_STATE !== $scratch) {
-  echo "FAIL   the temporary update-state file is not in place (got ".STAXX_UPDATE_STATE.")\n";
+if (staxx_update_state_file() !== $scratch) {
+  echo "FAIL   the temporary update-state file is not in place (got ".staxx_update_state_file().")\n";
   exit(1);
 }
 

@@ -157,6 +157,46 @@ $r = staxx_store_inspect($storeShape);
 ok('stacks beside archives is ours, even with no hidden records yet', $r['state'] === 'staxx');
 ok('...and lists the project it found', in_array('projA', $r['stacks'], true));
 
+/* Stacks filed into folders, which every real store has and no fixture here
+ * had until a live store of 84 reported as 4. A directory holding a compose
+ * file is a stack; one holding none but containing directories that do is a
+ * FOLDER, and its children are stacks named "Media/jellyfin". One level down
+ * and no further, exactly as the rest of the model works.
+ *
+ * This is the case worth guarding hardest: undercounting here is what tells
+ * somebody the folder they are about to adopt is not the one with their
+ * stacks in it. */
+$nested = $inspectRoot.'/nested';
+mkdir($nested.'/archives', 0755, true);
+mkdir($nested.'/stacks/loose', 0755, true);
+mkdir($nested.'/stacks/Media/jellyfin', 0755, true);
+mkdir($nested.'/stacks/Media/plex', 0755, true);
+mkdir($nested.'/stacks/Database/postgres', 0755, true);
+$yaml = "services:\n  a:\n    image: alpine:3.20\n";
+file_put_contents($nested.'/stacks/loose/compose.yaml', $yaml);
+file_put_contents($nested.'/stacks/Media/jellyfin/compose.yaml', $yaml);
+file_put_contents($nested.'/stacks/Media/plex/compose.yaml', $yaml);
+file_put_contents($nested.'/stacks/Database/postgres/compose.yaml', $yaml);
+$r = staxx_store_inspect($nested);
+sort($r['stacks']);
+ok('a stack inside a folder is counted, not skipped', count($r['stacks']) === 4,
+   'got '.count($r['stacks']).': '.implode(', ', $r['stacks']));
+ok('...named the way the stack model names them',
+   $r['stacks'] === ['Database/postgres', 'Media/jellyfin', 'Media/plex', 'loose'],
+   implode(', ', $r['stacks']));
+ok('...and the count in the sentence matches the list', strpos($r['detail'], '4 stacks') !== false, $r['detail']);
+// A folder is not itself a stack, so its own name must never appear.
+ok('the folder itself is not counted as a stack', !in_array('Media', $r['stacks'], true));
+
+/* A stack cannot contain another stack, so the walk stops one level down —
+ * without that, a compose file kept in a subdirectory of a stack (an example,
+ * a backup) would be counted as a stack of its own. */
+mkdir($nested.'/stacks/loose/examples', 0755, true);
+file_put_contents($nested.'/stacks/loose/examples/compose.yaml', $yaml);
+$r = staxx_store_inspect($nested);
+ok('a compose file kept inside a stack is not a second stack', count($r['stacks']) === 4,
+   'got '.count($r['stacks']).': '.implode(', ', $r['stacks']));
+
 /* The shape staxx_store_create() itself leaves behind: the three folders
  * made, and nothing in any of them yet. Reopening the dialog on a store
  * chosen a moment ago has to recognise it as ours — reading it as somebody
@@ -209,7 +249,13 @@ $r = staxx_store_inspect($capped);
 ok('the cap limits how many stack names are listed',
    count($r['stacks']) === STAXX_STORE_INSPECT_CAP,
    'got '.count($r['stacks']));
-ok('the detail says how many more there are', strpos($r['detail'], '5 more') !== false, $r['detail']);
+/* The sentence must give the true total and say separately that the list is
+ * only the first few. Written the other way round it read as "30 compose
+ * files (and 5 more)", which a reader adds up to 35. */
+ok('the detail gives the real total, not the listed count',
+   strpos($r['detail'], '30 compose files') !== false, $r['detail']);
+ok('...and says the list below is only the first of them',
+   strpos($r['detail'], 'The first '.STAXX_STORE_INSPECT_CAP.' are listed here.') !== false, $r['detail']);
 
 // staxx_store_inspect() must write nothing. Proven against the shape with
 // the most going on (storeShape), by snapshotting the whole fixture tree

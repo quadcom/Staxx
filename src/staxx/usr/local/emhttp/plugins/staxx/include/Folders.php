@@ -31,9 +31,20 @@
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Stacks.php';
 
-if (defined('STAXX_FOLDERS_FILE')) return;
+if (defined('STAXX_FOLDERS_LOADED')) return;
+define('STAXX_FOLDERS_LOADED', true);
 
-define('STAXX_FOLDERS_FILE', STAXX_CFG_DIR.'/folders.json');
+/**
+ * Where folders.json lives: <store>/config/folders.json, or '' when no data
+ * store has been chosen yet — a function rather than a constant because
+ * that answer can change, and every caller below checks for '' rather than
+ * building a path out of it, which would otherwise be a real,
+ * writable-looking path at the root of the filesystem.
+ */
+function staxx_folders_file(): string {
+  $cfg = staxx_config_root();
+  return $cfg === '' ? '' : $cfg.'/folders.json';
+}
 
 /**
  * The stored view state.
@@ -70,9 +81,10 @@ function staxx_folders_load(bool $fresh = false): array {
 
   $empty = ['version' => 3, 'collapsed' => [], 'start' => staxx_start_defaults()];
 
-  if (!is_file(STAXX_FOLDERS_FILE)) return $cache = $empty;
+  $file = staxx_folders_file();
+  if ($file === '' || !is_file($file)) return $cache = $empty;
 
-  $data = json_decode((string)@file_get_contents(STAXX_FOLDERS_FILE), true);
+  $data = json_decode((string)@file_get_contents($file), true);
   if (!is_array($data)) return $cache = $empty;
 
   $collapsed = [];
@@ -104,15 +116,22 @@ function staxx_folders_load(bool $fresh = false): array {
  * over every collapsed flag, drag order and boot wait already on disk.
  *
  * Does NOT lock. Every caller reaches this already holding the lock
- * staxx_mkdir_lock(STAXX_FOLDERS_FILE, ...) takes — see staxx_folders_update()
- * below, which is how every mutator in this file gets here. Locking a second
- * time in here as well would just make this call wait out its own caller's
- * lock and then time out.
+ * staxx_folders_update() below takes on this file's actual path, which is
+ * how every mutator in this file gets here. Locking a second time in here as
+ * well would just make this call wait out its own caller's lock and then
+ * time out.
  */
 function staxx_folders_save(array $data, ?string &$error = null): bool {
   $error = '';
-  if (!is_dir(STAXX_CFG_DIR) && !@mkdir(STAXX_CFG_DIR, 0755, true)) {
-    $error = 'Could not create '.STAXX_CFG_DIR;
+  $file = staxx_folders_file();
+  if ($file === '') {
+    $error = 'StaXX has nowhere to keep the folder layout yet — choose where its data should live first.';
+    return false;
+  }
+
+  $dir = dirname($file);
+  if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+    $error = 'Could not create '.$dir;
     return false;
   }
 
@@ -122,16 +141,16 @@ function staxx_folders_save(array $data, ?string &$error = null): bool {
     return false;
   }
 
-  $tmp = STAXX_FOLDERS_FILE.'.'.getmypid().'.tmp';
+  $tmp = $file.'.'.getmypid().'.tmp';
   $written = @file_put_contents($tmp, $json."\n");
   if ($written === false || $written !== strlen($json) + 1) {
     @unlink($tmp);
-    $error = 'Could not write '.STAXX_FOLDERS_FILE;
+    $error = 'Could not write '.$file;
     return false;
   }
-  if (!@rename($tmp, STAXX_FOLDERS_FILE)) {
+  if (!@rename($tmp, $file)) {
     @unlink($tmp);
-    $error = 'Could not save '.STAXX_FOLDERS_FILE.' — the temporary file could not be put in place.';
+    $error = 'Could not save '.$file.' — the temporary file could not be put in place.';
     return false;
   }
 
@@ -150,12 +169,17 @@ function staxx_folders_save(array $data, ?string &$error = null): bool {
  */
 function staxx_folders_update(callable $mutate, ?string &$error = null): bool {
   $error = '';
-  if (!staxx_mkdir_lock(STAXX_FOLDERS_FILE, $error)) return false;
+  $file = staxx_folders_file();
+  if ($file === '') {
+    $error = 'StaXX has nowhere to keep the folder layout yet — choose where its data should live first.';
+    return false;
+  }
+  if (!staxx_mkdir_lock($file, $error)) return false;
 
   $data = $mutate(staxx_folders_load(true));
   $ok   = staxx_folders_save($data, $error);
 
-  staxx_mkdir_unlock(STAXX_FOLDERS_FILE);
+  staxx_mkdir_unlock($file);
   return $ok;
 }
 

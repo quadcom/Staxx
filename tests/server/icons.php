@@ -12,12 +12,15 @@
  * vanish from the webGUI for as long as it is moved).
  *
  * staxx_icon_adopt() reads its SOURCE from the real shared icon cache
- * (STAXX_ICON_STORE), because that constant is not overridable — there is
+ * (staxx_icon_store_dir(), inside the data store's config folder since
+ * PLAN_97 Phase 4) — that function takes no override, because there is
  * only one icon cache on a real server, unlike the stack root. This test
  * writes one throwaway file into that cache under a reference no real icon
  * collection entry uses ('staxx-selftest'), and removes it again on exit.
  * That is a few bytes in a shared cache, never a stack's own folder, and it
- * self-cleans even on failure.
+ * self-cleans even on failure. Needs a real, reachable data store — there
+ * is nowhere to keep the fixture icon otherwise — so this aborts early with
+ * a plain message rather than silently testing nothing if none is chosen.
  *
  * What this does NOT cover: staxx_icon_adopt_sweep()'s own walk over
  * staxx_scan_stacks(), because that reads the real store root with no way
@@ -30,6 +33,12 @@
 
 require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
 
+if (!staxx_store_reachable()) {
+  echo "FAIL   no reachable data store — set STORE_ROOT to a real, present folder before "
+     . "running this suite; there is nowhere to keep the fixture icon otherwise\n";
+  exit(1);
+}
+
 $fails = 0;
 function check(string $what, bool $ok): void {
   global $fails;
@@ -41,13 +50,13 @@ $ref = 'staxx-selftest';
 
 // The one write outside /tmp this file makes, and it cleans itself up
 // however the run ends.
-$cachePath = STAXX_ICON_STORE.'/'.$ref.'.png';
+$cachePath = staxx_icon_store_dir().'/'.$ref.'.png';
 register_shutdown_function(function () use ($cachePath) {
   @unlink($cachePath);
 });
 
 $pngBytes = "\x89PNG\r\n\x1a\nfake-but-good-enough-for-this-test";
-@mkdir(STAXX_ICON_STORE, 0755, true);
+@mkdir(staxx_icon_store_dir(), 0755, true);
 file_put_contents($cachePath, $pngBytes);
 
 $scratch = '/tmp/staxx-icons-test';

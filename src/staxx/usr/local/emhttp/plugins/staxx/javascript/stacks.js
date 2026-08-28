@@ -14,6 +14,11 @@
   var ENDPOINT = scaffold.dataset.endpoint;
   var CSRF     = scaffold.dataset.csrf;
   var APPDATA  = scaffold.dataset.appdata || '';
+  // PLAN_97 Phase 4: whether the data store — and so the settings file inside
+  // it — can actually be read right now. Read once at load, same as CAN_RUN
+  // below; the settings panel uses it to say a save will be refused rather
+  // than let somebody find that out by trying.
+  var STORE_REACHABLE = scaffold.dataset.storeReachable === '1';
 
   var modal       = document.getElementById('staxx-modal');
   var modalTitle  = document.getElementById('staxx-modal-title');
@@ -19471,27 +19476,47 @@
         ' · <button type="button" class="staxx-link-btn" id="staxx-open-backup-check">' +
         'Check these are in your backup</button></p>'
       : '';
-    // PLAN_97: stacks and archives are no longer separate settings — they are
-    // fixed subfolders of the one store, shown here so nobody has to guess
-    // what choosing a store actually does, or mistake them for a second
-    // choice. Greyed out because there is nothing to edit: typing a different
-    // value here would do nothing, since only the store path itself is saved.
+    // PLAN_97: stacks, archives and (Phase 4) config are no longer separate
+    // settings — they are fixed subfolders of the one store, shown here so
+    // nobody has to guess what choosing a store actually does, or mistake
+    // them for a second choice. Greyed out because there is nothing to edit:
+    // typing a different value here would do nothing, since only the store
+    // path itself is saved. config is where these very settings now live,
+    // alongside the icon cache and StaXX's other state — see the note PLAN_97
+    // writes into that folder for the full list.
     var derivedLine = row.key === 'STORE_ROOT'
       ? '<div class="staxx-field">' +
           '<span></span>' +
           (value
             ? '<span class="staxx-hint">' +
                 '<code>' + esc(value) + '/stacks</code> — the compose files<br>' +
-                '<code>' + esc(value) + '/archives</code> — removed stacks\' zips' +
+                '<code>' + esc(value) + '/archives</code> — removed stacks\' zips<br>' +
+                '<code>' + esc(value) + '/config</code> — settings, icons and other StaXX state' +
               '</span>'
             : '<span class="staxx-hint">No data store has been chosen yet.</span>') +
+        '</div>'
+      : '';
+    // PLAN_97 Phase 4: the settings file lives inside the store now, so a
+    // store that cannot be reached refuses every save except the store path
+    // and the two menu settings (staxx_settings_save() enforces this — this
+    // is only saying so up front, rather than letting somebody find it out
+    // by pressing Save). value is non-blank here whenever this matters: an
+    // unchosen store already shows the "No data store has been chosen yet"
+    // line above instead.
+    var unreachableLine = (row.key === 'STORE_ROOT' && value && !STORE_REACHABLE)
+      ? '<div class="staxx-field">' +
+          '<span></span>' +
+          '<span class="staxx-hint staxx-hint--warn">' +
+            'The data store cannot be reached right now, so only this and the two menu settings ' +
+            'below can be saved until it comes back.' +
+          '</span>' +
         '</div>'
       : '';
     return head + '<div class="staxx-field">' +
              '<span>' + esc(row.label) + '</span>' +
              control +
              '<span class="staxx-hint">' + row.help + '</span>' +
-           '</div>' + derivedLine + storageLine;
+           '</div>' + derivedLine + unreachableLine + storageLine;
   }
 
   function settingsControlValue(row) {

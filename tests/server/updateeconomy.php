@@ -76,8 +76,8 @@ register_shutdown_function(function () use ($scratch) {
 
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
 
-if (getenv('STAXX_UPDATE_STATE') !== $scratch || STAXX_UPDATE_STATE !== $scratch) {
-  echo "FAIL   the temporary update-state file is not in place (got ".STAXX_UPDATE_STATE.")\n";
+if (getenv('STAXX_UPDATE_STATE') !== $scratch || staxx_update_state_file() !== $scratch) {
+  echo "FAIL   the temporary update-state file is not in place (got ".staxx_update_state_file().")\n";
   exit(1);
 }
 if ($scratch === '/boot/config/plugins/staxx/updates.json') {
