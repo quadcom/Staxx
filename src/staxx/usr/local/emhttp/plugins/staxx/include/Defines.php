@@ -65,6 +65,85 @@ function staxx_appdata_root(): string {
 }
 
 /**
+ * Will Unraid's mover carry this share's files off onto the array?
+ *
+ * The one question that matters wherever a destination is judged, so it lives
+ * in one place: the suggestion builder asks it, and so does the check on a
+ * path somebody typed or browsed to, which used to skip it entirely and so
+ * accepted a share the mover was going to drain. That gap was found by
+ * choosing such a share by hand and being told the path could be used.
+ *
+ * Only "yes" drains a share onto the array. "prefer" moves the other way,
+ * array -> pool; "only" and "no" move nothing between the two; and a share
+ * with no settings file at all is never examined by the mover, which loops
+ * over /boot/config/shares/*.cfg and nothing else.
+ *
+ * @return string '' when the mover will leave it alone, else why not.
+ */
+function staxx_share_drain_reason(string $share, string $sharesDir = '/boot/config/shares'): string {
+  $cfg = @parse_ini_file($sharesDir.'/'.$share.'.cfg', false, INI_SCANNER_RAW);
+  if ($cfg === false || !isset($cfg['shareUseCache'])) return '';
+  if (trim((string)$cfg['shareUseCache'], '"') !== 'yes') return '';
+
+  /* A clause, not a sentence: every caller wraps it in its own wording, and
+   * one that already carried advice and a full stop produced "...choose a
+   * different location.. Choose a folder inside a share...". Lower case and
+   * no trailing stop, matching the other clauses staxx_placement_risk()
+   * returns, so all three read the same after an em dash. */
+  return 'the "'.$share.'" share is set to be moved onto the array by the mover, so the stacks '
+       . 'would not stay on this pool';
+}
+
+/**
+ * Does the plugin guide where the stacks may live, or get out of the way?
+ *
+ * 'guided' (the default) marks the roots the stacks cannot live on in the
+ * folder picker and refuses a risky location outright. 'open' shows
+ * everything and allows it, saying what the risk is instead of enforcing it.
+ *
+ * Two refusals ignore this setting entirely, because neither is a risk
+ * anybody can sensibly accept: a filesystem living in memory loses the stacks
+ * at the next reboot for no benefit, and a whole share as the stack root makes
+ * every folder in that share read as a stack, which is wrong rather than
+ * daring.
+ */
+function staxx_placement_guided(): bool {
+  return trim((string)(staxx_cfg()['PLACEMENT_RULES'] ?? 'guided')) !== 'open';
+}
+
+/**
+ * Why this path is a risky home for the stacks, or '' if it is not.
+ *
+ * One place computes it and the two modes present it differently: guided turns
+ * it into a refusal, open shows it as a warning beside the box. Written this
+ * way round so the two can never drift into disagreeing about what counts as
+ * risky — which is exactly what happened before, when the suggestions checked
+ * a share's mover setting and a typed path did not.
+ */
+function staxx_placement_risk(string $path): string {
+  $norm = rtrim(trim($path), '/');
+  if (strpos($norm, '/mnt/') !== 0) return '';
+
+  $first = explode('/', substr($norm, strlen('/mnt/')), 2)[0];
+  if ($first === 'user0' || preg_match('/^disk[0-9]+$/', $first)) {
+    return 'that is one disk of the array, which has no redundancy of its own and bypasses the '
+         . 'rules the array uses to decide where files go';
+  }
+  if ($first === 'disks' || $first === 'remotes') {
+    return 'that is '.($first === 'disks' ? 'an unassigned drive' : 'a network mount')
+         . ', which can be missing at the next boot with the stacks inside it';
+  }
+
+  // The share the path lands in, which is the second segment under /mnt for a
+  // pool path and for the share-layer form alike.
+  if (preg_match('#^/mnt/[^/]+/([^/]+)#', $norm, $m)) {
+    $drain = staxx_share_drain_reason($m[1]);
+    if ($drain !== '') return $drain;
+  }
+  return '';
+}
+
+/**
  * Where a removed stack's zip goes. The setting if one is configured,
  * otherwise a fixed folder under wherever Unraid keeps appdata — so a blank
  * ARCHIVE_ROOT still lands somewhere sensible on any box, rather than

@@ -359,5 +359,203 @@ ok('starting a job refuses a bad destination before anything runs', $job === '' 
 ok('...and refused it for being the source, the one reason that cannot lapse',
    strpos($err, 'current stacks folder') !== false, $err);
 
+/* ------------------------ a share the mover will drain is not a home -------
+ * Found by hand: choosing a share whose policy moves its files to the array
+ * was accepted with "this path can be used", because only the SUGGESTIONS
+ * consulted the share's policy and a typed or browsed path skipped it. The
+ * stacks would then have been carried off the pool afterwards, quietly.
+ *
+ * The rule itself is tested against fixture share files under /tmp — nothing
+ * here reads or writes /boot/config/shares. The end-to-end case below then
+ * proves the destination check actually calls it, using whichever real share
+ * on this box is already set that way, and SKIPping where there is none. */
+
+$sd = '/tmp/zzrel-shares';
+@exec('rm -rf '.escapeshellarg($sd));
+@mkdir($sd, 0777, true);
+file_put_contents($sd.'/drains.cfg',  "shareUseCache=\"yes\"\nshareCachePool=\"cache-small\"\n");
+file_put_contents($sd.'/pinned.cfg',  "shareUseCache=\"only\"\nshareCachePool=\"cache-small\"\n");
+file_put_contents($sd.'/prefers.cfg', "shareUseCache=\"prefer\"\nshareCachePool=\"cache-small\"\n");
+file_put_contents($sd.'/nokey.cfg',   "shareCachePool=\"cache-small\"\n");
+
+ok('a share set to move onto the array is refused',
+   staxx_share_drain_reason('drains', $sd) !== '');
+/* The rule returns a CLAUSE and nothing more — every caller wraps it in its
+ * own sentence, and one that carried its own advice produced "...choose a
+ * different location.. Choose a folder inside a share...". So what is asserted
+ * here is the shape of the clause, and separately that the caller which prints
+ * it on its own does add the advice. */
+$clause = staxx_share_drain_reason('drains', $sd);
+ok('...and the reason names the mover and the array',
+   strpos($clause, 'mover') !== false && strpos($clause, 'array') !== false, $clause);
+ok('...and it is a clause, not a sentence with its own advice',
+   $clause === '' || (strpos($clause, 'Shares page') === false
+                      && substr($clause, -1) !== '.'
+                      && $clause[0] === strtolower($clause[0])), $clause);
+ok('...while the "Not offered" wording built from it does say what to change',
+   strpos(staxx_storage_share_reason($sd, 'drains', 'cache-small'), 'Shares page') !== false,
+   staxx_storage_share_reason($sd, 'drains', 'cache-small'));
+
+// The three that must NOT be refused. "prefer" moves array -> pool, which is
+// the opposite of the risk; "only" and "no" move nothing; and a file with no
+// cache setting at all is never acted on, because the mover only ever reads
+// what the file says.
+ok('a share pinned with "only" is fine',   staxx_share_drain_reason('pinned',  $sd) === '');
+ok('a share set to "prefer" is fine',      staxx_share_drain_reason('prefers', $sd) === '');
+ok('a file with no cache setting is fine', staxx_share_drain_reason('nokey',   $sd) === '');
+ok('a share with no settings file at all is fine — the mover never sees it',
+   staxx_share_drain_reason('no-such-share-anywhere', $sd) === '');
+
+@exec('rm -rf '.escapeshellarg($sd));
+
+/* End to end: does the destination check actually ask? Read-only, and it uses
+ * a real share rather than a fixture because that is the only way to prove the
+ * wiring rather than the rule. */
+$drainShare = '';
+$drainPool  = '';
+foreach ((array)@glob('/boot/config/shares/*.cfg') as $f) {
+  $cfg = @parse_ini_file($f, false, INI_SCANNER_RAW);
+  if (!is_array($cfg)) continue;
+  if (trim((string)($cfg['shareUseCache'] ?? ''), '"') !== 'yes') continue;
+  $pool = trim((string)($cfg['shareCachePool'] ?? ''), '"');
+  if ($pool === '' || !is_dir('/mnt/'.$pool)) continue;
+  $drainShare = basename($f, '.cfg');
+  $drainPool  = $pool;
+  break;
+}
+
+if ($drainShare === '') {
+  echo "SKIP   end-to-end drain case — no share on this box is set to move onto the array\n";
+} else {
+  $err = '';
+  $got = staxx_relocate_refuse('/mnt/'.$drainPool.'/'.$drainShare, $err);
+  ok('a real drained share is refused as a destination ('.$drainShare.' on '.$drainPool.')',
+     $got === '' && strpos($err, 'onto the array') !== false, $err);
+
+  // The share-layer form of the same folder has to be refused too: the mover
+  // reads the share's settings whichever path was used to reach it.
+  $err = '';
+  $got = staxx_relocate_refuse('/mnt/user/'.$drainShare.'/staxx-stacks', $err);
+  ok('...and so is the /mnt/user form of it',
+     $got === '' && strpos($err, 'onto the array') !== false, $err);
+}
+
+
+/* --------------------------- a share's own root is not the stacks root -----
+ * Pointing the stack root at a whole share makes every folder in that share
+ * read as a stack. Aimed at appdata, every container's config folder would
+ * become one. It was accepted whenever the share happened to be empty, which
+ * is exactly when nothing looks wrong yet.
+ *
+ * Read-only, and it uses real shares because the rule is about the shape of
+ * the path rather than about any share's settings. appdata exists on every
+ * Unraid box worth running this on; the case is skipped if it somehow does not.
+ */
+/* A share name that exists nowhere, so no OTHER refusal can reach it first.
+ * A real share root is caught earlier by the rule about a destination that
+ * would contain the current stacks folder — which is correct, and by this
+ * point in the suite the stacks root has been repointed inside appdata, so
+ * aiming at a real share here tested that older rule instead of this one. */
+$fake = '/mnt/user/zzrel-fake-share';
+$err = '';
+$got = staxx_relocate_refuse($fake, $err);
+ok('the whole of a share is refused as a stack root',
+   $got === '' && strpos($err, 'whole of the') !== false, $err);
+ok('...and the refusal names the folder to use instead',
+   strpos($err, $fake.'/'.STAXX_STACKS_FOLDER) !== false, $err);
+
+// The nested form of the same choice must still pass, or the rule above has
+// blocked the location rather than corrected it.
+$err = '';
+staxx_relocate_refuse($fake.'/'.STAXX_STACKS_FOLDER, $err);
+ok('a folder INSIDE the share is not caught by that rule',
+   strpos($err, 'whole of the') === false, $err);
+
+/* A share named for StaXX is the exception: somebody who made one deliberately
+ * means its root, and nesting staxx-stacks inside a share called staxx would be
+ * silly. Tested through a path that need not exist \u2014 the rule is about the
+ * name, and any other refusal for a fictional path is not this one. */
+$err = '';
+staxx_relocate_refuse('/mnt/cache-small/staxx', $err);
+ok('a share named for StaXX may be used at its root',
+   strpos($err, 'whole of the') === false, $err);
+
+
+/* ------------- a drained share is reached through the share layer instead ---
+ * StaXX prefers a direct pool path because it skips Unraid's share layer. But
+ * a share the mover drains has its contents carried off to the array, and the
+ * pool path then names a folder the data has left — the stacks would vanish
+ * from the page. The share-layer form follows the data, so with the placement
+ * rules set to get out of the way, that one case is rewritten rather than
+ * allowed as it stands.
+ *
+ * Tested through the rule itself, using fixture share files under /tmp.
+ *
+ * HONEST GAP: the branch that CALLS this only runs with the placement rules
+ * set to "open", and staxx_cfg() memoises on first read, so a suite cannot
+ * switch modes partway through — it would need a sub-process, and pointing one
+ * at a real config on a production server to prove a branch is not a trade
+ * worth making. The guided half below is covered properly; the open half was
+ * verified by hand on the box. Anything that changes that branch should be
+ * re-checked the same way.
+ */
+$sd2 = '/tmp/zzrel-shares2';
+@exec('rm -rf '.escapeshellarg($sd2));
+@mkdir($sd2, 0777, true);
+file_put_contents($sd2.'/drains.cfg', "shareUseCache=\"yes\"\nshareCachePool=\"cache-small\"\n");
+
+// The rule reads the REAL shares folder, so the fixture above only documents
+// the shape; the cases below use whatever this box actually has. A share set to
+// drain is found the same way the end-to-end case above finds one.
+$realDrain = '';
+foreach ((array)@glob('/boot/config/shares/*.cfg') as $f) {
+  $cfg = @parse_ini_file($f, false, INI_SCANNER_RAW);
+  if (is_array($cfg) && trim((string)($cfg['shareUseCache'] ?? ''), '"') === 'yes') {
+    $realDrain = basename($f, '.cfg');
+    break;
+  }
+}
+@exec('rm -rf '.escapeshellarg($sd2));
+
+if ($realDrain === '') {
+  echo "SKIP   share-layer swap cases — no share on this box is set to drain\n";
+} else {
+  $direct = '/mnt/cache-small/'.$realDrain.'/stacks';
+  ok('a direct pool path in a drained share is swapped for the share-layer form',
+     staxx_relocate_share_layer_form($direct) === '/mnt/user/'.$realDrain.'/stacks',
+     staxx_relocate_share_layer_form($direct));
+
+  // Applied twice must change nothing, because the background job re-checks
+  // its own destination before touching anything.
+  ok('the swap is idempotent',
+     staxx_relocate_share_layer_form('/mnt/user/'.$realDrain.'/stacks') === '');
+
+  ok('the share root itself swaps too, keeping the rest of the path empty',
+     staxx_relocate_share_layer_form('/mnt/cache-small/'.$realDrain) === '/mnt/user/'.$realDrain);
+
+  // And in guided mode — which is what this suite runs in, since that is the
+  // default — the same path is refused outright rather than swapped.
+  if (staxx_placement_guided()) {
+    $err = '';
+    ok('...while guided mode refuses it instead of swapping',
+       staxx_relocate_refuse($direct, $err) === '' && strpos($err, 'onto the array') !== false, $err);
+  } else {
+    echo "SKIP   guided-refusal case — this box is set to open\n";
+  }
+}
+
+// Nothing else is rewritten. An array disk keeps working when the mover runs;
+// it is simply unprotected, so there is nothing for a swap to rescue, and
+// silently moving somebody onto the share layer would be a change they did not
+// ask for and would not benefit from.
+ok('an array-disk path is never swapped',
+   staxx_relocate_share_layer_form('/mnt/disk8/Client_Archives/stacks') === '');
+ok('a path on a pool whose share stays put is never swapped',
+   staxx_relocate_share_layer_form('/mnt/m2cache/appdata/staxx-stacks') === '');
+ok('a path that is not /mnt/<x>/<share>/... is never swapped',
+   staxx_relocate_share_layer_form('/mnt/cache-big') === ''
+   && staxx_relocate_share_layer_form('/boot/config/plugins/staxx/stacks') === '');
+
+
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

@@ -243,5 +243,108 @@ ok('a relative path under a flash-rooted stack still resolves normally: missing 
 @exec('rm -rf '.escapeshellarg($base));
 @exec('rm -rf '.escapeshellarg($outside));
 
+
+/* ------------------------- what the folder picker offers for the stacks ----
+ * A big server shows 25 folders at /mnt and only a handful are places the
+ * stacks may live. They are MARKED rather than removed, so somebody hunting
+ * for disk8 can see it and read why it is out — a missing row reads as a bug.
+ *
+ * Every case here is read-only: browsing lists directories, and the mkdir
+ * cases below only ever exercise refusals, so nothing is created anywhere.
+ */
+/* Settings.php as well, because staxx_browse_dirs() reaches
+ * staxx_path_in_memory() through function_exists() — that guard exists to
+ * avoid a require loop, and it means a suite that loads only Stacks.php would
+ * quietly test one rule fewer than the endpoint applies. The endpoint always
+ * has this loaded, so the suite must too, and the rootshare case below is what
+ * proves the guarded call actually fires. */
+require_once '/usr/local/emhttp/plugins/staxx/include/Settings.php';
+
+$browse = staxx_browse_dirs('/mnt', 'stacks');
+ok('browsing /mnt for the stacks answers at all', isset($browse['dirs']), $browse['error'] ?? '');
+
+$blocked = $browse['blocked'] ?? [];
+$open    = array_values(array_diff($browse['dirs'] ?? [], array_keys($blocked)));
+
+// Every array disk and the array's own behind-the-share-layer path.
+$missedDisks = [];
+foreach (($browse['dirs'] ?? []) as $d) {
+  if ((preg_match('/^disk[0-9]+$/', $d) || $d === 'user0') && !isset($blocked[$d])) $missedDisks[] = $d;
+}
+ok('every array disk is marked unavailable', $missedDisks === [], implode(',', $missedDisks));
+
+foreach (['disks', 'remotes'] as $holder) {
+  if (!in_array($holder, $browse['dirs'] ?? [], true)) {
+    echo "SKIP   /mnt/$holder case — not present on this box\n";
+    continue;
+  }
+  ok('the '.$holder.' mount folder is marked unavailable', isset($blocked[$holder]));
+}
+
+// Every reason has to say something, or the row is dimmed with no explanation
+// and the whole point of showing it is lost.
+$blank = 0;
+foreach ($blocked as $why) { if (trim((string)$why) === '') $blank++; }
+ok('every unavailable row carries a reason', $blank === 0, $blank.' blank');
+
+/* A root whose filesystem lives in memory, which on Unraid is /mnt/rootshare
+ * and anything left over that is not a real mount. Skipped where the box has
+ * none, but where it has one this is also the case that proves the guarded
+ * call above is wired up rather than silently absent. */
+$inMemory = [];
+foreach (($browse['dirs'] ?? []) as $d) {
+  if (staxx_path_in_memory('/mnt/'.$d) && !isset($blocked[$d])) $inMemory[] = $d;
+}
+ok('a root living in memory is marked unavailable', $inMemory === [], implode(',', $inMemory));
+
+// The share layer has to stay openable — it is the way through to the shares,
+// even though choosing it directly is refused elsewhere.
+ok('/mnt/user is still openable', in_array('user', $open, true), implode(',', $open));
+ok('something is left to choose from', count($open) > 0, implode(',', $open));
+
+// Only the top level is filtered. Deeper down the rules are about shares, and
+// the destination box is the single voice on those.
+$inside = staxx_browse_dirs('/mnt/user', 'stacks');
+ok('below /mnt nothing is marked unavailable', ($inside['blocked'] ?? []) === []);
+
+// Any other purpose — a container's volume path, the archive folder — sees the
+// unfiltered list, because an array disk is an ordinary thing to mount.
+$plain = staxx_browse_dirs('/mnt');
+ok('without the stacks purpose nothing is marked at all', ($plain['blocked'] ?? []) === []);
+ok('...and the same folders are still listed',
+   count($plain['dirs'] ?? []) === count($browse['dirs'] ?? []));
+
+/* Creating a folder must not invent a share. Two segments below /mnt is a
+ * share's own root; anything shallower is where a new share would appear,
+ * which Unraid then discovers with whatever defaults apply. Refusals only —
+ * nothing is created by these. */
+$err = '';
+ok('the picker refuses to create a folder in /mnt/user',
+   staxx_browse_mkdir('/mnt/user', 'zzpaths-probe', $err, 'stacks') === ''
+   && strpos($err, 'new Unraid share') !== false, $err);
+
+$poolRoot = '';
+foreach (($browse['dirs'] ?? []) as $d) {
+  if (!isset($blocked[$d]) && $d !== 'user') { $poolRoot = '/mnt/'.$d; break; }
+}
+if ($poolRoot === '') {
+  echo "SKIP   pool-root create case — no pool is offered on this box\n";
+} else {
+  $err = '';
+  ok('the picker refuses to create a folder at the top of a pool ('.$poolRoot.')',
+     staxx_browse_mkdir($poolRoot, 'zzpaths-probe', $err, 'stacks') === ''
+     && strpos($err, 'new Unraid share') !== false, $err);
+}
+
+// The refusal is scoped to the stacks purpose: the same picker fills in volume
+// paths, where making a folder on a pool is ordinary. Aimed at a parent that
+// does not exist, so the older "no such folder" refusal answers first and
+// nothing is created either way — what is asserted is that the SHARE rule did
+// not fire.
+$err = '';
+staxx_browse_mkdir('/mnt/zzpaths-no-such-root', 'zzpaths-probe', $err, '');
+ok('the share rule does not fire for other purposes',
+   strpos($err, 'new Unraid share') === false, $err);
+
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

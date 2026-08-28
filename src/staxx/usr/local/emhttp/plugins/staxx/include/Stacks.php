@@ -229,7 +229,7 @@ function staxx_stack_dir(string $rel): string {
  * create, no rename, no delete, so the worst a crafted path can do is list a
  * folder the user could already see in Unraid's own file browser.
  */
-function staxx_browse_dirs(string $path): array {
+function staxx_browse_dirs(string $path, string $purpose = ''): array {
   $root = STAXX_BROWSE_ROOT;
   $want = trim($path) === '' ? $root : trim($path);
 
@@ -270,12 +270,55 @@ function staxx_browse_dirs(string $path): array {
   closedir($dh);
 
   natcasesort($dirs);
+  $dirs = array_values($dirs);
+
+  /* When the picker is choosing where the STACKS go, most of what /mnt holds
+   * is a dead end: sixteen array disks on a big server, plus the two folders
+   * that only ever hold mount points. Marked rather than removed, so somebody
+   * looking for disk8 can see it and read why it is out — concealing it would
+   * just read as a bug.
+   *
+   * Only ever the top level. Deeper down the rules that bite are about shares,
+   * and those are answered by the destination box itself, which must stay the
+   * single voice on whether a path can be used.
+   */
+  $blocked = [];
+  $guided  = !function_exists('staxx_placement_guided') || staxx_placement_guided();
+  if ($purpose === 'stacks' && $real === $root) {
+    foreach ($dirs as $entry) {
+      $why = '';
+      if (!$guided) {
+        // Nothing is marked with the rules set to 'open' — except a memory
+        // filesystem, below, which is refused whatever this says.
+      } elseif ($entry === 'user0' || preg_match('/^disk[0-9]+$/', $entry)) {
+        $why = 'part of the array — one disk has no redundancy of its own';
+      } elseif ($entry === 'disks' || $entry === 'remotes') {
+        $why = $entry === 'disks'
+          ? 'unassigned drives, which can be missing at the next boot'
+          : 'network mounts, which can be missing at the next boot';
+      }
+      if ($why === '' && function_exists('staxx_path_in_memory') && staxx_path_in_memory($root.'/'.$entry)) {
+        /* Anything whose filesystem lives in memory, which on Unraid catches
+         * /mnt/rootshare and any leftover folder that is not a real mount. The
+         * validator refuses these on save for the same reason; catching them
+         * here saves somebody browsing into one first.
+         *
+         * Guarded because that function lives in Settings.php, which requires
+         * THIS file rather than the other way round — requiring it back would
+         * be a loop. The endpoint always has it loaded; a caller that does not
+         * simply gets one fewer row marked, never a wrong one. */
+        $why = 'a filesystem living in memory — anything here is lost at the next reboot';
+      }
+      if ($why !== '') $blocked[$entry] = $why;
+    }
+  }
 
   return [
-    'path' => $real,
-    'up'   => $real === $root ? '' : dirname($real),
-    'dirs' => array_values($dirs),
-    'more' => $more,
+    'path'    => $real,
+    'up'      => $real === $root ? '' : dirname($real),
+    'dirs'    => $dirs,
+    'more'    => $more,
+    'blocked' => $blocked,
   ];
 }
 
@@ -297,7 +340,7 @@ function staxx_browse_dirs(string $path): array {
  * been resolved and checked against the browse root by the same rule browsing
  * uses. Nothing here takes a path apart or puts one together from user text.
  */
-function staxx_browse_mkdir(string $parent, string $name, string &$error): string {
+function staxx_browse_mkdir(string $parent, string $name, string &$error, string $purpose = ''): string {
   $name = trim($name);
   if (!staxx_valid_name($name)) {
     $error = 'Use letters, numbers, dots, dashes and underscores for a folder name, '
@@ -315,6 +358,27 @@ function staxx_browse_mkdir(string $parent, string $name, string &$error): strin
   if ($real !== $root && strpos($real, $root.'/') !== 0) {
     $error = 'Folders can only be made under '.$root.'.';
     return '';
+  }
+
+  /* Never invent a share. A new folder directly on a pool, or in /mnt/user,
+   * becomes a share Unraid discovers on its own, with whatever defaults happen
+   * to apply — which is the one thing staxx_folder_create() refuses everywhere
+   * else, and this button could quietly do. Two segments below /mnt is a
+   * share's own root ("user/appdata", "m2cache/appdata"); anything shallower
+   * than that is where a share would be created.
+   *
+   * Scoped to the stacks purpose, because the same picker fills in a
+   * container's volume paths, where making a folder on a pool is ordinary.
+   */
+  if ($purpose === 'stacks') {
+    $rel   = trim(substr($real, strlen($root)), '/');
+    $depth = $rel === '' ? 0 : count(explode('/', $rel));
+    if ($depth < 2) {
+      $error = 'A folder made here would become a new Unraid share, with whatever settings '
+             . 'happen to apply to it. Make the share itself on the Shares page first, then '
+             . 'this folder can be made inside it.';
+      return '';
+    }
   }
 
   $path = $real.'/'.$name;
@@ -2604,6 +2668,42 @@ function staxx_selftest(): array {
         ? 'none — every catalogued image is still pulling from where its template currently publishes'
         : implode("\n  ", $movedLines));
 
+  /* PLAN (this session): are the compose files in anybody's backup? Nothing
+   * backs them up by default — the Appdata Backup plugin works from each
+   * container's volume mappings, and a plugin's own store is not one — so a
+   * store nobody has named is a store that quietly is not covered.
+   *
+   * Guarded like the update-check line above, because this file is loadable on
+   * its own (see the troubleshooting one-liner in stacks.js) and Backup.php is
+   * then not necessarily loaded. Silence from it is a real answer and is
+   * reported as such: it means no claim could be made, never "not listed".
+   */
+  $backupReport = 'not checked — the backup module did not load';
+  if (function_exists('staxx_backup_coverage')) {
+    if (!staxx_backup_plugin_installed()) {
+      $backupReport = 'the Appdata Backup plugin is not installed, so there is nothing to check '
+                    . 'against — back these folders up some other way: '
+                    . implode(', ', staxx_backup_owned_paths());
+    } else {
+      $cov = staxx_backup_coverage();
+      if ($cov === null) {
+        $backupReport = 'the Appdata Backup plugin is installed, but its settings could not be '
+                      . 'read, so nothing can be said either way';
+      } elseif ($cov['missing'] === []) {
+        // Deliberately not "backed up": that a folder is named in the list is
+        // all this can see. Whether a run succeeds depends on their schedule
+        // and an off-box destination that may not even be reachable.
+        $backupReport = 'listed in the Appdata Backup plugin, under extra files — '
+                      . implode(', ', $cov['listed'])
+                      . ' (listed, which is not the same as proven to have been backed up)';
+      } else {
+        $backupReport = 'NOT listed in the Appdata Backup plugin, under extra files: '
+                      . implode(', ', $cov['missing'])
+                      . ' — add them there, or these compose files are in no backup';
+      }
+    }
+  }
+
   $canWrite = false;
   $writeErr = '';
   if (!is_dir($root)) {
@@ -2710,6 +2810,7 @@ function staxx_selftest(): array {
     'exec() available'    => function_exists('exec') && !in_array('exec', $disabled, true)
                                ? 'yes' : 'NO — nothing can be run',
     'job folder'          => STAXX_JOB_DIR,
+    'compose files in a backup' => $backupReport,
   ];
 }
 

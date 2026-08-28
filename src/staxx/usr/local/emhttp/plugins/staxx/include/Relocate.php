@@ -70,7 +70,8 @@ function staxx_relocate_link_outside(string $linkDir, string $target, string $ro
  *
  * @return string the normalised destination, or '' with $error set when refused
  */
-function staxx_relocate_refuse(string $destInput, string &$error): string {
+function staxx_relocate_refuse(string $destInput, string &$error, string &$notice = null): string {
+  $notice = '';
   $error  = '';
   $source = staxx_stack_root();
 
@@ -84,6 +85,78 @@ function staxx_relocate_refuse(string $destInput, string &$error): string {
   if (strpos($source, $norm.'/') === 0) {
     $error = 'The new location would contain the current stacks folder, which would put the '
            . 'old folder inside the new one. Choose somewhere else.';
+    return '';
+  }
+
+  /* Which share is this destination in, and will the mover drain it?
+   *
+   * Checked here so that a typed or browsed path gets the same care as a
+   * suggested one — without this, choosing a share set to move onto the array
+   * was accepted with "this path can be used", and the stacks would then have
+   * been carried off the pool behind the person's back.
+   *
+   * The share is the second segment under /mnt, which covers both a pool path
+   * (/mnt/cache-small/dvr) and the share-layer form (/mnt/user/dvr) — the
+   * mover reads the share's own settings either way, so both have to be asked
+   * about.
+   */
+  if (staxx_placement_guided()) {
+    $risk = staxx_placement_risk($norm);
+    if ($risk !== '') {
+      $error = 'The stacks cannot go here — '.$risk.'. Choose somewhere else, or set the '
+             . 'placement rules to "open" in Settings if you mean to do this anyway.';
+      return '';
+    }
+  } else {
+    /* The rules are set to get out of the way, but one risk here is not a
+     * trade-off, it is a path that stops working.
+     *
+     * StaXX prefers a direct pool path — /mnt/<pool>/<share>/... — because it
+     * skips Unraid's share layer, which is faster and lands the files exactly
+     * where you said. But a share the mover drains gets its contents carried
+     * off to the array, and a direct pool path then names a folder the data has
+     * left: the stacks would simply disappear from the page. The share-layer
+     * form of the same folder follows the data wherever the mover puts it, so
+     * it keeps working.
+     *
+     * So this one case is rewritten rather than allowed as-is, and the swap is
+     * reported rather than done quietly — it is a real trade-off, and the
+     * person choosing the location is entitled to know it was made.
+     */
+    $swap = staxx_relocate_share_layer_form($norm);
+    if ($swap !== '') {
+      $notice = 'Saved as '.$swap.' rather than '.$norm.'. StaXX normally writes straight to the '
+              . 'pool, which is faster and puts the files exactly where you asked — but Unraid is '
+              . 'set to move this share onto the array, and once it does, the pool path would name '
+              . 'a folder the stacks had left and they would vanish from this page. Going through '
+              . 'the share layer follows them instead. The cost is that the share layer is a little '
+              . 'slower, and new files can land on the array rather than the pool.';
+      $norm = $swap;
+    }
+  }
+
+  /* The whole of somebody's share is not a home for the stacks.
+   *
+   * A path of exactly /mnt/<pool>/<share> or /mnt/user/<share> makes the stack
+   * root the share itself, and then every folder in that share reads as a
+   * stack — pointed at appdata, every container's config folder would. It was
+   * accepted before whenever the share happened to be empty, which is the one
+   * case where nothing looked wrong at the time.
+   *
+   * A share named for StaXX is the exception, and the case worth encouraging:
+   * somebody who made a share for this deliberately means its root, and
+   * nesting a second folder called staxx-stacks inside a share called staxx
+   * would be silly.
+   *
+   * Refused with the exact path to use instead rather than quietly rewritten —
+   * a destination that changes under somebody's typing is worse than one that
+   * says what it wants. The suggestion builder offers the same nested shape,
+   * so this is the same rule reaching a path that was typed or browsed to.
+   */
+  if (preg_match('#^/mnt/[^/]+/([^/]+)$#', $norm, $m) && stripos($m[1], 'staxx') === false) {
+    $error = 'That is the whole of the "'.$m[1].'" share, and every folder in it would be read '
+           . 'as a stack. Use a folder inside it instead — '.$norm.'/'.STAXX_STACKS_FOLDER
+           . ' — so the share can go on being used for what it is for.';
     return '';
   }
 
@@ -101,6 +174,27 @@ function staxx_relocate_refuse(string $destInput, string &$error): string {
   }
 
   return $norm;
+}
+
+/**
+ * The share-layer form of a direct pool path, but only where using it is the
+ * safer choice: /mnt/<pool>/<share>/rest becomes /mnt/user/<share>/rest when
+ * the mover is set to drain that share onto the array.
+ *
+ * '' for everything else, and that includes a path already going through the
+ * share layer — which is what makes this safe to apply twice, since the
+ * background job re-checks its own destination before touching anything.
+ *
+ * Not applied to an array-disk path on purpose. That risk is different in kind:
+ * /mnt/disk8/... keeps working, it is simply unprotected, so there is nothing
+ * for a rewrite to rescue. Only a drained share moves the data out from under
+ * the path that names it.
+ */
+function staxx_relocate_share_layer_form(string $path): string {
+  if (!preg_match('#^/mnt/([^/]+)/([^/]+)(/.*)?$#', $path, $m)) return '';
+  if ($m[1] === 'user' || $m[1] === 'user0') return '';
+  if (staxx_share_drain_reason($m[2]) === '') return '';
+  return '/mnt/user/'.$m[2].($m[3] ?? '');
 }
 
 /**
@@ -585,33 +679,32 @@ function staxx_storage_redundant(string $profile): bool {
 /**
  * Would Unraid's mover leave a folder on this pool alone, or carry it back
  * onto the array? Read from the share's own config, never assumed — "yes"
- * drains it onto the array, "prefer" and "only" both pin it to the named
- * pool, and a share with no config file at all, or a config naming a
- * different pool as its cache target, is a policy this cannot vouch for.
+ * drains it onto the array, while "prefer", "only", "no" and a share with no
+ * config file at all all leave it where it is. A config naming a different
+ * pool as its cache target is the one other refusal: the share's files live
+ * somewhere else entirely.
  *
  * @return string '' when the share can be trusted to stay on $pool, else why not.
  */
 function staxx_storage_share_reason(string $sharesDir, string $shareName, string $pool): string {
+  /* No settings file, or one that does not name a cache policy, is SAFE — not
+   * unknown. Unraid's own mover is why: it loops over
+   * /boot/config/shares/*.cfg and nothing else, so a share with no file there
+   * is never examined at all, and a file that does not set shareUseCache
+   * sources an empty value matching neither case below. Both were reported
+   * here as "whether the mover would carry it off this pool is not known",
+   * which was a confident wrong answer in the frightening direction.
+   */
+  /* This one is read on its own in the "Not offered" list, so it is the caller
+   * that turns the clause into a sentence and says what to do about it. */
+  $drain = staxx_share_drain_reason($shareName, $sharesDir);
+  if ($drain !== '') {
+    return ucfirst($drain).'. Set that share to "Only" or "Prefer" on its pool on the Shares '
+         . 'page, or choose somewhere else.';
+  }
+
   $cfg = @parse_ini_file($sharesDir.'/'.$shareName.'.cfg', false, INI_SCANNER_RAW);
-  if ($cfg === false) {
-    return 'The "'.$shareName.'" share has no storage policy on record, so whether Unraid\'s mover '
-         . 'would carry it off this pool is not known.';
-  }
-
-  // An absent key is not the same answer as a key saying "yes", and must not
-  // borrow its message: one is a policy this cannot read, the other is a
-  // policy that would move the folder. Saying the wrong one of those is the
-  // confident-wrong-answer failure this project keeps catching in itself.
-  if (!isset($cfg['shareUseCache'])) {
-    return 'The "'.$shareName.'" share does not record where it keeps its files, so whether '
-         . 'the mover would carry it off this pool is not known.';
-  }
-
-  $useCache = trim((string)$cfg['shareUseCache'], '"');
-  if ($useCache !== 'prefer' && $useCache !== 'only') {
-    return 'The "'.$shareName.'" share is set to move onto the array, so a stack folder there '
-         . 'would not reliably stay on this pool.';
-  }
+  if ($cfg === false || !isset($cfg['shareUseCache'])) return '';
 
   $cachePool = trim((string)($cfg['shareCachePool'] ?? ''), '"');
   if ($cachePool !== '' && $cachePool !== $pool) {
@@ -647,6 +740,21 @@ function staxx_storage_share_reason(string $sharesDir, string $shareName, string
  *   fsType:string, freeBytes:?int, fsProfile:string, redundant:bool, share:string,
  *   removable:?bool}>, unavailable: array<int, array{kind:string, name:string, reason:string}>}
  */
+/**
+ * Are these two paths the same directory, one of them possibly reached
+ * through Unraid's share layer? True for an exact match, and true when the
+ * two differ only in that one starts /mnt/user and the other /mnt/<pool>
+ * with an identical tail. Two different pools sharing a tail are NOT the
+ * same place, which is why the share layer has to be one of the two sides.
+ */
+function staxx_storage_same_place(string $a, string $b): bool {
+  if ($a === $b) return true;
+  if (!preg_match('#^/mnt/([^/]+)/(.+)$#', $a, $ma)) return false;
+  if (!preg_match('#^/mnt/([^/]+)/(.+)$#', $b, $mb)) return false;
+  if ($ma[2] !== $mb[2]) return false;
+  return ($ma[1] === 'user') !== ($mb[1] === 'user');
+}
+
 function staxx_storage_options(string $disksIni = '/var/local/emhttp/disks.ini',
                                string $sharesDir = '/boot/config/shares'): array {
   $unavailable = [];
@@ -696,35 +804,86 @@ function staxx_storage_options(string $disksIni = '/var/local/emhttp/disks.ini',
       continue;
     }
 
-    $folder = '/mnt/'.$name.'/'.$shareName;
-    if (!is_dir($folder)) {
+    /* Which shares on this pool may hold the stacks.
+     *
+     * Every top-level folder on a pool IS a share — Unraid discovers them
+     * whether or not anyone made one deliberately — but "any share that stays
+     * on this pool" is too wide to be useful advice. Tried that way round
+     * first, and on a real box it suggested putting the compose files inside
+     * shares called "OBS-Cache", "TEMP" and "docker": somebody else's data,
+     * and a suggestion nobody should follow.
+     *
+     * So two kinds qualify. A share named for this plugin, which is somebody
+     * who has deliberately made a home for it and is the case worth
+     * encouraging. And the appdata share, the conventional home for a
+     * container's data on Unraid, which is where the stacks already sit.
+     * Anything else is left to be typed or browsed to by hand, where the
+     * person choosing it knows what the share is for and this code does not.
+     *
+     * Nothing is created here and no share is invented: a folder has to exist
+     * already and its own policy has to vouch for staying on this pool. A
+     * dot-named folder is skipped because it is not a share at all, so there
+     * is no policy to read and nothing to promise about it.
+     */
+    $profile   = trim((string)($info['fsProfile'] ?? ''), '"');
+    $redundant = staxx_storage_redundant($profile);
+
+    /* Why each folder was turned down is kept, not just the fact of it. When
+     * nothing on a pool is usable, the specific reason — "the mover would
+     * drain this share" — is worth far more than a generic "nothing here",
+     * and it is the reason somebody can actually act on. */
+    $found  = [];
+    $whyNot = [];
+    foreach ((array)@scandir('/mnt/'.$name) as $entry) {
+      if ($entry === '.' || $entry === '..' || $entry[0] === '.') continue;
+      $folder = '/mnt/'.$name.'/'.$entry;
+      if (!is_dir($folder)) continue;
+      if (stripos($entry, 'staxx') === false && $entry !== $shareName) continue;
+      $shareReason = staxx_storage_share_reason($sharesDir, $entry, $name);
+      if ($shareReason !== '') { $whyNot[] = $shareReason; continue; }
+
+      // One level below the folder just proved to exist, never two — the
+      // validator refuses a path whose parent does not already exist, so
+      // anything nested deeper would be refused on every single install.
+      $err  = '';
+      $norm = staxx_settings_validate_path('STACK_ROOT', $folder.'/'.STAXX_STACKS_FOLDER, $err);
+      if ($norm === '') { $whyNot[] = $err; continue; }
+
+      $found[] = ['share' => $entry, 'path' => $norm];
+    }
+
+    if ($found === []) {
       $unavailable[] = ['kind' => 'pool', 'name' => $name,
-        'reason' => 'The "'.$name.'" pool has no "'.$shareName.'" folder yet, and making one here '
-                  . 'would create a new share — make the share itself on the Shares page first.'];
+        'reason' => $whyNot === []
+          ? 'The "'.$name.'" pool has no "'.$shareName.'" folder and no share named for StaXX, '
+            . 'and making one here would create a share — make it on the Shares page first, set '
+            . 'to stay on this pool, and it will appear here.'
+          : $whyNot[0]];
       continue;
     }
 
-    $shareReason = staxx_storage_share_reason($sharesDir, $shareName, $name);
-    if ($shareReason !== '') {
-      $unavailable[] = ['kind' => 'pool', 'name' => $name, 'reason' => $shareReason];
-      continue;
+    /* A folder named for this plugin first, then the appdata share, then the
+     * rest by name. Capped, because a pool can easily hold a dozen shares and
+     * a wall of them ("system", "logs", "TEMP") buries the one worth taking.
+     */
+    usort($found, function ($a, $b) use ($shareName) {
+      $rank = function (string $s) use ($shareName): int {
+        if (stripos($s, 'staxx') !== false) return 0;
+        if ($s === $shareName) return 1;
+        return 2;
+      };
+      return [$rank($a['share']), $a['share']] <=> [$rank($b['share']), $b['share']];
+    });
+
+    foreach (array_slice($found, 0, 2) as $cand) {
+      $pools[] = [
+        'kind' => 'pool', 'name' => $name, 'path' => $cand['path'],
+        'fsType' => trim((string)($info['fsType'] ?? ''), '"'),
+        'freeBytes' => (int)trim((string)($info['fsFree'] ?? '0'), '"') * 1024,
+        'fsProfile' => $profile, 'redundant' => $redundant,
+        'share' => $cand['share'], 'removable' => null,
+      ];
     }
-
-    // One level below the folder just proved to exist, never two — the
-    // validator below refuses a path whose parent does not already exist, so
-    // anything nested deeper would be refused on every single install.
-    $err  = '';
-    $norm = staxx_settings_validate_path('STACK_ROOT', $folder.'/'.STAXX_STACKS_FOLDER, $err);
-    if ($norm === '') { $unavailable[] = ['kind' => 'pool', 'name' => $name, 'reason' => $err]; continue; }
-
-    $profile = trim((string)($info['fsProfile'] ?? ''), '"');
-    $pools[] = [
-      'kind' => 'pool', 'name' => $name, 'path' => $norm,
-      'fsType' => trim((string)($info['fsType'] ?? ''), '"'),
-      'freeBytes' => (int)trim((string)($info['fsFree'] ?? '0'), '"') * 1024,
-      'fsProfile' => $profile, 'redundant' => staxx_storage_redundant($profile),
-      'share' => $shareName, 'removable' => null,
-    ];
   }
 
   // Redundant pools first, then whatever order disks.ini gave the rest in —
@@ -750,9 +909,24 @@ function staxx_storage_options(string $disksIni = '/var/local/emhttp/disks.ini',
     ];
   }
 
-  $offered = $pools;
-  if ($overlay !== null) $offered[] = $overlay;
-  if ($flash !== null)   $offered[] = $flash;
+  /* An option that is already where the stacks are can never be a
+   * destination: staxx_relocate_refuse() rejects it outright. Offering it
+   * anyway put a guaranteed refusal in the destination box and pushed a
+   * usable pool down into the "or use" list behind it, which is exactly
+   * backwards. Flash is exempt — while the stacks are on it, being where they
+   * already are is the whole point of the button it draws.
+   *
+   * Caught by path, plus the share-layer twin of the same folder:
+   * /mnt/user/appdata/x and /mnt/<pool>/appdata/x are one directory when that
+   * share lives on that pool. realpath() cannot see this, because shfs is a
+   * mount point — it resolves /mnt/user/... to itself and never down to the
+   * pool behind it, so the tails are compared instead.
+   */
+  $offered = array_values(array_filter(
+    $overlay === null ? $pools : array_merge($pools, [$overlay]),
+    fn($o) => !staxx_storage_same_place($o['path'], $currentRoot)
+  ));
+  if ($flash !== null) $offered[] = $flash;
 
   return ['offered' => $offered, 'unavailable' => $unavailable];
 }

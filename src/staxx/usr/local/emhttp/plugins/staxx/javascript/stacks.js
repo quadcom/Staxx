@@ -8677,6 +8677,11 @@
   var pickerFor   = null;      // the input being filled in
   var pickerAt    = PICKER_ROOT;
   var pickerBusy  = false;
+  /* 'stacks' while the picker is choosing where the stacks live, '' otherwise.
+   * The same panel fills in a container's volume paths and the archive folder,
+   * where an array disk or an unassigned drive is an ordinary choice — so the
+   * restrictions have to belong to the field, not to the picker. */
+  var pickerPurpose = '';
 
   function pickerStart(value) {
     var v = String(value || '').trim();
@@ -8691,11 +8696,24 @@
                esc(res.up) + '"><i class="fa fa-level-up" aria-hidden="true"></i> ' +
                esc(res.up) + '</button>');
     }
+    var blocked = res.blocked || {};
     for (var i = 0; i < res.dirs.length; i++) {
+      var name = res.dirs[i];
+      var why  = blocked[name] || '';
+      if (why) {
+        // Shown, not hidden: somebody hunting for disk8 can see it is there
+        // and read why it is out. Disabled rather than merely styled, so it
+        // cannot be reached by keyboard either.
+        out.push('<button type="button" class="staxx-pickrow staxx-pickrow--out" disabled ' +
+                 'title="' + esc(why) + '">' +
+                 '<i class="fa fa-ban" aria-hidden="true"></i> ' +
+                 esc(name) + '<span class="staxx-pickrow-why">' + esc(why) + '</span></button>');
+        continue;
+      }
       out.push('<button type="button" class="staxx-pickrow" data-path="' +
-               esc(res.path + '/' + res.dirs[i]) + '">' +
+               esc(res.path + '/' + name) + '">' +
                '<i class="fa fa-folder-o" aria-hidden="true"></i> ' +
-               esc(res.dirs[i]) + '</button>');
+               esc(name) + '</button>');
     }
 
     pickerList.innerHTML = out.join('');
@@ -8709,7 +8727,7 @@
     pickerBusy = true;
     if (!carry) pickerMsg.textContent = 'Reading ' + path + '…';
 
-    call('browse', { path: path }, 20000).then(function (res) {
+    call('browse', { path: path, purpose: pickerPurpose }, 20000).then(function (res) {
       pickerBusy = false;
 
       var why = res.ok ? (res.error || '') : res.error;
@@ -8733,7 +8751,7 @@
   }
 
   // Makes one folder inside whichever one is on screen, then steps into it so
-  // that "Use this folder" is the obvious next click.
+  // that "Choose this folder" is the obvious next click.
   function pickerMake() {
     var name = pickerNew.value.trim();
     if (!name) { pickerNew.focus(); return; }
@@ -8742,7 +8760,8 @@
     pickerBusy = true;
     pickerMsg.textContent = 'Creating ' + name + '…';
 
-    call('browse-mkdir', { path: pickerAt, folderName: name }, 20000).then(function (res) {
+    call('browse-mkdir', { path: pickerAt, folderName: name, purpose: pickerPurpose },
+         20000).then(function (res) {
       pickerBusy = false;
       var why = res.ok ? (res.error || '') : res.error;
       if (why) { pickerMsg.textContent = why; pickerNew.select(); return; }
@@ -8752,8 +8771,9 @@
     });
   }
 
-  function pickerOpen(input) {
+  function pickerOpen(input, purpose) {
     flushPending();              // whatever was typed in the box goes in first
+    pickerPurpose = purpose || '';
     pickerFor = input;
     pickerAt  = PICKER_ROOT;
     pickerHere.textContent = PICKER_ROOT;
@@ -19221,6 +19241,23 @@
             'server.'
     },
     {
+      key: 'PLACEMENT_RULES', control: 'choice', label: 'Where stacks may live',
+      choices: [
+        ['guided', 'Guide me — hide and refuse risky locations'],
+        ['open',   'Get out of the way — warn me but allow it']
+      ],
+      help: 'Guided is the default. When choosing where the stacks live, the folder browser shows ' +
+            'the array disks, unassigned drives and network mounts greyed out with the reason, and ' +
+            'picking one is refused — a single array disk has no redundancy of its own, and an ' +
+            'unassigned or network drive can be missing at the next boot with the stacks inside ' +
+            'it. The same applies to a share Unraid is set to move onto the array. Get out of the ' +
+            'way shows everything and lets you choose any of them, saying what the risk is instead ' +
+            'of stopping you. Two things are refused either way, because neither is a risk worth ' +
+            'taking: a location that lives in memory, where the stacks would be gone at the next ' +
+            'reboot, and a whole share as the stacks folder, where every folder in that share ' +
+            'would be read as a stack.'
+    },
+    {
       key: 'SHELL_ENABLED', control: 'choice', label: 'Container shells',
       choices: [
         ['true',  'Allow opening a shell'],
@@ -19419,10 +19456,27 @@
     // anyone who declined the one-time banner. One entry point, reached two
     // ways — this line and the banner both open the same #staxx-storage-dlg,
     // never a second chooser of its own.
-    var storageLine = (row.key === 'STACK_ROOT' && (value === '/boot' || value.indexOf('/boot/') === 0))
-      ? '<p class="staxx-hint">Stacks are on the flash drive. ' +
+    //
+    // Shown for STACK_ROOT wherever the stacks currently live, not only while
+    // they are on flash. The banner is a one-time nudge off flash and is right
+    // to disappear once that is done, but this line is the only remaining door
+    // to the chooser, and gating it on flash too left an already-moved install
+    // with no way to move again — while the move itself has never cared where
+    // it starts from.
+    var onFlash    = (value === '/boot' || value.indexOf('/boot/') === 0);
+    /* Two links, both always there for the stacks folder. The backup one is
+     * the always-on way in: most people never relocate anything, since the
+     * default location is already inside appdata, so an offer made only after
+     * a move would never reach the very people whose store is in no backup.
+     * It is a link rather than a warning because it has nothing to report
+     * until it has asked — and the dialog it opens says the good news too. */
+    var storageLine = row.key === 'STACK_ROOT'
+      ? '<p class="staxx-hint">' +
+        (onFlash ? 'Stacks are on the flash drive. ' : '') +
         '<button type="button" class="staxx-link-btn" id="staxx-open-storage-settings">' +
-        'Move them somewhere else</button></p>'
+        (onFlash ? 'Move them somewhere else' : 'Move the stacks folder') + '</button>' +
+        ' · <button type="button" class="staxx-link-btn" id="staxx-open-backup-check">' +
+        'Check these are in your backup</button></p>'
       : '';
     return head + '<div class="staxx-field">' +
              '<span>' + esc(row.label) + '</span>' +
@@ -19824,11 +19878,23 @@
       var btn = event.target.closest('[data-browse]');
       if (btn) {
         var input = document.getElementById(btn.dataset.browse);
-        if (input) pickerOpen(input);
+        /* Only the stacks folder gets the narrowed view. The archive folder
+         * comes through this same handler and deliberately keeps the full one:
+         * an unassigned drive is a reasonable home for zips of removed stacks,
+         * and the validator allows it there. */
+        if (input) pickerOpen(input, btn.dataset.browse === 'staxx-setting-stack-root' ? 'stacks' : '');
         return;
       }
       if (event.target.closest('#staxx-scaffold-sweep')) {
         runScaffoldSweep();
+        return;
+      }
+      /* Opened on top of Settings rather than instead of it: nothing here is
+       * being edited, so there is nothing to lose and no reason to ask about
+       * discarding — unlike the storage chooser just below, which replaces
+       * this panel and therefore has to. */
+      if (event.target.closest('#staxx-open-backup-check')) {
+        openBackupDialog('');
         return;
       }
       // The STACK_ROOT row's own way back to the storage chooser (PLAN_68
@@ -19927,7 +19993,8 @@
     }
     if (opt.kind === 'overlay') {
       return 'Works, but goes through Unraid’s share layer — if the pool behind it ever ' +
-        'fills, a new stack could quietly land on the array instead.';
+        'fills, a new stack could quietly land on the array instead. A pool path is reached ' +
+        'directly and is the better choice, ideally a redundant one.';
     }
     return 'Where your stacks already are.';
   }
@@ -19942,6 +20009,11 @@
   // box and runs through the exact same check as typing (see the delegated
   // click handler below), never enabling the move button directly.
   function storageDestPanelHtml(bestOpt, suggestions) {
+    // bestOpt may be null — every pool can be unavailable, or the only ones
+    // left can be where the stacks already are. The box still has to be
+    // drawn, empty: typing or browsing a path is the whole way out of that
+    // case, and without a box there was no way to move at all.
+    var prefill = bestOpt ? bestOpt.path : '';
     var suggestionHtml = suggestions.length
       ? '<p class="staxx-hint staxx-storage-suggestions">Or use: ' +
           suggestions.map(function (o) {
@@ -19958,16 +20030,22 @@
         '<span>Move them to</span>' +
         '<div class="staxx-boxline">' +
           '<input type="text" class="staxx-input" id="staxx-storage-path" ' +
-               'spellcheck="false" value="' + esc(bestOpt.path) + '">' +
+               'spellcheck="false" value="' + esc(prefill) + '">' +
           '<button type="button" class="staxx-btn" id="staxx-storage-browse">Browse…</button>' +
         '</div>' +
         '<div class="staxx-boxline">' +
-          '<span class="staxx-hint" id="staxx-storage-check">Checking…</span>' +
+          '<span class="staxx-hint" id="staxx-storage-check">' +
+            (bestOpt ? 'Checking…' : 'Type a path, or use Browse…') + '</span>' +
           '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-storage-move" disabled>Move stacks</button>' +
         '</div>' +
       '</div>' +
-      suggestionHtml +
-      '<p class="staxx-hint" id="staxx-storage-desc">' + storageKindLine(bestOpt) + ' ' + storageFreeLine(bestOpt) + '</p>';
+      // The description sits directly under the box, ABOVE the alternatives,
+      // because it describes whatever the box currently holds — printed after
+      // the "Or use" links it read as describing the link instead, which said
+      // the opposite of the truth whenever the two differed in share layer.
+      '<p class="staxx-hint" id="staxx-storage-desc">' +
+        (bestOpt ? storageKindLine(bestOpt) + ' ' + storageFreeLine(bestOpt) : '') + '</p>' +
+      suggestionHtml;
   }
 
   // The kind/redundancy/free-space sentences describe whatever is currently
@@ -19981,7 +20059,24 @@
     var match = storageOptions && storageOptions.offered.filter(function (o) {
       return o.kind !== 'flash' && o.path === value;
     })[0];
-    line.innerHTML = match ? (storageKindLine(match) + ' ' + storageFreeLine(match)) : '';
+    line.innerHTML = match ? (storageKindLine(match) + ' ' + storageFreeLine(match))
+                           : storageShapeLine(value);
+  }
+
+  /* What can be said about a path nothing offered — typed in, or reached
+   * through Browse. Only what the path itself proves: a /mnt/user path goes
+   * through the share layer whoever typed it, and that is worth saying out
+   * loud, because it is the one wrong-looking choice the box will happily
+   * accept. Nothing is claimed about free space or redundancy, since nothing
+   * here knows which pool is behind it.
+   */
+  function storageShapeLine(value) {
+    var v = String(value || '').replace(/\/+$/, '');
+    if (v !== '/mnt/user' && v.indexOf('/mnt/user/') !== 0) return '';
+    return 'This goes through Unraid’s share layer, so what sits behind it can change — ' +
+      'if the pool it lands on fills, files can quietly end up on the array instead. ' +
+      'A pool path (/mnt/&lt;pool&gt;/…) is reached directly and is the better choice, ' +
+      'ideally a redundant one.';
   }
 
   /* ---- checking the destination path as it is typed --------------------
@@ -20018,10 +20113,33 @@
       }
       if (res.ready) {
         if (btn) btn.disabled = false;
-        if (line) { line.textContent = 'This path can be used.'; line.classList.remove('staxx-error'); }
+        if (line) {
+          /* A usable path can still be a poor one. With the placement rules
+           * set to 'open' the server allows a risky location and reports why
+           * it is risky here instead of refusing it, so the move stays
+           * possible and the reason is still on screen next to the button
+           * about to do it. Empty in guided mode by definition — anything
+           * risky was refused before it got this far. */
+          /* Three things can be true of a usable path: it is fine, it is
+           * risky, or a different path will be used instead. The swap is
+           * shown rather than written into the box — editing what somebody is
+           * still typing is worse than telling them what will happen — and
+           * both can appear together, since a swapped path may still carry a
+           * risk of its own. */
+          var says = [];
+          if (res.notice) says.push(res.notice);
+          else if (res.warn) says.push('This path can be used, but — ' + res.warn + '.');
+          else says.push('This path can be used.');
+
+          line.textContent = says.join(' ');
+          if (res.notice || res.warn) line.classList.add('staxx-warn');
+          else line.classList.remove('staxx-warn');
+          line.classList.remove('staxx-error');
+        }
       } else if (line) {
         line.textContent = res.error;
         line.classList.add('staxx-error');
+        line.classList.remove('staxx-warn');
       }
     });
   }
@@ -20052,6 +20170,171 @@
         }).join('') +
       '</ul>' +
     '</div>';
+  }
+
+  /* ------------------------------------------- the store and its backup ----
+   *
+   * Nothing backs the compose files up by default. The Appdata Backup plugin
+   * that most Unraid servers already run works from each CONTAINER's volume
+   * mappings, and a plugin's own store is not a container volume, so it is
+   * never picked up. The proof is on any box with both installed: Compose
+   * Manager's project folder sits in appdata beside StaXX's and appears in
+   * none of the archives.
+   *
+   * The fix is one line in that plugin's "include extra files/folders" box,
+   * and only a person can put it there. StaXX never writes to another
+   * plugin's settings: their settings page rewrites that file wholesale on
+   * save, their backup runs on a schedule of its own, and the thing a bad
+   * write would break is the very backup this exists to protect. So this
+   * hands over the paths, opens the door, and then watches.
+   */
+  var backupModal = document.getElementById('staxx-backup-dlg');
+  var backupBody  = document.getElementById('staxx-backup-body');
+  var backupMsg   = document.getElementById('staxx-backup-msg');
+  var backupClose = document.getElementById('staxx-backup-close');
+  var backupWatch = null;   // the poll timer, while the dialog is open
+  var backupLastOld = '';   // the pre-move path, so a focus re-check still asks about it
+
+  /* Copy arbitrary text, not the contents of a box on screen.
+   *
+   * Separate from pwgenDoCopy() on purpose: that one has a visible input to
+   * select, which is better feedback where there is one, and its fallback
+   * depends on having it. Here there is no such box, so the fallback makes a
+   * throwaway one. navigator.clipboard needs a secure context, which Unraid's
+   * webGUI usually is not — plain HTTP on a LAN address — so the old command
+   * is the path that actually runs on most servers, not the exception.
+   */
+  function copyText(text, sayFn) {
+    var said = function (ok) {
+      sayFn(ok ? 'Copied to the clipboard.'
+               : 'Could not copy — select the paths above and copy them by hand.');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { said(true); },
+                                              function () { said(false); });
+      return;
+    }
+    var tmp = document.createElement('textarea');
+    tmp.value = text;
+    // Off-screen rather than hidden: a display:none element cannot be
+    // selected, and a zero-sized one is unreliable across browsers.
+    tmp.setAttribute('style', 'position:fixed;left:-9999px;top:0;');
+    document.body.appendChild(tmp);
+    tmp.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(tmp);
+    said(ok);
+  }
+
+  function backupStopWatch() {
+    if (backupWatch) { clearTimeout(backupWatch); backupWatch = null; }
+  }
+
+  /* The old path, after a move. An entry naming a folder that no longer exists
+   * makes their backup keep reporting success while copying nothing, which is
+   * the worst failure shape in this whole area — so it is said out loud, and
+   * separately from the paths to add, rather than folded in with them. */
+  function backupStaleHtml(res, oldPath) {
+    if (!oldPath || res.oldListed !== true) return '';
+    return '<p class="staxx-notice staxx-notice--bad">' +
+      '<i class="fa fa-exclamation-triangle" aria-hidden="true"></i>' +
+      '<span><strong>Remove the old line too.</strong> Your backup still lists <code>' +
+      esc(oldPath) + '</code>, which no longer exists. Left there it keeps reporting success ' +
+      'while copying nothing.</span></p>';
+  }
+
+  /* Draw the dialog for one status reply.
+   *
+   * A null coverage means no claim is available at all — their settings could
+   * not be read or understood. That has to read as silence, never as "not
+   * listed": see the rules at the top of Backup.php. The same discipline
+   * applies to the tick, which says FOUND IN THE LIST and never "backed up",
+   * because whether a run succeeds depends on their schedule and an off-box
+   * destination that may not even be reachable from here.
+   */
+  function backupRender(res, oldPath) {
+    var cov = res.coverage;
+    if (!cov) {
+      backupBody.innerHTML = '<p class="staxx-hint">Your backup plugin\'s settings could not be ' +
+        'read, so nothing can be said about whether these folders are in it. Worth checking ' +
+        'yourself if you rely on it.</p>';
+      return;
+    }
+
+    if (!cov.missing.length) {
+      backupBody.innerHTML =
+        '<p class="staxx-notice staxx-notice--good">' +
+        '<i class="fa fa-check-circle" aria-hidden="true"></i>' +
+        '<span><strong>Found in your backup plugin\'s list.</strong> ' +
+        esc(cov.listed.join(', ')) + '</span></p>' +
+        '<p class="staxx-hint">That means the folders are named there — not that a backup has run ' +
+        'or succeeded. Only your backup plugin can tell you that.</p>' +
+        backupStaleHtml(res, oldPath);
+      return;
+    }
+
+    backupBody.innerHTML =
+      '<p class="staxx-hint">Nothing backs these up on its own. Your backup plugin works from ' +
+      'each container\'s own folders, and StaXX is a plugin rather than a container, so its ' +
+      'folders have to be named there by hand.</p>' +
+      '<pre class="staxx-backup-paths" id="staxx-backup-paths">' + esc(cov.missing.join('\n')) + '</pre>' +
+      backupStaleHtml(res, oldPath) +
+      '<div class="staxx-buttons staxx-buttons--inline">' +
+        '<button type="button" class="staxx-btn staxx-btn--primary" data-backup-copy="1">Copy the paths</button>' +
+        '<a class="staxx-btn" href="' + esc(res.url) + '" target="_blank" rel="noopener">Open your backup settings</a>' +
+      '</div>' +
+      '<p class="staxx-hint">Paste them into <strong>Include extra files/folders</strong>, one per ' +
+      'line, then <strong>press Save on that page</strong> — until you do, nothing has changed and ' +
+      'nothing will appear here. That page has its own folder picker with an "Add to list" button ' +
+      'too, if you would rather not paste.</p>' +
+      '<p class="staxx-hint">Watching for them to appear…</p>';
+  }
+
+  /* Ask now, then keep asking while the dialog is open, so the tick appears
+   * the moment that other page is saved rather than on the next page load.
+   * Stops on a definite answer, on close, and at a ceiling — a dialog left
+   * open on a forgotten tab must not poll for ever. */
+  function backupPoll(oldPath, deadline) {
+    call('backup-status', oldPath ? { old: oldPath } : {}).then(function (res) {
+      if (!backupModal.open || !res.ok) return;
+      backupRender(res, oldPath);
+      backupStopWatch();
+      // A null coverage is as final as a complete one: nothing can be said,
+      // and asking again every three seconds will not change that.
+      if (!res.coverage || !res.coverage.missing.length) return;
+      if (Date.now() > deadline) return;
+      backupWatch = setTimeout(function () { backupPoll(oldPath, deadline); }, 3000);
+    });
+  }
+
+  function openBackupDialog(oldPath) {
+    if (!backupModal) return;
+    backupLastOld = oldPath || '';
+    backupMsg.textContent = '';
+    backupBody.innerHTML = '<p class="staxx-hint">Checking…</p>';
+    if (!backupModal.open) backupModal.showModal();
+    backupStopWatch();
+    backupPoll(backupLastOld, Date.now() + 300000);
+  }
+
+  if (backupModal) {
+    backupBody.addEventListener('click', function (event) {
+      if (!event.target.closest('[data-backup-copy]')) return;
+      var pre = document.getElementById('staxx-backup-paths');
+      copyText(pre ? pre.textContent : '', function (m) { backupMsg.textContent = m; });
+    });
+
+    if (backupClose) backupClose.addEventListener('click', function () { backupModal.close(); });
+    backupModal.addEventListener('close', backupStopWatch);
+
+    /* The whole point of the watch: they leave for the other tab, save there,
+     * and come back here. Re-asking on focus turns that return into an
+     * instant answer instead of a wait of up to three seconds — and browsers
+     * throttle timers in background tabs, so the timer alone is not enough. */
+    window.addEventListener('focus', function () {
+      if (backupModal.open) backupPoll(backupLastOld, Date.now() + 300000);
+    });
   }
 
   function openStorageChooser() {
@@ -20090,7 +20373,7 @@
         // an already-moved install with nothing saying where its stacks are.
         '<p class="staxx-hint">Now: <code>' + esc(res.current) + '</code>' +
           (res.onFlash ? ' — the flash drive' : '') + '</p>' +
-        (bestOpt ? storageDestPanelHtml(bestOpt, nonFlash.slice(1)) : '') +
+        storageDestPanelHtml(bestOpt || null, bestOpt ? nonFlash.slice(1) : []) +
         storageUnavailableHtml(res.unavailable) +
         (flashOpt
           ? '<div class="staxx-storage-flash-foot">' +
@@ -20106,6 +20389,10 @@
   }
 
   function startStorageMove(dest) {
+    // Captured BEFORE the move, because the whole point of asking about it
+    // afterwards is that this path is the one now left stale in somebody's
+    // backup settings, naming a folder that no longer exists.
+    var oldRoot = (storageOptions && storageOptions.current) || '';
     storageMsg.textContent = 'Starting…';
     call('relocate', { dest: dest }).then(function (res) {
       if (!res.ok) {
@@ -20128,7 +20415,15 @@
           // already drawn on this page describes a location that no longer
           // exists — reloaded only now that the job has actually finished,
           // never merely because it started.
-          call('store-choice', { choice: 'chosen' }).then(function () { location.reload(); });
+          /* The reload waits for the backup dialog to be dealt with. The move
+           * has just invalidated any entry naming the old path, and reloading
+           * first would take that dialog down with the page before it could
+           * be read — the one moment it matters most. */
+          call('store-choice', { choice: 'chosen' }).then(function () {
+            if (!backupModal) { location.reload(); return; }
+            backupModal.addEventListener('close', function () { location.reload(); }, { once: true });
+            openBackupDialog(oldRoot);
+          });
         }
       });
     });
@@ -20184,11 +20479,13 @@
       }
       if (event.target.closest('#staxx-storage-browse')) {
         var box = document.getElementById('staxx-storage-path');
+        // Always the stacks folder here — that is the only thing this dialog
+        // chooses, so the narrowed view is unconditional.
+        if (box) { pickerOpen(box, 'stacks'); return; }
         // pickerOpen writes the chosen folder into the box and, because it
         // is outside the compose form host, dispatches its own input event —
         // the listener just below reacts to that exactly as it would to
         // typing, so there is no second re-check path to keep in step.
-        if (box) pickerOpen(box);
         return;
       }
       var suggest = event.target.closest('[data-storage-suggest]');

@@ -300,6 +300,68 @@ ok('changing TAKEOVER_DOCKER_TAB asks for a reload', $reload === true, $err);
 // function restores the original file regardless.
 staxx_settings_save(['TAKEOVER_DOCKER_TAB' => $after['TAKEOVER_DOCKER_TAB'] ?? 'false'], $err, $reload, $saved);
 
+/* ------------------------------------ where the stacks may NOT live -------
+ * The stacks folder is allowed on a pool or inside a share, and nowhere else
+ * under /mnt. Refused in the validator rather than only discouraged in the
+ * chooser, because every saved value comes through here whatever route it
+ * took.
+ *
+ * Read-only cases: each calls the validator directly and writes nothing, so
+ * none of these touch the real config.
+ *
+ * ARCHIVE_ROOT deliberately keeps all of these, which is why it is asserted
+ * rather than left implied — an unassigned drive is a reasonable home for zips
+ * of removed stacks, and sharing one function with STACK_ROOT must not quietly
+ * impose the stricter rule on it. */
+
+$refused = [
+  '/mnt/disk3/stacks'        => 'a single array disk',
+  '/mnt/disk12/stacks'       => 'a two-digit array disk',
+  '/mnt/user0/stacks'        => 'the array behind the share layer',
+  '/mnt/disks/mydrive/x'     => 'an unassigned drive',
+  '/mnt/remotes/nas_share/x' => 'a network mount',
+];
+foreach ($refused as $path => $what) {
+  $err = '';
+  $got = staxx_settings_validate_path('STACK_ROOT', $path, $err);
+  ok('the stacks folder is refused on '.$what.' ('.$path.')',
+     $got === '' && $err !== '', $err);
+  // A refusal has to say where to go instead, not just "no".
+  ok('...and the refusal names somewhere to put it instead',
+     strpos($err, 'share') !== false || strpos($err, 'pool') !== false, $err);
+}
+
+// The same path, as an archive folder, must NOT hit the new rule. It may still
+// be refused for an older reason (a parent that does not exist on this box),
+// so what is asserted is the absence of THIS refusal, not blanket acceptance.
+$err = '';
+staxx_settings_validate_path('ARCHIVE_ROOT', '/mnt/disks/mydrive/staxx-archives', $err);
+ok('an archive folder is not caught by the stacks-only rule',
+   strpos($err, 'unassigned drive') === false, $err);
+
+// The paths that must keep working, so the refusals cannot have been written
+// too broadly. The second is wherever this box actually keeps its stacks.
+foreach (['/mnt/user/appdata/staxx-stacks', staxx_stack_root()] as $good) {
+  $err = '';
+  ok('still accepted: '.$good,
+     staxx_settings_validate_path('STACK_ROOT', $good, $err) !== '', $err);
+}
+
+/* The near misses. "disk" with no number is a share name; a share called
+ * "disks-archive" is somebody's real share. Catching either would refuse a
+ * perfectly good location, and a regex written the obvious way does exactly
+ * that — which is why these are here rather than trusted. Asserted as "not
+ * refused for THIS reason", since a fictional share can fail the older
+ * parent-must-exist check on any given box. */
+foreach (['/mnt/user/disk/x', '/mnt/user/disks-archive/x', '/mnt/user/remotes-old/x'] as $good) {
+  $err = '';
+  staxx_settings_validate_path('STACK_ROOT', $good, $err);
+  ok('a share whose name merely starts like a disk is not refused for it: '.$good,
+     strpos($err, 'no redundancy of its own') === false
+     && strpos($err, 'missing at the next boot') === false, $err);
+}
+
+
 staxx_test_restore_cfg();
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";

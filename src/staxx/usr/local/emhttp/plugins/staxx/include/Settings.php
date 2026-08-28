@@ -61,6 +61,21 @@ function staxx_settings_keys(): array {
     // is never posted back by the store-choice action deliberately: nothing
     // may put the question back except a person editing the setting by hand.
     'STORAGE_CHOICE'      => ['type' => 'choice', 'default' => 'ask', 'choices' => ['ask', 'chosen', 'declined']],
+    /* Does the folder picker narrow itself down when choosing where the
+     * stacks live, and are the placement rules refusals or warnings?
+     *
+     *   guided = the picker marks the roots the stacks cannot live on, and a
+     *            risky location is refused; the default
+     *   open   = nothing is marked, and a risky location is allowed with the
+     *            reason said plainly instead
+     *
+     * "open" does NOT lift everything. Two refusals stay whatever this says,
+     * because neither is a risk somebody can sensibly accept: a filesystem
+     * living in memory loses the stacks at the next reboot for no benefit at
+     * all, and a whole share as the stack root makes every folder in that
+     * share read as a stack, which is simply wrong rather than daring.
+     */
+    'PLACEMENT_RULES'     => ['type' => 'choice', 'default' => 'guided', 'choices' => ['guided', 'open']],
     'ICON_FETCH'          => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     // PLAN_86 — record a matched icon into the compose file and copy its
     // picture into the stack's own folder, instead of guessing again on
@@ -245,6 +260,44 @@ function staxx_settings_validate_path(string $key, string $v, string &$error): s
     if ($norm === $archiveRoot || strpos($norm, $archiveRoot.'/') === 0) {
       $error = 'The stacks folder cannot be the archive folder, or sit inside it — '
              . 'an old zip there would be mistaken for a stack. Choose a location outside it.';
+      return '';
+    }
+  }
+
+  /* The stacks folder may only live on a pool or inside a share. Refused
+   * here rather than merely discouraged in the chooser, because the chooser
+   * is not the only way in — every saved value passes through this function.
+   *
+   * /mnt/diskN and /mnt/user0 are the array's own paths: one array disk has
+   * no redundancy of its own, and writing straight to it goes behind the
+   * array's placement rules instead of through them. /mnt/disks and
+   * /mnt/remotes are unassigned drives and network mounts, either of which
+   * can simply be absent at the next boot with the stacks inside it.
+   *
+   * STACK_ROOT only. ARCHIVE_ROOT comes through the same function, and an
+   * unassigned drive is a reasonable home for zips of removed stacks. An
+   * existing setting is never re-validated on read, so this refusal cannot
+   * lock anyone out of an install they already have.
+   */
+  /* Enforced only while the placement rules are set to guide. Turned to
+   * 'open', the same risk is reported as a warning beside the destination box
+   * instead — staxx_placement_risk() is the single place that decides what
+   * counts as risky, so the two modes cannot drift apart.
+   *
+   * The memory-filesystem refusal below is NOT behind this switch: losing the
+   * stacks at the next reboot is not a risk anybody accepts on purpose.
+   *
+   * STACK_ROOT only. ARCHIVE_ROOT comes through the same function, and an
+   * unassigned drive is a reasonable home for zips of removed stacks. An
+   * existing setting is never re-validated on read, so this refusal cannot
+   * lock anyone out of an install they already have.
+   */
+  if ($key === 'STACK_ROOT' && $underMnt && staxx_placement_guided()) {
+    $risk = staxx_placement_risk($norm);
+    if ($risk !== '') {
+      $error = 'The stacks folder cannot go here — '.$risk.'. Choose a folder inside a share, '
+             . 'or on a cache pool, such as /mnt/user/appdata. If you mean to do this anyway, '
+             . 'set the placement rules to "open" in Settings.';
       return '';
     }
   }

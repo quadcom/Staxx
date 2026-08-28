@@ -57,6 +57,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Detail.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Relocate.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Backup.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Crypt.php';
 
@@ -1407,8 +1408,16 @@ switch ($action) {
    * comes back as ok with an error message, because "you cannot look there" is
    * something to show inside the picker, not a failed request.
    */
+  /* 'purpose' is 'stacks' only when the picker was opened to choose where the
+   * stacks live. It narrows what is offered and stops Create inventing a
+   * share; anything else — a container's volume path, the archive folder —
+   * browses everything, because an array disk or an unassigned drive is an
+   * ordinary thing to mount into a container. Not an allowlist because it is
+   * not a boundary: a wrong value here only changes what is highlighted, and
+   * every real refusal is made again when the value is saved. */
   case 'browse':
-    staxx_reply(['ok' => true] + staxx_browse_dirs((string)($_POST['path'] ?? '')));
+    staxx_reply(['ok' => true] + staxx_browse_dirs((string)($_POST['path'] ?? ''),
+                                                   (string)($_POST['purpose'] ?? '')));
 
   /* ---- make one folder inside the one the picker is showing ----
    *
@@ -1419,7 +1428,8 @@ switch ($action) {
    */
   case 'browse-mkdir':
     $made = staxx_browse_mkdir((string)($_POST['path'] ?? ''),
-                                  (string)($_POST['folderName'] ?? ''), $error);
+                                  (string)($_POST['folderName'] ?? ''), $error,
+                                  (string)($_POST['purpose'] ?? ''));
     if ($made === '') staxx_reply(['ok' => true, 'error' => $error]);
     staxx_reply(['ok' => true, 'path' => $made]);
 
@@ -1943,9 +1953,47 @@ switch ($action) {
    * refused is a successful answer, not a failed request.
    */
   case 'relocate-check':
-    $dest = staxx_relocate_refuse((string)($_POST['dest'] ?? ''), $error);
+    $notice = '';
+    $dest = staxx_relocate_refuse((string)($_POST['dest'] ?? ''), $error, $notice);
     if ($dest === '') staxx_reply(['ok' => true, 'ready' => false, 'error' => $error]);
-    staxx_reply(['ok' => true, 'ready' => true, 'path' => $dest]);
+    /* With the placement rules set to 'open' a risky location is allowed, so
+     * the risk is reported here instead of refused. Sent for the guided case
+     * too, where it is always empty by definition — anything risky was already
+     * refused above — which keeps the browser from having to know which mode
+     * it is in. */
+    /* 'notice' is the share-layer swap, which is not a warning about the
+     * destination but a statement that a different one will be used. Sent
+     * separately so the browser can say both, since a swapped path can still
+     * carry a risk of its own. */
+    staxx_reply(['ok' => true, 'ready' => true, 'path' => $dest,
+                 'warn' => staxx_placement_risk($dest), 'notice' => $notice]);
+
+  /* ---- is the store named in the Appdata Backup plugin's extras list ----
+   *
+   * Read-only, and the one action the browser is allowed to poll: while the
+   * "add these paths" dialog is open it asks again every few seconds so a tick
+   * can appear the moment somebody saves that other page, without a reload.
+   * Cheap enough to poll — one small read of a file on the flash drive, and
+   * reads do not wear flash out; writes do, and there are none here.
+   *
+   * 'coverage' is null when no claim can be made at all (their settings could
+   * not be read or understood). The browser must treat that as "say nothing",
+   * never as "not listed" — see the rules in Backup.php.
+   *
+   * 'old' is optional: after a move, the previous stacks path is asked about
+   * separately, because an entry left naming a folder that no longer exists
+   * makes their backup keep reporting success while copying nothing.
+   */
+  case 'backup-status':
+    $old = trim((string)($_POST['old'] ?? ''));
+    staxx_reply([
+      'ok'        => true,
+      'installed' => staxx_backup_plugin_installed(),
+      'paths'     => staxx_backup_owned_paths(),
+      'coverage'  => staxx_backup_coverage(),
+      'url'       => STAXX_AB_SETTINGS_URL,
+      'oldListed' => $old === '' ? null : staxx_backup_lists_path($old),
+    ]);
 
   // ---- start moving the stacks folder to a new location ----
   case 'relocate':

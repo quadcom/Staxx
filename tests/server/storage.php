@@ -90,7 +90,20 @@ $flashEntries = array_values(array_filter(
   array_merge($real['offered'], $real['unavailable']),
   fn($e) => $e['kind'] === 'flash'
 ));
-ok('the flash drive is reported one way or the other', count($flashEntries) === 1, json_encode($flashEntries));
+/* Flash is only ever mentioned while the stacks are ON it — offered as "where
+ * they already are", never as a path invented from nothing, since flash is the
+ * one location this whole feature exists to move people away from. So the
+ * assertion has to depend on where the stacks currently sit: exactly one
+ * mention when they are on flash, none at all when they are not. Written as
+ * "exactly one, always" when this suite was new, which was true then only
+ * because the store had not been moved off flash yet — a stale assumption,
+ * not a bug in the code it was testing. */
+$onFlash = staxx_stack_root() === '/boot' || strpos(staxx_stack_root(), '/boot/') === 0;
+ok($onFlash
+     ? 'the flash drive is reported, because the stacks are on it'
+     : 'the flash drive is not mentioned at all, because the stacks are not on it',
+   count($flashEntries) === ($onFlash ? 1 : 0),
+   json_encode($flashEntries));
 if (count($flashEntries) === 1 && isset($flashEntries[0]['removable'])) {
   ok('a genuinely removable boot device is reported as such',
      $flashEntries[0]['removable'] === true, json_encode($flashEntries[0]));

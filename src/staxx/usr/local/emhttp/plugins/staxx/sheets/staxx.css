@@ -173,6 +173,35 @@
   color: var(--sm-danger);
 }
 
+/* The confirming counterpart of --bad, for the one thing here worth showing
+   green: the store's folders turning up in somebody's backup settings. Uses
+   the theme's own success colour where Unraid defines one, and falls back to
+   a plain green rather than borrowing --sm-accent, which is already the
+   neutral notice colour and would say nothing. */
+.staxx-notice--good {
+  border-left-color: var(--sm-success, #4c9a2a);
+}
+
+.staxx-notice--good > .fa {
+  color: var(--sm-success, #4c9a2a);
+}
+
+/* The paths to paste into another plugin's settings box. Selectable, wrapping
+   on long paths rather than scrolling sideways, and monospaced so a stray
+   space in a path is visible before it is copied. */
+.staxx-backup-paths {
+  margin: 0.6rem 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--sm-border, #444);
+  border-radius: 3px;
+  background: var(--sm-well, rgba(127, 127, 127, 0.12));
+  font-family: monospace;
+  font-size: 1.2rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}
+
 /* A <button> made to read as inline link text inside a sentence — used where
    a click must be owned outright by our own script rather than an <a href>,
    which Unraid's own page scripts intercept on plugin pages. */
@@ -2465,6 +2494,15 @@
   font-family: ui-monospace, Consolas, monospace;
   font-size: 1.2rem;
   white-space: pre-wrap;
+}
+
+/* A path that IS allowed but is a poor idea — what the placement rules report
+   instead of refusing, once they are set to get out of the way. Amber rather
+   than red on purpose: the move is going to be permitted, and dressing that as
+   an error would teach people to ignore real ones. */
+.staxx-warn {
+  border-left-color: var(--sm-warning, #d68000);
+  background: rgba(214, 128, 0, 0.12);
 }
 
 .staxx-error[hidden] {
@@ -6085,7 +6123,7 @@
   font-size: 1.2rem;
 }
 
-/* Where you are now — the thing "Use this folder" will hand back, so it is
+/* Where you are now — the thing "Choose this folder" will hand back, so it is
    shown as the path it is rather than as a breadcrumb trail that hides it. */
 .staxx-picker-where {
   padding: 0 1.4rem 0.9rem;
@@ -6133,6 +6171,27 @@
 .staxx-scaffold .staxx-pickrow .fa {
   width: 1.6rem;
   color: var(--sm-muted);
+}
+
+/* A root the stacks cannot live on — an array disk, or one of the folders that
+   only holds mount points. Shown rather than hidden, so somebody looking for
+   disk8 can see it is there and read why it is out; a missing row would just
+   read as a bug. Dimmed, not clickable, and carrying its own reason. */
+.staxx-scaffold .staxx-pickrow--out {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.staxx-scaffold .staxx-pickrow--out:hover,
+.staxx-scaffold .staxx-pickrow--out:focus-visible {
+  background: transparent;
+}
+
+.staxx-scaffold .staxx-pickrow-why {
+  display: block;
+  margin-left: 1.6rem;
+  color: var(--sm-muted);
+  font-size: 1.15rem;
 }
 
 /* Up one level, kept apart from the folders below it so it is not mistaken

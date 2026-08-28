@@ -844,7 +844,7 @@ endif;
     <div class="staxx-picker-head">
       <h3 class="staxx-picker-title" id="staxx-picker-title"><?= _('Choose a folder') ?></h3>
       <p class="staxx-picker-hint">
-        <?= _('Open a folder to look inside it, then choose "Use this folder". You can also type a path straight into the box.') ?>
+        <?= _('Open a folder to look inside it, then choose "Choose this folder" to put its path in the box you came from — nothing is saved or moved until you confirm there. You can also type a path straight into the box above.') ?>
       </p>
     </div>
 
@@ -870,7 +870,7 @@ endif;
       <p class="staxx-picker-msg" id="staxx-picker-msg" role="status" aria-live="polite"></p>
       <div class="staxx-buttons staxx-buttons--inline">
         <button type="button" class="staxx-btn" id="staxx-picker-cancel"><?= _('Cancel') ?></button>
-        <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-picker-use"><?= _('Use this folder') ?></button>
+        <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-picker-use"><?= _('Choose this folder') ?></button>
       </div>
     </div>
 
@@ -1246,6 +1246,30 @@ endif;
       <p class="staxx-settings-msg" id="staxx-storage-msg" role="status" aria-live="polite"></p>
       <div class="staxx-buttons staxx-buttons--inline">
         <button type="button" class="staxx-btn" id="staxx-storage-close"><?= _('Close') ?></button>
+      </div>
+    </div>
+
+  </dialog>
+
+  <!-- ------------------------------------------- the store and its backup --
+       Nothing backs the compose files up by default: the Appdata Backup
+       plugin works from each container's volume mappings, and a plugin's own
+       store is not one. So the paths have to be named in that plugin's own
+       "extra files" list, and only a person can do that — StaXX never writes
+       to another plugin's settings. This dialog hands over the paths and a way
+       there, then watches for them to appear. -->
+  <dialog class="staxx-settings" id="staxx-backup-dlg" aria-labelledby="staxx-backup-title">
+
+    <div class="staxx-settings-head">
+      <h3 class="staxx-settings-title" id="staxx-backup-title"><?= _('Add these folders to your backup') ?></h3>
+    </div>
+
+    <div class="staxx-settings-body" id="staxx-backup-body"></div>
+
+    <div class="staxx-settings-foot">
+      <p class="staxx-settings-msg" id="staxx-backup-msg" role="status" aria-live="polite"></p>
+      <div class="staxx-buttons staxx-buttons--inline">
+        <button type="button" class="staxx-btn" id="staxx-backup-close"><?= _('Close') ?></button>
       </div>
     </div>
 
