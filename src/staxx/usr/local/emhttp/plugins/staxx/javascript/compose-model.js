@@ -6524,7 +6524,13 @@
       post_start:          { title: 'After start', description: "A command to run once, right after the container starts." },
       pre_stop:            { title: 'Before stop', description: "A command to run once, just before the container stops." },
       privileged:          { title: 'Privileged', description: "Gives the container full access to the host, bypassing most of Docker's normal safety limits." },
-      profiles:            { title: 'Profiles', description: "Marks this service as only starting when a matching profile is chosen, so one compose file can describe several optional setups." },
+      // The warning is the important half (PLAN_69's own interim fix, which it
+      // said should not wait for the rest of that plan): StaXX never passes
+      // --profile, so a service tagged with one is simply skipped when the
+      // stack starts. Compose is doing exactly as asked, so there is no error
+      // and nothing on screen to explain it — which is why the field itself
+      // has to say so.
+      profiles:            { title: 'Profiles', description: "Marks this service as only starting when a matching profile is chosen, so one compose file can describe several optional setups. StaXX cannot choose a profile yet, so a service listed here will not start when you start this stack, and nothing will say why." },
       provider:            { title: 'Provider', description: "Runs this service through an external provider plugin instead of as a normal container." },
       pull_policy:         { title: 'When to pull the image', description: "When to fetch the image from its registry — always, never, or only if it is missing." },
       pull_refresh_after:  { title: 'Pull refresh', description: "How long a pulled image is trusted before compose checks its registry for a newer one again." },
