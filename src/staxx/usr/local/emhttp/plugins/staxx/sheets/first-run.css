@@ -1,0 +1,73 @@
+/* StaXX — the first-run "where should the data store live" screen.
+ * Copyright 2026, StaXX contributors. GPL-2.0.
+ *
+ * Only what this one screen needs. Everything else it draws — the field box,
+ * the notices, the buttons, the confirm list, the folder picker rows — is
+ * borrowed from staxx.css's existing classes so nothing here restyles a
+ * component the rest of the plugin already owns.
+ */
+
+/* Its own dialog class rather than .staxx-modal: that class's grid expects
+   four rows (head, tab strip, body, foot) for the compose editor, and this
+   dialog only ever has three — head, one scrolling body, and a message line. */
+.staxx-firstrun {
+  width: min(76rem, 96vw);
+  height: min(88vh, 80rem);
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--text-color, #e0e0e0);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+.staxx-firstrun:not([open]) { display: none; }
+
+.staxx-firstrun::backdrop { background: rgba(0, 0, 0, 0.55); }
+
+.staxx-firstrun-body {
+  overflow-y: auto;
+  padding: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+
+.staxx-firstrun-msg {
+  margin: 0;
+  padding: 0 1.4rem 1rem;
+  min-height: 1.6rem;
+}
+
+/* One line per reason until opened — <details>/<summary> needs no script of
+   its own to collapse and expand. */
+.staxx-firstrun-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.staxx-firstrun-reason {
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  padding: 0.6rem 1rem;
+}
+
+.staxx-firstrun-reason summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.staxx-firstrun-reason summary:focus-visible {
+  outline: 0.2rem solid var(--sm-accent, #6ba3e0);
+  outline-offset: 0.2rem;
+}
+
+.staxx-firstrun-reason p {
+  margin: 0.6rem 0 0;
+}

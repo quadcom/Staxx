@@ -22,6 +22,7 @@ var fs = require('fs');
 
 var FILES = [
   'src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js',
+  'src/staxx/usr/local/emhttp/plugins/staxx/javascript/first-run.js',
   'src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js',
   'src/staxx/usr/local/emhttp/plugins/staxx/javascript/manage.js',
   'src/staxx/usr/local/emhttp/plugins/staxx/javascript/ca-convert.js',

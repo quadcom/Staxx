@@ -34,26 +34,41 @@ require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
 // this is only the placeholder that stops the table trying to render without
 // a floor under it.
 if (!staxx_store_ready()) {
-  // The page's own stylesheet, emitted here because this branch returns long
-  // before the asset tags further down are reached — without it the panel
-  // renders with no styling at all. filemtime() for the same reason it is
-  // carried below: an edited stylesheet otherwise sits in the browser cache
+  // Both assets are emitted here because this branch returns long before the
+  // asset tags further down are reached — without them the panel renders
+  // with no styling and no behaviour at all. filemtime() for the same reason
+  // it is carried below: an edited file otherwise sits in the browser cache
   // and looks exactly like a change that did not work.
-  $noStoreCss = STAXX_ROOT.'/sheets/staxx.css';
+  //
+  // stacks.js is never loaded on this branch — see first-run.js's own header
+  // for why it cannot run without a stacks table already on the page. This
+  // paragraph is what stays visible if first-run.js fails to load at all; the
+  // script's job (Phase 2) is to turn it into the full explaining screen and,
+  // once dismissed, leave exactly this behind as the one-time reopen offer.
+  $noStoreCss   = STAXX_ROOT.'/sheets/staxx.css';
+  $firstRunCss  = STAXX_ROOT.'/sheets/first-run.css';
+  $firstRunJs   = STAXX_ROOT.'/javascript/first-run.js';
+  $vars = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
+  $csrf = (string)($vars['csrf_token'] ?? '');
   ?>
   <link rel="stylesheet" href="/plugins/<?= STAXX_PLUGIN ?>/sheets/staxx.css?v=<?= is_file($noStoreCss) ? filemtime($noStoreCss) : '0' ?>">
-  <div class="staxx-scaffold unapi">
+  <link rel="stylesheet" href="/plugins/<?= STAXX_PLUGIN ?>/sheets/first-run.css?v=<?= is_file($firstRunCss) ? filemtime($firstRunCss) : '0' ?>">
+  <div class="staxx-scaffold unapi"
+       data-csrf="<?= htmlspecialchars($csrf) ?>"
+       data-endpoint="/plugins/<?= STAXX_PLUGIN ?>/include/action.php">
     <div class="staxx-notice" id="staxx-no-store">
       <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
       <div>
         <strong><?= _('No data store has been chosen yet.') ?></strong>
-        <?= _('StaXX needs one folder to keep stacks and their archives in before it can show anything here. Choose one on the settings page to continue.') ?>
+        <?= _('StaXX needs one folder to keep stacks and their archives in before it can show anything here.') ?>
         <div class="staxx-buttons staxx-buttons--inline">
-          <a class="staxx-btn staxx-btn--primary" href="/Settings/staxx.settings"><?= _('Go to Settings') ?></a>
+          <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-firstrun-open"><?= _('Choose a data store') ?></button>
+          <a class="staxx-btn" href="/Settings/staxx.settings"><?= _('Go to Settings') ?></a>
         </div>
       </div>
     </div>
   </div>
+  <script src="/plugins/<?= STAXX_PLUGIN ?>/javascript/first-run.js?v=<?= is_file($firstRunJs) ? filemtime($firstRunJs) : '0' ?>"></script>
   <?
   return;
 }

@@ -144,6 +144,23 @@ never touched. Each file's header gives the exact commands. `files.php`, `links.
 both derive from) at a `/tmp` folder, the same way, and each refuses to run without it — leaving it
 out is a first-line abort, not a wrong answer.
 
+`store.php` covers PLAN_97 Phase 2's Store.php — telling apart a folder that is already a StaXX
+store, a bare pile of compose files, and one that is neither; writing the note a new store carries;
+and creating the store itself. It needs `STORE_ROOT` seeded to a scratch value first, the same
+first-line-abort-if-missing rule as the other suites, but that value is never a real store root here
+— it only proves a stray run cannot be mistaken for one holding Adrian's real data. Its own fixtures
+for the read-only inspector all live under `/tmp`, but the creation cases cannot: the store's own
+placement rules refuse anything outside a real share or pool, so those live under a disposable
+folder nested inside the real appdata share, cleaned up on every exit path the way
+`tests/server/storage.php` already does for its pool fixtures, and its writes to the real config
+file are backed up and restored the same way `settings.php`'s are. Its two negative cases matter
+most: a folder holding a `stacks` folder next to an `archives` folder reads as StaXX's own even
+before any stack inside it has its own hidden record, and a bare pile of compose files with no
+hidden record and no `archives` folder never reads as one. Running creation twice over the same
+folder proves adopting an existing store disturbs nothing already inside it. It also records one
+gap worth a look: a store whose three folders exist but hold nothing yet reads as neither empty nor
+its own, because nothing inside `stacks/` gives the inspector anything to find.
+
 `validate_schema.py` has no runner or framework. It prints one line per case and exits non-zero on
 failure; its negative cases (what the schema must *reject*) matter more than the positive ones.
 

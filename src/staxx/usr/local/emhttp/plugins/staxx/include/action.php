@@ -57,6 +57,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Detail.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Relocate.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Store.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Backup.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Crypt.php';
@@ -250,6 +251,10 @@ $staxxSafeWithoutStore = [
   'ca-refresh', 'ca-search', 'ca-home', 'ca-app',
   'probe', 'webui-test', 'ping',
   'crypt-state', 'crypt-build', 'crypt-rebuild', 'crypt-hash',
+  // PLAN_97 Phase 2 — the first-run dialog's own actions. These are how a
+  // store gets chosen in the first place, so they have to work before one
+  // exists, same as 'settings-save' above.
+  'store-check', 'store-inspect', 'store-create',
 ];
 if (!staxx_store_ready() && !in_array($action, $staxxSafeWithoutStore, true)) {
   staxx_reply([
@@ -1947,6 +1952,54 @@ switch ($action) {
     }
     staxx_reply(['ok' => true, 'settings' => $saved, 'reload' => $reload]);
 
+  /* ------------------------------------------------- choosing a data store --
+   * The first-run dialog, PLAN_97 Phase 2. Creating a store is not the same
+   * thing as relocating one — there is nothing to move yet — so none of this
+   * goes through staxx_relocate_refuse(), which exists to protect a move and
+   * currently refuses every one of those outright regardless.
+   */
+
+  /* ---- would this path be accepted as a NEW store, without creating it ----
+   *
+   * Read-only. Mirrors 'relocate-check' in shape — 'ok' is true whenever the
+   * question was answered at all, a refused path included.
+   */
+  case 'store-check':
+    $norm = staxx_settings_validate_path('STORE_ROOT', (string)($_POST['path'] ?? ''), $error);
+    staxx_reply([
+      'ok'    => true,
+      'ready' => $norm !== '',
+      'path'  => $norm,
+      'error' => $error,
+      'warn'  => $norm !== '' ? staxx_placement_risk($norm) : '',
+    ]);
+
+  /* ---- what is already sitting in this folder, if anything ----
+   *
+   * Read-only — never creates, moves or writes anything. See
+   * staxx_store_inspect() for the three shapes it tells apart.
+   */
+  case 'store-inspect':
+    staxx_reply(['ok' => true] + staxx_store_inspect((string)($_POST['path'] ?? '')));
+
+  /* ---- create the store and record the choice ----
+   *
+   * The only action that actually writes STORE_ROOT for the first time. See
+   * staxx_store_create() — it is safe to run again against a folder already
+   * adopted, which is how "use what is already here" and "start fresh" end
+   * up being the same button.
+   */
+  case 'store-create':
+    // Normalised once here, then handed on: staxx_store_create() re-validates
+    // the same value on its own account, but staxx_cfg() caches the config
+    // for the life of the request, so staxx_store_root() would still read the
+    // pre-save value straight after the write. Using $norm avoids that.
+    $norm = staxx_settings_validate_path('STORE_ROOT', (string)($_POST['path'] ?? ''), $error);
+    if ($norm === '' || !staxx_store_create($norm, $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true, 'path' => $norm]);
+
   /* ---------------------------------------------------- moving the stacks --
    * Relocating the data store to a new location. See Relocate.php for the
    * move itself and the storage-options reader; nothing here re-implements
@@ -1962,12 +2015,35 @@ switch ($action) {
   case 'storage-options':
     $current = staxx_stack_root();
     $options = staxx_storage_options();
+
+    /* Which offered location to pre-fill in the first-run dialog, decided
+     * here rather than in the browser so the reasoning lives in one place.
+     * PLAN_97's rule: follow where appdata already lives on this box. Of the
+     * offered entries, prefer one that IS the pool appdata's own share
+     * actually sits on (its share name matches appdata's), else the overlay
+     * entry (the share layer's own appdata path), else whatever is first —
+     * '' only when nothing at all was offered.
+     */
+    $appdataShare = basename(rtrim(staxx_appdata_root(), '/'));
+    $suggested = '';
+    foreach ($options['offered'] as $o) {
+      if ($o['kind'] === 'pool' && $o['share'] === $appdataShare) { $suggested = $o['path']; break; }
+    }
+    if ($suggested === '') {
+      foreach ($options['offered'] as $o) {
+        if ($o['kind'] === 'overlay') { $suggested = $o['path']; break; }
+      }
+    }
+    if ($suggested === '' && $options['offered'] !== []) $suggested = $options['offered'][0]['path'];
+
     staxx_reply([
-      'ok'          => true,
-      'current'     => $current,
-      'onFlash'     => $current === '/boot' || strpos($current, '/boot/') === 0,
-      'offered'     => $options['offered'],
-      'unavailable' => $options['unavailable'],
+      'ok'           => true,
+      'current'      => $current,
+      'onFlash'      => $current === '/boot' || strpos($current, '/boot/') === 0,
+      'offered'      => $options['offered'],
+      'unavailable'  => $options['unavailable'],
+      'arrayStarted' => staxx_array_started(),
+      'suggested'    => $suggested,
     ]);
 
   /* ---- would this destination be refused, without moving anything ----
