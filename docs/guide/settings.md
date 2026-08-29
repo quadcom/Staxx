@@ -42,6 +42,8 @@ have removed, and StaXX's own settings and icons. They are not a second choice t
 simply what choosing a store does. [What is actually in the store](where-things-live.md) explains
 each one.
 
+![The top of the settings panel: the "Show StaXX in" choice, then the "Data store" box holding the folder's full path, the three greyed-out folders listed underneath it, and the "Move the data store" link below those](../images/guide/settings-data-store.png)
+
 Two links sit under that box:
 
 - **Move the data store** opens its own dialog, *Where should stacks live?*. It suggests a place on

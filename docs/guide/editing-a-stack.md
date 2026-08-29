@@ -29,6 +29,8 @@ others the moment you switch.
 | **Split** | The form on one side, the actual file on the other, scrolling together. The usual view on a normal-sized window. |
 | **Compose** | The file on its own, full width, for typing directly into it. |
 
+![The editor in Split view: the form of boxes on the left and the compose file's text on the right, with the Form, Split and Compose buttons above them and the Configure, Manage, History and Versions tabs across the top](../images/guide/editing-a-stack-split.png)
+
 An **Outline** button above the panes jumps straight to a block or a service in a long file, rather
 than scrolling to find it.
 
@@ -38,6 +40,11 @@ The form is organised into groups — Ports, Volumes, Variables, Devices, Labels
 such as Health check, Resource limits, Networks, Secrets, Configs, DNS servers and more — each
 holding the boxes for one part of the file. A group only appears once there is a reason to show
 it: either the file already has something in it, or you have switched it on yourself.
+
+Where a group has a handful of answers most people want, it offers them by name rather than leaving
+you to type a path from memory.
+
+![The device picker's graphics section, offering "All graphics cards", "Intel graphics only" and "AMD graphics only", each showing the path it would add and a one-line explanation of what it is for](../images/guide/editing-a-stack-devices.png)
 
 **Switching a group off does not delete what was in it.** It sets it aside, kept exactly as
 written — comments and all — so switching it back on later restores it precisely as it was. One

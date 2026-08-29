@@ -5253,8 +5253,13 @@
 }
 
 .staxx-modal[data-sanitised="1"] .staxx-fieldrow--secret .staxx-input[data-note],
+.staxx-modal[data-sanitised="1"] .staxx-fieldrow--secret .staxx-input[data-part="name"],
 .staxx-modal[data-sanitised="1"] .staxx-fieldrow--secret .staxx-input[data-part="container"] {
-  filter: none;   /* the note and the container side are not the secret */
+  /* The note, the setting's own name and the container side are not the
+     secret — only the value is. The file view's redactor already leaves the
+     name readable for the same reason, and somebody filing a bug report
+     usually needs to say which setting it was. */
+  filter: none;
 }
 
 /* ---- modal: the file tab strip ----

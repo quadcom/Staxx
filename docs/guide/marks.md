@@ -19,6 +19,8 @@ The first pill on a row, showing whether the containers are actually going.
 | Red pill, e.g. "Dead" | The container is in a broken state Docker itself calls dead. | Worth a look — try restarting it. |
 | "unknown" (plain grey text, no pill) | StaXX cannot currently ask the running-container service what is going on. | Not something to fix on the row — it clears up once that service answers again. |
 
+![A folder row with four stack rows beneath it, each showing the app's logo, its name, a green "up" pill or a grey "stopped" one, the address it is reachable on, and columns of processor, memory and network figures](../images/guide/marks-row-states.png)
+
 ## The update column
 
 Sits right beside the running-state pill. **Most of the time it is empty, and empty is normally the
@@ -90,6 +92,8 @@ A "needs review" tag next to the name of a stack that was imported and has not y
 over. It will not start or update itself until you have checked it and confirmed it from the row's
 own menu — either by taking it over properly, or by clearing the lock if nothing else depends on
 its container name.
+
+![Three stack rows, each with an orange "needs review" tag sitting next to the stack's name](../images/guide/marks-needs-review.png)
 
 ## Waiting to confirm (handover)
 

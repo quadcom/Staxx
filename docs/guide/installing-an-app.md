@@ -18,6 +18,8 @@ into an ordinary compose file for you to review, rather than installing anything
    **Save** when you are happy. The new stack is created stopped, exactly like any other new stack —
    press Start when you want it running.
 
+![The "Add an app" window: a short explanation of what adding one does, a search box across the top, and four catalogue entries listed below with their logos, descriptions and an Add button each](../images/guide/installing-an-app-catalogue.png)
+
 ## What you see before adding anything
 
 Opening a card shows the same kind of information Unraid's own Apps page would: an icon, a

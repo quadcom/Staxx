@@ -80,6 +80,8 @@ pool alongside your other application data. Everything StaXX manages lives insid
   notes. A plain-text note inside that folder explains what each thing in it is, if you are ever
   looking at it directly.
 
+![The settings panel showing the data store's full path in its own box, with the three folders inside it — the stacks, the archives and the config folder — listed underneath, and a link offering to move the whole store elsewhere](../images/guide/settings-data-store.png)
+
 ## Coming from a version before the data store
 
 Before StaXX had a data store, its things were in four or five different places: the stacks

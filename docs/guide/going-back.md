@@ -41,6 +41,8 @@ Newest first. Each row carries:
 Click a row and that version's text appears on the right, read-only. Before you have picked
 anything, the right-hand side simply says *"Pick a version on the left to look at it."*
 
+![The History tab: a list of kept versions down the left with one picked out, the "Name to keep forever" box and the "Restore into Configure" button beneath it, and that version's text filling the right-hand side](../images/guide/going-back-history.png)
+
 If nothing has ever been saved, you get *"No history yet. The next time this stack is saved, that
 version starts being kept."*
 
