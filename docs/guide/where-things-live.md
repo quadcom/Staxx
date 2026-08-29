@@ -78,6 +78,73 @@ pool alongside your other application data. Everything StaXX manages lives insid
   notes. A plain-text note inside that folder explains what each thing in it is, if you are ever
   looking at it directly.
 
+## Coming from a version before the data store
+
+Before StaXX had a data store, its things were in four or five different places: the stacks
+wherever you had pointed them (out of the box, on the flash drive), the zips of removed stacks
+somewhere else again, and the settings and downloaded icons on the flash drive. Upgrading does not
+move any of that for you — StaXX will simply ask where its data should live, as though it were new,
+and your old files will still be sitting where they were.
+
+Moving them is a handful of commands, and nothing is deleted along the way, so you can check each
+step before going on.
+
+**First, stop your stacks.** Docker records where each running stack's files are, and moving them
+out from underneath a running stack is the one thing worth avoiding here.
+
+**Find out where your things are now.** The first two lines tell you where the stacks and the zips
+were kept; a blank second line means they were under your appdata folder in `staxx/archives`:
+
+```sh
+grep -E '^(STACK_ROOT|ARCHIVE_ROOT)=' /boot/config/plugins/staxx/staxx.cfg
+```
+
+**Decide where the store goes** — a folder inside a share on a drive pool, alongside your other
+application data, is the right answer for almost everyone. `/mnt/user/appdata/staxx` in the commands
+below; change it if you chose differently.
+
+**Move the stacks and the zips in.** If your stacks were already somewhere sensible, this is a
+rename rather than a copy, and takes no time:
+
+```sh
+mkdir -p /mnt/user/appdata/staxx
+mv /path/from/the/first/line   /mnt/user/appdata/staxx/stacks
+mv /path/from/the/second/line  /mnt/user/appdata/staxx/archives
+```
+
+**Carry your settings across.** This keeps everything except the handful of retired settings and
+the three that stay on the flash drive:
+
+```sh
+mkdir -p /mnt/user/appdata/staxx/config
+grep -vE '^(STORE_ROOT|HEADER_MENU|TAKEOVER_DOCKER_TAB|STACK_ROOT|ARCHIVE_ROOT|STORAGE_CHOICE)='   /boot/config/plugins/staxx/staxx.cfg > /mnt/user/appdata/staxx/config/staxx.cfg
+chmod 600 /mnt/user/appdata/staxx/config/staxx.cfg
+```
+
+That last line matters. If you had signed in to Docker Hub, that file holds the sign-in token, and
+on the flash drive the file permissions were decoration — every file there reads as private however
+it is set, because of how the drive is mounted. Off the flash drive they are real, so it is worth
+setting it properly.
+
+**Bring your icons over**, so they are not all downloaded again:
+
+```sh
+mkdir -p /mnt/user/appdata/staxx/config/icons
+cp -n /boot/config/plugins/staxx/icons/* /mnt/user/appdata/staxx/config/icons/ 2>/dev/null
+chmod 644 /mnt/user/appdata/staxx/config/icons/*
+```
+
+The `chmod` is for the same reason: copying off the flash drive carries that "everything is private"
+appearance with it, and icons are just pictures.
+
+**Now open StaXX.** It asks where its data should live. Give it the folder you have just filled in,
+and it will recognise it, tell you how many stacks it found, and let you in. Check the number looks
+right before going further.
+
+**Nothing above deletes anything.** Your old settings file, the old icons and the old folders are
+all still where they were. Leave them a few days, and once you are happy that everything came
+across, they can go.
+
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
