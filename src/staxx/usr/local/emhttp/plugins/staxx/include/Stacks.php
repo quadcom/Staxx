@@ -98,6 +98,23 @@ define('STAXX_CFILE_TMP', '/tmp/staxx/cfile');
 // of thousands of entries gets a partial answer instead of no answer at all.
 define('STAXX_CFILE_LIST_MAX', 2000);
 
+// The one placeholder value StaXX ever writes in on someone's behalf — used
+// by an exported stack to mark a value it stripped out, and by the export
+// screen to know a blank has been left rather than a real one forgotten. One
+// literal string, never varied by field, so a plain text search is all it
+// takes to find every one of them.
+define('STAXX_PLACEHOLDER', 'REPLACE-ME');
+
+// PLAN_76 Phase 5 — the export packer's own caps. The browser posts every
+// selected file's content as one JSON array in a single POST body, so this
+// keeps the total comfortably under PHP's post_max_size (8M on the test box)
+// the same way STAXX_LOG_DOWNLOAD_MAX does for a whole log download.
+define('STAXX_EXPORT_MAX', 2097152); // 2 MiB, summed across every file
+
+// Not a size question — a sanity ceiling so a malformed request cannot make
+// the packer loop over an unbounded list of tiny entries.
+define('STAXX_EXPORT_FILES_MAX', 200);
+
 /**
  * Make sure a job/log working directory exists and is private — job output
  * can hold a resolved compose config, variables and all, so nobody but this
@@ -4209,6 +4226,308 @@ function staxx_read_file(string $rel, string $file, string &$error): ?array {
   return ['b64' => base64_encode($raw), 'binary' => true];
 }
 
+/* ---------------------------------------------------------------------
+ * PLAN_76 Phase 2 — sorting a stack's files for export.
+ *
+ * staxx_export_sort() is a pure function over one stack's folder: every
+ * file, with a verdict (redactable / read / refused) and a reason a person
+ * can act on. It is deliberately built on staxx_list_files() rather than
+ * its own scan of the directory, so the hidden record folder is left out
+ * for the one reason it is ever left out anywhere in this file — because
+ * that helper already excludes it.
+ * --------------------------------------------------------------------- */
+
+/**
+ * Does this file look like key material? This cannot rest on
+ * staxx_looks_text()'s binary check — a private key in the usual PEM format
+ * is plain text and sails straight through it. So both ends are checked:
+ * the name (which catches the ordinary case) and the first line's marker
+ * (which catches the same key renamed to something innocuous). Either one
+ * is enough to refuse; neither passing is only "not obviously a key", which
+ * is what the "read" kind is for rather than a licence to trust the file.
+ *
+ * @return string a reason to refuse, or '' if this check finds nothing.
+ */
+function staxx_key_material_reason(string $path, string $name): string {
+  static $extensions = ['key', 'pem', 'crt', 'cer', 'der', 'pfx', 'p12', 'jks',
+                         'keystore', 'kdbx', 'asc', 'gpg', 'ppk', 'csr'];
+  static $bareNames  = ['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519',
+                         'id_rsa.pub', 'id_dsa.pub', 'id_ecdsa.pub', 'id_ed25519.pub'];
+
+  $ext = strtolower((string)pathinfo($name, PATHINFO_EXTENSION));
+  if (in_array($ext, $extensions, true) || in_array(strtolower($name), $bareNames, true)) {
+    return '"'.$name.'" has the name of a key or certificate file, so it is never offered for export.';
+  }
+
+  // A small read, not the whole file — the marker that matters is always at
+  // the very start. openssh-key-v1's magic is the one binary format here, so
+  // it is looked for anywhere in the chunk rather than pinned to the first
+  // line the way the two text markers are.
+  $head = @file_get_contents($path, false, null, 0, 4096);
+  if ($head !== false) {
+    $firstLine = strtok($head, "\n");
+    if ($firstLine === false) $firstLine = $head;
+    if (str_starts_with($firstLine, '-----BEGIN')
+        || str_starts_with($firstLine, 'PuTTY-User-Key-File')
+        || strpos($head, 'openssh-key-v1') !== false) {
+      return '"'.$name.'" starts with the marker of a private key, so it is never offered for export.';
+    }
+  }
+  return '';
+}
+
+/**
+ * Does the compose file actually name this companion file — through
+ * env_file:, a configs:/secrets: "file:" source, or a relative bind mount?
+ * A light text scan on purpose, not a second compose parser: the model
+ * already exists elsewhere for anything that needs the real structure, and
+ * this only has to answer one narrow question well enough to inform a
+ * choice, never to make one.
+ *
+ * @return array{0:bool, 1:string} [needed, plain-English reason]
+ */
+function staxx_compose_names_file(string $composeText, string $filename): array {
+  if ($composeText === '') return [false, ''];
+  $lines = preg_split('/\r\n|\r|\n/', $composeText);
+  $q     = preg_quote($filename, '/');
+  $bare  = '(?:\.\.?\/)?'.$q; // an optional leading ./ or ../
+
+  foreach ($lines as $i => $line) {
+    // env_file: as an inline scalar or single-item list on one line.
+    if (preg_match('/env_file:\s*\[?\s*["\']?'.$bare.'["\']?\s*\]?\s*$/i', $line)) {
+      return [true, 'the compose file loads it as an env_file'];
+    }
+    // env_file: as a multi-line list — walk the "- name" items under it.
+    if (preg_match('/^\s*env_file:\s*$/i', $line)) {
+      for ($j = $i + 1; $j < count($lines); $j++) {
+        if (!preg_match('/^\s*-\s*["\']?([^"\'\s][^"\']*)["\']?\s*$/', $lines[$j], $m)) break;
+        $item = trim($m[1]);
+        if ($item === $filename || $item === './'.$filename || $item === '../'.$filename) {
+          return [true, 'the compose file loads it as an env_file'];
+        }
+      }
+    }
+    // A configs:/secrets: entry names its source with a "file:" key —
+    // that key has no other use in a compose file, so matching on it alone
+    // is enough without tracking which top-level block it sits under.
+    if (preg_match('/^\s*file:\s*["\']?'.$bare.'["\']?\s*$/i', $line)) {
+      return [true, 'the compose file reads it as a config or secret source'];
+    }
+    // A relative bind mount: "- ./name:/target" or "- name:/target:ro".
+    if (preg_match('/^\s*-\s*["\']?'.$bare.'["\']?:/', $line)) {
+      return [true, 'the compose file mounts it into the container'];
+    }
+  }
+  return [false, ''];
+}
+
+/**
+ * Sort every file in a stack's folder into the four kinds PLAN_76 Phase 2
+ * defines. The hidden record folder never appears here because
+ * staxx_list_files() has already left it out.
+ *
+ * A refusal is settled first, for every file alike: a folder or a link
+ * cannot travel as a single file, an oversized one cannot travel at all,
+ * and key material is never offered whatever it is called. Only then are
+ * the compose file and a .env called 'redactable' — their contents are
+ * names and values, so they can be blanked field by field. What is left is
+ * either ordinary text, which travels once it has been read, or something
+ * that fails even the binary check, refused for the same reason a link is:
+ * nothing here can vouch for it.
+ *
+ * @return array<int, array{name:string, kind:string, size:int, why:string,
+ *                           needed:bool, needed_why:string}>|null
+ */
+function staxx_export_sort(string $rel, string &$error): ?array {
+  $files = staxx_list_files($rel, $error);
+  if ($files === null) return null;
+
+  $dir         = staxx_stack_dir($rel);
+  $composePath = staxx_find_compose_file($dir);
+  $composeText = $composePath !== '' ? (string)@file_get_contents($composePath) : '';
+
+  $out = [];
+  foreach ($files as $f) {
+    $path = $dir.'/'.$f['name'];
+    [$needed, $neededWhy] = staxx_compose_names_file($composeText, $f['name']);
+    if ($f['compose']) $needed = true; // the compose file always names itself
+
+    // Refusals are settled before anything is called blankable, so a link
+    // or an oversized file named ".env" — or a compose file that is itself a
+    // link — is refused rather than quietly followed. Written the other way
+    // round, the two kinds that can be blanked would have skipped every
+    // refusal below, which is the one ordering mistake here that leaks a
+    // file nobody chose.
+    $refusal = '';
+    if      ($f['link'])                  $refusal = '"'.$f['name'].'" is a link, so what it points to would leave rather than the file itself.';
+    else if ($f['dir'])                   $refusal = '"'.$f['name'].'" is a folder, so it cannot travel as a single file.';
+    else if ($f['size'] > STAXX_FILE_MAX) $refusal = '"'.$f['name'].'" is '.ceil($f['size'] / 1024).' KiB, over the '
+                                                   . round(STAXX_FILE_MAX / 1024).' KiB limit for a file that leaves this way.';
+    else                                  $refusal = staxx_key_material_reason($path, $f['name']);
+
+    if ($refusal !== '') {
+      $out[] = ['name' => $f['name'], 'kind' => 'refused', 'size' => $f['size'],
+        'why' => $refusal, 'needed' => $needed, 'needed_why' => $neededWhy];
+      continue;
+    }
+
+    if ($f['compose']) {
+      $out[] = ['name' => $f['name'], 'kind' => 'redactable', 'size' => $f['size'],
+        'why' => 'This is the stack\'s compose file, so its settings can be blanked one at a time.',
+        'needed' => $needed, 'needed_why' => $neededWhy];
+      continue;
+    }
+    if ($f['name'] === '.env') {
+      $out[] = ['name' => $f['name'], 'kind' => 'redactable', 'size' => $f['size'],
+        'why' => 'This holds names and values the same way the compose file does, '
+               . 'so it can be blanked field by field.',
+        'needed' => $needed, 'needed_why' => $neededWhy];
+      continue;
+    }
+    if (!$f['text']) {
+      $out[] = ['name' => $f['name'], 'kind' => 'refused', 'size' => $f['size'],
+        'why' => '"'.$f['name'].'" looks like a binary file, so there is no safe way to check '
+               . 'it for anything private before it leaves.',
+        'needed' => $needed, 'needed_why' => $neededWhy];
+      continue;
+    }
+
+    $out[] = ['name' => $f['name'], 'kind' => 'read', 'size' => $f['size'],
+      'why' => 'This is a plain text file, so it can only leave once its contents have been shown.',
+      'needed' => $needed, 'needed_why' => $neededWhy];
+  }
+  return $out;
+}
+
+/* ---------------------------------------------------------------------
+ * PLAN_76 Phase 5 — packing what leaves.
+ * --------------------------------------------------------------------- */
+
+/**
+ * Build a zip from name-and-contents pairs, and nothing else.
+ *
+ * $pairs is a list of ['name' => ..., 'content' => ...]. That is the ONLY
+ * shape this function can read — there is no parameter here that could carry
+ * a stack's folder, and nothing inside calls anything that resolves one. This
+ * is the plan's strongest rule, and it is enforced by shape rather than
+ * vigilance: the function is not being careful not to look at the real
+ * stack, it has no way to, whatever it is handed.
+ *
+ * $stackName is used only to name the zip for the person saving it — never to
+ * find a folder, a file, or anything else on disk. The caller (action.php's
+ * "export-pack") is the only place that ever puts a real stack's path into
+ * it, and even there it never reaches this function's own filesystem work.
+ *
+ * Every name is checked by staxx_valid_filename(), the same rule a companion
+ * file is written under, with one deliberate exception: that function also
+ * refuses the compose filenames themselves, because a second file by that
+ * name would collide with the real compose file already on disk. There is no
+ * "already on disk" here — this zip is built from nothing — and the compose
+ * file is exactly what belongs in an export, so a name is accepted whenever
+ * it is either a valid companion name or one of the compose filenames.
+ *
+ * Built in a private folder of its own under STAXX_CFILE_TMP, using the same
+ * `zip` shell command staxx_archive_stack() already uses — there is only one
+ * way this plugin makes a zip. That folder is removed whether packing
+ * succeeded or not.
+ *
+ * @param array<int, array{name:string, content:string}> $pairs
+ * @return string the zip's raw bytes, or '' plus $error.
+ */
+function staxx_export_pack(array $pairs, string $stackName, string &$error): string {
+  $error = '';
+
+  if (count($pairs) === 0) { $error = 'There is nothing to export.'; return ''; }
+  if (count($pairs) > STAXX_EXPORT_FILES_MAX) {
+    $error = 'That is '.count($pairs).' files, over the '.STAXX_EXPORT_FILES_MAX
+           . '-file limit for one export.';
+    return '';
+  }
+
+  $total = 0;
+  $seen  = [];
+  foreach ($pairs as $p) {
+    $name    = is_string($p['name'] ?? null) ? $p['name'] : '';
+    $content = is_string($p['content'] ?? null) ? $p['content'] : '';
+
+    if (!staxx_valid_filename($name) && !in_array(strtolower($name), STAXX_COMPOSE_FILENAMES, true)) {
+      $error = '"'.$name.'" is not a name this can export.';
+      return '';
+    }
+    if (isset($seen[strtolower($name)])) {
+      $error = '"'.$name.'" was given twice.';
+      return '';
+    }
+    $seen[strtolower($name)] = true;
+
+    $total += strlen($content);
+    if ($total > STAXX_EXPORT_MAX) {
+      $error = 'That export is '.round($total / 1024).' KiB, over the '
+             . round(STAXX_EXPORT_MAX / 1024).' KiB limit for one download.';
+      return '';
+    }
+  }
+
+  if (!staxx_private_dir(STAXX_CFILE_TMP)) {
+    $error = 'Could not prepare a place to build the export.';
+    return '';
+  }
+
+  $work = STAXX_CFILE_TMP.'/export-'.bin2hex(random_bytes(8));
+  if (!@mkdir($work, 0700, true)) {
+    $error = 'Could not prepare a place to build the export.';
+    return '';
+  }
+  $real = @realpath($work);
+  if ($real === false) {
+    $error = 'Could not prepare a place to build the export.';
+    return '';
+  }
+
+  $zipBytes = '';
+  try {
+    foreach ($pairs as $p) {
+      $name    = (string)$p['name'];
+      $content = is_string($p['content'] ?? null) ? $p['content'] : '';
+      if (@file_put_contents($real.'/'.$name, $content) === false) {
+        $error = 'Could not write "'.$name.'" while building the export.';
+        return '';
+      }
+    }
+
+    // $stackName's only use anywhere in this function: a label on the
+    // temporary zip file itself, never a path segment resolved against
+    // anything real. Scrubbed to a safe character set the same way
+    // staxx_archive_name() scrubs a stack's path for its own zip name.
+    $label = $stackName !== '' ? preg_replace('/[^A-Za-z0-9._-]/', '-', str_replace('/', '-', $stackName)) : 'export';
+    $zipPath = STAXX_CFILE_TMP.'/'.$label.'-'.bin2hex(random_bytes(4)).'.zip';
+    $zipCode = 1;
+    $zipOut  = staxx_sh(
+      'cd '.escapeshellarg($real).' && zip -r -y -q '.escapeshellarg($zipPath).' . 2>&1',
+      60,
+      $zipCode
+    );
+    if ($zipCode !== 0 || !is_file($zipPath)) {
+      @unlink($zipPath);
+      $error = 'Could not build the export.'.($zipOut !== '' ? "\n\n".trim($zipOut) : '');
+      return '';
+    }
+
+    $bytes = @file_get_contents($zipPath);
+    @unlink($zipPath);
+    if ($bytes === false) {
+      $error = 'Could not read back the export once it was built.';
+      return '';
+    }
+    $zipBytes = $bytes;
+    return $zipBytes;
+  } finally {
+    // Removed on every path out of this function, success or refusal alike —
+    // nothing this builds is worth keeping once the reply is on its way.
+    staxx_rmtree($real, $real);
+  }
+}
+
 /**
  * Write one companion file, text or binary.
  *
@@ -4504,6 +4823,103 @@ function staxx_job_verbs(): array {
 }
 
 /**
+ * Which settings in a compose file are still waiting to be filled in.
+ *
+ * A plain text search for STAXX_PLACEHOLDER, then a line-by-line reading of
+ * the file to say WHICH setting each occurrence sits on — a raw grep for the
+ * token tells nobody anything they can act on.
+ *
+ * This deliberately does not go through staxx_compose_meta(): that shells out
+ * to `compose config`, and a placeholder sitting in a slot compose expects to
+ * parse as a number or a mapping (a port, for instance) can make the whole
+ * file fail to resolve, which would report nothing at all rather than the one
+ * thing this function exists to report. A light line-scan of the raw text,
+ * tracking nesting by indentation the way the file is actually written, reads
+ * every case compose itself would refuse.
+ *
+ * Only the main file is read — an override reintroducing the placeholder in
+ * a value the main file already fills is a corner case this stage does not
+ * chase, and staxx_compose_files() is not consulted here.
+ *
+ * @return string[] human-readable descriptions, in the order found, deduplicated
+ */
+function staxx_placeholders(string $file): array {
+  if ($file === '') return [];
+  $text = @file_get_contents($file);
+  if ($text === false || $text === '') return [];
+  if (strpos($text, STAXX_PLACEHOLDER) === false) return [];
+
+  // A short table of the enclosing key names worth a friendlier name than
+  // their own, for the case where the line itself carries no name of its own
+  // (a bare "- REPLACE-ME" list entry rather than "KEY=REPLACE-ME" or
+  // "key: REPLACE-ME").
+  $generic = [
+    'ports'    => 'a port',
+    'expose'   => 'a port',
+    'volumes'  => 'a folder path',
+    'networks' => 'a network setting',
+    'secrets'  => 'a secret',
+    'configs'  => 'a value',
+  ];
+
+  $describe = function (string $key) : string {
+    $words = strtolower(str_replace(['_', '-'], ' ', $key));
+    $words = trim(preg_replace('/\s+/', ' ', $words));
+    return $words === '' ? 'a value' : 'the '.$words;
+  };
+
+  $found  = [];   // description => true, so insertion order survives dedup
+  $stack  = [];   // [[indent, key], ...] — the ancestor chain, most specific last
+  $currentService = '';
+  $serviceIndent  = null;
+
+  foreach (explode("\n", $text) as $line) {
+    $trimmed = ltrim($line, " \t");
+    if ($trimmed === '' || $trimmed[0] === '#') continue;
+    $indent = strlen($line) - strlen($trimmed);
+
+    // A leading "- " (a sequence item) is read one level in, so
+    // "- key: value" tracks the same as "key: value" a step deeper.
+    $body = $trimmed;
+    if (substr($body, 0, 2) === '- ') { $body = substr($body, 2); $indent += 2; }
+
+    $key = null;
+    if (preg_match('/^([A-Za-z0-9_.\-]+)\s*:(.*)$/', $body, $m)) {
+      $key   = $m[1];
+      $value = $m[2];
+
+      while ($stack && $stack[count($stack) - 1][0] >= $indent) array_pop($stack);
+      $parent = $stack ? $stack[count($stack) - 1][1] : '';
+      if ($parent === 'services') { $currentService = $key; $serviceIndent = $indent; }
+      elseif ($serviceIndent !== null && $indent <= $serviceIndent) {
+        $currentService = ''; $serviceIndent = null;
+      }
+      $stack[] = [$indent, $key];
+
+      if (strpos($value, STAXX_PLACEHOLDER) === false) continue;
+      $desc = $describe($key);
+    } else {
+      if (strpos($body, STAXX_PLACEHOLDER) === false) continue;
+      // A bare list entry. "NAME=REPLACE-ME" (an environment-style line)
+      // names itself; otherwise fall back to whichever key this list sits
+      // under (e.g. "ports"), or "a value" if even that is unclear.
+      if (preg_match('/^([A-Za-z_][A-Za-z0-9_]*)\s*=/', $body, $m2)) {
+        $desc = $describe($m2[1]);
+      } else {
+        while ($stack && $stack[count($stack) - 1][0] >= $indent) array_pop($stack);
+        $parent = $stack ? $stack[count($stack) - 1][1] : '';
+        $desc = $generic[$parent] ?? 'a value';
+      }
+    }
+
+    if ($currentService !== '') $desc .= ' (in service '.$currentService.')';
+    $found[$desc] = true;
+  }
+
+  return array_keys($found);
+}
+
+/**
  * Start a compose command in the background and return a job id.
  *
  * These commands are slow — pulling an image can take minutes — and a web
@@ -4594,6 +5010,29 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   $file = staxx_find_compose_file($dir);
   if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
   $files = staxx_compose_files($file);
+
+  // A file still holding STAXX_PLACEHOLDER cannot be started — half-filled
+  // either way, so this applies at both whole-stack and single-service scope.
+  // Only for a verb that actually brings something up: `down`, `logs` and the
+  // like are harmless against a file nobody has finished filling in yet.
+  if ($startsSomething) {
+    $waiting = staxx_placeholders($file);
+    if ($waiting) {
+      $shown = array_slice($waiting, 0, 6);
+      $more  = count($waiting) - count($shown);
+      $list  = implode(', ', $shown).($more > 0 ? ', and '.$more.' more' : '');
+      // Spelled out for small counts, the same way the rest of the plugin's
+      // messages read as sentences rather than a number stapled to a noun.
+      $words = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
+      $n     = count($waiting);
+      $count = $words[$n] ?? (string)$n;
+      $error = ($n === 1
+                 ? $count.' value still needs filling in: '.$list.'. Open the stack and fill it in.'
+                 : $count.' values still need filling in before this stack can start: '
+                   .$list.'. Open the stack and fill them in.');
+      return '';
+    }
+  }
 
   if ($service !== '') {
     // The allowlist for a service name: it must be a key of the services the

@@ -24,12 +24,15 @@ This guide is written in English only.
 - **[Adding an app from Community Applications](installing-an-app.md)** — turning a catalogue entry
   into an ordinary compose file: what carries across, what needs checking before you start it, and
   why nothing exists until you save.
+- **[Sharing a stack with somebody else](sharing-a-stack.md)** — how Export makes a copy with your
+  passwords, keys and paths taken out, what it refuses to send at all, and what the person on the
+  other end has to fill in before it will run.
 
 ## Not written yet
 
 These parts of StaXX do not have a page here yet — that is a gap to fill, not something left out on
-purpose: making a stack from scratch, bringing in a container that is already running on this
-server, and sharing a stack with somebody else.
+purpose: making a stack from scratch, and bringing in a container that is already running on this
+server.
 
 ## Terms used here
 
