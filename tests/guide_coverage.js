@@ -226,21 +226,40 @@ console.log('\n3. Known gaps');
 
   var rest  = indexText.slice(head.index + head[0].length);
   var next  = rest.search(/^##\s/m);
-  var para  = (next < 0 ? rest : rest.slice(0, next)).trim();
+  var body  = (next < 0 ? rest : rest.slice(0, next)).trim();
 
-  if (!para) { note('nothing is listed as unwritten'); return; }
+  if (!body) { note('nothing is listed as unwritten'); return; }
 
-  console.log('           ' + para.replace(/\s*\n\s*/g, ' '));
+  /* The section is a lead-in line and then one "- " bullet per missing thing,
+   * so the count is exact rather than a guess at where one item ends and the
+   * next begins — a bullet is a delimiter the markdown itself provides, which
+   * a comma inside a sentence never was. A bullet may wrap onto an indented
+   * continuation line, so those are folded back into the bullet above them. */
+  var items = [];
+  body.split('\n').forEach(function (line) {
+    var bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    if (bullet) {
+      items.push(bullet[1].trim());
+    } else if (items.length && line.trim()) {
+      items[items.length - 1] += ' ' + line.trim();
+    }
+  });
+  items = items.filter(function (s) { return s.length > 0; });
 
-  /* The paragraph is prose, so counting is a best effort: the items follow the
-   * last colon, separated by commas. Getting the count slightly wrong here is
-   * harmless — the paragraph itself is printed above, which is the point. */
-  var tail = para.lastIndexOf(':') >= 0 ? para.slice(para.lastIndexOf(':') + 1) : para;
-  var items = tail.split(/,\s*(?:and\s+)?/).map(function (s) {
-    return s.replace(/\s+/g, ' ').replace(/\.$/, '').trim();
-  }).filter(function (s) { return s.length > 0; });
+  if (!items.length) {
+    /* Prose, not a list — either the section has not been converted yet or
+     * somebody wrote a paragraph back into it. Reporting zero gaps here would
+     * read as "the guide is complete", which is the one wrong answer that
+     * looks like a right one, so the paragraph is printed and counted as at
+     * least one gap until it is in list form. */
+    console.log('           ' + body.replace(/\s*\n\s*/g, ' '));
+    console.log('           (that section is not a bullet list, so the gaps cannot be counted)');
+    gaps += 1;
+    return;
+  }
 
-  gaps += items.length || 1;
+  items.forEach(function (item) { console.log('           ' + item); });
+  gaps += items.length;
 })();
 
 /* =========================================================================

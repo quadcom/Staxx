@@ -150,19 +150,20 @@ Any of these appear against the row, before or during the import, rather than le
 
 ## What is not built yet
 
-**Containers started by hand cannot be imported.** If you created a container directly with Docker,
-or it belongs to no Unraid template and no Compose Manager project, StaXX lists it under
-**Containers with nothing behind them** and greys the row out. It is telling you it knows the
-container exists, and that it cannot yet write a stack for it.
+Two things Import cannot do for you yet:
 
-That is a real gap, and worth being clear about: if most of your containers were made that way,
+- **Containers started by hand cannot be imported.** If you created a container directly with
+  Docker, or it belongs to no Unraid template and no Compose Manager project, StaXX lists it under
+  **Containers with nothing behind them** and greys the row out. It is telling you it knows the
+  container exists, and that it cannot yet write a stack for it.
+- **Several containers cannot be brought in as one combined stack.** Each row you tick becomes its
+  own separate stack.
+
+The first of those is worth being clear about: if most of your containers were made that way,
 Import will look almost empty to you. The route across for now is to build the stack yourself with
 **Add stack**, copying the settings from the container by hand, and then use **Take over and
 start** on it — that item is offered on any stack whose container name something outside StaXX is
 already holding, not only on an imported one.
-
-There is also no way to bring several containers in as one combined stack. Each row you tick
-becomes its own separate stack.
 
 ## Terms used here
 
