@@ -23,9 +23,15 @@ This guide is written in English only.
 - **[Working with folders](folders.md)** — grouping stacks on the list: making a folder, moving a
   stack in or out, running everything inside one at once, and what deleting a folder does to what is
   inside it.
+- **[Making a stack from scratch](making-a-stack.md)** — starting a stack with nothing but a name:
+  the skeleton you are given, the settings offered as comments, every refusal and why, and the
+  single folder that comes out of it.
 - **[Adding an app from Community Applications](installing-an-app.md)** — turning a catalogue entry
   into an ordinary compose file: what carries across, what needs checking before you start it, and
   why nothing exists until you save.
+- **[Bringing in a container you already run](bringing-in-a-container.md)** — taking the containers
+  already on your server into StaXX: what can come across, what arrives locked, and what is left
+  untouched.
 - **[Sharing a stack with somebody else](sharing-a-stack.md)** — how Export makes a copy with your
   passwords, keys and paths taken out, what it refuses to send at all, and what the person on the
   other end has to fill in before it will run.
@@ -35,8 +41,8 @@ This guide is written in English only.
 ## Not written yet
 
 These parts of StaXX do not have a page here yet — that is a gap to fill, not something left out on
-purpose: making a stack from scratch, and bringing in a container that is already running on this
-server.
+purpose: hiding your own values before taking a screenshot, going back to an earlier version of a
+compose file, and the settings panel itself.
 
 ## Something wrong, or missing?
 
