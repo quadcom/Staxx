@@ -1,0 +1,119 @@
+---
+---
+
+// StaXX guide — dark mode for the published guide website.
+//
+// This file lives here rather than in docs/ for the same reason the site's
+// config does: docs/ is plain markdown that has to stay readable in a text
+// editor and on GitHub, and a stylesheet sitting among it would puzzle anybody
+// opening that folder. The Pages workflow copies it to assets/css/style.scss in
+// the scratch folder it builds from.
+//
+// The empty front matter above is not decoration — it is what makes Jekyll
+// process the file at all. Without it the import below is copied through as
+// literal text and the site loses every rule the theme has.
+//
+// The import brings in the whole Primer theme unchanged, so light readers see
+// exactly what they saw before; everything after it is additions only, all of
+// it behind the device's own dark setting. There is deliberately no toggle:
+// the reader has already told their device which they want.
+//
+// Copyright 2026, StaXX contributors. GPL-2.0.
+
+@import "{{ site.theme }}";
+
+@media (prefers-color-scheme: dark) {
+  // Dark grey rather than black, and off-white rather than white: both ends
+  // pulled in from the extremes, because maximum contrast is glare, not
+  // readability. Body text sits at about 12:1 against the page, links at 7.7:1.
+  body,
+  .markdown-body {
+    background-color: #1b1f23;
+    color: #d8dee4;
+  }
+
+  .markdown-body h1,
+  .markdown-body h2,
+  .markdown-body h3,
+  .markdown-body h4,
+  .markdown-body h5,
+  .markdown-body h6 {
+    color: #e6edf3;
+    border-bottom-color: #30363d;
+  }
+
+  .markdown-body a,
+  .markdown-body a:hover {
+    color: #6cb6ff;
+  }
+
+  .markdown-body a:visited {
+    color: #d2a8ff;
+  }
+
+  // Screenshots in the guide are already of a dark interface, so images are
+  // left alone — no filter, no dimming.
+
+  // The theme tints inline code with a barely-there black, which vanishes
+  // entirely on a dark page, so it is replaced by a barely-there white.
+  .markdown-body code {
+    background-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .markdown-body pre,
+  .markdown-body .highlight pre,
+  .markdown-body pre.highlight {
+    background-color: #24292e;
+  }
+
+  // Four of the theme's syntax colours are black or navy, chosen for a white
+  // page and invisible on this one, so the whole set is restated rather than
+  // patched: keywords and operators, tags, names and numbers, strings, comments,
+  // functions.
+  .highlight .k, .highlight .kv, .highlight .o { color: #ff7b72; }
+  .highlight .nt { color: #7ee787; }
+  .highlight .nb, .highlight .nv, .highlight .na, .highlight .mi { color: #79c0ff; }
+  .highlight .s, .highlight .s1, .highlight .s2 { color: #a5d6ff; }
+  .highlight .c, .highlight .c1, .highlight .cd { color: #8b949e; }
+  .highlight .nf { color: #d2a8ff; }
+  .highlight .err { color: #ffa198; background-color: transparent; }
+
+  .markdown-body table td,
+  .markdown-body table th {
+    border-color: #30363d;
+  }
+
+  // The theme stripes alternate rows white; on a dark page the stripe has to be
+  // the lighter of the two, not the darker.
+  .markdown-body table tr,
+  .markdown-body table tr:nth-child(2n) {
+    background-color: #1b1f23;
+    border-top-color: #30363d;
+  }
+
+  .markdown-body table tr:nth-child(2n) {
+    background-color: #22262b;
+  }
+
+  .markdown-body blockquote {
+    color: #9aa4ae;
+    border-left-color: #444c56;
+  }
+
+  .markdown-body hr {
+    background-color: #30363d;
+    border-color: #30363d;
+  }
+
+  // The theme's one page furniture: the "improve this page" line at the foot,
+  // which carries its own grey text and border classes.
+  .footer,
+  .text-gray {
+    color: #8b949e !important;
+  }
+
+  .border-top,
+  .border-gray-light {
+    border-color: #30363d !important;
+  }
+}
