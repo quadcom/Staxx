@@ -51,6 +51,7 @@
 .markdown-body > h1:first-child,
 .markdown-body > h1:first-child a,
 .markdown-body > h1:first-child a:hover,
+.markdown-body > h1:first-child a:focus,
 .markdown-body > h1:first-child a:visited,
 .markdown-body h1,
 .markdown-body h2,
@@ -68,14 +69,48 @@
   border-bottom-color: rgba(179, 92, 0, 0.35);
 }
 
-// Links stay blue, the theme's own colour. Once headings are orange, an orange
-// link would be indistinguishable from a heading by colour alone, and the theme
-// underlines links on hover only — so the difference has to be the colour.
+// Links are amber rather than the theme's blue, and carry an underline at all
+// times rather than on hover only. That underline is not decoration: with
+// headings and links both in the orange family, it is the whole of what tells a
+// reader this word can be pressed, so it cannot be something that only appears
+// once the pointer is already on it.
+//
+// The light pair is not the dark pair darkened by eye — an amber pale enough to
+// read well on a dark page is nearly invisible on a white one, so each mode gets
+// its own values, measured against its own background. Here the link is a golden
+// amber at 5.8:1 on white and the visited state a deep burnt orange at 9.2:1;
+// the two are far enough apart in both lightness and hue to be told apart at a
+// glance, and the link is far enough from the heading orange above to read as a
+// different colour rather than the same one slightly off.
+.markdown-body a,
+.markdown-body a:hover,
+.markdown-body a:focus {
+  color: #8a5c00;
+  text-decoration: underline;
+}
+
+.markdown-body a:visited {
+  color: #6f3a06;
+}
+
+// The masthead is a link too, so it would otherwise be caught by the rules
+// above. Its colour already survives on specificity — every masthead selector
+// names one more class and one more element than the plain link rules do — but
+// the underline does not, because the masthead block sets no decoration of its
+// own. So it states one: no underline at rest, underline on hover, exactly the
+// theme's own behaviour and exactly how the masthead looked before.
+.markdown-body > h1:first-child a {
+  text-decoration: none;
+}
+
+.markdown-body > h1:first-child a:hover {
+  text-decoration: underline;
+}
 
 @media (prefers-color-scheme: dark) {
   // Dark grey rather than black, and off-white rather than white: both ends
   // pulled in from the extremes, because maximum contrast is glare, not
-  // readability. Body text sits at about 12:1 against the page, links at 7.7:1.
+  // readability. Body text sits at about 12:1 against the page, links at 10.3:1.
   body,
   .markdown-body {
     background-color: #1b1f23;
@@ -87,6 +122,7 @@
   .markdown-body > h1:first-child,
   .markdown-body > h1:first-child a,
   .markdown-body > h1:first-child a:hover,
+  .markdown-body > h1:first-child a:focus,
   .markdown-body > h1:first-child a:visited,
   .markdown-body h1,
   .markdown-body h2,
@@ -102,13 +138,18 @@
     border-bottom-color: rgba(255, 140, 47, 0.35);
   }
 
+  // A pale amber at 10.3:1 against this page, with visited a deeper one at
+  // 6.0:1 — a wide enough gap in lightness that the two never read as the same
+  // colour, which two ambers a shade apart would. The permanent underline set
+  // in the light rules above carries through here; only the colours change.
   .markdown-body a,
-  .markdown-body a:hover {
-    color: #6cb6ff;
+  .markdown-body a:hover,
+  .markdown-body a:focus {
+    color: #ffc06b;
   }
 
   .markdown-body a:visited {
-    color: #d2a8ff;
+    color: #d98a3d;
   }
 
   // Screenshots in the guide are already of a dark interface, so images are
