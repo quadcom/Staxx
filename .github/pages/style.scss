@@ -107,6 +107,42 @@
   text-decoration: underline;
 }
 
+// The glossary is a list of terms, each a bold word opening its own paragraph.
+// In the theme's colours the term reads as the same text as the definition
+// behind it, so a reader hunting for one word has to read the prose to find it.
+// Giving the term the heading orange makes the page scannable — the same accent
+// the headings already carry, so the page still has one accent colour, not two.
+// The bold stays: bold and orange together are what make a term catchable at
+// arm's length, and dropping the weight would be a second change nobody asked
+// for.
+//
+// The scoping is the whole difficulty here. A bare "bold that opens a
+// paragraph" rule would be wrong on every other page: the guide opens
+// paragraphs with bold emphasis constantly — "First, stop your stacks." leads a
+// step in the moving-house instructions, and there are eight more like it on
+// that page alone. Those are emphasis, not terms, and orange would make them
+// noise.
+// So the rule is keyed on something only the glossary has: its own heading's id,
+// which was checked against the live page rather than assumed. Two further
+// narrowings keep it off everything else on the glossary page itself — the
+// paragraph must be a direct child of the content container, which excludes bold
+// inside a list item, a table cell or a quote; and the bold must be the
+// paragraph's first child, which excludes bold appearing mid-sentence. Headings
+// are not paragraphs, so they are never in reach.
+//
+// :has() is the only way to style an element from a sibling's id, and it has
+// been in every current browser since the end of 2023. Where it is missing the
+// whole rule is discarded — this one and no other, since it is a rule of its own
+// — and the glossary simply looks as it does today: bold terms in body colour.
+// A quiet loss of an improvement, not a broken page.
+//
+// The orange is the same darker burnt shade the headings take on a white page,
+// at 4.7:1 — a term is body-sized text, so it has to clear the 4.5:1 floor that
+// a large heading would not.
+body:has(h1#glossary) .markdown-body > p > strong:first-child {
+  color: #b35c00;
+}
+
 @media (prefers-color-scheme: dark) {
   // Dark grey rather than black, and off-white rather than white: both ends
   // pulled in from the extremes, because maximum contrast is glare, not
@@ -136,6 +172,12 @@
   .markdown-body h1,
   .markdown-body h2 {
     border-bottom-color: rgba(255, 140, 47, 0.35);
+  }
+
+  // The glossary's terms follow the headings onto the bright orange here, at
+  // 7.1:1 against this page — comfortably past the 4.5:1 a body-sized word owes.
+  body:has(h1#glossary) .markdown-body > p > strong:first-child {
+    color: #ff8c2f;
   }
 
   // A pale amber at 10.3:1 against this page, with visited a deeper one at
