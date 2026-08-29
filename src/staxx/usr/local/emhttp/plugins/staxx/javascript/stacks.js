@@ -19894,8 +19894,9 @@
       help: "Create one from Docker Hub's Account Settings → Security → Personal access tokens, " +
             'and choose the read-only, public repositories permission. That is all this feature ' +
             "needs, since checking an image's current version is the only thing it ever does — so a " +
-            'token that leaked could look, but never change or delete anything. It is kept in this ' +
-            "plugin's settings file on the flash drive, readable only by the administrator account. " +
+            'token that leaked could look, but never change or delete anything. It is kept in ' +
+            "StaXX's own settings file, in the config folder inside your data store, readable only " +
+            'by the administrator account. ' +
             'Leave both fields blank to sign out.'
     },
     {

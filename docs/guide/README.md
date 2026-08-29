@@ -20,6 +20,9 @@ This guide is written in English only.
 - **[Editing a stack](editing-a-stack.md)** — the form you get when you open a stack: the three ways
   to look at the same file, what the sections do, the note under each box, the two marks, and what
   saving does and does not change.
+- **[Hiding your values for a screenshot](hiding-your-values.md)** — the Sanitise tick that hides
+  the values you marked secret while you photograph the editor, exactly what it leaves showing, what
+  it switches off while it is on, and the one tab it cannot cover.
 - **[Working with folders](folders.md)** — grouping stacks on the list: making a folder, moving a
   stack in or out, running everything inside one at once, and what deleting a folder does to what is
   inside it.
@@ -35,14 +38,20 @@ This guide is written in English only.
 - **[Sharing a stack with somebody else](sharing-a-stack.md)** — how Export makes a copy with your
   passwords, keys and paths taken out, what it refuses to send at all, and what the person on the
   other end has to fill in before it will run.
+- **[Going back](going-back.md)** — how to return to an earlier version of a stack's file or to an
+  earlier build of one of its images, what each of the two lists holds, and why some things cannot
+  be gone back to.
+- **[The settings panel](settings.md)** — what the cog button opens, group by group: where StaXX
+  appears, the data store and how to move it, icons, updates, sign-ins, and the self-test that sits
+  beside it.
 
 <!-- pages:end -->
 
 ## Not written yet
 
 These parts of StaXX do not have a page here yet — that is a gap to fill, not something left out on
-purpose: hiding your own values before taking a screenshot, going back to an earlier version of a
-compose file, and the settings panel itself.
+purpose: making and hashing a password without leaving the editor, removing a stack and getting it
+back from the archive, and opening a shell into a running container.
 
 ## Something wrong, or missing?
 
