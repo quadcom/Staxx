@@ -1,5 +1,5 @@
 <?PHP
-/* StaXX — reading what could be imported.
+/* StaXX — reading what could be imported, and writing the chosen ones in.
  * Copyright 2026, StaXX contributors.
  *
  * WHAT THIS FILE IS FOR
@@ -10,11 +10,27 @@
  * runs), and a container that belongs to neither — started by hand, or by
  * something else entirely.
  *
- * This file only READS. It never writes a stack, never touches a container,
- * and never runs compose. The one thing it previews — the compose file StaXX
- * would write for a template — is generated in the BROWSER, by the same
- * converter the Apps dialog already uses; this file hands it the decoded
- * template and nothing more.
+ * This file reads what could be imported, and writes the chosen ones in as
+ * new stacks — a template converted to compose, or a Compose Manager project
+ * copied across with its settings file and override. It never touches a
+ * container: an imported stack arrives locked, so nothing it wrote runs until
+ * that lock is released.
+ *
+ * It does run compose, to ask it whether a file is readable — a project is
+ * checked as the pair it will actually run, compose file plus override
+ * together, so one that cannot run is refused before anything is written
+ * rather than discovered broken afterwards. That is also why a refusal here
+ * can quote compose's own words back to the person.
+ *
+ * Both writers create the stack folder and write the review-lock file into it
+ * BEFORE the compose file. That order is deliberate: written the other way
+ * round there is an instant in which the folder holds a compose file and no
+ * lock, and the row renders as an ordinary, unlocked, startable stack.
+ *
+ * The one thing previewed — the compose file StaXX would write for a
+ * template — is generated in the BROWSER, by the same converter the Apps
+ * dialog already uses; this file hands it the decoded template and nothing
+ * more.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License version 2,
