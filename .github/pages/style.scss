@@ -13,14 +13,64 @@
 // process the file at all. Without it the import below is copied through as
 // literal text and the site loses every rule the theme has.
 //
-// The import brings in the whole Primer theme unchanged, so light readers see
-// exactly what they saw before; everything after it is additions only, all of
-// it behind the device's own dark setting. There is deliberately no toggle:
-// the reader has already told their device which they want.
+// The import brings in the whole Primer theme unchanged; everything after it is
+// additions only. The dark rules sit behind the device's own dark setting, with
+// deliberately no toggle: the reader has already told their device which they
+// want. The rules ahead of that block are the ones that must apply in both
+// modes — the masthead's shape, and the orange that has to be a darker shade on
+// a white page than it can be on a dark one.
 //
 // Copyright 2026, StaXX contributors. GPL-2.0.
 
 @import "{{ site.theme }}";
+
+// The theme prints the site's name as a full-sized heading at the top of every
+// page, immediately above the page's own heading — on the front page the two
+// say the same thing twice. It cannot simply go: it is the only link back to
+// the guide's contents from an inner page. So it is dressed as a small quiet
+// masthead instead, and stops competing with the real heading below it.
+//
+// It is the first child of the content container on every page, and the only
+// heading holding a link — both were checked against the live site, front page
+// and inner page alike, because a selector that also caught a page's own
+// heading would shrink the wrong thing.
+.markdown-body > h1:first-child {
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 0;
+  padding-bottom: 0;
+  margin-bottom: 2.5rem;
+}
+
+// Unraid's orange, echoing the product's own palette. Two shades are needed,
+// not one: the orange StaXX itself uses reaches only about 2.3:1 on a white
+// page, so light readers get a darker burnt shade (4.7:1) and the bright one is
+// kept for the dark block below, where it sits at 7.1:1.
+.markdown-body > h1:first-child,
+.markdown-body > h1:first-child a,
+.markdown-body > h1:first-child a:hover,
+.markdown-body > h1:first-child a:visited,
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  color: #b35c00;
+}
+
+// The rules under the top two heading levels become an accent rather than a
+// divider — tinted with the same orange, but kept faint so they stay furniture.
+.markdown-body h1,
+.markdown-body h2 {
+  border-bottom-color: rgba(179, 92, 0, 0.35);
+}
+
+// Links stay blue, the theme's own colour. Once headings are orange, an orange
+// link would be indistinguishable from a heading by colour alone, and the theme
+// underlines links on hover only — so the difference has to be the colour.
 
 @media (prefers-color-scheme: dark) {
   // Dark grey rather than black, and off-white rather than white: both ends
@@ -32,14 +82,24 @@
     color: #d8dee4;
   }
 
+  // Headings take the bright Unraid orange here — 7.1:1 against this page, so
+  // it needs no darkening the way the white page did.
+  .markdown-body > h1:first-child,
+  .markdown-body > h1:first-child a,
+  .markdown-body > h1:first-child a:hover,
+  .markdown-body > h1:first-child a:visited,
   .markdown-body h1,
   .markdown-body h2,
   .markdown-body h3,
   .markdown-body h4,
   .markdown-body h5,
   .markdown-body h6 {
-    color: #e6edf3;
-    border-bottom-color: #30363d;
+    color: #ff8c2f;
+  }
+
+  .markdown-body h1,
+  .markdown-body h2 {
+    border-bottom-color: rgba(255, 140, 47, 0.35);
   }
 
   .markdown-body a,
