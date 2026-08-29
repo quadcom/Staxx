@@ -1,5 +1,7 @@
 # Adding an app from Community Applications
 
+<!-- index: 60 | turning a catalogue entry into an ordinary compose file: what carries across, what needs checking before you start it, and why nothing exists until you save. -->
+
 Community Applications is the catalogue of ready-made apps Unraid users already know. StaXX has its
 own way in to that catalogue — the **Apps** button beside "Add stack" — that turns a catalogue entry
 into an ordinary compose file for you to review, rather than installing anything straight away.

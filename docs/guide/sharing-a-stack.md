@@ -1,5 +1,7 @@
 # Sharing a stack with somebody else
 
+<!-- index: 70 | how Export makes a copy with your passwords, keys and paths taken out, what it refuses to send at all, and what the person on the other end has to fill in before it will run. -->
+
 A stack is already a folder with an ordinary compose file in it, so sharing one *ought* to be as
 easy as sending the file. The catch is that your file is full of things that belong to you and not
 to them: your passwords, your API keys, the paths to your own folders, the address of your own

@@ -1,5 +1,7 @@
 # Working with folders
 
+<!-- index: 50 | grouping stacks on the list: making a folder, moving a stack in or out, running everything inside one at once, and what deleting a folder does to what is inside it. -->
+
 Once you have more than a handful of stacks, the list can get long. A folder groups the ones that
 belong together — everything for one household member, everything to do with your media, a set of
 containers you always start or stop as one — under a single heading you can collapse when you are

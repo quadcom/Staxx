@@ -111,14 +111,45 @@ jobs:
           SHORT_SHA="${GITHUB_SHA:0:7}"
           TAG="${GITHUB_REF_NAME}-${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
 
-          # Never the "latest" release GitHub shows by default — that slot
-          # belongs to the numbered v* releases, not a rolling build.
-          gh release create "${TAG}" "${BUNDLE}.tar.gz" \
-            --target "${GITHUB_SHA}" \
-            --title "StaXX ${GITHUB_REF_NAME} (rolling)" \
-            --prerelease \
-            --notes "$(cat <<EOF
+          # The notes are built in a file rather than interpolated into the
+          # command, because on main they carry hand-written changelog prose full
+          # of backticks, dollar signs and backslashes — every one of which a
+          # "$(cat <<EOF ...)" substitution would try to expand or eat.
+          NOTES=release-notes.md
+          : > "${NOTES}"
+
+          # main is the only branch with a changelog section describing it. A
+          # rolling build off dev has none of its own, and the top section there
+          # would describe the last thing released rather than what is in the
+          # build — so dev keeps the plain description below.
+          if [ "${GITHUB_REF_NAME}" = "main" ] && [ -f CHANGELOG.md ]; then
+            # From the first '## ' heading down to, but not including, the next.
+            # Counting headings rather than matching a version shape, so a
+            # heading that is not a bare number still ends the section.
+            awk '/^## /{n++} n==2{exit} n==1{print}' CHANGELOG.md > "${NOTES}"
+
+            # The changelog separates versions with a rule, which the section
+            # therefore ends on — left in place it renders as a stray line
+            # immediately above the install block. Peeled off the end one line
+            # at a time so a rule in the MIDDLE of a section is untouched, and a
+            # section ending on ordinary prose is left exactly as it was.
+            while [ -s "${NOTES}" ]; do
+              case "$(tail -n 1 "${NOTES}")" in
+                ''|---) sed -i '$d' "${NOTES}" ;;
+                *) break ;;
+              esac
+            done
+          fi
+
+          # No changelog, or one with no section in it: fall back to the plain
+          # description rather than publish a release whose notes are empty.
+          if [ ! -s "${NOTES}" ]; then
+            cat > "${NOTES}" <<EOF
           Rolling build of the \`${GITHUB_REF_NAME}\` branch, built from ${GITHUB_SHA}.
+          EOF
+          fi
+
+          cat >> "${NOTES}" <<EOF
 
           Install on the Unraid server:
 
@@ -129,7 +160,14 @@ jobs:
 
           Nothing under \`/usr/local/emhttp\` survives a reboot, so a reboot removes it. Settings on the flash drive are kept.
           EOF
-          )"
+
+          # Never the "latest" release GitHub shows by default — that slot
+          # belongs to the numbered v* releases, not a rolling build.
+          gh release create "${TAG}" "${BUNDLE}.tar.gz" \
+            --target "${GITHUB_SHA}" \
+            --title "StaXX ${GITHUB_REF_NAME} (rolling)" \
+            --prerelease \
+            --notes-file "${NOTES}"
 
           # Keep only the 5 newest rolling releases for this branch. Matched on
           # the exact shape this workflow produces — branch, run number, short

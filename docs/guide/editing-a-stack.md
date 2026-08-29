@@ -1,5 +1,7 @@
 # Editing a stack
 
+<!-- index: 40 | the form you get when you open a stack: the three ways to look at the same file, what the sections do, the note under each box, the two marks, and what saving does and does not change. -->
+
 This is the screen you get when you open a stack: the file it runs from, drawn as a form so you can
 change a setting without touching a line of it. Open it by clicking the stack in the list. It always
 opens on the **Configure** tab, whatever tab you were last looking at — the other tabs (**Manage**,
