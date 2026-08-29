@@ -15,12 +15,21 @@ This guide is written in English only.
 - **[Where StaXX keeps its things](where-things-live.md)** — what lives in the data store versus the
   three lines on the flash drive, and the three ways to change where StaXX appears if you cannot
   reach its page.
+- **[Editing a stack](editing-a-stack.md)** — the form you get when you open a stack: the three
+  ways to look at the same file, what the sections do, the note under each box, the two marks, and
+  what saving does and does not change.
+- **[Working with folders](folders.md)** — grouping stacks on the list: making a folder, moving a
+  stack in or out, running everything inside one at once, and what deleting a folder does to what
+  is inside it.
+- **[Adding an app from Community Applications](installing-an-app.md)** — turning a catalogue entry
+  into an ordinary compose file: what carries across, what needs checking before you start it, and
+  why nothing exists until you save.
 
 ## Not written yet
 
 These parts of StaXX do not have a page here yet — that is a gap to fill, not something left out on
-purpose: making a stack from scratch, the form editor itself, bringing in an app from Community
-Applications, working with folders, and sharing a stack with somebody else.
+purpose: making a stack from scratch, bringing in a container that is already running on this
+server, and sharing a stack with somebody else.
 
 ## Terms used here
 
