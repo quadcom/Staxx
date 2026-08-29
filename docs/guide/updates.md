@@ -1,5 +1,7 @@
 # Checking for updates
 
+<!-- index: 10 | answers what the update column is telling you, why some images get checked more often than others, and what happens when you press it. -->
+
 **A blank space next to a stack is normally the good news — it means the check ran and there is
 nothing new.** There is no separate "up to date" mark. If the space is blank, either everything is
 current, or nothing has been asked yet — both look exactly the same until you check. Everything

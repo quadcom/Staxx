@@ -9501,8 +9501,128 @@
   .staxx-ca-app::backdrop,
   .staxx-confirm::backdrop,
   .staxx-settings::backdrop,
-  .staxx-logdlg::backdrop {
+  .staxx-logdlg::backdrop,
+  .staxx-export::backdrop {
     transition-duration: 1ms !important;
     animation-duration: 1ms !important;
   }
+}
+
+/* ---- PLAN_76/98 Stage 4: the export screen --------------------------------
+ *
+ * Built entirely in script (see openExportModal() in stacks.js) rather than
+ * from markup in StacksPage.php, since this stage owns none of the PHP —
+ * so it borrows .staxx-confirm's frame/head/foot wholesale and only the
+ * parts genuinely new to it, the two ticklists and the file viewer, get a
+ * rule here. Same recipe .staxx-detail above already uses for the same
+ * reason. */
+
+.staxx-export {
+  width: min(64rem, 94vw);
+  max-height: 86vh;
+}
+
+.staxx-export-body {
+  overflow-y: auto;
+}
+
+.staxx-export-section {
+  margin-bottom: 1.6rem;
+}
+
+.staxx-export-section h4 {
+  margin: 0 0 0.6rem;
+  font-size: 1.3rem;
+}
+
+.staxx-export-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.staxx-export-list li {
+  padding: 0.5rem 0;
+  border-bottom: 0.1rem solid var(--sm-line);
+}
+
+.staxx-export-list li:last-child {
+  border-bottom: none;
+}
+
+.staxx-export-row-main {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.staxx-export-row--refused {
+  opacity: 0.7;
+}
+
+.staxx-export-refused-mark {
+  display: inline-block;
+  width: 1.3rem;
+  text-align: center;
+  color: var(--sm-muted);
+}
+
+.staxx-export-size {
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+.staxx-export-needed {
+  font-size: 1.1rem;
+  color: var(--sm-accent);
+  border: 0.1rem solid var(--sm-accent);
+  border-radius: 0.4rem;
+  padding: 0 0.4rem;
+}
+
+.staxx-export-why {
+  margin: 0.2rem 0 0 1.9rem;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+.staxx-export-secret-badge {
+  font-size: 1.1rem;
+  color: var(--sm-danger);
+  border: 0.1rem solid var(--sm-danger);
+  border-radius: 0.4rem;
+  padding: 0 0.4rem;
+}
+
+.staxx-export-content {
+  margin: 0.6rem 0 0 1.9rem;
+}
+
+.staxx-export-hint {
+  margin: 0 0 0.4rem;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+.staxx-export-pre {
+  max-height: 20rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0.6rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.4rem;
+  font-family: monospace;
+  font-size: 1.1rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Never a claim the line is safe on its own — see EXPORT_SECRET_WORD_RE's
+ * own comment in stacks.js. This is "look here", not a pass/fail mark. */
+.staxx-export-secretline {
+  background: color-mix(in srgb, var(--sm-danger) 18%, transparent);
+}
+
+.staxx-export-values {
+  margin-bottom: 1rem;
 }

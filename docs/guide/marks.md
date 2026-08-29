@@ -1,5 +1,7 @@
 # What every mark means
 
+<!-- index: 20 | a quick key to every mark on the stack list: running state, restart pending, pinned, and the rest. -->
+
 A quick key to the small marks on the stack list — no essay, just what each one means and what to
 do about it. If you want the full story behind the update marks, that lives on the
 [update checking page](updates.md).

@@ -1,0 +1,49 @@
+# StaXX guide — the settings for the published guide website.
+#
+# This file lives here rather than in docs/ on purpose. docs/ is plain markdown
+# that has to stay readable in a text editor and on GitHub, and a config file for
+# a website generator sitting among it would be the first thing to puzzle
+# somebody opening that folder. The Pages workflow copies it into the scratch
+# folder it builds from.
+#
+# Copyright 2026, StaXX contributors. GPL-2.0.
+
+title: StaXX guide
+description: >-
+  StaXX replaces Unraid's Docker templates with ordinary compose files, drawn as
+  a form so you can change a setting without editing a file by hand.
+
+theme: jekyll-theme-primer
+
+# GitHub Pages switches all three of these on for every site it builds, whether
+# or not they are named here — checked against its own always-on list, not
+# assumed. They are written down anyway because two of them are load-bearing and
+# a silent default is a poor place to keep something the site cannot do without:
+#   optional-front-matter — not one guide page carries a YAML header, and without
+#     this Jekyll copies them through as raw markdown instead of rendering them.
+#   relative-links — rewrites a .md link from one page to another into the page
+#     it became, so the guide's own cross-links need no editing on the way in.
+#   titles-from-headings — takes each page's browser title from its first heading.
+plugins:
+  - jekyll-optional-front-matter
+  - jekyll-relative-links
+  - jekyll-titles-from-headings
+
+# The workflow copies in the guide and the glossary and nothing else, so this is
+# the second lock rather than the first — it only keeps the build's own working
+# files from being mistaken for pages.
+exclude:
+  - _config.yml
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+  - .jekyll-cache
+
+# Where to say something is wrong or missing. The Primer theme's layout has no
+# footer to hang this on, so it is kept here as a value and the guide's front
+# page carries the line instead — adding it there is a follow-up, and not
+# something this file can do on its own.
+feedback_url: https://staxxfb.quadcom.ca
+feedback_line: >-
+  Found a problem, or want something StaXX does not do yet? Say so at
+  https://staxxfb.quadcom.ca

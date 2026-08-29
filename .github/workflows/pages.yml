@@ -1,0 +1,144 @@
+# StaXX — publish the user guide as a website.
+#
+# The guide is written as plain markdown in docs/guide/ so it stays readable in
+# a text editor and on GitHub. This workflow is the only thing that turns it into
+# a website: nothing in docs/ is written for a site generator, and nothing here
+# writes back into docs/ — every step below works in a scratch folder, so a
+# person reading the repository sees exactly what was written.
+#
+# main only, never dev. The site is what somebody reads before deciding whether
+# to install StaXX, so it must never describe a feature that exists only on an
+# unreleased branch.
+#
+# docs/ also holds the project's internal thinking — the feasibility study, the
+# idea lists, the schema reference and the developer overview. None of that is
+# written for a user. So the staging step names the guide and the glossary and
+# copies only those, rather than copying docs/ and excluding the rest: an
+# exclusion list quietly stops covering everything the day somebody adds a file.
+#
+# ONE MANUAL STEP, once, before any of this publishes anything: in the
+# repository's Settings -> Pages, the source has to be set to "GitHub Actions".
+# Until that is done every run here goes green and nothing appears on the web.
+#
+# Copyright 2026, StaXX contributors. GPL-2.0.
+
+name: Publish the guide
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  id-token: write
+  contents: read
+
+concurrency:
+  group: pages
+  # Deliberately not cancel-in-progress. A deploy interrupted halfway can leave
+  # the live site part old and part new; letting a superseded run finish costs a
+  # couple of minutes and the next push overwrites it anyway.
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      # Where the site is assembled. Not the repository, and not _site — that
+      # name belongs to Jekyll's output.
+      SITE: _site-src
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Stage the guide
+        run: |
+          mkdir -p "$SITE"
+
+          # Named sources only — see the note at the top about what else is in
+          # docs/. Every guide page, then the glossary beside them.
+          cp docs/guide/*.md "$SITE/"
+          cp docs/glossary.md "$SITE/"
+
+          # A site needs a front page, and the guide's index is called README
+          # because that is what GitHub shows when somebody opens the folder.
+          mv "$SITE/README.md" "$SITE/index.md"
+
+          # Screenshots. docs/images/guide/ does not exist yet — the guide is all
+          # words so far — so this has to be a no-op rather than a failure.
+          # The folder keeps the shape it has in the repository, images/guide/,
+          # so a page written as ../images/guide/foo.png is correct when read on
+          # GitHub, where the page sits one level down inside docs/guide/.
+          if [ -d docs/images/guide ]; then
+            mkdir -p "$SITE/images"
+            cp -a docs/images/guide "$SITE/images/"
+          fi
+
+          # Two link fixes, both for the same reason: on the site every page sits
+          # at the top level, so a ../ that is correct in the repository climbs
+          # out of the site here. This is a project site served under /Staxx/, so
+          # ../ from a page does not stop at the site root — it lands on
+          # quadcom.github.io/ and the link is simply gone. The plugin that
+          # repairs .md links between pages cannot help either: it only sees
+          # paths that stay inside the site.
+          #
+          # The glossary link is the one every guide page closes with, and the
+          # only link in the guide reaching outside its own folder today. The
+          # image rewrite does nothing at all yet and is here so it is already
+          # right the day the first screenshot lands.
+          sed -i -e 's#\.\./glossary\.md#glossary.md#g' \
+                 -e 's#\.\./images/guide/#images/guide/#g' "$SITE"/*.md
+
+          # The site's own settings, kept outside docs/ so that folder stays
+          # plain markdown.
+          cp .github/pages/_config.yml "$SITE/"
+
+          # Belt and braces on the promise above: if an internal document ever
+          # reaches the staging folder, fail loudly here rather than publish it.
+          for internal in README feasibility feature-ideas settings-ideas x-unraid-schema; do
+            if [ -e "$SITE/${internal}.md" ]; then
+              echo "Internal document ${internal}.md reached the site folder — refusing to publish." >&2
+              exit 1
+            fi
+          done
+
+      - name: Point the site at the address Pages will serve it from
+        run: |
+          # The theme builds its stylesheet link from these, so a project site
+          # left without them renders unstyled. Taken from the Pages settings
+          # rather than written into the config by hand, so renaming the
+          # repository cannot silently break every page on the site.
+          {
+            echo "url: ${{ steps.pages.outputs.origin }}"
+            echo "baseurl: ${{ steps.pages.outputs.base_path }}"
+          } >> "$SITE/_config.yml"
+
+      - name: Build
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./_site-src
+          destination: ./_site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./_site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    # The environment is what gives this job the right to publish, and what puts
+    # the site's address on the run's summary page.
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -454,6 +454,44 @@ switch ($action) {
   case 'archive-list':
     staxx_reply(['ok' => true, 'dir' => staxx_archive_root(), 'files' => staxx_archive_list()]);
 
+  /* --------------------------------------------------- PLAN_76 — export ----
+   *
+   * 'export-sort' just reads and reports; 'export-pack' is where a person's
+   * choices actually leave. See staxx_export_pack()'s own comment in
+   * Stacks.php for why $name below can only ever name the zip, never find it
+   * a folder.
+   */
+  case 'export-sort':
+    $sorted = staxx_export_sort($name, $error);
+    if ($sorted === null) staxx_reply(['ok' => false, 'error' => $error]);
+    staxx_reply(['ok' => true, 'files' => $sorted]);
+
+  /* ---- export-pack: build a zip from name-and-contents pairs, not a folder --
+   *
+   * The zip comes back base64-encoded inside this JSON reply rather than
+   * from a download link, because this endpoint answers POST only, by
+   * design (see the CSRF note near the top of this file). A download link
+   * is a GET, and adding a GET route just to save one round trip is exactly
+   * how that protection would get walked around.
+   */
+  case 'export-pack':
+    $decoded = json_decode((string)($_POST['files'] ?? ''), true);
+    if (!is_array($decoded)) {
+      staxx_reply(['ok' => false, 'error' => 'The file list did not arrive as valid data.']);
+    }
+    foreach ($decoded as $pair) {
+      if (!is_array($pair) || !isset($pair['name']) || !is_string($pair['name'])
+          || (isset($pair['content']) && !is_string($pair['content']))) {
+        staxx_reply(['ok' => false, 'error' => 'The file list did not arrive as valid data.']);
+      }
+    }
+
+    $zip = staxx_export_pack($decoded, $name, $error);
+    if ($zip === '') staxx_reply(['ok' => false, 'error' => $error]);
+
+    $filename = ($name !== '' ? str_replace('/', '-', $name) : 'export').'.zip';
+    staxx_reply(['ok' => true, 'filename' => $filename, 'zip' => base64_encode($zip)]);
+
   /* ------------------------------------------------------ companion files --
    *
    * A stack folder may hold more than its compose file now — a .env, a

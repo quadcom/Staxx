@@ -1,5 +1,7 @@
 # Where StaXX keeps its things
 
+<!-- index: 30 | what lives in the data store versus the three lines on the flash drive, and the three ways to change where StaXX appears if you cannot reach its page. -->
+
 **Almost everything StaXX knows lives in one folder you chose yourself, called the data store. Only
 three lines live somewhere else — on the flash drive Unraid boots from — because those three have to
 be readable before the data store is even reachable.** That split is also why there is always a way

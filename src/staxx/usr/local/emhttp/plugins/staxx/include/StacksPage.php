@@ -1122,14 +1122,15 @@ endif;
   <!-- ---------------------------------------------------------- import -- -->
 
   <!-- The sixth dialog, opened from the Import button beside Apps. Lists
-       everything on the server that could be brought into StaXX; only
-       Unraid template rows can be ticked and written in, as new stacks that
-       arrive locked (see NEEDS-REVIEW.md, written server-side) so nothing
-       runs and no existing container is touched until that lock is cleared
-       by hand later. Compose Manager projects and containers belonging to
-       neither template nor project stay read-only — that still needs
-       multi-file support this phase does not have. Sits outside the editor
-       for the same reason the Apps dialog immediately above does. -->
+       everything on the server that could be brought into StaXX. Unraid
+       template rows and Compose Manager project rows can both be ticked and
+       written in, as new stacks that arrive locked (see NEEDS-REVIEW.md,
+       written server-side) so nothing runs and no existing container is
+       touched until that lock is cleared by hand later. A project brings its
+       settings file and its override across, the override renamed so compose
+       pairs it with the compose file. Containers belonging to neither
+       template nor project stay reference-only. Sits outside the editor for
+       the same reason the Apps dialog immediately above does. -->
   <dialog class="staxx-import" id="staxx-import-dlg" aria-labelledby="staxx-import-title">
 
     <div class="staxx-import-head">
