@@ -1,15 +1,5 @@
 # StaXX — Docker on Unraid, built on compose files
 
-<!-- dev-banner -->
-> [!CAUTION]
-> ## Development branch — do not install from here
->
-> This is where work in progress lands. Features on this branch may be half-finished, broken, or in
-> the middle of being changed, and the screenshots and text below may describe things that do not
-> work yet. For the current state of the project, read
-> [`main`](../../blob/main/README.md).
-<!-- /dev-banner -->
-
 > **Where this is up to.** In daily use on the author's own server and far enough along to judge on
 > its merits. Packaged from 1.1.0, but not yet published — the install below is the way in until
 > it is. See [Limitations](#limitations).
