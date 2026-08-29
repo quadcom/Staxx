@@ -99,6 +99,13 @@ jobs:
           # plain markdown.
           cp .github/pages/_config.yml "$SITE/"
 
+          # The site's own stylesheet, kept beside the config for the same
+          # reason. It layers dark-mode rules over the theme rather than
+          # replacing it, and Jekyll only treats it as a stylesheet at this
+          # exact path.
+          mkdir -p "$SITE/assets/css"
+          cp .github/pages/style.scss "$SITE/assets/css/style.scss"
+
           # Belt and braces on the promise above: if an internal document ever
           # reaches the staging folder, fail loudly here rather than publish it.
           for internal in README feasibility feature-ideas settings-ideas x-unraid-schema; do
