@@ -126,9 +126,11 @@ Export produces a file you send. See [sharing a stack](sharing-a-stack.md) for t
 
 ## Left out, for now
 
-There is no way to hide a value just for one screenshot without marking it secret in the file
-first, and no way to hide the extra tabs at all. Both are honest gaps rather than oversights: the
-first keeps Sanitise from ever guessing, and the second is why the warning above is on this page.
+Two things Sanitise cannot do. Both are honest gaps rather than oversights:
+
+- Hiding a value just for one screenshot, without marking it secret in the file first. That is what
+  keeps Sanitise from ever guessing.
+- Hiding the extra tabs at all. That is why the warning above is on this page.
 
 ## Terms used here
 

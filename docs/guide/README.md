@@ -50,8 +50,11 @@ This guide is written in English only.
 ## Not written yet
 
 These parts of StaXX do not have a page here yet — that is a gap to fill, not something left out on
-purpose: making and hashing a password without leaving the editor, removing a stack and getting it
-back from the archive, and opening a shell into a running container.
+purpose:
+
+- Making and hashing a password without leaving the editor.
+- Removing a stack and getting it back from the archive.
+- Opening a shell into a running container.
 
 ## Something wrong, or missing?
 

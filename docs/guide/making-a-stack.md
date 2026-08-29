@@ -121,10 +121,13 @@ A new stack is created **stopped** unless you chose Save and start.
 
 ## Being honest about what's not built
 
-There is no library of starting points here — no template gallery, no "make me a stack like that
-one". Every new stack begins from the same small skeleton, and anything richer than that comes from
-the Apps button or from pasting a file you already have. There is also no way to choose the folder
-while you are making the stack; it lands at the top level and moves afterwards.
+Two things Add stack does not offer:
+
+- A library of starting points — no template gallery, no "make me a stack like that one". Every new
+  stack begins from the same small skeleton, and anything richer than that comes from the Apps
+  button or from pasting a file you already have.
+- Choosing the folder while you are making the stack. It lands at the top level and moves
+  afterwards.
 
 ## Terms used here
 

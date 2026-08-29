@@ -185,8 +185,11 @@ A refusal always says what to do next. The ones people actually meet:
 
 ## Not built yet
 
-There is no way to export or import your settings, and no way to reset them all to how they started.
-There is also no record of what you changed and when.
+Three things the panel does not offer:
+
+- Exporting or importing your settings.
+- Resetting them all to how they started.
+- A record of what you changed and when.
 
 ## Terms used here
 

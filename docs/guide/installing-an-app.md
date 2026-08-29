@@ -85,10 +85,12 @@ on your behalf.
 
 ## Being honest about what's not built
 
-There is no way, from this dialog, to add several catalogue apps as one linked stack — each addition
-is one app, one editor session, one save. And nothing here checks whether a port or folder the app
-wants is already used by something else on your server; that check belongs to a different part of
-StaXX, not to the conversion itself.
+Two things this dialog does not do:
+
+- Adding several catalogue apps as one linked stack. Each addition is one app, one editor session,
+  one save.
+- Checking whether a port or folder the app wants is already used by something else on your server.
+  That check belongs to a different part of StaXX, not to the conversion itself.
 
 ## Terms used here
 
