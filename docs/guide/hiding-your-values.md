@@ -29,12 +29,18 @@ A banner sits across the top of the editor for as long as it is on:
 > Turn Sanitise off to make edits. The real values are still in the page — this hides them from a
 > picture, not from anyone with access to this browser.
 
+![The "Sanitised for screenshots" banner across the top of the editor, with the History tab greyed out beside the still-usable Configure, Manage and Versions tabs](../images/guide/hiding-your-values-banner.png)
+
 And the values themselves change, differently in each of the two panes:
 
 | Where | What happens to a hidden value |
 |---|---|
 | The file, shown as text | The value is replaced on screen with `**REDACTED**`, in the exact spot the real one sat. |
 | The form | The box is blurred, keeping its real width so the shape of the page stays honest. |
+
+![The compose file as text, with two values swapped for the word REDACTED while the names of both settings and the notes written beside them stay perfectly readable](../images/guide/hiding-your-values-file.png)
+
+![The same two settings shown as boxes on the form: their names and the notes underneath are readable, and only the two values themselves are blurred out](../images/guide/hiding-your-values-form.png)
 
 ## It never guesses what is secret
 
@@ -52,7 +58,7 @@ This is the part worth reading twice. Sanitise covers less than a quick glance s
 
 | Still visible | Why |
 |---|---|
-| The **name** of a setting | `ADMIN_TOKEN` still reads as `ADMIN_TOKEN`; only the value goes. Hiding both would make the picture unreadable for no gain. |
+| The **name** of a setting | `ADMIN_TOKEN` still reads as `ADMIN_TOKEN`; only the value goes. Hiding both would make the picture unreadable for no gain — and when you are reporting a problem, the name of the setting is usually the part somebody needs. |
 | The **note** written beside a secret | The sentence you wrote about a setting is not the setting's value. |
 | The **container side of a port** | The port inside the container is not the secret half of the pair. |
 | The whole **Versions** tab | An image name and a version number are not values you wrote, so there is nothing there for this to hide. |

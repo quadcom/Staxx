@@ -45,6 +45,8 @@ look right on the list and on its own page: its logo, what it is for, where its 
 are commented out, so the file runs exactly as-is and nothing is required of you; uncomment a line
 and type a value when you want one.
 
+![The whole starting file: a block of commented-out settings for the logo, description, category and links at the top, and below it a single service called my-app running the alpine image, set to restart unless you stop it](../images/guide/making-a-stack-scaffold.png)
+
 | Offered for the stack as a whole | What it is |
 |---|---|
 | Icon | The logo shown on the list — a known app name, an image file beside the compose file, a web address, or an icon name. |
