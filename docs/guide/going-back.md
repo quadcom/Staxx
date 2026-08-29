@@ -95,6 +95,11 @@ back.
 
 Services are listed on the left; picking one shows that service's recorded builds on the right.
 
+There is a shortcut. Where a row on the stack list is offering an update it can undo, its own menu
+has **Roll back…** — that opens this tab with the right service already picked, so you do not have
+to find it yourself. It only ever brings you here; the choosing and the confirming still happen on
+this tab.
+
 ## What a build's row shows
 
 | On the row | What it is |

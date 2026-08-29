@@ -987,6 +987,14 @@
   var versionsSelected     = null;   // the service name shown on the right, or null
   var versionsLoadError    = '';     // image-versions itself failed — nothing else in the pane can be trusted
   var versionsActionError  = '';     // a failed rollback, shown above an otherwise normal list
+  // A one-shot handover for "open the editor on Versions, showing this
+  // service": set just before editStack(), read and cleared by openEditor().
+  // The editor is reached through editStack() -> openEditor(), and openEditor()
+  // already takes ten positional arguments — threading an eleventh through
+  // both of them just to say which tab to land on is worse than one clearly
+  // named variable. Cleared on every path, including a failed read, so a
+  // handover nobody consumed cannot hijack the next unrelated edit.
+  var pendingVersionsService = null;
 
   // The tab strip's own state. FILES is the last `files` listing, in the
   // order it arrived — compose file first, then alphabetical (see
@@ -12384,6 +12392,19 @@
       setTab('manage');
       manageInst.select(manageSelect === '' ? 'all' : manageSelect);
     }
+
+    // A Roll back menu item on a stack row set this on its way here. It has
+    // to be read *after* the reset further up that clears versionsSelected,
+    // or the selection is wiped before it is ever used. setTab() calls
+    // ensureVersionsLoaded() itself, and that only overrides the name set
+    // here when the server's reply does not list it — so a service with no
+    // recorded versions lands on the first service that has some, rather
+    // than on an empty right-hand column.
+    if (pendingVersionsService !== null) {
+      versionsSelected = pendingVersionsService;
+      pendingVersionsService = null;
+      setTab('versions');
+    }
   }
 
   // Everything Manage was running stops here, not only in the dialog's own
@@ -16298,26 +16319,15 @@
     });
   }
 
-  // Rolls a service back to the previous version history remembers. Offered
-  // on every service row rather than only when a history entry is known to
-  // exist on the client — nothing in the `updates` reply says so, and
-  // staxx_update_rollback() already refuses cleanly, in a full sentence,
-  // when there is nothing to roll back to.
-  function rollbackUpdate(name, service, label) {
-    call('update-rollback', { name: name, service: service }).then(function (res) {
-      if (!res.ok) { failed('Could not roll back ' + label, res.error); return; }
-      var rows = containerRows(name, service);
-      if (rows.length) setBusy(rows, 'Rolling back…');
-      track(res.job, {
-        rows: rows, verb: 'recreate',
-        done: function (job) {
-          clearBusy(rows);
-          if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'recreate', res.job);
-          refreshUpdates(name, service);
-          refreshStateSoon();
-        }
-      });
-    });
+  // Opens the editor's Versions tab with this service already picked, which
+  // is where a rollback is actually chosen and carried out. It cannot be done
+  // from here: a rollback now pins the exact build in the compose file, so the
+  // server needs the file's text and refuses any call without it — and the
+  // row has no file text to give. So the menu item takes the person to the
+  // one place that does, rather than firing a call that can only be refused.
+  function openVersionsFor(name, service, label) {
+    pendingVersionsService = service;
+    editStack(name, label);
   }
 
   // Builds a locally built image again from a base that has moved on. A
@@ -17531,7 +17541,10 @@
   // service's image box so the cursor lands there directly.
   function editStack(name, label, focusService, manageSelect, focusField) {
     call('read', { name: name }).then(function (res) {
-      if (!res.ok) { failed('Could not open ' + label, res.error); return; }
+      // openEditor() never runs on this path, so anything it would have
+      // consumed has to be dropped here instead — a left-behind handover
+      // would silently open the *next* stack on Versions.
+      if (!res.ok) { pendingVersionsService = null; failed('Could not open ' + label, res.error); return; }
       openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch, res.icons);
     });
   }
@@ -19363,9 +19376,10 @@
   }
 
   // Asks first, since this now edits the compose file as well as changing
-  // what is running, then follows the job the same way rollbackUpdate() above
-  // does — the table row goes busy and a failed run is marked the same as any
-  // other failed run.
+  // what is running, then follows the job the way every other run does — the
+  // table row goes busy and a failed run is marked the same as any other
+  // failed run. This is the only place a rollback happens; the stack row's
+  // menu item just opens the editor here.
   function rollbackToVersion(service, digest, label) {
     var pinned = pinServiceImage(service, digest);
     if (!pinned.ok) {
@@ -21671,11 +21685,11 @@
 
     // PLAN_45 phase 4-8. Only when an earlier version is actually still kept
     // — the pill's own `back` flag says so, which is a plain state read on
-    // the server. staxx_update_rollback() refuses in a full sentence anyway,
-    // but a menu item that can only ever refuse is worse than no item.
+    // the server. Ellipsis because it opens a window rather than acting
+    // straight away, matching "Fix the tag…" above.
     if (updateEntry && updateEntry.back) {
-      menuItem('Roll back', 'undo', function () {
-        rollbackUpdate(stack, service, stackLabel(stack) + ' / ' + service);
+      menuItem('Roll back…', 'undo', function () {
+        openVersionsFor(stack, service, stackLabel(stack));
       }, { disabled: !CAN_RUN });
     }
 
