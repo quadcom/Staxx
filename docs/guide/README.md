@@ -15,12 +15,15 @@ This guide is written in English only.
 - **[Where StaXX keeps its things](where-things-live.md)** — what lives in the data store versus the
   three lines on the flash drive, and the three ways to change where StaXX appears if you cannot
   reach its page.
+- **[Sharing a stack with somebody else](sharing-a-stack.md)** — how Export makes a copy with your
+  passwords, keys and paths taken out, what it refuses to send at all, and what the person on the
+  other end has to fill in before it will run.
 
 ## Not written yet
 
 These parts of StaXX do not have a page here yet — that is a gap to fill, not something left out on
 purpose: making a stack from scratch, the form editor itself, bringing in an app from Community
-Applications, working with folders, and sharing a stack with somebody else.
+Applications, and working with folders.
 
 ## Terms used here
 
