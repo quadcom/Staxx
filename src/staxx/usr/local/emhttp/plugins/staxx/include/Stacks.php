@@ -105,6 +105,16 @@ define('STAXX_CFILE_LIST_MAX', 2000);
 // takes to find every one of them.
 define('STAXX_PLACEHOLDER', 'REPLACE-ME');
 
+// PLAN_76 Phase 5 — the export packer's own caps. The browser posts every
+// selected file's content as one JSON array in a single POST body, so this
+// keeps the total comfortably under PHP's post_max_size (8M on the test box)
+// the same way STAXX_LOG_DOWNLOAD_MAX does for a whole log download.
+define('STAXX_EXPORT_MAX', 2097152); // 2 MiB, summed across every file
+
+// Not a size question — a sanity ceiling so a malformed request cannot make
+// the packer loop over an unbounded list of tiny entries.
+define('STAXX_EXPORT_FILES_MAX', 200);
+
 /**
  * Make sure a job/log working directory exists and is private — job output
  * can hold a resolved compose config, variables and all, so nobody but this
@@ -4387,6 +4397,135 @@ function staxx_export_sort(string $rel, string &$error): ?array {
       'needed' => $needed, 'needed_why' => $neededWhy];
   }
   return $out;
+}
+
+/* ---------------------------------------------------------------------
+ * PLAN_76 Phase 5 — packing what leaves.
+ * --------------------------------------------------------------------- */
+
+/**
+ * Build a zip from name-and-contents pairs, and nothing else.
+ *
+ * $pairs is a list of ['name' => ..., 'content' => ...]. That is the ONLY
+ * shape this function can read — there is no parameter here that could carry
+ * a stack's folder, and nothing inside calls anything that resolves one. This
+ * is the plan's strongest rule, and it is enforced by shape rather than
+ * vigilance: the function is not being careful not to look at the real
+ * stack, it has no way to, whatever it is handed.
+ *
+ * $stackName is used only to name the zip for the person saving it — never to
+ * find a folder, a file, or anything else on disk. The caller (action.php's
+ * "export-pack") is the only place that ever puts a real stack's path into
+ * it, and even there it never reaches this function's own filesystem work.
+ *
+ * Every name is checked by staxx_valid_filename(), the same rule a companion
+ * file is written under, with one deliberate exception: that function also
+ * refuses the compose filenames themselves, because a second file by that
+ * name would collide with the real compose file already on disk. There is no
+ * "already on disk" here — this zip is built from nothing — and the compose
+ * file is exactly what belongs in an export, so a name is accepted whenever
+ * it is either a valid companion name or one of the compose filenames.
+ *
+ * Built in a private folder of its own under STAXX_CFILE_TMP, using the same
+ * `zip` shell command staxx_archive_stack() already uses — there is only one
+ * way this plugin makes a zip. That folder is removed whether packing
+ * succeeded or not.
+ *
+ * @param array<int, array{name:string, content:string}> $pairs
+ * @return string the zip's raw bytes, or '' plus $error.
+ */
+function staxx_export_pack(array $pairs, string $stackName, string &$error): string {
+  $error = '';
+
+  if (count($pairs) === 0) { $error = 'There is nothing to export.'; return ''; }
+  if (count($pairs) > STAXX_EXPORT_FILES_MAX) {
+    $error = 'That is '.count($pairs).' files, over the '.STAXX_EXPORT_FILES_MAX
+           . '-file limit for one export.';
+    return '';
+  }
+
+  $total = 0;
+  $seen  = [];
+  foreach ($pairs as $p) {
+    $name    = is_string($p['name'] ?? null) ? $p['name'] : '';
+    $content = is_string($p['content'] ?? null) ? $p['content'] : '';
+
+    if (!staxx_valid_filename($name) && !in_array(strtolower($name), STAXX_COMPOSE_FILENAMES, true)) {
+      $error = '"'.$name.'" is not a name this can export.';
+      return '';
+    }
+    if (isset($seen[strtolower($name)])) {
+      $error = '"'.$name.'" was given twice.';
+      return '';
+    }
+    $seen[strtolower($name)] = true;
+
+    $total += strlen($content);
+    if ($total > STAXX_EXPORT_MAX) {
+      $error = 'That export is '.round($total / 1024).' KiB, over the '
+             . round(STAXX_EXPORT_MAX / 1024).' KiB limit for one download.';
+      return '';
+    }
+  }
+
+  if (!staxx_private_dir(STAXX_CFILE_TMP)) {
+    $error = 'Could not prepare a place to build the export.';
+    return '';
+  }
+
+  $work = STAXX_CFILE_TMP.'/export-'.bin2hex(random_bytes(8));
+  if (!@mkdir($work, 0700, true)) {
+    $error = 'Could not prepare a place to build the export.';
+    return '';
+  }
+  $real = @realpath($work);
+  if ($real === false) {
+    $error = 'Could not prepare a place to build the export.';
+    return '';
+  }
+
+  $zipBytes = '';
+  try {
+    foreach ($pairs as $p) {
+      $name    = (string)$p['name'];
+      $content = is_string($p['content'] ?? null) ? $p['content'] : '';
+      if (@file_put_contents($real.'/'.$name, $content) === false) {
+        $error = 'Could not write "'.$name.'" while building the export.';
+        return '';
+      }
+    }
+
+    // $stackName's only use anywhere in this function: a label on the
+    // temporary zip file itself, never a path segment resolved against
+    // anything real. Scrubbed to a safe character set the same way
+    // staxx_archive_name() scrubs a stack's path for its own zip name.
+    $label = $stackName !== '' ? preg_replace('/[^A-Za-z0-9._-]/', '-', str_replace('/', '-', $stackName)) : 'export';
+    $zipPath = STAXX_CFILE_TMP.'/'.$label.'-'.bin2hex(random_bytes(4)).'.zip';
+    $zipCode = 1;
+    $zipOut  = staxx_sh(
+      'cd '.escapeshellarg($real).' && zip -r -y -q '.escapeshellarg($zipPath).' . 2>&1',
+      60,
+      $zipCode
+    );
+    if ($zipCode !== 0 || !is_file($zipPath)) {
+      @unlink($zipPath);
+      $error = 'Could not build the export.'.($zipOut !== '' ? "\n\n".trim($zipOut) : '');
+      return '';
+    }
+
+    $bytes = @file_get_contents($zipPath);
+    @unlink($zipPath);
+    if ($bytes === false) {
+      $error = 'Could not read back the export once it was built.';
+      return '';
+    }
+    $zipBytes = $bytes;
+    return $zipBytes;
+  } finally {
+    // Removed on every path out of this function, success or refusal alike —
+    // nothing this builds is worth keeping once the reply is on its way.
+    staxx_rmtree($real, $real);
+  }
 }
 
 /**

@@ -25,7 +25,11 @@
  *     '
  *
  * Prints one line per case and exits non-zero on any failure. Creates and
- * removes its own stacks, "zze…", under the temporary stack root.
+ * removes its own stacks, "zze…", under the temporary stack root. Stage 2
+ * (the file sorter) and Stage 5 (the packer) reuse that same STORE_ROOT
+ * rather than asking for a config of their own — a symlink fixture cannot
+ * live on the flash drive (vfat) either way, so /tmp/zze-store is exactly
+ * where those need to be built regardless.
  *
  * MUST NEVER RUN DOCKER. Every staxx_start_job() call below is arranged to
  * terminate in a refusal that returns before the function ever builds or
@@ -198,7 +202,228 @@ ok('a clean file is not refused for a placeholder (reaches the real service chec
    $r === '' && stripos($err, 'filling in') === false
    && stripos($err, 'No service called') !== false, $err);
 
-@exec('rm -rf '.escapeshellarg($tmp).' '.escapeshellarg($root));
+@exec('rm -rf '.escapeshellarg($tmp));
+
+/* ============================================================
+ * Stage 2 — sorting a stack's files
+ * ============================================================
+ *
+ * staxx_export_sort() over a stack built to carry one of everything: the
+ * hidden record folder, both redactable kinds, an ordinary text file, and
+ * one of each refusal — plus the two cases that matter most, proved
+ * separately below: a refused file the compose file also names stays
+ * "needed" without becoming permitted, and a symlink named ".env" is
+ * refused rather than treated as blankable.
+ *
+ * Reuses $root from Stage 1 above (STORE_ROOT is already pointed at
+ * /tmp/zze-store for this whole run) rather than asking for it again.
+ */
+
+$sortRel = 'zzesort';
+$sortDir = $root.'/'.$sortRel;
+@exec('rm -rf '.escapeshellarg($sortDir));
+mkdir($sortDir, 0755, true);
+
+// The compose file names two companions: .env as an env_file, and the
+// (refused) key file as a bind mount — both have to come back "needed".
+file_put_contents($sortDir.'/compose.yaml',
+  "services:\n".
+  "  a:\n".
+  "    image: alpine:3.20\n".
+  "    env_file:\n".
+  "      - .env\n".
+  "    volumes:\n".
+  "      - ./keyfile.pem:/certs/key.pem:ro\n"
+);
+file_put_contents($sortDir.'/.env', "TOKEN=secret\n");
+file_put_contents($sortDir.'/plain.txt', "just some notes, nothing sensitive\n");
+file_put_contents($sortDir.'/keyfile.pem', "not a real key, just named like one\n");
+file_put_contents($sortDir.'/renamed-secret.txt',
+  "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK0=\n-----END RSA PRIVATE KEY-----\n");
+file_put_contents($sortDir.'/binary.dat', "\x00\x01\x02binary-looking bytes");
+file_put_contents($sortDir.'/big.txt', str_repeat('a', STAXX_FILE_MAX + 1));
+mkdir($sortDir.'/subfolder', 0755, true);
+symlink($sortDir.'/plain.txt', $sortDir.'/reglink');
+mkdir($sortDir.'/'.STAXX_RECORD_DIR, 0755, true);
+file_put_contents($sortDir.'/'.STAXX_RECORD_DIR.'/note.json', '{}');
+
+$err = '';
+$sorted = staxx_export_sort($sortRel, $err);
+ok('the sorter runs over the fixture', $sorted !== null, $err);
+
+$byName = [];
+foreach ((array)$sorted as $row) $byName[$row['name']] = $row;
+
+ok('the hidden record folder is absent from the listing entirely',
+   !isset($byName[STAXX_RECORD_DIR]));
+
+ok('the compose file is redactable', ($byName['compose.yaml']['kind'] ?? '') === 'redactable');
+ok('and it carries needed => true', ($byName['compose.yaml']['needed'] ?? null) === true);
+
+ok('.env is redactable', ($byName['.env']['kind'] ?? '') === 'redactable');
+ok('.env carries needed => true because the compose file loads it as an env_file',
+   ($byName['.env']['needed'] ?? null) === true
+   && stripos($byName['.env']['needed_why'] ?? '', 'env_file') !== false,
+   $byName['.env']['needed_why'] ?? '');
+
+ok('an ordinary text file is "read"', ($byName['plain.txt']['kind'] ?? '') === 'read');
+ok('and is not marked needed', ($byName['plain.txt']['needed'] ?? null) === false);
+
+ok('a private key renamed to something innocuous is refused, caught by its first line',
+   ($byName['renamed-secret.txt']['kind'] ?? '') === 'refused'
+   && stripos($byName['renamed-secret.txt']['why'] ?? '', 'private key') !== false,
+   $byName['renamed-secret.txt']['why'] ?? '');
+
+ok('a key file is refused by its extension',
+   ($byName['keyfile.pem']['kind'] ?? '') === 'refused'
+   && stripos($byName['keyfile.pem']['why'] ?? '', 'key or certificate') !== false,
+   $byName['keyfile.pem']['why'] ?? '');
+
+ok('a binary file is refused',
+   ($byName['binary.dat']['kind'] ?? '') === 'refused'
+   && stripos($byName['binary.dat']['why'] ?? '', 'binary') !== false,
+   $byName['binary.dat']['why'] ?? '');
+
+ok('an oversized file is refused',
+   ($byName['big.txt']['kind'] ?? '') === 'refused'
+   && stripos($byName['big.txt']['why'] ?? '', 'KiB limit') !== false,
+   $byName['big.txt']['why'] ?? '');
+
+ok('a directory is refused',
+   ($byName['subfolder']['kind'] ?? '') === 'refused'
+   && stripos($byName['subfolder']['why'] ?? '', 'folder') !== false,
+   $byName['subfolder']['why'] ?? '');
+
+ok('a symlink is refused',
+   ($byName['reglink']['kind'] ?? '') === 'refused'
+   && stripos($byName['reglink']['why'] ?? '', 'link') !== false,
+   $byName['reglink']['why'] ?? '');
+
+ok('a refused file the compose file also names stays needed without becoming permitted',
+   ($byName['keyfile.pem']['needed'] ?? null) === true
+   && ($byName['keyfile.pem']['kind'] ?? '') === 'refused',
+   json_encode($byName['keyfile.pem'] ?? null));
+
+/* REGRESSION GUARD: refusals are settled before anything is called
+ * blankable, in the source itself. Written the other way round — checking
+ * for ".env" before checking for a link — a symlink named ".env" would be
+ * treated as the redactable kind, and whatever it points at would leave
+ * with the export instead of the file that was actually chosen. A symlink
+ * fixture cannot live on the flash drive (vfat), so this — like the rest of
+ * this file — lives entirely under /tmp; see tests/server/links.php. */
+$envLinkRel = 'zzesortenvlink';
+$envLinkDir = $root.'/'.$envLinkRel;
+@exec('rm -rf '.escapeshellarg($envLinkDir).' /tmp/zze-outside');
+mkdir($envLinkDir, 0755, true);
+mkdir('/tmp/zze-outside', 0755, true);
+file_put_contents('/tmp/zze-outside/target.env', "SECRET=should-not-leak\n");
+file_put_contents($envLinkDir.'/compose.yaml', "services:\n  a:\n    image: alpine:3.20\n");
+symlink('/tmp/zze-outside/target.env', $envLinkDir.'/.env');
+
+$err = '';
+$envSorted = staxx_export_sort($envLinkRel, $err);
+$envByName = [];
+foreach ((array)$envSorted as $row) $envByName[$row['name']] = $row;
+ok('REGRESSION GUARD: a symlink named .env is refused, not treated as blankable',
+   ($envByName['.env']['kind'] ?? '') === 'refused'
+   && stripos($envByName['.env']['why'] ?? '', 'link') !== false,
+   json_encode($envByName['.env'] ?? null));
+
+@exec('rm -rf '.escapeshellarg($sortDir).' '.escapeshellarg($envLinkDir).' /tmp/zze-outside');
+
+/* ============================================================
+ * Stage 5 — packing what leaves
+ * ============================================================
+ *
+ * staxx_export_pack() over name-and-contents pairs only. It is never handed
+ * a folder, so proving it "never reads the real stack's folder" means
+ * building a real stack on disk, handing the packer different content under
+ * the same name, and checking that the different content is what comes out.
+ */
+
+/** Unzip $bytes into $outDir (wiped first) and return [exit code, output lines]. */
+function zze_unzip(string $bytes, string $outDir): array {
+  @exec('rm -rf '.escapeshellarg($outDir));
+  mkdir($outDir, 0755, true);
+  $zipFile = $outDir.'.zip';
+  file_put_contents($zipFile, $bytes);
+  exec('cd '.escapeshellarg($outDir).' && unzip -o -q '.escapeshellarg($zipFile).' 2>&1', $lines, $code);
+  @unlink($zipFile);
+  return [$code, $lines];
+}
+
+/** Every "export-*" working folder currently left under the packer's temp dir. */
+function zze_pack_leftovers(): array {
+  return glob(STAXX_CFILE_TMP.'/export-*') ?: [];
+}
+
+$err = '';
+$bad = staxx_export_pack([['name' => 'a/b.txt', 'content' => 'x']], 'zzepack', $err);
+ok('the packer refuses a bad name', $bad === '' && $err !== '', $err);
+ok('and nothing was left behind on that failure path', zze_pack_leftovers() === []);
+
+$err = '';
+$overSize = [];
+for ($i = 0; $i < 3; $i++) {
+  $overSize[] = ['name' => 'big'.$i.'.txt', 'content' => str_repeat('x', 900000)];
+}
+$bad = staxx_export_pack($overSize, 'zzepack', $err);
+ok('the packer refuses to exceed the total-size cap',
+   $bad === '' && stripos($err, 'KiB limit') !== false, $err);
+ok('and nothing was left behind on that failure path', zze_pack_leftovers() === []);
+
+$err = '';
+$tooMany = [];
+for ($i = 0; $i < STAXX_EXPORT_FILES_MAX + 1; $i++) {
+  $tooMany[] = ['name' => 'f'.$i.'.txt', 'content' => 'x'];
+}
+$bad = staxx_export_pack($tooMany, 'zzepack', $err);
+ok('the packer refuses to exceed the file-count cap',
+   $bad === '' && stripos($err, 'file limit') !== false, $err);
+ok('and nothing was left behind on that failure path', zze_pack_leftovers() === []);
+
+$err = '';
+$pairs = [
+  ['name' => 'compose.yaml', 'content' => "services:\n  a:\n    image: alpine:3.20\n"],
+  ['name' => 'notes.txt',    'content' => "some plain notes\n"],
+];
+$zip = staxx_export_pack($pairs, 'zzepack', $err);
+ok('the packer produces a zip on a clean set of pairs', $zip !== '', $err);
+ok('and nothing was left behind on that success path', zze_pack_leftovers() === []);
+
+[$code, $unzipOut] = zze_unzip($zip, '/tmp/zze-unpacked');
+ok('the zip unpacks cleanly', $code === 0, implode(' ', $unzipOut));
+$entries = array_values(array_diff(scandir('/tmp/zze-unpacked') ?: [], ['.', '..']));
+sort($entries);
+ok('the zip holds exactly the names it was handed and nothing else',
+   $entries === ['compose.yaml', 'notes.txt'], implode(', ', $entries));
+ok('the compose file content round-trips byte for byte',
+   file_get_contents('/tmp/zze-unpacked/compose.yaml') === $pairs[0]['content']);
+ok('the notes file content round-trips byte for byte',
+   file_get_contents('/tmp/zze-unpacked/notes.txt') === $pairs[1]['content']);
+
+// A real stack on disk, so the "never reads the real folder" case has
+// something real to prove it did NOT read.
+$realRel = 'zzepackreal';
+$realDir = $root.'/'.$realRel;
+@exec('rm -rf '.escapeshellarg($realDir));
+mkdir($realDir, 0755, true);
+$realContent = "services:\n  a:\n    image: THE-REAL-FILE-ON-DISK\n";
+file_put_contents($realDir.'/compose.yaml', $realContent);
+
+$err = '';
+$differentContent = "services:\n  a:\n    image: WHAT-THE-CALLER-HANDED-IN\n";
+$zip = staxx_export_pack([['name' => 'compose.yaml', 'content' => $differentContent]], $realRel, $err);
+ok('a pair named after a compose filename is packed as given', $zip !== '', $err);
+
+[$code, ] = zze_unzip($zip, '/tmp/zze-unpacked-real');
+$got = @file_get_contents('/tmp/zze-unpacked-real/compose.yaml');
+ok('the packer never read the real stack folder — the handed-in content came out, not the file on disk',
+   $got === $differentContent && $got !== $realContent, (string)$got);
+
+@exec('rm -rf '.escapeshellarg($realDir).' /tmp/zze-unpacked /tmp/zze-unpacked-real');
+
+@exec('rm -rf '.escapeshellarg($root));
 
 echo $fails === 0 ? "\nAll passed.\n" : "\n$fails failed.\n";
 exit($fails === 0 ? 0 : 1);

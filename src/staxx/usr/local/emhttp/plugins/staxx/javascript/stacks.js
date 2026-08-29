@@ -17768,6 +17768,542 @@
     });
   }
 
+  /* =====================================================================
+   * PLAN_76/98 Stage 4 — the export screen
+   *
+   * Reached from the row menu, beside Remove stack, since both produce a
+   * copy of the stack rather than change the one already there.
+   *
+   * The dialog is built once, lazily, entirely in script — there is no
+   * markup for it in StacksPage.php, unlike every other dialog on this
+   * page, because this stage only owns stacks.js/manage.js/the stylesheet.
+   * It follows #staxx-confirm's own shape (head/body/foot, one scrolling
+   * body between fixed ends) purely by reusing its classes, so it picks up
+   * that dialog's look for free.
+   *
+   * exportState holds everything for the one export in progress and is
+   * null whenever the dialog is closed — nothing here is meant to survive
+   * past a Cancel or a completed export, the same way MODEL is the only
+   * long-lived parse on this page and this is deliberately not it: writing
+   * ticks into the open editor's own MODEL would allow an export to change
+   * what the editor shows mid-edit, which is not what either side expects.
+   */
+
+  var exportModal = null;
+  var exportState = null;
+
+  // Never a claim that a file is clean — only ever "look here". A keyword
+  // match, a long run of the kind of characters a generated secret is made
+  // of, and the marker line a key file starts with (the same three checks
+  // Stacks.php's own key-material test uses, adapted to a line at a time
+  // rather than a whole file, since this is about drawing the eye on
+  // screen, not refusing anything).
+  var EXPORT_SECRET_WORD_RE = /pass(word)?|secret|token|api[_-]?key|credential|private[_-]?key/i;
+  var EXPORT_SECRET_RUN_RE  = /[A-Za-z0-9+\/_=-]{24,}/;
+  var EXPORT_KEY_MARKER_RE  = /^-----BEGIN /;
+
+  function exportLineLooksSecret(line) {
+    return EXPORT_SECRET_WORD_RE.test(line) || EXPORT_SECRET_RUN_RE.test(line) ||
+           EXPORT_KEY_MARKER_RE.test(line.replace(/^[ \t]+/, ''));
+  }
+
+  function exportDialogEl() {
+    if (exportModal) return exportModal;
+    exportModal = document.createElement('dialog');
+    exportModal.className = 'staxx-confirm staxx-export';
+    exportModal.setAttribute('aria-labelledby', 'staxx-export-title');
+    exportModal.innerHTML =
+      '<div class="staxx-confirm-head"><h3 class="staxx-confirm-title" id="staxx-export-title"></h3></div>' +
+      '<div class="staxx-confirm-body staxx-export-body" id="staxx-export-body"></div>' +
+      '<div class="staxx-confirm-foot">' +
+        '<p class="staxx-confirm-msg" id="staxx-export-msg" role="status" aria-live="polite"></p>' +
+        '<div class="staxx-buttons staxx-buttons--inline">' +
+          '<button type="button" class="staxx-btn" id="staxx-export-cancel">Cancel</button>' +
+          '<button type="button" class="staxx-btn" id="staxx-export-back" hidden>Back</button>' +
+          '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-export-next">Next</button>' +
+        '</div>' +
+      '</div>';
+    // .staxx-btn and friends are only styled inside .staxx-scaffold — every
+    // other dialog on this page sits there too, just further up the same
+    // markup this script never touches, so this is appended to the same
+    // container rather than to <body>, where it would render frameless but
+    // unstyled.
+    (document.querySelector('.staxx-scaffold') || document.body).appendChild(exportModal);
+
+    exportModal.querySelector('#staxx-export-cancel').addEventListener('click', closeExportModal);
+    exportModal.querySelector('#staxx-export-back').addEventListener('click', function () {
+      renderExportScreen(1);
+    });
+    exportModal.querySelector('#staxx-export-next').addEventListener('click', onExportNext);
+    exportModal.addEventListener('close', function () { exportState = null; });
+
+    // Same backdrop hit-test every other <dialog> on this page uses — a
+    // click on the element itself, outside its own box, is a backdrop click.
+    exportModal.addEventListener('click', function (event) {
+      if (event.target !== exportModal || (exportState && exportState.busy)) return;
+      var r = exportModal.getBoundingClientRect();
+      if (event.clientX < r.left || event.clientX > r.right ||
+          event.clientY < r.top  || event.clientY > r.bottom) closeExportModal();
+    });
+    exportModal.addEventListener('cancel', function (event) {
+      if (exportState && exportState.busy) event.preventDefault();
+    });
+
+    exportModal.querySelector('#staxx-export-body').addEventListener('change', onExportBodyChange);
+    exportModal.querySelector('#staxx-export-body').addEventListener('click', onExportBodyClick);
+
+    return exportModal;
+  }
+
+  function closeExportModal() {
+    var el = exportDialogEl();
+    if (el.open) el.close();
+    exportState = null;
+  }
+
+  function exportSetMsg(text) {
+    var el = exportDialogEl().querySelector('#staxx-export-msg');
+    el.textContent = text || '';
+  }
+
+  function openExportModal(name, label) {
+    var el = exportDialogEl();
+    el.querySelector('#staxx-export-title').textContent = 'Export "' + label + '"';
+    el.querySelector('#staxx-export-body').innerHTML = '<p>Loading…</p>';
+    exportSetMsg('');
+    el.querySelector('#staxx-export-next').disabled = true;
+    if (!el.open) el.showModal();
+
+    exportState = {
+      stackName: name, label: label, screen: 1, busy: false,
+      composeName: '', composeText: '', fingerprint: '', doc: null, form: null,
+      files: [], envEntry: null, envText: null, envNames: [],
+      valuesTicked: {}, envTicked: {}, secretEnvNames: []
+    };
+
+    Promise.all([
+      call('read', { name: name }),
+      call('export-sort', { name: name })
+    ]).then(function (results) {
+      if (exportState === null) return;   // closed while this was in flight
+      var readRes = results[0], sortRes = results[1];
+      if (!readRes.ok) { failed('Could not open ' + label, readRes.error); closeExportModal(); return; }
+      if (!sortRes.ok) { failed('Could not list ' + label + '’s files', sortRes.error); closeExportModal(); return; }
+
+      exportState.composeText = readRes.body;
+      exportState.fingerprint = readRes.fingerprint;
+      exportState.doc  = YAML.parse(readRes.body);
+      exportState.form = YAML.buildForm(exportState.doc, netDrivers());
+      exportState.secretEnvNames = (YAML.secretEnvNames && YAML.secretEnvNames(exportState.form)) || [];
+
+      exportState.files = (sortRes.files || []).map(function (f) {
+        return {
+          name: f.name, kind: f.kind, size: f.size, why: f.why,
+          needed: !!f.needed, needed_why: f.needed_why || '',
+          shown: false, content: null
+        };
+      });
+      var composeEntry = exportState.files.filter(function (f) {
+        return f.kind === 'redactable' && f.name !== '.env';
+      })[0];
+      exportState.envEntry = exportState.files.filter(function (f) {
+        return f.kind === 'redactable' && f.name === '.env';
+      })[0] || null;
+      if (composeEntry) {
+        exportState.composeName = composeEntry.name;
+        composeEntry.ticked = true; // the compose file, forced on
+      }
+
+      exportState.form.fields.forEach(function (f) {
+        if (f.locked || f.absent || f.blocked) return;
+        if (!exportFieldHasSpot(f)) return;
+        exportState.valuesTicked[f.id] = !!f.sensitive;
+      });
+
+      el.querySelector('#staxx-export-next').disabled = false;
+      renderExportScreen(1);
+    }, function () {
+      failed('Could not open ' + label, 'The request could not be completed.');
+      closeExportModal();
+    });
+  }
+
+  function exportFieldHasSpot(f) {
+    var parts = f.parts || {};
+    return Object.keys(parts).some(function (k) {
+      return k !== 'name' && parts[k] && parts[k].spot;
+    });
+  }
+
+  /* ---- screen 1: the two ticklists --------------------------------- */
+
+  function exportFileRowHtml(f) {
+    var needed = f.needed ? '<span class="staxx-export-needed" title="' + esc(f.needed_why) +
+      '">this stack needs it</span>' : '';
+    var isCompose = f.name === exportState.composeName;
+    var box;
+    if (f.kind === 'refused') {
+      box = '<span class="staxx-export-refused-mark" aria-hidden="true">—</span>';
+    } else if (isCompose) {
+      box = '<input type="checkbox" checked disabled>';
+    } else {
+      var checked = !!f.ticked;
+      // Disabled until the content has actually loaded on screen, not merely
+      // requested — clicking "Show contents" must not itself unlock the tick
+      // a heartbeat before there is anything to have looked at.
+      var disabled = f.kind === 'read' && f.content === null;
+      box = '<input type="checkbox" data-file="' + esc(f.name) + '"' +
+            (checked ? ' checked' : '') + (disabled ? ' disabled' : '') + '>';
+    }
+    var showBtn = (f.kind === 'read')
+      ? ' <button type="button" class="staxx-btn staxx-btn--small" data-show-file="' +
+        esc(f.name) + '">' + (f.shown ? 'Hide contents' : 'Show contents') + '</button>'
+      : '';
+    var html = '<li class="staxx-export-row' + (f.kind === 'refused' ? ' staxx-export-row--refused' : '') + '">' +
+      '<label class="staxx-export-row-main">' + box + ' <code>' + esc(f.name) + '</code> ' +
+      '<span class="staxx-export-size">' + bytes(f.size) + '</span> ' + needed + '</label>' + showBtn +
+      '<p class="staxx-export-why">' + esc(f.why) + '</p>';
+    if (f.kind === 'read' && f.shown) html += exportFileContentHtml(f);
+    html += '</li>';
+    return html;
+  }
+
+  // No line here is ever allowed to read as "checked, nothing to see" — see
+  // exportLineLooksSecret()'s own comment for why that certainty is the one
+  // thing this must never offer.
+  function exportFileContentHtml(f) {
+    if (f.content === null) return '<div class="staxx-export-content">Loading…</div>';
+    var lines = f.content.split('\n').map(function (line) {
+      var cls = exportLineLooksSecret(line) ? ' class="staxx-export-secretline"' : '';
+      return '<div' + cls + '>' + esc(line) + '</div>';
+    }).join('');
+    return '<div class="staxx-export-content"><p class="staxx-export-hint">' +
+      'Lines below that look like they might carry a password, a key or a long random value are ' +
+      'marked — that only means "look here", never that the rest is safe.</p>' +
+      '<pre class="staxx-export-pre">' + lines + '</pre></div>';
+  }
+
+  function exportFilesHtml() {
+    // The compose file is always first — it is the one entry that can never
+    // be turned off, so it reads as the anchor the rest of the list hangs
+    // off, not as one more row a person has to hunt for.
+    var ordered = exportState.files.slice().sort(function (a, b) {
+      if (a.name === exportState.composeName) return -1;
+      if (b.name === exportState.composeName) return 1;
+      return 0;
+    });
+    return '<ul class="staxx-export-list">' + ordered.map(exportFileRowHtml).join('') + '</ul>';
+  }
+
+  function exportValueRowHtml(f) {
+    var checked = !!exportState.valuesTicked[f.id];
+    var badge = f.sensitive ? '<span class="staxx-export-secret-badge">marked secret</span>' : '';
+    var label = (f.service ? f.service + ': ' : '') + (f.title || f.target);
+    return '<li><label><input type="checkbox" data-value-id="' + esc(f.id) + '"' +
+      (checked ? ' checked' : '') + '> ' + esc(label) + '</label> ' + badge + '</li>';
+  }
+
+  function exportEnvRowHtml(name) {
+    var checked = exportState.envTicked[name] !== false; // every entry starts ticked
+    var certain = exportState.secretEnvNames.indexOf(name) !== -1;
+    var badge = certain ? '<span class="staxx-export-secret-badge">certainly secret</span>' : '';
+    return '<li><label><input type="checkbox" data-env-name="' + esc(name) + '"' +
+      (checked ? ' checked' : '') + '> <code>' + esc(name) + '</code></label> ' + badge + '</li>';
+  }
+
+  function exportValuesHtml() {
+    var rows = exportState.form.fields.filter(function (f) {
+      return !f.locked && !f.absent && !f.blocked && exportFieldHasSpot(f);
+    }).map(function (f) { return exportValueRowHtml(f); }).join('');
+    var html = '<div class="staxx-export-values"><h4>Compose settings</h4><ul class="staxx-export-list">' +
+      rows + '</ul></div>';
+
+    var envEntry = exportState.envEntry;
+    if (envEntry && envEntry.ticked) {
+      if (exportState.envText === null) {
+        html += '<div class="staxx-export-values"><h4>.env entries</h4><p>Loading…</p></div>';
+      } else {
+        html += '<div class="staxx-export-values"><h4>.env entries</h4>' +
+          '<p>A .env file exists to hold what differs between machines, so every entry starts ' +
+          'ticked — untick anything that is genuinely safe to share as-is.</p>' +
+          '<ul class="staxx-export-list">' + exportState.envNames.map(exportEnvRowHtml).join('') + '</ul></div>';
+      }
+    }
+    return html;
+  }
+
+  function exportScreen1Html() {
+    return '<div class="staxx-export-section"><h4>Files</h4>' +
+      '<p>The compose file always goes. Anything else here is your call.</p>' +
+      exportFilesHtml() + '</div>' +
+      '<div class="staxx-export-section">' + exportValuesHtml() + '</div>';
+  }
+
+  // A NAME=VALUE line the same way redactEnv() reads one — this only
+  // enumerates names for the ticklist; the actual rewrite still goes
+  // through YAML.redactEnv() itself, so there is exactly one place that
+  // decides what a line in a .env "is".
+  var EXPORT_ENV_LINE_RE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=/;
+
+  function exportEnvNamesOf(text) {
+    var names = [];
+    String(text || '').split('\n').forEach(function (line) {
+      var trimmed = line.replace(/^\s+/, '');
+      if (trimmed === '' || trimmed.charAt(0) === '#') return;
+      var m = EXPORT_ENV_LINE_RE.exec(line);
+      if (m) names.push(m[1]);
+    });
+    return names;
+  }
+
+  function exportLoadEnv() {
+    var envEntry = exportState.envEntry;
+    call('file-read', { name: exportState.stackName, file: envEntry.name }).then(function (res) {
+      if (exportState === null) return;
+      if (!res || !res.ok || res.binary) {
+        exportState.envText = '';
+        exportState.envNames = [];
+      } else {
+        exportState.envText = res.text || '';
+        exportState.envNames = exportEnvNamesOf(exportState.envText);
+        exportState.envNames.forEach(function (n) {
+          if (!(n in exportState.envTicked)) exportState.envTicked[n] = true;
+        });
+      }
+      renderExportScreen(1);
+    });
+  }
+
+  function exportShowFile(name) {
+    var f = exportState.files.filter(function (x) { return x.name === name; })[0];
+    if (!f) return;
+    if (f.shown) { f.shown = false; renderExportScreen(1); return; }
+    f.shown = true;
+    if (f.content !== null) { renderExportScreen(1); return; }
+    renderExportScreen(1);
+    call('file-read', { name: exportState.stackName, file: name }).then(function (res) {
+      if (exportState === null) return;
+      var target = exportState.files.filter(function (x) { return x.name === name; })[0];
+      if (!target) return;
+      target.content = (res && res.ok && !res.binary) ? (res.text || '') : '';
+      renderExportScreen(1);
+    });
+  }
+
+  function onExportBodyClick(event) {
+    var btn = event.target.closest('[data-show-file]');
+    if (btn) exportShowFile(btn.getAttribute('data-show-file'));
+  }
+
+  function onExportBodyChange(event) {
+    var el = event.target;
+    if (el.matches('[data-file]')) {
+      var name = el.getAttribute('data-file');
+      var f = exportState.files.filter(function (x) { return x.name === name; })[0];
+      if (!f) return;
+      f.ticked = el.checked;
+      if (f === exportState.envEntry && f.ticked && exportState.envText === null) exportLoadEnv();
+      renderExportScreen(1);
+      return;
+    }
+    if (el.matches('[data-value-id]')) {
+      exportState.valuesTicked[el.getAttribute('data-value-id')] = el.checked;
+      return;
+    }
+    if (el.matches('[data-env-name]')) {
+      exportState.envTicked[el.getAttribute('data-env-name')] = el.checked;
+    }
+  }
+
+  /* ---- screen 2: what is about to leave ------------------------------ */
+
+  function exportBuildSummary() {
+    var pickValue = function (f, partKey) {
+      return partKey !== 'name' && !!exportState.valuesTicked[f.id];
+    };
+    var report = [];
+    var composeOut = YAML.redactText(exportState.composeText, exportState.form.fields,
+      { pick: pickValue, placeholder: 'REPLACE-ME', report: report });
+
+    var envOut = null, envReport = [];
+    if (exportState.envEntry && exportState.envEntry.ticked) {
+      envOut = YAML.redactEnv(exportState.envText || '', function (name) {
+        return exportState.envTicked[name] !== false;
+      }, { placeholder: 'REPLACE-ME', report: envReport });
+    }
+
+    var goingNames = [exportState.composeName];
+    if (exportState.envEntry && exportState.envEntry.ticked) goingNames.push(exportState.envEntry.name);
+    exportState.files.forEach(function (f) {
+      if (f.kind === 'read' && f.ticked) goingNames.push(f.name);
+    });
+
+    var notGoing = exportState.files.filter(function (f) {
+      return goingNames.indexOf(f.name) === -1;
+    }).map(function (f) {
+      return { name: f.name, why: f.kind === 'refused' ? f.why : 'left out by choice' };
+    });
+
+    var markedSensitive = exportState.form.fields.filter(function (f) {
+      return !f.locked && !f.absent && !f.blocked && exportFieldHasSpot(f) &&
+             exportState.valuesTicked[f.id] && !f.sensitive;
+    });
+
+    return {
+      composeOut: composeOut, envOut: envOut,
+      blanked: report.concat(envReport.map(function (n) { return '.env: ' + n; })),
+      goingNames: goingNames, notGoing: notGoing, markedSensitive: markedSensitive
+    };
+  }
+
+  function exportScreen2Html(summary) {
+    var going = '<ul class="staxx-confirm-list">' + summary.goingNames.map(function (n) {
+      return '<li><code>' + esc(n) + '</code></li>';
+    }).join('') + '</ul>';
+
+    var notGoing = summary.notGoing.length
+      ? '<ul class="staxx-confirm-list">' + summary.notGoing.map(function (e) {
+          return '<li><code>' + esc(e.name) + '</code><span class="staxx-confirm-meta">' +
+                 esc(e.why) + '</span></li>';
+        }).join('') + '</ul>'
+      : '<p>Nothing was left out.</p>';
+
+    var blanked = summary.blanked.length
+      ? '<ul class="staxx-confirm-list">' + summary.blanked.map(function (b) {
+          return '<li>' + esc(b) + '</li>';
+        }).join('') + '</ul>'
+      : '<p>Nothing needed blanking.</p>';
+
+    var marked = summary.markedSensitive.length
+      ? '<p>These are also being marked secret in this stack’s own compose file, so the next export ' +
+        'starts correct: ' + summary.markedSensitive.map(function (f) {
+          return esc((f.service ? f.service + ': ' : '') + (f.title || f.target));
+        }).join(', ') + '.</p>'
+      : '';
+
+    return '<div class="staxx-export-section"><h4>Going</h4>' + going + '</div>' +
+      '<div class="staxx-export-section"><h4>Left behind, and why</h4>' + notGoing + '</div>' +
+      '<div class="staxx-export-section"><h4>Values blanked</h4>' + blanked + '</div>' +
+      marked +
+      '<p>Nothing is written until Export is pressed.</p>';
+  }
+
+  function renderExportScreen(n) {
+    if (exportState === null) return;
+    exportState.screen = n;
+    var el = exportDialogEl();
+    var back = el.querySelector('#staxx-export-back');
+    var next = el.querySelector('#staxx-export-next');
+    if (n === 1) {
+      el.querySelector('#staxx-export-body').innerHTML = exportScreen1Html();
+      back.hidden = true;
+      next.textContent = 'Next';
+    } else {
+      exportState.summary = exportBuildSummary();
+      el.querySelector('#staxx-export-body').innerHTML = exportScreen2Html(exportState.summary);
+      back.hidden = false;
+      next.textContent = 'Export';
+    }
+  }
+
+  /* ---- the write ------------------------------------------------------ */
+
+  // The covering note that rides inside the compose file itself, since the
+  // whole point of a paste route is that only the text survives the trip —
+  // a separate file would never reach the other end. No machine name, no
+  // user, no address: what this is, when, and what was taken out and why.
+  function exportNoteBlock(summary) {
+    var when = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+    var lines = ['# Exported by StaXX on ' + when + ', from the stack "' + exportState.label + '".', '#'];
+    if (summary.blanked.length) {
+      lines.push('# Values blanked — replace REPLACE-ME with your own before this will start:');
+      summary.blanked.forEach(function (b) { lines.push('#   ' + b); });
+    } else {
+      lines.push('# No values needed blanking.');
+    }
+    if (summary.notGoing.length) {
+      lines.push('#');
+      lines.push('# Files left behind, and why:');
+      summary.notGoing.forEach(function (e) { lines.push('#   ' + e.name + ' — ' + e.why); });
+    }
+    lines.push('#');
+    lines.push('# Once nothing here still reads REPLACE-ME, this block can be deleted.');
+    return lines.join('\n') + '\n\n';
+  }
+
+  // Marks a value sensitive in the stack's OWN file, through the same
+  // mechanism the form already uses — automatic, nothing to accept or
+  // refuse, but named in the summary already on screen so it is told
+  // rather than sprung. Only a compose setting can carry the mark; a .env
+  // entry has nowhere to put one, so those ticks are never written back.
+  function exportWriteBackMarks(summary) {
+    if (!summary.markedSensitive.length) return Promise.resolve();
+    var wrote = false;
+    summary.markedSensitive.forEach(function (f) {
+      if (YAML.setComment(exportState.doc, exportState.form, f.id, f.note || '', true, !!f.required)) {
+        wrote = true;
+      }
+    });
+    if (!wrote) return Promise.resolve();
+    return call('save', {
+      name: exportState.stackName, body: YAML.serialise(exportState.doc),
+      'new': '0', fingerprint: exportState.fingerprint
+    });
+  }
+
+  function onExportNext() {
+    if (exportState === null || exportState.busy) return;
+    if (exportState.screen === 1) { renderExportScreen(2); return; }
+    finishExport();
+  }
+
+  function finishExport() {
+    var summary = exportState.summary;
+    exportState.busy = true;
+    exportSetMsg('Exporting…');
+    exportDialogEl().querySelector('#staxx-export-next').disabled = true;
+
+    var note = exportNoteBlock(summary);
+    var files = [{ name: exportState.composeName, content: note + summary.composeOut }];
+    if (exportState.envEntry && exportState.envEntry.ticked) {
+      files.push({ name: exportState.envEntry.name, content: summary.envOut });
+    }
+    exportState.files.forEach(function (f) {
+      if (f.kind === 'read' && f.ticked) files.push({ name: f.name, content: f.content || '' });
+    });
+
+    exportWriteBackMarks(summary).then(function () {
+      if (files.length === 1) {
+        triggerDownload(files[0].name, files[0].content);
+        closeExportModal();
+        return;
+      }
+      call('export-pack', { name: exportState.stackName, files: JSON.stringify(files) }, 60000)
+        .then(function (res) {
+          if (!res || !res.ok) {
+            exportState.busy = false;
+            exportDialogEl().querySelector('#staxx-export-next').disabled = false;
+            exportSetMsg((res && res.error) || 'Could not build the zip.');
+            return;
+          }
+          triggerDownload(res.filename, base64ToBytes(res.zip));
+          closeExportModal();
+        }, exportFailed);
+    }, exportFailed);
+  }
+
+  // Every step of the write is a request that can fail, and a dialog left
+  // saying "Exporting…" with no way on is worse than one that says what went
+  // wrong — so both the write-back and the packing hand their failure here
+  // rather than leaving the promise chain to end silently. Nothing has left
+  // the machine at this point, so the way out is simply to try again.
+  function exportFailed(err) {
+    if (exportState === null) return;
+    exportState.busy = false;
+    exportDialogEl().querySelector('#staxx-export-next').disabled = false;
+    exportSetMsg((err && err.message) || 'The export did not finish. Try it again.');
+  }
+
   // Unlocking is just deleting the lock file — the same companion-file
   // delete action the editor already uses, so there is nothing new on the
   // endpoint to guard or test. This is the lesser option on a review-locked
@@ -20967,6 +21503,12 @@
       // editor first. Replaces the old per-service "Find the project
       // link…" item, which only ever wrote two of the fields this covers.
       menuItem('Fill in details…', 'magic', function () { runDetailLookup(name, label); });
+      // PLAN_76/98 — a copy of this stack with the personal parts taken
+      // out, for handing to somebody else. Sits with the other things that
+      // produce a file rather than change one, so it is grouped with
+      // Remove stack (which produces the archive zip) rather than up with
+      // the run verbs.
+      menuItem('Export…', 'share-square-o', function () { openExportModal(name, label); });
     }
 
     // The section shows even with no folders yet — "New folder" is what it is
