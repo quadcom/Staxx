@@ -1569,8 +1569,15 @@
   // editor's marks (applyClashAdvice() below) and the start guard (run()),
   // so the rule lives in exactly one place. `ownProject` drops a taken fact
   // that belongs to this very stack's own (possibly stopped-but-not-removed)
-  // container — starting a stack is never a clash with itself.
-  function findClashes(text, ownProject) {
+  // container — starting a stack is never a clash with itself. `netKindOf`
+  // is a plain {service name: netKind} map — see buildForm() in
+  // compose-model.js, the one place the bridge/host/other rule is decided.
+  // It is only ever consulted for ports: a macvlan/ipvlan ('other') service
+  // gets its own address, so docker does no port binding on it and a taken
+  // port can never really be its; a bind-mount path is unaffected, since the
+  // container still writes to the same disk regardless of which network it
+  // is on.
+  function findClashes(text, ownProject, netKindOf) {
     var out = [];
     if (!YAML || typeof YAML.hostPorts !== 'function') return out;
     // Docker's own compose-project label is the answer where a container
@@ -1584,14 +1591,22 @@
     // Manager plugin, still join them with '_'. A stack named the second way
     // would otherwise see every one of its own ports and paths reported as a
     // clash with itself.
+    //
+    // Neither pattern catches a container_name set outright with no project
+    // label at all (an Unraid-template stack such as Database/mariadb) — a
+    // name docker itself will never let a second container reuse, so a file
+    // that declares it is the only thing that can be running it.
+    var ownNames = typeof YAML.containerNames === 'function' ? YAML.containerNames(text) : [];
     var isOwn = function (t) {
+      var container = t.container || '';
+      if (ownNames.indexOf(container) !== -1) return true;
       if (!ownProject) return false;
       if (t.project) return t.project === ownProject;
-      var container = t.container || '';
       return container.indexOf(ownProject + '-') === 0 ||
              container.indexOf(ownProject + '_') === 0;
     };
     YAML.hostPorts(text).forEach(function (p) {
+      if (netKindOf && netKindOf[p.service] === 'other') return;
       TAKEN.ports.forEach(function (t) {
         if (isOwn(t) || t.proto !== p.proto || !portsOverlap(p.port, t.port)) return;
         out.push({ kind: 'port', line: p.line, col: p.col, len: p.len,
@@ -1605,6 +1620,16 @@
                    mine: p.path, container: t.container });
       });
     });
+    return out;
+  }
+
+  // Turns a buildForm() result's services list into the {service name:
+  // netKind} map findClashes() wants — one place to build it so the three
+  // call sites (the live editor, and the two start guards) never repeat the
+  // shape of form.services themselves.
+  function netKindMap(services) {
+    var out = {};
+    (services || []).forEach(function (s) { out[s.name] = s.netKind; });
     return out;
   }
 
@@ -1654,6 +1679,16 @@
     tz:     { icon: 'globe',         title: 'Choose a timezone from a map',   label: 'Choose a timezone' },
     device: { icon: 'plug',          title: 'Choose a device on this server', label: 'Choose a device' }
   };
+
+  // Whether a variable's value box should carry the timezone globe — a
+  // single test used both when the row is first drawn and by
+  // refreshRanges() below, which has to reach the same answer as an edit
+  // renames the variable without a full redraw. One place for the rule
+  // means renaming TZ to something else, or the other way round, is never
+  // read differently by the two call sites.
+  function isTzField(f) {
+    return f.binder === 'env' && /^(tz|timezone)$/i.test(f.target);
+  }
 
   // Settings whose value is one of a fixed few, so the box is a list to pick
   // from rather than something to spell correctly. Keyed by binder and target,
@@ -3326,8 +3361,7 @@
                 f.binder === 'label' ? 'label name' : 'variable name'));
       // Nearly every image takes one of these, and it has to be an IANA
       // name — getting it wrong is quiet, and every log line is hours out.
-      bits.push(boxHtml(f, index, 'value', 'value',
-                f.binder === 'env' && /^(tz|timezone)$/i.test(f.target) ? 'tz' : ''));
+      bits.push(boxHtml(f, index, 'value', 'value', isTzField(f) ? 'tz' : ''));
       bits.push(noteBoxHtml(f, index));
     } else if (f.binder === 'list') {
       // A plain list entry is one whole value with no second half to pair it
@@ -4219,7 +4253,11 @@
 
     // fileOpen !== null means a companion file is on screen — it has no
     // ports or volumes of its own, the same guard checkHostPaths() uses.
-    var hits = fileOpen === null ? findClashes(currentText(), projectForStack(openedName)) : [];
+    // MODEL.services already carries netKind (buildForm() computed it when
+    // the form was built), so this costs nothing extra on an edit pass.
+    var hits = fileOpen === null
+      ? findClashes(currentText(), projectForStack(openedName), netKindMap(MODEL.services))
+      : [];
     hits.forEach(function (h) {
       var f = fieldAtSpot(h.line, h.col);
       if (f) f.clashAdvice = h;
@@ -5497,6 +5535,30 @@
       if (advice) {
         advice.innerHTML = adviceText(f);
         advice.hidden = !advice.innerHTML;
+      }
+
+      // Which tool a value box carries is otherwise decided only at render
+      // time (boxHtml(), called from the row builder), so typing "TZ" into
+      // the name box next to it would not grow the globe button until the
+      // whole form redraws — which a form edit never does, on purpose (see
+      // the comment above this function). Bring the button into line here
+      // instead, without touching the box or the caret inside it.
+      var valueBox = rows[i].querySelector('.staxx-box--value .staxx-boxline');
+      if (valueBox) {
+        var valueInput = valueBox.querySelector('[data-part="value"]');
+        var wantTz = isTzField(f) && valueInput && !valueInput.disabled;
+        var tzBtn = valueBox.querySelector('[data-tool="tz"]');
+        if (wantTz && !tzBtn) {
+          var tzTool = TOOLS.tz;
+          valueBox.insertAdjacentHTML('beforeend',
+            '<button type="button" class="staxx-browse" data-tool="tz" data-row="' + rows[i].dataset.row + '"' +
+                 ' title="' + esc(tzTool.title) + '">' +
+              '<i class="fa fa-' + tzTool.icon + '" aria-hidden="true"></i>' +
+              '<span class="staxx-sr">' + esc(tzTool.label) + '</span>' +
+            '</button>');
+        } else if (!wantTz && tzBtn) {
+          tzBtn.remove();
+        }
       }
     }
     activeField = null;
@@ -12617,6 +12679,15 @@
     var out = [], seen = {};
     fileRefsSafe().forEach(function (r) {
       var name = r.file;
+      // An icon is named here so the tab strip can say which service uses a
+      // picture in the folder — but it is never reported as MISSING, because
+      // an icon value that names no file is not a mistake: "jellyfin", and
+      // "alpine-linux.svg" too, are names from the icon collection, resolved
+      // by the server against the shared cache rather than this folder. Only
+      // the server knows which of the four accepted shapes a value turned out
+      // to be, so guessing here would warn about most stacks on the machine.
+      if (r.where === 'icon') return;
+
       // "." and "../..." are outside this folder's business (build's own
       // "context: ." means the stack folder itself); a leading ".." is the
       // same idea one level up.
@@ -12627,8 +12698,14 @@
         // FILES only lists one level down. A directory by that first name
         // existing is as far as this can see — reporting anything past it
         // would be a guess, and a wrong guess here is worse than no answer.
-        var head = byName[name.slice(0, slash)];
-        if (head && head.dir) return;
+        //
+        // .staxx is the one exception: the server deliberately leaves it out
+        // of that listing (it is the stack's own hidden bookkeeping, not a
+        // file for a person to see), so its absence from FILES says nothing
+        // about whether a reference inside it — an adopted icon, say — is
+        // really there.
+        var head = name.slice(0, slash);
+        if (head === '.staxx' || (byName[head] && byName[head].dir)) return;
       } else if (byName[name]) {
         return;   // present, file or directory either one
       }
@@ -15231,7 +15308,10 @@
   function run(name, verb, done, service) {
     if (verb !== 'up') { runNow(name, verb, done, service); return; }
     call('read', { name: name }).then(function (res) {
-      var clashes = res && res.ok ? findClashes(res.body, projectForStack(name)) : [];
+      // One parse at click time to get netKind — same rule buildForm() uses
+      // everywhere else, not a second copy of it here.
+      var netKindOf = res && res.ok ? netKindMap(YAML.buildForm(YAML.parse(res.body), netDrivers()).services) : {};
+      var clashes = res && res.ok ? findClashes(res.body, projectForStack(name), netKindOf) : [];
       if (!clashes.length) { runNow(name, verb, done, service); return; }
       confirmClash(clashes, function () { runNow(name, verb, done, service); });
     });
@@ -18028,8 +18108,11 @@
     var rows = exportState.form.fields.filter(function (f) {
       return !f.locked && !f.absent && !f.blocked && exportFieldHasSpot(f);
     }).map(function (f) { return exportValueRowHtml(f); }).join('');
-    var html = '<div class="staxx-export-values"><h4>Compose settings</h4><ul class="staxx-export-list">' +
-      rows + '</ul></div>';
+    var html = '<div class="staxx-export-values"><h4>Compose settings</h4>' +
+      '<p>Tick anything whose value should not leave this server. The setting itself still ' +
+      'goes, carrying REPLACE-ME instead of the value for whoever opens it to fill in. Anything ' +
+      'this compose file already marks secret starts ticked.</p>' +
+      '<ul class="staxx-export-list">' + rows + '</ul></div>';
 
     var envEntry = exportState.envEntry;
     if (envEntry && envEntry.ticked) {
@@ -21836,7 +21919,9 @@
     Promise.all(stackNames.map(function (name) {
       return call('read', { name: name }).then(function (res) {
         if (!res || !res.ok) return [];
-        return findClashes(res.body, projectForStack(name)).map(function (c) {
+        // Same one-parse-at-click-time approach as run()'s own start guard.
+        var netKindOf = netKindMap(YAML.buildForm(YAML.parse(res.body), netDrivers()).services);
+        return findClashes(res.body, projectForStack(name), netKindOf).map(function (c) {
           c.stack = name;
           return c;
         });

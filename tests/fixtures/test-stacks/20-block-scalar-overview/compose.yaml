@@ -1,0 +1,20 @@
+# A root x-unraid.overview written as a block scalar, the shape the "fill in
+# this stack's details" chooser used to refuse outright — see replaceScalarAt()
+# in compose-model.js. Publishes nothing: what this tests is the metadata
+# rewrite, not anything that runs.
+
+name: block-scalar-overview
+
+x-unraid:
+  version: 1
+  category: Tools:Utilities
+  overview: |
+    A plain Alpine container that sits and does nothing.
+    Exists only so the block-scalar overview above has somewhere
+    real to sit, comments and all.
+
+services:
+  quiet:
+    image: alpine:latest
+    container_name: block-scalar-overview
+    command: ["sleep", "infinity"]        # never exits, never listens

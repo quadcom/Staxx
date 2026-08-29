@@ -486,10 +486,18 @@ function staxx_icon_url(string $ref): string {
 }
 
 /**
- * PLAN_86 — copy an already-cached icon into a stack's own folder, so the
- * picture travels with the compose file instead of living only in the shared
- * plugin cache. Returns the filename written (e.g. 'cloudbeaver.png'), or ''
- * with $error set to a sentence.
+ * PLAN_86 — copy an already-cached icon into the stack's own hidden record
+ * folder, so the picture travels with the compose file instead of living
+ * only in the shared plugin cache. Returns the relative path written (e.g.
+ * './.staxx/cloudbeaver.png') for use as the compose file's icon: value, or
+ * '' with $error set to a sentence.
+ *
+ * It has to be a path, not a bare filename: a compose file reading
+ * `icon: mariadb.svg` states that the picture sits beside it, which is a lie
+ * to anyone reading the YAML — or any tool that is not StaXX — once the
+ * picture actually lives in a subfolder. Keeping the file out of the stack's
+ * top level also stops it showing up as an editable tab next to the compose
+ * file in the YAML editor, which is not where an adopted picture belongs.
  *
  * Never fetches anything — the icon must already be in STAXX_ICON_SERVE or
  * the icon store, found the same way staxx_icon_url() looks for one. Safe
@@ -520,15 +528,22 @@ function staxx_icon_adopt(string $ref, string $dir, string &$error): string {
     return '';
   }
 
-  $file   = $ref.'.'.$ext;
-  $target = $dir.'/'.$file;
+  // The picture goes in the stack's own hidden record folder rather than
+  // beside the compose file — a stack edited for the first time may not
+  // have one yet, so staxx_icon_write() below creates it as part of writing
+  // the file (same as it creates any other missing directory).
+  $recordDir = $dir.'/'.STAXX_RECORD_DIR;
+  $file      = $ref.'.'.$ext;
+  $target    = $recordDir.'/'.$file;
+  $relative  = './'.STAXX_RECORD_DIR.'/'.$file;
 
   if (is_file($target)) {
     // Already there. Identical contents is a no-op success — this has to be
     // safe to run twice — but different contents is left alone: it is not
     // this plugin's picture to overwrite.
-    if (md5_file($target) === md5_file($source)) return $file;
-    $error = 'A different file already exists at that name in the stack folder.';
+    if (md5_file($target) === md5_file($source)) return $relative;
+    $error = 'A different picture is already saved under that name for this stack. '
+           . 'Rename the icon, or remove the one already there, and try again.';
     return '';
   }
 
@@ -536,7 +551,7 @@ function staxx_icon_adopt(string $ref, string $dir, string &$error): string {
   if ($body === false) { $error = 'The cached icon could not be read.'; return ''; }
   if (!staxx_icon_write($target, $body)) { $error = 'The icon could not be written to the stack folder.'; return ''; }
 
-  return $file;
+  return $relative;
 }
 
 /**

@@ -9856,6 +9856,79 @@ console.log('\nAO. PLAN_84 phase 1 — duplicate refusal, replace-in-place, top-
      JSON.stringify({ warnings: reparsed.warnings, unreadTail: reparsed.unreadTail }));
 })();
 
+/* =========================================================================
+ * AP — replaceScalarAt() over a block scalar. A block scalar (`key: |` /
+ *      `key: >`) parses to an 'opaque' node, the same shape an anchor, alias
+ *      or flow value gets — but its start/end mark its whole extent exactly,
+ *      so it is the one opaque reason replaceRootNested/replaceNested may
+ *      now overwrite. Every other opaque reason must stay refused.
+ * ========================================================================= */
+
+console.log('\nAP. replaceScalarAt() accepts a block scalar, refuses every other opaque reason');
+
+(function () {
+  // The real fixture: comments before and after the block, another
+  // x-unraid key alongside it, and a service below — all of it must survive
+  // byte for byte.
+  var file = path.join(ROOT, 'tests/fixtures/test-stacks/20-block-scalar-overview/compose.yaml');
+  if (!fs.existsSync(file)) { ok('20-block-scalar-overview present', false, 'file missing'); return; }
+
+  var src = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  var doc = Y.parse(src);
+  var done = Y.replaceRootNested(doc, null, ['x-unraid', 'overview'], 'One line.');
+  ok('replaceRootNested reports success over a block scalar', done === true, done);
+
+  var got = Y.serialise(doc);
+  var wantLines = src.split('\n').filter(function (l) {
+    return l.indexOf('A plain Alpine container') < 0 &&
+           l.indexOf('Exists only so the block-scalar') < 0 &&
+           l.indexOf('real to sit, comments and all.') < 0;
+  }).map(function (l) {
+    return l === '  overview: |' ? '  overview: One line.' : l;
+  });
+  var want = wantLines.join('\n');
+  ok('the block collapses to one line, everything else byte-identical',
+     got === want, firstDiff(want, got));
+
+  var reparsed = Y.parse(got);
+  ok('the result re-parses clean — no warnings, no unread tail',
+     reparsed.warnings.length === 0 && !reparsed.unreadTail,
+     JSON.stringify({ warnings: reparsed.warnings, unreadTail: reparsed.unreadTail }));
+})();
+
+(function () {
+  // An anchor in the same position stays refused — replacing it could
+  // change what a DIFFERENT part of the file resolves to, unlike a block
+  // scalar's self-contained extent.
+  var src = 'x-unraid:\n  overview: &shared |\n    shared text\n' +
+            'services:\n  web:\n    image: nginx\n    overview: *shared\n';
+  var doc = Y.parse(src);
+  var done = Y.replaceRootNested(doc, null, ['x-unraid', 'overview'], 'nope');
+  ok('an anchored block scalar is still refused', done === false, done);
+  ok('the file is byte-identical after the refusal', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // A flow value in the same position stays refused too.
+  var src = 'x-unraid:\n  overview: [a, b, c]\nservices:\n  web:\n    image: nginx\n';
+  var doc = Y.parse(src);
+  var done = Y.replaceRootNested(doc, null, ['x-unraid', 'overview'], 'nope');
+  ok('a flow value is still refused', done === false, done);
+  ok('the file is byte-identical after the refusal', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // The stale-spot guard still catches a block scalar moved underneath the
+  // caller since it was read — same PLAN_66 hazard, sized for a span of
+  // lines rather than one.
+  var src = 'x-unraid:\n  overview: |\n    one\n    two\nservices:\n  web:\n    image: nginx\n';
+  var doc = Y.parse(src);
+  doc.lines[2] = '    moved underneath';
+  var done = Y.replaceRootNested(doc, null, ['x-unraid', 'overview'], 'nope');
+  ok('a block scalar that moved underneath the caller is refused', done === false, done);
+  ok('doc.staleWrite tells the caller which of the two refusals this was', doc.staleWrite === true, doc.staleWrite);
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

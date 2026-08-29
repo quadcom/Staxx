@@ -3894,6 +3894,12 @@
    * carries the stale-spot guard (spotStale()) and sets doc.staleWrite, so a
    * file that moved underneath this since it was read is refused there, with
    * the caller able to tell that refusal apart from this one.
+   *
+   * One opaque shape is let through despite that: a block scalar (`key: |` /
+   * `key: >`). Its start/end mark its whole extent exactly, so replacing it
+   * loses nothing but the text the person chose to replace — unlike an
+   * anchor or alias, where a rewrite can change what a DIFFERENT part of the
+   * file resolves to. Every other opaque reason stays refused below.
    */
   function replaceScalarAt(doc, getPair, path, value) {
     var pair = getPair();
@@ -3903,13 +3909,47 @@
     }
     var parent = pair && pair.value && pair.value.kind === 'map' ? pair.value : null;
     var leaf = parent ? parent.pairs[path[path.length - 1]] : null;
-    if (!leaf || !leaf.value || leaf.value.kind !== 'scalar') return false;
+    if (!leaf || !leaf.value) return false;
+
+    if (leaf.value.kind === 'opaque' && leaf.value.reason === 'block-scalar') {
+      return replaceBlockScalarAt(doc, leaf, value);
+    }
+    if (leaf.value.kind !== 'scalar') return false;
 
     // Preserve the line's existing quoting style. emitScalar() only ever
     // refuses a value for carrying a line break — checked before it looks at
     // style at all — so there is no style mismatch a 'plain' retry could
     // rescue; none is attempted.
     return writeScalar(doc, scalarSpot(leaf.value), value, leaf.value.style);
+  }
+
+  // Collapses a `key: |`/`key: >` block (leaf.value.start..end, both line
+  // indices) down to one `key: value` line at the key's own indent. 'plain'
+  // is the same style a brand-new value gets from insertChild — there is no
+  // existing single line here whose quoting could be preserved instead.
+  function replaceBlockScalarAt(doc, leaf, value) {
+    var raw = emitScalar(value, 'plain', false);
+    if (raw === null) return false;
+
+    var v = leaf.value;
+    // spotStale()'s idea, sized for a multi-line span rather than one line:
+    // refuse before touching doc.lines if the block's own text has moved
+    // since it was read, the same "precondition not postcondition" reason.
+    var stale = doc.lines.slice(v.start, v.end).join('\n') !== v.raw;
+    doc.staleWrite = stale;
+    if (stale) return false;
+
+    // A comment sitting after the block indicator ("overview: |  # blurb")
+    // annotates the key, not the text being replaced, so it travels — the
+    // ordinary single-line path keeps such a comment (writeScalar preserves
+    // the rest of the line), and losing it only here would make which writer
+    // ran decide whether an author's note survived.
+    var tail = /^\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^:]+):\s*[|>][+-]?\d*(\s+#.*)$/
+                 .exec(doc.lines[v.start]);
+
+    splice(doc, v.start, v.end - v.start,
+           [pad(leaf.indent) + leaf.keyRaw + ': ' + raw + (tail ? tail[1] : '')]);
+    return true;
   }
 
   /** replaceScalarAt against a service's own x-unraid block. */
@@ -7369,16 +7409,20 @@
   }
 
   /**
-   * hostPorts(text) -> [{port, proto, line, col, len}]
+   * hostPorts(text) -> [{port, proto, line, col, len, service}]
    *
    * Every published host-side port of a service under `ports:` — `port` is
    * the number or range exactly as written (a range such as "8000-8010" is
    * returned whole, not expanded), `proto` is always 'tcp' or 'udp'/'sctp',
    * never blank. `line`/`col` are 0-based; `col` points inside any
-   * surrounding quotes. A port compose itself would pick (no host side at
-   * all) and one written as a ${...} variable (cannot be resolved without
-   * running compose) are both left out rather than guessed at — mirrors
-   * hostPaths() just above in every other respect, including never
+   * surrounding quotes. `service` is the owning service's name, already on
+   * hand from the ancestor stack below — a caller needs it to skip a port
+   * belonging to a service with its own address on a macvlan/ipvlan network,
+   * which takes no port on the server at all; that skip is the caller's own
+   * to make, not this function's. A port compose itself would pick (no host
+   * side at all) and one written as a ${...} variable (cannot be resolved
+   * without running compose) are both left out rather than guessed at —
+   * mirrors hostPaths() just above in every other respect, including never
    * parse()ing and never throwing.
    */
   function hostPorts(text) {
@@ -7410,7 +7454,8 @@
           if (r.published && isHostPortLike(r.published.text)) {
             out.push({
               port: r.published.text, proto: normalisePortProto(r.protocol),
-              line: r.published.line, col: r.published.col, len: r.published.text.length
+              line: r.published.line, col: r.published.col, len: r.published.text.length,
+              service: stack[stack.length - 2].key
             });
           }
           i = r.next - 1;
@@ -7435,12 +7480,59 @@
         if (!isHostPortLike(host)) continue;
         var lead = bits.slice(0, bits.length - 2).join(':');
         var hostCol = scanned.col + (lead ? lead.length + 1 : 0);
-        out.push({ port: host, proto: normalisePortProto(proto), line: i, col: hostCol, len: host.length });
+        out.push({
+          port: host, proto: normalisePortProto(proto), line: i, col: hostCol, len: host.length,
+          service: stack[stack.length - 2].key
+        });
       }
     } catch (e) {
       return [];
     }
     out.sort(function (a, b) { return a.line - b.line || a.col - b.col; });
+    return out;
+  }
+
+  /**
+   * containerNames(text) -> string[]
+   *
+   * Every container_name: value a service declares, in file order. Wanted
+   * for the editor's clash check: a container an Unraid template made
+   * carries no compose project label, and the docker-name fallback the
+   * check otherwise relies on only matches "<project>-" or "<project>_" —
+   * so a stack named the same as its own container (e.g. a stack "mariadb"
+   * whose container is named exactly "mariadb") reads as a stranger holding
+   * its port. Declaring the name here is proof of ownership, since docker
+   * itself enforces container-name uniqueness. Same classify()-and-
+   * ancestor-stack approach as hostPorts()/hostPaths() above, for the same
+   * reason: it must work on a file mid-edit. Never throws.
+   */
+  function containerNames(text) {
+    var out = [];
+    try {
+      text = String(text == null ? '' : text);
+      var lines = text.split('\n');
+      var stack = [];    // ancestor mapping keys enclosing the current line
+
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var c = classify(line, i);
+        if (c.kind === 'blank' || c.kind === 'comment') continue;
+
+        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
+        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
+
+        if (c.kind !== 'key') continue;
+
+        if (c.key === 'container_name' && c.valueCol >= 0 &&
+            stack.length >= 2 && stack[stack.length - 2].key === 'services') {
+          var scanned = scanEntryText(line, c.valueCol);
+          if (scanned && scanned.text !== '') out.push(scanned.text);
+        }
+        stack.push({ indent: c.indent, key: c.key });
+      }
+    } catch (e) {
+      return [];
+    }
     return out;
   }
 
@@ -8279,13 +8371,28 @@
     if (rel !== null) out.push({ file: rel, service: service, where: where });
   }
 
+  // x-unraid.icon holds a file only some of the time — a selfh.st catalogue
+  // name, a URL and a Font Awesome glyph (fa-something) are all legal values
+  // too, and none of those names a file the stack's own folder holds. Same
+  // glyph shape Icons.php's own resolver tests.
+  function isIconFileValue(s) {
+    return s != null && s !== '' && !/^https?:\/\//i.test(s) && !/^fa-[a-z0-9-]+$/i.test(s);
+  }
+
+  function pushIconRef(out, raw, service) {
+    if (!isIconFileValue(raw)) return;
+    var rel = relFile(raw);
+    if (rel !== null) out.push({ file: rel, service: service, where: 'icon' });
+  }
+
   /**
    * fileRefs(text) -> [{file, service, where}]
    *
    * `where` is one of 'env_file', 'secret', 'config', 'build', 'volume',
-   * 'include'. `service` is the owning service, or '' for a top-level
-   * secrets:/configs:/include: entry, which names no service. Never throws:
-   * anything this cannot make sense of is simply left out.
+   * 'include', 'icon'. `service` is the owning service, or '' for a
+   * top-level secrets:/configs:/include:/x-unraid.icon entry, which names no
+   * service. Never throws: anything this cannot make sense of is simply
+   * left out.
    */
   function fileRefs(text) {
     var out = [];
@@ -8333,6 +8440,18 @@
           if (stack.length === 0 && c.key === 'include' && c.valueCol >= 0) {
             var sc4 = scanEntryText(line, c.valueCol);
             if (sc4) pushFileRef(out, sc4.text, '', 'include');
+          }
+          // The document root's own x-unraid.icon. Names no service.
+          if (stack.length === 1 && stack[0].key === 'x-unraid' &&
+              c.key === 'icon' && c.valueCol >= 0) {
+            var sc5 = scanEntryText(line, c.valueCol);
+            if (sc5) pushIconRef(out, sc5.text, '');
+          }
+          // A service's own x-unraid.icon, overriding the root one.
+          if (svc !== null && stack.length === 3 && stack[2].key === 'x-unraid' &&
+              c.key === 'icon' && c.valueCol >= 0) {
+            var sc6 = scanEntryText(line, c.valueCol);
+            if (sc6) pushIconRef(out, sc6.text, svc);
           }
           stack.push({ indent: c.indent, key: c.key });
           continue;
@@ -8857,6 +8976,11 @@
     // just below the same section. Used to check the port is not already
     // taken by another container.
     hostPorts: hostPorts,
+    // Every container_name: a service declares — the clash check's proof
+    // that a nameless-project container is still this stack's own; see the
+    // comment above containerNames() for why the docker-name fallback alone
+    // is not enough.
+    containerNames: containerNames,
     // Every service/network/volume/secret/config/profile name the file
     // itself declares — see the "The file's own names" section above.
     fileNames: fileNames,

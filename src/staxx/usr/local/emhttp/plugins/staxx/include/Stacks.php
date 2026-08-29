@@ -1155,9 +1155,10 @@ function staxx_state_for(string $file, string $leaf): ?array {
  * fed here anyway, and a file using anchors or flow style is read worse than
  * it would be with compose available. Nothing from that pass is ever cached.
  *
- * Anything it does not understand — sequences, block scalars, tags — is SKIPPED
- * rather than guessed at. A missing key reads as "not set", which is a correct
- * answer; a guessed one is not.
+ * Anything it does not understand — sequences, tags — is SKIPPED rather than
+ * guessed at. A missing key reads as "not set", which is a correct answer; a
+ * guessed one is not. A block scalar is the one exception, collapsed to a
+ * single line — see staxx_flatten_block() below for why.
  *
  * Paths are joined with a null byte, which cannot appear in a YAML key.
  *
@@ -1167,6 +1168,7 @@ function staxx_yaml_flatten(string $yaml): array {
   $out   = [];
   $path  = [];            // list of [indent, key] currently open
   $skip  = null;          // indent to skip past, or null
+  $block = null;          // lines gathered for a block scalar, or null outside one
   $lines = explode("\n", $yaml);
 
   foreach ($lines as $raw) {
@@ -1175,10 +1177,20 @@ function staxx_yaml_flatten(string $yaml): array {
 
     $indent = strlen($line) - strlen(ltrim($line, ' '));
 
-    // Inside something we chose not to read — a sequence or a multi-line
-    // string. It ends at the first line indented no further than the key.
+    // Inside something we chose not to read — a sequence — or inside a block
+    // scalar, whose lines are gathered rather than dropped. Either ends at
+    // the first line indented no further than the key that opened it.
     if ($skip !== null) {
-      if ($indent > $skip) continue;
+      if ($indent > $skip) {
+        if ($block !== null) $block[] = $line;
+        continue;
+      }
+      if ($block !== null) {
+        $text = staxx_flatten_block($block);
+        if ($text !== '') $out[implode("\0", array_column($path, 1))] = $text;
+        array_pop($path);                                 // a scalar opens nothing
+        $block = null;
+      }
       $skip = null;
     }
 
@@ -1203,9 +1215,13 @@ function staxx_yaml_flatten(string $yaml): array {
 
     if ($value === '') continue;                          // a nested mapping
 
-    // A multi-line string. Its content is not needed by anything here, and
-    // reading it wrong would swallow the keys that follow it.
-    if (preg_match('/^[|>][+-]?\d*$/', $value)) { $skip = $indent; continue; }
+    // A block scalar (`|` literal or `>` folded, with any chomping or indent
+    // suffix). Its lines are gathered above rather than dropped: the "fill in
+    // this stack's details" chooser reads x-unraid.overview, which converted
+    // files write this way, and dropping it made the chooser see an empty
+    // description and then refuse to write over the one already there.
+    // $path stays open until the block ends, exactly as a nested mapping's does.
+    if (preg_match('/^[|>][+-]?\d*$/', $value)) { $skip = $indent; $block = []; continue; }
 
     if (strlen($value) > 1 && ($value[0] === '"' || $value[0] === "'")) {
       $value = substr($value, 1, -1);
@@ -1215,7 +1231,33 @@ function staxx_yaml_flatten(string $yaml): array {
     array_pop($path);                                     // a scalar opens nothing
   }
 
+  // A block scalar can be the last thing in the file, with no following line
+  // to notice it has ended. Closed out here instead.
+  if ($block !== null) {
+    $text = staxx_flatten_block($block);
+    if ($text !== '') $out[implode("\0", array_column($path, 1))] = $text;
+  }
+
   return $out;
+}
+
+/**
+ * One block scalar's gathered lines, reduced to the single line of prose
+ * every reader of such a value actually wants — nothing here cares about the
+ * literal-versus-folded distinction or about preserved line breaks, so the
+ * lines are trimmed and rejoined with one space rather than reproduced.
+ *
+ * Cut in CHARACTERS, not bytes, for the same reason staxx_detail_collapse()
+ * is: this answer is json_encode'd into the on-disk meta cache, and a
+ * byte-wise cut through the middle of a multi-byte character produces text
+ * json_encode() refuses outright — losing the whole stack's cached answer
+ * rather than shortening one description. An accented description is not
+ * unusual. The cap itself exists because an author's free text has no length
+ * limit of its own and this is written to disk once per stack.
+ */
+function staxx_flatten_block(array $block): string {
+  $text = trim((string)preg_replace('/\s+/', ' ', implode(' ', array_map('trim', $block))));
+  return mb_strlen($text, 'UTF-8') <= 4096 ? $text : mb_substr($text, 0, 4096, 'UTF-8');
 }
 
 /**
@@ -1345,7 +1387,7 @@ function staxx_first_ports(string $yaml): array {
 // key, so a plugin update cannot serve an answer the old parser computed —
 // without this a stale shape would sit there looking valid forever, since
 // nothing else about the compose file need have changed.
-const STAXX_META_VERSION = 4;
+const STAXX_META_VERSION = 5;
 
 /**
  * A hash of everything that can change what compose would report for a
