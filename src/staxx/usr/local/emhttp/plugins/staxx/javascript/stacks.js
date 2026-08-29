@@ -3785,6 +3785,10 @@
 
   function updateRequired() {
     var gaps = requiredGaps();
+    // Same literal staxx_start_job() refuses on (STAXX_PLACEHOLDER). This only
+    // gets Start disabled ahead of the click — the server's own refusal is
+    // the real one, and still fires even if this check is ever wrong.
+    var placeholder = currentText().indexOf('REPLACE-ME') !== -1;
 
     var rows = formHost.querySelectorAll('.staxx-fieldrow');
     for (var i = 0; i < rows.length; i++) {
@@ -3794,13 +3798,15 @@
     }
 
     if (!gaps.length) {
-      gapNote.hidden = true;
-      gapNote.textContent = '';
+      gapNote.hidden = !placeholder;
+      gapNote.textContent = placeholder
+        ? 'This file still has a REPLACE-ME placeholder in it. Fill it in before starting.'
+        : '';
       // Never switch Save-and-start back on by passing this check. It is
       // disabled server-side when compose or Docker is missing, and that
       // decision outranks anything happening in the form.
       saveBtn.disabled  = sanitised;
-      startBtn.disabled = sanitised || startBtnWasDisabled;
+      startBtn.disabled = sanitised || startBtnWasDisabled || placeholder;
       return;
     }
 
@@ -8561,40 +8567,11 @@
   var realText  = '';
 
   function redact(text) {
+    // The span logic itself moved into the compose model (PLAN_76/98), so
+    // node can load and prove it without a browser; this just supplies
+    // Sanitise's own placeholder so its behaviour is unchanged.
     if (!MODEL) return text;
-
-    var lines = text.split('\n');
-    var seen = {}, byLine = {};
-
-    MODEL.fields.forEach(function (f) {
-      if (!f.sensitive) return;
-      Object.keys(f.parts).forEach(function (k) {
-        // A variable's NAME is not the secret — hiding ADMIN_TOKEN as well as
-        // its value makes the screenshot unreadable for no gain.
-        if (k === 'name') return;
-        var s = f.parts[k].spot;
-        if (!s) return;
-        // Both halves of "8096:8097" share one scalar, so the same span would
-        // otherwise be replaced twice.
-        var key = s.line + ':' + s.col;
-        if (seen[key]) return;
-        seen[key] = true;
-        (byLine[s.line] = byLine[s.line] || []).push(s);
-      });
-    });
-
-    Object.keys(byLine).forEach(function (n) {
-      // Right to left, so replacing one span cannot shift the column of the
-      // next one along the same line.
-      var spots = byLine[n].sort(function (a, b) { return b.col - a.col; });
-      var line = lines[n];
-      spots.forEach(function (s) {
-        line = line.slice(0, s.col) + '**REDACTED**' + line.slice(s.col + s.len);
-      });
-      lines[n] = line;
-    });
-
-    return lines.join('\n');
+    return YAML.redactText(text, MODEL.fields);
   }
 
   function setSanitised(on) {

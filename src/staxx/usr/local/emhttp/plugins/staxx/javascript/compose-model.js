@@ -8454,6 +8454,152 @@
   }
 
   /* =====================================================================
+   * PLAN_76/98: redacting a copy that leaves
+   *
+   * API.redactText — the span-based redactor. It used to live inside
+   * stacks.js's Sanitise screenshot pass, where node could never load it to
+   * prove it works; it moved here so tests/export_redact.js can run it
+   * against the round-trip corpus directly. Sanitise now calls this with
+   * '**REDACTED**' so its own behaviour is unchanged; export calls it with
+   * 'REPLACE-ME' and its own tick-built `pick`.
+   *
+   * The file is never re-parsed or re-serialised: every field already
+   * carries the exact {line, col, len} span its value came from (`.spot`,
+   * set once by the parser), so this only ever punches holes in the text it
+   * was given. Two parts that share one scalar — a port written
+   * "8096:8097" is one span for both the host and container halves — are
+   * only ever replaced once, and spans on one line are replaced right to
+   * left so replacing one cannot shift the next along.
+   * ===================================================================== */
+
+  function defaultRedactPick(f, partKey) {
+    // A variable's NAME is not the secret — hiding ADMIN_TOKEN as well as
+    // its value makes the screenshot/export unreadable for no gain.
+    return !!f.sensitive && partKey !== 'name';
+  }
+
+  /**
+   * redactText(text, fields, opts) -> redacted text
+   *
+   * `fields` is a model's field list (MODEL.fields' own shape). `opts.pick`
+   * (field, partKey) -> boolean chooses which parts are blanked; left out,
+   * it is today's Sanitise rule (every sensitive field, minus its name).
+   * `opts.placeholder` is the replacement text, default '**REDACTED**'.
+   * `opts.report`, when given an array, gets one description pushed per
+   * span actually blanked — the export summary's "every value that was
+   * blanked" line reads from this rather than recomputing it.
+   */
+  function redactText(text, fields, opts) {
+    opts = opts || {};
+    var placeholder = opts.placeholder || '**REDACTED**';
+    var pick = opts.pick || defaultRedactPick;
+    var report = opts.report;
+
+    var lines = String(text == null ? '' : text).split('\n');
+    var seen = {}, byLine = {};
+
+    (fields || []).forEach(function (f) {
+      var parts = f.parts || {};
+      Object.keys(parts).forEach(function (k) {
+        if (!pick(f, k)) return;
+        var p = parts[k];
+        var s = p && p.spot;
+        if (!s) return;
+        // Both halves of "8096:8097" share one scalar, so the same span
+        // would otherwise be replaced — and reported — twice.
+        var key = s.line + ':' + s.col;
+        if (seen[key]) return;
+        seen[key] = true;
+        (byLine[s.line] = byLine[s.line] || []).push(s);
+        if (report) report.push((f.service ? f.service + ': ' : '') + (f.title || f.target || k));
+      });
+    });
+
+    Object.keys(byLine).forEach(function (n) {
+      // Right to left, so replacing one span cannot shift the column of the
+      // next one along the same line.
+      var spots = byLine[n].sort(function (a, b) { return b.col - a.col; });
+      var line = lines[n];
+      spots.forEach(function (s) {
+        line = line.slice(0, s.col) + placeholder + line.slice(s.col + s.len);
+      });
+      lines[n] = line;
+    });
+
+    return lines.join('\n');
+  }
+
+  // A NAME=VALUE line, an optional leading "export " kept as written, and
+  // everything after the first "=" taken as the value whole — quotes and
+  // all, so replacing it drops the quoting along with the secret rather
+  // than leaving an orphaned quote either side of the placeholder.
+  var ENV_LINE_RE = /^(\s*)(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
+
+  /**
+   * redactEnv(text, pick, opts) -> rewritten text
+   *
+   * Line by line, exactly as .env is: a comment, a blank line or anything
+   * that does not parse as NAME=VALUE is copied through untouched and in
+   * place — never guessed at, never dropped, never reordered. `pick(name)`
+   * decides which names are blanked. `opts.placeholder`/`opts.report` work
+   * the same as redactText's.
+   */
+  function redactEnv(text, pick, opts) {
+    opts = opts || {};
+    var placeholder = opts.placeholder || '**REDACTED**';
+    var report = opts.report;
+
+    var lines = String(text == null ? '' : text).split('\n');
+    var out = lines.map(function (line) {
+      var trimmed = line.replace(/^\s+/, '');
+      if (trimmed === '' || trimmed.charAt(0) === '#') return line;
+
+      var m = ENV_LINE_RE.exec(line);
+      if (!m) return line;                 // unparsable — shown to be read, not guessed at
+
+      var name = m[3];
+      if (!pick(name)) return line;
+
+      if (report) report.push(name);
+      return m[1] + (m[2] || '') + name + '=' + placeholder;
+    });
+
+    return out.join('\n');
+  }
+
+  /**
+   * secretEnvNames(model) -> [name, ...]
+   *
+   * Every .env entry name read by a compose setting the model already
+   * marks sensitive, so export can tick that entry too without asking the
+   * export screen to guess: a value that reaches outside the file is
+   * already recognised by interpolates()/varRefs() above, this just asks
+   * the question of the sensitive fields alone.
+   */
+  function secretEnvNames(model) {
+    var names = {};
+    ((model && model.fields) || []).forEach(function (f) {
+      if (!f.sensitive) return;
+      var parts = f.parts || {};
+      Object.keys(parts).forEach(function (k) {
+        if (k === 'name') return;
+        var p = parts[k];
+        var v = p && p.value;
+        if (v == null || !interpolates(v)) return;
+
+        VAR_RE.lastIndex = 0;
+        var m;
+        while ((m = VAR_RE.exec(String(v)))) {
+          if (m[0] === '$$') continue;
+          var name = m[1] !== undefined ? m[1] : m[3];
+          if (name) names[name] = true;
+        }
+      });
+    });
+    return Object.keys(names);
+  }
+
+  /* =====================================================================
    * Pinning an image to a digest
    *
    * API.pinnedImageRef — turns an image reference plus a fingerprint (what
@@ -8724,6 +8870,13 @@
     // Every ${NAME}/$NAME placeholder, so the editor can flag one nothing
     // will ever fill in — see the "Variable references" section above.
     varRefs: varRefs,
+    // PLAN_76/98: the span-based redactor Sanitise and export both use, the
+    // matching line-by-line .env rewriter, and the lookup from a sensitive
+    // setting to the .env entry it reads — see the section comment above
+    // redactText() for what each one promises.
+    redactText: redactText,
+    redactEnv: redactEnv,
+    secretEnvNames: secretEnvNames,
     // PLAN_15 phase 1: the dropdown value lists moved out of stacks.js's
     // CHOICES table — see the comment above VOCAB for what stayed behind.
     vocab: vocab,
