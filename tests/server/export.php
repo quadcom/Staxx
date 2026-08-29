@@ -162,9 +162,13 @@ file_put_contents($manyDir.'/compose.yaml',
 );
 $err = '';
 $r = staxx_start_job($manyRel, 'up', $err, '');
+// The names are the author's own, softened into words rather than expanded:
+// DB_PASSWORD reads back as "the db password", not "the database password".
+// Guessing what an abbreviation stands for is how a message ends up confidently
+// wrong about somebody else's file, so nothing here invents a longer word.
 ok('two waiting values are both named and the count word is right',
    $r === '' && stripos($err, 'Two values still need filling in') !== false
-   && stripos($err, 'database password') !== false && stripos($err, 'admin password') !== false, $err);
+   && stripos($err, 'db password') !== false && stripos($err, 'admin password') !== false, $err);
 
 // `remove` has no whole-stack form at all, and `config` has no single-service
 // form, so both are refused by the scope check itself — never even reach the
@@ -357,9 +361,29 @@ function zze_pack_leftovers(): array {
   return glob(STAXX_CFILE_TMP.'/export-*') ?: [];
 }
 
+// The reason is asserted, not merely that it refused. Written the loose way,
+// this case passed even with the name check deleted outright — "a/b.txt" then
+// failed a step later, when writing into a folder that does not exist, and a
+// refusal for the wrong reason reads exactly like a working guard. Proved by
+// deleting the check and watching this case stay green.
 $err = '';
 $bad = staxx_export_pack([['name' => 'a/b.txt', 'content' => 'x']], 'zzepack', $err);
-ok('the packer refuses a bad name', $bad === '' && $err !== '', $err);
+ok('the packer refuses a bad name, and refuses it AS a bad name',
+   $bad === '' && stripos($err, 'is not a name this can export') !== false, $err);
+ok('and nothing was left behind on that failure path', zze_pack_leftovers() === []);
+
+// The name that matters most: one climbing out of the folder the packer built
+// for itself. Refused by name, so it never reaches a write at all.
+$err = '';
+// One level up from the folder the packer builds in — which is where a name
+// beginning "../" actually lands, not /tmp. Aimed at the wrong folder this
+// assertion cannot fail, whatever the code does.
+$escapeProbe = STAXX_CFILE_TMP.'/zze-escape-probe.txt';
+@unlink($escapeProbe);
+$out = staxx_export_pack([['name' => '../zze-escape-probe.txt', 'content' => 'x']], 'zzepack', $err);
+ok('the packer refuses a name that climbs out of its own folder',
+   $out === '' && stripos($err, 'is not a name this can export') !== false, $err);
+ok('and nothing was written outside that folder', !file_exists($escapeProbe));
 ok('and nothing was left behind on that failure path', zze_pack_leftovers() === []);
 
 $err = '';
