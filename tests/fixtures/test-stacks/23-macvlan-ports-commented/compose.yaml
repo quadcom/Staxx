@@ -1,0 +1,19 @@
+# Fixture for PLAN_104: ports already written as the commented-out note,
+# exactly the shape a person would write by hand — no StaXX marker, just an
+# ordinary `# ports:` comment at the service's own indentation. This is the
+# steady state restorePorts() and portsNote() both have to read correctly,
+# and commentOutPorts() must leave alone since there is nothing live to act on.
+services:
+  app:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    # ports:
+    #   - "8080"        # the admin page
+    #   - "8081"
+    networks:
+      - lan
+
+networks:
+  lan:
+    driver: macvlan
+    external: true

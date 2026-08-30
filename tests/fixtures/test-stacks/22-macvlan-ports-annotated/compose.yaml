@@ -1,0 +1,21 @@
+# Fixture for PLAN_104: the same broken shape as 21, but with a trailing
+# comment beside each port — the case that proves a comment travels on its
+# own line rather than floating free. Two more lines sit between the ports
+# and the rest of the service, so the block's position within the service can
+# be asserted rather than assumed.
+services:
+  app:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    ports:
+      - "8080"        # the admin page
+      - "8081"        # the stream
+    environment:
+      TZ: Etc/UTC
+    networks:
+      - lan
+
+networks:
+  lan:
+    driver: macvlan
+    external: true

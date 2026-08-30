@@ -186,6 +186,15 @@
   color: var(--sm-success, #4c9a2a);
 }
 
+/* PLAN_104 — .staxx-notice's own margins are sized for a page-level banner;
+   nested inside a service's Ports group, that much space above and below
+   reads as a mistake rather than a warning. Comes after .staxx-notice
+   itself so its narrower margin wins over the equal-weight rule it
+   overrides. */
+.staxx-portswarn {
+  margin: 0 0 1rem;
+}
+
 /* The paths to paste into another plugin's settings box. Selectable, wrapping
    on long paths rather than scrolling sideways, and monospaced so a stray
    space in a path is visible before it is copied. */
@@ -5089,6 +5098,23 @@
 .staxx-scaffold .staxx-input--check {
   width: auto;
   padding: 0;
+}
+
+/* PLAN_104 — the ports note is the compose file's own commented-out block,
+   shown and edited as one box (see portsNoteHtml() in stacks.js). Monospace
+   and left as typed, the same as the note itself keeps every line as
+   written — a proportional font would be misleading about which port a
+   trailing comment sits beside. Comes after .staxx-input, which sets its
+   layout and colour; this only adds what a plain text box does not need. */
+.staxx-scaffold .staxx-portsnotebox {
+  min-height: 4.4rem;
+  font-family: ui-monospace, Consolas, monospace;
+  white-space: pre;
+  resize: vertical;
+}
+
+.staxx-portsnote {
+  margin: 0.5rem 0 0;
 }
 
 /* A dropdown wears the same skin as a text box, minus the right-hand padding —

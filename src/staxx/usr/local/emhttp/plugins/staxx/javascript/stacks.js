@@ -3710,6 +3710,62 @@
     return out.join('');
   }
 
+  /* ---- PLAN_104: ports on a macvlan/ipvlan service ----
+   *
+   * Docker refuses a live `ports:` entry on this kind of network — the
+   * container holds its own address, so there is no NAT for the mapping to
+   * go through — so a file with one set will not start. The three helpers
+   * below cover what the Ports group shows for it: a warning and a one-press
+   * fix when the file is already broken this way, the commented-out note
+   * as one editable box when it is not, and an offer to bring that note
+   * back live once the service is off such a network again. */
+
+  // Moment 1: the file already sets a live port on a network that cannot
+  // carry one. This is a fix, never a silent one — commentOutPorts() (called
+  // from the click handler) writes nothing until this button is pressed.
+  function macvlanPortsWarningHtml(serviceName) {
+    return '<div class="staxx-notice staxx-notice--bad staxx-portswarn">' +
+             '<i class="fa fa-exclamation-triangle" aria-hidden="true"></i>' +
+             '<div>' +
+               '<p>This service is on a network that gives it its own address. Docker refuses to publish ' +
+               'a port there, so this file will not start as it stands.</p>' +
+               '<button type="button" class="staxx-declfix" data-fix-macvlan-ports="1" ' +
+               'data-service="' + esc(serviceName) + '" ' +
+               'title="Turns the ports setting into a note, so the file can start.">Comment these ports out</button>' +
+             '</div>' +
+           '</div>';
+  }
+
+  // Moment 2: no live ports, so whatever the commented `# ports:` block
+  // already holds (or nothing) is shown as one free-text box — see
+  // compose-model.js's portsNote()/setPortsNote() for why this is a single
+  // box rather than a row per line: none of it is parsed YAML, so there is
+  // no field shape to give it. Committed on blur, in the formHost 'change'
+  // listener below.
+  function portsNoteHtml(serviceName) {
+    var note = YAML.portsNote(MODEL.doc, serviceName);
+    var text = note.lines.join('\n');
+    return '<div class="staxx-portsnote">' +
+             '<p class="staxx-fieldhint">This network gives the container its own address, so Docker never reads ' +
+             'a ports setting here. Kept as a note only, for your own reference — it never runs.</p>' +
+             '<textarea class="staxx-input staxx-portsnotebox" data-portsnote="1" ' +
+             'data-service="' + esc(serviceName) + '" spellcheck="false" ' +
+             'placeholder="One port per line, e.g. - &quot;8080&quot;        # the admin page" rows="' +
+             Math.max(2, note.lines.length + 1) + '">' + esc(text) + '</textarea>' +
+           '</div>';
+  }
+
+  // Moment 3, the "off" direction: a note is sitting there commented out
+  // and this service is no longer on a network that forbids it, so putting
+  // it back live is possible — offered, never automatic, since the person
+  // may simply have moved on from those ports.
+  function portsRestoreHtml(serviceName) {
+    return '<p class="staxx-fieldnote">This service keeps a note of ports that were commented out. ' +
+           '<button type="button" class="staxx-declfix" data-restore-ports="1" ' +
+           'data-service="' + esc(serviceName) + '" ' +
+           'title="Turns the note back into a live ports setting.">Bring them back live</button></p>';
+  }
+
   // A file the parser could not read at all is reparse()'s business — see
   // brokenFormHtml() — so by the time this runs form.ok is always true, and
   // the only empty case left is a readable file that simply lists nothing.
@@ -3791,6 +3847,22 @@
           else if (!rows.length && !grp.add) continue;
           out.push('<div class="staxx-formgroup ' + grp.cls + '" data-group="' + grp.key + '">');
           out.push(groupHeadHtml(grp, svc.name, grp.key === 'container' ? flags : null));
+          // PLAN_104: the Ports group is the one place svc.netKind changes
+          // what gets shown rather than just how a row looks — a live
+          // ports: setting on this kind of network is a broken file (fixed
+          // in one press), and with no live setting the group shows the
+          // commented note as one box instead of an empty grid. Read off
+          // svc.netKind directly rather than a port field's own copy of it,
+          // since a service with every port already commented out has no
+          // port fields left to read it from.
+          if (grp.key === 'port') {
+            if (svc.netKind === 'other') {
+              out.push(rows.length ? macvlanPortsWarningHtml(svc.name) : portsNoteHtml(svc.name));
+            } else {
+              var portNoteHere = YAML.portsNote(MODEL.doc, svc.name);
+              if (portNoteHere.present) out.push(portsRestoreHtml(svc.name));
+            }
+          }
           if (rows.length) out.push(captionRow(grp));
           for (var r = 0; r < rows.length; r++) {
             out.push(fieldHtml(form.fields[rows[r]], rows[r]));
@@ -5804,6 +5876,19 @@
       return;
     }
 
+    // PLAN_104: a networks: row's own value is the one place this generic
+    // write can flip the whole service onto or off a macvlan/ipvlan network
+    // — checked here, after the write above has already landed, so the
+    // result can be read straight off the model rather than guessed at
+    // beforehand. handleNetworkKindCrossing() takes over the redraw and
+    // status line (and can put the write back if the person declines) only
+    // when a crossing actually happened; anything else falls through to the
+    // ordinary quiet tail below exactly as before.
+    if (f.binder === 'list' && f.listKey === 'networks' && f.from === 'networks' &&
+        el.dataset.part === 'value' && handleNetworkKindCrossing(f, el)) {
+      return;
+    }
+
     // §11.3/§11.5: write every confirmed partner immediately, through the
     // same YAML.setValue() a typed edit itself uses (condition 6), and
     // report every outcome — a write, a refusal, or a partner that has gone
@@ -6071,6 +6156,13 @@
 
   formHost.addEventListener('change', function (event) {
     var el = event.target;
+
+    // The ports note box (portsNoteHtml(), PLAN_104) is text read straight
+    // off the model rather than one of MODEL.fields, so it has no data-row
+    // for the generic commit() below to look up — it owns its own commit
+    // instead, on the same "fires on Enter or on blur" moment every other
+    // text box here commits on.
+    if (el.dataset.portsnote !== undefined) { commitPortsNote(el); return; }
 
     // Choosing "a folder on the server…" from a volume's host dropdown must
     // never reach the file — swap the control instead of committing it.
@@ -6446,6 +6538,51 @@
       return;
     }
 
+    // PLAN_104 moment 1: the file already sets a live port on a network
+    // that cannot carry one, so this is a fix rather than a preference —
+    // still only ever run on a press, never on open. commentOutPorts()
+    // refuses (leaving the file untouched) when the block holds an anchor
+    // or alias; its own sentence is shown rather than swallowed.
+    var fixMacvlan = event.target.closest('[data-fix-macvlan-ports]');
+    if (fixMacvlan) {
+      var fmService = fixMacvlan.dataset.service;
+      flushPending();
+      pushUndo('commenting out "' + fmService + '"’s ports');
+      var fm = YAML.commentOutPorts(MODEL.doc, fmService);
+      if (!fm.ok) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus(fm.error);
+        return;
+      }
+      structuralEdit(-1, 'Commented out ' + fm.count + ' published port' + (fm.count === 1 ? '' : 's') +
+                    ' on "' + fmService + '" — a container with its own address cannot publish ' +
+                    (fm.count === 1 ? 'it' : 'any of them') + '. ' +
+                    'Undo is at the bottom if that was wrong.');
+      return;
+    }
+
+    // PLAN_104 moment 3, the "off" direction: a commented note is sitting
+    // there and this service is no longer on a network that forbids a live
+    // ports: setting, so it can go back in. restorePorts() itself refuses
+    // if a live setting has appeared from somewhere else in the meantime.
+    var restorePortsBtn = event.target.closest('[data-restore-ports]');
+    if (restorePortsBtn) {
+      var rpService = restorePortsBtn.dataset.service;
+      flushPending();
+      pushUndo('bringing back "' + rpService + '"’s ports');
+      var rp = YAML.restorePorts(MODEL.doc, rpService);
+      if (!rp.ok) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus(rp.error);
+        return;
+      }
+      structuralEdit(-1, 'Brought back ' + rp.count + ' published port' + (rp.count === 1 ? '' : 's') +
+                    ' for "' + rpService + '". Undo is at the bottom if that was wrong.');
+      return;
+    }
+
     // The version buttons beside a moved-image advisory (adviceText(),
     // applyMovedAdvice()) — one in-place rewrite of the image line, exactly
     // the box's own commit() path below. No confirmation dialog: the
@@ -6516,6 +6653,16 @@
       // anything at all.
       if (add.dataset.add === 'device') {
         devOpen(add.closest('.staxx-grouphead'), null, add.dataset.service);
+        return;
+      }
+      // PLAN_104 moment 2: on a network that forbids a live ports: setting,
+      // "+ port" has nowhere real to write to — it adds a line to the
+      // commented note instead of a row to a setting the file must never
+      // hold. Checked ahead of the generic list-add below, which would
+      // otherwise write a live entry straight into the broken shape this
+      // whole feature exists to avoid.
+      if (add.dataset.add === 'port' && netKindOfService(add.dataset.service) === 'other') {
+        addPortsNoteLine(add.dataset.service);
         return;
       }
       // A declaration has no service to hand YAML.addItem below, so it goes
@@ -6957,6 +7104,128 @@
       ? 'The stored network list in this file is not in a form StaXX can put back, so it has been ' +
         'discarded. The network mode has been cleared, so add the networks again from this row.'
       : 'There was nothing left to restore — the stash was empty or no longer made sense, so it was dropped.');
+  }
+
+  // PLAN_104: a service's own netKind, read straight off MODEL.services
+  // rather than off a port field's copy of it — a service with every port
+  // already commented out has no port fields left to carry one. 'bridge' is
+  // the same safe fallback buildForm() itself uses for a service it cannot
+  // find, or before the network list has answered at all.
+  function netKindOfService(service) {
+    var list = (MODEL && MODEL.services) || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].name === service) return list[i].netKind || 'bridge';
+    }
+    return 'bridge';
+  }
+
+  // PLAN_104 moment 2: "+ port" on a macvlan/ipvlan service adds one blank
+  // line to the commented note rather than a row to a setting the file must
+  // never hold live. setPortsNote() rewrites the whole block, so this reads
+  // it first and appends — the same read-then-write shape movePort() and
+  // the other structural edits above already use.
+  function addPortsNoteLine(service) {
+    flushPending();
+    var already = YAML.portsNote(MODEL.doc, service);
+    pushUndo('adding a port to "' + service + '"’s ports note');
+    var ok = YAML.setPortsNote(MODEL.doc, service, already.lines.concat(['- ""']));
+    if (!ok) {
+      undoStack.pop();
+      updateUndo();
+      setYamlStatus('That note is written in a way the form cannot add to — edit it in the Compose view instead.');
+      return;
+    }
+    structuralEdit(-1, '');
+    var svcSel = '.staxx-svc[data-service="' + service.replace(/"/g, '\\"') + '"]';
+    var ta = formHost.querySelector(svcSel + ' [data-portsnote]');
+    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  }
+
+  // The ports note's own box (portsNoteHtml()), committed on blur — see the
+  // formHost 'change' listener below for why this runs there rather than
+  // through the generic per-field commit() path: portsNote is text read
+  // straight off the model, not one of MODEL.fields, so there is no row for
+  // commit() to look up. setPortsNote() can add or remove lines, so unlike
+  // a plain value edit this goes through structuralEdit() like every other
+  // write here that changes the file's line count.
+  function commitPortsNote(el) {
+    if (!MODEL || sanitised || fileOpen !== null) return;
+    var service = el.dataset.service;
+    var lines = el.value.split('\n');
+    while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+
+    flushPending();
+    pushUndo('editing "' + service + '"’s ports note');
+    var ok = YAML.setPortsNote(MODEL.doc, service, lines);
+    if (!ok) {
+      undoStack.pop();
+      updateUndo();
+      setYamlStatus('This note could not be updated — edit it in the Compose view instead.');
+      return;
+    }
+    structuralEdit(-1, '');
+  }
+
+  // PLAN_104 moments 2 and 3: a networks: row's own value is the one place a
+  // plain edit can flip a service onto or off a macvlan/ipvlan network, and
+  // ports only ever run on the other kind — so that crossing cannot be left
+  // to the generic quiet write commit() gives every other value box. The
+  // write has already landed in MODEL.doc (YAML.setPart, run by the caller
+  // just above) by the time this runs; a fresh form is built to read the
+  // result rather than re-deriving the model's own driver-resolution rule
+  // here, so the two can never disagree about what counts as "other".
+  // Returns true when it has taken over the redraw and status line itself —
+  // an ordinary pick, crossing nothing, returns false and lets commit()'s
+  // usual quiet tail run as it always has.
+  function handleNetworkKindCrossing(f, el) {
+    var oldKind = netKindOfService(f.service);
+    var fresh = YAML.buildForm(MODEL.doc, netDrivers());
+    var newKind = 'bridge';
+    for (var i = 0; i < fresh.services.length; i++) {
+      if (fresh.services[i].name === f.service) { newKind = fresh.services[i].netKind || 'bridge'; break; }
+    }
+    if (newKind === oldKind) return false;
+
+    if (newKind === 'other') {
+      var livePorts = 0;
+      for (i = 0; i < fresh.fields.length; i++) {
+        var pf = fresh.fields[i];
+        if (pf.service === f.service && pf.binder === 'port' &&
+            ((pf.parts.host && pf.parts.host.value) || (pf.parts.container && pf.parts.container.value))) livePorts++;
+      }
+      if (!livePorts) { structuralEdit(-1, ''); return true; }
+
+      if (!window.confirm(
+            '"' + el.value + '" gives "' + f.service + '" its own address on the network, and Docker refuses ' +
+            'to publish a port there. Switching will keep ' +
+            (livePorts === 1 ? 'its one published port' : 'all ' + livePorts + ' published ports') +
+            ' as a note instead, so the file can still start. Continue?')) {
+        // Nothing here went through pushUndo() — a plain value edit never
+        // takes one — so the write commit() just made is put back by hand,
+        // the same way the box itself is reset to what it showed before.
+        YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
+        el.value = f.parts.value.value;
+        return true;
+      }
+
+      var cmt = YAML.commentOutPorts(MODEL.doc, f.service);
+      if (!cmt.ok) {
+        YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
+        el.value = f.parts.value.value;
+        setYamlStatus(cmt.error);
+        return true;
+      }
+      structuralEdit(-1, 'Switched "' + f.service + '" onto "' + el.value + '". ' +
+                    cmt.count + (cmt.count === 1 ? ' published port was' : ' published ports were') +
+                    ' kept as a note, since Docker refuses to publish one there.');
+      return true;
+    }
+
+    // "other" -> anything else: the note (if any) is offered back by
+    // portsRestoreHtml() on the next render, which this triggers — never
+    // put back live automatically, since the person may have moved on.
+    structuralEdit(-1, 'Switched "' + f.service + '" off its own-address network.');
+    return true;
   }
 
   // Asks for a container name by prompt rather than swapping the row's box —

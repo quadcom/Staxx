@@ -1,0 +1,25 @@
+# Fixture for PLAN_104: an anchor inside a ports block, aliased by a second
+# service further down the same file — the shared-admin-port pattern a real
+# author might write rather than repeating "8080" by hand. Commenting out
+# app's ports turns the anchor's line into comment text; whatever the model
+# actually does with the alias that still points at it is the thing this
+# fixture exists to prove, one way or the other.
+services:
+  app:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    ports:
+      - &admin_port "8080"
+    networks:
+      - lan
+
+  sidecar:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    ports:
+      - *admin_port
+
+networks:
+  lan:
+    driver: macvlan
+    external: true
