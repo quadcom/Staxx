@@ -16135,12 +16135,55 @@
     return (list || '').split(',').filter(function (s) { return s; });
   }
 
+  // One line per change a service picked up — order matches how a person
+  // would ask "what's different": the variables first, then the image, then
+  // the ports and volumes. Values are shown exactly as the server sent them;
+  // no masking, by Adrian's own call, since a masked value would be useless
+  // for actually confirming a change like a new time zone.
+  function pendingServiceLines(svc) {
+    var lines = [];
+    (svc.env || []).forEach(function (e) {
+      lines.push(e.from === null
+        ? 'Variable ' + e.name + ' added, set to ' + e.to
+        : 'Variable ' + e.name + ' changed from ' + e.from + ' to ' + e.to);
+    });
+    if (svc.image) lines.push('Image changed from ' + svc.image.from + ' to ' + svc.image.to);
+    (svc.ports && svc.ports.added   || []).forEach(function (p) { lines.push('Port ' + p + ' added'); });
+    (svc.ports && svc.ports.removed || []).forEach(function (p) { lines.push('Port ' + p + ' removed'); });
+    (svc.volumes && svc.volumes.added   || []).forEach(function (v) { lines.push('Volume ' + v + ' added'); });
+    (svc.volumes && svc.volumes.removed || []).forEach(function (v) { lines.push('Volume ' + v + ' removed'); });
+    return lines;
+  }
+
+  // Turns the pending-detail reply into the block of text the panel appends
+  // once it arrives. '' means there is nothing worth showing — a service
+  // with nothing to report is already absent from the object, so an empty
+  // result here is normal (compose missing, container gone, file no longer
+  // parsing) rather than a sign anything failed.
+  function buildPendingDetail(services) {
+    var names = Object.keys(services || {});
+    if (!names.length) return '';
+    return names.map(function (name) {
+      return name + '\n  ' + pendingServiceLines(services[name]).join('\n  ');
+    }).join('\n\n');
+  }
+
   // The panel a chip opens — reused straight off the existing output dialog
   // rather than a new mechanism, since it is already exactly this: a title
   // and a block of read-only text. logBox.textContent (not innerHTML) is
   // what openLogDialog() writes with, so nothing here needs its own escaping
   // — a service name can never become markup no matter what it contains.
   // Never restarts anything: no button in it does anything but close.
+  //
+  // Opens on the chip's own data attributes straight away — no waiting on
+  // the network for a button press — then asks the server what actually
+  // changed and appends that once (and only if) it comes back. pendingSeq is
+  // the usual "a late reply cannot paint over a panel that has moved on"
+  // guard: closed, or reopened for a different stack, before the reply
+  // lands. A refusal or an empty services object both leave the panel
+  // exactly as it opened, since neither is an error worth interrupting for.
+  var pendingSeq = 0;
+
   function openPendingPanel(chip) {
     var stack   = chip.dataset.stack || '';
     var edited  = parseInt(chip.dataset.edited || '0', 10) || 0;
@@ -16148,15 +16191,32 @@
     var absent   = pendingNames(chip.dataset.absent);
     var leftover = pendingNames(chip.dataset.leftover);
 
-    var parts = [];
-    parts.push('The file was last changed ' + pendingEditedWhen(edited) + '.');
-    if (changed.length)  parts.push('Settings changed since this started: ' + changed.join(', ') + '.');
-    if (absent.length)   parts.push('Not started yet: ' + absent.join(', ') + '.');
-    if (leftover.length) parts.push('No longer in the file: ' + leftover.join(', ') + '.');
-    parts.push('Restarting the stack rebuilds these from the file as it stands now — ' +
-               'nothing is wrong until you do.');
+    function build(detail) {
+      var parts = [];
+      parts.push('The file was last changed ' + pendingEditedWhen(edited) + '.');
+      if (changed.length)  parts.push('These services no longer match the file: ' + changed.join(', ') + '.');
+      if (absent.length)   parts.push('These services have not started yet: ' + absent.join(', ') + '.');
+      if (leftover.length) parts.push('These services are no longer in the file: ' + leftover.join(', ') + '.');
+      if (detail) parts.push('What changed:\n\n' + detail);
+      parts.push('Restarting the stack rebuilds these from the file as it stands now — ' +
+                 'nothing is wrong until you do.');
+      return parts.join('\n\n');
+    }
 
-    openLogDialog(stackLabel(stack) + ' — restart pending', parts.join('\n\n'));
+    openLogDialog(stackLabel(stack) + ' — restart pending', build(''));
+
+    pendingSeq++;
+    var mySeq = pendingSeq;
+    call('pending-detail', { name: stack }).then(function (res) {
+      // logDlg guarded the same way openLogDialog() guards it — a reply
+      // landing when the dialog is not in the page would otherwise throw
+      // inside a promise, where nothing would report it.
+      if (mySeq !== pendingSeq || !logDlg || !logDlg.open) return;
+      if (!res || !res.ok) return;   // a refusal leaves the panel exactly as it opened
+      var detail = buildPendingDetail(res.services);
+      if (!detail) return;           // nothing to report — the normal case, not an error
+      logBox.textContent = build(detail);
+    });
   }
 
   /* ---- pause switch (PLAN_45 phase 4-8) ---------------------------------

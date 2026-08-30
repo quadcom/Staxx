@@ -56,6 +56,7 @@ require_once '/usr/local/emhttp/plugins/staxx/include/UpdateRun.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Links.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Detail.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/CrossLinks.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/Pending.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Relocate.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Store.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Backup.php';
@@ -1000,6 +1001,19 @@ switch ($action) {
       }
     }
     staxx_reply(['ok' => true, 'rows' => $rows]);
+
+  // ---- "restart pending" panel: what actually changed, not just which service ----
+  //
+  // Deliberately separate from 'pending' above: that one runs for every row on
+  // every render and only ever compares fingerprints, never containers. This
+  // one runs once, when the panel is actually opened, and does the much more
+  // expensive docker-inspect-per-service comparison. See Pending.php's own
+  // header for why the two must never merge.
+  case 'pending-detail':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    staxx_reply(staxx_pending_detail($name));
 
   // ---- start a check pass; the page follows it with the existing 'job' action ----
   //
