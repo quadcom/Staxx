@@ -482,10 +482,14 @@ function staxx_watch_for_stack(string $stack): array {
 /**
  * PLAN_85 — one icon per service, for the editor's heading row.
  *
- * Resolves the same way staxx_stack_children()'s icon lookup does: a stated
- * icon always wins, and a service with none falls through to
- * staxx_icon_match()'s guess from the image name — a guess is a stand-in,
- * not a lie, so the editor and the table row must never disagree.
+ * Follows the row's own precedence (staxx_stack_tile()) rather than a
+ * separate rule, so the grid and the editor never disagree about the same
+ * stack's face. For a stack with exactly one service: the service's own
+ * stated icon wins if it resolves to a picture; failing that, the stack's
+ * own x-unraid icon; failing that, staxx_icon_match()'s guess from the image
+ * name. A stack with two or more services keeps the old single-step lookup
+ * per service — a stack-level icon standing in for one of several services
+ * would be a claim nobody made.
  *
  * @return array<string, array{html: string, q: string}>
  */
@@ -500,13 +504,31 @@ function staxx_service_icons_for_stack(string $stack): array {
   $meta = staxx_compose_meta($file);
   if (!$meta['ok']) return [];
 
-  $dir = dirname($file);
-  $out = [];
+  $dir       = dirname($file);
+  $lone      = count($meta['services']) === 1;
+  $stackIcon = (string)($meta['x']['icon'] ?? '');
+  $out       = [];
+
   foreach ($meta['services'] as $svc => $svcMeta) {
     $icon  = (string)($svcMeta['x']['icon'] ?? '');
     $image = trim((string)($svcMeta['image'] ?? ''));
+
+    $resolved = null;
+    if ($lone) {
+      $stated = staxx_icon_resolve($icon, $dir);
+      if (staxx_icon_usable($stated)) {
+        $resolved = $stated;
+      } elseif ($stackIcon !== '') {
+        $own = staxx_icon_resolve($stackIcon, $dir);
+        if (staxx_icon_usable($own)) $resolved = $own;
+      }
+    }
+    if ($resolved === null) {
+      $resolved = staxx_icon_resolve($icon, $dir, $image, $svc, $stack);
+    }
+
     $out[$svc] = [
-      'html' => staxx_icon_tile(staxx_icon_resolve($icon, $dir, $image, $svc, $stack), $svc),
+      'html' => staxx_icon_tile($resolved, $svc),
       'q'    => $image !== '' ? (staxx_icon_candidates($image)[0] ?? '') : '',
     ];
   }
@@ -855,10 +877,45 @@ function staxx_stack_own_icon(array $s): ?array {
   if ($own === '') return null;
 
   $icon = staxx_icon_resolve($own, $s['dir']);
-  if ($icon['fa'] === '' && $icon['url'] === ''
-      && ($icon['ref'] === '' || staxx_icon_missed($icon['ref']))) return null;
+  return staxx_icon_usable($icon) ? $icon : null;
+}
 
-  return $icon;
+/**
+ * Whether a resolved icon is actually a picture, rather than a reference
+ * that has already been tried and failed. Shared by staxx_stack_own_icon()
+ * and staxx_stack_lone_service_icon() so "usable" means the same thing for
+ * both — an address that cannot be downloaded is not an answer, whichever
+ * of the two said it.
+ */
+function staxx_icon_usable(array $icon): bool {
+  return !($icon['fa'] === '' && $icon['url'] === ''
+      && ($icon['ref'] === '' || staxx_icon_missed($icon['ref'])));
+}
+
+/**
+ * When a stack has exactly one service and that service states an icon of
+ * its own, that icon is the stack's face, ahead of the stack's own x-unraid
+ * icon: with only one container, the stack and the service are the same
+ * thing, and a local icon the stack owns travels with the folder where a
+ * converted template's remote web address does not. Only a *stated* service
+ * icon qualifies — a guess from the image name must never outrank something
+ * stated — and only when it actually resolves to a picture; a stack with two
+ * or more services, or a lone service that names nothing, gets null and the
+ * caller falls through to the stack's own icon as before.
+ *
+ * Resolved through the same staxx_icon_resolve() call the child rows use, so
+ * this can never disagree with what the editor shows for that service.
+ *
+ * @param array $kids from staxx_stack_children()
+ */
+function staxx_stack_lone_service_icon(array $s, array $kids): ?array {
+  if (count($kids) !== 1) return null;
+
+  $kid = $kids[0];
+  if ($kid['icon'] === '') return null;
+
+  $icon = staxx_icon_resolve($kid['icon'], $s['dir'], $kid['image'], $kid['service'], $s['name']);
+  return staxx_icon_usable($icon) ? $icon : null;
 }
 
 /**
@@ -868,14 +925,18 @@ function staxx_stack_own_icon(array $s): ?array {
  * the most that stays legible in a 4.4rem square; beyond that the fourth cell
  * counts what did not fit, the way a photo album cover does.
  *
- * An explicit `icon:` in the stack's own x-unraid block overrides all of this —
- * if someone has said what the stack looks like, that is the answer.
+ * Precedence: a lone service's own stated icon first (see
+ * staxx_stack_lone_service_icon()), then the stack's own explicit `icon:`,
+ * then the children tiled or guessed at, then the generic cube.
  *
  * @param array $kids from staxx_stack_children()
  */
 function staxx_stack_tile(array $s, array $kids): string {
   // Initials come from the title, so the letters in the tile are the letters
   // written beside it. The folder name is not what anyone is reading here.
+  $lone = staxx_stack_lone_service_icon($s, $kids);
+  if ($lone !== null) return staxx_icon_tile($lone, $s['leaf']);
+
   $own = staxx_stack_own_icon($s);
   if ($own !== null) return staxx_icon_tile($own, $s['leaf']);
 
@@ -907,14 +968,18 @@ function staxx_stack_tile(array $s, array $kids): string {
  *
  * Used for the folder-row strip, where four tiny smudges are less legible
  * than one. Same precedence as staxx_stack_tile(), just stopping after the
- * first picture instead of tiling every child: the stack's own x-unraid icon
- * first, then its first child's, then the generic cube. Resolved through the
- * same staxx_icon_resolve()/staxx_icon_tile() pair with the same arguments so
+ * first picture instead of tiling every child: a lone service's own stated
+ * icon first, then the stack's own x-unraid icon, then its first child's,
+ * then the generic cube. Resolved through the same
+ * staxx_icon_resolve()/staxx_icon_tile() pair with the same arguments so
  * this can never pick a different picture than the stack's own row does.
  *
  * @param array $kids from staxx_stack_children()
  */
 function staxx_stack_strip_tile(array $s, array $kids): string {
+  $lone = staxx_stack_lone_service_icon($s, $kids);
+  if ($lone !== null) return staxx_icon_tile($lone, $s['leaf']);
+
   $own = staxx_stack_own_icon($s);
   if ($own !== null) return staxx_icon_tile($own, $s['leaf']);
 
