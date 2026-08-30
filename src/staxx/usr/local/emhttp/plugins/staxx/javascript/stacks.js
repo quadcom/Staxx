@@ -17782,12 +17782,43 @@
       // Another stack may have been opened while this was in flight —
       // openedName is what says whether this answer still applies.
       if (openedName !== name || modal.dataset.adopt !== '1') return;
-      if (res && res.ok && res.hasOverride) {
-        installNote.querySelector('div').textContent =
-          'An override file (' + res.overrideName + ') is already in this folder and will be ' +
-          'applied on top of whatever is saved here.';
-        installNote.hidden = false;
+      if (!res || !res.ok) return;
+
+      // PLAN_102 5b — an override answer and a history offer are unrelated
+      // facts about the same folder, so both get their own line rather than
+      // one overwriting the other when both happen to be true.
+      var lines = [];
+      if (res.hasOverride) {
+        lines.push('<p>An override file (' + esc(res.overrideName) + ') is already in this folder ' +
+          'and will be applied on top of whatever is saved here.</p>');
       }
+      if (res.hasHistory) {
+        // historyWhen() is the History tab's own formatter (hoisted, declared
+        // further down this file) — one way of saying "when", not two.
+        // Deliberately silent on what is running: a stack can be running
+        // something older than its last save, which is what the
+        // restart-pending mark is for, not this line.
+        lines.push('<p>Your last working copy of this stack was saved ' + esc(historyWhen(res.historyAt)) +
+          '. <button type="button" class="staxx-link-btn" id="staxx-adopt-history-offer">Load it here instead</button>.</p>');
+      }
+      if (lines.length === 0) return;
+      installNote.querySelector('div').innerHTML = lines.join('');
+      installNote.hidden = false;
+
+      var offerBtn = document.getElementById('staxx-adopt-history-offer');
+      if (offerBtn) offerBtn.addEventListener('click', function () {
+        call('history-read', { name: name, n: res.historyN }).then(function (hres) {
+          if (openedName !== name || modal.dataset.adopt !== '1') return;
+          if (!hres || !hres.ok) {
+            failed('Could not load the last working copy', hres && hres.error);
+            return;
+          }
+          // Same load-not-write path the History tab's own Restore button
+          // uses — the person still saves it themselves, exactly as if they
+          // had typed it, with the same locked name and adoption claim.
+          performRestore(res.historyN, hres.text);
+        });
+      });
     });
   }
 

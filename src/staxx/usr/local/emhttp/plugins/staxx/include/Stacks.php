@@ -3069,6 +3069,20 @@ function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$
     $error = 'Could not save '.$file.' — the temporary file could not be put in place.';
     return false;
   }
+  // Keep the file as it now stands too — not only as it stood before. The
+  // before-save capture above is what catches an edit made on the server by
+  // hand between two saves; without this second call the version just
+  // written is never kept at all, so a save followed by a lost file loses
+  // exactly the copy nobody else has. staxx_record_capture() already skips a
+  // capture whose hash matches the newest one stored, so the version this
+  // writes and the "before" version taken at the *next* save — the same
+  // bytes — collapse into one kept version rather than two.
+  $recordNote2 = '';
+  if (!staxx_record_capture($name, basename($file), $recordNote2) && $recordNote2 !== '') {
+    if ($note !== null && $note === '') $note = $recordNote2;
+    error_log('StaXX: history not kept for '.$name.': '.$recordNote2);
+  }
+
   // A brand new stack just changed the tree's shape; see staxx_scan_stacks_reset().
   staxx_scan_stacks_reset();
   return true;
@@ -5253,6 +5267,17 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   $file = staxx_find_compose_file($dir);
   if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
   $files = staxx_compose_files($file);
+
+  // Catches a compose file dropped into this folder by hand and started
+  // without ever being opened here first — the one window the editor's own
+  // seed call cannot cover. A no-op once any history exists, so this can
+  // only ever do real work on the very first run against such a stack.
+  // Never blocks the run itself: a job is what was asked for, not a history
+  // entry.
+  $seedNote = '';
+  if (!staxx_record_seed($name, $seedNote) && $seedNote !== '') {
+    error_log('StaXX: history not seeded for '.$name.': '.$seedNote);
+  }
 
   // A file still holding STAXX_PLACEHOLDER cannot be started — half-filled
   // either way, so this applies at both whole-stack and single-service scope.

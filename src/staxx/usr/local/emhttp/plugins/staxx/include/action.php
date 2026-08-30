@@ -378,6 +378,13 @@ switch ($action) {
    * write into a fileless folder (staxx_save_stack()'s own fallback,
    * compose.yaml). Anything else sitting in the folder is not this stack's
    * override under that rule, and is rightly none of this answer's business.
+   *
+   * PLAN_102 5b — the same question also reports whether this stack has any
+   * kept history at all (staxx_record_list() reads the hidden index only; it
+   * never creates one), since a fileless folder usually still has one — the
+   * file went missing, not the history beside it. Only the newest version's
+   * number and timestamp go over the wire; the editor never needs the rest of
+   * the list just to offer the last one.
    */
   case 'adopt-check':
     if (!staxx_valid_path($name)) {
@@ -386,10 +393,15 @@ switch ($action) {
     $adoptDir      = staxx_stack_dir($name);
     $overrideName  = staxx_expected_override_basename($adoptDir.'/compose.yaml');
     $hasOverride   = $overrideName !== '' && is_file($adoptDir.'/'.$overrideName);
+    $versions      = staxx_record_list($name);
+    $newest        = $versions[0] ?? null;
     staxx_reply([
       'ok'           => true,
       'hasOverride'  => $hasOverride,
       'overrideName' => $hasOverride ? $overrideName : '',
+      'hasHistory'   => $newest !== null,
+      'historyN'     => $newest !== null ? $newest['n'] : 0,
+      'historyAt'    => $newest !== null ? $newest['at'] : 0,
     ]);
 
   /* ---- check a compose file without saving it ----
