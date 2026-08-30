@@ -4673,6 +4673,30 @@ function staxx_export_pack(array $pairs, string $stackName, string &$error): str
       }
     }
 
+    // A version marker, written by this function alone rather than accepted
+    // from the browser — a bundle cannot be produced without one. Once
+    // bundles exist in the wild, an importer needs to know what shape it has
+    // been handed; without this, a bundle written today could never say what
+    // it is, and the importer would be left sniffing at its contents. It
+    // carries no machine name, user name, path or timestamp — the covering
+    // note already inside the compose file is the anonymous record of when
+    // and where from, and this must stay just as anonymous. Written last and
+    // unconditionally, overwriting rather than refusing on the one-in-never
+    // chance a pair already claimed this exact name — a stack cannot
+    // actually supply a file here (the icon is the only nested entry
+    // staxx_export_sort() ever hands back, and it is named for the picture,
+    // not this marker), and the format identity matters more than a name
+    // nobody real would collide with.
+    if (!@mkdir($real.'/'.STAXX_RECORD_DIR, 0700, true) && !is_dir($real.'/'.STAXX_RECORD_DIR)) {
+      $error = 'Could not prepare a place to build the export.';
+      return '';
+    }
+    $marker = json_encode(['format' => 'staxx-bundle', 'version' => 1], JSON_PRETTY_PRINT);
+    if (@file_put_contents($real.'/'.STAXX_RECORD_DIR.'/bundle.json', $marker) === false) {
+      $error = 'Could not write the bundle marker while building the export.';
+      return '';
+    }
+
     // $stackName's only use anywhere in this function: a label on the
     // temporary zip file itself, never a path segment resolved against
     // anything real. Scrubbed to a safe character set the same way

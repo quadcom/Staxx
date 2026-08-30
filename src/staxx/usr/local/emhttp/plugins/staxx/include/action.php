@@ -497,7 +497,11 @@ switch ($action) {
     $zip = staxx_export_pack($decoded, $name, $error);
     if ($zip === '') staxx_reply(['ok' => false, 'error' => $error]);
 
-    $filename = ($name !== '' ? str_replace('/', '-', $name) : 'export').'.zip';
+    // .staxx rather than .zip: this is an ordinary zip underneath (renaming
+    // it back to .zip is how anyone can look inside), but the extension
+    // gives the bundle a recognisable identity for a future importer to
+    // check, rather than leaving it to guess at an arbitrary zip's contents.
+    $filename = ($name !== '' ? str_replace('/', '-', $name) : 'export').'.staxx';
     staxx_reply(['ok' => true, 'filename' => $filename, 'zip' => base64_encode($zip)]);
 
   /* ------------------------------------------------------ companion files --
