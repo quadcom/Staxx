@@ -20186,10 +20186,26 @@
         ? '<span class="staxx-crypt-fact">Recipe ' + esc(String(s.builtRecipeId).slice(0, 8)) + '</span>' : '') +
     '</div>';
 
+    // checkedAt is 0 exactly when no self-test record applies to the image
+    // that is actually built — nothing has been tested against it, whether
+    // because it was only just built or because a record went missing. That
+    // is a different thing from a format that WAS tested and failed, and
+    // must not be coloured or worded the same way: "failed" is a claim that
+    // a test ran, and making that claim about one that never did is what
+    // sent someone hunting for a broken container when nothing had actually
+    // been tried yet.
+    var checked = !!s.checkedAt;
     var formatsHtml = '';
     if (s.built && Array.isArray(s.formats) && s.formats.length) {
       formatsHtml = '<div class="staxx-crypt-formats">' +
+        (checked ? '' :
+          '<p class="staxx-hint">Not checked yet — build or rebuild the container to prove which ' +
+          'formats work on this machine.</p>') +
         s.formats.map(function (f) {
+          if (!checked) {
+            return '<div class="staxx-crypt-format staxx-crypt-format--unknown">' +
+              esc((f.label || f.id) + ' — not checked yet') + '</div>';
+          }
           var cls = 'staxx-crypt-format ' + (f.ok ? 'staxx-crypt-format--ok' : 'staxx-crypt-format--bad');
           // argon2's own check may be weaker than the others' — the plan is
           // explicit that a format may only claim what was actually proven,

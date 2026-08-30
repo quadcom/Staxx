@@ -1988,6 +1988,10 @@ switch ($action) {
     if (!staxx_settings_save($_POST, $error, $reload, $saved)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
+    // A saved CRYPT_MODE must take effect without a rebuild — restart policy
+    // and, for always-running, actually starting it. Cheap when the
+    // container does not exist yet, which is most saves.
+    staxx_crypt_apply_mode();
     staxx_reply(['ok' => true, 'settings' => $saved, 'reload' => $reload]);
 
   /* ------------------------------------------------- choosing a data store --

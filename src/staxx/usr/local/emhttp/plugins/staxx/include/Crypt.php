@@ -141,6 +141,27 @@ function staxx_crypt_selftest_read(): array {
   // like a missing file below, and both must, since "the record cannot be
   // read" and "nothing has ever passed" have to mean the same thing here.
   $raw = $file === '' ? false : @file_get_contents($file);
+  // Before the store existed (PLAN_97) this record lived on flash. A store
+  // that has never seen one yet — moved, or freshly created — must not read
+  // as "nothing proven" while a perfectly good record sits at the old
+  // location: adopt it once, but only ever INTO an absence, and only when a
+  // store is actually there to adopt it into. Any failure along the way is
+  // silent and falls through to $empty below — this gates which hash
+  // formats are trusted, so it must fail closed, never invent a pass.
+  if ($raw === false && $file !== '') {
+    $old = STAXX_CFG_DIR.'/crypt-selftest.json';
+    $legacy = @file_get_contents($old);
+    if ($legacy !== false) {
+      $dir = dirname($file);
+      if (is_dir($dir) || @mkdir($dir, 0755, true)) {
+        $tmp = $file.'.tmp-'.getmypid();
+        if (@file_put_contents($tmp, $legacy) !== false) {
+          @chmod($tmp, 0600);
+          if (@rename($tmp, $file)) $raw = $legacy; else @unlink($tmp);
+        }
+      }
+    }
+  }
   if ($raw === false) return $empty;
   $data = json_decode($raw, true);
   if (!is_array($data) || !is_string($data['recipeId'] ?? null) || !is_int($data['at'] ?? null)
@@ -450,6 +471,32 @@ function staxx_crypt_selftest_one(string $format, string &$argon2Method): bool {
   return false;
 }
 
+/**
+ * Bring an EXISTING container into line with the current CRYPT_MODE setting
+ * without a rebuild: set its restart policy so a reboot matches the setting
+ * just as a fresh build does, and start it if the mode is now always-running
+ * and it is currently stopped. Does nothing at all when the container does
+ * not exist yet — there is nothing to bring into line, and this must stay
+ * cheap for every settings save that has nothing to do with hashing.
+ */
+function staxx_crypt_apply_mode(): void {
+  // Asked once and reused: `docker update --restart` changes the policy, not
+  // whether the container is running, so asking a second time afterwards
+  // would spend another inspect to be told the same thing.
+  $status = staxx_crypt_container_status();
+  if ($status === 'missing') return;
+
+  $mode    = (string)(staxx_cfg()['CRYPT_MODE'] ?? '') === 'always' ? 'always' : 'ondemand';
+  $restart = $mode === 'always' ? 'unless-stopped' : 'no';
+  staxx_sh(
+    staxx_docker_bin().' update --restart '.escapeshellarg($restart).' '.escapeshellarg(STAXX_CRYPT_CONTAINER),
+    10
+  );
+  if ($mode === 'always' && $status === 'stopped') {
+    staxx_sh(staxx_docker_bin().' start '.escapeshellarg(STAXX_CRYPT_CONTAINER), 15);
+  }
+}
+
 /* --------------------------------------------------------------- guards --
  *
  * Both pure and Docker-free on purpose, so tests/server/crypt.php can prove
@@ -534,13 +581,20 @@ function staxx_crypt_do_build(string &$error): bool {
   // runs from the explicit build/rebuild the person just asked for.
   staxx_sh(staxx_docker_bin().' rm -f '.escapeshellarg(STAXX_CRYPT_CONTAINER), 10);
 
+  // The restart policy is set at creation time so "always-running" actually
+  // survives a reboot rather than only a `docker start` done once now — a
+  // reboot on 2026-08-27 killed a container created with the default policy
+  // (`no`) and nothing ever brought it back, while the setting still said
+  // always. staxx_crypt_apply_mode() below keeps this in step if the
+  // setting changes later without a rebuild.
+  $restart = (string)(staxx_cfg()['CRYPT_MODE'] ?? '') === 'always' ? 'unless-stopped' : 'no';
   echo staxx_sh(
     staxx_docker_bin().' create --name '.escapeshellarg(STAXX_CRYPT_CONTAINER)
     // No volume, no port, no network, nothing mounted — it reads a password
     // and prints a hash, and anything more is a way in. --read-only was
     // confirmed on the server 2026-08-26 not to break any of the three
     // tools: none of them need to write anything.
-    .' --network none --read-only '.escapeshellarg($tag),
+    .' --network none --read-only --restart '.escapeshellarg($restart).' '.escapeshellarg($tag),
     30, $code
   )."\n";
   if ($code !== 0) { $error = 'The container could not be created.'; return false; }

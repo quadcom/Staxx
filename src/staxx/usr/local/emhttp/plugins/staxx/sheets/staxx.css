@@ -8268,6 +8268,13 @@
   color: var(--sm-danger);
 }
 
+/* A format nobody has tested yet is neither a pass nor a fail — it reads as
+   "unknown", styled like the plain facts line above rather than either
+   colour, so it is never mistaken for a broken container. */
+.staxx-crypt-format--unknown {
+  color: var(--sm-muted);
+}
+
 /* One block of the crypt panel — an explanation with its own button under
    it. Several stack down the panel, so the gap belongs here rather than on
    each paragraph inside them. */
