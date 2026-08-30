@@ -251,7 +251,7 @@ $staxxSafeWithoutStore = [
   'images', 'tags', 'hub-search', 'image-facts',
   'ca-refresh', 'ca-search', 'ca-home', 'ca-app',
   'probe', 'webui-test', 'ping',
-  'crypt-state', 'crypt-build', 'crypt-rebuild', 'crypt-hash',
+  'crypt-state', 'crypt-build', 'crypt-rebuild', 'crypt-hash', 'crypt-recipe',
   // PLAN_97 Phase 2 — the first-run dialog's own actions. These are how a
   // store gets chosen in the first place, so they have to work before one
   // exists, same as 'settings-save' above.
@@ -270,6 +270,16 @@ switch ($action) {
   case 'read':
     $body = staxx_read_stack($name, $error);
     if ($body === null) staxx_reply(['ok' => false, 'error' => $error]);
+    // PLAN_102 5a — a compose file dropped into the folder by hand has no
+    // history until something is saved over it, and until then the file is
+    // its own only copy. Somebody opening the editor is the earliest moment
+    // this can be kept that is still a person asking for something, rather
+    // than a render doing it behind their back. A no-op once any version
+    // exists, and never allowed to stand between them and their file.
+    $seedNote = '';
+    if (!staxx_record_seed($name, $seedNote) && $seedNote !== '') {
+      error_log('StaXX: history not seeded for '.$name.': '.$seedNote);
+    }
     $reply = ['ok' => true, 'name' => $name, 'body' => $body, 'fingerprint' => md5($body)];
     // PLAN_61 — the registry-move facts for this stack's services, if any.
     // Absent entirely when there is nothing to say, per the wire contract:
@@ -291,14 +301,15 @@ switch ($action) {
     $body        = (string)($_POST['body'] ?? '');
     $isNew       = ($_POST['new'] ?? '') === '1';
     $fingerprint = (string)($_POST['fingerprint'] ?? '');
-    $exists      = is_dir(staxx_stack_dir($name));
 
-    if ($isNew && $exists) {
-      staxx_reply([
-        'ok'    => false,
-        'error' => 'A stack called "'.$name.'" already exists. Pick another name, '
-                 . 'or edit the existing one.',
-      ]);
+    // PLAN_102 — a create either lands on empty ground or is refused, and
+    // the caller may claim it means to give an existing but fileless stack
+    // folder its first compose file. The whole decision, refusals included,
+    // is one function so a suite on the server can prove it; only the claim
+    // itself is read here. An ordinary edit never reaches it.
+    if ($isNew) {
+      $refusal = staxx_create_refusal($name, ($_POST['adopt'] ?? '') === '1');
+      if ($refusal !== '') staxx_reply(['ok' => false, 'error' => $refusal]);
     }
 
     // The last save always winning silently is the bug this closes: a save
@@ -345,7 +356,7 @@ switch ($action) {
     // than an assumption, and the fingerprint of what is now there so a
     // second save in the same session is not refused against its own write.
     $written = staxx_find_compose_file(staxx_stack_dir($name));
-    staxx_reply([
+    $saveReply = [
       'ok'           => true,
       'name'         => $name,
       'file'         => $written,
@@ -355,6 +366,52 @@ switch ($action) {
       // Empty unless the previous version could not be kept — this save then
       // has no undo, which the person is entitled to know at the time.
       'historyNote'  => $historyNote,
+    ];
+    // PLAN_85 — one icon per service, so a saved icon shows without reopening
+    // the editor. Same omit-when-empty wire contract as 'read' above; read
+    // after the write is confirmed, so this always matches what is now on disk.
+    $saveIcons = staxx_service_icons_for_stack($name);
+    if ($saveIcons !== []) $saveReply['icons'] = $saveIcons;
+    staxx_reply($saveReply);
+
+  /* ---- what a fileless folder about to be adopted already holds ----
+   *
+   * PLAN_102 — adoption is still allowed when the folder holds an override
+   * file, but writing a main file beside one changes what that override
+   * applies to, so the editor asks this once before the person saves.
+   *
+   * There is no main file on disk yet to pair an override against, so this
+   * cannot read staxx_compose_files() directly the way 'check' and
+   * 'file-save' do. What it can do is ask staxx_expected_override_basename()
+   * the same question those pairings turn on — same directory, same base
+   * name, same extension — aimed at the one filename this route will ever
+   * write into a fileless folder (staxx_save_stack()'s own fallback,
+   * compose.yaml). Anything else sitting in the folder is not this stack's
+   * override under that rule, and is rightly none of this answer's business.
+   *
+   * PLAN_102 5b — the same question also reports whether this stack has any
+   * kept history at all (staxx_record_list() reads the hidden index only; it
+   * never creates one), since a fileless folder usually still has one — the
+   * file went missing, not the history beside it. Only the newest version's
+   * number and timestamp go over the wire; the editor never needs the rest of
+   * the list just to offer the last one.
+   */
+  case 'adopt-check':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $adoptDir      = staxx_stack_dir($name);
+    $overrideName  = staxx_expected_override_basename($adoptDir.'/compose.yaml');
+    $hasOverride   = $overrideName !== '' && is_file($adoptDir.'/'.$overrideName);
+    $versions      = staxx_record_list($name);
+    $newest        = $versions[0] ?? null;
+    staxx_reply([
+      'ok'           => true,
+      'hasOverride'  => $hasOverride,
+      'overrideName' => $hasOverride ? $overrideName : '',
+      'hasHistory'   => $newest !== null,
+      'historyN'     => $newest !== null ? $newest['n'] : 0,
+      'historyAt'    => $newest !== null ? $newest['at'] : 0,
     ]);
 
   /* ---- check a compose file without saving it ----
@@ -2359,6 +2416,13 @@ switch ($action) {
   // ---- everything Settings and the editor's hash panel need to draw ----
   case 'crypt-state':
     staxx_reply(['ok' => true, 'state' => staxx_crypt_state()]);
+
+  // ---- the Dockerfile and the create command, verbatim, for "Show the recipe" ----
+  case 'crypt-recipe':
+    $recipe = staxx_crypt_recipe();
+    if (!$recipe['ok']) staxx_reply(['ok' => false, 'error' => $recipe['error']]);
+    staxx_reply(['ok' => true, 'dockerfile' => $recipe['dockerfile'],
+                 'build' => $recipe['build'], 'create' => $recipe['create']]);
 
   // ---- build the container for the first time; only ever called by a button press ----
   case 'crypt-build':

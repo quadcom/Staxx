@@ -64,9 +64,16 @@ New to the page? The [user guide](docs/guide/README.md) explains what you are lo
 To remove it again, run the same script with `--remove`, which keeps your settings, or `--purge`,
 which takes those too.
 
-Once StaXX is published none of this is needed — Unraid's **Plugins → Install Plugin** box takes a
-plugin address directly, and Community Applications is not required for that. It is not the way in
-yet because the project is not public.
+**Prefer a proper plugin install?** From `v1.2.1` onwards, numbered releases also install the
+ordinary Unraid way. Paste this into **Plugins → Install Plugin**:
+
+```
+https://raw.githubusercontent.com/quadcom/Staxx/main/staxx.plg
+```
+
+That gives you a plugin Unraid tracks and updates like any other, kept on the flash drive so it
+survives a reboot without reinstalling. Community Applications is not required for it — StaXX is
+not published there yet, because the project is not public.
 
 ## Contents
 

@@ -263,6 +263,29 @@ function staxx_record_capture(string $rel, string $file, string &$note): bool {
   return true;
 }
 
+/**
+ * For a compose file that reached this stack some way other than a StaXX
+ * save — dropped into the folder by hand, most often — keep the file as it
+ * stands now, but only if this stack's history holds nothing at all. Once
+ * any version exists, whether from this or from an ordinary save, there is
+ * something to find and this is a no-op that still reports success: it can
+ * therefore only ever do real work once in a stack's life.
+ *
+ * Reuses staxx_record_capture() rather than a second path to the same
+ * history directory — that function already reads the file fresh off disk,
+ * hashes it, and skips a capture that duplicates the newest kept version, so
+ * there is nothing left for this to do but check the history is empty first.
+ */
+function staxx_record_seed(string $rel, string &$note): bool {
+  $note = '';
+  if (staxx_record_read($rel)['versions'] ?? []) return true; // already has history
+
+  $file = staxx_find_compose_file(staxx_stack_dir($rel));
+  if ($file === '') return true; // no compose file to seed from
+
+  return staxx_record_capture($rel, basename($file), $note);
+}
+
 /** Every kept version, newest first. [] when there is no history at all. */
 function staxx_record_list(string $rel): array {
   $versions = staxx_record_read($rel)['versions'] ?? [];

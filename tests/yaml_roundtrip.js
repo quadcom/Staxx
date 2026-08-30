@@ -9929,6 +9929,219 @@ console.log('\nAP. replaceScalarAt() accepts a block scalar, refuses every other
   ok('doc.staleWrite tells the caller which of the two refusals this was', doc.staleWrite === true, doc.staleWrite);
 })();
 
+/* =========================================================================
+ * AQ — the ports note (PLAN_104): portsNote(), setPortsNote(),
+ *      commentOutPorts() and restorePorts(). A service on a macvlan/ipvlan
+ *      network never has a live `ports:` — Docker's macvlan driver refuses
+ *      port mappings outright — so the published ports live instead as an
+ *      inert `# ports:` comment block. None of these four functions decide
+ *      WHEN to act; that is the browser layer's job, not built yet, so
+ *      these cases only prove the read/write mechanics are lossless.
+ * ========================================================================= */
+
+console.log('\nAQ. The ports note — commenting live ports out and restoring them, losslessly');
+
+(function () {
+  // Fixture 21: no fixture-specific behaviour to protect (no trailing
+  // comments), so this is the plainest headline case — comment out, then
+  // restore, must return the exact original bytes.
+  var file = path.join(ROOT, 'tests/fixtures/test-stacks/21-macvlan-ports-live/compose.yaml');
+  var src = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  var doc = Y.parse(src);
+
+  var before = src.split('\n').indexOf('    ports:');
+  var c = Y.commentOutPorts(doc, 'app');
+  ok('commentOutPorts reports success and the right count', c.ok === true && c.count === 2, JSON.stringify(c));
+
+  var mid = Y.serialise(doc);
+  var afterComment = mid.split('\n').indexOf('    # ports:');
+  ok('the block sits at the same line it always did, just commented',
+     afterComment === before, 'was line ' + before + ', now ' + afterComment);
+  ok('both port entries are commented, nothing else in the service moved',
+     mid.indexOf('    #   - "8080"') >= 0 && mid.indexOf('    #   - "8081"') >= 0, mid);
+
+  var doc2 = Y.parse(mid);
+  var r = Y.restorePorts(doc2, 'app');
+  ok('restorePorts reports success and the right count', r.ok === true && r.count === 2, JSON.stringify(r));
+
+  var got = Y.serialise(doc2);
+  ok('commenting out and restoring returns the file to its exact original bytes',
+     got === src, firstDiff(src, got));
+
+  var reparsed = Y.parse(got);
+  ok('the restored file re-parses clean — no warnings, no unread tail',
+     reparsed.warnings.length === 0 && !reparsed.unreadTail,
+     JSON.stringify({ warnings: reparsed.warnings, unreadTail: reparsed.unreadTail }));
+})();
+
+(function () {
+  // Fixture 22: a trailing comment beside each port, plus another setting
+  // (environment:) below the block — proves a comment travels with its own
+  // port rather than floating free, in both directions, and that the block
+  // does not move within the service even with neighbours on both sides.
+  var file = path.join(ROOT, 'tests/fixtures/test-stacks/22-macvlan-ports-annotated/compose.yaml');
+  var src = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  var doc = Y.parse(src);
+
+  var before = src.split('\n').indexOf('    ports:');
+  var c = Y.commentOutPorts(doc, 'app');
+  ok('commentOutPorts succeeds over annotated ports', c.ok === true && c.count === 2, JSON.stringify(c));
+
+  var mid = Y.serialise(doc);
+  var afterComment = mid.split('\n').indexOf('    # ports:');
+  ok('the block still sits between the same two neighbours after commenting out',
+     afterComment === before, 'was line ' + before + ', now ' + afterComment);
+  ok('the admin-page comment is still beside its own port, commented out',
+     mid.indexOf('    #   - "8080"        # the admin page') >= 0, mid);
+  ok('the stream comment is still beside its own port, commented out',
+     mid.indexOf('    #   - "8081"        # the stream') >= 0, mid);
+  ok('the setting below the block (environment:) is untouched',
+     mid.indexOf('    environment:') >= 0 && mid.indexOf('      TZ: Etc/UTC') >= 0, mid);
+
+  var doc2 = Y.parse(mid);
+  var r = Y.restorePorts(doc2, 'app');
+  ok('restorePorts succeeds over the annotated note', r.ok === true && r.count === 2, JSON.stringify(r));
+
+  var got = Y.serialise(doc2);
+  ok('both trailing comments are back beside their own port, live again',
+     got.indexOf('      - "8080"        # the admin page') >= 0 &&
+     got.indexOf('      - "8081"        # the stream') >= 0, got);
+  ok('the round trip returns the file to its exact original bytes',
+     got === src, firstDiff(src, got));
+
+  var reparsed = Y.parse(got);
+  ok('the restored file re-parses clean — no warnings, no unread tail',
+     reparsed.warnings.length === 0 && !reparsed.unreadTail,
+     JSON.stringify({ warnings: reparsed.warnings, unreadTail: reparsed.unreadTail }));
+})();
+
+(function () {
+  // Fixture 23: ports already commented out by hand. There is nothing live
+  // to act on, so commentOutPorts refuses; portsNote reads the block's
+  // lines with the marker and the block's own indentation stripped and
+  // nothing else normalised — the internal spacing before "# the admin
+  // page" survives verbatim.
+  var file = path.join(ROOT, 'tests/fixtures/test-stacks/23-macvlan-ports-commented/compose.yaml');
+  var src = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  var doc = Y.parse(src);
+
+  var c = Y.commentOutPorts(doc, 'app');
+  ok('commentOutPorts refuses a service with no live ports setting', c.ok === false, JSON.stringify(c));
+  ok('the file is byte-identical after the refusal', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+
+  var note = Y.portsNote(doc, 'app');
+  ok('portsNote finds the hand-written block', note.present === true, JSON.stringify(note));
+  ok('portsNote reads the lines as written, marker and indent stripped, nothing else normalised',
+     note.lines.length === 2 &&
+     note.lines[0] === '- "8080"        # the admin page' &&
+     note.lines[1] === '- "8081"',
+     JSON.stringify(note.lines));
+})();
+
+(function () {
+  // Fixture 23 again: setPortsNote([]) removes the block entirely and must
+  // disturb no other comment in the service — the header comment above
+  // services: and the networks: block below both survive untouched.
+  var file = path.join(ROOT, 'tests/fixtures/test-stacks/23-macvlan-ports-commented/compose.yaml');
+  var src = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  var doc = Y.parse(src);
+
+  var range = Y.portsNote(Y.parse(src), 'app').range;
+  var done = Y.setPortsNote(doc, 'app', []);
+  ok('setPortsNote([]) reports success', done === true, done);
+
+  // Cut the block out by its own line range rather than by matching text —
+  // the fixture's own header prose names "# ports:" in backticks, which a
+  // text-content filter would also (wrongly) strip.
+  var srcLines = src.split('\n');
+  var want = srcLines.slice(0, range.start).concat(srcLines.slice(range.end)).join('\n');
+  var got = Y.serialise(doc);
+  ok('the block is gone and nothing else in the file changed', got === want, firstDiff(want, got));
+
+  var reparsed = Y.parse(got);
+  ok('the result re-parses clean — no warnings, no unread tail',
+     reparsed.warnings.length === 0 && !reparsed.unreadTail,
+     JSON.stringify({ warnings: reparsed.warnings, unreadTail: reparsed.unreadTail }));
+})();
+
+(function () {
+  // Fixture 24: a service on both a macvlan network and a plain bridge one.
+  // One macvlan network is enough to break port publishing, so this must
+  // still comment out cleanly — and the bridge network's own declaration,
+  // sitting right after the macvlan one, must survive untouched.
+  var file = path.join(ROOT, 'tests/fixtures/test-stacks/24-macvlan-and-bridge/compose.yaml');
+  var src = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  var doc = Y.parse(src);
+
+  var before = src.split('\n').indexOf('    ports:');
+  var c = Y.commentOutPorts(doc, 'app');
+  ok('commentOutPorts succeeds for a service on both a macvlan and a bridge network',
+     c.ok === true && c.count === 1, JSON.stringify(c));
+
+  var got = Y.serialise(doc);
+  var afterComment = got.split('\n').indexOf('    # ports:');
+  ok('the block did not move within the service', afterComment === before, 'was line ' + before + ', now ' + afterComment);
+  ok('the bridge network declaration beside the macvlan one is untouched',
+     got.indexOf('  internal:\n    driver: bridge') >= 0, got);
+
+  var doc2 = Y.parse(got);
+  var r = Y.restorePorts(doc2, 'app');
+  ok('restorePorts succeeds', r.ok === true && r.count === 1, JSON.stringify(r));
+  ok('the round trip returns the file to its exact original bytes',
+     Y.serialise(doc2) === src, firstDiff(src, Y.serialise(doc2)));
+})();
+
+(function () {
+  // Fixture 25: an anchor inside the ports block, aliased by a second
+  // service further down the file. Read the model's own comment above
+  // commentOutPorts(): an anchor's definition may be the only thing an
+  // alias elsewhere depends on, and commenting it out cannot prove that
+  // alias would still resolve — so this is a REFUSAL, not a rewrite.
+  var file = path.join(ROOT, 'tests/fixtures/test-stacks/25-macvlan-ports-alias/compose.yaml');
+  var src = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  var doc = Y.parse(src);
+
+  var c = Y.commentOutPorts(doc, 'app');
+  ok('commentOutPorts refuses a ports block holding an anchor', c.ok === false, JSON.stringify(c));
+  ok('the refusal names the reason (anchor or alias)', /anchor|alias/.test(c.error), c.error);
+  ok('the file is byte-identical after the refusal', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // restorePorts must refuse rather than write a second `ports:` key when
+  // the service already has a live one — the quiet-corruption case, not
+  // exercised by any fixture above since none of them carries both a live
+  // key and a note at once.
+  var src = 'services:\n  web:\n    image: nginx\n    ports:\n      - "80"\n';
+  var doc = Y.parse(src);
+  var r = Y.restorePorts(doc, 'web');
+  ok('restorePorts refuses when the service already has a live ports setting', r.ok === false, JSON.stringify(r));
+  ok('the file is byte-identical after the refusal', Y.serialise(doc) === src, firstDiff(src, Y.serialise(doc)));
+})();
+
+(function () {
+  // setPortsNote on a service with neither a live ports setting nor an
+  // existing note creates one at the end of the service's own keys, and
+  // portsNote reads it straight back.
+  var src = 'services:\n  web:\n    image: nginx\n    restart: unless-stopped\n  other:\n    image: alpine\n';
+  var doc = Y.parse(src);
+  var done = Y.setPortsNote(doc, 'web', ['- "8080"', '- "8081"        # note']);
+  ok('setPortsNote reports success when creating a fresh block', done === true, done);
+
+  var want = 'services:\n  web:\n    image: nginx\n    restart: unless-stopped\n' +
+             '    # ports:\n    #   - "8080"\n    #   - "8081"        # note\n' +
+             '  other:\n    image: alpine\n';
+  var got = Y.serialise(doc);
+  ok('the new block lands at the end of the service, the other service untouched',
+     got === want, firstDiff(want, got));
+
+  var reparsed = Y.parse(got);
+  var note = Y.portsNote(reparsed, 'web');
+  ok('portsNote reads the freshly-created block back exactly',
+     note.present === true && note.lines[0] === '- "8080"' && note.lines[1] === '- "8081"        # note',
+     JSON.stringify(note));
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

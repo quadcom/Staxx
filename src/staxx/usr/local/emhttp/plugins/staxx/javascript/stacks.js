@@ -43,6 +43,11 @@
   var nameField   = document.getElementById('staxx-name-field');
   var nameInput   = document.getElementById('staxx-name');
   var nameFolder  = document.getElementById('staxx-name-folder');
+  // PLAN_102 phase 2 — cached once so the "adopt" wording (openEditor()'s
+  // adopt branch) can be swapped back on the next ordinary open. The PHP
+  // only renders this text once, so there is no other copy to fall back to.
+  var nameHintEl      = nameField ? nameField.querySelector('.staxx-name-hint') : null;
+  var nameHintDefault = nameHintEl ? nameHintEl.textContent : '';
   var yamlPane    = document.getElementById('staxx-yaml');
   var yamlNums    = document.getElementById('staxx-yamlnums');
   var yamlMarks   = document.getElementById('staxx-yamlmarks');
@@ -236,10 +241,12 @@
   var settingsMsg    = document.getElementById('staxx-settings-msg');
   var settingsCancel = document.getElementById('staxx-settings-cancel');
   var settingsSave   = document.getElementById('staxx-settings-save');
-  // StaXXCrypt's own state (PLAN_74 Part A piece 3) — a sibling of the body
-  // rather than one of its rows, since Save/Cancel/dirty-tracking do not
-  // apply to it: nothing here is a setting, only a report and a button.
-  var settingsCryptBox = document.getElementById('staxx-crypt-state');
+  // StaXXCrypt's own state (PLAN_74 Part A piece 3) — script builds this
+  // element fresh inside the settings body every time the panel opens (it
+  // sits right after the CRYPT_MODE row, not as a fixed row of its own), so
+  // it cannot be captured once at page load the way the rest of these are —
+  // a lookup at use time instead.
+  function settingsCryptBox() { return document.getElementById('staxx-crypt-state'); }
 
   // PLAN_68 Part B — where the data store should live. May be null on a
   // stale page, guarded the same way settingsModal is above.
@@ -581,12 +588,16 @@
     // Add button on an empty group has to write (PLAN_7.md's condition:
     // service_started rule leaves no way to write a bare short-form add here
     // anyway once nothing exists yet to copy the shape from).
-    var longForm = false, shortForm = false;
+    var longForm = false, shortForm = false, portsOther = false;
     for (i = 0; i < fields.length; i++) {
       var df = fields[i];
       if (df.service !== serviceName) continue;
       if (df.binder === 'depends' && !df.fold) longForm = true;
       else if (df.binder === 'list' && df.listKey === 'depends_on') shortForm = true;
+      // Every port on one service shares the same network, so the first one
+      // found tells us all of them do — checked here rather than off
+      // svc.netKind because this function only has fields to look at.
+      else if (df.binder === 'port') portsOther = portsOther || df.netKind === 'other';
     }
     for (i = 0; i < head.length; i++) {
       if (head[i].key !== 'depends') continue;
@@ -597,6 +608,18 @@
         : { key: 'depends', heading: 'Depends on', cls: 'staxx-formgroup--single',
             add: 'list:depends_on', flag: 'depends' };
       break;
+    }
+    // Macvlan/ipvlan only: the outer box is gone from every port row (see
+    // fieldHtml's mapped branch), so the heading naming it has to go too —
+    // blanked rather than removed, so the grid still lines up column for
+    // column with the rows beneath it.
+    if (portsOther) {
+      for (i = 0; i < head.length; i++) {
+        if (head[i].key !== 'port') continue;
+        head[i] = { key: 'port', heading: 'Ports', cls: 'staxx-formgroup--mapped staxx-formgroup--ports',
+                    add: 'port', flag: 'port', cols: ['', 'Container', 'protocol', 'Notes'] };
+        break;
+      }
     }
     return head.concat(tail);
   }
@@ -2844,6 +2867,17 @@
     for (var i = 0; i < advice.length; i++) {
       out += '<p class="staxx-fieldnote">' + esc(advice[i]) + '</p>';
     }
+    // Ports on a macvlan/ipvlan service only: the outer box is hidden (see
+    // the mapped branch of fieldHtml()) because the model's own advice above
+    // already says the outer number is ignored, but rule 2 forbids hiding a
+    // value the author wrote without saying where it went — so if the file
+    // still sets one, say so and point at where it can still be seen.
+    if (f.binder === 'port' && f.netKind === 'other' &&
+        f.parts.host && f.parts.host.value) {
+      out += '<p class="staxx-fieldnote">The file also sets ' + esc(f.parts.host.value) +
+             ' on the server side. It is ignored on this kind of network; edit it in ' +
+             'the Compose view if you want it gone.</p>';
+    }
     // Networks only (declareMissing is set nowhere else — see the 1e loop in
     // compose-model.js): one click writes the missing network's whole
     // declaration, so the advice above gets a fix rather than leaving the
@@ -3259,13 +3293,21 @@
       // say what it holds.
       bits.push('<span class="staxx-fieldlabel">' + esc(f.title) + helpBtnHtml(help, helpId) + '</span>');
       bits.push(boxHtml(f, index, 'value', 'value'));
-      bits.push(noteBoxHtml(f, index));
+      // The web page port has nowhere to put a note until the address line
+      // it lives on exists, so its Notes box would be a box that can never
+      // be typed in. Drawn only when it can hold something — writable, or
+      // already carrying a comment worth showing — and the WebUI chip takes
+      // the empty column instead of sitting a track further out.
+      var webui    = f.target === 'x-unraid.webui';
+      var showNote = !webui || !!(f.commentSpot || f.note);
+      if (showNote) bits.push(noteBoxHtml(f, index));
       // The web page port is the one Container row the WebUI button actually
       // follows (PLAN_51) — filled in, the button opens this port; cleared,
       // it turns off. Said here rather than left for the button to explain
       // on its own, since this is the only place that changes it.
-      if (f.target === 'x-unraid.webui') {
-        bits.push('<span class="staxx-webchip" title="' +
+      if (webui) {
+        bits.push('<span class="staxx-webchip' + (showNote ? '' : ' staxx-webchip--near') +
+          '" title="' +
           esc('The WebUI button on this container’s row opens this port. Clear it and the button turns off.') +
           '">WebUI</span>');
       }
@@ -3319,9 +3361,15 @@
       }
       // Only a volume gets the folder picker. A port is a number, so browsing
       // for one would be a button that never finds what you came for.
-      bits.push(boxHtml(f, index, 'host',
-                f.binder === 'port' ? 'port on the server' : 'path on the server',
-                f.binder === 'volume' ? 'browse' : ''));
+      // A port on a macvlan/ipvlan service has no outer number to set — the
+      // container has its own address, so Docker never looks at this side —
+      // so the box is replaced with the same blank-cell placeholder an empty
+      // grid track uses elsewhere, keeping the row's five columns aligned.
+      bits.push(f.binder === 'port' && f.netKind === 'other'
+                ? '<span class="staxx-boxgap" aria-hidden="true"></span>'
+                : boxHtml(f, index, 'host',
+                    f.binder === 'port' ? 'port on the server' : 'path on the server',
+                    f.binder === 'volume' ? 'browse' : ''));
       // A mount someone deliberately made read-only has to keep saying so.
       // The row lost its title, so the badge moves in beside the path it
       // qualifies rather than disappearing with it.
@@ -3662,6 +3710,64 @@
     return out.join('');
   }
 
+  /* ---- PLAN_104: ports on a macvlan/ipvlan service ----
+   *
+   * Docker refuses a live `ports:` entry on this kind of network — the
+   * container holds its own address, so there is no NAT for the mapping to
+   * go through — so a file with one set will not start. The three helpers
+   * below cover what the Ports group shows for it: a warning and a one-press
+   * fix when the file is already broken this way, the commented-out note
+   * as one editable box when it is not, and an offer to bring that note
+   * back live once the service is off such a network again. */
+
+  // Moment 1: the file already sets a live port on a network that cannot
+  // carry one. This is a fix, never a silent one — commentOutPorts() (called
+  // from the click handler) writes nothing until this button is pressed.
+  function macvlanPortsWarningHtml(serviceName) {
+    return '<div class="staxx-notice staxx-notice--bad staxx-portswarn">' +
+             '<i class="fa fa-exclamation-triangle" aria-hidden="true"></i>' +
+             '<div>' +
+               '<p>This service is on a network that gives it its own address, so nothing can ' +
+               'publish a port for it — these ports do nothing. Docker used to ignore them ' +
+               'quietly; it now refuses the file instead, so this will stop starting on a newer ' +
+               'Docker than the one here.</p>' +
+               '<button type="button" class="staxx-declfix" data-fix-macvlan-ports="1" ' +
+               'data-service="' + esc(serviceName) + '" ' +
+               'title="Turns the ports setting into a note, so the file keeps working.">Comment these ports out</button>' +
+             '</div>' +
+           '</div>';
+  }
+
+  // Moment 2: no live ports, so whatever the commented `# ports:` block
+  // already holds (or nothing) is shown as one free-text box — see
+  // compose-model.js's portsNote()/setPortsNote() for why this is a single
+  // box rather than a row per line: none of it is parsed YAML, so there is
+  // no field shape to give it. Committed on blur, in the formHost 'change'
+  // listener below.
+  function portsNoteHtml(serviceName) {
+    var note = YAML.portsNote(MODEL.doc, serviceName);
+    var text = note.lines.join('\n');
+    return '<div class="staxx-portsnote">' +
+             '<p class="staxx-fieldhint">This network gives the container its own address, so Docker never reads ' +
+             'a ports setting here. Kept as a note only, for your own reference — it never runs.</p>' +
+             '<textarea class="staxx-input staxx-portsnotebox" data-portsnote="1" ' +
+             'data-service="' + esc(serviceName) + '" spellcheck="false" ' +
+             'placeholder="One port per line, e.g. - &quot;8080&quot;        # the admin page" rows="' +
+             Math.max(2, note.lines.length + 1) + '">' + esc(text) + '</textarea>' +
+           '</div>';
+  }
+
+  // Moment 3, the "off" direction: a note is sitting there commented out
+  // and this service is no longer on a network that forbids it, so putting
+  // it back live is possible — offered, never automatic, since the person
+  // may simply have moved on from those ports.
+  function portsRestoreHtml(serviceName) {
+    return '<p class="staxx-fieldnote">This service keeps a note of ports that were commented out. ' +
+           '<button type="button" class="staxx-declfix" data-restore-ports="1" ' +
+           'data-service="' + esc(serviceName) + '" ' +
+           'title="Turns the note back into a live ports setting.">Bring them back live</button></p>';
+  }
+
   // A file the parser could not read at all is reparse()'s business — see
   // brokenFormHtml() — so by the time this runs form.ok is always true, and
   // the only empty case left is a readable file that simply lists nothing.
@@ -3743,6 +3849,22 @@
           else if (!rows.length && !grp.add) continue;
           out.push('<div class="staxx-formgroup ' + grp.cls + '" data-group="' + grp.key + '">');
           out.push(groupHeadHtml(grp, svc.name, grp.key === 'container' ? flags : null));
+          // PLAN_104: the Ports group is the one place svc.netKind changes
+          // what gets shown rather than just how a row looks — a live
+          // ports: setting on this kind of network is a broken file (fixed
+          // in one press), and with no live setting the group shows the
+          // commented note as one box instead of an empty grid. Read off
+          // svc.netKind directly rather than a port field's own copy of it,
+          // since a service with every port already commented out has no
+          // port fields left to read it from.
+          if (grp.key === 'port') {
+            if (svc.netKind === 'other') {
+              out.push(rows.length ? macvlanPortsWarningHtml(svc.name) : portsNoteHtml(svc.name));
+            } else {
+              var portNoteHere = YAML.portsNote(MODEL.doc, svc.name);
+              if (portNoteHere.present) out.push(portsRestoreHtml(svc.name));
+            }
+          }
           if (rows.length) out.push(captionRow(grp));
           for (var r = 0; r < rows.length; r++) {
             out.push(fieldHtml(form.fields[rows[r]], rows[r]));
@@ -5756,6 +5878,19 @@
       return;
     }
 
+    // PLAN_104: a networks: row's own value is the one place this generic
+    // write can flip the whole service onto or off a macvlan/ipvlan network
+    // — checked here, after the write above has already landed, so the
+    // result can be read straight off the model rather than guessed at
+    // beforehand. handleNetworkKindCrossing() takes over the redraw and
+    // status line (and can put the write back if the person declines) only
+    // when a crossing actually happened; anything else falls through to the
+    // ordinary quiet tail below exactly as before.
+    if (f.binder === 'list' && f.listKey === 'networks' && f.from === 'networks' &&
+        el.dataset.part === 'value' && handleNetworkKindCrossing(f, el)) {
+      return;
+    }
+
     // §11.3/§11.5: write every confirmed partner immediately, through the
     // same YAML.setValue() a typed edit itself uses (condition 6), and
     // report every outcome — a write, a refusal, or a partner that has gone
@@ -6023,6 +6158,13 @@
 
   formHost.addEventListener('change', function (event) {
     var el = event.target;
+
+    // The ports note box (portsNoteHtml(), PLAN_104) is text read straight
+    // off the model rather than one of MODEL.fields, so it has no data-row
+    // for the generic commit() below to look up — it owns its own commit
+    // instead, on the same "fires on Enter or on blur" moment every other
+    // text box here commits on.
+    if (el.dataset.portsnote !== undefined) { commitPortsNote(el); return; }
 
     // Choosing "a folder on the server…" from a volume's host dropdown must
     // never reach the file — swap the control instead of committing it.
@@ -6398,6 +6540,51 @@
       return;
     }
 
+    // PLAN_104 moment 1: the file already sets a live port on a network
+    // that cannot carry one, so this is a fix rather than a preference —
+    // still only ever run on a press, never on open. commentOutPorts()
+    // refuses (leaving the file untouched) when the block holds an anchor
+    // or alias; its own sentence is shown rather than swallowed.
+    var fixMacvlan = event.target.closest('[data-fix-macvlan-ports]');
+    if (fixMacvlan) {
+      var fmService = fixMacvlan.dataset.service;
+      flushPending();
+      pushUndo('commenting out "' + fmService + '"’s ports');
+      var fm = YAML.commentOutPorts(MODEL.doc, fmService);
+      if (!fm.ok) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus(fm.error);
+        return;
+      }
+      structuralEdit(-1, 'Commented out ' + fm.count + ' published port' + (fm.count === 1 ? '' : 's') +
+                    ' on "' + fmService + '" — a container with its own address cannot publish ' +
+                    (fm.count === 1 ? 'it' : 'any of them') + '. ' +
+                    'Undo is at the bottom if that was wrong.');
+      return;
+    }
+
+    // PLAN_104 moment 3, the "off" direction: a commented note is sitting
+    // there and this service is no longer on a network that forbids a live
+    // ports: setting, so it can go back in. restorePorts() itself refuses
+    // if a live setting has appeared from somewhere else in the meantime.
+    var restorePortsBtn = event.target.closest('[data-restore-ports]');
+    if (restorePortsBtn) {
+      var rpService = restorePortsBtn.dataset.service;
+      flushPending();
+      pushUndo('bringing back "' + rpService + '"’s ports');
+      var rp = YAML.restorePorts(MODEL.doc, rpService);
+      if (!rp.ok) {
+        undoStack.pop();
+        updateUndo();
+        setYamlStatus(rp.error);
+        return;
+      }
+      structuralEdit(-1, 'Brought back ' + rp.count + ' published port' + (rp.count === 1 ? '' : 's') +
+                    ' for "' + rpService + '". Undo is at the bottom if that was wrong.');
+      return;
+    }
+
     // The version buttons beside a moved-image advisory (adviceText(),
     // applyMovedAdvice()) — one in-place rewrite of the image line, exactly
     // the box's own commit() path below. No confirmation dialog: the
@@ -6468,6 +6655,16 @@
       // anything at all.
       if (add.dataset.add === 'device') {
         devOpen(add.closest('.staxx-grouphead'), null, add.dataset.service);
+        return;
+      }
+      // PLAN_104 moment 2: on a network that forbids a live ports: setting,
+      // "+ port" has nowhere real to write to — it adds a line to the
+      // commented note instead of a row to a setting the file must never
+      // hold. Checked ahead of the generic list-add below, which would
+      // otherwise write a live entry straight into the broken shape this
+      // whole feature exists to avoid.
+      if (add.dataset.add === 'port' && netKindOfService(add.dataset.service) === 'other') {
+        addPortsNoteLine(add.dataset.service);
         return;
       }
       // A declaration has no service to hand YAML.addItem below, so it goes
@@ -6909,6 +7106,135 @@
       ? 'The stored network list in this file is not in a form StaXX can put back, so it has been ' +
         'discarded. The network mode has been cleared, so add the networks again from this row.'
       : 'There was nothing left to restore — the stash was empty or no longer made sense, so it was dropped.');
+  }
+
+  // PLAN_104: a service's own netKind, read straight off MODEL.services
+  // rather than off a port field's copy of it — a service with every port
+  // already commented out has no port fields left to carry one. 'bridge' is
+  // the same safe fallback buildForm() itself uses for a service it cannot
+  // find, or before the network list has answered at all.
+  function netKindOfService(service) {
+    var list = (MODEL && MODEL.services) || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].name === service) return list[i].netKind || 'bridge';
+    }
+    return 'bridge';
+  }
+
+  // PLAN_104 moment 2: "+ port" on a macvlan/ipvlan service adds one blank
+  // line to the commented note rather than a row to a setting the file must
+  // never hold live. setPortsNote() rewrites the whole block, so this reads
+  // it first and appends — the same read-then-write shape movePort() and
+  // the other structural edits above already use.
+  function addPortsNoteLine(service) {
+    flushPending();
+    var already = YAML.portsNote(MODEL.doc, service);
+    pushUndo('adding a port to "' + service + '"’s ports note');
+    var ok = YAML.setPortsNote(MODEL.doc, service, already.lines.concat(['- ""']));
+    if (!ok) {
+      undoStack.pop();
+      updateUndo();
+      setYamlStatus('That note is written in a way the form cannot add to — edit it in the Compose view instead.');
+      return;
+    }
+    structuralEdit(-1, '');
+    var svcSel = '.staxx-svc[data-service="' + service.replace(/"/g, '\\"') + '"]';
+    var ta = formHost.querySelector(svcSel + ' [data-portsnote]');
+    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  }
+
+  // The ports note's own box (portsNoteHtml()), committed on blur — see the
+  // formHost 'change' listener below for why this runs there rather than
+  // through the generic per-field commit() path: portsNote is text read
+  // straight off the model, not one of MODEL.fields, so there is no row for
+  // commit() to look up. setPortsNote() can add or remove lines, so unlike
+  // a plain value edit this goes through structuralEdit() like every other
+  // write here that changes the file's line count.
+  function commitPortsNote(el) {
+    if (!MODEL || sanitised || fileOpen !== null) return;
+    var service = el.dataset.service;
+    var lines = el.value.split('\n');
+    while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+
+    flushPending();
+    pushUndo('editing "' + service + '"’s ports note');
+    var ok = YAML.setPortsNote(MODEL.doc, service, lines);
+    if (!ok) {
+      undoStack.pop();
+      updateUndo();
+      setYamlStatus('This note could not be updated — edit it in the Compose view instead.');
+      return;
+    }
+    structuralEdit(-1, '');
+  }
+
+  // PLAN_104 moments 2 and 3: a networks: row's own value is the one place a
+  // plain edit can flip a service onto or off a macvlan/ipvlan network, and
+  // ports only ever run on the other kind — so that crossing cannot be left
+  // to the generic quiet write commit() gives every other value box. The
+  // write has already landed in MODEL.doc (YAML.setPart, run by the caller
+  // just above) by the time this runs; a fresh form is built to read the
+  // result rather than re-deriving the model's own driver-resolution rule
+  // here, so the two can never disagree about what counts as "other".
+  // Returns true when it has taken over the redraw and status line itself —
+  // an ordinary pick, crossing nothing, returns false and lets commit()'s
+  // usual quiet tail run as it always has.
+  function handleNetworkKindCrossing(f, el) {
+    var oldKind = netKindOfService(f.service);
+    var fresh = YAML.buildForm(MODEL.doc, netDrivers());
+    var newKind = 'bridge';
+    for (var i = 0; i < fresh.services.length; i++) {
+      if (fresh.services[i].name === f.service) { newKind = fresh.services[i].netKind || 'bridge'; break; }
+    }
+    if (newKind === oldKind) return false;
+
+    if (newKind === 'other') {
+      var livePorts = 0;
+      for (i = 0; i < fresh.fields.length; i++) {
+        var pf = fresh.fields[i];
+        if (pf.service === f.service && pf.binder === 'port' &&
+            ((pf.parts.host && pf.parts.host.value) || (pf.parts.container && pf.parts.container.value))) livePorts++;
+      }
+      if (!livePorts) { structuralEdit(-1, ''); return true; }
+
+      if (!window.confirm(
+            '"' + el.value + '" gives "' + f.service + '" its own address on the network, and Docker refuses ' +
+            'to publish a port there. Switching will keep ' +
+            (livePorts === 1 ? 'its one published port'
+                             : (livePorts === 2 ? 'both published ports'
+                                                : 'its ' + livePorts + ' published ports')) +
+            ' as a note instead, so the file can still start. Continue?')) {
+        // Nothing here went through pushUndo() — a plain value edit never
+        // takes one — so the write commit() just made is put back by hand,
+        // the same way the box itself is reset to what it showed before.
+        YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
+        el.value = f.parts.value.value;
+        // Said out loud: without this the status line still shows whatever
+        // happened before, which reads as though the switch went through.
+        setYamlStatus('Left "' + f.service + '" on "' + f.parts.value.value +
+                      '". Nothing was changed.');
+        return true;
+      }
+
+      var cmt = YAML.commentOutPorts(MODEL.doc, f.service);
+      if (!cmt.ok) {
+        YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
+        el.value = f.parts.value.value;
+        setYamlStatus(cmt.error);
+        return true;
+      }
+      structuralEdit(-1, 'Switched "' + f.service + '" onto "' + el.value + '". ' +
+                    cmt.count + (cmt.count === 1 ? ' published port was' : ' published ports were') +
+                    ' kept as a note, since a container with its own address cannot publish ' +
+                    (cmt.count === 1 ? 'it' : 'any of them') + '.');
+      return true;
+    }
+
+    // "other" -> anything else: the note (if any) is offered back by
+    // portsRestoreHtml() on the next render, which this triggers — never
+    // put back live automatically, since the person may have moved on.
+    structuralEdit(-1, 'Switched "' + f.service + '" off its own-address network.');
+    return true;
   }
 
   // Asks for a container name by prompt rather than swapping the row's box —
@@ -7625,6 +7951,15 @@
 
   var cryptState        = null;   // last known crypt-state reply, or null before the first fetch
   var cryptStatePromise = null;   // in-flight fetch, so a second call while one is running joins it
+
+  // The "Show the recipe" disclosure — fetched once, on first press, not on
+  // every settings open: cryptRecipe holds the reply (or cryptRecipeError a
+  // reason it could not be read), cryptRecipeOpen just tracks whether the
+  // disclosure is currently expanded so a state refresh mid-panel does not
+  // collapse it back shut under the person.
+  var cryptRecipe       = null;
+  var cryptRecipeError  = null;
+  var cryptRecipeOpen   = false;
 
   function cryptFetchState(force) {
     if (force) { cryptState = null; cryptStatePromise = null; }
@@ -12180,12 +12515,19 @@
   // the whole stack's own All tab, a service name for one container's — and
   // it is what switches straight to Manage further down, once the model this
   // stack's Manage view is built from (MODEL, from reparse() above) exists.
-  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved, watch, icons) {
+  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved, watch, icons, adopt) {
     closeMenu();
     clearError();
 
     modal.dataset.new = isNew ? '1' : '0';
-    modalTitle.textContent = isNew ? 'New stack' : 'Edit stack';
+    // PLAN_102 phase 2 — "give this folder its first compose file", reached
+    // only from a stack's own menu or its folder-strip tile. save() below
+    // reads this to send the adoption claim the server's gate requires.
+    modal.dataset.adopt = adopt ? '1' : '0';
+    // Repairing a folder that already exists is a new file, not a new stack,
+    // and everything else in this view says so — the name is filled in and
+    // locked to that folder — so the heading says it too.
+    modalTitle.textContent = adopt ? 'New compose file' : (isNew ? 'New stack' : 'Edit stack');
     openedName = name || '';
     fingerprintAtOpen = fingerprint || '';   // '' for a new stack — nothing to conflict with yet
     serviceRenamed = false;
@@ -12279,7 +12621,17 @@
     nameFolder.hidden = at < 0;
 
     nameInput.value = at < 0 ? (name || '') : name.slice(at + 1);
-    nameInput.readOnly = false;
+    // Adopting: the directory is the thing being repaired, so typing a
+    // different name here would create somewhere else instead of fixing
+    // this folder — locked, with the hint saying so. Reset unconditionally
+    // on every other open, or a locked box would silently survive into the
+    // next "Add stack".
+    nameInput.readOnly = !!adopt;
+    if (nameHintEl) {
+      nameHintEl.textContent = adopt
+        ? 'This folder has no compose file yet — saving here writes one, so the name cannot be changed.'
+        : nameHintDefault;
+    }
     nameField.hidden = false;
 
     // Always off on open. Coming back to blurred fields a week later and
@@ -14805,6 +15157,10 @@
     // really is a caught install, which is always a new stack.
     var payload = { name: name, body: withEol(body, composeEol), 'new': modal.dataset.new,
                      fingerprint: fingerprintAtOpen };
+    // PLAN_102 phase 1/2 — only ever '1' when this open was "start a compose
+    // file here" against an existing fileless folder; every other new-stack
+    // route leaves it unset, so the name-clash refusal still applies to them.
+    if (isNew && modal.dataset.adopt === '1') payload.adopt = '1';
     if (isNew && pendingHandoffId) payload.handoff = pendingHandoffId;
 
     call('save', payload)
@@ -14856,6 +15212,13 @@
         // own write would look like a conflict to the very next one.
         textAtOpen = body;
         fingerprintAtOpen = res.fingerprint || '';
+
+        // PLAN_85 — a saved icon must show without reopening the editor.
+        // Harmless to do even on the paths that go on to closeEditor(): the
+        // next open re-reads everything anyway, so this only ever matters on
+        // the stay-open path in finishSave() below.
+        serviceIcons = res.icons || {};
+        paintServiceIcons();
 
         // PLAN_71 stage 5: a save is exactly the moment the file side of the
         // comparison can have moved — asked for here rather than waiting on
@@ -17689,6 +18052,65 @@
     });
   }
 
+  // PLAN_102 phase 2 — the one route into a fileless stack's folder: the
+  // usual new-stack scaffold, but with the name locked to this folder and
+  // the adoption claim set so save()'s payload carries it. Reached from the
+  // stack's own menu (buildStackMenu) and, once broken, from its folder-strip
+  // tile (the scaffold click handler) — both pass the same directory name a
+  // normal stack row already carries.
+  function openAdoptEditor(name) {
+    openEditor(name, '', true, '', undefined, undefined, undefined, undefined, undefined, undefined, true);
+
+    // Whether an override already sits in this folder — asked once the
+    // editor is already open and usable, never before: a slow or failed
+    // answer must not hold up the one route in for a fileless stack.
+    // Reuses installNote, the handoff hook's own non-blocking line (reset to
+    // hidden on every openEditor() call above) rather than inventing a
+    // second banner for the same slot.
+    call('adopt-check', { name: name }).then(function (res) {
+      // Another stack may have been opened while this was in flight —
+      // openedName is what says whether this answer still applies.
+      if (openedName !== name || modal.dataset.adopt !== '1') return;
+      if (!res || !res.ok) return;
+
+      // PLAN_102 5b — an override answer and a history offer are unrelated
+      // facts about the same folder, so both get their own line rather than
+      // one overwriting the other when both happen to be true.
+      var lines = [];
+      if (res.hasOverride) {
+        lines.push('<p>An override file (' + esc(res.overrideName) + ') is already in this folder ' +
+          'and will be applied on top of whatever is saved here.</p>');
+      }
+      if (res.hasHistory) {
+        // historyWhen() is the History tab's own formatter (hoisted, declared
+        // further down this file) — one way of saying "when", not two.
+        // Deliberately silent on what is running: a stack can be running
+        // something older than its last save, which is what the
+        // restart-pending mark is for, not this line.
+        lines.push('<p>Your last working copy of this stack was saved ' + esc(historyWhen(res.historyAt)) +
+          '. <button type="button" class="staxx-link-btn" id="staxx-adopt-history-offer">Load it here instead</button>.</p>');
+      }
+      if (lines.length === 0) return;
+      installNote.querySelector('div').innerHTML = lines.join('');
+      installNote.hidden = false;
+
+      var offerBtn = document.getElementById('staxx-adopt-history-offer');
+      if (offerBtn) offerBtn.addEventListener('click', function () {
+        call('history-read', { name: name, n: res.historyN }).then(function (hres) {
+          if (openedName !== name || modal.dataset.adopt !== '1') return;
+          if (!hres || !hres.ok) {
+            failed('Could not load the last working copy', hres && hres.error);
+            return;
+          }
+          // Same load-not-write path the History tab's own Restore button
+          // uses — the person still saves it themselves, exactly as if they
+          // had typed it, with the same locked name and adoption claim.
+          performRestore(res.historyN, hres.text);
+        });
+      });
+    });
+  }
+
   // One row of the removal confirmation's file list: a plain file shows its
   // size, a subdirectory shows how many entries it holds one level down, and
   // a symlink is called out on its own — the archive stores a symlink as a
@@ -18623,12 +19045,29 @@
             // A failed handover has already put itself back on the server —
             // the job's own output says what went wrong, so there is
             // nothing to ask here beyond refreshing the row's badge either
-            // way. Only a clean finish has anything left to confirm.
+            // way. A clean finish used to ask "does it work?" immediately,
+            // right on top of the page a person has to leave this dialog to
+            // go and check — so it only tells them what to do next now; the
+            // row's own badge (below) is what asks the question, once they
+            // come back to answer it.
             track(r.job, {
               show: true,
               done: function (job) {
                 refreshRows();
-                if (job.exit === 0) openHandoverAnswer(name, label, true);
+                if (job.exit === 0) {
+                  askConfirm({
+                    title: label + ' is now live',
+                    bodyHtml:
+                      '<p>"' + esc(label) + '" has been switched over and is running now.</p>' +
+                      '<p>Go and use it the way you normally would, to check it works.</p>' +
+                      '<p>Its row now carries a "waiting to confirm" marker. Press that when ' +
+                      'you are ready, and it will ask whether to keep this change or put ' +
+                      'everything back — the old container is still there, set aside, until ' +
+                      'you answer.</p>' +
+                      '<p>Nothing is decided until then, so there is no hurry.</p>',
+                    goLabel: 'OK'
+                  }).then(function () { closeConfirm(); });
+                }
               }
             });
           });
@@ -20246,7 +20685,7 @@
   // chose to run — and never removed by a button in what follows: that is
   // the person's own move, in their own time.
   function renderCryptSettings() {
-    var box = settingsCryptBox;
+    var box = settingsCryptBox();
     if (!box) return;
     var s = cryptState;
     if (!s) { box.hidden = true; return; }
@@ -20326,11 +20765,57 @@
             '</div>'
           : '');
 
+    // "We don't want to hide anything from users that would make them
+    // question the safety of what they have installed" — so the recipe is
+    // one press away rather than tucked behind a separate page, and it shows
+    // the real Dockerfile and the real `docker create` flags, not a summary
+    // of them.
+    var recipeBodyHtml = '';
+    if (cryptRecipeOpen) {
+      if (cryptRecipeError) {
+        recipeBodyHtml = '<p class="staxx-hint">' + esc(cryptRecipeError) + '</p>';
+      } else if (cryptRecipe) {
+        recipeBodyHtml =
+          '<p class="staxx-hint">This is exactly what gets built — nothing is fetched pre-built. ' +
+          'The container it makes runs with no network connection and a read-only filesystem, ' +
+          'which is what the command below actually asks for.</p>' +
+          '<pre class="staxx-crypt-recipe-pre">' + esc(cryptRecipe.dockerfile) + '</pre>' +
+          '<p class="staxx-hint">The two commands run against it — the first builds the image, ' +
+          'the second makes the container:</p>' +
+          '<pre class="staxx-crypt-recipe-pre">' + esc(cryptRecipe.build) + '</pre>' +
+          '<pre class="staxx-crypt-recipe-pre">' + esc(cryptRecipe.create) + '</pre>';
+      } else {
+        recipeBodyHtml = '<p class="staxx-hint">Reading the recipe…</p>';
+      }
+    }
+    var recipeHtml =
+      '<div class="staxx-crypt-line">' +
+        '<button type="button" class="staxx-link-btn" id="staxx-crypt-recipe-toggle">' +
+        (cryptRecipeOpen ? 'Hide the recipe' : 'Show the recipe') + '</button>' +
+        recipeBodyHtml +
+      '</div>';
+
     box.innerHTML =
       '<div class="staxx-crypt-line">' + factsHtml + formatsHtml + '</div>' +
-      noticeHtml + buildHtml +
+      noticeHtml + buildHtml + recipeHtml +
       '<p class="staxx-hint">Not shown in the Stacks or Container lists — StaXXCrypt is StaXX\'s ' +
       'own plumbing, not an application you chose to run.</p>';
+  }
+
+  // Toggles the recipe disclosure and fetches it the first time it opens —
+  // never on every settings open, since the text never changes between
+  // builds. A second toggle open re-shows the cached copy rather than
+  // fetching again.
+  function toggleCryptRecipe() {
+    cryptRecipeOpen = !cryptRecipeOpen;
+    if (cryptRecipeOpen && !cryptRecipe && !cryptRecipeError) {
+      call('crypt-recipe', {}).then(function (res) {
+        if (res && res.ok) cryptRecipe = res;
+        else cryptRecipeError = (res && res.error) || 'Could not read the recipe.';
+        renderCryptSettings();
+      });
+    }
+    renderCryptSettings();
   }
 
   // Runs a build or rebuild started from the Settings panel and follows it
@@ -20357,18 +20842,12 @@
     });
   }
 
-  if (settingsCryptBox) {
-    settingsCryptBox.addEventListener('click', function (event) {
-      if (event.target.closest('#staxx-crypt-build')) {
-        runCryptJob('crypt-build', 'Building…');
-      } else if (event.target.closest('#staxx-crypt-rebuild')) {
-        runCryptJob('crypt-rebuild', 'Rebuilding…');
-      }
-    });
-  }
+  // The crypt block's own clicks are handled by the delegated
+  // settingsBody listener below — it is built by script after the panel
+  // opens, so nothing here can be listened on directly at load time.
 
   function loadCryptState() {
-    if (!settingsCryptBox) return;
+    if (!settingsCryptBox()) return;
     cryptFetchState().then(renderCryptSettings);
     renderCryptSettings();   // paint whatever is already cached immediately, do not wait on the fetch
   }
@@ -20504,7 +20983,13 @@
       settingsMsg.textContent = '';
       settingsMsg.classList.remove('staxx-settings-msg--bad');
       settingsBody.innerHTML = SETTINGS_ROWS.map(function (row) {
-        return settingsFieldHtml(row, res.settings[row.key] || '');
+        var html = settingsFieldHtml(row, res.settings[row.key] || '');
+        // PLAN_74 Part A piece 3, moved per feedback: StaXXCrypt's own state
+        // belongs right under the setting that governs it, not pinned to the
+        // bottom of the whole panel however far you have scrolled past it.
+        // Not a row of SETTINGS_ROWS itself — see settingsCryptBox() above.
+        if (row.key === 'CRYPT_MODE') html += '<div class="staxx-crypt" id="staxx-crypt-state" hidden></div>';
+        return html;
       }).join('') +
         // PLAN_83: nothing here is a setting to save — pressing it reads and
         // checks every stack there and then, so it sits as its own action
@@ -20624,6 +21109,18 @@
       }
       if (event.target.closest('#staxx-scaffold-sweep')) {
         runScaffoldSweep();
+        return;
+      }
+      if (event.target.closest('#staxx-crypt-build')) {
+        runCryptJob('crypt-build', 'Building…');
+        return;
+      }
+      if (event.target.closest('#staxx-crypt-rebuild')) {
+        runCryptJob('crypt-rebuild', 'Rebuilding…');
+        return;
+      }
+      if (event.target.closest('#staxx-crypt-recipe-toggle')) {
+        toggleCryptRecipe();
         return;
       }
       /* Opened on top of Settings rather than instead of it: nothing here is
@@ -21700,6 +22197,11 @@
       // Remove stack (which produces the archive zip) rather than up with
       // the run verbs.
       menuItem('Export…', 'share-square-o', function () { openExportModal(name, label); });
+    } else {
+      // PLAN_102 phase 2 — the one route in for a stack with nothing to
+      // edit yet. hasFile false is exactly the state that gives every other
+      // route (Edit compose file, the row's own icon) nothing to open.
+      menuItem('Start a compose file here', 'file-code-o', function () { openAdoptEditor(name); });
     }
 
     // The section shows even with no folders yet — "New folder" is what it is
@@ -22662,8 +23164,58 @@
   /* -------------------------------------------------------------- wiring -- */
 
   scaffold.addEventListener('click', function (event) {
+    // A folder's icon strip is decoration (aria-hidden, plain <span>s — see
+    // the accessibility note on .staxx-fstrip in the stylesheet), so it is
+    // handled ahead of the closest('button') below rather than folded into
+    // it: nothing in here is a button, and everything it reaches is already
+    // reachable another way. A stack that fails to parse AND has no compose
+    // file at all has nothing an editor could open onto, so only
+    // data-fstrip-edit (set on the server, which is where "has a file" is
+    // actually known) routes to the editor — every other item, broken or
+    // not, just opens its folder and scrolls to the row.
+    var fstripItem = event.target.closest('.staxx-fstrip-item');
+    if (fstripItem) {
+      var fstripStack = fstripItem.dataset.fstripStack;
+      if (!fstripStack) return;
+      if (fstripItem.dataset.fstripEdit === '1') {
+        editStack(fstripStack, stackLabel(fstripStack));
+        return;
+      }
+      // PLAN_102 phase 3 — the other kind of broken tile: the server never
+      // marks a fileless stack data-fstrip-edit (see the comment above), so
+      // among the broken ones (the red triangle, .staxx-fstrip-item--broken)
+      // that is exactly the "no file" case, without inventing a fresh way to
+      // ask the same question the styling must not be read for.
+      if (fstripItem.classList.contains('staxx-fstrip-item--broken')) {
+        openAdoptEditor(fstripStack);
+        return;
+      }
+      var fstripFolderRow = fstripItem.closest('[data-folder-row]');
+      if (fstripFolderRow) {
+        var fstripChevron = fstripFolderRow.querySelector('[data-toggle-folder]');
+        if (fstripChevron && fstripChevron.getAttribute('aria-expanded') !== 'true') {
+          toggleFolder(fstripChevron.dataset.toggleFolder, fstripChevron);
+        }
+      }
+      var fstripRow = rowFor(fstripStack);
+      if (fstripRow) {
+        fstripRow.scrollIntoView({ block: 'center' });
+        fstripRow.classList.add('staxx-row--fstrip-flash');
+        setTimeout(function () {
+          fstripRow.classList.remove('staxx-row--fstrip-flash');
+        }, 900);
+      }
+      return;
+    }
+
     var el = event.target.closest('button');
     if (!el) return;
+
+    // PLAN_102 phase 2b — the red "no compose file" sentence is itself the
+    // fix now (see staxx_render_rows()'s !$s['hasFile'] branch). Checked
+    // before every other button case below so nothing broader — the row's
+    // own menu trigger included — can swallow it first.
+    if (el.dataset.adoptFix) { openAdoptEditor(el.dataset.adoptFix); return; }
 
     // The restart-pending chip (PLAN_71 stage 5) — always its own button,
     // never a menu item, because it must only ever explain itself. Every
@@ -22695,6 +23247,18 @@
       applyUpdate(pillStack, pillService,
                   onContainer ? stackLabel(pillStack) + ' / ' + pillService
                               : stackLabel(pillStack));
+      return;
+    }
+
+    // The "waiting to confirm" badge left on a stack row after a handover —
+    // a second way in, alongside the menu's own "It works" / "It does not
+    // work" items, so a person checking the webui does not have to leave it
+    // and reopen the menu just to answer the question they came back for.
+    if (el.classList.contains('staxx-handoverbadge')) {
+      var badgeRow = el.closest('.staxx-stack-row, .staxx-container-row');
+      if (!badgeRow) return;
+      var badgeStack = badgeRow.dataset.stackRow;
+      if (badgeStack) openHandoverAnswer(badgeStack, stackLabel(badgeStack), true);
       return;
     }
 

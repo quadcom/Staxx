@@ -250,12 +250,13 @@
   background-color: var(--sm-fill-2);
 }
 
-/* ---- Body layout: log | buttons | (shell / handle / files) ---------------
+/* ---- Body layout: log | handle | (shell / handle / files) ----------------
  * --sm-split is the shell's flex-grow and the file pane takes what is left
- * of 2, so 1 is an even split. PLAN_52's handle writes it on the column, not
- * on the panes: an inline flex on a pane would outrank
- * .staxx-manage-pane--collapsed below and a collapsed pane would keep its
- * height.
+ * of 2, so 1 is an even split; --sm-bodysplit does the same job one level
+ * up, between the log pane and the whole right-hand column. Both handles
+ * write their property on the column, not on the panes: an inline flex on a
+ * pane would outrank .staxx-manage-pane--collapsed below and a collapsed
+ * pane would keep its size.
  * ------------------------------------------------------------------------- */
 
 .staxx-manage-body {
@@ -263,10 +264,11 @@
   flex: 1 1 auto;
   min-height: 0;
   gap: 0.5rem;
+  --sm-bodysplit: 1;
 }
 
-.staxx-manage-pane--log  { flex: 3 1 0; }
-.staxx-manage-right      { flex: 3 1 0; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; --sm-split: 1; }
+.staxx-manage-pane--log  { flex: var(--sm-bodysplit, 1) 1 0; }
+.staxx-manage-right      { flex: calc(2 - var(--sm-bodysplit, 1)) 1 0; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; min-width: 0; --sm-split: 1; }
 .staxx-manage-pane--shell { flex: var(--sm-split, 1) 1 0; }
 .staxx-manage-pane--files { flex: calc(2 - var(--sm-split, 1)) 1 0; }
 
@@ -281,6 +283,15 @@
   cursor: row-resize;
   touch-action: none;          /* or a touch drag scrolls the page instead */
   position: relative;
+}
+
+/* The vertical handle between the log and the right-hand column: the same
+   bar, turned 90 degrees — a column-wide strip instead of a row-tall one. */
+.staxx-manage-split--vertical {
+  height: auto;
+  width: 1rem;
+  margin: 0 -0.35rem;
+  cursor: col-resize;
 }
 
 /* A short centred grip rather than a full-width hairline. Drawn edge to edge
@@ -298,11 +309,23 @@
   border-radius: 4px;
 }
 
+.staxx-manage-split--vertical::before {
+  width: 4px;
+  height: 3rem;
+}
+
 .staxx-manage-split:hover::before,
 .staxx-manage-split:focus-visible::before,
 .staxx-manage-split--dragging::before {
   background-color: var(--sm-accent);
   width: 4rem;
+}
+
+.staxx-manage-split--vertical:hover::before,
+.staxx-manage-split--vertical:focus-visible::before,
+.staxx-manage-split--vertical.staxx-manage-split--dragging::before {
+  width: 4px;
+  height: 4rem;
 }
 
 .staxx-manage-split:focus-visible {
@@ -312,17 +335,29 @@
 
 /* Held on <body> for the length of a drag: without it the pointer sweeping
    over a log line or a file name selects text as it goes, which looks like
-   the drag has gone wrong. */
+   the drag has gone wrong. The --vertical modifier only swaps the cursor,
+   since a drag can carry the pointer off the handle onto a pane that has its
+   own idea of what the cursor should be. */
 .staxx-manage-dragging {
   user-select: none;
   cursor: row-resize;
 }
 
+.staxx-manage-dragging--vertical {
+  cursor: col-resize;
+}
 
+
+/* min-width alongside min-height because these panes sit in a row as well as
+   in a column. A flex item defaults to min-width:auto, which refuses to
+   shrink below its content's own minimum — so a pane holding a long
+   unbreakable line pushed the whole row past the right edge of the window
+   instead of scrolling inside itself. */
 .staxx-manage-pane {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   border: 1px solid var(--sm-line);
   border-radius: var(--sm-radius);
   overflow: hidden;
@@ -336,7 +371,14 @@
   flex: 0 0 auto;
 }
 
-.staxx-manage-pane--collapsed .staxx-manage-pane-body {
+/* Doubled class for weight, not for looks. `.staxx-manage-pane--log
+   .staxx-manage-pane-body` below sets display:flex at the same specificity as
+   this rule and is written later, so it used to win — the log was the one
+   pane whose body never hid when collapsed. A collapsed pane is also told to
+   take its natural width and not shrink, so the still-visible body sized
+   itself to the longest unwrapped line and the pane grew to eighty thousand
+   pixels, far off the right of the dialog. */
+.staxx-manage-pane.staxx-manage-pane--collapsed .staxx-manage-pane-body {
   display: none;
 }
 
@@ -546,8 +588,8 @@
   overflow: auto;
   padding: 0.5rem 0.7rem;
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 0.85rem;
-  line-height: 1.4;
+  font-size: 1.25rem;
+  line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -701,8 +743,8 @@
   overflow: auto;
   padding: 0.5rem 0.7rem;
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 0.85rem;
-  line-height: 1.4;
+  font-size: 1.25rem;
+  line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1082,13 +1124,15 @@
 .staxx-sh-b    { font-weight: 700; }
 
 /* ---- D7: the narrow layout itself ----------------------------------------
- * Collapses the fixed log | buttons | (shell over files) split into a single
+ * Collapses the (log / handle / (shell over files)) split into a single
  * column: the narrow tab row picks one of log/shell/files to show, the
  * buttons column stays pinned above it — "the thing you came to press" —
  * and `.staxx-manage-right`'s own box disappears via `display: contents` so
  * its two children (shell, files) sit as plain siblings of the log pane,
  * each one individually hidden or shown by manage.js's own narrowhidden
- * class rather than by the wide layout's collapse-to-header behaviour.
+ * class rather than by the wide layout's collapse-to-header behaviour. Both
+ * handles share `.staxx-manage-split`, so the one rule below hides them both
+ * — there is no split to share out once one pane fills the whole screen.
  * ------------------------------------------------------------------------- */
 @media (max-width: 45rem) {
   .staxx-manage-narrowtabs { display: flex; }

@@ -1,0 +1,20 @@
+# Fixture for PLAN_104: a service on a macvlan network with a live `ports:`
+# block. Docker's macvlan driver refuses port mappings outright — the
+# container holds its own address on the LAN, so there is no NAT to map
+# through — meaning this file, as written, will not start. It is the "already
+# broken" case the plan calls out: commentOutPorts() must turn this block into
+# the commented note without moving it or losing anything beside it.
+services:
+  app:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    ports:
+      - "8080"
+      - "8081"
+    networks:
+      - lan
+
+networks:
+  lan:
+    driver: macvlan
+    external: true

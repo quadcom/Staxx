@@ -229,22 +229,43 @@ at `/boot/config/plugins/staxx/`.
 case people install by hand, and that shapes what a "release" means here — so do not go looking for
 Unraid's packaging chain to be complete, and do not do work to complete it unasked.
 
-**A release is a zip of the plugin folder, the installer script, and instructions for running it.**
-That is the whole of it. Point anybody asking at that, not at Unraid's plugin manager.
+**There are two ways in, and the by-hand one is still the main one.** A release is a zip of the
+plugin folder, the installer script, and instructions for running it — that is what most people
+should be pointed at. A numbered `v*` release *also* publishes a real package and a stamped
+manifest, so Unraid's **Plugins → Install Plugin** box works for those versions; see below.
 
-**The Unraid-specific packaging rules therefore do not apply yet.** `pkg_build.sh` builds the real
-`.txz`, and `staxx.plg` carries a version, two checksums and a `packageURL` pointing at a GitHub
-release asset — none of which is currently the route anybody installs by. Keeping the manifest
-truthful is still worth doing (its `CHANGES` block is the release notes Unraid would show, and the
-version should match `CHANGELOG.md`), but **building a package, stamping checksums and publishing a
-tagged release are not steps in shipping a change** at this stage. Treat them as work for the day
-the project goes public, and ask before doing any of it.
+**The manifest install route now exists, but it is a separate act from an ordinary change.**
+`pkg_build.sh` builds the real `.txz`, and `staxx.plg` carries a real version, real checksums and a
+`packageURL` pointing at a GitHub release asset. A `v*` tag push runs `publish.yml`, which builds
+that package, stamps the manifest and publishes both as a proper GitHub release — but that only
+happens on a deliberate tag, never as a side effect of an ordinary commit. **Building a package,
+stamping checksums and publishing a tagged release are still not steps in shipping a change** —
+they are a separate, occasional act of cutting a release, done when a version is ready to be
+installable by manifest, not on every push. Ask before cutting one.
 
 Two facts worth not rediscovering: `pkg_build.sh` must run on Linux, since the package carries Unix
-permissions and ownership; and the existing `v1.1.0` GitHub release is a **draft**, so its asset has
-never been publicly downloadable. CI publishes a rolling pre-release per push carrying
-`staxx-main.tar.gz` — that is the tarball the by-hand install route uses, and it is a different
-thing from the `.txz`.
+permissions and ownership; and `v1.1.0` is a public release that **does** carry its `.txz`, so the
+manifest route worked at 1.1.0 — it was `v1.2.0` that was cut without running the packager, leaving
+the manifest naming a package nobody uploaded and still carrying 1.1.0's two checksums. That is the
+exact failure `publish.yml`'s agreement checks exist to make impossible. CI (`release.yml`) publishes a rolling pre-release per push
+carrying `staxx-main.tar.gz` — that is the tarball the by-hand install route uses, and it is a
+different thing from the `.txz` a tagged release carries.
+
+## Version policy
+
+Ordinary semver, and it is enforced by the release workflow rather than left to memory:
+
+- **Patch** (`1.2.1`) — fixes only. Nothing new, and nothing already on disk changes shape.
+- **Minor** (`1.3.0`) — new features. Everything StaXX has already written still reads exactly as
+  before.
+- **Major** (`2.0.0`) — the user must act. Something stored on their server changes shape and needs
+  migrating, or a setting now behaves differently than it did.
+
+**Standing rule: any plan that changes the shape of something StaXX has already written on
+somebody's server must carry its own migration step, and must say plainly which version reads which
+shape.** This matters more now than it used to — StaXX is no longer just the author's own server,
+other people are starting to run it, and a plan with no migration step is a plan that breaks their
+box silently the day it lands.
 
 ## Verifying a change with no browser
 
@@ -400,8 +421,9 @@ piece of engineering in the repository, and the reason the rest of this exists.
   cache and looks exactly like a change that did not work.
 - **Own the render.** Stock Unraid CSS classes are not borrowed for layout — their rules are
   invisible to us and change between releases. Every class used is `staxx-`-prefixed.
-- `staxx.plg` still carries `TODO-` placeholders for author, repo and MD5. That is
-  deliberate, so a premature publish fails loudly.
+- `staxx.plg` is fully populated — real author, real repo, real checksums. Nothing there guards
+  against a premature publish any more, so that job now falls to judgement: cut a tagged release
+  only when a version is actually ready to be installed by manifest.
 
 ## Writing code
 

@@ -67,6 +67,41 @@ function staxx_crypt_recipe_id(): string {
   return $id = $bytes !== false ? md5($bytes) : '';
 }
 
+/**
+ * What the Settings panel's "Show the recipe" button asks for — the whole
+ * point of building this on the machine rather than fetching an image is
+ * that anyone can read the recipe, so this hands back the real Dockerfile
+ * text (comments and all) and the real `docker create` command, not a
+ * summary of either. An unreadable Dockerfile is reported honestly rather
+ * than answered with an empty string dressed up as the recipe.
+ */
+function staxx_crypt_recipe(): array {
+  $path  = STAXX_ROOT.'/crypt/Dockerfile';
+  $bytes = @file_get_contents($path);
+  if ($bytes === false) {
+    return ['ok' => false, 'error' => 'The recipe file is missing: it should be at '.$path.'.'];
+  }
+
+  // Both commands are written the same way staxx_crypt_do_build() writes
+  // them, off the same recipe id and the same setting, so what is shown is
+  // today's real tag rather than a stand-in worked out later. Two commands
+  // and not one: the build is where the labels that identify our own images
+  // come from, and the create is where "no network, read-only" is set — a
+  // person asking whether this is safe needs to see both halves.
+  $recipeId = staxx_crypt_recipe_id();
+  $tag      = 'staxxcrypt:'.substr($recipeId, 0, 12);
+  $restart  = (string)(staxx_cfg()['CRYPT_MODE'] ?? '') === 'always' ? 'unless-stopped' : 'no';
+
+  $build = staxx_docker_bin().' build --label '.escapeshellarg('staxx.crypt=1')
+    .' --label '.escapeshellarg('staxx.crypt.recipe='.$recipeId)
+    .' -t '.escapeshellarg($tag).' <a copy of the folder holding the recipe above>';
+
+  $create = staxx_docker_bin().' create --name '.escapeshellarg(STAXX_CRYPT_CONTAINER)
+    .' --network none --read-only --restart '.escapeshellarg($restart).' '.escapeshellarg($tag);
+
+  return ['ok' => true, 'dockerfile' => $bytes, 'build' => $build, 'create' => $create];
+}
+
 /** Every one of the four hash formats this container is meant to offer. */
 function staxx_crypt_format_defs(): array {
   return [

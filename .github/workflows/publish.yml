@@ -1,0 +1,170 @@
+# StaXX — cut a numbered release and publish the real Unraid package.
+#
+# Deliberately a SEPARATE file from release.yml, which publishes a rolling
+# pre-release on every push and must keep doing exactly that, untouched, no
+# matter what this file does. This one only runs on a `v*` tag (or by hand),
+# because cutting a release is a deliberate act, not something that should
+# ride along with an ordinary commit.
+#
+# What a manifest install actually needs, that the rolling bundle does not:
+# the real .txz built by pkg_build.sh, and staxx.plg stamped with that
+# package's version and checksums, served off `main` (Unraid fetches the
+# manifest from raw.githubusercontent.com/.../main/staxx.plg, not from a
+# release asset — only the .txz itself comes from the release).
+#
+# Copyright 2026, StaXX contributors. GPL-2.0.
+
+name: Publish tagged release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (no leading v), e.g. 1.3.0'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # need main's history too, to commit the stamped manifest back to it
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install schema test dependencies
+        run: pip install pyyaml jsonschema
+
+      # Same gates release.yml runs. A release that skips them is worse than no
+      # release at all — this is the one thing that ends up on someone else's
+      # server permanently, not a rolling build they can throw away.
+      - name: Check
+        run: |
+          for f in src/staxx/usr/local/emhttp/plugins/staxx/javascript/*.js; do node --check "$f"; done
+          # Every suite this checkout has, not a hard-coded list — see
+          # release.yml's own comment on this line for why a named list is
+          # the wrong shape here too.
+          for t in tests/*.js; do echo "==> $t"; node "$t"; done
+          python tests/validate_schema.py
+
+      - name: Determine the version being published
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "TAG=v${VERSION}" >> "$GITHUB_ENV"
+
+      # Fatal, every one of them. A hand-driven release has three places that
+      # all have to say the same version before anything gets built, because
+      # each is read by something different: the tag is what a manifest
+      # install's URL implies, the entity is what the plugin actually reports
+      # once installed, and the CHANGES block is the notes Unraid's Plugin
+      # Manager shows for it. Any one lagging behind ships a release that
+      # lies about itself.
+      - name: Check the tag, the manifest and the changelog agree
+        run: |
+          PLG_VERSION="$(sed -n 's/.*<!ENTITY version *"\([^"]*\)".*/\1/p' staxx.plg | head -n1)"
+          CHANGELOG_VERSION="$(grep -m1 '^## ' CHANGELOG.md | sed -E 's/^## +([0-9][0-9.]*).*/\1/')"
+
+          if [ "${VERSION}" != "${PLG_VERSION}" ]; then
+            echo "::error::Publishing ${VERSION}, but staxx.plg's <!ENTITY version> entity still says ${PLG_VERSION}. Bump the entity (and add its CHANGES section) before tagging."
+            exit 1
+          fi
+
+          if [ "${VERSION}" != "${CHANGELOG_VERSION}" ]; then
+            echo "::error::Publishing ${VERSION}, but CHANGELOG.md's newest '## ' heading says ${CHANGELOG_VERSION}. Add (or fix) the changelog entry for ${VERSION} before tagging."
+            exit 1
+          fi
+
+          if ! grep -q "^###${VERSION}\$" staxx.plg; then
+            echo "::error::staxx.plg's <CHANGES> block has no ###${VERSION} section. The Plugin Manager shows that block as the release notes for the version being installed — add one before tagging."
+            exit 1
+          fi
+
+      - name: Build the package and stamp the manifest
+        run: ./pkg_build.sh "${VERSION}" --update-plg
+
+      # Before the checkout below, not after. That step replaces the whole
+      # working tree with main's, so reading CHANGELOG.md afterwards would take
+      # the notes from whatever main says today rather than from the tree this
+      # release was actually cut from — and if main has already moved on to the
+      # next version's section, the release would ship someone else's notes.
+      #
+      # The extraction itself is lifted from release.yml rather than rewritten
+      # worse: from the first '## ' heading down to (not including) the next,
+      # then peel the changelog's trailing separator rule off the end one line
+      # at a time, since a rule mid-section must survive.
+      - name: Extract this version's release notes
+        run: |
+          NOTES=release-notes.md
+          awk '/^## /{n++} n==2{exit} n==1{print}' CHANGELOG.md > "${NOTES}"
+          while [ -s "${NOTES}" ]; do
+            case "$(tail -n 1 "${NOTES}")" in
+              ''|---) sed -i '$d' "${NOTES}" ;;
+              *) break ;;
+            esac
+          done
+
+      # Required, not optional: the manifest people actually install from is
+      # fetched straight off main (raw.githubusercontent.com/.../main/staxx.plg),
+      # never off a release asset. If the stamped file only existed in this
+      # tag's own tree, main would keep pointing at the previous release's
+      # package and checksums forever. A tag push leaves HEAD detached, so
+      # main has to be fetched and checked out explicitly rather than assumed.
+      - name: Commit the stamped manifest back to main
+        run: |
+          cp staxx.plg /tmp/staxx.plg.stamped
+          git config user.name "staxx-release-bot"
+          git config user.email "actions@github.com"
+          git fetch origin main
+          git checkout -B main origin/main
+          cp /tmp/staxx.plg.stamped staxx.plg
+          git add staxx.plg
+          if git diff --cached --quiet; then
+            echo "staxx.plg on main already matches this build; nothing to commit."
+          else
+            git commit -m "Stamp staxx.plg for ${TAG}"
+            git push origin main
+          fi
+          echo "MAIN_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PKG_FILE="build/staxx-${VERSION}-noarch-1.txz"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            # Re-running a tag (or a workflow_dispatch for one already cut):
+            # replace both assets rather than fail on "already exists".
+            gh release upload "${TAG}" "${PKG_FILE}" staxx.plg --clobber
+            gh release edit "${TAG}" --latest
+          else
+            # A tag push already created the tag; workflow_dispatch has not,
+            # so point it at the commit this run just pushed to main.
+            TARGET_ARGS=()
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              TARGET_ARGS=(--target "${MAIN_SHA}")
+            fi
+            gh release create "${TAG}" "${PKG_FILE}" staxx.plg \
+              --title "StaXX ${VERSION}" \
+              --notes-file release-notes.md \
+              --latest \
+              "${TARGET_ARGS[@]}"
+          fi

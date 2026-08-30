@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/TODO-OWNER/TODO-REPO/schema/x-unraid.schema.json",
+  "$id": "https://raw.githubusercontent.com/quadcom/Staxx/main/schema/x-unraid.schema.json",
   "title": "x-unraid",
   "description": "Presentation metadata carried inside an ordinary compose file. Validates the x-unraid blocks and permits every other compose key, so it can be run against a whole compose file converted to JSON. Validate the SOURCE file converted to JSON, not `docker compose config` output, which has a history of stripping extension fields. There is nothing here for individual form fields: what a value is for is written in the comment beside it, which YAML already has and this schema cannot see.",
   "$comment": "format: \"uri\" throughout this schema is documentation only — Draft 2020-12 treats \"format\" as a non-enforcing annotation unless the validator is given an optional RFC-3986/3987 checker package, which this project does not install. The actual gate on every address-shaped key below is its \"pattern\", not its \"format\".",

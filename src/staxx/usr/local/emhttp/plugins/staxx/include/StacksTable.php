@@ -480,13 +480,11 @@ function staxx_watch_for_stack(string $stack): array {
 }
 
 /**
- * PLAN_85 — one icon per service, for the editor's heading row.
+ * One icon per service, for the editor's heading row.
  *
- * Deliberately narrower than staxx_stack_children()'s icon lookup: this calls
- * staxx_icon_resolve() with only the icon and the stack directory, no image,
- * service or stack, which is what stops it falling through to
- * staxx_icon_match(). The editor must show exactly what the file says, never
- * a guess made at display time.
+ * Every service goes through staxx_service_icon(), the single chain the grid
+ * itself uses (see its own comment for the precedence), so the editor and the
+ * grid never disagree about the same stack's face.
  *
  * @return array<string, array{html: string, q: string}>
  */
@@ -501,13 +499,18 @@ function staxx_service_icons_for_stack(string $stack): array {
   $meta = staxx_compose_meta($file);
   if (!$meta['ok']) return [];
 
-  $dir = dirname($file);
-  $out = [];
+  $dir       = dirname($file);
+  $stackIcon = (string)($meta['x']['icon'] ?? '');
+  $out       = [];
+
   foreach ($meta['services'] as $svc => $svcMeta) {
     $icon  = (string)($svcMeta['x']['icon'] ?? '');
     $image = trim((string)($svcMeta['image'] ?? ''));
+
+    $resolved = staxx_service_icon($icon, $stackIcon, $dir, $image, $svc, $stack);
+
     $out[$svc] = [
-      'html' => staxx_icon_tile(staxx_icon_resolve($icon, $dir), $svc),
+      'html' => staxx_icon_tile($resolved, $svc),
       'q'    => $image !== '' ? (staxx_icon_candidates($image)[0] ?? '') : '',
     ];
   }
@@ -835,31 +838,53 @@ function staxx_icon_tile(array $icon, string $name): string {
 }
 
 /**
- * The stack's own icon, resolved — or null when it does not say anything
- * usable, so the caller falls through to its children's icons.
- *
- * A stack's own `icon:` outranks its children's, but an address that cannot
- * be downloaded is not an answer. Converted Unraid templates carry plenty of
- * these: StirlingPDF's still names a favicon under the project's former
- * "Frooodle" account, which 404s, and the initials tile that produced was
- * indistinguishable from a stack whose icon had never been set — while the
- * editor, reading the service's own icon, showed the real logo. A download
- * already known to have failed therefore counts as no icon at all.
- *
- * Not a permanent verdict, and deliberately not one for an icon merely
- * waiting to be fetched: that keeps its reference so the page can swap the
- * picture in when it arrives, and the failure marker expires on its own, so
- * a site that was briefly down recovers without anything being edited.
+ * Whether a resolved icon is actually a picture, rather than a reference
+ * that has already been tried and failed. An address that cannot be
+ * downloaded is not an answer: converted Unraid templates carry plenty of
+ * these (StirlingPDF's still names a favicon under the project's former
+ * "Frooodle" account, which 404s), and a failed download's initials tile was
+ * indistinguishable from a stack whose icon had never been set at all. Not
+ * a permanent verdict — a reference still waiting on its first fetch keeps
+ * it so the page can swap the picture in when it arrives, and a failure
+ * marker expires on its own, so a site that was briefly down recovers
+ * without anything being edited.
  */
-function staxx_stack_own_icon(array $s): ?array {
-  $own = (string)($s['x']['icon'] ?? '');
-  if ($own === '') return null;
+function staxx_icon_usable(array $icon): bool {
+  return !($icon['fa'] === '' && $icon['url'] === ''
+      && ($icon['ref'] === '' || staxx_icon_missed($icon['ref'])));
+}
 
-  $icon = staxx_icon_resolve($own, $s['dir']);
-  if ($icon['fa'] === '' && $icon['url'] === ''
-      && ($icon['ref'] === '' || staxx_icon_missed($icon['ref']))) return null;
+/**
+ * The one place a service's icon gets decided. Every display — the grid
+ * row, the folder strip, the editor's heading row — draws whatever this
+ * returns rather than guessing anything of its own.
+ *
+ * Each step is tried only when the one before produced nothing usable
+ * (staxx_icon_usable()):
+ *   1. the service's own stated icon, name only — a guess must never enter
+ *      at this step, so no image/service/stack is passed
+ *   2. the stack's own stated icon, skipped when it names nothing — the
+ *      service icon field's own hint calls it "overrides the stack icon for
+ *      this service", so the stack's icon is already the designed default
+ *   3. a search from the image name, which is only ever reached when the
+ *      service names nothing at step 1: staxx_icon_resolve() returns
+ *      early on any non-empty stated value, before it would look at
+ *      $image/$service/$stack, so this step never runs otherwise
+ *   4. nothing — the caller draws initials, the floor every stack has
+ *
+ * @return array from staxx_icon_resolve()
+ */
+function staxx_service_icon(string $svcIcon, string $stackIcon, string $dir,
+                            string $image, string $service, string $stack): array {
+  $icon = staxx_icon_resolve($svcIcon, $dir);
+  if (staxx_icon_usable($icon)) return $icon;
 
-  return $icon;
+  if ($stackIcon !== '') {
+    $icon = staxx_icon_resolve($stackIcon, $dir);
+    if (staxx_icon_usable($icon)) return $icon;
+  }
+
+  return staxx_icon_resolve($svcIcon, $dir, $image, $service, $stack);
 }
 
 /**
@@ -869,28 +894,27 @@ function staxx_stack_own_icon(array $s): ?array {
  * the most that stays legible in a 4.4rem square; beyond that the fourth cell
  * counts what did not fit, the way a photo album cover does.
  *
- * An explicit `icon:` in the stack's own x-unraid block overrides all of this —
- * if someone has said what the stack looks like, that is the answer.
+ * Every child is resolved through staxx_service_icon() — the stack's own
+ * `icon:` is just that call's second-choice input, not a separate step here.
+ * Services that resolve to the SAME picture then collapse to one tile: with a
+ * stack-level icon and no per-service ones, every service reaches that same
+ * logo, and four copies of it is a mosaic showing no variety. Collapsing is
+ * what lets the row drop its old stack-icon special case rather than move it.
+ *
+ * Keyed on the resolved icon, never on the rendered tile. A tile carries the
+ * service's own initials and colour as what a broken picture falls back to,
+ * so two services showing one logo render as two different strings and would
+ * never match. Services that resolved to NOTHING are exempt: their tiles are
+ * their own distinct initials, which is real variety, not a repeat.
  *
  * @param array $kids from staxx_stack_children()
  */
 function staxx_stack_tile(array $s, array $kids): string {
-  // Initials come from the title, so the letters in the tile are the letters
-  // written beside it. The folder name is not what anyone is reading here.
-  $own = staxx_stack_own_icon($s);
-  if ($own !== null) return staxx_icon_tile($own, $s['leaf']);
-
   if (!$kids) {
     return '<i class="fa fa-cubes"></i>';
   }
 
-  $tiles = [];
-  foreach ($kids as $kid) {
-    $tiles[] = staxx_icon_tile(
-      staxx_icon_resolve($kid['icon'], $s['dir'], $kid['image'], $kid['service'], $s['name']),
-      $kid['service'] !== '' ? $kid['service'] : $kid['name']
-    );
-  }
+  $tiles = array_column(staxx_stack_icon_tiles($s, $kids), 'html');
 
   if (count($tiles) === 1) return $tiles[0];
 
@@ -904,30 +928,131 @@ function staxx_stack_tile(array $s, array $kids): string {
 }
 
 /**
- * A stack's icon at strip size: one tile, never the mosaic.
+ * Every child of a stack resolved to a tile, collapsing services that reached
+ * the SAME picture to one entry. Shared by staxx_stack_tile() (the row
+ * mosaic) and staxx_stack_strip_tile() (the folder-strip group) so the
+ * collapsing rule — keyed on the resolved icon, never on the rendered tile,
+ * with icon-less services exempt because their initials are real variety —
+ * lives in one place rather than being copied and risking disagreement. See
+ * staxx_stack_tile()'s comment above for the full reasoning.
  *
- * Used for the folder-row strip, where four tiny smudges are less legible
- * than one. Same precedence as staxx_stack_tile(), just stopping after the
- * first picture instead of tiling every child: the stack's own x-unraid icon
- * first, then its first child's, then the generic cube. Resolved through the
- * same staxx_icon_resolve()/staxx_icon_tile() pair with the same arguments so
- * this can never pick a different picture than the stack's own row does.
+ * Each entry carries the name it was built from as well as its html: the
+ * folder strip labels every icon with its own service, and working that out
+ * in a second pass would mean a second copy of the collapsing rule to drift
+ * out of step with this one — and every icon resolved twice per render.
  *
  * @param array $kids from staxx_stack_children()
+ * @return array<int, array{html: string, name: string}> one per distinct icon, in order
  */
-function staxx_stack_strip_tile(array $s, array $kids): string {
-  $own = staxx_stack_own_icon($s);
-  if ($own !== null) return staxx_icon_tile($own, $s['leaf']);
+function staxx_stack_icon_tiles(array $s, array $kids): array {
+  $stackIcon = (string)($s['x']['icon'] ?? '');
+  $out  = [];
+  $seen = [];
+  foreach ($kids as $kid) {
+    $icon = staxx_service_icon($kid['icon'], $stackIcon, $s['dir'],
+                               $kid['image'], $kid['service'], $s['name']);
+    $key  = $icon['fa'].'|'.$icon['url'].'|'.$icon['ref'];
+    if ($key !== '||' && isset($seen[$key])) continue;
+    $seen[$key] = true;
+    $name = $kid['service'] !== '' ? $kid['service'] : $kid['name'];
+    $out[] = ['html' => staxx_icon_tile($icon, $name), 'name' => $name];
+  }
+  return $out;
+}
+
+/**
+ * A stack's icons at strip size: every distinct service icon in one
+ * overlapping cluster that spreads into a small grid on hover ("exploded
+ * view") rather than sitting in the row's own tiled mosaic. Shares
+ * staxx_stack_tile()'s collapsing rule via staxx_stack_icon_tiles(), so this
+ * can never disagree with the row about what counts as "the same picture".
+ *
+ * Only the collapsed view still caps: three cells, two icons plus a "+N"
+ * chip once there are more, since a stack repeats once per row of an
+ * already-wrapping folder list and a fourth cell here costs vertical space
+ * the row's own mosaic never spends. Exploded has the room a hover affords,
+ * so it shows every distinct icon with no cap and no chip — Adrian's call:
+ * nobody is expecting one compose file to run twenty services, and if one
+ * ever does the grid is allowed to simply grow. Columns still follow
+ * ceil(sqrt(n)), just without the old cap of three, so the grid stays roughly
+ * square instead of turning into one long row.
+ *
+ * Every cell either view could ever need is emitted every time — one per
+ * distinct icon, plus the collapsed chip should there be more than three —
+ * and CSS alone decides which are visible and where they sit. That is what
+ * lets hovering animate: nothing already on the page changes what markup
+ * exists, only how it is placed.
+ *
+ * Each cell carries its own position as inline custom properties, since a
+ * rule keyed to one fixed icon count could not cover every stack: --fg-i is
+ * which slot it stacks into while collapsed, --fg-x/--fg-y are its exploded
+ * column and row. The three numbers that size the surrounding boxes —
+ * --fg-shown, --fg-cols, --fg-rows — come back alongside the markup rather
+ * than baked into it, because the item that needs them for its own fixed
+ * width is rendered by the caller, not this function.
+ *
+ * Each cell also carries its own title — the stack's name followed by that
+ * cell's service — rather than relying on the item's title alone, so hovering
+ * one icon among several says which service it is. The item keeps its own
+ * plain stack-name title too: a title on a descendant wins over an
+ * ancestor's, so the cell answers once the pointer is on an icon, and the
+ * item still answers while the pointer sits between icons.
+ *
+ * @param array $kids from staxx_stack_children()
+ * @return array{html: string, shown: int, cols: int, rows: int}
+ */
+function staxx_stack_strip_tile(array $s, array $kids): array {
+  $leaf = (string)($s['leaf'] ?? '');
 
   if (!$kids) {
-    return '<i class="fa fa-cubes"></i>';
+    return [
+      'html' => '<span class="staxx-fgroup" style="--fg-cols:1;--fg-rows:1">'
+              . '<span class="staxx-fgroup-cell" style="--fg-i:0;--fg-x:0;--fg-y:0">'
+              . '<i class="fa fa-cubes"></i></span></span>',
+      'shown' => 1, 'cols' => 1, 'rows' => 1,
+    ];
   }
 
-  $kid = $kids[0];
-  return staxx_icon_tile(
-    staxx_icon_resolve($kid['icon'], $s['dir'], $kid['image'], $kid['service'], $s['name']),
-    $kid['service'] !== '' ? $kid['service'] : $kid['name']
-  );
+  $icons = staxx_stack_icon_tiles($s, $kids);
+  $n     = count($icons);
+
+  // Collapsed: two icons, or every icon when there are three or fewer.
+  $capShown = $n > 3 ? 2 : $n;
+  $capExtra = $n - $capShown; // icons the collapsed chip stands in for
+
+  // Exploded: no cap — every distinct icon gets its own cell.
+  $cols = (int)ceil(sqrt($n));
+  $rows = (int)ceil($n / $cols);
+
+  // Cells past the collapsed cap park behind the last one collapsed DOES
+  // show, so hovering reads as them sliding out from under the stack rather
+  // than appearing from nowhere.
+  $parkAt = max($capShown - 1, 0);
+
+  $cells = [];
+  for ($i = 0; $i < $n; $i++) {
+    $reveal = $i >= $capShown ? ' staxx-fgroup-cell--reveal' : '';
+    $svc    = $icons[$i]['name'];
+    $title  = ($leaf !== '' && $svc !== '') ? sprintf(_('%s – %s'), $leaf, $svc) : ($leaf !== '' ? $leaf : $svc);
+    $cells[] = '<span class="staxx-fgroup-cell'.$reveal.'" style="--fg-i:'
+             . min($i, $parkAt).';--fg-x:'.($i % $cols).';--fg-y:'.intdiv($i, $cols).'"'
+             . ' title="'.htmlspecialchars($title).'">'
+             . $icons[$i]['html'].'</span>';
+  }
+  if ($capExtra > 0) {
+    $capTitle = sprintf(_('%s – %d more'), $leaf, $capExtra);
+    $cells[] = '<span class="staxx-fgroup-cell staxx-fgroup-cell--capchip" style="--fg-i:'.$capShown.'"'
+             . ' title="'.htmlspecialchars($capTitle).'">'
+             . '<span class="staxx-tile staxx-tile--more">+'.$capExtra.'</span></span>';
+  }
+
+  return [
+    'html'  => '<span class="staxx-fgroup" style="--fg-cols:'.$cols.';--fg-rows:'.$rows.'">'
+             . implode('', $cells) . '</span>',
+    'shown' => $capShown + ($capExtra > 0 ? 1 : 0),
+    'cols'  => $cols,
+    'rows'  => $rows,
+  ];
 }
 
 /**
@@ -1179,6 +1304,58 @@ function staxx_pin_mark_html(array $kids): string {
 }
 
 /**
+ * PLAN_104 — the mark for a stack with at least one service on a macvlan or
+ * ipvlan network that still carries a live `ports:` key. A container with its
+ * own address on the LAN cannot have a port published for it, so those ports
+ * do nothing whatever Docker does with them — this build ignores them, a
+ * newer one refuses the file, and the second is what makes it worth tidying.
+ * Either way it is the one case on the row that is a fault, not a fact, hence
+ * sharing .staxx-driftmark/.staxx-imgmismatch's accent colour rather than
+ * .staxx-pinmark's quiet grey.
+ *
+ * $macvlanNames is gathered once per render, never here: unknown means
+ * unknown (PLAN_104) — a network this machine has never heard of gets no
+ * mark, and guessing macvlan from a name like br0.2 is exactly what the plan
+ * rules out.
+ *
+ * @param array $meta from staxx_compose_meta()
+ * @param array<string,bool> $macvlanNames network name => true
+ */
+function staxx_portmark_html(array $meta, array $macvlanNames): string {
+  if (!$macvlanNames) return '';
+
+  $bad = [];
+  foreach ($meta['services'] ?? [] as $svc => $sm) {
+    if (empty($sm['firstPort'])) continue;   // no live ports: key, nothing to warn about
+    foreach ((array)($sm['networks'] ?? []) as $net) {
+      if (isset($macvlanNames[$net])) { $bad[] = $svc; break; }
+    }
+  }
+  if (!$bad) return '';
+
+  // Deliberately not "it will not start": on the Docker shipping with Unraid
+  // today these containers do start, because this build ignores the ports
+  // rather than refusing them, and a warning that contradicts what somebody
+  // can plainly see running is a warning they learn to ignore. What is true
+  // either way is that the ports do nothing, and that a newer Docker refuses
+  // the file outright — which is the reason to tidy it now.
+  $text = count($bad) === 1
+    ? sprintf(_('%s is on a network that gives it its own address, so the ports the file '
+              . 'publishes for it do nothing. A newer Docker refuses a file like this rather '
+              . 'than ignoring it. Open the stack to keep them as a note instead.'), $bad[0])
+    : sprintf(_('%d services here are on a network that gives them their own address, so the '
+              . 'ports the file publishes for them do nothing. A newer Docker refuses a file '
+              . 'like this rather than ignoring it. Open the stack to keep them as notes '
+              . 'instead.'), count($bad));
+
+  // Same icon-only shape as .staxx-driftmark — the tooltip and the .staxx-sr
+  // span already carry the whole sentence.
+  return '<span class="staxx-portmark" title="'.htmlspecialchars($text).'">'
+       . '<i class="fa fa-exclamation-triangle"></i>'
+       . '<span class="staxx-sr">'.htmlspecialchars($text).'</span></span>';
+}
+
+/**
  * Every row of the table body, as HTML.
  *
  * Divs standing in for a table, arranged as CSS grid / subgrid so the columns
@@ -1215,6 +1392,17 @@ function staxx_render_rows(array $rows, bool $canRun): string {
   // most a handful of Compose Manager projects, not once per stack, so it
   // costs nothing per row even though every row consults it.
   $drift = staxx_import_drift();
+
+  // PLAN_104 — once per render, not once per row: staxx_docker_networks()
+  // shells out to docker, and the table can hold dozens of stacks. A Docker
+  // that is down (or slow) leaves this empty, which staxx_portmark_html()
+  // reads as "show no mark" rather than as a reason to guess.
+  $macvlanNames = [];
+  foreach (staxx_docker_networks() as $net) {
+    if ($net['driver'] === 'macvlan' || $net['driver'] === 'ipvlan') {
+      $macvlanNames[$net['name']] = true;
+    }
+  }
 
   ob_start();
 
@@ -1329,14 +1517,39 @@ function staxx_render_rows(array $rows, bool $canRun): string {
               if ($fMembers):
             ?>
             <div class="staxx-fstrip" aria-hidden="true">
-              <? foreach ($fMembers as $fs): ?>
-                <span class="staxx-fstrip-item"
+              <? foreach ($fMembers as $fs):
+                   // The three sizing numbers travel on the ITEM, not just the
+                   // group inside it: the item's own width has to be fixed
+                   // before the group inside it is free to explode on hover.
+                   $fStrip = $fs['parses']
+                     ? staxx_stack_strip_tile($fs, staxx_stack_children($fs))
+                     : [
+                         'html' => '<span class="staxx-fgroup" style="--fg-cols:1;--fg-rows:1">'
+                                 . '<span class="staxx-fgroup-cell" style="--fg-i:0;--fg-x:0;--fg-y:0">'
+                                 . '<i class="fa fa-exclamation-triangle"></i></span></span>',
+                         'shown' => 1, 'cols' => 1, 'rows' => 1,
+                       ];
+
+                   // Same two wordings the stack's own row uses, so the tooltip
+                   // and the row a click lands on never disagree: a missing file
+                   // and an unreadable one look identical in the strip.
+                   $fWhy = !$fs['hasFile']
+                     ? _('No compose file in this folder')
+                     : _('Compose cannot read this file');
+              ?>
+                <span class="staxx-fstrip-item<?= $fs['parses'] ? '' : ' staxx-fstrip-item--broken' ?>"
                       data-fstrip-stack="<?= htmlspecialchars($fs['name']) ?>"
                       data-running="<?= $fs['running'] ? '1' : '0' ?>"
-                      title="<?= htmlspecialchars($fs['leaf']) ?>">
-                  <?= $fs['parses']
-                        ? staxx_stack_strip_tile($fs, staxx_stack_children($fs))
-                        : '<i class="fa fa-exclamation-triangle"></i>' ?>
+                      <?php /* Only a stack that both fails to parse AND has a file
+                               worth editing gets this: a broken folder entry with no
+                               compose file at all has nothing an editor could open, so
+                               it falls back to the plain open-folder-and-scroll path. */ ?>
+                      <?= (!$fs['parses'] && $fs['hasFile']) ? 'data-fstrip-edit="1"' : '' ?>
+                      title="<?= $fs['parses']
+                               ? htmlspecialchars($fs['leaf'])
+                               : htmlspecialchars(sprintf(_('%s – %s'), $fs['leaf'], $fWhy)) ?>"
+                      style="--fg-shown:<?= $fStrip['shown'] ?>;--fg-cols:<?= $fStrip['cols'] ?>;--fg-rows:<?= $fStrip['rows'] ?>">
+                  <?= $fStrip['html'] ?>
                 </span>
               <? endforeach; ?>
             </div>
@@ -1580,11 +1793,15 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                        "handover" section of Stacks.php. Distinct from the
                        review badge below: unlike a locked import, this row
                        genuinely owns its containers and shows their real
-                       state, so nothing about it is blanked. -->
-                  <span class="staxx-handoverbadge"
-                        title="<?= htmlspecialchars(_('Waiting to be confirmed after a handover. Check the app works, then answer the question in the stack menu.')) ?>">
+                       state, so nothing about it is blanked. It is a real
+                       button, not a static label: pressing it opens the same
+                       "does it work?" question the stack menu's own two
+                       items ask, so checking the webui does not mean leaving
+                       the row and reopening the menu to answer it. -->
+                  <button type="button" class="staxx-handoverbadge"
+                        title="<?= htmlspecialchars(_('This app has been switched over and is running now. Check that it works, then press this to keep it or put the old one back.')) ?>">
                     <?= _('waiting to confirm') ?>
-                  </span>
+                  </button>
                 <? elseif ($s['review']): ?>
                   <!-- Imported and not yet reviewed — see the "review lock"
                        section of Stacks.php. Read-only marker; the menu item
@@ -1598,6 +1815,10 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                   <?= staxx_drift_mark_html($drift[$s['name']]) ?>
                 <? endif; ?>
                 <?= staxx_pin_mark_html($kids) ?>
+                <?php /* PLAN_104 — read straight off the same compose meta
+                         $kids was already built from, cached on disk, so this
+                         costs nothing extra per row. */ ?>
+                <?= staxx_portmark_html($s['parses'] ? staxx_compose_meta($s['file']) : ['services' => []], $macvlanNames) ?>
                 <!-- The count is only worth printing for a stack that has more
                      than one container; for a single one the State column
                      already says everything this would. -->
@@ -1610,7 +1831,18 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 
           <span class="staxx-cell staxx-cell--services" role="gridcell">
             <? if (!$s['hasFile']): ?>
-              <span class="red-text"><?= _('No compose file in this folder') ?></span>
+              <!-- PLAN_102 phase 2b — the message and the fix in one place: a
+                   real button so the row's own click delegate can route it to
+                   "start a compose file here", not a styled link and not a
+                   span with a click handler bolted on. staxx-adopt-fix is not
+                   yet in the stylesheet (see stacks.js's own note by the
+                   handler) — red-text alone already gives it the same look
+                   this line has always had, button-reset included. -->
+              <button type="button" class="red-text staxx-adopt-fix"
+                      data-adopt-fix="<?= htmlspecialchars($s['name']) ?>"
+                      title="<?= htmlspecialchars(_('Start a compose file in this folder.')) ?>">
+                <?= _('No compose file in this folder') ?>
+              </button>
             <? elseif (!$s['parses']): ?>
               <span class="red-text"><?= _('Compose cannot read this file') ?></span>
               <span class="staxx-parse-error"><?= htmlspecialchars((string)$s['error']) ?></span>

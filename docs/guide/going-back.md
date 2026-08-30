@@ -23,9 +23,16 @@ trying to undo.
 
 # History — going back to a file you changed
 
-Every time you save a stack, the file as it was a moment before is kept first. A save that changed
-nothing at all is not kept, so the list is a list of real changes rather than a list of times you
-opened the editor.
+Every time you save a stack, a copy of the file is kept — both the version you replaced and the
+version you just wrote. So the newest entry on the list is the file as it now stands, which means the
+version you are actually running is in here too, not only the ones you have moved on from. That
+matters on the day the file itself goes missing: what you lose is the copy nothing else holds.
+
+A save that changed nothing at all is not kept, and the same copy is never kept twice, so the list
+stays a list of real changes rather than a list of times you opened the editor.
+
+A compose file you put in the folder yourself, rather than writing here, gets kept the first time you
+open it or start it — so it has something to go back to before you have edited it even once.
 
 ## What the list shows
 
@@ -59,6 +66,19 @@ it."* Press **Discard and restore** to go ahead.
 
 Because restoring is just a normal save when you finally press Save, the file it replaces is itself
 kept — so undoing an undo works exactly like anything else here.
+
+## When the file itself has gone
+
+If a stack's compose file is deleted, moved, or lost with the drive it sat on, the history beside it
+is untouched — it lives inside the stack's own folder, and only the file went. The row then reads
+**"No compose file in this folder"** in red, and pressing those words offers you your last working
+copy, with the date it was saved. Loading it works exactly like restoring above: it goes into the
+editor for you to look at, and nothing is written until you press Save.
+
+![The editor open on a folder whose compose file is missing, with an offer beneath the tabs reading "Your last working copy of this stack was saved 2 minutes ago. Load it here instead."](../images/guide/making-a-stack-lost-file.png)
+
+A stack that has never been saved or opened here has nothing kept yet, so you get the blank starting
+file instead. See [making a stack from scratch](making-a-stack.md) for what that gives you.
 
 ## Naming a version keeps it forever
 

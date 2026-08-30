@@ -21,6 +21,20 @@ The first pill on a row, showing whether the containers are actually going.
 
 ![A folder row with four stack rows beneath it, each showing the app's logo, its name, a green "up" pill or a grey "stopped" one, the address it is reachable on, and columns of processor, memory and network figures](../images/guide/marks-row-states.png)
 
+## A red triangle where the app's picture should be
+
+The strongest mark on the list, because it replaces the app's own logo rather than sitting beside it.
+It means StaXX could not make sense of that stack's compose file, or could not find one in the
+folder at all, and the row says which of the two it is in red, with the reader's own complaint
+underneath — the line number is usually the fastest way to the problem:
+
+![A stack row whose app logo is replaced by a red warning triangle, its name beside it, and in red "Compose cannot read this file" with "yaml: line 31: did not find expected key" underneath](../images/guide/marks-broken-stack.png)
+
+Nothing about such a stack can run, so there is nothing to start and no state pill worth reading.
+Open the editor from the triangle and fix the file; the row goes back to normal on the next save. The
+same triangle appears in the group of pictures on the stack's [folder row](folders.md), in full
+colour with a red outline, so a problem inside a collapsed folder is still visible from the outside.
+
 ## The update column
 
 Sits right beside the running-state pill. **Most of the time it is empty, and empty is normally the

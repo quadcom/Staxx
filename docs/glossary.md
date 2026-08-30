@@ -115,6 +115,20 @@ stack over, not something StaXX reads back in.
 
 **WebGUI** — Unraid's web interface, the thing you see in your browser.
 
+**Bridge network** — the ordinary way a container is connected: it sits behind your server, and you
+reach an app inside it at the server's own address on whichever outer port you chose. `br0`-style
+networks are the exception, below.
+
+**macvlan / ipvlan network** — a network that gives a container an **address of its own** on your
+home network, as though it were a separate machine plugged into your switch. On Unraid these are the
+`br0` networks. The two names are two ways of doing the same thing, and nothing here treats them
+differently.
+
+*Why it matters here:* a container with its own address is reached directly on that address, so
+Docker refuses to publish a port for it — and a compose file that asks it to will not start at all.
+StaXX keeps such ports as a note in the file rather than as a live setting — the guide's
+"Editing a stack" page shows what that looks like.
+
 **Plugin** — an add-on that extends Unraid. It can add pages, buttons and background tasks. This
 project is a plugin.
 

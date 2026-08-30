@@ -186,6 +186,15 @@
   color: var(--sm-success, #4c9a2a);
 }
 
+/* PLAN_104 — .staxx-notice's own margins are sized for a page-level banner;
+   nested inside a service's Ports group, that much space above and below
+   reads as a mistake rather than a warning. Comes after .staxx-notice
+   itself so its narrower margin wins over the equal-weight rule it
+   overrides. */
+.staxx-portswarn {
+  margin: 0 0 1rem;
+}
+
 /* The paths to paste into another plugin's settings box. Selectable, wrapping
    on long paths rather than scrolling sideways, and monospaced so a stray
    space in a path is visible before it is copied. */
@@ -368,8 +377,11 @@
 
 /* A stack that compose cannot read is not actionable in the usual way; say so
    in the tile rather than only in the far column. */
+/* Border as well as glyph, matching the same stack's tile in a folder row's
+   picture group: one mark drawn two ways reads as two different states. */
 .staxx-scaffold .staxx-icon--bad {
   color: var(--sm-danger);
+  border-color: var(--sm-danger);
 }
 
 .staxx-scaffold .staxx-icon--bad:hover,
@@ -714,6 +726,30 @@
   color: var(--sm-muted);
   font-size: 1.1rem;
   font-weight: 400;
+}
+
+/* The "no compose file" message is the button that fixes it, so it needs to
+   invite a click without becoming a button: the app root's own reset already
+   strips every button back to plain text, and this only adds what a person
+   needs to tell that this particular sentence does something. */
+/* The "no compose file" message is the button that fixes it, so it says so:
+   the warning's own red, in a thin red outline that reads as pressable.
+   Written as button.<class> rather than the class alone because the app
+   root's blanket button reset matches with the same weight, and a tie there
+   is decided by whichever came last — which is not something to leave to
+   the order two rules happen to sit in. */
+.staxx-scaffold button.staxx-adopt-fix {
+  cursor: pointer;
+  text-align: left;
+  color: var(--sm-danger);
+  border: 1px solid var(--sm-danger);
+  border-radius: 0.4rem;
+  padding: 0.2rem 0.6rem;
+}
+
+.staxx-scaffold button.staxx-adopt-fix:hover,
+.staxx-scaffold button.staxx-adopt-fix:focus-visible {
+  background: color-mix(in srgb, var(--sm-danger) 12%, transparent);
 }
 
 .staxx-parse-error {
@@ -1327,32 +1363,63 @@
    so it contributes almost nothing to how wide `state` and `address` become —
    and those two are sized by every other row on the page, not by this one.
    An unwrapped strip would have inflated all of them. */
+/* The gap BETWEEN stacks has to beat the overlap WITHIN one, or the grouping
+   says nothing: at a 10px overlap and the old 4px gap, there was no telling
+   where one stack's icons ended and the next stack's began. */
 .staxx-fstrip {
   display: flex;
   flex: 1 1 auto;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.4rem;
+  gap: 1.2rem;
   min-width: 0;
+  /* Shared by every .staxx-fgroup/-cell below: sizes and spacing that never
+     vary per stack, so only the numbers that DO vary (how many cells show,
+     what shape the exploded grid is) need to travel as inline custom
+     properties on the item and its cells. Kept local to the strip rather
+     than promoted onto the plugin-wide --sm-* scope, since nothing outside
+     this feature reads them. */
+  --fg-cell: 2.6rem;
+  --fg-overlap: 1rem;  /* 10px: Unraid sets 62.5% on the root */
+  --fg-gap: 0.4rem;
+  --fg-pad: 0.3rem;
+  --fg-step: calc(var(--fg-cell) - var(--fg-overlap));
 }
 
+/* Sized to its own collapsed footprint — --fg-shown, set inline per stack in
+   the markup — rather than to whatever .staxx-fgroup happens to need at the
+   moment: .staxx-fgroup is always position: absolute below, so an in-flow
+   parent would otherwise collapse to nothing the instant it floats free to
+   explode on hover, shunting every stack after it sideways. position:
+   relative is what anchors that absolute child to THIS box rather than to
+   the strip or the row. */
 .staxx-fstrip-item {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 2.6rem;
-  height: 2.6rem;
-  overflow: hidden;
-  border-radius: 0.4rem;
   font-size: 1.4rem;
   line-height: 1;
+  width: calc((var(--fg-shown) - 1) * var(--fg-step) + var(--fg-cell));
+  height: var(--fg-cell);
+  /* Each item is a mouse-only shortcut to a row already reachable another
+     way (the folder chevron, or the stack's own icon and menu once open) —
+     see the click handler's comment for why it stays a plain <span>, never
+     a button, so this is the only affordance a pointer user gets. Same cursor
+     for the --broken variant: it opens the editor instead, but it is just as
+     clickable. */
+  cursor: pointer;
 }
 
-.staxx-fstrip-item img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+/* Landing on a row scrolled to from a folder's icon strip gets a brief tint
+   so arriving somewhere in the middle of a long table is not disorienting —
+   same ~900ms-then-fade idiom as .staxx-menu-num--saved above, tokens rather
+   than a literal colour so it still reads correctly in both themes. */
+.staxx-row--fstrip-flash {
+  background-color: var(--sm-fill);
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: -0.15rem;
+  transition: background-color var(--sm-motion-slow) var(--sm-ease),
+              outline-color var(--sm-motion-slow) var(--sm-ease);
 }
 
 /* A stopped stack, so the strip doubles as a reading of what is running in a
@@ -1363,9 +1430,168 @@
   filter: grayscale(1);
 }
 
+/* A stack compose cannot read is never running, so the rule above would dim
+   it too — but "not running" is not the news here, "broken" is, and dimming
+   it would spend the same visual slot saying something less useful. Undoing
+   that needs to beat [data-running="0"]'s (0,2,0) specificity outright, not
+   just win on source order (the state poll can rewrite data-running at any
+   time, but never touches this class) — the extra attribute selector below
+   is only there to add specificity; the attribute itself is always present. */
+.staxx-fstrip-item.staxx-fstrip-item--broken[data-fstrip-stack] {
+  opacity: 1;
+  filter: none;
+}
+
+/* Red border and triangle, so a broken stack reads as a problem file rather
+   than just an oddly full-colour stopped one. */
+.staxx-fstrip-item--broken .staxx-fgroup-cell {
+  border-color: var(--sm-danger);
+}
+.staxx-fstrip-item--broken .fa-exclamation-triangle {
+  color: var(--sm-danger);
+}
+
+/* Opacity below 1 always opens its own stacking context (position alone does
+   not), which would otherwise trap a stopped stack's exploded panel under
+   whatever plain row happens to follow it in the table — its z-index would
+   only ever be compared against its OWN children, never against later
+   siblings. z-index on the item itself, not just the panel inside it, is
+   what lifts the whole item — panel included — into .staxx-table-wrap's own
+   stacking order instead, so a running and a stopped stack explode the same
+   way. */
+.staxx-fstrip-item:hover {
+  z-index: 20;
+}
+
+/* One stack's icons. Always position: absolute, in both states, rather than
+   toggled on hover: toggling would only move the "where does the collapsed
+   size come from" problem from the item onto the group, which is exactly
+   what the item's own fixed width above already exists to settle once.
+   Collapsed, this just fills the item; width, height, background and border
+   are what grow and fade in on hover, and all four are continuously
+   animatable, so nothing here needs a discrete transition at all. */
+.staxx-fgroup {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: 0.1rem solid transparent;
+  border-radius: var(--sm-radius);
+  transition: width var(--sm-motion-slow) var(--sm-ease),
+              height var(--sm-motion-slow) var(--sm-ease),
+              left var(--sm-motion-slow) var(--sm-ease),
+              top var(--sm-motion-slow) var(--sm-ease),
+              background-color var(--sm-motion-slow) var(--sm-ease),
+              border-color var(--sm-motion-slow) var(--sm-ease);
+}
+
+/* Grown around roughly where the collapsed group sat: shifted out by
+   --fg-pad on both axes rather than spawned at a fresh corner, so the eye
+   never has to jump to find it, and padded so the icons don't end up flush
+   against the panel edge they've just gained. Solid fill and border are what
+   read this as a floating panel rather than loose icons hanging in space;
+   both start transparent above so the panel fades in rather than snapping
+   into view. */
+.staxx-fstrip-item:hover .staxx-fgroup {
+  left: calc(-1 * var(--fg-pad));
+  top: calc(-1 * var(--fg-pad));
+  width: calc(var(--fg-cols) * var(--fg-cell) + (var(--fg-cols) - 1) * var(--fg-gap) + 2 * var(--fg-pad));
+  height: calc(var(--fg-rows) * var(--fg-cell) + (var(--fg-rows) - 1) * var(--fg-gap) + 2 * var(--fg-pad));
+  background: var(--sm-bg);
+  border-color: var(--sm-line);
+}
+
+.staxx-fgroup-cell {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--fg-cell);
+  height: var(--fg-cell);
+  overflow: hidden;
+  border-radius: 0.4rem;
+  /* Solid, not one of the translucent --sm-fill tokens: the folder row's own
+     background is already a wash, and a translucent cell over a translucent
+     row would let overlapping icons bleed into each other instead of reading
+     as separate objects. */
+  background: var(--sm-bg);
+  border: 0.1rem solid var(--sm-line);
+  /* --fg-i is which slot this cell stacks into while collapsed — a
+     transform, not a margin, so the same property can carry it out to its
+     exploded grid position below without a second, conflicting way of moving
+     it. Normal document order already paints a later cell over an earlier
+     one, which is the leftmost-underneath order wanted here, so nothing
+     further is needed to get it. */
+  transform: translate(calc(var(--fg-i) * var(--fg-step)), 0);
+  transition: transform var(--sm-motion-slow) var(--sm-ease);
+}
+
+/* Every icon cell, shown collapsed or not, travels to its exploded slot on
+   hover — --fg-x/--fg-y are that cell's column and row, turned into the same
+   pixel step the panel's own size above is built from. The collapsed-only
+   chip is excluded: it never had a grid slot to travel to. */
+.staxx-fstrip-item:hover .staxx-fgroup-cell:not(.staxx-fgroup-cell--capchip) {
+  transform: translate(
+    calc(var(--fg-x) * (var(--fg-cell) + var(--fg-gap)) + var(--fg-pad)),
+    calc(var(--fg-y) * (var(--fg-cell) + var(--fg-gap)) + var(--fg-pad))
+  );
+}
+
+/* Real icons past the collapsed cap: invisible and parked at the same slot
+   as the last cell collapsed DOES show, so hovering reads as them sliding
+   out from under the stack rather than appearing from nowhere.
+
+   pointer-events: none while collapsed matters as much as the opacity does.
+   These cells sit later in the markup than the visible ones (so hovering can
+   open the group in the first place — see the item-level rule below), which
+   means they paint, and hit-test, ABOVE the visible cells despite opacity: 0
+   not showing them: an invisible element is still hit-tested. Without this,
+   the pointer landing anywhere a hidden cell is parked would report ITS
+   title rather than the visible icon underneath it. Restored on hover below,
+   once each cell has actually moved to its own exploded slot, so a pointer
+   crossing onto a just-revealed cell keeps landing on the group (it is still
+   inside .staxx-fstrip-item) rather than finding a gap and letting the panel
+   flicker shut. */
+.staxx-fgroup-cell--reveal {
+  opacity: 0;
+  pointer-events: none;
+  transition: transform var(--sm-motion-slow) var(--sm-ease),
+              opacity var(--sm-motion) var(--sm-ease);
+}
+
+.staxx-fstrip-item:hover .staxx-fgroup-cell--reveal {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The collapsed view's own "+N" chip, shown only when there are more icons
+   than the three-cell cap allows: it has nowhere to explode TO, since the
+   exploded view has room for everything it was hiding, so hovering just
+   fades it out where it already sits rather than moving it anywhere.
+
+   pointer-events matters as much as the opacity, for the same reason it does
+   on a revealed cell above: staying where it sits means it sits ON TOP of a
+   cell of the open grid — the third collapsed slot lands under the top row's
+   second icon — and an invisible box still answers a hover, so that icon
+   reported "+N more" as its name instead of its own service. */
+.staxx-fstrip-item:hover .staxx-fgroup-cell--capchip {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.staxx-fgroup-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 /* The initials tile shown until an icon has been downloaded is sized for a
    row, and inherits .staxx-tile--N's colour from the shared rules above. */
-.staxx-fstrip-item .staxx-tile {
+.staxx-fgroup-cell .staxx-tile {
   width: 100%;
   height: 100%;
   font-size: 1rem;
@@ -2099,6 +2325,36 @@
   white-space: nowrap;
 }
 
+/* .staxx-handoverbadge is a real <button> (it opens the "does it work?"
+   question), unlike .staxx-reviewbadge beside it, which stays a plain
+   label. Same trap as the update pill and the pending chip further down:
+   Unraid's own `.unapi button { background-color: transparent; border-
+   radius: 0 }` is a class plus an element type, so it outranks the single
+   class above and would square the pill off — border-radius is restated
+   here to stop that. Hover and focus borrow the update pill's own accent
+   fill and outline, so a pressable badge reads as one visual language with
+   the rest of the row rather than inventing a second.
+
+   font-family is restated for the reason the update pill's own comment
+   records: the class above never set one, so without this the browser's
+   own button typeface applies and the badge renders in a different face
+   from the stack name sitting right beside it. */
+.staxx-scaffold button.staxx-handoverbadge {
+  border-radius: 1rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.staxx-scaffold button.staxx-handoverbadge:hover {
+  background: var(--sm-accent);
+  color: #000;
+}
+
+.staxx-scaffold button.staxx-handoverbadge:focus-visible {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.1rem;
+}
+
 /* The update pill (PLAN_45 Part H) — sits beside the state pill in the same
    status area, not a column of its own. Copies .staxx-pill's own radius,
    padding and font-size rather than sharing its selector, because the
@@ -2351,6 +2607,19 @@
   font-size: 1.1rem;
 }
 
+/* PLAN_104 — the mark for a stack with a service on a macvlan/ipvlan network
+   that still carries a live ports: key, which will not start. A fault, not a
+   fact, so it takes .staxx-driftmark/.staxx-imgmismatch's accent colour
+   rather than .staxx-pinmark's quiet grey just above — same icon-only shape,
+   the tooltip and .staxx-sr span already carry the whole sentence. */
+.staxx-portmark {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  color: var(--sm-accent);
+  font-size: 1.1rem;
+}
+
 /* The boot marker (PLAN_43) — always in the markup (see staxx_boot_mark_html())
    but hidden by default, because "off" is the common case and a lightning
    bolt on every row would be noise, not information. Keyed off the ROW's own
@@ -2406,6 +2675,14 @@
   font-size: 0.85rem;
   line-height: 1.5;
   white-space: nowrap;
+}
+
+/* With no Notes box on the row, the chip takes the track that box would have
+   used instead of sitting a column further out. After the rule above, not
+   before: both carry the same weight, so source order is what decides which
+   grid-column wins. */
+.staxx-webchip--near {
+  grid-column: 3;
 }
 
 /* ---- Panels: the editor ---------------------------------------------------
@@ -4834,6 +5111,23 @@
 .staxx-scaffold .staxx-input--check {
   width: auto;
   padding: 0;
+}
+
+/* PLAN_104 — the ports note is the compose file's own commented-out block,
+   shown and edited as one box (see portsNoteHtml() in stacks.js). Monospace
+   and left as typed, the same as the note itself keeps every line as
+   written — a proportional font would be misleading about which port a
+   trailing comment sits beside. Comes after .staxx-input, which sets its
+   layout and colour; this only adds what a plain text box does not need. */
+.staxx-scaffold .staxx-portsnotebox {
+  min-height: 4.4rem;
+  font-family: ui-monospace, Consolas, monospace;
+  white-space: pre;
+  resize: vertical;
+}
+
+.staxx-portsnote {
+  margin: 0.5rem 0 0;
 }
 
 /* A dropdown wears the same skin as a text box, minus the right-hand padding —
@@ -8220,16 +8514,17 @@
 
 /* ---- StaXXCrypt state (PLAN_74 Part A piece 3) --------------------------
  *
- * Sits between the settings body and its foot, filled entirely by script:
- * built/not-built, running, recipe version, the last self-test's per-format
- * results, and the build/rebuild button. Same border-top-as-divider idiom
- * as .staxx-settings-group above, since it is one more section of the same
- * panel rather than a dialog of its own.
+ * Sits inside the settings body, straight after the CRYPT_MODE row it
+ * reports on — filled entirely by script: built/not-built, running, recipe
+ * version, the last self-test's per-format results, the build/rebuild
+ * button, and the recipe disclosure. Indented with a left border rather
+ * than the settings-group border-top divider above, so it reads as
+ * belonging to the row above it rather than as a section of its own.
  */
 .staxx-crypt {
-  flex: 0 0 auto;
-  padding: 1.2rem 1.4rem 0;
-  border-top: 0.1rem solid var(--sm-line);
+  margin: -0.6rem 0 1.4rem 0.2rem;
+  padding: 0.6rem 0 0 1.2rem;
+  border-left: 0.2rem solid var(--sm-line);
 }
 
 .staxx-crypt[hidden] {
@@ -8287,6 +8582,21 @@
   align-items: center;
   gap: 0.8rem;
   margin-bottom: 1.2rem;
+}
+
+/* The recipe disclosure's own text — a real file and a real command, shown
+   whole. overflow-x is local to the block so a long Dockerfile line scrolls
+   inside it rather than the settings panel itself scrolling sideways. */
+.staxx-crypt-recipe-pre {
+  margin: 0.6rem 0;
+  padding: 0.8rem 1rem;
+  overflow-x: auto;
+  background: var(--sm-fill-0);
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.15rem;
+  white-space: pre;
 }
 
 .staxx-settings-foot {

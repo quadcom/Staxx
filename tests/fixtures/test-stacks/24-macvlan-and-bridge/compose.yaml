@@ -1,0 +1,21 @@
+# Fixture for PLAN_104: a service attached to both a macvlan network and an
+# ordinary bridge one. The plan is explicit that one macvlan network is
+# enough — the trigger is "any macvlan/ipvlan network on this service", not
+# "its only network" — so this service still has live ports to comment out
+# even though a plain bridge sits right beside `lan` in its network list.
+services:
+  app:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    ports:
+      - "9090"
+    networks:
+      - lan
+      - internal
+
+networks:
+  lan:
+    driver: macvlan
+    external: true
+  internal:
+    driver: bridge

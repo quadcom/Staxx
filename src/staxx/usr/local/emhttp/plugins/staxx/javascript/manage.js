@@ -40,6 +40,17 @@
   // watching, so there is deliberately no separate ping.
   var POLL_MS = 1000;
 
+  // The log pane polls faster than that while output is actually arriving.
+  // A flat one-second poll made a busy container read a second behind and
+  // arrive in visible clumps, which is what "not real-time" looked like. A
+  // read that brings text is evidence more is coming, so the next one goes
+  // out quickly; a read that brings nothing eases back towards the idle rate
+  // rather than holding a fast poll against a container saying nothing. The
+  // idle rate is unchanged, so a quiet pane costs exactly what it did.
+  var LOG_POLL_FAST = 200;
+  var LOG_POLL_IDLE = POLL_MS;
+  var LOG_POLL_EASE = 1.6;
+
   // PLAN_44 D7. The same 45rem the stylesheet uses, and deliberately the
   // same string — stacks.js's own NARROW carries the reasoning (a rem inside
   // a media query is the browser's default font size, not the 62.5% Unraid
@@ -59,6 +70,11 @@
   var splitRatio = 1;
   var SPLIT_MIN_PX = 60;   // neither pane can be dragged below this
   var SPLIT_STEP = 0.1;    // one arrow-key nudge
+
+  // The log pane's share of the whole body, same spelling as splitRatio
+  // above — a second handle between the log and the shell/files column,
+  // sitting alongside the one above rather than replacing it.
+  var bodyRatio = 1;
 
   // PLAN_44 D4, the shell.
   //
@@ -344,10 +360,25 @@
       var files = pane('files', 'Files');
       buildFilesBody(files.body);
       right.appendChild(shell.el);
-      right.appendChild(splitter(right, shell.el, files.el));
+      right.appendChild(splitter(right, shell.el, files.el, {
+        prop: '--sm-split',
+        vertical: false,
+        get: function () { return splitRatio; },
+        set: function (v) { splitRatio = v; },
+        title: 'Drag to share the room between the shell and the files. ' +
+          'Double-click for an even split.'
+      }));
       right.appendChild(files.el);
 
       body.appendChild(logPane.el);
+      body.appendChild(splitter(body, logPane.el, right, {
+        prop: '--sm-bodysplit',
+        vertical: true,
+        get: function () { return bodyRatio; },
+        set: function (v) { bodyRatio = v; },
+        title: 'Drag to share the room between the log and the shell. ' +
+          'Double-click for an even split.'
+      }));
       body.appendChild(right);
 
       els.log = logPane;
@@ -413,36 +444,45 @@
       return { el: el, head: h, actions: actions, body: body };
     }
 
-    // The handle between the shell and the file panes. It writes one custom
-    // property on the column and the two panes' own flex rules read it —
-    // never an inline style on a pane, because an inline flex would outrank
-    // the collapsed rule and a collapsed pane would keep its height.
-    function splitter(column, shellEl, filesEl) {
+    // A drag handle between two panes. It writes one custom property on the
+    // column and the panes' own flex rules read it — never an inline style
+    // on a pane, because an inline flex would outrank the collapsed rule and
+    // a collapsed pane would keep its size. Used twice: the original
+    // horizontal handle between the shell and files (opts.vertical false,
+    // dragged up/down), and the vertical one between the log and the
+    // shell/files column (opts.vertical true, dragged left/right). The two
+    // differ only in which axis they measure and which module-scope ratio
+    // they read and write, via opts.get/opts.set — everything else, down to
+    // the pointer-capture refusal below, is identical.
+    function splitter(column, aEl, bEl, opts) {
       var el = document.createElement('div');
-      el.className = 'staxx-manage-split';
+      el.className = 'staxx-manage-split' +
+        (opts.vertical ? ' staxx-manage-split--vertical' : '');
       el.setAttribute('role', 'separator');
       el.setAttribute('tabindex', '0');
-      el.setAttribute('aria-orientation', 'horizontal');
-      el.title = 'Drag to share the room between the shell and the files. ' +
-        'Double-click for an even split.';
+      el.setAttribute('aria-orientation', opts.vertical ? 'vertical' : 'horizontal');
+      el.title = opts.title;
 
       function collapsed() {
-        return shellEl.classList.contains('staxx-manage-pane--collapsed') ||
-          filesEl.classList.contains('staxx-manage-pane--collapsed');
+        return aEl.classList.contains('staxx-manage-pane--collapsed') ||
+          bEl.classList.contains('staxx-manage-pane--collapsed');
       }
 
       function apply() {
-        column.style.setProperty('--sm-split', String(splitRatio));
-        el.setAttribute('aria-valuenow', String(Math.round(splitRatio * 50)));
+        var r = opts.get();
+        column.style.setProperty(opts.prop, String(r));
+        el.setAttribute('aria-valuenow', String(Math.round(r * 50)));
       }
 
       // The floor is in pixels but what is stored is a ratio, so the split
       // holds its proportions across a window resize instead of pinning one
-      // pane to a height that only made sense at one size.
+      // pane to a size that only made sense at one size.
       function set(r) {
-        var total = column.clientHeight - el.offsetHeight;
+        var size = opts.vertical ? column.clientWidth : column.clientHeight;
+        var handleSize = opts.vertical ? el.offsetWidth : el.offsetHeight;
+        var total = size - handleSize;
         var lo = total > SPLIT_MIN_PX * 2 ? (2 * SPLIT_MIN_PX) / total : 0.5;
-        splitRatio = Math.max(lo, Math.min(2 - lo, r));
+        opts.set(Math.max(lo, Math.min(2 - lo, r)));
         apply();
       }
 
@@ -457,9 +497,14 @@
 
       function onMove(ev) {
         var box = column.getBoundingClientRect();
-        var total = column.clientHeight - el.offsetHeight;
+        var size = opts.vertical ? column.clientWidth : column.clientHeight;
+        var handleSize = opts.vertical ? el.offsetWidth : el.offsetHeight;
+        var total = size - handleSize;
         if (total <= 0) return;
-        set((2 * (ev.clientY - box.top - el.offsetHeight / 2)) / total);
+        var pos = opts.vertical
+          ? ev.clientX - box.left - el.offsetWidth / 2
+          : ev.clientY - box.top - el.offsetHeight / 2;
+        set((2 * pos) / total);
       }
 
       function endDrag() {
@@ -470,6 +515,7 @@
         window.removeEventListener('pointercancel', endDrag);
         el.classList.remove('staxx-manage-split--dragging');
         document.body.classList.remove('staxx-manage-dragging');
+        if (opts.vertical) document.body.classList.remove('staxx-manage-dragging--vertical');
       }
 
       el.addEventListener('pointerdown', function (ev) {
@@ -483,6 +529,7 @@
         window.addEventListener('pointercancel', endDrag);
         el.classList.add('staxx-manage-split--dragging');
         document.body.classList.add('staxx-manage-dragging');
+        if (opts.vertical) document.body.classList.add('staxx-manage-dragging--vertical');
       });
 
       // Preventing the default on pointerdown does not stop the mouse event
@@ -495,8 +542,11 @@
 
       el.addEventListener('keydown', function (ev) {
         if (collapsed()) return;
-        if (ev.key === 'ArrowUp') set(splitRatio - SPLIT_STEP);
-        else if (ev.key === 'ArrowDown') set(splitRatio + SPLIT_STEP);
+        var r = opts.get();
+        if (!opts.vertical && ev.key === 'ArrowUp') set(r - SPLIT_STEP);
+        else if (!opts.vertical && ev.key === 'ArrowDown') set(r + SPLIT_STEP);
+        else if (opts.vertical && ev.key === 'ArrowLeft') set(r - SPLIT_STEP);
+        else if (opts.vertical && ev.key === 'ArrowRight') set(r + SPLIT_STEP);
         else if (ev.key === 'Home') set(1);
         else return;
         ev.preventDefault();
@@ -532,6 +582,7 @@
       dropped:  0,      // total lines ever evicted by the LOG_CAP shift
       domDropped: 0,    // how much of `dropped` the DOM has already trimmed for — see appendNewLines()
       pollTimer: null,
+      pollDelay: LOG_POLL_FAST, // current gap between reads; see LOG_POLL_FAST
       pollSeq:  0,      // bumped on every start/stop; a stale reply checks this before landing
       downloadText: null
     };
@@ -805,6 +856,7 @@
       log.domDropped = 0;
       log.alive = false;
       log.error = '';
+      log.pollDelay = LOG_POLL_FAST;
       renderLines();
       if (!state.stack) return; // nothing open yet to follow
       var mySeq = ++log.pollSeq;
@@ -843,11 +895,16 @@
           if (res.text) appendChunk(res.text);
           if (typeof res.offset === 'number') log.offset = res.offset;
           updateEmptyState();
+          // Text means more is probably on its way, so chase it; silence
+          // eases back towards the idle rate. See LOG_POLL_FAST.
+          log.pollDelay = res.text
+            ? LOG_POLL_FAST
+            : Math.min(LOG_POLL_IDLE, Math.round(log.pollDelay * LOG_POLL_EASE));
         }
         // alive:false means the follower ended on its own (nothing left to
         // tail, or the container was removed) — the pane already shows
         // everything there was, so polling stops rather than spinning.
-        if (log.alive) schedulePoll(mySeq, POLL_MS);
+        if (log.alive) schedulePoll(mySeq, log.pollDelay);
       });
     }
 

@@ -1250,15 +1250,15 @@ endif;
       <h3 class="staxx-settings-title" id="staxx-settings-title"><?= _('Settings') ?></h3>
     </div>
 
-    <div class="staxx-settings-body" id="staxx-settings-body"></div>
-
     <!-- PLAN_74 Part A piece 3: StaXXCrypt is StaXX's own plumbing, not an
          application somebody chose to run, so it does not belong on a page
          about the containers you chose — but hidden from the list is not
-         hidden from you, so its whole state (built or not, running, recipe
-         version, self-test results, the build/rebuild button) lives here
-         with the rest of StaXX's own configuration. Script fills it. -->
-    <div class="staxx-crypt" id="staxx-crypt-state" hidden></div>
+         hidden from you. Its whole state (built or not, running, recipe
+         version, self-test results, the build/rebuild button, and the
+         recipe disclosure) is built by script directly under the CRYPT_MODE
+         row inside the body above, not pinned here as a fixed sibling of it. -->
+
+    <div class="staxx-settings-body" id="staxx-settings-body"></div>
 
     <div class="staxx-settings-foot">
       <p class="staxx-settings-msg" id="staxx-settings-msg" role="status" aria-live="polite"></p>

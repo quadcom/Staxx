@@ -2836,15 +2836,18 @@
       var pfHost = pf.parts.host ? pf.parts.host.value : '';
       var pfContainer = pf.parts.container ? pf.parts.container.value : '';
 
-      if (pfHost && pfContainer) {
-        pf.advice.push(pf.netKind === 'host'
-          ? 'This container shares the server\'s network, so the outer number here is ignored — the port inside the container is the one the web button opens.'
-          : 'This container has its own address, so the outer number here is ignored — the port inside the container is the one the web button opens.');
-      } else {
-        pf.advice.push(pf.netKind === 'host'
-          ? 'This container shares the server\'s network, so the port inside the container is the port on the server.'
-          : 'This container has its own address, so only the port inside the container matters.');
-      }
+      // Host networking gets a sentence because the row still shows both
+      // numbers and the outer one quietly does nothing. A macvlan/ipvlan
+      // service gets none: its outer box is not drawn at all (see the mapped
+      // branch of fieldHtml() in stacks.js), so there is no misleading box to
+      // explain, and a note under every port row saying the same thing is
+      // noise. A host value the author wrote is still never hidden silently —
+      // adviceText() says where it went whenever the file sets one.
+      if (pf.netKind !== 'host') continue;
+
+      pf.advice.push(pfHost && pfContainer
+        ? 'This container shares the server\'s network, so the outer number here is ignored — the port inside the container is the one the web button opens.'
+        : 'This container shares the server\'s network, so the port inside the container is the port on the server.');
     }
 
     // The Web page port field (PLAN_51) started out just showing whatever a
@@ -5004,6 +5007,252 @@
     var entry = sections[service] ? sections[service][key] : undefined;
     if (!entry || !entry.lines || !entry.lines.length) return null;
     return stashLinesOk(entry.lines, null);
+  }
+
+  /* =====================================================================
+   * The ports note (PLAN_104)
+   * =====================================================================
+   *
+   * A service on a macvlan/ipvlan network cannot carry a live `ports:` —
+   * Docker's macvlan driver has no NAT to map a port through, and refuses the
+   * file outright. What replaces it is a commented block sitting exactly
+   * where `ports:` would be:
+   *
+   *     # ports:
+   *     #   - "8080"        # the admin page
+   *     #   - "8081"
+   *
+   * Comment lines are invisible to the parser above (classify() marks them
+   * 'comment' and parseMap/parseSeq skip straight past), so this block is
+   * found and written by direct line text rather than through the parse
+   * tree. That is also what makes the round trip exact: every line in the
+   * block is transformed at a fixed column with a fixed two-character
+   * marker ('#' plus one space) inserted after the service's own key
+   * indentation, and undone by stripping exactly that back off — so
+   * whatever was on the line before (a trailing comment, odd internal
+   * spacing, anything) survives untouched on either side of the trip.
+   *
+   * None of the four functions below decide *when* to act — no netKind
+   * check, no automatic rewriting. They are just the read/write primitives
+   * PLAN_104's UI moments call.
+   */
+
+  // Inserts the block's marker ('#' + one space) at `keyIndent`, keeping
+  // everything from that column onward exactly as it was. The one-space
+  // marker is what turns "ports:" into "# ports:" and "  - \"8080\"" (a
+  // child line already indented past keyIndent) into "#   - \"8080\"" —
+  // see the section comment above for why this is always invertible.
+  function portsCommentLine(line, keyIndent) {
+    var tail = line.length > keyIndent ? line.slice(keyIndent) : '';
+    return pad(keyIndent) + '#' + (tail === '' ? '' : ' ' + tail);
+  }
+
+  // The exact reverse of portsCommentLine: strips the marker, and the one
+  // separator space if the line actually has one (a hand-written comment
+  // with no space, or several, after the '#' is read back faithfully rather
+  // than normalised).
+  function portsUncommentLine(line, keyIndent) {
+    var tail = line.slice(keyIndent + 1);
+    if (tail.charAt(0) === ' ') tail = tail.slice(1);
+    return pad(keyIndent) + tail;
+  }
+
+  // Finds the commented block belonging to `service`, if any: a `# ports:`
+  // line at the service's own key indentation, plus every following comment
+  // line at that same indentation whose content (after the '#') is indented
+  // further than the header's — which is what lets a hand-written comment
+  // that happens to start "# ports:" be picked up as this note (PLAN_104
+  // says that is fine: it IS that note, shown and written back as it
+  // stands). Returns null when the service cannot be read or no such block
+  // exists; otherwise {svc, keyIndent, start, end} — start/end are line
+  // indices, end exclusive, the same convention as every other range here.
+  function findPortsNote(doc, service) {
+    var svc = serviceMapOf(doc, service);
+    if (!svc) return null;
+    var keyIndent = svc.value.indent;
+    var marker = pad(keyIndent) + '#';
+
+    // The service's own physical extent — every line indented deeper than
+    // the service key, blank lines included — not svc.value.end, which can
+    // stop short of a trailing comment the parser never attached to a key.
+    var limit = svc.start + 1, i = svc.start + 1;
+    while (i < doc.lines.length) {
+      var ln = doc.lines[i];
+      if (!/^\s*$/.test(ln)) {
+        var lead = ln.match(/^[ \t]*/)[0].length;
+        if (lead <= svc.indent) break;
+        limit = i + 1;
+      }
+      i++;
+    }
+
+    var headerIdx = -1, headerContentIndent = 0;
+    for (i = svc.value.start; i < limit; i++) {
+      var line = doc.lines[i];
+      if (line.slice(0, marker.length) !== marker) continue;
+      var content = line.slice(marker.length);
+      var stripped = content.replace(/^[ \t]*/, '');
+      if (!/^ports\s*:/.test(stripped)) continue;
+      headerIdx = i;
+      headerContentIndent = content.length - stripped.length;
+      break;
+    }
+    if (headerIdx < 0) return null;
+
+    var end = headerIdx + 1;
+    while (end < limit) {
+      var l2 = doc.lines[end];
+      if (l2.slice(0, marker.length) !== marker) break;
+      var c2 = l2.slice(marker.length);
+      var s2 = c2.replace(/^[ \t]*/, '');
+      if (c2.length - s2.length <= headerContentIndent) break;
+      end++;
+    }
+
+    return { svc: svc, keyIndent: keyIndent, start: headerIdx, end: end };
+  }
+
+  /**
+   * portsNote(doc, service) -> { present, lines, range }
+   *
+   * Reads the commented ports block described above without changing
+   * anything. `lines` are the block's inner lines (everything but the
+   * `# ports:` header) with the comment marker and the block's own
+   * indentation stripped, so a caller sees `- "8080"        # the admin
+   * page` — the text as written, nothing normalised beyond that leading
+   * indent. `range` is {start, end} in line indices (end exclusive) or null
+   * when no block is present.
+   */
+  function portsNote(doc, service) {
+    var found = findPortsNote(doc, service);
+    if (!found) return { present: false, lines: [], range: null };
+
+    var lines = [];
+    for (var i = found.start + 1; i < found.end; i++) {
+      var live = portsUncommentLine(doc.lines[i], found.keyIndent);
+      lines.push(live.replace(/^\s+/, ''));
+    }
+    return { present: true, lines: lines, range: { start: found.start, end: found.end } };
+  }
+
+  /**
+   * setPortsNote(doc, service, lines) -> bool
+   *
+   * Writes the note back from the same shape portsNote() reads: each entry
+   * in `lines` becomes one commented child line under a `# ports:` header.
+   * An empty array removes the block entirely. Updates in place — the block
+   * keeps whatever position it already had — or, when none exists yet, adds
+   * one at the end of the service's own keys. Never touches any other
+   * comment in the service, because only the block's own line range (or a
+   * single insertion point) is spliced.
+   */
+  function setPortsNote(doc, service, lines) {
+    if (hasUnreadTail(doc)) return false;
+    var svc = serviceMapOf(doc, service);
+    if (!svc) return false;
+    var found = findPortsNote(doc, service);
+    var keyIndent = found ? found.keyIndent : svc.value.indent;
+
+    if (!lines || !lines.length) {
+      if (!found) return true;                // nothing to remove
+      splice(doc, found.start, found.end - found.start, []);
+      return true;
+    }
+
+    var built = [pad(keyIndent) + '# ports:'];
+    lines.forEach(function (l) { built.push(pad(keyIndent) + '#   ' + l); });
+
+    if (found) {
+      splice(doc, found.start, found.end - found.start, built);
+    } else {
+      splice(doc, svc.value.end, 0, built);
+    }
+    return true;
+  }
+
+  // True when any sealed region of the given reason overlaps [start, end) —
+  // used below to refuse commenting out a block this file cannot prove is
+  // safe to touch: an anchor commented out here could be the only definition
+  // an alias elsewhere in the file depends on, and a broken alias is a file
+  // that will not load at all, which is worse than refusing.
+  function sealedReasonIn(doc, start, end, reasons) {
+    var sealed = doc.sealed || [];
+    for (var i = 0; i < sealed.length; i++) {
+      var s = sealed[i];
+      if (reasons.indexOf(s.reason) < 0) continue;
+      if (s.start < end && s.end > start) return true;
+    }
+    return false;
+  }
+
+  /**
+   * commentOutPorts(doc, service) -> { ok, count, error }
+   *
+   * Turns a live `ports:` block into the commented form above, in place —
+   * same lines, same position, every trailing comment still beside the
+   * entry it was written next to. `count` is how many port entries were
+   * commented. Refuses (ok:false) rather than write a broken file when the
+   * block holds an anchor or alias: commenting out an anchor's definition
+   * can break an alias elsewhere in the file that depends on it, and this
+   * function has no way to know whether one does.
+   */
+  function commentOutPorts(doc, service) {
+    if (hasUnreadTail(doc)) {
+      return { ok: false, count: 0, error: 'This file has a line the form cannot read, so nothing can be changed until that is fixed by hand.' };
+    }
+    var svc = serviceMapOf(doc, service);
+    if (!svc) return { ok: false, count: 0, error: 'That service could not be found.' };
+    var portsPair = svc.value.pairs['ports'];
+    if (!portsPair || !portsPair.value) {
+      return { ok: false, count: 0, error: 'This service has no live ports setting to comment out.' };
+    }
+    if (portsPair.value.kind !== 'seq') {
+      return { ok: false, count: 0, error: 'The ports setting is written in a form this cannot safely comment out.' };
+    }
+    if (sealedReasonIn(doc, portsPair.start, portsPair.end, ['anchor', 'alias'])) {
+      return { ok: false, count: 0, error: 'This ports block holds an anchor or alias, and commenting it out could break something elsewhere in the file that depends on it, so it has been left alone.' };
+    }
+
+    var keyIndent = portsPair.indent;
+    var count = portsPair.value.items.length;
+    var newLines = [];
+    for (var i = portsPair.start; i < portsPair.end; i++) {
+      newLines.push(portsCommentLine(doc.lines[i], keyIndent));
+    }
+    splice(doc, portsPair.start, portsPair.end - portsPair.start, newLines);
+    return { ok: true, count: count, error: '' };
+  }
+
+  /**
+   * restorePorts(doc, service) -> { ok, count, error }
+   *
+   * The exact reverse of commentOutPorts(): the commented block found by
+   * findPortsNote() becomes live YAML again, in place. Refuses when there is
+   * no such block, or when the service already has a live `ports:` — writing
+   * a second one would be a corrupted file, not a restore.
+   */
+  function restorePorts(doc, service) {
+    if (hasUnreadTail(doc)) {
+      return { ok: false, count: 0, error: 'This file has a line the form cannot read, so nothing can be changed until that is fixed by hand.' };
+    }
+    var svc = serviceMapOf(doc, service);
+    if (!svc) return { ok: false, count: 0, error: 'That service could not be found.' };
+    if (svc.value.pairs['ports']) {
+      return { ok: false, count: 0, error: 'This service already has a live ports setting, so there is nothing to restore into.' };
+    }
+    var found = findPortsNote(doc, service);
+    if (!found) {
+      return { ok: false, count: 0, error: 'There is no commented-out ports note on this service to restore.' };
+    }
+
+    var newLines = [], count = 0;
+    for (var i = found.start; i < found.end; i++) {
+      var live = portsUncommentLine(doc.lines[i], found.keyIndent);
+      newLines.push(live);
+      if (i > found.start && /^\s*-/.test(live)) count++;
+    }
+    splice(doc, found.start, found.end - found.start, newLines);
+    return { ok: true, count: count, error: '' };
   }
 
   /* =====================================================================
@@ -9008,7 +9257,14 @@
     // pins it — see its own comment above for the rule and why it exists
     // here rather than in the front end.
     pinnedImageRef: pinnedImageRef,
-    unpinnedImageRef: unpinnedImageRef
+    unpinnedImageRef: unpinnedImageRef,
+    // PLAN_104: the commented `# ports:` note a macvlan/ipvlan service
+    // carries instead of a live ports: block — see the section comment
+    // above findPortsNote() for the shape and why this is line-based.
+    portsNote: portsNote,
+    setPortsNote: setPortsNote,
+    commentOutPorts: commentOutPorts,
+    restorePorts: restorePorts
   };
 
   if (typeof window !== 'undefined') window.StaxxYaml = API;

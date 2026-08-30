@@ -19,6 +19,7 @@
 <?
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
+require_once '/usr/local/emhttp/plugins/staxx/include/BootCopy.php';
 
 if (defined('STAXX_JOB_DIR')) return;
 
@@ -827,6 +828,47 @@ function staxx_find_compose_file(string $dir): string {
 }
 
 /**
+ * Whether a save that means to create something may go ahead, and why not
+ * when it may not: '' to proceed, else the sentence to show.
+ *
+ * $adopt is the caller claiming it means to give an existing but fileless
+ * stack folder its first compose file, rather than to create a new stack.
+ * That claim only ever NARROWS the name-clash refusal below — which is what
+ * stops "Add stack" writing into a stack somebody else already owns — so it
+ * is deliberately not inferred from the directory's own state.
+ *
+ * A function rather than a few lines inside the endpoint's switch, because a
+ * refusal reachable only over HTTP is a refusal no suite on this box can
+ * prove; tests/server/adopt.php calls this directly.
+ */
+function staxx_create_refusal(string $name, bool $adopt): string {
+  $dir    = staxx_stack_dir($name);
+  $exists = is_dir($dir);
+
+  if (!$exists) {
+    return $adopt
+      ? 'There is no folder called "'.$name.'" any more. Refresh the stack list and look again.'
+      : '';
+  }
+
+  if (!$adopt) {
+    return 'A stack called "'.$name.'" already exists. Pick another name, or edit the '
+         . 'existing one.';
+  }
+
+  // Asked the same way the lister asks it — a second guess at which filenames
+  // count is exactly how this refusal gets bypassed by a file the lister can
+  // see and this gate cannot.
+  $have = staxx_find_compose_file($dir);
+  if ($have !== '') {
+    return 'This folder already has a compose file ('.basename($have).'), so there is nothing '
+         . 'to start here. Use Edit to change it instead.';
+  }
+
+  return '';
+}
+
+/**
  * The main file plus its override, if one sits beside it — Docker's own
  * pairing rule, not a scan of the folder. $main is a FILE PATH, not a
  * directory: staxx_find_compose_file() already answers "what is this
@@ -1460,7 +1502,7 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
  *                services:array<string,array{image:string, container_name:string,
  *                                            x:array<string,string>, fixedIp:string,
  *                                            firstPort:array{target?:string,published?:string,count?:int},
- *                                            netMode:string}>}
+ *                                            netMode:string, networks:string[]}>}
  */
 function staxx_compose_meta(string $file, ?string &$error = null): array {
   static $cache = [];
@@ -1534,7 +1576,19 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
     $service = $parts[1];
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
-                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => ''];
+                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
+                                      'networks' => []];
+    }
+
+    // Which networks this service names, regardless of what else is nested
+    // under each one (an ipv4_address, aliases, …) — `docker compose config`
+    // always writes a service's networks: as a mapping keyed by network name,
+    // so parts[3] is that name whatever comes after it. Recorded here, apart
+    // from the elseif chain below, because a path can match this AND (for
+    // ipv4_address) that chain's own branch — the two are not alternatives.
+    if ($parts[2] === 'networks' && count($parts) >= 4 && $parts[3] !== ''
+        && !in_array($parts[3], $meta['services'][$service]['networks'], true)) {
+      $meta['services'][$service]['networks'][] = $parts[3];
     }
 
     if ($parts[2] === 'image' && count($parts) === 3) {
@@ -1569,7 +1623,8 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
   foreach (staxx_first_ports($yaml) as $service => $port) {
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
-                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => ''];
+                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
+                                      'networks' => []];
     }
     $meta['services'][$service]['firstPort'] = $port;
   }
@@ -3028,6 +3083,30 @@ function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$
     $error = 'Could not save '.$file.' — the temporary file could not be put in place.';
     return false;
   }
+  // Keep the file as it now stands too — not only as it stood before. The
+  // before-save capture above is what catches an edit made on the server by
+  // hand between two saves; without this second call the version just
+  // written is never kept at all, so a save followed by a lost file loses
+  // exactly the copy nobody else has. staxx_record_capture() already skips a
+  // capture whose hash matches the newest one stored, so the version this
+  // writes and the "before" version taken at the *next* save — the same
+  // bytes — collapse into one kept version rather than two.
+  $recordNote2 = '';
+  if (!staxx_record_capture($name, basename($file), $recordNote2) && $recordNote2 !== '') {
+    if ($note !== null && $note === '') $note = $recordNote2;
+    error_log('StaXX: history not kept for '.$name.': '.$recordNote2);
+  }
+
+  // The boot-drive shelf copy (PLAN_103). Same reasoning as the history
+  // capture above: the save has already succeeded by this point, and a
+  // failure to copy must never undo that — it is only ever logged, and
+  // surfaced as a note the same way a history that could not be kept is.
+  $bootNote = '';
+  if (!staxx_boot_copy_stack($name, $bootNote) && $bootNote !== '') {
+    if ($note !== null && $note === '') $note = $bootNote;
+    error_log('StaXX: boot copy not written for '.$name.': '.$bootNote);
+  }
+
   // A brand new stack just changed the tree's shape; see staxx_scan_stacks_reset().
   staxx_scan_stacks_reset();
   return true;
@@ -3313,6 +3392,13 @@ function staxx_archive_stack(
            . 'The archive is safe; remove the folder by hand.';
     return false;
   }
+
+  // The stack is gone from the store, so its boot-drive shelf copy goes
+  // with it (PLAN_103) — a shelf that quietly kept it would be a
+  // resurrection waiting to happen, and this is what the archive above
+  // exists for already. Nothing here can undo the archive that just
+  // succeeded, so this only ever removes; it never reports a failure back.
+  staxx_boot_remove_stack($name);
 
   staxx_scan_stacks_reset(); // the stack's directory is gone; see the function's own comment
   $archive = $final;
@@ -4215,6 +4301,16 @@ function staxx_list_files(string $rel, string &$error): ?array {
  * round to get this wrong.
  */
 function staxx_looks_text(string $path): bool {
+  // A picture is never offered as editable text, even when it technically is
+  // one: an SVG is plain text all the way down, so without this an icon
+  // sitting in the stack's folder opens as a tab in the editor beside the
+  // compose file, inviting an edit nobody wants to make there. It is still
+  // listed, and still downloadable, like any other companion file.
+  $ext = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
+  if (in_array($ext, ['svg', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp', 'avif'], true)) {
+    return false;
+  }
+
   $fh = @fopen($path, 'rb');
   if ($fh === false) return false;
   $chunk = fread($fh, 8192);
@@ -4793,6 +4889,19 @@ function staxx_write_file(string $rel, string $file, string $body, bool $isText,
     $error = 'Could not save "'.$file.'" — the temporary file could not be put in place.';
     return false;
   }
+
+  // The boot-drive shelf copy (PLAN_103) only ever mirrors the compose file
+  // and its override — an ordinary companion file (a .env, a certificate)
+  // is not the stack's definition and never belongs on it. $mainPath and the
+  // override-name check above already establish which case this is; nothing
+  // further is copied for any other file this function writes.
+  if ($mainPath !== ''
+      && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0) {
+    $bootNote = '';
+    if (!staxx_boot_copy_stack($rel, $bootNote) && $bootNote !== '') {
+      error_log('StaXX: boot copy not written for '.$rel.': '.$bootNote);
+    }
+  }
   return true;
 }
 
@@ -4804,8 +4913,16 @@ function staxx_delete_file(string $rel, string $file, string &$error): bool {
   $path = staxx_stack_file($rel, $file, $error);
   if ($path === '') return false;
 
+  // Whether this is the override, checked before it is gone — deleting it
+  // is a change to the stack's own definition, so the shelf copy (PLAN_103)
+  // has to lose it too, the same as staxx_write_file() gives it one.
+  $mainPath = staxx_find_compose_file(dirname($path));
+  $isOverride = $mainPath !== ''
+             && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0;
+
   if (is_link($path)) {
     if (!@unlink($path)) { $error = 'Could not delete "'.$file.'".'; return false; }
+    if ($isOverride) staxx_boot_sync_after_delete($rel);
     return true;
   }
   if (is_dir($path)) {
@@ -4820,7 +4937,25 @@ function staxx_delete_file(string $rel, string $file, string &$error): bool {
     $error = 'Could not delete "'.$file.'".';
     return false;
   }
+  if ($isOverride) staxx_boot_sync_after_delete($rel);
   return true;
+}
+
+/**
+ * Re-run the shelf copy after an override is deleted, so PLAN_103's boot
+ * copy drops the override it no longer needs to hold rather than going on
+ * showing one that was just removed. staxx_boot_copy_stack() already skips
+ * writing an override that is no longer on disk and unlinks a stale one
+ * left over from an earlier copy — this just gives it the same chance
+ * staxx_write_file() and staxx_save_stack() get, without a second version
+ * of that logic here. A failure is only ever logged, same as every other
+ * boot-copy call site — the delete this follows has already succeeded.
+ */
+function staxx_boot_sync_after_delete(string $rel): void {
+  $bootNote = '';
+  if (!staxx_boot_copy_stack($rel, $bootNote) && $bootNote !== '') {
+    error_log('StaXX: boot copy not updated for '.$rel.': '.$bootNote);
+  }
 }
 
 /** Rename one companion file within its own folder. */
@@ -4913,6 +5048,18 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
     $error = 'Could not rename the stack on disk. Check the permissions on '.$from.'.';
     return '';
   }
+
+  // The shelf copy (PLAN_103) is keyed by the same rel path as the store, so
+  // a rename moves it there too: drop the copy filed under the old name and
+  // write one under the new — never left both, and never overwrite either
+  // silently. Both are logged-only failures; the rename on disk has already
+  // succeeded and nothing here may undo it.
+  staxx_boot_remove_stack($rel);
+  $bootNote = '';
+  if (!staxx_boot_copy_stack($newRel, $bootNote) && $bootNote !== '') {
+    error_log('StaXX: boot copy not written for '.$newRel.': '.$bootNote);
+  }
+
   staxx_scan_stacks_reset(); // moved the directory; see the function's own comment
   return $newRel;
 }
@@ -5212,6 +5359,17 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   $file = staxx_find_compose_file($dir);
   if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
   $files = staxx_compose_files($file);
+
+  // Catches a compose file dropped into this folder by hand and started
+  // without ever being opened here first — the one window the editor's own
+  // seed call cannot cover. A no-op once any history exists, so this can
+  // only ever do real work on the very first run against such a stack.
+  // Never blocks the run itself: a job is what was asked for, not a history
+  // entry.
+  $seedNote = '';
+  if (!staxx_record_seed($name, $seedNote) && $seedNote !== '') {
+    error_log('StaXX: history not seeded for '.$name.': '.$seedNote);
+  }
 
   // A file still holding STAXX_PLACEHOLDER cannot be started — half-filled
   // either way, so this applies at both whole-stack and single-service scope.

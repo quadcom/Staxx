@@ -1,6 +1,6 @@
 # Editing a stack
 
-<!-- index: 40 | the form you get when you open a stack: the three ways to look at the same file, what the sections do, the note under each box, the two marks, and what saving does and does not change. -->
+<!-- index: 40 | the form you get when you open a stack: the three ways to look at the same file, what the sections do, ports on a container with its own address, the note under each box, the two marks, and what saving does and does not change. -->
 
 This is the screen you get when you open a stack: the file it runs from, drawn as a form so you can
 change a setting without touching a line of it. Open it by clicking the stack in the list. It always
@@ -55,6 +55,32 @@ Anything the form cannot safely show as a box — a value spread over several li
 shared block, or written in a shape the form will not touch — is shown as read-only text with a
 plain sentence saying why, rather than hidden or guessed at. Fixing it means switching to the
 Compose view and editing the line yourself.
+
+## Ports on a container with its own address
+
+A service can be put on a macvlan or ipvlan network — the kind where the container gets an address of
+its own on your LAN rather than sitting behind the server's. **Docker refuses to publish a port for
+such a container**, and a compose file that asks it to will not start at all. There is nothing to
+publish: the container is already reachable on its own address.
+
+So if a service is on one of those networks and its file still lists ports, StaXX says so and offers
+to put it right in one press:
+
+![The Ports group showing a red warning that this service is on a network giving it its own address, that Docker refuses to publish a port there, and that the file will not start as it stands, with a "Comment these ports out" button above the two port rows](../images/guide/editing-a-stack-vlan-ports-warning.png)
+
+**Pressing it keeps every port, as a note.** The `ports:` block is commented out rather than deleted,
+so the file starts and nothing you wrote is lost — including the notes beside each port. Undo is at
+the bottom of the editor if it was not what you wanted:
+
+![The same group after pressing it: an explanation that the setting is kept as a note only, a box holding the two ports as text, and the compose file beside it showing the ports block commented out with its comment intact](../images/guide/editing-a-stack-vlan-ports-note.png)
+
+From then on, that group is a plain box you can type in — somewhere to record which ports the app
+inside uses, for your own reference. "+ port" adds a line to it. Nothing in that box ever runs.
+
+Two more things it does, both offered rather than done to you. **Moving a service onto one of those
+networks** asks first, and keeps its ports as a note in the same step — decline and the switch does
+not happen, because half of it would leave a file that cannot start. **Moving it back off** offers to
+bring the ports back live, exactly as they were written.
 
 ## The note under a box
 
