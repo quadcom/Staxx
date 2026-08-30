@@ -204,7 +204,10 @@ echo ""
 # The package name is written out in full rather than as &packageFile;: this is
 # a CDATA block, where XML does not expand an entity reference, so the entity
 # would reach the shell literally, match nothing, and delete the package that
-# was just installed. It has to be bumped by hand at every release.
+# was just installed. Not a hand edit — pkg_build.sh rewrites this line in step
+# with the version entity and aborts if the rewrite did not land, because the
+# failure is silent by nature: a stale name here keeps the PREVIOUS release's
+# package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
   ! -name "staxx-1.3.0-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
