@@ -63,21 +63,6 @@ New to the page? The [user guide](docs/guide/README.md) explains what you are lo
 To remove it again, use **Remove** on the Plugins page. Your settings and your stacks are left
 alone; deleting the data store folder is a separate, deliberate act.
 
-### Want the newest work, before it is a release?
-
-Every push builds a bundle you can install by hand. It is how the author runs it day to day, and it
-is ahead of the numbered releases — which also means it is less tested, and it does **not** survive
-a reboot, so you will want to keep the folder around. Take the newest **main** build from
-[Releases](https://github.com/quadcom/Staxx/releases) and run the script inside it:
-
-```sh
-cd /boot
-tar -xzf ~/staxx-main.tar.gz          # wherever you put the download
-bash /boot/staxx-main/dev-install.sh
-```
-
-`--remove` takes it off again and keeps your settings; `--purge` takes those too.
-
 ## Contents
 
 - [The stacks page](#the-stacks-page) · [The editor](#the-editor) · [Secrets and passwords](#secrets-and-passwords) · [Settings that belong together](#settings-that-belong-together)
