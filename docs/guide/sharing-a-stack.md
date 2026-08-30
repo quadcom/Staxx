@@ -18,7 +18,7 @@ change one.
 1. Open a stack's menu and choose **Export**.
 2. Tick which files go, and which values get blanked. Sensible choices are already made for you.
 3. Read the summary of what is about to leave.
-4. Press Export. One file saves as itself; several arrive as a zip.
+4. Press Export. One file saves as itself; several arrive as a single `.staxx` file.
 
 ## The first screen: what goes, and what gets hidden
 
@@ -98,9 +98,12 @@ wrote.
 downloads as plain text, ready to paste anywhere. A zip holding a single text file is a nuisance to
 open and impossible to paste.
 
-**Several files arrive as a zip.** The server builds it from exactly the files and contents your
-browser hands over, with one deliberate exception — the picture, below. Everything else is chosen
-on your screen, so nothing can be picked up that you did not tick.
+**Several files arrive as a single `.staxx` file.** It is an ordinary zip underneath — rename it to
+`.zip` and it opens like any other, because the point of the format is that it can be looked inside,
+not that it is sealed. The server builds it from exactly the files and contents your browser hands
+over, with one deliberate exception — the picture, below. Everything else is chosen on your screen,
+so nothing can be picked up that you did not tick. Nothing in StaXX opens a `.staxx` file for you
+yet, so today it is a way of handing a stack over, not something StaXX can read back in.
 
 ## About the picture {#about-the-picture}
 
@@ -140,7 +143,8 @@ question the server will answer about that folder is "what picture does this com
 
 To use a stack somebody sent you, make a new stack and paste the text in. Fill in everything that
 says `REPLACE-ME` — StaXX will not let it start until you do, and will tell you what is still
-outstanding. Opening a zip somebody sent is not built yet.
+outstanding. If what you were sent is a `.staxx` file, rename it to `.zip`, open it, and paste the
+compose file's text in the same way — StaXX does not open one of these for you yet.
 
 ---
 

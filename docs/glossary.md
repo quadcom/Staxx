@@ -102,6 +102,13 @@ two, and nothing is ever guessed — an unmarked value is not treated as a secre
 always done by the half of a setting that does not change: the container port `8096` rather than the
 whole line `"8096:8096"`, so changing the host port does not lose track of the box.
 
+**`.staxx`** — the file Export produces when a stack is more than one file. It is an ordinary zip
+underneath — rename it to `.zip` and it opens like any other — with the extension marking it as a
+StaXX bundle rather than an arbitrary zip.
+
+*Why it matters here:* nothing opens one of these for you yet, so today it is a way of handing a
+stack over, not something StaXX reads back in.
+
 ---
 
 ## The Unraid side
