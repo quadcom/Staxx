@@ -58,9 +58,13 @@ Compose view and editing the line yourself.
 
 A group can also drop a box that does not apply. A service on its own network address — a macvlan or
 ipvlan network, the kind where the container gets an address of its own on your LAN — reaches its
-ports directly, so the outer "on the server" port is ignored entirely. Ports in that service show
-only the container's own port, and the note beside them says which outer number the file still sets,
-so nothing looks like it has been thrown away.
+ports directly, so the outer "on the server" port means nothing to it. Ports in such a service show
+the container's own port and nothing else:
+
+![The Ports group for a service on the br0.2 network, its columns reading Container, protocol and Notes with no "on the server" column at all, and three rows holding 8080, 8081 and 8082](../images/guide/editing-a-stack-vlan-ports.png)
+
+If the file does set an outer number on one of those ports, a line under that row says so and where
+to change it — a value you wrote is never dropped from view without being mentioned.
 
 ## The note under a box
 

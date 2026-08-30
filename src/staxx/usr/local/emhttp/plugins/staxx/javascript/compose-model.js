@@ -2836,15 +2836,18 @@
       var pfHost = pf.parts.host ? pf.parts.host.value : '';
       var pfContainer = pf.parts.container ? pf.parts.container.value : '';
 
-      if (pfHost && pfContainer) {
-        pf.advice.push(pf.netKind === 'host'
-          ? 'This container shares the server\'s network, so the outer number here is ignored — the port inside the container is the one the web button opens.'
-          : 'This container has its own address, so the outer number here is ignored — the port inside the container is the one the web button opens.');
-      } else {
-        pf.advice.push(pf.netKind === 'host'
-          ? 'This container shares the server\'s network, so the port inside the container is the port on the server.'
-          : 'This container has its own address, so only the port inside the container matters.');
-      }
+      // Host networking gets a sentence because the row still shows both
+      // numbers and the outer one quietly does nothing. A macvlan/ipvlan
+      // service gets none: its outer box is not drawn at all (see the mapped
+      // branch of fieldHtml() in stacks.js), so there is no misleading box to
+      // explain, and a note under every port row saying the same thing is
+      // noise. A host value the author wrote is still never hidden silently —
+      // adviceText() says where it went whenever the file sets one.
+      if (pf.netKind !== 'host') continue;
+
+      pf.advice.push(pfHost && pfContainer
+        ? 'This container shares the server\'s network, so the outer number here is ignored — the port inside the container is the one the web button opens.'
+        : 'This container shares the server\'s network, so the port inside the container is the port on the server.');
     }
 
     // The Web page port field (PLAN_51) started out just showing whatever a

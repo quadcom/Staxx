@@ -12238,7 +12238,10 @@
     // only from a stack's own menu or its folder-strip tile. save() below
     // reads this to send the adoption claim the server's gate requires.
     modal.dataset.adopt = adopt ? '1' : '0';
-    modalTitle.textContent = isNew ? 'New stack' : 'Edit stack';
+    // Repairing a folder that already exists is a new file, not a new stack,
+    // and everything else in this view says so — the name is filled in and
+    // locked to that folder — so the heading says it too.
+    modalTitle.textContent = adopt ? 'New compose file' : (isNew ? 'New stack' : 'Edit stack');
     openedName = name || '';
     fingerprintAtOpen = fingerprint || '';   // '' for a new stack — nothing to conflict with yet
     serviceRenamed = false;

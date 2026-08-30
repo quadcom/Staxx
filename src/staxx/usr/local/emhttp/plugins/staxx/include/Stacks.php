@@ -4270,6 +4270,16 @@ function staxx_list_files(string $rel, string &$error): ?array {
  * round to get this wrong.
  */
 function staxx_looks_text(string $path): bool {
+  // A picture is never offered as editable text, even when it technically is
+  // one: an SVG is plain text all the way down, so without this an icon
+  // sitting in the stack's folder opens as a tab in the editor beside the
+  // compose file, inviting an edit nobody wants to make there. It is still
+  // listed, and still downloadable, like any other companion file.
+  $ext = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
+  if (in_array($ext, ['svg', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp', 'avif'], true)) {
+    return false;
+  }
+
   $fh = @fopen($path, 'rb');
   if ($fh === false) return false;
   $chunk = fread($fh, 8192);
