@@ -7198,13 +7198,19 @@
       if (!window.confirm(
             '"' + el.value + '" gives "' + f.service + '" its own address on the network, and Docker refuses ' +
             'to publish a port there. Switching will keep ' +
-            (livePorts === 1 ? 'its one published port' : 'all ' + livePorts + ' published ports') +
+            (livePorts === 1 ? 'its one published port'
+                             : (livePorts === 2 ? 'both published ports'
+                                                : 'its ' + livePorts + ' published ports')) +
             ' as a note instead, so the file can still start. Continue?')) {
         // Nothing here went through pushUndo() — a plain value edit never
         // takes one — so the write commit() just made is put back by hand,
         // the same way the box itself is reset to what it showed before.
         YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
         el.value = f.parts.value.value;
+        // Said out loud: without this the status line still shows whatever
+        // happened before, which reads as though the switch went through.
+        setYamlStatus('Left "' + f.service + '" on "' + f.parts.value.value +
+                      '". Nothing was changed.');
         return true;
       }
 
@@ -7217,7 +7223,8 @@
       }
       structuralEdit(-1, 'Switched "' + f.service + '" onto "' + el.value + '". ' +
                     cmt.count + (cmt.count === 1 ? ' published port was' : ' published ports were') +
-                    ' kept as a note, since Docker refuses to publish one there.');
+                    ' kept as a note, since a container with its own address cannot publish ' +
+                    (cmt.count === 1 ? 'it' : 'any of them') + '.');
       return true;
     }
 
