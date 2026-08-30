@@ -345,7 +345,7 @@ switch ($action) {
     // than an assumption, and the fingerprint of what is now there so a
     // second save in the same session is not refused against its own write.
     $written = staxx_find_compose_file(staxx_stack_dir($name));
-    staxx_reply([
+    $saveReply = [
       'ok'           => true,
       'name'         => $name,
       'file'         => $written,
@@ -355,7 +355,13 @@ switch ($action) {
       // Empty unless the previous version could not be kept — this save then
       // has no undo, which the person is entitled to know at the time.
       'historyNote'  => $historyNote,
-    ]);
+    ];
+    // PLAN_85 — one icon per service, so a saved icon shows without reopening
+    // the editor. Same omit-when-empty wire contract as 'read' above; read
+    // after the write is confirmed, so this always matches what is now on disk.
+    $saveIcons = staxx_service_icons_for_stack($name);
+    if ($saveIcons !== []) $saveReply['icons'] = $saveIcons;
+    staxx_reply($saveReply);
 
   /* ---- check a compose file without saving it ----
    *

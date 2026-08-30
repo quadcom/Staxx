@@ -482,11 +482,10 @@ function staxx_watch_for_stack(string $stack): array {
 /**
  * PLAN_85 — one icon per service, for the editor's heading row.
  *
- * Deliberately narrower than staxx_stack_children()'s icon lookup: this calls
- * staxx_icon_resolve() with only the icon and the stack directory, no image,
- * service or stack, which is what stops it falling through to
- * staxx_icon_match(). The editor must show exactly what the file says, never
- * a guess made at display time.
+ * Resolves the same way staxx_stack_children()'s icon lookup does: a stated
+ * icon always wins, and a service with none falls through to
+ * staxx_icon_match()'s guess from the image name — a guess is a stand-in,
+ * not a lie, so the editor and the table row must never disagree.
  *
  * @return array<string, array{html: string, q: string}>
  */
@@ -507,7 +506,7 @@ function staxx_service_icons_for_stack(string $stack): array {
     $icon  = (string)($svcMeta['x']['icon'] ?? '');
     $image = trim((string)($svcMeta['image'] ?? ''));
     $out[$svc] = [
-      'html' => staxx_icon_tile(staxx_icon_resolve($icon, $dir), $svc),
+      'html' => staxx_icon_tile(staxx_icon_resolve($icon, $dir, $image, $svc, $stack), $svc),
       'q'    => $image !== '' ? (staxx_icon_candidates($image)[0] ?? '') : '',
     ];
   }

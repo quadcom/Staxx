@@ -14901,6 +14901,13 @@
         textAtOpen = body;
         fingerprintAtOpen = res.fingerprint || '';
 
+        // PLAN_85 — a saved icon must show without reopening the editor.
+        // Harmless to do even on the paths that go on to closeEditor(): the
+        // next open re-reads everything anyway, so this only ever matters on
+        // the stay-open path in finishSave() below.
+        serviceIcons = res.icons || {};
+        paintServiceIcons();
+
         // PLAN_71 stage 5: a save is exactly the moment the file side of the
         // comparison can have moved — asked for here rather than waiting on
         // the state poll, so a chip can appear "the instant a save lands"
