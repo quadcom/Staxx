@@ -1327,32 +1327,26 @@
    so it contributes almost nothing to how wide `state` and `address` become —
    and those two are sized by every other row on the page, not by this one.
    An unwrapped strip would have inflated all of them. */
+/* The gap BETWEEN stacks has to beat the overlap WITHIN one, or the grouping
+   says nothing: at a 5px overlap and the old 4px gap, there was no telling
+   where one stack's icons ended and the next stack's began. */
 .staxx-fstrip {
   display: flex;
   flex: 1 1 auto;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.4rem;
+  gap: 1.2rem;
   min-width: 0;
 }
 
+/* Just a wrapper now: the fixed size, clipping and rounding moved onto
+   .staxx-fgroup-cell below, since one item can hold several overlapping
+   cells rather than always exactly one. */
 .staxx-fstrip-item {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 2.6rem;
-  height: 2.6rem;
-  overflow: hidden;
-  border-radius: 0.4rem;
   font-size: 1.4rem;
   line-height: 1;
-}
-
-.staxx-fstrip-item img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
 }
 
 /* A stopped stack, so the strip doubles as a reading of what is running in a
@@ -1363,9 +1357,63 @@
   filter: grayscale(1);
 }
 
+/* One stack's icons, each at full size, just touching each other so they read
+   as one group belonging to one stack rather than as loose neighbours. The
+   overlap is what says "these belong together"; it is not a space-saving
+   measure, and the cap of three cells is what actually holds the width down.
+   A single-service stack — most of them — is a group of one, so it looks the
+   same as a lone icon always did. */
+.staxx-fgroup {
+  display: inline-flex;
+  align-items: center;
+}
+
+.staxx-fgroup-cell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 2.6rem;
+  height: 2.6rem;
+  overflow: hidden;
+  border-radius: 0.4rem;
+  /* Solid, not one of the translucent --sm-fill tokens: the folder row's own
+     background is already a wash, and a translucent cell over a translucent
+     row would let overlapping icons bleed into each other instead of reading
+     as separate objects. */
+  background: var(--sm-bg);
+  border: 0.1rem solid var(--sm-line);
+}
+
+/* Five pixels, not a third of a cell: the icons are meant to just touch, the
+   way a stack of cards sitting almost square on each other does, rather than
+   fan out. Unraid sets 62.5% on the root, so 0.5rem is 5px here. */
+.staxx-fgroup-cell + .staxx-fgroup-cell {
+  margin-left: -0.5rem;
+}
+
+/* The leftmost cell sits on top, each one after it tucked behind — normal
+   document order paints LATER siblings on top, the opposite of what is
+   wanted here, so it has to be said explicitly. A row-reverse layout could
+   get the same result from paint order alone, but that only works if the
+   markup emits cells in reverse too, and reasoning through which physical
+   margin then produces the overlap — with no browser here to check it
+   against — was more likely to end up wrong than three plain rules are.
+   Capped at three cells, so three rules is all this ever needs. */
+.staxx-fgroup-cell:nth-child(1) { z-index: 3; }
+.staxx-fgroup-cell:nth-child(2) { z-index: 2; }
+.staxx-fgroup-cell:nth-child(3) { z-index: 1; }
+
+.staxx-fgroup-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 /* The initials tile shown until an icon has been downloaded is sized for a
    row, and inherits .staxx-tile--N's colour from the shared rules above. */
-.staxx-fstrip-item .staxx-tile {
+.staxx-fgroup-cell .staxx-tile {
   width: 100%;
   height: 100%;
   font-size: 1rem;

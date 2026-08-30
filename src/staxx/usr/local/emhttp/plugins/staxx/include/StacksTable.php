@@ -914,17 +914,7 @@ function staxx_stack_tile(array $s, array $kids): string {
     return '<i class="fa fa-cubes"></i>';
   }
 
-  $stackIcon = (string)($s['x']['icon'] ?? '');
-  $tiles = [];
-  $seen  = [];
-  foreach ($kids as $kid) {
-    $icon = staxx_service_icon($kid['icon'], $stackIcon, $s['dir'],
-                               $kid['image'], $kid['service'], $s['name']);
-    $key  = $icon['fa'].'|'.$icon['url'].'|'.$icon['ref'];
-    if ($key !== '||' && isset($seen[$key])) continue;
-    $seen[$key] = true;
-    $tiles[] = staxx_icon_tile($icon, $kid['service'] !== '' ? $kid['service'] : $kid['name']);
-  }
+  $tiles = staxx_stack_icon_tiles($s, $kids);
 
   if (count($tiles) === 1) return $tiles[0];
 
@@ -938,26 +928,65 @@ function staxx_stack_tile(array $s, array $kids): string {
 }
 
 /**
- * A stack's icon at strip size: one tile, never the mosaic.
+ * Every child of a stack resolved to a tile, collapsing services that reached
+ * the SAME picture to one entry. Shared by staxx_stack_tile() (the row
+ * mosaic) and staxx_stack_strip_tile() (the folder-strip group) so the
+ * collapsing rule — keyed on the resolved icon, never on the rendered tile,
+ * with icon-less services exempt because their initials are real variety —
+ * lives in one place rather than being copied and risking disagreement. See
+ * staxx_stack_tile()'s comment above for the full reasoning.
  *
- * Used for the folder-row strip, where four tiny smudges are less legible
- * than one. Resolves its first child through the identical staxx_service_icon()
- * call staxx_stack_tile() uses, so this can never pick a different picture
- * than the stack's own row does.
+ * @param array $kids from staxx_stack_children()
+ * @return array<int, string> tile html, one per distinct icon, in order
+ */
+function staxx_stack_icon_tiles(array $s, array $kids): array {
+  $stackIcon = (string)($s['x']['icon'] ?? '');
+  $tiles = [];
+  $seen  = [];
+  foreach ($kids as $kid) {
+    $icon = staxx_service_icon($kid['icon'], $stackIcon, $s['dir'],
+                               $kid['image'], $kid['service'], $s['name']);
+    $key  = $icon['fa'].'|'.$icon['url'].'|'.$icon['ref'];
+    if ($key !== '||' && isset($seen[$key])) continue;
+    $seen[$key] = true;
+    $tiles[] = staxx_icon_tile($icon, $kid['service'] !== '' ? $kid['service'] : $kid['name']);
+  }
+  return $tiles;
+}
+
+/**
+ * A stack's icons at strip size: every distinct service icon in one
+ * overlapping cluster, drawn the way a group of profile photos is — each
+ * partly covering the next — rather than the row's own tiled mosaic. Shares
+ * staxx_stack_tile()'s collapsing rule via staxx_stack_icon_tiles(), so this
+ * can never disagree with the row about what counts as "the same picture".
+ *
+ * The cells only just touch — a few pixels of overlap, enough to read as one
+ * group belonging to one stack. That is why the strip's own gap between
+ * stacks is wider than the overlap inside one: with the two alike there was
+ * no telling where one stack's icons ended and the next stack's began.
+ *
+ * Capped at three rather than the row mosaic's four: this strip repeats once
+ * per stack across a folder row that already wraps onto further lines, so a
+ * fourth cell here costs vertical space the single row tile never spends.
  *
  * @param array $kids from staxx_stack_children()
  */
 function staxx_stack_strip_tile(array $s, array $kids): string {
   if (!$kids) {
-    return '<i class="fa fa-cubes"></i>';
+    return '<span class="staxx-fgroup"><span class="staxx-fgroup-cell"><i class="fa fa-cubes"></i></span></span>';
   }
 
-  $stackIcon = (string)($s['x']['icon'] ?? '');
-  $kid = $kids[0];
-  return staxx_icon_tile(
-    staxx_service_icon($kid['icon'], $stackIcon, $s['dir'], $kid['image'], $kid['service'], $s['name']),
-    $kid['service'] !== '' ? $kid['service'] : $kid['name']
-  );
+  $tiles = staxx_stack_icon_tiles($s, $kids);
+
+  $extra = count($tiles) - 3;
+  if ($extra > 0) {
+    $tiles = array_slice($tiles, 0, 2);
+    $tiles[] = '<span class="staxx-tile staxx-tile--more">+'.($extra + 1).'</span>';
+  }
+
+  $cells = array_map(function ($t) { return '<span class="staxx-fgroup-cell">'.$t.'</span>'; }, $tiles);
+  return '<span class="staxx-fgroup">'.implode('', $cells).'</span>';
 }
 
 /**
@@ -1366,7 +1395,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                       title="<?= htmlspecialchars($fs['leaf']) ?>">
                   <?= $fs['parses']
                         ? staxx_stack_strip_tile($fs, staxx_stack_children($fs))
-                        : '<i class="fa fa-exclamation-triangle"></i>' ?>
+                        : '<span class="staxx-fgroup"><span class="staxx-fgroup-cell"><i class="fa fa-exclamation-triangle"></i></span></span>' ?>
                 </span>
               <? endforeach; ?>
             </div>
