@@ -1466,6 +1466,13 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                                  . '<i class="fa fa-exclamation-triangle"></i></span></span>',
                          'shown' => 1, 'cols' => 1, 'rows' => 1,
                        ];
+
+                   // Same two wordings the stack's own row uses, so the tooltip
+                   // and the row a click lands on never disagree: a missing file
+                   // and an unreadable one look identical in the strip.
+                   $fWhy = !$fs['hasFile']
+                     ? _('No compose file in this folder')
+                     : _('Compose cannot read this file');
               ?>
                 <span class="staxx-fstrip-item<?= $fs['parses'] ? '' : ' staxx-fstrip-item--broken' ?>"
                       data-fstrip-stack="<?= htmlspecialchars($fs['name']) ?>"
@@ -1477,7 +1484,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                       <?= (!$fs['parses'] && $fs['hasFile']) ? 'data-fstrip-edit="1"' : '' ?>
                       title="<?= $fs['parses']
                                ? htmlspecialchars($fs['leaf'])
-                               : htmlspecialchars(sprintf(_('%s – %s'), $fs['leaf'], _('Compose cannot read this file'))) ?>"
+                               : htmlspecialchars(sprintf(_('%s – %s'), $fs['leaf'], $fWhy)) ?>"
                       style="--fg-shown:<?= $fStrip['shown'] ?>;--fg-cols:<?= $fStrip['cols'] ?>;--fg-rows:<?= $fStrip['rows'] ?>">
                   <?= $fStrip['html'] ?>
                 </span>
