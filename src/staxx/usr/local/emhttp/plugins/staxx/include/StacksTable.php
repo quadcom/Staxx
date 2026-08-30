@@ -1467,10 +1467,12 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                          'shown' => 1, 'cols' => 1, 'rows' => 1,
                        ];
               ?>
-                <span class="staxx-fstrip-item"
+                <span class="staxx-fstrip-item<?= $fs['parses'] ? '' : ' staxx-fstrip-item--broken' ?>"
                       data-fstrip-stack="<?= htmlspecialchars($fs['name']) ?>"
                       data-running="<?= $fs['running'] ? '1' : '0' ?>"
-                      title="<?= htmlspecialchars($fs['leaf']) ?>"
+                      title="<?= $fs['parses']
+                               ? htmlspecialchars($fs['leaf'])
+                               : htmlspecialchars(sprintf(_('%s – %s'), $fs['leaf'], _('Compose cannot read this file'))) ?>"
                       style="--fg-shown:<?= $fStrip['shown'] ?>;--fg-cols:<?= $fStrip['cols'] ?>;--fg-rows:<?= $fStrip['rows'] ?>">
                   <?= $fStrip['html'] ?>
                 </span>

@@ -1375,6 +1375,27 @@
   filter: grayscale(1);
 }
 
+/* A stack compose cannot read is never running, so the rule above would dim
+   it too — but "not running" is not the news here, "broken" is, and dimming
+   it would spend the same visual slot saying something less useful. Undoing
+   that needs to beat [data-running="0"]'s (0,2,0) specificity outright, not
+   just win on source order (the state poll can rewrite data-running at any
+   time, but never touches this class) — the extra attribute selector below
+   is only there to add specificity; the attribute itself is always present. */
+.staxx-fstrip-item.staxx-fstrip-item--broken[data-fstrip-stack] {
+  opacity: 1;
+  filter: none;
+}
+
+/* Red border and triangle, so a broken stack reads as a problem file rather
+   than just an oddly full-colour stopped one. */
+.staxx-fstrip-item--broken .staxx-fgroup-cell {
+  border-color: var(--sm-danger);
+}
+.staxx-fstrip-item--broken .fa-exclamation-triangle {
+  color: var(--sm-danger);
+}
+
 /* Opacity below 1 always opens its own stacking context (position alone does
    not), which would otherwise trap a stopped stack's exploded panel under
    whatever plain row happens to follow it in the table — its z-index would
