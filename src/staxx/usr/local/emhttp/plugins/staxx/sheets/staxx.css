@@ -723,14 +723,24 @@
    invite a click without becoming a button: the app root's own reset already
    strips every button back to plain text, and this only adds what a person
    needs to tell that this particular sentence does something. */
-.staxx-adopt-fix {
+/* The "no compose file" message is the button that fixes it, so it says so:
+   the warning's own red, in a thin red outline that reads as pressable.
+   Written as button.<class> rather than the class alone because the app
+   root's blanket button reset matches with the same weight, and a tie there
+   is decided by whichever came last — which is not something to leave to
+   the order two rules happen to sit in. */
+.staxx-scaffold button.staxx-adopt-fix {
   cursor: pointer;
   text-align: left;
+  color: var(--sm-danger);
+  border: 1px solid var(--sm-danger);
+  border-radius: 0.4rem;
+  padding: 0.2rem 0.6rem;
 }
 
-.staxx-adopt-fix:hover,
-.staxx-adopt-fix:focus-visible {
-  text-decoration: underline;
+.staxx-scaffold button.staxx-adopt-fix:hover,
+.staxx-scaffold button.staxx-adopt-fix:focus-visible {
+  background: color-mix(in srgb, var(--sm-danger) 12%, transparent);
 }
 
 .staxx-parse-error {
