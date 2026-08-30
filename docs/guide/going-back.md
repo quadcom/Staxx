@@ -75,6 +75,8 @@ is untouched — it lives inside the stack's own folder, and only the file went.
 copy, with the date it was saved. Loading it works exactly like restoring above: it goes into the
 editor for you to look at, and nothing is written until you press Save.
 
+![The editor open on a folder whose compose file is missing, with an offer beneath the tabs reading "Your last working copy of this stack was saved 2 minutes ago. Load it here instead."](../images/guide/making-a-stack-lost-file.png)
+
 A stack that has never been saved or opened here has nothing kept yet, so you get the blank starting
 file instead. See [making a stack from scratch](making-a-stack.md) for what that gives you.
 

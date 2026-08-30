@@ -113,7 +113,11 @@ drive it was on. Nothing about such a stack can run, and until you put a file ba
 to edit, so it gets the same starting file a new stack does. Three things lead there, whichever you
 happen to be looking at:
 
-- **"Start a compose file here"** on that stack's own menu.
+- **"Start a compose file here"** on that stack's own menu, which for such a stack is the only thing
+  the menu offers to do to the file:
+
+  ![A stack's menu headed 20-lost-compose-file, with a single item reading "Start a compose file here"](../images/guide/making-a-stack-menu-item.png)
+
 - **The red words on its row**, which say "No compose file in this folder" and are themselves the
   button that fixes it.
 - **The red warning triangle** standing in for that stack in its folder's row of pictures.
@@ -126,6 +130,8 @@ Two things it tells you when they apply. If StaXX kept an earlier version of tha
 offered your last working copy instead of the blank one — see [going back](going-back.md). And if an
 override file is still sitting in the folder, it says so, because a new main file changes what that
 override applies to.
+
+![The editor open on a folder being repaired: the stack name filled in and greyed, a line saying the folder has no compose file yet so the name cannot be changed, and beneath the tabs an offer reading "Your last working copy of this stack was saved 2 minutes ago. Load it here instead."](../images/guide/making-a-stack-lost-file.png)
 
 If the folder already has a compose file, this is refused and points you at Edit instead. Nothing
 here ever writes over a file that is already there.
