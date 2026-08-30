@@ -1365,6 +1365,25 @@
   line-height: 1;
   width: calc((var(--fg-shown) - 1) * var(--fg-step) + var(--fg-cell));
   height: var(--fg-cell);
+  /* Each item is a mouse-only shortcut to a row already reachable another
+     way (the folder chevron, or the stack's own icon and menu once open) —
+     see the click handler's comment for why it stays a plain <span>, never
+     a button, so this is the only affordance a pointer user gets. Same cursor
+     for the --broken variant: it opens the editor instead, but it is just as
+     clickable. */
+  cursor: pointer;
+}
+
+/* Landing on a row scrolled to from a folder's icon strip gets a brief tint
+   so arriving somewhere in the middle of a long table is not disorienting —
+   same ~900ms-then-fade idiom as .staxx-menu-num--saved above, tokens rather
+   than a literal colour so it still reads correctly in both themes. */
+.staxx-row--fstrip-flash {
+  background-color: var(--sm-fill);
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: -0.15rem;
+  transition: background-color var(--sm-motion-slow) var(--sm-ease),
+              outline-color var(--sm-motion-slow) var(--sm-ease);
 }
 
 /* A stopped stack, so the strip doubles as a reading of what is running in a

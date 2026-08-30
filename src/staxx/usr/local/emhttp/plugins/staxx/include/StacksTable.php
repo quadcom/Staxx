@@ -1470,6 +1470,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                 <span class="staxx-fstrip-item<?= $fs['parses'] ? '' : ' staxx-fstrip-item--broken' ?>"
                       data-fstrip-stack="<?= htmlspecialchars($fs['name']) ?>"
                       data-running="<?= $fs['running'] ? '1' : '0' ?>"
+                      <?php /* Only a stack that both fails to parse AND has a file
+                               worth editing gets this: a broken folder entry with no
+                               compose file at all has nothing an editor could open, so
+                               it falls back to the plain open-folder-and-scroll path. */ ?>
+                      <?= (!$fs['parses'] && $fs['hasFile']) ? 'data-fstrip-edit="1"' : '' ?>
                       title="<?= $fs['parses']
                                ? htmlspecialchars($fs['leaf'])
                                : htmlspecialchars(sprintf(_('%s – %s'), $fs['leaf'], _('Compose cannot read this file'))) ?>"

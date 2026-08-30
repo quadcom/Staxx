@@ -22788,6 +22788,41 @@
   /* -------------------------------------------------------------- wiring -- */
 
   scaffold.addEventListener('click', function (event) {
+    // A folder's icon strip is decoration (aria-hidden, plain <span>s — see
+    // the accessibility note on .staxx-fstrip in the stylesheet), so it is
+    // handled ahead of the closest('button') below rather than folded into
+    // it: nothing in here is a button, and everything it reaches is already
+    // reachable another way. A stack that fails to parse AND has no compose
+    // file at all has nothing an editor could open onto, so only
+    // data-fstrip-edit (set on the server, which is where "has a file" is
+    // actually known) routes to the editor — every other item, broken or
+    // not, just opens its folder and scrolls to the row.
+    var fstripItem = event.target.closest('.staxx-fstrip-item');
+    if (fstripItem) {
+      var fstripStack = fstripItem.dataset.fstripStack;
+      if (!fstripStack) return;
+      if (fstripItem.dataset.fstripEdit === '1') {
+        editStack(fstripStack, stackLabel(fstripStack));
+        return;
+      }
+      var fstripFolderRow = fstripItem.closest('[data-folder-row]');
+      if (fstripFolderRow) {
+        var fstripChevron = fstripFolderRow.querySelector('[data-toggle-folder]');
+        if (fstripChevron && fstripChevron.getAttribute('aria-expanded') !== 'true') {
+          toggleFolder(fstripChevron.dataset.toggleFolder, fstripChevron);
+        }
+      }
+      var fstripRow = rowFor(fstripStack);
+      if (fstripRow) {
+        fstripRow.scrollIntoView({ block: 'center' });
+        fstripRow.classList.add('staxx-row--fstrip-flash');
+        setTimeout(function () {
+          fstripRow.classList.remove('staxx-row--fstrip-flash');
+        }, 900);
+      }
+      return;
+    }
+
     var el = event.target.closest('button');
     if (!el) return;
 
