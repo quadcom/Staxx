@@ -1304,6 +1304,58 @@ function staxx_pin_mark_html(array $kids): string {
 }
 
 /**
+ * PLAN_104 — the mark for a stack with at least one service on a macvlan or
+ * ipvlan network that still carries a live `ports:` key. A container with its
+ * own address on the LAN cannot have a port published for it, so those ports
+ * do nothing whatever Docker does with them — this build ignores them, a
+ * newer one refuses the file, and the second is what makes it worth tidying.
+ * Either way it is the one case on the row that is a fault, not a fact, hence
+ * sharing .staxx-driftmark/.staxx-imgmismatch's accent colour rather than
+ * .staxx-pinmark's quiet grey.
+ *
+ * $macvlanNames is gathered once per render, never here: unknown means
+ * unknown (PLAN_104) — a network this machine has never heard of gets no
+ * mark, and guessing macvlan from a name like br0.2 is exactly what the plan
+ * rules out.
+ *
+ * @param array $meta from staxx_compose_meta()
+ * @param array<string,bool> $macvlanNames network name => true
+ */
+function staxx_portmark_html(array $meta, array $macvlanNames): string {
+  if (!$macvlanNames) return '';
+
+  $bad = [];
+  foreach ($meta['services'] ?? [] as $svc => $sm) {
+    if (empty($sm['firstPort'])) continue;   // no live ports: key, nothing to warn about
+    foreach ((array)($sm['networks'] ?? []) as $net) {
+      if (isset($macvlanNames[$net])) { $bad[] = $svc; break; }
+    }
+  }
+  if (!$bad) return '';
+
+  // Deliberately not "it will not start": on the Docker shipping with Unraid
+  // today these containers do start, because this build ignores the ports
+  // rather than refusing them, and a warning that contradicts what somebody
+  // can plainly see running is a warning they learn to ignore. What is true
+  // either way is that the ports do nothing, and that a newer Docker refuses
+  // the file outright — which is the reason to tidy it now.
+  $text = count($bad) === 1
+    ? sprintf(_('%s is on a network that gives it its own address, so the ports the file '
+              . 'publishes for it do nothing. A newer Docker refuses a file like this rather '
+              . 'than ignoring it. Open the stack to keep them as a note instead.'), $bad[0])
+    : sprintf(_('%d services here are on a network that gives them their own address, so the '
+              . 'ports the file publishes for them do nothing. A newer Docker refuses a file '
+              . 'like this rather than ignoring it. Open the stack to keep them as notes '
+              . 'instead.'), count($bad));
+
+  // Same icon-only shape as .staxx-driftmark — the tooltip and the .staxx-sr
+  // span already carry the whole sentence.
+  return '<span class="staxx-portmark" title="'.htmlspecialchars($text).'">'
+       . '<i class="fa fa-exclamation-triangle"></i>'
+       . '<span class="staxx-sr">'.htmlspecialchars($text).'</span></span>';
+}
+
+/**
  * Every row of the table body, as HTML.
  *
  * Divs standing in for a table, arranged as CSS grid / subgrid so the columns
@@ -1340,6 +1392,17 @@ function staxx_render_rows(array $rows, bool $canRun): string {
   // most a handful of Compose Manager projects, not once per stack, so it
   // costs nothing per row even though every row consults it.
   $drift = staxx_import_drift();
+
+  // PLAN_104 — once per render, not once per row: staxx_docker_networks()
+  // shells out to docker, and the table can hold dozens of stacks. A Docker
+  // that is down (or slow) leaves this empty, which staxx_portmark_html()
+  // reads as "show no mark" rather than as a reason to guess.
+  $macvlanNames = [];
+  foreach (staxx_docker_networks() as $net) {
+    if ($net['driver'] === 'macvlan' || $net['driver'] === 'ipvlan') {
+      $macvlanNames[$net['name']] = true;
+    }
+  }
 
   ob_start();
 
@@ -1752,6 +1815,10 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                   <?= staxx_drift_mark_html($drift[$s['name']]) ?>
                 <? endif; ?>
                 <?= staxx_pin_mark_html($kids) ?>
+                <?php /* PLAN_104 — read straight off the same compose meta
+                         $kids was already built from, cached on disk, so this
+                         costs nothing extra per row. */ ?>
+                <?= staxx_portmark_html($s['parses'] ? staxx_compose_meta($s['file']) : ['services' => []], $macvlanNames) ?>
                 <!-- The count is only worth printing for a stack that has more
                      than one container; for a single one the State column
                      already says everything this would. -->

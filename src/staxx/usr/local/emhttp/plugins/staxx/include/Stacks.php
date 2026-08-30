@@ -1501,7 +1501,7 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
  *                services:array<string,array{image:string, container_name:string,
  *                                            x:array<string,string>, fixedIp:string,
  *                                            firstPort:array{target?:string,published?:string,count?:int},
- *                                            netMode:string}>}
+ *                                            netMode:string, networks:string[]}>}
  */
 function staxx_compose_meta(string $file, ?string &$error = null): array {
   static $cache = [];
@@ -1575,7 +1575,19 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
     $service = $parts[1];
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
-                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => ''];
+                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
+                                      'networks' => []];
+    }
+
+    // Which networks this service names, regardless of what else is nested
+    // under each one (an ipv4_address, aliases, …) — `docker compose config`
+    // always writes a service's networks: as a mapping keyed by network name,
+    // so parts[3] is that name whatever comes after it. Recorded here, apart
+    // from the elseif chain below, because a path can match this AND (for
+    // ipv4_address) that chain's own branch — the two are not alternatives.
+    if ($parts[2] === 'networks' && count($parts) >= 4 && $parts[3] !== ''
+        && !in_array($parts[3], $meta['services'][$service]['networks'], true)) {
+      $meta['services'][$service]['networks'][] = $parts[3];
     }
 
     if ($parts[2] === 'image' && count($parts) === 3) {
@@ -1610,7 +1622,8 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
   foreach (staxx_first_ports($yaml) as $service => $port) {
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
-                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => ''];
+                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
+                                      'networks' => []];
     }
     $meta['services'][$service]['firstPort'] = $port;
   }

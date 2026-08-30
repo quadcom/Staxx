@@ -3727,11 +3727,13 @@
     return '<div class="staxx-notice staxx-notice--bad staxx-portswarn">' +
              '<i class="fa fa-exclamation-triangle" aria-hidden="true"></i>' +
              '<div>' +
-               '<p>This service is on a network that gives it its own address. Docker refuses to publish ' +
-               'a port there, so this file will not start as it stands.</p>' +
+               '<p>This service is on a network that gives it its own address, so nothing can ' +
+               'publish a port for it — these ports do nothing. Docker used to ignore them ' +
+               'quietly; it now refuses the file instead, so this will stop starting on a newer ' +
+               'Docker than the one here.</p>' +
                '<button type="button" class="staxx-declfix" data-fix-macvlan-ports="1" ' +
                'data-service="' + esc(serviceName) + '" ' +
-               'title="Turns the ports setting into a note, so the file can start.">Comment these ports out</button>' +
+               'title="Turns the ports setting into a note, so the file keeps working.">Comment these ports out</button>' +
              '</div>' +
            '</div>';
   }

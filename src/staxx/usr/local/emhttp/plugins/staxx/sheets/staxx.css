@@ -2607,6 +2607,19 @@
   font-size: 1.1rem;
 }
 
+/* PLAN_104 — the mark for a stack with a service on a macvlan/ipvlan network
+   that still carries a live ports: key, which will not start. A fault, not a
+   fact, so it takes .staxx-driftmark/.staxx-imgmismatch's accent colour
+   rather than .staxx-pinmark's quiet grey just above — same icon-only shape,
+   the tooltip and .staxx-sr span already carry the whole sentence. */
+.staxx-portmark {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  color: var(--sm-accent);
+  font-size: 1.1rem;
+}
+
 /* The boot marker (PLAN_43) — always in the markup (see staxx_boot_mark_html())
    but hidden by default, because "off" is the common case and a lightning
    bolt on every row would be noise, not information. Keyed off the ROW's own
