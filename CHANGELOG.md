@@ -5,6 +5,52 @@ numbered; everything before it was dated.
 
 ---
 
+## 1.3.0 — released 2026-08-30
+
+The release that makes a folder row show you what is actually in it, gives a stack folder with no
+compose file a way to get one, and keeps a copy of every compose file somewhere a dead pool cannot
+take it.
+
+- **A copy of every compose file now lives on the boot volume.** If the pool holding your stacks
+  ever dies, the definition of every container you run dies with it unless you had your own backup.
+  StaXX now keeps a plain copy of each stack's compose file at the top of the flash drive — which
+  Unraid already backs up wholesale, and which is readable before the array has even started. It is
+  a shelf, never a second opinion: StaXX never reads it while your store is there, never compares the
+  two to work out which is newer, and nothing ever comes back on its own. Turning it off is one
+  setting; it ships on, because the people it protects are the ones who would never go looking for
+  it.
+- **A stack folder with no compose file can be given one.** Until now the row said the file was
+  missing and left you to fix it over a network share. It now offers the same starting file "Add
+  stack" writes. It is a repair route, not a second way to make a stack, and it says so.
+- **Your first version is kept, not just your second.** A stack's history used to hold only the
+  version each save replaced, so a brand-new stack — or a file you dropped in by hand — had nothing
+  kept until its second save. That window is closed: the file is kept the first time you open it,
+  the first time you run it, and after every save as well as before one. If the file then goes
+  missing, StaXX offers your last saved copy back, with the date, and loads it into the editor for
+  you to look at rather than writing it anywhere.
+- **A folder row shows every service inside it.** All the icons, grouped rather than shrunk to
+  nothing, opening into a grid when you hover and naming whichever one is under the cursor. Each is
+  a way into the stack it stands for, and the two kinds of broken — a stack with no compose file,
+  and one compose cannot read — are drawn differently instead of both being a shrug.
+- **A stack shows the same picture everywhere.** One place now decides a service's icon, so the row
+  and the editor cannot disagree. The editor can work one out for you, and follows one you state the
+  moment you state it.
+- **A container with its own address no longer pretends to publish ports.** On a macvlan or ipvlan
+  network the outer port is ignored by Docker entirely, so the box asking for it is gone and the
+  recipe is shown instead. A port already written is kept as a note rather than deleted, and a stack
+  whose ports cannot do anything says so on its row.
+- **The log and the shell share the width.** A drag handle between them instead of taking turns, and
+  the log keeps up, reads more easily and stays inside the dialog.
+- **Fixes:** the takeover no longer asks whether it worked on top of the page that answers that; the
+  glossary explains the two kinds of network and its ports section describes what ports now do; and
+  a declined switch that changed nothing now says so rather than implying it did something.
+- **For the record:** numbered releases install the ordinary Unraid way again. 1.2.0 shipped with a
+  manifest naming a package that was never uploaded, so installing by plugin address failed. That is
+  fixed, and the build now refuses to publish a release whose version, manifest and changelog do not
+  all agree.
+
+---
+
 ## 1.2.0 — released 2026-08-28
 
 The release that gives StaXX one home. Everything it keeps — your stacks, the zips of ones you
