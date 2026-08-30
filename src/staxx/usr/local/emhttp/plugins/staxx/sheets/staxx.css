@@ -2099,6 +2099,36 @@
   white-space: nowrap;
 }
 
+/* .staxx-handoverbadge is a real <button> (it opens the "does it work?"
+   question), unlike .staxx-reviewbadge beside it, which stays a plain
+   label. Same trap as the update pill and the pending chip further down:
+   Unraid's own `.unapi button { background-color: transparent; border-
+   radius: 0 }` is a class plus an element type, so it outranks the single
+   class above and would square the pill off — border-radius is restated
+   here to stop that. Hover and focus borrow the update pill's own accent
+   fill and outline, so a pressable badge reads as one visual language with
+   the rest of the row rather than inventing a second.
+
+   font-family is restated for the reason the update pill's own comment
+   records: the class above never set one, so without this the browser's
+   own button typeface applies and the badge renders in a different face
+   from the stack name sitting right beside it. */
+.staxx-scaffold button.staxx-handoverbadge {
+  border-radius: 1rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.staxx-scaffold button.staxx-handoverbadge:hover {
+  background: var(--sm-accent);
+  color: #000;
+}
+
+.staxx-scaffold button.staxx-handoverbadge:focus-visible {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.1rem;
+}
+
 /* The update pill (PLAN_45 Part H) — sits beside the state pill in the same
    status area, not a column of its own. Copies .staxx-pill's own radius,
    padding and font-size rather than sharing its selector, because the

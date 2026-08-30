@@ -1580,11 +1580,15 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                        "handover" section of Stacks.php. Distinct from the
                        review badge below: unlike a locked import, this row
                        genuinely owns its containers and shows their real
-                       state, so nothing about it is blanked. -->
-                  <span class="staxx-handoverbadge"
-                        title="<?= htmlspecialchars(_('Waiting to be confirmed after a handover. Check the app works, then answer the question in the stack menu.')) ?>">
+                       state, so nothing about it is blanked. It is a real
+                       button, not a static label: pressing it opens the same
+                       "does it work?" question the stack menu's own two
+                       items ask, so checking the webui does not mean leaving
+                       the row and reopening the menu to answer it. -->
+                  <button type="button" class="staxx-handoverbadge"
+                        title="<?= htmlspecialchars(_('This app has been switched over and is running now. Check that it works, then press this to keep it or put the old one back.')) ?>">
                     <?= _('waiting to confirm') ?>
-                  </span>
+                  </button>
                 <? elseif ($s['review']): ?>
                   <!-- Imported and not yet reviewed — see the "review lock"
                        section of Stacks.php. Read-only marker; the menu item

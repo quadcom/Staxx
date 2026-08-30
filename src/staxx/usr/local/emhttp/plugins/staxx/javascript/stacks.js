@@ -18667,12 +18667,29 @@
             // A failed handover has already put itself back on the server —
             // the job's own output says what went wrong, so there is
             // nothing to ask here beyond refreshing the row's badge either
-            // way. Only a clean finish has anything left to confirm.
+            // way. A clean finish used to ask "does it work?" immediately,
+            // right on top of the page a person has to leave this dialog to
+            // go and check — so it only tells them what to do next now; the
+            // row's own badge (below) is what asks the question, once they
+            // come back to answer it.
             track(r.job, {
               show: true,
               done: function (job) {
                 refreshRows();
-                if (job.exit === 0) openHandoverAnswer(name, label, true);
+                if (job.exit === 0) {
+                  askConfirm({
+                    title: label + ' is now live',
+                    bodyHtml:
+                      '<p>"' + esc(label) + '" has been switched over and is running now.</p>' +
+                      '<p>Go and use it the way you normally would, to check it works.</p>' +
+                      '<p>Its row now carries a "waiting to confirm" marker. Press that when ' +
+                      'you are ready, and it will ask whether to keep this change or put ' +
+                      'everything back — the old container is still there, set aside, until ' +
+                      'you answer.</p>' +
+                      '<p>Nothing is decided until then, so there is no hurry.</p>',
+                    goLabel: 'OK'
+                  }).then(function () { closeConfirm(); });
+                }
               }
             });
           });
@@ -22797,6 +22814,18 @@
       applyUpdate(pillStack, pillService,
                   onContainer ? stackLabel(pillStack) + ' / ' + pillService
                               : stackLabel(pillStack));
+      return;
+    }
+
+    // The "waiting to confirm" badge left on a stack row after a handover —
+    // a second way in, alongside the menu's own "It works" / "It does not
+    // work" items, so a person checking the webui does not have to leave it
+    // and reopen the menu just to answer the question they came back for.
+    if (el.classList.contains('staxx-handoverbadge')) {
+      var badgeRow = el.closest('.staxx-stack-row, .staxx-container-row');
+      if (!badgeRow) return;
+      var badgeStack = badgeRow.dataset.stackRow;
+      if (badgeStack) openHandoverAnswer(badgeStack, stackLabel(badgeStack), true);
       return;
     }
 
