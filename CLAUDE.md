@@ -225,14 +225,15 @@ at `/boot/config/plugins/staxx/`.
 
 ## How StaXX is actually delivered right now
 
-**This is pre-alpha and deliberately not on Community Applications.** Adrian offers it as a test
-case people install by hand, and that shapes what a "release" means here — so do not go looking for
-Unraid's packaging chain to be complete, and do not do work to complete it unasked.
+**This is pre-alpha and deliberately not on Community Applications.** That is a listing, not a
+file format: it is how people would *find* StaXX and be told it had updated. Not applying for it is
+a decision, not an omission — do not do work towards it unasked.
 
-**There are two ways in, and the by-hand one is still the main one.** A release is a zip of the
-plugin folder, the installer script, and instructions for running it — that is what most people
-should be pointed at. A numbered `v*` release *also* publishes a real package and a stamped
-manifest, so Unraid's **Plugins → Install Plugin** box works for those versions; see below.
+**The packaging chain itself is complete, and the manifest is the way in people should be pointed
+at.** Paste the manifest address into Unraid's **Plugins → Install Plugin** box and it installs like
+any other plugin: it survives a reboot, and Unraid notices later versions because it re-reads the
+manifest from `main`. The by-hand bundle still exists and is what Adrian runs day to day, but it is
+now the *secondary* route — ahead of the releases, less tested, and gone at the next reboot.
 
 **The manifest install route now exists, but it is a separate act from an ordinary change.**
 `pkg_build.sh` builds the real `.txz`, and `staxx.plg` carries a real version, real checksums and a
@@ -247,9 +248,11 @@ Two facts worth not rediscovering: `pkg_build.sh` must run on Linux, since the p
 permissions and ownership; and `v1.1.0` is a public release that **does** carry its `.txz`, so the
 manifest route worked at 1.1.0 — it was `v1.2.0` that was cut without running the packager, leaving
 the manifest naming a package nobody uploaded and still carrying 1.1.0's two checksums. That is the
-exact failure `publish.yml`'s agreement checks exist to make impossible. CI (`release.yml`) publishes a rolling pre-release per push
-carrying `staxx-main.tar.gz` — that is the tarball the by-hand install route uses, and it is a
-different thing from the `.txz` a tagged release carries.
+exact failure `publish.yml`'s agreement checks exist to make impossible.
+
+CI (`release.yml`) publishes a rolling pre-release per push carrying `staxx-main.tar.gz` — that is
+the tarball the by-hand route uses, and it is a different thing from the `.txz` a tagged release
+carries. The two workflows are deliberately separate and neither should grow into the other.
 
 ## Version policy
 

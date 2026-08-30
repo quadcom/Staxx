@@ -7812,10 +7812,34 @@
     return picked.join(sep);
   }
 
-  function pwgenStrengthText(bits) {
+  function pwgenStrengthText(bits, approx) {
     bits = Math.floor(bits);
     var band = bits < 50 ? 'weak' : bits < 70 ? 'reasonable' : bits < 100 ? 'strong' : 'very strong';
-    return bits + ' bits — ' + band;
+    return (approx ? 'about ' : '') + bits + ' bits — ' + band;
+  }
+
+  // A typed password has no recipe to read the strength off, so this guesses
+  // the pool it was drawn from purely from which character classes appear in
+  // it — lower, upper, digits, or anything else standing in for the rest of
+  // printable ASCII — and is always labelled an estimate, never a fact.
+  function pwgenTypedStrength(value) {
+    var pool = 0;
+    if (/[a-z]/.test(value)) pool += 26;
+    if (/[A-Z]/.test(value)) pool += 26;
+    if (/[0-9]/.test(value)) pool += 10;
+    if (/[^a-zA-Z0-9]/.test(value)) pool += 33;
+    if (!pool) return '';
+    return pwgenStrengthText(value.length * Math.log2(pool), true);
+  }
+
+  // A hash belongs to one password. The moment the password changes — typed
+  // or regenerated — the one on screen is of something else, and a live Fill
+  // button beside it would write a value nothing will ever accept.
+  function pwgenClearHash() {
+    if (pwgenHashValue) pwgenHashValue.value = '';
+    if (pwgenHashCopy) pwgenHashCopy.disabled = true;
+    if (pwgenHashReady()) setPwgenHashNote('Choose a format and press Hash.');
+    updatePwgenAvailability();   // the hash's Fill goes off with it
   }
 
   // Fetched lazily, the first time word mode is actually used, from the
@@ -7839,6 +7863,7 @@
 
   function pwgenGenerate() {
     if (!pwgenValue) return;
+    pwgenClearHash();
 
     if (pwgenModeWords && pwgenModeWords.checked) {
       pwgenLoadWords().then(function (words) {
@@ -8177,6 +8202,15 @@
   if (pwgenPanel) {
     pwgenPanel.addEventListener('input', function (event) {
       var id = event.target.id;
+      if (id === 'staxx-pwgen-value') {
+        // Typed by hand, so there is no recipe to read the strength off —
+        // it is inferred from the value itself, and said to be a guess.
+        if (pwgenStrength) pwgenStrength.textContent = pwgenTypedStrength(pwgenValue ? pwgenValue.value : '');
+        pwgenClearHash();
+        updatePwgenHashBtn();
+        updatePwgenAvailability();
+        return;
+      }
       if (id === 'staxx-pwgen-length' || id === 'staxx-pwgen-count' || id === 'staxx-pwgen-sep') pwgenGenerate();
     });
     pwgenPanel.addEventListener('change', function (event) {

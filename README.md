@@ -38,19 +38,18 @@ underneath stays an ordinary compose file that still runs anywhere.
 
 ## The 60-second start
 
-Download the latest **main** build from [Releases](https://github.com/quadcom/Staxx/releases),
-extract it to a folder on your server, and run the install script inside it. Every push to main
-builds one, so the newest is always at the top of that page.
+Copy this address:
 
-The flash drive is the sensible place to put it — `/boot/` — because what gets installed does not
-survive a reboot and you will want the folder again. Anywhere will work; the script finds its own
-way.
-
-```sh
-cd /boot
-tar -xzf ~/staxx-main.tar.gz          # wherever you put the download
-bash /boot/staxx-main/dev-install.sh
 ```
+https://raw.githubusercontent.com/quadcom/Staxx/main/staxx.plg
+```
+
+In Unraid, go to **Plugins → Install Plugin**, paste it in, and press Install. That is the whole of
+it. You get a plugin Unraid looks after like any other: it survives a reboot, it appears on your
+Plugins page, and it will tell you when there is a newer version.
+
+You do not need Community Applications for this, and StaXX is not in it — see
+[Limitations](#limitations).
 
 Open **Docker → Stacks**. The first thing it does is ask where it should keep its data — one folder
 holding your stacks, the zips of any you remove, and its own settings. It suggests a sensible place
@@ -61,19 +60,23 @@ it, and it is there. Or press **Apps** and pick something.
 
 New to the page? The [user guide](docs/guide/README.md) explains what you are looking at.
 
-To remove it again, run the same script with `--remove`, which keeps your settings, or `--purge`,
-which takes those too.
+To remove it again, use **Remove** on the Plugins page. Your settings and your stacks are left
+alone; deleting the data store folder is a separate, deliberate act.
 
-**Prefer a proper plugin install?** From `v1.3.0` onwards, numbered releases also install the
-ordinary Unraid way. Paste this into **Plugins → Install Plugin**:
+### Want the newest work, before it is a release?
 
+Every push builds a bundle you can install by hand. It is how the author runs it day to day, and it
+is ahead of the numbered releases — which also means it is less tested, and it does **not** survive
+a reboot, so you will want to keep the folder around. Take the newest **main** build from
+[Releases](https://github.com/quadcom/Staxx/releases) and run the script inside it:
+
+```sh
+cd /boot
+tar -xzf ~/staxx-main.tar.gz          # wherever you put the download
+bash /boot/staxx-main/dev-install.sh
 ```
-https://raw.githubusercontent.com/quadcom/Staxx/main/staxx.plg
-```
 
-That gives you a plugin Unraid tracks and updates like any other, kept on the flash drive so it
-survives a reboot without reinstalling. Community Applications is not required for it — StaXX is
-not published there yet, because the project is not public.
+`--remove` takes it off again and keeps your settings; `--purge` takes those too.
 
 ## Contents
 
@@ -364,11 +367,9 @@ Everything above works today. None of this does yet.
 
 ## Limitations
 
-- Pre-alpha. It is not in Community Applications, so Unraid will not offer it to you or tell you
-  when it updates — you install it yourself, by hand or by plugin address.
+- Pre-alpha. It is not in Community Applications, so you will not come across it there — you install
+  it from its address. Once installed, Unraid does tell you when a newer version is out.
 - Requires Unraid 7.2 or later, and Docker Compose already on the server — StaXX does not install it.
-- Stacks start out on the flash drive. StaXX offers to move them, but until you take it up they sit
-  on a drive with finite writes and no redundancy.
 - Graphics figures cover Intel and AMD cards. Nvidia shows no figures, though a container given an
   Nvidia card is still labelled as such.
 - Without a Docker Hub read-only token, update checks are limited to roughly ten images an hour
