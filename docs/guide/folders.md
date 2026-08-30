@@ -1,6 +1,6 @@
 # Working with folders
 
-<!-- index: 50 | grouping stacks on the list: making a folder, moving a stack in or out, running everything inside one at once, and what deleting a folder does to what is inside it. -->
+<!-- index: 50 | grouping stacks on the list: making a folder, moving a stack in or out, running everything inside one at once, the row of app pictures a folder carries, and what deleting a folder does to what is inside it. -->
 
 Once you have more than a handful of stacks, the list can get long. A folder groups the ones that
 belong together — everything for one household member, everything to do with your media, a set of
@@ -74,6 +74,24 @@ back up. This is purely a display choice — the stacks inside are entirely unaf
 and nothing about them changes while their folder is collapsed. StaXX remembers which folders you
 last left collapsed, and remembers it on the server rather than in your browser, so the list looks the
 same however you get there — from your desktop, or your phone.
+
+## The row of pictures on a folder
+
+A folder's own row carries a small picture for every app inside it, grouped together and slightly
+overlapping like a hand of cards, so a collapsed folder still tells you what is in it. Rest your
+mouse on the group and it opens out into a grid with every app shown separately; move away and it
+folds back up. Nothing else on the page moves while it is open.
+
+Each picture names the stack it belongs to when you hover it, along with the service inside that
+stack it came from — useful when one stack runs several things. Clicking a picture takes you to that
+stack: the folder opens if it was collapsed, the list scrolls to the stack's own row, and the row
+lights up briefly so you can see where you landed.
+
+A stack StaXX cannot read is drawn as a red warning triangle in the group rather than a picture, in
+full colour with a red outline, because a stack with a problem in its file is worth spotting rather
+than hiding. Clicking one of those goes straight to the editor instead, which is where the problem
+can be fixed — unless the folder has no compose file in it at all, in which case there is nothing to
+open and it behaves like any other picture, taking you to the row that explains what is missing.
 
 ## Running a whole folder at once
 

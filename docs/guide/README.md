@@ -24,8 +24,8 @@ This guide is written in English only.
   the values you marked secret while you photograph the editor, exactly what it leaves showing, what
   it switches off while it is on, and the one tab it cannot cover.
 - **[Working with folders](folders.md)** — grouping stacks on the list: making a folder, moving a
-  stack in or out, running everything inside one at once, and what deleting a folder does to what is
-  inside it.
+  stack in or out, running everything inside one at once, the row of app pictures a folder carries,
+  and what deleting a folder does to what is inside it.
 - **[Making a stack from scratch](making-a-stack.md)** — starting a stack with nothing but a name:
   the skeleton you are given, the settings offered as comments, every refusal and why, and the
   single folder that comes out of it.
@@ -36,8 +36,8 @@ This guide is written in English only.
   already on your server into StaXX: what can come across, what arrives locked, and what is left
   untouched.
 - **[Sharing a stack with somebody else](sharing-a-stack.md)** — how Export makes a copy with your
-  passwords, keys and paths taken out, what it refuses to send at all, and what the person on the
-  other end has to fill in before it will run.
+  passwords, keys and paths taken out, what it refuses to send at all, what rides along with the
+  stack, and what the person on the other end has to fill in before it will run.
 - **[Going back](going-back.md)** — how to return to an earlier version of a stack's file or to an
   earlier build of one of its images, what each of the two lists holds, and why some things cannot
   be gone back to.
