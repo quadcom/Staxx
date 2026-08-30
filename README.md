@@ -1,10 +1,10 @@
 # StaXX — Docker on Unraid, built on compose files
 
 > **Where this is up to.** In daily use on the author's own server and far enough along to judge on
-> its merits. Packaged from 1.1.0, but not yet published — the install below is the way in until
-> it is. See [Limitations](#limitations).
+> its merits. Not on Community Applications, and not meant to be yet — but numbered releases do
+> install the ordinary Unraid way. See [Limitations](#limitations).
 >
-> Version 1.2.0 · [changelog](CHANGELOG.md)
+> Version 1.3.0 · [changelog](CHANGELOG.md)
 
 ## Why this exists
 
@@ -64,7 +64,7 @@ New to the page? The [user guide](docs/guide/README.md) explains what you are lo
 To remove it again, run the same script with `--remove`, which keeps your settings, or `--purge`,
 which takes those too.
 
-**Prefer a proper plugin install?** From `v1.2.1` onwards, numbered releases also install the
+**Prefer a proper plugin install?** From `v1.3.0` onwards, numbered releases also install the
 ordinary Unraid way. Paste this into **Plugins → Install Plugin**:
 
 ```
@@ -364,7 +364,8 @@ Everything above works today. None of this does yet.
 
 ## Limitations
 
-- Pre-alpha. It is installed by hand, is not published, and is not in Community Applications.
+- Pre-alpha. It is not in Community Applications, so Unraid will not offer it to you or tell you
+  when it updates — you install it yourself, by hand or by plugin address.
 - Requires Unraid 7.2 or later, and Docker Compose already on the server — StaXX does not install it.
 - Stacks start out on the flash drive. StaXX offers to move them, but until you take it up they sit
   on a drive with finite writes and no redundancy.
