@@ -40,6 +40,17 @@
   // watching, so there is deliberately no separate ping.
   var POLL_MS = 1000;
 
+  // The log pane polls faster than that while output is actually arriving.
+  // A flat one-second poll made a busy container read a second behind and
+  // arrive in visible clumps, which is what "not real-time" looked like. A
+  // read that brings text is evidence more is coming, so the next one goes
+  // out quickly; a read that brings nothing eases back towards the idle rate
+  // rather than holding a fast poll against a container saying nothing. The
+  // idle rate is unchanged, so a quiet pane costs exactly what it did.
+  var LOG_POLL_FAST = 200;
+  var LOG_POLL_IDLE = POLL_MS;
+  var LOG_POLL_EASE = 1.6;
+
   // PLAN_44 D7. The same 45rem the stylesheet uses, and deliberately the
   // same string — stacks.js's own NARROW carries the reasoning (a rem inside
   // a media query is the browser's default font size, not the 62.5% Unraid
@@ -532,6 +543,7 @@
       dropped:  0,      // total lines ever evicted by the LOG_CAP shift
       domDropped: 0,    // how much of `dropped` the DOM has already trimmed for — see appendNewLines()
       pollTimer: null,
+      pollDelay: LOG_POLL_FAST, // current gap between reads; see LOG_POLL_FAST
       pollSeq:  0,      // bumped on every start/stop; a stale reply checks this before landing
       downloadText: null
     };
@@ -805,6 +817,7 @@
       log.domDropped = 0;
       log.alive = false;
       log.error = '';
+      log.pollDelay = LOG_POLL_FAST;
       renderLines();
       if (!state.stack) return; // nothing open yet to follow
       var mySeq = ++log.pollSeq;
@@ -843,11 +856,16 @@
           if (res.text) appendChunk(res.text);
           if (typeof res.offset === 'number') log.offset = res.offset;
           updateEmptyState();
+          // Text means more is probably on its way, so chase it; silence
+          // eases back towards the idle rate. See LOG_POLL_FAST.
+          log.pollDelay = res.text
+            ? LOG_POLL_FAST
+            : Math.min(LOG_POLL_IDLE, Math.round(log.pollDelay * LOG_POLL_EASE));
         }
         // alive:false means the follower ended on its own (nothing left to
         // tail, or the container was removed) — the pane already shows
         // everything there was, so polling stops rather than spinning.
-        if (log.alive) schedulePoll(mySeq, POLL_MS);
+        if (log.alive) schedulePoll(mySeq, log.pollDelay);
       });
     }
 

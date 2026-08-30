@@ -266,7 +266,7 @@
 }
 
 .staxx-manage-pane--log  { flex: 3 1 0; }
-.staxx-manage-right      { flex: 3 1 0; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; --sm-split: 1; }
+.staxx-manage-right      { flex: 3 1 0; display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; min-width: 0; --sm-split: 1; }
 .staxx-manage-pane--shell { flex: var(--sm-split, 1) 1 0; }
 .staxx-manage-pane--files { flex: calc(2 - var(--sm-split, 1)) 1 0; }
 
@@ -319,10 +319,16 @@
 }
 
 
+/* min-width alongside min-height because these panes sit in a row as well as
+   in a column. A flex item defaults to min-width:auto, which refuses to
+   shrink below its content's own minimum — so a pane holding a long
+   unbreakable line pushed the whole row past the right edge of the window
+   instead of scrolling inside itself. */
 .staxx-manage-pane {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   border: 1px solid var(--sm-line);
   border-radius: var(--sm-radius);
   overflow: hidden;
@@ -336,7 +342,14 @@
   flex: 0 0 auto;
 }
 
-.staxx-manage-pane--collapsed .staxx-manage-pane-body {
+/* Doubled class for weight, not for looks. `.staxx-manage-pane--log
+   .staxx-manage-pane-body` below sets display:flex at the same specificity as
+   this rule and is written later, so it used to win — the log was the one
+   pane whose body never hid when collapsed. A collapsed pane is also told to
+   take its natural width and not shrink, so the still-visible body sized
+   itself to the longest unwrapped line and the pane grew to eighty thousand
+   pixels, far off the right of the dialog. */
+.staxx-manage-pane.staxx-manage-pane--collapsed .staxx-manage-pane-body {
   display: none;
 }
 
@@ -546,8 +559,8 @@
   overflow: auto;
   padding: 0.5rem 0.7rem;
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 0.85rem;
-  line-height: 1.4;
+  font-size: 1.25rem;
+  line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -701,8 +714,8 @@
   overflow: auto;
   padding: 0.5rem 0.7rem;
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 0.85rem;
-  line-height: 1.4;
+  font-size: 1.25rem;
+  line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
 }
