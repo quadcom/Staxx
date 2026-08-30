@@ -4319,17 +4319,50 @@ function staxx_key_material_reason(string $path, string $name): string {
 }
 
 /**
+ * Every x-unraid icon: value in the compose file that could plausibly be a
+ * file — neither an http(s):// URL nor a Font Awesome glyph (fa-something),
+ * since neither of those names anything on disk; see staxx_icon_resolve()'s
+ * own checks for the same two shapes. Trimmed of quotes and whitespace. A
+ * stack can carry more than one icon: line — one at the top level, one per
+ * service — so every line is returned, not just the first.
+ *
+ * @return string[]
+ */
+function staxx_compose_icon_values(string $composeText): array {
+  if ($composeText === '') return [];
+  if (!preg_match_all('/^\s*icon:\s*["\']?([^"\'\r\n]*?)["\']?\s*$/mi', $composeText, $matches)) return [];
+  $out = [];
+  foreach ($matches[1] as $val) {
+    $val = trim($val);
+    if ($val === '') continue;
+    if (preg_match('#^https?://#i', $val)) continue;
+    if (preg_match('/^fa-[a-z0-9-]+$/i', $val)) continue;
+    $out[] = $val;
+  }
+  return $out;
+}
+
+/**
  * Does the compose file actually name this companion file — through
- * env_file:, a configs:/secrets: "file:" source, or a relative bind mount?
- * A light text scan on purpose, not a second compose parser: the model
- * already exists elsewhere for anything that needs the real structure, and
- * this only has to answer one narrow question well enough to inform a
- * choice, never to make one.
+ * env_file:, a configs:/secrets: "file:" source, a relative bind mount, or
+ * x-unraid's own icon: value? A light text scan on purpose, not a second
+ * compose parser: the model already exists elsewhere for anything that needs
+ * the real structure, and this only has to answer one narrow question well
+ * enough to inform a choice, never to make one.
  *
  * @return array{0:bool, 1:string} [needed, plain-English reason]
  */
 function staxx_compose_names_file(string $composeText, string $filename): array {
   if ($composeText === '') return [false, ''];
+
+  // Checked once over the whole file rather than inside the per-line loop
+  // below, because an icon: value is a standalone key, not a marker that
+  // introduces a following block of its own the way env_file: does.
+  foreach (staxx_compose_icon_values($composeText) as $val) {
+    $bareIcon = preg_replace('#^\.{1,2}/#', '', $val); // an optional leading ./ or ../
+    if ($bareIcon === $filename) return [true, 'the compose file uses it as this stack\'s icon'];
+  }
+
   $lines = preg_split('/\r\n|\r|\n/', $composeText);
   $q     = preg_quote($filename, '/');
   $bare  = '(?:\.\.?\/)?'.$q; // an optional leading ./ or ../
@@ -4365,8 +4398,9 @@ function staxx_compose_names_file(string $composeText, string $filename): array 
 
 /**
  * Sort every file in a stack's folder into the four kinds PLAN_76 Phase 2
- * defines. The hidden record folder never appears here because
- * staxx_list_files() has already left it out.
+ * defines. The hidden record folder itself never appears here, because
+ * staxx_list_files() has already left it out — except for one single
+ * allowlisted exception appended at the very end; see the comment there.
  *
  * A refusal is settled first, for every file alike: a folder or a link
  * cannot travel as a single file, an oversized one cannot travel at all,
@@ -4378,7 +4412,7 @@ function staxx_compose_names_file(string $composeText, string $filename): array 
  * nothing here can vouch for it.
  *
  * @return array<int, array{name:string, kind:string, size:int, why:string,
- *                           needed:bool, needed_why:string}>|null
+ *                           needed:bool, needed_why:string, b64?:string}>|null
  */
 function staxx_export_sort(string $rel, string &$error): ?array {
   $files = staxx_list_files($rel, $error);
@@ -4438,6 +4472,48 @@ function staxx_export_sort(string $rel, string &$error): ?array {
       'why' => 'This is a plain text file, so it can only leave once its contents have been shown.',
       'needed' => $needed, 'needed_why' => $neededWhy];
   }
+
+  /* ---- the one allowlisted exception: the compose file's own icon -------
+   *
+   * The hidden record folder also holds history/ — full copies of every
+   * past save, 54 of 114 of which hold a live password, secret or token on
+   * this server today, which is precisely what exporting exists to strip —
+   * and record.json, this installation's own rollback ledger, which a
+   * rollback deliberately trusts only because it recorded it itself. Either
+   * one leaving would either undo the redaction the export just performed,
+   * or hand another machine a ledger entry it never earned.
+   *
+   * So this is an ALLOWLIST of exactly one file, not "the folder minus the
+   * risky bits": the only thing ever taken out of the record folder is the
+   * single picture the compose file's own x-unraid icon: names, found and
+   * read here on the server — never a path the browser gets to ask for (see
+   * staxx_stack_file(), which goes on refusing the record folder outright).
+   * Anything else that ever lands in this folder in future stays home by
+   * default; extending this to more of the folder's contents needs a new
+   * conscious decision, not a wider glob.
+   */
+  foreach (staxx_compose_icon_values($composeText) as $val) {
+    $bareIcon = preg_replace('#^\./#', '', $val); // only a single "./" — ".." never reaches here
+    $prefix   = STAXX_RECORD_DIR.'/';
+    if (strncmp($bareIcon, $prefix, strlen($prefix)) !== 0) continue;
+
+    $inner = substr($bareIcon, strlen($prefix));
+    if (!staxx_valid_filename($inner)) continue; // no slash, no "..", no history/ or record.json by shape
+
+    $iconPath = $dir.'/'.STAXX_RECORD_DIR.'/'.$inner;
+    if (is_link($iconPath) || !is_file($iconPath)) continue;
+    $size = @filesize($iconPath);
+    if ($size === false || $size > STAXX_FILE_MAX) continue;
+    $body = @file_get_contents($iconPath);
+    if ($body === false) continue;
+
+    $out[] = ['name' => $bareIcon, 'kind' => 'icon', 'size' => (int)$size,
+      'why' => 'This is the picture the compose file uses as this stack\'s icon.',
+      'needed' => true, 'needed_why' => 'the compose file uses it as this stack\'s icon',
+      'b64' => base64_encode($body)];
+    break; // there is only ever one icon, however many icon: lines name it
+  }
+
   return $out;
 }
 
@@ -4446,14 +4522,33 @@ function staxx_export_sort(string $rel, string &$error): ?array {
  * --------------------------------------------------------------------- */
 
 /**
+ * If $name is the one nested shape staxx_export_pack() accepts — ".staxx/"
+ * plus a valid companion filename — return that inner filename; otherwise ''.
+ * Kept as its own function so the check is worded identically everywhere it
+ * is made, rather than three copies drifting apart over time.
+ */
+function staxx_export_pack_record_icon(string $name): string {
+  $prefix = STAXX_RECORD_DIR.'/';
+  if (strncmp($name, $prefix, strlen($prefix)) !== 0) return '';
+  $inner = substr($name, strlen($prefix));
+  return staxx_valid_filename($inner) ? $inner : '';
+}
+
+/**
  * Build a zip from name-and-contents pairs, and nothing else.
  *
- * $pairs is a list of ['name' => ..., 'content' => ...]. That is the ONLY
- * shape this function can read — there is no parameter here that could carry
- * a stack's folder, and nothing inside calls anything that resolves one. This
- * is the plan's strongest rule, and it is enforced by shape rather than
- * vigilance: the function is not being careful not to look at the real
- * stack, it has no way to, whatever it is handed.
+ * $pairs is a list of ['name' => ..., 'content' => ...] — or, for the one
+ * icon entry staxx_export_sort() ever hands back, ['name' => ..., 'b64' =>
+ * ...], its raw bytes still base64 rather than run through a text decoder
+ * that would corrupt anything that is not valid UTF-8 (most icons on a real
+ * server are PNGs, not SVGs). A pair carries exactly one of the two —
+ * action.php's own validation for "export-pack" already refuses one
+ * carrying both or neither. That is the ONLY shape this function can read —
+ * there is no parameter here that could carry a stack's folder, and nothing
+ * inside calls anything that resolves one. This is the plan's strongest
+ * rule, and it is enforced by shape rather than vigilance: the function is
+ * not being careful not to look at the real stack, it has no way to,
+ * whatever it is handed.
  *
  * $stackName is used only to name the zip for the person saving it — never to
  * find a folder, a file, or anything else on disk. The caller (action.php's
@@ -4461,19 +4556,26 @@ function staxx_export_sort(string $rel, string &$error): ?array {
  * it, and even there it never reaches this function's own filesystem work.
  *
  * Every name is checked by staxx_valid_filename(), the same rule a companion
- * file is written under, with one deliberate exception: that function also
- * refuses the compose filenames themselves, because a second file by that
- * name would collide with the real compose file already on disk. There is no
- * "already on disk" here — this zip is built from nothing — and the compose
- * file is exactly what belongs in an export, so a name is accepted whenever
- * it is either a valid companion name or one of the compose filenames.
+ * file is written under, with two deliberate exceptions. First, that function
+ * also refuses the compose filenames themselves, because a second file by
+ * that name would collide with the real compose file already on disk. There
+ * is no "already on disk" here — this zip is built from nothing — and the
+ * compose file is exactly what belongs in an export, so a name is accepted
+ * whenever it is either a valid companion name or one of the compose
+ * filenames. Second, a name of exactly ".staxx/" followed by a valid
+ * companion name is also accepted — see staxx_export_pack_record_icon() —
+ * because that is the one shape staxx_export_sort()'s icon allowlist ever
+ * hands back. Nothing else may nest: staxx_valid_filename() forbids both a
+ * slash and "..", so the inner half can only ever name a direct child of the
+ * one ".staxx" subfolder this function creates for it, never anything above
+ * or beside the temporary folder these files are written into.
  *
  * Built in a private folder of its own under STAXX_CFILE_TMP, using the same
  * `zip` shell command staxx_archive_stack() already uses — there is only one
  * way this plugin makes a zip. That folder is removed whether packing
  * succeeded or not.
  *
- * @param array<int, array{name:string, content:string}> $pairs
+ * @param array<int, array{name:string, content?:string, b64?:string}> $pairs
  * @return string the zip's raw bytes, or '' plus $error.
  */
 function staxx_export_pack(array $pairs, string $stackName, string &$error): string {
@@ -4489,10 +4591,10 @@ function staxx_export_pack(array $pairs, string $stackName, string &$error): str
   $total = 0;
   $seen  = [];
   foreach ($pairs as $p) {
-    $name    = is_string($p['name'] ?? null) ? $p['name'] : '';
-    $content = is_string($p['content'] ?? null) ? $p['content'] : '';
+    $name = is_string($p['name'] ?? null) ? $p['name'] : '';
 
-    if (!staxx_valid_filename($name) && !in_array(strtolower($name), STAXX_COMPOSE_FILENAMES, true)) {
+    if (!staxx_valid_filename($name) && !in_array(strtolower($name), STAXX_COMPOSE_FILENAMES, true)
+        && staxx_export_pack_record_icon($name) === '') {
       $error = '"'.$name.'" is not a name this can export.';
       return '';
     }
@@ -4502,7 +4604,19 @@ function staxx_export_pack(array $pairs, string $stackName, string &$error): str
     }
     $seen[strtolower($name)] = true;
 
-    $total += strlen($content);
+    // A b64 pair (the icon — see staxx_export_pack_record_icon()) is counted
+    // by its DECODED length, not the base64 text's own length, or the size
+    // cap this accounts for would be wrong by roughly a third.
+    if (is_string($p['b64'] ?? null)) {
+      $decoded = base64_decode($p['b64'], true);
+      if ($decoded === false) {
+        $error = '"'.$name.'" did not arrive intact.';
+        return '';
+      }
+      $total += strlen($decoded);
+    } else {
+      $total += strlen(is_string($p['content'] ?? null) ? $p['content'] : '');
+    }
     if ($total > STAXX_EXPORT_MAX) {
       $error = 'That export is '.round($total / 1024).' KiB, over the '
              . round(STAXX_EXPORT_MAX / 1024).' KiB limit for one download.';
@@ -4529,9 +4643,31 @@ function staxx_export_pack(array $pairs, string $stackName, string &$error): str
   $zipBytes = '';
   try {
     foreach ($pairs as $p) {
-      $name    = (string)$p['name'];
-      $content = is_string($p['content'] ?? null) ? $p['content'] : '';
-      if (@file_put_contents($real.'/'.$name, $content) === false) {
+      $name = (string)$p['name'];
+
+      // The icon arrives as base64 rather than text — decoded here, not in
+      // the browser or the endpoint, so the bytes are never passed through a
+      // text decoder that would corrupt anything that is not valid UTF-8
+      // (most icons on a real server are PNGs, not SVGs).
+      if (is_string($p['b64'] ?? null)) {
+        $bytes = base64_decode($p['b64'], true);
+        if ($bytes === false) {
+          $error = '"'.$name.'" did not arrive intact.';
+          return '';
+        }
+      } else {
+        $bytes = is_string($p['content'] ?? null) ? $p['content'] : '';
+      }
+
+      // The only name shape with a directory in it — create that one
+      // subfolder on first use. is_dir() after a failed mkdir() covers the
+      // second such file in the same export finding it already there.
+      if (staxx_export_pack_record_icon($name) !== ''
+          && !@mkdir($real.'/'.STAXX_RECORD_DIR, 0700, true) && !is_dir($real.'/'.STAXX_RECORD_DIR)) {
+        $error = 'Could not prepare a place to build the export.';
+        return '';
+      }
+      if (@file_put_contents($real.'/'.$name, $bytes) === false) {
         $error = 'Could not write "'.$name.'" while building the export.';
         return '';
       }
