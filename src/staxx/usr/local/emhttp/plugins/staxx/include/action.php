@@ -270,6 +270,16 @@ switch ($action) {
   case 'read':
     $body = staxx_read_stack($name, $error);
     if ($body === null) staxx_reply(['ok' => false, 'error' => $error]);
+    // PLAN_102 5a — a compose file dropped into the folder by hand has no
+    // history until something is saved over it, and until then the file is
+    // its own only copy. Somebody opening the editor is the earliest moment
+    // this can be kept that is still a person asking for something, rather
+    // than a render doing it behind their back. A no-op once any version
+    // exists, and never allowed to stand between them and their file.
+    $seedNote = '';
+    if (!staxx_record_seed($name, $seedNote) && $seedNote !== '') {
+      error_log('StaXX: history not seeded for '.$name.': '.$seedNote);
+    }
     $reply = ['ok' => true, 'name' => $name, 'body' => $body, 'fingerprint' => md5($body)];
     // PLAN_61 — the registry-move facts for this stack's services, if any.
     // Absent entirely when there is nothing to say, per the wire contract:
