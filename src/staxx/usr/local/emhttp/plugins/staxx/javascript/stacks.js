@@ -18050,11 +18050,27 @@
       exportState.secretEnvNames = (YAML.secretEnvNames && YAML.secretEnvNames(exportState.form)) || [];
 
       exportState.files = (sortRes.files || []).map(function (f) {
-        return {
+        var entry = {
           name: f.name, kind: f.kind, size: f.size, why: f.why,
           needed: !!f.needed, needed_why: f.needed_why || '',
           shown: false, content: null
         };
+        // The adopted icon rides along as one such entry carrying its own
+        // picture inline — the browser is never allowed to ask for an
+        // arbitrary path inside a stack's hidden folder, so the server reads
+        // it once and hands it over rather than leaving it to file-read.
+        // It goes with the stack by default, since the compose file already
+        // names it, but stays tickable off like any other optional file.
+        // The base64 is kept exactly as it arrived rather than decoded —
+        // an icon is not always an SVG (some are PNGs on the real server),
+        // and the picture is never shown or edited here, so there is no
+        // reason to look inside it; the server turns it back into bytes
+        // when it builds the zip.
+        if (typeof f.b64 === 'string') {
+          entry.b64 = f.b64;
+          entry.ticked = true;
+        }
+        return entry;
       });
       var composeEntry = exportState.files.filter(function (f) {
         return f.kind === 'redactable' && f.name !== '.env';
@@ -18291,7 +18307,7 @@
     var goingNames = [exportState.composeName];
     if (exportState.envEntry && exportState.envEntry.ticked) goingNames.push(exportState.envEntry.name);
     exportState.files.forEach(function (f) {
-      if (f.kind === 'read' && f.ticked) goingNames.push(f.name);
+      if ((f.kind === 'read' || f.kind === 'icon') && f.ticked) goingNames.push(f.name);
     });
 
     var notGoing = exportState.files.filter(function (f) {
@@ -18425,6 +18441,7 @@
       files.push({ name: exportState.envEntry.name, content: summary.envOut });
     }
     exportState.files.forEach(function (f) {
+      if (f.kind === 'icon' && f.ticked) { files.push({ name: f.name, b64: f.b64 }); return; }
       if (f.kind === 'read' && f.ticked) files.push({ name: f.name, content: f.content || '' });
     });
 

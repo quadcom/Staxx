@@ -1,6 +1,6 @@
 # Sharing a stack with somebody else
 
-<!-- index: 70 | how Export makes a copy with your passwords, keys and paths taken out, what it refuses to send at all, and what the person on the other end has to fill in before it will run. -->
+<!-- index: 70 | how Export makes a copy with your passwords, keys and paths taken out, what it refuses to send at all, what rides along with the stack, and what the person on the other end has to fill in before it will run. -->
 
 A stack is already a folder with an ordinary compose file in it, so sharing one *ought* to be as
 easy as sending the file. The catch is that your file is full of things that belong to you and not
@@ -30,6 +30,7 @@ Every file sitting in the stack's folder is listed, sorted into three kinds.
 |---|---|
 | **Can be blanked** | The compose file, and a `.env` file if there is one. These are lists of names and values, so individual values can be taken out of them. The compose file always goes — it *is* the stack — and cannot be unticked. |
 | **Must be read first** | Any other ordinary text file. There is no reliable way to blank one automatically, so it can only travel after you have looked at it. Ticking it opens its contents on the spot. |
+| **The stack's picture** | If your stack has an icon of its own, it comes too, ticked already, because your compose file names it. It is the one thing here that is not a file sitting in the folder in plain sight — see [below](#about-the-picture). Untick it if you would rather it stayed. |
 | **Refused** | Keys, certificates, anything that is not text, anything too large, folders, and shortcuts to files elsewhere. These are listed with the reason, but there is no tick to argue with. |
 
 A file the compose file actually depends on is marked as such, so you can see at a glance what the
@@ -98,14 +99,39 @@ downloads as plain text, ready to paste anywhere. A zip holding a single text fi
 open and impossible to paste.
 
 **Several files arrive as a zip.** The server builds it from exactly the files and contents your
-browser hands over. It is never told where your stack lives, so it cannot reach past what you chose
-and pick up something you did not.
+browser hands over, with one deliberate exception — the picture, below. Everything else is chosen
+on your screen, so nothing can be picked up that you did not tick.
+
+## About the picture {#about-the-picture}
+
+A stack can keep its own icon, and StaXX stores it in a hidden folder tucked inside the stack —
+out of the way, so it is not one more file to scroll past every time you open the stack. Your
+compose file names it, so it belongs with the stack, and it travels.
+
+That folder is the one place the export reaches into on its own, and it takes **exactly one thing
+out of it: the picture your compose file names.** Nothing else in there can ever be exported, and
+that is worth knowing, because of what else lives there.
+
+**The same folder holds every earlier version of your compose file** — StaXX keeps a copy before
+each save, so you can go back. Those copies are your file as it was *before* anything was blanked,
+which means they hold your real passwords and keys in plain text. Sending them would quietly undo
+the entire point of exporting. So they never travel, and the rule is not "the folder, apart from
+the history" — it is "the picture, and nothing else", so there is nothing to forget.
+
+**It also holds StaXX's own notes about your machine** — which versions you have saved, which
+image versions you have run. None of that is true on somebody else's server, so none of it goes
+either. Their StaXX starts its own history from their first save.
+
+Because the picture is chosen by the server rather than by your browser, there is no way to ask for
+anything else in that folder — not by editing a request, not by a crafted file name. The only
+question the server will answer about that folder is "what picture does this compose file name?"
 
 ## What Export never does
 
 - It never changes or removes the stack you are exporting, beyond marking the values you ticked as
   secrets.
-- It never reaches into the stack's saved history of earlier versions.
+- It never reaches into the stack's saved history of earlier versions — the one thing it takes from
+  that hidden folder is the picture your compose file names.
 - It never includes a file you did not tick.
 - It never sends anything anywhere. It produces a file and hands it to you; where it goes next is
   entirely up to you.

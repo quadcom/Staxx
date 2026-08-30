@@ -481,8 +481,15 @@ switch ($action) {
       staxx_reply(['ok' => false, 'error' => 'The file list did not arrive as valid data.']);
     }
     foreach ($decoded as $pair) {
+      // Exactly one of content (text) or b64 (the icon's raw bytes, still
+      // base64 — see staxx_export_pack()'s own comment for why it is decoded
+      // there rather than here) — never both, never neither.
+      $hasContent = isset($pair['content']);
+      $hasB64     = isset($pair['b64']);
       if (!is_array($pair) || !isset($pair['name']) || !is_string($pair['name'])
-          || (isset($pair['content']) && !is_string($pair['content']))) {
+          || ($hasContent === $hasB64)
+          || ($hasContent && !is_string($pair['content']))
+          || ($hasB64 && !is_string($pair['b64']))) {
         staxx_reply(['ok' => false, 'error' => 'The file list did not arrive as valid data.']);
       }
     }
