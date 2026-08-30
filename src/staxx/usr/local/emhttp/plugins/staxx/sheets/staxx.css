@@ -2655,6 +2655,14 @@
   white-space: nowrap;
 }
 
+/* With no Notes box on the row, the chip takes the track that box would have
+   used instead of sitting a column further out. After the rule above, not
+   before: both carry the same weight, so source order is what decides which
+   grid-column wins. */
+.staxx-webchip--near {
+  grid-column: 3;
+}
+
 /* ---- Panels: the editor ---------------------------------------------------
    Output moved into its own dialog (.staxx-logdlg, further down) so it can
    never scroll the page underneath it — see that block for why. */

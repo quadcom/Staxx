@@ -3293,13 +3293,21 @@
       // say what it holds.
       bits.push('<span class="staxx-fieldlabel">' + esc(f.title) + helpBtnHtml(help, helpId) + '</span>');
       bits.push(boxHtml(f, index, 'value', 'value'));
-      bits.push(noteBoxHtml(f, index));
+      // The web page port has nowhere to put a note until the address line
+      // it lives on exists, so its Notes box would be a box that can never
+      // be typed in. Drawn only when it can hold something — writable, or
+      // already carrying a comment worth showing — and the WebUI chip takes
+      // the empty column instead of sitting a track further out.
+      var webui    = f.target === 'x-unraid.webui';
+      var showNote = !webui || !!(f.commentSpot || f.note);
+      if (showNote) bits.push(noteBoxHtml(f, index));
       // The web page port is the one Container row the WebUI button actually
       // follows (PLAN_51) — filled in, the button opens this port; cleared,
       // it turns off. Said here rather than left for the button to explain
       // on its own, since this is the only place that changes it.
-      if (f.target === 'x-unraid.webui') {
-        bits.push('<span class="staxx-webchip" title="' +
+      if (webui) {
+        bits.push('<span class="staxx-webchip' + (showNote ? '' : ' staxx-webchip--near') +
+          '" title="' +
           esc('The WebUI button on this container’s row opens this port. Clear it and the button turns off.') +
           '">WebUI</span>');
       }
