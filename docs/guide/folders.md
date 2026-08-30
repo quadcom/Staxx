@@ -77,21 +77,36 @@ same however you get there — from your desktop, or your phone.
 
 ## The row of pictures on a folder
 
-A folder's own row carries a small picture for every app inside it, grouped together and slightly
-overlapping like a hand of cards, so a collapsed folder still tells you what is in it. Rest your
-mouse on the group and it opens out into a grid with every app shown separately; move away and it
-folds back up. Nothing else on the page moves while it is open.
+A folder's own row carries a picture for every app inside it, so a collapsed folder still tells you
+what is in it:
+
+![Six app logos in a row on a folder's own row, each in its own rounded square, standing for the six stacks inside that folder](../images/guide/folders-row-pictures.png)
+
+A stack that runs several things at once keeps its pictures together as one overlapping group, like a
+hand of cards, with a count on the end when there are more than will fit:
+
+![Two app logos overlapping, the left one tucked behind the right, with a grey "+8" tag beside them](../images/guide/folders-group-closed.png)
+
+Rest your mouse on a group and it opens out into a grid with every app shown separately — all of
+them, however many there are. Move away and it folds back up. Nothing else on the page moves while it
+is open:
+
+![The same group opened out into a grid of ten app logos, four across and three down, each in its own square](../images/guide/folders-group-open.png)
 
 Each picture names the stack it belongs to when you hover it, along with the service inside that
 stack it came from — useful when one stack runs several things. Clicking a picture takes you to that
 stack: the folder opens if it was collapsed, the list scrolls to the stack's own row, and the row
 lights up briefly so you can see where you landed.
 
-A stack StaXX cannot read is drawn as a red warning triangle in the group rather than a picture, in
-full colour with a red outline, because a stack with a problem in its file is worth spotting rather
-than hiding. Clicking one of those goes straight to the editor instead, which is where the problem
-can be fixed — unless the folder has no compose file in it at all, in which case there is nothing to
-open and it behaves like any other picture, taking you to the row that explains what is missing.
+A stack StaXX cannot read is drawn as a red warning triangle instead of a picture, in full colour
+with a red outline while the pictures around it stay dimmed, because a stack with a problem in its
+file is worth spotting rather than hiding:
+
+![A red warning triangle with a red outline sitting between two dimmed app logos](../images/guide/folders-broken-stack.png)
+
+Clicking one of those goes straight to the editor, which is where the problem can be fixed — unless
+the folder has no compose file in it at all, in which case there is nothing to open and it behaves
+like any other picture, taking you to the row that explains what is missing.
 
 ## Running a whole folder at once
 
