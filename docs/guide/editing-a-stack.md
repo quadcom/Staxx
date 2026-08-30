@@ -56,6 +56,12 @@ shared block, or written in a shape the form will not touch — is shown as read
 plain sentence saying why, rather than hidden or guessed at. Fixing it means switching to the
 Compose view and editing the line yourself.
 
+A group can also drop a box that does not apply. A service on its own network address — a macvlan or
+ipvlan network, the kind where the container gets an address of its own on your LAN — reaches its
+ports directly, so the outer "on the server" port is ignored entirely. Ports in that service show
+only the container's own port, and the note beside them says which outer number the file still sets,
+so nothing looks like it has been thrown away.
+
 ## The note under a box
 
 Most boxes carry a smaller box underneath labelled **Notes**. That is not a caption the form
