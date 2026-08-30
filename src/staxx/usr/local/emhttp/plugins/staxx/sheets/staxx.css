@@ -368,8 +368,11 @@
 
 /* A stack that compose cannot read is not actionable in the usual way; say so
    in the tile rather than only in the far column. */
+/* Border as well as glyph, matching the same stack's tile in a folder row's
+   picture group: one mark drawn two ways reads as two different states. */
 .staxx-scaffold .staxx-icon--bad {
   color: var(--sm-danger);
+  border-color: var(--sm-danger);
 }
 
 .staxx-scaffold .staxx-icon--bad:hover,
@@ -714,6 +717,20 @@
   color: var(--sm-muted);
   font-size: 1.1rem;
   font-weight: 400;
+}
+
+/* The "no compose file" message is the button that fixes it, so it needs to
+   invite a click without becoming a button: the app root's own reset already
+   strips every button back to plain text, and this only adds what a person
+   needs to tell that this particular sentence does something. */
+.staxx-adopt-fix {
+  cursor: pointer;
+  text-align: left;
+}
+
+.staxx-adopt-fix:hover,
+.staxx-adopt-fix:focus-visible {
+  text-decoration: underline;
 }
 
 .staxx-parse-error {

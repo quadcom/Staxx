@@ -827,6 +827,47 @@ function staxx_find_compose_file(string $dir): string {
 }
 
 /**
+ * Whether a save that means to create something may go ahead, and why not
+ * when it may not: '' to proceed, else the sentence to show.
+ *
+ * $adopt is the caller claiming it means to give an existing but fileless
+ * stack folder its first compose file, rather than to create a new stack.
+ * That claim only ever NARROWS the name-clash refusal below — which is what
+ * stops "Add stack" writing into a stack somebody else already owns — so it
+ * is deliberately not inferred from the directory's own state.
+ *
+ * A function rather than a few lines inside the endpoint's switch, because a
+ * refusal reachable only over HTTP is a refusal no suite on this box can
+ * prove; tests/server/adopt.php calls this directly.
+ */
+function staxx_create_refusal(string $name, bool $adopt): string {
+  $dir    = staxx_stack_dir($name);
+  $exists = is_dir($dir);
+
+  if (!$exists) {
+    return $adopt
+      ? 'There is no folder called "'.$name.'" any more. Refresh the stack list and look again.'
+      : '';
+  }
+
+  if (!$adopt) {
+    return 'A stack called "'.$name.'" already exists. Pick another name, or edit the '
+         . 'existing one.';
+  }
+
+  // Asked the same way the lister asks it — a second guess at which filenames
+  // count is exactly how this refusal gets bypassed by a file the lister can
+  // see and this gate cannot.
+  $have = staxx_find_compose_file($dir);
+  if ($have !== '') {
+    return 'This folder already has a compose file ('.basename($have).'), so there is nothing '
+         . 'to start here. Use Edit to change it instead.';
+  }
+
+  return '';
+}
+
+/**
  * The main file plus its override, if one sits beside it — Docker's own
  * pairing rule, not a scan of the folder. $main is a FILE PATH, not a
  * directory: staxx_find_compose_file() already answers "what is this

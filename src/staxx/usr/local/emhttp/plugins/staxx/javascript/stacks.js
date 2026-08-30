@@ -43,6 +43,11 @@
   var nameField   = document.getElementById('staxx-name-field');
   var nameInput   = document.getElementById('staxx-name');
   var nameFolder  = document.getElementById('staxx-name-folder');
+  // PLAN_102 phase 2 — cached once so the "adopt" wording (openEditor()'s
+  // adopt branch) can be swapped back on the next ordinary open. The PHP
+  // only renders this text once, so there is no other copy to fall back to.
+  var nameHintEl      = nameField ? nameField.querySelector('.staxx-name-hint') : null;
+  var nameHintDefault = nameHintEl ? nameHintEl.textContent : '';
   var yamlPane    = document.getElementById('staxx-yaml');
   var yamlNums    = document.getElementById('staxx-yamlnums');
   var yamlMarks   = document.getElementById('staxx-yamlmarks');
@@ -12224,11 +12229,15 @@
   // the whole stack's own All tab, a service name for one container's — and
   // it is what switches straight to Manage further down, once the model this
   // stack's Manage view is built from (MODEL, from reparse() above) exists.
-  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved, watch, icons) {
+  function openEditor(name, body, isNew, fingerprint, focusService, manageSelect, focusField, moved, watch, icons, adopt) {
     closeMenu();
     clearError();
 
     modal.dataset.new = isNew ? '1' : '0';
+    // PLAN_102 phase 2 — "give this folder its first compose file", reached
+    // only from a stack's own menu or its folder-strip tile. save() below
+    // reads this to send the adoption claim the server's gate requires.
+    modal.dataset.adopt = adopt ? '1' : '0';
     modalTitle.textContent = isNew ? 'New stack' : 'Edit stack';
     openedName = name || '';
     fingerprintAtOpen = fingerprint || '';   // '' for a new stack — nothing to conflict with yet
@@ -12323,7 +12332,17 @@
     nameFolder.hidden = at < 0;
 
     nameInput.value = at < 0 ? (name || '') : name.slice(at + 1);
-    nameInput.readOnly = false;
+    // Adopting: the directory is the thing being repaired, so typing a
+    // different name here would create somewhere else instead of fixing
+    // this folder — locked, with the hint saying so. Reset unconditionally
+    // on every other open, or a locked box would silently survive into the
+    // next "Add stack".
+    nameInput.readOnly = !!adopt;
+    if (nameHintEl) {
+      nameHintEl.textContent = adopt
+        ? 'This folder has no compose file yet — saving here writes one, so the name cannot be changed.'
+        : nameHintDefault;
+    }
     nameField.hidden = false;
 
     // Always off on open. Coming back to blurred fields a week later and
@@ -14849,6 +14868,10 @@
     // really is a caught install, which is always a new stack.
     var payload = { name: name, body: withEol(body, composeEol), 'new': modal.dataset.new,
                      fingerprint: fingerprintAtOpen };
+    // PLAN_102 phase 1/2 — only ever '1' when this open was "start a compose
+    // file here" against an existing fileless folder; every other new-stack
+    // route leaves it unset, so the name-clash refusal still applies to them.
+    if (isNew && modal.dataset.adopt === '1') payload.adopt = '1';
     if (isNew && pendingHandoffId) payload.handoff = pendingHandoffId;
 
     call('save', payload)
@@ -17737,6 +17760,34 @@
       // would silently open the *next* stack on Versions.
       if (!res.ok) { pendingVersionsService = null; failed('Could not open ' + label, res.error); return; }
       openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch, res.icons);
+    });
+  }
+
+  // PLAN_102 phase 2 — the one route into a fileless stack's folder: the
+  // usual new-stack scaffold, but with the name locked to this folder and
+  // the adoption claim set so save()'s payload carries it. Reached from the
+  // stack's own menu (buildStackMenu) and, once broken, from its folder-strip
+  // tile (the scaffold click handler) — both pass the same directory name a
+  // normal stack row already carries.
+  function openAdoptEditor(name) {
+    openEditor(name, '', true, '', undefined, undefined, undefined, undefined, undefined, undefined, true);
+
+    // Whether an override already sits in this folder — asked once the
+    // editor is already open and usable, never before: a slow or failed
+    // answer must not hold up the one route in for a fileless stack.
+    // Reuses installNote, the handoff hook's own non-blocking line (reset to
+    // hidden on every openEditor() call above) rather than inventing a
+    // second banner for the same slot.
+    call('adopt-check', { name: name }).then(function (res) {
+      // Another stack may have been opened while this was in flight —
+      // openedName is what says whether this answer still applies.
+      if (openedName !== name || modal.dataset.adopt !== '1') return;
+      if (res && res.ok && res.hasOverride) {
+        installNote.querySelector('div').textContent =
+          'An override file (' + res.overrideName + ') is already in this folder and will be ' +
+          'applied on top of whatever is saved here.';
+        installNote.hidden = false;
+      }
     });
   }
 
@@ -21826,6 +21877,11 @@
       // Remove stack (which produces the archive zip) rather than up with
       // the run verbs.
       menuItem('Export…', 'share-square-o', function () { openExportModal(name, label); });
+    } else {
+      // PLAN_102 phase 2 — the one route in for a stack with nothing to
+      // edit yet. hasFile false is exactly the state that gives every other
+      // route (Edit compose file, the row's own icon) nothing to open.
+      menuItem('Start a compose file here', 'file-code-o', function () { openAdoptEditor(name); });
     }
 
     // The section shows even with no folders yet — "New folder" is what it is
@@ -22805,6 +22861,15 @@
         editStack(fstripStack, stackLabel(fstripStack));
         return;
       }
+      // PLAN_102 phase 3 — the other kind of broken tile: the server never
+      // marks a fileless stack data-fstrip-edit (see the comment above), so
+      // among the broken ones (the red triangle, .staxx-fstrip-item--broken)
+      // that is exactly the "no file" case, without inventing a fresh way to
+      // ask the same question the styling must not be read for.
+      if (fstripItem.classList.contains('staxx-fstrip-item--broken')) {
+        openAdoptEditor(fstripStack);
+        return;
+      }
       var fstripFolderRow = fstripItem.closest('[data-folder-row]');
       if (fstripFolderRow) {
         var fstripChevron = fstripFolderRow.querySelector('[data-toggle-folder]');
@@ -22825,6 +22890,12 @@
 
     var el = event.target.closest('button');
     if (!el) return;
+
+    // PLAN_102 phase 2b — the red "no compose file" sentence is itself the
+    // fix now (see staxx_render_rows()'s !$s['hasFile'] branch). Checked
+    // before every other button case below so nothing broader — the row's
+    // own menu trigger included — can swallow it first.
+    if (el.dataset.adoptFix) { openAdoptEditor(el.dataset.adoptFix); return; }
 
     // The restart-pending chip (PLAN_71 stage 5) — always its own button,
     // never a menu item, because it must only ever explain itself. Every

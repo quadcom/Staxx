@@ -291,14 +291,15 @@ switch ($action) {
     $body        = (string)($_POST['body'] ?? '');
     $isNew       = ($_POST['new'] ?? '') === '1';
     $fingerprint = (string)($_POST['fingerprint'] ?? '');
-    $exists      = is_dir(staxx_stack_dir($name));
 
-    if ($isNew && $exists) {
-      staxx_reply([
-        'ok'    => false,
-        'error' => 'A stack called "'.$name.'" already exists. Pick another name, '
-                 . 'or edit the existing one.',
-      ]);
+    // PLAN_102 — a create either lands on empty ground or is refused, and
+    // the caller may claim it means to give an existing but fileless stack
+    // folder its first compose file. The whole decision, refusals included,
+    // is one function so a suite on the server can prove it; only the claim
+    // itself is read here. An ordinary edit never reaches it.
+    if ($isNew) {
+      $refusal = staxx_create_refusal($name, ($_POST['adopt'] ?? '') === '1');
+      if ($refusal !== '') staxx_reply(['ok' => false, 'error' => $refusal]);
     }
 
     // The last save always winning silently is the bug this closes: a save
@@ -362,6 +363,34 @@ switch ($action) {
     $saveIcons = staxx_service_icons_for_stack($name);
     if ($saveIcons !== []) $saveReply['icons'] = $saveIcons;
     staxx_reply($saveReply);
+
+  /* ---- what a fileless folder about to be adopted already holds ----
+   *
+   * PLAN_102 — adoption is still allowed when the folder holds an override
+   * file, but writing a main file beside one changes what that override
+   * applies to, so the editor asks this once before the person saves.
+   *
+   * There is no main file on disk yet to pair an override against, so this
+   * cannot read staxx_compose_files() directly the way 'check' and
+   * 'file-save' do. What it can do is ask staxx_expected_override_basename()
+   * the same question those pairings turn on — same directory, same base
+   * name, same extension — aimed at the one filename this route will ever
+   * write into a fileless folder (staxx_save_stack()'s own fallback,
+   * compose.yaml). Anything else sitting in the folder is not this stack's
+   * override under that rule, and is rightly none of this answer's business.
+   */
+  case 'adopt-check':
+    if (!staxx_valid_path($name)) {
+      staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
+    }
+    $adoptDir      = staxx_stack_dir($name);
+    $overrideName  = staxx_expected_override_basename($adoptDir.'/compose.yaml');
+    $hasOverride   = $overrideName !== '' && is_file($adoptDir.'/'.$overrideName);
+    staxx_reply([
+      'ok'           => true,
+      'hasOverride'  => $hasOverride,
+      'overrideName' => $hasOverride ? $overrideName : '',
+    ]);
 
   /* ---- check a compose file without saving it ----
    *

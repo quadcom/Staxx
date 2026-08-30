@@ -1764,7 +1764,18 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 
           <span class="staxx-cell staxx-cell--services" role="gridcell">
             <? if (!$s['hasFile']): ?>
-              <span class="red-text"><?= _('No compose file in this folder') ?></span>
+              <!-- PLAN_102 phase 2b — the message and the fix in one place: a
+                   real button so the row's own click delegate can route it to
+                   "start a compose file here", not a styled link and not a
+                   span with a click handler bolted on. staxx-adopt-fix is not
+                   yet in the stylesheet (see stacks.js's own note by the
+                   handler) — red-text alone already gives it the same look
+                   this line has always had, button-reset included. -->
+              <button type="button" class="red-text staxx-adopt-fix"
+                      data-adopt-fix="<?= htmlspecialchars($s['name']) ?>"
+                      title="<?= htmlspecialchars(_('Start a compose file in this folder.')) ?>">
+                <?= _('No compose file in this folder') ?>
+              </button>
             <? elseif (!$s['parses']): ?>
               <span class="red-text"><?= _('Compose cannot read this file') ?></span>
               <span class="staxx-parse-error"><?= htmlspecialchars((string)$s['error']) ?></span>
