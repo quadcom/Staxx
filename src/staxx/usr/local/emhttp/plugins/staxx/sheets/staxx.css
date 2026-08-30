@@ -1465,26 +1465,46 @@
   );
 }
 
-/* Real icons past the collapsed cap, and the exploded view's own "+N" chip:
-   invisible and parked at the same slot as the last cell collapsed DOES
-   show, so hovering reads as them sliding out from under the stack rather
-   than appearing from nowhere. */
+/* Real icons past the collapsed cap: invisible and parked at the same slot
+   as the last cell collapsed DOES show, so hovering reads as them sliding
+   out from under the stack rather than appearing from nowhere.
+
+   pointer-events: none while collapsed matters as much as the opacity does.
+   These cells sit later in the markup than the visible ones (so hovering can
+   open the group in the first place — see the item-level rule below), which
+   means they paint, and hit-test, ABOVE the visible cells despite opacity: 0
+   not showing them: an invisible element is still hit-tested. Without this,
+   the pointer landing anywhere a hidden cell is parked would report ITS
+   title rather than the visible icon underneath it. Restored on hover below,
+   once each cell has actually moved to its own exploded slot, so a pointer
+   crossing onto a just-revealed cell keeps landing on the group (it is still
+   inside .staxx-fstrip-item) rather than finding a gap and letting the panel
+   flicker shut. */
 .staxx-fgroup-cell--reveal {
   opacity: 0;
+  pointer-events: none;
   transition: transform var(--sm-motion-slow) var(--sm-ease),
               opacity var(--sm-motion) var(--sm-ease);
 }
 
 .staxx-fstrip-item:hover .staxx-fgroup-cell--reveal {
   opacity: 1;
+  pointer-events: auto;
 }
 
 /* The collapsed view's own "+N" chip, shown only when there are more icons
    than the three-cell cap allows: it has nowhere to explode TO, since the
    exploded view has room for everything it was hiding, so hovering just
-   fades it out where it already sits rather than moving it anywhere. */
+   fades it out where it already sits rather than moving it anywhere.
+
+   pointer-events matters as much as the opacity, for the same reason it does
+   on a revealed cell above: staying where it sits means it sits ON TOP of a
+   cell of the open grid — the third collapsed slot lands under the top row's
+   second icon — and an invisible box still answers a hover, so that icon
+   reported "+N more" as its name instead of its own service. */
 .staxx-fstrip-item:hover .staxx-fgroup-cell--capchip {
   opacity: 0;
+  pointer-events: none;
 }
 
 .staxx-fgroup-cell img {

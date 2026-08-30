@@ -914,7 +914,7 @@ function staxx_stack_tile(array $s, array $kids): string {
     return '<i class="fa fa-cubes"></i>';
   }
 
-  $tiles = staxx_stack_icon_tiles($s, $kids);
+  $tiles = array_column(staxx_stack_icon_tiles($s, $kids), 'html');
 
   if (count($tiles) === 1) return $tiles[0];
 
@@ -936,22 +936,28 @@ function staxx_stack_tile(array $s, array $kids): string {
  * lives in one place rather than being copied and risking disagreement. See
  * staxx_stack_tile()'s comment above for the full reasoning.
  *
+ * Each entry carries the name it was built from as well as its html: the
+ * folder strip labels every icon with its own service, and working that out
+ * in a second pass would mean a second copy of the collapsing rule to drift
+ * out of step with this one — and every icon resolved twice per render.
+ *
  * @param array $kids from staxx_stack_children()
- * @return array<int, string> tile html, one per distinct icon, in order
+ * @return array<int, array{html: string, name: string}> one per distinct icon, in order
  */
 function staxx_stack_icon_tiles(array $s, array $kids): array {
   $stackIcon = (string)($s['x']['icon'] ?? '');
-  $tiles = [];
-  $seen  = [];
+  $out  = [];
+  $seen = [];
   foreach ($kids as $kid) {
     $icon = staxx_service_icon($kid['icon'], $stackIcon, $s['dir'],
                                $kid['image'], $kid['service'], $s['name']);
     $key  = $icon['fa'].'|'.$icon['url'].'|'.$icon['ref'];
     if ($key !== '||' && isset($seen[$key])) continue;
     $seen[$key] = true;
-    $tiles[] = staxx_icon_tile($icon, $kid['service'] !== '' ? $kid['service'] : $kid['name']);
+    $name = $kid['service'] !== '' ? $kid['service'] : $kid['name'];
+    $out[] = ['html' => staxx_icon_tile($icon, $name), 'name' => $name];
   }
-  return $tiles;
+  return $out;
 }
 
 /**
@@ -961,22 +967,21 @@ function staxx_stack_icon_tiles(array $s, array $kids): array {
  * staxx_stack_tile()'s collapsing rule via staxx_stack_icon_tiles(), so this
  * can never disagree with the row about what counts as "the same picture".
  *
- * Two different caps, because the collapsed and exploded views show
- * different numbers of icons from the same list:
- *   - collapsed keeps the strip's long-standing cap of three cells: two
- *     icons plus a "+N" chip once there are more, since a stack repeats once
- *     per row of an already-wrapping folder list and a fourth cell here
- *     costs vertical space the row's own mosaic never spends.
- *   - exploded has the room a hover affords: every icon up to a full 3x3
- *     grid (ceil(sqrt(n)) columns, capped at 3), and only past nine does IT
- *     also fall back to a chip, in the ninth cell rather than the third.
+ * Only the collapsed view still caps: three cells, two icons plus a "+N"
+ * chip once there are more, since a stack repeats once per row of an
+ * already-wrapping folder list and a fourth cell here costs vertical space
+ * the row's own mosaic never spends. Exploded has the room a hover affords,
+ * so it shows every distinct icon with no cap and no chip — Adrian's call:
+ * nobody is expecting one compose file to run twenty services, and if one
+ * ever does the grid is allowed to simply grow. Columns still follow
+ * ceil(sqrt(n)), just without the old cap of three, so the grid stays roughly
+ * square instead of turning into one long row.
  *
- * Every cell either view could ever need is emitted every time — up to nine
- * icon cells, plus the exploded chip should there be more, plus the
- * collapsed chip should there be more than three — and CSS alone decides
- * which are visible and where they sit. That is what lets hovering animate:
- * nothing already on the page changes what markup exists, only how it is
- * placed.
+ * Every cell either view could ever need is emitted every time — one per
+ * distinct icon, plus the collapsed chip should there be more than three —
+ * and CSS alone decides which are visible and where they sit. That is what
+ * lets hovering animate: nothing already on the page changes what markup
+ * exists, only how it is placed.
  *
  * Each cell carries its own position as inline custom properties, since a
  * rule keyed to one fixed icon count could not cover every stack: --fg-i is
@@ -986,10 +991,19 @@ function staxx_stack_icon_tiles(array $s, array $kids): array {
  * than baked into it, because the item that needs them for its own fixed
  * width is rendered by the caller, not this function.
  *
+ * Each cell also carries its own title — the stack's name followed by that
+ * cell's service — rather than relying on the item's title alone, so hovering
+ * one icon among several says which service it is. The item keeps its own
+ * plain stack-name title too: a title on a descendant wins over an
+ * ancestor's, so the cell answers once the pointer is on an icon, and the
+ * item still answers while the pointer sits between icons.
+ *
  * @param array $kids from staxx_stack_children()
  * @return array{html: string, shown: int, cols: int, rows: int}
  */
 function staxx_stack_strip_tile(array $s, array $kids): array {
+  $leaf = (string)($s['leaf'] ?? '');
+
   if (!$kids) {
     return [
       'html' => '<span class="staxx-fgroup" style="--fg-cols:1;--fg-rows:1">'
@@ -999,19 +1013,16 @@ function staxx_stack_strip_tile(array $s, array $kids): array {
     ];
   }
 
-  $tiles = staxx_stack_icon_tiles($s, $kids);
-  $n     = count($tiles);
+  $icons = staxx_stack_icon_tiles($s, $kids);
+  $n     = count($icons);
 
   // Collapsed: two icons, or every icon when there are three or fewer.
   $capShown = $n > 3 ? 2 : $n;
   $capExtra = $n - $capShown; // icons the collapsed chip stands in for
 
-  // Exploded: every icon up to nine, or eight plus a chip beyond that.
-  $expShown = $n > 9 ? 8 : $n;
-  $expExtra = $n - $expShown; // icons the exploded chip stands in for
-
-  $cols = min(3, (int)ceil(sqrt(min($n, 9))));
-  $rows = (int)ceil(($expShown + ($expExtra > 0 ? 1 : 0)) / $cols);
+  // Exploded: no cap — every distinct icon gets its own cell.
+  $cols = (int)ceil(sqrt($n));
+  $rows = (int)ceil($n / $cols);
 
   // Cells past the collapsed cap park behind the last one collapsed DOES
   // show, so hovering reads as them sliding out from under the stack rather
@@ -1019,20 +1030,19 @@ function staxx_stack_strip_tile(array $s, array $kids): array {
   $parkAt = max($capShown - 1, 0);
 
   $cells = [];
-  for ($i = 0; $i < $expShown; $i++) {
+  for ($i = 0; $i < $n; $i++) {
     $reveal = $i >= $capShown ? ' staxx-fgroup-cell--reveal' : '';
+    $svc    = $icons[$i]['name'];
+    $title  = ($leaf !== '' && $svc !== '') ? sprintf(_('%s – %s'), $leaf, $svc) : ($leaf !== '' ? $leaf : $svc);
     $cells[] = '<span class="staxx-fgroup-cell'.$reveal.'" style="--fg-i:'
-             . min($i, $parkAt).';--fg-x:'.($i % $cols).';--fg-y:'.intdiv($i, $cols).'">'
-             . $tiles[$i].'</span>';
-  }
-  if ($expExtra > 0) {
-    $i = $expShown;
-    $cells[] = '<span class="staxx-fgroup-cell staxx-fgroup-cell--reveal" style="--fg-i:'
-             . $parkAt.';--fg-x:'.($i % $cols).';--fg-y:'.intdiv($i, $cols).'">'
-             . '<span class="staxx-tile staxx-tile--more">+'.$expExtra.'</span></span>';
+             . min($i, $parkAt).';--fg-x:'.($i % $cols).';--fg-y:'.intdiv($i, $cols).'"'
+             . ' title="'.htmlspecialchars($title).'">'
+             . $icons[$i]['html'].'</span>';
   }
   if ($capExtra > 0) {
-    $cells[] = '<span class="staxx-fgroup-cell staxx-fgroup-cell--capchip" style="--fg-i:'.$capShown.'">'
+    $capTitle = sprintf(_('%s – %d more'), $leaf, $capExtra);
+    $cells[] = '<span class="staxx-fgroup-cell staxx-fgroup-cell--capchip" style="--fg-i:'.$capShown.'"'
+             . ' title="'.htmlspecialchars($capTitle).'">'
              . '<span class="staxx-tile staxx-tile--more">+'.$capExtra.'</span></span>';
   }
 
