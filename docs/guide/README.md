@@ -18,8 +18,8 @@ This guide is written in English only.
   three lines on the flash drive, and the three ways to change where StaXX appears if you cannot
   reach its page.
 - **[Editing a stack](editing-a-stack.md)** — the form you get when you open a stack: the three ways
-  to look at the same file, what the sections do, the note under each box, the two marks, and what
-  saving does and does not change.
+  to look at the same file, what the sections do, ports on a container with its own address, the
+  note under each box, the two marks, and what saving does and does not change.
 - **[Hiding your values for a screenshot](hiding-your-values.md)** — the Sanitise tick that hides
   the values you marked secret while you photograph the editor, exactly what it leaves showing, what
   it switches off while it is on, and the one tab it cannot cover.
