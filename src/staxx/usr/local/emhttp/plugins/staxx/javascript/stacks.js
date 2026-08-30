@@ -236,10 +236,12 @@
   var settingsMsg    = document.getElementById('staxx-settings-msg');
   var settingsCancel = document.getElementById('staxx-settings-cancel');
   var settingsSave   = document.getElementById('staxx-settings-save');
-  // StaXXCrypt's own state (PLAN_74 Part A piece 3) — a sibling of the body
-  // rather than one of its rows, since Save/Cancel/dirty-tracking do not
-  // apply to it: nothing here is a setting, only a report and a button.
-  var settingsCryptBox = document.getElementById('staxx-crypt-state');
+  // StaXXCrypt's own state (PLAN_74 Part A piece 3) — script builds this
+  // element fresh inside the settings body every time the panel opens (it
+  // sits right after the CRYPT_MODE row, not as a fixed row of its own), so
+  // it cannot be captured once at page load the way the rest of these are —
+  // a lookup at use time instead.
+  function settingsCryptBox() { return document.getElementById('staxx-crypt-state'); }
 
   // PLAN_68 Part B — where the data store should live. May be null on a
   // stale page, guarded the same way settingsModal is above.
@@ -581,12 +583,16 @@
     // Add button on an empty group has to write (PLAN_7.md's condition:
     // service_started rule leaves no way to write a bare short-form add here
     // anyway once nothing exists yet to copy the shape from).
-    var longForm = false, shortForm = false;
+    var longForm = false, shortForm = false, portsOther = false;
     for (i = 0; i < fields.length; i++) {
       var df = fields[i];
       if (df.service !== serviceName) continue;
       if (df.binder === 'depends' && !df.fold) longForm = true;
       else if (df.binder === 'list' && df.listKey === 'depends_on') shortForm = true;
+      // Every port on one service shares the same network, so the first one
+      // found tells us all of them do — checked here rather than off
+      // svc.netKind because this function only has fields to look at.
+      else if (df.binder === 'port') portsOther = portsOther || df.netKind === 'other';
     }
     for (i = 0; i < head.length; i++) {
       if (head[i].key !== 'depends') continue;
@@ -597,6 +603,18 @@
         : { key: 'depends', heading: 'Depends on', cls: 'staxx-formgroup--single',
             add: 'list:depends_on', flag: 'depends' };
       break;
+    }
+    // Macvlan/ipvlan only: the outer box is gone from every port row (see
+    // fieldHtml's mapped branch), so the heading naming it has to go too —
+    // blanked rather than removed, so the grid still lines up column for
+    // column with the rows beneath it.
+    if (portsOther) {
+      for (i = 0; i < head.length; i++) {
+        if (head[i].key !== 'port') continue;
+        head[i] = { key: 'port', heading: 'Ports', cls: 'staxx-formgroup--mapped staxx-formgroup--ports',
+                    add: 'port', flag: 'port', cols: ['', 'Container', 'protocol', 'Notes'] };
+        break;
+      }
     }
     return head.concat(tail);
   }
@@ -2844,6 +2862,17 @@
     for (var i = 0; i < advice.length; i++) {
       out += '<p class="staxx-fieldnote">' + esc(advice[i]) + '</p>';
     }
+    // Ports on a macvlan/ipvlan service only: the outer box is hidden (see
+    // the mapped branch of fieldHtml()) because the model's own advice above
+    // already says the outer number is ignored, but rule 2 forbids hiding a
+    // value the author wrote without saying where it went — so if the file
+    // still sets one, say so and point at where it can still be seen.
+    if (f.binder === 'port' && f.netKind === 'other' &&
+        f.parts.host && f.parts.host.value) {
+      out += '<p class="staxx-fieldnote">The file also sets ' + esc(f.parts.host.value) +
+             ' on the server side. It is ignored on this kind of network; edit it in ' +
+             'the Compose view if you want it gone.</p>';
+    }
     // Networks only (declareMissing is set nowhere else — see the 1e loop in
     // compose-model.js): one click writes the missing network's whole
     // declaration, so the advice above gets a fix rather than leaving the
@@ -3319,9 +3348,15 @@
       }
       // Only a volume gets the folder picker. A port is a number, so browsing
       // for one would be a button that never finds what you came for.
-      bits.push(boxHtml(f, index, 'host',
-                f.binder === 'port' ? 'port on the server' : 'path on the server',
-                f.binder === 'volume' ? 'browse' : ''));
+      // A port on a macvlan/ipvlan service has no outer number to set — the
+      // container has its own address, so Docker never looks at this side —
+      // so the box is replaced with the same blank-cell placeholder an empty
+      // grid track uses elsewhere, keeping the row's five columns aligned.
+      bits.push(f.binder === 'port' && f.netKind === 'other'
+                ? '<span class="staxx-boxgap" aria-hidden="true"></span>'
+                : boxHtml(f, index, 'host',
+                    f.binder === 'port' ? 'port on the server' : 'path on the server',
+                    f.binder === 'volume' ? 'browse' : ''));
       // A mount someone deliberately made read-only has to keep saying so.
       // The row lost its title, so the badge moves in beside the path it
       // qualifies rather than disappearing with it.
@@ -7625,6 +7660,15 @@
 
   var cryptState        = null;   // last known crypt-state reply, or null before the first fetch
   var cryptStatePromise = null;   // in-flight fetch, so a second call while one is running joins it
+
+  // The "Show the recipe" disclosure — fetched once, on first press, not on
+  // every settings open: cryptRecipe holds the reply (or cryptRecipeError a
+  // reason it could not be read), cryptRecipeOpen just tracks whether the
+  // disclosure is currently expanded so a state refresh mid-panel does not
+  // collapse it back shut under the person.
+  var cryptRecipe       = null;
+  var cryptRecipeError  = null;
+  var cryptRecipeOpen   = false;
 
   function cryptFetchState(force) {
     if (force) { cryptState = null; cryptStatePromise = null; }
@@ -20246,7 +20290,7 @@
   // chose to run — and never removed by a button in what follows: that is
   // the person's own move, in their own time.
   function renderCryptSettings() {
-    var box = settingsCryptBox;
+    var box = settingsCryptBox();
     if (!box) return;
     var s = cryptState;
     if (!s) { box.hidden = true; return; }
@@ -20326,11 +20370,57 @@
             '</div>'
           : '');
 
+    // "We don't want to hide anything from users that would make them
+    // question the safety of what they have installed" — so the recipe is
+    // one press away rather than tucked behind a separate page, and it shows
+    // the real Dockerfile and the real `docker create` flags, not a summary
+    // of them.
+    var recipeBodyHtml = '';
+    if (cryptRecipeOpen) {
+      if (cryptRecipeError) {
+        recipeBodyHtml = '<p class="staxx-hint">' + esc(cryptRecipeError) + '</p>';
+      } else if (cryptRecipe) {
+        recipeBodyHtml =
+          '<p class="staxx-hint">This is exactly what gets built — nothing is fetched pre-built. ' +
+          'The container it makes runs with no network connection and a read-only filesystem, ' +
+          'which is what the command below actually asks for.</p>' +
+          '<pre class="staxx-crypt-recipe-pre">' + esc(cryptRecipe.dockerfile) + '</pre>' +
+          '<p class="staxx-hint">The two commands run against it — the first builds the image, ' +
+          'the second makes the container:</p>' +
+          '<pre class="staxx-crypt-recipe-pre">' + esc(cryptRecipe.build) + '</pre>' +
+          '<pre class="staxx-crypt-recipe-pre">' + esc(cryptRecipe.create) + '</pre>';
+      } else {
+        recipeBodyHtml = '<p class="staxx-hint">Reading the recipe…</p>';
+      }
+    }
+    var recipeHtml =
+      '<div class="staxx-crypt-line">' +
+        '<button type="button" class="staxx-link-btn" id="staxx-crypt-recipe-toggle">' +
+        (cryptRecipeOpen ? 'Hide the recipe' : 'Show the recipe') + '</button>' +
+        recipeBodyHtml +
+      '</div>';
+
     box.innerHTML =
       '<div class="staxx-crypt-line">' + factsHtml + formatsHtml + '</div>' +
-      noticeHtml + buildHtml +
+      noticeHtml + buildHtml + recipeHtml +
       '<p class="staxx-hint">Not shown in the Stacks or Container lists — StaXXCrypt is StaXX\'s ' +
       'own plumbing, not an application you chose to run.</p>';
+  }
+
+  // Toggles the recipe disclosure and fetches it the first time it opens —
+  // never on every settings open, since the text never changes between
+  // builds. A second toggle open re-shows the cached copy rather than
+  // fetching again.
+  function toggleCryptRecipe() {
+    cryptRecipeOpen = !cryptRecipeOpen;
+    if (cryptRecipeOpen && !cryptRecipe && !cryptRecipeError) {
+      call('crypt-recipe', {}).then(function (res) {
+        if (res && res.ok) cryptRecipe = res;
+        else cryptRecipeError = (res && res.error) || 'Could not read the recipe.';
+        renderCryptSettings();
+      });
+    }
+    renderCryptSettings();
   }
 
   // Runs a build or rebuild started from the Settings panel and follows it
@@ -20357,18 +20447,12 @@
     });
   }
 
-  if (settingsCryptBox) {
-    settingsCryptBox.addEventListener('click', function (event) {
-      if (event.target.closest('#staxx-crypt-build')) {
-        runCryptJob('crypt-build', 'Building…');
-      } else if (event.target.closest('#staxx-crypt-rebuild')) {
-        runCryptJob('crypt-rebuild', 'Rebuilding…');
-      }
-    });
-  }
+  // The crypt block's own clicks are handled by the delegated
+  // settingsBody listener below — it is built by script after the panel
+  // opens, so nothing here can be listened on directly at load time.
 
   function loadCryptState() {
-    if (!settingsCryptBox) return;
+    if (!settingsCryptBox()) return;
     cryptFetchState().then(renderCryptSettings);
     renderCryptSettings();   // paint whatever is already cached immediately, do not wait on the fetch
   }
@@ -20504,7 +20588,13 @@
       settingsMsg.textContent = '';
       settingsMsg.classList.remove('staxx-settings-msg--bad');
       settingsBody.innerHTML = SETTINGS_ROWS.map(function (row) {
-        return settingsFieldHtml(row, res.settings[row.key] || '');
+        var html = settingsFieldHtml(row, res.settings[row.key] || '');
+        // PLAN_74 Part A piece 3, moved per feedback: StaXXCrypt's own state
+        // belongs right under the setting that governs it, not pinned to the
+        // bottom of the whole panel however far you have scrolled past it.
+        // Not a row of SETTINGS_ROWS itself — see settingsCryptBox() above.
+        if (row.key === 'CRYPT_MODE') html += '<div class="staxx-crypt" id="staxx-crypt-state" hidden></div>';
+        return html;
       }).join('') +
         // PLAN_83: nothing here is a setting to save — pressing it reads and
         // checks every stack there and then, so it sits as its own action
@@ -20624,6 +20714,18 @@
       }
       if (event.target.closest('#staxx-scaffold-sweep')) {
         runScaffoldSweep();
+        return;
+      }
+      if (event.target.closest('#staxx-crypt-build')) {
+        runCryptJob('crypt-build', 'Building…');
+        return;
+      }
+      if (event.target.closest('#staxx-crypt-rebuild')) {
+        runCryptJob('crypt-rebuild', 'Rebuilding…');
+        return;
+      }
+      if (event.target.closest('#staxx-crypt-recipe-toggle')) {
+        toggleCryptRecipe();
         return;
       }
       /* Opened on top of Settings rather than instead of it: nothing here is

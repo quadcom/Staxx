@@ -251,7 +251,7 @@ $staxxSafeWithoutStore = [
   'images', 'tags', 'hub-search', 'image-facts',
   'ca-refresh', 'ca-search', 'ca-home', 'ca-app',
   'probe', 'webui-test', 'ping',
-  'crypt-state', 'crypt-build', 'crypt-rebuild', 'crypt-hash',
+  'crypt-state', 'crypt-build', 'crypt-rebuild', 'crypt-hash', 'crypt-recipe',
   // PLAN_97 Phase 2 — the first-run dialog's own actions. These are how a
   // store gets chosen in the first place, so they have to work before one
   // exists, same as 'settings-save' above.
@@ -2359,6 +2359,13 @@ switch ($action) {
   // ---- everything Settings and the editor's hash panel need to draw ----
   case 'crypt-state':
     staxx_reply(['ok' => true, 'state' => staxx_crypt_state()]);
+
+  // ---- the Dockerfile and the create command, verbatim, for "Show the recipe" ----
+  case 'crypt-recipe':
+    $recipe = staxx_crypt_recipe();
+    if (!$recipe['ok']) staxx_reply(['ok' => false, 'error' => $recipe['error']]);
+    staxx_reply(['ok' => true, 'dockerfile' => $recipe['dockerfile'],
+                 'build' => $recipe['build'], 'create' => $recipe['create']]);
 
   // ---- build the container for the first time; only ever called by a button press ----
   case 'crypt-build':

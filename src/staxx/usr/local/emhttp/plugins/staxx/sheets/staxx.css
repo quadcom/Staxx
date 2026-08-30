@@ -8220,16 +8220,17 @@
 
 /* ---- StaXXCrypt state (PLAN_74 Part A piece 3) --------------------------
  *
- * Sits between the settings body and its foot, filled entirely by script:
- * built/not-built, running, recipe version, the last self-test's per-format
- * results, and the build/rebuild button. Same border-top-as-divider idiom
- * as .staxx-settings-group above, since it is one more section of the same
- * panel rather than a dialog of its own.
+ * Sits inside the settings body, straight after the CRYPT_MODE row it
+ * reports on — filled entirely by script: built/not-built, running, recipe
+ * version, the last self-test's per-format results, the build/rebuild
+ * button, and the recipe disclosure. Indented with a left border rather
+ * than the settings-group border-top divider above, so it reads as
+ * belonging to the row above it rather than as a section of its own.
  */
 .staxx-crypt {
-  flex: 0 0 auto;
-  padding: 1.2rem 1.4rem 0;
-  border-top: 0.1rem solid var(--sm-line);
+  margin: -0.6rem 0 1.4rem 0.2rem;
+  padding: 0.6rem 0 0 1.2rem;
+  border-left: 0.2rem solid var(--sm-line);
 }
 
 .staxx-crypt[hidden] {
@@ -8287,6 +8288,21 @@
   align-items: center;
   gap: 0.8rem;
   margin-bottom: 1.2rem;
+}
+
+/* The recipe disclosure's own text — a real file and a real command, shown
+   whole. overflow-x is local to the block so a long Dockerfile line scrolls
+   inside it rather than the settings panel itself scrolling sideways. */
+.staxx-crypt-recipe-pre {
+  margin: 0.6rem 0;
+  padding: 0.8rem 1rem;
+  overflow-x: auto;
+  background: var(--sm-fill-0);
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.15rem;
+  white-space: pre;
 }
 
 .staxx-settings-foot {
