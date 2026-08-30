@@ -232,8 +232,15 @@ a decision, not an omission — do not do work towards it unasked.
 **The packaging chain itself is complete, and the manifest is the way in people should be pointed
 at.** Paste the manifest address into Unraid's **Plugins → Install Plugin** box and it installs like
 any other plugin: it survives a reboot, and Unraid notices later versions because it re-reads the
-manifest from `main`. The by-hand bundle still exists and is what Adrian runs day to day, but it is
-now the *secondary* route — ahead of the releases, less tested, and gone at the next reboot.
+manifest from `main`. **That is the only install route a user is ever shown.**
+
+**The copy-to-flash-and-run-the-script route is development tooling, and stays out of anything a
+user reads** — the same rule the test suites are under. It is how Adrian and every agent deploy to
+the test box, and it is worth keeping precisely because it is the opposite of a release: no build,
+no commit, no tag, no version number, and it will carry uncommitted work. It also does not survive
+a reboot, which is a feature here rather than a shortcoming, since a reboot is the panic button when
+a change breaks the webGUI. It belongs in this file and in `local/dev-server.md`; it does not belong
+in `README.md`, in `docs/`, or in a release note.
 
 **The manifest install route now exists, but it is a separate act from an ordinary change.**
 `pkg_build.sh` builds the real `.txz`, and `staxx.plg` carries a real version, real checksums and a
@@ -250,9 +257,17 @@ manifest route worked at 1.1.0 — it was `v1.2.0` that was cut without running 
 the manifest naming a package nobody uploaded and still carrying 1.1.0's two checksums. That is the
 exact failure `publish.yml`'s agreement checks exist to make impossible.
 
-CI (`release.yml`) publishes a rolling pre-release per push carrying `staxx-main.tar.gz` — that is
-the tarball the by-hand route uses, and it is a different thing from the `.txz` a tagged release
-carries. The two workflows are deliberately separate and neither should grow into the other.
+CI (`release.yml`) publishes a rolling pre-release per push carrying `staxx-main.tar.gz`. That is
+the deploy bundle described above, not a release anybody installs on purpose, and it is a different
+thing from the `.txz` a tagged release carries. The two workflows are deliberately separate and
+neither should grow into the other.
+
+**What the deploy route cannot prove**, and so is worth an occasional real install: the manifest's
+own install and removal scripts. `dev-install.sh` mirrors the parts that matter day to day — seeding
+the config, running `apply_settings`, writing the registration marker — but the legacy
+`stack.manager` → `staxx` settings migration, the older-package cleanup, and the whole removal path
+only ever run through a genuine plugin install. The migration is the one that touches somebody's
+existing settings, so it is the one worth actually exercising rather than reasoning about.
 
 ## Version policy
 
