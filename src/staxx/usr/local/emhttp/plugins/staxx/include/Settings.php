@@ -60,6 +60,11 @@ function staxx_settings_keys(): array {
     // dialog keys off. Nothing is offered as a default here, because any
     // default would put data somewhere before anybody agreed to it.
     'STORE_ROOT'          => ['type' => 'path',   'default' => ''],
+    // PLAN_103 — a plain copy of every stack's compose file kept on the boot
+    // drive, so losing the data store never means losing every stack's
+    // definition. Not in STAXX_FLASH_KEYS: this only ever gates a copy step,
+    // it is never needed before the store is reachable.
+    'BOOT_COPY'           => ['type' => 'choice', 'default' => 'true',  'choices' => ['true', 'false']],
     /* Does the folder picker narrow itself down when choosing where the
      * stacks live, and are the placement rules refusals or warnings?
      *
