@@ -1328,7 +1328,7 @@
    and those two are sized by every other row on the page, not by this one.
    An unwrapped strip would have inflated all of them. */
 /* The gap BETWEEN stacks has to beat the overlap WITHIN one, or the grouping
-   says nothing: at a 5px overlap and the old 4px gap, there was no telling
+   says nothing: at a 10px overlap and the old 4px gap, there was no telling
    where one stack's icons ended and the next stack's began. */
 .staxx-fstrip {
   display: flex;
@@ -1337,16 +1337,34 @@
   align-items: center;
   gap: 1.2rem;
   min-width: 0;
+  /* Shared by every .staxx-fgroup/-cell below: sizes and spacing that never
+     vary per stack, so only the numbers that DO vary (how many cells show,
+     what shape the exploded grid is) need to travel as inline custom
+     properties on the item and its cells. Kept local to the strip rather
+     than promoted onto the plugin-wide --sm-* scope, since nothing outside
+     this feature reads them. */
+  --fg-cell: 2.6rem;
+  --fg-overlap: 1rem;  /* 10px: Unraid sets 62.5% on the root */
+  --fg-gap: 0.4rem;
+  --fg-pad: 0.3rem;
+  --fg-step: calc(var(--fg-cell) - var(--fg-overlap));
 }
 
-/* Just a wrapper now: the fixed size, clipping and rounding moved onto
-   .staxx-fgroup-cell below, since one item can hold several overlapping
-   cells rather than always exactly one. */
+/* Sized to its own collapsed footprint — --fg-shown, set inline per stack in
+   the markup — rather than to whatever .staxx-fgroup happens to need at the
+   moment: .staxx-fgroup is always position: absolute below, so an in-flow
+   parent would otherwise collapse to nothing the instant it floats free to
+   explode on hover, shunting every stack after it sideways. position:
+   relative is what anchors that absolute child to THIS box rather than to
+   the strip or the row. */
 .staxx-fstrip-item {
+  position: relative;
   display: inline-flex;
   align-items: center;
   font-size: 1.4rem;
   line-height: 1;
+  width: calc((var(--fg-shown) - 1) * var(--fg-step) + var(--fg-cell));
+  height: var(--fg-cell);
 }
 
 /* A stopped stack, so the strip doubles as a reading of what is running in a
@@ -1357,25 +1375,67 @@
   filter: grayscale(1);
 }
 
-/* One stack's icons, each at full size, just touching each other so they read
-   as one group belonging to one stack rather than as loose neighbours. The
-   overlap is what says "these belong together"; it is not a space-saving
-   measure, and the cap of three cells is what actually holds the width down.
-   A single-service stack — most of them — is a group of one, so it looks the
-   same as a lone icon always did. */
+/* Opacity below 1 always opens its own stacking context (position alone does
+   not), which would otherwise trap a stopped stack's exploded panel under
+   whatever plain row happens to follow it in the table — its z-index would
+   only ever be compared against its OWN children, never against later
+   siblings. z-index on the item itself, not just the panel inside it, is
+   what lifts the whole item — panel included — into .staxx-table-wrap's own
+   stacking order instead, so a running and a stopped stack explode the same
+   way. */
+.staxx-fstrip-item:hover {
+  z-index: 20;
+}
+
+/* One stack's icons. Always position: absolute, in both states, rather than
+   toggled on hover: toggling would only move the "where does the collapsed
+   size come from" problem from the item onto the group, which is exactly
+   what the item's own fixed width above already exists to settle once.
+   Collapsed, this just fills the item; width, height, background and border
+   are what grow and fade in on hover, and all four are continuously
+   animatable, so nothing here needs a discrete transition at all. */
 .staxx-fgroup {
-  display: inline-flex;
-  align-items: center;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: 0.1rem solid transparent;
+  border-radius: var(--sm-radius);
+  transition: width var(--sm-motion-slow) var(--sm-ease),
+              height var(--sm-motion-slow) var(--sm-ease),
+              left var(--sm-motion-slow) var(--sm-ease),
+              top var(--sm-motion-slow) var(--sm-ease),
+              background-color var(--sm-motion-slow) var(--sm-ease),
+              border-color var(--sm-motion-slow) var(--sm-ease);
+}
+
+/* Grown around roughly where the collapsed group sat: shifted out by
+   --fg-pad on both axes rather than spawned at a fresh corner, so the eye
+   never has to jump to find it, and padded so the icons don't end up flush
+   against the panel edge they've just gained. Solid fill and border are what
+   read this as a floating panel rather than loose icons hanging in space;
+   both start transparent above so the panel fades in rather than snapping
+   into view. */
+.staxx-fstrip-item:hover .staxx-fgroup {
+  left: calc(-1 * var(--fg-pad));
+  top: calc(-1 * var(--fg-pad));
+  width: calc(var(--fg-cols) * var(--fg-cell) + (var(--fg-cols) - 1) * var(--fg-gap) + 2 * var(--fg-pad));
+  height: calc(var(--fg-rows) * var(--fg-cell) + (var(--fg-rows) - 1) * var(--fg-gap) + 2 * var(--fg-pad));
+  background: var(--sm-bg);
+  border-color: var(--sm-line);
 }
 
 .staxx-fgroup-cell {
-  position: relative;
+  position: absolute;
+  left: 0;
+  top: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
-  width: 2.6rem;
-  height: 2.6rem;
+  width: var(--fg-cell);
+  height: var(--fg-cell);
   overflow: hidden;
   border-radius: 0.4rem;
   /* Solid, not one of the translucent --sm-fill tokens: the folder row's own
@@ -1384,26 +1444,48 @@
      as separate objects. */
   background: var(--sm-bg);
   border: 0.1rem solid var(--sm-line);
+  /* --fg-i is which slot this cell stacks into while collapsed — a
+     transform, not a margin, so the same property can carry it out to its
+     exploded grid position below without a second, conflicting way of moving
+     it. Normal document order already paints a later cell over an earlier
+     one, which is the leftmost-underneath order wanted here, so nothing
+     further is needed to get it. */
+  transform: translate(calc(var(--fg-i) * var(--fg-step)), 0);
+  transition: transform var(--sm-motion-slow) var(--sm-ease);
 }
 
-/* Five pixels, not a third of a cell: the icons are meant to just touch, the
-   way a stack of cards sitting almost square on each other does, rather than
-   fan out. Unraid sets 62.5% on the root, so 0.5rem is 5px here. */
-.staxx-fgroup-cell + .staxx-fgroup-cell {
-  margin-left: -0.5rem;
+/* Every icon cell, shown collapsed or not, travels to its exploded slot on
+   hover — --fg-x/--fg-y are that cell's column and row, turned into the same
+   pixel step the panel's own size above is built from. The collapsed-only
+   chip is excluded: it never had a grid slot to travel to. */
+.staxx-fstrip-item:hover .staxx-fgroup-cell:not(.staxx-fgroup-cell--capchip) {
+  transform: translate(
+    calc(var(--fg-x) * (var(--fg-cell) + var(--fg-gap)) + var(--fg-pad)),
+    calc(var(--fg-y) * (var(--fg-cell) + var(--fg-gap)) + var(--fg-pad))
+  );
 }
 
-/* The leftmost cell sits on top, each one after it tucked behind — normal
-   document order paints LATER siblings on top, the opposite of what is
-   wanted here, so it has to be said explicitly. A row-reverse layout could
-   get the same result from paint order alone, but that only works if the
-   markup emits cells in reverse too, and reasoning through which physical
-   margin then produces the overlap — with no browser here to check it
-   against — was more likely to end up wrong than three plain rules are.
-   Capped at three cells, so three rules is all this ever needs. */
-.staxx-fgroup-cell:nth-child(1) { z-index: 3; }
-.staxx-fgroup-cell:nth-child(2) { z-index: 2; }
-.staxx-fgroup-cell:nth-child(3) { z-index: 1; }
+/* Real icons past the collapsed cap, and the exploded view's own "+N" chip:
+   invisible and parked at the same slot as the last cell collapsed DOES
+   show, so hovering reads as them sliding out from under the stack rather
+   than appearing from nowhere. */
+.staxx-fgroup-cell--reveal {
+  opacity: 0;
+  transition: transform var(--sm-motion-slow) var(--sm-ease),
+              opacity var(--sm-motion) var(--sm-ease);
+}
+
+.staxx-fstrip-item:hover .staxx-fgroup-cell--reveal {
+  opacity: 1;
+}
+
+/* The collapsed view's own "+N" chip, shown only when there are more icons
+   than the three-cell cap allows: it has nowhere to explode TO, since the
+   exploded view has room for everything it was hiding, so hovering just
+   fades it out where it already sits rather than moving it anywhere. */
+.staxx-fstrip-item:hover .staxx-fgroup-cell--capchip {
+  opacity: 0;
+}
 
 .staxx-fgroup-cell img {
   width: 100%;

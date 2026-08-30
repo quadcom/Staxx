@@ -956,37 +956,93 @@ function staxx_stack_icon_tiles(array $s, array $kids): array {
 
 /**
  * A stack's icons at strip size: every distinct service icon in one
- * overlapping cluster, drawn the way a group of profile photos is — each
- * partly covering the next — rather than the row's own tiled mosaic. Shares
+ * overlapping cluster that spreads into a small grid on hover ("exploded
+ * view") rather than sitting in the row's own tiled mosaic. Shares
  * staxx_stack_tile()'s collapsing rule via staxx_stack_icon_tiles(), so this
  * can never disagree with the row about what counts as "the same picture".
  *
- * The cells only just touch — a few pixels of overlap, enough to read as one
- * group belonging to one stack. That is why the strip's own gap between
- * stacks is wider than the overlap inside one: with the two alike there was
- * no telling where one stack's icons ended and the next stack's began.
+ * Two different caps, because the collapsed and exploded views show
+ * different numbers of icons from the same list:
+ *   - collapsed keeps the strip's long-standing cap of three cells: two
+ *     icons plus a "+N" chip once there are more, since a stack repeats once
+ *     per row of an already-wrapping folder list and a fourth cell here
+ *     costs vertical space the row's own mosaic never spends.
+ *   - exploded has the room a hover affords: every icon up to a full 3x3
+ *     grid (ceil(sqrt(n)) columns, capped at 3), and only past nine does IT
+ *     also fall back to a chip, in the ninth cell rather than the third.
  *
- * Capped at three rather than the row mosaic's four: this strip repeats once
- * per stack across a folder row that already wraps onto further lines, so a
- * fourth cell here costs vertical space the single row tile never spends.
+ * Every cell either view could ever need is emitted every time — up to nine
+ * icon cells, plus the exploded chip should there be more, plus the
+ * collapsed chip should there be more than three — and CSS alone decides
+ * which are visible and where they sit. That is what lets hovering animate:
+ * nothing already on the page changes what markup exists, only how it is
+ * placed.
+ *
+ * Each cell carries its own position as inline custom properties, since a
+ * rule keyed to one fixed icon count could not cover every stack: --fg-i is
+ * which slot it stacks into while collapsed, --fg-x/--fg-y are its exploded
+ * column and row. The three numbers that size the surrounding boxes —
+ * --fg-shown, --fg-cols, --fg-rows — come back alongside the markup rather
+ * than baked into it, because the item that needs them for its own fixed
+ * width is rendered by the caller, not this function.
  *
  * @param array $kids from staxx_stack_children()
+ * @return array{html: string, shown: int, cols: int, rows: int}
  */
-function staxx_stack_strip_tile(array $s, array $kids): string {
+function staxx_stack_strip_tile(array $s, array $kids): array {
   if (!$kids) {
-    return '<span class="staxx-fgroup"><span class="staxx-fgroup-cell"><i class="fa fa-cubes"></i></span></span>';
+    return [
+      'html' => '<span class="staxx-fgroup" style="--fg-cols:1;--fg-rows:1">'
+              . '<span class="staxx-fgroup-cell" style="--fg-i:0;--fg-x:0;--fg-y:0">'
+              . '<i class="fa fa-cubes"></i></span></span>',
+      'shown' => 1, 'cols' => 1, 'rows' => 1,
+    ];
   }
 
   $tiles = staxx_stack_icon_tiles($s, $kids);
+  $n     = count($tiles);
 
-  $extra = count($tiles) - 3;
-  if ($extra > 0) {
-    $tiles = array_slice($tiles, 0, 2);
-    $tiles[] = '<span class="staxx-tile staxx-tile--more">+'.($extra + 1).'</span>';
+  // Collapsed: two icons, or every icon when there are three or fewer.
+  $capShown = $n > 3 ? 2 : $n;
+  $capExtra = $n - $capShown; // icons the collapsed chip stands in for
+
+  // Exploded: every icon up to nine, or eight plus a chip beyond that.
+  $expShown = $n > 9 ? 8 : $n;
+  $expExtra = $n - $expShown; // icons the exploded chip stands in for
+
+  $cols = min(3, (int)ceil(sqrt(min($n, 9))));
+  $rows = (int)ceil(($expShown + ($expExtra > 0 ? 1 : 0)) / $cols);
+
+  // Cells past the collapsed cap park behind the last one collapsed DOES
+  // show, so hovering reads as them sliding out from under the stack rather
+  // than appearing from nowhere.
+  $parkAt = max($capShown - 1, 0);
+
+  $cells = [];
+  for ($i = 0; $i < $expShown; $i++) {
+    $reveal = $i >= $capShown ? ' staxx-fgroup-cell--reveal' : '';
+    $cells[] = '<span class="staxx-fgroup-cell'.$reveal.'" style="--fg-i:'
+             . min($i, $parkAt).';--fg-x:'.($i % $cols).';--fg-y:'.intdiv($i, $cols).'">'
+             . $tiles[$i].'</span>';
+  }
+  if ($expExtra > 0) {
+    $i = $expShown;
+    $cells[] = '<span class="staxx-fgroup-cell staxx-fgroup-cell--reveal" style="--fg-i:'
+             . $parkAt.';--fg-x:'.($i % $cols).';--fg-y:'.intdiv($i, $cols).'">'
+             . '<span class="staxx-tile staxx-tile--more">+'.$expExtra.'</span></span>';
+  }
+  if ($capExtra > 0) {
+    $cells[] = '<span class="staxx-fgroup-cell staxx-fgroup-cell--capchip" style="--fg-i:'.$capShown.'">'
+             . '<span class="staxx-tile staxx-tile--more">+'.$capExtra.'</span></span>';
   }
 
-  $cells = array_map(function ($t) { return '<span class="staxx-fgroup-cell">'.$t.'</span>'; }, $tiles);
-  return '<span class="staxx-fgroup">'.implode('', $cells).'</span>';
+  return [
+    'html'  => '<span class="staxx-fgroup" style="--fg-cols:'.$cols.';--fg-rows:'.$rows.'">'
+             . implode('', $cells) . '</span>',
+    'shown' => $capShown + ($capExtra > 0 ? 1 : 0),
+    'cols'  => $cols,
+    'rows'  => $rows,
+  ];
 }
 
 /**
@@ -1388,14 +1444,25 @@ function staxx_render_rows(array $rows, bool $canRun): string {
               if ($fMembers):
             ?>
             <div class="staxx-fstrip" aria-hidden="true">
-              <? foreach ($fMembers as $fs): ?>
+              <? foreach ($fMembers as $fs):
+                   // The three sizing numbers travel on the ITEM, not just the
+                   // group inside it: the item's own width has to be fixed
+                   // before the group inside it is free to explode on hover.
+                   $fStrip = $fs['parses']
+                     ? staxx_stack_strip_tile($fs, staxx_stack_children($fs))
+                     : [
+                         'html' => '<span class="staxx-fgroup" style="--fg-cols:1;--fg-rows:1">'
+                                 . '<span class="staxx-fgroup-cell" style="--fg-i:0;--fg-x:0;--fg-y:0">'
+                                 . '<i class="fa fa-exclamation-triangle"></i></span></span>',
+                         'shown' => 1, 'cols' => 1, 'rows' => 1,
+                       ];
+              ?>
                 <span class="staxx-fstrip-item"
                       data-fstrip-stack="<?= htmlspecialchars($fs['name']) ?>"
                       data-running="<?= $fs['running'] ? '1' : '0' ?>"
-                      title="<?= htmlspecialchars($fs['leaf']) ?>">
-                  <?= $fs['parses']
-                        ? staxx_stack_strip_tile($fs, staxx_stack_children($fs))
-                        : '<span class="staxx-fgroup"><span class="staxx-fgroup-cell"><i class="fa fa-exclamation-triangle"></i></span></span>' ?>
+                      title="<?= htmlspecialchars($fs['leaf']) ?>"
+                      style="--fg-shown:<?= $fStrip['shown'] ?>;--fg-cols:<?= $fStrip['cols'] ?>;--fg-rows:<?= $fStrip['rows'] ?>">
+                  <?= $fStrip['html'] ?>
                 </span>
               <? endforeach; ?>
             </div>
