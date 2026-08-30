@@ -494,7 +494,7 @@ endif;
             </div>
             <div class="staxx-pwgen-strength" id="staxx-pwgen-strength"></div>
             <div class="staxx-pwgen-row staxx-pwgen-valuerow">
-              <input type="text" id="staxx-pwgen-value" readonly spellcheck="false" <?= $nofill ?>>
+              <input type="text" id="staxx-pwgen-value" spellcheck="false" placeholder="<?= _('Generated, or type your own') ?>" <?= $nofill ?>>
               <button type="button" class="staxx-btn" id="staxx-pwgen-regen" title="<?= _('Generate another') ?>">
                 <i class="fa fa-refresh" aria-hidden="true"></i> <?= _('Regenerate') ?>
               </button>
