@@ -634,7 +634,10 @@ switch ($action) {
       'note'         => $note,
       'suggest'      => $suggest,
       'marked'       => $bundle['marked'],
-      'placeholders' => substr_count($bundle['compose']['text'], STAXX_PLACEHOLDER),
+      // Counted over the real lines only. The covering note names the
+      // placeholder twice in its own explanation, so a plain count of the
+      // whole file reports two more values needing filling in than there are.
+      'placeholders' => staxx_bundle_placeholders($bundle['compose']['text']),
     ]);
 
   case 'bundle-import':

@@ -5245,6 +5245,23 @@ function staxx_bundle_read(string $bytes, string &$error): ?array {
 }
 
 /**
+ * How many values in a bundle's compose file still need filling in.
+ *
+ * Comment lines are skipped: the covering note an export writes names the
+ * placeholder twice while explaining it, so counting the whole file reports
+ * two more outstanding values than the file actually has.
+ */
+function staxx_bundle_placeholders(string $composeText): int {
+  $n = 0;
+  foreach (explode("
+", $composeText) as $line) {
+    if (substr(ltrim($line), 0, 1) === '#') continue;
+    $n += substr_count($line, STAXX_PLACEHOLDER);
+  }
+  return $n;
+}
+
+/**
  * Create a new stack from a bundle staxx_bundle_read() already validated.
  * Never merges into or overwrites an existing stack — staxx_create_refusal()
  * is the same gate "Add stack" uses, called the same way it always refuses a
