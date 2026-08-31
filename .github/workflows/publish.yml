@@ -131,6 +131,20 @@ jobs:
             *)      echo "CHANNEL=main" >> "$GITHUB_ENV"; echo "CHANNEL_BRANCH=main" >> "$GITHUB_ENV" ;;
           esac
 
+      # Every component is two digits, always. Unraid compares versions as
+      # text, so fixed-width fields are the only thing that makes text order
+      # and number order the same: unpadded, 1.10.0 sorts BELOW 1.5.0 and
+      # updates silently stop being offered to everybody. Padding also keeps
+      # the whole scheme clear of the tag names burnt while releases were
+      # immutable, since 01.02.00 is not 1.2.0.
+      - name: Check the version is the padded shape
+        run: |
+          BASE="${VERSION%%_dev*}"
+          if ! echo "${BASE}" | grep -qE '^[0-9]{2}[.][0-9]{2}[.][0-9]{2}$'; then
+            echo "::error::${VERSION} is not the padded shape. Every component is two digits: 00.01.00, 01.00.00, 01.10.00 — and a dev build adds _dev<date> after it. Unpadded numbers sort wrongly as text, which is how updates stop being offered without anyone noticing."
+            exit 1
+          fi
+
       # BEFORE the build, and the ordering is the entire point. pkg_build.sh
       # --update-plg WRITES the version it is handed into the manifest, so
       # anything read afterwards is only the tag echoed back and an agreement
@@ -177,13 +191,17 @@ jobs:
           if [ "${CHANNEL}" = "dev" ]; then
             EXISTING="$(git tag --list 'v*_dev*' | sed 's/^v//')"
           else
-            # The 4-digit filter drops the abandoned dated scheme (versions
-            # were dates up to 2026.08.26). Those sort ABOVE every 1.x under a
-            # text comparison, so leaving them in would refuse every release
-            # for ever. Their real consequence is worse and cannot be fixed
-            # from here: anyone still running a dated build is never offered
-            # a numbered one, because 1.3.0 sorts below 2026.08.26.
-            EXISTING="$(git tag --list 'v*' | sed 's/^v//' | grep -v '_dev' | grep -vE '^[0-9]{4}[.]' || true)"
+            # Only the CURRENT scheme counts. Two abandoned ones sit in the
+            # tag list and both sort wrongly against it: the dated versions
+            # (up to 2026.08.26) sort above every padded number, and the
+            # unpadded 1.x ones sort above 00.x too. Left in, either would
+            # refuse every release for ever. Matching two leading digits and a
+            # dot is what picks out the padded scheme and nothing else.
+            #
+            # Their real consequence cannot be fixed from here: anyone still
+            # running a dated or unpadded build is never offered a padded one.
+            # Nobody is, which is exactly why the switch happened now.
+            EXISTING="$(git tag --list 'v*' | sed 's/^v//' | grep -v '_dev' | grep -E '^[0-9][0-9][.]' || true)"
           fi
 
           HIGHEST="$(echo "${EXISTING}" | LC_ALL=C sort | tail -n1)"

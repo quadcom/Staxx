@@ -1,11 +1,17 @@
 # Changelog
 
-What changed, newest first. Versions match the plugin manifest. From 1.1.0 they are
-numbered; everything before it was dated.
+What changed, newest first. Versions match the plugin manifest.
+
+**Numbering changed at `00.01.00`.** Every component is now two digits, and the count restarted from
+`00.01.00` on the way to `01.00.00` — the first release meant for general use. The padding is not
+decoration: Unraid compares plugin versions as plain text, so `1.10.0` would sort *below* `1.5.0` and
+updates would silently stop being offered. Fixed-width numbers make text order and number order the
+same thing. Everything above `1.1.0` in this file used the old unpadded numbering, and the versions
+before that were dates.
 
 ---
 
-## 1.3.0 — released 2026-08-30
+## 00.01.00 — released 2026-08-30
 
 The release that makes a folder row show you what is actually in it, gives a stack folder with no
 compose file a way to get one, and keeps a copy of every compose file somewhere a dead pool cannot

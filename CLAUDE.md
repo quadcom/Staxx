@@ -269,8 +269,8 @@ Switching is pasting the other one.
 
 | | `main` | `dev` |
 |---|---|---|
-| Version | `1.4.0` | `1.4.0_dev20260830` |
-| Tag | `v1.4.0` | `v1.4.0_dev20260830` |
+| Version | `00.02.00` | `00.02.00_dev20260830` |
+| Tag | `v00.02.00` | `v00.02.00_dev20260830` |
 | Cut how | tag it, deliberately | press the button on `publish.yml`; it dates and tags itself |
 | Release notes | hand-written, checked | generated from commit subjects |
 | Frequency | seldom | often |
@@ -285,15 +285,19 @@ than rediscovered:
   and time order are the same thing. A counter would need padding and would break silently the day it
   overflowed it.
 - **A Slackware package filename cannot hold a hyphen in its version.** `upgradepkg` splits the name
-  on hyphens from the right, so `staxx-1.4.0-dev...-noarch-1.txz` reads as a package *named*
-  `staxx-1.4.0`, and it would stop recognising new packages as replacing the old one. Hence `_dev`.
+  on hyphens from the right, so `staxx-01.04.00-dev...-noarch-1.txz` reads as a package *named*
+  `staxx-01.04.00`, and it would stop recognising new packages as replacing the old one. Hence
+  `_dev`.
 
-**The trap that follows from text comparison, and it is not hypothetical: `1.10.0` sorts BELOW
-`1.5.0`**, because `1` comes before `5` one character in. The day a minor version reaches double
-digits, Unraid silently stops offering updates to everybody. `publish.yml` therefore refuses to
-publish a version that does not sort above the newest release already out on that channel — under
-`LC_ALL=C`, because a locale-aware comparison can reorder punctuation and this has to be the byte
-comparison `strcmp` actually performs.
+**This is why every component is two digits.** Unpadded, `1.10.0` sorts BELOW `1.5.0` — `1` comes
+before `5` one character in — so the day a minor version reached double digits Unraid would silently
+stop offering updates to everybody. Fixed-width fields make text order and number order the same
+thing, and the padded scheme is enforced by `publish.yml` rather than remembered.
+
+Belt and braces on top of that: `publish.yml` also refuses to publish a version that does not sort
+above the newest release already out on that channel, under `LC_ALL=C` — a locale-aware comparison
+can reorder punctuation, and this has to be the byte comparison `strcmp` actually performs. The
+padding should make that gate unreachable; it is there for the day something else is got wrong.
 
 **A live consequence of the same rule, which cannot be fixed from here:** versions were dates up to
 `2026.08.26`, and `2026.08.26` sorts *above* every `1.x`. Anyone still running a dated build will
@@ -302,7 +306,7 @@ would refuse every release for ever — but the people on them, if any exist, ar
 have to reinstall from the manifest address by hand.
 
 One consequence to accept rather than fix: a dev user is never *offered* the stable release, because
-`1.4.0` sorts before `1.4.0_dev20260830` as text. Switching to stable means pasting main's address,
+`00.02.00` sorts before `00.02.00_dev20260830` as text. Switching to stable means pasting main's address,
 which installs it outright. That is a deliberate act, which is the right shape for a channel switch.
 
 **The `branch` entity in `staxx.plg` is the channel switch, and it is per-branch content — treat it
@@ -329,15 +333,22 @@ existing settings, so it is the one worth actually exercising rather than reason
 
 Ordinary semver, and it is enforced by the release workflow rather than left to memory:
 
-- **Patch** (`1.2.1`) — fixes only. Nothing new, and nothing already on disk changes shape.
-- **Minor** (`1.3.0`) — new features. Everything StaXX has already written still reads exactly as
+**Every component is two digits.** `00.01.00`, `01.00.00`, `01.10.00` — never `1.10.0`. This is
+enforced by `publish.yml` and is not a style preference; see the two-channel section above for why
+text comparison makes fixed width the only safe shape. It also keeps the scheme clear of the tag
+names burnt while releases were immutable, since `01.02.00` is not `1.2.0`.
+
+- **Patch** (`00.01.01`) — fixes only. Nothing new, and nothing already on disk changes shape.
+- **Minor** (`00.02.00`) — new features. Everything StaXX has already written still reads exactly as
   before.
-- **Major** (`2.0.0`) — the user must act. Something stored on their server changes shape and needs
-  migrating, or a setting now behaves differently than it did.
+- **Major** (`01.00.00`) — the user must act. Something stored on their server changes shape and
+  needs migrating, or a setting now behaves differently than it did.
+
+`01.00.00` is the first release meant for general use; the `00.xx.xx` line is the run-up to it.
 
 **The number is decided by what has accumulated on `dev`, and it is decided once.** A dev build
-carries the number `main` is heading towards — cut `1.4.0_dev...` and you have declared the next
-stable release to be `1.4.0`. If something landing later turns out to be a major change, the base
+carries the number `main` is heading towards — cut `00.02.00_dev...` and you have declared the next
+stable release to be `00.02.00`. If something landing later turns out to be a major change, the base
 number moves and the next dev build says so; nothing is burnt either way, because a dev tag can
 never collide with the stable tag it is heading towards.
 

@@ -17,7 +17,7 @@
 > its merits. Not on Community Applications, and not meant to be yet — but numbered releases do
 > install the ordinary Unraid way. See [Limitations](#limitations).
 >
-> Version 1.3.0 · [changelog](CHANGELOG.md)
+> Version 00.01.00 · [changelog](CHANGELOG.md)
 
 ## Why this exists
 

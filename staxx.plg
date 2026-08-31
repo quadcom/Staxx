@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "1.3.0">
+<!ENTITY version              "00.01.00">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!-- TODO: point at the real repository before the first release. Left as an
@@ -40,7 +40,7 @@
 >
 
 <CHANGES>
-###1.3.0
+###00.01.00
 - A copy of every compose file is now kept at the top of the flash drive, so a dead pool no longer
   takes the definition of every container you run with it. StaXX never reads that copy while your
   own store is there, and nothing ever comes back from it on its own. One setting turns it off; it
