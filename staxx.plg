@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.02.00">
+<!ENTITY version              "00.02.00_dev20260831">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!-- TODO: point at the real repository before the first release. Left as an
@@ -15,8 +15,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "19c20e152b5e0ac72e55015fecbeaf69">
-<!ENTITY packageSHA256        "665ba7697d91876372cae858a7ca6b7089dbf1d47f109a7a9ab9e95be19e04fb">
+<!ENTITY packageMD5           "206a45885be2ef3e8d0bd75eb781464a">
+<!ENTITY packageSHA256        "2331343752e3577a9d8088ca5cae1191aeb4f9a0ca007b48ee98ba0c78d0e5f7">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -40,6 +40,24 @@
 >
 
 <CHANGES>
+###00.02.00_dev20260831
+- Point dev at 00.02.00, the version main is heading towards
+- Say that the development channel builds itself most nights
+- Cut a dev release each night, but only when dev has earned one
+- Write a dollar sign twice, so a password hash survives the file
+- Name every test suite, not the half somebody remembered
+- Let each service own its picture, and stop the stack claiming one
+- Say that alpha means minor releases and no migrations
+- Write the release runbook down, so neither channel is cut from memory
+- Stamp staxx.plg for v00.01.00
+- Stop the sort gate counting the release it is publishing
+- Pad every version component, and restart the count at 00.01.00
+- Catch a manifest pointing at the wrong channel within a minute, not a release
+- Give dev its own release channel, so it stops burning main's numbers
+- Take the deploy script out of the readme entirely
+- Lead with the plugin install, since that is now the way in
+- Let somebody type their own password, and never leave a hash behind it
+- Stamp staxx.plg for v1.3.0
 ###00.01.00
 - A copy of every compose file is now kept at the top of the flash drive, so a dead pool no longer
   takes the definition of every container you run with it. StaXX never reads that copy while your
@@ -209,7 +227,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.01.00-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.02.00_dev20260831-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
