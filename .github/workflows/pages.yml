@@ -6,9 +6,13 @@
 # writes back into docs/ — every step below works in a scratch folder, so a
 # person reading the repository sees exactly what was written.
 #
-# main only, never dev. The site is what somebody reads before deciding whether
-# to install StaXX, so it must never describe a feature that exists only on an
-# unreleased branch.
+# main's guide is the top level, exactly as always — what somebody reads
+# before deciding whether to install StaXX, so it must never move or change
+# shape because of this. dev's guide is also published, into a dev/ subfolder,
+# so Adrian can read unreleased documentation rendered rather than as raw
+# markdown on GitHub — he has accepted that this makes it publicly reachable,
+# just unlinked from the main site. GitHub Pages serves only one site per
+# repository, so both branches build into the same site rather than two.
 #
 # docs/ also holds the project's internal thinking — the feasibility study, the
 # idea lists, the schema reference and the developer overview. None of that is
@@ -26,7 +30,7 @@ name: Publish the guide
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 permissions:
@@ -51,7 +55,20 @@ jobs:
       SITE: _site-src
 
     steps:
+      # Two explicit checkouts, regardless of which branch triggered the run —
+      # main always builds the top level and dev always builds dev/, so a push
+      # to dev can never alter what the main pages say, and a push to main
+      # always refreshes both (dev's guide can otherwise drift out of date
+      # silently, since nothing else would rebuild it).
       - uses: actions/checkout@v5
+        with:
+          ref: main
+          path: main-src
+
+      - uses: actions/checkout@v5
+        with:
+          ref: dev
+          path: dev-src
 
       - name: Configure Pages
         id: pages
@@ -61,56 +78,101 @@ jobs:
         run: |
           mkdir -p "$SITE"
 
-          # Named sources only — see the note at the top about what else is in
-          # docs/. Every guide page, then the glossary beside them.
-          cp docs/guide/*.md "$SITE/"
-          cp docs/glossary.md "$SITE/"
+          # One copy of the staging logic, called once per branch, so the two
+          # copies can never drift apart. Takes the checkout to read from and
+          # the folder to write into ($SITE for main, $SITE/dev for dev).
+          stage_guide() {
+            local src="$1" dest="$2"
+            mkdir -p "$dest"
 
-          # A site needs a front page, and the guide's index is called README
-          # because that is what GitHub shows when somebody opens the folder.
-          mv "$SITE/README.md" "$SITE/index.md"
+            # Named sources only — see the note at the top about what else is
+            # in docs/. Every guide page, then the glossary beside them.
+            cp "$src"/docs/guide/*.md "$dest/"
+            cp "$src"/docs/glossary.md "$dest/"
 
-          # Screenshots. docs/images/guide/ does not exist yet — the guide is all
-          # words so far — so this has to be a no-op rather than a failure.
-          # The folder keeps the shape it has in the repository, images/guide/,
-          # so a page written as ../images/guide/foo.png is correct when read on
-          # GitHub, where the page sits one level down inside docs/guide/.
-          if [ -d docs/images/guide ]; then
-            mkdir -p "$SITE/images"
-            cp -a docs/images/guide "$SITE/images/"
-          fi
+            # A site needs a front page, and the guide's index is called
+            # README because that is what GitHub shows when somebody opens
+            # the folder.
+            mv "$dest/README.md" "$dest/index.md"
 
-          # Two link fixes, both for the same reason: on the site every page sits
-          # at the top level, so a ../ that is correct in the repository climbs
-          # out of the site here. This is a project site served under /Staxx/, so
-          # ../ from a page does not stop at the site root — it lands on
-          # quadcom.github.io/ and the link is simply gone. The plugin that
-          # repairs .md links between pages cannot help either: it only sees
-          # paths that stay inside the site.
-          #
-          # The glossary link is the one every guide page closes with, and the
-          # only link in the guide reaching outside its own folder today. The
-          # image rewrite does nothing at all yet and is here so it is already
-          # right the day the first screenshot lands.
-          sed -i -e 's#\.\./glossary\.md#glossary.md#g' \
-                 -e 's#\.\./images/guide/#images/guide/#g' "$SITE"/*.md
+            # Screenshots. docs/images/guide/ does not exist yet — the guide
+            # is all words so far — so this has to be a no-op rather than a
+            # failure. The folder keeps the shape it has in the repository,
+            # images/guide/, so a page written as ../images/guide/foo.png is
+            # correct when read on GitHub, where the page sits one level down
+            # inside docs/guide/.
+            if [ -d "$src/docs/images/guide" ]; then
+              mkdir -p "$dest/images"
+              cp -a "$src/docs/images/guide" "$dest/images/"
+            fi
+
+            # Two link fixes, both for the same reason: on the site every
+            # page sits at the top level of its own section (site root for
+            # main, dev/ for dev), so a ../ that is correct in the repository
+            # climbs out of that section here. This is a project site served
+            # under /Staxx/, so ../ from dev/ does not stop at the site root
+            # — it climbs past it and the link is simply gone. The plugin
+            # that repairs .md links between pages cannot help either: it
+            # only sees paths that stay inside the site.
+            #
+            # The glossary link is the one every guide page closes with, and
+            # the only link in the guide reaching outside its own folder
+            # today. The image rewrite does nothing at all yet and is here so
+            # it is already right the day the first screenshot lands.
+            sed -i -e 's#\.\./glossary\.md#glossary.md#g' \
+                   -e 's#\.\./images/guide/#images/guide/#g' "$dest"/*.md
+          }
+
+          stage_guide main-src "$SITE"
+          stage_guide dev-src "$SITE/dev"
+
+          # The dev section's warning banner is generated here, at build time,
+          # never committed to a repo file. A banner written into docs/ on dev
+          # gets carried into main by the next merge and then has to be
+          # remembered and removed, which has repeatedly gone wrong on this
+          # project — generating it only in this scratch folder means there is
+          # nothing to carry.
+          {
+            echo "> **This describes the development branch.** It covers"
+            echo "> features that may not be in the stable release yet, and"
+            echo "> may change or disappear before release. For the stable"
+            echo "> guide, see [the main site](..)."
+            echo
+            cat "$SITE/dev/index.md"
+          } > "$SITE/dev/index.md.new"
+          mv "$SITE/dev/index.md.new" "$SITE/dev/index.md"
 
           # The site's own settings, kept outside docs/ so that folder stays
-          # plain markdown.
-          cp .github/pages/_config.yml "$SITE/"
+          # plain markdown. Site-wide, not per-branch, so taken from main only
+          # and staged once at the root — a dev/ subfolder inherits it from
+          # the site, it does not need its own copy.
+          cp main-src/.github/pages/_config.yml "$SITE/"
 
           # The site's own stylesheet, kept beside the config for the same
           # reason. It layers dark-mode rules over the theme rather than
           # replacing it, and Jekyll only treats it as a stylesheet at this
           # exact path.
           mkdir -p "$SITE/assets/css"
-          cp .github/pages/style.scss "$SITE/assets/css/style.scss"
+          cp main-src/.github/pages/style.scss "$SITE/assets/css/style.scss"
 
           # Belt and braces on the promise above: if an internal document ever
-          # reaches the staging folder, fail loudly here rather than publish it.
-          for internal in README feasibility feature-ideas settings-ideas x-unraid-schema; do
-            if [ -e "$SITE/${internal}.md" ]; then
-              echo "Internal document ${internal}.md reached the site folder — refusing to publish." >&2
+          # reaches the staging folder — main's or dev's half — fail loudly
+          # here rather than publish it.
+          for section in "$SITE" "$SITE/dev"; do
+            for internal in README feasibility feature-ideas settings-ideas x-unraid-schema; do
+              if [ -e "$section/${internal}.md" ]; then
+                echo "Internal document ${internal}.md reached the site folder — refusing to publish." >&2
+                exit 1
+              fi
+            done
+          done
+
+          # A half-built site deploying is worse than a run failing: the
+          # deploy replaces the live site wholesale, so check both front pages
+          # exist and actually have content before going any further.
+          for index in "$SITE/index.md" "$SITE/dev/index.md"; do
+            if [ ! -s "$index" ]; then
+              echo "$index is missing or empty — refusing to publish." >&2
               exit 1
             fi
           done
