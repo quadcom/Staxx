@@ -2,11 +2,14 @@
 
 <!-- dev-banner -->
 > [!CAUTION]
-> ## Development branch — do not install from here
+> ## Development branch — the bleeding edge, not the stable release
 >
-> This is where work in progress lands. Features on this branch may be half-finished, broken, or in
-> the middle of being changed, and the screenshots and text below may describe things that do not
-> work yet. For the current state of the project, read
+> This is where work in progress lands. Features here may be half-finished, broken, or in the middle
+> of being changed, and the text and screenshots below may describe things that do not work yet.
+>
+> You *can* install this — it is the development channel described under
+> [Two channels](#two-channels) — but take it only if you want to see things early and do not mind
+> the occasional rough edge. For the stable release, read
 > [`main`](../../blob/main/README.md).
 <!-- /dev-banner -->
 
@@ -72,6 +75,23 @@ New to the page? The [user guide](docs/guide/README.md) explains what you are lo
 
 To remove it again, use **Remove** on the Plugins page. Your settings and your stacks are left
 alone; deleting the data store folder is a separate, deliberate act.
+
+### Two channels
+
+The address above is the **stable** channel. There is also a **development** channel, released far
+more often, carrying work that has not settled yet:
+
+```
+https://raw.githubusercontent.com/quadcom/Staxx/dev/staxx.plg
+```
+
+It installs exactly the same way and it is a real plugin, not a workaround — but features on it may
+be half-finished or in the middle of being changed, and it moves under you. Take it if you want to
+see things early and do not mind the occasional rough edge; take the stable one otherwise.
+
+You are on one channel at a time. To switch, paste the other address into **Install Plugin**. Going
+from development back to stable will not appear as an available update — you have to install it —
+because a development build always sorts as the newer of the two.
 
 ## Contents
 

@@ -103,9 +103,11 @@ if [[ "${UPDATE_PLG}" == "--update-plg" ]]; then
   # Matched on any version shape, not a dated one: that block keeps the named
   # package and deletes every other, so a pattern that misses leaves the .plg
   # naming the PREVIOUS release and deleting the one it just installed. Versions
-  # were dates up to 2026.08.26 and are numbered from 1.1.0, and a build script
-  # that silently only handles the old shape is exactly how that goes unnoticed.
-  sed -i -E "s|${NAME}-[0-9][0-9.]*-${ARCH}-${BUILD}\.txz|${PKG_NAME}.txz|g" "${PLG}"
+  # were dates up to 2026.08.26, are numbered from 1.1.0, and a dev release adds
+  # a "_dev20260830" (or "_dev20260830b") tail — the character class has to
+  # cover digits, dots, underscores and letters, or going from one dev release
+  # to the next silently fails to rewrite this line at all.
+  sed -i -E "s|${NAME}-[0-9][0-9A-Za-z_.]*-${ARCH}-${BUILD}\.txz|${PKG_NAME}.txz|g" "${PLG}"
 
   # Cheap proof it landed, because the failure above is silent by nature.
   if ! grep -q "${PKG_NAME}.txz" "${PLG}"; then
