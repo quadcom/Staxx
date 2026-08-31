@@ -326,7 +326,13 @@ b2_reset_stack($doorDir, "services:\n  a:\n    image: alpine:3.20\n");
 $doorErr = '';
 ok('staxx_save_stack() on an existing stack succeeds',
    staxx_save_stack($doorRel, "services:\n  a:\n    image: alpine:3.21\n", $doorErr), $doorErr);
-ok('...and produces exactly one version', count(staxx_record_list($doorRel)) === 1);
+// Two, not one: staxx_save_stack() captures on both sides of the write —
+// what it is about to replace, and what it has just written — so the version
+// nobody else holds a copy of is kept even if the file is lost before the
+// next save. The companion-file door below captures only on the way in, so
+// the two doors deliberately produce different counts for one save each.
+ok('...and produces two versions, the replaced one and the written one',
+   count(staxx_record_list($doorRel)) === 2, 'count='.count(staxx_record_list($doorRel)));
 
 // The compose file itself cannot be reached through the companion-file
 // editor at all — staxx_valid_filename() refuses all four of its names, so
@@ -336,7 +342,7 @@ ok('the file editor cannot write the compose file at all',
    staxx_write_file($doorRel, 'compose.yaml', "services:\n  a:\n    image: alpine:3.22\n", true, $doorErr) === false,
    $doorErr);
 ok('...and that refusal left the history alone',
-   count(staxx_record_list($doorRel)) === 1);
+   count(staxx_record_list($doorRel)) === 2, 'count='.count(staxx_record_list($doorRel)));
 
 // The override IS reachable that way, and is compose configuration just as
 // much as the main file — so it is the real second door.
@@ -345,15 +351,15 @@ ok('the file editor can write the override file',
    staxx_write_file($doorRel, 'compose.override.yaml', "services:\n  a:\n    cpus: 1\n", true, $doorErr),
    $doorErr);
 ok('...the first override save keeps nothing, there being no previous version',
-   count(staxx_record_list($doorRel)) === 1);
+   count(staxx_record_list($doorRel)) === 2, 'count='.count(staxx_record_list($doorRel)));
 
 $doorErr = '';
 ok('the file editor can write the override file a second time',
    staxx_write_file($doorRel, 'compose.override.yaml', "services:\n  a:\n    cpus: 2\n", true, $doorErr),
    $doorErr);
 $doorVersions = staxx_record_list($doorRel);
-ok('...and that overwrite IS kept, giving two versions',
-   count($doorVersions) === 2, 'count='.count($doorVersions));
+ok('...and that overwrite IS kept, adding a third version',
+   count($doorVersions) === 3, 'count='.count($doorVersions));
 ok('...recorded against the override, not the main file',
    ($doorVersions[0]['file'] ?? '') === 'compose.override.yaml',
    'file='.($doorVersions[0]['file'] ?? '?'));
@@ -363,7 +369,8 @@ ok('...holding what the override said before that save',
 $doorErr = '';
 ok('staxx_write_file() writing a non-compose companion file succeeds',
    staxx_write_file($doorRel, '.env', "A=1\n", true, $doorErr), $doorErr);
-ok('...and produces no additional version', count(staxx_record_list($doorRel)) === 2);
+ok('...and produces no additional version', count(staxx_record_list($doorRel)) === 3,
+   'count='.count(staxx_record_list($doorRel)));
 
 // A path where a filename belongs used to keep nothing and report success —
 // the exact way the first wiring of door one shipped broken and silent.
