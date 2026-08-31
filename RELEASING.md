@@ -77,6 +77,35 @@ is how a tag gets a typo in it.
 
 ---
 
+## The nightly, and when it does nothing
+
+You no longer have to remember to press the button. Every night, StaXX checks whether anything has
+actually changed on the development branch since the last development release, and if so, cuts one
+for you automatically — the exact same process described above, just started by a clock instead of
+by hand.
+
+If nothing has changed, it does nothing at all. No release, no notice, no clutter — a quiet night
+produces a quiet, ordinary "all clear" and nothing else.
+
+There is one deliberate blind spot: every development release ends by writing its own new version
+number back into the project, and that write-back is itself a small change. The nightly check does
+not count it as "new work" — if it did, that one housekeeping change would look like a reason to
+cut another release, which would make its own housekeeping change, which would look like a reason
+for the night after that, forever. So that particular change is ignored on purpose, and only real
+work counts.
+
+The button itself still works exactly as before, any time you want to cut a development release by
+hand rather than waiting for the clock.
+
+One thing to know for a long quiet spell: if the project sees no activity at all for two months,
+GitHub switches the nightly off by itself and says nothing. It needs turning back on by hand, so if
+you return after a long break and no development release appears, that is the first thing to check.
+
+None of this touches the stable release. Cutting a stable release stays a deliberate, hands-on act
+only you can start, exactly as described below — nothing here can ever set one off on its own.
+
+---
+
 ## Cutting a stable release
 
 Four things must say the same number before anything is built. The build checks all four and refuses
