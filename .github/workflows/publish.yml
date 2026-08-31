@@ -204,6 +204,9 @@ jobs:
             EXISTING="$(git tag --list 'v*' | sed 's/^v//' | grep -v '_dev' | grep -E '^[0-9][0-9][.]' || true)"
           fi
 
+          # Drop the version being published. On a tag push its own tag is
+          # already in the list, and nothing sorts above itself.
+          EXISTING="$(echo "${EXISTING}" | grep -vxF "${VERSION}" || true)"
           HIGHEST="$(echo "${EXISTING}" | LC_ALL=C sort | tail -n1)"
           if [ -z "${HIGHEST}" ]; then
             echo "No previous ${CHANNEL} release to sort against."
@@ -211,7 +214,7 @@ jobs:
           fi
 
           if ! LC_ALL=C awk -v a="${VERSION}" -v b="${HIGHEST}" 'BEGIN{exit !(a>b)}'; then
-            echo "::error::${VERSION} does not sort above ${HIGHEST}, the newest ${CHANNEL} release already out. Unraid compares plugin versions as plain text, so nobody on ${HIGHEST} would ever be offered this. Beware double digits: 1.10.0 sorts below 1.5.0."
+            echo "::error::${VERSION} does not sort above ${HIGHEST}, the newest ${CHANNEL} release already out. Unraid compares plugin versions as plain text, so nobody on ${HIGHEST} would ever be offered this. Every component is two digits, so this should be unreachable — check the version, not the padding."
             exit 1
           fi
           echo "${VERSION} sorts above ${HIGHEST}."
