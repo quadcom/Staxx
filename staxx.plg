@@ -32,7 +32,7 @@
          version="&version;"
          launch="&launch;"
          pluginURL="&pluginURL;"
-         icon="cubes"
+         icon="staxx.png"
          min="7.2.0"
          support="https://staxxfb.quadcom.ca"
          project="https://github.com/&github;"
