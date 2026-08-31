@@ -690,17 +690,21 @@ function staxx_import_projects(): array {
                . ' — these will not be copied across.';
     }
 
-    // Whatever the compose file itself already says about its own icon —
-    // same 'x-unraid: icon:' key a stack's own tile reads — falling back to
-    // whichever service names an image first, so an unstarted project still
-    // gets a real logo instead of initials.
-    $meta = $file !== '' ? staxx_compose_meta($file) : ['x' => [], 'services' => []];
-    $image = '';
+    // A stack has no icon of its own (PLAN_105) — read the first service
+    // that names an image, and use its own stated icon, so an unstarted
+    // project still gets a real logo instead of initials the same way the
+    // grid resolves one.
+    $meta = $file !== '' ? staxx_compose_meta($file) : ['services' => []];
+    $svcIcon = '';
+    $image   = '';
     foreach ($meta['services'] as $svc) {
-      if (($svc['image'] ?? '') !== '') { $image = $svc['image']; break; }
+      if (($svc['image'] ?? '') !== '') {
+        $image   = $svc['image'];
+        $svcIcon = (string)($svc['x']['icon'] ?? '');
+        break;
+      }
     }
-    $icon = staxx_import_icon((string)($meta['x']['icon'] ?? ''),
-                                 $file !== '' ? dirname($file) : '', '', $image);
+    $icon = staxx_import_icon($svcIcon, $file !== '' ? dirname($file) : '', '', $image);
 
     $out[] = [
       'source'   => 'project',

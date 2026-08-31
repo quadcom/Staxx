@@ -110,7 +110,7 @@
     var project = checkUrl(L('org.opencontainers.image.source')) || checkUrl(L('org.opencontainers.image.url'));
     var author = L('org.opencontainers.image.authors');
 
-    var lines = ['  version: 1'];
+    var lines = ['  version: 1'].concat(CA.importedMetaLines('docker-image'));
     if (overview) {
       lines.push('  overview: |');
       CA.wrapText(overview, 78).forEach(function (l) { lines.push('    ' + l); });
@@ -126,24 +126,15 @@
    * route 3's bare skeleton is its own four lines, unchanged)
    * ===================================================================== */
 
-  function assemble(sourceLine, warnings, notes, stackMeta, bodyLines) {
-    var lines = [];
-    lines.push(sourceLine);
-    lines.push('#');
-    lines.push('# This is an ordinary compose file — delete every x-unraid block below and');
-    lines.push('# it still runs with a plain `docker compose up`. Check the ports and paths');
-    lines.push('# before starting it; some may have been filled in with placeholder defaults.');
-    if (warnings.length) {
-      lines.push('#');
-      lines.push('# Could not be translated automatically:');
-      lines = lines.concat(CA.warningCommentLines(warnings));
-    }
-    if (notes.length) {
-      lines.push('#');
-      lines.push('# Filled in for you — check these before starting:');
-      lines = lines.concat(CA.warningCommentLines(notes));
-    }
-    lines.push('');
+  // Where this file came from is stamped into stackMeta's own imported: block
+  // (see buildStackMeta) rather than written as a standing comment on every
+  // file — see PLAN_67 Step 0. Only the findings blocks still earn a place
+  // in the header, shared with ca-convert.js's own assembly.
+  function assemble(warnings, notes, stackMeta, bodyLines) {
+    var lines = CA.findingsCommentLines(warnings, notes);
+    // Only a separator when there is something above it to separate from: a
+    // clean import has no header at all, and must not open on a blank line.
+    if (lines.length) lines.push('');
     lines.push('x-unraid:');
     lines = lines.concat(stackMeta);
     lines.push('');
@@ -211,13 +202,9 @@
       'where the data should live.'];
     var warnings = [];
 
-    var sourceLine = source === 'local'
-      ? "# Built from " + image + "'s own settings, already on this server."
-      : "# Built from " + image + "'s own settings on Docker Hub.";
-
     return {
       name: name,
-      yaml: assemble(sourceLine, warnings, notes, stackMeta, svc),
+      yaml: assemble(warnings, notes, stackMeta, svc),
       warnings: warnings, notes: notes, route: 'config', wantConfig: false
     };
   }
@@ -543,10 +530,9 @@
         names.join(', ') + ' — and all of them are added; delete whichever you do not want, in the editor.']);
     }
 
-    var sourceLine = "# Copied from " + image + "'s own documentation on Docker Hub.";
     return {
       name: name,
-      yaml: assemble(sourceLine, warnings, notes, stackMeta, finalLines),
+      yaml: assemble(warnings, notes, stackMeta, finalLines),
       warnings: warnings, notes: notes, route: 'readme', wantConfig: false
     };
   }

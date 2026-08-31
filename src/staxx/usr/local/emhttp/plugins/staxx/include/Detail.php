@@ -7,8 +7,8 @@
  * PLAN_84 Phase 2. One entry point, staxx_detail_discover(), that asks every
  * existing source — image labels, the Community Applications catalogue, a
  * local Unraid template, Docker Hub, a registry, a live probe — what they
- * know about a stack's icon, description, category, author, links and web
- * page address, and hands back an answer for each field with a plain-English
+ * know about a stack's description, category, author, links and web page
+ * address, and hands back an answer for each field with a plain-English
  * sentence saying where it came from and how much to trust it.
  *
  * NOTHING IS WRITTEN HERE. This is discovery only — see include/action.php's
@@ -112,8 +112,6 @@ function staxx_detail_schema_ok(string $field, string $value): bool {
     case 'readme':
     case 'webui':
       return preg_match('#^https?://#', $value) === 1;
-    case 'icon':
-      return preg_match('/^(https?:\/\/\S+|\.\/\S+|fa-[a-z0-9-]+|[A-Za-z0-9][A-Za-z0-9._-]*)$/', $value) === 1;
     case 'overview':
     case 'category':
     case 'author':
@@ -301,7 +299,7 @@ function staxx_detail_hub_url(string $image): string {
  * view neither of them needs. Widened from Watch.php's Repository+Project
  * pair to the fields this feature's cascades ask for.
  *
- * @return array{icon:string, overview:string, category:string, author:string, webui:string}|null
+ * @return array{overview:string, category:string, author:string, webui:string}|null
  */
 // $dir defaults to the real template folder, and every caller in this plugin
 // uses that default — only a test passes another one, the same arrangement
@@ -330,7 +328,6 @@ function staxx_detail_template_match(string $image, string $dir = STAXX_IMPORT_T
     if (strtolower(staxx_links_repo_path((string)($xml->Repository ?? ''))) !== $repo) continue;
 
     $found = [
-      'icon'     => trim((string)($xml->Icon ?? '')),
       'overview' => trim((string)($xml->Overview ?? '')),
       'category' => trim((string)($xml->Category ?? '')),
       'author'   => trim((string)($xml->Author ?? '')),
@@ -369,31 +366,6 @@ function staxx_detail_normalise_category(string $raw): string {
 }
 
 /* --------------------------------------------------------------- one answer -- */
-
-/**
- * A picture the chooser can actually show for one icon value, resolved the
- * same way the table resolves the icons it draws — never by the browser
- * guessing a public address for itself. The chooser puts the stored icon
- * beside the found one as two real pictures (PLAN_84's 2026-08-27 revision),
- * and that comparison is the whole reason the icon is in the chooser at all,
- * so a guessed URL that silently fails to load would quietly remove the one
- * safeguard the icon has.
- *
- * Fetches when it must and the setting allows it, exactly as the table's own
- * sweep does; a picture that cannot be had comes back as '' and the chooser
- * says so in words rather than showing a broken image.
- *
- * @return array{fa:string, url:string}
- */
-function staxx_detail_icon_preview(string $icon, string $dir, string $image): array {
-  if (trim($icon) === '') return ['fa' => '', 'url' => ''];
-  $r = staxx_icon_resolve($icon, $dir, $image);
-  if ($r['fa'] !== '') return ['fa' => $r['fa'], 'url' => ''];
-  if ($r['url'] === '' && $r['ref'] !== '' && staxx_icon_fetching()) {
-    $r['url'] = staxx_icon_fetch($r['ref'], $r['remote']);
-  }
-  return ['fa' => '', 'url' => (string)$r['url']];
-}
 
 /** One answer, or null when there is nothing to offer — either no source
  *  answered, or the only source that did equals what the file already
@@ -478,53 +450,6 @@ function staxx_detail_project_support(
   }
 
   return ['project' => $project, 'support' => $support, 'currentProject' => $currentProject, 'currentSupport' => $currentSupport];
-}
-
-function staxx_detail_icon(
-  string $image, array $stackX, string $leadService, string $stackLeaf, ?array $template
-): ?array {
-  $current = trim((string)($stackX['icon'] ?? ''));
-
-  $repo = strtolower(staxx_links_repo_path($image));
-  $catIcon = '';
-  if ($repo !== '') {
-    $ordinal = staxx_links_ca_map()[$repo] ?? null;
-    if ($ordinal !== null) {
-      $app = staxx_ca_app($ordinal);
-      $catIcon = is_array($app) ? trim((string)($app['Icon'] ?? '')) : '';
-    }
-  }
-  if ($catIcon !== '' && staxx_detail_schema_ok('icon', $catIcon)) {
-    return staxx_detail_answer($catIcon, 'catalog', 'claimed',
-      'The Community Applications catalogue lists this icon for the image.', $current);
-  }
-
-  // Template icons are only ever taken when they are a real URL — a
-  // template naming an absolute local path on its own author's server is
-  // meaningless here, because the compose file this writes into must run
-  // unmodified anywhere (rule 1). This is narrower than the schema itself,
-  // which also allows a bare selfh.st name or a relative ./path from a
-  // template, because a template's own path convention cannot be trusted to
-  // mean the same thing once it is somebody else's stack.
-  $tplIcon = trim((string)($template['icon'] ?? ''));
-  if ($tplIcon !== '' && preg_match('#^https?://#', $tplIcon) && staxx_detail_schema_ok('icon', $tplIcon)) {
-    return staxx_detail_answer($tplIcon, 'template', 'claimed',
-      'A local Unraid template names this as the icon.', $current);
-  }
-
-  // The unique-hit matcher — a guess, and the one answer here that is
-  // written with a trailing comment saying so (see 'auto_comment' below).
-  // Icons.php's own header explains why a wrong icon is worse than none.
-  $matched = staxx_icon_match($image, $leadService, $stackLeaf);
-  if ($matched !== '' && staxx_detail_schema_ok('icon', $matched)) {
-    $answer = staxx_detail_answer($matched, 'matcher', 'guess',
-      "Matched automatically from the image's name — exactly one icon in StaXX's collection fits.",
-      $current);
-    if ($answer !== null) $answer['auto_comment'] = true;
-    return $answer;
-  }
-
-  return null;
 }
 
 function staxx_detail_overview(
@@ -867,19 +792,6 @@ function staxx_detail_discover(string $stackName): array {
     $ps = staxx_detail_project_support($image, $stackX, $serviceX, $budget);
     $stack['project']  = ['current' => $ps['currentProject'], 'answer' => $ps['project'],  'skipped' => null];
     $stack['support']  = ['current' => $ps['currentSupport'], 'answer' => $ps['support'],  'skipped' => null];
-
-    $iconAnswer = staxx_detail_icon($image, $stackX, $lead, $leaf, $template);
-    $currentIcon = trim((string)($stackX['icon'] ?? ''));
-    $stack['icon'] = [
-      'current' => $currentIcon,
-      'answer'  => $iconAnswer,
-      'skipped' => null,
-      // Both sides as real pictures, resolved here rather than in the browser.
-      'preview'        => staxx_detail_icon_preview($currentIcon, $dir, $image),
-      'answer_preview' => $iconAnswer === null
-        ? ['fa' => '', 'url' => '']
-        : staxx_detail_icon_preview((string)$iconAnswer['value'], $dir, $image),
-    ];
 
     $overviewCurrent = trim((string)($stackX['overview'] ?? ''));
     $overviewAnswer  = staxx_detail_overview($image, $stackX, $template, $budget);

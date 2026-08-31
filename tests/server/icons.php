@@ -29,6 +29,10 @@
  * level reachable without moving anything, is the field the walk skips on:
  * staxx_compose_meta() correctly reporting a service's own recorded icon,
  * via a synthetic compose file under /tmp.
+ *
+ * Also covers PLAN_105: staxx_service_icon() no longer takes a stack-level
+ * icon at all, so a service with none of its own now has only its image
+ * name left to resolve from, and a service's own stated icon still wins.
  */
 
 require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
@@ -82,29 +86,37 @@ check('an unwritable (non-existent) target directory is refused',
 
 /* ---- the copy itself ---- */
 
+// The picture lands in the stack's own hidden record folder, not loose beside
+// the compose file, and what comes back is the relative path the compose file
+// will name — './.staxx/<ref>.png', not a bare filename. This suite checked
+// for a bare filename in the stack directory long after that stopped being
+// true, and so reported three failures that were only ever its own.
+$rel = './'.STAXX_RECORD_DIR.'/'.$ref.'.png';
+$abs = $stack.'/'.STAXX_RECORD_DIR.'/'.$ref.'.png';
+
 $error = '';
 $file  = staxx_icon_adopt($ref, $stack, $error);
-check('a fresh copy lands in the target directory',
-  $file === $ref.'.png' && is_file($stack.'/'.$file));
+check("a fresh copy lands in the stack's own hidden folder",
+  $file === $rel && is_file($abs));
 
 check('the copy is byte-identical to the cached source',
-  is_file($stack.'/'.$file) && md5_file($stack.'/'.$file) === md5($pngBytes));
+  is_file($abs) && md5_file($abs) === md5($pngBytes));
 
-$mtimeFirst = @filemtime($stack.'/'.$file);
+$mtimeFirst = @filemtime($abs);
 
 $error  = '';
 $again  = staxx_icon_adopt($ref, $stack, $error);
 check('running it a second time is a success',
-  $again === $ref.'.png' && $error === '');
+  $again === $rel && $error === '');
 
 check('and writes nothing the second time',
-  @filemtime($stack.'/'.$file) === $mtimeFirst);
+  @filemtime($abs) === $mtimeFirst);
 
 /* ---- a different file already under that name ---- */
 
-$clashDir = $scratch.'/clash';
-@mkdir($clashDir, 0755, true);
-$clashPath = $clashDir.'/'.$ref.'.png';
+$clashDir  = $scratch.'/clash';
+$clashPath = $clashDir.'/'.STAXX_RECORD_DIR.'/'.$ref.'.png';
+@mkdir(dirname($clashPath), 0755, true);
 file_put_contents($clashPath, 'not the same bytes at all');
 $before = md5_file($clashPath);
 
@@ -114,6 +126,24 @@ check('a different file already under that name is refused',
 
 check('and is left completely untouched',
   md5_file($clashPath) === $before);
+
+/* ---- PLAN_105 — the stack has no icon of its own ---- */
+// staxx_service_icon() (in StacksTable.php, already required above) no
+// longer takes a stack-icon argument at all, so there is no route left for
+// a stack-level `icon:` field to reach a service — proven here directly
+// against the chain rather than through a rendered page.
+
+// Every part of this has to match nothing, service and stack name included:
+// the search is not only on the image. An earlier version of this case used
+// the service name "app", which matches the "app-store" icon and made the
+// check fail for a reason that had nothing to do with what it was proving.
+$none = staxx_service_icon('', $stack, 'zzqqxx/zzqqxx-nothing', 'zzqqxx-nothing', 'zzqqxx-nothing');
+check('with no service icon, an image matching nothing resolves to nothing — no stack field is left to fall back to',
+  $none['fa'] === '' && $none['url'] === '' && $none['ref'] === '');
+
+$ownFa = staxx_service_icon('fa-server', $stack, 'zzstaxxtest/neverexisted-plan105', 'app', 'stack');
+check('a service that states its own icon still wins, regardless of anything at stack level',
+  $ownFa['fa'] === 'fa-server');
 
 /* ---- the field the walk relies on, never overwritten ---- */
 

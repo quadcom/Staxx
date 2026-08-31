@@ -3855,7 +3855,7 @@
   /**
    * addNested's sibling resolving against the document root rather than a
    * service — PLAN_84 phase 1. Nothing before this could write a top-level
-   * x-unraid key at all: the icon, description, category, author and
+   * x-unraid key at all: the description, category, author and
    * documentation link have nowhere to go until one exists. Same
    * snapshot-and-rollback, same "level is scalar/opaque/sealed -> refuse"
    * guard as addNested/addDeclNested, and the same placeholder retraction for
@@ -3884,7 +3884,7 @@
   /**
    * Shared body for replaceNested/replaceRootNested (PLAN_84 phase 1b) — the
    * in-place value writer the form's own presentation fields never needed
-   * until now (project, author, description, icon and category are not form
+   * until now (project, author, description and category are not form
    * fields at all, so the ordinary setPart()/writeScalar() path can never
    * reach them). `getPair` is the same seam ensurePath already takes, so
    * this needs no service/root variant of its own.
@@ -9133,7 +9133,7 @@
     // rather than a service.
     addDeclNested: addDeclNested,
     // PLAN_84 phase 1: addNested's sibling for the document root, so the
-    // stack-level x-unraid fields (icon, description, category, author,
+    // stack-level x-unraid fields (description, category, author,
     // documentation link) have somewhere to be written at all.
     addRootNested: addRootNested,
     // PLAN_84 phase 1: rewrites one existing x-unraid value in place —

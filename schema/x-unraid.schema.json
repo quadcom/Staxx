@@ -23,7 +23,7 @@
     "stack": {
       "type": "object",
       "description": "Stack-level metadata. Every key optional.",
-      "$comment": "additionalProperties is deliberately absent (see docs/x-unraid-schema.md, Validation): reading rule 1 already commits to ignoring unknown keys so a file written for a later schema version still renders on an older StaXX. A propertyNames pattern was weighed and rejected — a typo like overvieww is still a perfectly shaped property name, so a shape check would not catch the thing it is meant to catch, and would only put a second, narrower key format in competition with the same forward-compatibility promise.",
+      "$comment": "additionalProperties is deliberately absent (see docs/x-unraid-schema.md, Validation): reading rule 1 already commits to ignoring unknown keys so a file written for a later schema version still renders on an older StaXX. A propertyNames pattern was weighed and rejected — a typo like overvieww is still a perfectly shaped property name, so a shape check would not catch the thing it is meant to catch, and would only put a second, narrower key format in competition with the same forward-compatibility promise. The 'not' below is narrower still, on purpose: a stack's picture is derived from its services, never stated (PLAN_105), so icon alone is refused here even though every other unrecognised key stays tolerated. A file from before this changed may still carry the key; the reader just no longer looks for it, which this schema cannot and need not express.",
       "properties": {
         "version": {
           "type": "integer",
@@ -31,7 +31,6 @@
           "default": 1,
           "description": "Schema version. A reader seeing a higher major version falls back to inference rather than misreading the metadata."
         },
-        "icon":     { "$ref": "#/$defs/icon" },
         "overview": { "type": "string", "description": "Markdown." },
         "category": { "type": "string", "description": "Unraid's existing category taxonomy, e.g. MediaApp:Video." },
         "project":  { "type": "string", "format": "uri", "pattern": "^https?://" },
@@ -39,6 +38,7 @@
         "readme":   { "type": "string", "format": "uri", "pattern": "^https?://" },
         "author":   { "type": "string" },
         "update":   { "$ref": "#/$defs/update" },
+        "imported": { "$ref": "#/$defs/imported" },
         "sections": {
           "type": "object",
           "description": "Form sections a service has switched off, keyed by service name then by compose key (healthcheck, ports, deploy.resources, cap_add…). Each entry is either the boolean false — hidden, holding nothing — or a string holding JSON ({\"after\":…,\"lines\":[…]}), the section's own lines kept verbatim so re-enabling it restores them byte for byte. The JSON inside that string is deliberately not validated here: it is not YAML, so it is one opaque line to this schema, not a second copy of the compose structure. If the compose file itself still has the block, the file wins and a leftover entry here is ignored.",
@@ -58,7 +58,8 @@
           "$comment": "No schema version bump for this key. Rule 1's forward-compatibility promise already means an older StaXX ignores keys it does not recognise, so an older build simply does not see links, which is correct behaviour rather than a degradation.",
           "items": { "$ref": "#/$defs/link" }
         }
-      }
+      },
+      "not": { "required": ["icon"] }
     },
 
     "link": {
@@ -194,6 +195,25 @@
           "minimum": 0,
           "maximum": 720,
           "description": "Hours to wait, after an update is first seen, before an 'auto' mode applies it."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "imported": {
+      "type": "object",
+      "description": "Stamped once, when the file is generated, by whichever route wrote it. Never written by hand and never touched again afterwards — it is a record of how this file came to exist, not a setting.",
+      "required": ["from", "on"],
+      "properties": {
+        "from": {
+          "type": "string",
+          "enum": ["community-applications", "unraid-template", "docker-image", "running-container"],
+          "description": "community-applications = converted from a Community Applications catalogue entry. unraid-template = converted from the user's own Unraid XML template. docker-image = built from an image reference (Docker Hub or local). running-container = adopted from a container already running on this server."
+        },
+        "on": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "The date this file was generated, in the browser's local time."
         }
       },
       "additionalProperties": false

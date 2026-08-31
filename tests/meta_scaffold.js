@@ -104,9 +104,12 @@ console.log('\nA. No block at either level');
 
   ok('A1 no error', r.error === '', r.error);
   ok('A2 reports changed', r.changed === true);
-  ok('A3 stack fields all added', r.added.stack.indexOf('icon') >= 0 &&
+  // PLAN_105: a stack has no picture of its own, so icon is never a stack
+  // field — only version and update (and the rest) are offered at that level.
+  ok('A3 stack fields all added, icon never among them', r.added.stack.indexOf('icon') < 0 &&
      r.added.stack.indexOf('version') >= 0 && r.added.stack.indexOf('update') >= 0);
-  ok('A4 service fields all added', r.added.services.web && r.added.services.web.indexOf('webui') >= 0);
+  ok('A4 service fields all added, including icon', r.added.services.web &&
+     r.added.services.web.indexOf('webui') >= 0 && r.added.services.web.indexOf('icon') >= 0);
 
   var doc = Y.parse(r.yaml);
   ok('A5 still parses clean', doc.root.kind === 'map' && !doc.unreadTail);
@@ -147,20 +150,23 @@ console.log('\nC. Partly filled block');
   var text =
     'x-unraid:\n' +
     '  version: 1\n' +
-    '  icon: fa-database\n' +
     '  category: Tools:Utilities\n' +
     '\n' +
     'services:\n' +
     '  web:\n' +
-    '    image: nginx\n';
+    '    image: nginx\n' +
+    '    x-unraid:\n' +
+    '      icon: fa-database\n';
   var r = M.scaffold(text);
 
   ok('C1 no error', r.error === '');
-  ok('C2 icon and category and version not re-offered', r.added.stack.indexOf('icon') < 0 &&
-     r.added.stack.indexOf('category') < 0 && r.added.stack.indexOf('version') < 0);
+  ok('C2 category and version not re-offered', r.added.stack.indexOf('category') < 0 &&
+     r.added.stack.indexOf('version') < 0);
   ok('C3 the gaps were added', r.added.stack.indexOf('overview') >= 0 &&
      r.added.stack.indexOf('project') >= 0 && r.added.stack.indexOf('update') >= 0);
-  ok('C4 existing lines untouched, in place', r.yaml.indexOf('  icon: fa-database\n') >= 0 &&
+  ok('C3b service icon already set is not re-offered, its other gaps are',
+     r.added.services.web.indexOf('icon') < 0 && r.added.services.web.indexOf('webui') >= 0);
+  ok('C4 existing lines untouched, in place', r.yaml.indexOf('      icon: fa-database\n') >= 0 &&
      r.yaml.indexOf('  category: Tools:Utilities\n') >= 0);
   ok('C5 added lines land after the existing ones', r.yaml.indexOf('category: Tools:Utilities') <
      r.yaml.indexOf('# overview:'));
@@ -173,24 +179,26 @@ console.log('\nC. Partly filled block');
 console.log('\nD. Commented placeholder already present');
 
 (function () {
+  // icon is a service-only field now (PLAN_105), so the commented-placeholder
+  // idempotency check lives at that level instead of the stack's. A real key
+  // has to sit alongside the comment, or the block parses as null rather
+  // than a map (see the "scaffolded but nothing uncommented yet" case in
+  // schema/x-unraid.schema.json) and this service is skipped wholesale.
   var text =
-    'x-unraid:\n' +
-    '  version: 1\n' +
-    '  # icon:            already offered, some day someone will fill this in\n' +
-    '\n' +
     'services:\n' +
     '  web:\n' +
-    '    image: nginx\n';
+    '    image: nginx\n' +
+    '    x-unraid:\n' +
+    '      project: https://example.org\n' +
+    '      # icon:            already offered, some day someone will fill this in\n';
   var r = M.scaffold(text);
 
-  ok('D1 icon not offered a second time', r.added.stack.indexOf('icon') < 0);
-  // Only the stack-level block matters here — the service gets its own
-  // "# icon:" offer, which is a separate field at a separate level.
-  var stackPart = r.yaml.slice(0, r.yaml.indexOf('services:'));
-  var count = (stackPart.match(/# icon:/g) || []).length;
-  ok('D2 exactly one "# icon:" line in the stack-level block', count === 1, 'count=' + count);
+  ok('D1 icon not offered a second time', r.added.services.web.indexOf('icon') < 0);
+  var count = (r.yaml.match(/# icon:/g) || []).length;
+  ok('D2 exactly one "# icon:" line in the whole file', count === 1, 'count=' + count);
   ok('D3 the original placeholder text survives verbatim', r.yaml.indexOf(
-    '  # icon:            already offered, some day someone will fill this in') >= 0);
+    '      # icon:            already offered, some day someone will fill this in') >= 0);
+  ok('D4 the other gaps still get offered', r.added.services.web.indexOf('webui') >= 0);
 })();
 
 /* =========================================================================
@@ -374,7 +382,7 @@ function assertAgree(name, text) {
 assertAgree('J1 no x-unraid at all', 'services:\n  web:\n    image: nginx\n');
 
 assertAgree('J2 partial root block',
-  'x-unraid:\n  version: 1\n  icon: fa-database\n\nservices:\n  web:\n    image: nginx\n');
+  'x-unraid:\n  version: 1\n  category: Tools:Utilities\n\nservices:\n  web:\n    image: nginx\n');
 
 assertAgree('J3 full root block already scaffolded',
   M.scaffold('services:\n  web:\n    image: nginx\n').yaml);
@@ -390,7 +398,7 @@ assertAgree('J4 service with some fields already set',
 assertAgree('J5 commented placeholders already present',
   'x-unraid:\n' +
   '  version: 1\n' +
-  '  # icon:            already offered\n' +
+  '  # category:        already offered\n' +
   '\n' +
   'services:\n' +
   '  web:\n' +
@@ -423,7 +431,7 @@ assertAgree('J9 unreadable — bad tail indent',
 console.log('\nK. missingFields() given a document, not text');
 
 (function () {
-  var text = 'x-unraid:\n  version: 1\n  icon: fa-database\n\nservices:\n  web:\n    image: nginx\n';
+  var text = 'x-unraid:\n  version: 1\n  category: Tools:Utilities\n\nservices:\n  web:\n    image: nginx\n';
   var doc = Y.parse(text);
   var fromText = M.missingFields(text);
   var fromDoc = M.missingFields(doc);

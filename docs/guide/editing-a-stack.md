@@ -139,12 +139,24 @@ form points things out; it never decides for you that something is safe, wrong, 
 
 ## Left out, for now
 
-Some of what a stack records about the app itself — its description, its logo, its project links —
-has no box on this form yet. There are two ways round that in the meantime. **Fill in details**, at
-the top of the screen, goes and looks those up from the image, from the app's catalogue entry and
-from its own page, and shows you what it found before writing any of it. Typing your own wording
-instead still means switching to the Compose view and editing it by hand. That is an honest gap,
-not a hidden one.
+Some of what a stack records about the app itself — its description, its project links — has no box
+on this form yet. There are two ways round that in the meantime. **Fill in details**, at the top of
+the screen, goes and looks those up from the image, from the app's catalogue entry and from its own
+page, and shows you what it found before writing any of it. Typing your own wording instead still
+means switching to the Compose view and editing it by hand. That is an honest gap, not a hidden one.
+
+## Where a stack's picture comes from
+
+A stack does not have a picture of its own to set. **The picture on a stack's row is its containers'
+pictures, shown together** — one container, one logo; several containers, several logos side by
+side, collapsing to a single one where they all look alike. So the picture follows what is actually
+in the stack rather than what the stack was once called, and a database container looks like a
+database.
+
+Each container finds its own picture: the one you have named for it, or failing that a search on the
+image's name, or failing that its initials. If a container is showing initials and you would rather
+it showed a logo, name one for that container — and **Keep icons with the stack**, in settings, will
+do the naming for you wherever the match is unambiguous.
 
 ## Terms used here
 

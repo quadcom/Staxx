@@ -50,9 +50,9 @@
  *   - staxx_detail_template_match() now takes a $dir argument (its static
  *     cache keyed on the folder as well as the image), so the template
  *     cascade itself IS exercised directly below, against fixture folders
- *     this file creates and removes under /tmp — repository match, the
- *     absolute-local-path icon refusal, a .bak file being ignored, a
- *     non-matching repository, and the folder-keyed cache. What is still
+ *     this file creates and removes under /tmp — repository match, a .bak
+ *     file being ignored, a non-matching repository, and the folder-keyed
+ *     cache. What is still
  *     out of reach is only staxx_detail_project_support()'s OWN call to
  *     staxx_watch_claimed_home($image) — that call site still has no
  *     $dir parameter, so the template-claimed *project/support* fallback
@@ -261,8 +261,8 @@ ok('claimed: project comes from the catalogue', ($s['project']['answer']['value'
    && ($s['project']['answer']['from'] ?? '') === 'catalog' && ($s['project']['answer']['tier'] ?? '') === 'claimed');
 ok('claimed: support comes from the catalogue too', ($s['support']['answer']['value'] ?? '') === 'https://catalog.example/casupport'
    && ($s['support']['answer']['tier'] ?? '') === 'claimed');
-ok('claimed: icon is the bare catalogue name, tier claimed',
-   ($s['icon']['answer']['value'] ?? '') === 'capp-icon-fixture' && ($s['icon']['answer']['tier'] ?? '') === 'claimed');
+ok('claimed: no icon field is offered for the stack at all (PLAN_105 — a stack has no icon of its own)',
+   !array_key_exists('icon', $s), json_encode(array_keys($s)));
 ok('claimed: overview is collapsed to one line and capped',
    strpos((string)($s['overview']['answer']['value'] ?? ''), "\n") === false
    && strlen((string)($s['overview']['answer']['value'] ?? '')) <= 300
@@ -280,11 +280,9 @@ zd_collect_result($answers, $r);
 /* ============================================================ 3. suppression =========== */
 
 zd_write_stack('zzdetail-suppress', zd_simple('app', $caRepo1.':latest',
-  "  icon: capp-icon-fixture\n  category: Network\n"));
+  "  category: Network\n"));
 $r = staxx_detail_discover('zzdetail-suppress');
 ok('suppress: discover succeeds', $r['ok'] === true);
-ok('suppress: an icon identical to what is already there is never offered as new',
-   $r['stack']['icon']['answer'] === null, json_encode($r['stack']['icon']));
 ok('suppress: a DIFFERENT current category still surfaces the found value',
    ($r['stack']['category']['answer']['value'] ?? '') === 'MediaApp:Video', json_encode($r['stack']['category']));
 ok('suppress: current is reported back exactly as stored', $r['stack']['category']['current'] === 'Network');
@@ -412,21 +410,33 @@ ok('stored+identical (template): a value identical to the template-claimed home 
 zd_collect($answers, 'project', $tplDiffering);
 @exec('rm -rf '.escapeshellarg($tplFallbackDir));
 
-/* ============================================================ 7. icon ambiguity ========= */
+/* ============================================================ 7. no icon offer, and the old field is inert (PLAN_105) === */
+// The stack-level `icon:` field is gone entirely: the resolver no longer
+// offers one for the stack, and a file still carrying the old field (hand-
+// patched or left over from before this landed) has it simply ignored —
+// each service resolves its own picture from its own stated icon, or from
+// its own image name, never from the stack.
 
-zd_write_stack('zzdetail-iconambiguous', zd_simple('app', 'zzstaxxtest/widgettest:latest'));
-$r = staxx_detail_discover('zzdetail-iconambiguous');
-ok('icon: a name matching two collection entries yields no icon at all',
-   $r['stack']['icon']['answer'] === null, json_encode($r['stack']['icon']));
-zd_collect_result($answers, $r);
+zd_write_stack('zzdetail-oldicon', zd_simple('app', 'zzstaxxtest/widgettest:latest',
+  "  icon: this-old-field-is-inert\n"));
+$r = staxx_detail_discover('zzdetail-oldicon');
+ok('PLAN_105: no icon field is offered for the stack, even when the file still carries one',
+   !array_key_exists('icon', $r['stack']), json_encode(array_keys($r['stack'])));
 
-zd_write_stack('zzdetail-iconmatch', zd_simple('app', 'zzstaxxtest/uniquewidgetzz:latest'));
-$r = staxx_detail_discover('zzdetail-iconmatch');
-ok('icon: a name matching exactly one collection entry is offered, marked auto-matched',
-   ($r['stack']['icon']['answer']['value'] ?? '') === 'uniquewidgetzz'
-   && ($r['stack']['icon']['answer']['from'] ?? '') === 'matcher'
-   && ($r['stack']['icon']['answer']['tier'] ?? '') === 'guess'
-   && ($r['stack']['icon']['answer']['auto_comment'] ?? false) === true);
+// The chain itself: a service with no stated icon resolves from its own
+// image name only — the stack's stale field is not even in the argument
+// list any more, so there is no route left for it to be consulted.
+$fromImage = staxx_service_icon('', staxx_stack_dir('zzdetail-oldicon'),
+                                 'zzstaxxtest/uniquewidgetzz:latest', 'app', 'zzdetail-oldicon');
+ok('PLAN_105: with no service icon, resolution comes from the image name alone',
+   $fromImage['ref'] === 'uniquewidgetzz', json_encode($fromImage));
+
+// A service that states its own icon still wins outright, regardless of
+// anything at stack level.
+$ownWins = staxx_service_icon('fa-server', staxx_stack_dir('zzdetail-oldicon'),
+                               'zzstaxxtest/uniquewidgetzz:latest', 'app', 'zzdetail-oldicon');
+ok("PLAN_105: a service's own stated icon still wins",
+   $ownWins['fa'] === 'fa-server', json_encode($ownWins));
 zd_collect_result($answers, $r);
 
 /* ============================================================ 8. lead service rule ====== */
@@ -505,40 +515,27 @@ mkdir($tplCascadeDir, 0755, true);
 file_put_contents($tplCascadeDir.'/my-match.xml',
   '<Container>'
   .'<Repository>zzstaxxtest/tplcascade</Repository>'
-  .'<Icon>https://example.org/tplicon.png</Icon>'
-  .'<Overview>A template-sourced overview for the cascade test, verifying the four fields all come through together.</Overview>'
+  .'<Overview>A template-sourced overview for the cascade test, verifying the three fields all come through together.</Overview>'
   .'<Category>MediaApp-Video</Category>'
   .'<Author>Template Author Co</Author>'
   .'</Container>');
-// A .bak of the same template, holding a DIFFERENT icon — real templates-user
-// folders carry exactly this after an overwrite, and it must parse just as
-// happily as the real file while never being the one actually read.
+// A .bak of the same template, holding a DIFFERENT overview — real
+// templates-user folders carry exactly this after an overwrite, and it must
+// parse just as happily as the real file while never being the one actually
+// read.
 file_put_contents($tplCascadeDir.'/my-match.xml.bak',
-  '<Container><Repository>zzstaxxtest/tplcascade</Repository><Icon>https://example.org/WRONG-BAK-ICON.png</Icon></Container>');
-file_put_contents($tplCascadeDir.'/my-abspath.xml',
-  '<Container><Repository>zzstaxxtest/tplabspath</Repository><Icon>/mnt/user/appdata/icons/abspath.png</Icon></Container>');
+  '<Container><Repository>zzstaxxtest/tplcascade</Repository><Overview>WRONG BAK OVERVIEW</Overview></Container>');
 
 $tplMatch = staxx_detail_template_match('zzstaxxtest/tplcascade:latest', $tplCascadeDir);
-ok('template cascade: a matching repository supplies icon, overview, category and author together',
+ok('template cascade: a matching repository supplies overview, category and author together (icon is no longer part of this shape — PLAN_105)',
    is_array($tplMatch)
-   && $tplMatch['icon'] === 'https://example.org/tplicon.png'
+   && !array_key_exists('icon', $tplMatch)
    && strpos($tplMatch['overview'], 'cascade test') !== false
    && $tplMatch['category'] === 'MediaApp-Video'
    && $tplMatch['author'] === 'Template Author Co',
    json_encode($tplMatch));
-ok('template cascade: the .bak beside it is ignored — its different icon never wins',
-   ($tplMatch['icon'] ?? '') !== 'https://example.org/WRONG-BAK-ICON.png');
-
-// The absolute-local-path refusal lives in staxx_detail_icon() (the caller),
-// not in staxx_detail_template_match() itself, which hands back the raw XML
-// field untouched — so the refusal is proven at the level that actually
-// enforces it, using the real template array this dir produces.
-$tplAbsPath = staxx_detail_template_match('zzstaxxtest/tplabspath:latest', $tplCascadeDir);
-ok('template cascade: the repository still matches, carrying the raw (unfiltered) icon value',
-   is_array($tplAbsPath) && $tplAbsPath['icon'] === '/mnt/user/appdata/icons/abspath.png');
-$absPathIcon = staxx_detail_icon('zzstaxxtest/tplabspath:latest', [], 'app', 'zzdetail-tplabspath', $tplAbsPath);
-ok('template cascade: an absolute local path is refused as an icon — the file must run anywhere',
-   $absPathIcon === null, json_encode($absPathIcon));
+ok('template cascade: the .bak beside it is ignored — its different overview never wins',
+   ($tplMatch['overview'] ?? '') !== 'WRONG BAK OVERVIEW');
 
 $tplNone = staxx_detail_template_match('zzstaxxtest/tplcascade-absent:latest', $tplCascadeDir);
 ok('template cascade: a repository nothing in the folder claims is not used, even though the folder is not empty',
@@ -550,14 +547,14 @@ $tplCascadeDir2 = '/tmp/zzdetail-tplcascade2';
 @exec('rm -rf '.escapeshellarg($tplCascadeDir2));
 mkdir($tplCascadeDir2, 0755, true);
 file_put_contents($tplCascadeDir2.'/my-other.xml',
-  '<Container><Repository>zzstaxxtest/tplcascade</Repository><Icon>https://example.org/OTHERDIR-icon.png</Icon></Container>');
+  '<Container><Repository>zzstaxxtest/tplcascade</Repository><Overview>OTHERDIR overview</Overview></Container>');
 $tplFromDir2 = staxx_detail_template_match('zzstaxxtest/tplcascade:latest', $tplCascadeDir2);
 ok('template cascade: the same image in a DIFFERENT folder gets that folder\'s own answer',
-   is_array($tplFromDir2) && $tplFromDir2['icon'] === 'https://example.org/OTHERDIR-icon.png',
+   is_array($tplFromDir2) && $tplFromDir2['overview'] === 'OTHERDIR overview',
    json_encode($tplFromDir2));
 $tplFromDir1Again = staxx_detail_template_match('zzstaxxtest/tplcascade:latest', $tplCascadeDir);
 ok('template cascade: ...and the original folder\'s cached answer is untouched by that second call',
-   is_array($tplFromDir1Again) && $tplFromDir1Again['icon'] === 'https://example.org/tplicon.png');
+   is_array($tplFromDir1Again) && strpos($tplFromDir1Again['overview'], 'cascade test') !== false);
 
 @exec('rm -rf '.escapeshellarg($tplCascadeDir).' '.escapeshellarg($tplCascadeDir2));
 
@@ -705,8 +702,6 @@ function zd_schema_pattern_ok(string $field, string $value): bool {
     case 'readme':
     case 'webui':
       return preg_match('#^https?://#', $value) === 1;
-    case 'icon':
-      return preg_match('/^(https?:\/\/\S+|\.\/\S+|fa-[a-z0-9-]+|[A-Za-z0-9][A-Za-z0-9._-]*)$/', $value) === 1;
     case 'overview':
     case 'category':
     case 'author':

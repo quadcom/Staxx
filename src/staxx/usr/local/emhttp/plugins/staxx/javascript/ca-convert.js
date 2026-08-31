@@ -202,6 +202,41 @@
     return out;
   }
 
+  // The two "what happened" comment blocks — the only header content that
+  // survives PLAN_67 Step 0's slimming. They appear only when there is
+  // something specific to report, so unlike the standing preamble they
+  // replaced, there is no guaranteed line above them: the first block present
+  // opens with its own heading, not a bare '#' separator, and a leading '#'
+  // is only added ahead of the second block when both are present.
+  function findingsCommentLines(warnings, notes) {
+    var lines = [];
+    if (warnings.length) {
+      lines.push('# Could not be translated automatically:');
+      lines = lines.concat(warningCommentLines(warnings));
+    }
+    if (notes.length) {
+      if (lines.length) lines.push('#');
+      lines.push('# Filled in for you — check these before starting:');
+      lines = lines.concat(warningCommentLines(notes));
+    }
+    return lines;
+  }
+
+  // Local time, not UTC — both callers run in the browser, where "today"
+  // means the day it looks like on the person's own screen.
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function todayStamp() {
+    var d = new Date();
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  // The stamp recording how a generated file came to exist — see
+  // schema/x-unraid.schema.json's $defs/imported. Written once, at
+  // generation time, never touched again afterwards.
+  function importedMetaLines(from) {
+    return ['  imported:', '    from: ' + from, '    on: ' + todayStamp()];
+  }
+
   /* =====================================================================
    * Category / Network
    * ===================================================================== */
@@ -849,8 +884,13 @@
     // stack's one link. readme has no service-level key — it stays stack-only.
     var svcProject = scalarPresent(app.Project) ? scalarOut(app.Project) : '';
     var svcSupport = scalarPresent(app.Support) ? scalarOut(app.Support) : '';
-    if (scalarPresent(app.WebUI) || svcProject || svcSupport) {
+    // icon lives here, not in stack-level x-unraid below: a stack's picture
+    // is derived from its services, never stated (PLAN_105), and a converted
+    // file is always single-service, so this is the same catalogue picture
+    // written where it is now read.
+    if (scalarPresent(app.WebUI) || svcProject || svcSupport || scalarPresent(app.Icon)) {
       svc.push('    x-unraid:');
+      if (scalarPresent(app.Icon)) svc.push('      icon: ' + scalarOut(app.Icon));
       if (scalarPresent(app.WebUI)) svc.push('      webui: ' + dq(app.WebUI));
       if (svcProject) svc.push('      project: ' + svcProject);
       if (svcSupport) svc.push('      support: ' + svcSupport);
@@ -859,7 +899,7 @@
     /* ---- stack-level x-unraid ------------------------------------------ */
 
     var stackMeta = ['  version: 1'];
-    if (scalarPresent(app.Icon)) stackMeta.push('  icon: ' + scalarOut(app.Icon));
+    stackMeta = stackMeta.concat(importedMetaLines(opts.origin === 'template' ? 'unraid-template' : 'community-applications'));
     var category = normaliseCategory(app);
     if (category) stackMeta.push('  category: ' + scalarOut(category));
     // scalarPresent(), not bare truthiness — same empty-XML-element bug as
@@ -879,32 +919,14 @@
 
     /* ---- whole file ------------------------------------------------------ */
 
-    // The importer runs this same converter on a user's own Unraid template,
-    // not just a Community Applications catalogue entry — and "Converted from
-    // the Community Applications template" is simply false there, since that
-    // template was never in the CA feed at all.
-    var subject = app.Name || name;
-    var firstLine = opts.origin === 'template'
-      ? '# Converted from the Unraid template for ' + subject + '.'
-      : '# Converted from the Community Applications template for ' + subject + '.';
-
-    var lines = [];
-    lines.push(firstLine);
-    lines.push('#');
-    lines.push('# This is an ordinary compose file — delete every x-unraid block below and');
-    lines.push('# it still runs with a plain `docker compose up`. Check the ports and paths');
-    lines.push('# before starting it; some may have been filled in with placeholder defaults.');
-    if (warnings.length) {
-      lines.push('#');
-      lines.push('# Could not be translated automatically:');
-      lines = lines.concat(warningCommentLines(warnings));
-    }
-    if (notes.length) {
-      lines.push('#');
-      lines.push('# Filled in for you — check these before starting:');
-      lines = lines.concat(warningCommentLines(notes));
-    }
-    lines.push('');
+    // Where this file came from is now stamped into the metadata (imported:
+    // above) rather than written as a standing comment on every file — see
+    // PLAN_67 Step 0. Only the findings blocks below still earn a place in
+    // the header, because they say something specific to this conversion.
+    var lines = findingsCommentLines(warnings, notes);
+    // Only a separator when there is something above it to separate from: a
+    // clean conversion has no header at all, and must not open on a blank line.
+    if (lines.length) lines.push('');
     lines.push('x-unraid:');
     lines = lines.concat(stackMeta);
     lines.push('');
@@ -941,7 +963,9 @@
     dq: dq,
     scalarOut: scalarOut,
     wrapText: wrapText,
-    warningCommentLines: warningCommentLines
+    warningCommentLines: warningCommentLines,
+    findingsCommentLines: findingsCommentLines,
+    importedMetaLines: importedMetaLines
   };
 
   if (typeof window !== 'undefined') window.StaxxCA = API;

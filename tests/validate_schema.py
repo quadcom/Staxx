@@ -55,16 +55,23 @@ NEGATIVE = [
         {"x-unraid": "Jellyfin"},
     ),
     (
-        "stack icon given as a block rather than a string",
-        {"x-unraid": {"icon": {"url": "https://example.org/icon.png"}}},
+        # PLAN_105: a stack's picture is derived from its services, never
+        # stated, so the key is refused outright regardless of shape — this
+        # is not a pattern failure, it is the key not existing any more.
+        "stack icon, in any shape at all",
+        {"x-unraid": {"icon": "jellyfin"}},
     ),
     (
-        "stack icon climbing out of the stack directory",
-        {"x-unraid": {"icon": "../../../etc/passwd"}},
+        "service icon given as a block rather than a string",
+        service_doc(icon={"url": "https://example.org/icon.png"}),
     ),
     (
-        "stack icon holding a javascript: URI",
-        {"x-unraid": {"icon": "javascript:alert(1)"}},
+        "service icon climbing out of the stack directory",
+        service_doc(icon="../../../etc/passwd"),
+    ),
+    (
+        "service icon holding a javascript: URI",
+        service_doc(icon="javascript:alert(1)"),
     ),
     (
         "stack project that is not a link",
@@ -153,6 +160,26 @@ NEGATIVE = [
     (
         "unknown key inside a stack update block",
         {"x-unraid": {"update": {"mode": "auto", "schedule": "nightly"}}},
+    ),
+    (
+        "imported from not one of the four known routes",
+        {"x-unraid": {"imported": {"from": "hand-typed", "on": "2026-08-30"}}},
+    ),
+    (
+        "imported on given as a malformed date",
+        {"x-unraid": {"imported": {"from": "docker-image", "on": "30/08/2026"}}},
+    ),
+    (
+        "imported missing its on date entirely",
+        {"x-unraid": {"imported": {"from": "docker-image"}}},
+    ),
+    (
+        "imported missing its from route entirely",
+        {"x-unraid": {"imported": {"on": "2026-08-30"}}},
+    ),
+    (
+        "unknown key inside an imported block",
+        {"x-unraid": {"imported": {"from": "docker-image", "on": "2026-08-30", "note": "hi"}}},
     ),
     (
         "service update mode not one of off/notify/auto",
@@ -281,10 +308,9 @@ NEGATIVE = [
 POSITIVE = [
     ("empty document", {}),
     ("no metadata at all", {"services": {"app": {"image": "nginx"}}}),
-    ("stack metadata only", {"x-unraid": {"version": 1, "icon": "jellyfin"}}),
+    ("stack metadata only", {"x-unraid": {"version": 1, "overview": "Free software media system."}}),
     ("every stack key at once", {"x-unraid": {
         "version": 1,
-        "icon": "jellyfin",
         "overview": "Free software media system.",
         "category": "MediaApp:Video",
         "project": "https://jellyfin.org",
@@ -303,13 +329,25 @@ POSITIVE = [
         update={"mode": "notify", "delay": 12},
     )),
     ("stack update block with mode but no delay", {"x-unraid": {"update": {"mode": "off"}}}),
+    ("a valid imported block for each of the four routes", {"x-unraid": {"imported": {
+        "from": "unraid-template", "on": "2026-08-30",
+    }}}),
+    ("imported: community-applications", {"x-unraid": {"imported": {
+        "from": "community-applications", "on": "2026-08-30",
+    }}}),
+    ("imported: docker-image", {"x-unraid": {"imported": {
+        "from": "docker-image", "on": "2026-08-30",
+    }}}),
+    ("imported: running-container", {"x-unraid": {"imported": {
+        "from": "running-container", "on": "2026-08-30",
+    }}}),
     # `name` was a display-name override at both levels; a stack is now named after its
     # directory and a service after its key, full stop, so the key has nothing left to do.
     # Neither def sets additionalProperties: false, so a leftover `name:` from an older file
     # is tolerated exactly like any other unknown key — ignored, not rejected.
     ("a leftover stack name: is tolerated but ignored", {"x-unraid": {"name": "Jellyfin"}}),
     ("a leftover service name: is tolerated but ignored", service_doc(name="Jellyfin")),
-    ("each icon form", {"x-unraid": {"icon": "fa-database"}}),
+    ("each icon form", service_doc(icon="fa-database")),
     ("unknown stack key is tolerated", {"x-unraid": {"someFutureKey": "value"}}),
     ("unknown service key is tolerated", service_doc(someFutureKey="value")),
     # A file written against the old draft is not an error. Unknown keys are

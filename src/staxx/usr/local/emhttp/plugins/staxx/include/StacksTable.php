@@ -499,15 +499,14 @@ function staxx_service_icons_for_stack(string $stack): array {
   $meta = staxx_compose_meta($file);
   if (!$meta['ok']) return [];
 
-  $dir       = dirname($file);
-  $stackIcon = (string)($meta['x']['icon'] ?? '');
-  $out       = [];
+  $dir = dirname($file);
+  $out = [];
 
   foreach ($meta['services'] as $svc => $svcMeta) {
     $icon  = (string)($svcMeta['x']['icon'] ?? '');
     $image = trim((string)($svcMeta['image'] ?? ''));
 
-    $resolved = staxx_service_icon($icon, $stackIcon, $dir, $image, $svc, $stack);
+    $resolved = staxx_service_icon($icon, $dir, $image, $svc, $stack);
 
     $out[$svc] = [
       'html' => staxx_icon_tile($resolved, $svc),
@@ -859,30 +858,24 @@ function staxx_icon_usable(array $icon): bool {
  * row, the folder strip, the editor's heading row — draws whatever this
  * returns rather than guessing anything of its own.
  *
- * Each step is tried only when the one before produced nothing usable
- * (staxx_icon_usable()):
+ * A stack has no icon of its own to fall back to (PLAN_105): its picture is
+ * a picture of what it contains, so it cannot declare an identity separate
+ * from its services. Each step here is tried only when the one before
+ * produced nothing usable (staxx_icon_usable()):
  *   1. the service's own stated icon, name only — a guess must never enter
  *      at this step, so no image/service/stack is passed
- *   2. the stack's own stated icon, skipped when it names nothing — the
- *      service icon field's own hint calls it "overrides the stack icon for
- *      this service", so the stack's icon is already the designed default
- *   3. a search from the image name, which is only ever reached when the
+ *   2. a search from the image name, which is only ever reached when the
  *      service names nothing at step 1: staxx_icon_resolve() returns
  *      early on any non-empty stated value, before it would look at
  *      $image/$service/$stack, so this step never runs otherwise
- *   4. nothing — the caller draws initials, the floor every stack has
+ *   3. nothing — the caller draws initials, the floor every stack has
  *
  * @return array from staxx_icon_resolve()
  */
-function staxx_service_icon(string $svcIcon, string $stackIcon, string $dir,
+function staxx_service_icon(string $svcIcon, string $dir,
                             string $image, string $service, string $stack): array {
   $icon = staxx_icon_resolve($svcIcon, $dir);
   if (staxx_icon_usable($icon)) return $icon;
-
-  if ($stackIcon !== '') {
-    $icon = staxx_icon_resolve($stackIcon, $dir);
-    if (staxx_icon_usable($icon)) return $icon;
-  }
 
   return staxx_icon_resolve($svcIcon, $dir, $image, $service, $stack);
 }
@@ -894,12 +887,12 @@ function staxx_service_icon(string $svcIcon, string $stackIcon, string $dir,
  * the most that stays legible in a 4.4rem square; beyond that the fourth cell
  * counts what did not fit, the way a photo album cover does.
  *
- * Every child is resolved through staxx_service_icon() — the stack's own
- * `icon:` is just that call's second-choice input, not a separate step here.
- * Services that resolve to the SAME picture then collapse to one tile: with a
- * stack-level icon and no per-service ones, every service reaches that same
- * logo, and four copies of it is a mosaic showing no variety. Collapsing is
- * what lets the row drop its old stack-icon special case rather than move it.
+ * Every child is resolved through staxx_service_icon() — a stack has no icon
+ * of its own to feed it (PLAN_105); each service resolves from its own
+ * stated icon or its image name alone. Services that resolve to the SAME
+ * picture then collapse to one tile: several services all naming the same
+ * picture reach that same logo, and four copies of it is a mosaic showing no
+ * variety. Collapsing is what lets the row drop that case rather than show it.
  *
  * Keyed on the resolved icon, never on the rendered tile. A tile carries the
  * service's own initials and colour as what a broken picture falls back to,
@@ -945,11 +938,10 @@ function staxx_stack_tile(array $s, array $kids): string {
  * @return array<int, array{html: string, name: string}> one per distinct icon, in order
  */
 function staxx_stack_icon_tiles(array $s, array $kids): array {
-  $stackIcon = (string)($s['x']['icon'] ?? '');
   $out  = [];
   $seen = [];
   foreach ($kids as $kid) {
-    $icon = staxx_service_icon($kid['icon'], $stackIcon, $s['dir'],
+    $icon = staxx_service_icon($kid['icon'], $s['dir'],
                                $kid['image'], $kid['service'], $s['name']);
     $key  = $icon['fa'].'|'.$icon['url'].'|'.$icon['ref'];
     if ($key !== '||' && isset($seen[$key])) continue;
@@ -1075,13 +1067,6 @@ function staxx_icon_wanted(): array {
 
   foreach (staxx_list_stacks() as $s) {
     if (!$s['parses']) continue;
-
-    $own = (string)($s['x']['icon'] ?? '');
-    if ($own !== '') {
-      $add(staxx_icon_resolve($own, $s['dir']));
-      // A stack that names its own icon does not need its children's, but the
-      // container rows underneath it still show them.
-    }
 
     foreach (staxx_stack_children($s) as $kid) {
       $add(staxx_icon_resolve($kid['icon'], $s['dir'], $kid['image'],

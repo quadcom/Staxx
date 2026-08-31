@@ -20351,8 +20351,8 @@
             'out is the name of the icon being asked for. Turning it off stops all downloading — ' +
             'icons already saved keep working, and containers with no icon show a coloured tile ' +
             'with their initials instead. You can always name an icon yourself with ' +
-            '<code>icon:</code> in a stack\'s <code>x-unraid</code> section, which works whichever ' +
-            'way this is set.<br><br>Icons are by ' +
+            '<code>icon:</code> in a service\'s <code>x-unraid</code> section, which works ' +
+            'whichever way this is set.<br><br>Icons are by ' +
             '<a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st</a> and ' +
             'used under the <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" ' +
             'rel="noopener">CC BY 4.0</a> licence.'

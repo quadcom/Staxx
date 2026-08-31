@@ -157,6 +157,19 @@ console.log('\nA. README route — matching and corrections');
 var jf = build('linuxserver/jellyfin', 'hub', { readme: JELLYFIN_README, labels: JELLYFIN_CONFIG_LABELS }, OPTS);
 ok('lscr.io/linuxserver/jellyfin:latest in the block matches an import of linuxserver/jellyfin',
    jf.route === 'readme');
+ok('the readme route stamps docker-image', jf.yaml.indexOf('  from: docker-image') >= 0);
+ok('the stamp carries an on: date shaped YYYY-MM-DD', /\n {4}on: \d{4}-\d{2}-\d{2}\n/.test(jf.yaml));
+ok('the file no longer opens with a "Copied from" comment line',
+   jf.yaml.indexOf('# Copied from') === -1);
+ok('the file no longer carries the standing "ordinary compose file" sentences',
+   jf.yaml.indexOf('This is an ordinary compose file') === -1);
+// The blank line under the header used to be unconditional. With the header
+// gone, an import that reports nothing has nothing to separate from, and
+// pushing it anyway opened the file on an empty line.
+ok('an import with nothing to report opens straight on x-unraid:',
+   (jf.warnings || []).length || (jf.notes || []).length
+     ? jf.yaml.split('\n')[0].charAt(0) === '#'
+     : jf.yaml.split('\n')[0] === 'x-unraid:');
 ok('PUID becomes 99 with a note', jf.yaml.indexOf('PUID=99') >= 0 &&
    jf.notes.some(function (n) { return /PUID to 99/.test(n); }));
 ok('PGID becomes 100 with a note', jf.yaml.indexOf('PGID=100') >= 0 &&
@@ -269,8 +282,10 @@ var cfgUdp = build('example/thing', 'hub', { ports: ['5353/udp'] }, OPTS);
 ok('a udp port keeps its suffix', cfgUdp.yaml.indexOf('"5353:5353/udp"') >= 0);
 
 var cfgLocal = build('example/thing', 'local', { ports: ['80/tcp'] }, OPTS);
-ok('the local-source header names the server, not Docker Hub',
-   /already on this server/.test(cfgLocal.yaml.split('\n')[0]));
+ok('the config route no longer opens with a "Built from" source line',
+   cfgLocal.yaml.indexOf('# Built from') === -1);
+ok('the config route stamps docker-image regardless of hub vs local',
+   cfgLocal.yaml.indexOf('  from: docker-image') >= 0 && cfg.yaml.indexOf('  from: docker-image') >= 0);
 
 /* =========================================================================
  * E. Route 3 — neither

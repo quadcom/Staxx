@@ -40,7 +40,6 @@
   // from what a field is actually called). `version` carries none: it is
   // a real default rather than something offered, so it is never named.
   var STACK_FIELDS = [
-    { key: 'icon', word: 'an icon', hint: 'a selfh.st name, ./icon.png, a URL, or fa-database' },
     { key: 'overview', word: 'a description', block: 'What this stack is for.' },
     { key: 'category', word: 'a category', hint: 'Unraid category, e.g. MediaApp:Video' },
     { key: 'project', word: 'a project page', hint: 'the project home page' },
@@ -54,7 +53,7 @@
   ];
 
   var SERVICE_FIELDS = [
-    { key: 'icon', word: 'an icon', hint: 'overrides the stack icon for this service' },
+    { key: 'icon', word: 'an icon', hint: 'a selfh.st name, ./icon.png, a URL, or fa-database' },
     { key: 'overview', word: 'a description', block: 'What this container does.' },
     { key: 'project', word: 'a project page', hint: 'the page for this service, when it differs' },
     { key: 'support', word: 'a support page', hint: 'the support page for this service' },

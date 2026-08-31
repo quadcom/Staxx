@@ -330,7 +330,14 @@ ok('the empty-valued /config Path falls back to its Default', embyY.indexOf('/mn
 ok('a Path Mode of plain rw gets no :suffix', embyY.indexOf('/mnt/user:/media') >= 0 && embyY.indexOf('/mnt/user:/media:rw') === -1);
 ok('the yes|no choice-list default picks the first option', embyY.indexOf('ENABLE_HEALTHCHECK: "yes"') >= 0);
 ok('an empty Variable with an empty Default is still emitted, empty', embyY.indexOf('HEALTHCHECK_COMMAND: ""') >= 0);
-ok('Icon becomes stack x-unraid.icon', embyY.indexOf('icon: https://raw.githubusercontent.com/binhex/templates') >= 0);
+// PLAN_105: a stack's picture is derived from its services, never stated —
+// the catalogue's Icon lands in the SERVICE's x-unraid block, not the
+// stack's, even though a converted file is always single-service.
+ok('Icon becomes service x-unraid.icon', embyY.indexOf('      icon: https://raw.githubusercontent.com/binhex/templates') >= 0);
+// Stack-level keys sit at 2-space indent; only a service's own x-unraid
+// block (6-space indent) may carry icon, so a bare "  icon:" line would mean
+// one leaked back onto the stack.
+ok('no stack-level icon is ever written', embyY.indexOf('\n  icon:') === -1);
 ok('CategoryList[0] MediaApp-Video normalises to MediaApp:Video', embyY.indexOf('category: MediaApp:Video') >= 0);
 ok('Project is carried through unchanged, typo and all', embyY.indexOf('project: https://https://emby.media/') >= 0);
 ok('Support becomes stack x-unraid.support', embyY.indexOf('support: https://forums.unraid.net') >= 0);
@@ -517,6 +524,9 @@ ok('binhex-emby also carries no notes — every value it needed came from its ow
 ok('an app with no warnings has no heading and no stray comment block',
    embyNoWarn.yaml.indexOf('Could not be translated automatically') === -1);
 ok('a clean conversion has no comment block at all', !/^# Filled in for you/m.test(embyNoWarn.yaml));
+ok('a clean conversion does not open the file with a stray bare "#" line', embyNoWarn.yaml.indexOf('#') !== 0);
+ok('a warnings-only conversion opens straight on its own heading, no leading bare "#"',
+   gpuR.yaml.indexOf('# Could not be translated automatically:') === 0);
 
 /* =========================================================================
  * H2. Uppercase repository-path note
@@ -597,6 +607,8 @@ ok('...and exactly one note', pathOnlyR.notes.length === 1);
 ok('its comment block carries only the "Filled in for you" heading',
    pathOnlyR.yaml.indexOf('# Filled in for you') >= 0 &&
    pathOnlyR.yaml.indexOf('# Could not be translated automatically:') === -1);
+ok('a notes-only conversion opens straight on its own heading, no leading bare "#"',
+   pathOnlyR.yaml.indexOf('# Filled in for you') === 0);
 ok('omitting opts falls back to /mnt/user/appdata/',
    pathOnlyR.yaml.indexOf('/mnt/user/appdata/path-only-test/config') >= 0);
 
@@ -1032,19 +1044,48 @@ ok('buildForm().ok is true for the reordered output', kForm.ok === true);
  * passes 'template' to get a first line that is actually true.
  * ========================================================================= */
 
-console.log('\nL. opts.origin — the provenance line');
+console.log('\nL. opts.origin — the imported: stamp');
 
-var CA_LINE = '# Converted from the Community Applications template for binhex-emby.';
-var TEMPLATE_LINE = '# Converted from the Unraid template for binhex-emby.';
+var CA_FROM = '  from: community-applications';
+var TEMPLATE_FROM = '  from: unraid-template';
+var DATE_SHAPE = /\n {4}on: \d{4}-\d{2}-\d{2}\n/;
 
-ok('no opts.origin produces the Community Applications wording',
-   CA.convert(EMBY).yaml.indexOf(CA_LINE) === 0);
-ok('opts.origin: "ca" produces the same Community Applications wording',
-   CA.convert(EMBY, { origin: 'ca' }).yaml.indexOf(CA_LINE) === 0);
-ok('opts.origin: "template" produces the Unraid template wording',
-   CA.convert(EMBY, { origin: 'template' }).yaml.indexOf(TEMPLATE_LINE) === 0);
-ok('an unrecognised opts.origin falls back to the Community Applications wording',
-   CA.convert(EMBY, { origin: 'bogus' }).yaml.indexOf(CA_LINE) === 0);
+ok('no opts.origin stamps community-applications',
+   CA.convert(EMBY).yaml.indexOf(CA_FROM) >= 0);
+ok('opts.origin: "ca" stamps the same community-applications value',
+   CA.convert(EMBY, { origin: 'ca' }).yaml.indexOf(CA_FROM) >= 0);
+ok('opts.origin: "template" stamps unraid-template',
+   CA.convert(EMBY, { origin: 'template' }).yaml.indexOf(TEMPLATE_FROM) >= 0);
+ok('an unrecognised opts.origin falls back to community-applications',
+   CA.convert(EMBY, { origin: 'bogus' }).yaml.indexOf(CA_FROM) >= 0);
+ok('the stamp carries an on: date shaped YYYY-MM-DD',
+   DATE_SHAPE.test(CA.convert(EMBY).yaml));
+ok('the file no longer opens with a "Converted from" comment line',
+   CA.convert(EMBY).yaml.indexOf('# Converted from') === -1);
+
+// PLAN_105: the catalogue's icon lands on the service for either origin —
+// 'ca' and 'template' both convert a single-service file, and the picture
+// is the same statement wherever it came from.
+ok('the icon lands on the service under opts.origin: "ca"',
+   CA.convert(EMBY, { origin: 'ca' }).yaml.indexOf('      icon: https://raw.githubusercontent.com/binhex/templates') >= 0);
+ok('the icon lands on the service under opts.origin: "template"',
+   CA.convert(EMBY, { origin: 'template' }).yaml.indexOf('      icon: https://raw.githubusercontent.com/binhex/templates') >= 0);
+ok('the file no longer carries the standing "ordinary compose file" sentences',
+   CA.convert(EMBY).yaml.indexOf('This is an ordinary compose file') === -1);
+
+// The blank line under the header used to be unconditional. With the header
+// gone, a conversion that reports nothing has nothing to separate from, and
+// pushing it anyway opened every clean file on an empty line.
+var CLEAN = CA.convert({ Name: 'demo', Repository: 'nginx:latest', Network: 'bridge' });
+ok('a conversion with nothing to report opens straight on x-unraid:',
+   CLEAN.warnings.length === 0 && CLEAN.notes.length === 0 &&
+   CLEAN.yaml.split('\n')[0] === 'x-unraid:');
+ok('a conversion that does report something keeps its blank line above x-unraid:',
+   (function () {
+     var lines = CA.convert({ Name: 'demo', Network: 'bridge' }).yaml.split('\n');
+     var at = lines.indexOf('x-unraid:');
+     return at > 0 && lines[at - 1] === '' && lines[0].charAt(0) === '#';
+   })());
 
 /* =========================================================================
  * M. A Path setting whose Target is not a container path at all
