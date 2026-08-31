@@ -10142,6 +10142,179 @@ console.log('\nAQ. The ports note — commenting live ports out and restoring th
      JSON.stringify(note));
 })();
 
+/* =========================================================================
+ * AR. PLAN_105 — a password hash survives the compose file
+ *
+ * Compose reads a bare "$" as the start of a variable name at every point a
+ * value passes through it, so a hash's own dollar signs vanish unless each
+ * is written twice. escapeDollars() is the one function that does the
+ * doubling; hashNeedsEscaping() is the one check that decides a value looks
+ * like a hash. Both are exercised directly here, and through fieldsFor()'s
+ * hashEscape property, which is what stacks.js's one-click fix actually
+ * reads.
+ * ========================================================================= */
+
+console.log('\nAR. PLAN_105 — a password hash survives the compose file');
+
+// One service, one environment entry named V, so every case below only has
+// to supply the raw text of the value.
+function hashField(rawValue) {
+  var src = 'services:\n  a:\n    image: alpine\n    environment:\n      V: ' + rawValue + '\n';
+  var doc = Y.parse(src);
+  var form = Y.buildForm(doc);
+  return { doc: doc, form: form, field: Y.fieldById(form, 'a/env#0/V'), src: src };
+}
+
+var GENERIC_NOTE = 'uses a variable defined outside the compose file';
+var HASH_NOTE = 'this looks like a password hash';
+
+/* ---- AR1. All four formats, written already escaped, round-trip clean -- */
+
+(function () {
+  var CASES = {
+    argon2id: '$$argon2id$$v=19,m=65540,t=3,p=4$$c2FsdA$$aGFzaA',
+    bcrypt:   '$$2y$$12$$abcdefghijklmnopqrstuvABCDEFGHIJKLMNOPQRST',
+    'sha-512 crypt': '$$6$$saltsalt$$hashhashhashhashhashhashhashhashhashhash',
+    'sha-256 crypt': '$$5$$saltsalt$$hashhashhashhashhashhashhashhash'
+  };
+  Object.keys(CASES).forEach(function (label) {
+    var quoted = '"' + CASES[label] + '"';
+    var h = hashField(quoted);
+    ok(label + ' escaped: parse/serialise gives back the identical text',
+       Y.serialise(h.doc) === h.src, firstDiff(h.src, Y.serialise(h.doc)));
+    ok(label + ' escaped: advice is empty', h.field.advice.length === 0, h.field.advice);
+    ok(label + ' escaped: hashEscape is null', h.field.hashEscape === null, JSON.stringify(h.field.hashEscape));
+  });
+})();
+
+/* ---- AR2. The same four written raw are spotted, and the fix matches --- */
+
+(function () {
+  var CASES = {
+    argon2id: '$argon2id$v=19,m=65540,t=3,p=4$c2FsdA$aGFzaA',
+    bcrypt:   '$2y$12$abcdefghijklmnopqrstuvABCDEFGHIJKLMNOPQRST',
+    'sha-512 crypt': '$6$saltsalt$hashhashhashhashhashhashhashhashhashhash',
+    'sha-256 crypt': '$5$saltsalt$hashhashhashhashhashhashhash'
+  };
+  Object.keys(CASES).forEach(function (label) {
+    var raw = CASES[label];
+    var h = hashField('"' + raw + '"');
+    ok(label + ' raw: carries the hash sentence',
+       h.field.advice.some(function (a) { return a.indexOf(HASH_NOTE) >= 0; }), h.field.advice);
+    ok(label + ' raw: does not carry the generic variable sentence',
+       !h.field.advice.some(function (a) { return a.indexOf(GENERIC_NOTE) >= 0; }), h.field.advice);
+    ok(label + ' raw: hashEscape names the value part',
+       h.field.hashEscape && h.field.hashEscape.part === 'value', JSON.stringify(h.field.hashEscape));
+    ok(label + ' raw: hashEscape.to is the fully-doubled string',
+       h.field.hashEscape && h.field.hashEscape.to === Y.escapeDollars(raw), JSON.stringify(h.field.hashEscape));
+  });
+})();
+
+/* ---- AR3. An already-escaped value is not offered a second escaping ---- */
+
+(function () {
+  // Doubling twice is the same silent breakage one step along — compose
+  // would then only strip half the pairs and leave the value visibly wrong.
+  var h = hashField('"$$argon2id$$v=19,m=65540,t=3,p=4$$c2FsdA$$aGFzaA"');
+  ok('an already-escaped argon2id value is not re-flagged', h.field.hashEscape === null, JSON.stringify(h.field.hashEscape));
+  ok('and carries no hash sentence', !h.field.advice.some(function (a) { return a.indexOf(HASH_NOTE) >= 0; }), h.field.advice);
+})();
+
+/* ---- AR4. escapeDollars: a mid-string dollar, and none at all ---------- */
+
+(function () {
+  ok('a dollar in the middle is doubled', Y.escapeDollars('hunter$2y$abc') === 'hunter$$2y$$abc');
+  var plain = 'an ordinary password';
+  ok('a value with no dollar at all is returned unchanged — the no-op that keeps a plain password looking normal',
+     Y.escapeDollars(plain) === plain);
+})();
+
+/* ---- AR5. Left alone by the phase-2 check ------------------------------- */
+
+(function () {
+  var braced = hashField('"${DB_PASSWORD}"');
+  ok('${DB_PASSWORD} is not flagged as a hash', braced.field.hashEscape === null, JSON.stringify(braced.field.hashEscape));
+  ok('${DB_PASSWORD} still carries the existing generic variable sentence',
+     braced.field.advice.some(function (a) { return a.indexOf(GENERIC_NOTE) >= 0; }), braced.field.advice);
+
+  var escLiteral = hashField('"$$LITERAL"');
+  ok('$$LITERAL is not flagged as a hash', escLiteral.field.hashEscape === null, JSON.stringify(escLiteral.field.hashEscape));
+  ok('$$LITERAL carries no advice at all', escLiteral.field.advice.length === 0, escLiteral.field.advice);
+
+  var bareVar = hashField('"$DB_PASSWORD"');
+  ok('$DB_PASSWORD is not flagged as a hash', bareVar.field.hashEscape === null, JSON.stringify(bareVar.field.hashEscape));
+  ok('$DB_PASSWORD still carries the existing generic variable sentence',
+     bareVar.field.advice.some(function (a) { return a.indexOf(GENERIC_NOTE) >= 0; }), bareVar.field.advice);
+
+  // Contains a scheme name, but does not START with one — must not fire.
+  var midScheme = hashField('"hunter$2y$abc"');
+  ok('a dollar mid-string that merely looks like a scheme is not flagged',
+     midScheme.field.hashEscape === null, JSON.stringify(midScheme.field.hashEscape));
+
+  var notAScheme = hashField('"$notascheme$x"');
+  ok('a leading dollar whose name is not a known scheme is not flagged',
+     notAScheme.field.hashEscape === null, JSON.stringify(notAScheme.field.hashEscape));
+
+  var empty = hashField('""');
+  ok('an empty string is not flagged', empty.field.hashEscape === null, JSON.stringify(empty.field.hashEscape));
+
+  ok('a non-string input never throws and is simply not a hash',
+     Y.hashNeedsEscaping(42) === false && Y.hashNeedsEscaping(null) === false &&
+     Y.hashNeedsEscaping(undefined) === false && Y.hashNeedsEscaping({}) === false);
+})();
+
+/* ---- AR6. Applying the fix disturbs nothing else on or off the line ---- */
+
+(function () {
+  var before = 'services:\n' +
+               '  a:\n' +
+               '    image: alpine\n' +
+               '    environment:\n' +
+               '      ABOVE: keep\n' +
+               '      ADMIN_TOKEN: $argon2id$v=19$m=65540,t=3,p=4$c2FsdA$aGFzaA  # do not touch me\n' +
+               '      BELOW: keep\n';
+  var doc = Y.parse(before);
+  var form = Y.buildForm(doc);
+  var field = Y.fieldById(form, 'a/env#1/ADMIN_TOKEN');
+  ok('the raw hash is offered a fix', !!field.hashEscape, JSON.stringify(field && field.hashEscape));
+
+  var applied = Y.setPart(doc, form, field.id, field.hashEscape.part, field.hashEscape.to);
+  ok('setPart accepts the fix', applied);
+
+  var after = Y.serialise(doc);
+  var beforeLines = before.split('\n'), afterLines = after.split('\n');
+  var changed = diffLines(before, after);
+  ok('exactly one line changed', changed.length === 1, JSON.stringify(changed));
+  ok('the value on that line is now doubled',
+     afterLines[5].indexOf('$$argon2id$$v=19$$m=65540,t=3,p=4$$c2FsdA$$aGFzaA') >= 0, afterLines[5]);
+  ok('the trailing comment on that line is untouched',
+     afterLines[5].indexOf('# do not touch me') >= 0, afterLines[5]);
+  ok('every other line is byte-identical to before',
+     beforeLines.filter(function (_, i) { return i !== 5; }).join('\n') ===
+     afterLines.filter(function (_, i) { return i !== 5; }).join('\n'));
+})();
+
+/* ---- AR7. One shared escaping step — Fill/Copy and the model agree ----- */
+
+(function () {
+  var raw = '$argon2id$v=19,m=65540,t=3,p=4$c2FsdA$aGFzaA';
+  var h = hashField('"' + raw + '"');
+  ok('escapeDollars(value) and the model\u2019s own hashEscape.to are the identical string',
+     Y.escapeDollars(raw) === h.field.hashEscape.to, h.field.hashEscape);
+})();
+
+/* ---- AR8. The escaping is mechanically reversible ----------------------- */
+
+(function () {
+  // The cheapest available proof it is lossless: undoing the doubling by
+  // hand — every "$$" back to a single "$" — must return exactly the raw
+  // hash that went in, which is what compose itself does on the way in.
+  var raw = '$6$saltsalt$hashhashhashhashhashhashhashhashhashhash';
+  var h = hashField('"' + raw + '"');
+  var unescaped = h.field.hashEscape.to.replace(/\$\$/g, '$');
+  ok('undoing the doubling returns the original raw hash exactly', unescaped === raw, unescaped);
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

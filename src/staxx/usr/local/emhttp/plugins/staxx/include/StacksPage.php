@@ -480,6 +480,8 @@ endif;
                 <input type="checkbox" id="staxx-pwgen-punct">
                 <span><?= _('Punctuation') ?></span>
               </label>
+              <div class="staxx-pwgen-hint"><?= _('The dollar sign is left out on purpose — in a compose file it is where Compose starts reading the name of a variable.') ?>
+                <a href="https://github.com/quadcom/Staxx/blob/main/docs/guide/passwords-and-hashes.md" target="_blank" rel="noopener"><?= _('Why') ?></a></div>
             </div>
             <div id="staxx-pwgen-words" hidden>
               <label class="staxx-pwgen-row">

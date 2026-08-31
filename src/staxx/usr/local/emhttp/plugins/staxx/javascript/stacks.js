@@ -2890,6 +2890,20 @@
              'title="Declares ' + esc(f.declareMissing) + ' as a network created outside this file, ' +
              'which is what an Unraid network is.">Add it to this file</button>';
     }
+    // PLAN_105: the model has already said, above, that this looks like a
+    // password hash compose will strip the dollar signs out of. This is the
+    // fix for it — one press, through the ordinary field-writing path, with
+    // its own undo snapshot taken first, the same way the network fix below
+    // earns one. The doubled string is NOT put in
+    // an attribute here: it is a live credential, and the click reads it
+    // back off the model instead, which also means a redraw can never leave
+    // a button holding a value the file has since moved past.
+    if (f.hashEscape) {
+      out += '<button type="button" class="staxx-declfix" data-fix-hash="1" ' +
+             'title="Writes each dollar sign twice, which is how a compose file carries a real ' +
+             'dollar sign. The container still receives the hash exactly as it reads now.">' +
+             'Write each dollar sign twice</button>';
+    }
     // PLAN_64 phase C: not a greyed-out row for each network that was set
     // aside — section 6 rules that out on purpose, since a disabled row
     // reads as file content switched off, when in truth it has been removed.
@@ -6531,6 +6545,40 @@
       return;
     }
 
+    // PLAN_105's "Write each dollar sign twice", beside a hash the file is
+    // carrying with single ones (adviceText()). Deliberately writes through
+    // the field's own box and commit(), rather than calling setPart here:
+    // that is the one path that already reparses, redraws, autosaves and
+    // reports its own refusals, and a second write path for one button is
+    // exactly the kind of thing that drifts out of step with it.
+    var fixHash = event.target.closest('[data-fix-hash]');
+    if (fixHash) {
+      var hRow = fixHash.closest('[data-field-row]');
+      var hf   = hRow ? YAML.fieldById(MODEL.form, hRow.dataset.fieldRow) : null;
+      // Read fresh, never from the button: between the render and this press
+      // the file may have been edited elsewhere, and writing a stale doubled
+      // string would overwrite whatever replaced it.
+      if (!hf || !hf.hashEscape) {
+        setYamlStatus('That value has changed since the note appeared — nothing was written.');
+        return;
+      }
+      // A named attribute of its own, not data-part: several places on this
+      // page find a row's input with querySelector('[data-part="value"]'),
+      // and a button answering to that selector inside the same row is a
+      // silent mix-up waiting to happen.
+      var hBox = hRow.querySelector('input[data-part="' + hf.hashEscape.part + '"]');
+      if (!hBox) {
+        setYamlStatus('That value cannot be written from the form — write it in the Compose view instead.');
+        return;
+      }
+      flushPending();
+      pushUndo('writing each dollar sign twice');
+      hBox.value = hf.hashEscape.to;
+      commit(hBox);
+      hBox.focus();
+      return;
+    }
+
     // "Put them back", beside a network_mode row's set-aside note
     // (adviceText(), PLAN_64 phase C). restoreServiceNetworks() owns its
     // own undo entry and redraw.
@@ -8136,7 +8184,12 @@
         if (pwgenHashValue) pwgenHashValue.value = res.hash;
         if (pwgenHashCopy) pwgenHashCopy.disabled = false;
         updatePwgenAvailability();
-        setPwgenHashNote('Done.');
+        // Said here, permanently, so the Copy dialog below is a reminder
+        // rather than a surprise — a hash always starts with a dollar sign
+        // and holds several more, so this fires on essentially every hash.
+        setPwgenHashNote('A hash always contains dollar signs. Both Fill and Copy write each one '
+          + 'twice, so Compose passes the hash through untouched. The box above holds the plain '
+          + 'hash if something other than a compose file needs it.');
       });
     });
   }
@@ -8219,24 +8272,96 @@
     });
   }
 
-  // Shared by the password's own Copy and the hash's — same clipboard
-  // dance, only the source box and where the status line goes differ.
-  function pwgenDoCopy(input, sayFn) {
-    var val = input ? input.value : '';
-    if (!val) return;
+  // Every other typeof-YAML guard on this page falls back to a safe neutral
+  // — an early return, an empty list. This one must not: the neutral answer
+  // here is the value with its dollar signs left single, which is precisely
+  // the silent breakage this whole feature exists to stop. So it returns
+  // null and both callers refuse instead, which is only ever reachable from
+  // a stale cached copy of the model.
+  function pwgenEscape(val) {
+    if (!YAML || typeof YAML.escapeDollars !== 'function') return null;
+    return YAML.escapeDollars(val);
+  }
+
+  // The actual clipboard write, factored out of pwgenDoCopy() below because
+  // the text that ends up on the clipboard is sometimes the doubled-$ form
+  // rather than whatever the box is currently showing (see the dialog
+  // branch below). The execCommand fallback only ever copies a field's own
+  // selection, so where the two differ the field is swapped to the text
+  // being copied, selected, copied, then put back exactly as it was.
+  function pwgenCopyText(input, text, sayFn) {
     var said = function (ok) {
       sayFn(ok ? 'Copied to the clipboard.' : 'Could not copy — select the value and copy it by hand.');
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(val).then(function () { said(true); }, function () { said(false); });
-    } else {
-      // A browser with no Clipboard API — select what is already on screen
-      // and fall back to the old copy command.
-      input.select();
-      var ok = false;
-      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-      said(ok);
+      navigator.clipboard.writeText(text).then(function () { said(true); }, function () { said(false); });
+      return;
     }
+    // finally, not a plain sequence: the box is holding text the person did
+    // not put there for as long as this runs, and a throw anywhere in the
+    // middle would leave the doubled form sitting in it as though it had
+    // been typed.
+    var was = input.value;
+    var ok = false;
+    try {
+      input.value = text;
+      input.select();
+      ok = document.execCommand('copy');
+    } catch (e) {
+      ok = false;
+    } finally {
+      input.value = was;
+    }
+    said(ok);
+  }
+
+  // Shared by the password's own Copy and the hash's. A value with no
+  // dollar sign in it copies exactly as before. One that does holds a
+  // compose-only variable trigger, so — before anything reaches the
+  // clipboard — this explains what is about to happen and copies the
+  // doubled form only once that is acknowledged; every other way out of the
+  // dialog (Escape, the backdrop, Cancel) copies nothing, same as any other
+  // question on this page.
+  function pwgenDoCopy(input, sayFn) {
+    var val = input ? input.value : '';
+    if (!val) return;
+    if (val.indexOf('$') === -1) { pwgenCopyText(input, val, sayFn); return; }
+
+    var escaped = pwgenEscape(val);
+    if (escaped === null) {
+      sayFn('Could not copy — reload the page and try again.');
+      return;
+    }
+
+    // The value itself is never shown here — unlike the overwrite question
+    // above, which shows a value already on screen and in the file, a
+    // freshly generated password or hash is neither, and a dialog is a
+    // place a live credential can end up somewhere the Sanitise screenshot
+    // tick cannot reach. A generic example carries the point instead.
+    var plainMsg = 'This value contains a dollar sign. In a compose file, a dollar sign is where '
+      + 'Compose starts reading the name of a variable, so the copy has each dollar sign written '
+      + 'twice — for example, a single $ becomes $$ — which is how you tell Compose you mean a real '
+      + 'dollar sign. The container still receives the value exactly as it reads on screen. If you '
+      + 'are pasting this somewhere that is not a compose file — an .env file, or an application\'s '
+      + 'own settings — a single dollar sign is what belongs there, and the box above holds that '
+      + 'plain version for you to select and copy by hand. Copy the doubled version now?';
+
+    if (!confirmModal) {
+      if (window.confirm(plainMsg)) pwgenCopyText(input, escaped, sayFn);
+      return;
+    }
+    askConfirm({
+      title: 'This value contains a dollar sign',
+      bodyHtml: '<p>In a compose file, a dollar sign is where Compose starts reading the name of a '
+        + 'variable.</p>'
+        + '<p>The copy therefore has each dollar sign written twice — for example, a single '
+        + '<code>$</code> becomes <code>$$</code> — which is how you tell Compose you mean a real '
+        + 'dollar sign. The container still receives the value exactly as it reads on screen.</p>'
+        + '<p>If you are pasting this somewhere that is not a compose file — an <code>.env</code> '
+        + 'file, or an application’s own settings — a single dollar sign is what belongs there. '
+        + 'The box above holds that plain version, and you can select and copy it by hand.</p>',
+      goLabel: 'I understand'
+    }).then(function (go) { if (go) { closeConfirm(); pwgenCopyText(input, escaped, sayFn); } });
   }
 
   if (pwgenCopy) {
@@ -8258,11 +8383,28 @@
     el = pwgenTargetEl();
     if (!el) { updatePwgenAvailability(); return; }
 
+    // Compose reads a single $ as the start of a variable name and
+    // substitutes it away, so a value containing one — every hash this tool
+    // makes starts with one and holds four or five more — would arrive at
+    // the container shredded. Doubling is what Compose reads back as a
+    // literal $, and it is a no-op for an ordinary password, so nothing
+    // looks different in the common case. Left visible afterwards on
+    // purpose: it is what the file has to contain.
+    var escaped = pwgenEscape(val);
+    if (escaped === null) {
+      setPwgenNote('Could not fill — reload the page and try again.');
+      return;
+    }
+
     function doFill() {
-      el.value = val;
+      el.value = escaped;
       commit(el);       // the ordinary field-writing path — history, undo and reparse all come from here
       el.focus();
-      closePwgen();
+      closePwgen();     // clears the pwgen panel, so the doubled-$ note below goes on the editor's own status line, not in it
+      if (escaped !== val) {
+        setYamlStatus('Filled with each $ written twice, so Compose passes it through as typed — '
+          + 'the container still receives the value exactly as it was generated.');
+      }
     }
 
     var was = String(el.value || '').trim();

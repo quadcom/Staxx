@@ -2180,6 +2180,30 @@
     return /\$\{|\$[A-Za-z_]/.test(stripped);
   }
 
+  // Doubling every $ is the whole fix for PLAN_105: Compose reads a single
+  // $ as the start of a variable name at every point a value passes through
+  // it, so a literal one only survives written as $$.
+  function escapeDollars(s) {
+    return String(s).replace(/\$/g, '$$$$');
+  }
+
+  // All four hash formats StaXX's own hashing tool makes — and every other
+  // common one a person could arrive with — start "$scheme$", and Compose
+  // deletes each bare $ before the container ever sees the value (PLAN_105).
+  // Matching the scheme name itself, rather than "any dollar", is what keeps
+  // this quiet for an ordinary ${VAR} or $VAR reference — those never match.
+  // Longer scheme names are listed before any name they start with (argon2id
+  // before argon2i, 2y/2b/2a before bare 2) so the alternation cannot stop
+  // early and leave a trailing "d" or "y" unaccounted for against the "$"
+  // that must follow. A leading "$$" already fails here on its own: the
+  // second character has to be one of these scheme names, and none of them
+  // starts with "$", so an already-escaped value is never re-flagged.
+  var HASH_SCHEME_RE = /^\$(argon2id|argon2i|argon2d|apr1|2y|2b|2a|2|1|5|6|7|y)\$/;
+  function hashNeedsEscaping(s) {
+    if (typeof s !== 'string') return false;
+    return HASH_SCHEME_RE.test(s);
+  }
+
   /* ---- putting a service's fields together ------------------------------- */
 
   // Fields come out in the order the file has them, and everything about them
@@ -2206,10 +2230,24 @@
 
       // 1f: a value that reaches into a variable defined outside the file
       // (a .env entry, a shell export) stops being a plain string the moment
-      // someone types over it — flag every part that carries one.
+      // someone types over it — flag every part that carries one. A value
+      // that instead looks like a password hash (PLAN_105) gets its own
+      // specific sentence in place of this generic one, plus the fix itself,
+      // since compose would otherwise strip every dollar sign silently.
       var advice = t.advice.slice();
+      var hashEscape = null;
       for (var pk in t.parts) {
-        if (t.parts.hasOwnProperty(pk) && t.parts[pk] && interpolates(t.parts[pk].value)) {
+        if (!t.parts.hasOwnProperty(pk) || !t.parts[pk]) continue;
+        var pv = t.parts[pk].value;
+        if (hashNeedsEscaping(pv)) {
+          advice.push('this looks like a password hash — compose reads each dollar sign as ' +
+                       'the start of a variable name and will strip every one out before the ' +
+                       'container ever sees the value, so each dollar sign needs writing ' +
+                       'twice for the hash to arrive intact');
+          hashEscape = { part: pk, to: escapeDollars(pv) };
+          break;
+        }
+        if (interpolates(pv)) {
           advice.push('this value uses a variable defined outside the compose file — ' +
                        'typing over it replaces the variable with a fixed value');
           break;
@@ -2252,6 +2290,14 @@
         absent: t.absent,
         blocked: t.blocked,
         advice: advice,
+        // Set only when hashNeedsEscaping() fired above — { part, to } names
+        // which part of this field carries the hash and the doubled string
+        // to write into it, the shape stacks.js needs to offer a one-click
+        // fix through the ordinary field-writing path. Always present and
+        // null when the check did not fire, rather than left undefined the
+        // way declareMissing below is — one shape for every field means a
+        // consumer can read it without guarding for a missing property.
+        hashEscape: hashEscape,
         fixed: fixed,
         // Neither name is genuinely required: a service with build: and no
         // image: is valid compose, and nothing reads container_name's value
@@ -9212,6 +9258,8 @@
     // plain values can still have one side hand-edited into a pointer
     // afterwards, and overwriting that is the harm).
     interpolates: interpolates,
+    escapeDollars: escapeDollars,
+    hashNeedsEscaping: hashNeedsEscaping,
     // PLAN_70 stage 5: the two pure decisions behind the cross-stack lookup
     // — see the section comment above crossLooksLikeAddress() for why they
     // live here rather than in stacks.js.

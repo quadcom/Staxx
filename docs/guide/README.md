@@ -20,6 +20,9 @@ This guide is written in English only.
 - **[Editing a stack](editing-a-stack.md)** — the form you get when you open a stack: the three ways
   to look at the same file, what the sections do, ports on a container with its own address, the
   note under each box, the two marks, and what saving does and does not change.
+- **[Making a password, and its scrambled form](passwords-and-hashes.md)** — the Password button in
+  a stack's editor: making a password or a passphrase, turning one into the scrambled form some apps
+  ask for, and why a dollar sign is written twice in a compose file.
 - **[Hiding your values for a screenshot](hiding-your-values.md)** — the Sanitise tick that hides
   the values you marked secret while you photograph the editor, exactly what it leaves showing, what
   it switches off while it is on, and the one tab it cannot cover.
@@ -52,7 +55,6 @@ This guide is written in English only.
 These parts of StaXX do not have a page here yet — that is a gap to fill, not something left out on
 purpose:
 
-- Making and hashing a password without leaving the editor.
 - Removing a stack and getting it back from the archive.
 - Opening a shell into a running container.
 
