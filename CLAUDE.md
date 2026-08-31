@@ -52,6 +52,13 @@ node tests/meta_scaffold.js         # the commented x-unraid fields a new stack 
 node tests/js_undeclared.js         # names assigned but declared nowhere
 node tests/words.js                 # the passphrase generator's word list — count, shape, uniqueness
 node tests/registry_note.js         # the registry-behaviour note generator's own cases
+node tests/links_detect.js          # spotting that two services need to know about each other
+node tests/links_record.js          # the connection record — writing it, matching it, noticing it is stale
+node tests/crosslinks.js            # the browser half of the same: wording, and the confirmed-link write
+node tests/db_images.js             # the table of well-known database images
+node tests/pin_image.js             # pinning an image to one exact build
+node tests/export_redact.js         # what export blanks out before a stack leaves the machine
+node tests/guide_coverage.js        # which shipped features the user guide still says nothing about
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 ```
@@ -75,116 +82,94 @@ using StaXX would read it. The one testing-shaped thing that *is* user-facing is
 with a different audience.
 
 `tests/server/` holds PHP checks that can only run **on the server** — copy them up and run them
-there. `files.php` covers the companion-file helpers and the archive confirmation; `record.php` and
-`imagehistory.php` cover each stack's own hidden record — its compose-file history, and the image
-versions kept for a rollback, including the keep-set that decides what may be deleted;
-`pending.php` covers the restart-pending comparison — whether what is running still matches what the
-file now says — and above all its refusals; it needs no config keys and changes nothing, because the
-cases it builds are handed explicit `/tmp` paths rather than moving `STORE_ROOT`;
-`unpin.php` covers releasing a pin, including the one trap in it: the declined-version
-fingerprint is filed under the image's UNPINNED name, so clearing the pinned one instead makes the
-whole feature silently do nothing;
-`rollback.php` covers the image rollback's refusals — above all that the version asked for must be
-one this service itself recorded rather than merely digest-shaped;
-`crypt.php` covers the hashing container's refusals, and needs no config keys at all: every case
-either calls a pure function with made-up data or asks a read-only question, so it builds, starts,
-pulls and removes nothing. The two that matter most are that a hash format is refused unless the
-self-test has actually proven it, and that the superseded-image chooser never picks an image without
-StaXX's own stamp on it — the one place StaXX deletes without asking;
-`releasenotes_live.php` is the one suite that talks to the network, so it is opt-in — it runs only
-with `STAXX_LIVE_NOTES=1` and needs no config keys, because it asks read-only questions and records
-nothing. It proves the notes lookup end to end against a real project, and pins the gap that a
-rolling tag finds no release at all, so those cases flip to green the day PLAN_82a lands. A failure
-there may mean the external repository changed rather than the code being wrong;
-`updateeconomy.php` covers PLAN_90's registry economy — reference parsing including the ghcr/lscr
-no-rewrite rule, the OCI-index-first `Accept` list, the whole cadence table with its churn/floor/
-ceiling clamps, and the failed-image notice's wording once `fails` is already in state. It is
-offline (no stub of a registry exists in this repo, so anything that needs a real HTTP reply is
-left to `registry_live.php` below) and needs no config keys for most of it, but its row-notice
-section reads a real stack off the stacks folder, so `STORE_ROOT` is pointed at `/tmp` and restored the
-same way `record.php` does; `registry_live.php` is `releasenotes_live.php`'s sibling for the same
-plan — opt-in behind `STAXX_LIVE_REGISTRY=1`, needs no config keys, and proves a real `304` against
-a real registry plus that the digest matches what the docker CLI reports, for a Hub, a ghcr and an
-lscr image; `registry_quirks.php` is PLAN_92 Stage 1 — opt-in behind `STAXX_QUIRKS=1`, needs no
-config keys, and asks the same read-only questions of nine real public registries (Docker Hub gets
-just one image; its allowance is the only tight one), printing a summary table of what each one
-turned out to do. It carries the regression guard for the ghcr placeholder-scope fix, run against
-ghcr and codeberg's Gitea-hosted registry alike, and is worth a run whenever the registry code is
-touched, or before a release — an opt-in suite nobody runs is a suite that can rot unnoticed;
-set `STAXX_QUIRKS_JSON=/tmp/quirks.json` alongside it to also save what it measured;
-`registry_selfhosted.php` is PLAN_92 Stage 2 — opt-in behind `STAXX_SELFHOSTED=1`, needs
-`REGISTRY_TRUST` pointed at `127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002`, and is the only suite
-here that pulls anything: it starts and removes three throwaway registries on the box itself (open,
-password-protected, and a second implementation) to prove what a self-hosted registry does that a
-public one cannot show. Worth a run alongside `registry_quirks.php` whenever the registry code is
-touched, or before a release — the same "an opt-in suite nobody runs" trap applies twice over here, and
-`STAXX_SELFHOSTED_JSON=/tmp/selfhosted.json` saves what it measured the same way. Hand those two
-files to `node tests/registry_note.js /tmp/quirks.json /tmp/selfhosted.json` to regenerate
-`tests/server/REGISTRY-BEHAVIOUR.md`, the written record of what each of the twelve registries turned
-out to do — regenerate it as part of running the suites rather than as a separate chore somebody
-forgets, and never hand-edit it, since the next run overwrites it. It refuses to write anything from
-a run that reported failures;
-`detail.php` covers PLAN_84 Phase 2's resolver — what the server can find out about a stack's icon,
-description, category, author and links — and needs `STORE_ROOT` pointed at `/tmp/zzdetail-store`
-and `IMAGE_LOOKUP` forced to `"false"`, both refused-without like every other key here; forcing the
-network setting off, rather than merely not needing it, is what keeps this suite from ever touching
-the network at all, since every fixture image is fictional and local inspect always then comes back
-empty. Its negative cases matter most: nothing is invented for an unknown image, a non-`https` value
-is discarded at every link field, an ambiguous icon name yields nothing, a value identical to one
-already stored is never offered again while a genuinely different found value now surfaces as a
-conflict honestly labelled by its real source, and no catalogue or template value is ever labelled
-`stated` — asserted as one invariant over every case's output, alongside every value passing the
-schema's own pattern;
-`links.php` covers
-what happens when a stack folder holds a symlink, and needs `STORE_ROOT` pointed at `/tmp/b1-store`
-for the run because a store left on flash is vfat and cannot hold one; `autostart.php` covers the
-bridge to Unraid's boot-start list, and points `STAXX_AUTOSTART_FILE` at `/tmp` so the real one is
-never touched. Each file's header gives the exact commands. `files.php`, `links.php` and
-`record.php` all point `STORE_ROOT` (the one config key the stacks folder and the archive folder
-both derive from) at a `/tmp` folder, the same way, and each refuses to run without it — leaving it
-out is a first-line abort, not a wrong answer.
+there. **Every file's own header carries the exact command, the config keys that run needs, and how
+it puts them back**, so the table below is an index, not a substitute for reading the header of the
+one you are about to run.
 
-`store.php` covers PLAN_97 Phase 2's Store.php — telling apart a folder that is already a StaXX
-store, a bare pile of compose files, and one that is neither; writing the note a new store carries;
-and creating the store itself. It needs `STORE_ROOT` seeded to a scratch value first, the same
-first-line-abort-if-missing rule as the other suites, but that value is never a real store root here
-— it only proves a stray run cannot be mistaken for one holding Adrian's real data. Its own fixtures
-for the read-only inspector all live under `/tmp`, but the creation cases cannot: the store's own
-placement rules refuse anything outside a real share or pool, so those live under a disposable
-folder nested inside the real appdata share, cleaned up on every exit path the way
-`tests/server/storage.php` already does for its pool fixtures, and its one write to the real flash
-file is backed up and restored the same way `settings.php`'s is — `settings.php` itself backs up
-both halves of the config since PLAN_97 Phase 4 split it in two (the flash pointer file and, once a
-store exists, its own settings file inside `<store>/config`), and proves how the two layer together
-with the shipped defaults, using scratch flash-file states rather than this box's real one. Its two
-negative cases matter
-most: a folder holding a `stacks` folder next to an `archives` folder reads as StaXX's own even
-before any stack inside it has its own hidden record, and a bare pile of compose files with no
-hidden record and no `archives` folder never reads as one. Running creation twice over the same
-folder proves adopting an existing store disturbs nothing already inside it, and a store whose three
-folders exist but hold nothing yet — exactly what creating one leaves behind — still reads as
-StaXX's own rather than as somebody else's folder, which is what stops the first-run screen warning
-a person off the store they chose a moment ago.
+Four rules run through the whole set:
 
-`relocate.php` covers PLAN_97 Phase 3's Relocate.php — relocation now moves the whole data store
-as one tree, not the stacks folder alone, so the fixture it builds is a whole store: two stacks
-under `stacks` (one carrying its own hidden `.staxx` record folder), a file under `archives`
-standing in for a removed stack's zip, and a note under `config`. The Phase 1 blanket refusal is
-gone, so a clean destination is accepted rather than turned away outright, and a destination is
-still refused both for being the store itself and for sitting inside its `stacks` or `archives`
-folders. Its cases that matter most: all three folders and the hidden record folder arrive intact,
-the archive travels byte for byte since it is the only copy of a removed stack, and the fixed order
-— trial run, copy, verify, only then switch the setting, only then delete the original — is proved
-rather than assumed: a failure injected at the verify step is checked against the config file on
-disk, not the process's own memoised copy, so it actually proves `STORE_ROOT` was never touched. A
-failed trial or copy also leaves the destination exactly as it was found, whether that means absent
-or present-and-empty. It needs `STORE_ROOT` seeded to a scratch value first, the same
-first-line-abort-if-missing rule as the other suites, and lives under the real appdata share for the
-same "the store's own placement rules refuse anything outside a real share or pool" reason
-`store.php` does, with one exception: the case-clash cases need a filesystem that folds case, which
-only the flash drive offers, so those live there instead, briefly. The one case that actually
-succeeds runs last, since it is the only one that switches the real config and deletes the throwaway
-source — everything before it must leave both alone.
+- **A suite needing a config key refuses to run without it.** Leaving it out is a first-line abort,
+  never a wrong answer. `staxx_cfg()` memoises on first read, so a key has to be seeded into the
+  config file *before* php starts — it cannot be changed from inside the script.
+- **A suite that redirects `STORE_ROOT` points it at `/tmp` and restores the real value on every exit
+  path, including a fatal error.** `STORE_ROOT` is the one key both the stacks folder and the archive
+  folder derive from, so redirecting it moves both. Never point it at the real store.
+- **Some suites deliberately do not redirect it**, and hand explicit `/tmp` paths to the function
+  under test instead. Moving the store even for one command makes every real stack vanish from the
+  webGUI for as long as it is moved, which is not acceptable on Adrian's box.
+- **Seven are opt-in behind an environment flag**, marked below. An opt-in suite nobody runs is a
+  suite that can rot unnoticed — run them when the code they cover is touched, and before a release.
+
+| Suite | What it covers | Needs |
+|---|---|---|
+| `adopt` | Whether a compose file may be written into a folder that already exists, when the caller claims adoption of a fileless one | `STORE_ROOT` |
+| `autostart` | The bridge to Unraid's boot-start list | `STAXX_AUTOSTART_FILE` at `/tmp` |
+| `backup` | Whether the store is named in the Appdata Backup plugin's extras list, against the real installed file | `STORE_ROOT` |
+| `bootcopy` | The shelf of compose copies on the flash drive: the copy after every save, the case-clash refusal, removal and restore | `STORE_ROOT` |
+| `console` | The `recreate` and stack-scope `update` verbs, the scope refusals, the job-log tailer, the log follower and the shell — no real session is ever opened | — |
+| `crypt` | The hashing container's refusals. Builds, starts, pulls and removes nothing | — |
+| `detail` | What the server can find out about a stack's icon, description, category, author and links | `STORE_ROOT`, `IMAGE_LOOKUP=false` |
+| `export` | The export route — placeholders, redaction, and the job that packs a bundle | `STORE_ROOT` (some cases) |
+| `files` | The companion-file helpers and the archive confirmation | `STORE_ROOT` |
+| `gpu` | The Intel busy-percentage maths, read from the sysfs idle counter, and its shape with no sample on disk | — |
+| `handover` | Handover targets, the set-aside name, the state file's round trip, the script text, every refusal | — |
+| `icons` | Copying a matched icon into a stack's own folder, and its refusals | — |
+| `imagehistory` | Per-stack image history, and the keep-list image cleanup builds from it | `STORE_ROOT` |
+| `import` | The importer's three readers, the write path, and the per-row icon fallbacks | — |
+| `links` | What happens when a stack folder holds a symlink — needs a filesystem that can hold one, so never flash | `STORE_ROOT` at `/tmp` |
+| `links_match` | The cross-stack matcher and its one-target credentials lookup | `STORE_ROOT` |
+| `meta-cache` | The on-disk memory behind reading a compose file's metadata, keyed on contents plus version | — |
+| `moves` | Noticing when a catalogue app's template has moved registries | backs up three real files |
+| `override` | Two-file compose support, the strict pairing rule, and what it feeds | `STORE_ROOT` at `/tmp` |
+| `paths` | Making and checking volume paths, including how one outside `/mnt` is judged | `STORE_ROOT` |
+| `pending` | The restart-pending comparison — what is running against what the file now says — and above all its refusals | — |
+| `project-links` | Working out an app's own project links | **opt-in**, several `STAXX_CA_*` |
+| `record` | Each stack's own hidden record — its compose-file history — and the two doors that capture into it | `STORE_ROOT` |
+| `registry_live` | A real `304` against a real registry, and that the digest matches what the docker CLI reports | **opt-in** `STAXX_LIVE_REGISTRY=1` |
+| `registry_quirks` | The same read-only questions asked of nine real public registries, with the ghcr placeholder-scope guard | **opt-in** `STAXX_QUIRKS=1` |
+| `registry_selfhosted` | Three throwaway registries started on the box itself — open, password-protected, and a second implementation. The only suite here that pulls anything | **opt-in** `STAXX_SELFHOSTED=1`, `REGISTRY_TRUST` |
+| `releasenotes` | Release notes captured at pull time: the URL builder, the trimmer, and the one shared record-before-a-pull step | `STORE_ROOT` |
+| `releasenotes_live` | The notes lookup end to end against a real project | **opt-in** `STAXX_LIVE_NOTES=1` |
+| `relocate` | Moving the whole data store as one tree, and the fixed order it must happen in | `STORE_ROOT` |
+| `review` | The review lock, the job-runner refusal, and that a rename or a folder move keeps the lock | `STORE_ROOT` at `/tmp` |
+| `rollback` | That a rollback target must be a version this service itself recorded, not merely digest-shaped | `STORE_ROOT` |
+| `settings` | The settings allowlist, validator and atomic writer, and how the two halves of the config layer together | backs up both config files |
+| `storage` | What locations the store could move to | — |
+| `store` | Telling a StaXX store from a bare pile of compose files from neither, and creating one | `STORE_ROOT` seeded to scratch |
+| `takeover` | The route an imported Compose Manager project takes instead of a handover. Every case is a refusal, on purpose | `STORE_ROOT` |
+| `unpin` | Releasing a pin, and what an automatic pass may act on afterwards | `STORE_ROOT` |
+| `updateeconomy` | Reference parsing, the `Accept` list, the whole cadence table, and the failed-image notice's wording | `STORE_ROOT` (row-notice cases) |
+| `updaterun` | The doing side of updates — the clock, the queue, rollback, cleanup, the build-base reader | `STORE_ROOT` |
+| `updates` | The detection core — the state file, the digest probes, the per-image ask, the scope collector | **opt-in**, `STAXX_UPDATE_*` |
+| `watch` | Watching what an image's own publisher publishes | — |
+| `webui` | Resolving the address a service's web-page button opens, across every port and network arrangement | — |
+
+Where the traps are, none of them recoverable from the code:
+
+- **`unpin`** — the declined-version fingerprint is filed under the image's UNPINNED name, so clearing
+  the pinned one instead makes the whole feature silently do nothing.
+- **`crypt`** — the two cases that matter are that a hash format is refused until the self-test has
+  proved it on this machine, and that the superseded-image chooser never picks an image without
+  StaXX's own stamp. That is the one place StaXX deletes without asking.
+- **`detail`** — its negative cases matter most: nothing is invented for an unknown image, a
+  non-`https` value is discarded at every link field, a value identical to one already stored is
+  never offered again, and no catalogue or template value is ever labelled `stated`. Forcing
+  `IMAGE_LOOKUP` off, rather than merely not needing it, is what keeps it off the network at all.
+- **`store`** — a folder holding `stacks` beside `archives` reads as StaXX's own even before any
+  stack inside it has its own record, and a bare pile of compose files never does. That is what stops
+  the first-run screen warning somebody off the store they chose a moment ago.
+- **`relocate`** — the order is proved, not assumed: trial run, copy, verify, only then switch the
+  setting, only then delete the original. A failure injected at the verify step is checked against
+  the config file on disk, not the process's own memoised copy. Its one succeeding case runs last,
+  since it is the only one that switches the real config and deletes the throwaway source.
+- **`releasenotes_live`** — a failure there may mean the external repository changed rather than the
+  code being wrong.
+- **`registry_quirks` and `registry_selfhosted`** — set `STAXX_QUIRKS_JSON` and
+  `STAXX_SELFHOSTED_JSON` to save what they measured, then hand both files to
+  `node tests/registry_note.js` to regenerate `tests/server/REGISTRY-BEHAVIOUR.md`, the written record
+  of what each of the twelve registries turned out to do. Regenerate it as part of the run rather than
+  as a chore somebody forgets, and never hand-edit it — the next run overwrites it, and it refuses to
+  write anything from a run that reported failures.
 
 `validate_schema.py` has no runner or framework. It prints one line per case and exits non-zero on
 failure; its negative cases (what the schema must *reject*) matter more than the positive ones.
