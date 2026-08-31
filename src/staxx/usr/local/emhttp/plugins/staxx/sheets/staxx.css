@@ -681,6 +681,16 @@
   background: var(--sm-good);
 }
 
+/* Sick beats up when both classes land on the same dot — the container is
+   still running, but its own health check says the app inside is not, so this
+   has to sit after --up in the file to win the cascade. Same red as
+   .staxx-pill--bad, because it marks the same fact the pill does; a container
+   whose check is merely still deciding gets no dot of its own, since the pill
+   already says so and the state passes on its own. */
+.staxx-dot--sick {
+  background: var(--sm-danger);
+}
+
 /* ---- Stack table -------------------------------------------------------- */
 
 /* The flex layout lives on .staxx-namebox, a <div> inside the cell, rather

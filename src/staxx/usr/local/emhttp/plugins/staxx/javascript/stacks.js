@@ -16241,7 +16241,7 @@
   // machine that HTML is identical poll after poll — so it is compared and
   // skipped the same way a figure is. See setCell for why the comparison is
   // against what we were handed rather than against innerHTML.
-  function paintState(row, html, isUp, address) {
+  function paintState(row, html, isUp, address, sick) {
     // Suppressed the same way a busy row is: a real state landing here would
     // otherwise paint the sticky failure marker away one poll after it
     // appeared. See markFailed()/clearFailure() for how it comes and goes.
@@ -16256,7 +16256,11 @@
       addr.innerHTML = address;
       addr.staxxTxt = address;
     }
-    setClass(row.querySelector('.staxx-dot'), 'staxx-dot--up', !!isUp);
+    var dot = row.querySelector('.staxx-dot');
+    setClass(dot, 'staxx-dot--up', !!isUp);
+    // A sick container is still up, so --sick is drawn over --up by CSS
+    // rather than replacing it — both classes can be present together.
+    setClass(dot, 'staxx-dot--sick', !!sick);
   }
 
   // "2 of 3 running". Counted from the rows on screen rather than sent by the
@@ -16380,7 +16384,7 @@
       // The cell's contents come from the server already rendered, so a pill
       // that appears without a page load is identical to one that came with
       // it — including its translated wording.
-      paintState(row, s.html, s.running, s.address);
+      paintState(row, s.html, s.running, s.address, s.sick);
 
       // The menu is rebuilt from these attributes every time it opens, so
       // updating them is what turns Start into Restart and enables Stop.
@@ -16410,7 +16414,7 @@
           // not a missing reading.
           setData(kid, 'container', '');
           setData(kid, 'state', '');
-          paintState(kid, res.notCreated || '', false, res.noAddress || '');
+          paintState(kid, res.notCreated || '', false, res.noAddress || '', false);
           paintContainerImage(kid, '', res.notCreatedImage);
           return;
         }
@@ -16421,7 +16425,7 @@
         setData(kid, 'container', c.container);
         setData(kid, 'state', c.state);
         if (c.state === 'running') up++;
-        paintState(kid, c.html, c.state === 'running', c.address);
+        paintState(kid, c.html, c.state === 'running', c.address, c.sick);
         paintContainerImage(kid, c.image, res.notCreatedImage);
       });
 

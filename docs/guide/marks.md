@@ -13,6 +13,8 @@ The first pill on a row, showing whether the containers are actually going.
 | Mark | Meaning | What to do |
 |---|---|---|
 | Green pill, e.g. "Up 5 minutes" | Running. The words are whatever Docker itself reports, so they can say "Up 2 hours" or similar rather than just "running". | Nothing needed. |
+| Red pill, e.g. "Up 2 hours (unhealthy)" | The container is going, but the app inside says it is not working. See below. | Worth a look — the app's own log usually says why. |
+| Amber pill, e.g. "Up 5 seconds (health: starting)" | The container is going, and its own check has not finished deciding yet. | Give it a moment. |
 | Grey pill, "stopped" | Not running, and nothing else is wrong. | Start it when you want it running. |
 | Grey pill, "not created" | The container has never been built from the file yet. | Start it to create and run it. |
 | Amber pill (e.g. "Restarting", "paused") | Mid-way through something, or paused. | Usually settles on its own; check back. |
@@ -20,6 +22,22 @@ The first pill on a row, showing whether the containers are actually going.
 | "unknown" (plain grey text, no pill) | StaXX cannot currently ask the running-container service what is going on. | Not something to fix on the row — it clears up once that service answers again. |
 
 ![A folder row with four stack rows beneath it, each showing the app's logo, its name, a green "up" pill or a grey "stopped" one, the address it is reachable on, and columns of processor, memory and network figures](../images/guide/marks-row-states.png)
+
+## Running, and actually working, are two different things
+
+Hover any running pill and it tells you which of the two it is claiming.
+
+Most images say only "the container is going". That is genuinely all Docker knows: some apps fail
+at startup and shut themselves down while the container carries on doing something harmless, and
+from the outside it looks perfectly fine. A green pill on such an app means nobody has checked.
+
+Some images ship their own definition of working and check themselves every few seconds. Where one
+does, StaXX shows the answer: the pill turns red and the dot on the app's picture turns red with
+it, so a stack whose app has quietly died no longer reads as healthy. The stack's own row turns red
+too, and its tooltip names which part of it is the unhappy one.
+
+Nothing is being probed to work this out — it is the app's own verdict on itself, which Docker was
+already collecting. StaXX simply asks for it.
 
 ## A red triangle where the app's picture should be
 

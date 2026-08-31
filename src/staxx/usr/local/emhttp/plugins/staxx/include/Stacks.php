@@ -1854,6 +1854,7 @@ function staxx_container_index(): array {
       'project'    => $r['project'],
       'service'    => $r['service'],
       'configHash' => $r['configHash'] ?? '',
+      'health'     => $r['health'] ?? 'none',
     ];
 
     $index['byProject'][$row['project']][] = $row;
@@ -2455,6 +2456,44 @@ function staxx_stack_containers(array $s): array {
   $result  = $index['byProject'][$project] ?? [];
   if ($key !== null) $memo[$key] = $result;
   return $result;
+}
+
+/**
+ * PLAN_107 — rolls a stack's containers up into one health word, considering
+ * only the ones actually running: a stopped container's stale health means
+ * nothing, and is already covered by the ordinary running/stopped colour.
+ * Unhealthy outranks starting outranks healthy, so one bad container is never
+ * hidden behind another that is still coming up.
+ *
+ * Computed only where the caller already has the containers in hand — never
+ * from staxx_stack_states(), which is deliberately one `compose ls` and no
+ * file reads (see its own docblock).
+ */
+function staxx_stack_health(array $containers): string {
+  $any = ['unhealthy' => false, 'starting' => false, 'healthy' => false];
+  foreach ($containers as $c) {
+    if (strtolower((string)($c['state'] ?? '')) !== 'running') continue;
+    $h = $c['health'] ?? 'none';
+    if (isset($any[$h])) $any[$h] = true;
+  }
+  if ($any['unhealthy']) return 'unhealthy';
+  if ($any['starting'])  return 'starting';
+  if ($any['healthy'])   return 'healthy';
+  return 'none';
+}
+
+/**
+ * The service names — or container names, for one with no service label —
+ * that are running and unhealthy. What the tooltip on a sick stack row names.
+ */
+function staxx_unhealthy_services(array $containers): array {
+  $out = [];
+  foreach ($containers as $c) {
+    if (strtolower((string)($c['state'] ?? '')) !== 'running') continue;
+    if (($c['health'] ?? 'none') !== 'unhealthy') continue;
+    $out[] = (string)(($c['service'] ?? '') !== '' ? $c['service'] : ($c['name'] ?? ''));
+  }
+  return $out;
 }
 
 /**

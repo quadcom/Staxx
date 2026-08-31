@@ -1473,6 +1473,22 @@ function staxx_image_facts(string $image, string $source, bool $wantConfig = fal
 }
 
 /**
+ * Docker prints an image's own health check as a suffix on the status text —
+ * "Up 2 hours (healthy)", "Up 3 minutes (unhealthy)", "Up 5 seconds
+ * (health: starting)" — and nothing at all when the image declares no check.
+ * Matched on the END of the trimmed string, never by searching it: a
+ * container or image name cannot reach that position, so nothing there can
+ * be crafted to spoof a health word that Docker never actually reported.
+ */
+function staxx_health_from_status(string $status): string {
+  $status = trim($status);
+  if (str_ends_with($status, '(healthy)'))          return 'healthy';
+  if (str_ends_with($status, '(unhealthy)'))         return 'unhealthy';
+  if (str_ends_with($status, '(health: starting)'))  return 'starting';
+  return 'none';
+}
+
+/**
  * One `docker ps -a` for the whole machine, every field the plugin's several
  * container readers each want, so they can share this single shell-out
  * instead of running their own near-identical one straight after it —
@@ -1487,9 +1503,12 @@ function staxx_image_facts(string $image, string $source, bool $wantConfig = fal
  * whitespace from each line, so a container whose final label is empty would
  * otherwise lose the tab before it and arrive one field short.
  *
+ * `health` (PLAN_107) costs no extra call — it is read straight out of the
+ * status text `{{.Status}}` already carried in this same line.
+ *
  * @return array<int, array{id:string, name:string, state:string, status:string,
  *                          image:string, project:string, service:string,
- *                          configFiles:string, configHash:string}>
+ *                          configFiles:string, configHash:string, health:string}>
  */
 function staxx_docker_ps_raw(): array {
   static $rows = null;
@@ -1535,6 +1554,7 @@ function staxx_docker_ps_raw(): array {
       'service'     => $c[6],
       'configFiles' => $c[7],
       'configHash'  => $c[8] ?? '',
+      'health'      => staxx_health_from_status($c[3]),
     ];
   }
   return $rows;
