@@ -11,6 +11,11 @@
 > [Two channels](#two-channels) — but take it only if you want to see things early and do not mind
 > the occasional rough edge. For the stable release, read
 > [`main`](../../blob/main/README.md).
+>
+> **A new build goes out most nights.** Whenever there is new work here, a release is cut
+> automatically overnight, and your server will offer it to you like any other plugin update. That
+> is the point of this channel — but it does mean updates arrive often, and each one carries whatever
+> landed that day. Quiet days produce nothing at all.
 <!-- /dev-banner -->
 
 > **Where this is up to.** In daily use on the author's own server and far enough along to judge on
@@ -78,8 +83,9 @@ alone; deleting the data store folder is a separate, deliberate act.
 
 ### Two channels
 
-The address above is the **stable** channel. There is also a **development** channel, released far
-more often, carrying work that has not settled yet:
+The address above is the **stable** channel. There is also a **development** channel, carrying work
+that has not settled yet. A build goes out most nights — whenever there is new work, a release is
+cut automatically overnight; quiet days produce nothing:
 
 ```
 https://raw.githubusercontent.com/quadcom/Staxx/dev/staxx.plg
