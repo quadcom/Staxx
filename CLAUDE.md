@@ -311,6 +311,13 @@ for updates, so a `dev` value carried into main's manifest by a merge would quie
 development builds to everyone on the stable channel. `publish.yml` therefore *sets* it from the
 branch it is publishing and refuses to publish if it did not take. Never trust the committed value.
 
+**So a merge from `dev` to `main` has two things to put back, not one:** the readme's banner (which
+`cleanreadme` removes) and this entity, which the merge will have carried over as `dev`. Do both in
+the merge commit. Forgetting is not silent — the `Check` workflow reads the entity on every push and
+fails on `main` if it does not say `main` — but the window between the merge and noticing is a window
+where the stable channel's manifest is pointing people at development builds, so put it back at the
+same time as the banner rather than waiting to be told.
+
 **What the deploy route cannot prove**, and so is worth an occasional real install: the manifest's
 own install and removal scripts. `dev-install.sh` mirrors the parts that matter day to day — seeding
 the config, running `apply_settings`, writing the registration marker — but the legacy

@@ -54,3 +54,19 @@ jobs:
           # gate before it has built anything.
           for t in tests/*.js; do echo "==> $t"; node "$t"; done
           python tests/validate_schema.py
+
+      # The manifest's branch entity decides which branch an installed plugin
+      # polls for updates, so it is per-branch content, exactly like the
+      # readme's development banner — and a merge carries it across just as
+      # easily. publish.yml sets it at release time, but that is too late to
+      # notice: between a bad merge and the next release, main's manifest is
+      # served from raw.githubusercontent as-is, and everybody on the stable
+      # channel would be quietly pointed at development builds. Checked on
+      # every push instead, so it is caught within a minute of the merge.
+      - name: Check the manifest names this branch
+        run: |
+          PLG_BRANCH="$(sed -n 's/.*<!ENTITY branch *"\([^"]*\)".*/\1/p' staxx.plg | head -n1)"
+          if [ "${PLG_BRANCH}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::staxx.plg's <!ENTITY branch> says \"${PLG_BRANCH}\", but this is ${GITHUB_REF_NAME}. An installed plugin polls that branch for updates, so on ${GITHUB_REF_NAME} it must say ${GITHUB_REF_NAME}. This is almost always a merge carrying the other branch's value across."
+            exit 1
+          fi

@@ -9,7 +9,7 @@
      obvious placeholder so a premature publish fails loudly rather than
      silently fetching from somewhere unintended. -->
 <!ENTITY github               "quadcom/Staxx">
-<!ENTITY branch               "main">
+<!ENTITY branch               "dev">
 
 <!ENTITY pkgARCH              "noarch">
 <!ENTITY pkgBUILD             "1">
