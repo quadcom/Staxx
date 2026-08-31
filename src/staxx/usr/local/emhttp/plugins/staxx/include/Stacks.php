@@ -1442,7 +1442,7 @@ function staxx_first_ports(string $yaml): array {
 // key, so a plugin update cannot serve an answer the old parser computed —
 // without this a stale shape would sit there looking valid forever, since
 // nothing else about the compose file need have changed.
-const STAXX_META_VERSION = 5;
+const STAXX_META_VERSION = 6;
 
 /**
  * A hash of everything that can change what compose would report for a
@@ -1515,7 +1515,7 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
  *                services:array<string,array{image:string, container_name:string,
  *                                            x:array<string,string>, fixedIp:string,
  *                                            firstPort:array{target?:string,published?:string,count?:int},
- *                                            netMode:string, networks:string[]}>}
+ *                                            netMode:string, networks:string[], healthcheck:bool}>}
  */
 function staxx_compose_meta(string $file, ?string &$error = null): array {
   static $cache = [];
@@ -1590,7 +1590,7 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
                                       'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => []];
+                                      'networks' => [], 'healthcheck' => false];
     }
 
     // Which networks this service names, regardless of what else is nested
@@ -1628,6 +1628,11 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
       // is on — staxx_service_net_kind() falls back to this when there is no
       // running container to ask instead.
       $meta['services'][$service]['netMode'] = $value;
+    } elseif ($parts[2] === 'healthcheck' && count($parts) >= 4 && $parts[3] === 'test') {
+      // PLAN_108 — only a real test command counts as "already has one";
+      // `healthcheck: {disable: true}` on its own is not that, the same
+      // reading applied to an image's own ["NONE"].
+      $meta['services'][$service]['healthcheck'] = true;
     }
   }
 
@@ -1637,7 +1642,7 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
                                       'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => []];
+                                      'networks' => [], 'healthcheck' => false];
     }
     $meta['services'][$service]['firstPort'] = $port;
   }
@@ -6791,6 +6796,169 @@ function staxx_cfile_cp_out_cmd(string $container, string $path, string $hostTem
 function staxx_cfile_cp_in_cmd(string $container, string $hostTemp, string $path): string {
   return escapeshellarg(staxx_docker_bin()).' cp -- '
        . escapeshellarg($hostTemp).' '.escapeshellarg($container.':'.$path);
+}
+
+/* ============================================================= PLAN_108 health trial ===
+ *
+ * Working out whether a health check CAN be offered, never applying one —
+ * that stays entirely a compose-file edit through the existing save route.
+ * Both functions below take an already-resolved container name (the same
+ * kind staxx_cfile_container() hands back, never a name typed by the
+ * browser), and both share one short timeout so a hung candidate can never
+ * hold a PHP worker open.
+ */
+
+// Long enough for a client tool to open a real connection and answer, short
+// enough that a person waiting on the chooser is never left staring at it.
+define('STAXX_HEALTH_TRIAL_TIMEOUT', 8);
+
+/** Docker's own name rule, checked before a name reaches a shell on top of
+ *  (not instead of) escapeshellarg() — the same belt-and-braces every other
+ *  exec helper in this section applies. */
+function staxx_health_valid_container(string $container): bool {
+  return $container !== '' && preg_match('/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/D', $container) === 1;
+}
+
+/**
+ * Which of curl and wget exist inside a running container — the two tools
+ * the web-ping source (PLAN_108 step 4) can reach for. One `docker exec`,
+ * `command -v` rather than `which`, because `which` is itself missing from
+ * plenty of minimal images.
+ *
+ * @return array{curl:bool, wget:bool}
+ */
+function staxx_health_tools(string $container, string &$why): array {
+  $why = '';
+  if (!staxx_health_valid_container($container)) { $why = 'That is not a valid container name.'; return []; }
+
+  // The trailing `exit 0` is load-bearing, and its absence was measured on a
+  // real container rather than reasoned about: a shell exits with the status
+  // of its LAST command, so a container without wget made the final
+  // `command -v` fail, short-circuit its `&&`, and hand back 127 — reported
+  // as "could not ask this container anything" for a probe that in fact ran
+  // perfectly and correctly found nothing. Since most images carry neither
+  // tool, that silently retired the web-ping source almost everywhere. The
+  // exit code here must say whether the QUESTION could be asked; what the
+  // answer was is read from the output.
+  $probe = 'command -v curl >/dev/null 2>&1 && echo CURL_YES; '
+         . 'command -v wget >/dev/null 2>&1 && echo WGET_YES; '
+         . 'exit 0';
+  $code = null;
+  $out = staxx_sh(
+    escapeshellarg(staxx_docker_bin()).' exec '.escapeshellarg($container).' sh -c '.escapeshellarg($probe),
+    5, $code
+  );
+  if ($code !== 0) { $why = 'Could not ask that container what tools it has inside it.'; return []; }
+
+  return [
+    'curl' => strpos($out, 'CURL_YES') !== false,
+    'wget' => strpos($out, 'WGET_YES') !== false,
+  ];
+}
+
+/**
+ * What a `docker exec` exit code says about whether a candidate check CAN
+ * run — '' for "it ran fine", a plain sentence otherwise. Split out as its
+ * own pure function purely so the exit-code judgement can be tested with a
+ * made-up number, the same reasoning staxx_parse_image_healthcheck() is
+ * split out for, rather than needing a real container to produce one.
+ */
+function staxx_health_trial_verdict(int $code): string {
+  if ($code === 0) return '';
+
+  if ($code === 127) {
+    return 'This image has nothing inside it to check with, so this check cannot be offered here.';
+  }
+
+  // 124 is `timeout`'s own "ran out of time"; 137 is what is left once the
+  // grace period (`timeout -k 2`) has to finish the job with SIGKILL.
+  if ($code === 124 || $code === 137) {
+    return 'That command did not answer in time, so this check cannot be offered here.';
+  }
+
+  return 'That command failed just now, so this check cannot be offered here. '
+       . 'The app may simply be busy at this moment, but the safe answer is not to offer a check that already failed once.';
+}
+
+/**
+ * Undo compose's own `$$` -> `$` substitution — the one compose would have
+ * done on the way from the YAML into the container. The trial runs the
+ * candidate directly through `docker exec`, with compose nowhere in the
+ * chain, so a recipe's `$$MYSQL_ROOT_PASSWORD` — written that way because
+ * that IS the correct compose syntax for a literal dollar — would otherwise
+ * reach the shell untouched, where the shell itself expands `$$` to its own
+ * process id rather than leaving a variable name for the database's own
+ * client to read. The command then fails for a reason that has nothing to
+ * do with whether the check itself is right, and the trial would report a
+ * perfectly good recipe as "failed just now" with no way to tell the two
+ * apart. Only the trial does this substitution — nowhere else in this file
+ * stands in for compose, so nowhere else should undo what compose does.
+ *
+ * str_replace() already pairs left to right, non-overlapping, which is the
+ * same rule compose's own substitution follows: "$$$$" (two pairs) becomes
+ * "$$", and a lone "$" with no partner is left exactly as it was.
+ */
+function staxx_health_collapse_dollars(string $s): string {
+  return str_replace('$$', '$', $s);
+}
+
+/**
+ * Run one CANDIDATE health-check command inside a running container, once,
+ * and judge only whether it CAN run there — this never decides whether the
+ * offer is a good idea, only whether the command has anything to execute.
+ *
+ * A refusal here always means "offer nothing", never "offer anyway" — see
+ * PLAN_108's own framing: a check that cannot run reports unhealthy for
+ * ever, which is worse than the blank box it would replace.
+ *
+ * One honest limit that cannot be designed around: a candidate can also
+ * fail here because the app genuinely is unhealthy at this exact moment,
+ * and this trial has no way to tell that apart from a command that cannot
+ * run at all. Both read as "offer nothing" on purpose — it is the safe
+ * direction, not a false negative worth chasing.
+ */
+function staxx_health_trial(string $container, $test, string &$why): bool {
+  $why = '';
+
+  $mode = is_array($test) ? (string)($test[0] ?? '') : '';
+  if (!is_array($test) || ($mode !== 'CMD' && $mode !== 'CMD-SHELL')) {
+    $why = 'That is not a health-check command StaXX understands.';
+    return false;
+  }
+
+  $args = array_slice($test, 1);
+  if ($args === []) {
+    $why = 'That health-check command has no command in it, so there is nothing to try.';
+    return false;
+  }
+  // Standing in for compose's own variable substitution — see
+  // staxx_health_collapse_dollars()'s own comment for why this has to
+  // happen here and nowhere else.
+  $args = array_map('staxx_health_collapse_dollars', $args);
+
+  if (!staxx_health_valid_container($container)) { $why = 'That is not a valid container name.'; return false; }
+
+  $running = trim(staxx_sh(
+    escapeshellarg(staxx_docker_bin()).' inspect -f '.escapeshellarg('{{.State.Running}}').' '.escapeshellarg($container),
+    5
+  ));
+  if ($running !== 'true') {
+    $why = 'That container is not running, so there is nothing to try a health check against.';
+    return false;
+  }
+
+  $inner = $mode === 'CMD-SHELL'
+    ? 'sh -c '.escapeshellarg((string)$args[0])
+    : implode(' ', array_map('escapeshellarg', $args));
+
+  $code = null;
+  staxx_sh(
+    escapeshellarg(staxx_docker_bin()).' exec '.escapeshellarg($container).' '.$inner,
+    STAXX_HEALTH_TRIAL_TIMEOUT, $code
+  );
+
+  $why = staxx_health_trial_verdict((int)$code);
+  return $why === '';
 }
 
 /**

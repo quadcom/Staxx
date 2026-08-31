@@ -960,6 +960,101 @@ switch ($action) {
     if ($text === null) staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'text' => $text]);
 
+  /* ---- PLAN_108 step 2 — the facts a health-check chooser needs ----
+   *
+   * Answers only, never a candidate check and never a trial of one — this
+   * is what the browser reads before it offers anything. It shares the file
+   * manager's own container resolution (SHELL_ENABLED, the review lock, and
+   * — critically — the service being a real member of this stack's compose
+   * file, the same membership rule the job runner checks a service name
+   * against), because working out what StaXX knows about a container's own
+   * health check is the same "reach into a running container" capability,
+   * wearing yet another hat.
+   */
+  case 'health-probe':
+    $service = (string)($_POST['service'] ?? '');
+    $container = staxx_cfile_container($name, $service, $error);
+    if ($container === '') staxx_reply(['ok' => false, 'error' => $error]);
+
+    $file = staxx_find_compose_file(staxx_stack_dir($name));
+    $meta = staxx_compose_meta($file);
+    $svc  = $meta['services'][$service] ?? ['image' => '', 'healthcheck' => false];
+
+    $toolsWhy = '';
+    $tools = staxx_health_tools($container, $toolsWhy);
+    // staxx_health_tools() returns [] on failure, which json_encode()s as
+    // [] — indistinguishable, to the browser, from an object whose fields
+    // simply are not there yet, which is exactly the shape "nothing worth
+    // asking this image" also has. Sending null instead is the only way
+    // "could not find out" cannot be mistaken for "found out there is
+    // nothing" — $toolsError stays alongside it either way.
+    $toolsReply = $toolsWhy === '' ? $tools : null;
+
+    $config   = staxx_local_image_config($svc['image']);
+    $declared = (bool)($config['healthcheck']['declared'] ?? false);
+    $inFile   = (bool)$svc['healthcheck'];
+
+    // Source 2 (PLAN_108) — only worth the fetch when there is genuinely
+    // nothing to offer without it; an image or file that already checks
+    // itself has nothing this could add, so the network call is skipped.
+    $published = (!$declared && !$inFile) ? staxx_health_published_check($svc['image']) : null;
+
+    staxx_reply([
+      'ok'          => true,
+      'image'       => $svc['image'],
+      'declared'    => $declared,
+      'inFile'      => $inFile,
+      'port'        => (int)staxx_detail_unique_declared_port($config),
+      'tools'       => $toolsReply,
+      'toolsError'  => $toolsWhy,
+      'published'   => $published,
+      // Said here, at the time, because working any of this out ran one
+      // short command inside the container — see PLAN_108's own framing of
+      // why that has to be admitted rather than done quietly.
+      'note'        => 'Working this out ran one short command inside the running container.',
+    ]);
+
+  /* ---- PLAN_108 step 2 — actually try a candidate check ----
+   *
+   * This is the one action that runs a command the browser sent, inside a
+   * container. That is only ever safe because it grants no capability that
+   * is not already granted: it sits behind the identical door as the file
+   * manager and the interactive console above — staxx_cfile_container()'s
+   * own SHELL_ENABLED switch, review lock and service-membership check —
+   * and anyone who can reach any of those can already open a shell in that
+   * same container and type whatever they like. The candidate is not
+   * re-derived from the recipe table server-side on purpose: that would
+   * mean a second copy of the browser's own selection logic, and two
+   * places deciding which command a recipe means is worse than one.
+   *
+   * The shape check below is not redundant with staxx_health_trial()'s own
+   * — it stops nonsense before it reaches that function, rather than
+   * relying on a refusal happening to be the right one.
+   */
+  case 'health-try':
+    $service = (string)($_POST['service'] ?? '');
+    $test = json_decode((string)($_POST['test'] ?? ''), true);
+
+    if (!is_array($test) || count($test) < 2) {
+      staxx_reply(['ok' => false, 'error' => 'That is not a health-check command StaXX understands.']);
+    }
+    $mode = $test[0] ?? null;
+    if ($mode !== 'CMD' && $mode !== 'CMD-SHELL') {
+      staxx_reply(['ok' => false, 'error' => 'That is not a health-check command StaXX understands.']);
+    }
+    foreach ($test as $part) {
+      if (!is_string($part)) {
+        staxx_reply(['ok' => false, 'error' => 'That is not a health-check command StaXX understands.']);
+      }
+    }
+
+    $container = staxx_cfile_container($name, $service, $error);
+    if ($container === '') staxx_reply(['ok' => false, 'error' => $error]);
+
+    $why = '';
+    $canRun = staxx_health_trial($container, $test, $why);
+    staxx_reply(['ok' => true, 'canRun' => $canRun, 'why' => $why]);
+
   /* ---------------------------------------------------------------------
    * The handover — taking over an imported stack's container name.
    *

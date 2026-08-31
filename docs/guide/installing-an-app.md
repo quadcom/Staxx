@@ -34,7 +34,9 @@ just the image name in it, for you to build up by hand.
 
 ## What the conversion produces
 
-The result is a normal compose file — nothing about it depends on StaXX to run. Every setting the
+The result is a normal compose file — nothing about it depends on StaXX to run. It arrives already
+laid out in StaXX's standard order, the same tidying described in
+[editing a stack](editing-a-stack.md#tidying-a-file-into-staxxs-layout). Every setting the
 catalogue app declared becomes an ordinary line in that file: a port, a mounted folder, a variable,
 a device, a label. Its description, its web address, its icon and its other links go into the block
 compose itself ignores but StaXX reads to draw the form — delete that block entirely and the file

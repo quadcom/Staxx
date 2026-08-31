@@ -82,6 +82,15 @@ networks** asks first, and keeps its ports as a note in the same step — declin
 not happen, because half of it would leave a file that cannot start. **Moving it back off** offers to
 bring the ports back live, exactly as they were written.
 
+## Working out a health check
+
+The Health check group has its own **Work out a health check** button. Press it and StaXX tries to
+work out a sensible check for that container — trying it out inside the running container first —
+then shows you what it found and what that check actually proves before asking whether to add it.
+Nothing is written until you say yes, and it will never touch a service that already has a check of
+its own. See [what every mark means](marks.md#letting-staxx-work-out-a-health-check) for what a
+health check is and how StaXX decides on one.
+
 ## The note under a box
 
 Most boxes carry a smaller box underneath labelled **Notes**. That is not a caption the form
@@ -129,20 +138,37 @@ form points things out; it never decides for you that something is safe, wrong, 
 
 Files arrive from different places — a Community Applications template, a Docker image, a project
 already running on your server, or one you pasted in by hand — and each shapes its file a little
-differently. **Tidy this file**, beside Undo at the bottom of the editor, lays the settings inside
-each container out in one consistent order, matching the order the form itself is drawn in, so the
-file and the form read the same way.
+differently. Left alone, your stacks end up reading a dozen different ways. Laying every file out
+the same way means the file teaches you the same shape the form shows you, whichever stack you open.
+
+**It happens twice.** Once by itself, the moment a file first becomes a stack — you do not have to
+ask for it. And on demand afterwards, with **Tidy this file**, beside Undo at the bottom of the
+editor, for bringing an older stack into line. Ordinary editing is never affected either way — a
+change you make still only touches the lines it is about.
+
+Tidying puts the settings inside each container in one consistent order, matching the order the
+form itself is drawn in, and does the same for the file's own top-level sections — the container
+list, the network and volume lists, and so on. It also adds a blank line between sections and
+between containers wherever one is missing, so the file has some air in it. A gap you left on
+purpose is never touched — blank lines are only ever added, never taken away. **Containers
+themselves are never reordered relative to each other**, since the order they are written in can
+carry meaning.
 
 **Nothing you wrote is lost.** This only ever moves whole settings — and whatever is written beside
-them — into a different order; it never changes a value, and it never touches your comments beyond
-carrying them along with the setting they belong to. If part of the file is written in a shape too
-unusual to reorder safely, that part is left exactly as it was and the message after pressing the
-button says which part and why.
+them — into a different order. No line of text is ever rewritten: your quoting, your spacing, your
+comments and your values are all carried across exactly as you wrote them, and a comment always
+travels with the setting it sits above.
 
-It changes nothing on disk by itself — it lands as an ordinary unsaved change, so Save keeps it and
-Undo puts it straight back. And because every file already goes through your stack's own history
-before you can edit it, the version from just before you pressed Tidy is sitting there if you ever
-want to see it again.
+**It refuses rather than guesses.** Where StaXX cannot be sure that moving something would leave the
+file meaning exactly the same thing, it leaves that part alone and says so. That can happen because
+part of the file is shared with another part of it, because something there was written in a shape
+StaXX could not fully follow, or because a value's own blank lines are part of what it says rather
+than just spacing. A refusal changes nothing — it is StaXX declining to guess, not a fault.
+
+It changes nothing on disk by itself — pressing the button lands it as an ordinary unsaved change,
+so Save keeps it and Undo puts it straight back. And because every file already goes through your
+stack's own history before you can edit it, the version from before it was ever tidied — arrival or
+button alike — is sitting there in the stack's history if you ever want to see it again.
 
 ## What this never does
 

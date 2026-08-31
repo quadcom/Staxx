@@ -1371,9 +1371,31 @@ function staxx_registry_labels(string $host, string $repo, string $tag): array {
 }
 
 /**
+ * Docker's own `.Config.Healthcheck.Test`, normalised into the shape
+ * PLAN_108 needs rather than the shape Docker hands back: `["NONE"]` is an
+ * image author's explicit "I have cancelled the inherited check", which
+ * must read as "not declared" exactly the same as the key being absent —
+ * only `CMD`/`CMD-SHELL` mean there is really something to run. A tiny pure
+ * function purely so it can be tested with made-up JSON, never a real image.
+ *
+ * @return array{test:string[], declared:bool}
+ */
+function staxx_parse_image_healthcheck(?array $healthcheck): array {
+  $test = is_array($healthcheck['Test'] ?? null) ? array_values($healthcheck['Test']) : [];
+  $mode = (string)($test[0] ?? '');
+  $declared = ($mode === 'CMD' || $mode === 'CMD-SHELL') && count($test) > 1;
+  return ['test' => $declared ? $test : [], 'declared' => $declared];
+}
+
+/**
  * The same three fields read straight off an image already pulled onto this
  * server — no network at all, so a locally-sourced image is never made to
- * wait on Docker Hub for something it can already answer itself.
+ * wait on Docker Hub for something it can already answer itself. Also
+ * reports whether the image ships its own health check (PLAN_108 step 1):
+ * an offer only ever has to be worked out for a container that is actually
+ * running, so this — the pulled-image reader — is the only one of the two
+ * config readers that needs it; staxx_registry_config() feeds the
+ * not-yet-pulled route, which a health offer never reaches.
  *
  * The reference is checked for shape before it reaches the shell —
  * lowercase alphanumerics and `. _ - / :` only — on top of, not instead of,
@@ -1383,7 +1405,8 @@ function staxx_registry_labels(string $host, string $repo, string $tag): array {
  *
  * Never returns Env, for the same reason staxx_registry_config() does not.
  *
- * @return array{ports?:string[], volumes?:string[], labels?:array<string,string>}
+ * @return array{ports?:string[], volumes?:string[], labels?:array<string,string>,
+ *               healthcheck?:array{test:string[], declared:bool}}
  */
 function staxx_local_image_config(string $ref): array {
   $ref = trim($ref);
@@ -1399,9 +1422,10 @@ function staxx_local_image_config(string $ref): array {
   if (!is_array($config)) return [];
 
   return [
-    'ports'   => array_keys(is_array($config['ExposedPorts'] ?? null) ? $config['ExposedPorts'] : []),
-    'volumes' => array_keys(is_array($config['Volumes'] ?? null) ? $config['Volumes'] : []),
-    'labels'  => is_array($config['Labels'] ?? null) ? $config['Labels'] : [],
+    'ports'       => array_keys(is_array($config['ExposedPorts'] ?? null) ? $config['ExposedPorts'] : []),
+    'volumes'     => array_keys(is_array($config['Volumes'] ?? null) ? $config['Volumes'] : []),
+    'labels'      => is_array($config['Labels'] ?? null) ? $config['Labels'] : [],
+    'healthcheck' => staxx_parse_image_healthcheck(is_array($config['Healthcheck'] ?? null) ? $config['Healthcheck'] : null),
   ];
 }
 

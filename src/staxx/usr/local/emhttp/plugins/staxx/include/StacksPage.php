@@ -115,6 +115,9 @@ $caFile  = STAXX_ROOT.'/javascript/ca-convert.js';
 $imageFile = STAXX_ROOT.'/javascript/image-import.js';
 $scaffoldFile = STAXX_ROOT.'/javascript/meta-scaffold.js';
 $dbImagesFile = STAXX_ROOT.'/javascript/db-images.js';
+// PLAN_108 stage 5: the health-check chooser. Reads window.StaxxDbImages, so
+// it must load after db-images.js — see the script tag order below.
+$healthOfferFile = STAXX_ROOT.'/javascript/health-offer.js';
 // The Manage tab's own script and stylesheet (PLAN_44 phase 2) — written by a
 // separate agent in parallel with this file, so neither is guaranteed to exist
 // yet at any given moment. Guarded the same way the three scripts above are:
@@ -128,6 +131,7 @@ $caTag   = $assets.'/javascript/ca-convert.js?v='.(is_file($caFile) ? filemtime(
 $imageTag = $assets.'/javascript/image-import.js?v='.(is_file($imageFile) ? filemtime($imageFile) : '0');
 $scaffoldTag = $assets.'/javascript/meta-scaffold.js?v='.(is_file($scaffoldFile) ? filemtime($scaffoldFile) : '0');
 $dbImagesTag = $assets.'/javascript/db-images.js?v='.(is_file($dbImagesFile) ? filemtime($dbImagesFile) : '0');
+$healthOfferTag = $assets.'/javascript/health-offer.js?v='.(is_file($healthOfferFile) ? filemtime($healthOfferFile) : '0');
 $manageJsTag  = $assets.'/javascript/manage.js?v='.(is_file($manageJsFile) ? filemtime($manageJsFile) : '0');
 $manageCssTag = $assets.'/sheets/manage.css?v='.(is_file($manageCssFile) ? filemtime($manageCssFile) : '0');
 $cssTag  = $assets.'/sheets/staxx.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
@@ -1485,6 +1489,12 @@ endif;
      scripts above. -->
 <? if (is_file($dbImagesFile)): ?>
 <script src="<?= $dbImagesTag ?>"></script>
+<? endif; ?>
+<!-- PLAN_108 stage 5: the health-check chooser — reads window.StaxxDbImages,
+     set by the script just above, so this must load after it. Conditional
+     for the same reason as the scripts above. -->
+<? if (is_file($healthOfferFile)): ?>
+<script src="<?= $healthOfferTag ?>"></script>
 <? endif; ?>
 <!-- The Manage tab (PLAN_44 Part D), a separate file for the same reason as
      the three above: a bad edit there costs the Manage tab, not the rest of

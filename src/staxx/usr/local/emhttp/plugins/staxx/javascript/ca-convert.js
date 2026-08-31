@@ -526,7 +526,12 @@
       tmpfs: [], loggingDriver: '', loggingOptions: [], extraHosts: [],
       entrypoint: '', stopSignal: '', stopGracePeriod: '', cgroup: '',
       macAddress: '', platform: '', workingDir: '', labels: [], environment: [],
-      privileged: false, warnings: [], notes: []
+      privileged: false, warnings: [], notes: [],
+      // --health-* / --no-healthcheck: the one ExtraParams shape this file
+      // turns into a real compose block instead of just naming its
+      // equivalent — see buildHealthcheck() below.
+      healthCmd: '', healthInterval: '', healthTimeout: '', healthRetries: '',
+      healthStartPeriod: '', healthDisable: false
     };
     if (!str) return out;
 
@@ -536,7 +541,9 @@
       '--pid': 'pid', '--ipc': 'ipc', '--stop-signal': 'stopSignal',
       '--cgroupns': 'cgroup', '--mac-address': 'macAddress', '--platform': 'platform',
       '--workdir': 'workingDir', '-w': 'workingDir', '--entrypoint': 'entrypoint',
-      '--log-driver': 'loggingDriver'
+      '--log-driver': 'loggingDriver', '--health-cmd': 'healthCmd',
+      '--health-interval': 'healthInterval', '--health-timeout': 'healthTimeout',
+      '--health-retries': 'healthRetries', '--health-start-period': 'healthStartPeriod'
     };
     var LISTS = {
       '--cap-add': 'capAdd', '--cap-drop': 'capDrop', '--device': 'devices',
@@ -544,7 +551,8 @@
       '--group-add': 'groupAdd', '--tmpfs': 'tmpfs', '--log-opt': 'loggingOptions',
       '--add-host': 'extraHosts'
     };
-    var BOOLS = { '--read-only': 'readOnly', '--init': 'init', '--privileged': 'privileged' };
+    var BOOLS = { '--read-only': 'readOnly', '--init': 'init', '--privileged': 'privileged',
+                  '--no-healthcheck': 'healthDisable' };
     var KV = { '--label': 'labels', '--env': 'environment', '-e': 'environment' };
     var NO_VALUE_DROP = { '-d': 1, '--detach': 1, '-it': 1, '-i': 1, '-t': 1,
                            '--tty': 1, '--interactive': 1, '--rm': 1 };
@@ -617,6 +625,73 @@
       out.notes.push('Dropped these `docker run` options, which Compose already provides on its own: ' + dropped.join(', ') + '.');
     }
     return out;
+  }
+
+  // Docker's own duration/count spellings, which compose reads unchanged:
+  // one or more (number + unit) pairs for a duration ("30s", "1m30s") and a
+  // bare whole number for retries. Checked for general shape only — never
+  // reformatted — so a value compose would reject is left out rather than
+  // guessed at.
+  var HEALTH_DURATION_RE = /^([0-9]+(\.[0-9]+)?(h|m|s|ms|us|µs|ns))+$/;
+  var HEALTH_RETRIES_RE = /^[0-9]+$/;
+
+  // The wording FLAG_HINTS already gives an unmapped --health-* flag, reused
+  // here for the one case that still has nothing to translate: a timing flag
+  // with no --health-cmd to attach it to configures nothing on its own.
+  function healthFlagNote(flag, value) {
+    var shown = value !== '' ? (flag + '=' + value) : flag;
+    var hint = FLAG_HINTS.hasOwnProperty(flag) ? ' ' + FLAG_HINTS[flag] : '';
+    return 'The Docker option "' + shown + '" could not be translated to a Compose setting and was not applied. Check whether it is still needed.' + hint;
+  }
+
+  // Turns ExtraParams' --health-* / --no-healthcheck flags into the lines
+  // that go inside a healthcheck: block (see PLAN_108's "a fifth source,
+  // nearly free"). The command comes from the same Community Applications
+  // template that already supplied this service's image, ports and volumes
+  // — it is not a new trust boundary, so health-offer.js's narrower shape
+  // rules for a user-typed command deliberately do not apply here.
+  function buildHealthcheck(extra, dollarsEscaped, noEscape, warnings, notes) {
+    var TIMING = [
+      { key: 'healthInterval', flag: '--health-interval', out: 'interval', re: HEALTH_DURATION_RE, kind: 'duration' },
+      { key: 'healthTimeout', flag: '--health-timeout', out: 'timeout', re: HEALTH_DURATION_RE, kind: 'duration' },
+      { key: 'healthRetries', flag: '--health-retries', out: 'retries', re: HEALTH_RETRIES_RE, kind: 'whole number' },
+      { key: 'healthStartPeriod', flag: '--health-start-period', out: 'start_period', re: HEALTH_DURATION_RE, kind: 'duration' }
+    ];
+
+    if (extra.healthDisable) {
+      // disable: true wins outright — Docker never runs the check at all —
+      // so anything else the template set for it would be silently unused.
+      // Named so, rather than translated and then ignored.
+      var dropped = [];
+      if (extra.healthCmd) dropped.push('--health-cmd');
+      TIMING.forEach(function (f) { if (extra[f.key]) dropped.push(f.flag); });
+      if (dropped.length) {
+        notes.push('--no-healthcheck was also set on this template, which switches the health ' +
+          'check off entirely; ' + dropped.join(', ') + ' were not applied.');
+      }
+      return ['      disable: true'];
+    }
+
+    if (!extra.healthCmd) {
+      // No command means no check exists to configure — each timing flag
+      // keeps its own "could not be translated" note rather than being
+      // folded into a block that would do nothing.
+      TIMING.forEach(function (f) {
+        if (extra[f.key]) warnings.push(healthFlagNote(f.flag, extra[f.key]));
+      });
+      return [];
+    }
+
+    var cmd = escapeDollarsTracked(extra.healthCmd, 'healthcheck.test', dollarsEscaped, noEscape);
+    var lines = ['      test: ["CMD-SHELL", ' + dq(cmd) + ']'];
+    TIMING.forEach(function (f) {
+      var v = extra[f.key];
+      if (!v) return;
+      if (f.re.test(v)) lines.push('      ' + f.out + ': ' + v);
+      else warnings.push('The Docker option "' + f.flag + '=' + v + '" was not applied: "' + v +
+        '" is not a ' + f.kind + ' Docker would accept there, so it was left out of the health check.');
+    });
+    return lines;
   }
 
   /* =====================================================================
@@ -887,6 +962,12 @@
     if (devices.length) { svc.push('    devices:'); emitAlignedBlock(devices).forEach(function (l) { svc.push(l); }); }
     if (environment.length) { svc.push('    environment:'); emitAlignedBlock(environment).forEach(function (l) { svc.push(l); }); }
     if (labels.length) { svc.push('    labels:'); emitAlignedBlock(labels).forEach(function (l) { svc.push(l); }); }
+
+    var healthLines = buildHealthcheck(extra, dollarsEscaped, noEscape, warnings, notes);
+    if (healthLines.length) {
+      svc.push('    healthcheck:');
+      healthLines.forEach(function (l) { svc.push(l); });
+    }
 
     pushListBlock(svc, 'cap_add', extra.capAdd);
     pushListBlock(svc, 'cap_drop', extra.capDrop);

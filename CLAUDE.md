@@ -65,6 +65,7 @@ node tests/links_detect.js          # spotting that two services need to know ab
 node tests/links_record.js          # the connection record — writing it, matching it, noticing it is stale
 node tests/crosslinks.js            # the browser half of the same: wording, and the confirmed-link write
 node tests/db_images.js             # the table of well-known database images
+node tests/health_offer.js          # picking a health check, and the narrow door for one found elsewhere
 node tests/pin_image.js             # pinning an image to one exact build
 node tests/export_redact.js         # what export blanks out before a stack leaves the machine
 node tests/guide_coverage.js        # which shipped features the user guide still says nothing about
@@ -123,6 +124,7 @@ Four rules run through the whole set:
 | `files` | The companion-file helpers and the archive confirmation | `STORE_ROOT` |
 | `gpu` | The Intel busy-percentage maths, read from the sysfs idle counter, and its shape with no sample on disk | — |
 | `handover` | Handover targets, the set-aside name, the state file's round trip, the script text, every refusal | — |
+| `health` | Reading an image's own declared health check, and every refusal of the trial that decides whether a candidate check may ever be offered | — |
 | `icons` | Copying a matched icon into a stack's own folder, and its refusals | — |
 | `imagehistory` | Per-stack image history, and the keep-list image cleanup builds from it | `STORE_ROOT` |
 | `import` | The importer's three readers, the write path, and the per-row icon fallbacks | — |

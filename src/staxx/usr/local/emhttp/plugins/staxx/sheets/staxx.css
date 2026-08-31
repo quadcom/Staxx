@@ -2311,6 +2311,27 @@
   outline-offset: 0.1rem;
 }
 
+/* PLAN_108 stage 5: the health-check offer, on the one pill where clicking
+   does something — a running container nothing checks. Same green fill as
+   the ordinary .staxx-pill--up (it IS that state, just with something to do
+   about it), so background-color is restated rather than left to that rule's
+   own `background` shorthand — see the comment on .staxx-pill--fail above for
+   why a single class loses that fight against Unraid's own button reset. */
+.staxx-scaffold .staxx-pill--offer {
+  cursor: pointer;
+  border: none;
+  border-radius: 1rem;
+  font: inherit;
+  background-color: var(--sm-good);
+  color: #fff;
+}
+
+.staxx-scaffold .staxx-pill--offer:hover,
+.staxx-scaffold .staxx-pill--offer:focus-visible {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.1rem;
+}
+
 /* Two pills on the name's second line: a stack imported with its run buttons
    locked, and a container waiting for its handover to be confirmed. Outlined
    rather than filled, so they read as "check this" and not as an error — the

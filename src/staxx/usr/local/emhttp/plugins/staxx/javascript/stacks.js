@@ -3633,6 +3633,16 @@
                '<i class="fa fa-plus" aria-hidden="true"></i> ' + esc(addWord(g.add)) +
                '</button>');
     }
+    // PLAN_108 stage 5 — the editor's own door onto the same offer the row's
+    // state pill opens. Health has no `add` (see the comment on GROUPS above:
+    // its leaves are always present as fields), so this is its own button
+    // rather than the g.add branch just above — shown unconditionally rather
+    // than only when the group is empty, since offerHealthCheck() itself
+    // already refuses cleanly when there is nothing to add.
+    if (g.key === 'health') {
+      bits.push('<button type="button" class="staxx-add" data-health-offer="' + esc(serviceName) + '">' +
+               '<i class="fa fa-heartbeat" aria-hidden="true"></i> Work out a health check</button>');
+    }
     bits.push('</div>');
     // After .staxx-grouphead's own closing tag, not inside it — a
     // full-width paragraph would end that flex row's content early exactly
@@ -6666,6 +6676,16 @@
       return;
     }
 
+    // PLAN_108 stage 5 — the Health check group's own "Work out a check for
+    // me" button. openedName is what offerHealthCheck() itself checks to
+    // know it may write straight into the open document rather than reading
+    // the file fresh, so nothing beyond the service name needs passing here.
+    var healthOfferBtn = event.target.closest('[data-health-offer]');
+    if (healthOfferBtn) {
+      offerHealthCheck(openedName, healthOfferBtn.dataset.healthOffer);
+      return;
+    }
+
     var secBtn = event.target.closest('[data-sections]');
     if (secBtn) {
       // Stopped here, not left to bubble: the document-level listener below
@@ -8616,23 +8636,40 @@
     updateUndo();
   });
 
-  // PLAN_67 step 1 — lays keys out inside each service in StaXX's house
-  // order, never changing what any of them say. YAML.tidy() may not exist
-  // yet (built alongside this button, in the compose model), so this checks
-  // for it rather than assuming — a page deployed mid-build must not throw.
+  // PLAN_67 step 4 — the one place both the Tidy button and every arrival
+  // route that lays a file out the moment it becomes a stack get their
+  // wording from, so "what happened to this file" is never spelled out by
+  // hand more than once. Returns null for "say nothing" — a fresh import
+  // that tidy() found nothing to move in is not news, so an arrival route is
+  // free to skip the notice entirely rather than announce a no-op.
+  function tidyResultMessage(result) {
+    var refusalText = (result.refusals || []).map(function (r) { return r.why; }).join(' ');
+    if (!result.changed) return refusalText ? 'Nothing was tidied — ' + refusalText : null;
+    return 'This file was tidied into StaXX’s layout. Nothing was lost.' +
+      (refusalText ? ' Left alone: ' + refusalText : '');
+  }
+
+  // Runs tidy() over a file that has just arrived — a conversion, an import,
+  // or a brand-new paste — and never blocks on a refusal: a refusal just
+  // means it arrives as it was, exactly as PLAN_67 asks. YAML.tidy() may not
+  // exist yet on a page deployed mid-build, so this checks rather than
+  // assumes, same guard the button below always had.
+  function tidyOnArrival(text) {
+    if (!YAML || typeof YAML.tidy !== 'function') return { text: text, message: null };
+    var result = YAML.tidy(text);
+    if (!result.changed) return { text: text, message: tidyResultMessage(result) };
+    return { text: result.text, message: tidyResultMessage(result) };
+  }
+
   if (tidyBtn) tidyBtn.addEventListener('click', function () {
     if (sanitised || fileOpen !== null || !YAML || typeof YAML.tidy !== 'function') return;
 
-    var result = YAML.tidy(currentText());
-    var refusalText = (result.refusals || []).map(function (r) { return r.why; }).join(' ');
-
-    if (!result.changed) {
+    var outcome = tidyOnArrival(currentText());
+    if (outcome.text === currentText()) {
       // Same one-sentence rule whether nothing needed moving or everything
       // refused — PLAN_67 is explicit that "changed nothing" must still say
       // so, rather than a silent no-op that looks like the button did nothing.
-      setYamlStatus(refusalText
-        ? 'Nothing was tidied — ' + refusalText
-        : 'This file is already in StaXX’s house layout — nothing to change.');
+      setYamlStatus(outcome.message || 'This file is already in StaXX’s house layout — nothing to change.');
       return;
     }
 
@@ -8641,12 +8678,11 @@
     // the ordinary reparse a programmatic edit always gets. Never saved here —
     // the person decides whether to keep it.
     pushUndo('tidying the file');
-    yamlPane.value = result.text;
+    yamlPane.value = outcome.text;
     paintGutter();
     paintInk();
     reparse();
-    setYamlStatus('This file was tidied into StaXX’s layout. Nothing was lost.' +
-      (refusalText ? ' Left alone: ' + refusalText : ''));
+    setYamlStatus(outcome.message);
     updateUndo();
   });
 
@@ -10683,7 +10719,16 @@
     // a form that has only just opened.
     var openName = kind === 'user' ? staxxFreeName(result.name, staxxTakenNames()) : result.name;
 
-    openEditor(openName, result.yaml, true, '');
+    // PLAN_67 step 4 — laid out once, the moment this becomes a stack. A
+    // refusal just means it opens as the converter wrote it; nothing here
+    // blocks on one.
+    var tidied = tidyOnArrival(result.yaml);
+
+    openEditor(openName, tidied.text, true, '');
+    // After openEditor(), not before — reparse() inside it overwrites the
+    // status line with the file's own warnings, same reasoning as the Tidy
+    // button's own notice always had.
+    if (tidied.message) setYamlStatus(tidied.message);
     if (handoffId) pendingHandoffId = handoffId;
     pendingHandoffEdit = kind === 'edit';
     // PLAN_106 phase 5 gap: yamlAsWritten is null when convert() escaped
@@ -10830,7 +10875,17 @@
     function finish(result) {
       settle();
       caModal.close();
-      openEditor(result.name, result.yaml, true, '');
+
+      // PLAN_67 step 4 — laid out once, the moment this becomes a stack. Only
+      // the real importer's own output, never the plain caSkeleton() fallback
+      // below — that one is six lines of comments and a bare image line, with
+      // nothing in house order to be out of.
+      var tidied = tidyOnArrival(result.yaml);
+
+      openEditor(result.name, tidied.text, true, '');
+      // After openEditor(), not before — its own reparse() would overwrite
+      // this with the file's warnings, same reasoning as caOpenConverted().
+      if (tidied.message) setYamlStatus(tidied.message);
 
       // caImport()'s own three wordings, in shape: warnings are settings a
       // correction had nothing to put right, notes are values filled in on
@@ -12315,6 +12370,16 @@
       // where it is going. staxx_import_write_project() re-reads the project
       // itself by id and overwrites every field of 'about' with its own
       // trusted values, so there is nothing genuine to put in it here.
+      //
+      // PLAN_67 step 4 — deliberately NOT tidied here. staxx_import_write_
+      // project() writes the file raw, with no history capture of its own
+      // (unlike staxx_import_write() below, which routes through the ordinary
+      // save path) — so the untouched original stays uncaptured on disk until
+      // the server's own read-time seed catches it the moment somebody first
+      // opens this stack's editor. Tidying the write would make THAT the
+      // first thing ever captured, losing the byte-for-byte original the
+      // whole point of this route is to keep. See editStack()'s own tidy
+      // call for where this is put right instead.
       if (entry.source === 'project') {
         call('import-project', { name: stackName, id: entry.id, about: '{}' }, 20000).then(function (res) {
           if (res.ok) {
@@ -12370,6 +12435,13 @@
         var scaffolded = window.StaxxMeta.scaffold(writeBody);
         if (!scaffolded.error) writeBody = scaffolded.yaml;
       }
+
+      // PLAN_67 step 4 — laid out once, here, since this route writes straight
+      // to the server with no editor to do it in later. staxx_import_write()
+      // routes through the ordinary save path, so this write IS what seeds
+      // the stack's history — a refusal from tidy() just means it lands as
+      // the converter (and scaffold()) wrote it.
+      writeBody = tidyOnArrival(writeBody).text;
 
       // PLAN_106 phase 5: the template's own wording, before any dollar sign
       // was doubled — sent alongside the write so the server can save it
@@ -15656,6 +15728,12 @@
       : openedName;
     var body = currentText();
 
+    // PLAN_67 step 4 — a brand-new stack is laid out once, on its first save,
+    // never on an ordinary edit's save. No notice needed either way: isNew
+    // always closes the editor once this save lands (see finishSave()), so
+    // there is nowhere left on screen to show one by the time it would apply.
+    if (isNew) body = tidyOnArrival(body).text;
+
     if (!leaf) { showError('Give the stack a name.'); nameInput.focus(); return; }
 
     clearError();
@@ -18577,7 +18655,31 @@
       // consumed has to be dropped here instead — a left-behind handover
       // would silently open the *next* stack on Versions.
       if (!res.ok) { pendingVersionsService = null; failed('Could not open ' + label, res.error); return; }
-      openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch, res.icons);
+
+      // PLAN_67 step 4 — an adopted project's own arrival route (import-
+      // project) deliberately writes byte for byte with no tidy and no
+      // history capture of its own; the server's read-time seed just above
+      // (staxx_record_seed(), in the 'read' action this call just made) is
+      // what actually keeps that untouched original as version one. Tidying
+      // is safe from this point on, and idempotent, so it costs nothing to
+      // redo on a second look before the review lock is cleared — a stack
+      // still awaiting review is exactly one nobody has ever saved through
+      // StaXX yet, adopted project or otherwise.
+      var row = rowFor(name);
+      var menuBtn = row ? row.querySelector('[data-menu="stack"]') : null;
+      var body = res.body;
+      var tidyNote = null;
+      if (menuBtn && menuBtn.dataset.review === '1') {
+        var outcome = tidyOnArrival(body);
+        body = outcome.text;
+        tidyNote = outcome.message;
+      }
+
+      openEditor(res.name, body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch, res.icons);
+      // After openEditor(), not before — its own reparse() would overwrite
+      // this with the file's warnings, same reasoning as every other arrival
+      // route's own notice.
+      if (tidyNote) setYamlStatus(tidyNote);
     });
   }
 
@@ -20551,6 +20653,274 @@
           if (modal.dataset.tab === 'versions') ensureVersionsLoaded();
           else renderVersionsPane();
         }
+      });
+    });
+  }
+
+  /* =====================================================================
+   * PLAN_108 stage 5 — offering a health check.
+   *
+   * One flow, reached from two doors: a running container's own state pill
+   * (staxx_container_pill()'s 'none' case, made a click target server-side)
+   * and a button in the editor's own Health check group. Both call
+   * offerHealthCheck() below; everything else here is that flow's own
+   * machinery, kept in one place so there is only ever one wording for "here
+   * is why nothing is offered" and one way of writing an accepted offer in.
+   * ===================================================================== */
+
+  // The service's own environment, read from a parsed form the same shape
+  // reparse() builds — a map-style `environment:` entry is one field per
+  // name, binder 'env', so this is a plain filter rather than a second
+  // reader. A sequence-style `environment: [KEY=value]` list is not covered
+  // (its fields carry a synthetic '@environment#n' target, not a name) — a
+  // recipe that needs a value it cannot see this way is simply refused as
+  // 'recipe-needs-a-value', never offered wrongly, so the gap costs nothing
+  // beyond an occasional over-cautious refusal.
+  function envForService(form, service) {
+    var env = {};
+    (form.fields || []).forEach(function (f) {
+      if (f.service === service && f.binder === 'env' && f.parts && f.parts.value) {
+        env[f.target] = f.parts.value.value;
+      }
+    });
+    return env;
+  }
+
+  // A courtesy line, not a refusal — so a plain scan of the file's own text
+  // is enough. The real answer would mean walking every OTHER service's
+  // depends_on block through the parser for one sentence nobody's safety
+  // depends on; this looks for the one shape the plan actually cares about,
+  // long-form depends_on naming this service with a service_healthy
+  // condition, within a few lines of its own name.
+  function anotherServiceWaitsOn(bodyText, service) {
+    var safe = service.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    var re = new RegExp('\\b' + safe + ':\\s*\\r?\\n(?:[ \\t]+\\S[^\\r\\n]*\\r?\\n){0,3}?\\s*condition:\\s*service_healthy');
+    return re.test(bodyText);
+  }
+
+  // The plain sentence for every way chooseHealthCheck() can decline. Each
+  // reason is a different fact, so each gets its own wording — see
+  // health-offer.js's own comment on why "already checks itself" and
+  // "nothing worth asking" must never share a sentence.
+  function noOfferSentence(reason, toolsError) {
+    switch (reason) {
+      case 'already-in-file':
+        return 'This service already has a health check written into the file — there is nothing to add.';
+      case 'image-checks-itself':
+        return 'This image already checks itself, so Docker is already watching it. There is nothing for StaXX to add.';
+      case 'recipe-needs-a-value':
+        return 'StaXX knows a health check for this image, but it needs a setting that is not filled in here yet.';
+      case 'needs-a-trial':
+        // Reached only when the probe itself could not find out what is
+        // available inside the container — a real failure, not "ask for a
+        // trial" (the probe already ran one), so it is explained as one.
+        return 'StaXX could not look inside the container to see what it could check with' +
+               (toolsError ? ': ' + toolsError : '.');
+      default:
+        return 'StaXX has no health check to offer for this image — no known recipe for it, and no web ' +
+               'address to try. Docker will keep reporting nothing has checked it.';
+    }
+  }
+
+  // Shows a message wherever it can actually be seen. `inEditor` names
+  // whether THIS flow's own stack is the one open in the editor right now —
+  // not merely whether some dialog happens to be open, since a stack's own
+  // row pill can be clicked while a DIFFERENT stack's editor is open, and a
+  // message about the row would otherwise land silently in that unrelated
+  // dialog's footer. A page-level notice would be invisible behind an open
+  // dialog either way — showModal() paints it in the top layer — so the
+  // editor's own error box is the only place left to put it when it applies.
+  function healthNotice(message, inEditor) {
+    if (inEditor) showError(message); else showPageNotice(message);
+  }
+
+  // test[0] is CMD, CMD-SHELL or NONE (health-offer.js and db-images.json
+  // never produce anything else) — this is only ever for display, so the
+  // words after it are simply joined back into the one line a person reads.
+  function offerCommandText(test) {
+    return (test || []).slice(1).join(' ');
+  }
+
+  // Writes an accepted offer into a throwaway parse of `bodyText` — never
+  // the live editor state directly, same reasoning as pinServiceImage()
+  // above: a refusal here must leave whatever is actually open untouched.
+  // Returns the new document text, or null if the file could not take the
+  // write (a sealed healthcheck: block, most likely).
+  function applyHealthOfferToText(bodyText, service, offer) {
+    var doc = YAML.parse(bodyText);
+    var form = YAML.buildForm(doc);
+
+    var test = offer.test || [];
+    var mode = test[0] === 'NONE' ? 'none' : (test[0] === 'CMD-SHELL' ? 'shell' : (test[0] === 'CMD' ? 'cmd' : null));
+    if (!mode || !YAML.writeTest(doc, form, service, mode, offerCommandText(test))) return null;
+
+    // writeTest() may have just created healthcheck: itself, so the leaf
+    // fields harvestLeaves() always synthesises have to be found again
+    // against a fresh form built on the doc it just edited.
+    form = YAML.buildForm(doc);
+    var leafTargets = { interval: 'healthcheck.interval', timeout: 'healthcheck.timeout',
+                         retries: 'healthcheck.retries', start_period: 'healthcheck.start_period' };
+    var ok = true;
+    Object.keys(leafTargets).forEach(function (key) {
+      var value = offer[key];
+      if (value === undefined || value === null || value === '') return;
+      var field = null;
+      for (var i = 0; i < form.fields.length; i++) {
+        var f = form.fields[i];
+        if (f.service === service && f.target === leafTargets[key]) { field = f; break; }
+      }
+      if (!field || !YAML.setValue(doc, form, field.id, String(value))) ok = false;
+    });
+    if (!ok) return null;
+    return YAML.serialise(doc);
+  }
+
+  // The confirmation itself — the claim in full, the exact command, the
+  // timing, and the plan's two required disclosures: that working this out
+  // ran a short command inside the container (probe.note), and, only where
+  // it applies, that another service is written to wait for this one.
+  function confirmHealthOffer(service, choice, probe, bodyText) {
+    var offer = choice.offer;
+    var waited = anotherServiceWaitsOn(bodyText, service);
+    var lines = [
+      '<p>' + esc(choice.claim) + '.</p>',
+      '<p><code>' + esc(offerCommandText(offer.test)) + '</code></p>',
+      '<p>Runs every ' + esc(offer.interval) + ', times out after ' + esc(offer.timeout) +
+        ', and is allowed ' + esc(String(offer.retries)) + ' tries before being called unhealthy' +
+        (offer.start_period ? ', with ' + esc(offer.start_period) + ' of grace after the container starts' : '') +
+        '.</p>',
+      '<p>' + esc(probe.note) + '</p>'
+    ];
+    if (waited) {
+      lines.push('<p>Another service in this file is written to wait for "' + esc(service) +
+        '" to become healthy before it starts. Right now that wait always passes at once — adding this ' +
+        'check turns it into a real gate.</p>');
+    }
+    return askConfirm({
+      title: 'Add a health check for "' + service + '"?',
+      bodyHtml: lines.join(''),
+      goLabel: 'Add it'
+    });
+  }
+
+  // The one entry point both doors call. Never writes or applies anything on
+  // its own — every branch either says why nothing is offered, or asks
+  // before touching the file, and only a "yes" from confirmHealthOffer()
+  // above reaches the write itself.
+  function offerHealthCheck(stack, service) {
+    // Fixed for the whole flow, not re-read later — whether the editor gets
+    // opened or closed while a request is in flight must not change which
+    // stack this offer is about, or where its messages are shown.
+    var open = modal.open && openedName === stack;
+
+    if (!window.StaxxHealthOffer || !window.StaxxDbImages) {
+      healthNotice('This version of StaXX cannot work out a health check yet — reload the page and try again.', open);
+      return;
+    }
+
+    call('health-probe', { name: stack, service: service }).then(function (probe) {
+      if (!probe || !probe.ok) {
+        healthNotice('Could not look into "' + service + '": ' + ((probe && probe.error) || 'no reason given.'), open);
+        return;
+      }
+
+      // The compose file the browser already has, when this stack's own
+      // editor is open — its in-memory text, unsaved edits and all, since
+      // that is the file an acceptance would actually be adding to.
+      // Otherwise there is nothing in memory to read, so this is the one
+      // place in the flow that reads the file itself — carrying the server's
+      // own fingerprint along, since a direct save() below needs it and
+      // there is no editor state here to hold one instead.
+      (open ? Promise.resolve({ text: currentText(), fingerprint: fingerprintAtOpen })
+            : call('read', { name: stack }).then(function (r) {
+                return (r && r.ok) ? { text: r.body, fingerprint: r.fingerprint } : null;
+              })
+      ).then(function (read) {
+        if (!read) {
+          healthNotice('Could not read "' + stack + '".', open);
+          return;
+        }
+
+        // A textarea always hands its value back as LF, whatever went into
+        // it — reading the file directly skips that, so CRLF is normalised
+        // by hand here and put back on the way out, the same trade withEol()
+        // documents for every other writer in this file.
+        var eol = read.text.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
+        var bodyText = eol === '\r\n' ? read.text.replace(/\r\n/g, '\n') : read.text;
+
+        var form = YAML.buildForm(YAML.parse(bodyText));
+        var facts = {
+          image: probe.image,
+          ownCheck: probe.declared,
+          fileCheck: probe.inFile,
+          dbEntry: window.StaxxDbImages.lookupImage(probe.image),
+          env: envForService(form, service),
+          webPort: probe.port,
+          tools: probe.tools,
+          // Only ever looked for when nothing else already answers, so this
+          // is null far more often than not — and null is the honest
+          // "nothing published", never an empty object standing in for one.
+          published: probe.published || null
+        };
+        var choice = window.StaxxHealthOffer.chooseHealthCheck(facts);
+
+        if (!choice.offer) {
+          healthNotice(noOfferSentence(choice.reason, probe.toolsError), open);
+          return;
+        }
+
+        call('health-try', { name: stack, service: service, test: JSON.stringify(choice.offer.test) })
+          .then(function (tryRes) {
+            if (!tryRes || !tryRes.ok) {
+              healthNotice('Could not try that check: ' + ((tryRes && tryRes.error) || 'no reason given.'), open);
+              return;
+            }
+            // The whole safety property of this feature: a candidate that
+            // does not actually run must never be offered anyway.
+            if (!tryRes.canRun) {
+              healthNotice('StaXX found a possible check for "' + service + '", but it did not work when ' +
+                            'tried: ' + tryRes.why, open);
+              return;
+            }
+
+            confirmHealthOffer(service, choice, probe, bodyText).then(function (go) {
+              closeConfirm();
+              if (!go) return;
+
+              var newText = applyHealthOfferToText(bodyText, service, choice.offer);
+              if (newText === null) {
+                healthNotice('That health check could not be written into the file. Add it in the ' +
+                              'Compose view instead.', open);
+                return;
+              }
+
+              if (open) {
+                // The editor is already open on exactly this stack — write
+                // into the box the same way any other structural edit does,
+                // then save() through the same button every other edit uses.
+                pushUndo('adding a health check for ' + service);
+                yamlPane.value = newText;
+                paintGutter();
+                paintInk();
+                reparse();
+                save(false);
+              } else {
+                // No editor open to write into — save() reads its payload
+                // from the dialog's own state, none of which exists here, so
+                // this goes through the plain save action directly instead,
+                // carrying the fingerprint the 'read' above already gave us.
+                call('save', { name: stack, body: withEol(newText, eol), 'new': '0', fingerprint: read.fingerprint })
+                  .then(function (res) {
+                    if (!res || !res.ok) {
+                      showPageNotice((res && res.error) || 'Could not save the health check.');
+                      return;
+                    }
+                    showPageNotice('Added a health check for "' + service + '" in "' + stackLabel(stack) + '".');
+                    refreshRows();
+                  });
+              }
+            });
+          });
       });
     });
   }
@@ -24098,6 +24468,15 @@
         openJobOutput(record);
         refreshStateSoon();   // repaint the real state now the marker is gone
       }
+      return;
+    }
+
+    // PLAN_108 stage 5 — the state pill's own offer: a running container
+    // nothing checks, made a click target server-side (staxx_container_pill()
+    // carries the stack and service right on the button, since a container
+    // row's pill has no other reachable name for either).
+    if (el.classList.contains('staxx-pill--offer')) {
+      if (el.dataset.stack && el.dataset.service) offerHealthCheck(el.dataset.stack, el.dataset.service);
       return;
     }
 

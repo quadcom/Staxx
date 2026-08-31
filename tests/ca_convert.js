@@ -252,7 +252,7 @@ var FIXTURES = [
 /* =========================================================================
  * A. Round-trip and form-readability, every fixture
  *
- * doc.sealed is not required to be empty. Two reasons are expected and
+ * doc.sealed is not required to be empty. Three reasons are expected and
  * harmless, not bugs:
  *
  *   block-scalar  the Overview mapping the spec calls for is written as a
@@ -269,11 +269,35 @@ var FIXTURES = [
  *                 beside `seal(ctx, at, at + 1, 'escape')`. The file still
  *                 round-trips and the form still builds; only that one
  *                 field shows as locked.
+ *   flow          a template carrying --health-cmd writes healthcheck.test
+ *                 as `["CMD-SHELL", "…"]` — the one-line flow form
+ *                 compose-model.js's own readTest()/writeTest() read and
+ *                 write, and the same shape most real files already use
+ *                 (see that file's own comment beside "healthcheck.test:
+ *                 read as {mode, command}"). Sealed on principle like any
+ *                 flow collection; the form still edits it via its two
+ *                 split fields.
  *
  * What must never appear is any OTHER reason — an anchor, alias, merge key
- * or flow collection would mean this converter wrote something the form
+ * or a flow collection anywhere else would mean this converter wrote something the form
  * cannot edit at all, which is the actual bug this guards against.
  * ========================================================================= */
+
+// A sealed range is only "bad" — an anchor, alias, merge key, or a flow
+// collection this converter had no business writing — once block-scalar,
+// escape and the one legitimate flow shape (healthcheck.test) are excluded.
+// A seal's start/end are LINE indices (0-based, half-open), not character
+// offsets, so the exempted text is read off the split lines, not the raw
+// string — and scoped to that exact shape, not just the 'flow' reason, so a
+// flow collection turning up anywhere else still fails loudly.
+function isBadSeal(s, yaml) {
+  if (s.reason === 'block-scalar' || s.reason === 'escape') return false;
+  if (s.reason === 'flow') {
+    var line = yaml.split('\n')[s.start] || '';
+    if (/test:\s*\[\s*"(CMD-SHELL|CMD|NONE)/.test(line)) return false;
+  }
+  return true;
+}
 
 console.log('\nA. Round-trip and readability');
 FIXTURES.forEach(function (pair) {
@@ -286,7 +310,7 @@ FIXTURES.forEach(function (pair) {
   ok(label + ': ends in exactly one newline', /[^\n]\n$/.test(r.yaml) || r.yaml === '\n');
   var form = Y.buildForm(doc);
   ok(label + ': buildForm().ok is true', form.ok === true);
-  var badSeals = doc.sealed.filter(function (s) { return s.reason !== 'block-scalar' && s.reason !== 'escape'; });
+  var badSeals = doc.sealed.filter(function (s) { return isBadSeal(s, r.yaml); });
   ok(label + ': nothing sealed except the overview block and escaped values', badSeals.length === 0, JSON.stringify(badSeals));
 });
 
@@ -452,10 +476,19 @@ ok('a repeated --log-opt collects into a logging.options list, not one overwriti
    liquidY.indexOf('max-size: "2m"') >= 0 && liquidY.indexOf('max-file: "1"') >= 0);
 ok('logging: sits among the block keys, after the per-setting blocks', liquidY.indexOf('logging:') > liquidY.indexOf('environment:') || liquidY.indexOf('environment:') === -1);
 
+// wger-redis carries a full set of --health-* flags — real ExtraParams from
+// the live feed — so this is also the "complete healthcheck: block" case:
+// PLAN_108 turns these from a "here's the compose equivalent" note into an
+// actual block instead of a warning.
 var wgerR = CA.convert(WGER_REDIS);
-['--health-cmd', '--health-interval', '--health-retries', '--health-start-period', '--health-timeout'].forEach(function (flag) {
-  ok('unmapped flag ' + flag + ' is reported in warnings', wgerR.warnings.some(function (w) { return w.indexOf(flag) >= 0; }));
-});
+ok('a full set of --health-* flags produces a healthcheck: block, not warnings',
+   !wgerR.warnings.some(function (w) { return /--health-/.test(w); }));
+ok('--health-cmd becomes test: ["CMD-SHELL", ...]', wgerY.indexOf('test: ["CMD-SHELL", "redis-cli ping"]') >= 0);
+ok('--health-interval becomes interval:', wgerY.indexOf('interval: 10s') >= 0);
+ok('--health-timeout becomes timeout:', wgerY.indexOf('timeout: 5s') >= 0);
+ok('--health-retries becomes retries:', wgerY.indexOf('retries: 5') >= 0);
+ok('--health-start-period becomes start_period:', wgerY.indexOf('start_period: 30s') >= 0);
+ok('healthcheck: sits after labels/before the cap_add-style keys', wgerY.indexOf('healthcheck:') > wgerY.indexOf('image:'));
 ok('PostArgs becomes command:', wgerY.indexOf('command: redis-server /usr/local/etc/redis/redis.conf') >= 0);
 
 var elasticR = CA.convert(ELASTICSEARCH);
@@ -778,14 +811,14 @@ if (fs.existsSync(FEED)) {
       if (Y.serialise(doc) !== r.yaml) roundtripFail++;
       var form = Y.buildForm(doc);
       if (!form.ok) formFail++;
-      if (doc.sealed.some(function (s) { return s.reason !== 'block-scalar' && s.reason !== 'escape'; })) badSealFail++;
+      if (doc.sealed.some(function (s) { return isBadSeal(s, r.yaml); })) badSealFail++;
     } catch (e) {
       thrown++;
     }
   });
   ok('every one of ' + total + ' feed apps round-trips byte for byte', roundtripFail === 0, roundtripFail + ' failed');
   ok('every one of ' + total + ' feed apps builds a readable form', formFail === 0, formFail + ' failed');
-  ok('none of ' + total + ' feed apps seal anything but the overview block or an escaped value', badSealFail === 0, badSealFail + ' failed');
+  ok('none of ' + total + ' feed apps seal anything but the overview block, an escaped value, or a translated healthcheck', badSealFail === 0, badSealFail + ' failed');
   ok('convert() never throws on any of ' + total + ' feed apps', thrown === 0, thrown + ' threw');
 } else {
   console.log('  (skipped — feed not found at ' + FEED + ')');
@@ -1303,6 +1336,112 @@ ok('yamlAsWritten is absent when nothing was escaped',
    ndR.yamlAsWritten == null, String(ndR.yamlAsWritten));
 ok('the untouched Port/Path/Device/image sites report no yamlAsWritten difference beyond the image',
    duR.yamlAsWritten == null, String(duR.yamlAsWritten));
+
+/* =========================================================================
+ * Q. Health-check translation (PLAN_108, "a fifth source, nearly free") —
+ * --health-* / --no-healthcheck used to be explained away with a note
+ * naming compose's equivalent; they now become a real healthcheck: block.
+ * ========================================================================= */
+
+console.log('\nQ. Health-check translation');
+
+// --health-cmd alone: the other four keys are simply absent, not written
+// with empty/default values.
+var healthCmdAloneR = CA.convert({
+  Name: 'health-cmd-alone', Repository: 'example/health-cmd-alone',
+  ExtraParams: '--health-cmd="curl -f http://localhost/"'
+});
+ok('--health-cmd alone produces a healthcheck: block with just test:',
+   healthCmdAloneR.yaml.indexOf('    healthcheck:\n      test: ["CMD-SHELL", "curl -f http://localhost/"]\n') >= 0,
+   healthCmdAloneR.yaml);
+['interval:', 'timeout:', 'retries:', 'start_period:'].forEach(function (k) {
+  ok('...and no ' + k + ' key is written', healthCmdAloneR.yaml.indexOf('      ' + k) === -1);
+});
+
+// A timing flag with no --health-cmd configures nothing on its own — no
+// block at all, and the flag keeps the same explanatory note it always had.
+var orphanIntervalR = CA.convert({
+  Name: 'orphan-interval', Repository: 'example/orphan-interval',
+  ExtraParams: '--health-interval=30s'
+});
+ok('an orphaned --health-interval (no --health-cmd) emits no healthcheck: block',
+   orphanIntervalR.yaml.indexOf('\n    healthcheck:\n') === -1, orphanIntervalR.yaml);
+ok('...and keeps its "could not be translated" note',
+   orphanIntervalR.warnings.some(function (w) { return w.indexOf('--health-interval=30s') >= 0 && w.indexOf('interval key') >= 0; }));
+
+// --no-healthcheck alone.
+var noHealthAloneR = CA.convert({
+  Name: 'no-health-alone', Repository: 'example/no-health-alone',
+  ExtraParams: '--no-healthcheck'
+});
+ok('--no-healthcheck alone becomes healthcheck: disable: true',
+   noHealthAloneR.yaml.indexOf('    healthcheck:\n      disable: true\n') >= 0, noHealthAloneR.yaml);
+ok('...with nothing dropped to mention, no note is added',
+   !noHealthAloneR.notes.some(function (w) { return /no-healthcheck/.test(w); }));
+
+// --no-healthcheck alongside a command — disable wins, and it says so.
+var noHealthWithCmdR = CA.convert({
+  Name: 'no-health-with-cmd', Repository: 'example/no-health-with-cmd',
+  ExtraParams: '--no-healthcheck --health-cmd="curl -f http://localhost/"'
+});
+ok('--no-healthcheck beats a --health-cmd present alongside it',
+   noHealthWithCmdR.yaml.indexOf('    healthcheck:\n      disable: true\n') >= 0);
+ok('...and the check itself is never written', noHealthWithCmdR.yaml.indexOf('test:') === -1);
+ok('...and a note names --health-cmd as the thing that was not applied',
+   noHealthWithCmdR.notes.some(function (w) { return /--health-cmd/.test(w) && /not applied/.test(w); }));
+
+// A malformed duration keeps its own note and is left out of the block —
+// the check itself (built from a valid --health-cmd) still gets written.
+var badDurationR = CA.convert({
+  Name: 'bad-duration', Repository: 'example/bad-duration',
+  ExtraParams: '--health-cmd="curl -f http://localhost/" --health-interval=notaduration'
+});
+ok('a malformed duration is left out of the block', badDurationR.yaml.indexOf('\n      interval:') === -1);
+ok('...the check itself is still written', badDurationR.yaml.indexOf('test: ["CMD-SHELL"') >= 0);
+ok('...and a warning names the bad value',
+   badDurationR.warnings.some(function (w) { return w.indexOf('--health-interval=notaduration') >= 0; }));
+
+// A malformed retries count, same shape.
+var badRetriesR = CA.convert({
+  Name: 'bad-retries', Repository: 'example/bad-retries',
+  ExtraParams: '--health-cmd="curl -f http://localhost/" --health-retries=five'
+});
+ok('a malformed retries count is left out of the block', badRetriesR.yaml.indexOf('\n      retries:') === -1, badRetriesR.yaml);
+ok('...and a warning names the bad value',
+   badRetriesR.warnings.some(function (w) { return w.indexOf('--health-retries=five') >= 0; }));
+
+// A literal "$" in the command must reach the file doubled — the same rule
+// every other ExtraParams-derived value follows (see section O).
+var healthDollarR = CA.convert({
+  Name: 'health-dollar', Repository: 'example/health-dollar',
+  ExtraParams: '--health-cmd="curl -f http://localhost/$VAR || exit 1"'
+});
+ok('a "$" inside --health-cmd is doubled in the written test: line',
+   healthDollarR.yaml.indexOf('test: ["CMD-SHELL", "curl -f http://localhost/$$VAR || exit 1"]') >= 0,
+   healthDollarR.yaml);
+ok('...and reported in dollarsEscaped under the check',
+   healthDollarR.dollarsEscaped.some(function (d) { return d.key === 'healthcheck.test' && d.count === 1; }));
+
+// A quoted, space-separated command must survive tokenising as one value,
+// not be split on its own internal spaces.
+var healthQuotedR = CA.convert({
+  Name: 'health-quoted', Repository: 'example/health-quoted',
+  ExtraParams: '--health-cmd "curl -f http://localhost/ || exit 1"'
+});
+ok('a quoted --health-cmd with spaces survives as one value',
+   healthQuotedR.yaml.indexOf('test: ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]') >= 0,
+   healthQuotedR.yaml);
+
+// The converted file still parses and its healthcheck round-trips exactly —
+// the same guarantee section A already checks for wger-redis, run here
+// explicitly against a file this section built for itself.
+var healthDoc = Y.parse(healthCmdAloneR.yaml);
+ok('a healthcheck-carrying file parses with nothing badly sealed',
+   healthDoc.sealed.filter(function (s) { return isBadSeal(s, healthCmdAloneR.yaml); }).length === 0,
+   JSON.stringify(healthDoc.sealed));
+ok('...and serialises back byte for byte', Y.serialise(healthDoc) === healthCmdAloneR.yaml);
+var healthForm = Y.buildForm(healthDoc);
+ok('...and the form still builds', healthForm.ok === true);
 
 /* ---- summary ------------------------------------------------------------ */
 

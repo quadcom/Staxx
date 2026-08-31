@@ -173,8 +173,16 @@ function staxx_merged_addresses(array $containers, array $webuiById = []): array
  * health (staxx_stack_health()), $s['unhealthy'] the service names a title
  * can name. Both are optional — a caller that has not computed them gets
  * today's plain running pill, never an error.
+ *
+ * PLAN_108 stage 6: $service, when given, turns the "nothing here checks
+ * itself" case into a click target for the health-check offer, exactly as
+ * staxx_container_pill() already does for a container row. Only worth
+ * passing for a one-service stack — that is the only case where a single
+ * name is unambiguous — and left '' otherwise, which keeps today's plain,
+ * unclickable pill. The caller decides "one service" because it already
+ * knows the shape cheaply; this function does no reading of its own.
  */
-function staxx_state_pill(array $s, bool $canRun): string {
+function staxx_state_pill(array $s, bool $canRun, string $service = ''): string {
   if (!$canRun) {
     return '<span class="staxx-sub">'._('unknown').'</span>';
   }
@@ -203,7 +211,19 @@ function staxx_state_pill(array $s, bool $canRun): string {
     // never drawn, this is the ONLY place it can be said.
     $ran     = (int)($s['healthRunning'] ?? 0);
     $checked = (int)($s['healthChecked'] ?? 0);
-    if     ($checked === 0)    $title = _('Docker says this is running. Nothing here checks itself, so nothing has confirmed the apps inside are working.');
+    if ($checked === 0) {
+      // Same button staxx_container_pill() draws for its own 'none' case —
+      // same class, same data attributes — so stacks.js's one delegated
+      // click handler (matched on staxx-pill--offer) already covers this
+      // one too, with no handler of its own to keep in step.
+      if ($service !== '') {
+        $title = _('Docker says this is running. Nothing here checks itself, so nothing has confirmed the apps inside are working. Click to see if StaXX can work out a check for it.');
+        return '<button type="button" class="staxx-pill staxx-pill--up staxx-pill--offer" title="'.$title.'"'
+             . ' data-stack="'.htmlspecialchars($s['name']).'" data-service="'.htmlspecialchars($service).'">'
+             . $status.'</button>';
+      }
+      $title = _('Docker says this is running. Nothing here checks itself, so nothing has confirmed the apps inside are working.');
+    }
     else if ($checked === $ran) $title = _('Everything here checks itself, and every check says it is working.');
     else                        $title = sprintf(_('%1$d of the %2$d containers here check themselves and say they are working. Nothing has checked the rest.'), $checked, $ran);
     return '<span class="staxx-pill staxx-pill--up" title="'.$title.'">'.$status.'</span>';
@@ -243,8 +263,14 @@ function staxx_stack_sub(int $count, int $running): string {
  * is actually being made, so a green pill can never be read as more than
  * Docker itself knows. $c['health'] is optional, so a caller that has not
  * computed it (a not-created placeholder, mainly) still gets today's pill.
+ *
+ * PLAN_108 stage 5: $stack, when given, is what turns the 'none' case — the
+ * exact moment a person learns nothing is watching this container — into a
+ * click target for the health-check offer. Left '' for the two callers that
+ * have no stack to name (staxx_state_snapshot()'s "not created" placeholder),
+ * which simply keeps today's plain, unclickable pill.
  */
-function staxx_container_pill(array $c): string {
+function staxx_container_pill(array $c, string $stack = ''): string {
   if (!$c['exists']) {
     return '<span class="staxx-pill staxx-pill--down">'._('not created').'</span>';
   }
@@ -254,15 +280,29 @@ function staxx_container_pill(array $c): string {
   switch ($c['state']) {
     case 'running':
       $health = $c['health'] ?? 'none';
+      $service = $c['service'] !== '' ? $c['service'] : ($c['name'] ?? '');
       $titles = [
         'healthy'   => _('This image checks itself, and its own check says it is working.'),
         'unhealthy' => _('The container is running, but the image\'s own check says the app inside is not working.'),
         'starting'  => _('The container is running. Its own check has not finished deciding yet.'),
-        'none'      => _('Docker says this container is running. This image does not check itself, so nothing here has confirmed the app inside is working.'),
+        'none'      => ($stack !== '' && $service !== '')
+          ? _('Docker says this container is running. This image does not check itself, so nothing here has confirmed the app inside is working. Click to see if StaXX can work out a check for it.')
+          : _('Docker says this container is running. This image does not check itself, so nothing here has confirmed the app inside is working.'),
       ];
       $class = $health === 'unhealthy' ? ' staxx-pill--bad' : ($health === 'starting' ? ' staxx-pill--warn' : ' staxx-pill--up');
       // Not escaped again — see staxx_state_pill() above on what _() returns.
       $title = $titles[$health] ?? $titles['none'];
+      // Only the 'none' case is ever a click target — an image that checks
+      // itself, or one already reporting, has nothing to offer. A real
+      // <button>, not a styled span, following the same specificity fight
+      // .staxx-pill--fail already won against Unraid's own button reset —
+      // see that rule in the stylesheet for why it has to be restated there
+      // rather than inherited.
+      if ($health === 'none' && $stack !== '' && $service !== '') {
+        return '<button type="button" class="staxx-pill staxx-pill--up staxx-pill--offer" title="'.$title.'"'
+             . ' data-stack="'.htmlspecialchars($stack).'" data-service="'.htmlspecialchars($service).'">'
+             . $status.'</button>';
+      }
       return '<span class="staxx-pill'.$class.'" title="'.$title.'">'.$status.'</span>';
     case 'restarting':
     case 'removing':
@@ -1921,7 +1961,12 @@ function staxx_render_rows(array $rows, bool $canRun): string {
           <!-- data-cell names these for the browser: after a start or a stop it
                replaces just these cells rather than the whole row. -->
           <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_state_pill($s + ['health' => $sHealth, 'unhealthy' => $sUnhealthy,
-            'healthRunning' => $sCounts['running'], 'healthChecked' => $sCounts['checked']], $canRun).staxx_update_pill_html($sUpdate).staxx_pending_chip_html($sPending) ?></span>
+            'healthRunning' => $sCounts['running'], 'healthChecked' => $sCounts['checked']], $canRun,
+            /* PLAN_108 stage 6 — !$expandable is exactly "one child, no
+               container row drawn" (see $expandable's own definition above),
+               the same shape data-sole-service already tests for. */
+            !$expandable ? (string)($kids[0]['service'] ?? '') : ''
+          ).staxx_update_pill_html($sUpdate).staxx_pending_chip_html($sPending) ?></span>
           <span class="staxx-cell staxx-cell--address staxx-addrcell" role="gridcell" data-cell="address"><?=
             staxx_address_html(staxx_merged_addresses(staxx_stack_containers($s), array_column($kids, 'webui', 'id')))
           ?></span>
@@ -2105,7 +2150,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
             <? endif; ?>
           </span>
 
-          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_container_pill($kid).staxx_update_pill_html($kUpdate).staxx_pending_service_chip_html($kPending) ?></span>
+          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_container_pill($kid, $s['name']).staxx_update_pill_html($kUpdate).staxx_pending_service_chip_html($kPending) ?></span>
           <span class="staxx-cell staxx-cell--address staxx-addrcell" role="gridcell" data-cell="address"><?=
             staxx_address_html($kid['id'] !== ''
               ? staxx_address_webui_override(
@@ -2243,7 +2288,7 @@ function staxx_state_snapshot(): array {
         // this function already measured and ruled out. The browser keeps
         // its own copy of the last `updates` reply and re-applies it after
         // painting this html, so the pill still survives a poll.
-        'html'      => staxx_container_pill(['exists' => true] + $c),
+        'html'      => staxx_container_pill(['exists' => true] + $c, $name),
         // Ports move when a container is recreated with a changed compose
         // file, so this travels with the state rather than being fixed at
         // render time.
@@ -2274,8 +2319,17 @@ function staxx_state_snapshot(): array {
       'project'    => $s['project'] !== '' ? $s['project'] : staxx_project_name($s['leaf']),
       // No update pill here either — same reasoning as the container html
       // just above.
+      //
+      // PLAN_108 stage 6 — this cheap path has no declared service count to
+      // hand (see the comment above on why it never reads the compose file),
+      // so a real container being the only one docker knows about stands in
+      // for "one service". The two can disagree only for a stack that
+      // declares more than one service but has never started all of them —
+      // a genuinely rare shape, and the worst it costs is an extra click
+      // target until the next full render, never a wrong action.
       'html'       => staxx_state_pill($s + ['health' => $mineHealth, 'unhealthy' => $mineUnhealthy,
-                        'healthRunning' => $mineCounts['running'], 'healthChecked' => $mineCounts['checked']], $canRun),
+                        'healthRunning' => $mineCounts['running'], 'healthChecked' => $mineCounts['checked']], $canRun,
+                        count($mine) === 1 ? (string)($mine[0]['service'] !== '' ? $mine[0]['service'] : $mine[0]['name']) : ''),
       'address'    => staxx_address_html(staxx_merged_addresses($mine, $webuiById)),
       // PLAN_107 — what the browser toggles staxx-dot--sick from on the
       // stack row itself.

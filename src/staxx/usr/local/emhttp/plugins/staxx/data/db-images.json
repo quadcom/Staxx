@@ -1,5 +1,5 @@
 {
-  "_comment": "StaXX -- the well-known database images table (PLAN_70 stage 5, 10.2). The single source of truth read by both the server (include/CrossLinks.php) and the browser (javascript/db-images.js) -- see either file for how. Guessing a secret from a setting's *name* is refused elsewhere in this project, so the only honest way to recognise 'this is the password box' for a handful of very common images is to say so outright, for images checked one at a time against their own documentation. Every setting name was verified against the image's Docker Hub page (and, for MariaDB, its own Knowledge Base) rather than recalled. Nothing here is inferred from a setting's spelling; it is either in this table or it is unknown. 'user'/'password'/'rootPassword'/'database' are each a priority-ordered list of the environment settings that image recognises -- first name found in the target's file wins. Left out on purpose: no MariaDB/MySQL 'random root password' or hashed-password variants, since they hold no password value to read.",
+  "_comment": "StaXX -- the well-known database images table (PLAN_70 stage 5, 10.2; healthcheck recipes added PLAN_108 stage 3). The single source of truth read by both the server (include/CrossLinks.php) and the browser (javascript/db-images.js) -- see either file for how. Guessing a secret from a setting's *name* is refused elsewhere in this project, so the only honest way to recognise 'this is the password box' for a handful of very common images is to say so outright, for images checked one at a time against their own documentation. Every setting name was verified against the image's Docker Hub page (and, for MariaDB, its own Knowledge Base) rather than recalled. Nothing here is inferred from a setting's spelling; it is either in this table or it is unknown. 'user'/'password'/'rootPassword'/'database' are each a priority-ordered list of the environment settings that image recognises -- first name found in the target's file wins. Left out on purpose: no MariaDB/MySQL 'random root password' or hashed-password variants, since they hold no password value to read. An entry's optional 'healthcheck' is a real question checked against that image's own client tools and documentation, never guessed from the image's name -- an entry with no real question to ask (linuxserver-mariadb) simply has no 'healthcheck' key. A literal '$' inside 'test' is written '$$' so compose's own variable substitution leaves it alone and the doubled dollar reaches the container's shell as one, which then reads the named variable from the container's own environment.",
   "images": [
     {
       "id": "mariadb",
@@ -8,11 +8,20 @@
       "user": ["MARIADB_USER", "MYSQL_USER"],
       "password": ["MARIADB_PASSWORD", "MYSQL_PASSWORD"],
       "rootPassword": ["MARIADB_ROOT_PASSWORD", "MYSQL_ROOT_PASSWORD"],
-      "database": ["MARIADB_DATABASE", "MYSQL_DATABASE"]
+      "database": ["MARIADB_DATABASE", "MYSQL_DATABASE"],
+      "healthcheck": {
+        "test": ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 3,
+        "start_period": "30s",
+        "claim": "this database accepted a real connection and confirmed its storage engine has finished starting up",
+        "source": "https://mariadb.com/docs/server/server-management/automated-mariadb-deployment-and-administration/docker-and-mariadb/using-healthcheck-sh"
+      }
     },
     {
       "id": "linuxserver-mariadb",
-      "note": "LinuxServer's rebuild only ever recognises the older MYSQL_* names -- setting a MARIADB_* one against this image does nothing, so it needs its own entry rather than sharing the official image's.",
+      "note": "LinuxServer's rebuild only ever recognises the older MYSQL_* names -- setting a MARIADB_* one against this image does nothing, so it needs its own entry rather than sharing the official image's. No healthcheck recipe: LinuxServer's own support forum reports the official image's healthcheck.sh does not work correctly against their build, and no replacement of theirs is documented, so there is no real question confirmed safe to ask here.",
       "images": ["linuxserver/mariadb"],
       "user": ["MYSQL_USER"],
       "password": ["MYSQL_PASSWORD"],
@@ -26,15 +35,33 @@
       "user": ["MYSQL_USER"],
       "password": ["MYSQL_PASSWORD"],
       "rootPassword": ["MYSQL_ROOT_PASSWORD"],
-      "database": ["MYSQL_DATABASE"]
+      "database": ["MYSQL_DATABASE"],
+      "healthcheck": {
+        "test": ["CMD-SHELL", "mysql -uroot -p\"$$MYSQL_ROOT_PASSWORD\" -e \"SELECT 1\""],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 3,
+        "start_period": "30s",
+        "claim": "this database logged in and answered a real query",
+        "source": "https://github.com/docker-library/healthcheck/blob/master/mysql/docker-healthcheck"
+      }
     },
     {
       "id": "postgres",
-      "note": "Postgres has one account, not two -- POSTGRES_USER is the superuser, so there is no separate root slot to fill in. pgvecto-rs is a postgres rebuild whose own quick-start uses the same POSTGRES_* variables verbatim.",
+      "note": "Postgres has one account, not two -- POSTGRES_USER is the superuser, so there is no separate root slot to fill in. pgvecto-rs is a postgres rebuild whose own quick-start uses the same POSTGRES_* variables verbatim. The image's own documentation states POSTGRES_USER defaults to 'postgres' and POSTGRES_DB defaults to whatever POSTGRES_USER resolves to, so the health check's own command supplies those two defaults itself (as $${VAR:-default}) rather than requiring them -- only the password genuinely has no safe default to fall back on.",
       "images": ["postgres", "tensorchord/pgvecto-rs"],
       "user": ["POSTGRES_USER"],
       "password": ["POSTGRES_PASSWORD"],
-      "database": ["POSTGRES_DB"]
+      "database": ["POSTGRES_DB"],
+      "healthcheck": {
+        "test": ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRES_PASSWORD\" psql -h 127.0.0.1 -U \"$${POSTGRES_USER:-postgres}\" -d \"$${POSTGRES_DB:-$${POSTGRES_USER:-postgres}}\" -c \"SELECT 1\""],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 3,
+        "start_period": "30s",
+        "claim": "this database logged in and answered a real query",
+        "source": "https://hub.docker.com/_/postgres"
+      }
     },
     {
       "id": "mongo",
@@ -42,25 +69,61 @@
       "images": ["mongo"],
       "user": ["MONGO_INITDB_ROOT_USERNAME"],
       "password": ["MONGO_INITDB_ROOT_PASSWORD"],
-      "database": ["MONGO_INITDB_DATABASE"]
+      "database": ["MONGO_INITDB_DATABASE"],
+      "healthcheck": {
+        "test": ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 3,
+        "start_period": "30s",
+        "claim": "this database answered a genuine ping request",
+        "source": "https://www.mongodb.com/docs/manual/reference/command/ping/"
+      }
     },
     {
       "id": "redis",
       "note": "The plain 'redis' image on Docker Hub documents no password environment variable at all -- only a mounted config file or a command-line --requirepass. Bitnami's rebuild is the common one that does take a setting, and it has no username at all: this is the password-only shape the plan calls for.",
       "images": ["bitnami/redis"],
-      "password": ["REDIS_PASSWORD"]
+      "password": ["REDIS_PASSWORD"],
+      "healthcheck": {
+        "test": ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 3,
+        "start_period": "30s",
+        "claim": "this cache answered its own ping command",
+        "source": "https://redis.io/docs/latest/commands/ping/"
+      }
     },
     {
       "id": "valkey",
       "note": "Same story as Bitnami's Redis rebuild: a password setting, no username. The official valkey/valkey image, like official redis, documents no environment variable for this at all.",
       "images": ["bitnami/valkey"],
-      "password": ["VALKEY_PASSWORD"]
+      "password": ["VALKEY_PASSWORD"],
+      "healthcheck": {
+        "test": ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" --no-auth-warning ping | grep -q PONG"],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 3,
+        "start_period": "30s",
+        "claim": "this cache answered its own ping command",
+        "source": "https://valkey.io/commands/ping/"
+      }
     },
     {
       "id": "mssql",
-      "note": "The account is hard-wired to 'sa' -- there is no setting that names a username, only the one that sets its password -- so this is also password-only. (Older documentation called this variable SA_PASSWORD; current images require MSSQL_SA_PASSWORD.)",
+      "note": "The account is hard-wired to 'sa' -- there is no setting that names a username, only the one that sets its password -- so this is also password-only. (Older documentation called this variable SA_PASSWORD; current images require MSSQL_SA_PASSWORD.) Microsoft's own current tooling documentation (linked below) confirms mssql-tools has been superseded by mssql-tools18, which current SQL Server container images ship at /opt/mssql-tools18/bin/sqlcmd -- and that newer sqlcmd encrypts by default and refuses to connect to the container's self-signed certificate unless told to trust it with -C. The health check tries the current path first and falls back to the pre-2022-CU14 path second, so one recipe still works on an older pinned image rather than offering nothing to anyone not on the very latest tag.",
       "images": ["mssql/server"],
-      "password": ["MSSQL_SA_PASSWORD"]
+      "password": ["MSSQL_SA_PASSWORD"],
+      "healthcheck": {
+        "test": ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -b -o /dev/null || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -b -o /dev/null"],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 5,
+        "start_period": "60s",
+        "claim": "this database logged in and answered a real query",
+        "source": "https://learn.microsoft.com/en-us/sql/linux/sql-server-linux-setup-tools"
+      }
     }
   ]
 }

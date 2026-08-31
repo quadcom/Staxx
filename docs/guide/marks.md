@@ -39,6 +39,61 @@ too, and its tooltip names which part of it is the unhappy one.
 Nothing is being probed to work this out — it is the app's own verdict on itself, which Docker was
 already collecting. StaXX simply asks for it.
 
+## Letting StaXX work out a health check
+
+A health check is not something an app's author has to build in. It is just a question Docker asks
+the container every so often — "are you all right?" — and the container answers yes or no. Some
+apps ship their own question and answer it themselves; most do not, which is why so many green pills
+only ever mean "the container is going", never "the app inside is working". You can add the question
+afterwards, without any help from whoever wrote the app, and it lives in your own file from then on.
+
+You will meet the offer in two places:
+
+- **Click a green running pill that says nothing has checked it.** On a stack holding several
+  services, that is the pill on each service's own row. On a stack holding one, it is the pill on the
+  stack's own row, since there is no doubt about which container it means.
+- **A button in the editor's health check section**, for anyone who goes looking before anything has
+  quietly gone wrong.
+
+When you click through, StaXX looks for a real question to ask, best answer first:
+
+| What StaXX finds | What happens |
+|---|---|
+| The image already checks itself | Nothing is offered — Docker is already watching it. |
+| StaXX recognises the image | It offers a check written against that database's own documentation, using the database's own tool to log in and ask it something real. |
+| The project published its own example, and it matches a shape StaXX recognises | It offers that check instead. |
+| The app has a web page, and something inside the container can fetch a page | It offers a plain check of that page. |
+| None of the above | It offers nothing, and says so. |
+
+Be clear about what each kind actually proves, because none of them proves more than the question it
+asked. A check written against a known database logs in and runs a real command, so it stands for
+something — the database accepted a connection and did real work. A plain web-page check only tells
+you the web page answered; it says nothing about whatever sits behind that page. StaXX always tells
+you which claim you are getting before you accept it.
+
+**Nothing is ever offered on a guess.** Before it offers anything, StaXX tries the candidate check
+once against the running container and looks at what comes back — this runs one short command
+inside the container, and only when you have asked for a check to be worked out. If the command
+cannot run at all, StaXX says so and offers nothing, rather than handing you a check that would sit
+there reporting "unhealthy" forever regardless of whether the app is actually fine. That trial is
+also why you can trust an accepted offer: a check that could not run would never have been offered.
+
+Sometimes StaXX offers nothing at all, and that is the correct answer, not a shortcoming. It means
+StaXX does not know a real question to ask that particular image. A check that can only ever say yes
+is worse than no check, because it turns an honest "nobody knows" into a false "looks fine" — so
+silence here is deliberate.
+
+One thing worth knowing before you accept: if another service in the same file is already written to
+wait for this one to become healthy, that wait does nothing until a check exists to answer it. Adding
+one turns it into a real gate — the other service will now actually wait its turn. StaXX tells you
+when this applies to the check you are about to add.
+
+**What this never does.** Nothing is ever added without you accepting it on screen first. Nothing is
+written into a service that already has a check, whether that check came from the image itself or is
+already sitting in your file. No check is ever invented for an image StaXX does not recognise. And a
+container going unhealthy never makes StaXX restart it — Docker does not restart a container just
+because it fails its own check, and nothing here changes that.
+
 ## A red triangle where the app's picture should be
 
 The strongest mark on the list, because it replaces the app's own logo rather than sitting beside it.
