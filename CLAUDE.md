@@ -27,13 +27,21 @@ Two rules override most other judgement calls:
 
 ## Development environment
 
-Development happens on **Windows**; the code runs on a **Linux Unraid server**. There is no PHP,
-no Docker, and no browser on the dev machine, so a webGUI page can never be driven locally. But
+Development happens on **Windows**; the code runs on a **Linux Unraid server**. PHP and Docker live
+on the server, not on the dev machine, so a webGUI page cannot be *rendered* locally — but Chrome is
+here and driven directly, so a page already deployed to the server can be opened, clicked and read.
+Docker questions are answered on the server, where the containers actually are. But
 node and python are both present here, and every JavaScript and schema suite — the compose model's
 own round-trip tests, the Community Applications converter, the image importer, the undeclared-name
 check, the schema self-test — runs on the dev machine, not just a syntax check of it. `compose-
 model.js` is requireable from node directly, so a suspected round-trip bug can be proven with a
 throwaway probe instead of guessed at. Only PHP is genuinely absent locally.
+
+**The interpreter is called `python` here, never `python3`.** Windows keeps a stub named `python3`
+on the path whose only purpose is to print "Python was not found" and offer the Microsoft Store, so
+the habitual Linux spelling fails with exactly the message that looks like Python being missing.
+It is not: 3.13 is installed, with `pyyaml` and `jsonschema` both available, and
+`validate_schema.py` runs locally. Reach for another approach only after `python` itself has failed.
 
 **CRITICAL:** Never rewrite entire files. Provide targeted patch diffs or isolated code blocks only.
 **Execution:** Before executing any multi-file changes, write your proposed architecture to `PLAN.md` and wait for user approval. If during the process there are new sub-plans built. Create PLAN_X.md incrementing 'X' to keep track of all the steps that are outstanding. Once the plan(s) are complete then the plan files can be marked as complete. Keep the plans for future quick reference but move them into a complerted plans folder.
@@ -366,7 +374,7 @@ What still holds is the *saying*: a change that alters the shape of something al
 state plainly what now reads differently, so the hand-patch can be aimed. Silence is the failure
 here, not the absence of a migration.
 
-## Verifying a change with no browser
+## Verifying server-side logic without the UI
 
 For server-side logic, calling plugin functions from a throwaway PHP script beats driving the UI.
 `staxx_start_job()` returns `''` plus an error string for every refusal, so guard and allowlist
