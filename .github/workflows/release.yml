@@ -1,37 +1,32 @@
-# StaXX — build the dev-install bundle and publish it as a rolling release.
+# StaXX — run the check gate on every push to main or dev.
 #
-# One workflow, both branches. Two files would drift apart the first time one
-# was changed and the other forgotten.
-#
-# The bundle is what /boot/staxx-dev/ expects: the plugin folder's *contents*
-# as staxx/, with dev-install.sh beside it. Staging src/staxx instead would
-# install the mirrored path inside the plugin folder, leaving the webGUI with a
-# plugin directory holding nothing but a usr tree and no error to say so.
+# Used to also stage and publish a rolling dev-install tarball; that route is
+# retired now that dev is a proper release channel of its own (see
+# publish.yml), and it was the only thing that ever exposed the deploy script
+# publicly, so it goes rather than staying dark. This file is kept, renamed,
+# for the one part still worth keeping: a broken commit on either branch is
+# caught here, and that must not be lost along with the rest.
 #
 # Copyright 2026, StaXX contributors. GPL-2.0.
 
-name: Release dev-install bundle
+name: Check
 
 on:
   push:
     branches: [main, dev]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 concurrency:
-  # Each run publishes its own uniquely-tagged release, so nothing here can
-  # collide — this just stops two builds of the same branch racing pointlessly.
-  group: release-${{ github.ref_name }}
+  # Stops two check runs of the same branch racing pointlessly; nothing here
+  # publishes anything, so there is nothing for two runs to collide over.
+  group: check-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
-  release:
+  check:
     runs-on: ubuntu-latest
 
     env:
-      PLUGIN: staxx
       SRC: src/staxx/usr/local/emhttp/plugins/staxx
 
     steps:
@@ -49,8 +44,8 @@ jobs:
         run: pip install pyyaml jsonschema
 
       # A broken build reaching the server is worse than no build at all, so
-      # every suite that runs without PHP gates the release. stacks.js is one
-      # big IIFE — a single typo kills the whole page's behaviour silently.
+      # every suite that runs without PHP gates here. stacks.js is one big
+      # IIFE — a single typo kills the whole page's behaviour silently.
       - name: Check
         run: |
           for f in "$SRC"/javascript/*.js; do node --check "$f"; done
@@ -60,125 +55,18 @@ jobs:
           for t in tests/*.js; do echo "==> $t"; node "$t"; done
           python tests/validate_schema.py
 
-      - name: Stage the bundle
+      # The manifest's branch entity decides which branch an installed plugin
+      # polls for updates, so it is per-branch content, exactly like the
+      # readme's development banner — and a merge carries it across just as
+      # easily. publish.yml sets it at release time, but that is too late to
+      # notice: between a bad merge and the next release, main's manifest is
+      # served from raw.githubusercontent as-is, and everybody on the stable
+      # channel would be quietly pointed at development builds. Checked on
+      # every push instead, so it is caught within a minute of the merge.
+      - name: Check the manifest names this branch
         run: |
-          BUNDLE="${PLUGIN}-${GITHUB_REF_NAME}"
-          echo "BUNDLE=${BUNDLE}" >> "$GITHUB_ENV"
-          STAGE="stage/${BUNDLE}"
-
-          mkdir -p "${STAGE}/${PLUGIN}"
-          cp -a "${SRC}/." "${STAGE}/${PLUGIN}/"
-          cp dev-install.sh "${STAGE}/"
-          # dev-install.sh copies this into the plugin folder if it finds it,
-          # which is where the Plugin Manager looks for a readme.
-          cp README.md "${STAGE}/"
-
-          # Placeholders that only exist to keep empty directories in git.
-          find "${STAGE}" -name '.gitkeep' -delete
-
-          # Unraid splits .page files on a literal newline-dash-dash-dash-newline,
-          # and a carriage return fails that split silently. -I skips a binary
-          # file rather than searching its bytes for a CR, so the first icon or
-          # font added under the plugin folder is not corrupted.
-          while IFS= read -r -d '' f; do
-            grep -qIU $'\r' "$f" 2>/dev/null && sed -i 's/\r$//' "$f"
-          done < <(find "${STAGE}" -type f -print0)
-
-          find "${STAGE}" -type d -exec chmod 0755 {} +
-          find "${STAGE}" -type f -exec chmod 0644 {} +
-          chmod 0755 "${STAGE}/dev-install.sh"
-          chmod 0755 "${STAGE}/${PLUGIN}/scripts/"* 2>/dev/null || true
-          chmod 0755 "${STAGE}/${PLUGIN}/event/"* 2>/dev/null || true
-
-          # So the box can say what it is actually running.
-          cat > "${STAGE}/BUILD-INFO.txt" <<EOF
-          branch : ${GITHUB_REF_NAME}
-          commit : ${GITHUB_SHA}
-          built  : $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-          run    : ${GITHUB_RUN_NUMBER}
-          EOF
-
-          tar -C stage -czf "${BUNDLE}.tar.gz" "${BUNDLE}"
-
-      - name: Publish the rolling release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # With immutable releases on, deleting a release still leaves its tag
-          # name permanently unusable — not even a fresh repo gets it back. So
-          # the tag can never be the same one twice; every build gets its own,
-          # run number and commit together so it stays both unique and readable.
-          SHORT_SHA="${GITHUB_SHA:0:7}"
-          TAG="${GITHUB_REF_NAME}-${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
-
-          # The notes are built in a file rather than interpolated into the
-          # command, because on main they carry hand-written changelog prose full
-          # of backticks, dollar signs and backslashes — every one of which a
-          # "$(cat <<EOF ...)" substitution would try to expand or eat.
-          NOTES=release-notes.md
-          : > "${NOTES}"
-
-          # main is the only branch with a changelog section describing it. A
-          # rolling build off dev has none of its own, and the top section there
-          # would describe the last thing released rather than what is in the
-          # build — so dev keeps the plain description below.
-          if [ "${GITHUB_REF_NAME}" = "main" ] && [ -f CHANGELOG.md ]; then
-            # From the first '## ' heading down to, but not including, the next.
-            # Counting headings rather than matching a version shape, so a
-            # heading that is not a bare number still ends the section.
-            awk '/^## /{n++} n==2{exit} n==1{print}' CHANGELOG.md > "${NOTES}"
-
-            # The changelog separates versions with a rule, which the section
-            # therefore ends on — left in place it renders as a stray line
-            # immediately above the install block. Peeled off the end one line
-            # at a time so a rule in the MIDDLE of a section is untouched, and a
-            # section ending on ordinary prose is left exactly as it was.
-            while [ -s "${NOTES}" ]; do
-              case "$(tail -n 1 "${NOTES}")" in
-                ''|---) sed -i '$d' "${NOTES}" ;;
-                *) break ;;
-              esac
-            done
+          PLG_BRANCH="$(sed -n 's/.*<!ENTITY branch *"\([^"]*\)".*/\1/p' staxx.plg | head -n1)"
+          if [ "${PLG_BRANCH}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::staxx.plg's <!ENTITY branch> says \"${PLG_BRANCH}\", but this is ${GITHUB_REF_NAME}. An installed plugin polls that branch for updates, so on ${GITHUB_REF_NAME} it must say ${GITHUB_REF_NAME}. This is almost always a merge carrying the other branch's value across."
+            exit 1
           fi
-
-          # No changelog, or one with no section in it: fall back to the plain
-          # description rather than publish a release whose notes are empty.
-          if [ ! -s "${NOTES}" ]; then
-            cat > "${NOTES}" <<EOF
-          Rolling build of the \`${GITHUB_REF_NAME}\` branch, built from ${GITHUB_SHA}.
-          EOF
-          fi
-
-          cat >> "${NOTES}" <<EOF
-
-          Install on the Unraid server:
-
-          \`\`\`sh
-          wget -O - https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${BUNDLE}.tar.gz | tar -xzf - -C /boot
-          bash /boot/${BUNDLE}/dev-install.sh
-          \`\`\`
-
-          Nothing under \`/usr/local/emhttp\` survives a reboot, so a reboot removes it. Settings on the flash drive are kept.
-          EOF
-
-          # Never the "latest" release GitHub shows by default — that slot
-          # belongs to the numbered v* releases, not a rolling build.
-          gh release create "${TAG}" "${BUNDLE}.tar.gz" \
-            --target "${GITHUB_SHA}" \
-            --title "StaXX ${GITHUB_REF_NAME} (rolling)" \
-            --prerelease \
-            --notes-file "${NOTES}"
-
-          # Keep only the 5 newest rolling releases for this branch. Matched on
-          # the exact shape this workflow produces — branch, run number, short
-          # sha — not on the branch name and a dash, which a branch called
-          # main-something would also satisfy: this step DELETES, so the pattern
-          # has to be incapable of reaching a numbered v* release or another
-          # branch's builds. Runs after publishing, so a prune failure is a
-          # tidy-up miss and never a broken release.
-          gh release list --limit 200 --json tagName,createdAt \
-            --jq "sort_by(.createdAt) | reverse | .[] | select(.tagName | test(\"^${GITHUB_REF_NAME}-[0-9]+-[0-9a-f]{7}$\")) | .tagName" \
-            | tail -n +6 \
-            | while read -r old; do
-                gh release delete "${old}" --yes --cleanup-tag || true
-              done || true

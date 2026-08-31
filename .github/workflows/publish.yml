@@ -1,16 +1,23 @@
 # StaXX — cut a numbered release and publish the real Unraid package.
 #
-# Deliberately a SEPARATE file from release.yml, which publishes a rolling
-# pre-release on every push and must keep doing exactly that, untouched, no
-# matter what this file does. This one only runs on a `v*` tag (or by hand),
-# because cutting a release is a deliberate act, not something that should
-# ride along with an ordinary commit.
+# Deliberately a SEPARATE file from release.yml, which only checks every push
+# and must keep doing exactly that, untouched, no matter what this file does.
+# This one only runs on a `v*` tag (or by hand), because cutting a release is
+# a deliberate act, not something that should ride along with an ordinary
+# commit.
 #
-# What a manifest install actually needs, that the rolling bundle does not:
-# the real .txz built by pkg_build.sh, and staxx.plg stamped with that
-# package's version and checksums, served off `main` (Unraid fetches the
-# manifest from raw.githubusercontent.com/.../main/staxx.plg, not from a
-# release asset — only the .txz itself comes from the release).
+# Two channels live in one workflow, told apart by the version string alone:
+# a plain `1.4.0` is a main release, and `1.4.0_dev20260830` (the version main
+# is heading towards, then a build date) is a dev one. Each stamps and reads
+# its own manifest — `dev`'s off the dev branch, `main`'s off main — so a
+# person can point an install at either and get exactly that channel's own
+# updates, never the other's.
+#
+# What a manifest install actually needs, that a plain checkout does not: the
+# real .txz built by pkg_build.sh, and staxx.plg stamped with that package's
+# version, checksums and branch (Unraid fetches the manifest straight off
+# raw.githubusercontent.com/.../<branch>/staxx.plg, not from a release asset —
+# only the .txz itself comes from the release).
 #
 # Copyright 2026, StaXX contributors. GPL-2.0.
 
@@ -18,12 +25,17 @@ name: Publish tagged release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*']   # matches both v1.4.0 and v1.4.0_dev20260830
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to publish (no leading v), e.g. 1.3.0'
-        required: true
+        description: >-
+          Version to publish (no leading v), e.g. 1.4.0. Leave blank to cut
+          today's dev release instead — the workflow computes the dated
+          version, tags it and publishes it, which is the intended way to
+          make a dev build. Only fill this in for a deliberate manual release
+          of an exact version (main or dev).
+        required: false
 
 permissions:
   contents: write
@@ -35,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0   # need main's history too, to commit the stamped manifest back to it
+          fetch-depth: 0   # need every branch's and tag's history — to commit the stamped manifest back to the channel branch, and to find prior dev/main tags
 
       - uses: actions/setup-node@v5
         with:
@@ -60,32 +72,192 @@ jobs:
           for t in tests/*.js; do echo "==> $t"; node "$t"; done
           python tests/validate_schema.py
 
-      - name: Determine the version being published
+      # Three cases: a tag push (version and channel are read off the tag); a
+      # hand-typed dispatch (the manual escape hatch, for an exact version on
+      # either channel); and a blank dispatch, which is the intended way to
+      # cut a dev release — computed and tagged here rather than left to a
+      # human to type, because a hand-typed dated version is how a tag gets
+      # burnt with a typo baked into it. Tags are immutable and can never be
+      # reused, so the dated version is checked against real tags, not assumed
+      # free.
+      - name: Determine the version, channel and tag being published
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          git config user.name "staxx-release-bot"
+          git config user.email "actions@github.com"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION="${{ github.event.inputs.version }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git fetch --tags origin
+            BASE_VERSION="$(sed -n 's/.*<!ENTITY version *"\([^"]*\)".*/\1/p' staxx.plg | head -n1 | sed -E 's/_dev.*$//')"
+            DATED="${BASE_VERSION}_dev$(date -u +%Y%m%d)"
+            VERSION=""
+            for SUFFIX in "" b c d e f g h i j k l m n o p q r s t u v w x y z; do
+              CANDIDATE="${DATED}${SUFFIX}"
+              if ! git rev-parse -q --verify "refs/tags/v${CANDIDATE}" >/dev/null; then
+                VERSION="${CANDIDATE}"
+                break
+              fi
+            done
+            if [ -z "${VERSION}" ]; then
+              echo "::error::Every letter suffix for ${DATED} is already tagged. Something is very wrong, or it is time to widen the scheme."
+              exit 1
+            fi
+            # Deliberately NOT tagged here. A tag is permanent and can never
+            # be reused, so creating one before the checks have run would burn
+            # the name on any transient failure. gh release create makes it at
+            # the end, once there is something to attach it to.
           else
             VERSION="${GITHUB_REF_NAME#v}"
           fi
+
+          # A tag push obviously already has its tag. Neither dispatch route
+          # does any more — nothing is tagged until the release is created, so
+          # a run that fails a check costs nothing and the name stays free.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            NEEDS_TAG="true"
+          else
+            NEEDS_TAG="false"
+          fi
+
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "TAG=v${VERSION}" >> "$GITHUB_ENV"
+          echo "NEEDS_TAG=${NEEDS_TAG}" >> "$GITHUB_ENV"
 
-      # Fatal, every one of them. A hand-driven release has three places that
-      # all have to say the same version before anything gets built, because
-      # each is read by something different: the tag is what a manifest
-      # install's URL implies, the entity is what the plugin actually reports
-      # once installed, and the CHANGES block is the notes Unraid's Plugin
-      # Manager shows for it. Any one lagging behind ships a release that
-      # lies about itself.
-      - name: Check the tag, the manifest and the changelog agree
+          # Channel is decided by the version string alone: any "_dev" makes
+          # it a dev release, on the dev branch; anything else is main.
+          case "${VERSION}" in
+            *_dev*) echo "CHANNEL=dev" >> "$GITHUB_ENV"; echo "CHANNEL_BRANCH=dev" >> "$GITHUB_ENV" ;;
+            *)      echo "CHANNEL=main" >> "$GITHUB_ENV"; echo "CHANNEL_BRANCH=main" >> "$GITHUB_ENV" ;;
+          esac
+
+      # Every component is two digits, always. Unraid compares versions as
+      # text, so fixed-width fields are the only thing that makes text order
+      # and number order the same: unpadded, 1.10.0 sorts BELOW 1.5.0 and
+      # updates silently stop being offered to everybody. Padding also keeps
+      # the whole scheme clear of the tag names burnt while releases were
+      # immutable, since 01.02.00 is not 1.2.0.
+      - name: Check the version is the padded shape
         run: |
-          PLG_VERSION="$(sed -n 's/.*<!ENTITY version *"\([^"]*\)".*/\1/p' staxx.plg | head -n1)"
-          CHANGELOG_VERSION="$(grep -m1 '^## ' CHANGELOG.md | sed -E 's/^## +([0-9][0-9.]*).*/\1/')"
-
-          if [ "${VERSION}" != "${PLG_VERSION}" ]; then
-            echo "::error::Publishing ${VERSION}, but staxx.plg's <!ENTITY version> entity still says ${PLG_VERSION}. Bump the entity (and add its CHANGES section) before tagging."
+          BASE="${VERSION%%_dev*}"
+          if ! echo "${BASE}" | grep -qE '^[0-9]{2}[.][0-9]{2}[.][0-9]{2}$'; then
+            echo "::error::${VERSION} is not the padded shape. Every component is two digits: 00.01.00, 01.00.00, 01.10.00 — and a dev build adds _dev<date> after it. Unpadded numbers sort wrongly as text, which is how updates stop being offered without anyone noticing."
             exit 1
           fi
+
+      # BEFORE the build, and the ordering is the entire point. pkg_build.sh
+      # --update-plg WRITES the version it is handed into the manifest, so
+      # anything read afterwards is only the tag echoed back and an agreement
+      # check against it can never fail. This is the 1.2.0 failure: the entity
+      # was bumped, the packager was never run, and the manifest shipped naming
+      # a package nobody had built.
+      - name: Read the manifest as committed
+        run: |
+          COMMITTED="$(sed -n 's/.*<!ENTITY version *"\([^"]*\)".*/\1/p' staxx.plg | head -n1)"
+          echo "COMMITTED=${COMMITTED}" >> "$GITHUB_ENV"
+
+      # On main the tag and the committed entity must match outright. On dev
+      # the tag carries a dated _dev tail the manifest does not, so what must
+      # agree is the base version each is heading towards.
+      - name: Check the tag and the committed manifest agree
+        run: |
+          WANT="${COMMITTED}"
+          GOT="${VERSION}"
+          if [ "${CHANNEL}" = "dev" ]; then
+            WANT="${COMMITTED%%_dev*}"
+            GOT="${VERSION%%_dev*}"
+          fi
+          if [ "${GOT}" != "${WANT}" ]; then
+            if [ "${CHANNEL}" = "dev" ]; then
+              echo "::error::Publishing ${VERSION}, heading towards ${GOT}, but staxx.plg's <!ENTITY version> says ${COMMITTED}. Set the entity to the version main is heading towards before cutting a dev build."
+            else
+              echo "::error::Publishing ${VERSION}, but staxx.plg's <!ENTITY version> entity says ${COMMITTED}. Bump the entity (and add its CHANGES section) before tagging."
+            fi
+            exit 1
+          fi
+
+      # Unraid decides "is there an update" with strcmp, not version_compare
+      # (dynamix.plugin.manager/include/ShowPlugins.php) -- so a version that
+      # does not sort ABOVE the one people already have is simply never
+      # offered, silently and for ever. The trap that makes this worth a gate
+      # rather than a comment: 1.10.0 sorts BELOW 1.5.0, because "1" < "5" one
+      # character in. Nothing about that is visible until nobody updates.
+      #
+      # LC_ALL=C is load-bearing. A locale-aware comparison can ignore or
+      # reorder punctuation, and this has to be the byte comparison strcmp
+      # actually performs.
+      - name: Check this version sorts above every release already out
+        run: |
+          if [ "${CHANNEL}" = "dev" ]; then
+            EXISTING="$(git tag --list 'v*_dev*' | sed 's/^v//')"
+          else
+            # Only the CURRENT scheme counts. Two abandoned ones sit in the
+            # tag list and both sort wrongly against it: the dated versions
+            # (up to 2026.08.26) sort above every padded number, and the
+            # unpadded 1.x ones sort above 00.x too. Left in, either would
+            # refuse every release for ever. Matching two leading digits and a
+            # dot is what picks out the padded scheme and nothing else.
+            #
+            # Their real consequence cannot be fixed from here: anyone still
+            # running a dated or unpadded build is never offered a padded one.
+            # Nobody is, which is exactly why the switch happened now.
+            EXISTING="$(git tag --list 'v*' | sed 's/^v//' | grep -v '_dev' | grep -E '^[0-9][0-9][.]' || true)"
+          fi
+
+          HIGHEST="$(echo "${EXISTING}" | LC_ALL=C sort | tail -n1)"
+          if [ -z "${HIGHEST}" ]; then
+            echo "No previous ${CHANNEL} release to sort against."
+            exit 0
+          fi
+
+          if ! LC_ALL=C awk -v a="${VERSION}" -v b="${HIGHEST}" 'BEGIN{exit !(a>b)}'; then
+            echo "::error::${VERSION} does not sort above ${HIGHEST}, the newest ${CHANNEL} release already out. Unraid compares plugin versions as plain text, so nobody on ${HIGHEST} would ever be offered this. Beware double digits: 1.10.0 sorts below 1.5.0."
+            exit 1
+          fi
+          echo "${VERSION} sorts above ${HIGHEST}."
+
+      - name: Build the package and stamp the manifest
+        run: ./pkg_build.sh "${VERSION}" --update-plg
+
+      # The entity decides which branch an installed plugin polls for updates
+      # — it is per-branch content, exactly like the README's development
+      # banner, and a merge can carry the wrong value across just as easily.
+      # Set it explicitly rather than trust the committed value: a `dev` value
+      # reaching main's manifest would silently start offering development
+      # builds to everyone on the stable channel.
+      - name: Stamp the branch entity to match the channel
+        run: |
+          sed -i -E "s|(<!ENTITY branch *\")[^\"]*(\">)|\1${CHANNEL_BRANCH}\2|" staxx.plg
+          STAMPED="$(sed -n 's/.*<!ENTITY branch *"\([^"]*\)".*/\1/p' staxx.plg | head -n1)"
+          if [ "${STAMPED}" != "${CHANNEL_BRANCH}" ]; then
+            echo "::error::Tried to stamp staxx.plg's <!ENTITY branch> to ${CHANNEL_BRANCH} but it reads ${STAMPED} afterwards — the sed pattern did not match."
+            exit 1
+          fi
+
+      # Fatal, every one of them. A hand-driven release has places that all
+      # have to say the same thing before anything gets published, because
+      # each is read by something different: the tag is what a manifest
+      # install's URL implies, the version entity is what the plugin actually
+      # reports once installed, and the branch entity decides which channel it
+      # Only the branch half is re-read here. The version entity now holds
+      # whatever pkg_build.sh just wrote, so comparing it to the tag would be
+      # comparing the tag with itself; that agreement is checked against the
+      # COMMITTED manifest, before the build, further up.
+      - name: Check the stamped manifest points at the right channel
+        run: |
+          PLG_BRANCH="$(sed -n 's/.*<!ENTITY branch *"\([^"]*\)".*/\1/p' staxx.plg | head -n1)"
+          if [ "${PLG_BRANCH}" != "${CHANNEL_BRANCH}" ]; then
+            echo "::error::staxx.plg's <!ENTITY branch> says ${PLG_BRANCH}, but this is a ${CHANNEL} release, which must poll ${CHANNEL_BRANCH}. The stamping step above should have set this."
+            exit 1
+          fi
+
+      # Main only: a numbered release still needs a hand-written changelog
+      # entry and its own CHANGES section, because nothing generates prose for
+      # it. Dev releases skip both — see the generation step below instead.
+      - name: Check the changelog agrees
+        if: env.CHANNEL == 'main'
+        run: |
+          CHANGELOG_VERSION="$(grep -m1 '^## ' CHANGELOG.md | sed -E 's/^## +([0-9][0-9.]*).*/\1/')"
 
           if [ "${VERSION}" != "${CHANGELOG_VERSION}" ]; then
             echo "::error::Publishing ${VERSION}, but CHANGELOG.md's newest '## ' heading says ${CHANGELOG_VERSION}. Add (or fix) the changelog entry for ${VERSION} before tagging."
@@ -97,20 +269,61 @@ jobs:
             exit 1
           fi
 
-      - name: Build the package and stamp the manifest
-        run: ./pkg_build.sh "${VERSION}" --update-plg
+      # Dev only: nobody writes changelog prose for a dev build, so the notes
+      # are the commit subjects since the previous dev tag — or, if this is
+      # the first dev build after a main release, since that main tag.
+      - name: Find the commits since the last dev (or main) release
+        if: env.CHANNEL == 'dev'
+        run: |
+          PREV_DEV_TAG="$(git tag -l 'v*_dev*' | grep -vFx "${TAG}" | sort -V | tail -n1 || true)"
+          if [ -n "${PREV_DEV_TAG}" ]; then
+            SINCE="${PREV_DEV_TAG}"
+          else
+            SINCE="$(git tag -l 'v*' | grep -v '_dev' | sort -V | tail -n1 || true)"
+          fi
+          if [ -n "${SINCE}" ]; then
+            git log --pretty='- %s' "${SINCE}..HEAD" > dev-commits.txt
+          else
+            git log --pretty='- %s' HEAD > dev-commits.txt   # no earlier tag at all
+          fi
 
-      # Before the checkout below, not after. That step replaces the whole
-      # working tree with main's, so reading CHANGELOG.md afterwards would take
-      # the notes from whatever main says today rather than from the tree this
-      # release was actually cut from — and if main has already moved on to the
-      # next version's section, the release would ship someone else's notes.
+      # Inserted at the top of the <CHANGES> block, ahead of main's own
+      # numbered sections, which are never touched — only a heading that
+      # itself contains "_dev" matches for removal, so the block stays
+      # bounded instead of growing with every dev build.
+      - name: Generate and insert this dev build's release notes
+        if: env.CHANNEL == 'dev'
+        run: |
+          python3 - <<'PY'
+          import os, re
+
+          version = os.environ["VERSION"]
+          with open("dev-commits.txt", encoding="utf-8") as f:
+              body = f.read().rstrip("\n") or "- No commits since the last release."
+
+          with open("staxx.plg", encoding="utf-8") as f:
+              plg = f.read()
+          plg = re.sub(r"###[^\n]*_dev[^\n]*\n(?:(?!###|</CHANGES>)[^\n]*\n?)*", "", plg)
+          plg = plg.replace("<CHANGES>\n", f"<CHANGES>\n###{version}\n{body}\n", 1)
+          with open("staxx.plg", "w", encoding="utf-8", newline="\n") as f:
+              f.write(plg)
+
+          with open("release-notes.md", "w", encoding="utf-8", newline="\n") as f:
+              f.write(f"Development build {version}, off the dev branch.\n\n{body}\n")
+          PY
+
+      # Main only. Before the checkout below, not after — that step replaces
+      # the whole working tree with main's, so reading CHANGELOG.md afterwards
+      # would take the notes from whatever main says today rather than from
+      # the tree this release was actually cut from, and if main has already
+      # moved on to the next version's section, the release would ship someone
+      # else's notes.
       #
-      # The extraction itself is lifted from release.yml rather than rewritten
-      # worse: from the first '## ' heading down to (not including) the next,
-      # then peel the changelog's trailing separator rule off the end one line
-      # at a time, since a rule mid-section must survive.
+      # The extraction itself: from the first '## ' heading down to (not
+      # including) the next, then peel the changelog's trailing separator rule
+      # off the end one line at a time, since a rule mid-section must survive.
       - name: Extract this version's release notes
+        if: env.CHANNEL == 'main'
         run: |
           NOTES=release-notes.md
           awk '/^## /{n++} n==2{exit} n==1{print}' CHANGELOG.md > "${NOTES}"
@@ -122,27 +335,29 @@ jobs:
           done
 
       # Required, not optional: the manifest people actually install from is
-      # fetched straight off main (raw.githubusercontent.com/.../main/staxx.plg),
-      # never off a release asset. If the stamped file only existed in this
-      # tag's own tree, main would keep pointing at the previous release's
-      # package and checksums forever. A tag push leaves HEAD detached, so
-      # main has to be fetched and checked out explicitly rather than assumed.
-      - name: Commit the stamped manifest back to main
+      # fetched straight off the channel's own branch
+      # (raw.githubusercontent.com/.../<branch>/staxx.plg), never off a release
+      # asset. If the stamped file only existed in this tag's own tree, that
+      # branch would keep pointing at the previous release's package,
+      # checksums and channel forever. A tag push leaves HEAD detached, so the
+      # branch has to be fetched and checked out explicitly rather than
+      # assumed.
+      - name: Commit the stamped manifest back to the channel branch
         run: |
           cp staxx.plg /tmp/staxx.plg.stamped
           git config user.name "staxx-release-bot"
           git config user.email "actions@github.com"
-          git fetch origin main
-          git checkout -B main origin/main
+          git fetch origin "${CHANNEL_BRANCH}"
+          git checkout -B "${CHANNEL_BRANCH}" "origin/${CHANNEL_BRANCH}"
           cp /tmp/staxx.plg.stamped staxx.plg
           git add staxx.plg
           if git diff --cached --quiet; then
-            echo "staxx.plg on main already matches this build; nothing to commit."
+            echo "staxx.plg on ${CHANNEL_BRANCH} already matches this build; nothing to commit."
           else
             git commit -m "Stamp staxx.plg for ${TAG}"
-            git push origin main
+            git push origin "${CHANNEL_BRANCH}"
           fi
-          echo "MAIN_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "BRANCH_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Publish the release
         env:
@@ -150,21 +365,31 @@ jobs:
         run: |
           PKG_FILE="build/staxx-${VERSION}-noarch-1.txz"
 
+          TITLE="StaXX ${VERSION}"
+          RELEASE_FLAGS=(--latest)
+          if [ "${CHANNEL}" = "dev" ]; then
+            TITLE="StaXX ${VERSION} (development)"
+            RELEASE_FLAGS=(--prerelease)
+          fi
+
           if gh release view "${TAG}" >/dev/null 2>&1; then
             # Re-running a tag (or a workflow_dispatch for one already cut):
             # replace both assets rather than fail on "already exists".
             gh release upload "${TAG}" "${PKG_FILE}" staxx.plg --clobber
-            gh release edit "${TAG}" --latest
+            gh release edit "${TAG}" --title "${TITLE}" "${RELEASE_FLAGS[@]}"
           else
-            # A tag push already created the tag; workflow_dispatch has not,
-            # so point it at the commit this run just pushed to main.
+            # A tag push already has its tag and gh will use it as-is. A
+            # dispatch has none, so the tag gh creates has to be pointed at the
+            # commit this run just pushed to the channel branch — without
+            # --target it would be cut from the default branch, which for a dev
+            # release is the wrong branch entirely.
             TARGET_ARGS=()
-            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-              TARGET_ARGS=(--target "${MAIN_SHA}")
+            if [ "${NEEDS_TAG}" = "true" ]; then
+              TARGET_ARGS=(--target "${BRANCH_SHA}")
             fi
             gh release create "${TAG}" "${PKG_FILE}" staxx.plg \
-              --title "StaXX ${VERSION}" \
+              --title "${TITLE}" \
               --notes-file release-notes.md \
-              --latest \
+              "${RELEASE_FLAGS[@]}" \
               "${TARGET_ARGS[@]}"
           fi
