@@ -8176,6 +8176,47 @@
   font-size: 1.2rem;
 }
 
+/* The dollar-sign warning lists a service, a setting and a value per row, and
+   they are read DOWN the columns rather than along each line. The shared list
+   above lays every row out on its own with space-between, so no two rows put
+   their setting in the same place; this makes the whole list one grid so they
+   line up. li carries display:contents so its four cells become the grid's own
+   items — which is also why the row separator goes on the cells rather than on
+   the li, whose box no longer exists to carry it. */
+.staxx-dollar-list {
+  display: grid;
+  grid-template-columns: max-content max-content max-content minmax(0, 1fr);
+}
+
+.staxx-dollar-list li {
+  display: contents;
+}
+
+.staxx-dollar-list li > * {
+  padding: 0.5rem 0.9rem 0.5rem 0;
+}
+
+.staxx-dollar-list li > *:first-child {
+  padding-left: 0.9rem;
+}
+
+.staxx-dollar-list li:not(:last-child) > * {
+  border-bottom: 0.1rem solid var(--sm-hairline);
+}
+
+/* The setting's name is never shortened — it is how you find the value being
+   complained about. Only the value itself may run out of room. */
+.staxx-dollar-list code {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.staxx-dollar-list li > code:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---- PLAN_93: the one-box storage chooser -------------------------------
  * The other candidates, offered as links rather than rival buttons — a press
  * only fills the destination box, it never moves anything on its own. */

@@ -5683,8 +5683,12 @@
 
   function dollarModalBodyHtml(rows) {
     var many = rows.length > 1;
-    var list = '<ul class="staxx-confirm-list">' + rows.map(function (r) {
-      return '<li><strong>' + esc(r.service) + '</strong> → <code>' + esc(r.key) + '</code> — ' +
+    // Four cells rather than one run-on line, because the layout is a grid
+    // (staxx-dollar-list) — these are read down the columns, and the shared
+    // list's own row spacing puts every row's setting somewhere different.
+    var list = '<ul class="staxx-confirm-list staxx-dollar-list">' + rows.map(function (r) {
+      return '<li><strong>' + esc(r.service) + '</strong><span aria-hidden="true">→</span>' +
+             '<code>' + esc(r.key) + '</code>' +
              '<code>' + esc(truncateDollarValue(r.value)) + '</code></li>';
     }).join('') + '</ul>';
     return list + '<p>A dollar sign is where Compose starts reading a variable name, so it deletes ' +

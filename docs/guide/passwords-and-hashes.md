@@ -143,6 +143,8 @@ affected, and which setting of which service it belongs to:
 > container ever sees them. Writing each one twice is the fix, and the container still receives them
 > exactly as they read above.
 
+![A message headed "This stack has 3 values Compose will damage", listing three settings belonging to a service called jellyfin — an admin token holding a scrambled password, an SMTP password and an API key — each with its value beside it, above two buttons reading "Leave them" and "Write each one twice"](../images/guide/passwords-and-hashes-dollar-warning.png)
+
 **Write each one twice** corrects all of them in a single press, and **Undo** takes the whole lot
 back in one. **Leave them** closes the message and changes nothing — each affected value still
 carries its own note and its own button, so you can take them one at a time instead. The message

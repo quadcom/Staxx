@@ -120,6 +120,11 @@ one, and tells you which values it changed:
 > has been written twice — the container still receives it exactly as before. Find it in that
 > stack's own history if you want it back as it arrived.
 
+Expand a template's row before importing it and the same thing is shown in advance, against the file
+it would write:
+
+![The expanded preview of a template waiting to be imported, showing the compose file it would write with the admin token's dollar signs each written twice, and underneath a note headed "Dollar signs doubled so compose does not read them as the start of a variable name" saying the value contained five dollar signs and that the container still receives it exactly as before](../images/guide/bringing-in-a-container-dollar-signs-doubled.png)
+
 The app receives precisely what it received before. Nothing about how it behaves changes.
 
 **Your template's own wording is kept.** The first version in the new stack's history is the file
