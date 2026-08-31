@@ -114,6 +114,7 @@ Four rules run through the whole set:
 | `autostart` | The bridge to Unraid's boot-start list | `STAXX_AUTOSTART_FILE` at `/tmp` |
 | `backup` | Whether the store is named in the Appdata Backup plugin's extras list, against the real installed file | `STORE_ROOT` |
 | `bootcopy` | The shelf of compose copies on the flash drive: the copy after every save, the case-clash refusal, removal and restore | `STORE_ROOT` |
+| `bundle` | The `.staxx` bundle importer's refusals — a crafted entry name, a planted record-folder file, a bad marker, an oversized or unreadable bundle — plus the two accept cases and the write into a fresh store | `STORE_ROOT` (only the two write cases) |
 | `console` | The `recreate` and stack-scope `update` verbs, the scope refusals, the job-log tailer, the log follower and the shell — no real session is ever opened | — |
 | `crypt` | The hashing container's refusals. Builds, starts, pulls and removes nothing | — |
 | `detail` | What the server can find out about a stack's icon, description, category, author and links | `STORE_ROOT`, `IMAGE_LOOKUP=false` |

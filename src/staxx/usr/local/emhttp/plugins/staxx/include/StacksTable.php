@@ -182,20 +182,31 @@ function staxx_state_pill(array $s, bool $canRun): string {
     $health = $s['health'] ?? 'none';
     $status = htmlspecialchars((string)$s['status']);
     if ($health === 'unhealthy') {
-      // Not escaped here — the whole title goes through htmlspecialchars()
-      // once on its way into the attribute below, and escaping twice would
-      // show a service name's punctuation as entity text.
-      $names = implode(', ', $s['unhealthy'] ?? []);
+      // _() is Unraid's own translator and it returns HTML, not plain text:
+      // it turns an apostrophe into an entity on the way past. Escaping its
+      // result again would escape that entity's own ampersand and print
+      // "&apos;" on screen, so only the service names — the untrusted half —
+      // are escaped here.
+      $names = implode(', ', array_map('htmlspecialchars', $s['unhealthy'] ?? []));
       $title = $names !== ''
         ? sprintf(_('The container is running, but the image\'s own check says the app inside is not working: %s.'), $names)
         : _('The container is running, but the image\'s own check says the app inside is not working.');
-      return '<span class="staxx-pill staxx-pill--bad" title="'.htmlspecialchars($title).'">'.$status.'</span>';
+      return '<span class="staxx-pill staxx-pill--bad" title="'.$title.'">'.$status.'</span>';
     }
     if ($health === 'starting') {
       $title = _('The container is running. Its own check has not finished deciding yet.');
-      return '<span class="staxx-pill staxx-pill--warn" title="'.htmlspecialchars($title).'">'.$status.'</span>';
+      return '<span class="staxx-pill staxx-pill--warn" title="'.$title.'">'.$status.'</span>';
     }
-    return '<span class="staxx-pill staxx-pill--up">'.$status.'</span>';
+    // A stack shows one pill for however many containers it holds, so the
+    // green case has to say which of the two claims it is making just as the
+    // container rows do — and for a one-service stack, whose container row is
+    // never drawn, this is the ONLY place it can be said.
+    $ran     = (int)($s['healthRunning'] ?? 0);
+    $checked = (int)($s['healthChecked'] ?? 0);
+    if     ($checked === 0)    $title = _('Docker says this is running. Nothing here checks itself, so nothing has confirmed the apps inside are working.');
+    else if ($checked === $ran) $title = _('Everything here checks itself, and every check says it is working.');
+    else                        $title = sprintf(_('%1$d of the %2$d containers here check themselves and say they are working. Nothing has checked the rest.'), $checked, $ran);
+    return '<span class="staxx-pill staxx-pill--up" title="'.$title.'">'.$status.'</span>';
   }
   if ((string)$s['status'] !== '') {
     return '<span class="staxx-pill">'.htmlspecialchars((string)$s['status']).'</span>';
@@ -250,7 +261,8 @@ function staxx_container_pill(array $c): string {
         'none'      => _('Docker says this container is running. This image does not check itself, so nothing here has confirmed the app inside is working.'),
       ];
       $class = $health === 'unhealthy' ? ' staxx-pill--bad' : ($health === 'starting' ? ' staxx-pill--warn' : ' staxx-pill--up');
-      $title = htmlspecialchars($titles[$health] ?? $titles['none']);
+      // Not escaped again — see staxx_state_pill() above on what _() returns.
+      $title = $titles[$health] ?? $titles['none'];
       return '<span class="staxx-pill'.$class.'" title="'.$title.'">'.$status.'</span>';
     case 'restarting':
     case 'removing':
@@ -1623,6 +1635,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
       // source.
       $sHealth    = staxx_stack_health($kids);
       $sUnhealthy = staxx_unhealthy_services($kids);
+      $sCounts    = staxx_stack_health_counts($kids);
       // Unhealthy only. A check still deciding is not a fault, and a dot
       // that flickers red every time a container restarts teaches people to
       // ignore it.
@@ -1907,7 +1920,8 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 
           <!-- data-cell names these for the browser: after a start or a stop it
                replaces just these cells rather than the whole row. -->
-          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_state_pill($s + ['health' => $sHealth, 'unhealthy' => $sUnhealthy], $canRun).staxx_update_pill_html($sUpdate).staxx_pending_chip_html($sPending) ?></span>
+          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_state_pill($s + ['health' => $sHealth, 'unhealthy' => $sUnhealthy,
+            'healthRunning' => $sCounts['running'], 'healthChecked' => $sCounts['checked']], $canRun).staxx_update_pill_html($sUpdate).staxx_pending_chip_html($sPending) ?></span>
           <span class="staxx-cell staxx-cell--address staxx-addrcell" role="gridcell" data-cell="address"><?=
             staxx_address_html(staxx_merged_addresses(staxx_stack_containers($s), array_column($kids, 'webui', 'id')))
           ?></span>
@@ -2199,6 +2213,7 @@ function staxx_state_snapshot(): array {
     // read, and never from staxx_stack_states() itself (see its docblock).
     $mineHealth    = staxx_stack_health($mine);
     $mineUnhealthy = staxx_unhealthy_services($mine);
+    $mineCounts    = staxx_stack_health_counts($mine);
 
     // Keyed by service, which is what the container rows carry, so the browser
     // can find each row without knowing the container names in advance. That
@@ -2259,7 +2274,8 @@ function staxx_state_snapshot(): array {
       'project'    => $s['project'] !== '' ? $s['project'] : staxx_project_name($s['leaf']),
       // No update pill here either — same reasoning as the container html
       // just above.
-      'html'       => staxx_state_pill($s + ['health' => $mineHealth, 'unhealthy' => $mineUnhealthy], $canRun),
+      'html'       => staxx_state_pill($s + ['health' => $mineHealth, 'unhealthy' => $mineUnhealthy,
+                        'healthRunning' => $mineCounts['running'], 'healthChecked' => $mineCounts['checked']], $canRun),
       'address'    => staxx_address_html(staxx_merged_addresses($mine, $webuiById)),
       // PLAN_107 — what the browser toggles staxx-dot--sick from on the
       // stack row itself.

@@ -9999,3 +9999,35 @@
 .staxx-export-values {
   margin-bottom: 1rem;
 }
+
+/* ---- PLAN_101/101a: dropping a .staxx bundle onto the grid ---------------
+ *
+ * The preview dialog is built in script (see openBundleModal() in stacks.js)
+ * and borrows .staxx-confirm's frame wholesale, plus .staxx-export's own
+ * section/list/pre classes for its body — the same recipe .staxx-export
+ * itself already uses, for the same reason: it owns no markup of its own in
+ * StacksPage.php. */
+
+.staxx-bundle {
+  width: min(50rem, 92vw);
+  max-height: 86vh;
+}
+
+.staxx-bundle .staxx-confirm-body {
+  overflow-y: auto;
+}
+
+/* A file dragged over the grid: framed the same way the editor's own drop
+   zone hints at itself, so a drop anywhere on the grid still lands
+   somewhere sane even without a folder underneath the pointer. */
+#staxx-rows.staxx-rows--drop {
+  outline: 0.15rem dashed var(--sm-accent);
+  outline-offset: -0.15rem;
+}
+
+/* The one folder a bundle drop would land in, while it is being dragged
+   over — without this, "drop it on the folder" is a guess. */
+.staxx-folder-row.staxx-folder-row--drop-target {
+  outline: 0.15rem dashed var(--sm-accent);
+  outline-offset: -0.15rem;
+}

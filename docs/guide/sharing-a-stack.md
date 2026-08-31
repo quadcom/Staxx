@@ -139,12 +139,27 @@ question the server will answer about that folder is "what picture does this com
 - It never sends anything anywhere. It produces a file and hands it to you; where it goes next is
   entirely up to you.
 
-## Going the other way
+## Going the other way: opening one
 
-To use a stack somebody sent you, make a new stack and paste the text in. Fill in everything that
-says `REPLACE-ME` — StaXX will not let it start until you do, and will tell you what is still
-outstanding. If what you were sent is a `.staxx` file, rename it to `.zip`, open it, and paste the
-compose file's text in the same way — StaXX does not open one of these for you yet.
+**Drag the `.staxx` file onto the stack list and drop it.** That is the whole of it. Drop it on a
+folder and it lands in that folder; drop it on a stack, and it joins the folder that stack is in;
+drop it anywhere else and it lands at the top level. The folder it would land in is outlined while
+you drag, so you can see where it is going before you let go.
+
+Nothing is written when you drop it. You get a preview first: what the bundle holds, where it will
+land, what it will be called — which you can change — and the covering note the person who exported
+it sent along, listing every value you need to fill in. Only when you press Import does the stack
+appear, and it appears stopped, with its `REPLACE-ME` values still waiting for you.
+
+If the name you pick is already taken, StaXX says so and lets you pick another. It never merges
+into a stack you already have, and it never overwrites one.
+
+A bundle from somebody else is treated as exactly that — a file from outside. StaXX checks every
+part of it before unpacking anything, and refuses the whole bundle, with a sentence saying why, if
+anything in it is not one of the few shapes a bundle is allowed to hold. Nothing it contains can
+reach outside the new stack's own folder, and nothing it claims about the stack's past is believed.
+
+If you would rather do it by hand, that still works: make a new stack and paste the compose text in.
 
 ---
 

@@ -14233,6 +14233,13 @@
   var COMPOSE_FILENAMES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'];
   var STAXX_FILE_MAX = 262144;   // 256 KB
 
+  // The cap for a dropped .staxx bundle — a different, bigger limit than a
+  // companion file, because a bundle carries a whole stack's compose file,
+  // companions and picture together. See PLAN_101a decision 4: 4 MiB raw is
+  // 5.5 MiB once base64-encoded, comfortably under the server's own request
+  // limit, and no bundle StaXX itself ever writes can approach it.
+  var STAXX_BUNDLE_MAX = 4194304;   // 4 MiB
+
   function validFilename(file) {
     if (!file || file.length > 63) return false;
     if (file.indexOf('..') !== -1 || file.indexOf('/') !== -1) return false;
@@ -23580,6 +23587,299 @@
 
       var ident = gripIdentity(info.row, kind);
       postStartOrder(kind, parent, units, function () { restoreGripFocus(kind, ident); });
+    });
+  }
+
+  /* ---- dropping a .staxx bundle onto the grid (PLAN_101 / PLAN_101a) ----
+   *
+   * rowsHost already has a drag handler above, for reordering rows. That one
+   * only ever starts from a pointerdown on a grip, so draggingGripRow is
+   * null for anything dragged in from outside the page — and a file drag
+   * never sets it either. The two are told apart simply by asking whether
+   * the drag carries files at all (dragHasFiles below); each listener bails
+   * out of the case that is not its own, so a row reorder keeps working
+   * exactly as it did and the two paths never interfere.
+   *
+   * The server does all the reading — no zip library ships with this page —
+   * so this half only gets the file to base64, previews what bundle-inspect
+   * reports, and on confirmation hands the same bytes to bundle-import. */
+
+  function dragHasFiles(event) {
+    var dt = event.dataTransfer;
+    if (!dt || !dt.types) return false;
+    for (var i = 0; i < dt.types.length; i++) if (dt.types[i] === 'Files') return true;
+    return false;
+  }
+
+  // Where a bundle dropped at this point in the grid would land, and which
+  // row (if any) stands for that folder — used to mark it while dragging.
+  // A folder header row wins outright; a stack row's own folder is next;
+  // failing that, anywhere still inside an open folder's body counts as
+  // that folder too. Anything else is the top level.
+  function bundleDropTarget(target) {
+    if (!target || !target.closest || !rowsHost) return { folder: '', row: null };
+    var folderRow = target.closest('[data-folder-row]');
+    if (folderRow) return { folder: folderRow.getAttribute('data-folder-row'), row: folderRow };
+    var stackRow = target.closest('[data-stack-row]');
+    if (stackRow) {
+      var fid = stackRow.dataset.inFolder || '';
+      return { folder: fid, row: fid ? rowsHost.querySelector('[data-folder-row="' + fid + '"]') : null };
+    }
+    var group = target.closest('[data-folder-group]');
+    if (group) {
+      var gid = group.getAttribute('data-folder-group');
+      return { folder: gid, row: rowsHost.querySelector('[data-folder-row="' + gid + '"]') };
+    }
+    return { folder: '', row: null };
+  }
+
+  var bundleDropRowMarked = null;
+
+  function markBundleDropRow(row) {
+    if (bundleDropRowMarked === row) return;
+    if (bundleDropRowMarked) bundleDropRowMarked.classList.remove('staxx-folder-row--drop-target');
+    bundleDropRowMarked = row;
+    if (bundleDropRowMarked) bundleDropRowMarked.classList.add('staxx-folder-row--drop-target');
+  }
+
+  // Only the first .staxx entry is read (PLAN_101 decision 2 — several
+  // dropped at once take the first, and the preview says so) rather than a
+  // queue nobody asked for.
+  function handleBundleDrop(files, folder) {
+    var dropped = Array.prototype.slice.call(files || []);
+    var staxxFiles = dropped.filter(function (f) { return /\.staxx$/i.test(f.name); });
+    if (!staxxFiles.length) {
+      failed('Nothing to import', dropped.length
+        ? 'Only a ".staxx" bundle can be dropped here.'
+        : 'Nothing was dropped.');
+      return;
+    }
+    var file = staxxFiles[0];
+    if (file.size > STAXX_BUNDLE_MAX) {
+      failed('Bundle too large', '"' + file.name + '" is ' + bytes(file.size) +
+        ', over the ' + bytes(STAXX_BUNDLE_MAX) + ' limit for a bundle.');
+      return;
+    }
+    var reader = new FileReader();
+    reader.onerror = function () {
+      failed('Could not read the file', '"' + file.name + '" could not be read from this computer.');
+    };
+    reader.onload = function () {
+      var b64 = bytesToBase64(new Uint8Array(reader.result));
+      openBundleModal(file.name, folder, b64, staxxFiles.length > 1);
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  if (rowsHost) {
+    rowsHost.addEventListener('dragenter', function (event) {
+      if (!dragHasFiles(event)) return;
+      event.preventDefault();   // else the browser opens the file and leaves the page
+      rowsHost.classList.add('staxx-rows--drop');
+    });
+
+    rowsHost.addEventListener('dragover', function (event) {
+      if (!dragHasFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      markBundleDropRow(bundleDropTarget(event.target).row);
+    });
+
+    rowsHost.addEventListener('dragleave', function (event) {
+      if (!dragHasFiles(event)) return;
+      // relatedTarget still sits inside rowsHost when the pointer merely
+      // crosses from one child to another — only clear once it truly leaves.
+      if (event.relatedTarget && rowsHost.contains(event.relatedTarget)) return;
+      rowsHost.classList.remove('staxx-rows--drop');
+      markBundleDropRow(null);
+    });
+
+    rowsHost.addEventListener('drop', function (event) {
+      if (!dragHasFiles(event)) return;
+      event.preventDefault();
+      rowsHost.classList.remove('staxx-rows--drop');
+      var target = bundleDropTarget(event.target);
+      markBundleDropRow(null);
+      handleBundleDrop(event.dataTransfer.files, target.folder);
+    });
+  }
+
+  // Page-wide safety net: a drop that lands a few pixels off the grid is
+  // not caught by rowsHost's own listener above, and with nothing to
+  // preventDefault() it the browser opens the file and navigates away,
+  // losing whatever was on screen. This is the same trap the editor's own
+  // drop zone documents; here it is guarded page-wide since the target is
+  // the whole grid rather than one modal.
+  window.addEventListener('dragover', function (event) { event.preventDefault(); });
+  window.addEventListener('drop', function (event) { event.preventDefault(); });
+
+  var bundleModal = null;
+  var bundleState = null;   // { zip, folder, busy, done } while the preview dialog is open
+
+  function bundleDialogEl() {
+    if (bundleModal) return bundleModal;
+    bundleModal = document.createElement('dialog');
+    bundleModal.className = 'staxx-confirm staxx-bundle';
+    bundleModal.setAttribute('aria-labelledby', 'staxx-bundle-title');
+    bundleModal.innerHTML =
+      '<div class="staxx-confirm-head"><h3 class="staxx-confirm-title" id="staxx-bundle-title">Import a bundle</h3></div>' +
+      '<div class="staxx-confirm-body" id="staxx-bundle-body"></div>' +
+      '<div class="staxx-confirm-foot">' +
+        '<p class="staxx-confirm-msg" id="staxx-bundle-msg" role="status" aria-live="polite"></p>' +
+        '<div class="staxx-buttons staxx-buttons--inline">' +
+          '<button type="button" class="staxx-btn" id="staxx-bundle-cancel">Cancel</button>' +
+          '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-bundle-import" disabled>Import</button>' +
+        '</div>' +
+      '</div>';
+    // Appended beside .staxx-scaffold, not <body> — everything .staxx-btn
+    // and friends style is scoped there, the same reason openExportModal()
+    // does this for its own dialog.
+    (document.querySelector('.staxx-scaffold') || document.body).appendChild(bundleModal);
+
+    bundleModal.querySelector('#staxx-bundle-cancel').addEventListener('click', closeBundleModal);
+    bundleModal.querySelector('#staxx-bundle-import').addEventListener('click', onBundleImportClick);
+    bundleModal.addEventListener('close', function () { bundleState = null; });
+
+    // Same backdrop hit-test every <dialog> on this page uses.
+    bundleModal.addEventListener('click', function (event) {
+      if (event.target !== bundleModal || (bundleState && bundleState.busy)) return;
+      var r = bundleModal.getBoundingClientRect();
+      if (event.clientX < r.left || event.clientX > r.right ||
+          event.clientY < r.top  || event.clientY > r.bottom) closeBundleModal();
+    });
+    bundleModal.addEventListener('cancel', function (event) {
+      if (bundleState && bundleState.busy) event.preventDefault();
+    });
+
+    return bundleModal;
+  }
+
+  function closeBundleModal() {
+    var el = bundleDialogEl();
+    if (el.open) el.close();
+    bundleState = null;
+  }
+
+  function bundleSetMsg(text) {
+    bundleDialogEl().querySelector('#staxx-bundle-msg').textContent = text || '';
+  }
+
+  // zipB64 is read once, up front, and reused for both calls — bundle-import
+  // uploads it again rather than the server holding it between the two, so
+  // there is nothing here to go stale while the preview sits open.
+  function openBundleModal(fileName, folder, zipB64, multiple) {
+    var el = bundleDialogEl();
+    el.querySelector('#staxx-bundle-body').innerHTML = '<p>Reading the bundle…</p>';
+    bundleSetMsg('');
+    el.querySelector('#staxx-bundle-import').disabled = true;
+    el.querySelector('#staxx-bundle-cancel').hidden = false;
+    if (!el.open) el.showModal();
+
+    bundleState = { zip: zipB64, folder: folder, busy: false, done: false };
+
+    call('bundle-inspect', { zip: zipB64 }, 60000).then(function (res) {
+      if (bundleState === null) return;   // closed while this was in flight
+      if (!res.ok) { closeBundleModal(); failed('Could not read the bundle', res.error); return; }
+      renderBundlePreview(fileName, folder, res, multiple);
+    }).catch(function () {
+      if (bundleState === null) return;
+      closeBundleModal();
+      failed('Could not read the bundle', 'The request did not complete.');
+    });
+  }
+
+  function renderBundlePreview(fileName, folder, info, multiple) {
+    var el = bundleDialogEl();
+    var defaultName = info.suggest || fileName.replace(/\.staxx$/i, '');
+    var where = folder ? ('inside "' + esc(folder) + '"') : 'at the top level';
+
+    var html = '';
+    if (multiple) {
+      html += '<p class="staxx-export-hint">Several files were dropped — only "' + esc(fileName) +
+        '" is being imported.</p>';
+    }
+    if (info.marked === false) {
+      html += '<p class="staxx-export-hint">This bundle predates the version marker, so it is being ' +
+        'read as the earliest kind.</p>';
+    }
+
+    html += '<div class="staxx-export-section"><h4>Name and location</h4>' +
+      '<p class="staxx-export-hint">This will land ' + where + '.</p>' +
+      '<div class="staxx-field"><span>Stack name</span>' +
+        '<input type="text" class="staxx-input" id="staxx-bundle-name" spellcheck="false" value="' +
+        esc(defaultName) + '"></div>' +
+      '</div>';
+
+    // The export's own covering note, shown exactly as it wrote it — this is
+    // "what you must supply before this will run" in the export's own words,
+    // so the preview never has to keep a second list of the same thing.
+    html += '<div class="staxx-export-section"><h4>Before this will start</h4>';
+    html += info.note
+      ? '<pre class="staxx-export-pre">' + esc(info.note) + '</pre>'
+      : '<p class="staxx-export-hint">This bundle carries no covering note.</p>';
+    if (info.placeholders) {
+      html += '<p class="staxx-export-hint">' + info.placeholders + ' value' +
+        (info.placeholders === 1 ? '' : 's') + ' still need' + (info.placeholders === 1 ? 's' : '') +
+        ' filling in before this will start.</p>';
+    }
+    html += '</div>';
+
+    html += '<div class="staxx-export-section"><h4>What is inside</h4><ul class="staxx-export-list">';
+    html += '<li>' + esc(info.compose.name) + '</li>';
+    (info.files || []).forEach(function (f) {
+      html += '<li>' + esc(f.name) + ' <span class="staxx-export-size">(' + bytes(f.size) + ')</span></li>';
+    });
+    html += info.icon
+      ? '<li>A picture — ' + esc(info.icon.name) + ' <span class="staxx-export-size">(' +
+        bytes(info.icon.size) + ')</span></li>'
+      : '<li>No picture</li>';
+    html += '</ul></div>';
+
+    el.querySelector('#staxx-bundle-body').innerHTML = html;
+    el.querySelector('#staxx-bundle-import').disabled = false;
+  }
+
+  function onBundleImportClick() {
+    if (!bundleState || bundleState.busy) return;
+    var el = bundleDialogEl();
+    if (bundleState.done) { closeBundleModal(); return; }
+
+    var nameBox = el.querySelector('#staxx-bundle-name');
+    var leaf = (nameBox.value || '').trim();
+    if (!leaf) { bundleSetMsg('Give the stack a name.'); return; }
+    var full = bundleState.folder ? (bundleState.folder + '/' + leaf) : leaf;
+
+    bundleState.busy = true;
+    el.querySelector('#staxx-bundle-import').disabled = true;
+    el.querySelector('#staxx-bundle-cancel').disabled = true;
+    bundleSetMsg('Importing…');
+
+    call('bundle-import', { zip: bundleState.zip, name: full }, 60000).then(function (res) {
+      if (bundleState === null) return;   // closed while this was in flight
+      bundleState.busy = false;
+      el.querySelector('#staxx-bundle-cancel').disabled = false;
+      if (!res.ok) {
+        // Left open on refusal — a name already in use is the expected case,
+        // and it must be recoverable by changing the name, not by starting over.
+        el.querySelector('#staxx-bundle-import').disabled = false;
+        bundleSetMsg(res.error || 'Could not import this bundle.');
+        return;
+      }
+      refreshRows();   // the 'rows' refresh: the set of stacks just changed
+      bundleState.done = true;
+      el.querySelector('#staxx-bundle-body').innerHTML =
+        '<p>"' + esc(res.name) + '" has been created, stopped, with its values still to fill in.</p>';
+      el.querySelector('#staxx-bundle-cancel').hidden = true;
+      var btn = el.querySelector('#staxx-bundle-import');
+      btn.textContent = 'Close';
+      btn.disabled = false;
+      bundleSetMsg('');
+    }).catch(function () {
+      if (bundleState === null) return;
+      bundleState.busy = false;
+      el.querySelector('#staxx-bundle-import').disabled = false;
+      el.querySelector('#staxx-bundle-cancel').disabled = false;
+      bundleSetMsg('The request did not complete.');
     });
   }
 

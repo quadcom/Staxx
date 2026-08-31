@@ -20,6 +20,11 @@
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/BootCopy.php';
+// The bundle importer writes a stack's own picture and checks it is really a
+// picture, both of which live here. Named rather than left to whichever page
+// happened to pull Icons.php in first, so a server suite that requires only
+// this file still finds them.
+require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
 
 if (defined('STAXX_JOB_DIR')) return;
 
@@ -115,6 +120,14 @@ define('STAXX_EXPORT_MAX', 2097152); // 2 MiB, summed across every file
 // Not a size question — a sanity ceiling so a malformed request cannot make
 // the packer loop over an unbounded list of tiny entries.
 define('STAXX_EXPORT_FILES_MAX', 200);
+
+// PLAN_101 — the bundle importer's own cap on an uploaded ".staxx" file. The
+// real server's PHP accepts an 8 MB request body, and the bundle travels
+// base64-encoded — a third larger than its raw bytes — while an export can
+// only ever hold STAXX_EXPORT_MAX (2 MiB) of content. 4 MiB raw is roomy for
+// anything StaXX itself ever made, and still safely inside what PHP will
+// accept once encoded.
+define('STAXX_BUNDLE_MAX', 4194304); // 4 MiB
 
 /**
  * Make sure a job/log working directory exists and is private — job output
@@ -2480,6 +2493,25 @@ function staxx_stack_health(array $containers): string {
   if ($any['starting'])  return 'starting';
   if ($any['healthy'])   return 'healthy';
   return 'none';
+}
+
+/**
+ * How many of a stack's running containers check themselves, out of how many
+ * are running at all. A stack row shows one pill for the lot, so without this
+ * "says it is working" would quietly speak for containers nothing has ever
+ * asked — which is the exact overclaim PLAN_107 exists to stop.
+ *
+ * @return array{running:int, checked:int}
+ */
+function staxx_stack_health_counts(array $containers): array {
+  $running = 0;
+  $checked = 0;
+  foreach ($containers as $c) {
+    if (strtolower((string)($c['state'] ?? '')) !== 'running') continue;
+    $running++;
+    if (($c['health'] ?? 'none') !== 'none') $checked++;
+  }
+  return ['running' => $running, 'checked' => $checked];
 }
 
 /**
@@ -4863,6 +4895,423 @@ function staxx_export_pack(array $pairs, string $stackName, string &$error): str
     // nothing this builds is worth keeping once the reply is on its way.
     staxx_rmtree($real, $real);
   }
+}
+
+/* ------------------------------------------------------- PLAN_101 — import --
+ *
+ * Reading a bundle back is the mirror image of staxx_export_pack() above,
+ * with the direction of trust reversed. Exporting, StaXX wrote every byte in
+ * the zip. Importing, the zip is a claim from somewhere else, and every name
+ * inside it is untrusted until this has checked it — so nothing is extracted
+ * until every name has passed, and what actually lands is checked again from
+ * scratch rather than trusting the listing to have predicted it.
+ */
+
+/**
+ * Walk an already-extracted bundle folder, refusing a symlink, a directory
+ * other than the one record folder, or anything that resolves outside
+ * $root. Returns the plain file paths found, relative to $root with forward
+ * slashes, or null with $error set.
+ *
+ * Kept separate from staxx_bundle_read() only because it recurses one level
+ * into the record folder — nothing here is reused anywhere else.
+ *
+ * @return string[]|null
+ */
+function staxx_bundle_walk(string $dir, string $root, string &$error): ?array {
+  $entries = @scandir($dir);
+  if ($entries === false) {
+    $error = 'That bundle could not be read back after unpacking.';
+    return null;
+  }
+
+  $out = [];
+  foreach ($entries as $entry) {
+    if ($entry === '.' || $entry === '..') continue;
+    $path = $dir.'/'.$entry;
+
+    // A link is refused before anything resolves it, same reasoning as
+    // staxx_rmtree(): resolving first would either follow it somewhere real
+    // (is_dir()) or report "outside the tree" for a target that is outside
+    // by definition (realpath()) — neither is the right refusal to give.
+    if (is_link($path)) {
+      $error = 'This bundle contains a link, which is not something a bundle StaXX made would ever hold.';
+      return null;
+    }
+
+    $rel = substr($path, strlen($root) + 1);
+
+    if (is_dir($path)) {
+      if ($rel !== rtrim(STAXX_RECORD_DIR, '/')) {
+        $error = '"'.$rel.'" is a folder this bundle should not contain.';
+        return null;
+      }
+      $real = @realpath($path);
+      if ($real === false || ($real !== $root && strpos($real, $root.'/') !== 0)) {
+        $error = 'This bundle tries to reach outside itself.';
+        return null;
+      }
+      $sub = staxx_bundle_walk($path, $root, $error);
+      if ($sub === null) return null;
+      $out = array_merge($out, $sub);
+      continue;
+    }
+
+    $real = @realpath($path);
+    if ($real === false || ($real !== $root && strpos($real, $root.'/') !== 0)) {
+      $error = 'This bundle tries to reach outside itself.';
+      return null;
+    }
+    $out[] = $rel;
+  }
+  return $out;
+}
+
+/**
+ * Validate and unpack an uploaded ".staxx" bundle. Writes nothing outside a
+ * throwaway folder under STAXX_CFILE_TMP, which is removed on every path out
+ * of this function, refusal included.
+ *
+ * The order below IS the safety, in the same sense staxx_rmtree()'s own
+ * docblock means it: every entry's name is checked before anything is
+ * extracted, so a crafted zip never gets as far as having a single byte of
+ * itself written to disk; only then is it extracted; and only then is what
+ * actually landed checked again from scratch, belt and braces against unzip
+ * behaving differently from its own listing.
+ *
+ * @return array{compose:array{name:string,text:string},
+ *               files:array<int,array{name:string,text:string,size:int}>,
+ *               icon:?array{name:string,bytes:string,size:int},
+ *               version:int, marked:bool}|null
+ */
+function staxx_bundle_read(string $bytes, string &$error): ?array {
+  $error = '';
+
+  if ($bytes === '') { $error = 'That bundle is empty.'; return null; }
+  if (strlen($bytes) > STAXX_BUNDLE_MAX) {
+    // Rounded UP, and in KiB the way staxx_export_pack() words its own caps:
+    // a bundle one byte over 4 MiB rounds to "4 MiB, over the 4 MiB limit",
+    // which reads like the code is wrong rather than the file being too big.
+    $error = 'That bundle is '.ceil(strlen($bytes) / 1024).' KiB, over the '
+           . round(STAXX_BUNDLE_MAX / 1024).' KiB limit for one bundle.';
+    return null;
+  }
+
+  if (!staxx_private_dir(STAXX_CFILE_TMP)) {
+    $error = 'Could not prepare a place to read the bundle.';
+    return null;
+  }
+  $work = STAXX_CFILE_TMP.'/bundle-'.bin2hex(random_bytes(8));
+  if (!@mkdir($work, 0700, true)) {
+    $error = 'Could not prepare a place to read the bundle.';
+    return null;
+  }
+  $real = @realpath($work);
+  if ($real === false) {
+    $error = 'Could not prepare a place to read the bundle.';
+    return null;
+  }
+
+  try {
+    $zipPath = $real.'/bundle.zip';
+    if (@file_put_contents($zipPath, $bytes) === false) {
+      $error = 'Could not write the bundle to a scratch file.';
+      return null;
+    }
+
+    // Step 1: list the entries without extracting anything.
+    $listCode = 1;
+    $listOut  = staxx_sh('unzip -Z1 '.escapeshellarg($zipPath).' 2>&1', 20, $listCode);
+    if ($listCode !== 0) {
+      $error = 'That file is not a bundle StaXX can read.';
+      return null;
+    }
+    $names = array_values(array_filter(explode("\n", $listOut), fn($n) => $n !== ''));
+    if ($names === []) {
+      $error = 'That bundle is empty.';
+      return null;
+    }
+    if (count($names) > STAXX_EXPORT_FILES_MAX) {
+      $error = 'That bundle holds '.count($names).' entries, over the '.STAXX_EXPORT_FILES_MAX
+             . '-entry limit for one bundle.';
+      return null;
+    }
+
+    // Step 2: every name checked before anything is extracted, and the WHOLE
+    // bundle refused on the first bad one. An unrecognised entry means this
+    // is not a bundle StaXX made, and guessing at what to do with it is
+    // exactly how something unexpected ends up written to disk.
+    $composeName    = '';
+    $fileNames      = [];
+    $iconName       = '';
+    $markerSeen     = false;
+    $recordDirEntry = STAXX_RECORD_DIR.'/';
+
+    foreach ($names as $entry) {
+      if ($entry[0] === '/' || $entry[0] === '\\') {
+        $error = '"'.$entry.'" is not a name a bundle StaXX made would ever hold.';
+        return null;
+      }
+      if (strpos($entry, '\\') !== false) {
+        $error = '"'.$entry.'" holds a backslash, which is not a name a bundle StaXX made would ever hold.';
+        return null;
+      }
+      if (strpos($entry, '..') !== false) {
+        $error = '"'.$entry.'" tries to step outside the bundle, so the whole bundle is refused.';
+        return null;
+      }
+      if (preg_match('/^[A-Za-z]:/', $entry)) {
+        $error = '"'.$entry.'" names a drive, which is not a name a bundle StaXX made would ever hold.';
+        return null;
+      }
+      if (substr($entry, -1) === '/') {
+        // A bare directory entry is ordinary in a zip — the only one a
+        // bundle StaXX made ever holds is the record folder itself.
+        if ($entry === $recordDirEntry) continue;
+        $error = '"'.$entry.'" is a folder this bundle should not contain.';
+        return null;
+      }
+
+      if (in_array(strtolower($entry), STAXX_COMPOSE_FILENAMES, true)) {
+        if ($composeName !== '') {
+          $error = 'This bundle holds more than one compose file, so it is not clear which one to import.';
+          return null;
+        }
+        $composeName = $entry;
+        continue;
+      }
+      if ($entry === $recordDirEntry.'bundle.json') {
+        $markerSeen = true;
+        continue;
+      }
+      // The record folder's ONE permitted entry beyond the marker is the
+      // picture, and it is recognised by its extension as well as its shape.
+      // Without the extension test a flat ".staxx/record.json" reads as a
+      // candidate picture and is only stopped later, when its bytes turn out
+      // not to be any picture format — which works, but leaves the allowlist
+      // resting on a check two steps away. A planted record file has to be
+      // refused by its NAME.
+      if (staxx_export_pack_record_icon($entry) !== ''
+          && in_array(strtolower((string)pathinfo($entry, PATHINFO_EXTENSION)), STAXX_ICON_EXTS, true)) {
+        if ($iconName !== '') {
+          $error = 'This bundle holds more than one picture, so it is not clear which one is this stack\'s icon.';
+          return null;
+        }
+        $iconName = $entry;
+        continue;
+      }
+      if (staxx_valid_filename($entry)) {
+        $fileNames[] = $entry;
+        continue;
+      }
+
+      $error = '"'.$entry.'" is not a name this can import.';
+      return null;
+    }
+
+    if ($composeName === '') {
+      $error = 'This bundle has no compose file, so there is nothing to import.';
+      return null;
+    }
+
+    // Step 3: extract, only now that every name has passed.
+    $extractDir = $real.'/x';
+    if (!@mkdir($extractDir, 0700, true)) {
+      $error = 'Could not prepare a place to unpack the bundle.';
+      return null;
+    }
+    $unzipCode = 1;
+    staxx_sh('unzip -qq -o '.escapeshellarg($zipPath).' -d '.escapeshellarg($extractDir).' 2>&1', 30, $unzipCode);
+    if ($unzipCode !== 0) {
+      $error = 'That bundle could not be unpacked.';
+      return null;
+    }
+
+    // Step 4: check what actually landed, rather than trusting the listing
+    // above to have predicted it.
+    $extractReal = @realpath($extractDir);
+    if ($extractReal === false) {
+      $error = 'That bundle could not be unpacked.';
+      return null;
+    }
+    $expected = array_merge(
+      [$composeName],
+      $fileNames,
+      $iconName !== '' ? [$iconName] : [],
+      $markerSeen ? [$recordDirEntry.'bundle.json'] : []
+    );
+    $landed = staxx_bundle_walk($extractReal, $extractReal, $error);
+    if ($landed === null) return null;
+    foreach ($landed as $foundPath) {
+      if (!in_array($foundPath, $expected, true)) {
+        $error = '"'.$foundPath.'" was not in the bundle\'s own listing, so the bundle is refused.';
+        return null;
+      }
+    }
+
+    // Step 5: read. The compose file is validated exactly the way
+    // staxx_save_stack() validates one before writing it — $extractReal is
+    // passed as the project directory so a relative env_file: can resolve
+    // against the companion files that were just unpacked alongside it.
+    $composePath = $extractReal.'/'.$composeName;
+    if (!is_file($composePath)) {
+      $error = 'This bundle\'s compose file could not be found after unpacking.';
+      return null;
+    }
+    $composeText = (string)@file_get_contents($composePath);
+    $validateError = '';
+    $warnings = null;
+    if (!staxx_validate_compose($composeText, $validateError, $extractReal, $warnings)) {
+      $error = 'This bundle\'s compose file is not valid: '.$validateError;
+      return null;
+    }
+
+    $files = [];
+    foreach ($fileNames as $fn) {
+      $fp = $extractReal.'/'.$fn;
+      if (!is_file($fp)) {
+        $error = '"'.$fn.'" could not be found after unpacking.';
+        return null;
+      }
+      $size = (int)@filesize($fp);
+      if ($size > STAXX_FILE_MAX) {
+        $error = '"'.$fn.'" is '.ceil($size / 1024).' KiB, over the '.round(STAXX_FILE_MAX / 1024)
+               . ' KiB limit for a companion file.';
+        return null;
+      }
+      // No bundle StaXX made ever carries a binary companion file — export
+      // refuses to pack one in the first place — so one turning up here
+      // means this bundle was not made by StaXX, whatever it claims.
+      if (!staxx_looks_text($fp)) {
+        $error = '"'.$fn.'" looks like a binary file, so it is refused rather than trusted.';
+        return null;
+      }
+      $files[] = ['name' => $fn, 'text' => (string)@file_get_contents($fp), 'size' => $size];
+    }
+
+    $icon = null;
+    if ($iconName !== '') {
+      $ip = $extractReal.'/'.$iconName;
+      if (!is_file($ip)) {
+        $error = 'This bundle\'s picture could not be found after unpacking.';
+        return null;
+      }
+      $iconSize = (int)@filesize($ip);
+      if ($iconSize > STAXX_FILE_MAX) {
+        $error = 'This bundle\'s picture is over the '.round(STAXX_FILE_MAX / 1024).' KiB limit.';
+        return null;
+      }
+      $iconBody = (string)@file_get_contents($ip);
+      $ext      = strtolower((string)pathinfo($iconName, PATHINFO_EXTENSION));
+      if (!staxx_icon_is_picture($ext, $iconBody)) {
+        $error = 'This bundle\'s picture is not actually a picture.';
+        return null;
+      }
+      $icon = ['name' => basename($iconName), 'bytes' => $iconBody, 'size' => $iconSize];
+    }
+
+    // Step 6: the marker. Absent is accepted as version 1 — the only bundles
+    // without one predate the marker existing at all.
+    $version = 1;
+    $marked  = false;
+    if ($markerSeen) {
+      $markerRaw  = (string)@file_get_contents($extractReal.'/'.STAXX_RECORD_DIR.'/bundle.json');
+      $markerData = @json_decode($markerRaw, true);
+      if (!is_array($markerData) || ($markerData['format'] ?? '') !== 'staxx-bundle'
+          || !is_int($markerData['version'] ?? null)) {
+        $error = 'This bundle\'s marker file is not one StaXX wrote, so the bundle is refused.';
+        return null;
+      }
+      $version = (int)$markerData['version'];
+      if ($version > 1) {
+        $error = 'This bundle was made by a newer version of StaXX than the one on this server.';
+        return null;
+      }
+      $marked = true;
+    }
+
+    return [
+      'compose' => ['name' => $composeName, 'text' => $composeText],
+      'files'   => $files,
+      'icon'    => $icon,
+      'version' => $version,
+      'marked'  => $marked,
+    ];
+  } finally {
+    // Removed on every path out, success or refusal alike — nothing this
+    // reads is worth keeping once the reply is on its way.
+    staxx_rmtree($real, $real);
+  }
+}
+
+/**
+ * Create a new stack from a bundle staxx_bundle_read() already validated.
+ * Never merges into or overwrites an existing stack — staxx_create_refusal()
+ * is the same gate "Add stack" uses, called the same way it always refuses a
+ * name already in use.
+ *
+ * Only ever writes the compose file (through staxx_save_stack(), so it gets
+ * exactly the same validation and history capture an ordinary save gets),
+ * the companion files (through staxx_write_file()) and the picture (through
+ * staxx_icon_write(), straight into the new stack's own record folder).
+ * The bundle marker is never written — it describes the bundle, not the
+ * stack — and nothing else ever reaches the record folder, by allowlist
+ * rather than by filter: a crafted bundle must not be able to plant a false
+ * history or a rollback record naming an image this machine has never run.
+ *
+ * The stack is created stopped, full stop. This never leans on the
+ * REPLACE-ME start guard — it simply never starts anything.
+ *
+ * A failure part-way through is reported plainly, saying what did land; it
+ * never attempts a rollback, which could delete more than this call created.
+ */
+function staxx_bundle_write(array $bundle, string $rel, string &$error): bool {
+  $error = '';
+
+  if (!staxx_valid_path($rel)) {
+    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
+           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    return false;
+  }
+  $refusal = staxx_create_refusal($rel, false);
+  if ($refusal !== '') { $error = $refusal; return false; }
+
+  $composeText = (string)($bundle['compose']['text'] ?? '');
+  $saveError   = '';
+  if (!staxx_save_stack($rel, $composeText, $saveError)) {
+    $error = 'The compose file could not be written: '.$saveError;
+    return false;
+  }
+
+  foreach ((array)($bundle['files'] ?? []) as $f) {
+    $fname     = (string)($f['name'] ?? '');
+    $ftext     = (string)($f['text'] ?? '');
+    $fileError = '';
+    if (!staxx_write_file($rel, $fname, $ftext, true, $fileError)) {
+      $error = 'The stack was created, but "'.$fname.'" could not be written: '.$fileError;
+      return false;
+    }
+  }
+
+  $icon = $bundle['icon'] ?? null;
+  if (is_array($icon)) {
+    $iname  = (string)($icon['name'] ?? '');
+    $ibytes = (string)($icon['bytes'] ?? '');
+    // Checked again here rather than trusted from the caller: this function
+    // is what turns a name into a path, so it is where the name has to be
+    // proved safe, whatever validated it upstream.
+    if (!staxx_valid_filename($iname)) {
+      $error = 'The stack was created, but its picture is not named something this can write.';
+      return false;
+    }
+    $target = staxx_stack_dir($rel).'/'.STAXX_RECORD_DIR.'/'.$iname;
+    if (!staxx_icon_write($target, $ibytes)) {
+      $error = 'The stack was created, but its picture could not be written.';
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**

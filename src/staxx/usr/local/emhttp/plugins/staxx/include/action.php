@@ -581,6 +581,79 @@ switch ($action) {
     $filename = ($name !== '' ? str_replace('/', '-', $name) : 'export').'.staxx';
     staxx_reply(['ok' => true, 'filename' => $filename, 'zip' => base64_encode($zip)]);
 
+  /* --------------------------------------------------- PLAN_101 — import ---
+   *
+   * The mirror of export-sort/export-pack above, in reverse: 'bundle-inspect'
+   * only reads and reports what a dropped ".staxx" holds, writing nothing;
+   * 'bundle-import' is where a person's confirmation actually creates a
+   * stack. Both re-decode and re-validate the bundle from scratch — nothing
+   * is held on the server between the two calls, so there is nothing here
+   * that can go stale.
+   */
+  case 'bundle-inspect':
+    $zipBytes = base64_decode((string)($_POST['zip'] ?? ''), true);
+    if ($zipBytes === false) {
+      staxx_reply(['ok' => false, 'error' => 'That bundle did not arrive intact.']);
+    }
+    $bundle = staxx_bundle_read($zipBytes, $error);
+    if ($bundle === null) staxx_reply(['ok' => false, 'error' => $error]);
+
+    // The covering note every export writes into its own compose file, read
+    // back rather than re-summarised here — so the preview and the export
+    // stay in step by construction instead of two lists drifting apart.
+    // Trusted only when the very first line is the exact sentence
+    // staxx_export writes; anything else is not the export's own words and
+    // is left blank rather than guessed at.
+    $note    = '';
+    $suggest = '';
+    $composeLines = explode("\n", $bundle['compose']['text']);
+    if (isset($composeLines[0]) && str_starts_with($composeLines[0], '# Exported by StaXX on')) {
+      $noteLines = [];
+      foreach ($composeLines as $line) {
+        if (!str_starts_with($line, '#')) break;
+        $noteLines[] = $line;
+      }
+      $note = implode("\n", $noteLines);
+
+      // Untrusted input like everything else in the bundle, so it is put
+      // through the same scrub staxx_export_pack() applies to its own zip
+      // label before being checked as a name at all.
+      if (preg_match('/from the stack "(.*)"\.$/', $composeLines[0], $m)) {
+        $candidate = preg_replace('/[^A-Za-z0-9._-]/', '-', $m[1]);
+        if (staxx_valid_name($candidate)) $suggest = $candidate;
+      }
+    }
+
+    staxx_reply([
+      'ok'           => true,
+      'compose'      => $bundle['compose'],
+      'files'        => array_map(fn($f) => ['name' => $f['name'], 'size' => $f['size']], $bundle['files']),
+      'icon'         => $bundle['icon'] !== null
+                       ? ['name' => $bundle['icon']['name'], 'size' => $bundle['icon']['size']]
+                       : null,
+      'note'         => $note,
+      'suggest'      => $suggest,
+      'marked'       => $bundle['marked'],
+      'placeholders' => substr_count($bundle['compose']['text'], STAXX_PLACEHOLDER),
+    ]);
+
+  case 'bundle-import':
+    $zipBytes = base64_decode((string)($_POST['zip'] ?? ''), true);
+    if ($zipBytes === false) {
+      staxx_reply(['ok' => false, 'error' => 'That bundle did not arrive intact.']);
+    }
+    // Read again from the raw bytes rather than trusting anything
+    // 'bundle-inspect' reported earlier — that call's answer was shown to a
+    // person who may have sat on it, and this is the point nothing may be
+    // written on a stale or tampered say-so.
+    $bundle = staxx_bundle_read($zipBytes, $error);
+    if ($bundle === null) staxx_reply(['ok' => false, 'error' => $error]);
+
+    if (!staxx_bundle_write($bundle, $name, $error)) {
+      staxx_reply(['ok' => false, 'error' => $error]);
+    }
+    staxx_reply(['ok' => true, 'name' => $name]);
+
   /* ------------------------------------------------------ companion files --
    *
    * A stack folder may hold more than its compose file now — a .env, a
