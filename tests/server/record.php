@@ -431,6 +431,60 @@ foreach (["$travelRel/.staxx/record.json", "$travelRel/.staxx/history/"] as $wan
   ok('the archive contains '.$want, strpos($zipList, $want) !== false);
 }
 
+/* ------------------------------------------------------ caught install -- */
+
+// PLAN_106 phase 5 gap: action.php's 'save' case saves a caught install's
+// as-is wording first, then the real body, for a brand-new stack only —
+// exactly the two-call shape staxx_import_write() already uses and
+// tests/server/import.php's cases 7 and 8 already prove. action.php itself
+// cannot be driven from here (its staxx_reply() calls exit()), so this
+// proves the same underlying staxx_save_stack() sequence action.php now
+// makes, rather than the HTTP wiring around it.
+
+$caRel = 'zzb2caasis';
+$caDir = $root.'/'.$caRel;
+@exec('rm -rf '.escapeshellarg($caDir));
+
+$caAsIs    = "services:\n  a:\n    environment:\n      TOKEN: \"\$argon2id\$v=19\$m=6\"\n    image: alpine:3.20\n";
+$caEscaped = "services:\n  a:\n    environment:\n      TOKEN: \"\$\$argon2id\$\$v=19\$\$m=6\"\n    image: alpine:3.20\n";
+
+$caErr1 = '';
+ok('a caught install\'s as-is save succeeds (new stack, as-is differs from body)',
+   staxx_save_stack($caRel, $caAsIs, $caErr1), $caErr1);
+$caErr2 = '';
+ok('...and the escaped save that follows also succeeds',
+   staxx_save_stack($caRel, $caEscaped, $caErr2), $caErr2);
+ok('...leaving the escaped text on disk',
+   file_get_contents($caDir.'/compose.yaml') === $caEscaped);
+
+$caHistory = staxx_record_list($caRel);
+ok('...and both saves filed their own history version', count($caHistory) === 2, json_encode($caHistory));
+$caEarliest = null;
+foreach ($caHistory as $v) { if ($v['n'] === 1) $caEarliest = $v; }
+if ($caEarliest !== null) {
+  ok('...and the earlier one holds the as-is wording, dollar signs single',
+     staxx_record_get($caRel, 1) === $caAsIs);
+}
+
+@exec('rm -rf '.escapeshellarg($caDir));
+
+// action.php only makes the as-is save when isNew is true — an ordinary
+// edit of an existing stack must never double-save, so an edit reaches
+// staxx_save_stack() exactly once, whatever bodyAsIs the request carried.
+// Proved here at that level: one call, the ordinary before-and-after
+// capture pair any first save makes — not the deliberate two full calls the
+// caught-install case above makes on purpose.
+$caEditRel = 'zzb2caedit';
+$caEditDir = $root.'/'.$caEditRel;
+b2_reset_stack($caEditDir, $caAsIs);
+$caEditErr = '';
+ok('a single staxx_save_stack() call (the isNew=false edit path) still succeeds',
+   staxx_save_stack($caEditRel, $caEscaped, $caEditErr), $caEditErr);
+ok('...filing the ordinary two versions one call produces, not three',
+   count(staxx_record_list($caEditRel)) === 2, json_encode(staxx_record_list($caEditRel)));
+
+@exec('rm -rf '.escapeshellarg($caEditDir));
+
 /* ---------------------------------------------------------------------- */
 
 b2_wipe();

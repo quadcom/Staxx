@@ -106,6 +106,32 @@ The file itself is worth reading — it says where the stack came from, whether 
 name already exists and what it is doing, what could not be brought across, and what StaXX filled
 in for you.
 
+### A value with a dollar sign in it
+
+An Unraid template passes a dollar sign through exactly as you typed it. A compose file does not —
+there, a dollar sign is where Compose starts reading the *name of a variable*, so it deletes it
+before the container ever sees it. A password holding one, or a scrambled password (which always
+holds several), would reach the app broken, with nothing to say why.
+
+So StaXX writes each dollar sign twice on the way in, which is how a compose file carries a real
+one, and tells you which values it changed:
+
+> **1 value changed.** Unraid passes a dollar sign through as typed; a compose file does not, so it
+> has been written twice — the container still receives it exactly as before. Find it in that
+> stack's own history if you want it back as it arrived.
+
+The app receives precisely what it received before. Nothing about how it behaves changes.
+
+**Your template's own wording is kept.** The first version in the new stack's history is the file
+exactly as the template had it, single dollar signs and all — the corrected version is the second,
+and is the one that runs. So there are two ways back to the original: that history, and the Unraid
+template itself, which is never touched. See [going back](going-back.md).
+
+This happens only to values coming from an Unraid template, where a dollar sign can only ever have
+been a real one. A Compose Manager project is already a compose file, so its dollar signs already
+mean whatever you meant by them, and nothing here touches them. There is more on all of this in
+[making a password](passwords-and-hashes.md).
+
 ### Getting out of the lock
 
 Two items appear on the stack's own menu while it is locked:

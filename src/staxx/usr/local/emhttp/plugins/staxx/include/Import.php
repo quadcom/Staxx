@@ -1192,8 +1192,20 @@ function staxx_import_prepare_dir(string $rel, string &$error): string {
  * folder are removed, so a refused import leaves nothing behind. The folder
  * removed is always the one this call just made — the refusal above already
  * guarantees nothing existed at $rel beforehand.
+ *
+ * $asIs, when given and different from $yaml, is the template's own wording
+ * before StaXX doubled any dollar sign for compose. It is saved FIRST —
+ * staxx_save_stack() captures what it has just written as well as what it is
+ * about to overwrite, so this alone puts the as-is text into the stack's
+ * history as its own version — and then $yaml is saved over it as an
+ * ordinary second save, which does exactly the same for the escaped text.
+ * Either save on its own would have been enough to keep a copy; doing both
+ * as real saves, rather than trying to reverse the doubling after the fact,
+ * is what leaves the escaped text as the file that is actually running and
+ * the as-is text sitting in history for anyone who wants to see what the
+ * template originally said.
  */
-function staxx_import_write(string $rel, string $yaml, array $about, string &$error): bool {
+function staxx_import_write(string $rel, string $yaml, array $about, string &$error, string $asIs = ''): bool {
   $dir = staxx_import_prepare_dir($rel, $error);
   if ($dir === '') return false;
 
@@ -1211,6 +1223,13 @@ function staxx_import_write(string $rel, string $yaml, array $about, string &$er
     return false;
   }
   @chmod($notePath, 0644);
+
+  if ($asIs !== '' && $asIs !== $yaml) {
+    if (!staxx_save_stack($rel, $asIs, $error)) {
+      staxx_rmtree($real, $real);
+      return false;
+    }
+  }
 
   if (!staxx_save_stack($rel, $yaml, $error)) {
     staxx_rmtree($real, $real);

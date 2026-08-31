@@ -448,6 +448,20 @@ ok('a bare "secrets:" line is not mistaken for an empty SECRET_KEY_RE env var',
    !aligned.warnings.some(function (w) { return /secrets/.test(w); }),
    JSON.stringify(aligned.warnings));
 
+// PLAN_106 Phase 1: the README route copies its fenced compose block
+// verbatim — the author already wrote it as compose YAML, so its dollar
+// signs already mean whatever the author meant. Unlike ca-convert.js's
+// Unraid-template route, nothing here may double them.
+var DOLLAR_README = ['```yaml', 'services:', '  dollartest:',
+  '    image: someone/dollar-readme-test', '    environment:',
+  '      APP_HASH: $argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA', '```'].join('\n');
+var dollarReadme = build('someone/dollar-readme-test', 'hub', { readme: DOLLAR_README },
+  { appdata: '/mnt/user/appdata/', timezone: 'Etc/UTC' });
+ok('the README route is the one taken', dollarReadme.route === 'readme', dollarReadme.route);
+ok('a dollar sign already in the README\'s own example is left exactly as written, never doubled',
+   dollarReadme.yaml.indexOf('APP_HASH: $argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA') >= 0 &&
+   dollarReadme.yaml.indexOf('$$') === -1, dollarReadme.yaml);
+
 /* =========================================================================
  * H. Round-trip guard — every produced file, every case
  * ========================================================================= */

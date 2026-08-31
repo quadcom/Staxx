@@ -53,6 +53,7 @@ still runs with a plain `docker compose up`.
 | A fixed MAC address | Kept wherever there is any network interface at all; dropped only when the container shares another container's network entirely. |
 | Extra `docker run` options StaXX recognises (memory limits, restart policy, capabilities, health checks named as options rather than settings, and a good number of others) | Translated to their compose equivalent. |
 | Extra `docker run` options StaXX does not recognise | Left out, and named plainly in the check-list above the editor so nothing goes missing unannounced. |
+| A value containing a dollar sign | Each one is written twice, which is how a compose file carries a real dollar sign — the app still receives the value exactly as before. You are told which values were changed, **Undo** takes it back, and once you save, the original wording is the first version in the stack's history. There is more on why in [making a password](passwords-and-hashes.md). |
 
 Anything StaXX had to invent — a folder path the app never gave a value for, a port with no host
 side named, a fixed address it is keeping unchanged — is filled in as a placeholder and listed

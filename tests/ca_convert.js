@@ -1165,6 +1165,145 @@ ok('a Name with capitals keeps them in container_name', capsNameR.yaml.indexOf('
 ok('...while the service key stays lowercase', capsNameR.yaml.indexOf('  excalidraw:\n') >= 0);
 ok('...and the stack name (used for the appdata placeholder etc.) stays lowercase too', capsNameR.name === 'excalidraw');
 
+/* =========================================================================
+ * O. Dollar signs — Unraid does no substitution, so every "$" in a
+ * template value is literal and must be doubled to survive becoming a
+ * compose file (PLAN_106 Phase 1).
+ * ========================================================================= */
+
+console.log('\nO. Dollar signs are doubled at the four write sites, nowhere else');
+
+// Sites 1 (Type="Variable") and 2 (Type="Label"), with the real shapes
+// found on Adrian's own server.
+var DOLLAR_CONFIG = {
+  Name: 'dollar-config-test', Repository: 'example/dollar-config-test', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'ADMIN_TOKEN', Target: 'ADMIN_TOKEN', Default: '', Description: '',
+        Type: 'Variable', Required: 'false', Mask: 'false' }, value: '$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA' },
+    { '@attributes': { Name: 'SMTP_PASSWORD', Target: 'SMTP_PASSWORD', Default: '', Description: '',
+        Type: 'Variable', Required: 'false', Mask: 'false' }, value: 'ne$zF@7q' },
+    { '@attributes': { Name: 'traefik.enable', Target: 'traefik.enable', Default: '', Description: '',
+        Type: 'Label', Required: 'false', Mask: 'false' }, value: 'ab$1md' }
+  ]
+};
+var dcR = CA.convert(DOLLAR_CONFIG);
+ok('Type="Variable" doubles the vaultwarden-shaped hash',
+   dcR.yaml.indexOf('ADMIN_TOKEN: "$$argon2id$$v=19$$m=65536,t=3,p=4$$c2FsdA$$aGFzaA"') >= 0);
+ok('Type="Variable" doubles a "$" followed by a letter mid-value',
+   dcR.yaml.indexOf('SMTP_PASSWORD: "ne$$zF@7q"') >= 0);
+ok('Type="Label" doubles a "$" followed by a digit',
+   dcR.yaml.indexOf('traefik.enable: "ab$$1md"') >= 0);
+ok('dollarsEscaped names every touched key with its own dollar count, nothing else',
+   JSON.stringify(dcR.dollarsEscaped) === JSON.stringify([
+     { key: 'ADMIN_TOKEN', count: 5 }, { key: 'SMTP_PASSWORD', count: 1 }, { key: 'traefik.enable', count: 1 }
+   ]), JSON.stringify(dcR.dollarsEscaped));
+
+// Sites 3 (-e/--env, --label) and 4 (--log-opt), off ExtraParams.
+var DOLLAR_EXTRA = {
+  Name: 'dollar-extra-test', Repository: 'example/dollar-extra-test', Network: 'bridge',
+  ExtraParams: '-e FOO=x$*b2 --label bar=a$&b --log-opt tag=$argon2id$v=19'
+};
+var deR = CA.convert(DOLLAR_EXTRA);
+ok('-e merges into environment: with its "$*" doubled', deR.yaml.indexOf('FOO: "x$$*b2"') >= 0);
+ok('--label merges into labels: with its "$&" doubled', deR.yaml.indexOf('bar: "a$$&b"') >= 0);
+ok('--log-opt doubles the dollars in its own option value', deR.yaml.indexOf('tag: "$$argon2id$$v=19"') >= 0);
+ok('dollarsEscaped covers all three ExtraParams sites and nothing more',
+   JSON.stringify(deR.dollarsEscaped) === JSON.stringify([
+     { key: 'FOO', count: 1 }, { key: 'bar', count: 1 }, { key: 'tag', count: 2 }
+   ]), JSON.stringify(deR.dollarsEscaped));
+
+// A port, a volume, a device and the image name are never touched — a "$"
+// there is already wrong in a way doubling cannot fix (see the plan).
+var DOLLAR_UNESCAPED = {
+  Name: 'dollar-unescaped-test', Repository: 'example/img$1', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'Port', Target: '8080', Default: '', Mode: 'tcp', Description: '',
+        Type: 'Port', Required: 'false', Mask: 'false' }, value: '80$0' },
+    { '@attributes': { Name: 'Path', Target: '/data', Default: '', Mode: 'rw', Description: '',
+        Type: 'Path', Required: 'false', Mask: 'false' }, value: '/mnt/user/app$data' },
+    { '@attributes': { Name: 'Dev', Target: '/dev/x', Default: '', Description: '',
+        Type: 'Device', Required: 'false', Mask: 'false' }, value: '/dev/x$1' }
+  ]
+};
+var duR = CA.convert(DOLLAR_UNESCAPED);
+ok('the image name keeps a single "$"', duR.yaml.indexOf('image: example/img$1\n') >= 0);
+ok('a Port value keeps a single "$"', duR.yaml.indexOf('- "80$0:8080"') >= 0);
+ok('a Path (volume) value keeps a single "$"', duR.yaml.indexOf('/mnt/user/app$data:/data') >= 0);
+ok('a Device value keeps a single "$"', duR.yaml.indexOf('/dev/x$1') >= 0);
+ok('none of those four sites are reported in dollarsEscaped', duR.dollarsEscaped.length === 0);
+
+// A template with no dollar anywhere is byte-identical to before this
+// change — escaping a value that holds no "$" is a no-op everywhere.
+function todayStampForTest() {
+  var d = new Date();
+  function p2(n) { return (n < 10 ? '0' : '') + n; }
+  return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+}
+var NO_DOLLAR = {
+  Name: 'no-dollar-test', Repository: 'example/no-dollar-test', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'PASS', Target: 'PASS', Default: '', Description: '',
+        Type: 'Variable', Required: 'false', Mask: 'false' }, value: 'plainvalue' },
+    { '@attributes': { Name: 'LBL', Target: 'lbl.key', Default: '', Description: '',
+        Type: 'Label', Required: 'false', Mask: 'false' }, value: 'plainlabel' }
+  ]
+};
+var ndR = CA.convert(NO_DOLLAR);
+var expectedNoDollarYaml =
+  'x-unraid:\n' +
+  '  version: 1\n' +
+  '  imported:\n' +
+  '    from: community-applications\n' +
+  '    on: ' + todayStampForTest() + '\n' +
+  '\n' +
+  'services:\n' +
+  '  no-dollar-test:\n' +
+  '    image: example/no-dollar-test\n' +
+  '    container_name: no-dollar-test\n' +
+  '    restart: unless-stopped\n' +
+  '    networks:\n' +
+  '      - default\n' +
+  '    environment:\n' +
+  '      PASS: "plainvalue"\n' +
+  '    labels:\n' +
+  '      lbl.key: "plainlabel"\n';
+ok('a template with no dollar anywhere produces byte-identical output',
+   ndR.yaml === expectedNoDollarYaml, ndR.yaml);
+ok('...and reports no escaping at all', ndR.dollarsEscaped.length === 0);
+
+/* =========================================================================
+ * P. yamlAsWritten — the template's own wording, before any dollar sign was
+ * doubled, run through the same conversion a second time rather than
+ * reversed out of the escaped text (PLAN_106 Phase 5).
+ * ========================================================================= */
+
+console.log('\nP. yamlAsWritten carries the template\'s own dollar-sign wording');
+
+ok('yamlAsWritten holds the single-dollar wording for the hash',
+   dcR.yamlAsWritten.indexOf('ADMIN_TOKEN: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA"') >= 0,
+   dcR.yamlAsWritten);
+ok('...and for the mid-value dollar',
+   dcR.yamlAsWritten.indexOf('SMTP_PASSWORD: "ne$zF@7q"') >= 0);
+ok('...and for the label',
+   dcR.yamlAsWritten.indexOf('traefik.enable: "ab$1md"') >= 0);
+ok('yamlAsWritten is also produced for the ExtraParams sites',
+   deR.yamlAsWritten.indexOf('FOO: "x$*b2"') >= 0 &&
+   deR.yamlAsWritten.indexOf('bar: "a$&b"') >= 0 &&
+   deR.yamlAsWritten.indexOf('tag: "$argon2id$v=19"') >= 0, deR.yamlAsWritten);
+
+ok('yaml itself is unchanged from today — still doubled',
+   dcR.yaml.indexOf('ADMIN_TOKEN: "$$argon2id$$v=19$$m=65536,t=3,p=4$$c2FsdA$$aGFzaA"') >= 0);
+
+ok('the escaped and as-is texts differ only in their dollar signs',
+   dcR.yaml.replace(/\$\$/g, '$') === dcR.yamlAsWritten, dcR.yamlAsWritten);
+ok('...same for the ExtraParams-derived pair',
+   deR.yaml.replace(/\$\$/g, '$') === deR.yamlAsWritten, deR.yamlAsWritten);
+
+ok('yamlAsWritten is absent when nothing was escaped',
+   ndR.yamlAsWritten == null, String(ndR.yamlAsWritten));
+ok('the untouched Port/Path/Device/image sites report no yamlAsWritten difference beyond the image',
+   duR.yamlAsWritten == null, String(duR.yamlAsWritten));
+
 /* ---- summary ------------------------------------------------------------ */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

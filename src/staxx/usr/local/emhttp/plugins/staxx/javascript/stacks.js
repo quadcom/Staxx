@@ -151,6 +151,13 @@
   // container still running the old way behind it, so a save worth offering
   // the handover for. Lives and dies alongside pendingHandoffId above.
   var pendingHandoffEdit = false;
+  // PLAN_106 phase 5 gap: the template's own, unescaped wording for a caught
+  // install, so the first save of the new stack can file it into history
+  // before the escaped text overwrites it — the CA import panel already gets
+  // this for free through the write it makes itself; the single-app editor
+  // route has no such write to piggyback on, so it sends this once instead.
+  // Lives and dies alongside pendingHandoffId above, same reasoning.
+  var pendingBodyAsIs = '';
   var pageNotice   = document.getElementById('staxx-page-notice');
   var pageNoticeIcon   = pageNotice ? pageNotice.querySelector('.fa') : null;
   var pageNoticeAction = document.getElementById('staxx-page-notice-action');
@@ -192,6 +199,11 @@
   // ever shown alongside the quiet automatic lookup's own found-something
   // state, see showDetailOfferBar() further down.
   var scaffoldDismiss = document.getElementById('staxx-scaffold-dismiss');
+  // PLAN_106 phase 4: latches true the first time this editor session's
+  // reparse() finds a flagged dollar sign, so the modal is offered once per
+  // open rather than reopening itself on every keystroke reparse() already
+  // runs on — openEditor() is the only place that clears it back to false.
+  var dollarModalOffered = false;
   var makePathsNote = document.getElementById('staxx-makepaths');
   var inUseNote     = document.getElementById('staxx-inusepaths');
 
@@ -218,6 +230,12 @@
   var confirmMsg    = document.getElementById('staxx-confirm-msg');
   var confirmCancel = document.getElementById('staxx-confirm-cancel');
   var confirmGo     = document.getElementById('staxx-confirm-go');
+  // The PHP-rendered label ("Cancel"), read once before any caller's own
+  // wording overwrites it — PLAN_106's dollar-sign modal is the first caller
+  // that wants something less generic ("Leave them") on the dismiss button,
+  // and every other caller keeps reading as it always has by simply never
+  // setting opts.cancelLabel.
+  var confirmCancelDefault = confirmCancel ? confirmCancel.textContent : 'Cancel';
   // The optional third answer (PLAN_44 C2) — null-guarded the same way the
   // rest of this dialog already is, and hidden except when a caller passes
   // askConfirm() an extraLabel.
@@ -2890,18 +2908,20 @@
              'title="Declares ' + esc(f.declareMissing) + ' as a network created outside this file, ' +
              'which is what an Unraid network is.">Add it to this file</button>';
     }
-    // PLAN_105: the model has already said, above, that this looks like a
-    // password hash compose will strip the dollar signs out of. This is the
-    // fix for it — one press, through the ordinary field-writing path, with
-    // its own undo snapshot taken first, the same way the network fix below
-    // earns one. The doubled string is NOT put in
-    // an attribute here: it is a live credential, and the click reads it
-    // back off the model instead, which also means a redraw can never leave
-    // a button holding a value the file has since moved past.
+    // PLAN_105/PLAN_106: the model has already said, above, that this value
+    // carries a dollar sign compose cannot read as a working reference. This
+    // is the fix for it — one press, through the ordinary field-writing path,
+    // with its own undo snapshot taken first, the same way the network fix
+    // below earns one. The doubled string is NOT put in an attribute here:
+    // it is a live credential, and the click reads it back off the model
+    // instead, which also means a redraw can never leave a button holding a
+    // value the file has since moved past. The title is the model's own
+    // reason for the FIRST flagged part (hashEscape only ever names one),
+    // not a copy of it kept here — it travels on the fix itself.
     if (f.hashEscape) {
+      var hashReason = dollarFixSentences(f)[0] || 'a dollar sign here needs writing twice for compose to keep it';
       out += '<button type="button" class="staxx-declfix" data-fix-hash="1" ' +
-             'title="Writes each dollar sign twice, which is how a compose file carries a real ' +
-             'dollar sign. The container still receives the hash exactly as it reads now.">' +
+             'title="' + esc(hashReason.charAt(0).toUpperCase() + hashReason.slice(1) + '.') + '">' +
              'Write each dollar sign twice</button>';
     }
     // PLAN_64 phase C: not a greyed-out row for each network that was set
@@ -5583,7 +5603,7 @@
     if (!YAML) { formHost.innerHTML = '<p class="staxx-form-empty">The form view could not load.</p>'; return; }
 
     var doc  = YAML.parse(currentText());
-    var form = YAML.buildForm(doc, netDrivers());
+    var form = YAML.buildForm(doc, netDrivers(), envNameList());
     form.doc = doc;
     MODEL = form;
     applyMovedAdvice();   // before renderForm() below, so its first paint already carries the fact
@@ -5611,6 +5631,7 @@
     updateRequired();
     updateMissing();
     updateScaffoldNote();
+    maybeOfferDollarFixes();   // PLAN_106 phase 4 — latched, so this is a no-op after the first call
     checkImageSettle();   // PLAN_84 phase 5 — the automatic "fill in details" trigger
     relint();
     checkHostPaths();   // ask the server about any volume host path not already cached
@@ -5619,6 +5640,121 @@
     // still on screen has to have it locked again — find and replace is the
     // one path that reaches this from a companion tab.
     if (fileOpen !== null) lockForm();
+  }
+
+  /* ---- PLAN_106 phase 4: the whole-file dollar-sign modal ---- */
+
+  // Every field the model has flagged for a literal dollar sign compose
+  // would otherwise strip, in file order.
+  function dollarFlaggedFields() {
+    if (!MODEL || !MODEL.ok || !MODEL.fields) return [];
+    return MODEL.fields.filter(function (f) { return f.dollarFixes && f.dollarFixes.length; });
+  }
+
+  // Each fix carries its own reason (compose-model.js), so the sentence for a
+  // part is read straight off it. Matching the wording out of the field's
+  // advice list would work today and break the day the model rephrases one,
+  // silently and with nothing to point at it.
+  function dollarFixSentences(f) {
+    return (f.dollarFixes || []).map(function (fix) { return fix.reason; })
+                                .filter(function (s) { return !!s; });
+  }
+
+  // One row per flagged PART, not per field — a mapped volume whose host and
+  // container halves are both bad needs both named, the same reason
+  // dollarFixes itself is a list rather than a single entry.
+  function dollarModalRows(fields) {
+    var rows = [];
+    fields.forEach(function (f) {
+      f.dollarFixes.forEach(function (fix) {
+        var part = f.parts && f.parts[fix.part];
+        rows.push({ fieldId: f.id, service: f.service, key: f.target, value: part ? part.value : '' });
+      });
+    });
+    return rows;
+  }
+
+  // Width only — PLAN_105 already settled that a value belongs on screen
+  // here, since it is already on screen in the field it came from.
+  function truncateDollarValue(v) {
+    v = String(v == null ? '' : v);
+    return v.length > 48 ? v.slice(0, 45) + '…' : v;
+  }
+
+  function dollarModalBodyHtml(rows) {
+    var many = rows.length > 1;
+    var list = '<ul class="staxx-confirm-list">' + rows.map(function (r) {
+      return '<li><strong>' + esc(r.service) + '</strong> → <code>' + esc(r.key) + '</code> — ' +
+             '<code>' + esc(truncateDollarValue(r.value)) + '</code></li>';
+    }).join('') + '</ul>';
+    return list + '<p>A dollar sign is where Compose starts reading a variable name, so it deletes ' +
+      (many ? 'these' : 'this one') + ' before the container ever sees ' + (many ? 'them' : 'it') +
+      '. Writing each one twice is the fix, and the container still receives ' +
+      (many ? 'them' : 'it') + ' exactly as ' + (many ? 'they read' : 'it reads') + ' above.</p>';
+  }
+
+  // Fixes one field's own flagged parts, one write at a time — re-reading
+  // the field off MODEL before every write, the way the single-field button
+  // (data-fix-hash, below) already does, since MODEL is rebuilt by commit()
+  // under it on every pass. Returns whether anything actually landed, so the
+  // caller can tell a field that changed out from under it from one that
+  // never had a box to write through in the first place.
+  function applyDollarFieldFixes(fid) {
+    var did = false, guard = 0;
+    while (guard++ < 8) {
+      var f = YAML.fieldById(MODEL, fid);
+      if (!f || !f.dollarFixes || !f.dollarFixes.length) break;
+      var fix = f.dollarFixes[0];
+      var row = formHost.querySelector('[data-field-row="' + fid.replace(/"/g, '\\"') + '"]');
+      var box = row && row.querySelector('input[data-part="' + fix.part + '"]');
+      if (!box) break;   // not on the form to write through — nothing more to do here
+      box.value = fix.to;
+      commit(box);
+      did = true;
+    }
+    return did;
+  }
+
+  // "Write each one twice" — one undo entry for the whole set, same as the
+  // single-field button earns for its one field.
+  function applyAllDollarFixes(fieldIds) {
+    flushPending();
+    pushUndo('writing each dollar sign twice');
+    var appliedAny = false;
+    fieldIds.forEach(function (fid) { if (applyDollarFieldFixes(fid)) appliedAny = true; });
+    if (!appliedAny) { undoStack.pop(); updateUndo(); }   // every one of them had already changed — nothing to keep
+    else setYamlStatus('Wrote each flagged dollar sign twice.');
+  }
+
+  // Offered once per editor session — dollarModalOffered is cleared only by
+  // openEditor(), never recomputed away by the next reparse(), which is what
+  // stops this reopening itself on every keystroke while someone is typing.
+  // Re-parse once the .env answer lands, so the offer below judges a name
+  // against what actually declares it. Without this the offer would fire on
+  // the first parse, when every .env name still reads as declared by
+  // nothing — and its own latch would make that the only time it ever asked.
+  function dollarRecheck() {
+    if (openedName && MODEL) reparse();
+  }
+
+  function maybeOfferDollarFixes() {
+    if (dollarModalOffered || !confirmModal) return;
+    // null is "not fetched yet", not "nothing is declared" — the same
+    // distinction envVars exists to keep, for the same reason.
+    if (envKeys() === null) return;
+    var flagged = dollarFlaggedFields();
+    if (!flagged.length) return;
+    dollarModalOffered = true;
+    var rows = dollarModalRows(flagged);
+    askConfirm({
+      title: rows.length === 1 ? 'This stack has 1 value Compose will damage'
+                                : 'This stack has ' + rows.length + ' values Compose will damage',
+      bodyHtml: dollarModalBodyHtml(rows),
+      goLabel: 'Write each one twice',
+      cancelLabel: 'Leave them'
+    }).then(function (go) {
+      if (go) applyAllDollarFixes(flagged.map(function (f) { return f.id; }));
+    });
   }
 
   /* ---- form -> file ---- */
@@ -5630,7 +5766,7 @@
 
   function refreshRanges() {
     var doc   = MODEL.doc;
-    var fresh = YAML.buildForm(doc, netDrivers());
+    var fresh = YAML.buildForm(doc, netDrivers(), envNameList());
     fresh.doc = doc;
     MODEL = fresh;
     applyMovedAdvice();   // rows already exist here, so this brings them into line itself
@@ -10391,6 +10527,62 @@
     return name + '-' + n;
   }
 
+  // PLAN_106 phase 2: one sentence for the editor's own banner, naming this
+  // stack's own doubled values — no stack name to give, unlike the bulk
+  // summary below, since a banner only ever belongs to the stack it is on.
+  function dollarsEscapedBannerHtml(list) {
+    var n = list.length;
+    var names = list.map(function (d) { return '“' + esc(d.key) + '”'; }).join(', ');
+    return '<strong>' + (n === 1 ? '1 value changed.' : n + ' values changed.') + '</strong> ' +
+      'The value' + (n === 1 ? ' for ' : 's for ') + names + ' contained a dollar sign. Unraid ' +
+      'passes those through as typed; a compose file does not, so each one is now written twice ' +
+      '— the container still receives ' + (n === 1 ? 'it' : 'them') + ' exactly as before. ' +
+      'Undo (below) puts it back if you would rather see it as it arrived.';
+  }
+
+  // PLAN_106 phase 2: convert() has already doubled every dollar sign it
+  // found (Phase 1) before this ever runs, so the file caOpenConverted()
+  // below loads into the editor is already correct. This only gives Undo
+  // something real to put back: each flagged value is halved, the pane is
+  // snapshotted in THAT state, then the doubled value is written straight
+  // back through the same YAML.setValue() commit() itself calls — one calm
+  // write for what convert() already decided, not a choice offered the way
+  // the PLAN_106 phase 4 modal is. Has to run right after openEditor()
+  // (whose own reparse() built MODEL against result.yaml), before anything
+  // else touches the pane.
+  function seedDollarEscapeUndo(dollarsEscaped) {
+    if (!MODEL || !MODEL.doc || !YAML || !dollarsEscaped || !dollarsEscaped.length) return;
+    var doubledKeys = {};
+    dollarsEscaped.forEach(function (d) { doubledKeys[d.key] = true; });
+    var toRestore = [];
+    MODEL.fields.forEach(function (f) {
+      var pv = f.parts && f.parts.value;
+      if (doubledKeys[f.target] && pv && typeof pv.value === 'string' && pv.value.indexOf('$$') >= 0) {
+        toRestore.push({ id: f.id, plain: pv.value.replace(/\$\$/g, '$'), escaped: pv.value });
+      }
+    });
+    if (!toRestore.length) return;
+
+    var doc = MODEL.doc, form = MODEL;
+    toRestore.forEach(function (t) {
+      var f = YAML.fieldById(form, t.id);
+      if (f) { YAML.setValue(doc, form, f.id, t.plain); form = YAML.buildForm(doc); }
+    });
+    // pushUndo() snapshots currentText(), which is yamlPane.value — so the
+    // pane has to actually show the halved values before the snapshot, or
+    // Undo would restore to the very text already on screen.
+    yamlPane.value = YAML.serialise(doc);
+    pushUndo('writing each dollar sign twice');
+    toRestore.forEach(function (t) {
+      var f = YAML.fieldById(form, t.id);
+      if (f) { YAML.setValue(doc, form, f.id, t.escaped); form = YAML.buildForm(doc); }
+    });
+    yamlPane.value = YAML.serialise(doc);
+    paintGutter();
+    paintInk();
+    reparse();
+  }
+
   // The shared tail of the import path: convert an already-fetched record and
   // open the editor on it. caImport() reaches this after closing the CA
   // dialog; the handoff hook at the end of this file reaches it with no CA
@@ -10438,12 +10630,25 @@
     openEditor(openName, result.yaml, true, '');
     if (handoffId) pendingHandoffId = handoffId;
     pendingHandoffEdit = kind === 'edit';
+    // PLAN_106 phase 5 gap: yamlAsWritten is null when convert() escaped
+    // nothing, and openEditor() just above has already cleared this to ''
+    // for every other route — only set it when there is a genuine original
+    // wording to recover.
+    pendingBodyAsIs = result.yamlAsWritten || '';
+    seedDollarEscapeUndo(result.dollarsEscaped);
 
     // Not folded into the warnings below: this is context, not a problem, and
     // the error box is red. openEditor() hides this banner again on its way
-    // in, so it never survives into the next stack someone opens.
-    if (intro) {
-      installNote.querySelector('div').textContent = intro;
+    // in, so it never survives into the next stack someone opens. Two
+    // unrelated facts can both be true of the same fresh stack, so each gets
+    // its own paragraph rather than one overwriting the other.
+    var bannerLines = [];
+    if (intro) bannerLines.push('<p>' + esc(intro) + '</p>');
+    if (result.dollarsEscaped && result.dollarsEscaped.length) {
+      bannerLines.push('<p>' + dollarsEscapedBannerHtml(result.dollarsEscaped) + '</p>');
+    }
+    if (bannerLines.length) {
+      installNote.querySelector('div').innerHTML = bannerLines.join('');
       installNote.hidden = false;
     }
     // Set unconditionally, whether or not intro fired above — every caller
@@ -11393,6 +11598,18 @@
   // caImport() guards it (:5701 or thereabouts), because a stale cached
   // script must leave the row without a preview rather than throw and take
   // the whole page down with it.
+  // PLAN_106 phase 2: convert()'s dollarsEscaped list, worded for a reader
+  // who has never seen the concept. A key here can be a --log-opt option as
+  // well as an environment or label name (ca-convert.js merges all three
+  // into the one list), so this never calls it "the environment variable" —
+  // only ever "the value for KEY", which is true of all three.
+  function dollarsEscapedLine(d) {
+    return 'The value for “' + esc(d.key) + '” contained ' +
+      (d.count > 1 ? d.count + ' dollar signs' : 'a dollar sign') +
+      '. Unraid passes those through as typed; a compose file does not, so each one is now ' +
+      'written twice. The container still receives it exactly as before.';
+  }
+
   function importTemplatePreviewHtml(entry) {
     if (!window.StaxxCA || typeof window.StaxxCA.convert !== 'function') {
       return '<p class="staxx-form-empty">The app converter has not loaded. Reload the page and try again.</p>';
@@ -11420,6 +11637,15 @@
       bits.push('<p class="staxx-import-warn">Filled in for you — check these before starting:</p>' +
         '<ul class="staxx-import-notes">' +
           result.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
+        '</ul>');
+    }
+    // PLAN_106: a preview, so this is information rather than a question —
+    // the write already happened above, in memory, the moment convert() ran.
+    if (result.dollarsEscaped && result.dollarsEscaped.length) {
+      bits.push('<p class="staxx-import-warn">Dollar signs doubled so compose does not read them ' +
+        'as the start of a variable name:</p>' +
+        '<ul class="staxx-import-notes">' +
+          result.dollarsEscaped.map(function (d) { return '<li>' + dollarsEscapedLine(d) + '</li>'; }).join('') +
         '</ul>');
     }
     return bits.join('');
@@ -11922,6 +12148,27 @@
   // Writes every ticked row one at a time. Sequential on purpose — each
   // write runs compose's own validation on the server, and firing them all
   // at once would bury the box rather than show progress.
+  // PLAN_106 phase 2: the bulk run writes straight to the server with no
+  // editor open, so there is no Undo button to offer — each write already
+  // landed in that stack's own history the moment it was written, and this
+  // says so rather than promising a button that is not there.
+  function dollarTouchesSummaryHtml(touches) {
+    var n = touches.length;
+    var head = (n === 1 ? '1 value changed.' : n + ' values changed.') +
+      ' Unraid passes a dollar sign through as typed; a compose file does not, so ' +
+      (n === 1 ? 'it has' : 'each one has') + ' been written twice — the container' +
+      (n === 1 ? '' : 's') + ' still receive' + (n === 1 ? 's' : '') + ' ' + (n === 1 ? 'it' : 'them') +
+      ' exactly as before. Find ' + (n === 1 ? 'it' : 'each') + ' in ' +
+      (n === 1 ? 'that stack' : 'its own stack') + '’s own history if you want it back as it arrived.';
+    return '<p class="staxx-import-summarymsg">' + head + '</p>' +
+      '<ul class="staxx-import-summaryfails">' +
+        touches.map(function (t) {
+          return '<li><strong>' + esc(t.key) + '</strong> in “' + esc(t.name) + '”' +
+            (t.count > 1 ? ' (' + t.count + ' dollar signs)' : '') + '</li>';
+        }).join('') +
+      '</ul>';
+  }
+
   function importRunSelected() {
     var idxs = [];
     for (var k in importSelected) if (importSelected[k]) idxs.push(Number(k));
@@ -11936,6 +12183,7 @@
     var written = 0;
     var failures = [];
     var folderFailures = {};   // folderName -> error, filled in only in Match mode
+    var dollarTouches = [];    // PLAN_106 phase 2 — {name, key, count}, one per value doubled
 
     // Two ticked rows that would land on the very same (folder, name) collide
     // silently otherwise — the second write lands on top of the first
@@ -12037,6 +12285,14 @@
         return;
       }
 
+      // PLAN_106 phase 2: this run writes straight to the server with no
+      // editor open, so its own history record (a save already writes one)
+      // is the only undo — the summary below says so rather than offering a
+      // button that has nothing to press.
+      (result.dollarsEscaped || []).forEach(function (d) {
+        dollarTouches.push({ name: entry.name, key: d.key, count: d.count });
+      });
+
       var about = JSON.stringify({
         source: 'template',
         id: entry.id,
@@ -12059,7 +12315,14 @@
         if (!scaffolded.error) writeBody = scaffolded.yaml;
       }
 
-      call('import-write', { name: stackName, body: writeBody, about: about }, 20000).then(function (res) {
+      // PLAN_106 phase 5: the template's own wording, before any dollar sign
+      // was doubled — sent alongside the write so the server can save it
+      // first and let the ordinary history mechanism keep it. '' when
+      // nothing was escaped, which staxx_import_write() treats as "no as-is
+      // text to save".
+      var writeBodyAsIs = result.yamlAsWritten || '';
+
+      call('import-write', { name: stackName, body: writeBody, bodyAsIs: writeBodyAsIs, about: about }, 20000).then(function (res) {
         if (res.ok) {
           written++;
           importExisting.push({ folder: destFolder, leaf: leaf });
@@ -12097,6 +12360,9 @@
           }).join('') +
         '</ul>');
       }
+
+      if (dollarTouches.length) bits.push(dollarTouchesSummaryHtml(dollarTouches));
+
       importSummary.innerHTML = bits.join('');
       importSummary.hidden = false;
 
@@ -12741,6 +13007,7 @@
     viewBeforeFile = null;
     FILES = [];
     envVars = null;   // yesterday's .env answer is meaningless against today's stack
+    dollarModalOffered = false;   // a fresh session gets its own one-time offer
     fileDots = {};
     fileMime = {};
     hideBinPanel();   // yesterday's stack may have left this showing
@@ -12830,6 +13097,7 @@
     pendingNote.hidden = true;
     pendingHandoffId = '';
     pendingHandoffEdit = false;
+    pendingBodyAsIs = '';
     yamlPane.readOnly = false;
 
     // A new stack starts with one service rather than an empty box. The Add
@@ -13269,6 +13537,15 @@
     return envVars;
   }
 
+  // buildForm()'s third argument wants a plain array of names, not the
+  // name->true map envVars keeps for varDots()'s own O(1) lookup — this is
+  // the one conversion, called everywhere buildForm() feeds the visible
+  // form, so a name declared in the stack's .env file is never flagged by
+  // PLAN_106's dollar-sign check as though nothing declared it.
+  function envNameList() {
+    return envVars ? Object.keys(envVars) : [];
+  }
+
   // "export FOO=1" as well as "FOO=1" — the former is common enough in
   // hand-written .env files to be worth allowing. A "#" comment line never
   // matches this at all, since '#' is not a legal first character of NAME.
@@ -13284,7 +13561,7 @@
       var c = FILES[i];
       if (c.name === '.env' && !c.dir && !c.link && c.text) { f = c; break; }
     }
-    if (!f) { envVars = {}; relint(); return; }
+    if (!f) { envVars = {}; relint(); dollarRecheck(); return; }
 
     var was = openedName;
     return call('file-read', { name: openedName, file: '.env' }).then(function (res) {
@@ -13298,6 +13575,7 @@
       }
       envVars = names;
       relint();
+      dollarRecheck();
     });
   }
 
@@ -15338,6 +15616,10 @@
     // route leaves it unset, so the name-clash refusal still applies to them.
     if (isNew && modal.dataset.adopt === '1') payload.adopt = '1';
     if (isNew && pendingHandoffId) payload.handoff = pendingHandoffId;
+    // PLAN_106 phase 5 gap: rides along only on the first save of a caught
+    // install, same shape as handoff above — cleared on success below so a
+    // second save in the same session never repeats it.
+    if (isNew && pendingBodyAsIs) payload.bodyAsIs = pendingBodyAsIs;
 
     call('save', payload)
       .then(function (res) {
@@ -15359,6 +15641,10 @@
         // app that lost its exit route because the first save needed a
         // different name would lose it silently.
         pendingHandoffId = '';
+        // Same reasoning as pendingHandoffId just above: a refused save
+        // above returns before this line, so a retry still carries the
+        // original wording along with it.
+        pendingBodyAsIs = '';
 
         // Read before clearing, same reasoning: a refused save must still
         // leave the offer waiting for the retry that actually lands.
@@ -18359,6 +18645,7 @@
     confirmTitle.textContent = opts.title;
     confirmBody.innerHTML = opts.bodyHtml;
     confirmGo.textContent = opts.goLabel;
+    confirmCancel.textContent = opts.cancelLabel || confirmCancelDefault;
     if (confirmExtra) {
       confirmExtra.hidden = !opts.extraLabel;
       confirmExtra.textContent = opts.extraLabel || '';

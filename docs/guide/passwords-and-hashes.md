@@ -133,14 +133,37 @@ The doubling is only right for a compose file. If you are pasting into a file of
 variables, or into an app's own settings screen, **a single dollar sign is what belongs there**. The
 box in the panel still holds that plain version — select it and copy it by hand.
 
-### A hash that is already in your file
+### A value that is already in your file
 
-If a stack already has a scrambled password written with single dollar signs — pasted in from
-somewhere else, or from before StaXX did this for you — the note under that box says so, and offers a
-button: **Write each dollar sign twice**. One press fixes it, and **Undo** takes it back.
+If a stack already holds a value written with single dollar signs — pasted in from somewhere else,
+or from before StaXX did this for you — you are told when you open it. A message names every value
+affected, and which setting of which service it belongs to:
 
-This does not need a new password. The scrambled value is of the right password already; it was only
+> A dollar sign is where Compose starts reading a variable name, so it deletes these before the
+> container ever sees them. Writing each one twice is the fix, and the container still receives them
+> exactly as they read above.
+
+**Write each one twice** corrects all of them in a single press, and **Undo** takes the whole lot
+back in one. **Leave them** closes the message and changes nothing — each affected value still
+carries its own note and its own button, so you can take them one at a time instead. The message
+comes back next time you open that stack, because until you act the file is still wrong.
+
+This never needs a new password. A scrambled value is of the right password already; it was only
 written in a way Compose was eating.
+
+### What it stays quiet about
+
+The check is deliberately narrow, because a warning people learn to click past is worse than no
+warning at all. It says nothing about:
+
+- A value written `${LIKE_THIS}`, which is plainly meant as a variable and treated as one.
+- A dollar sign already written twice — that one is correct as it stands.
+- A name something in the file genuinely provides, such as an entry in the stack's own file of
+  environment variables. Those work, so they are left alone.
+
+What it does speak up about is a dollar sign Compose cannot read as a name at all, a scrambled
+password, and a name that **nothing** provides — because that last one is quietly replaced with
+nothing, which ruins the value just as thoroughly as the others.
 
 Docker's own reference for this is
 [interpolation in a compose file](https://docs.docker.com/reference/compose-file/interpolation/), if
@@ -166,9 +189,9 @@ Honest gaps rather than oversights:
   way to check one, so this could only be offered for some formats and not others.
 - Remembering a password between sessions, or keeping a list of them. StaXX is not a password
   manager, and pretending otherwise would be the wrong place to keep one.
-- Warning about a dollar sign typed straight into a box on the form. Only the panel's own buttons
-  know they are handling a password — a dollar sign typed anywhere else is often a variable somebody
-  meant.
+- Warning you the moment you type a dollar sign into a box on the form. The check above runs when a
+  stack is opened, not as you type, so something you have just typed is flagged the next time you
+  open that stack rather than straight away.
 
 ## Terms used here
 

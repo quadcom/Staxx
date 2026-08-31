@@ -2204,13 +2204,80 @@
     return HASH_SCHEME_RE.test(s);
   }
 
+  // A bare $ straight after another dollar's worth of first character —
+  // \{ for a deliberate ${...} reference, or a legal name start — is caught
+  // below; anything else (a digit, punctuation, whitespace, or the value
+  // simply ending) is something Compose cannot read as a variable name at
+  // all, so a literal dollar sitting there is silently deleted the same way
+  // a hash's dollars are.
+  var DOLLAR_RE = /\$(\{|[A-Za-z_][A-Za-z0-9_]*)?/g;
+
+  // dollarsNeedEscaping(value, declared) -> {reason, to} | null
+  //
+  // PLAN_106: hashNeedsEscaping() alone only ever caught a value that
+  // STARTS with a known hash scheme. Measured against real Unraid
+  // templates that missed most of the actual damage — a generated
+  // password's own random characters carry a literal "$" just as often,
+  // and none of them look like a hash. This widens the same question to
+  // every dollar Compose cannot read as a working reference: a name
+  // nothing in the file declares, or a character straight after the $ that
+  // cannot start a variable name at all. Checked first and kept as its own
+  // branch so its clearer, hash-specific wording wins over the generic one
+  // below when both would otherwise fire.
+  //
+  // $$ pairs are an escaped literal already and are stripped first, exactly
+  // as interpolates() does, so "$$LITERAL" is never touched. `declared` is
+  // the set of names this file can actually resolve — built once per parse
+  // by the caller (the file's own top-level variables: block, plus any
+  // env_file's own names) and handed in here rather than looked up, so this
+  // stays pure and the test suite can drive it directly with any set it likes.
+  function dollarsNeedEscaping(value, declared) {
+    if (typeof value !== 'string') return null;
+    if (hashNeedsEscaping(value)) {
+      return {
+        reason: 'this looks like a password hash — compose reads each dollar sign as ' +
+                'the start of a variable name and will strip every one out before the ' +
+                'container ever sees the value, so each dollar sign needs writing ' +
+                'twice for the hash to arrive intact',
+        to: escapeDollars(value)
+      };
+    }
+    var known = declared || {};
+    var stripped = value.replace(/\$\$/g, '');
+    DOLLAR_RE.lastIndex = 0;
+    var m;
+    while ((m = DOLLAR_RE.exec(stripped))) {
+      var after = m[1];
+      if (after === '{') continue;                 // a deliberate ${...} reference — leave it
+      // hasOwnProperty rather than a plain lookup: a variable legitimately
+      // named "constructor" or "toString" would otherwise read as declared
+      // off Object's own prototype, and be left to be silently deleted.
+      if (after && Object.prototype.hasOwnProperty.call(known, after)) continue;
+      if (after) {
+        return {
+          reason: 'nothing in this file declares a variable called "' + after + '", so compose ' +
+                  'will replace "$' + after + '" with nothing before the container sees the ' +
+                  'value — a real dollar sign needs writing twice',
+          to: escapeDollars(value)
+        };
+      }
+      var nextCh = stripped.charAt(m.index + 1);
+      return {
+        reason: 'compose cannot read "$' + nextCh + '" as a variable name, so this value will ' +
+                'not arrive as it reads here — a real dollar sign needs writing twice',
+        to: escapeDollars(value)
+      };
+    }
+    return null;
+  }
+
   /* ---- putting a service's fields together ------------------------------- */
 
   // Fields come out in the order the file has them, and everything about them
   // beyond the value is either worked out from the file or read from the
   // comment beside it. There is nothing to match up, so there is nothing to
   // fall out of step.
-  function fieldsFor(serviceName, serviceMap, lines) {
+  function fieldsFor(serviceName, serviceMap, lines, declared) {
     var targets = harvest(serviceMap, lines);
     var fields = [];
 
@@ -2228,29 +2295,47 @@
                     t.absent || t.blocked;
       var fixed   = t.binder === 'setting' && ALWAYS_KEYS.indexOf(t.target) >= 0;
 
-      // 1f: a value that reaches into a variable defined outside the file
-      // (a .env entry, a shell export) stops being a plain string the moment
-      // someone types over it — flag every part that carries one. A value
-      // that instead looks like a password hash (PLAN_105) gets its own
-      // specific sentence in place of this generic one, plus the fix itself,
-      // since compose would otherwise strip every dollar sign silently.
+      // 1f/PLAN_106: a value that reaches into a variable defined outside the
+      // file (a .env entry, a shell export) stops being a plain string the
+      // moment someone types over it. A value that instead carries a dollar
+      // Compose cannot read as a working reference — a password hash, or any
+      // other literal $ (dollarsNeedEscaping()) — gets its own specific
+      // sentence in place of this generic one, plus the fix itself, since
+      // Compose would otherwise strip it silently. Every part is checked
+      // (not just the first one that matches) so a field whose host AND
+      // container both carry a bad dollar reports both, rather than one
+      // going unmentioned because the loop stopped early.
       var advice = t.advice.slice();
       var hashEscape = null;
+      var dollarFixes = [];
+      var saidInterpolates = false;
       for (var pk in t.parts) {
         if (!t.parts.hasOwnProperty(pk) || !t.parts[pk]) continue;
         var pv = t.parts[pk].value;
-        if (hashNeedsEscaping(pv)) {
-          advice.push('this looks like a password hash — compose reads each dollar sign as ' +
-                       'the start of a variable name and will strip every one out before the ' +
-                       'container ever sees the value, so each dollar sign needs writing ' +
-                       'twice for the hash to arrive intact');
-          hashEscape = { part: pk, to: escapeDollars(pv) };
-          break;
+        var bad = dollarsNeedEscaping(pv, declared);
+        if (bad) {
+          advice.push(bad.reason);
+          // The reason travels ON the fix, not just in advice: the page needs
+          // the sentence for this exact part, and picking it back out of
+          // advice by its wording would be a second copy of that wording
+          // living somewhere it can silently fall out of step.
+          var fix = { part: pk, to: bad.to, reason: bad.reason };
+          dollarFixes.push(fix);
+          // hashEscape keeps naming only the FIRST flagged part — the shape
+          // the existing single one-click fix in stacks.js already reads.
+          // dollarFixes carries every part, for a fix that offers all of them.
+          if (!hashEscape) hashEscape = fix;
+          continue;
         }
-        if (interpolates(pv)) {
+        // Said once per field, however many parts carry a reference: the
+        // sentence is about the field, not about one half of it, so a port
+        // with a variable on both sides would otherwise repeat it verbatim.
+        // The dollar sentences above are the opposite — each names its own
+        // part and its own fix, so those do repeat, deliberately.
+        if (!saidInterpolates && interpolates(pv)) {
+          saidInterpolates = true;
           advice.push('this value uses a variable defined outside the compose file — ' +
                        'typing over it replaces the variable with a fixed value');
-          break;
         }
       }
 
@@ -2290,14 +2375,20 @@
         absent: t.absent,
         blocked: t.blocked,
         advice: advice,
-        // Set only when hashNeedsEscaping() fired above — { part, to } names
-        // which part of this field carries the hash and the doubled string
-        // to write into it, the shape stacks.js needs to offer a one-click
-        // fix through the ordinary field-writing path. Always present and
-        // null when the check did not fire, rather than left undefined the
-        // way declareMissing below is — one shape for every field means a
-        // consumer can read it without guarding for a missing property.
+        // Set only when dollarsNeedEscaping() fired above for at least one
+        // part — { part, to } names the FIRST such part and the doubled
+        // string to write into it, kept for the existing one-click fix in
+        // stacks.js that reads only this. Always present and null when
+        // nothing fired, rather than left undefined the way declareMissing
+        // below is — one shape for every field means a consumer can read it
+        // without guarding for a missing property.
         hashEscape: hashEscape,
+        // PLAN_106: the same information as hashEscape, but naming every
+        // flagged part rather than only the first — { part, to } per entry,
+        // in part order, [] when nothing fired. A field whose host AND
+        // container parts both carry a bad dollar needs both fixed, which
+        // hashEscape alone cannot say.
+        dollarFixes: dollarFixes,
         fixed: fixed,
         // Neither name is genuinely required: a service with build: and no
         // image: is valid compose, and nothing reads container_name's value
@@ -2660,12 +2751,34 @@
     return wt;
   }
 
+  // knownVarNames(doc, envNames) -> {NAME: true, ...}
+  //
+  // PLAN_106: the set dollarsNeedEscaping() treats as genuinely resolvable —
+  // built once per parse, not per field. compose-model.js has no filesystem
+  // access, so it can read the file's own top-level `variables:` block
+  // itself but cannot read an env_file's contents; a caller that has (e.g.
+  // stacks.js, which already loads env files for its own envKeys() check)
+  // passes those names in as `envNames` and they are folded in here.
+  function knownVarNames(doc, envNames) {
+    var out = {};
+    var vp = doc.root && doc.root.pairs && doc.root.pairs['variables'];
+    if (vp && vp.value && vp.value.kind === 'map') {
+      for (var i = 0; i < vp.value.keys.length; i++) out[vp.value.keys[i]] = true;
+    }
+    if (envNames) {
+      for (var j = 0; j < envNames.length; j++) out[envNames[j]] = true;
+    }
+    return out;
+  }
+
   // netDrivers: name -> driver for this server's own docker networks, from
   // stacks.js's netDrivers() — null/omitted means "not answered yet", which
   // this treats exactly like "no networks", so every one of the ~25 existing
   // callers (and tests/yaml_roundtrip.js) that omit it keep seeing bridge
-  // everywhere, unchanged.
-  function buildForm(doc, netDrivers) {
+  // everywhere, unchanged. envNames: optional list of names an env_file
+  // supplies, folded into dollarsNeedEscaping()'s declared set — see
+  // knownVarNames() above.
+  function buildForm(doc, netDrivers, envNames) {
     // `declared` is seeded here rather than where it is filled in, because both
     // early returns below happen first — a caller reading declared.networks on
     // an unreadable file must find an empty list, not undefined.
@@ -2686,6 +2799,9 @@
 
     var xs = doc.root.pairs['x-unraid'];
     out.stack = xs && xs.value ? flatOf(xs.value) : {};
+
+    // Built once per parse, not once per field — see knownVarNames() above.
+    var dollarDeclared = knownVarNames(doc, envNames);
 
     // Top-level include: — read before the no-services return below, since an
     // include-only file (PLAN_20's measured case) is exactly what that branch
@@ -2748,7 +2864,7 @@
         if (vv && vv.kind === 'opaque' && (vv.reason === 'merge' || vv.reason === 'alias')) shared = true;
       }
 
-      var fields = fieldsFor(name, p.value, doc.lines);
+      var fields = fieldsFor(name, p.value, doc.lines, dollarDeclared);
       out.fields = out.fields.concat(fields);
       out.services.push({
         name: name,
@@ -9260,6 +9376,7 @@
     interpolates: interpolates,
     escapeDollars: escapeDollars,
     hashNeedsEscaping: hashNeedsEscaping,
+    dollarsNeedEscaping: dollarsNeedEscaping,
     // PLAN_70 stage 5: the two pure decisions behind the cross-stack lookup
     // — see the section comment above crossLooksLikeAddress() for why they
     // live here rather than in stacks.js.

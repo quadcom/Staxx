@@ -1961,7 +1961,12 @@ var FIXTURE_10_ADVANCED = [
   ok('a ${VAR:-default} port carries the advice', advised(port('81/tcp')));
   ok('and its host part is the whole expression, not mangled by the default\u2019s own colon',
      port('81/tcp').parts.host.value === '${ALT:-8081}', port('81/tcp').parts.host.value);
-  ok('a bare $VAR port carries the advice', advised(port('82/tcp')));
+  // PLAN_106: a bare $VAR with no braces and no declared source is exactly
+  // the shape that check now flags rather than waves through — nothing in
+  // this file declares RAWPORT, so it gets the sharper "compose will
+  // replace it with nothing" sentence and a fix, not the older generic one.
+  ok('a bare $VAR port is now flagged rather than merely advised',
+     !advised(port('82/tcp')) && port('82/tcp').dollarFixes.length === 1, port('82/tcp').advice);
   ok('a literal port number carries no advice', !advised(port('83/tcp')));
   ok('an escaped $$ with nothing real behind it carries no advice', !advised(env('LITERAL')));
   ok('a value mixing an escaped $$ and a real ${VAR} still carries the advice', advised(env('MIXED')));
@@ -10229,7 +10234,7 @@ var HASH_NOTE = 'this looks like a password hash';
      Y.escapeDollars(plain) === plain);
 })();
 
-/* ---- AR5. Left alone by the phase-2 check ------------------------------- */
+/* ---- AR5. Left alone by the phase-2 check, and by hashNeedsEscaping ----- */
 
 (function () {
   var braced = hashField('"${DB_PASSWORD}"');
@@ -10241,19 +10246,14 @@ var HASH_NOTE = 'this looks like a password hash';
   ok('$$LITERAL is not flagged as a hash', escLiteral.field.hashEscape === null, JSON.stringify(escLiteral.field.hashEscape));
   ok('$$LITERAL carries no advice at all', escLiteral.field.advice.length === 0, escLiteral.field.advice);
 
-  var bareVar = hashField('"$DB_PASSWORD"');
-  ok('$DB_PASSWORD is not flagged as a hash', bareVar.field.hashEscape === null, JSON.stringify(bareVar.field.hashEscape));
-  ok('$DB_PASSWORD still carries the existing generic variable sentence',
-     bareVar.field.advice.some(function (a) { return a.indexOf(GENERIC_NOTE) >= 0; }), bareVar.field.advice);
-
-  // Contains a scheme name, but does not START with one — must not fire.
-  var midScheme = hashField('"hunter$2y$abc"');
-  ok('a dollar mid-string that merely looks like a scheme is not flagged',
-     midScheme.field.hashEscape === null, JSON.stringify(midScheme.field.hashEscape));
-
-  var notAScheme = hashField('"$notascheme$x"');
-  ok('a leading dollar whose name is not a known scheme is not flagged',
-     notAScheme.field.hashEscape === null, JSON.stringify(notAScheme.field.hashEscape));
+  // hashNeedsEscaping() itself stays narrow — anchored to the START of the
+  // value — exactly as PLAN_105 left it. "hunter$2y$abc" contains a scheme
+  // name mid-string, and "$notascheme$x" leads with a dollar whose name is
+  // not a scheme at all; neither is a hash by that test, still.
+  ok('a scheme name mid-string is not a hash by hashNeedsEscaping()',
+     Y.hashNeedsEscaping('hunter$2y$abc') === false);
+  ok('a leading dollar whose name is not a known scheme is not a hash by hashNeedsEscaping()',
+     Y.hashNeedsEscaping('$notascheme$x') === false);
 
   var empty = hashField('""');
   ok('an empty string is not flagged', empty.field.hashEscape === null, JSON.stringify(empty.field.hashEscape));
@@ -10313,6 +10313,156 @@ var HASH_NOTE = 'this looks like a password hash';
   var h = hashField('"' + raw + '"');
   var unescaped = h.field.hashEscape.to.replace(/\$\$/g, '$');
   ok('undoing the doubling returns the original raw hash exactly', unescaped === raw, unescaped);
+})();
+
+/* =========================================================================
+ * AR9-AR12. PLAN_106 — a broader check, on a file that was already there
+ *
+ * hashNeedsEscaping() alone only ever caught a value STARTING with a known
+ * hash scheme. Measured on a real server, most of the damage was something
+ * else entirely — a generated password's own random characters carrying a
+ * literal "$" nowhere near a hash shape. dollarsNeedEscaping() widens the
+ * same question to every dollar Compose cannot read as a working reference,
+ * and fieldsFor() now calls it instead of the narrow hash-only check for
+ * every part of every field — see the AR5 rewrite above for what that did
+ * to hashNeedsEscaping()'s own, still-narrow, test coverage.
+ * ========================================================================= */
+
+console.log('\nAR9-AR12. PLAN_106 — a broader check on a file that was already there');
+
+/* ---- AR9. Every row of the table, flagged or left alone as stated ------ */
+
+(function () {
+  // { -> leave, a deliberate reference, whether or not the name is declared.
+  var brace = hashField('"${WHATEVER}"');
+  ok('${WHATEVER} is left alone', brace.field.dollarFixes.length === 0, JSON.stringify(brace.field.advice));
+
+  // A digit straight after $ cannot start a variable name at all.
+  var digit = hashField('"ab$1md"');
+  ok('a digit after $ is flagged', digit.field.dollarFixes.length === 1, JSON.stringify(digit.field.advice));
+  ok('the digit case reads as unreadable, not as an unknown name',
+     digit.field.advice[0].indexOf('cannot read') >= 0, digit.field.advice);
+
+  // Punctuation straight after $, same verdict.
+  var punct = hashField('"x$*b2"');
+  ok('punctuation after $ is flagged', punct.field.dollarFixes.length === 1, JSON.stringify(punct.field.advice));
+  ok('and the sentence names exactly what follows the $',
+     punct.field.advice[0].indexOf('"$*"') >= 0, punct.field.advice);
+
+  var amp = hashField('"a$&b"');
+  ok('a second punctuation shape is flagged the same way', amp.field.dollarFixes.length === 1, amp.field.advice);
+
+  // Whitespace straight after $, same verdict.
+  var space = hashField('"a$ b"');
+  ok('whitespace after $ is flagged', space.field.dollarFixes.length === 1, space.field.advice);
+
+  // The value simply ending straight after $, same verdict.
+  var end = hashField('"trailing$"');
+  ok('a $ at the very end of the value is flagged', end.field.dollarFixes.length === 1, end.field.advice);
+
+  // A letter/underscore start reads as a legal name — the declared/
+  // undeclared split is AR10 below, not this table row on its own.
+  var letter = hashField('"$zF"');
+  ok('a letter after $ is judged by whether the name is declared, not flagged on shape alone',
+     letter.field.dollarFixes.length === 1, letter.field.advice); // undeclared here — declared() is empty
+})();
+
+/* ---- AR10. A declared name is left alone; the same name undeclared is
+ *            flagged — both a variables:-declared name and a .env-declared
+ *            one (the env case is folded in by the caller, see
+ *            knownVarNames() in compose-model.js). ---------------------- */
+
+(function () {
+  var declSrc = 'variables:\n  SITE_KEY:\n    default: x\n' +
+                'services:\n  a:\n    image: alpine\n    environment:\n      V: "$SITE_KEY"\n';
+  var declForm = Y.buildForm(Y.parse(declSrc));
+  var declField = Y.fieldById(declForm, 'a/env#0/V');
+  ok('a name declared in the top-level variables: block is left alone',
+     declField.dollarFixes.length === 0, JSON.stringify(declField.advice));
+  ok('and still carries the ordinary "defined outside the file" note',
+     declField.advice.some(function (a) { return a.indexOf(GENERIC_NOTE) >= 0; }), declField.advice);
+
+  var undeclSrc = 'variables:\n  SITE_KEY:\n    default: x\n' +
+                  'services:\n  a:\n    image: alpine\n    environment:\n      V: "$OTHER_KEY"\n';
+  var undeclForm = Y.buildForm(Y.parse(undeclSrc));
+  var undeclField = Y.fieldById(undeclForm, 'a/env#0/V');
+  ok('a name the variables: block does NOT declare is flagged',
+     undeclField.dollarFixes.length === 1, JSON.stringify(undeclField.advice));
+  ok('naming exactly the missing variable',
+     undeclField.advice[0].indexOf('"OTHER_KEY"') >= 0 || undeclField.advice[0].indexOf('OTHER_KEY') >= 0,
+     undeclField.advice);
+
+  var envSrc = 'services:\n  a:\n    image: alpine\n    environment:\n      V: "$FROM_ENV_FILE"\n';
+  var envDoc = Y.parse(envSrc);
+  var envForm = Y.buildForm(envDoc, null, ['FROM_ENV_FILE']);
+  var envField = Y.fieldById(envForm, 'a/env#0/V');
+  ok('a name supplied via an env_file (envNames) is left alone',
+     envField.dollarFixes.length === 0, JSON.stringify(envField.advice));
+
+  var noEnvForm = Y.buildForm(envDoc, null, ['SOME_OTHER_NAME']);
+  var noEnvField = Y.fieldById(noEnvForm, 'a/env#0/V');
+  ok('the same name, absent from the env_file names supplied, is flagged',
+     noEnvField.dollarFixes.length === 1, JSON.stringify(noEnvField.advice));
+})();
+
+/* ---- AR11. Two bad parts in one field both report (the break bug) ------ */
+
+(function () {
+  var src = 'services:\n  a:\n    image: alpine\n    ports:\n      - "$zF@:$Ub5"\n';
+  var form = Y.buildForm(Y.parse(src));
+  var field = form.fields.filter(function (f) { return f.binder === 'port'; })[0];
+  ok('a port field is found', !!field);
+  ok('both the host and container parts are flagged, not just the first',
+     field.dollarFixes.length === 2, JSON.stringify(field.dollarFixes));
+  var parts = field.dollarFixes.map(function (d) { return d.part; }).sort();
+  ok('host and container are both named', parts[0] === 'container' && parts[1] === 'host', parts);
+  ok('advice carries one sentence per bad part', field.advice.length === 2, field.advice);
+  ok('hashEscape still names only the first, for the existing single-fix button',
+     field.hashEscape && field.hashEscape.part === field.dollarFixes[0].part, JSON.stringify(field.hashEscape));
+
+  // The offered fix always equals escapeDollars() of the value it fixes —
+  // the two can never disagree, because dollarsNeedEscaping() builds `to`
+  // by calling escapeDollars() itself rather than re-doubling by hand.
+  field.dollarFixes.forEach(function (fx) {
+    var raw = field.parts[fx.part].value;
+    ok('the offered fix for ' + fx.part + ' equals escapeDollars() of its value',
+       fx.to === Y.escapeDollars(raw), JSON.stringify(fx));
+  });
+})();
+
+/* ---- AR12. Already escaped is never flagged again; applying a general
+ *            (non-hash) fix disturbs nothing else on or off the line ---- */
+
+(function () {
+  var already = hashField('"$$zF@"');
+  ok('an already-escaped literal dollar is not re-flagged',
+     already.field.dollarFixes.length === 0, JSON.stringify(already.field.advice));
+
+  var before = 'services:\n' +
+               '  a:\n' +
+               '    image: alpine\n' +
+               '    environment:\n' +
+               '      ABOVE: keep\n' +
+               '      SMTP_PASSWORD: ne$%ZE7q  # do not touch me\n' +
+               '      BELOW: keep\n';
+  var doc = Y.parse(before);
+  var form = Y.buildForm(doc);
+  var field = Y.fieldById(form, 'a/env#1/SMTP_PASSWORD');
+  ok('the raw literal dollar is offered a fix', field.dollarFixes.length === 1, JSON.stringify(field.dollarFixes));
+
+  var applied = Y.setPart(doc, form, field.id, field.dollarFixes[0].part, field.dollarFixes[0].to);
+  ok('setPart accepts the fix', applied);
+
+  var after = Y.serialise(doc);
+  var beforeLines = before.split('\n'), afterLines = after.split('\n');
+  var changed = diffLines(before, after);
+  ok('exactly one line changed', changed.length === 1, JSON.stringify(changed));
+  ok('the value on that line is now doubled', afterLines[5].indexOf('ne$$%ZE7q') >= 0, afterLines[5]);
+  ok('the trailing comment on that line is untouched',
+     afterLines[5].indexOf('# do not touch me') >= 0, afterLines[5]);
+  ok('every other line is byte-identical to before',
+     beforeLines.filter(function (_, i) { return i !== 5; }).join('\n') ===
+     afterLines.filter(function (_, i) { return i !== 5; }).join('\n'));
 })();
 
 /* ---- result ------------------------------------------------------------- */

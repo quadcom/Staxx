@@ -57,6 +57,33 @@
       .replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
   }
 
+  // Unraid does no variable substitution at all, so every "$" arriving in a
+  // template's environment/label value is literal by definition — but a
+  // compose file reads a bare "$" as the start of a variable reference and
+  // silently drops it. Doubling it here is right only for values written
+  // into compose YAML; it must never be applied to ports, paths, devices or
+  // the image name, where a "$" cannot legitimately appear at all, so this
+  // is called at each write site rather than folded into dq()/scalarOut(),
+  // which those other fields share. Matches compose-model.js's own
+  // escapeDollars() byte for byte; kept as a local copy rather than a cross-
+  // file reach because this module is required stand-alone under Node.
+  function escapeDollars(s) {
+    return String(s == null ? '' : s).replace(/\$/g, '$$$$');
+  }
+
+  // Doubles a value's dollars and records what it touched, so convert() can
+  // report every environment/label key it changed without every call site
+  // repeating the counting logic. noEscape makes this a pass-through — used
+  // to get the template's own unescaped wording back out of the same code
+  // path, rather than trying to reverse the doubling after the fact.
+  function escapeDollarsTracked(val, key, dollarsEscaped, noEscape) {
+    var s = String(val == null ? '' : val);
+    if (noEscape) return s;
+    var n = (s.match(/\$/g) || []).length;
+    if (n > 0) dollarsEscaped.push({ key: key, count: n });
+    return escapeDollars(s);
+  }
+
   var UNSAFE_LEAD = /^[\s\-?:,\[\]{}#&*!|>'"%@`]/;
   var YAML_KEYWORD = /^(true|false|yes|no|on|off|null|~)$/i;
   var LOOKS_NUMERIC = /^[-+]?[0-9]+(\.[0-9]+)?$/;
@@ -604,7 +631,7 @@
     return def.indexOf('|') >= 0 ? def.split('|')[0] : def;
   }
 
-  function processConfig(configArr, name, warnings, notes, appdataRoot) {
+  function processConfig(configArr, name, warnings, notes, appdataRoot, dollarsEscaped, noEscape) {
     var ports = [], volumes = [], devices = [], environment = [], labels = [];
     if (!Array.isArray(configArr)) configArr = [];
 
@@ -664,9 +691,11 @@
       } else if (type === 'Variable') {
         // Emitted even when empty: the form shows it with its description,
         // which is the whole point of importing the metadata.
-        environment.push({ content: '      ' + keyOut(target) + ': ' + dq(val), comment: comment });
+        var venv = escapeDollarsTracked(val, target, dollarsEscaped, noEscape);
+        environment.push({ content: '      ' + keyOut(target) + ': ' + dq(venv), comment: comment });
       } else if (type === 'Label') {
-        labels.push({ content: '      ' + keyOut(target) + ': ' + dq(val), comment: comment });
+        var vlbl = escapeDollarsTracked(val, target, dollarsEscaped, noEscape);
+        labels.push({ content: '      ' + keyOut(target) + ': ' + dq(vlbl), comment: comment });
       } else {
         warnings.push('The setting "' + label + '" has the unrecognised type "' + type + '" and was skipped.');
       }
@@ -747,6 +776,8 @@
     appdataRoot = appdataRoot.replace(/\/*$/, '/');
     var warnings = [];
     var notes = [];
+    var dollarsEscaped = [];
+    var noEscape = !!opts.noDollarEscape;
     var name = normaliseName(app.Name);
     var service = name;
 
@@ -758,7 +789,7 @@
     notes = notes.concat(extra.notes);
     var net = networkInfo(app, notes, warnings, extra.macAddress,
       (opts.stackServices || []).filter(function (s) { return s !== service; }));
-    var cfg = processConfig(app.Config, name, warnings, notes, appdataRoot);
+    var cfg = processConfig(app.Config, name, warnings, notes, appdataRoot, dollarsEscaped, noEscape);
     reorderPortsForWebUI(cfg.ports, app.WebUI, notes);
 
     var privileged = app.Privileged === 'true' || extra.privileged;
@@ -767,10 +798,12 @@
       return { content: '      - ' + scalarOut(v), comment: '' };
     }));
     var environment = cfg.environment.concat(extra.environment.map(function (kv) {
-      return { content: '      ' + keyOut(kv.key) + ': ' + dq(kv.value), comment: '' };
+      var v = escapeDollarsTracked(kv.value, kv.key, dollarsEscaped, noEscape);
+      return { content: '      ' + keyOut(kv.key) + ': ' + dq(v), comment: '' };
     }));
     var labels = cfg.labels.concat(extra.labels.map(function (kv) {
-      return { content: '      ' + keyOut(kv.key) + ': ' + dq(kv.value), comment: '' };
+      var v = escapeDollarsTracked(kv.value, kv.key, dollarsEscaped, noEscape);
+      return { content: '      ' + keyOut(kv.key) + ': ' + dq(v), comment: '' };
     }));
 
     /* ---- the service body -------------------------------------------- */
@@ -872,7 +905,8 @@
           var oeq = opt.indexOf('=');
           var optKey = oeq >= 0 ? opt.slice(0, oeq) : opt;
           var optVal = oeq >= 0 ? opt.slice(oeq + 1) : '';
-          svc.push('        ' + keyOut(optKey) + ': ' + dq(optVal));
+          var ov = escapeDollarsTracked(optVal, optKey, dollarsEscaped, noEscape);
+          svc.push('        ' + keyOut(optKey) + ': ' + dq(ov));
         });
       }
     }
@@ -943,7 +977,26 @@
 
     var yaml = lines.join('\n') + '\n';
 
-    return { name: name, service: service, yaml: yaml, warnings: warnings, notes: notes };
+    // The template's own wording, before StaXX doubled anything, so a
+    // caller can keep it (see Import.php's two-save history trick) without
+    // trying to reverse the doubling after the fact — that only has to
+    // agree with what was escaped when something actually was, so a second
+    // run of the same conversion is asked for it directly rather than this
+    // call building two documents at once. Skipped when nothing was
+    // escaped, so a template with no dollar sign is unchanged in every
+    // respect, including this field being absent rather than a duplicate.
+    var yamlAsWritten = null;
+    if (!noEscape && dollarsEscaped.length) {
+      var passthroughOpts = {};
+      for (var k in opts) { if (opts.hasOwnProperty(k)) passthroughOpts[k] = opts[k]; }
+      passthroughOpts.noDollarEscape = true;
+      yamlAsWritten = convert(app, passthroughOpts).yaml;
+    }
+
+    return {
+      name: name, service: service, yaml: yaml, warnings: warnings, notes: notes,
+      dollarsEscaped: dollarsEscaped, yamlAsWritten: yamlAsWritten
+    };
   }
 
   /* =====================================================================
@@ -962,6 +1015,7 @@
     repositoryPath: repositoryPath,
     dq: dq,
     scalarOut: scalarOut,
+    escapeDollars: escapeDollars,
     wrapText: wrapText,
     warningCommentLines: warningCommentLines,
     findingsCommentLines: findingsCommentLines,

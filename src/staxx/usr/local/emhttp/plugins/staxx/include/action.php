@@ -301,6 +301,11 @@ switch ($action) {
     $body        = (string)($_POST['body'] ?? '');
     $isNew       = ($_POST['new'] ?? '') === '1';
     $fingerprint = (string)($_POST['fingerprint'] ?? '');
+    // PLAN_106 phase 5 gap: a caught install's own, unescaped wording — only
+    // ever sent alongside a brand-new stack's first save (see stacks.js),
+    // and read here unconditionally so an edit that somehow carried a stale
+    // value along is still ignored below rather than acted on.
+    $bodyAsIs    = (string)($_POST['bodyAsIs'] ?? '');
 
     // PLAN_102 — a create either lands on empty ground or is refused, and
     // the caller may claim it means to give an existing but fileless stack
@@ -327,6 +332,21 @@ switch ($action) {
                       . 'update, or a hand edit on the server. Close the editor and open the '
                       . 'stack again to see the current version, then make your changes again.',
         ]);
+      }
+    }
+
+    // PLAN_106 phase 5 gap — same shape as staxx_import_write()'s own as-is
+    // save: only on a brand-new stack (an ordinary edit must never double-
+    // save), and only when there is genuinely a different original wording
+    // to keep. Saved first so it files as history version one and the real,
+    // escaped write below files as version two — no rollback here if it
+    // fails, since unlike the import path there is no folder this call
+    // created to remove, and staxx_create_refusal() above has already
+    // guaranteed the ground was empty.
+    if ($isNew && $bodyAsIs !== '' && $bodyAsIs !== $body) {
+      $asIsError = '';
+      if (!staxx_save_stack($name, $bodyAsIs, $asIsError)) {
+        staxx_reply(['ok' => false, 'error' => $asIsError]);
       }
     }
 
@@ -2263,14 +2283,18 @@ switch ($action) {
    * See staxx_import_write() for the refuse-don't-overwrite rule and the
    * lock-before-file ordering; this case only shapes the request into what it
    * expects. 'about' is a JSON object built by the browser — see Import.php's
-   * staxx_import_note() for the fields it reads out of it.
+   * staxx_import_note() for the fields it reads out of it. 'bodyAsIs', when
+   * the converter doubled a dollar sign, is the template's own wording
+   * before that — see staxx_import_write()'s doc comment for why saving it
+   * first is what gets it into the stack's own history.
    */
   case 'import-write':
-    $body  = (string)($_POST['body']  ?? '');
-    $about = json_decode((string)($_POST['about'] ?? ''), true);
+    $body    = (string)($_POST['body']  ?? '');
+    $bodyAsIs = (string)($_POST['bodyAsIs'] ?? '');
+    $about   = json_decode((string)($_POST['about'] ?? ''), true);
     if (!is_array($about)) $about = [];
 
-    if (!staxx_import_write($name, $body, $about, $error)) {
+    if (!staxx_import_write($name, $body, $about, $error, $bodyAsIs)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
     staxx_reply(['ok' => true, 'name' => $name]);
