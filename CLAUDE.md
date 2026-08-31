@@ -264,6 +264,12 @@ workflows are deliberately separate and neither should grow into the other.
 
 ## Two release channels
 
+**`RELEASING.md` is the runbook — follow it to the letter when cutting either kind of release.** It
+carries the ordered steps, every refusal the build can produce and what each one means, and the two
+per-branch values a merge will get wrong. What follows here is the reasoning behind it, which is
+what you need when changing the machinery rather than using it.
+
+
 Same plugin, two channels, chosen by which manifest address somebody pastes into **Install Plugin**.
 Switching is pasting the other one.
 
