@@ -12,6 +12,20 @@
 > the occasional rough edge. For the stable release, read
 > [`main`](../../blob/main/README.md).
 >
+> ### To install this branch
+>
+> **Every install address further down this page is the stable one.** This is the address for
+> *this* branch — paste it into Unraid's **Plugins → Install Plugin** box:
+>
+> ```
+> https://raw.githubusercontent.com/quadcom/Staxx/dev/staxx.plg
+> ```
+>
+> **The user guide for this branch** is at
+> **[quadcom.github.io/Staxx/dev](https://quadcom.github.io/Staxx/dev/)** — it describes what is
+> here, rather than what is in the release. The [stable guide](https://quadcom.github.io/Staxx/)
+> covers the release instead.
+>
 > **A new build goes out most nights.** Whenever there is new work here, a release is cut
 > automatically overnight, and your server will offer it to you like any other plugin update. That
 > is the point of this channel — but it does mean updates arrive often, and each one carries whatever
