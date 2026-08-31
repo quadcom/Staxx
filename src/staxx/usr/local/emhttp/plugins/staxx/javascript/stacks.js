@@ -295,6 +295,18 @@
   var startBtn = document.getElementById('staxx-save-start');
   var undoBtn  = document.getElementById('staxx-undo');
 
+  // PLAN_67 step 1's "Tidy this file" button. Built here rather than added to
+  // the page's own markup, the same reasoning as iconAdoptNotice further
+  // down — one more button in that row is not worth a PHP change for. Same
+  // class as Undo, which it sits beside: it is the same kind of action, an
+  // edit to the whole file that Undo can put straight back.
+  var tidyBtn = document.createElement('button');
+  tidyBtn.type = 'button';
+  tidyBtn.className = 'staxx-btn';
+  tidyBtn.id = 'staxx-tidy';
+  tidyBtn.textContent = 'Tidy this file';
+  if (undoBtn && undoBtn.parentNode) undoBtn.parentNode.insertBefore(tidyBtn, undoBtn);
+
   // The lists a service can gain an entry in. The buttons that add one belong
   // to the SERVICE, never to the list: removing the last port has to take the
   // "ports:" key with it, because a key with nothing under it is null and
@@ -6549,6 +6561,12 @@
     // on, and undoing there writes the compose file's text into that file.
     undoBtn.disabled = sanitised || fileOpen !== null || !top;
     undoBtn.title = top ? 'Undo ' + top.what : 'Nothing to undo yet';
+    // Same guard as Undo, minus "is there anything to undo" — Tidy always has
+    // something to look at, it just may find nothing to move. Sanitise hides
+    // real values behind placeholders, and a companion file's tab means the
+    // box on screen is not the compose file at all; either way there is
+    // nothing here that Tidy should be reordering.
+    if (tidyBtn) tidyBtn.disabled = sanitised || fileOpen !== null;
   }
 
   // Called BEFORE the document is touched. The compose pane and the model are
@@ -8595,6 +8613,40 @@
     paintInk();
     reparse();
     setYamlStatus('Undid ' + step.what + '.');
+    updateUndo();
+  });
+
+  // PLAN_67 step 1 — lays keys out inside each service in StaXX's house
+  // order, never changing what any of them say. YAML.tidy() may not exist
+  // yet (built alongside this button, in the compose model), so this checks
+  // for it rather than assuming — a page deployed mid-build must not throw.
+  if (tidyBtn) tidyBtn.addEventListener('click', function () {
+    if (sanitised || fileOpen !== null || !YAML || typeof YAML.tidy !== 'function') return;
+
+    var result = YAML.tidy(currentText());
+    var refusalText = (result.refusals || []).map(function (r) { return r.why; }).join(' ');
+
+    if (!result.changed) {
+      // Same one-sentence rule whether nothing needed moving or everything
+      // refused — PLAN_67 is explicit that "changed nothing" must still say
+      // so, rather than a silent no-op that looks like the button did nothing.
+      setYamlStatus(refusalText
+        ? 'Nothing was tidied — ' + refusalText
+        : 'This file is already in StaXX’s house layout — nothing to change.');
+      return;
+    }
+
+    // A whole-file replacement, landed the same way restoring a version from
+    // history does: pushUndo() first so one click puts it straight back, then
+    // the ordinary reparse a programmatic edit always gets. Never saved here —
+    // the person decides whether to keep it.
+    pushUndo('tidying the file');
+    yamlPane.value = result.text;
+    paintGutter();
+    paintInk();
+    reparse();
+    setYamlStatus('This file was tidied into StaXX’s layout. Nothing was lost.' +
+      (refusalText ? ' Left alone: ' + refusalText : ''));
     updateUndo();
   });
 

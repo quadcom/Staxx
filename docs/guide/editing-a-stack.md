@@ -125,6 +125,25 @@ one before it writes anything.
 **Whatever the form flags — a gap, a mismatch, a suggestion — is a judgement call left to you.** The
 form points things out; it never decides for you that something is safe, wrong, or fine to ignore.
 
+## Tidying a file into StaXX's layout
+
+Files arrive from different places — a Community Applications template, a Docker image, a project
+already running on your server, or one you pasted in by hand — and each shapes its file a little
+differently. **Tidy this file**, beside Undo at the bottom of the editor, lays the settings inside
+each container out in one consistent order, matching the order the form itself is drawn in, so the
+file and the form read the same way.
+
+**Nothing you wrote is lost.** This only ever moves whole settings — and whatever is written beside
+them — into a different order; it never changes a value, and it never touches your comments beyond
+carrying them along with the setting they belong to. If part of the file is written in a shape too
+unusual to reorder safely, that part is left exactly as it was and the message after pressing the
+button says which part and why.
+
+It changes nothing on disk by itself — it lands as an ordinary unsaved change, so Save keeps it and
+Undo puts it straight back. And because every file already goes through your stack's own history
+before you can edit it, the version from just before you pressed Tidy is sitting there if you ever
+want to see it again.
+
 ## What this never does
 
 - **It never reformats your file.** Whitespace, indentation, quoting style and line order all stay

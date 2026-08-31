@@ -763,6 +763,24 @@
   var TOP_SPEC_SET = specSetOf(TOP_SPEC_KEYS);
   var SERVICE_SPEC_SET = specSetOf(SERVICE_SPEC_KEYS);
 
+  // PLAN_67 step 1: the house order tidy() lays a service's own keys into.
+  // This is the order the form already renders its groups in — stacks.js's
+  // GROUPS table — so the file and the form teach the same shape. tests/
+  // tidy.js checks the two tables agree, so a group added to one and
+  // forgotten in the other is caught rather than silently drifting apart.
+  // `<<` and `x-unraid` are not listed: tidy() pins the merge key first and
+  // x-unraid last in every service regardless of this table, because both
+  // would otherwise sort in the wrong place by accident of spelling. Any
+  // service key not named here (a real compose key the form has no control
+  // for yet, or a typo) keeps its existing relative order, placed after the
+  // known keys and before x-unraid.
+  var SERVICE_ORDER = [
+    'image', 'container_name', 'restart', 'network_mode', 'networks', 'ports',
+    'volumes', 'environment', 'devices', 'labels', 'healthcheck', 'deploy',
+    'build', 'depends_on', 'secrets', 'configs', 'profiles', 'dns', 'cap_add',
+    'cap_drop', 'expose', 'env_file', 'logging'
+  ];
+
   // Nested values the form can edit. The parser reaches these already and
   // writeScalar needs only a spot — the only thing missing was a field pointing
   // at one. An ABSENT leaf is never offered: creating a healthcheck block means
@@ -4333,6 +4351,286 @@
 
     splice(doc, insertAt, 0, block);
     return { ok: true };
+  }
+
+  /* =====================================================================
+   * PLAN_67 step 1: laying a service's own keys into the house order
+   * ===================================================================== */
+
+  // leadOf() (used everywhere else) claims a comment run above a key when it
+  // is AT LEAST as indented as the key — correct for its callers, which walk
+  // outward from one key and want a deeper, nested comment to travel with a
+  // shallower one above it. Under a full reorder of a service's keys that
+  // rule is a silent corruption: a note sitting at the end of one key's block
+  // gets claimed by whatever key comes next merely because it is indented no
+  // shallower, and moving that next key carries the note away from what it
+  // annotates. tidy() therefore needs its own, stricter version — indent
+  // must match exactly — kept local rather than changing leadOf() itself,
+  // which every other caller still needs as it is.
+  function tidyLeadStart(lines, at, indent) {
+    var i = at - 1;
+    while (i >= 0) {
+      var c = classify(lines[i], i);
+      if (c.kind !== 'comment' || c.indent !== indent) break;
+      i--;
+    }
+    return i + 1;
+  }
+
+  // Whether a pair's value is a '|+' or '>+' block scalar — the "keep"
+  // chomping indicator, the one case where the trailing blank lines a span
+  // deliberately excludes (see blockEnd()) are actually part of the value's
+  // own text. Moving the span without them would silently shorten the
+  // string, so tidy() refuses the whole service rather than risk it.
+  function keepChompScalar(doc, pair) {
+    if (!pair.value || pair.value.kind !== 'opaque' || pair.value.reason !== 'block-scalar') return false;
+    var line = doc.lines[pair.start];
+    var idx = line.indexOf(':', pair.indent + pair.keyRaw.length);
+    if (idx < 0) return false;
+    var m = /^\s*[|>]([+-]?\d*[+-]?)/.exec(line.slice(idx + 1));
+    return !!(m && m[1].indexOf('+') >= 0);
+  }
+
+  // Is `b` the same multiset of lines as `a`? The one check that proves a
+  // reordering pass has not lost or duplicated a line — sorting turns "did
+  // every line survive, exactly once" into a straight array comparison.
+  function sameMultiset(a, b) {
+    if (a.length !== b.length) return false;
+    var sa = a.slice().sort(), sb = b.slice().sort();
+    for (var i = 0; i < sa.length; i++) { if (sa[i] !== sb[i]) return false; }
+    return true;
+  }
+
+  // Works out the house order for one service, or refuses it. Returns
+  // { changed: false } when the service is already in order, { refusal:
+  // '<sentence>' } when it cannot safely be touched, or { changed: true,
+  // start, end, lines } holding the whole replacement span. Never edits
+  // `doc` itself — tidy() commits every service with one splice, or none.
+  function layoutService(doc, svcMap) {
+    var keys = svcMap.keys, pairs = svcMap.pairs, i, s, region;
+
+    // Recompute each key's lead comment with the strict rule above — this is
+    // the span that moves as one block, the same "key, value and the
+    // comment directly over it" unit moveItem() already moves for one list
+    // entry, generalised here to a whole service's keys.
+    var spans = [];
+    for (i = 0; i < keys.length; i++) {
+      var p = pairs[keys[i]];
+      spans.push({ key: keys[i], pair: p, start: tidyLeadStart(doc.lines, p.start, p.indent), end: p.end });
+    }
+
+    var totalStart = spans[0].start, totalEnd = svcMap.end;
+
+    // Refusal: every non-blank line here must belong to exactly one span.
+    // This is what turns the stricter lead-comment rule above from a silent
+    // corruption into a visible "left this alone" — a comment the old rule
+    // would have swallowed now shows up as an uncovered line — and it is
+    // also what catches a duplicate key: the parser keeps the first pair and
+    // discards the second, but the second's lines are still sitting in the
+    // file, claimed by nothing.
+    var covered = new Array(totalEnd - totalStart);
+    for (i = 0; i < spans.length; i++) {
+      for (var l = spans[i].start; l < spans[i].end; l++) covered[l - totalStart] = true;
+    }
+    for (l = totalStart; l < totalEnd; l++) {
+      if (covered[l - totalStart]) continue;
+      if (classify(doc.lines[l], l).kind !== 'blank') {
+        return { refusal: 'Line ' + (l + 1) + ' is not part of any setting here, so this service was left alone.' };
+      }
+    }
+
+    // Refusal: a keep-chomped block scalar's trailing blank lines are part
+    // of its value and a span's end excludes them — see keepChompScalar().
+    for (i = 0; i < spans.length; i++) {
+      if (keepChompScalar(doc, spans[i].pair)) {
+        return { refusal: 'The "' + spans[i].key + '" value keeps its trailing blank lines as part of its text, so this service was left alone.' };
+      }
+    }
+
+    // Which spans hold an anchor, alias or merge key anywhere inside them —
+    // doc.sealed records every such region in the whole document, however
+    // deeply nested, so this also catches one buried inside a list or a
+    // nested map, not only a bare "key: &anchor value".
+    var special = [];
+    for (i = 0; i < spans.length; i++) {
+      var hit = false;
+      for (s = 0; s < doc.sealed.length; s++) {
+        region = doc.sealed[s];
+        if (region.start >= spans[i].start && region.end <= spans[i].end &&
+            (region.reason === 'anchor' || region.reason === 'alias' || region.reason === 'merge')) {
+          hit = true; break;
+        }
+      }
+      if (hit) special.push(i);
+    }
+
+    // Refusal: belt and braces alongside the per-line coverage check above —
+    // every sealed region overlapping the service must sit entirely inside
+    // one span, the same overlap moveItem() guards against. The coverage
+    // check already proves this in the ordinary case; this is what catches
+    // it even if a sealed region ever straddled two spans, which would mean
+    // the span boundaries themselves could not be trusted.
+    for (s = 0; s < doc.sealed.length; s++) {
+      region = doc.sealed[s];
+      if (region.start < totalEnd && region.end > totalStart) {
+        var contained = false;
+        for (i = 0; i < spans.length; i++) {
+          if (region.start >= spans[i].start && region.end <= spans[i].end) { contained = true; break; }
+        }
+        if (!contained) {
+          return { refusal: 'Something in this service could not be safely split into its own pieces, so it was left alone.' };
+        }
+      }
+    }
+
+    // The target order: SERVICE_ORDER's keys that are present, then any
+    // unrecognised key keeping its own relative order, then '<<' pinned
+    // first and 'x-unraid' pinned last — see SERVICE_ORDER's own comment.
+    var present = {}, used = {};
+    for (i = 0; i < keys.length; i++) present[keys[i]] = true;
+    var ordered = [];
+    for (i = 0; i < SERVICE_ORDER.length; i++) {
+      if (present[SERVICE_ORDER[i]]) { ordered.push(SERVICE_ORDER[i]); used[SERVICE_ORDER[i]] = true; }
+    }
+    for (i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      if (k !== '<<' && k !== 'x-unraid' && !used[k]) ordered.push(k);
+    }
+    if (present['<<']) ordered.unshift('<<');
+    if (present['x-unraid']) ordered.push('x-unraid');
+
+    // Refusal: the planned order must not reverse two anchor/alias/merge
+    // spans relative to each other. special[] was built walking the spans in
+    // file order, so within it `a` always precedes `b` today; if the target
+    // order puts `b` first, the two have crossed.
+    if (special.length > 1) {
+      var indexOf = {};
+      for (i = 0; i < ordered.length; i++) indexOf[ordered[i]] = i;
+      for (i = 0; i < special.length - 1; i++) {
+        for (var j = i + 1; j < special.length; j++) {
+          var a = spans[special[i]].key, b = spans[special[j]].key;
+          if (indexOf[b] < indexOf[a]) {
+            return { refusal: 'Reordering would change which comes first, "' + a + '" or "' + b +
+                     '" — one may be a shared block the other reuses — so this service was left alone.' };
+          }
+        }
+      }
+    }
+
+    var same = true;
+    for (i = 0; i < keys.length; i++) { if (ordered[i] !== keys[i]) { same = false; break; } }
+    if (same) return { changed: false };
+
+    // Each span's own trailing gap (already proved blank-only above) travels
+    // with the span that precedes it, so relocating a key relocates the
+    // blank line that used to sit under it too — nothing is added or
+    // removed, only carried along.
+    var blocks = {};
+    for (i = 0; i < spans.length; i++) {
+      var to = i + 1 < spans.length ? spans[i + 1].start : totalEnd;
+      blocks[spans[i].key] = doc.lines.slice(spans[i].start, to);
+    }
+
+    var out = [];
+    for (i = 0; i < ordered.length; i++) out = out.concat(blocks[ordered[i]]);
+
+    return { changed: true, start: totalStart, end: totalEnd, lines: out };
+  }
+
+  /**
+   * Lays one file's service-level keys into the house order (PLAN_67 step
+   * 1). A pure function: takes the file's text, returns what the tidied
+   * text would be, and never writes anything itself — the caller decides
+   * whether to save it. Top-level keys and the order of services relative
+   * to each other are untouched; that is steps 2 and 3.
+   *
+   * Never throws, whatever the input, including '', null or a file that is
+   * nothing but comments — a crash here would leave the caller not knowing
+   * whether anything had changed, which is worse than a refusal.
+   *
+   * Refuses per service, and the whole file when the parser itself could
+   * not read it — see layoutService() above for what each one means. A
+   * refusal changes nothing for that scope: when everything refuses,
+   * `changed` is false and `text` is the input back byte for byte.
+   *
+   * -> { text: <string>, changed: <bool>, refusals: [{ scope, why }] }
+   */
+  function tidy(text) {
+    var input = String(text == null ? '' : text);
+    try {
+      return tidyLines(input);
+    } catch (e) {
+      return { text: input, changed: false,
+               refusals: [{ scope: 'file', why: 'Something unexpected stopped this file being checked, so nothing was changed.' }] };
+    }
+  }
+
+  function tidyLines(input) {
+    var doc = parse(input);
+
+    // Any region of the file failing to parse means reordering around it is
+    // guessing, so the whole file refuses rather than one scope. unreadTail
+    // is the parser's own "stopped partway through" signal (see the comment
+    // above it in parse()); a root that never became a map at all is the
+    // same situation caught one step earlier — the whole-file seals for tab
+    // indentation, a YAML directive, or more than one document.
+    if (!doc.root || doc.root.kind !== 'map' || doc.unreadTail) {
+      return { text: input, changed: false,
+               refusals: [{ scope: 'file', why: 'Part of this file could not be read, so nothing was reordered.' }] };
+    }
+
+    var servicesPair = doc.root.pairs['services'];
+    var servicesMap = servicesPair && servicesPair.value && servicesPair.value.kind === 'map' ? servicesPair.value : null;
+    if (!servicesMap || !servicesMap.keys.length) {
+      return { text: input, changed: false, refusals: [] };
+    }
+
+    var refusals = [], replacements = [], i;
+    for (i = 0; i < servicesMap.keys.length; i++) {
+      var name = servicesMap.keys[i];
+      var svcMap = servicesMap.pairs[name].value;
+      if (!svcMap || svcMap.kind !== 'map' || !svcMap.keys.length) continue;
+
+      var result = layoutService(doc, svcMap);
+      if (result.refusal) {
+        refusals.push({ scope: 'service:' + name, why: result.refusal });
+      } else if (result.changed) {
+        replacements.push({ start: result.start, end: result.end, lines: result.lines });
+      }
+    }
+
+    if (!replacements.length) {
+      return { text: input, changed: false, refusals: refusals };
+    }
+
+    replacements.sort(function (a, b) { return a.start - b.start; });
+    var candidate = [], pos = 0, r;
+    for (i = 0; i < replacements.length; i++) {
+      r = replacements[i];
+      while (pos < r.start) { candidate.push(doc.lines[pos]); pos++; }
+      candidate = candidate.concat(r.lines);
+      pos = r.end;
+    }
+    while (pos < doc.lines.length) { candidate.push(doc.lines[pos]); pos++; }
+
+    // Validate before committing (PLAN_67: one splice, not many). Every
+    // service was checked on its own above, but a candidate assembled from
+    // several of them is either safe as a whole or not trusted at all —
+    // there is nothing sensible to roll back to partway through, since
+    // splice() re-parses and replaces the tree wholesale.
+    if (!sameMultiset(doc.lines, candidate)) {
+      return { text: input, changed: false,
+               refusals: [{ scope: 'file', why: 'The reordered file did not check out line for line, so nothing was changed.' }] };
+    }
+    var check = parse(doc.bom + candidate.join('\n'));
+    if (!check.root || check.root.kind !== 'map' || check.unreadTail ||
+        check.warnings.length > doc.warnings.length || check.sealed.length > doc.sealed.length) {
+      return { text: input, changed: false,
+               refusals: [{ scope: 'file', why: 'The reordered file did not read back the same way, so nothing was changed.' }] };
+    }
+
+    splice(doc, 0, doc.lines.length, candidate);
+    return { text: serialise(doc), changed: true, refusals: refusals };
   }
 
   /**
@@ -9257,6 +9555,10 @@
     // handle up to it, because no other list has an order that means
     // anything.
     moveItem: moveItem,
+    // PLAN_67 step 1: lays a service's own keys into the house order —
+    // the "Tidy this file" pass, service scope only so far. See its own
+    // comment for the contract and the refusals.
+    tidy: tidy,
     addDeclared: addDeclared,
     declareNetwork: declareNetwork,
     // PLAN_64 phase C: the network row dropdown's mode branch, and its way

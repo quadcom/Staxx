@@ -57,6 +57,7 @@ node tests/ca_convert.js            # Community Applications template -> compose
 node tests/image_import.js          # Docker Hub / local image -> starting compose file
 node tests/stash_guard.js           # a set-aside may only hold the block it claims to
 node tests/meta_scaffold.js         # the commented x-unraid fields a new stack starts with
+node tests/tidy.js                  # the service-scope layout pass — key spans, refusals, idempotence
 node tests/js_undeclared.js         # names assigned but declared nowhere
 node tests/words.js                 # the passphrase generator's word list — count, shape, uniqueness
 node tests/registry_note.js         # the registry-behaviour note generator's own cases
