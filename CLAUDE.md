@@ -526,6 +526,12 @@ piece of engineering in the repository, and the reason the rest of this exists.
   line as content, and one syntax error makes it reject the *whole file* and return `false` —
   silently. The failure only surfaces the day a new key is added, because existing user configs
   already hold every older key.
+- **`_()` returns HTML, not plain text.** Unraid's own translator turns an apostrophe into
+  `&apos;` and `**bold**`/`*italic*` into tags before handing the string back, so
+  `htmlspecialchars(_('the app\'s own check'))` escapes that entity's ampersand and prints
+  `&apos;` on screen. Interpolate `_()` straight into markup and escape only the untrusted values
+  you are splicing into it. Existing double-escaping call sites are harmless only because none of
+  their strings contain an apostrophe.
 - **Asset URLs carry `filemtime()`.** Without it an edited stylesheet or script sits in the browser
   cache and looks exactly like a change that did not work.
 - **Own the render.** Stock Unraid CSS classes are not borrowed for layout — their rules are
