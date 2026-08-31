@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="STAXX">
+  <title>STAXX</title>
+  <defs><linearGradient id="r" gradientUnits="userSpaceOnUse" x1="36" y1="36" x2="220" y2="220"><stop offset="0" stop-color="#FFA24B"/><stop offset="0.45" stop-color="#FF8C2F"/><stop offset="1" stop-color="#E22828"/></linearGradient></defs>
+  <g id="staxx-icon" fill="#F2F4F8">
+    <path id="bar-1" d="M218.00,38.00 L204.90,74.00 L74.00,74.00 L87.10,38.00 Z"/>
+    <path id="bar-2" d="M182.00,86.00 L168.90,122.00 L38.00,122.00 L51.10,86.00 Z"/>
+    <path id="bar-3" d="M218.00,134.00 L204.90,170.00 L74.00,170.00 L87.10,134.00 Z"/>
+    <path id="bar-4" d="M182.00,182.00 L168.90,218.00 L38.00,218.00 L51.10,182.00 Z"/>
+  </g>
+</svg>
