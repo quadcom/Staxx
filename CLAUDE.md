@@ -230,6 +230,11 @@ bash tools/publish-preview.sh review       # just the front page and the review 
 bash tools/publish-preview.sh <file.md>…   # just those files
 ```
 
+**Every sectioned build also refreshes the changelog**, whichever section was asked for. It gains a
+bullet in the same commit as the change it describes, so it is edited in passing rather than
+deliberately, and it is the one page nobody would think to rebuild. Rendering it costs well under a
+second, which is cheaper than noticing it has gone stale.
+
 **Rebuild only the section you changed.** A full run empties the folder first, which is what makes a
 deleted page vanish; a sectioned run writes over just those pages and leaves everything else alone.
 Either way the last step is the same, so the top bar goes back onto every page it touched and the
