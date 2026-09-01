@@ -344,4 +344,4 @@ loudly instead of quietly shipping something broken.
 ## Before this
 
 The work landed as a long series of small pieces, each recorded with its reasoning in
-`completed-plans/`. That folder is the real history for anything earlier than this entry.
+`plans/completed-plans/`. That folder is the real history for anything earlier than this entry.

@@ -28,7 +28,8 @@ var path = require('path');
 var ROOT      = path.join(__dirname, '..');
 var GUIDE_DIR = path.join(ROOT, 'docs', 'guide');
 var INDEX     = path.join(GUIDE_DIR, 'README.md');
-var PLANS_DIR = path.join(ROOT, 'completed-plans');
+var PLANS_DIR = path.join(ROOT, 'plans', 'completed-plans');
+var LIVE_PLANS = path.join(ROOT, 'plans');
 
 var START = '<!-- pages:start -->';
 var END   = '<!-- pages:end -->';
@@ -270,10 +271,10 @@ console.log('\n3. Known gaps');
  * or
  *   Guide page: none — internal
  *
- * The 32 plans already in completed-plans/ predate it and are deliberately not
+ * The 32 plans already in plans/completed-plans/ predate it and are deliberately not
  * retrofitted, so listing them by name every build would be noise nobody reads
  * and would bury a real finding. They are counted in one line instead. Only
- * the live plans in the repository root are named, because those are the ones
+ * the live plans in plans/ are named, because those are the ones
  * somebody is still in a position to fix.
  * ====================================================================== */
 
@@ -296,9 +297,9 @@ console.log('\n4. Plans with no stated guide page');
                 + 'convention (not listed)');
   }
 
-  var live = plansIn(ROOT);
+  var live = plansIn(LIVE_PLANS);
   var missing = live.filter(function (n) {
-    return !HAS.test(read(path.join(ROOT, n)) || '');
+    return !HAS.test(read(path.join(LIVE_PLANS, n)) || '');
   });
 
   /* Counted apart from the problems above rather than added to them: today

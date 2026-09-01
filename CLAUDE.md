@@ -44,12 +44,16 @@ It is not: 3.13 is installed, with `pyyaml` and `jsonschema` both available, and
 `validate_schema.py` runs locally. Reach for another approach only after `python` itself has failed.
 
 **CRITICAL:** Never rewrite entire files. Provide targeted patch diffs or isolated code blocks only.
-**Execution:** Before executing any multi-file changes, write your proposed architecture to `PLAN.md` and wait for user approval. If during the process there are new sub-plans built. Create PLAN_X.md incrementing 'X' to keep track of all the steps that are outstanding. Once the plan(s) are complete then the plan files can be marked as complete. Keep the plans for future quick reference but move them into a `completed-plans/` folder.
+**Execution:** Before executing any multi-file changes, write your proposed architecture to `PLAN.md` and wait for user approval. If during the process there are new sub-plans built. Create PLAN_X.md incrementing 'X' to keep track of all the steps that are outstanding. Once the plan(s) are complete then the plan files can be marked as complete. Keep the plans for future quick reference but move them into `plans/completed-plans/`.
+
+**Where a plan lives:** every plan is a file in `plans/`. Everything still in play sits in the root
+of that folder — in progress, not started yet, or waiting on a decision. A finished plan moves down
+into `plans/completed-plans/`. Nothing plan-shaped is left loose in the project root.
 
 **A plan file is never deleted. There is no exception to this and no case where deleting one is the
-tidy answer.** A plan has exactly three ends: it is built, and moves to `completed-plans/`; it is
-abandoned, and its status line says so and why, and it moves to `completed-plans/` as the record of a
-road not taken; or it is still open, and it stays in the root. Superseding a plan does not delete it
+tidy answer.** A plan has exactly three ends: it is built, and moves to `plans/completed-plans/`; it
+is abandoned, and its status line says so and why, and it moves to `plans/completed-plans/` as the
+record of a road not taken; or it is still open, and it stays in `plans/`. Superseding a plan does not delete it
 either — the old one's status says what replaced it. A number is never reused. **Never remove a plan
 file, never fold two into one by deleting the loser, and never propose deleting one as housekeeping.**
 
@@ -58,7 +62,7 @@ plans cite older ones by number — so a missing file turns every citation to it
 can check. This already happened once: 57 finished plans, numbers 1 to 58, disappeared from disk on
 2026-08-25 when the commit that stopped carrying them in the repository took the working copies with
 it. They were recovered from the repository's history on 2026-09-01, but that door is now shut —
-`completed-plans/` and `PLAN_*.md` are gitignored, so **git is no longer a safety net for them.** They
+the whole of `plans/` is gitignored, so **git is no longer a safety net for them.** They
 survive on Adrian's own real-time backup of his development directory and nowhere else.
 
 **A commit is checked for private detail before it is made, and it can quietly exclude a file.** A
@@ -222,7 +226,7 @@ failure; its negative cases (what the schema must *reject*) matter more than the
 compose files, each built to exercise one quirk (comments, anchors, odd indentation, duplicate
 field names, and so on), that `yaml_roundtrip.js` and others parse, edit and write back to prove
 nothing is lost. It lives in the repository so anyone can reproduce the numbers rather than trust
-a claim. `completed-plans/PLAN_60a-parser-reads-part-of-a-file.md` records the parser work that
+a claim. `plans/completed-plans/PLAN_60a-parser-reads-part-of-a-file.md` records the parser work that
 corpus was built to check, including the two writers that splice lines themselves and so need their
 own guard against editing a file only partly read.
 

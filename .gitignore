@@ -32,12 +32,9 @@ desktop.ini
 # Review artifacts — kept locally for comparison, not part of the source
 /audits/
 
-# Finished plans — kept on disk for reference, not carried in the repository
-/completed-plans/
-
-# Working plans — kept on disk while a piece is being built, not carried in the repository
-/PLAN.md
-/PLAN_*.md
+# Plans — kept on disk for reference, not carried in the repository. Everything still in
+# play sits in plans/ itself; finished ones move down into plans/completed-plans/.
+/plans/
 
 # Project review reports, written by the order95 skill. Derived entirely from the plans
 # and the code, and the plans themselves are not in the repository either — so a report

@@ -4,7 +4,7 @@
 idea survives without a stale implementation plan attached to it.
 
 **BUILT — 2026-08-21.** Both gates cleared, decision 10 answered, and the code plan is done and
-filed at `completed-plans/PLAN_61-catalogue-registry-move.md`. That file records what the plan got
+filed at `plans/completed-plans/PLAN_61-catalogue-registry-move.md`. That file records what the plan got
 wrong and the two items it deliberately left open; this one is kept only for the concept and the
 measurements behind it. Nothing here is outstanding.
 
@@ -121,7 +121,7 @@ never touched. Weighted at the refusals, as ever:
 
 1. ~~**Decision 10 needs an answer.**~~ **Answered 2026-08-21** — see the decisions table above.
 2. ~~`PLAN_60.md` must have landed first.~~ **Cleared 2026-08-21 — it has landed**
-   (`completed-plans/PLAN_60-full-tree-review-fixes.md`). The write path decision 7 depends on was
+   (`plans/completed-plans/PLAN_60-full-tree-review-fixes.md`). The write path decision 7 depends on was
    corrupting any file indented with four spaces at the time this document was written, so a code
    plan drafted then would have specified a write that no longer exists.
 

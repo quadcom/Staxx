@@ -1,7 +1,7 @@
 # Importing from Unraid CA — what was built, what it found, what needs your eye
 
 **2026-08-16. `PLAN_17.md` is complete**, deployed to the test box and verified end to end. The plan
-now sits in `completed-plans/`.
+now sits in `plans/completed-plans/`.
 
 This is the results write-up. The first half is what happened; the second half is **the seven things
 that need a decision from you**, which is the part worth reading if you only read one.
