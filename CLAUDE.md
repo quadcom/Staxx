@@ -209,9 +209,22 @@ the common cases right and the interesting ones wrong, which is precisely backwa
 whose job is to catch a surprise before it ships. It needs the GitHub CLI signed in, and reads no
 token of its own.
 
-Relative images and cross-page links are rewritten so the guide can be clicked through page to page
-with the pictures loading, and the working copy is read directly rather than copied — so re-render
-and press refresh. Output lands in `.preview/`, which is gitignored.
+Relative images and cross-page links are rewritten so the guide clicks through page to page with its
+pictures loading. The output folder is self-contained — pictures are copied in beside the pages —
+which is what lets it be handed to a web server elsewhere. It lands in `.preview/`, gitignored.
+
+**There is also a copy on the server, so drafts can be read on a phone or tablet:**
+
+```sh
+bash tools/publish-preview.sh      # render, then replace what the server is showing
+```
+
+`http://<box>:8099/`, served by a `docs-preview` stack in Adrian's own StaXX store — an ordinary
+nginx container, visible and removable like any other stack, reading a folder it cannot write to.
+It renders nothing itself; the pages are built here, because that is where the signed-in GitHub CLI
+is. **The whole folder is replaced rather than merged**: a page deleted from the guide has to vanish
+from the preview too, or believing a stale page is current — the one thing this exists to prevent —
+is what it starts causing.
 
 **Adrian reviews docs here before they are pushed.** Offer it whenever a change to the readme or a
 guide page is waiting on his approval; a page he can look at is worth more than a description of it.

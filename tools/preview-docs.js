@@ -20,9 +20,10 @@
  * Two rewrites happen to the HTML that comes back, both so the preview behaves
  * like the real thing rather than a wall of broken links:
  *
- *   Images  — every relative source becomes an absolute file:/// URL into the
- *             working copy. Nothing is copied, so a picture replaced on disk
- *             shows up on the next reload.
+ *   Images  — copied in beside the pages and pointed at with a relative path,
+ *             which is what makes the output a self-contained folder. That is
+ *             the whole reason it can be handed to a web server elsewhere and
+ *             still show its pictures.
  *   Links   — a link to another markdown file becomes a link to that file's own
  *             preview, so the guide can be clicked through page to page the way
  *             a reader would. A link to a page that was not rendered this run is
@@ -30,6 +31,8 @@
  *
  * Output goes to .preview/, which .gitignore excludes: generated HTML has no
  * business in the repository, and a stale copy of it would be worse than none.
+ * `--out <dir>` writes it somewhere else instead — a folder that can be handed
+ * straight to nginx, which is how the copy on the server is fed.
  */
 
 'use strict';
@@ -40,7 +43,14 @@ var os = require('os');
 var execFileSync = require('child_process').execFileSync;
 
 var ROOT = path.resolve(__dirname, '..');
-var OUT = path.join(ROOT, '.preview');
+
+/* Where the rendered pages land. `--out <dir>` puts them somewhere else — the
+ * output is self-contained, so it can be handed straight to a web server
+ * rather than only read here. */
+var outArg = process.argv.indexOf('--out');
+var OUT = outArg > 0 && process.argv[outArg + 1]
+  ? path.resolve(process.argv[outArg + 1])
+  : path.join(ROOT, '.preview');
 
 // Where the stylesheet is cached. Fetched once and reused, so an ordinary run
 // makes exactly one network call per page and none for the styling.
@@ -88,13 +98,22 @@ function previewName(rel) {
   return rel.replace(/[\\/]/g, '-').replace(/\.md$/i, '') + '.html';
 }
 
-/* A file in the working copy, as a URL the little server below answers.
- * Root-relative rather than file:/// on purpose: a page served over http
- * cannot load a file:// image, and serving is what makes this openable in any
- * browser rather than only one set up to allow local files. */
+/* Every working-copy file some page referred to, gathered while rewriting and
+ * copied into the output afterwards. Copying rather than pointing at the
+ * original is what makes the output a self-contained folder — which is the
+ * whole reason it can be handed to a web server somewhere else and still show
+ * its pictures. */
+var assets = {};
+
+/* A file in the working copy, as a URL relative to the output folder. Not
+ * file:/// : a page served over http cannot load a file:// image, and the
+ * browser here refuses file:// URLs outright, so a preview served any other
+ * way would be one nobody could check. */
 function repoUrl(abs) {
   var rel = path.relative(ROOT, abs).replace(/\\/g, '/');
-  return '/repo/' + rel.split('/').map(encodeURIComponent).join('/');
+  if (rel.indexOf('..') === 0) return null;      // outside the working copy — leave it alone
+  assets[rel] = abs;
+  return 'repo/' + rel.split('/').map(encodeURIComponent).join('/');
 }
 
 /* Point every relative image and link at something that actually resolves from
@@ -105,7 +124,8 @@ function rewrite(html, rel, rendered) {
 
   html = html.replace(/(<img\b[^>]*?\bsrc=")([^"]+)(")/gi, function (all, a, src, b) {
     if (/^(https?:|data:|file:|#)/i.test(src)) return all;
-    return a + repoUrl(path.resolve(dir, src)) + b;
+    var u = repoUrl(path.resolve(dir, src));
+    return u ? a + u + b : all;
   });
 
   html = html.replace(/(<a\b[^>]*?\bhref=")([^"]+)(")/gi, function (all, a, href, b) {
@@ -128,7 +148,9 @@ function rewrite(html, rel, rendered) {
 
     // Anything else on disk — a picture linked rather than embedded, say.
     var abs = path.resolve(ROOT, target);
-    return fs.existsSync(abs) ? a + repoUrl(abs) + hash + b : all;
+    if (!fs.existsSync(abs)) return all;
+    var u = repoUrl(abs);
+    return u ? a + u + hash + b : all;
   });
 
   return html;
@@ -157,7 +179,10 @@ function page(title, body, css, nav) {
 }
 
 function main() {
-  var args = process.argv.slice(2).filter(function (a) { return a.charAt(0) !== '-'; });
+  var argv = process.argv.slice(2);
+  var args = argv.filter(function (a, i) {
+    return a.charAt(0) !== '-' && argv[i - 1] !== '--out';
+  });
   var files = args.length ? args.map(function (f) {
     return path.relative(ROOT, path.resolve(f)).replace(/\\/g, '/');
   }) : defaultFiles();
@@ -185,6 +210,17 @@ function main() {
     fs.writeFileSync(path.join(OUT, previewName(rel)), page(rel, html, css, nav), 'utf8');
     console.log('ok');
   });
+
+  // The copy that makes the folder self-contained. Done after rendering
+  // rather than during, because the same picture is usually referred to by
+  // more than one page and a set means it is copied once.
+  var names = Object.keys(assets);
+  names.forEach(function (rel) {
+    var dest = path.join(OUT, 'repo', rel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(assets[rel], dest);
+  });
+  if (names.length) console.log('  ' + names.length + ' picture(s) copied alongside.');
 
   var list = files.map(function (rel) {
     return '<li><a href="' + previewName(rel) + '">' + rel + '</a></li>';
@@ -222,14 +258,14 @@ function serve() {
     var url = decodeURIComponent(req.url.split('?')[0]);
     if (url === '/') url = '/index.html';
 
-    var base = OUT, rest = url;
-    if (url.indexOf('/repo/') === 0) { base = ROOT; rest = url.slice('/repo'.length); }
-
-    // Resolve first, then refuse anything that climbed out of the folder it
-    // was meant to stay inside. Every path here is written by this tool, so
-    // this guards a malformed request rather than a mistake above it.
-    var file = path.resolve(base, '.' + rest);
-    if (file.indexOf(base) !== 0 || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+    // One root, because the output folder already holds its own pictures —
+    // which is the same reason it can be handed to nginx somewhere else.
+    //
+    // Resolve first, then refuse anything that climbed out of that folder.
+    // Every path here is written by this tool, so this guards a malformed
+    // request rather than a mistake above it.
+    var file = path.resolve(OUT, '.' + url);
+    if (file.indexOf(OUT) !== 0 || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       return res.end('Not found: ' + url);
     }
