@@ -71,3 +71,4 @@ desktop.ini
 # clones this, so it stays on disk and out of the repository.
 /tools/preview-docs.js
 /tools/publish-preview.sh
+/tools/publish-review.js

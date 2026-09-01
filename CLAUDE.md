@@ -224,6 +224,12 @@ which is what lets it be handed to a web server elsewhere. It lands in `.preview
 bash tools/publish-preview.sh      # render, then replace what the server is showing
 ```
 
+**Its front page is the newest project review**, written by `tools/publish-review.js` from whatever
+`summaries/` holds, with links across to the readme, the guide and the changelog. The docs tool's own
+contents list lives at `pages.html` so the two never fight over `index.html`. Earlier reviews stay at
+`reviews/`, which is the one folder the publish script does **not** empty — everything else there is
+rewritten from the repository each run, but a review exists nowhere else on that machine.
+
 `http://<box>:8099/`, served by a `docs-preview` stack in Adrian's own StaXX store — an ordinary
 nginx container, visible and removable like any other stack, reading a folder it cannot write to.
 It renders nothing itself; the pages are built here, because that is where the signed-in GitHub CLI
