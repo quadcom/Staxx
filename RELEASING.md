@@ -116,7 +116,11 @@ if they disagree, but doing them in this order means it never has to.
    behaves differently. `01.00.00` is the first release meant for general use.
 
 2. **On `dev`**, in one commit:
-   - `CHANGELOG.md` — a new `## <version> — released <date>` section at the top, in the house voice.
+   - `CHANGELOG.md` — **rename** the running `## Unreleased` heading to `## <version> — released
+     <date>`. You are not writing this section now; it has been filling up as the work landed, and
+     every dev build has already published it. Read it through and tidy the wording, but the bullets
+     should already be there. The build refuses to publish while that heading still says
+     `Unreleased`.
    - `staxx.plg` — set `<!ENTITY version>` to the new number, and add a `###<version>` section at the
      top of the `<CHANGES>` block. That block is what Unraid's Plugin Manager shows.
    - Push `dev`.
@@ -150,6 +154,11 @@ if they disagree, but doing them in this order means it never has to.
 
 9. **Set dev's manifest to the *next* version you are heading towards**, and push. See the gotcha
    below.
+
+10. **Mirror it onto the feedback board.** Publish a changelog entry there from the section you
+    renamed in step 2 — same story, same words. That board is the only one of the three changelogs
+    that reaches people who never look at the repository. It stays a deliberate act rather than a
+    build step: publishing is visible to everyone at once and cannot be quietly undone.
 
 ---
 

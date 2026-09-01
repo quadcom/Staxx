@@ -2,12 +2,42 @@
 
 What changed, newest first. Versions match the plugin manifest.
 
+**The top section is `Unreleased`.** Work lands there as it is done, and a development build
+publishes that section as its own release notes — so a change with no bullet in it is a change
+nobody outside this repository is told about. Cutting a stable release renames that heading to the
+version and its date; the build refuses to publish while it still says `Unreleased`.
+
 **Numbering changed at `00.01.00`.** Every component is now two digits, and the count restarted from
 `00.01.00` on the way to `01.00.00` — the first release meant for general use. The padding is not
 decoration: Unraid compares plugin versions as plain text, so `1.10.0` would sort *below* `1.5.0` and
 updates would silently stop being offered. Fixed-width numbers make text order and number order the
 same thing. Everything above `1.1.0` in this file used the old unpadded numbering, and the versions
 before that were dates.
+
+---
+
+## Unreleased
+
+- **A running container that nothing is checking can be offered a health check.** A green row only
+  ever meant the container was going, never that the app inside was working. Click the pill on such a
+  row — or use the button in the editor's health check section — and StaXX works out a question worth
+  asking that image: a check written against a known database's own documentation, one the project
+  published itself, or a plain fetch of the app's web page. It tries the candidate inside the running
+  container first, so a check that cannot run is never offered. Where it knows no real question, it
+  says so and offers nothing, because a check that can only ever say yes turns "nobody knows" into
+  "looks fine". Nothing is applied without you accepting it, and the check it writes is ordinary
+  compose that travels with the file to any machine.
+- **A check says what it actually proves.** A web-page check tells you the page answered and nothing
+  about whatever sits behind it; a database check has logged in and run a real query. The offer names
+  which claim you are getting before you accept it.
+- **A Community Applications template that carried a health check now keeps it.** It used to be
+  explained away with a note saying compose had an equivalent, and then discarded.
+- **Every compose file is laid out the same way, once, as it arrives.** However a file got here, its
+  sections and each container's settings are put into one order, with a blank line between sections.
+  The button in the editor brings an older stack into line. Order only: no line's text is ever
+  rewritten, comments travel with the setting they sit above, blank lines are only ever added, and
+  containers are never reordered against each other. Where StaXX cannot be sure a move would leave
+  the file meaning the same thing, it leaves that part alone and says so.
 
 ---
 
