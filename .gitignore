@@ -59,3 +59,8 @@ desktop.ini
 # approach ever returns.
 /.claude/
 /.mcp.json
+
+# Locally rendered previews of the readme and the guide, written by
+# tools/preview-docs.js. Generated HTML plus a cached stylesheet — it exists to
+# be looked at before a push and is stale the moment the markdown changes.
+/.preview/

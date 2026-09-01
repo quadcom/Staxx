@@ -194,6 +194,28 @@ a claim. `completed-plans/PLAN_60a-parser-reads-part-of-a-file.md` records the p
 corpus was built to check, including the two writers that splice lines themselves and so need their
 own guard against editing a file only partly read.
 
+## Seeing a page the way GitHub will render it
+
+```sh
+node tools/preview-docs.js                    # readme, changelog and the whole guide
+node tools/preview-docs.js README.md          # just one
+node tools/preview-docs.js --no-serve         # write the files, do not serve them
+```
+
+Serves the result at `http://localhost:8099`. **It does not approximate GitHub's formatting — it
+asks GitHub to do the rendering**, through the same markdown endpoint the site itself uses, so alert
+blocks, task lists and tables come back exactly as they will appear. A local markdown library gets
+the common cases right and the interesting ones wrong, which is precisely backwards for something
+whose job is to catch a surprise before it ships. It needs the GitHub CLI signed in, and reads no
+token of its own.
+
+Relative images and cross-page links are rewritten so the guide can be clicked through page to page
+with the pictures loading, and the working copy is read directly rather than copied — so re-render
+and press refresh. Output lands in `.preview/`, which is gitignored.
+
+**Adrian reviews docs here before they are pushed.** Offer it whenever a change to the readme or a
+guide page is waiting on his approval; a page he can look at is worth more than a description of it.
+
 ## Deploying to the test server
 
 Credentials for the test box live in `local/dev-server.md`, which is gitignored via `/local/`.
