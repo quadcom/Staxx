@@ -60,6 +60,23 @@ can check. This already happened once: 57 finished plans, numbers 1 to 58, disap
 it. They were recovered from the repository's history on 2026-09-01, but that door is now shut —
 `completed-plans/` and `PLAN_*.md` are gitignored, so **git is no longer a safety net for them.** They
 survive on Adrian's own real-time backup of his development directory and nowhere else.
+
+**A commit is checked for private detail before it is made, and it can quietly exclude a file.** A
+local pre-commit hook — in `.git/hooks/`, so never carried in a clone — reads the lines a commit
+*adds* and refuses the commit over an address on the real server's network, a password hash carrying
+real salt and hash material, a private key, a GitHub or Docker Hub token, Adrian's email address, or
+this machine's own name or mapped drive. It ignores the example addresses the code and tests use
+throughout, the bare hash scheme names the docs discuss, and any line ending `# allow-private`. Past
+it once with `STAXX_ALLOW_PRIVATE=1 git commit`, and only with a reason.
+
+**Plan-shaped paths are treated differently and this is the part that surprises people:** a staged
+plan is read in *full*, not just its changed lines, and if anything is found that one file is
+**dropped from the commit** while everything else lands. So a commit can legitimately contain less
+than was staged — the hook says which file it held and why. Nothing is lost; the plan is untouched on
+disk and commits once it has been sanitised. The whole text is read rather than the diff because a
+credential committed three commits ago is already in the history for good, and it is a check rather
+than a "sanitised on <date>" marker because a marker is a claim that goes stale on the next edit.
+The `housekeeping` skill carries the sanitising rules the check enforces.
 **COMMENTS AND DOCUMENTATION** Comments and documentation should reflect what something does not what it used to do along with what it now does.
 **WRITING CODE** When writing code, Opus always makes the plan and Multiple SOnnet agents will write the code. Opus will then verify the code that was written. Just before writing starts tell me "Sonnet agents are writing".
 **TOKEN USAGE** At all times be conservative on token usage.
