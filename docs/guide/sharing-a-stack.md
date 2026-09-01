@@ -10,13 +10,13 @@ Your compose file has things in it that belong only to you: passwords, keys, you
 Right-click a stack's row and choose **Export…**. See [the stack list](the-stack-list.md) for the
 rest of that menu.
 
-<!-- SHOT: sharing-a-stack-menu | close-up | a stack row's right-click menu with Export… visible -->
+![The stack menu open, with Export among its items](../images/guide/the-stack-list-row-menu.png)
 
 ## 2. Choose what goes
 
 The first screen lists every file in the stack's folder.
 
-<!-- SHOT: sharing-a-stack-files | full frame | the export dialog's first screen, file list and compose settings list both visible -->
+![The first Export screen: a Files list showing the compose file always goes and a picture that is left behind because it cannot be checked, then Compose settings listing every setting with a tick box, the four already marked secret ticked for you](../images/guide/sharing-a-stack-files.png)
 
 | Kind | What happens |
 |---|---|
@@ -49,7 +49,7 @@ differs machine to machine.
 
 Press **Next**. Nothing is written yet.
 
-<!-- SHOT: sharing-a-stack-summary | full frame | the export dialog's second screen: Going, Left behind and why, Values blanked -->
+![The second Export screen: Going lists the compose file, Left behind and why names the picture and the reason, Values blanked lists the four settings whose values are being replaced, and a line saying nothing is written until Export is pressed](../images/guide/sharing-a-stack-summary.png)
 
 | Section | Shows |
 |---|---|

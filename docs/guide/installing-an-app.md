@@ -14,14 +14,14 @@ one catalogue entry into an ordinary compose file, ready for you to check before
 2. Read the window that opens. It shows a curated home page — **Spotlight**, **Recently Added**
    and **Top Trending** — with a search box and a category list above them.
 
-   ![The "Add an app" window: a short explanation of what adding one does, a search box across the top, and four catalogue entries listed below with their logos, descriptions and an Add button each](../images/guide/installing-an-app-catalogue.png)
+   ![The Add an app window: an explanation of what adding one does, a Home and a Search tab, a search box with a category dropdown beside it, then Spotlight Apps and Recently Added listed as cards with a picture, a maintainer, a pull count and an Add button each](../images/guide/installing-an-app-window.png)
 
 3. Find the app you want. Browse the home page, pick a category, or type a name in the search box —
    typing switches you to the **Search** tab on its own.
 
 4. Press an app's card to open it.
 
-   <!-- SHOT: installing-an-app-card | full frame | an open app card: icon, title, description, screenshots, and the Add this app button -->
+   ![An app's card in the Add an app window: its picture and name, Project, Support and Registry links, the description the maintainer wrote, its category, when it was added, its image name and its maintainer, with Add this app and Close in the top corner](../images/guide/installing-an-app-card.png)
 
 5. Read the card. It shows an icon, a description, screenshots if the maintainer supplied any, its
    category, when it was added and last updated, its Docker Hub pull count and star rating where
@@ -35,7 +35,7 @@ one catalogue entry into an ordinary compose file, ready for you to check before
 
 8. Land in the stack editor. The new stack has a name already, but nothing has been saved.
 
-   <!-- SHOT: installing-an-app-editor | full frame | the stack editor just after adding an app, with the check-list banner visible above the form -->
+   ![The editor straight after pressing Add this app, titled New stack: a banner saying one value was changed because it held a dollar sign, the converted compose file with placeholder comments at the top, and below the form the check-list of things to look at before saving](../images/guide/installing-an-app-editor.png)
 
 9. Read the banner above the form, if one appears. It lists anything worth a look before you save —
    settings with no compose equivalent, values StaXX had to fill in, or a dollar sign that was
@@ -64,7 +64,7 @@ file with just the image name in it, for you to build up by hand.
 
 ## The result
 
-<!-- SHOT: installing-an-app-result | close-up | the compose view showing the app-information comment block at the top of the file: icon, description, category and links -->
+![The three bars under the editor: the red check-list naming each path that was filled in with a placeholder, a bar offering to create three folders that do not exist yet, and a caution that one of the folders already has files in it](../images/guide/installing-an-app-result.png)
 
 The result is a normal compose file — nothing about it depends on StaXX to run. It arrives already
 laid out in StaXX's standard order, the same tidying described in
