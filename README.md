@@ -40,7 +40,7 @@
 > its merits. Not on Community Applications, and not meant to be yet — but numbered releases do
 > install the ordinary Unraid way. See [Limitations](#limitations).
 >
-> Version 00.01.00 · [changelog](CHANGELOG.md)
+> Latest release: **[00.01.00](https://github.com/quadcom/Staxx/releases)** · [changelog](CHANGELOG.md)
 
 ## Why this exists
 

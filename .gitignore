@@ -64,3 +64,10 @@ desktop.ini
 # tools/preview-docs.js. Generated HTML plus a cached stylesheet — it exists to
 # be looked at before a push and is stale the moment the markdown changes.
 /.preview/
+
+# The docs preview tooling. Entirely local: it renders the guide and writes it
+# onto Adrian's own box, hardcoding that machine's address and a drive letter
+# only his Windows setup has. Useful every day here and useful to nobody who
+# clones this, so it stays on disk and out of the repository.
+/tools/preview-docs.js
+/tools/publish-preview.sh

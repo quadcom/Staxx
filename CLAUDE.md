@@ -196,6 +196,11 @@ own guard against editing a file only partly read.
 
 ## Seeing a page the way GitHub will render it
 
+**Local only — neither script below is in the repository.** They render the guide and write it onto
+Adrian's own box, hardcoding that machine's address and a drive letter only his setup has, so they
+are gitignored in place: on disk here, absent from a clone. Same reasoning as `local/`.
+
+
 ```sh
 node tools/preview-docs.js                    # readme, changelog and the whole guide
 node tools/preview-docs.js README.md          # just one
