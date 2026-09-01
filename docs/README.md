@@ -1,3 +1,5 @@
+<p align="center"><img src="../Logo/staxx-wordmark-heavy-1024.png" alt="StaXX" width="260"></p>
+
 # Start here
 
 This folder holds the project's thinking: what it is trying to do, whether it can be done, and the

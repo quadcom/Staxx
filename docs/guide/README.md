@@ -1,3 +1,5 @@
+<p align="center"><img src="../images/guide/staxx-lockup.png" alt="StaXX" width="360"></p>
+
 # The StaXX guide
 
 StaXX is the page where every container on your server lives, drawn as a form so you can change a

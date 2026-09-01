@@ -1,3 +1,5 @@
+<p align="center"><img src="Logo/staxx-lockup-1024.png" alt="StaXX" width="420"></p>
+
 # StaXX — Docker on Unraid, built on compose files
 
 <!-- dev-banner -->
