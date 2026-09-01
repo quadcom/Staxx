@@ -44,7 +44,22 @@ It is not: 3.13 is installed, with `pyyaml` and `jsonschema` both available, and
 `validate_schema.py` runs locally. Reach for another approach only after `python` itself has failed.
 
 **CRITICAL:** Never rewrite entire files. Provide targeted patch diffs or isolated code blocks only.
-**Execution:** Before executing any multi-file changes, write your proposed architecture to `PLAN.md` and wait for user approval. If during the process there are new sub-plans built. Create PLAN_X.md incrementing 'X' to keep track of all the steps that are outstanding. Once the plan(s) are complete then the plan files can be marked as complete. Keep the plans for future quick reference but move them into a complerted plans folder.
+**Execution:** Before executing any multi-file changes, write your proposed architecture to `PLAN.md` and wait for user approval. If during the process there are new sub-plans built. Create PLAN_X.md incrementing 'X' to keep track of all the steps that are outstanding. Once the plan(s) are complete then the plan files can be marked as complete. Keep the plans for future quick reference but move them into a `completed-plans/` folder.
+
+**A plan file is never deleted. There is no exception to this and no case where deleting one is the
+tidy answer.** A plan has exactly three ends: it is built, and moves to `completed-plans/`; it is
+abandoned, and its status line says so and why, and it moves to `completed-plans/` as the record of a
+road not taken; or it is still open, and it stays in the root. Superseding a plan does not delete it
+either — the old one's status says what replaced it. A number is never reused. **Never remove a plan
+file, never fold two into one by deleting the loser, and never propose deleting one as housekeeping.**
+
+The reason is not sentiment. A plan is the only record of *why* something was decided, and newer
+plans cite older ones by number — so a missing file turns every citation to it into a claim nobody
+can check. This already happened once: 57 finished plans, numbers 1 to 58, disappeared from disk on
+2026-08-25 when the commit that stopped carrying them in the repository took the working copies with
+it. They were recovered from the repository's history on 2026-09-01, but that door is now shut —
+`completed-plans/` and `PLAN_*.md` are gitignored, so **git is no longer a safety net for them.** They
+survive on Adrian's own real-time backup of his development directory and nowhere else.
 **COMMENTS AND DOCUMENTATION** Comments and documentation should reflect what something does not what it used to do along with what it now does.
 **WRITING CODE** When writing code, Opus always makes the plan and Multiple SOnnet agents will write the code. Opus will then verify the code that was written. Just before writing starts tell me "Sonnet agents are writing".
 **TOKEN USAGE** At all times be conservative on token usage.
