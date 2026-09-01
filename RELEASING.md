@@ -155,10 +155,20 @@ if they disagree, but doing them in this order means it never has to.
 9. **Set dev's manifest to the *next* version you are heading towards**, and push. See the gotcha
    below.
 
-10. **Mirror it onto the feedback board.** Publish a changelog entry there from the section you
-    renamed in step 2 — same story, same words. That board is the only one of the three changelogs
-    that reaches people who never look at the repository. It stays a deliberate act rather than a
-    build step: publishing is visible to everyone at once and cannot be quietly undone.
+10. **Mirror it onto the feedback board.** That board is the only one of the three changelogs that
+    reaches people who never look at the repository.
+
+    **Check for an existing draft first.** An entry is often written while the work is being done
+    and left unpublished until the release it names is actually cut — so the usual job here is
+    finding that draft, reading it against what shipped, and publishing it. Writing a fresh one on
+    top would leave two.
+
+    ```sh
+    bash ~/.claude/skills/feedlog/feedlog.sh GET /api/admin/changelogs
+    ```
+
+    Publishing stays a deliberate act rather than a build step: it is visible to everyone at once
+    and cannot be quietly undone, so **ask before publishing**.
 
 ---
 
