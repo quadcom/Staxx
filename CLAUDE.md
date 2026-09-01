@@ -218,11 +218,23 @@ Relative images and cross-page links are rewritten so the guide clicks through p
 pictures loading. The output folder is self-contained — pictures are copied in beside the pages —
 which is what lets it be handed to a web server elsewhere. It lands in `.preview/`, gitignored.
 
-**There is also a copy on the server, so drafts can be read on a phone or tablet:**
+**The local preview site is where all of this is read.** It lives on Adrian's own box and is the
+normal way he looks at anything before it is pushed:
 
 ```sh
-bash tools/publish-preview.sh      # render, then replace what the server is showing
+bash tools/publish-preview.sh              # everything, from scratch
+bash tools/publish-preview.sh guide        # just the user guide (and the glossary)
+bash tools/publish-preview.sh readme       # just the readme
+bash tools/publish-preview.sh changelog    # just the changelog
+bash tools/publish-preview.sh review       # just the front page and the review history
+bash tools/publish-preview.sh <file.md>…   # just those files
 ```
+
+**Rebuild only the section you changed.** A full run empties the folder first, which is what makes a
+deleted page vanish; a sectioned run writes over just those pages and leaves everything else alone.
+Either way the last step is the same, so the top bar goes back onto every page it touched and the
+front page is rebuilt from the newest review — navigation never depends on which part was rebuilt.
+The contents page always lists the whole site, not the subset a partial run happened to render.
 
 **Its front page is the newest project review**, written by `tools/publish-review.js` from whatever
 `summaries/` holds, with links across to the readme, the guide and the changelog, and a fixed
