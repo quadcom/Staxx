@@ -132,7 +132,10 @@ appears; delete the folder and it goes. There is no database to fall out of step
 Every stack is a row, and each container inside it gets its own row.
 
 - **Live figures** per container — processor, memory, network and graphics, each with a small graph.
-- **State** per container, with uptime and what its health check says.
+- **State** per container, with uptime and what its health check says. Where nothing is checking a
+  running container, StaXX offers to work one out — from a known database's own documentation, the
+  project's published example, or the app's web page — and tries it inside the container before
+  offering it. Where it knows no real question to ask, it says so rather than inventing one.
 - **Four buttons** — web page, logs, project page, Unraid support thread.
 - **Its address**, with Unraid's own address-and-port substitution.
 - **Its logo**, kept — the picture is copied in beside the compose file and recorded there, so a
@@ -183,6 +186,9 @@ block — shown, never hidden.
 
 - **Undo covers the form and the file alike** — a change made in a box and the line it wrote go back
   as one step, not two.
+- **One house layout.** A file is laid out once as it arrives, however it got here, and a button
+  brings an older stack into line. Order only: no line's text is ever rewritten, comments travel
+  with what they annotate, and where a move might change what the file means it is left alone.
 - **Find and replace** in the file view, including replace-all.
 - **The author's comments become the help text** beside each field, and help text you write becomes
   comments in the file. Two marks — **secret** and **required** — say how a value should be treated.
