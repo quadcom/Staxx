@@ -91,6 +91,8 @@ Nothing is written until you say yes, and it will never touch a service that alr
 its own. See [what every mark means](marks.md#letting-staxx-work-out-a-health-check) for what a
 health check is and how StaXX decides on one.
 
+![The Health check group in the editor with every box empty — "How the check runs" and "The check itself" — and a "Work out a health check" button in the top right of the group](../images/guide/editing-a-stack-health-offer.png)
+
 ## The note under a box
 
 Most boxes carry a smaller box underneath labelled **Notes**. That is not a caption the form
@@ -153,6 +155,17 @@ between containers wherever one is missing, so the file has some air in it. A ga
 purpose is never touched — blank lines are only ever added, never taken away. **Containers
 themselves are never reordered relative to each other**, since the order they are written in can
 carry meaning.
+
+Before, a file as it happened to arrive — the lists of volumes and networks above the containers, the
+stack's own name stranded at the bottom, each container's settings in no particular order, and no
+blank lines anywhere:
+
+![A compose file with volumes and networks listed first, then services, and the name last; inside the one container the settings run ports, volumes, a comment, devices, image, environment, restart and networks, with no blank lines anywhere](../images/guide/editing-a-stack-tidy-before.png)
+
+After, the same file with nothing added and nothing taken away — note that the comment has travelled
+with the setting it was written above:
+
+![The same file laid out: the name first, then services, then networks, then volumes, with a blank line between each; inside the container the settings now run image, restart, networks, ports, volumes, environment, then the same comment still directly above devices](../images/guide/editing-a-stack-tidy-after.png)
 
 **Nothing you wrote is lost.** This only ever moves whole settings — and whatever is written beside
 them — into a different order. No line of text is ever rewritten: your quoting, your spacing, your

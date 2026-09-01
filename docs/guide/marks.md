@@ -55,6 +55,8 @@ You will meet the offer in two places:
 - **A button in the editor's health check section**, for anyone who goes looking before anything has
   quietly gone wrong.
 
+![A stack row for a stack called zz-screenshot-demo running one container called demo-database on the postgres image, its green "running(1)" pill outlined to show it is a button you can press](../images/guide/marks-health-offer-pill.png)
+
 When you click through, StaXX looks for a real question to ask, best answer first:
 
 | What StaXX finds | What happens |
@@ -70,6 +72,8 @@ asked. A check written against a known database logs in and runs a real command,
 something — the database accepted a connection and did real work. A plain web-page check only tells
 you the web page answered; it says nothing about whatever sits behind that page. StaXX always tells
 you which claim you are getting before you accept it.
+
+![The offer, headed "Add a health check for demo-database?", saying the check proves this database logged in and answered a real query, showing the command in full, then that it runs every 30s, times out after 5s and is allowed 3 tries before being called unhealthy with 30s of grace after the container starts, then that working this out ran one short command inside the running container, with Cancel and "Add it" buttons](../images/guide/marks-health-offer.png)
 
 **Nothing is ever offered on a guess.** Before it offers anything, StaXX tries the candidate check
 once against the running container and looks at what comes back — this runs one short command

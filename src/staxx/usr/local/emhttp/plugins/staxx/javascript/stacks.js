@@ -20782,8 +20782,13 @@
   function confirmHealthOffer(service, choice, probe, bodyText) {
     var offer = choice.offer;
     var waited = anotherServiceWaitsOn(bodyText, service);
+    // The claims are written as fragments in the table they come from, so
+    // they read correctly after "...a check that proves". Standing alone as
+    // the first sentence of the offer they need a capital, which is cheaper
+    // to add here than to write two spellings of every claim.
+    var claim = choice.claim ? choice.claim.charAt(0).toUpperCase() + choice.claim.slice(1) : '';
     var lines = [
-      '<p>' + esc(choice.claim) + '.</p>',
+      '<p>' + esc(claim) + '.</p>',
       '<p><code>' + esc(offerCommandText(offer.test)) + '</code></p>',
       '<p>Runs every ' + esc(offer.interval) + ', times out after ' + esc(offer.timeout) +
         ', and is allowed ' + esc(String(offer.retries)) + ' tries before being called unhealthy' +
