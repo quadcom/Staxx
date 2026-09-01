@@ -252,6 +252,11 @@ Each row of the index is a card of the same shape as the finding it points at,
 carrying that finding's own severity colour down its left edge and its severity word above the
 title, and going green with a tick once the `housekeeping` skill has marked it `addressed`.
 
+The bar is fixed to the top of the window, so every anchor target on a review carries a
+`scroll-margin-top` of the bar's height plus a little — both read from one CSS variable. Without it a
+link from the index scrolls the finding to the very top and straight behind the bar, which looks like
+the link pointing at the wrong thing rather than the page hiding what it found.
+
 The same bar is stamped onto **every** page in the preview folder, not just the review — the docs
 tool's own thin nav is removed on the way past, so there is one bar rather than two that drift. The
 StaXX preview name is the way back to the newest review. Links in the bar take a path prefix,
