@@ -327,7 +327,7 @@ jobs:
           # empty section, so nothing here could be empty without that gate
           # having broken — and inventing a placeholder would hide it.
           with open("dev-commits.txt", encoding="utf-8") as f:
-              body = f.read().rstrip("\n")
+              body = f.read().strip("\n")   # strip, not rstrip: the section opens with a blank line
 
 
           with open("staxx.plg", encoding="utf-8") as f:
