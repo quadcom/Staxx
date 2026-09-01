@@ -304,13 +304,18 @@ contents list lives at `pages.html` so the two never fight over `index.html`. Ea
 `reviews/`, which is the one folder the publish script does **not** empty — everything else there is
 rewritten from the repository each run, but a review exists nowhere else on that machine.
 
-`http://<box>:8099/`, served by a `docs-preview` stack in Adrian's own StaXX store — an ordinary
+Served on port 8099 by a `docs-preview` stack in Adrian's own StaXX store — an ordinary
 nginx container, visible and removable like any other stack, reading a folder it cannot write to.
 It renders nothing itself; the pages are built here, because that is where the signed-in GitHub CLI
-is, and written **straight into the folder nginx serves** over a mapped drive (`P:` →
-`\knoxx.localppdata\staxx-docs-preview\html`). There is no copy step: writing the page is
-publishing it. Use the host's `.local` name when mapping — the bare name does not resolve here, and
-this shell cannot use a UNC path at all, only a mapped letter.
+is, and written **straight into the folder nginx serves** over a mapped drive. There is no copy
+step: writing the page is publishing it. Use the host's `.local` name when mapping — the bare name
+does not resolve here, and this shell cannot use a UNC path at all, only a mapped letter.
+
+**The address, the drive letter and the folder it points at are in `local/machine.md`** — read it
+when you need one. They are Adrian's own machine and network, and this file is public, so they live
+in the one place `.gitignore` already keeps out of the repository. Same arrangement as
+`local/dev-server.md`, which holds the server's credentials. Nothing expands automatically: reading
+that file *is* the lookup.
 
 **The whole folder is emptied rather than written over**: a page deleted from the guide has to
 vanish from the preview too, or believing a stale page is current — the one thing this exists to
