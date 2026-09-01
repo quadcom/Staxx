@@ -222,9 +222,21 @@ bash tools/publish-preview.sh      # render, then replace what the server is sho
 `http://<box>:8099/`, served by a `docs-preview` stack in Adrian's own StaXX store — an ordinary
 nginx container, visible and removable like any other stack, reading a folder it cannot write to.
 It renders nothing itself; the pages are built here, because that is where the signed-in GitHub CLI
-is. **The whole folder is replaced rather than merged**: a page deleted from the guide has to vanish
-from the preview too, or believing a stale page is current — the one thing this exists to prevent —
-is what it starts causing.
+is, and written **straight into the folder nginx serves** over a mapped drive (`P:` →
+`\knoxx.localppdata\staxx-docs-preview\html`). There is no copy step: writing the page is
+publishing it. Use the host's `.local` name when mapping — the bare name does not resolve here, and
+this shell cannot use a UNC path at all, only a mapped letter.
+
+**The whole folder is emptied rather than written over**: a page deleted from the guide has to
+vanish from the preview too, or believing a stale page is current — the one thing this exists to
+prevent — is what it starts causing. The script refuses to empty a drive that does not look like
+the preview folder, since the alternative is destroying whatever it is really pointing at.
+
+**Two Unraid traps, both measured rather than reasoned about.** The container mounts the *pool*
+path, never `/mnt/user/...`: that is a FUSE overlay, and a bind mount through it turns into `Stale
+file handle` the moment the files underneath are deleted and rewritten — which is precisely what
+publishing does, so every page returned 500 until the mount named the pool. And the folder needs
+`chown nobody:users` before Windows can write into it at all.
 
 **Adrian reviews docs here before they are pushed.** Offer it whenever a change to the readme or a
 guide page is waiting on his approval; a page he can look at is worth more than a description of it.
