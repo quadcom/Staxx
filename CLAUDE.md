@@ -226,7 +226,12 @@ bash tools/publish-preview.sh      # render, then replace what the server is sho
 
 **Its front page is the newest project review**, written by `tools/publish-review.js` from whatever
 `summaries/` holds, with links across to the readme, the guide and the changelog, and a fixed
-contents list down the left. Each row is a card of the same shape as the finding it points at,
+contents list down the left. The bar runs the full width along the top edge, and the index and the
+review sit side by side beneath it — the index fixed and scrolling on its own, the review scrolling
+normally. Both are positioned against the viewport, so the bar's height lives in one CSS variable
+rather than being written out in three places that would drift apart.
+
+Each row of the index is a card of the same shape as the finding it points at,
 carrying that finding's own severity colour down its left edge and its severity word above the
 title, and going green with a tick once the `housekeeping` skill has marked it `addressed`.
 
