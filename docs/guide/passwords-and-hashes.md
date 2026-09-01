@@ -2,142 +2,126 @@
 
 <!-- index: 42 | the Password button in a stack's editor: making a password or a passphrase, turning one into the scrambled form some apps ask for, and why a dollar sign is written twice in a compose file. -->
 
-Most apps you install want a password, and some want a *scrambled* version of one instead. Making
-either somewhere else and pasting it in means it has been through your clipboard, another window and
-possibly a website. The **Password** button on the top row of a stack's editor does both jobs
-without the value leaving the page.
-
-You need a stack open to reach it. The panel it opens has two halves: the password itself at the
-top, and its scrambled form underneath.
+Some apps want a password. Some want it *scrambled* first. The **Password** button does both, in
+[the stack editor](the-stack-editor.md), without the value ever leaving the page.
 
 ## The short version
 
 1. Open the stack and press **Password**.
-2. Click into the box on the form you want filled — the panel fills whichever box you were last in.
-3. Press **Fill** to put the password straight into that box, or **Copy** to take it away with you.
-4. If the app wants the scrambled form instead, choose a format, press **Hash**, then use that
-   half's own **Fill** or **Copy**.
+2. Click into the box you want filled.
+3. Press **Fill** to put the password there, or **Copy** to take it with you.
+4. For the scrambled form: choose a format, press **Hash**, then use that half's own **Fill** or
+   **Copy**.
 
-## The password itself
+## Making a password
 
-Two kinds, chosen with the pair of buttons at the top.
+Two kinds, chosen with buttons at the top of the panel.
 
-| Kind | What you get | What you can change |
+| Kind | Example | You can change |
 |---|---|---|
-| Characters | A jumble — `k7#mQ-vp2Rz` | How long, and whether to include capitals, digits and punctuation |
-| Words | A passphrase — `harbour-cedar-lantern-quiet` | How many words, and what goes between them |
+| Characters | `k7#mQ-vp2Rz` | Length. Whether to include capitals, digits and punctuation |
+| Words | `harbour-cedar-lantern-quiet` | How many words, and what goes between them |
 
-A new one appears every time you change any of those, and there is a **Regenerate** button for when
-you simply want a different one. Underneath sits a strength reading — how hard the password would be
-to guess. If you type your own over the top, the reading stays but is labelled an estimate, because
-there is no recipe behind a typed password to measure.
+Change any of those and a new one appears. **Regenerate** gives you a different one on demand.
 
-You can type or paste your own password into that box at any time. Everything below works the same
-way on it.
+Under it is a strength reading, in bits. Higher is harder to guess. Type your own password over the
+top and the reading still shows, but it is only ever labelled an estimate — there is no recipe
+behind a typed password to measure.
 
-### One character it never uses
+You can type or paste your own password in at any time. Everything below works the same on it.
 
-Under the character options you will see this:
+### The dollar sign is left out
+
+The panel says so, under the character options:
 
 > The dollar sign is left out on purpose — in a compose file it is where Compose starts reading the
 > name of a variable.
 
-That is the whole reason. [Why a dollar sign is special](#why-a-dollar-sign-is-special) explains
-what would otherwise happen. Nothing else is held back — capitals, digits and punctuation are all
-there if you tick them.
+[Why a dollar sign is special](#why-a-dollar-sign-is-special) explains what would otherwise happen.
+Nothing else is held back.
 
-## The scrambled form
+## Making the scrambled form
 
-Some apps will not take a password at all. They want it put through a one-way scramble first, so
-that what is written in your compose file cannot be turned back into the password. **Hash** is the
-name for that scramble, and it is the lower half of the panel.
+Some apps refuse a password outright and want it put through a one-way scramble first — a **hash**.
+That is the lower half of the panel.
 
-Four formats are offered, and **only ones this server has actually proved it can produce** appear in
-the list:
+Only formats this server has actually proved it can produce are offered:
 
 | Format | Where you will meet it |
 |---|---|
-| bcrypt | Very common — web apps, and anything using an Apache-style password file |
+| bcrypt | Web apps, and anything using an Apache-style password file |
 | SHA-512 crypt | Linux system accounts, and apps that borrow that format |
 | SHA-256 crypt | The same, in a shorter form |
-| argon2id | Newer apps that have chosen the current recommendation, such as Vaultwarden |
+| argon2id | Newer apps, such as Vaultwarden |
 
-Choose one, press **Hash**, and the scrambled value appears in the box below it. A format may be
-marked *lighter check* — that means this server could prove it produces the right shape, but could
-not prove it round-trips, so it is offered with that said out loud rather than hidden.
+Choose one, press **Hash**, and the value appears below it. A format may say **(lighter check)** —
+this server could prove it makes the right shape, but not that it round-trips, so it says so rather
+than hiding it.
 
 ### It needs a small container, once
 
-The scrambling is done by a tiny container StaXX builds on your server the first time you ask for a
-hash. If it has not been built yet, that half of the panel offers to build it and says what that
-involves. It fetches a base image and a few packages, and it touches nothing else about your stacks.
-The password half works whether or not you ever build it.
+A tiny container on your server does the scrambling. If it is not built yet, this half of the panel
+offers to build it and says what that fetches. The password half works either way. Because the
+container starts and stops for one request, a hash takes a second or two — the panel says so while
+you wait. The container's own state, and buttons to build, recreate or rebuild it, are also on the
+[settings panel](settings.md).
 
-Because that container starts and stops for a single request, a hash takes a second or two. The panel
-says so while you wait, rather than looking stuck.
+## Fill and Copy
 
-## Fill and Copy, and why each half has its own
+The password and its hash usually go to two different places, so each half has its own pair.
 
-The password and its scrambled form usually go to two different places — the scrambled form into the
-app's settings, the password into wherever you keep passwords. So each half has its own pair of
-buttons rather than one being a step on the way to the other.
-
-| Button | What it does |
+| Button | Does |
 |---|---|
-| Fill | Puts that value into whichever box on the form you were last in |
+| Fill | Puts the value in whichever box you last clicked |
 | Copy | Puts it on your clipboard |
 
-**Fill asks first if the box already holds something.** It names the box and shows you what is in it,
-because a working password quietly replaced is a broken app and a lost credential.
+**Fill asks first if the box already holds something**, and names what is there — a working
+credential quietly replaced is a broken app.
 
-Fill goes through the ordinary editing path, so it lands in the stack's history and **Undo** takes it
+Fill goes through the ordinary editing path. It lands in the stack's history, and **Undo** takes it
 back like any other change.
+
+While [Sanitise](hiding-your-values.md) is on, Fill is turned off — the panel and **Copy** still
+work.
 
 ## Why a dollar sign is special
 
-This is the one thing worth understanding, because it explains three messages you will see.
+In a compose file, a dollar sign is where Compose starts reading the *name of a variable* — a value
+it expects defined somewhere else. A password of `pa$$word` is read as `pa` plus two variables that
+probably do not exist, and the app receives `pa`. Nothing warns you; the app just says the password
+is wrong.
 
-In a compose file, a dollar sign does not mean a dollar sign. It is where Compose starts reading the
-*name of a variable* — a value it expects to find defined somewhere else. So a password of
-`pa$$word` is read as `pa` followed by two variables that probably do not exist, and the app receives
-`pa`. Nothing warns you. The app simply says the password is wrong.
+**Quoting it does not help.** The substitution happens after the file is read, so quote marks make
+no difference.
 
-**Quoting it does not help.** That is most people's first guess, and it is wrong: the substitution
-happens after the file has been read, so quote marks make no difference at all.
-
-The way to say "I mean a real dollar sign" is to write it **twice**. `pa$$$$word` in the file
-delivers `pa$$word` to the container. It looks odd, and it is correct.
+The fix is to write it **twice**. `pa$$$$word` in the file delivers `pa$$word` to the container. It
+looks odd, and it is correct.
 
 ### Where this bites hardest
 
-**Every scrambled password starts with a dollar sign and holds four or five more.** That is just how
-the formats are written — `$argon2id$v=19$...`, `$2y$12$...`. Paste one straight into a compose file
-and almost all of it is eaten before the app ever sees it.
+Every hash starts with a dollar sign and holds several more — `$argon2id$v=19$...`, `$2y$12$...`.
+Paste one straight in and most of it is eaten.
 
-So StaXX writes each one twice for you, and tells you it has:
+So StaXX writes each one twice for you, and says so:
 
-- **Fill** always writes the compose-file form. For an ordinary password with no dollar sign in it,
-  that changes nothing at all.
-- **Copy** shows a short message first, whenever there is a dollar sign in what you are copying. It
-  says what is about to go on your clipboard and why. Press **I understand** and it copies the
-  doubled form; close it any other way and nothing is copied.
-- **Under the scrambled value**, once you have made one, a line explains that a hash always contains
-  dollar signs and that both buttons write each one twice.
+| Where | What happens |
+|---|---|
+| Fill | Always writes the doubled, compose-file form |
+| Copy | Shows a message first, whenever there is a dollar sign in what you are copying. Press **I understand** to copy the doubled form; close it any other way and nothing copies |
+| Under a hash you have made | A line explains that a hash always has dollar signs, and that both buttons double them |
 
-The doubled form is left showing in the box on the form afterwards, on purpose. It is genuinely what
-the file has to contain, and hiding that would make the file and the form disagree.
+The doubled form is left showing in the box afterwards, on purpose — it is what the file has to
+contain.
 
-### If you are pasting somewhere else
+**If you are pasting somewhere else** — a file of environment variables, or an app's own settings
+screen — a single dollar sign is what belongs there. The box still holds that plain version; select
+it and copy it by hand.
 
-The doubling is only right for a compose file. If you are pasting into a file of environment
-variables, or into an app's own settings screen, **a single dollar sign is what belongs there**. The
-box in the panel still holds that plain version — select it and copy it by hand.
+### A value already in your file
 
-### A value that is already in your file
-
-If a stack already holds a value written with single dollar signs — pasted in from somewhere else,
-or from before StaXX did this for you — you are told when you open it. A message names every value
-affected, and which setting of which service it belongs to:
+Open a stack holding a value written with single dollar signs — pasted in from elsewhere, or from
+before StaXX did this for you — and you are told. A message names every value and which setting it
+belongs to:
 
 > A dollar sign is where Compose starts reading a variable name, so it deletes these before the
 > container ever sees them. Writing each one twice is the fix, and the container still receives them
@@ -145,55 +129,45 @@ affected, and which setting of which service it belongs to:
 
 ![A message headed "This stack has 3 values Compose will damage", listing three settings belonging to a service called jellyfin — an admin token holding a scrambled password, an SMTP password and an API key — each with its value beside it, above two buttons reading "Leave them" and "Write each one twice"](../images/guide/passwords-and-hashes-dollar-warning.png)
 
-**Write each one twice** corrects all of them in a single press, and **Undo** takes the whole lot
-back in one. **Leave them** closes the message and changes nothing — each affected value still
-carries its own note and its own button, so you can take them one at a time instead. The message
-comes back next time you open that stack, because until you act the file is still wrong.
+| Button | Does |
+|---|---|
+| Write each one twice | Corrects every value in one press. **Undo** takes the whole lot back |
+| Leave them | Closes the message and changes nothing. Each value still carries its own note and its own fix, one at a time |
 
-This never needs a new password. A scrambled value is of the right password already; it was only
-written in a way Compose was eating.
+The message returns next time you open that stack, until you act — the file is still wrong until
+then. Fixing it never needs a new password: a scrambled value is the right one already, only written
+in a way Compose was eating.
 
-### What it stays quiet about
+### What the check stays quiet about
 
-The check is deliberately narrow, because a warning people learn to click past is worse than no
-warning at all. It says nothing about:
+- `${LIKE_THIS}` — plainly meant as a variable, and treated as one.
+- A dollar sign already written twice — that one is correct.
+- A name the file's own environment-variable settings genuinely provide.
 
-- A value written `${LIKE_THIS}`, which is plainly meant as a variable and treated as one.
-- A dollar sign already written twice — that one is correct as it stands.
-- A name something in the file genuinely provides, such as an entry in the stack's own file of
-  environment variables. Those work, so they are left alone.
+It does speak up about a dollar sign Compose cannot read as a name, a scrambled password, and a name
+**nothing** provides — that last one is quietly replaced with nothing, ruining the value just as
+badly as the others.
 
-What it does speak up about is a dollar sign Compose cannot read as a name at all, a scrambled
-password, and a name that **nothing** provides — because that last one is quietly replaced with
-nothing, which ruins the value just as thoroughly as the others.
-
-Docker's own reference for this is
-[interpolation in a compose file](https://docs.docker.com/reference/compose-file/interpolation/), if
-you want the primary source.
+Docker's own reference is
+[interpolation in a compose file](https://docs.docker.com/reference/compose-file/interpolation/).
 
 ## What this never does
 
-- **Nothing is sent anywhere.** Passwords and passphrases are made in your browser. The scrambling
-  happens in a container on your own server, which is built with no network access at all.
-- **It never stores the password.** It lives in that box and nowhere else, and closing the panel
-  blanks both boxes. If you want to keep it, copy it somewhere before you close it.
-- **It never turns a scrambled value back into a password.** That is the entire point of scrambling
-  one. If you lose the password, you make a new one and hash it again.
-- **It never changes a box you did not choose.** Fill only ever writes to the box you were last in,
-  and names it before it writes.
-- **It never guesses which format your app wants.** That is on the app's own documentation.
+- **Sends nothing anywhere.** Passwords are made in your browser. Scrambling happens in a container
+  on your own server, built with no network access at all.
+- **Never stores the password.** Closing the panel blanks both boxes. Copy it out first if you want
+  to keep it.
+- **Never turns a hash back into a password.** If you lose the password, make a new one and hash it
+  again.
+- **Never guesses which format your app wants.** That is on the app's own documentation.
 
 ## Left out, for now
 
-Honest gaps rather than oversights:
-
-- Checking a password against a hash you already have. The tool that makes argon2id hashes has no
-  way to check one, so this could only be offered for some formats and not others.
-- Remembering a password between sessions, or keeping a list of them. StaXX is not a password
-  manager, and pretending otherwise would be the wrong place to keep one.
-- Warning you the moment you type a dollar sign into a box on the form. The check above runs when a
-  stack is opened, not as you type, so something you have just typed is flagged the next time you
-  open that stack rather than straight away.
+- Checking a password against a hash you already have. The tool behind argon2id has no way to check
+  one, so this could only work for some formats, not all.
+- Remembering a password between sessions. StaXX is not a password manager.
+- Flagging a dollar sign as you type it. The check above runs when a stack is opened, not as you
+  type, so something you have just typed is flagged next time you open that stack.
 
 ## Terms used here
 

@@ -18,6 +18,13 @@ before that were dates.
 
 ## Unreleased
 
+- **The user guide is now a manual rather than a description.** It opens with a walk round the
+  screen you land on — every button, column, mark and menu item named, with a close-up picture of
+  each — and a matching walk round the editor and the settings panel. The rest of the pages are
+  step-by-step: adding an app from the catalogue and bringing in a container you already run are
+  written as numbered walkthroughs you can follow with the screen in front of you. Everything is
+  written shorter and plainer, and where one page shows something another page explains, the two are
+  now linked.
 - **StaXX's own mark now sits in the corner of its page**, in place of the stock icon Unraid gives
   any plugin, so the page says whose it is at a glance.
 

@@ -1,200 +1,149 @@
 # Bringing in a container you already run
 
-<!-- index: 65 | taking the containers already on your server into StaXX: what can come across, what arrives locked, and what is left untouched. -->
+<!-- index: 65 | a walkthrough of Import, from pressing the button to opening the new stack and taking it over. -->
 
-You almost certainly have containers running already — set up through Unraid's own templates, or
-through the Compose Manager plugin. **Import** takes those and writes each one out as an ordinary
-StaXX stack, without switching anything off, starting anything, or disturbing the original. You
-reach it from the **Import** button in the row of buttons at the top right of the stacks page,
-between **Apps** and **Add stack**.
+Import takes a container already running on your server and writes it out as an ordinary StaXX
+stack. Nothing switches off, starts, or changes while it runs.
 
-Every import arrives **locked**. StaXX will not start it until you have read what it wrote and
-said so — that is the whole point. Nothing runs, and no existing container is touched, until you
-choose to take it over later.
+## Walkthrough
 
-## Not everything can come across yet
+1. **Press Import**, in the row of buttons at the top right, between **Apps** and **Add stack**.
 
-Three kinds of thing are listed, and only two of them can actually be imported. If your containers
-are the third kind, this feature has nothing for you yet.
+   <!-- SHOT: bringing-in-a-container-button | close-up | the top button row with Import ringed -->
 
-| What it is | Can it be brought in? |
-|---|---|
-| Something set up through an Unraid template | Yes |
-| A project in the Compose Manager plugin | Yes |
-| A container someone started by hand, belonging to neither | **No — listed for reference only** |
+2. **Read the list.** A window opens with everything on the server sorted into groups.
 
-That third group is shown greyed out, under the heading *"Importing these is not built yet."* It is
-there so you can see the whole picture of what is on your server, not because you can act on it.
-There is more on this at the bottom of the page.
+   <!-- SHOT: bringing-in-a-container-groups | full frame | the Import window with its groups, the first three open -->
 
-## The short version
+   | Group | What is in it | Can it be ticked? |
+   |---|---|---|
+   | Unraid templates | Apps installed the Unraid way | Yes |
+   | Compose Manager projects | Projects belonging to the Compose Manager plugin | Yes |
+   | Containers with nothing behind them | Started by hand, belonging to neither | No — reference only |
+   | Already imported | Name already taken by a stack in StaXX | No |
+   | Left over from a removed container | No container behind them any more | No |
 
-1. Press **Import**. A window opens listing everything on the server, in groups.
-2. Tick the templates and projects you want. Expand a template row first if you want to see the
-   file it would write.
-3. Choose where they land with the **Import into** picker at the bottom.
-4. Press **Import**. Each one becomes a new stack marked **needs review** — nothing starts. Open
-   each stack, read what StaXX wrote, then use its own menu to take it over.
+   The first three groups start open. The last two start collapsed — they are background
+   information, not something to act on. Each row shows an icon, the name, where it came from, and
+   what its container is doing: **Running**, **Stopped**, or **No container**.
 
-## What you see in the window
+3. **Tick what you want.** Only Unraid templates and Compose Manager projects can be ticked.
 
-Everything on the server is sorted into five groups. The first three are open when the window
-opens; the last two start collapsed, because they are background information rather than something
-to act on.
+4. **Expand a template row** to check it first, if you want to. It shows the compose file StaXX
+   would write, and two lists underneath: *"Could not be translated automatically:"* and *"Filled in
+   for you — check these before starting:"*. This is a preview, not a certificate — it does not say
+   the result is correct, only what StaXX could and could not work out.
 
-| Group | What is in it |
-|---|---|
-| **Unraid templates** | Apps installed the Unraid way. Tickable. |
-| **Compose Manager projects** | Projects belonging to the Compose Manager plugin. Tickable. |
-| **Containers with nothing behind them** | Started by hand, belonging to neither. Reference only. |
-| **Already imported** | Things whose name is already taken by a stack in StaXX. |
-| **Left over from a removed container** | Leftovers with no container behind them any more. |
+5. **Choose where they land**, with the **Import into** picker at the bottom.
 
-Each row shows an icon, the name, where it came from — **Unraid template**, **Compose Manager
-project** or **Not managed by StaXX** — and what its container is doing right now: **Running**,
-**Stopped** or **No container**. A row whose name is already taken by an existing stack is greyed
-out and flagged **Already in StaXX**; pick a different name or remove the existing stack if you
-want that one after all.
+   | Choice | What it does |
+   |---|---|
+   | Match my Docker folders | Each template goes into a StaXX folder named after its Docker folder, or the top level if it has none. |
+   | (top level) | Everything lands at the top level. |
+   | Any existing StaXX folder | Everything lands in that folder. |
 
-Expanding a template row shows a preview of the compose file it would write, together with two
-lists: *"Could not be translated automatically:"* and *"Filled in for you — check these before
-starting:"*. **The preview is not a certificate.** It shows you what would be written and names
-what StaXX could not work out — it does not say the result is correct or that the app will run.
-The judgement stays with you, which is exactly why every import arrives locked.
+   A Compose Manager project always lands at the top level while matching is on — it has no Docker
+   folder to match. Its own folder name is fixed to the project name, because Docker has to keep
+   seeing it.
 
-### Your passwords come with it
+6. **Press Import.** Each ticked row becomes a new stack, marked **needs review**. Nothing starts.
 
-Whatever a template already had filled in — **passwords and API keys included** — is copied
-straight into the new file. That is deliberate: a copy that dropped them would not run. But it
-does mean the new stack's file holds your secrets in plain text, so treat it the way you would
-treat the original.
+7. **Open the new stack** — click its picture — and read what StaXX wrote before doing anything
+   else with it.
 
-## Choosing where they land
+   <!-- SHOT: bringing-in-a-container-needs-review | close-up | a stack row carrying the needs review tag -->
 
-The **Import into** picker at the bottom offers:
+8. **Right-click the row** to open its menu. Two items appear because it is locked.
 
-| Choice | What it does |
-|---|---|
-| **Match my Docker folders** | Each template goes into a StaXX folder named after the Docker folder it is already in, or the top level if it has none. |
-| **(top level)** | Everything lands at the top level of your stacks. |
-| Any existing StaXX folder | Everything lands in that folder. |
+   | Menu item | What it does |
+   |---|---|
+   | Take over and start | Switches the old container off, sets it aside under another name, starts this stack in its place, then asks whether it worked. |
+   | Clear the lock only | Removes the lock and nothing else. Use this only when nothing else holds the container's name. |
 
-A Compose Manager project always lands at the top level while matching is on, since it has no
-Docker folder of its own to match. Its own folder name is fixed rather than chosen — the row tells
-you what it will be — because Docker has to keep seeing the same project name.
+   **Take over and start** is the normal choice — it deals with the running container for you.
+   **Clear the lock only** leaves that container exactly as it is, so the new stack can then fail to
+   start if the name is still taken. Do not delete `NEEDS-REVIEW.md` by hand instead — that lifts the
+   lock without doing either of these, and the stack then fails against whatever still holds its name.
 
-If you have a Docker folder whose membership is decided by a pattern rather than a plain list,
-StaXX says so and puts anything from it at the top level instead. It cannot work out that pattern
-without guessing, and a wrong guess would file your stack somewhere you would not think to look.
+See [the row and its menu](the-stack-list.md) and [the stack editor](the-stack-editor.md) for what
+you are looking at once it is open.
 
-## What arrives, and the lock on it
+## What arrives, and why it is locked
 
-Each import becomes an ordinary stack folder with a normal compose file in it — the sort of file
-that would run anywhere, with no dependence on StaXX. A Compose Manager project is copied **exactly
-as you wrote it**, byte for byte, with no reformatting and no rearranging.
+Each import becomes a stack folder holding a normal compose file — one that would run anywhere,
+with no dependence on StaXX. A Compose Manager project is copied exactly as written, byte for byte.
 
-Alongside it, StaXX writes a file called `NEEDS-REVIEW.md`, and writes it *first*, before the
-compose file exists. While that file is there:
+Alongside it, StaXX writes `NEEDS-REVIEW.md` first, before the compose file exists. While it is
+there, every Start, Stop and Restart on that stack is refused:
 
-- The row shows a **needs review** tag next to the name.
-- Every **Start**, **Stop** and **Restart** on that stack is refused, with this message:
+> This stack was imported and has not been reviewed yet. Open it, read NEEDS-REVIEW.md, then
+> choose "Take over and start" or "Clear the lock only" before starting it.
 
-  > This stack was imported and has not been reviewed yet. Open it, read NEEDS-REVIEW.md, then
-  > choose "Take over and start" or "Clear the lock only" before starting it.
+The file itself says where the stack came from, whether a container of that name already exists,
+what could not be brought across, and what StaXX filled in for you. See [what every mark
+means](marks.md) for the **needs review** tag itself.
 
-The file itself is worth reading — it says where the stack came from, whether a container of that
-name already exists and what it is doing, what could not be brought across, and what StaXX filled
-in for you.
+## Your passwords come with it
 
-### A value with a dollar sign in it
+Whatever a template already had filled in — passwords and API keys included — is copied straight
+into the new file. A copy that dropped them would not run. This means the new file holds your
+secrets in plain text, so treat it the way you treat the original.
 
-An Unraid template passes a dollar sign through exactly as you typed it. A compose file does not —
-there, a dollar sign is where Compose starts reading the *name of a variable*, so it deletes it
-before the container ever sees it. A password holding one, or a scrambled password (which always
-holds several), would reach the app broken, with nothing to say why.
+## A dollar sign is written twice
 
-So StaXX writes each dollar sign twice on the way in, which is how a compose file carries a real
-one, and tells you which values it changed:
+An Unraid template passes a dollar sign through exactly as typed. A compose file does not — it
+reads a dollar sign as the start of a variable name, and drops it. So StaXX writes each one twice on
+the way in, and tells you where:
 
 > **1 value changed.** Unraid passes a dollar sign through as typed; a compose file does not, so it
 > has been written twice — the container still receives it exactly as before. Find it in that
 > stack's own history if you want it back as it arrived.
 
-Expand a template's row before importing it and the same thing is shown in advance, against the file
-it would write:
+Expanding a template's row before importing it shows the same thing in advance:
 
 ![The expanded preview of a template waiting to be imported, showing the compose file it would write with the admin token's dollar signs each written twice, and underneath a note headed "Dollar signs doubled so compose does not read them as the start of a variable name" saying the value contained five dollar signs and that the container still receives it exactly as before](../images/guide/bringing-in-a-container-dollar-signs-doubled.png)
 
-The app receives precisely what it received before. Nothing about how it behaves changes.
+The app receives exactly what it received before. The first version in the stack's history is the
+file exactly as the template had it, single dollar signs and all — the second, corrected version is
+the one that runs. See [why a dollar sign is written twice](passwords-and-hashes.md).
 
-**Your template's own wording is kept.** The first version in the new stack's history is the file
-exactly as the template had it, single dollar signs and all — the corrected version is the second,
-and is the one that runs. So there are two ways back to the original: that history, and the Unraid
-template itself, which is never touched. See [going back](going-back.md).
+This only happens to values from an Unraid template. A Compose Manager project is already a compose
+file, so its dollar signs already mean what you meant, and nothing touches them.
 
-This happens only to values coming from an Unraid template, where a dollar sign can only ever have
-been a real one. A Compose Manager project is already a compose file, so its dollar signs already
-mean whatever you meant by them, and nothing here touches them. There is more on all of this in
-[making a password](passwords-and-hashes.md).
+## What is left untouched
 
-### Getting out of the lock
-
-Two items appear on the stack's own menu while it is locked:
-
-| Menu item | What it does |
-|---|---|
-| **Take over and start** | Switches the old container off, sets it aside under another name, starts this stack in its place, then asks you afterwards whether it worked — so there is a way back if it did not. |
-| **Clear the lock only** | Removes the lock and nothing else. For when nothing else holds the container's name. |
-
-**Do not delete the file by hand.** It is the obvious move and it is the wrong one: deleting it
-lifts the lock but does none of the switching, so the stack then simply fails to start against
-whatever still holds its container name. Docker will not let two containers share a name. Use the
-menu.
-
-## What this never does
-
-Importing reads. It does not act on anything already running.
-
-- **Nothing is started, stopped, or deleted.** A running container is still running, untouched,
-  after an import — including the very container the new stack describes.
-- **The original Unraid template stays exactly where it is.** It is not moved, edited or removed.
-- **A Compose Manager project stays in Compose Manager.** It is still listed there and still works
-  from there. Its file is copied, never taken. (Because both places can then act on the same
-  containers, pick one to use going forward — the review file says the same.)
-- **Nothing overwrites an existing stack.** An import refuses outright if there is already anything
-  where it would write, and if any step fails after that, the half-made folder is cleared away
-  rather than left behind.
+- **Nothing is started, stopped, or deleted.** A running container stays running, including the
+  one the new stack describes.
+- **The Unraid template stays exactly where it is.** Not moved, edited, or removed.
+- **A Compose Manager project stays in Compose Manager**, still listed and still working from
+  there. Its file is copied, never taken.
+- **Nothing overwrites an existing stack.** An import refuses outright if something already exists
+  where it would write.
 
 ## Refusals you may run into
 
-Any of these appear against the row, before or during the import, rather than leaving you guessing:
-
 | What it says | Why |
 |---|---|
-| *A stack called "…" already exists. Pick a different name, or delete the existing stack first.* | The name is taken. Nothing is ever written over an existing stack. |
-| *No compose file could be found for this project.* | StaXX could not find the file the project actually runs from, so there is nothing to copy. |
-| *This project's compose file holds no services — importing it would create an empty stack.* | The file describes no containers, so the result would do nothing. |
-| *Docker is currently running this project as "…", not "…" — importing it under this name would not line up with those containers.* | Docker knows the running containers by a different project name, so the new stack would not control them. It can still be imported; you just need to know it will not adopt what is running. |
-| *This project has an override file, which will be copied and used.* | A second file adds to the first. Both come across, and StaXX renames the second one if it must, so Docker actually pairs the two. |
-| *This project's folder also holds: … — these will not be copied across.* | Only the compose file, its settings file and its override come over. Anything else in that folder stays put. |
-| *Another ticked row already writes to the same place.* | Two of the rows you ticked would land in the same folder under the same name. Untick one, or send them to different folders. |
+| A stack called "…" already exists. Pick a different name, or delete the existing stack first. | The name is taken. Nothing is ever written over an existing stack. |
+| No compose file could be found for this project. | StaXX could not find the file the project actually runs from. |
+| This project's compose file holds no services — importing it would create an empty stack. | The file describes no containers. |
+| Docker is currently running this project as "…", not "…" — importing it under this name would not line up with those containers. | Docker knows the running containers by a different project name, so the new stack will not control them. It can still be imported. |
+| This project has an override file, which will be copied and used. | A second file adds to the first. StaXX renames it if it must, so Docker pairs the two. |
+| This project's folder also holds: … — these will not be copied across. | Only the compose file, its settings file, and its override come over. |
+| Another ticked row already writes to the same place. | Two ticked rows would land in the same folder under the same name. Untick one, or send them to different folders. |
+
+If a Docker folder's membership is decided by a pattern rather than a plain list, StaXX cannot match
+it and puts anything from it at the top level instead, rather than guess.
 
 ## What is not built yet
 
-Two things Import cannot do for you yet:
-
-- **Containers started by hand cannot be imported.** If you created a container directly with
-  Docker, or it belongs to no Unraid template and no Compose Manager project, StaXX lists it under
-  **Containers with nothing behind them** and greys the row out. It is telling you it knows the
-  container exists, and that it cannot yet write a stack for it.
-- **Several containers cannot be brought in as one combined stack.** Each row you tick becomes its
+- **Containers started by hand cannot be imported.** They are listed under **Containers with
+  nothing behind them** and greyed out, so you can see they exist even though StaXX cannot write a
+  stack for them yet. Build the stack yourself with **Add stack** instead, copying the settings by
+  hand, then use **Take over and start** on it — that item is offered on any stack whose container
+  name something outside StaXX is holding, not only on an imported one.
+- **Several containers cannot be brought in as one combined stack.** Each ticked row becomes its
   own separate stack.
-
-The first of those is worth being clear about: if most of your containers were made that way,
-Import will look almost empty to you. The route across for now is to build the stack yourself with
-**Add stack**, copying the settings from the container by hand, and then use **Take over and
-start** on it — that item is offered on any stack whose container name something outside StaXX is
-already holding, not only on an imported one.
 
 ## Terms used here
 
