@@ -1,4 +1,4 @@
-# Sharing a stack with somebody else
+# Export and import a stack
 
 <!-- index: 70 | how Export blanks your passwords and paths out of a copy, what it refuses to send, and what the other person has to fill in. -->
 
@@ -63,6 +63,8 @@ settings — a `.env` file has nowhere to keep that mark.
 
 ## 4. Press Export
 
+<!-- SHOT: sharing-a-stack-export | close-up | the Export button on the summary screen -->
+
 | What you sent | What you get |
 |---|---|
 | Just the compose file | Downloads as plain text — paste it anywhere. |
@@ -71,7 +73,9 @@ settings — a `.env` file has nowhere to keep that mark.
 StaXX cannot open a `.staxx` file back in yet, so today this is a way to hand a stack over, not a
 round trip.
 
-## What the file itself looks like
+## The exported file
+
+<!-- SHOT: sharing-a-stack-comment | close-up | the exported compose file open in a text editor, showing the comment block at the top and a REPLACE-ME value further down -->
 
 A blanked value becomes `REPLACE-ME` — never a value that looks real. StaXX refuses to start any
 stack still holding one, and says which settings are still waiting.
@@ -88,7 +92,7 @@ real file with holes punched in it, not one rebuilt from scratch.
 The person who receives it fills those holes in through [the stack editor](the-stack-editor.md).
 For a value that needs a real password, see [making a password or passphrase](passwords-and-hashes.md).
 
-## About the picture
+## The icon
 
 An icon lives in a hidden folder tucked inside the stack, alongside every earlier saved copy of the
 compose file — including the passwords those copies still hold. Export reaches into that folder for
@@ -103,6 +107,8 @@ not by rule — there is no "everything except the risky bits" here.
 - It never says a file is clean — only ever "look here".
 
 ## Opening one you receive
+
+<!-- SHOT: sharing-a-stack-preview | full frame | the import preview shown after dropping a .staxx file: what it holds, where it will land, and the sender's note listing values to fill in -->
 
 Drag a `.staxx` file onto the stack list and drop it. Drop it on a folder to land there; drop it on
 a stack to join that stack's folder; drop it anywhere else to land at the top level.

@@ -4,18 +4,18 @@
 
 This is the window that opens when you click [a stack's picture](the-stack-list.md) on the list, or press **Add stack**. This page walks it part by part.
 
-<!-- SHOT: the-stack-editor-whole-window | full frame | the whole editor open on a real stack: header with title and name box, the tools row, the four tabs, Split view with the form on the left and the compose file on the right, and the button row along the bottom -->
+![The whole editor window in Split view: the header with the stack name and tools, the four tabs, the form on the left showing the Container and Ports sections, the compose file on the right, and the buttons along the bottom](../images/guide/the-stack-editor-whole.png)
 
 ## The header
 
-<!-- SHOT: the-stack-editor-header | close-up | the title, the stack name box with its hint line underneath, and the full tools row: Sanitise, Password, Fill in details, Outline, Close -->
+![The editor tools row: a Sanitise tick box, then Password, Fill in details, Outline, the Form, Split and Compose view buttons, and Close](../images/guide/the-stack-editor-tools.png)
 
 | Part | What it does |
 |---|---|
 | Title | The stack's name, or **New stack** while making one. |
 | Stack name box | The folder that holds this stack's file. The hint underneath it reads: "The folder that holds this stack's compose file. Renaming it moves the folder." |
-| Sanitise | Hides every value marked sensitive, so a screenshot does not leak them. See [hiding your values](hiding-your-values.md). |
-| Password | Opens the password and passphrase generator, and a hash tool beside it. See [making a password](passwords-and-hashes.md). |
+| Sanitise | Hides every value marked sensitive, so a screenshot does not leak them. See [Sanitise mode](hiding-your-values.md). |
+| Password | Opens the password generator, and a hashing tool beside it. See [password generator and hashing tool](passwords-and-hashes.md). |
 | Fill in details | Looks up this stack's icon, links, description and more from the image, its catalogue entry and its own page. |
 | Outline | Jumps to a block or service inside the compose file. |
 | Close | Closes the editor. |
@@ -36,7 +36,7 @@ Split is the normal view on a wide window, and Form on a narrow one. Split's but
 
 ## The four tabs
 
-<!-- SHOT: the-stack-editor-tabs | close-up | the four tabs — Configure, Manage, History, Versions — with Configure selected -->
+![The four editor tabs: Configure selected, then Manage, History and Versions](../images/guide/the-stack-editor-tabs.png)
 
 | Tab | What it holds |
 |---|---|
@@ -103,7 +103,7 @@ Each service then gets its own set of groups. Most are hidden until you switch t
 
 ## The buttons along the bottom
 
-<!-- SHOT: the-stack-editor-footer | close-up | the button row along the bottom: Tidy this file, Undo, Save, Save and start -->
+![The buttons along the bottom of the editor: Tidy this file, a greyed-out Undo, Save and Save and start](../images/guide/the-stack-editor-footer.png)
 
 | Button | What it does | Unavailable when |
 |---|---|---|
@@ -116,7 +116,7 @@ Each service then gets its own set of groups. Most are hidden until you switch t
 
 | Message | Wording | Meaning |
 |---|---|---|
-| Sanitise banner | "Sanitised for screenshots. Values marked sensitive are hidden and nothing can be changed. Turn Sanitise off to make edits." | Sanitise is on. See [hiding your values](hiding-your-values.md). |
+| Sanitise banner | "Sanitised for screenshots. Values marked sensitive are hidden and nothing can be changed. Turn Sanitise off to make edits." | Sanitise is on. See [Sanitise mode](hiding-your-values.md). |
 | Conversion banner | "This install came in from Unraid's Apps page. StaXX has converted it to a stack below — save it to install the app." | This stack just arrived converted from an Unraid install, a reinstall, or an existing container being brought in. |
 | Required-field bar | Names the blank field, e.g. "…And 2 other rows need attention." | A required field is still empty. Click the bar to jump to it. |
 | Missing-file bar | '"filename" is named in this compose file but is not in this stack. Create it, or add it with the + button above.' | The file refers to a file that is not in this stack's folder. |

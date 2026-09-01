@@ -1,11 +1,11 @@
-# Going back
+# Version history and rollback
 
 <!-- index: 75 | how to return to an earlier version of a stack's file, or to an earlier build of one of its images, what each list holds, and why some things cannot be gone back to. -->
 
 Two different things live here. **History** undoes your own edits to the file. **Versions** undoes
 an app's own update. Both sit in the [stack editor](the-stack-editor.md), beside Configure.
 
-## Going back to a file you changed
+## History tab
 
 1. Open the stack. Click **History**.
 2. Click a version on the left to read it.
@@ -31,7 +31,7 @@ Click a row to read it on the right. Nothing picked yet says *"Pick a version on
 at it."* Nothing saved yet says *"No history yet. The next time this stack is saved, that version
 starts being kept."*
 
-### Naming a version keeps it forever
+### Naming a version
 
 | Kind | How long it is kept |
 |---|---|
@@ -43,7 +43,7 @@ Clearing a name asks first: *"A named version is kept forever. Clearing its name
 the ordinary queue of the last 20 saves, where it can be deleted the moment a newer one is saved —
 possibly straight away."*
 
-### When the file itself is gone
+### Missing compose file
 
 If the compose file is deleted or lost, the row reads **"No compose file in this folder"**. Click it
 and StaXX offers your last working copy, dated. Loading it works exactly like restoring above.
@@ -53,14 +53,16 @@ and StaXX offers your last working copy, dated. Loading it works exactly like re
 Never saved or opened here at all? You get the blank starting file instead — see
 [making a stack from scratch](making-a-stack.md).
 
-### Two things to know
+### Restore limits
 
 - **An override version cannot be restored from here yet.** Its button is switched off. Open its
   own tab and copy the text in by hand.
 - **History is unavailable while Sanitise is on.** An old version holds real, unhidden values —
   see [hiding your values](hiding-your-values.md). Turn Sanitise off to get it back.
 
-## Going back to an earlier build of an app
+## Versions tab
+
+<!-- SHOT: going-back-versions-tab | full frame | the Versions tab open, showing the list of services on the left and one service's recorded builds on the right -->
 
 1. Open the stack. Click **Versions**.
 2. Pick a service on the left. Its recorded builds appear on the right.
@@ -69,7 +71,9 @@ Never saved or opened here at all? You get the blank starting file instead — s
 A row on the [stack list](the-stack-list.md) offering an update it can undo has **Roll back…** on
 its menu — that opens Versions with the right service already picked.
 
-### What a build's row shows
+### A build's row
+
+<!-- SHOT: going-back-build-row | close-up | one build's row in the Versions tab, showing its heading, date and fingerprint, the "See the source" link, "What changed" notes, and its "Put this back" button -->
 
 | On the row | What it is |
 |---|---|
@@ -83,7 +87,7 @@ Where the publisher wrote no release notes, you may get the raw list of commits 
 *"The project published no release under this build's name, so this is the raw list of commits
 that went into it."*
 
-### What "Put this back" actually does
+### Put this back
 
 **It edits the compose file so it names that exact build.** That is what makes it stick — a later
 update has nothing vague left to move on to. The file it replaced goes into History, so it can be
@@ -97,9 +101,11 @@ With an override file, it adds: *"This stack has an override file, though, and a
 can win over this pin and make it look as though nothing happened."* Worth reading — the one case
 where the whole thing appears to do nothing.
 
-### Pinning and releasing live here too
+### Pinning and releasing
 
-Naming an exact build is what "pinned" means — see the pin mark on [the stack list](the-stack-list.md#the-marks-you-may-see-on-a-row).
+<!-- SHOT: going-back-pinned-band | close-up | the "Pinned to …" band for a service, with the "Release this pin" button beside it -->
+
+Naming an exact build is what "pinned" means — see the pin mark on [the stack list](the-stack-list.md#row-marks).
 A pinned service shows **Pinned to …** with **Release this pin** beside it, whether the pin came
 from here or was typed into the file by hand.
 
@@ -107,13 +113,13 @@ Releasing explains: *"The compose file will stop naming an exact build, so this 
 tag again. Nothing restarts now — it keeps running what it is running until the next update or
 recreate moves it."*
 
-### Expect this list to be empty at first
+### Nothing recorded yet
 
 A build is only recorded the first time StaXX updates that image. A new or just-imported stack
 shows *"Nothing has been recorded yet. A version is recorded the first time StaXX updates one of
 this stack's images."* See [updates](updates.md).
 
-### What you can and cannot go back to
+### Rollback limits
 
 **Only a build StaXX itself recorded for that service.** Anything else is refused: *"That version
 is not one recorded for this service, so it cannot be rolled back to."* Without that check, a

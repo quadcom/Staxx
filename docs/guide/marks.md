@@ -1,8 +1,8 @@
-# What every mark means
+# Row marks and icons
 
-<!-- index: 20 | a quick key to every mark on the stack list: running state, update state, and the rest. -->
+<!-- index: 20 | a quick key to every mark on the stacks page: running state, update state, and the rest. -->
 
-Every mark on the [stack list](the-stack-list.md), in one place. Find it, read what it means, and
+Every mark on [the stacks page](the-stack-list.md), in one place. Find it, read what it means, and
 what to do about it.
 
 ## Running state
@@ -28,8 +28,10 @@ add the second kind.
 
 ## Update state
 
+<!-- SHOT: marks-update-pill | close-up | a stack row's State column with the update pill visible next to the running pill, highlight box round the update pill -->
+
 Sits beside the running pill. Empty most of the time, and empty is the good news — nothing newer
-was found. See the [update page](updates.md) for the cadence, the countdown, and the author's own
+was found. See [update checking](updates.md) for the cadence, the countdown, and the author's own
 published example.
 
 | Wording | Meaning |
@@ -49,7 +51,7 @@ Only `update ready` (and its version forms) is a button. Everything else is a fa
 `update ready` and `rebuild ready` are shown in a stronger colour because they are the two worth
 acting on.
 
-## The marks under a stack's name
+## Marks under the name
 
 | Example | Mark | Meaning |
 |---|---|---|
@@ -61,7 +63,9 @@ acting on.
 tells them apart. A third, identical triangle sits beside the image name in the Services column —
 see below.
 
-## Marks that mean "restart to apply"
+## Restart to apply marks
+
+<!-- SHOT: marks-restart-chip | close-up | a stack row showing the grey "Restart to apply" chip beside the State column, highlight box round the chip -->
 
 Shown when the running containers no longer match what the file on screen says — usually because it
 was edited and saved but not yet restarted. **Nothing is broken until you restart.**
@@ -78,7 +82,7 @@ was edited and saved but not yet restarted. **Nothing is broken until you restar
 | Not started yet | In the file, never started. |
 | No longer in the file | Removed from the file after its container started — still running, but orphaned. |
 
-## Tags and badges beside a stack's name
+## Tags beside the name
 
 | Example | Tag | Meaning |
 |---|---|---|
@@ -86,7 +90,7 @@ was edited and saved but not yet restarted. **Nothing is broken until you restar
 | Orange outlined button | `waiting to confirm` | Shown right after a handover — an older container switched off and this one running in its place. Check the app still works, then answer in the row's own menu. |
 | Small lightning bolt | *(no text; hover for detail)* | Starts at boot. Hovering says whether that is the whole stack, only part of it, or nothing, and whether a delay is set before the next one starts. |
 
-## A red triangle where the app's picture should be
+## Broken stack marks
 
 The strongest mark on the list — it replaces the app's own logo rather than sitting beside it.
 It means Compose could not read that stack's file, or found no file at all. The row says which, in
@@ -98,7 +102,7 @@ Nothing about such a stack can run. Open the editor from the triangle and fix th
 returns to normal on the next save. The same triangle appears on a [folder row](folders.md) too,
 so a problem inside a collapsed folder is still visible from outside.
 
-## Letting StaXX work out a health check
+## Health check offer
 
 Click a green running pill that says nothing has checked it, or use the button in the
 [health check section of the editor](editing-a-stack.md), and StaXX looks for a real question to

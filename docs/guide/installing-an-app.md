@@ -1,4 +1,4 @@
-# Adding an app from Community Applications
+# Install an app from Community Applications
 
 <!-- index: 60 | a step-by-step walkthrough of adding a catalogue app: what carries across, what needs checking before you start it, and why nothing exists until you save. -->
 
@@ -39,7 +39,7 @@ one catalogue entry into an ordinary compose file, ready for you to check before
 
 9. Read the banner above the form, if one appears. It lists anything worth a look before you save —
    settings with no compose equivalent, values StaXX had to fill in, or a dollar sign that was
-   written twice. See [what carries over, and what needs a check](#what-carries-over-and-what-needs-a-check) below.
+   written twice. See [what carries over](#what-carries-over) below.
 
 10. Check the ports and folders StaXX filled in. Each one keeps its own description, so the form
     still explains what it is for.
@@ -62,7 +62,9 @@ The same search box also finds plain images — a Docker Hub search, or an image
 server. Those carry none of a catalogue entry's own settings, so adding one opens a bare starting
 file with just the image name in it, for you to build up by hand.
 
-## What the conversion produces
+## The result
+
+<!-- SHOT: installing-an-app-result | close-up | the compose view showing the app-information comment block at the top of the file: icon, description, category and links -->
 
 The result is a normal compose file — nothing about it depends on StaXX to run. It arrives already
 laid out in StaXX's standard order, the same tidying described in
@@ -72,7 +74,7 @@ description, its web address, its icon and its other links go into the block com
 but StaXX reads to draw the form — delete that block and the file still runs with a plain
 `docker compose up`.
 
-## What carries over, and what needs a check
+## What carries over
 
 | From the original app | What happens |
 |---|---|
@@ -92,7 +94,7 @@ fixed address it is keeping unchanged — is filled in as a placeholder and name
 know it needs a look. Check an empty setting too, even where nothing was flagged: StaXX fills gaps
 sensibly, but it does not know your network or your other containers.
 
-## What cannot come across at all
+## What cannot convert
 
 A handful of `docker run` options have no compose equivalent, and StaXX says so rather than guessing:
 
@@ -112,7 +114,7 @@ address, is dropped rather than written in broken.
 - It never contacts your server's Docker until you press Save.
 - It never starts a newly added app on your behalf. Saving creates it stopped, like any new stack.
 
-## Being honest about what's not built
+## Not built yet
 
 - Adding several catalogue apps as one linked stack is not built. Each addition is one app, one
   editor session, one save.

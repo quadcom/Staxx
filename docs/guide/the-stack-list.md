@@ -1,8 +1,9 @@
-# The stack list
+# The stacks page
 
 <!-- index: 5 | a walk round the page you land on: every button along the top, every part of a row, and every item in the menus. -->
 
-This is the screen you land on. It lists every stack on your server, one row each. This page walks it top to bottom, part by part.
+This is the screen you land on. It lists every stack, one row each. This page walks it top to
+bottom, part by part.
 
 ![The whole StaXX page: the row of buttons top right, the update summary and storage hint below it, the machine figures strip, then the column headings and a list of folder and stack rows](../images/guide/the-stack-list-whole-screen.png)
 
@@ -21,14 +22,17 @@ This is the screen you land on. It lists every stack on your server, one row eac
 | Update all | Installs every update currently waiting. |
 | Pause updates | Freezes every update countdown on the page. Press again to say Resume updates. |
 
-## What sits under the buttons
+## Update summary and machine strip
 
 ![The update summary reading Never checked, the hint naming the folder stacks are kept in, and the machine strip below showing GPU figures and how long ago they were taken, ringed](../images/guide/the-stack-list-machine-strip.png)
-A line says when updates were last checked, and how many are waiting. It reads **Never checked** until the first check runs.
+A line says when updates were last checked, and how many are waiting. It reads **Never checked**
+until the first check runs. See [update checking](updates.md) for what a check does.
 
-Below it, a hint names the folder your stacks are kept in. Anything you drop there by hand shows up here too.
+Below it, a hint names the folder your stacks are kept in. Anything you drop there by hand shows up
+here too.
 
-A strip of machine figures follows: GPU use, and how fresh the numbers are — **Updated Ns ago**, or **Figures are Ns old** if the collector has fallen behind.
+A strip of machine figures follows: GPU use, and how fresh the numbers are — **Updated Ns ago**, or
+**Figures are Ns old** if the collector has fallen behind.
 
 ## The columns
 
@@ -44,7 +48,7 @@ A strip of machine figures follows: GPU use, and how fresh the numbers are — *
 | Network | Network traffic, with a small graph. |
 | GPU | Graphics use, with a small graph. The column only appears when a stack on the page has a graphics card handed to it. |
 
-## A stack row, left to right
+## Stack row parts
 
 | Example | Part | What it does |
 |---|---|---|
@@ -68,10 +72,10 @@ To open a stack's menu, right-click its row.
 | Repo | The project's own page, when known. |
 | CA | The support or discussion thread for the app, when known. |
 
-## The marks you may see on a row
+## Row marks
 
 Three of these are the same orange triangle. What tells them apart is where it sits and what it says
-when you hover it.
+when you hover it. See [row marks and icons](marks.md) for the full key.
 
 | Example | Mark | Meaning |
 |---|---|---|
@@ -153,7 +157,7 @@ Click its picture to open the folder menu.
 | Delay | How long to wait before the next thing starts. |
 | Delete folder | Deletes the folder. Stacks inside are moved back to the top level first, not deleted. |
 
-## When something is wrong
+## Broken stacks
 
 | Example | What it means |
 |---|---|
@@ -162,7 +166,7 @@ Click its picture to open the folder menu.
 
 Neither row can be started until it is fixed. Fixing it and saving brings the row back to normal.
 
-## What this screen never does
+## What this never does
 
 - It never starts, stops or updates anything without you pressing a button for it.
 - It never invents a web page, project link or support thread for an app it does not recognise.

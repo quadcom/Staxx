@@ -22,11 +22,15 @@ to type one from memory:
 
 ## The note under a box
 
+<!-- SHOT: editing-a-stack-notes | close-up | a setting box with its Notes box underneath, a sentence typed into it -->
+
 Most boxes carry a smaller box underneath labelled **Notes**. That is the actual comment written on
 that line in the file. Type a sentence and it is written back as the comment on that exact line,
 nowhere else. Leave it blank and no comment is written at all.
 
 ## Secret and required
+
+<!-- SHOT: editing-a-stack-marks | close-up | the compose view showing a setting's comment carrying both the Secret and Required marks -->
 
 Two facts about a box are recorded as short marks at the end of its comment:
 
@@ -52,7 +56,7 @@ Need a value rather than just a mark? The **Password** button makes one for you 
 Whatever the form flags — a gap, a mismatch, a suggestion — is a judgement call left to you. It
 points things out; it never decides for you.
 
-## Saving is not restarting
+## Restart to apply
 
 A container already running keeps running on its old settings until you restart it. Saving only
 changes what the file says should happen next. If the two have drifted apart, the row shows a
@@ -86,7 +90,7 @@ for your own reference. Nothing in it ever runs.
 **Moving a service onto one of those networks** asks first, and comments the ports out in the same
 step. **Moving it back off** offers to bring the ports back live, exactly as they were written.
 
-## Getting a health check offered
+## Health check offer
 
 Press **Work out a health check** in the Health check group. StaXX tries the check out inside the
 running container first, then shows you what it found and what the check actually proves.
@@ -94,8 +98,7 @@ running container first, then shows you what it found and what the check actuall
 ![The Health check group in the editor with every box empty — "How the check runs" and "The check itself" — and a "Work out a health check" button in the top right of the group](../images/guide/editing-a-stack-health-offer.png)
 
 Nothing is written until you say yes. StaXX never touches a service that already has a check of its
-own. See [letting StaXX work out a health check](marks.md#letting-staxx-work-out-a-health-check) for
-what a health check is and how StaXX decides on one.
+own. See [what every mark means](marks.md) for what a health check is and how StaXX decides on one.
 
 ## Tidying a file into StaXX's layout
 
@@ -147,7 +150,7 @@ later; see [going back](going-back.md).
 - **It is not a second copy of your file.** The form is a view drawn from the file itself — the file
   you started with is still the same file, in the same place, readable in any text editor.
 
-## Left out, for now
+## Not on the form yet
 
 Some of what a stack records about the app itself — its description, its project links — has no box
 on this form yet. **Fill in details**, at the top of the screen, looks them up from the image, the

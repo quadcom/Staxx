@@ -1,11 +1,13 @@
-# Making a password, and its scrambled form
+# Password generator and hashing tool
 
 <!-- index: 42 | the Password button in a stack's editor: making a password or a passphrase, turning one into the scrambled form some apps ask for, and why a dollar sign is written twice in a compose file. -->
 
-Some apps want a password. Some want it *scrambled* first. The **Password** button does both, in
+Some apps want a password. Some want it scrambled first. The **Password** button does both, in
 [the stack editor](the-stack-editor.md), without the value ever leaving the page.
 
-## The short version
+<!-- SHOT: passwords-and-hashes-button | close-up | the toolbar row of the stack editor with the Password button ringed -->
+
+## Steps
 
 1. Open the stack and press **Password**.
 2. Click into the box you want filled.
@@ -17,6 +19,10 @@ Some apps want a password. Some want it *scrambled* first. The **Password** butt
 
 Two kinds, chosen with buttons at the top of the panel.
 
+![The password panel in Characters mode: Length, tick boxes for Capitals, Digits and Punctuation, a strength line reading 144 bits — very strong, the generated value, and Regenerate, Copy and Fill buttons, with the Hash section below](../images/guide/passwords-and-hashes-generator.png)
+
+![The same panel in Words mode: a Words count, a Joined by box, a strength line reading 50 bits — reasonable, and a generated passphrase of five words joined by dashes](../images/guide/passwords-and-hashes-words.png)
+
 | Kind | Example | You can change |
 |---|---|---|
 | Characters | `k7#mQ-vp2Rz` | Length. Whether to include capitals, digits and punctuation |
@@ -24,11 +30,15 @@ Two kinds, chosen with buttons at the top of the panel.
 
 Change any of those and a new one appears. **Regenerate** gives you a different one on demand.
 
-Under it is a strength reading, in bits. Higher is harder to guess. Type your own password over the
-top and the reading still shows, but it is only ever labelled an estimate — there is no recipe
-behind a typed password to measure.
-
 You can type or paste your own password in at any time. Everything below works the same on it.
+
+### Strength
+
+<!-- SHOT: passwords-and-hashes-strength | close-up | the strength reading under a generated password -->
+
+A strength reading sits under the box, in bits. Higher is harder to guess. Type your own password
+over the top and the reading still shows — but it is only ever labelled an estimate, because there
+is no recipe behind a typed password to measure.
 
 ### The dollar sign is left out
 
@@ -40,33 +50,9 @@ The panel says so, under the character options:
 [Why a dollar sign is special](#why-a-dollar-sign-is-special) explains what would otherwise happen.
 Nothing else is held back.
 
-## Making the scrambled form
-
-Some apps refuse a password outright and want it put through a one-way scramble first — a **hash**.
-That is the lower half of the panel.
-
-Only formats this server has actually proved it can produce are offered:
-
-| Format | Where you will meet it |
-|---|---|
-| bcrypt | Web apps, and anything using an Apache-style password file |
-| SHA-512 crypt | Linux system accounts, and apps that borrow that format |
-| SHA-256 crypt | The same, in a shorter form |
-| argon2id | Newer apps, such as Vaultwarden |
-
-Choose one, press **Hash**, and the value appears below it. A format may say **(lighter check)** —
-this server could prove it makes the right shape, but not that it round-trips, so it says so rather
-than hiding it.
-
-### It needs a small container, once
-
-A tiny container on your server does the scrambling. If it is not built yet, this half of the panel
-offers to build it and says what that fetches. The password half works either way. Because the
-container starts and stops for one request, a hash takes a second or two — the panel says so while
-you wait. The container's own state, and buttons to build, recreate or rebuild it, are also on the
-[settings panel](settings.md).
-
 ## Fill and Copy
+
+<!-- SHOT: passwords-and-hashes-fill-copy | close-up | the password half's Copy and Fill buttons under the generated value -->
 
 The password and its hash usually go to two different places, so each half has its own pair.
 
@@ -81,8 +67,49 @@ credential quietly replaced is a broken app.
 Fill goes through the ordinary editing path. It lands in the stack's history, and **Undo** takes it
 back like any other change.
 
-While [Sanitise](hiding-your-values.md) is on, Fill is turned off — the panel and **Copy** still
+While [Sanitise mode](hiding-your-values.md) is on, Fill is turned off — the panel and **Copy** still
 work.
+
+## Making the scrambled form
+
+Some apps refuse a password outright and want it put through a one-way scramble first — a **hash**.
+That is the **Hash** section, in the lower half of the panel.
+
+<!-- SHOT: passwords-and-hashes-hash-section | full frame | the whole Hash section of the panel: the Format dropdown, the Hash button, and the result box below it -->
+
+Only formats this server has actually proved it can produce are offered:
+
+| Format | Where you will meet it |
+|---|---|
+| bcrypt | Web apps, and anything using an Apache-style password file |
+| SHA-512 crypt | Linux system accounts, and apps that borrow that format |
+| SHA-256 crypt | The same, in a shorter form |
+| argon2id | Newer apps, such as Vaultwarden |
+
+<!-- SHOT: passwords-and-hashes-format-dropdown | close-up | the Format dropdown open, showing the list of proved formats, one marked (lighter check) -->
+
+Choose one, press **Hash**, and the value appears below it. A format may say **(lighter check)** —
+this server could prove it makes the right shape, but not that it round-trips, so it says so rather
+than hiding it.
+
+### The result
+
+![The panel after pressing Hash: the plain password above, and below it the bcrypt hash in its own box with its own Copy and Fill buttons](../images/guide/passwords-and-hashes-hash-result.png)
+
+Once a hash is made, the result box holds it, with its own **Copy** and **Fill** underneath, and a
+note explaining the dollar signs it always contains — see [below](#where-this-bites-hardest).
+
+### It needs a small container, once
+
+![The StaXXCrypt block on the Settings panel: a setting for whether the container stays running, its state reading Built, and running now with a recipe number, and each hash format listed with its own result — bcrypt, SHA-512 crypt, SHA-256 crypt and argon2id all passing](../images/guide/settings-staxxcrypt.png)
+
+Hashing is done by a small container on your server called **StaXXCrypt**. If it is not built yet,
+the Hash section shows a note and a **Build it…** button instead of the Format dropdown. The
+password half works either way.
+
+Because the container starts and stops for one request, a hash takes a second or two — the panel
+says so while you wait. StaXXCrypt's own state, and buttons to build, recreate or rebuild it, are
+also on the [settings panel](settings.md).
 
 ## Why a dollar sign is special
 
@@ -161,7 +188,7 @@ Docker's own reference is
   again.
 - **Never guesses which format your app wants.** That is on the app's own documentation.
 
-## Left out, for now
+## Not built yet
 
 - Checking a password against a hash you already have. The tool behind argon2id has no way to check
   one, so this could only work for some formats, not all.

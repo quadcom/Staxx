@@ -1,9 +1,11 @@
-# The settings panel
+# Settings
 
 <!-- index: 80 | every setting behind the cog, group by group, plus the self-test and the first-run screen. -->
 
 Press **Settings**, the cog above your stack list, to open this panel. Unraid's own Settings →
 Utilities page is now just a signpost to it.
+
+![The Settings panel open at its top: Show StaXX in, the Data store box with its folder button and the three folders derived from it, Docker menu, and Installs from the Apps page](../images/guide/settings-panel-open.png)
 
 ## Using the panel
 
@@ -22,15 +24,23 @@ reloads for you and says so.
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
 | Show StaXX in | A tab under the Docker menu / Its own button in the top bar | Docker tab | As a tab it sits ahead of Docker Containers and is the tab you land on. Has no effect while Docker menu (below) is on. |
-| Data store | A folder path | blank | The one folder holding your stacks and their archives. See [where StaXX keeps its things](where-things-live.md). |
+| Data store | A folder path | blank | The one folder holding your stacks and their archives. See [file locations](where-things-live.md). |
 | Docker menu | Leave the Docker menu alone / Replace it with StaXX | Off | Replacing it takes everything under it with it, including Unraid's own container list. Nothing is changed underneath; turning it off puts it straight back. |
 | Installs from the Apps page | Bring them into StaXX / Ask first / Leave them to Unraid | Bring them into StaXX | What happens when you install something from Unraid's own Apps page. Turning it off restores Unraid's own install route; nothing already installed changes. See [adding an app](installing-an-app.md). |
 | Container icons | Download them automatically / Do not download anything | On | Off, containers with no icon get a coloured tile with their initials. The only thing sent out, when on, is the name of the icon being asked for. |
 | Keep icons with the stack | Record them in the file / Work them out each time | On | Writes the icon's name into the stack's file and saves a copy of the picture beside it, so the stack looks the same on any server. An icon you named yourself is never touched. |
 | StaXXCrypt hashing container | Only while hashing / Keep it running | Only while hashing | The container behind [making a password hash](passwords-and-hashes.md). Kept running, hashing is near-instant; on demand it costs nothing idle but takes a couple of seconds per hash. |
+
+![The StaXXCrypt block on the Settings panel: a setting for whether the container stays running, its state reading Built, and running now with a recipe number, and each hash format listed with its own result — bcrypt, SHA-512 crypt, SHA-256 crypt and argon2id all passing](../images/guide/settings-staxxcrypt.png)
+
 | Image documentation | Read it automatically / Do not look anything up | On | Whether adding an image reads its own documentation to build a fuller starting file. Only runs the moment you add something, never in the background. The only thing sent out is the image's name. |
 | Where stacks may live | Guide me / Get out of the way | Guide me | Guide me hides and refuses risky locations when choosing a folder — a single array disk, an unassigned or network drive, a share bound for the array. Get out of the way shows everything and warns instead. **Refused either way:** a location that lives in memory, and a whole share as the stacks folder — every folder in it would be read as a stack. |
 | Container shells | Allow opening a shell / Do not allow shells | On | Off **refuses every shell on the server**, not just the tab. There is no way round it from the page. |
+
+The **Choose a folder** button sits beside the Data store box — a small folder icon. Press it to
+browse the server instead of typing a path.
+
+<!-- SHOT: settings-data-store-row | close-up | the Data store text box with the "Choose a folder" folder-icon button beside it, highlight box around that button -->
 
 Two links sit under the data store box:
 
@@ -38,8 +48,14 @@ Two links sit under the data store box:
   pool and lists anywhere it declined to offer, with the reason next to it. The move copies
   everything, **checks it byte for byte, and only then removes the original** — nothing is
   deleted before the copy is proved good. A failed move leaves your data exactly where it was.
-- **Check these are in your backup** asks whether these folders are named in the Appdata Backup
-  plugin. Being named is not the same as having been backed up — see the self-test below.
+
+  <!-- SHOT: settings-move-dialog | full frame | the "Where should stacks live?" dialog open, showing the suggested pool location and the "Move the data store" button -->
+
+- **Check these are in your backup** opens *Add these folders to your backup*, which says whether
+  these folders are named in the Appdata Backup plugin. Being named is not the same as having been
+  backed up — see the self-test below.
+
+  <!-- SHOT: settings-backup-dialog | full frame | the "Add these folders to your backup" dialog open, showing its found-in-the-list or not-listed message -->
 
 Keeping the store on the flash drive is possible through a separate, quieter button. It makes you
 tick a box first: flash wears out with use, and it is the least redundant place in the machine.
@@ -47,6 +63,8 @@ tick a box first: flash wears out with use, and it is the least redundant place 
 ## Image updates
 
 This group is explained fully in [checking for updates](updates.md). What the panel decides:
+
+<!-- SHOT: settings-image-updates | full frame | the Image updates group of the settings panel — "Check for image updates" through "Remove old images automatically" -->
 
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
@@ -58,7 +76,7 @@ This group is explained fully in [checking for updates](updates.md). What the pa
 | Only install during a quiet time | Yes / No | Yes | An update whose delay runs out outside quiet hours waits for them to open. |
 | Quiet time starts / ends | A 24-hour time | 03:00 / 05:00 | The quiet window. It may run past midnight. |
 | Notify me | Never / When a check finds something / That, and again once installed | Never | One message per check or queue, never one per container. |
-| Previous versions to keep | 0 to 5 | 2 | How many older image versions stay on disk so an update can be undone. See [going back](going-back.md). |
+| Previous versions to keep | 0 to 5 | 2 | How many older image versions stay on disk so an update can be undone. See [version history](going-back.md). |
 | Remove old images automatically | No / Yes, once a week | No | Only ever removes an image nothing is running and no roll-back still needs. |
 
 ## Docker Hub sign-in
@@ -67,13 +85,15 @@ A username, an access token, and a list of registries you run yourself — used 
 your images for updates. **Without signing in, Docker Hub allows this server about ten of those
 checks an hour; signed in, about a hundred.**
 
+<!-- SHOT: settings-docker-hub | full frame | the Docker Hub sign-in group, showing the username field and the "registries you run yourself" field — scroll or crop so the access token field is out of frame; the stored token must never appear in a picture -->
+
 | Setting | What it does |
 |---|---|
 | Docker Hub username | Your Docker Hub account name. Leave blank to stay signed out. |
 | Docker Hub access token | Make it in Docker Hub's own account settings, under Security → Personal access tokens, with the **read-only, public repositories** permission. StaXX only ever asks an image its current version, so a leaked token could look but never change or delete anything. It is kept in StaXX's own settings file inside the data store, readable only by the administrator account. Leave both boxes blank to sign out. |
 | Registries you run yourself | Naming a registry here makes StaXX trust that machine's own certificate, or talk to it with **no encryption at all** if it has none. Only ever name a registry you run yourself. Several are separated by commas. A password is never sent to a registry reached without encryption. Left blank, nothing beyond the ordinary public internet is trusted. |
 
-## Also on the panel, but not settings
+## Other tools on the panel
 
 - **Add missing StaXX fields to every stack** reads every stack and offers to add its icon, links
   and description fields as commented placeholders. It shows what would be added before writing
@@ -84,7 +104,7 @@ checks an hour; signed in, about a hundred.**
   has actually proven it can make, and buttons to Build, Recreate or Rebuild it. A newer recipe is
   only ever a notice; nothing rebuilds until you press the button.
 
-## Choosing a store the first time
+## First-run screen
 
 Before a data store is chosen, the stack list is replaced by one notice: **No data store has been
 chosen yet.** Two buttons sit under it — **Choose a data store**, which opens the same *Where
@@ -97,10 +117,12 @@ and a warning if it goes through Unraid's share layer rather than a pool directl
 
 <!-- SHOT: settings-first-run | full frame | the "No data store has been chosen yet" notice with its two buttons, before any store is picked -->
 
-## The self-test
+## Self-test
 
 **Self-test**, the button beside Settings, answers "why did nothing happen?" with facts, in two
 stages.
+
+![The Self-test output: a list of checks with their answers, then a list of commands run one at a time, each ending in ok](../images/guide/settings-self-test-output.png)
 
 **First, everything answerable without running a command** — where the stacks live, whether that
 folder exists and is writable, free space, how many stacks and folders there are, how many are
@@ -121,7 +143,7 @@ Whether a backup has ever run, finished, or reached a destination that still exi
 StaXX cannot see. If the line says the folders are not listed, act on that straight away; if it
 says they are, whether you really have a backup is still your call.
 
-## When a save is refused
+## Save refusals
 
 | What it says | Why |
 |---|---|

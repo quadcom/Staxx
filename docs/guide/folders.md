@@ -1,4 +1,4 @@
-# Working with folders
+# Folders
 
 <!-- index: 50 | grouping stacks on the list: making a folder, moving a stack in or out, running everything inside one at once, renaming, and deleting. -->
 
@@ -8,6 +8,8 @@ See [the folder row and its menu](the-stack-list.md#folders) for what it looks l
 Folders are one level deep. You cannot put a folder inside a folder.
 
 ## Making a folder
+
+<!-- SHOT: folders-new | close-up | the New folder dialog with the name box, opened from the button above the list -->
 
 1. Press **New folder** above the list, or **New folder…** on a stack's own menu — that also files
    the stack straight into it.
@@ -25,6 +27,8 @@ one:
 
 ## Moving a stack into a folder
 
+<!-- SHOT: folders-move-in | close-up | a stack's row menu open on Move to folder, showing the list of folders -->
+
 1. Open the stack's own menu.
 2. Choose **Move to folder**.
 3. Pick the folder.
@@ -32,6 +36,8 @@ one:
 This moves the stack's files. It does not stop the stack, and does not touch its containers.
 
 ## Moving a stack out of a folder
+
+<!-- SHOT: folders-move-out | close-up | a stack's row menu open with Remove from folder highlighted -->
 
 1. Open the stack's own menu.
 2. Choose **Remove from folder**.
@@ -41,6 +47,8 @@ that name at the destination — rename it first.
 
 ## Renaming a folder
 
+<!-- SHOT: folders-rename | close-up | a folder's own menu open with Rename folder highlighted, and the name box it opens -->
+
 1. Open the folder's own menu.
 2. Choose **Rename folder**.
 3. Type the new name.
@@ -48,7 +56,7 @@ that name at the destination — rename it first.
 The same name rules above apply. Every stack inside moves with it. Nothing about how they run
 changes.
 
-## The row of pictures on a folder
+## Folder icons
 
 A collapsed folder's own row carries a picture for every app inside it:
 
@@ -74,6 +82,8 @@ Clicking it goes to the editor, where the problem can be fixed.
 
 ## Running everything in a folder
 
+<!-- SHOT: folders-menu | close-up | a folder's own menu open, showing Start everything, Stop everything, Check this folder and Update this folder -->
+
 Open the folder's own menu:
 
 | Item | What it does |
@@ -87,6 +97,8 @@ Each stack still runs its own outcome. One failing to start does not stop the ot
 shows its own result.
 
 ## Deleting a folder
+
+<!-- SHOT: folders-delete | close-up | a folder's own menu open with Delete folder highlighted -->
 
 1. Open the folder's own menu.
 2. Choose **Delete folder**.

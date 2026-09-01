@@ -1,4 +1,4 @@
-# Where StaXX keeps its things
+# File locations and the data store
 
 <!-- index: 30 | what is in the data store, what is on the flash drive, how to move the store, and how to reach StaXX if you cannot get to its page. -->
 
@@ -19,18 +19,18 @@ even reachable.
 A plain-text note inside `config` explains what each folder is, if you ever open the store directly.
 
 You choose the store's location the first time you open StaXX, and can move it later. See
-[the settings panel](settings.md) for both.
+[Settings](settings.md) for both.
 
-## What is inside a stack's own folder
+## Inside a stack's folder
 
 A stack's folder holds its compose file — an ordinary text file, readable by `docker compose`
 anywhere, not just here. Alongside it may sit whatever else that stack needs: an environment file,
 a data folder, anything the author wrote.
 
 One thing is hidden: a small folder holding the stack's own saved history. See
-[going back](going-back.md) for what it keeps and how to use it.
+[version history](going-back.md) for what it keeps and how to use it.
 
-## The three lines on the flash drive
+## Flash drive settings
 
 They sit in a small settings file, alongside every other plugin's own settings.
 
@@ -42,14 +42,16 @@ They sit in a small settings file, alongside every other plugin's own settings.
 
 ## Moving the data store
 
-Open [the settings panel](settings.md) and press **Move the data store**. It copies everything to
+Open [Settings](settings.md) and press **Move the data store**. It copies everything to
 the new place, checks it byte for byte, and only removes the old folder once that check has passed.
 If the move fails, your data is still exactly where it was.
 
-## Three ways to reach StaXX, in the order to try them
+<!-- SHOT: where-things-live-move-dialog | full frame | the "Where should stacks live?" dialog open, with the suggested pool location and the "Move the data store" button visible -->
+
+## If you cannot reach StaXX
 
 1. **StaXX's own settings panel.** Open StaXX and press Settings. Use this whenever you can — it is
-   the only route that keeps every other setting in step. See [the settings panel](settings.md).
+   the only route that keeps every other setting in step. See [Settings](settings.md).
 2. **Unraid's own settings page for StaXX**, under Settings → Utilities → StaXX. An escape hatch: it
    writes straight to the flash drive, so it still works even when StaXX's own page cannot be
    reached, or while the array is still starting. It only offers the Docker-menu choices and the
@@ -69,7 +71,7 @@ Reboot the server. The part of Unraid that holds a plugin's pages is rebuilt fro
 the server starts, so a broken page cannot survive a reboot. None of your settings are lost, because
 none of them live in that part.
 
-## While the array is still starting
+## While the array is starting
 
 For a short while after the server powers on, StaXX can read its three flash-drive lines but not the
 rest of its settings, because the data store lives on a drive pool that has not mounted yet. StaXX

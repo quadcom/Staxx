@@ -1,4 +1,4 @@
-# Making a stack from scratch
+# Create a new stack
 
 <!-- index: 55 | starting a stack with nothing but a name: the skeleton you are given, the settings offered as comments, every refusal and why, and the single folder that comes out of it. -->
 
@@ -6,22 +6,28 @@ Use this when there is no catalogue entry for what you want — an image you alr
 
 ## Steps
 
-1. Press **Add stack**, top right of the [stack list](the-stack-list.md). [The stack editor](the-stack-editor.md) opens straight away, titled **New stack**.
-2. Type a name in the **Stack name** box. This is the only thing you are asked for. It becomes the folder's name, so renaming it later moves the folder.
-3. Look at the skeleton you are given — see below.
-4. Uncomment any of the settings offered, and type a value, if you want them.
-5. Put in your own image, service name and settings, or paste a whole compose file over the skeleton.
-6. Press **Save**, or **Save and start** to run it straight away.
+1. Press **Add stack**, top right of the [stack list](the-stack-list.md).
 
-There is no folder picker here. A new stack always lands at the top level. To file it in a folder afterwards, use **Move to folder** on the stack's own menu — see [folders](folders.md). There is no template gallery either; every new stack starts from the same skeleton. For a ready-made app instead, use the **Apps** button — see [adding an app](installing-an-app.md).
+   <!-- SHOT: making-a-stack-button | close-up | the top button row with Add stack highlighted -->
 
-## The skeleton
+2. [The stack editor](the-stack-editor.md) opens straight away, titled **New stack**.
+3. Type a name in the **Stack name** box. This is the only thing you are asked for. It becomes the folder's name, so renaming it later moves the folder.
+4. Look at the skeleton you are given — see below.
+5. Uncomment any of the settings offered, and type a value, if you want them.
+6. Put in your own image, service name and settings, or paste a whole compose file over the skeleton.
+7. Press **Save**, or **Save and start** to run it straight away.
+
+   <!-- SHOT: making-a-stack-save | close-up | the Save and Save and start buttons in the editor footer -->
+
+There is no folder picker here. A new stack always lands at the top level. To file it in a folder afterwards, use **Move to folder** on the stack's own menu — see [folders](folders.md). There is no template gallery either; every new stack starts from the same skeleton. For a ready-made app instead, use the **Apps** button — see [installing an app](installing-an-app.md).
+
+## Starting file
 
 ![The whole starting file: a block of commented-out settings for the logo, description, category and links at the top, and below it a single service called my-app running the alpine image, set to restart unless you stop it](../images/guide/making-a-stack-scaffold.png)
 
 One service, called `my-app`, running `alpine:3.20`, set to restart unless you stop it. It is a real, working compose file — it would run as it stands — but it is there to be replaced.
 
-## The settings offered as comments
+## Commented settings
 
 Above the service sits a block of settings, commented out. They make a stack look right on the list and its own page. Uncomment a line and type a value to use one; leave them alone and the file runs exactly as it is.
 
@@ -48,7 +54,7 @@ StaXX checks the file with the real compose program before saving. A file that w
 
 A new stack is created **stopped** unless you chose Save and start.
 
-## When it says no, and why
+## Refusals
 
 | What it says | Why |
 |---|---|
@@ -63,7 +69,9 @@ A new stack is created **stopped** unless you chose Save and start.
 
 If no data store has been chosen yet, the whole page is replaced by a prompt to choose one instead — see [where things live](where-things-live.md).
 
-## What comes out of it
+## The result
+
+<!-- SHOT: making-a-stack-result | full frame | the new stack's compose file open in a plain text editor outside StaXX, showing it is an ordinary file -->
 
 A folder named after your stack, holding an ordinary compose file. Nothing else — no database, no hidden index. Open it in any text editor, copy it anywhere, or run it with a plain `docker compose up` on a machine that has never heard of StaXX, and it behaves the same. Delete the commented settings and nothing about how the stack runs changes.
 

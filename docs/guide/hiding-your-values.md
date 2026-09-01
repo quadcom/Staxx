@@ -1,4 +1,4 @@
-# Hiding your values for a screenshot
+# Sanitise mode
 
 <!-- index: 45 | the Sanitise tick that hides values marked secret while you photograph the editor, exactly what it leaves showing, what it switches off while it is on, and the one tab it cannot cover. -->
 
@@ -10,6 +10,8 @@ Be blunt with yourself about what it does: it hides values from a picture. It do
 from anyone using this browser.
 
 ## Steps
+
+<!-- SHOT: hiding-your-values-tick | close-up | the Sanitise tick box on the editor's top row, next to the stack name and just left of the Password button, unticked -->
 
 1. Open the stack you want to photograph.
 2. Tick **Sanitise**. A banner appears and the editor locks.
@@ -43,7 +45,7 @@ mark before you photograph anything.
 
 The real values are still in the page. They come straight back the moment the tick comes off.
 
-## The one it cannot cover: a second file
+## Second file tabs
 
 A stack can hold more than a compose file — a settings file such as `.env`, or anything else kept
 beside it. Those open as extra tabs, and opening one switches Sanitise off by itself. The tick
@@ -65,7 +67,7 @@ placeholders, so nothing may write one of them into your real file.
 | Every box and button on the form | All disabled. Anything already disabled stays that way when you switch back. |
 | **Undo** | Nothing to undo, because nothing can change. |
 | **Replace** in the find bar | Would edit the placeholder copy on screen, which is thrown away. **Find** still works. |
-| **Fill** on the password generator | The panel and **Copy** keep working. Only writing into a box stops, with the note *"Sanitise is on, so writing to the file is turned off. Turn it off to fill a box."* See [passwords and hashes](passwords-and-hashes.md). |
+| **Fill** on the password generator | The panel and **Copy** keep working. Only writing into a box stops, with the note *"Sanitise is on, so writing to the file is turned off. Turn it off to fill a box."* See [password generator and hashing tool](passwords-and-hashes.md). |
 | The **History** tab | Disabled, with the message *"Not available while Sanitised. An old version holds the real, unhidden values, so history is hidden until Sanitise is turned off."* See [going back](going-back.md). |
 
 History is closed because an old copy of your file holds the values from before you hid them. Left
@@ -80,12 +82,8 @@ open, it would undo the whole point in one click.
 - It never removes a value. Every value is still there, one tick away.
 - It never tells you a picture is safe to share. Whether your screenshot is fit to post is your
   judgement, every time.
-
-## Not this: sending a stack to somebody else
-
-Handing somebody a copy of a stack to run themselves is a different job, done by Export, which
-writes `REPLACE-ME` into a copy it hands you. Sanitise produces nothing and changes nothing; Export
-produces a file you send. See [sharing a stack](sharing-a-stack.md).
+- It is not a way to send a stack to somebody else — that is Export, which writes a real file with
+  `REPLACE-ME` in place of your values. See [sharing a stack](sharing-a-stack.md).
 
 ## Left out, for now
 

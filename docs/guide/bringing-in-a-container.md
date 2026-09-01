@@ -1,4 +1,4 @@
-# Bringing in a container you already run
+# Import an existing container
 
 <!-- index: 65 | a walkthrough of Import, from pressing the button to opening the new stack and taking it over. -->
 
@@ -68,7 +68,9 @@ stack. Nothing switches off, starts, or changes while it runs.
 See [the row and its menu](the-stack-list.md) and [the stack editor](the-stack-editor.md) for what
 you are looking at once it is open.
 
-## What arrives, and why it is locked
+## The import lock
+
+<!-- SHOT: bringing-in-a-container-refusal | close-up | the message shown when Start is pressed on a stack still marked needs review -->
 
 Each import becomes a stack folder holding a normal compose file — one that would run anywhere,
 with no dependence on StaXX. A Compose Manager project is copied exactly as written, byte for byte.
@@ -83,7 +85,7 @@ The file itself says where the stack came from, whether a container of that name
 what could not be brought across, and what StaXX filled in for you. See [what every mark
 means](marks.md) for the **needs review** tag itself.
 
-## Your passwords come with it
+## Passwords carried over
 
 Whatever a template already had filled in — passwords and API keys included — is copied straight
 into the new file. A copy that dropped them would not run. This means the new file holds your
@@ -135,7 +137,7 @@ file, so its dollar signs already mean what you meant, and nothing touches them.
 If a Docker folder's membership is decided by a pattern rather than a plain list, StaXX cannot match
 it and puts anything from it at the top level instead, rather than guess.
 
-## What is not built yet
+## Not built yet
 
 - **Containers started by hand cannot be imported.** They are listed under **Containers with
   nothing behind them** and greyed out, so you can see they exist even though StaXX cannot write a
