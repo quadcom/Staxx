@@ -18,6 +18,9 @@ before that were dates.
 
 ## Unreleased
 
+- **StaXX's own mark now sits in the corner of its page**, in place of the stock icon Unraid gives
+  any plugin, so the page says whose it is at a glance.
+
 - **A running container that nothing is checking can be offered a health check.** A green row only
   ever meant the container was going, never that the app inside was working. Click the pill on such a
   row — or use the button in the editor's health check section — and StaXX works out a question worth
