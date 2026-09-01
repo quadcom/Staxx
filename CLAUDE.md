@@ -226,10 +226,15 @@ bash tools/publish-preview.sh      # render, then replace what the server is sho
 
 **Its front page is the newest project review**, written by `tools/publish-review.js` from whatever
 `summaries/` holds, with links across to the readme, the guide and the changelog, and a fixed
-contents list down the left — one row per finding, ticked green and struck through once the
-`housekeeping` skill has marked that finding `addressed`. The list is read out of the page itself,
-so it cannot disagree with it; findings are matched on the class rather than the element, because
-older reviews wrote them as `article` and newer ones as `div`. The docs tool's own
+contents list down the left. Each row is a card of the same shape as the finding it points at,
+carrying that finding's own severity colour down its left edge and its severity word above the
+title, and going green with a tick once the `housekeeping` skill has marked it `addressed`.
+
+Everything on that list — the title, the severity, the colour, the done state — is read out of the
+page itself, so it cannot disagree with what the review says. Two details worth not rediscovering:
+findings are matched on the class rather than the element, because older reviews wrote them as
+`article` and newer ones as `div`; and the severity words differ between reviews ("critical" in one,
+"Do first" in another), so the label is copied rather than mapped. The docs tool's own
 contents list lives at `pages.html` so the two never fight over `index.html`. Earlier reviews stay at
 `reviews/`, which is the one folder the publish script does **not** empty — everything else there is
 rewritten from the repository each run, but a review exists nowhere else on that machine.
