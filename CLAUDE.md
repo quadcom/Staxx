@@ -235,8 +235,14 @@ Each row of the index is a card of the same shape as the finding it points at,
 carrying that finding's own severity colour down its left edge and its severity word above the
 title, and going green with a tick once the `housekeeping` skill has marked it `addressed`.
 
-Everything on that list — the title, the severity, the colour, the done state — is read out of the
-page itself, so it cannot disagree with what the review says. Two details worth not rediscovering:
+The same bar is stamped onto **every** page in the preview folder, not just the review — the docs
+tool's own thin nav is removed on the way past, so there is one bar rather than two that drift. The
+StaXX preview name is the way back to the newest review. Links in the bar take a path prefix,
+because a page inside `reviews/` needs `../` on every one of them; without it they all pointed at
+`reviews/pages.html` and friends, which do not exist.
+
+Everything on the index list — the title, the severity, the colour, the done state — is read out of
+the page itself, so it cannot disagree with what the review says. Two details worth not rediscovering:
 findings are matched on the class rather than the element, because older reviews wrote them as
 `article` and newer ones as `div`; and the severity words differ between reviews ("critical" in one,
 "Do first" in another), so the label is copied rather than mapped. The docs tool's own
