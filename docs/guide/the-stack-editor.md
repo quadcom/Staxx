@@ -22,7 +22,7 @@ This is the window that opens when you click [a stack's picture](the-stack-list.
 
 ## The three views
 
-<!-- SHOT: the-stack-editor-views | close-up | the Form, Split and Compose buttons, with Split pressed -->
+![The three view buttons — Form, Split and Compose — with Split selected](../images/guide/the-stack-editor-views.png)
 
 Three buttons switch how you see the same file.
 
@@ -49,7 +49,7 @@ History is switched off while Sanitise is on. An old version holds the real valu
 
 ## The form, section by section
 
-<!-- SHOT: the-stack-editor-stack-section | full frame | the Stack section open at the top of the form, above the first service, showing its Networks, Volumes, Secrets and Configs groups -->
+![The Stack section opened, showing its four groups — Networks, Volumes, Secrets and Configs — each with an add button on the right](../images/guide/the-stack-editor-stack-section.png)
 
 The form opens with a **Stack** section — settings that belong to the whole file, not to one service — then one section per service.
 
@@ -60,7 +60,7 @@ The form opens with a **Stack** section — settings that belong to the whole fi
 | Secrets | Secrets declared for the whole stack to share. |
 | Configs | Configs declared for the whole stack to share. |
 
-<!-- SHOT: the-stack-editor-service-section | full frame | one service's section with the Sections button pressed and its picker open, showing several groups ticked on -->
+![A service's section: its name with a pencil to rename it, its description, then the Container group with Image, Container name, Restart policy and Web page port, a Sections button, and the Ports group heading below](../images/guide/the-stack-editor-service-section.png)
 
 Each service then gets its own set of groups. Most are hidden until you switch them on with that service's **Sections** button — a picker lists all of them, with a tick beside each one already showing.
 
@@ -90,7 +90,7 @@ Each service then gets its own set of groups. Most are hidden until you switch t
 
 ## What sits on a row
 
-<!-- SHOT: the-stack-editor-row-parts | close-up | one field row showing a note underneath it, the info-circle help mark beside its label, and the remove cross at the end -->
+![A Volumes group with two rows: the column captions above the boxes, a folder button to browse the server, a read and write dropdown, and a Notes box with its caption underneath](../images/guide/the-stack-editor-row-parts.png)
 
 | Part | What it is |
 |---|---|
