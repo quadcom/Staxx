@@ -4,7 +4,9 @@
 
 ## The update check
 
-<!-- SHOT: updates-summary-line | close-up | the update summary line above the stacks page reading last checked time and how many updates are waiting -->
+
+![The Check for updates button while a check is running, greyed out and reading "Checking…"](../images/guide/updates-checking.png)
+![The update summary line reading "Checked 4 minutes ago, 19 updates waiting."](../images/guide/updates-summary-line.png)
 
 A check asks each image's registry one question: is a newer build published under the same tag?
 Nothing is downloaded. Nothing restarts. The answer sits until you press the pill or the countdown
@@ -56,7 +58,7 @@ note at the top of the form instead, with the same button.
 
 ## Update pill wordings
 
-<!-- SHOT: updates-pill-row | close-up | a stack row's State column with an update pill next to the running pill, highlight box round the update pill -->
+![A stack row with an orange "update ready" pill in the State column, beside a grey stopped pill](../images/guide/updates-pill-row.png)
 
 The State column shows a pill for the container itself — see [the State column](the-stack-list.md#the-state-column). Beside it, when there is something to report, sits an update pill. Nothing is
 shown there when nothing was found, or nothing has been checked yet.
@@ -106,7 +108,7 @@ All of this lives in the row's own menu — see [the row menu](the-stack-list.md
 ## Pause and update all
 
 ![The Check for updates button ringed, with Update all and Pause updates beside it](../images/guide/updates-bulk-buttons.png)
-<!-- SHOT: updates-pause-resume | close-up | two frames of the same button: Pause updates in its normal state, and the same button after being pressed, now reading Resume updates -->
+![The pause button after being pressed, now reading "Resume updates" and filled orange, with Update all beside it](../images/guide/updates-pause-resume.png)
 
 | Button | What it does |
 |---|---|

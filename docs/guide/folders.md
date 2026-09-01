@@ -9,7 +9,7 @@ Folders are one level deep. You cannot put a folder inside a folder.
 
 ## Making a folder
 
-<!-- SHOT: folders-new | close-up | the New folder dialog with the name box, opened from the button above the list -->
+![The New folder button replaced by a naming box with the placeholder "Media", sitting in the row of buttons](../images/guide/folders-new.png)
 
 1. Press **New folder** above the list, or **New folder…** on a stack's own menu — that also files
    the stack straight into it.
@@ -27,7 +27,7 @@ one:
 
 ## Moving a stack into a folder
 
-<!-- SHOT: folders-move-in | close-up | a stack's row menu open on Move to folder, showing the list of folders -->
+![A stack's menu open at its Move to folder list, every folder named, the folder the stack is already in greyed out, and New folder and Remove from folder underneath](../images/guide/folders-move-in.png)
 
 1. Open the stack's own menu.
 2. Choose **Move to folder**.
@@ -37,7 +37,7 @@ This moves the stack's files. It does not stop the stack, and does not touch its
 
 ## Moving a stack out of a folder
 
-<!-- SHOT: folders-move-out | close-up | a stack's row menu open with Remove from folder highlighted -->
+![The same menu's lower half, where Remove from folder takes a stack back to the top level](../images/guide/folders-move-in.png)
 
 1. Open the stack's own menu.
 2. Choose **Remove from folder**.
@@ -47,7 +47,7 @@ that name at the destination — rename it first.
 
 ## Renaming a folder
 
-<!-- SHOT: folders-rename | close-up | a folder's own menu open with Rename folder highlighted, and the name box it opens -->
+![A folder row with its name replaced by an editable box holding the current name](../images/guide/folders-rename.png)
 
 1. Open the folder's own menu.
 2. Choose **Rename folder**.
@@ -82,7 +82,7 @@ Clicking it goes to the editor, where the problem can be fixed.
 
 ## Running everything in a folder
 
-<!-- SHOT: folders-menu | close-up | a folder's own menu open, showing Start everything, Stop everything, Check this folder and Update this folder -->
+![The folder menu: Start everything, Stop everything, Check this folder, Update this folder, Rename folder, Delay and Delete folder](../images/guide/the-stack-list-folder-menu.png)
 
 Open the folder's own menu:
 
@@ -98,10 +98,11 @@ shows its own result.
 
 ## Deleting a folder
 
-<!-- SHOT: folders-delete | close-up | a folder's own menu open with Delete folder highlighted -->
+![The folder menu, where Delete folder is the last item](../images/guide/the-stack-list-folder-menu.png)
 
 1. Open the folder's own menu.
 2. Choose **Delete folder**.
+3. Your browser asks to confirm. Unlike the rest of StaXX, this one is the browser's own dialog, so it looks different from every other question StaXX asks. It says the stacks inside are moved back to the top level, not deleted, and that nothing moves at all unless every one of them can.
 
 **This never deletes what is inside it.** Every stack is moved back to the top level first. Only
 once every one of them has moved does the empty folder itself go.
