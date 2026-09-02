@@ -924,6 +924,21 @@
   min-width: 0;
 }
 
+/* State can hold two pills (a status pill and an update pill), and once the
+   track above narrows them onto a second line the block layout this cell
+   would otherwise keep left-aligns both and lets the wrapped line sit flush
+   against the first, overlapping it by a pixel. Flex-wrapping the pills
+   themselves, rather than leaving them to inline-block flow, gives them a
+   gap and centres both lines instead. */
+.staxx-stacks .staxx-cell--state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: center;
+  align-items: center;
+  align-content: center;
+}
+
 /* The header row's bold weight and rule-off, same idea as the two grids
    below and scoped the same way. Centred rather than left, so a heading
    still sits over its figures once the ~130rem fold below packs cpu/mem/

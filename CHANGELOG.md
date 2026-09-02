@@ -100,6 +100,9 @@ before that were dates.
   own row has nothing to do with most of those titles, so the single strip above everything read
   badly. Every expanded folder now shows its own row of titles directly above its stacks, and the
   loose stacks below the last folder get one of their own too.
+- **A stack's status and update pills no longer overlap when a narrow column pushes them onto a
+  second line.** They now space out with a small gap between them and sit centred in the column,
+  instead of both hugging the left edge with the wrapped line printed a pixel over the first.
 
 ---
 
