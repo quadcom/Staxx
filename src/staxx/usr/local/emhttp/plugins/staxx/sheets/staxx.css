@@ -1833,10 +1833,19 @@
 /* The inner wrapper is what actually clips: min-height: 0 is what lets a
    0fr row shrink at all, and that has to sit on an element separate from the
    one being animated, or the row track and the thing measuring it fight each
-   other. */
+   other.
+
+   position: relative for the same reason as .staxx-children-inner below —
+   a collapsed folder's rows carry the identical .staxx-iconwrap > .staxx-dot
+   / .staxx-spinner pair (the folder row's own status light and busy spinner,
+   plus every stack row filed inside), and without a positioning root of its
+   own here those two hang off whatever positioned ancestor sits further up
+   the page instead of this wrapper — measured live as Unraid's own page
+   container growing its own vertical scrollbar. See the fuller note there. */
 .staxx-folder-inner {
   overflow: hidden;
   min-height: 0;
+  position: relative;
 }
 
 /* ---- Container rows ----------------------------------------------------- */
@@ -1886,9 +1895,25 @@
   visibility: hidden;   /* same reason as the folder wrapper above */
 }
 
+/* overflow: hidden above clips a collapsed stack's rows visually, but it does
+   not on its own stop the two things a container row ever positions off the
+   page rather than off its own box: the running-state dot and the busy
+   spinner, both .staxx-dot / .staxx-spinner sitting on .staxx-iconwrap. That
+   wrapper only sets position: relative on itself, not on anything between it
+   and here, so with nothing named as a positioning root on THIS element the
+   dot and spinner's containing block can resolve past this wrapper to
+   whatever positioned ancestor the page happens to supply further up —
+   which still paints inside the collapsed box, but is measured by Unraid's
+   own page container as real scrollable content once it does. Measured live:
+   this is what took the page container's own extra vertical scrollbar (46px
+   of scrollHeight the visible page never used) to exactly zero. Never
+   remove this without re-measuring scrollHeight against clientHeight on a
+   page with folders collapsed — the two sliding wrappers give no visual sign
+   of the second scrollbar appearing again. */
 .staxx-children-inner {
   overflow: hidden;
   min-height: 0;
+  position: relative;
 }
 
 /* The band behind an EXPANDED stack: the stack row and its container rows

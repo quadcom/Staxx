@@ -18,6 +18,9 @@ before that were dates.
 
 ## Unreleased
 
+- **The page no longer grows a second scrollbar of its own.** Collapsing a stack or a folder was
+  leaving a sliver of invisible extra room on the page, on top of your browser's own scrollbar —
+  fixed at the source, so both scroll the same amount again.
 - **Tidy no longer refuses a file over the commented example StaXX itself writes into it.** A
   trailing note indented under a setting now travels with that setting instead of being treated as
   a stray line — so a freshly scaffolded stack tidies cleanly instead of being refused outright. Its
