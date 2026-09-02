@@ -97,8 +97,9 @@ before that were dates.
   to fit the widest version pair on the page, which could crush the name and services next to it and
   add a sideways scrollbar. It now stops growing past a sensible width, and a badge too long for it
   is trimmed with an ellipsis on screen — hover it for the full "from → to" version pair.
-- **Column headings in the stack list are now centred**, so CPU, Memory, Network and GPU still line
-  up over their own figures once a narrower window packs those four into a compact block.
+- **The CPU, Memory, Network and GPU column headings now sit centred over their own graph**, not the
+  whole column, so a heading still lines up with its figures whether the window is full width or a
+  narrower one has packed those four into a compact block.
 - **The column titles now sit inside each folder, not just once at the top of the list.** A folder's
   own row has nothing to do with most of those titles, so the single strip above everything read
   badly. Every expanded folder now shows its own row of titles directly above its stacks, and the

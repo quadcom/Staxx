@@ -965,12 +965,16 @@
    wins regardless of source order or which container query is live. */
 .staxx-stacks [role="columnheader"].staxx-num {
   /* A figure cell is pushed to the end of its track (justify-self: end, see
-     .staxx-num above) and carries an 88px blank ::after standing in for a
-     sparkline, so centring its text only centred it inside a cell that was
-     itself sitting hard right, with the blank taking half the room. A heading
-     has no graph to line up with: stretch it across the track, drop the
-     placeholder, and centre what is left. */
-  justify-self: stretch;
+     .staxx-num above), and its graph — .staxx-spark, or .staxx-bar in the
+     memory/GPU columns, both the same footprint — sits at the cell's right
+     edge inside the cell's own 0.8rem right padding. A heading has no figure
+     of its own to right-align, only a graph beneath it to sit over, so it
+     takes that same right-hand slot and centres its text within it, rather
+     than across the whole track the way a plain centred heading would. */
+  justify-self: end;
+  width: calc(8.8rem + 0.8rem); /* .staxx-spark's width + the cell's own right
+                                    padding — change one, change both */
+  padding-left: 0;
   justify-content: center;
 }
 
