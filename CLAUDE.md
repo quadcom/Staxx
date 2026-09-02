@@ -4,10 +4,19 @@ Project: **StaXX**  ·  Plan tag: **`STX`**
 
 - publish: README.md CHANGELOG.md docs/README.md docs/guide docs/glossary.md
 - repo: quadcom/Staxx
+- per-branch: staxx.plg branch
+- release-ignore-tags: 1.* 20[0-9][0-9].*
 
-*Those two lines are read by the `preview-site` skill: what this project publishes to the shared
+*The first two lines are read by the `preview-site` skill: what this project publishes to the shared
 preview site, and which repository to render against so a bare issue reference looks right. The tag
 is the folder it publishes into and the prefix its plan files carry.*
+
+*The last two are read by the `cut-a-release` skill. `per-branch` names every value that differs
+between the two branches, so the check can refuse a release whose manifest still says `dev` on
+`main` — the merge step most often forgotten, and the one that quietly offers development builds to
+everyone on the stable channel. `release-ignore-tags` excludes the tags a padded version can never
+sort above: the unpadded `1.x` names burnt while releases were immutable, and the dated scheme used
+before them. Without it every stable release would be refused for ever.*
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
