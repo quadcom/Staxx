@@ -1159,6 +1159,15 @@ function staxx_import_prepare_dir(string $rel, string &$error): string {
     return '';
   }
 
+  // PLAN_118 — every import route funnels through here, so this is where
+  // Community Applications, an image import and a Compose Manager takeover
+  // all get refused rather than quietly running a second stack as the same
+  // compose project.
+  if (!staxx_name_free(staxx_path_leaf($rel), '', $clashError)) {
+    $error = $clashError;
+    return '';
+  }
+
   if (!@mkdir($dir, 0755, true)) {
     $error = 'Could not create '.$dir;
     return '';

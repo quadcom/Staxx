@@ -508,7 +508,7 @@ switch ($action) {
         'dir'          => staxx_archive_root(),
       ]);
     }
-    if (!staxx_archive_stack($name, $error, $confirmed, $archive)) {
+    if (!staxx_archive_stack($name, $error, $confirmed, $archive, $note)) {
       staxx_reply(['ok' => false, 'error' => $error]);
     }
 
@@ -526,7 +526,7 @@ switch ($action) {
       return $data;
     });
 
-    staxx_reply(['ok' => true, 'archive' => $archive]);
+    staxx_reply(['ok' => true, 'archive' => $archive, 'note' => (string)$note]);
 
   // ---- what has been archived, for the settings panel ----
   case 'archive-list':

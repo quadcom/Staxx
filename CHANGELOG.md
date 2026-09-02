@@ -83,6 +83,13 @@ before that were dates.
   rough count of how much has arrived, when compose reports it), and clicking it opens the same
   running log a failed start already offers. A brand-new stack started from the editor's "Save and
   start" now shows this from the moment its row appears, and it survives refreshing the page mid-download.
+- **Two stacks that would end up sharing the same name are now caught before it happens.** If a
+  stack folder's name matches one that already exists somewhere else in your store, a "shares the
+  name" mark now appears in the state column explaining which folder it clashes with — because
+  Docker can only ever run one of them, and the other reading as stopped is a symptom, not a fault.
+  Removing the one that isn't running now only ever takes away its own folder, never the other
+  one's containers by mistake. Renaming, moving, creating or importing a stack under a name already
+  in use elsewhere is now refused up front, with a plain explanation of why.
 
 ---
 

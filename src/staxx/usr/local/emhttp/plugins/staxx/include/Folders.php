@@ -684,6 +684,16 @@ function staxx_folder_assign(string $stack, string $folder, string &$error): str
     return '';
   }
 
+  // PLAN_118 — the checks above only catch a leaf already sitting at the top
+  // level or in the SAME destination folder. Moving "tdarr" into "Backup"
+  // while "Media/tdarr" exists trips neither, but both would still run as
+  // the same compose project. $stack excludes this stack's own current
+  // entry, since it is the one being moved.
+  if (!staxx_name_free($leaf, $stack, $clashError)) {
+    $error = $clashError;
+    return '';
+  }
+
   if (!@rename($from, $to)) { $error = 'Could not move the stack on disk.'; return ''; }
 
   // The tree's shape just changed on disk; see staxx_scan_stacks_reset().

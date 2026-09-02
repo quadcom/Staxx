@@ -244,6 +244,108 @@ function staxx_project_name(string $leaf): string {
   return preg_replace('/[^a-z0-9_-]/', '', strtolower($leaf));
 }
 
+/**
+ * A compose file's own top-level `name:` key, if it sets one — read
+ * directly off the file rather than through staxx_yaml_flatten(), which
+ * needs `docker compose config` to produce the canonical form it expects.
+ * This has to work without compose running at all, since it feeds
+ * staxx_name_free() (PLAN_118), the check that runs before anything is
+ * written or started.
+ *
+ * Only a line starting in column zero counts — a `name:` indented under a
+ * service is something else entirely. Returns '' when the file sets none,
+ * which is the ordinary case: most stacks are named after their directory.
+ */
+function staxx_compose_own_name(string $file): string {
+  $lines = @file($file, FILE_IGNORE_NEW_LINES);
+  if ($lines === false) return '';
+  foreach ($lines as $line) {
+    if (preg_match('/^name:\s*[\'"]?([A-Za-z0-9_.-]+)[\'"]?\s*(#.*)?$/', $line, $m)) {
+      return strtolower($m[1]);
+    }
+  }
+  return '';
+}
+
+/**
+ * The compose project name this stack's own file would actually produce —
+ * its explicit `name:` if it sets one, else compose's own guess from the
+ * directory. Shared by the clash detector and the delete guard below so
+ * both agree on what a stack is "really" called (PLAN_118).
+ */
+function staxx_stack_project_guess(string $file, string $leaf): string {
+  $own = $file !== '' ? staxx_compose_own_name($file) : '';
+  return $own !== '' ? $own : staxx_project_name($leaf);
+}
+
+/**
+ * Which stacks on disk would run as the same compose project — worked out
+ * from the store itself, never from what is currently running, because the
+ * hazard is a twin that has never been started (PLAN_118). Grouped by
+ * staxx_stack_project_guess(); any project name claimed by more than one
+ * stack is a clash, and every stack in the group carries the others' paths.
+ *
+ * Cached exactly like staxx_scan_stacks(), which is what it walks — cleared
+ * by the same reset so a stack created or renamed mid-request is seen.
+ *
+ * @return array<string, string[]> stack path => the other stack paths
+ *                                  claiming the same project name
+ */
+function staxx_project_clashes(bool $reset = false): array {
+  static $clashes = null;
+  if ($reset) { $clashes = null; return []; }
+  if ($clashes !== null) return $clashes;
+
+  $projectOf = [];
+  foreach (staxx_scan_stacks()['stacks'] as $found) {
+    $file = staxx_find_compose_file($found['dir']);
+    $projectOf[$found['rel']] = staxx_stack_project_guess($file, $found['leaf']);
+  }
+
+  $groups = [];
+  foreach ($projectOf as $rel => $proj) $groups[$proj][] = $rel;
+
+  $clashes = [];
+  foreach ($projectOf as $rel => $proj) {
+    $clashes[$rel] = array_values(array_diff($groups[$proj], [$rel]));
+  }
+  return $clashes;
+}
+
+/**
+ * Refuse a new stack's leaf if the project name it would run as is already
+ * claimed by another stack anywhere in the store (PLAN_118) — two stacks
+ * named alike, one in a folder and one not, describe the same compose
+ * project, and Docker keeps only one of them. staxx_valid_path() is not the
+ * place for this: that gate is about shape, not about what else is already
+ * in the store. Called by every door that names a stack directory — new
+ * stack, Community Applications install, image import, bundle import,
+ * rename and a folder move.
+ *
+ * $ownPath, when given, is the stack this leaf already belongs to (a rename
+ * or a move keeping its own name), so a stack is never compared against
+ * itself — the caller means "is this leaf still free", not "is it unique
+ * among everyone else too".
+ *
+ * @param string|null $error set to the full refusal sentence on a clash
+ */
+function staxx_name_free(string $leaf, string $ownPath = '', ?string &$error = null): bool {
+  $guess = staxx_project_name($leaf);
+  foreach (staxx_scan_stacks()['stacks'] as $found) {
+    if ($found['rel'] === $ownPath) continue;
+    $file = staxx_find_compose_file($found['dir']);
+    if (staxx_stack_project_guess($file, $found['leaf']) !== $guess) continue;
+
+    // Always written: every caller hands in a variable it has not set yet,
+    // so testing it for null here would leave the refusal with no sentence.
+    $where = $found['folder'] !== '' ? ' in '.$found['folder'] : '';
+    $error = 'A stack called "'.$guess.'" already exists'.$where.'. Two stacks with the same '
+           . 'name would run as one project — pick another name, or move that one instead.';
+    return false;
+  }
+  return true;
+}
+
 function staxx_stack_dir(string $rel): string {
   return staxx_stack_root().'/'.$rel;
 }
@@ -1044,6 +1146,7 @@ function staxx_scan_stacks(bool $reset = false): array {
  */
 function staxx_scan_stacks_reset(): void {
   staxx_scan_stacks(true);
+  staxx_project_clashes(true); // grouped from the same scan; see its own comment
 }
 
 /**
@@ -1123,12 +1226,19 @@ function staxx_compose_ls(): array {
  * All of it corrects itself the next time the stack is started, because that
  * restamps the path.
  *
+ * $stub is test-only: a server suite has no way to make a fake project
+ * genuinely running (see tests/server/clash.php), so passing an array here
+ * replaces the memoised answer outright rather than asking real docker.
+ * Never passed by any real caller — every production call site takes no
+ * argument at all.
+ *
  * @return array{byFile:array<string,array{name:string,status:string}>,
  *               byTail:array<string,array{name:string,status:string}>,
  *               byName:array<string,array{name:string,status:string}>}
  */
-function staxx_compose_state(): array {
+function staxx_compose_state(?array $stub = null): array {
   static $state = null;
+  if ($stub !== null) return $state = $stub;
   if ($state !== null) return $state;
   $state = ['byFile' => [], 'byTail' => [], 'byName' => []];
 
@@ -1185,12 +1295,21 @@ function staxx_file_tail(string $file): string {
  *
  * @param string $file absolute path to the compose file, or ''
  * @param string $leaf the stack's own directory name, without its folder
+ * @param bool $clash PLAN_118 — true when another stack on disk would run as
+ *             the same project (staxx_project_clashes()). Both fallbacks
+ *             below guess a project from a directory name, which is exactly
+ *             the wrong answer for a clashing stack: the tail and name
+ *             matches could belong to either twin, and the file path is the
+ *             only thing that ties state to THIS directory rather than the
+ *             other one. So a clashing stack gets its state from its own
+ *             file or not at all.
  */
-function staxx_state_for(string $file, string $leaf): ?array {
+function staxx_state_for(string $file, string $leaf, bool $clash = false): ?array {
   $state = staxx_compose_state();
-  if ($file === '') return $state['byName'][staxx_project_name($leaf)] ?? null;
+  if ($file === '') return $clash ? null : ($state['byName'][staxx_project_name($leaf)] ?? null);
 
   if (isset($state['byFile'][$file])) return $state['byFile'][$file];
+  if ($clash) return null;
 
   $tail = staxx_file_tail($file);
   if (isset($state['byTail'][$tail])) return $state['byTail'][$tail];
@@ -1763,14 +1882,16 @@ function staxx_compose_files_mtime(string $file): int {
  *                          filename:string, services:string[], x:array<string,string>,
  *                          project:string, status:string, running:bool, hasFile:bool,
  *                          parses:bool, error:?string, review:bool, handover:bool,
- *                          takeover:bool}>
+ *                          takeover:bool, clash:string[]}>
  */
 function staxx_list_stacks(): array {
   $stacks = [];
+  $clashes = staxx_project_clashes();
 
   foreach (staxx_scan_stacks()['stacks'] as $found) {
     $dir    = $found['dir'];
     $file   = staxx_find_compose_file($dir);
+    $clash  = $clashes[$found['rel']] ?? [];
     // Locked stacks report no state — same reasoning, and the same one-line
     // guard, as staxx_stack_states(); see its comment for why a green row on
     // an unreviewed import is the hazard rather than a cosmetic problem.
@@ -1778,7 +1899,7 @@ function staxx_list_stacks(): array {
     // every poll, so guarding only one leaves the row turning green seconds
     // after it is drawn.
     $locked = staxx_review_file($dir) !== '';
-    $state  = $locked ? null : staxx_state_for($file, $found['leaf']);
+    $state  = $locked ? null : staxx_state_for($file, $found['leaf'], $clash !== []);
     $status = $state['status'] ?? '';
 
     $parseError = null;
@@ -1822,6 +1943,9 @@ function staxx_list_stacks(): array {
       // and start" — cheap for the same reason staxx_foreign_holders()'s own
       // docblock gives: both reads behind it are statically cached.
       'takeover' => staxx_foreign_holders($found['rel']) !== [],
+      // PLAN_118 — the other stacks that would run as this same compose
+      // project, or [] when this one is not part of a clash.
+      'clash'    => $clash,
     ];
   }
 
@@ -2645,13 +2769,15 @@ function staxx_can_run(): bool {
  * up?" is one `compose ls` for the whole machine and no file reads at all.
  *
  * @return array<string, array{name:string, file:string, project:string,
- *                             status:string, running:bool}>
+ *                             status:string, running:bool, clash:string[]}>
  */
 function staxx_stack_states(): array {
-  $out = [];
+  $out     = [];
+  $clashes = staxx_project_clashes();
 
   foreach (staxx_scan_stacks()['stacks'] as $found) {
-    $file   = staxx_find_compose_file($found['dir']);
+    $file  = staxx_find_compose_file($found['dir']);
+    $clash = $clashes[$found['rel']] ?? [];
     // A locked stack is reported as having no state at all, and deliberately.
     // staxx_state_for() falls back to matching on the project name, which
     // compose derives from the folder — so an imported copy sitting in a
@@ -2659,8 +2785,10 @@ function staxx_stack_states(): array {
     // the row goes green for containers that are not ours. That green row is
     // the mechanism of the whole hazard the review lock exists to stop, so it
     // must not appear even though the verbs behind it are already refused.
+    // A stack in a project-name clash (PLAN_118) gets the same restriction:
+    // staxx_state_for()'s fallbacks would just as happily match its twin.
     $state  = staxx_review_file($found['dir']) !== '' ? null
-                                                     : staxx_state_for($file, $found['leaf']);
+                                                     : staxx_state_for($file, $found['leaf'], $clash !== []);
     $status = (string)($state['status'] ?? '');
 
     $out[$found['rel']] = [
@@ -2673,6 +2801,7 @@ function staxx_stack_states(): array {
       'project' => (string)($state['name'] ?? ''),
       'status'  => $status,
       'running' => stripos($status, 'running') !== false,
+      'clash'   => $clash,
     ];
   }
 
@@ -3102,6 +3231,15 @@ function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$
   }
   $dir = staxx_stack_dir($name);
 
+  // PLAN_118 — only checked for a stack that does not exist yet. Saving an
+  // edit to a stack already on disk must never trip on its own name, and a
+  // stack that already clashes is Adrian's to rename or remove, not this
+  // save's to refuse.
+  if (!is_dir($dir) && !staxx_name_free(staxx_path_leaf($name), '', $clashError)) {
+    $error = $clashError;
+    return false;
+  }
+
   // The stack's existing override, if it has one, has to be checked
   // alongside whatever is being saved here — a main file that is fine on
   // its own can still be broken once the override on disk is layered over
@@ -3309,10 +3447,16 @@ function staxx_share_perms(string $path, bool $isDir): void {
  * nothing on this page can reach.
  *
  * @param string|null $archive set to the full path of the written zip on success
+ * @param string|null $note PLAN_118 — set when the `down` step was skipped
+ *                     because this folder's project is actually running from
+ *                     a different stack; the caller shows it as part of a
+ *                     successful reply, since nothing here has gone wrong
  */
 function staxx_archive_stack(
-  string $name, string &$error, bool $confirmed = false, ?string &$archive = null
+  string $name, string &$error, bool $confirmed = false, ?string &$archive = null,
+  ?string &$note = null
 ): bool {
+  $note = '';
   $error = '';
   if (!staxx_valid_path($name)) { $error = 'Invalid stack name.'; return false; }
 
@@ -3406,20 +3550,48 @@ function staxx_archive_stack(
 
   $cmd  = staxx_compose_cmd();
   if (!$locked && $file !== '' && $cmd !== '' && staxx_docker_running()) {
-    $code = 1;
-    $out  = staxx_sh(
-      'cd '.escapeshellarg($dir).' && '.$cmd.' '.staxx_compose_file_args($files).' down 2>&1',
-      120,
-      $code
-    );
-    // Refuse if the containers are still up. Archiving the folder while its
-    // containers run leaves them orphaned, with nothing in this UI able to
-    // reach them again.
-    if ($code !== 0) {
-      $error = 'The containers could not be stopped, so nothing was archived or removed. '
-             . 'Stop the stack first, then try again.'
-             . ($out !== '' ? "\n\n".trim($out) : '');
-      return false;
+    // PLAN_118 — two stacks can share a compose project name (one in a
+    // folder, one not), and Docker holds only one project by that name: the
+    // one whose `up` ran last. A plain `down` here resolves by project name,
+    // so if this folder's file is not among that project's own config files,
+    // the project belongs to some OTHER stack and `down` would stop and
+    // remove containers that are not this stack's to touch. Skip it and
+    // archive the folder only, exactly as if nothing were running at all.
+    $leaf    = staxx_path_leaf($name);
+    $project = staxx_stack_project_guess($file, $leaf);
+    $running = staxx_compose_state()['byName'][$project] ?? null;
+    $isMine  = staxx_state_for($file, $leaf, true) !== null;
+
+    if ($running !== null && !$isMine) {
+      $ownedBy = '';
+      foreach (staxx_project_clashes()[$name] ?? [] as $sibling) {
+        $siblingFile = staxx_find_compose_file(staxx_stack_dir($sibling));
+        if ($siblingFile !== '' && staxx_state_for($siblingFile, staxx_path_leaf($sibling), true) !== null) {
+          $ownedBy = $sibling;
+          break;
+        }
+      }
+      $note = $ownedBy !== ''
+        ? 'Project "'.$project.'" is running from '.$ownedBy.', so its containers were left '
+          .'alone; only this folder was archived.'
+        : 'Project "'.$project.'" is running elsewhere, so its containers were left alone; '
+          .'only this folder was archived.';
+    } else {
+      $code = 1;
+      $out  = staxx_sh(
+        'cd '.escapeshellarg($dir).' && '.$cmd.' '.staxx_compose_file_args($files).' down 2>&1',
+        120,
+        $code
+      );
+      // Refuse if the containers are still up. Archiving the folder while its
+      // containers run leaves them orphaned, with nothing in this UI able to
+      // reach them again.
+      if ($code !== 0) {
+        $error = 'The containers could not be stopped, so nothing was archived or removed. '
+               . 'Stop the stack first, then try again.'
+               . ($out !== '' ? "\n\n".trim($out) : '');
+        return false;
+      }
     }
   }
 
@@ -5560,6 +5732,14 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
   $to = staxx_stack_root().'/'.$newRel;
   if (file_exists($to)) {
     $error = 'Something called "'.$newLeaf.'" is already there. Pick another name.';
+    return '';
+  }
+  // PLAN_118 — the checks above only catch a leaf collision in the SAME
+  // folder; a rename can just as easily produce the compose project name a
+  // stack in some other folder already claims. $rel excludes this stack's
+  // own current entry from the search, since it is the one being renamed.
+  if (!staxx_name_free($newLeaf, $rel, $clashError)) {
+    $error = $clashError;
     return '';
   }
   if (!@rename($from, $to)) {

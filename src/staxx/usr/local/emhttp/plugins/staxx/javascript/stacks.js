@@ -19112,9 +19112,14 @@
               // The dialog stays open rather than closing: there is nothing
               // left to confirm, but naming where the archive landed is
               // worth a beat before Done is the only thing left to press.
+              // PLAN_118 — set only when this folder shared its compose
+              // project name with another stack, so `down` was skipped
+              // rather than stopping that other stack's containers.
+              var noteHtml = res.note ? '<p>' + esc(res.note) + '</p>' : '';
               askConfirm({
                 title: 'Removed "' + label + '"',
                 bodyHtml: '<p>Its folder is now kept as <code>' + esc(res.archive) + '</code>.</p>' +
+                  noteHtml +
                   '<p>Unzipping it back into the stacks folder puts the stack back.</p>',
                 goLabel: 'Done'
               }).then(function () { closeConfirm(); });

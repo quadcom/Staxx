@@ -94,6 +94,13 @@ when you hover it. See [row marks and icons](marks.md) for the full key.
 | <img src="../images/guide/the-stack-list-pill-busy.png" alt="An orange dashed outline pill reading Updating"> | A command is running on this row. It also says Starting, Stopping, Removing or Rebuilding. |
 | <img src="../images/guide/the-stack-list-pill-failed.png" alt="A red pill reading Update failed"> | The last command failed. Click it to see what happened. |
 
+An amber **name clash** pill turns up here when a stack's folder shares a name with another stack
+somewhere else in your store. Docker can only ever run one of them, so hovering it names the other
+folder — the one that is actually running keeps its real state, and its stopped twin is not
+secretly holding anything hostage. Rename one of them, or remove the one you are not using; StaXX
+also now refuses to create, rename, move or import a stack under a name already in use elsewhere,
+so a fresh clash should not happen again by accident.
+
 Beside it, an update pill, when there is something to say. Nothing at all is shown when nothing
 newer was found, or when nothing has been checked yet.
 

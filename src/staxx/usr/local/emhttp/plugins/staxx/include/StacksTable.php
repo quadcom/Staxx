@@ -237,6 +237,29 @@ function staxx_state_pill(array $s, bool $canRun, string $service = ''): string 
   return '<span class="staxx-pill staxx-pill--down">'._('stopped').'</span>';
 }
 
+/**
+ * PLAN_118 — the state cell's second pill for a stack whose compose project
+ * name is also claimed by another stack on disk. Docker can only ever hold
+ * one project by that name, the one whose `up` ran last, so the row this is
+ * NOT drawn on is the one actually running; see staxx_state_for()'s own
+ * clash guard for why. Warns rather than blocks — the row still has to say
+ * what is true right now, this just explains why it might look surprising.
+ *
+ * $project is the guessed project name shared by every stack in $clash;
+ * good enough for the tooltip even though it is a guess, since every
+ * stack it names is guessed the same way.
+ */
+function staxx_clash_pill_html(array $clash, string $project): string {
+  if ($clash === []) return '';
+  $others = implode(', ', array_map('htmlspecialchars', $clash));
+  $title  = sprintf(
+    _('Shares the name "%1$s" with %2$s. Docker can only run one project under that name — rename one of these stacks, or delete the one that is not in use.'),
+    htmlspecialchars($project), $others
+  );
+  // Not escaped again — _() returns HTML; see staxx_state_pill() above.
+  return ' <span class="staxx-pill staxx-pill--warn" title="'.$title.'">'._('name clash').'</span>';
+}
+
 /** The "3 stacks · 1 running" line under a folder name. */
 function staxx_folder_sub(int $count, int $running): string {
   $text = sprintf($count === 1 ? _('%d stack') : _('%d stacks'), $count);
@@ -1982,7 +2005,8 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                container row drawn" (see $expandable's own definition above),
                the same shape data-sole-service already tests for. */
             !$expandable ? (string)($kids[0]['service'] ?? '') : ''
-          ).staxx_update_pill_html($sUpdate).staxx_pending_chip_html($sPending) ?></span>
+          ).staxx_update_pill_html($sUpdate).staxx_pending_chip_html($sPending)
+          .staxx_clash_pill_html($s['clash'] ?? [], staxx_project_name($s['leaf'])) ?></span>
           <span class="staxx-cell staxx-cell--address staxx-addrcell" role="gridcell" data-cell="address"><?=
             staxx_address_html(staxx_merged_addresses(staxx_stack_containers($s), array_column($kids, 'webui', 'id')))
           ?></span>
@@ -2351,7 +2375,8 @@ function staxx_state_snapshot(): array {
       // target until the next full render, never a wrong action.
       'html'       => staxx_state_pill($s + ['health' => $mineHealth, 'unhealthy' => $mineUnhealthy,
                         'healthRunning' => $mineCounts['running'], 'healthChecked' => $mineCounts['checked']], $canRun,
-                        count($mine) === 1 ? (string)($mine[0]['service'] !== '' ? $mine[0]['service'] : $mine[0]['name']) : ''),
+                        count($mine) === 1 ? (string)($mine[0]['service'] !== '' ? $mine[0]['service'] : $mine[0]['name']) : '')
+                     . staxx_clash_pill_html($s['clash'] ?? [], staxx_project_name($s['leaf'])),
       'address'    => staxx_address_html(staxx_merged_addresses($mine, $webuiById)),
       // PLAN_107 — what the browser toggles staxx-dot--sick from on the
       // stack row itself.
