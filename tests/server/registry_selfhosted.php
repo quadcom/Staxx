@@ -16,7 +16,12 @@
  * PROVES its own cleanup rather than assuming it.
  *
  * Needs REGISTRY_TRUST set, in the REAL config, to exactly the three
- * loopback addresses below — a throwaway registry started for a few minutes
+ * loopback addresses below. THE REAL CONFIG IS THE STORE'S HALF, not the
+ * flash one: staxx_cfg() layers <STORE_ROOT>/config/staxx.cfg over
+ * /boot/config/plugins/staxx/staxx.cfg, and the store's copy already holds
+ * an empty REGISTRY_TRUST that wins over anything seeded on flash — which
+ * is exactly how a run on 2026-09-02 aborted on the first line. Read
+ * STORE_ROOT off the flash file, then seed the store's file — a throwaway registry started for a few minutes
  * has no certificate, so this is PLAN_92a Part A's opt-in put to use. Same
  * idiom as tests/server/record.php: seed it before PHP starts (staxx_cfg()
  * memoises on first read, so changing the file mid-run is too late), and
@@ -26,13 +31,15 @@
  *
  *     pscp tests/server/registry_selfhosted.php root@<box>:/tmp/
  *     plink … '
- *       CFG=/boot/config/plugins/staxx/staxx.cfg
+ *       ROOT=$(sed -n "s/^STORE_ROOT=\"\(.*\)\"//p" /boot/config/plugins/staxx/staxx.cfg)
+ *       CFG=$ROOT/config/staxx.cfg
  *       cp $CFG /tmp/staxx-cfg.bak
  *       grep -q "^REGISTRY_TRUST=" $CFG \
  *         && sed -i "s#^REGISTRY_TRUST=.*#REGISTRY_TRUST=\"127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002\"#" $CFG \
  *         || echo "REGISTRY_TRUST=\"127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002\"" >> $CFG
  *       STAXX_SELFHOSTED=1 STAXX_SELFHOSTED_JSON=/tmp/selfhosted.json php /tmp/registry_selfhosted.php; RC=$?
  *       cp /tmp/staxx-cfg.bak $CFG
+ *       diff -q /tmp/staxx-cfg.bak $CFG && echo CONFIG_IDENTICAL
  *       exit $RC
  *     '
  *
