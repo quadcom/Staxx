@@ -518,7 +518,8 @@ console.log('\nB2. Hazards the corpus does not hold');
 // list, indented deeper than the key column, directly above the next key.
 // Under the loose "at least as indented" rule the next key claims it, and
 // moving that key carries the note away from the list it is about. Under the
-// strict rule it belongs to nothing, which is an orphan, which refuses.
+// strict rule it is a trailing comment indented deeper than "ports:" itself
+// (PLAN_117), so it travels with the ports: block wherever that block moves.
 var HAZARD_DEEP_COMMENT = [
   'services:',
   '  web:',
@@ -558,7 +559,7 @@ var HAZARD_KEEP_CHOMP = [
   ''
 ].join('\n');
 
-function refusesUnchanged(label, text) {
+function refusesUnchanged(label, text, quotedText) {
   if (!HAS_TIDY) { skip(label, 'YAML.tidy is missing'); return; }
   var r;
   try { r = Y.tidy(text); } catch (e) { ok(label, false, 'threw: ' + e.message); return; }
@@ -568,6 +569,30 @@ function refusesUnchanged(label, text) {
   ok(label + ' says why in a sentence',
      r.refusals.length > 0 && typeof r.refusals[0].why === 'string' && r.refusals[0].why.length > 10,
      r.refusals.length ? r.refusals[0].why : '(no refusal)');
+  // PLAN_117 step 4: a duplicate key's refusal names the actual second
+  // line, not just its number — quoted verbatim, trimmed of its indent.
+  if (quotedText) {
+    ok(label + ' quotes the actual line',
+       r.refusals.length > 0 && r.refusals[0].why.indexOf('(`' + quotedText + '`)') >= 0,
+       r.refusals.length ? r.refusals[0].why : '(no refusal)');
+  }
+}
+
+// PLAN_117: a comment indented deeper than its scope's own key column now
+// travels with the block above it instead of being an orphan nothing owns —
+// so this reorders (rather than refusing), and `commentLine` must land
+// directly after `precedingLine`, wherever the reorder puts that block.
+function reordersCommentStays(label, text, commentLine, precedingLine) {
+  if (!HAS_TIDY) { skip(label, 'YAML.tidy is missing'); return; }
+  var r;
+  try { r = Y.tidy(text); } catch (e) { ok(label, false, 'threw: ' + e.message); return; }
+  if (!ok(label + ' is not refused', r.refusals.length === 0, JSON.stringify(r.refusals))) return;
+  ok(label + ' actually reorders', r.changed === true);
+  var idx = r.text.indexOf(commentLine);
+  var before = idx >= 0 ? r.text.slice(0, idx).replace(/\n$/, '').split('\n') : [];
+  var prev = before.length ? before[before.length - 1] : null;
+  ok(label + ' the comment is still directly after the block it was under', prev === precedingLine,
+     'text:\n' + r.text);
 }
 
 // The one that would actually break the file rather than merely muddle it.
@@ -586,8 +611,9 @@ var HAZARD_ANCHOR_CROSSES = [
 ].join('\n');
 
 refusesUnchanged('an anchor its alias would cross', HAZARD_ANCHOR_CROSSES);
-refusesUnchanged('a note indented deeper than its key', HAZARD_DEEP_COMMENT);
-refusesUnchanged('a duplicate key', HAZARD_DUPLICATE_KEY);
+reordersCommentStays('a note indented deeper than its key', HAZARD_DEEP_COMMENT,
+  '      # the second one is only for the admin page', '      - "8080:80"');
+refusesUnchanged('a duplicate key', HAZARD_DUPLICATE_KEY, 'image: alpine:3.21');
 refusesUnchanged('a |+ block scalar', HAZARD_KEEP_CHOMP);
 
 /* ---- B3. The same four hazards, one level up: at the TOP of the file ----
@@ -599,11 +625,11 @@ refusesUnchanged('a |+ block scalar', HAZARD_KEEP_CHOMP);
 // "volumes" sits ahead of "services" here, so the top-level pass wants to
 // move "services" ahead of it. The note directly above "configs" reads as an
 // end-of-service remark, but it sits at a deeper indent than the top level's
-// own column — so a comment INSIDE a scalar-valued key's own single line
-// never reaches it, and this note is genuinely uncovered by any top-level
-// span. Left claimed under the old "at least as indented" rule (always true
-// at indent zero), it would be handed to "configs" as its lead comment and
-// carried away from "services" the moment volumes moved between them.
+// own column — so, under the strict lead rule, it is never claimed as
+// "configs"'s own lead comment. PLAN_117: because it IS indented deeper than
+// "services:"'s own column, it now travels as part of the "services:" span
+// instead, and the reorder carries it along rather than stranding it under
+// "configs" the moment volumes moves between them.
 var HAZARD_TOP_DEEP_COMMENT = [
   'volumes:',
   '  data: {}',
@@ -665,10 +691,11 @@ var HAZARD_TOP_DUPLICATE_KEY = [
   ''
 ].join('\n');
 
-refusesUnchanged('a note indented deeper than the top level', HAZARD_TOP_DEEP_COMMENT);
+reordersCommentStays('a note indented deeper than the top level', HAZARD_TOP_DEEP_COMMENT,
+  '    # a note about the web service', '    image: alpine:3.20');
 refusesUnchanged('a |+ block scalar at the top level', HAZARD_TOP_KEEP_CHOMP);
 refusesUnchanged('an anchor its alias would cross at the top level', HAZARD_TOP_ANCHOR_CROSSES);
-refusesUnchanged('a duplicate key at the top level', HAZARD_TOP_DUPLICATE_KEY);
+refusesUnchanged('a duplicate key at the top level', HAZARD_TOP_DUPLICATE_KEY, 'volumes:');
 
 /* ---- B4. Blank lines (PLAN_67 step 3) ------------------------------------ */
 
@@ -749,6 +776,81 @@ if (HAS_TIDY) {
   }
 } else {
   skip('blank-line cases', 'YAML.tidy is missing');
+}
+
+/* =========================================================================
+ * B5. PLAN_117, built from the real scaffolder rather than a hand-written
+ * fixture: the commented example meta_scaffold.js writes into a fresh
+ * stack's x-unraid block is exactly the shape the old rule refused, at both
+ * the top of the file and inside one service. A change to what the
+ * scaffolder writes is caught here too, since this runs its real output.
+ * ========================================================================= */
+
+console.log('\nB5. A trailing comment travels with its block, using the real scaffold');
+
+var META_PATH = path.join(ROOT, 'src/staxx/usr/local/emhttp/plugins/staxx/javascript/meta-scaffold.js');
+var HAS_META = fs.existsSync(META_PATH);
+
+if (HAS_TIDY && HAS_META) {
+  var Meta = require(META_PATH);
+
+  // "volumes:" ahead of "services:" forces the top-level pass to actually
+  // reorder, rather than merely finding the scaffolded file already in
+  // house order — the fresh root x-unraid block scaffold() writes goes in
+  // immediately before "services:", so without this the reorder that would
+  // expose the hazard is never attempted.
+  var freshStack = ['volumes:', '  data: {}', 'services:', '  web:', '    image: alpine:3.20', ''].join('\n');
+  var stackScaffold = Meta.scaffold(freshStack);
+  if (ok('scaffold adds the stack fields', stackScaffold.changed === true)) {
+    var stackTidy = safeTidy(stackScaffold.yaml);
+    if (stackTidy.threw) {
+      ok('a freshly scaffolded stack does not throw when tidied', false, stackTidy.threw.stack);
+    } else {
+      ok('a freshly scaffolded stack is not refused', stackTidy.result.refusals.length === 0,
+        JSON.stringify(stackTidy.result.refusals));
+      var stackOut = stackTidy.result.text;
+      var updateAt = stackOut.indexOf('# update:');
+      var readmeAt = stackOut.indexOf('# readme:');
+      var servicesAt = stackOut.indexOf('\nservices:');
+      var volumesAt = stackOut.indexOf('\nvolumes:');
+      ok('the commented update block stays inside x-unraid, ahead of services:',
+        readmeAt >= 0 && updateAt > readmeAt && updateAt < servicesAt,
+        'readme: ' + readmeAt + '  update: ' + updateAt + '  services: ' + servicesAt);
+      ok('x-unraid (and so services:) now sorts ahead of volumes:, the reorder this fixture forces',
+        servicesAt > 0 && volumesAt > servicesAt);
+    }
+  }
+
+  // The same shape one level down: a fresh per-service x-unraid block is
+  // also a bare key followed only by deeper commented placeholders, and
+  // "restart:" written ahead of "image:" forces layoutService to actually
+  // move things.
+  var freshService = ['services:', '  web:', '    restart: unless-stopped', '    image: alpine:3.20', ''].join('\n');
+  var svcScaffold = Meta.scaffold(freshService);
+  if (ok('scaffold adds the service fields', !!(svcScaffold.added.services && svcScaffold.added.services.web))) {
+    var svcTidy = safeTidy(svcScaffold.yaml);
+    if (svcTidy.threw) {
+      ok('a freshly scaffolded service does not throw when tidied', false, svcTidy.threw.stack);
+    } else {
+      ok('a freshly scaffolded service is not refused', svcTidy.result.refusals.length === 0,
+        JSON.stringify(svcTidy.result.refusals));
+      var svcOut = svcTidy.result.text;
+      // scaffold() always offers the STACK fields too (this file had no
+      // root x-unraid block either), which has its own "overview" field —
+      // so the service's own copy is searched for AFTER its own "icon:",
+      // the field immediately before it in SERVICE_FIELDS.
+      var iconAt = svcOut.indexOf('# icon:');
+      var overviewAt = iconAt >= 0 ? svcOut.indexOf('# overview: |', iconAt) : -1;
+      var imageAt = svcOut.indexOf('image:');
+      var restartAt = svcOut.indexOf('restart:');
+      ok('the commented overview block stays inside x-unraid, directly after icon',
+        iconAt >= 0 && overviewAt > iconAt, 'icon: ' + iconAt + '  overview: ' + overviewAt);
+      ok('image: now sorts ahead of restart:, the reorder this fixture forces',
+        imageAt >= 0 && imageAt < restartAt);
+    }
+  }
+} else {
+  skip('a trailing comment travels with its block (real scaffold)', HAS_TIDY ? 'meta-scaffold.js is missing' : 'YAML.tidy is missing');
 }
 
 /* =========================================================================

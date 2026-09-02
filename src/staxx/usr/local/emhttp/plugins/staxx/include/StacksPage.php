@@ -739,6 +739,12 @@ endif;
              the colour. It works without mirroring the text because the box
              never wraps (wrap="off", white-space: pre) and the line height is
              fixed, which puts line N at exactly (N-1) x lineHeight. -->
+        <!-- PLAN_117 step 3 — what Tidy did, said where it can be seen rather
+             than only on the muted status line below the pane (which a
+             refusal used to reach with nothing else on screen to explain
+             it). Empty and hidden until script has something to say;
+             script fills it with an ordinary .staxx-notice. -->
+        <div class="staxx-yaml-notice" id="staxx-yaml-notice" hidden></div>
         <div class="staxx-yamlwrap" id="staxx-yamlwrap">
           <!-- The gutter is painted OVER the textarea, not beside it. A
                textarea scrolls its own padding away horizontally, so a long

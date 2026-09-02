@@ -139,6 +139,9 @@ Tidying lands as an ordinary unsaved change: Save keeps it, Undo puts it straigh
 from before it was tidied — arrival or button alike — is in the stack's history if you want it back
 later; see [going back](going-back.md).
 
+Either way, what happened appears as its own message above the file, not just on the small status
+line below it — so a refusal is something you will actually notice.
+
 ## What this never does
 
 - **It never reformats your file.** Whitespace, indentation, quoting style and line order stay

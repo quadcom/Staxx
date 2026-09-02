@@ -58,6 +58,7 @@
   // wherever it is used, the same way paintInk() guards for YAML.highlight.
   var yamlDots    = yamlNums.querySelector('.staxx-yamldots');
   var yamlStatus  = document.getElementById('staxx-yaml-status');
+  var yamlNotice  = document.getElementById('staxx-yaml-notice');
   // The autocomplete list and the hover-help panel, both siblings of the
   // textarea inside yamlWrap. May be null while the markup has not landed
   // yet — guarded everywhere they are used, the same way yamlDots is above.
@@ -3950,6 +3951,35 @@
 
   function setYamlStatus(text) {
     yamlStatus.textContent = text || '';
+  }
+
+  // PLAN_117 step 3 — Tidy's own result, shown where it can actually be seen:
+  // the same .staxx-notice shape used elsewhere on the page, dismissible, and
+  // scrolled into view, rather than the muted status line below the pane —
+  // that line sits under the fold on a tall file and carries no colour or
+  // icon, which is what let a refusal go unnoticed until a screenshot
+  // finally caught its wording. yamlStatus itself is untouched — other
+  // callers (the password-fill note, reparse()'s own warning line) still use
+  // it exactly as before.
+  function hideYamlNotice() {
+    if (!yamlNotice) return;
+    yamlNotice.innerHTML = '';
+    yamlNotice.hidden = true;
+  }
+
+  function showYamlNotice(text, bad) {
+    if (!yamlNotice) return;
+    if (!text) { hideYamlNotice(); return; }
+    yamlNotice.innerHTML =
+      '<div class="staxx-notice' + (bad ? ' staxx-notice--bad' : ' staxx-notice--good') + '">' +
+      '<i class="fa ' + (bad ? 'fa-info-circle' : 'fa-check-circle') + '" aria-hidden="true"></i>' +
+      '<div>' + esc(text) + '</div>' +
+      '<button type="button" class="staxx-notice-close" title="Dismiss" aria-label="Dismiss">' +
+        '<i class="fa fa-times" aria-hidden="true"></i></button>' +
+      '</div>';
+    yamlNotice.hidden = false;
+    yamlNotice.querySelector('.staxx-notice-close').addEventListener('click', hideYamlNotice);
+    yamlNotice.scrollIntoView({ block: 'nearest' });
   }
 
   /* ---- required fields ---- */
@@ -8661,10 +8691,13 @@
   // exist yet on a page deployed mid-build, so this checks rather than
   // assumes, same guard the button below always had.
   function tidyOnArrival(text) {
-    if (!YAML || typeof YAML.tidy !== 'function') return { text: text, message: null };
+    if (!YAML || typeof YAML.tidy !== 'function') return { text: text, message: null, bad: false };
     var result = YAML.tidy(text);
-    if (!result.changed) return { text: text, message: tidyResultMessage(result) };
-    return { text: result.text, message: tidyResultMessage(result) };
+    // "bad" only when something was actually left alone — a clean tidy (or a
+    // file already in house order) is good news even though nothing changed.
+    var bad = (result.refusals || []).length > 0;
+    if (!result.changed) return { text: text, message: tidyResultMessage(result), bad: bad };
+    return { text: result.text, message: tidyResultMessage(result), bad: bad };
   }
 
   if (tidyBtn) tidyBtn.addEventListener('click', function () {
@@ -8675,7 +8708,7 @@
       // Same one-sentence rule whether nothing needed moving or everything
       // refused — PLAN_67 is explicit that "changed nothing" must still say
       // so, rather than a silent no-op that looks like the button did nothing.
-      setYamlStatus(outcome.message || 'This file is already in StaXX’s house layout — nothing to change.');
+      showYamlNotice(outcome.message || 'This file is already in StaXX’s house layout — nothing to change.', outcome.bad);
       return;
     }
 
@@ -8688,7 +8721,7 @@
     paintGutter();
     paintInk();
     reparse();
-    setYamlStatus(outcome.message);
+    showYamlNotice(outcome.message, outcome.bad);
     updateUndo();
   });
 
@@ -10731,10 +10764,9 @@
     var tidied = tidyOnArrival(result.yaml);
 
     openEditor(openName, tidied.text, true, '');
-    // After openEditor(), not before — reparse() inside it overwrites the
-    // status line with the file's own warnings, same reasoning as the Tidy
-    // button's own notice always had.
-    if (tidied.message) setYamlStatus(tidied.message);
+    // After openEditor(), not before — its own hideYamlNotice() call would
+    // otherwise clear this straight back off again.
+    if (tidied.message) showYamlNotice(tidied.message, tidied.bad);
     if (handoffId) pendingHandoffId = handoffId;
     pendingHandoffEdit = kind === 'edit';
     // PLAN_106 phase 5 gap: yamlAsWritten is null when convert() escaped
@@ -10889,9 +10921,8 @@
       var tidied = tidyOnArrival(result.yaml);
 
       openEditor(result.name, tidied.text, true, '');
-      // After openEditor(), not before — its own reparse() would overwrite
-      // this with the file's warnings, same reasoning as caOpenConverted().
-      if (tidied.message) setYamlStatus(tidied.message);
+      // After openEditor(), not before — same reasoning as caOpenConverted().
+      if (tidied.message) showYamlNotice(tidied.message, tidied.bad);
 
       // caImport()'s own three wordings, in shape: warnings are settings a
       // correction had nothing to put right, notes are values filled in on
@@ -13145,6 +13176,7 @@
     fileDots = {};
     fileMime = {};
     hideBinPanel();   // yesterday's stack may have left this showing
+    hideYamlNotice(); // ditto for a previous Tidy result — a caller wanting one shown re-shows it below
 
     // Yesterday's history is meaningless against today's stack — bumping the
     // sequence is what stops a history-list/-read reply still in flight from
@@ -18679,18 +18711,18 @@
       var row = rowFor(name);
       var menuBtn = row ? row.querySelector('[data-menu="stack"]') : null;
       var body = res.body;
-      var tidyNote = null;
+      var tidyNote = null, tidyBad = false;
       if (menuBtn && menuBtn.dataset.review === '1') {
         var outcome = tidyOnArrival(body);
         body = outcome.text;
         tidyNote = outcome.message;
+        tidyBad = outcome.bad;
       }
 
       openEditor(res.name, body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch, res.icons);
-      // After openEditor(), not before — its own reparse() would overwrite
-      // this with the file's warnings, same reasoning as every other arrival
-      // route's own notice.
-      if (tidyNote) setYamlStatus(tidyNote);
+      // After openEditor(), not before — same reasoning as every other
+      // arrival route's own notice.
+      if (tidyNote) showYamlNotice(tidyNote, tidyBad);
     });
   }
 

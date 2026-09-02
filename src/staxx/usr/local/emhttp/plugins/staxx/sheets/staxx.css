@@ -195,6 +195,18 @@
   margin: 0 0 1rem;
 }
 
+/* PLAN_117 step 3 — Tidy's own result, same reasoning as .staxx-portswarn:
+   .staxx-notice's margins are sized for a page-level banner, and above the
+   compose pane that much space reads as misplaced rather than important.
+   Empty and hidden (see the markup) until script has something to show. */
+.staxx-yaml-notice:not(:empty) {
+  margin: 0 0 0.8rem;
+}
+
+.staxx-yaml-notice .staxx-notice {
+  margin: 0;
+}
+
 /* The paths to paste into another plugin's settings box. Selectable, wrapping
    on long paths rather than scrolling sideways, and monospaced so a stray
    space in a path is visible before it is copied. */

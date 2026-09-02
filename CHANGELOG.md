@@ -18,6 +18,10 @@ before that were dates.
 
 ## Unreleased
 
+- **Tidy no longer refuses a file over the commented example StaXX itself writes into it.** A
+  trailing note indented under a setting now travels with that setting instead of being treated as
+  a stray line — so a freshly scaffolded stack tidies cleanly instead of being refused outright. Its
+  result is also shown as a proper notice above the file, not just on the small status line below it.
 - **An image you haven't downloaded yet is no longer asked about at update checks.** There was
   nothing on your server to compare a registry's answer against, so the question was always wasted —
   it is now skipped, and asked promptly as soon as the image is actually here.

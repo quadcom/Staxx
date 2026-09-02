@@ -4480,6 +4480,31 @@
       var p = mapNode.pairs[keys[i]];
       spans.push({ key: keys[i], pair: p, start: tidyLeadStart(doc.lines, p.start, p.indent), end: p.end });
     }
+
+    // A comment sitting AFTER a key's last child, indented deeper than the
+    // key's own column, belongs to that block — rule 2 in CLAUDE.md: a
+    // comment travels with what it annotates, and by indentation that block
+    // is what it annotates. (A comment at the key's own column stays a lead
+    // for whatever key comes next, as tidyLeadStart above already gives it.)
+    // Without this, PLAN_117: the commented-out example meta_scaffold writes
+    // under x-unraid sits deeper than x-unraid's own column but shallower
+    // than nothing that follows it, so it belonged to no span at all and
+    // tidy refused every scaffolded file on sight.
+    //
+    // Blanks between two such comments are absorbed along with them; a
+    // trailing run of blanks with no further comment after it is left alone
+    // — that gap belongs to the blank-line pass (step 3), not to this block.
+    for (i = 0; i < spans.length; i++) {
+      var limit = i + 1 < spans.length ? spans[i + 1].start : mapNode.end;
+      var j = spans[i].end, lastComment = j;
+      while (j < limit) {
+        var c = classify(doc.lines[j], j);
+        if (c.kind === 'blank') { j++; continue; }
+        if (c.kind === 'comment' && c.indent > spans[i].pair.indent) { j++; lastComment = j; continue; }
+        break;
+      }
+      spans[i].end = lastComment;
+    }
     return spans;
   }
 
@@ -4527,8 +4552,9 @@
     }
     for (l = totalStart; l < totalEnd; l++) {
       if (covered[l - totalStart]) continue;
-      if (classify(doc.lines[l], l).kind !== 'blank') {
-        return { refusal: 'Line ' + (l + 1) + ' is not part of any setting here, so ' + scopeName + ' was left alone.' };
+      var stray = classify(doc.lines[l], l);
+      if (stray.kind !== 'blank') {
+        return { refusal: describeUncoveredLine(spans, mapNode, doc.lines[l], l, stray, scopeName) };
       }
     }
 
@@ -4642,6 +4668,33 @@
     for (i = 0; i < ordered.length; i++) out = out.concat(blocks[ordered[i]]);
 
     return { changed: true, start: totalStart, end: totalEnd, lines: out };
+  }
+
+  // Builds the refusal sentence for a line the spans above don't cover —
+  // PLAN_117 step 4: naming a line number told Adrian nothing about what was
+  // actually on it, so a real screenshot of it was needed to diagnose the
+  // scaffold bug at all. Quotes the trimmed line and, where it can tell,
+  // says what it is: the second copy of a key already read (the parser
+  // keeps the first and discards the second, but its lines are still in the
+  // file), or a comment nothing owns — named after the last key at this
+  // scope that starts before it, if any.
+  function describeUncoveredLine(spans, mapNode, line, l, cls, scopeName) {
+    var trimmed = line.replace(/^\s+/, '').replace(/\s+$/, '');
+    var quoted = '`' + trimmed + '`';
+    var why;
+    if (cls.kind === 'key' && mapNode.pairs[cls.key]) {
+      why = 'repeats a setting already given above it';
+    } else if (cls.kind === 'comment') {
+      var owner = null;
+      for (var i = 0; i < spans.length; i++) {
+        if (spans[i].start <= l) owner = spans[i].key; else break;
+      }
+      why = 'is a comment' + (owner ? ' indented under ' + owner : '') +
+            ', but it follows nothing that could own it';
+    } else {
+      why = 'is not part of any setting here';
+    }
+    return 'Line ' + (l + 1) + ' (' + quoted + ') ' + why + ', so ' + scopeName + ' was left alone.';
   }
 
   function layoutService(doc, svcMap) {
