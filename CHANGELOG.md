@@ -90,6 +90,10 @@ before that were dates.
   Removing the one that isn't running now only ever takes away its own folder, never the other
   one's containers by mistake. Renaming, moving, creating or importing a stack under a name already
   in use elsewhere is now refused up front, with a plain explanation of why.
+- **A very long update badge no longer squeezes the rest of the row.** The status column had grown
+  to fit the widest version pair on the page, which could crush the name and services next to it and
+  add a sideways scrollbar. It now stops growing past a sensible width, and a badge too long for it
+  is trimmed with an ellipsis on screen — hover it for the full "from → to" version pair.
 
 ---
 

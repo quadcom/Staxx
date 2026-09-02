@@ -799,7 +799,10 @@
   grid-template-columns:
     auto                    /* name */
     minmax(14rem, 1fr)      /* services */
-    max-content             /* state */
+    fit-content(24rem)      /* state — capped so one long update badge (see
+                               PLAN_119) cannot widen the column past this and
+                               starve name/services instead; the badge itself
+                               wraps or ellipses beyond it */
     auto                    /* address */
     repeat(4, max-content); /* cpu, mem, net, gpu */
   width: 100%;
@@ -903,6 +906,22 @@
   padding: 0.7rem 0.8rem;
   text-align: left;
   word-break: break-word;
+}
+
+/* PLAN_119: a grid item's automatic minimum is its min-content width, and a
+   min-content is measured with nothing allowed to wrap — so one update badge
+   reading "10.11.11ubu2604-ls46 → 10.11.11ubu2604-ls47" set the whole State
+   track's floor at 340px, and every other column had to give way to it until
+   the grid ran off the edge of a 1300px window. With the floor removed the
+   fit-content() cap on the track (see "The grid" above) is what decides, the
+   badge clips to its ellipsis, and the row's pills wrap onto a second line
+   instead. Address gets the same treatment for the same reason: a long
+   unbroken host:port list otherwise holds its track open. Neither cell is
+   given a width of its own — only permission to be narrower than its widest
+   unbreakable child. */
+.staxx-stacks .staxx-cell--state,
+.staxx-stacks .staxx-cell--address {
+  min-width: 0;
 }
 
 /* The header row's bold weight and rule-off, same idea as the two grids
@@ -2424,6 +2443,14 @@
   font-size: 1.1rem;
   font-weight: 600;
   white-space: nowrap;
+  /* The state column now has a cap (see PLAN_119) — a long version pair
+     ("10.11.11ubu2604-ls46 → 10.11.11ubu2604-ls47") clips to an ellipsis
+     inside the badge rather than widening the column past it. The full
+     pair is still in the title attribute, set alongside the label in
+     staxx_update_pill_html() and paintUpdatePill(). */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* The one state worth drawing the eye to — filled with the same accent
@@ -9088,7 +9115,8 @@
     grid-template-columns:
       auto                    /* name */
       minmax(14rem, 1fr)      /* services */
-      max-content             /* state */
+      fit-content(24rem)      /* state — same cap as the base template, see
+                                 PLAN_119 */
       auto                    /* address */
       repeat(2, max-content); /* cpu+mem, net+gpu */
   }
