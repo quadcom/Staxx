@@ -103,6 +103,10 @@ before that were dates.
 - **A stack's status and update pills no longer overlap when a narrow column pushes them onto a
   second line.** They now space out with a small gap between them and sit centred in the column,
   instead of both hugging the left edge with the wrapped line printed a pixel over the first.
+- **The Stack, Services, State and Address headings now sit centred against the full header row**
+  once a narrower window packs the figures into a compact block. They used to sit at the top,
+  beside CPU and Memory only, with a stray line cutting across the whole row underneath them; now
+  the only mid-row line is CPU's and Memory's own, and it only spans those two columns.
 
 ---
 

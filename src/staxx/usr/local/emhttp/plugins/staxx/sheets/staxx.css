@@ -9180,15 +9180,33 @@
 
      The head row's own Stack/Services/State/Address cells carry none of
      these four modifier classes — only the four data-stat cells do; see the
-     head row's markup in StacksPage.php. That is not a gap to fill: with no
-     second row of figures under them to span against, ordinary auto-
-     placement already seats them correctly, in row 1 beside the CPU and
-     Memory labels. */
+     head row's markup in StacksPage.php. Auto-placement alone would seat
+     them in row 1 only, beside the CPU/Memory headings, which drew their
+     own bottom border across the whole row and left them pinned to the top
+     of the two-row block instead of centred against it — see the header
+     rule below, which spans and centres them instead. */
   .staxx-cell--name,
   .staxx-cell--services,
   .staxx-cell--state,
   .staxx-cell--address {
     grid-row: 1 / span 2;
+  }
+
+  /* The header row's own text headings (Stack/Services/State/Address) get
+     the same two-row span as their data-row counterparts above, plus the
+     centring auto-placement can't give them: without this they sit in row 1
+     only, so their bottom border cuts a line across the whole header row
+     between the CPU/Memory and Network/GPU headings, and the text rides the
+     top of the block instead of sitting level with it. Spanning both rows
+     moves their bottom border down to meet Network/GPU's, leaving CPU's and
+     Memory's own bottom border as the only divider — correctly scoped to
+     just those two columns rather than the full row. */
+  .staxx-stacks .staxx-head-row [role="columnheader"]:not(.staxx-num) {
+    grid-row: 1 / span 2;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   /* The folder heading's one cell still spans columns 1 through 4 of the new
