@@ -18504,6 +18504,11 @@
     openSettings('staxx-setting-hub-user');
   });
 
+  var spendReadoutBtn = document.getElementById('staxx-open-spend-readout');
+  if (spendReadoutBtn) spendReadoutBtn.addEventListener('click', function () {
+    openSettings('staxx-setting-spend-readout');
+  });
+
   document.getElementById('staxx-add').addEventListener('click', function () {
     openEditor('', '', true, '');
   });
@@ -21325,6 +21330,13 @@
             'effort even though it is cheap. Enter a 24-hour time, such as 04:00.'
     },
     {
+      key: 'SPEND_READOUT', control: 'readout', label: 'Registry questions',
+      help: 'Checking asks a registry a question that normally costs nothing — it does not count ' +
+            'against Docker Hub\'s download allowance unless a registry refuses that free form and ' +
+            'has to be asked the costly way instead. This shows what each registry has been asked ' +
+            'and what, if anything, it cost.'
+    },
+    {
       key: 'WATCH_EXAMPLES', control: 'choice', label: 'Watch the publisher\'s own examples',
       choices: [
         ['true',  'Look, during the same check'],
@@ -21439,7 +21451,12 @@
 
   function settingsFieldHtml(row, value) {
     var control;
-    if (row.control === 'choice') {
+    if (row.control === 'readout') {
+      // Nothing to save here — a static report filled in by loadSpendReadout()
+      // once the panel is open, not a value settingsControlValue() can read
+      // off an input. Skipped by settingsDirty() and saveSettings() below.
+      control = '<div class="staxx-readout" id="' + row.id + '">Looking…</div>';
+    } else if (row.control === 'choice') {
       var opts = row.choices.map(function (o) {
         return '<option value="' + esc(o[0]) + '"' + (o[0] === value ? ' selected' : '') +
                '>' + esc(o[1]) + '</option>';
@@ -21747,6 +21764,70 @@
     });
   }
 
+  // One plain sentence (or two) per registry host — how many questions it
+  // was asked, what that cost, and whatever is worth saying about it. Kept
+  // to prose rather than a table: SPEND_READOUT's own row is small, and a
+  // table of one row per host would need headings repeating what the
+  // sentence already says. docker.io is named "Docker Hub" throughout,
+  // since nobody who set the sign-in fields above thinks of it any other
+  // way; every other host is shown by its own address.
+  function spendHostLine(row) {
+    var name = row.host === 'docker.io' ? 'Docker Hub' : esc(row.host);
+    var costText;
+    if (!row.paidHour && !row.paidDay) {
+      // Unmetered hosts never pay at all, so "all free" is the honest
+      // reading; a metered one that happens to have paid for nothing this
+      // run still could have, so it gets the more cautious "paid for none".
+      costText = (row.ceiling === null) ? 'all free' : 'paid for none';
+    } else {
+      costText = 'paid for ' + row.paidHour + (row.paidHour === 1 ? ' question' : ' questions') +
+                 ' this hour (' + row.paidDay + ' today)';
+    }
+
+    var sentence = name + ' — asked ' + row.askedHour + (row.askedHour === 1 ? ' time' : ' times') +
+      ' this hour (' + row.askedDay + ' today), ' + costText + '.';
+
+    if (row.assumed) {
+      // ceiling is already half of what StaXX is willing to spend, so the
+      // allowance it is assuming is double that — see the guard rail in
+      // the update pass, which this text is describing.
+      sentence += ' StaXX assumes an allowance of ' + (row.ceiling * 2) + ' an hour until Hub reports one.';
+    } else if (row.remaining !== null && row.limit !== null) {
+      sentence += ' ' + row.remaining + ' of ' + row.limit + ' downloads left this hour.';
+    } else if (row.ceiling === null) {
+      sentence += ' This registry reports no limit.';
+    }
+
+    if (!row.headfree) {
+      sentence += ' This registry refused the free form, so StaXX pays for each question here ' +
+                  'and stops at half the allowance.';
+    }
+    if (row.cli) {
+      sentence += ' ' + row.cli + (row.cli === 1 ? ' question went' : ' questions went') +
+                  ' through Docker itself, which StaXX cannot count.';
+    }
+
+    var now = Math.floor(Date.now() / 1000);
+    var prefix = (row.refusedAt && (now - row.refusedAt) < 3600)
+      ? 'Stopped answering ' + timeAgoWords(row.refusedAt) + ' ago. ' : '';
+
+    return '<p>' + prefix + sentence + '</p>';
+  }
+
+  function loadSpendReadout() {
+    var box = document.getElementById('staxx-setting-spend-readout');
+    if (!box) return;
+    call('spend', {}).then(function (res) {
+      if (!res.ok || !Array.isArray(res.spend)) {
+        box.textContent = 'Could not read the figures just now.';
+        return;
+      }
+      box.innerHTML = res.spend.length
+        ? res.spend.map(spendHostLine).join('')
+        : '<p>No registry has been asked yet. Figures appear after the first check.</p>';
+    });
+  }
+
   // The crypt block's own clicks are handled by the delegated
   // settingsBody listener below — it is built by script after the panel
   // opens, so nothing here can be listened on directly at load time.
@@ -21760,6 +21841,7 @@
   function settingsDirty() {
     if (!settingsOpenValues) return false;
     return SETTINGS_ROWS.some(function (row) {
+      if (row.control === 'readout') return false;   // nothing to save, so never dirty
       return settingsControlValue(row) !== settingsOpenValues[row.key];
     });
   }
@@ -21930,6 +22012,7 @@
       }
       loadArchiveList();
       loadCryptState();
+      loadSpendReadout();
     });
   }
 
@@ -21959,7 +22042,10 @@
     if (!settingsOpenValues || settingsBusy) return;
 
     var fields = {};
-    SETTINGS_ROWS.forEach(function (row) { fields[row.key] = settingsControlValue(row); });
+    SETTINGS_ROWS.forEach(function (row) {
+      if (row.control === 'readout') return;   // a report, not a setting
+      fields[row.key] = settingsControlValue(row);
+    });
 
     settingsBusy = true;
     settingsSave.disabled = true;

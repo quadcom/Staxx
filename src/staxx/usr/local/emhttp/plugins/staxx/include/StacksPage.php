@@ -251,24 +251,28 @@ endif;
        accent colour, which is what --hint--warn below also uses for "worth
        a look, not broken"; --bad exists precisely to override that to red for
        the two "act now" conditions above, which this is not. -->
-  <? if (!empty($updateState['limited'])):
-    // Any registry can be the one refusing, not only Docker Hub — so the
-    // notice names whoever did, and the sign-in offer below is shown only
-    // when Docker Hub is among them, because it helps with nothing else.
-    // A state file written before this was recorded has no list at all;
-    // Docker Hub was the only thing that could refuse back then.
-    $refusers = (array)($updateState['limitedBy'] ?? []);
-    if ($refusers === []) $refusers = ['docker.io'];
+  <? // PLAN_112 Phase C — staxx_spend_refusers() reads the ledger's own
+     // per-host refusal clock, falling back to the old flat flag for a
+     // state file the ledger has not filled in yet. After A0 the ordinary
+     // update question costs Docker Hub nothing, so a Hub refusal is
+     // evidence that something ELSE spent the allowance — a user's own pull,
+     // or another machine on the same address — never that checking was
+     // greedy, hence the rewritten wording naming Hub specifically.
+     $refusers = staxx_spend_refusers($updateState, time());
+     if ($refusers !== []):
   ?>
     <div class="staxx-notice">
       <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
       <div>
-        <strong><?= htmlspecialchars(implode(' and ', $refusers)) ?> <?= _('stopped answering questions about images from this server for now. Anything it was not asked about still shows the answer it gave last time.') ?></strong>
         <? if (in_array('docker.io', $refusers, true)): ?>
-        <?= _('Signing in to a Docker Hub account in the') ?> <button type="button" id="staxx-open-hub-settings" class="staxx-link-btn"><?= _('settings panel') ?></button> <?= _('raises the limit, or you can just leave it to try again later.') ?>
+        <strong><?= _('Docker Hub has stopped answering questions from this address for now.') ?></strong>
+        <?= _('Checking for updates costs nothing, so this is usually caused by images being downloaded — by you, or by anything else on your network sharing this address. Anything StaXX did not get to still shows the answer it gave last time, and it will try again within the hour.') ?>
+        <?= _('Signing in to a Docker Hub account in the') ?> <button type="button" id="staxx-open-hub-settings" class="staxx-link-btn"><?= _('settings panel') ?></button> <?= _('gives this address a larger download allowance.') ?>
         <? else: ?>
-        <?= _('The next check will ask again.') ?>
+        <strong><?= htmlspecialchars(implode(' and ', $refusers)) ?> <?= _('stopped answering questions from this server for now.') ?></strong>
+        <?= _('Anything it was not asked about still shows the answer it gave last time. The next check will ask again.') ?>
         <? endif; ?>
+        <button type="button" id="staxx-open-spend-readout" class="staxx-link-btn"><?= _('See what each registry was asked') ?></button>
       </div>
     </div>
   <? endif; ?>

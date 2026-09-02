@@ -31,9 +31,9 @@ fi
 # words, so this is hygiene rather than a live vulnerability — but the order
 # still matters.
 case "${1:-}" in
-  check|apply|cleanup) ;;
+  check|full|apply|cleanup) ;;
   *)
-    echo "Usage: update-check {check|apply|cleanup}" >&2
+    echo "Usage: update-check {check|full|apply|cleanup}" >&2
     exit 1
     ;;
 esac
@@ -86,6 +86,13 @@ done
 php_bin="${php_bin:-php}"
 
 run_check() {
+  # $1 is the mode this pass runs as: "check" is the hourly pass, "full" is
+  # the once-a-day-or-week look that considers every image regardless of
+  # cadence (PLAN_112, Adrian's decision 2 — a flag on the same pass rather
+  # than a second job). Each writes its own log via LOG below, which is
+  # already keyed off the command-line verb.
+  local mode="$1"
+
   # Belt and braces: the cron entry should not exist at all when checking is
   # off, but a stale entry surviving a failed rewrite must not then run a pass
   # the user turned off.
@@ -106,10 +113,11 @@ run_check() {
     exit 0
   fi
 
-  log "starting check pass (UPDATE_CHECK=${update_check})."
-  # false = a scheduled pass respects the remembered six-hour answers; only a
-  # person pressing the button in the browser forces every image to be asked
-  # again.
+  log "starting ${mode} pass (UPDATE_CHECK=${update_check})."
+  # false = the hourly pass, which respects each image's own remembered
+  # cadence; true = the daily/weekly full look (or a person pressing the
+  # button in the browser), which asks every image regardless of when it was
+  # last asked.
   #
   # Watch.php, not Links.php or Updates.php directly — it requires Links.php,
   # which requires Updates.php, so this still gets staxx_update_check(), but
@@ -117,8 +125,13 @@ run_check() {
   # (PLAN_62) for the checks inside it. Requiring anything narrower leaves one
   # or both function_exists() guards permanently false here, which is the one
   # spawn site that runs every scheduled pass — see PLAN_61 and PLAN_62.
-  "${php_bin}" -r "require '${PLUGIN_DIR}/include/Watch.php'; staxx_update_check('all', false);" >> "${LOG}" 2>&1
-  log "check pass finished."
+  if [[ "${mode}" == "full" ]]; then
+    force="true"
+  else
+    force="false"
+  fi
+  "${php_bin}" -r "require '${PLUGIN_DIR}/include/Watch.php'; staxx_update_check('all', ${force});" >> "${LOG}" 2>&1
+  log "${mode} pass finished."
 }
 
 run_apply() {
@@ -161,8 +174,8 @@ run_cleanup() {
 }
 
 case "${1:-}" in
-  check)
-    run_check
+  check|full)
+    run_check "${1}"
     ;;
   apply)
     run_apply
@@ -171,7 +184,7 @@ case "${1:-}" in
     run_cleanup
     ;;
   *)
-    echo "Usage: update-check {check|apply|cleanup}" >&2
+    echo "Usage: update-check {check|full|apply|cleanup}" >&2
     exit 1
     ;;
 esac

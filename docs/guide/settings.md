@@ -78,6 +78,7 @@ This group is explained fully in [checking for updates](updates.md). What the pa
 | Notify me | Never / When a check finds something / That, and again once installed | Never | One message per check or queue, never one per container. |
 | Previous versions to keep | 0 to 5 | 2 | How many older image versions stay on disk so an update can be undone. See [version history](going-back.md). |
 | Remove old images automatically | No / Yes, once a week | No | Only ever removes an image nothing is running and no roll-back still needs. |
+| Registry questions | — a report, nothing to set | — | What each registry has actually been asked, this hour and today, and what — if anything — it cost. Worth a look whenever a `could not check` pill keeps turning up; see [checking for updates](updates.md#docker-hubs-limit). |
 
 ## Docker Hub sign-in
 

@@ -8603,6 +8603,20 @@
   display: none;
 }
 
+/* SPEND_READOUT's own row (PLAN_112 Phase C) — one <p> per registry host,
+ * filled by script. Plain sentences rather than a table, so this only
+ * needs to space them out; the field's own .staxx-hint colour is close to
+ * right for a report rather than a label, so this narrows it back to the
+ * normal text colour. */
+.staxx-readout p {
+  margin: 0 0 0.6rem;
+  font-size: 1.2rem;
+}
+
+.staxx-readout p:last-child {
+  margin-bottom: 0;
+}
+
 .staxx-crypt-facts {
   display: flex;
   flex-wrap: wrap;

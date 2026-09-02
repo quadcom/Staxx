@@ -24,6 +24,16 @@ before that were dates.
 - **Checking for updates no longer spends any of your Docker Hub allowance.** It asks for a build's
   headers only, which Hub does not count — the allowance is only spent when you actually install an
   update.
+- **Checking now runs every hour, asking only the images that are due, with a full look at every
+  image at the time you chose.** Choosing "Once a week" used to mean each image was only asked about
+  weekly; it now means the once-a-week full look happens then, while how often any one image is
+  actually asked is still decided by how often it tends to change.
+- **The settings panel now shows what each registry has actually been asked, and what it cost** —
+  under Image updates, next to the check schedule. Being refused by Docker Hub now means something
+  else on your address spent the download allowance, since a check itself costs nothing, and StaXX
+  tries again within the hour rather than waiting for the next pass; the refusal notice on the stacks
+  page says so and links straight to the new figures. Hovering an update pill also now says when that
+  image was last asked, when it is next due, and why.
 - **The user guide is now a manual rather than a description.** It opens with a walk round the
   screen you land on — every button, column, mark and menu item named, with a close-up picture of
   each — and a matching walk round the editor and the settings panel. The rest of the pages are

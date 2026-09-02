@@ -2248,6 +2248,12 @@ switch ($action) {
   case 'settings':
     staxx_reply(['ok' => true, 'settings' => staxx_settings_read()]);
 
+  // PLAN_112 Phase B — the spend ledger's own readout, drawn as a static
+  // block in the settings panel and readable by anything else that wants
+  // the same figures the pass itself prints to its log.
+  case 'spend':
+    staxx_reply(['ok' => true, 'spend' => staxx_spend_report(staxx_update_state(), time())]);
+
   /* ---- validate and write a settings save ----
    *
    * $settings in the reply comes from staxx_settings_save()'s own $saved

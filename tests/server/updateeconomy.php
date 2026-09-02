@@ -1,6 +1,8 @@
 <?php
-/* PLAN_90 Stages 1, 2, 3 and 3b, and PLAN_112 Phase A0 — spending registry
- * questions like money, and the pure seam behind asking for headers only.
+/* PLAN_90 Stages 1, 2, 3 and 3b, PLAN_112 Phase A0 — spending registry
+ * questions like money, and the pure seam behind asking for headers only —
+ * PLAN_112 Phase B — the ledger itself (section F), pure and offline — and
+ * PLAN_112 Phase C — the cadence explaining itself (section G), also pure.
  * Checked against the real installed Defines.php and Updates.php.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. Almost every
@@ -491,6 +493,158 @@ ok('...and setting it false is read back false',
    staxx_registry_headfree($hostA) === false);
 ok('a different host is unaffected by the first host\'s memo',
    staxx_registry_headfree($hostB) === true);
+
+/* staxx_image_registry() keys the per-registry stand-down and, since Phase B,
+ * the spend ledger — so a one-segment reference whose colon is a TAG must
+ * read as Docker Hub, or nginx:alpine gets a registry of its own. */
+ok('image_registry: a bare name with a tag is Docker Hub, not a host with a port',
+   staxx_image_registry('nginx:alpine') === 'docker.io');
+ok('image_registry: a bare name is Docker Hub', staxx_image_registry('redis') === 'docker.io');
+ok('image_registry: a host with a port is kept, lower-cased',
+   staxx_image_registry('Localhost:5000/team/app:1.0') === 'localhost:5000');
+ok('image_registry: a dotted host is kept',
+   staxx_image_registry('ghcr.io/owner/app:latest') === 'ghcr.io');
+
+/* ======================================================================= *
+ * F — PLAN_112 Phase B, the ledger. Pure and offline: canned $now values and
+ * hand-built $spend/$state arrays, no network and no state file involved —
+ * these functions never read staxx_update_state() themselves.
+ * ======================================================================= */
+
+$H = 3600; // one hour, in seconds, for readable arithmetic below
+$t0 = 10 * 86400; // an arbitrary day boundary, well clear of hour/day zero
+
+/* A free event never counts as paid. */
+$spendF = staxx_spend_record([], 'ghcr.io', ['kind' => 'free'], $t0);
+ok('a free event increments free, not paid',
+   $spendF['ghcr.io']['free'] === 1 && $spendF['ghcr.io']['paid'] === 0,
+   json_encode($spendF['ghcr.io']));
+
+/* A paid event increments both the hour bucket and the day bucket. */
+$spendP = staxx_spend_record([], 'docker.io', ['kind' => 'paid'], $t0);
+ok('a paid event increments both the hour and day paid counts',
+   $spendP['docker.io']['paid'] === 1 && $spendP['docker.io']['dayPaid'] === 1,
+   json_encode($spendP['docker.io']));
+
+/* An hour rollover resets the hour counts but leaves the day counts alone. */
+$spendRoll = staxx_spend_record([], 'docker.io', ['kind' => 'paid'], $t0);
+$spendRoll = staxx_spend_record($spendRoll, 'docker.io', ['kind' => 'paid'], $t0 + $H);
+ok('an hour rollover resets the hour count',
+   $spendRoll['docker.io']['paid'] === 1, json_encode($spendRoll['docker.io']));
+ok('...but not the day count, which keeps both askings',
+   $spendRoll['docker.io']['dayPaid'] === 2, json_encode($spendRoll['docker.io']));
+
+/* A day rollover resets the day counts. */
+$spendDay = staxx_spend_record([], 'docker.io', ['kind' => 'paid'], $t0);
+$spendDay = staxx_spend_record($spendDay, 'docker.io', ['kind' => 'paid'], $t0 + 86400);
+ok('a day rollover resets the day count',
+   $spendDay['docker.io']['dayPaid'] === 1, json_encode($spendDay['docker.io']));
+
+/* may_pay with a reported limit+remaining overrides the local paid count
+ * entirely — even at zero paid locally, a remaining figure at or below half
+ * the limit says no. */
+$hostLimited = staxx_spend_record([], 'ghcr.io', ['kind' => 'free', 'limit' => ['limit' => 100, 'remaining' => 50]], $t0);
+ok('remaining at exactly half the limit refuses a paid ask',
+   staxx_spend_may_pay($hostLimited['ghcr.io'], 'ghcr.io', $t0) === false,
+   json_encode($hostLimited['ghcr.io']));
+$hostRoom = staxx_spend_record([], 'ghcr.io', ['kind' => 'free', 'limit' => ['limit' => 100, 'remaining' => 51]], $t0);
+ok('one above half the limit allows it',
+   staxx_spend_may_pay($hostRoom['ghcr.io'], 'ghcr.io', $t0) === true,
+   json_encode($hostRoom['ghcr.io']));
+
+/* With no reported limit, docker.io is assumed to allow 50 paid asks an
+ * hour; every other host is treated as unmetered and never stops. */
+$hub = [];
+for ($i = 0; $i < 50; $i++) $hub = staxx_spend_record($hub, 'docker.io', ['kind' => 'paid'], $t0);
+ok('docker.io with no reported limit refuses the 51st paid ask this hour',
+   staxx_spend_may_pay($hub['docker.io'], 'docker.io', $t0) === false, json_encode($hub['docker.io']));
+$other = [];
+for ($i = 0; $i < 500; $i++) $other = staxx_spend_record($other, 'example.invalid', ['kind' => 'paid'], $t0);
+ok('an unmetered host never stops, however much it has paid',
+   staxx_spend_may_pay($other['example.invalid'], 'example.invalid', $t0) === true,
+   json_encode($other['example.invalid']));
+
+/* A refusal stamps refusedAt, and staxx_spend_refusers() names that host and
+ * no other. */
+$spendRefused = staxx_spend_record(['ghcr.io' => ['free' => 3]], 'docker.io', ['kind' => 'refused'], $t0);
+ok('a refused event stamps refusedAt',
+   ($spendRefused['docker.io']['refusedAt'] ?? 0) === $t0, json_encode($spendRefused['docker.io']));
+$refusers = staxx_spend_refusers(['spend' => $spendRefused], $t0 + 60);
+ok('staxx_spend_refusers() names only the refusing host, not the untouched one',
+   $refusers === ['docker.io'], json_encode($refusers));
+
+/* The old-shape fallback — no 'spend' key at all yet. */
+ok('a state with limited=true and limitedBy set reads through the old shape',
+   staxx_spend_refusers(['limited' => true, 'limitedBy' => ['ghcr.io']], $t0) === ['ghcr.io']);
+ok('a state with neither limited nor spend reads as no one refusing',
+   staxx_spend_refusers([], $t0) === []);
+
+/* A ledger that HAS 'spend' but whose refusal is over an hour old reads as
+ * nobody refusing — the old flat flag is never consulted once 'spend'
+ * exists, even if it is still sitting there stale. */
+$staleRefusal = ['docker.io' => ['refusedAt' => $t0]];
+ok('a refusal more than an hour old is not reported as still refusing',
+   staxx_spend_refusers(['spend' => $staleRefusal, 'limited' => true, 'limitedBy' => ['docker.io']], $t0 + 2 * $H) === [],
+   json_encode($staleRefusal));
+
+/* staxx_spend_report() — ordering, the assumed flag, and an unmetered
+ * ceiling reading as null rather than PHP_INT_MAX leaking out. */
+$reportState = ['spend' => [
+  'zzz.example' => ['hour' => intdiv($t0, 3600), 'free' => 4, 'paid' => 0, 'headfree' => true],
+  'docker.io'   => ['hour' => intdiv($t0, 3600), 'free' => 0, 'paid' => 3, 'headfree' => false],
+]];
+$report = staxx_spend_report($reportState, $t0);
+ok('staxx_spend_report() puts docker.io first regardless of alphabetical order',
+   ($report[0]['host'] ?? '') === 'docker.io', json_encode(array_column($report, 'host')));
+$dockerRow = $report[0];
+ok('docker.io with no reported limit is marked assumed, with a ceiling of 50',
+   $dockerRow['assumed'] === true && $dockerRow['ceiling'] === 50, json_encode($dockerRow));
+$otherRow = $report[1];
+ok('an unmetered host reports a null ceiling, not PHP_INT_MAX',
+   $otherRow['ceiling'] === null && $otherRow['assumed'] === false, json_encode($otherRow));
+
+/* ======================================================================= *
+ * G — PLAN_112 Phase C, the cadence explains itself. Pure, no network, no
+ * state file — one entry per branch of staxx_update_cadence_why(), proving
+ * every branch carries a non-empty sentence, that the sentence's interval is
+ * one of the six the rule can actually produce (a wrong number here would
+ * describe an interval nobody is being asked at), and that
+ * staxx_update_cadence() still returns the same number as its sibling for
+ * every case — the one-liner wrapper must never drift from the rule it
+ * wraps.
+ * ======================================================================= */
+
+$validIntervals = [6 * STAXX_HOUR, 12 * STAXX_HOUR, STAXX_DAY, 2 * STAXX_DAY, 7 * STAXX_DAY, 14 * STAXX_DAY];
+
+function cadenceCase(string $what, string $image, array $entry): void {
+  global $validIntervals;
+  $why = staxx_update_cadence_why($image, $entry);
+  ok($what.' — has a sentence', $why['why'] !== '', json_encode($why));
+  ok($what.' — the interval is one the rule can actually produce',
+     in_array($why['interval'], $validIntervals, true), $why['interval'].'s');
+  ok($what.' — staxx_update_cadence() agrees with its sibling',
+     staxx_update_cadence($image, $entry) === $why['interval'],
+     staxx_update_cadence($image, $entry).' vs '.$why['interval']);
+}
+
+cadenceCase('a digest-pinned reference', 'app@sha256:'.str_repeat('a', 64), []);
+cadenceCase('never asked before', 'app:foo', []);
+cadenceCase('errored, five fails in a row', 'app:1.2.3', ['asked' => time() - 100, 'error' => 'could not check', 'fails' => 5]);
+cadenceCase('errored, fewer than five fails', 'app:1.2.3', ['asked' => time() - 100, 'error' => 'could not check', 'fails' => 1]);
+cadenceCase('a rolling tag', 'app:latest', ['asked' => time() - 100]);
+cadenceCase('a version-shaped tag', 'app:1.2.3', ['asked' => time() - 100]);
+cadenceCase('an unrecognised tag', 'app:foo', ['asked' => time() - 100]);
+cadenceCase('churn — two recent moves', 'app:1.2.3', ['asked' => time() - 100, 'moves' => [time() - 100, time() - 200]]);
+cadenceCase('quiet — a version tag with a move 100 days old', 'app:1.2.3', ['asked' => time() - 100, 'moves' => [time() - 100 * STAXX_DAY]]);
+cadenceCase('quiet — a rolling tag with a move 100 days old', 'app:latest', ['asked' => time() - 100, 'moves' => [time() - 100 * STAXX_DAY]]);
+
+/* staxx_update_when_words() — empty when never asked, and names the last-ask
+ * clock otherwise. */
+ok('never asked (asked=0) returns an empty sentence',
+   staxx_update_when_words('app:1.2.3', [], time()) === '');
+$whenWords = staxx_update_when_words('app:1.2.3', ['asked' => time() - 3700, 'nextDue' => time() + 100], time());
+ok('an asked image carries "Last asked" in its sentence',
+   strpos($whenWords, 'Last asked') !== false, $whenWords);
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

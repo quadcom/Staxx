@@ -20,6 +20,13 @@ nothing.
 
 <!-- SHOT: updates-cadence-settings | full frame | the image updates section of the settings page, showing the check schedule control and the "what to do with what is found" choice -->
 
+A check pass runs every hour, on its own, and only asks about the images that are due — most images
+sit that pass out. The daily or weekly choice in [settings](settings.md#image-updates) is when StaXX
+instead takes a full look at everything, whether it was due or not. That changes what the setting
+means: choosing "Once a week" does not mean each image is only ever asked once a week — how often a
+given image is asked is decided by the table below, running every hour. The weekly choice only sets
+when the once-over of the whole lot happens.
+
 A registry only answers so many questions an hour. StaXX spends that allowance where the answer is
 most likely to have changed, and saves it where it almost never has. Checking costs your Docker Hub
 allowance nothing at all — StaXX only asks for the build's headers, and Hub does not count that.
@@ -139,6 +146,13 @@ When a registry refuses to answer, the pill says `could not check`. Hovering it 
 questions asked recently, the repository no longer at that address, an unreachable registry, or
 simply no answer at all. A check that keeps failing eventually says how long it has been failing, so
 you can judge whether it is worth trying again.
+
+Being refused by Docker Hub now means something else spent the download allowance on your address —
+one of your own pulls, or another machine on the same network — since checking itself costs nothing.
+StaXX tries again within the hour rather than waiting for the next scheduled pass. **Settings →
+[Image updates](settings.md#image-updates)** shows what each registry has actually been asked and
+what, if anything, it cost — worth a look if `could not check` keeps turning up. Hovering an update
+pill also says when that image was last asked, when it is next due, and why.
 
 ## Terms used here
 
