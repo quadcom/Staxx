@@ -67,6 +67,9 @@ before that were dates.
 - Fixed a device row's Notes box floating above the device's path box, and showing the word "Notes"
   twice — once as the column heading, once as a repeated hint under the box. Both boxes now line up,
   and "Notes" appears once.
+- **The settings panel is now the size of the stack editor, with its controls split across five
+  tabs** — General, Storage, Icons and images, Updates, and Registries and security — instead of one
+  long scrolling list of twenty-five controls.
 
 ---
 

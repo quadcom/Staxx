@@ -1252,12 +1252,31 @@ endif;
 
   <!-- The eighth dialog, a sibling of the seven above for the same reason:
        outside .staxx-table-wrap, inside the scaffold. No <form> wrapper,
-       for the same reason as the editor above. The body starts empty; script
-       fills it from the settings-read action before showModal(). -->
-  <dialog class="staxx-settings" id="staxx-settings" aria-labelledby="staxx-settings-title">
+       for the same reason as the editor above. staxx-settings--wide (PLAN_113)
+       sizes this dialog like the stack editor and switches it to the same
+       head/tab-strip/body/foot grid — a modifier rather than a change to
+       .staxx-settings itself, since the storage and backup dialogs below
+       share that class and stay a plain list with no tabs. The body starts
+       empty; script fills it, sorted into the panes below, from the
+       settings-read action before showModal(). -->
+  <dialog class="staxx-settings staxx-settings--wide" id="staxx-settings" aria-labelledby="staxx-settings-title">
 
     <div class="staxx-settings-head">
       <h3 class="staxx-settings-title" id="staxx-settings-title"><?= _('Settings') ?></h3>
+    </div>
+
+    <!-- Same tab pattern as the editor's Configure/Manage/History/Versions
+         strip further up this file: plain .staxx-tabstrip/.staxx-tab
+         buttons, switched by setSettingsTab() writing data-tab onto the
+         dialog itself (stacks.js), with a .staxx-settings-pane[data-pane]
+         per tab shown by CSS. #settings and every focus-a-field link still
+         work — openSettings() switches to the right tab before focusing. -->
+    <div class="staxx-tabstrip staxx-settings-tabstrip" id="staxx-settings-tabstrip" role="tablist" aria-label="<?= _('Settings section') ?>">
+      <button type="button" class="staxx-tab" role="tab" aria-selected="true" data-tab="general"><?= _('General') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="storage"><?= _('Storage') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="icons"><?= _('Icons and images') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="updates"><?= _('Updates') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="registries"><?= _('Registries and security') ?></button>
     </div>
 
     <!-- PLAN_74 Part A piece 3: StaXXCrypt is StaXX's own plumbing, not an
@@ -1266,7 +1285,7 @@ endif;
          hidden from you. Its whole state (built or not, running, recipe
          version, self-test results, the build/rebuild button, and the
          recipe disclosure) is built by script directly under the CRYPT_MODE
-         row inside the body above, not pinned here as a fixed sibling of it. -->
+         row inside the body below, not pinned here as a fixed sibling of it. -->
 
     <div class="staxx-settings-body" id="staxx-settings-body"></div>
 

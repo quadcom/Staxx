@@ -8559,6 +8559,22 @@
   .staxx-settings[open]::backdrop { opacity: 0; }
 }
 
+/* PLAN_113: sized and laid out like the editor now that its controls are
+ * split across tabs instead of one long scroll. A modifier rather than a
+ * change to .staxx-settings itself — see the comment above that class and
+ * beside this dialog in StacksPage.php — since the storage and backup
+ * dialogs share that class and stay a plain flex column with no tabs.
+ * Overrides the base class's width/max-height and swaps its flex column for
+ * the editor's own four-row grid (head, tab strip, body, foot); the body
+ * still scrolls, just per pane now rather than for the whole panel. */
+.staxx-settings--wide {
+  width: min(168rem, 96vw);
+  height: min(94vh, 108rem);
+  max-height: none;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+}
+
 .staxx-settings-head {
   flex: 0 0 auto;
   padding: 1.2rem 1.4rem 0.8rem;
@@ -8573,6 +8589,31 @@
   flex: 1 1 auto;
   padding: 0 1.4rem 1.2rem;
   overflow-y: auto;
+}
+
+/* Grid items get an automatic minimum size of their content otherwise,
+ * which would let a tall pane stretch this row past the dialog's own
+ * height instead of scrolling within it — same reasoning as the editor's
+ * own .staxx-modal-body. */
+.staxx-settings--wide .staxx-settings-body {
+  min-height: 0;
+}
+
+/* One tab's worth of controls at a time, all built into the DOM together
+ * (see openSettings() in stacks.js) and picked out by which one matches the
+ * dialog's own data-tab, the same switch the editor's Configure/Manage/
+ * History/Versions tabs use. Every pane stays present so Save can read
+ * every control regardless of which one is showing. */
+.staxx-settings-pane {
+  display: none;
+}
+
+.staxx-settings--wide[data-tab="general"] .staxx-settings-pane[data-pane="general"],
+.staxx-settings--wide[data-tab="storage"] .staxx-settings-pane[data-pane="storage"],
+.staxx-settings--wide[data-tab="icons"] .staxx-settings-pane[data-pane="icons"],
+.staxx-settings--wide[data-tab="updates"] .staxx-settings-pane[data-pane="updates"],
+.staxx-settings--wide[data-tab="registries"] .staxx-settings-pane[data-pane="registries"] {
+  display: block;
 }
 
 /* Labels a run of fields inside the settings panel — so far only the Docker

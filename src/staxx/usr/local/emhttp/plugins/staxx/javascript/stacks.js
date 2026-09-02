@@ -255,6 +255,7 @@
   // The Settings panel. May be null on a stale page — guarded the same way
   // confirmModal is above; openSettings() itself is a no-op without it.
   var settingsModal  = document.getElementById('staxx-settings');
+  var settingsTabstrip = document.getElementById('staxx-settings-tabstrip');
   var settingsBody   = document.getElementById('staxx-settings-body');
   var settingsMsg    = document.getElementById('staxx-settings-msg');
   var settingsCancel = document.getElementById('staxx-settings-cancel');
@@ -21170,7 +21171,7 @@
    */
   var SETTINGS_ROWS = [
     {
-      key: 'HEADER_MENU', control: 'choice', label: 'Show StaXX in',
+      key: 'HEADER_MENU', control: 'choice', label: 'Show StaXX in', tab: 'general',
       choices: [
         ['false', 'A tab under the Docker menu'],
         ['true',  'Its own button in the top navigation bar']
@@ -21179,7 +21180,7 @@
             'and becomes the default landing tab; nothing is replaced either way.'
     },
     {
-      key: 'STORE_ROOT', control: 'path', label: 'Data store',
+      key: 'STORE_ROOT', control: 'path', label: 'Data store', tab: 'storage',
       help: 'The one folder holding everything StaXX keeps: your stacks and the archived copies of ' +
             'ones you have removed. A storage pool is mounted before Docker itself even starts, so ' +
             'keeping this on the flash device buys nothing and only wears out the drive; a pool ' +
@@ -21187,7 +21188,7 @@
             'share layer, which a path under /mnt/user does not.'
     },
     {
-      key: 'TAKEOVER_DOCKER_TAB', control: 'choice', label: 'Docker menu',
+      key: 'TAKEOVER_DOCKER_TAB', control: 'choice', label: 'Docker menu', tab: 'general',
       choices: [
         ['false', 'Leave the Docker menu alone'],
         ['true',  'Replace it with StaXX']
@@ -21201,7 +21202,7 @@
             'for there to be any way in.'
     },
     {
-      key: 'CATCH_INSTALLS', control: 'choice', label: 'Installs from the Apps page',
+      key: 'CATCH_INSTALLS', control: 'choice', label: 'Installs from the Apps page', tab: 'general',
       choices: [
         ['true',   'Bring them into StaXX'],
         ['prompt', 'Ask first'],
@@ -21220,7 +21221,7 @@
             'exactly as it was, and nothing already installed changes.'
     },
     {
-      key: 'ICON_FETCH', control: 'choice', label: 'Container icons',
+      key: 'ICON_FETCH', control: 'choice', label: 'Container icons', tab: 'icons',
       choices: [
         ['true',  'Download them automatically'],
         ['false', 'Do not download anything']
@@ -21239,7 +21240,7 @@
             'rel="noopener">CC BY 4.0</a> licence.'
     },
     {
-      key: 'ICON_ADOPT', control: 'choice', label: 'Keep icons with the stack',
+      key: 'ICON_ADOPT', control: 'choice', label: 'Keep icons with the stack', tab: 'icons',
       choices: [
         ['true',  'Record them in the file'],
         ['false', 'Work them out each time']
@@ -21255,18 +21256,7 @@
             'worked out afresh on every page, as they were before.'
     },
     {
-      key: 'CRYPT_MODE', control: 'choice', label: 'StaXXCrypt hashing container',
-      choices: [
-        ['ondemand', 'Only while hashing (default)'],
-        ['always',   'Keep it running']
-      ],
-      help: 'Whether the small container StaXX builds to make password hashes (see below) stays ' +
-            'stopped between uses. On demand costs nothing while idle, but each hash starts and ' +
-            'stops it, which takes a couple of seconds. Keeping it running idles at almost no cost and ' +
-            'hashes near-instantly — worth it if you are setting up several logins at once.'
-    },
-    {
-      key: 'IMAGE_LOOKUP', control: 'choice', label: 'Image documentation',
+      key: 'IMAGE_LOOKUP', control: 'choice', label: 'Image documentation', tab: 'icons',
       choices: [
         ['true',  'Read it automatically'],
         ['false', 'Do not look anything up']
@@ -21280,7 +21270,7 @@
             'server.'
     },
     {
-      key: 'PLACEMENT_RULES', control: 'choice', label: 'Where stacks may live',
+      key: 'PLACEMENT_RULES', control: 'choice', label: 'Where stacks may live', tab: 'general',
       choices: [
         ['guided', 'Guide me — hide and refuse risky locations'],
         ['open',   'Get out of the way — warn me but allow it']
@@ -21297,7 +21287,7 @@
             'would be read as a stack.'
     },
     {
-      key: 'SHELL_ENABLED', control: 'choice', label: 'Container shells',
+      key: 'SHELL_ENABLED', control: 'choice', label: 'Container shells', tab: 'general',
       choices: [
         ['true',  'Allow opening a shell'],
         ['false', 'Do not allow shells']
@@ -21310,7 +21300,7 @@
             'it from the page.'
     },
     {
-      key: 'UPDATE_CHECK', control: 'choice', label: 'Check for image updates',
+      key: 'UPDATE_CHECK', control: 'choice', label: 'Check for image updates', tab: 'updates',
       group: 'Image updates',
       groupHelp: 'Checking asks each image\'s registry whether a newer version of the same tag ' +
             'exists. It only ever tells you — nothing is downloaded and nothing is restarted. ' +
@@ -21330,19 +21320,19 @@
             'about more often than others</a>.'
     },
     {
-      key: 'UPDATE_CHECK_TIME', control: 'time', label: 'Time of day to check',
+      key: 'UPDATE_CHECK_TIME', control: 'time', label: 'Time of day to check', tab: 'updates',
       help: 'The middle of the night is a sensible time, since a check costs a little server ' +
             'effort even though it is cheap. Enter a 24-hour time, such as 04:00.'
     },
     {
-      key: 'SPEND_READOUT', control: 'readout', label: 'Registry questions',
+      key: 'SPEND_READOUT', control: 'readout', label: 'Registry questions', tab: 'updates',
       help: 'Checking asks a registry a question that normally costs nothing — it does not count ' +
             'against Docker Hub\'s download allowance unless a registry refuses that free form and ' +
             'has to be asked the costly way instead. This shows what each registry has been asked ' +
             'and what, if anything, it cost.'
     },
     {
-      key: 'WATCH_EXAMPLES', control: 'choice', label: 'Watch the publisher\'s own examples',
+      key: 'WATCH_EXAMPLES', control: 'choice', label: 'Watch the publisher\'s own examples', tab: 'icons',
       choices: [
         ['true',  'Look, during the same check'],
         ['false', 'Do not look at anything']
@@ -21359,7 +21349,7 @@
             'off stops all of that; update checking itself keeps working exactly as before.'
     },
     {
-      key: 'UPDATE_MODE', control: 'choice', label: 'What to do with what is found',
+      key: 'UPDATE_MODE', control: 'choice', label: 'What to do with what is found', tab: 'updates',
       choices: [
         ['off',    'Nothing — just show it on the row'],
         ['notify', 'Wait for you to press Update, on the row\'s badge or its menu'],
@@ -21369,13 +21359,13 @@
             'file, and that wins over this.'
     },
     {
-      key: 'UPDATE_DELAY_HOURS', control: 'number', min: 0, max: 720, label: 'Delay before installing',
+      key: 'UPDATE_DELAY_HOURS', control: 'number', min: 0, max: 720, label: 'Delay before installing', tab: 'updates',
       help: 'Only used when the setting above is "Install it by itself". How long an update ' +
             'sits on its row, counting down, before it installs itself. In hours, 0 to 720 ' +
             '(30 days).'
     },
     {
-      key: 'UPDATE_WINDOW', control: 'choice', label: 'Only install during a quiet time',
+      key: 'UPDATE_WINDOW', control: 'choice', label: 'Only install during a quiet time', tab: 'updates',
       choices: [
         ['true',  'Yes'],
         ['false', 'No — install the moment the delay is up']
@@ -21384,16 +21374,16 @@
             'waits for them to open rather than installing itself in the middle of anything.'
     },
     {
-      key: 'UPDATE_WINDOW_START', control: 'time', label: 'Quiet time starts',
+      key: 'UPDATE_WINDOW_START', control: 'time', label: 'Quiet time starts', tab: 'updates',
       help: 'A 24-hour time, such as 03:00. The quiet time is allowed to run past midnight ' +
             'into the next day.'
     },
     {
-      key: 'UPDATE_WINDOW_END', control: 'time', label: 'Quiet time ends',
+      key: 'UPDATE_WINDOW_END', control: 'time', label: 'Quiet time ends', tab: 'updates',
       help: 'A 24-hour time, such as 05:00.'
     },
     {
-      key: 'UPDATE_NOTIFY', control: 'choice', label: 'Notify me',
+      key: 'UPDATE_NOTIFY', control: 'choice', label: 'Notify me', tab: 'updates',
       choices: [
         ['off',     'Never'],
         ['found',   'When a check finds something waiting'],
@@ -21403,12 +21393,12 @@
             'queue finishing, never one per container.'
     },
     {
-      key: 'UPDATE_RETAIN', control: 'number', min: 0, max: 5, label: 'Previous versions to keep',
+      key: 'UPDATE_RETAIN', control: 'number', min: 0, max: 5, label: 'Previous versions to keep', tab: 'updates',
       help: 'How many older versions of each image this server keeps on disk so an update can ' +
             'be rolled back afterwards. 0 to 5.'
     },
     {
-      key: 'UPDATE_CLEANUP', control: 'choice', label: 'Remove old images automatically',
+      key: 'UPDATE_CLEANUP', control: 'choice', label: 'Remove old images automatically', tab: 'updates',
       choices: [
         ['off',    'No — leave old images where they are'],
         ['weekly', 'Yes, once a week']
@@ -21417,7 +21407,7 @@
             'any more — never a general clean-up of everything unused.'
     },
     {
-      key: 'HUB_USER', control: 'text', label: 'Docker Hub username',
+      key: 'HUB_USER', control: 'text', label: 'Docker Hub username', tab: 'registries',
       group: 'Docker Hub sign-in',
       groupHelp: 'Used when checking your containers\' images for updates. Without signing in, ' +
             'Docker Hub only allows about ten of those checks an hour from this server; signing in ' +
@@ -21425,7 +21415,7 @@
       help: 'The Docker Hub account name to sign in with. Leave blank to stay signed out.'
     },
     {
-      key: 'HUB_TOKEN', control: 'password', label: 'Docker Hub access token',
+      key: 'HUB_TOKEN', control: 'password', label: 'Docker Hub access token', tab: 'registries',
       help: "Create one from Docker Hub's Account Settings → Security → Personal access tokens, " +
             'and choose the read-only, public repositories permission. That is all this feature ' +
             "needs, since checking an image's current version is the only thing it ever does — so a " +
@@ -21435,17 +21425,37 @@
             'Leave both fields blank to sign out.'
     },
     {
-      key: 'REGISTRY_TRUST', control: 'text', label: 'Registries you run yourself',
+      key: 'REGISTRY_TRUST', control: 'text', label: 'Registries you run yourself', tab: 'registries',
       help: 'Name a registry here and StaXX will trust that machine\'s own certificate, or talk to ' +
             'it without any encryption at all if it has not been given one — so only name a registry ' +
             'you actually run, never someone else\'s. Separate several with a comma, e.g. ' +
             'registry.home.lan, 192.168.1.20:5000. A password is never sent to a registry reached ' +
             'without encryption. Leave blank to trust nothing but the public internet as normal.'
+    },
+    // Moved to the end of this tab (PLAN_113) so StaXXCrypt's own switch sits
+    // beside the credentials it protects, rather than in its old spot among
+    // the icon settings — a hangover from before the panel had tabs at all.
+    {
+      key: 'CRYPT_MODE', control: 'choice', label: 'StaXXCrypt hashing container', tab: 'registries',
+      choices: [
+        ['ondemand', 'Only while hashing (default)'],
+        ['always',   'Keep it running']
+      ],
+      help: 'Whether the small container StaXX builds to make password hashes (see below) stays ' +
+            'stopped between uses. On demand costs nothing while idle, but each hash starts and ' +
+            'stops it, which takes a couple of seconds. Keeping it running idles at almost no cost and ' +
+            'hashes near-instantly — worth it if you are setting up several logins at once.'
     }
   ];
   SETTINGS_ROWS.forEach(function (row) {
     row.id = 'staxx-setting-' + row.key.toLowerCase().replace(/_/g, '-');
   });
+
+  // PLAN_113: the five tabs the panel is now split into, in the order the
+  // tab strip in StacksPage.php lists its buttons. Kept as plain keys rather
+  // than a {key, label} pair, because the labels already live on the buttons
+  // themselves — nothing here needs to know the words.
+  var SETTINGS_TABS = ['general', 'storage', 'icons', 'updates', 'registries'];
 
   // What the open fetched, keyed the same way as SETTINGS_ROWS — compared
   // against the controls on every input/change to decide whether Save may be
@@ -21964,6 +21974,21 @@
     });
   }
 
+  // Same idea as the editor's setTab(): a data-tab attribute on the dialog
+  // itself, read by CSS to show the matching pane, plus aria-selected on the
+  // buttons for anyone using a screen reader rather than looking at the
+  // strip. Safe to call before showModal() — nothing here depends on the
+  // dialog being open yet.
+  function setSettingsTab(tab) {
+    if (!settingsModal) return;
+    settingsModal.dataset.tab = tab;
+    if (settingsTabstrip) {
+      Array.prototype.forEach.call(settingsTabstrip.querySelectorAll('.staxx-tab'), function (btn) {
+        btn.setAttribute('aria-selected', btn.dataset.tab === tab ? 'true' : 'false');
+      });
+    }
+  }
+
   function openSettings(focusId) {
     if (!settingsModal) return;
     call('settings', {}).then(function (res) {
@@ -21974,36 +21999,58 @@
       settingsOpenValues = res.settings;
       settingsMsg.textContent = '';
       settingsMsg.classList.remove('staxx-settings-msg--bad');
-      settingsBody.innerHTML = SETTINGS_ROWS.map(function (row) {
-        var html = settingsFieldHtml(row, res.settings[row.key] || '');
-        // PLAN_74 Part A piece 3, moved per feedback: StaXXCrypt's own state
-        // belongs right under the setting that governs it, not pinned to the
-        // bottom of the whole panel however far you have scrolled past it.
-        // Not a row of SETTINGS_ROWS itself — see settingsCryptBox() above.
-        if (row.key === 'CRYPT_MODE') html += '<div class="staxx-crypt" id="staxx-crypt-state" hidden></div>';
-        return html;
-      }).join('') +
-        // PLAN_83: nothing here is a setting to save — pressing it reads and
-        // checks every stack there and then, so it sits as its own action
-        // row rather than one of SETTINGS_ROWS. See runScaffoldSweep().
-        '<div class="staxx-field">' +
-          '<span>StaXX fields</span>' +
-          '<button type="button" class="staxx-link-btn" id="staxx-scaffold-sweep">' +
-          'Add missing StaXX fields to every stack…</button>' +
-          '<span class="staxx-hint">Checks every stack for its icon, links and description ' +
-          'fields, and offers to add whatever is missing as commented placeholders — nothing ' +
-          'already there is changed.</span>' +
-        '</div>' +
-        // Hidden until loadArchiveList() below hears back with something
-        // definite to show — a folder holding nothing archived yet still
-        // shows the folder, but a failed fetch must not leave a half-drawn
-        // section sitting under the settings rows.
-        '<div class="staxx-field" id="staxx-archive-list" hidden>' +
-          '<span>Archived stacks</span>' +
-          '<span class="staxx-hint" id="staxx-archive-hint"></span>' +
-          '<ul class="staxx-confirm-list" id="staxx-archive-files"></ul>' +
-        '</div>';
+      // PLAN_113: one pane per tab rather than one long scroll. Each row
+      // still keeps its id, its help text and its place in SETTINGS_ROWS —
+      // this only sorts the rendered HTML into five buckets by row.tab, so
+      // saving (which reads every control regardless of which pane it is in)
+      // needs no change at all.
+      settingsBody.innerHTML = SETTINGS_TABS.map(function (tab) {
+        var rowsHtml = SETTINGS_ROWS.filter(function (row) {
+          return row.tab === tab;
+        }).map(function (row) {
+          var html = settingsFieldHtml(row, res.settings[row.key] || '');
+          // PLAN_74 Part A piece 3, moved per feedback: StaXXCrypt's own
+          // state belongs right under the setting that governs it. Not a row
+          // of SETTINGS_ROWS itself — see settingsCryptBox() above.
+          if (row.key === 'CRYPT_MODE') html += '<div class="staxx-crypt" id="staxx-crypt-state" hidden></div>';
+          return html;
+        }).join('');
+        // Two things that are not settings sit at the end of the tab they
+        // are about, rather than pinned to the bottom of the whole panel:
+        // PLAN_83's sweep reads and checks every stack there and then, so it
+        // belongs beside the icon/description fields it fills in, and the
+        // archive list is a read-only view of what removeStack() has kept,
+        // so it belongs beside the store it is kept in.
+        if (tab === 'icons') {
+          rowsHtml +=
+            '<div class="staxx-field">' +
+              '<span>StaXX fields</span>' +
+              '<button type="button" class="staxx-link-btn" id="staxx-scaffold-sweep">' +
+              'Add missing StaXX fields to every stack…</button>' +
+              '<span class="staxx-hint">Checks every stack for its icon, links and description ' +
+              'fields, and offers to add whatever is missing as commented placeholders — nothing ' +
+              'already there is changed.</span>' +
+            '</div>';
+        } else if (tab === 'storage') {
+          // Hidden until loadArchiveList() below hears back with something
+          // definite to show — a folder holding nothing archived yet still
+          // shows the folder, but a failed fetch must not leave a half-drawn
+          // section sitting under the settings rows.
+          rowsHtml +=
+            '<div class="staxx-field" id="staxx-archive-list" hidden>' +
+              '<span>Archived stacks</span>' +
+              '<span class="staxx-hint" id="staxx-archive-hint"></span>' +
+              '<ul class="staxx-confirm-list" id="staxx-archive-files"></ul>' +
+            '</div>';
+        }
+        return '<div class="staxx-settings-pane" data-pane="' + tab + '">' + rowsHtml + '</div>';
+      }).join('');
       settingsSave.disabled = true;
+      // Default tab is General, with no memory of the last one opened — a
+      // caller asking for a specific field wins over that default so
+      // #settings links and signposts still land on the right pane.
+      var focusRow = focusId ? SETTINGS_ROWS.filter(function (row) { return row.id === focusId; })[0] : null;
+      setSettingsTab(focusRow ? focusRow.tab : SETTINGS_TABS[0]);
       settingsModal.showModal();
       // Explicit, and after showModal(), for the same reason every dialog in
       // this file sets focus by hand: the browser's own "first focusable
@@ -22090,6 +22137,13 @@
   }
 
   if (settingsModal) {
+    if (settingsTabstrip) {
+      settingsTabstrip.addEventListener('click', function (event) {
+        var btn = event.target.closest('.staxx-tab');
+        if (btn) setSettingsTab(btn.dataset.tab);
+      });
+    }
+
     settingsBody.addEventListener('input', settingsUpdateDirty);
     settingsBody.addEventListener('change', settingsUpdateDirty);
 
