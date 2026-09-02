@@ -949,6 +949,15 @@
   border-bottom: 0.1rem solid var(--sm-line);
 }
 
+/* Services is the odd one out: the service names in the rows beneath it are
+   left-aligned (ordinary text, not a figure), so a centred heading floats
+   above them instead of sitting over the column it names. Left it alone,
+   same padding as every other cell, so the heading text lines up with the
+   first name below it. */
+.staxx-stacks [role="columnheader"].staxx-head--services {
+  text-align: left;
+}
+
 /* The narrow block further down turns a figure cell into a flex row
    (label + value), which ignores text-align on its single text child —
    only justify-content moves it. One class plus the attribute, (0,3,0),
@@ -9207,6 +9216,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
+  }
+
+  /* This flex row's own justify-content: center above would otherwise win
+     back the centring the base rule just turned off for Services — same
+     reasoning, carried into the fold. */
+  .staxx-stacks .staxx-head-row [role="columnheader"].staxx-head--services {
+    justify-content: flex-start;
   }
 
   /* The folder heading's one cell still spans columns 1 through 4 of the new

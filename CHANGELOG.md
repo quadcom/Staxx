@@ -106,7 +106,9 @@ before that were dates.
 - **The Stack, Services, State and Address headings now sit centred against the full header row**
   once a narrower window packs the figures into a compact block. They used to sit at the top,
   beside CPU and Memory only, with a stray line cutting across the whole row underneath them; now
-  the only mid-row line is CPU's and Memory's own, and it only spans those two columns.
+  the only mid-row line is CPU's and Memory's own, and it only spans those two columns. Services
+  stays left-aligned, though, so its heading sits over the left-aligned service names below it
+  instead of floating centred above them.
 
 ---
 
