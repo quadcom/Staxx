@@ -1,5 +1,7 @@
 # FEATURE — the app moved house, and nothing told you
 
+*Moved out of the project root into the filed plans on 2026-09-02, after the 2 September project review found it loose there. Six filed plans cite it by its bare name; they all sit in this same folder, so every one of those references still resolves.*
+
 **Concept only. No code plan here.** Extracted from `PLAN_55.md` (now closed) on 2026-08-21, so the
 idea survives without a stale implementation plan attached to it.
 

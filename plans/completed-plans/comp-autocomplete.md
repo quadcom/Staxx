@@ -1,5 +1,7 @@
 # Compose value autocomplete, and field help in the form
 
+*Moved out of the project root into the filed plans on 2026-09-02, after the 2 September project review found it loose there. Six filed plans cite it by its bare name; they all sit in this same folder, so every one of those references still resolves.*
+
 ## Context
 
 You typed a `restart:` **value** in the compose editor and nothing was offered. Chasing it produced

@@ -161,7 +161,7 @@ Four rules run through the whole set:
 - **Some suites deliberately do not redirect it**, and hand explicit `/tmp` paths to the function
   under test instead. Moving the store even for one command makes every real stack vanish from the
   webGUI for as long as it is moved, which is not acceptable on Adrian's box.
-- **Seven are opt-in behind an environment flag**, marked below. An opt-in suite nobody runs is a
+- **Six are opt-in behind an environment flag**, marked below. An opt-in suite nobody runs is a
   suite that can rot unnoticed — run them when the code they cover is touched, and before a release.
 
 | Suite | What it covers | Needs |
