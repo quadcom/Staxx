@@ -360,17 +360,13 @@ endif;
     <?= _('Anything you put there by hand shows up here, and anything added here is an ordinary compose file you can copy elsewhere.') ?>
   </p>
 
-  <!-- Machine-wide figures, kept separate from the table on purpose.
-       Per-container GPU comes from /proc/<pid>/fdinfo and works for both Intel
-       and AMD, so the table's own GPU column is the real reading. What is shown
-       here is the whole card, including whatever is using it from outside
-       docker — and it is labelled as the whole machine's rather than being
-       divided between containers, which would be a guess wearing a number's
-       clothes. -->
-  <div class="staxx-strip" id="staxx-strip" hidden>
-    <span class="staxx-strip-item" id="staxx-strip-gpu" hidden></span>
-    <span class="staxx-strip-item" id="staxx-strip-age"></span>
-  </div>
+  <!-- A quiet status line, empty and hidden until something needs it — see
+       setPushStatus() in stacks.js, the live-feed-degraded notice. Used to
+       also carry the whole-machine GPU card and a staleness line (PLAN_114
+       moved a stack's GPU badge onto its own row instead, where it survives
+       the stack being stopped, and dropped the strip's age line — a stale
+       snapshot now just blanks the row like a stopped one, see applyStats()). -->
+  <div class="staxx-strip" id="staxx-strip" hidden></div>
 
   <!-- The table is always here, even with nothing in it.
        The browser replaces this table's body in place rather than reloading

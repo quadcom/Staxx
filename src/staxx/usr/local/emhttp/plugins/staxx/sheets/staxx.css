@@ -1275,7 +1275,10 @@
   cursor: help;
 }
 
-/* ---- Machine-wide strip ------------------------------------------------- */
+/* ---- Status strip --------------------------------------------------------
+   Used to also carry the whole-machine GPU card and a staleness line; both
+   moved onto the row itself (PLAN_114), leaving this as just the quiet
+   live-feed-degraded notice — see setPushStatus() in stacks.js. */
 
 .staxx-strip {
   display: flex;
@@ -1299,20 +1302,6 @@
 
 @starting-style {
   .staxx-strip { opacity: 0; translate: 0 -0.4rem; }
-}
-
-.staxx-strip-item b {
-  color: var(--sm-fg);
-  font-weight: 700;
-}
-
-.staxx-strip-item i {
-  font-style: normal;
-  opacity: 0.75;
-}
-
-#staxx-strip-age {
-  margin-left: auto;
 }
 
 /* ---- Folders ------------------------------------------------------------ */

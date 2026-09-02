@@ -5,7 +5,7 @@
 This is the screen you land on. It lists every stack, one row each. This page walks it top to
 bottom, part by part.
 
-![The whole StaXX page: the row of buttons top right, the update summary and storage hint below it, the machine figures strip, then the column headings and a list of folder and stack rows](../images/guide/the-stack-list-whole-screen.png)
+![The whole StaXX page: the row of buttons top right, the update summary and storage hint below it, then the column headings and a list of folder and stack rows](../images/guide/the-stack-list-whole-screen.png)
 
 ## The buttons along the top
 
@@ -22,17 +22,13 @@ bottom, part by part.
 | Update all | Installs every update currently waiting. |
 | Pause updates | Freezes every update countdown on the page. Press again to say Resume updates. |
 
-## Update summary and machine strip
+## Update summary
 
-![The update summary reading Never checked, the hint naming the folder stacks are kept in, and the machine strip below showing GPU figures and how long ago they were taken, ringed](../images/guide/the-stack-list-machine-strip.png)
 A line says when updates were last checked, and how many are waiting. It reads **Never checked**
 until the first check runs. See [update checking](updates.md) for what a check does.
 
 Below it, a hint names the folder your stacks are kept in. Anything you drop there by hand shows up
 here too.
-
-A strip of machine figures follows: GPU use, and how fresh the numbers are — **Updated Ns ago**, or
-**Figures are Ns old** if the collector has fallen behind.
 
 ## The columns
 
@@ -46,7 +42,7 @@ A strip of machine figures follows: GPU use, and how fresh the numbers are — *
 | CPU | Processor use, with a small graph. |
 | Memory | Memory use, with a small graph. |
 | Network | Network traffic, with a small graph. |
-| GPU | Graphics use, with a small graph. The column only appears when a stack on the page has a graphics card handed to it. |
+| GPU | A coloured badge (Intel, AMD or NVIDIA) for a stack whose file asks for a graphics card, plus a use figure and small graph while it is running. The badge stays even when the stack is stopped, so you can see which stacks have hardware in them without starting them. The column only appears when a stack on the page has one. |
 
 ## Stack row parts
 

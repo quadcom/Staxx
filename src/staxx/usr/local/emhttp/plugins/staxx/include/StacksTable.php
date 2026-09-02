@@ -29,6 +29,9 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Autostart.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
+// For staxx_compose_gpu_vendors() — the page renders rows without going
+// through action.php, which is the only other place Devices.php was pulled in.
+require_once '/usr/local/emhttp/plugins/staxx/include/Devices.php';
 
 // NO "already loaded?" guard here, deliberately.
 //
@@ -1669,6 +1672,19 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 
       $kids = $s['parses'] ? staxx_stack_children($s) : [];
 
+      // PLAN_114 — which vendors this file itself asks a GPU from, keyed by
+      // service, so the row's badge survives the stack being stopped (the
+      // live-stats route below goes blank the moment a container does).
+      // A second small read of the file, alongside the one staxx_compose_meta()
+      // already does elsewhere on this row — the raw text, not the compose
+      // config, is what has the reservations shape this needs.
+      $gpuFile = ($s['parses'] && $s['file'] !== '')
+        ? staxx_compose_gpu_vendors((string)@file_get_contents($s['file']))
+        : [];
+      $sGpuVendors = [];
+      foreach ($gpuFile as $svcVendors) $sGpuVendors = array_merge($sGpuVendors, $svcVendors);
+      $sGpuVendors = array_values(array_unique($sGpuVendors));
+
       // PLAN_107 — rolled up from $kids, already in hand, rather than a
       // second read of the containers: see staxx_stack_health()'s own
       // docblock for why this must never be computed from a compose-ls-only
@@ -1986,7 +2002,10 @@ function staxx_render_rows(array $rows, bool $canRun): string {
             <span class="staxx-statv staxx-net">—</span>
             <span class="staxx-spark" data-spark="net"></span>
           </span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="gpu">
+          <!-- data-gpu-file carries what the compose file itself asks for, so
+               blankFigures() in stacks.js can still paint the vendor badge
+               once the live stats have nothing to say (PLAN_114). -->
+          <span class="staxx-cell staxx-num" role="gridcell" data-stat="gpu" data-gpu-file="<?= htmlspecialchars(implode(' ', $sGpuVendors)) ?>">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="gpu"></span>
           </span>
@@ -2028,6 +2047,9 @@ function staxx_render_rows(array $rows, bool $canRun): string {
         // comparison; a service with no verdict at all (never ran, say) gets
         // '', which is exactly what staxx_pending_service_chip_html() shows nothing for.
         $kPending = (string)($sPending['services'][$kid['service']] ?? '');
+        // PLAN_114 — this one service's own vendors out of $gpuFile, computed
+        // once for the whole stack above.
+        $kGpuVendors = $gpuFile[$kid['service']] ?? [];
 ?>
         <!-- data-state below is read by the container menu (buildContainerMenu()
              in stacks.js) straight off the row, so it has to be right on the
@@ -2173,7 +2195,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
             <span class="staxx-statv staxx-net">—</span>
             <span class="staxx-spark" data-spark="net"></span>
           </span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="gpu">
+          <span class="staxx-cell staxx-num" role="gridcell" data-stat="gpu" data-gpu-file="<?= htmlspecialchars(implode(' ', $kGpuVendors)) ?>">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="gpu"></span>
           </span>

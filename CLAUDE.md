@@ -176,7 +176,6 @@ Four rules run through the whole set:
 | `detail` | What the server can find out about a stack's icon, description, category, author and links | `STORE_ROOT`, `IMAGE_LOOKUP=false` |
 | `export` | The export route — placeholders, redaction, and the job that packs a bundle | `STORE_ROOT` (some cases) |
 | `files` | The companion-file helpers and the archive confirmation | `STORE_ROOT` |
-| `gpu` | The Intel busy-percentage maths, read from the sysfs idle counter, and its shape with no sample on disk | — |
 | `handover` | Handover targets, the set-aside name, the state file's round trip, the script text, every refusal | — |
 | `health` | Reading an image's own declared health check, and every refusal of the trial that decides whether a candidate check may ever be offered | — |
 | `icons` | Copying a matched icon into a stack's own folder, and its refusals | — |

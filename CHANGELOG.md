@@ -38,6 +38,10 @@ before that were dates.
   tries again within the hour rather than waiting for the next pass; the refusal notice on the stacks
   page says so and links straight to the new figures. Hovering an update pill also now says when that
   image was last asked, when it is next due, and why.
+- **The wide bar of Intel and AMD graphics figures above the stack list is gone**, and a stack
+  whose file asks for a graphics card now carries a coloured badge on its own row instead — Intel
+  blue, AMD red, NVIDIA green. That badge stays even while the stack is stopped, so you can see
+  which stacks have hardware in them without starting them, which the old bar could never show.
 - **The user guide is now a manual rather than a description.** It opens with a walk round the
   screen you land on — every button, column, mark and menu item named, with a close-up picture of
   each — and a matching walk round the editor and the settings panel. The rest of the pages are

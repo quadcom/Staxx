@@ -27,11 +27,12 @@ DIR="$1"
 
 STALE=45          # give up if nobody has asked for stats in this many seconds
 
-# Measured on a 62-container server: docker stats takes about 1.5s, and the
-# Intel reading is a handful of file reads that cost next to nothing.
-# sample_gpu_metrics() below spends roughly another second reading the AMD
-# metrics table repeatedly, which paces the round out to about two or three
-# seconds end to end — that is what the graphs advance at.
+# Measured on a 62-container server: docker stats takes about 1.5s, which
+# paces the round on its own — see PLAN_114 for why nothing here adds to it
+# any more. The whole-machine Intel and AMD readings this collector used to
+# spend a further second on fed only the strip above the table, which is
+# gone; a stack's GPU vendor now comes from its own compose file instead
+# (staxx_compose_gpu_vendors() in Devices.php), read once at row render.
 
 WATCH="$DIR/watch"
 LOCK="$DIR/collector.pid"
@@ -174,157 +175,6 @@ sample_gpu_procs() {
   mv "$out" "$DIR/gpuproc.raw"
 }
 
-# How many separate pieces of work each card is running, machine-wide.
-#
-# The same counter for both cards, deliberately. The two are otherwise measured
-# by different tools that count different things, and a header line where one
-# card says "idle" while the other says "0%" is reporting the same state two
-# ways — which reads as though they differ.
-#
-# A drm-client-id is one context on the card, not one process: a process opens
-# the card several times and every one of those descriptors carries the SAME
-# client id, so distinct ids are the honest unit. See sample_gpu_procs().
-#
-# The kernel already keeps this list, at /sys/kernel/debug/dri/<n>/clients, and
-# reading the lot costs TWO MILLISECONDS. The obvious alternatives are all far
-# worse and one of them is simply wrong:
-#
-#   fuser on /dev/dri/*        0.19s, and MISSES EVERY CONTAINER. Docker gives
-#                              a container its own device node with the same
-#                              major and minor but a different inode, and fuser
-#                              matches on the inode. It reported nothing at all
-#                              while a hardware encode was running.
-#   grep every /proc/*/fdinfo  1.8s, correct but a third of a sampling round.
-#   a shell loop over /proc    39 seconds. Not an option.
-#
-# The debugfs tree lists the same client under several directories, so the file
-# format is: one line per client, columns command/tgid/dev/.../id, with a header
-# line repeated in each file. Deduplicating on device-and-id collapses them.
-sample_gpu_clients() {
-  out="$DIR/gpuclients.raw.tmp"
-
-  # `c <drm minor> <client id>`. The minor is turned into a vendor by the
-  # reader, which already knows which card is which — see staxx_gpu_nodes().
-  awk '$1 != "command" && $2 ~ /^[0-9]+$/ && $NF ~ /^[0-9]+$/ { print "c", $3, $NF }' \
-    /sys/kernel/debug/dri/*/clients 2>/dev/null | sort -u > "$out"
-
-  mv "$out" "$DIR/gpuclients.raw"
-}
-
-# Sample the Intel GPU from sysfs — read-only, nothing attached to the card
-# and nothing to kill.
-#
-# WHY THIS REPLACED intel_gpu_top: that tool attaches to the i915 perf/PMU
-# interface, and it was being started and then SIGTERMed/SIGKILLed under a
-# timeout every few seconds, for as long as any StaXX page stayed open —
-# indefinitely, on a server that never closes its Docker tab. On this
-# hardware the card doing that is a discrete Intel Arc that also does the
-# Plex hardware transcode, and the user has seen GPU crashes and freezes.
-# Never proven as the cause, but repeatedly attaching a performance monitor
-# to a card and killing it hard is a credible one, and there is no need to
-# carry that risk for a number plain file reads already give.
-#
-# The idle-residency counter counts upward in milliseconds, so busy% is the
-# inverse of how much of the elapsed wall time it grew by — see
-# staxx_gpu_busy_percent() in Stats.php for the exact sum, and gpu.php for
-# the proof it is right (verified on the box: 2002ms idle of 2004ms elapsed
-# -> 0% busy, with the clock reading 0 while idle).
-#
-# Not every i915 generation exposes the same path. Newer ones publish
-# gt/gt0/rc6_residency_ms; older ones publish it under power/ instead — both
-# are tried, in that order, and the first that exists wins for that card.
-#
-# Follows the same "keep the previous reading so the caller can take a
-# difference" idiom as sample_gpu_procs() above, so there is one shape for
-# this kind of counter rather than two: the old reading moves to *.prev
-# before the new one is written.
-sample_intel() {
-  out="$DIR/intel.raw.tmp"
-  # First line is the timestamp, exactly like gpuproc.raw above: a millisecond
-  # clock read at the same moment as the residency counters below it, so the
-  # reader has a real elapsed time to divide by rather than assuming the
-  # collector's cycle length.
-  date +%s%3N > "$out"
-
-  for card in /sys/class/drm/card*; do
-    [ -d "$card/device" ] || continue
-    vendor=$(cat "$card/device/vendor" 2>/dev/null)
-    [ "$vendor" = "0x8086" ] || continue
-
-    node=$(basename "$card")
-
-    residency=""
-    for base in "$card/gt/gt0" "$card/power"; do
-      if [ -r "$base/rc6_residency_ms" ]; then
-        residency=$(cat "$base/rc6_residency_ms" 2>/dev/null)
-        break
-      fi
-    done
-    [ -n "$residency" ] || continue
-
-    freq=$(cat "$card/gt/gt0/rps_act_freq_mhz" 2>/dev/null)
-    max=$(cat "$card/gt/gt0/rps_max_freq_mhz" 2>/dev/null)
-
-    echo "i $node $residency ${freq:-0} ${max:-0}" >> "$out"
-  done
-
-  # Keep the previous sample: the busy figure is a rate, and a rate needs two
-  # readings and the time between them. Copied, not moved — see the same swap
-  # in sample_gpu_procs() above for why moving it away first leaves a real gap
-  # with no .raw file in it at all.
-  [ -f "$DIR/intel.raw" ] && cp "$DIR/intel.raw" "$DIR/intel.prev"
-  mv "$out" "$DIR/intel.raw"
-}
-
-# The AMD card's own metrics table, sampled repeatedly.
-#
-# WHY THIS EXISTS: radeontop and the kernel's gpu_busy_percent both watch the
-# graphics pipe, and a video transcode does not touch it. Measured here during
-# a flat-out VAAPI encode, both read 0% while this table read 100%. On a media
-# server that is the only figure anybody wants.
-#
-# SAMPLED REPEATEDLY, and that is the point of doing it here. The table holds
-# an instant, not an average. A real-time transcode finishes each frame well
-# inside the frame interval, so a single read genuinely catches the encoder
-# idle about half the time — measured at 1080p60 the readings ran
-# 10000,0,10000,0,9700,0,9900 and so on. One read is a coin toss between "busy"
-# and "idle"; twenty of them across a second measure how much of that second
-# the engine was working, which is the figure wanted.
-#
-# It also costs nothing, because this REPLACES the pause at the end of the
-# round rather than adding to it. Reading the file is a few microseconds; the
-# second was going to be spent sleeping anyway.
-#
-# The bytes are passed through as hex and decoded by the reader. The table is a
-# versioned binary structure and where the fields sit depends on the version,
-# so that knowledge lives in one place, in Stats.php, where it can be checked
-# against the size the table declares for itself.
-sample_gpu_metrics() {
-  out="$DIR/gpumetrics.raw.tmp"
-  : > "$out"
-
-  n=0
-  while [ $n -lt 20 ]; do
-    for f in /sys/class/drm/card*/device/gpu_metrics; do
-      [ -r "$f" ] || continue
-      node=$(basename "$(dirname "$(dirname "$f")")")
-      minor=$(cut -d: -f2 "/sys/class/drm/$node/dev" 2>/dev/null)
-      hex=$(od -An -tx1 -v "$f" 2>/dev/null | tr -d ' \n')
-      [ -n "$minor" ] && [ -n "$hex" ] && echo "g $minor $hex" >> "$out"
-    done
-    n=$((n + 1))
-    # Unconditional, so a machine with no such card still pauses here rather
-    # than spinning through the whole round with no wait at all.
-    #
-    # Not faster than this: the driver caches the table for about a
-    # millisecond, so reads closer together than that return the same numbers
-    # twice and would bias the result rather than refine it.
-    sleep 0.05
-  done
-
-  mv "$out" "$DIR/gpumetrics.raw"
-}
-
 while [ -f "$WATCH" ]; do
   now=$(date +%s)
   seen=$(cat "$WATCH" 2>/dev/null)
@@ -405,14 +255,6 @@ while [ -f "$WATCH" ]; do
   # Must run after devices.raw is refreshed above — it drives which containers
   # are worth looking at.
   sample_gpu_procs
-  sample_gpu_clients
-
-  sample_intel
-
-  # This is the pause at the end of the round, spent reading the AMD metrics
-  # table over and over instead of doing nothing. It takes the same second a
-  # plain sleep used to.
-  sample_gpu_metrics
 done
 
 cleanup

@@ -25383,9 +25383,10 @@
   }
   rebindStatRows();
 
-  var strip    = document.getElementById('staxx-strip');
-  var stripGpu = document.getElementById('staxx-strip-gpu');
-  var stripAge = document.getElementById('staxx-strip-age');
+  // See setPushStatus() below — the only thing left that ever shows in here,
+  // now the whole-machine GPU card and the staleness line have both moved
+  // onto the row itself (PLAN_114).
+  var strip = document.getElementById('staxx-strip');
 
   var history  = {};    // project -> { cpu:[], mem:[], net:[], gpu:[] }
   var previous = {};    // project -> last cumulative counters
@@ -25638,25 +25639,36 @@
     setClass(row, 'staxx-row--no-gpu', !s.gpuMapped);
   }
 
+  // The vendors a row's compose file asks for, read off the GPU cell — that
+  // is where staxx_render_rows() writes data-gpu-file, not on the row itself.
+  function gpuFileVendors(row) {
+    var td = cell(row, 'gpu');
+    return ((td && td.dataset.gpuFile) || '').split(/\s+/).filter(Boolean);
+  }
+
   function blankFigures(row) {
     setCell(row, 'cpu', '—', null);
     setCell(row, 'mem', '—', null);
     setCell(row, 'net', '—', null);
-    setCell(row, 'gpu', '', null);          // blank, never a dash
     setData(row, 'statCpu', '');
     setData(row, 'statGpuMapped', '');
 
-    // No stats at all this poll — container stopped, never created, or its
-    // whole stack is down — means no way to know whether a GPU is mapped
-    // either. Hiding the cell here too, rather than leaving it as whatever
-    // paintFigures last decided: the alternative is a class that keeps
-    // whatever value it happened to have from the last time stats WERE
-    // available, which is fine while a row bounces between running and
-    // stopped in the ordinary case, but leaves a row that has NEVER had
-    // stats (a service declared in the compose file but never started) with
-    // no class at all and its GPU cell visible — showing the empty label
-    // this whole feature exists to remove.
-    setClass(row, 'staxx-row--no-gpu', true);
+    // No LIVE figure to show — container stopped, never created, or its whole
+    // stack is down — but what the compose file itself asks for (see
+    // data-gpu-file, written by staxx_render_rows()) is not a live figure, so
+    // it survives here (PLAN_114): a stopped stack with a GPU in its file
+    // still carries the badge, just with nothing beside it.
+    var gpuTd   = cell(row, 'gpu');
+    var vendors = gpuFileVendors(row);
+    setCell(row, 'gpu', gpuBadge(vendors), null);
+    setTitle(gpuTd, vendors.length
+      ? vendors.map(function (v) { return GPU_NAMES[v] || v; }).join(' + ') + ' GPU'
+      : '');
+
+    // Only a row with nothing declared and nothing running drops the cell
+    // entirely — see .staxx-row--no-gpu in staxx.css. One with a badge to
+    // show keeps the cell, badge and all, exactly like a running one does.
+    setClass(row, 'staxx-row--no-gpu', vendors.length === 0);
   }
 
   /* ---- applying a snapshot ---- */
@@ -25665,64 +25677,11 @@
     if (!res || !res.ok) return;
     manageUpdateStats(res);
 
-    // Say how stale the figures are rather than letting an unchanging table
-    // look like a quiet server.
-    if (strip) strip.hidden = false;
-    if (stripAge) {
-      if (res.warming) {
-        stripAge.textContent = 'Collecting first sample…';
-      } else if (res.age === null || res.age > 30) {
-        stripAge.textContent = 'Figures are ' + (res.age || '?') + 's old' +
-                               (res.collector ? '' : ' — collector not running');
-      } else {
-        stripAge.textContent = 'Updated ' + res.age + 's ago';
-      }
-    }
-
-    // The machine's own GPU figures, one card per entry.
-    //
-    // EVERY CARD IS WRITTEN THE SAME WAY: a count of what it is running, then
-    // how busy it is. This used to describe an unused Intel card as "idle" and
-    // an unused AMD card as "0%", which is the same state told two ways and
-    // reads as though the two cards differ. Whatever a card is doing, it is now
-    // described in the same shape as its neighbour.
-    if (stripGpu) {
-      var g = res.gpu || {};
-
-      var card = function (label, c) {
-        if (!c) return null;
-
-        var n = c.clients || 0;
-        var busy = (typeof c.busy === 'number' ? c.busy : 0);
-
-        // Engines only ever appear for a card that has some, and only while
-        // something is on them, so they cannot reintroduce the asymmetry.
-        var engines = Object.keys(c.engines || {})
-          .map(function (k) { return esc(k) + ' ' + c.engines[k] + '%'; });
-
-        return '<b>' + label + '</b> ' +
-               n + ' thread' + (n === 1 ? '' : 's') + ' &middot; ' + busy + '%' +
-               (engines.length ? ' <i>(' + engines.join(', ') + ')</i>' : '');
-      };
-
-      var parts = [card('Intel GPU', g.intel), card('AMD GPU', g.amd)]
-        .filter(function (p) { return p !== null; });
-
-      var strapline = parts.join(' &nbsp;&middot;&nbsp; ');
-      if (stripGpu.staxxTxt !== strapline) {      // see setCell
-        stripGpu.innerHTML = strapline;
-        stripGpu.staxxTxt = strapline;
-      }
-      stripGpu.hidden = parts.length === 0;
-
-      // The AMD figure comes from radeontop, which watches the card as a whole
-      // and has no per-process breakdown; the Intel one can be attributed to a
-      // container. That is a real difference in what the numbers mean, so it is
-      // said here rather than being allowed to distort how they are printed.
-      setTitle(stripGpu, 'Whole-machine GPU figures. '
-                       + 'The thread count is the number of separate pieces of work each card is '
-                       + 'running, counted the same way for every card.');
-    }
+    // A snapshot old enough that the collector has plainly stopped keeping up
+    // (or never started) is worse than no figures at all if left on screen —
+    // it would sit there looking current. Treated exactly like a stopped row:
+    // blanked, with only the GPU badge (never a live figure) surviving.
+    var stale = res.warming || !res.collector || (typeof res.age === 'number' && res.age > 30);
 
     // Only a snapshot the server has actually refreshed advances the graphs.
     var fresh = res.sampledAt && res.sampledAt !== lastAt;
@@ -25735,7 +25694,12 @@
       var s       = stacks[project];
       var kids    = kidRows[row.dataset.stackRow] || [];
 
-      if (!s) {
+      // Declared in the file counts towards showing the column even while
+      // stopped or stale — that is the whole point of PLAN_114's badge.
+      if (gpuFileVendors(row).length) anyGpu = true;
+      kids.forEach(function (kid) { if (gpuFileVendors(kid).length) anyGpu = true; });
+
+      if (!s || stale) {
         blankFigures(row);
         kids.forEach(blankFigures);
         return;
@@ -25763,7 +25727,8 @@
 
     // Nothing on this page has a GPU, so the column is dropped entirely rather
     // than left as a full-height strip of empty cells. It reappears by itself
-    // the moment a stack with a GPU starts.
+    // the moment a stack with a GPU starts, or the moment one is added to a
+    // file — the row does not have to be running for its badge to count.
     var table = document.querySelector('.staxx-stacks');
     if (table) setClass(table, 'staxx-no-gpu', !anyGpu);
 
@@ -25914,10 +25879,9 @@
   var PUSH_FALLBACK = 20000;
   var pushFallbackTimer = null;
 
-  // The one place on the page that already says quietly how stale its own
-  // figures are (see applyStats' stripAge) — a degraded feed is the same
-  // kind of fact, so it is shown the same way rather than in a dialog that
-  // would interrupt whatever the user is doing.
+  // The one quiet status line the page has (see the strip's own comment in
+  // StacksPage.php) — a degraded feed is shown here rather than in a dialog
+  // that would interrupt whatever the user is doing.
   var pushStatusEl = document.createElement('span');
   pushStatusEl.className = 'staxx-strip-item';
   pushStatusEl.hidden = true;
