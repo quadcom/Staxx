@@ -3369,13 +3369,18 @@
       // is attached. Browsing /dev by hand is what never finds what you came
       // for, which is why there was no button here before.
       var hint = kit ? kit.hint : 'path to the device on this server';
-      var head = headHtml(kit ? kit.label : f.title, [roTag, lostTag]);
+      // A direct child of the row, not the `head` slot inside a box, so the
+      // rule that spans a heading across the whole row (see .staxx-fieldrow
+      // > .staxx-fieldhead in the stylesheet) puts it above both boxes
+      // instead of inside whichever one happens to carry it — which is what
+      // let the shorter Notes box centre against the taller path box below.
+      bits.push(headHtml(kit ? kit.label : f.title, [roTag, lostTag]));
 
       if (solo) {
         // Written as one path, so there is no second one to fold away.
-        bits.push(boxHtml(f, index, 'container', hint, 'device', head));
+        bits.push(boxHtml(f, index, 'container', hint, 'device'));
       } else {
-        bits.push(boxHtml(f, index, 'host', hint, 'device', head));
+        bits.push(boxHtml(f, index, 'host', hint, 'device'));
 
         var into = f.parts.container;
         if (into) {

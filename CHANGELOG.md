@@ -64,6 +64,9 @@ before that were dates.
   rewritten, comments travel with the setting they sit above, blank lines are only ever added, and
   containers are never reordered against each other. Where StaXX cannot be sure a move would leave
   the file meaning the same thing, it leaves that part alone and says so.
+- Fixed a device row's Notes box floating above the device's path box, and showing the word "Notes"
+  twice — once as the column heading, once as a repeated hint under the box. Both boxes now line up,
+  and "Notes" appears once.
 
 ---
 

@@ -4432,6 +4432,16 @@
   --sm-fieldcols: minmax(0, 1fr) minmax(0, 1fr) 2.4rem;
 }
 
+/* The path box now carries the friendly-name heading above the two boxes
+   (see the direct-child .staxx-fieldhead rule below) rather than inside
+   itself, but it still has a hint line under its own input that the note box
+   does not. Centring against the row's tallest cell — the row's default —
+   left the shorter note box's input floating above the path input, the same
+   problem volumes solved the same way. */
+.staxx-formgroup--device .staxx-fieldrow > .staxx-box {
+  align-self: start;
+}
+
 .staxx-fieldrow {
   display: grid;
   grid-template-columns: var(--sm-fieldcols, minmax(0, 1fr));
@@ -4650,6 +4660,14 @@
    every mount in the file. */
 .staxx-formgroup--volumes .staxx-box--note .staxx-boxhint {
   display: block;
+}
+
+/* The device group's own hint above turns the note box's hint back on too,
+   but that hint is just the word "Notes" — already said once by the column
+   caption above the row — so it is switched off again here, leaving only
+   the path box's hint (which says something the caption cannot) visible. */
+.staxx-formgroup--device .staxx-box--note .staxx-boxhint {
+  display: none;
 }
 
 /* ---- modal: adding and removing entries ---- */
