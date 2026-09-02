@@ -31,7 +31,7 @@
  *
  *     pscp tests/server/registry_selfhosted.php root@<box>:/tmp/
  *     plink … '
- *       ROOT=$(sed -n "s/^STORE_ROOT=\"\(.*\)\"//p" /boot/config/plugins/staxx/staxx.cfg)
+ *       ROOT=$(sed -n "s/^STORE_ROOT=\"\(.*\)\"/\1/p" /boot/config/plugins/staxx/staxx.cfg)
  *       CFG=$ROOT/config/staxx.cfg
  *       cp $CFG /tmp/staxx-cfg.bak
  *       grep -q "^REGISTRY_TRUST=" $CFG \
