@@ -96,6 +96,10 @@ before that were dates.
   is trimmed with an ellipsis on screen — hover it for the full "from → to" version pair.
 - **Column headings in the stack list are now centred**, so CPU, Memory, Network and GPU still line
   up over their own figures once a narrower window packs those four into a compact block.
+- **The column titles now sit inside each folder, not just once at the top of the list.** A folder's
+  own row has nothing to do with most of those titles, so the single strip above everything read
+  badly. Every expanded folder now shows its own row of titles directly above its stacks, and the
+  loose stacks below the last folder get one of their own too.
 
 ---
 

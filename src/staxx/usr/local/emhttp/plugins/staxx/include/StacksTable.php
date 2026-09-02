@@ -1455,6 +1455,30 @@ function staxx_portmark_html(array $meta, array $macvlanNames): string {
 }
 
 /**
+ * The row of column titles — PLAN_120 moved it off the top of the grid and
+ * into staxx_render_rows(), which now prints one copy inside every folder and
+ * one more above the loose stacks, so it needed a name of its own to call
+ * from more than one place. The cells themselves are unchanged from the
+ * single copy StacksPage.php used to hold: eight columnheader cells, with
+ * data-stat on the four figure columns so the GPU one can still be hidden
+ * page-wide by attribute.
+ */
+function staxx_header_row_html(): string {
+  return '<div class="staxx-row staxx-head-row" role="row">'
+       . '<span class="staxx-cell" role="columnheader">'._('Stack').'</span>'
+       . '<span class="staxx-cell" role="columnheader">'._('Services').'</span>'
+       . '<span class="staxx-cell" role="columnheader">'._('State').'</span>'
+       . '<span class="staxx-cell" role="columnheader">'._('Address').'</span>'
+       . '<span class="staxx-cell staxx-num" role="columnheader" data-stat="cpu">'._('CPU').'</span>'
+       . '<span class="staxx-cell staxx-num" role="columnheader" data-stat="mem">'._('Memory').'</span>'
+       . '<span class="staxx-cell staxx-num" role="columnheader" data-stat="net">'._('Network').'</span>'
+       // data-stat on the heading too, so the whole column can be hidden
+       // with one rule when nothing on the page has a GPU.
+       . '<span class="staxx-cell staxx-num" role="columnheader" data-stat="gpu">'._('GPU').'</span>'
+       . '</div>';
+}
+
+/**
  * Every row of the table body, as HTML.
  *
  * Divs standing in for a table, arranged as CSS grid / subgrid so the columns
@@ -1521,6 +1545,9 @@ function staxx_render_rows(array $rows, bool $canRun): string {
   // since those always come last — so a group only ever needs closing in
   // those two places.
   $inFolderGroup = false;
+  // Whether the loose-stacks header has already been printed — it goes once,
+  // above the first unfiled stack, whether or not any folder preceded it.
+  $looseHeaderShown = false;
 
   foreach ($rows as $row):
 
@@ -1672,6 +1699,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
              data-folder-children="<?= htmlspecialchars($row['id']) ?>"
              <?= $row['collapsed'] ? 'hidden' : '' ?>>
           <div class="staxx-group staxx-folder-inner" role="presentation">
+            <?= staxx_header_row_html() ?>
 <?
     else:
       $s = $row['stack'];
@@ -1812,6 +1840,13 @@ function staxx_render_rows(array $rows, bool $canRun): string {
           </div>
         </div>
       </div>
+<?
+      endif;
+
+      if ($row['folder'] === '' && !$looseHeaderShown):
+        $looseHeaderShown = true;
+?>
+      <?= staxx_header_row_html() ?>
 <?
       endif;
 

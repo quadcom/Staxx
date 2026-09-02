@@ -32,6 +32,10 @@ here too.
 
 ## The columns
 
+The column titles sit directly above each folder's own stacks, not once at the top of the whole
+list — a folder's own row has nothing to do with most of them. The loose stacks below the last
+folder get a row of titles of their own too.
+
 ![The column headings — Stack, Services, State, Address, CPU, Memory and Network — above an opened folder and four of its stacks, two running with live graphs in the CPU, Memory and Network columns and two stopped showing dashes](../images/guide/the-stack-list-columns.png)
 | Column | What it shows |
 |---|---|

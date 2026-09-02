@@ -375,18 +375,11 @@ endif;
        nothing to put the next one into. "No stacks yet" is a row inside it. -->
   <div class="staxx-table-wrap">
     <div class="staxx-stacks" role="treegrid" aria-label="<?= _('Stacks') ?>">
-      <div class="staxx-row staxx-head-row" role="row">
-        <span class="staxx-cell" role="columnheader"><?= _('Stack') ?></span>
-        <span class="staxx-cell" role="columnheader"><?= _('Services') ?></span>
-        <span class="staxx-cell" role="columnheader"><?= _('State') ?></span>
-        <span class="staxx-cell" role="columnheader"><?= _('Address') ?></span>
-        <span class="staxx-cell staxx-num" role="columnheader" data-stat="cpu"><?= _('CPU') ?></span>
-        <span class="staxx-cell staxx-num" role="columnheader" data-stat="mem"><?= _('Memory') ?></span>
-        <span class="staxx-cell staxx-num" role="columnheader" data-stat="net"><?= _('Network') ?></span>
-        <!-- data-stat on the heading too, so the whole column can be hidden
-             with one rule when nothing on the page has a GPU. -->
-        <span class="staxx-cell staxx-num" role="columnheader" data-stat="gpu"><?= _('GPU') ?></span>
-      </div>
+      <!-- No header row here any more (PLAN_120): the single row of column
+           titles sat above the folder rows, which have nothing to do with
+           most of those titles. staxx_render_rows() now prints one copy
+           inside every folder, directly above that folder's own stacks, and
+           one more above the loose stacks below the last folder. -->
 
       <!-- Rendered by the same function the JSON endpoint calls, so a row that
            arrives without a page load is identical to one that arrived with
