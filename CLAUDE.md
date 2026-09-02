@@ -1,5 +1,14 @@
 # CLAUDE.md
 
+Project: **StaXX**  ·  Plan tag: **`STX`**
+
+- publish: README.md CHANGELOG.md docs/README.md docs/guide docs/glossary.md
+- repo: quadcom/Staxx
+
+*Those two lines are read by the `preview-site` skill: what this project publishes to the shared
+preview site, and which repository to render against so a bare issue reference looks right. The tag
+is the folder it publishes into and the prefix its plan files carry.*
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What this is
