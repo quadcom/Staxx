@@ -21,7 +21,9 @@ nothing.
 <!-- SHOT: updates-cadence-settings | full frame | the image updates section of the settings page, showing the check schedule control and the "what to do with what is found" choice -->
 
 A registry only answers so many questions an hour. StaXX spends that allowance where the answer is
-most likely to have changed, and saves it where it almost never has.
+most likely to have changed, and saves it where it almost never has. Checking costs your Docker Hub
+allowance nothing at all — StaXX only asks for the build's headers, and Hub does not count that.
+What spends the allowance is downloading an image, not asking about one.
 
 | Image | Asked about |
 |---|---|
@@ -35,6 +37,9 @@ most likely to have changed, and saves it where it almost never has.
 
 Nothing is ever asked about more than four times a day, or left longer than a fortnight between
 checks.
+
+An image you haven't actually downloaded to this server yet isn't asked about at all — there's
+nothing on your machine to compare a registry's answer against, so StaXX waits until it's here.
 
 Turning the schedule off in [settings](settings.md#image-updates) stops all of this. Left on, these
 rules only decide which images get asked during a pass — not whether a pass happens at all.
@@ -122,9 +127,13 @@ A folder has the same two actions for just what is inside it — see [folders](t
 
 <!-- SHOT: updates-could-not-check | close-up | a stack row with a "could not check" pill, its tooltip open showing the failure reason -->
 
-Docker Hub only answers a small number of these questions an hour from a server that has not signed
-in — about ten. Signed in with an access token, that rises to about a hundred. Add the token under
+Docker Hub only lets one address download so many images an hour — about a hundred from a server
+that has not signed in, and about two hundred signed in with an access token. Add the token under
 [settings](settings.md#docker-hub-sign-in).
+
+A check spends none of that. StaXX only asks Docker Hub for a build's headers — never the build
+itself — and Hub does not count that against you. The allowance is spent by actually downloading an
+image: installing an update, or anything else on your network that pulls through the same address.
 
 When a registry refuses to answer, the pill says `could not check`. Hovering it says why: too many
 questions asked recently, the repository no longer at that address, an unreachable registry, or

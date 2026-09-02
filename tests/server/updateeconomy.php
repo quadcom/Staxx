@@ -1,5 +1,6 @@
 <?php
-/* PLAN_90 Stages 1, 2, 3 and 3b — spending registry questions like money.
+/* PLAN_90 Stages 1, 2, 3 and 3b, and PLAN_112 Phase A0 — spending registry
+ * questions like money, and the pure seam behind asking for headers only.
  * Checked against the real installed Defines.php and Updates.php.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. Almost every
@@ -41,10 +42,14 @@
  * instead by tests/server/registry_live.php, the opt-in companion to this
  * file. What that leaves untested here, and why:
  *
- *   - staxx_registry_token()'s challenge parsing and staxx_registry_digest()'s
- *     header parsing are exercised only against real registries, in the live
- *     suite. There is no seam in Defines.php that lets a server-side test
- *     hand either function a canned HTTP reply.
+ *   - staxx_registry_token()'s challenge parsing is exercised only against
+ *     real registries, in the live suite. There is no seam in Defines.php
+ *     that lets a server-side test hand it a canned HTTP reply.
+ *     staxx_registry_digest() itself is the same, but the header-dump
+ *     parsing it relies on (staxx_registry_parse_head()) and the rule for
+ *     when the header-only form is abandoned (staxx_registry_free_form_
+ *     refused()) were pulled out as pure functions for PLAN_112 Phase A0
+ *     precisely so that seam could exist — see section E below.
  *   - Whether a stored entity tag is actually sent as If-None-Match only
  *     when the stored Accept fingerprint matches, and what state changes
  *     when a 304 comes back, both live inside staxx_image_remote() and
@@ -424,6 +429,68 @@ mkdir($stackScratchRoot, 0755, true);
 
   @exec('rm -rf '.escapeshellarg($stackScratchRoot));
 }
+
+/* ======================================================================= *
+ * E — PLAN_112 A0, the free form. Pure functions only — no network, no
+ * state. Canned header dumps stand in for what curl would actually print;
+ * proving those dumps match a real registry's own reply is the live suite's
+ * job, not this one's.
+ * ======================================================================= */
+
+$singleBlock = "HTTP/2 200\r\n"
+  . "docker-content-digest: sha256:".str_repeat('a', 64)."\r\n"
+  . "ETag: \"abc123\"\r\n";
+$parsedSingle = staxx_registry_parse_head($singleBlock);
+ok('a single-block header dump reads its status',
+   $parsedSingle['status'] === 200, json_encode($parsedSingle));
+ok('...and lower-cases its header names',
+   isset($parsedSingle['head']['docker-content-digest']) && isset($parsedSingle['head']['etag']),
+   json_encode($parsedSingle));
+
+/* A redirect followed by the real answer — -L means the dump can hold more
+ * than one response, and this must NOT be mistaken for a refusal of the
+ * header-only form; only the final block counts. */
+$twoBlock = "HTTP/1.1 307 Temporary Redirect\r\n"
+  . "location: https://elsewhere.example/v2/x/manifests/y\r\n"
+  . "\r\n"
+  . "HTTP/2 200\r\n"
+  . "docker-content-digest: sha256:".str_repeat('b', 64)."\r\n";
+$parsedTwo = staxx_registry_parse_head($twoBlock);
+ok('a redirect-then-200 dump reads the FINAL block\'s status, not the redirect\'s',
+   $parsedTwo['status'] === 200, json_encode($parsedTwo));
+ok('...and the final block\'s digest header, not the redirect\'s location',
+   isset($parsedTwo['head']['docker-content-digest']) && !isset($parsedTwo['head']['location']),
+   json_encode($parsedTwo));
+
+$block401 = "HTTP/1.1 401 Unauthorized\r\n"
+  . "www-authenticate: Bearer realm=\"https://auth.example/token\"\r\n";
+ok('a 401 block reads as status 401',
+   staxx_registry_parse_head($block401)['status'] === 401);
+
+/* The refusal rule is narrow on purpose: only 405 means the host itself
+ * rejects the header-only form. Every other status this section checks is
+ * answered by the routes already in staxx_registry_digest() and must never
+ * trip the same memoisation, or a host that merely omits a digest header
+ * would wrongly be downgraded to paying for a full GET on every future
+ * check. */
+foreach ([401, 307, 200, 404, 429] as $notRefusal) {
+  ok("free_form_refused($notRefusal) is false — that status has its own route, not a refusal of the short form",
+     staxx_registry_free_form_refused($notRefusal) === false);
+}
+ok('free_form_refused(405) is true — a plain Method Not Allowed IS a refusal',
+   staxx_registry_free_form_refused(405) === true);
+
+/* staxx_registry_headfree() — per-host memo, defaults true, one host's
+ * write does not touch another's. */
+$hostA = 'example.invalid';
+$hostB = 'other.invalid';
+ok('an unasked host defaults to "header-only works"',
+   staxx_registry_headfree($hostA) === true);
+staxx_registry_headfree($hostA, false);
+ok('...and setting it false is read back false',
+   staxx_registry_headfree($hostA) === false);
+ok('a different host is unaffected by the first host\'s memo',
+   staxx_registry_headfree($hostB) === true);
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

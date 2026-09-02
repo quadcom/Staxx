@@ -958,6 +958,57 @@ function staxx_registry_curl_opts(string $host): string {
 }
 
 /**
+ * Per-host memo of whether the header-only manifest request (HEAD, or a
+ * response to one) actually works against this host — every registry
+ * measured 2026-09-02 does answer it, so the default is "assume yes" and the
+ * memo exists only to remember the rare host that says otherwise. Same
+ * record-and-return shape as staxx_registry_scheme() above: read with no
+ * $set, write by passing one.
+ */
+function staxx_registry_headfree(string $host, ?bool $set = null): bool {
+  static $free = [];
+  if ($set !== null) { $free[$host] = $set; return $set; }
+  return $free[$host] ?? true;
+}
+
+/**
+ * Whether a status is the one answer that means "this host refuses the
+ * header-only form" — a plain 405 Method Not Allowed. Everything else (a
+ * challenge, a redirect, a real 200 with no digest header) is answered by
+ * the existing routes and must never be read as a refusal of the free form
+ * itself, so this is its own small, testable rule.
+ */
+function staxx_registry_free_form_refused(int $status): bool {
+  return $status === 405;
+}
+
+/**
+ * Split a curl header dump into the final response block and read its
+ * status and lower-cased headers. -L follows redirects, so the dump can
+ * hold more than one response; only the last block describes what the
+ * request actually answered.
+ *
+ * @return array{status:int, head:array<string,string>}
+ */
+function staxx_registry_parse_head(string $out): array {
+  $blocks = preg_split("/\r?\n\r?\n/", trim($out));
+  $last   = $blocks ? (string)end($blocks) : '';
+
+  $status = 0;
+  $head   = [];
+  foreach (explode("\n", $last) as $line) {
+    $line = trim($line, "\r\n ");
+    if ($line === '') continue;
+    if (preg_match('#^HTTP/\S+\s+(\d{3})#i', $line, $sm)) { $status = (int)$sm[1]; continue; }
+    $p = strpos($line, ':');
+    if ($p === false) continue;
+    $head[strtolower(trim(substr($line, 0, $p)))] = trim(substr($line, $p + 1));
+  }
+
+  return ['status' => $status, 'head' => $head];
+}
+
+/**
  * The authentication challenge one registry host answers with, parsed —
  * realm, service, and whether it wants no authentication at all.
  *
@@ -1141,8 +1192,15 @@ function staxx_registry_token(string $host, string $repo, string &$why = null): 
 }
 
 /**
- * One header-only manifest request — the "has it changed?" question
- * PLAN_90 Stage 2 spends instead of a full digest fetch every pass.
+ * One header-only manifest request — the "has it changed?" question. Since
+ * PLAN_112 Phase A0 this genuinely sends no body-fetching request at all: it
+ * measured on 2026-09-02 that Docker Hub charges the asking address's pull
+ * allowance per manifest GET — a 304 answering a conditional GET is charged
+ * too — but never for a header-only request (HEAD, curl's -I), which still
+ * returns the digest and entity-tag headers. All nine public registries
+ * checked answer the header-only form with a usable digest. So this asks
+ * for headers only, and falls back to a full GET only on a host that
+ * refuses the shorter form outright with a 405.
  *
  * @param string $etag sent back verbatim as If-None-Match, quotes and all.
  *        Never synthesise this from a digest and never add or strip quotes
@@ -1152,11 +1210,14 @@ function staxx_registry_token(string $host, string $repo, string &$why = null): 
  * @param string &$why '' on success, else 'limited', 'notfound', 'auth' or
  *        'failed' — never a digest and never a guess.
  * @return array{status:int, digest:string, etag:string, labels:array,
- *               limit?:array{remaining?:int, limit?:int}}
+ *               limit?:array{remaining?:int, limit?:int}, charged?:bool}
  *         status is the HTTP status (200, 304) or 0 when the request itself
  *         never got an answer. A 304 carries no body and therefore no
  *         labels — that is correct, not a gap, and callers must not read
- *         the empty labels array as "the publisher removed them".
+ *         the empty labels array as "the publisher removed them". 'charged'
+ *         is present on a 200 only: false when the header-only form
+ *         answered it, true when a full GET had to be sent instead (the
+ *         one-off 405 fallback, or the computed-digest path below).
  */
 function staxx_registry_digest(string $host, string $repo, string $tag, string $etag = '',
                                string &$why = null): array {
@@ -1177,29 +1238,45 @@ function staxx_registry_digest(string $host, string $repo, string $tag, string $
   $url = staxx_registry_scheme($host).'://'.$apiHost.'/v2/'.$repo.'/manifests/'.rawurlencode($tag);
   $curlOpts = staxx_registry_curl_opts($host);
 
-  $cmd = 'curl -sS -L --proto '.escapeshellarg('=https,http').' --max-time 8'.$curlOpts.' -D /dev/stdout -o /dev/null -X GET';
-  foreach ($headers as $h) $cmd .= ' -H '.escapeshellarg($h);
-  $cmd .= ' '.escapeshellarg($url);
+  $proto = '--proto '.escapeshellarg('=https,http').' --max-time 8'.$curlOpts;
+  $hdrArgs = '';
+  foreach ($headers as $h) $hdrArgs .= ' -H '.escapeshellarg($h);
 
-  $out = staxx_sh($cmd, 12);
-  if ($out === '') { $why = 'failed'; return $refuse; }
+  // -I sends HEAD and dumps the response headers to stdout — no -D/-o
+  // needed, since a HEAD request has no body to discard in the first place.
+  $freeCmd = 'curl -sS -L '.$proto.' -I'.$hdrArgs.' '.escapeshellarg($url);
+  // Kept as the original GET-with-header-dump form: the fallback for the
+  // rare host that refuses HEAD outright, so it must behave exactly as
+  // every host was answered before this change.
+  $getCmd  = 'curl -sS -L '.$proto.' -D /dev/stdout -o /dev/null -X GET'.$hdrArgs.' '.escapeshellarg($url);
 
-  // -L follows redirects, so the header dump can hold more than one
-  // response; only the final block's status and headers describe what the
-  // manifest request actually answered.
-  $blocks = preg_split("/\r?\n\r?\n/", trim($out));
-  $last   = $blocks ? (string)end($blocks) : '';
-
-  $status = 0;
-  $head   = [];
-  foreach (explode("\n", $last) as $line) {
-    $line = trim($line, "\r\n ");
-    if ($line === '') continue;
-    if (preg_match('#^HTTP/\S+\s+(\d{3})#i', $line, $sm)) { $status = (int)$sm[1]; continue; }
-    $p = strpos($line, ':');
-    if ($p === false) continue;
-    $head[strtolower(trim(substr($line, 0, $p)))] = trim(substr($line, $p + 1));
+  $charged = false;
+  if (staxx_registry_headfree($host)) {
+    $out = staxx_sh($freeCmd, 12);
+    if ($out === '') { $why = 'failed'; return $refuse; }
+    $parsed = staxx_registry_parse_head($out);
+    if (staxx_registry_free_form_refused($parsed['status'])) {
+      // Only an explicit 405 means the header-only form itself does not
+      // work here — a challenge, a redirect or a bare 200 with no digest
+      // are all answered by the routes below and must never be read as a
+      // refusal of the short form, or a host that merely omits the digest
+      // header (public.ecr.aws on a full GET) would wrongly be memoised as
+      // GET-only and pay for every future check for nothing.
+      staxx_registry_headfree($host, false);
+      $out = staxx_sh($getCmd, 12);
+      if ($out === '') { $why = 'failed'; return $refuse; }
+      $parsed  = staxx_registry_parse_head($out);
+      $charged = true;
+    }
+  } else {
+    $out = staxx_sh($getCmd, 12);
+    if ($out === '') { $why = 'failed'; return $refuse; }
+    $parsed  = staxx_registry_parse_head($out);
+    $charged = true;
   }
+
+  $status = $parsed['status'];
+  $head   = $parsed['head'];
 
   if ($status === 304) return ['status' => 304, 'digest' => '', 'etag' => '', 'labels' => []];
 
@@ -1214,10 +1291,13 @@ function staxx_registry_digest(string $host, string $repo, string $tag, string $
 
   $digest = strtolower((string)($head['docker-content-digest'] ?? ''));
   if (!preg_match('/^sha256:[0-9a-f]{64}$/', $digest)) {
-    // public.ecr.aws (Amazon's public gallery) answers 200 with neither a
-    // docker-content-digest nor an ETag -- confirmed on the box 2026-08-27.
-    // A manifest's digest is by definition the sha256 of its exact served
-    // bytes, so re-asking with the same Accept/bearer and piping the body
+    // public.ecr.aws (Amazon's public gallery) sends docker-content-digest
+    // on a header-only request but not on a full GET -- measured 2026-09-02.
+    // After PLAN_112 A0 the header-only form is what staxx_registry_digest()
+    // asks first, so this fallback is expected to be rare from here on; it
+    // stays in place for any host that answers neither request with the
+    // header. A manifest's digest is by definition the sha256 of its exact
+    // served bytes, so re-asking with the same Accept/bearer and piping the body
     // straight into sha256sum reproduces it without the body ever becoming
     // a PHP string (which could trim or re-encode it and change the hash).
     // Measured against this same reference, the result matched
@@ -1251,17 +1331,19 @@ function staxx_registry_digest(string $host, string $repo, string $tag, string $
       // merged rather than read key by key, 'computed' would be shown to a
       // user as a project link.
       'digestFrom' => 'computed',
+      'charged'    => true, // a full GET was sent to get a body to hash
     ];
   }
 
   $result = [
-    'status' => 200,
-    'digest' => $digest,
-    'etag'   => (string)($head['etag'] ?? ''),
-    'labels' => [],
+    'status'  => 200,
+    'digest'  => $digest,
+    'etag'    => (string)($head['etag'] ?? ''),
+    'labels'  => [],
+    'charged' => $charged,
   ];
 
-  // Spent nowhere yet — PLAN_90 Stage 5 is what reads this. Kept to a
+  // Spent nowhere yet — PLAN_112 Phase B is what reads this. Kept to a
   // couple of lines because nothing else touches it.
   $limit = [];
   if (isset($head['ratelimit-remaining'])) $limit['remaining'] = (int)explode(';', $head['ratelimit-remaining'])[0];

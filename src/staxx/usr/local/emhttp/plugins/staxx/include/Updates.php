@@ -1045,6 +1045,22 @@ function staxx_array_is_list(array $arr): bool {
 }
 
 /**
+ * Sorts `docker image inspect`'s raw output into what it actually said,
+ * pulled out as its own pure function so the two very different reasons for
+ * an empty answer can be told apart without a live docker call: a decoded
+ * JSON object means the image is on disk; "No such image" (the daemon's own
+ * wording, case-insensitive) means it genuinely is not; anything else —
+ * empty output, a socket error, a timeout — means the question itself
+ * failed and nothing has been learned either way.
+ */
+function staxx_image_local_verdict(string $out): array {
+  $data = json_decode($out, true);
+  if (is_array($data)) return $data;
+  if (stripos($out, 'No such image') !== false) return [];
+  return ['unknown' => true];
+}
+
+/**
  * What is actually sitting on disk for one image reference — the digest
  * Docker recorded when it pulled it, comparable to staxx_image_remote()'s
  * digest with no conversion either side.
@@ -1052,6 +1068,10 @@ function staxx_array_is_list(array $arr): bool {
  * Not present locally → []. Present but with no RepoDigests (built here or
  * side-loaded, never pulled) → ['built' => true] with no digest, so the
  * caller does not mistake a locally-built image for one that is up to date.
+ * The inspect call itself failed — socket down, timeout, garbage back —
+ * → ['unknown' => true]: unlike [], this is not an answer, and callers that
+ * treat an absent digest as "nothing to compare" already handle it the same
+ * as [] without any change, but staxx_update_check() treats the two apart.
  */
 function staxx_image_local(string $image): array {
   // 2>&1 here for the same reason as the imagetools route above.
@@ -1059,8 +1079,8 @@ function staxx_image_local(string $image): array {
     staxx_docker_bin().' image inspect '.escapeshellarg($image).' --format '.escapeshellarg('{{json .}}').' 2>&1',
     15
   );
-  $data = json_decode($out, true);
-  if (!is_array($data)) return [];
+  $data = staxx_image_local_verdict($out);
+  if ($data === [] || !empty($data['unknown'])) return $data;
 
   $repo = staxx_hub_repo_path($image);
   // The reference's own repository half, used to pick the matching
@@ -1231,7 +1251,17 @@ function staxx_update_refresh_after_run(string $stack, string $service = ''): bo
     // disk has just been re-measured — an image that was absent or built
     // here has plainly been pulled since. Every other remembered error is a
     // statement about the registry and is none of this function's business.
-    if (($entry['error'] ?? '') === 'not installed') unset($entry['error']);
+    if (($entry['error'] ?? '') === 'not installed') {
+      unset($entry['error']);
+      // The 'not installed' short-circuit stamps 'asked'/'nextDue' so the
+      // ask itself is skipped while the image stays absent — but the image
+      // has plainly just appeared, so that cadence is stale the moment it
+      // is cleared. Left in place, the next check pass would wait out
+      // whatever interval was stamped while there was nothing to ask about,
+      // instead of asking the registry promptly now there is something to
+      // compare against.
+      unset($entry['asked'], $entry['nextDue']);
+    }
     if (!empty($entry['built'])) unset($entry['built'], $entry['error']);
     // Up to date now, so the countdown running against that version has
     // nothing left to fire on — cleared by the same four keys
@@ -1542,6 +1572,26 @@ function staxx_update_check(string $scope, bool $force): array {
     $tags   = null;
     $local  = staxx_image_local($image);
 
+    // Genuinely absent — never the 'unknown' shape, which means the
+    // question itself failed rather than answering "no". With no local
+    // digest, no answer from the registry could change anything, so the
+    // ask is skipped and
+    // that skip is stamped like any other, the same shape as the
+    // digest-pinned short-circuit just below. Without this every image
+    // nobody has installed was asked about on every single pass, for an
+    // answer thrown away a few lines down, and never earned a cadence of
+    // its own.
+    if ($local === []) {
+      $existing['error'] = 'not installed';
+      unset($existing['local']);
+      $existing['asked'] = $now;
+      $existing['nextDue'] = $now + staxx_update_cadence($image, $existing);
+      $images[$image] = $existing;
+      $result['missing']++;
+      echo $image." — not installed here, not asked\n";
+      continue;
+    }
+
     // repo:tag@sha256:<digest> names one exact build — the registry can only
     // ever answer with the digest already written in the reference, so
     // asking is guaranteed waste, and on a limited allowance that waste is
@@ -1677,6 +1727,23 @@ function staxx_update_check(string $scope, bool $force): array {
       continue;
     }
 
+    // The registry answered fine but reading what is actually on disk
+    // failed — a broken docker socket, a timeout, garbage back. Recording
+    // this as "not installed" would be a lie the moment the image turns out
+    // to be sitting right there; the previously recorded local digest (if
+    // any) is left alone rather than overwritten with nothing learned.
+    // Stamped and cadenced the same as any other completed ask, since the
+    // registry question itself did succeed — only the local half is unknown.
+    if (!empty($local['unknown'])) {
+      $existing['error'] = 'local image could not be read';
+      $existing['asked'] = $now;
+      $existing['nextDue'] = $now + staxx_update_cadence($image, $existing);
+      $images[$image] = $existing;
+      $result['failed']++;
+      echo $image." — local image could not be read\n";
+      continue;
+    }
+
     // A locally-built or side-loaded image has no pulled digest to compare —
     // saying "up to date" would be a lie. Phase 7 of PLAN_45 will read the
     // build recipe's base image properly; for now just say so, honestly.
@@ -1708,9 +1775,11 @@ function staxx_update_check(string $scope, bool $force): array {
       continue;
     }
 
-    // Not on this box at all — a service that has never been started. Leave
-    // any previously-remembered seen/was/seenDigest alone; there is simply
-    // nothing new to say this pass.
+    // Unreachable in practice: the early exit above already sends a
+    // genuinely absent image straight to `continue` before the registry is
+    // ever asked, and nothing between there and here reassigns $local. Kept
+    // as a guard rather than deleted, since a future reordering of the loop
+    // could put an ask ahead of that exit again without anyone noticing.
     if ($local === []) {
       $existing['error'] = 'not installed';
       unset($existing['local']);

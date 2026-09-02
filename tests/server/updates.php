@@ -121,6 +121,20 @@ ok('remote: a failed lookup returns [], never a fabricated "up to date"', $remot
 $local = staxx_image_local($noSuchImage);
 ok('local: an image nobody has returns []', $local === []);
 
+/* staxx_image_local_verdict() is pure — no docker call — so the two very
+ * different reasons for an empty inspect answer can be checked directly
+ * against the daemon's own wording, rather than only by shape. */
+ok('verdict: "No such image" reads as genuinely absent',
+   staxx_image_local_verdict('Error: No such image: foo:latest') === []);
+ok('verdict: a broken socket reads as unknown, not absent',
+   staxx_image_local_verdict('Cannot connect to the Docker daemon at unix:///var/run/docker.sock')
+     === ['unknown' => true]);
+ok('verdict: empty output reads as unknown, not absent',
+   staxx_image_local_verdict('') === ['unknown' => true]);
+$verdictOk = staxx_image_local_verdict('{"Id":"sha256:abc","RepoDigests":[]}');
+ok('verdict: a real inspect answer decodes through, Id intact',
+   is_array($verdictOk) && ($verdictOk['Id'] ?? '') === 'sha256:abc');
+
 /* ------------------------------------------------- 7. scope-to-image collection */
 
 $all = staxx_update_images('all');

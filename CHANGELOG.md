@@ -18,6 +18,12 @@ before that were dates.
 
 ## Unreleased
 
+- **An image you haven't downloaded yet is no longer asked about at update checks.** There was
+  nothing on your server to compare a registry's answer against, so the question was always wasted —
+  it is now skipped, and asked promptly as soon as the image is actually here.
+- **Checking for updates no longer spends any of your Docker Hub allowance.** It asks for a build's
+  headers only, which Hub does not count — the allowance is only spent when you actually install an
+  update.
 - **The user guide is now a manual rather than a description.** It opens with a walk round the
   screen you land on — every button, column, mark and menu item named, with a close-up picture of
   each — and a matching walk round the editor and the settings panel. The rest of the pages are

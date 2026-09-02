@@ -94,6 +94,7 @@ function check_registry(string $label, string $host, string $image): array {
   $row = [
     'registry' => $label, 'challenge' => '?', 'token' => '?',
     '304' => '?', 'ratelimit' => '?', 'digest_match' => '?', 'digest_from' => '?',
+    'head_charged' => '?', 'charged_path' => '?',
   ];
 
   // --- 1. reference splits to the right host, never rewritten to Hub ---
@@ -222,8 +223,14 @@ function check_registry(string $label, string $host, string $image): array {
   }
   // staxx_registry_digest() marks a digest 'computed' only when it had to
   // fall back to hashing the manifest body itself — public.ecr.aws sends
-  // no docker-content-digest header at all, unlike the other eight.
+  // docker-content-digest on a header-only request but not on a full GET
+  // (measured 2026-09-02), so since PLAN_112 A0 made the header-only form
+  // the default ask, this path should be rare here rather than routine.
   $row['digest_from'] = (($first['digestFrom'] ?? '') === 'computed') ? 'computed (no header)' : 'header';
+  // 'header' means the header-only request answered outright; 'fallback'
+  // means a full GET had to be sent either as the 405 retry or to hash the
+  // body — see staxx_registry_digest()'s 'charged' key.
+  $row['charged_path'] = !empty($first['charged']) ? 'fallback' : 'header';
 
   // --- 5. that digest matches docker buildx imagetools inspect, or skip ---
   $code = 1;
@@ -282,6 +289,32 @@ function check_registry(string $label, string $host, string $image): array {
   } else {
     note("$label: no rate-limit headers were sent (not every registry sends them)");
     $row['ratelimit'] = 'not sent';
+  }
+
+  // --- 8. PLAN_112 A0: the header-only form costs nothing where a
+  // ratelimit-remaining figure is actually reported. Ask once more and
+  // compare the figure before and after — the header lags slightly on some
+  // hosts, so only a drop of exactly one after exactly one request counts
+  // as 'yes'; equal, or a HIGHER remaining figure (the window rolling over
+  // between the two asks), both mean the header-only form was not charged. ---
+  if (isset($first['limit']['remaining'])) {
+    $before = (int)$first['limit']['remaining'];
+    $thirdWhy = '';
+    spend(1);
+    $third = staxx_registry_digest($host, $repo, $tag, '', $thirdWhy);
+    $after = $third['limit']['remaining'] ?? null;
+    if (!is_int($after)) {
+      $row['head_charged'] = 'not sent';
+    } elseif ($after === $before - 1) {
+      $row['head_charged'] = 'yes';
+    } else {
+      $row['head_charged'] = 'no';
+    }
+    ok("$label: the header-only form is not charged against the reported allowance",
+       $row['head_charged'] !== 'yes', "remaining before $before, after ".var_export($after, true));
+  } else {
+    note("$label: no ratelimit-remaining figure to compare — head_charged left unmeasured");
+    $row['head_charged'] = 'not sent';
   }
 
   return $row;
