@@ -94,6 +94,8 @@ before that were dates.
   to fit the widest version pair on the page, which could crush the name and services next to it and
   add a sideways scrollbar. It now stops growing past a sensible width, and a badge too long for it
   is trimmed with an ellipsis on screen — hover it for the full "from → to" version pair.
+- **Column headings in the stack list are now centred**, so CPU, Memory, Network and GPU still line
+  up over their own figures once a narrower window packs those four into a compact block.
 
 ---
 
