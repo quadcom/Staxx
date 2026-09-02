@@ -21,6 +21,7 @@ The first pill on a row.
 | Amber, "Restarting" or "paused" | Mid-way through something. | Usually settles on its own. |
 | Red, "Dead" | Docker itself calls this broken. | Worth a look. Try restarting it. |
 | "unknown", plain grey text | StaXX cannot ask the container service right now. | Clears up once that service answers again. |
+| Dashed, "Starting…" or "Downloading image…" | A command you asked for is still running. On a first start, the image is being downloaded. | Wait. Click the pill to watch the log as it happens. |
 
 Hover any pill to see whether it means "the container is going" or "the app inside says it is
 working" — most images can only say the first. See [health checks](editing-a-stack.md) for how to

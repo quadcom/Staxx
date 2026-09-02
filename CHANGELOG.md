@@ -74,6 +74,11 @@ before that were dates.
 - **The settings panel is now the size of the stack editor, with its controls split across five
   tabs** — General, Storage, Icons and images, Updates, and Registries and security — instead of one
   long scrolling list of twenty-five controls.
+- **Starting a stack for the first time now shows the image downloading**, instead of a "Starting…"
+  pill that never changed. While the image comes down the pill reads "Downloading image…" (with a
+  rough count of how much has arrived, when compose reports it), and clicking it opens the same
+  running log a failed start already offers. A brand-new stack started from the editor's "Save and
+  start" now shows this from the moment its row appears, and it survives refreshing the page mid-download.
 
 ---
 

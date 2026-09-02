@@ -2299,15 +2299,15 @@
    styled span — the whole point of this pill is that clicking it does
    something, so it has to be reachable and operable like any other control. */
 /* Prefixed with .staxx-scaffold purely for specificity, and — as with the
-   Logs button above — that is not belt-and-braces. This is the only pill that
-   is a <button>, and Unraid's own sheet carries
-   `.unapi button { background-color: transparent; border-radius: 0 }`. One
-   class plus an element type outranks a single class, so an unprefixed rule
-   here loses both the fill and the rounded ends and the marker renders as bare
-   text in the state column. border-radius is restated rather than inherited
-   from .staxx-pill for exactly the same reason: that rule is a single class
-   too, so it loses the same fight. background-color, not the background
-   shorthand, so it is plain which declaration is being contested. */
+   Logs button above — that is not belt-and-braces. Unraid's own sheet
+   carries `.unapi button { background-color: transparent; border-radius: 0 }`.
+   One class plus an element type outranks a single class, so an unprefixed
+   rule here loses both the fill and the rounded ends and the marker renders
+   as bare text in the state column. border-radius is restated rather than
+   inherited from .staxx-pill for exactly the same reason: that rule is a
+   single class too, so it loses the same fight. background-color, not the
+   background shorthand, so it is plain which declaration is being
+   contested. */
 .staxx-scaffold .staxx-pill--fail {
   cursor: pointer;
   border: none;
@@ -2340,6 +2340,27 @@
 
 .staxx-scaffold .staxx-pill--offer:hover,
 .staxx-scaffold .staxx-pill--offer:focus-visible {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.1rem;
+}
+
+/* The busy pill (PLAN_115): a live job's own marker, and clicking it opens
+   the streaming log the way the failure pill opens a finished one's — so it
+   is a <button> for the same reasons, and needs the same .staxx-scaffold
+   specificity fight against Unraid's `.unapi button` reset. border stays the
+   dashed accent .staxx-pill--busy already sets above (background-color, not
+   the background shorthand, is the only thing restated here, again so it is
+   plain which declaration is being contested). */
+.staxx-scaffold .staxx-pill--busy {
+  cursor: pointer;
+  border-radius: 1rem;
+  font: inherit;
+  background-color: transparent;
+  color: var(--sm-accent);
+}
+
+.staxx-scaffold .staxx-pill--busy:hover,
+.staxx-scaffold .staxx-pill--busy:focus-visible {
   outline: 0.15rem solid var(--sm-accent);
   outline-offset: 0.1rem;
 }

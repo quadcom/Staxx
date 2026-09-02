@@ -16049,6 +16049,24 @@
   // anything that has to survive it cannot live only on the DOM node.
   var rowFailures = {};
 
+  // Turns a rowKey() back into the live row(s) it names — used both by a
+  // sticky failure marker and by a job still in flight (restoreBusy() below)
+  // to find whatever fresh rows now match, once refreshRows() has thrown the
+  // old ones away.
+  function rowsForKey(key) {
+    var sep = key.indexOf('\u0000');
+    if (sep === -1) return stackRows(key);
+    var stack = key.slice(0, sep), service = key.slice(sep + 1);
+    var rows = [];
+    Array.prototype.forEach.call(
+      document.querySelectorAll(
+        '.staxx-container-row[data-in-stack="' + stack + '"][data-service="' + service + '"]'
+      ),
+      function (r) { rows.push(r); }
+    );
+    return rows;
+  }
+
   function paintFailure(rows, verb) {
     var label = FAIL_LABEL[verb] || 'Failed';
     rows.forEach(function (row) {
@@ -16090,22 +16108,55 @@
   // the same reason.
   function restoreFailures() {
     Object.keys(rowFailures).forEach(function (key) {
-      var sep = key.indexOf('\u0000');
-      var rows;
-      if (sep === -1) {
-        rows = stackRows(key);
-      } else {
-        var stack = key.slice(0, sep), service = key.slice(sep + 1);
-        rows = [];
-        Array.prototype.forEach.call(
-          document.querySelectorAll(
-            '.staxx-container-row[data-in-stack="' + stack + '"][data-service="' + service + '"]'
-          ),
-          function (r) { rows.push(r); }
-        );
-      }
+      var rows = rowsForKey(key);
       if (rows.length) paintFailure(rows, rowFailures[key].verb);
     });
+  }
+
+  // Same problem, same fix, for a job still running: refreshRows() throws
+  // every row away, so a stack started from "Save and start" — whose row did
+  // not exist when the job began — and any other row mid-command would
+  // otherwise come back reading "stopped" until the job finishes. One job
+  // can own several keys (a whole-stack job also spins its container rows),
+  // so rows are gathered per job before repainting rather than repainted key
+  // by key, or only the last key's rows would end up remembered.
+  function restoreBusy() {
+    var rowsByJob = {};
+    Object.keys(rowJobs).forEach(function (key) {
+      var job = rowJobs[key];
+      if (!jobs[job]) { delete rowJobs[key]; return; }
+      var rows = rowsForKey(key);
+      if (rows.length) (rowsByJob[job] || (rowsByJob[job] = [])).push.apply(rowsByJob[job], rows);
+    });
+    Object.keys(rowsByJob).forEach(function (job) {
+      var entry = jobs[job];
+      entry.rows = rowsByJob[job];
+      setBusy(entry.rows, entry.pillLabel);
+    });
+  }
+
+  // A real <button>, not a styled span — like the fail pill below, so that
+  // a job still running can be opened and streamed rather than only a
+  // finished one. See paintBusyLabel() for the one place that writes it, and
+  // .staxx-scaffold .staxx-pill--busy in staxx.css for why it needs the same
+  // specificity trick the fail pill already carries.
+  function busyPillHtml(label) {
+    return '<button type="button" class="staxx-pill staxx-pill--busy">' + label + '</button>';
+  }
+
+  function paintBusyLabel(row, label) {
+    var td = row.querySelector('[data-cell="state"]');
+    if (td) {
+      td.innerHTML = busyPillHtml(label);
+
+      // paintState skips a cell whose HTML has not changed since it last
+      // wrote one. "Starting…" was put here by this function instead, so
+      // that record has to go: without it a stack that ends up back in the
+      // state it started in — a restart, or a start that failed — keeps the
+      // busy pill for ever, because the state arriving afterwards matches
+      // what paintState last wrote and gets skipped.
+      td.staxxTxt = '';
+    }
   }
 
   function setBusy(rows, label) {
@@ -16117,18 +16168,7 @@
       // paint the old state over the top of "Starting…".
       row.dataset.busy = '1';
       spin(row, true);
-      var td = row.querySelector('[data-cell="state"]');
-      if (td) {
-        td.innerHTML = '<span class="staxx-pill staxx-pill--busy">' + label + '</span>';
-
-        // paintState skips a cell whose HTML has not changed since it last
-        // wrote one. "Starting…" was put here by this function instead, so
-        // that record has to go: without it a stack that ends up back in the
-        // state it started in — a restart, or a start that failed — keeps the
-        // busy pill for ever, because the state arriving afterwards matches
-        // what paintState last wrote and gets skipped.
-        td.staxxTxt = '';
-      }
+      paintBusyLabel(row, label);
     });
   }
 
@@ -16154,6 +16194,57 @@
 
   var jobs      = {};    // job id -> { rows, verb, show, atBottom, offset, text, done }
   var jobTicker = null;
+
+  // rowKey() -> job id, for every row a job in `jobs` is currently spinning.
+  // Kept separate from `jobs` itself because a whole-stack job spins several
+  // rows under several different keys (the stack row, plus one per container
+  // row) that all have to lead back to the one entry — see track() below,
+  // where this is filled in, and restoreBusy() where it survives a
+  // refreshRows() table-body swap the way rowFailures already does.
+  var rowJobs = {};
+
+  // Reads compose's own plain-text progress lines (forced by --progress
+  // plain — see STAXX_COMPOSE_PROGRESS_PLAIN in Stacks.php, where the
+  // command is built) to say whether an image is downloading right now, and
+  // roughly how much of it is done. Returns null when there is nothing to
+  // say yet — the base BUSY_LABEL stands in that case — because a `restart`
+  // or a plain `up` on images already on disk should never claim to be
+  // downloading anything.
+  //
+  // The state machine reads every line rather than just the newest one,
+  // because compose interleaves several services' lines together and a
+  // trailing blank line from the last poll would otherwise look like "not
+  // downloading any more".
+  function pullProgressLabel(text) {
+    var downloading = false;
+    var lines = text.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      if (/Pull complete|Pulled|Creating|Starting|Started/.test(lines[i])) downloading = false;
+      else if (/Pulling|Downloading|Extracting/.test(lines[i])) downloading = true;
+    }
+    if (!downloading) return null;
+    // Each layer prints one "Pulling fs layer" line and, once done, one
+    // "Pull complete" line — counting both gives a rough "N of M" without
+    // decoding a percentage. Capped at the layer count so a line this has
+    // not seen before (a registry wording this has not met yet) cannot
+    // print something like "14 of 12".
+    var layers   = (text.match(/Pulling fs layer/g) || []).length;
+    var complete = (text.match(/Pull complete/g) || []).length;
+    return layers ? 'Downloading image… ' + Math.min(complete, layers) + ' of ' + layers
+                  : 'Downloading image…';
+  }
+
+  // Wires the output pane's scroll listener onto one job — shared by track()
+  // (a job started with the dialog already open) and by clicking a busy
+  // pill (a job the dialog is only now being opened onto).
+  function followScroll(job) {
+    logBox.onscroll = function () {
+      var entry = jobs[job];
+      if (entry) {
+        entry.atBottom = logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 30;
+      }
+    };
+  }
 
   function startTicker() {
     if (!jobTicker) jobTicker = setInterval(tickJobs, 1000);
@@ -16187,6 +16278,19 @@
         entry.text  += part.text || '';
         entry.offset = part.offset;
 
+        // The busy pill says what compose is actually doing, for the three
+        // verbs that can pull an image — only worth recomputing when new
+        // text arrived, and only worth repainting when it changed.
+        if (part.text && (entry.verb === 'up' || entry.verb === 'pull' || entry.verb === 'update')) {
+          var pillLabel = pullProgressLabel(entry.text) || BUSY_LABEL[entry.verb] || 'Working…';
+          if (pillLabel !== entry.pillLabel) {
+            entry.pillLabel = pillLabel;
+            entry.rows.forEach(function (row) {
+              if (row.dataset.busy) paintBusyLabel(row, pillLabel);
+            });
+          }
+        }
+
         // Reassigning the whole of the pane's text destroys and recreates its
         // text node, which collapses any selection the reader has made inside
         // it. A tick that brought no new output must therefore write nothing.
@@ -16201,6 +16305,11 @@
 
         if (part.done) {
           delete jobs[id];
+          // Every rowKey() this job was filed under leads back to `id` —
+          // see track() below, where they are added.
+          Object.keys(rowJobs).forEach(function (key) {
+            if (rowJobs[key] === id) delete rowJobs[key];
+          });
           if (entry.show) {
             logTitle.textContent += (part.exit !== 0 && part.exit !== null)
               ? ' — failed (exit ' + part.exit + ')'
@@ -16231,23 +16340,21 @@
   function track(job, opts) {
     opts = opts || {};
     jobs[job] = {
-      rows:     opts.rows || [],
-      verb:     opts.verb || '',
-      show:     !!opts.show,
-      atBottom: true,
-      offset:   0,
-      text:     '',
-      shown:    '',   // what the output pane already holds, so an idle tick can skip writing it
-      done:     opts.done
+      rows:      opts.rows || [],
+      verb:      opts.verb || '',
+      show:      !!opts.show,
+      atBottom:  true,
+      offset:    0,
+      text:      '',
+      shown:     '',   // what the output pane already holds, so an idle tick can skip writing it
+      pillLabel: BUSY_LABEL[opts.verb] || 'Working…',
+      done:      opts.done
     };
-    if (opts.show) {
-      logBox.onscroll = function () {
-        var entry = jobs[job];
-        if (entry) {
-          entry.atBottom = logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 30;
-        }
-      };
-    }
+    (opts.rows || []).forEach(function (row) {
+      var key = rowKey(row);
+      if (key) rowJobs[key] = job;
+    });
+    if (opts.show) followScroll(job);
     startTicker();
   }
 
@@ -18251,6 +18358,7 @@
       // and every row was just thrown away. rowFailures is the record that
       // survives the swap; this puts the markers back on the new rows.
       restoreFailures();
+      restoreBusy();
 
       // Every row in the fresh markup starts with no tabindex at all, the
       // same situation the very first page load was in — rebuild the
@@ -24659,6 +24767,25 @@
     // row's pill has no other reachable name for either).
     if (el.classList.contains('staxx-pill--offer')) {
       if (el.dataset.stack && el.dataset.service) offerHealthCheck(el.dataset.stack, el.dataset.service);
+      return;
+    }
+
+    // A busy pill names a job still running — open the same output dialog
+    // the failure pill uses, but live: mark it `show` so the next tick (and
+    // every one after) streams into it, rather than the one-off fetch
+    // openJobOutput() does for a job that has already finished.
+    if (el.classList.contains('staxx-pill--busy')) {
+      var busyRow = el.closest('[data-stack-row], .staxx-container-row');
+      var busyKey = busyRow ? rowKey(busyRow) : null;
+      var busyJob = busyKey ? rowJobs[busyKey] : null;
+      var busyEntry = busyJob ? jobs[busyJob] : null;
+      if (busyEntry) {
+        openLogDialog(BUSY_LABEL[busyEntry.verb] || 'Output', busyEntry.text || 'Working…');
+        busyEntry.show     = true;
+        busyEntry.shown    = busyEntry.text || 'Working…';
+        busyEntry.atBottom = true;
+        followScroll(busyJob);
+      }
       return;
     }
 

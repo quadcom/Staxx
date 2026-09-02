@@ -1072,9 +1072,17 @@ function staxx_compose_cmd(): string {
   $info = staxx_compose();
   if (!$info['available']) return '';
   if ($info['form'] === 'standalone') {
+    // Not given --ansi never below: this is the legacy standalone binary,
+    // which may be pre-v2 and never had the flag added, unlike the plugin
+    // form every real install actually runs.
     return $info['path'] !== '' ? escapeshellarg($info['path']) : 'docker-compose';
   }
-  return escapeshellarg(staxx_docker_bin()).' compose';
+  // Both are GLOBAL compose flags and only global: on the server's v2.40.3
+  // `up --progress plain` is refused as an unknown flag, so they cannot go
+  // in staxx_job_verbs()'s per-verb strings. --ansi never strips the colour
+  // escape codes and --progress plain replaces the redrawn-in-place bar with
+  // one line per step — the shape stacks.js scans for "Downloading image…".
+  return escapeshellarg(staxx_docker_bin()).' compose --ansi never --progress plain';
 }
 
 /**
