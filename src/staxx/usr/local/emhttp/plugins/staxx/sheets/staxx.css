@@ -291,19 +291,21 @@
 
 /* ---- Title bar status chips (PLAN_125) ----
  *
- * Still named -titlebar from when the chips lived inside Unraid's own title
- * bar (PLAN_125); they now sit in their own row (.staxx-statusrow, below)
- * which already right-aligns them, so this class only needs the chip
- * styling itself. The colour tokens the chips need are declared on this
- * class too (see the .staxx-scaffold rule above) because the chip row sits
- * outside .staxx-scaffold in the page's own markup — nothing here would show
- * a colour otherwise. */
+ * These chips sit inside Unraid's own per-page title bar (`div.title`) when
+ * it exists, right-aligned there; only when Unraid's tabbed view replaces
+ * that bar with a shared tab strip do they get a row of their own instead
+ * (.staxx-statusrow, below). Unraid's title bar puts 1.8px letter-spacing
+ * and a 1.4rem font size on its name, which is why both are reset here. The
+ * colour tokens the chips need are declared on this class too (see the
+ * .staxx-scaffold rule above) because the chip lives outside .staxx-scaffold
+ * in the page's own markup — nothing here would show a colour otherwise. */
 .staxx-titlebar {
   display: flex;
   gap: 0.6rem;
   align-items: center;
   letter-spacing: normal;
   font-size: 1rem;
+  margin-left: auto; /* pins the chips to the right end of the title bar; harmless in the status row, which already right-aligns */
 }
 
 /* A touch smaller than the table's own pills, so the chips sit inside the
@@ -346,11 +348,18 @@
   outline-offset: 0.1rem;
 }
 
-/* The chip row (PLAN_125) sits right above the buttons row, right-aligned
-   over it. Unraid's own title bar carries a 20px bottom margin we can no
-   longer class (nothing sets .staxx-has-titlebar any more), so this pulls
-   the row up into that gap instead of leaving a double gap above the
-   buttons. */
+/* The gap under the title bar matches the buttons row's own 0.6rem — see
+   .staxx-bar above — so more of the table shows. Set by the script on the
+   title bar once our span has been added to it. */
+div.title.staxx-has-titlebar {
+  margin-bottom: 0.6rem;
+}
+
+/* This row is only used when Unraid's tabbed view has replaced the per-page
+   title bar with its own shared tab strip, so the chips have no title bar to
+   sit in. It sits right above the buttons row, right-aligned over it; the
+   negative top margin pulls it up into the gap under that strip instead of
+   leaving a double gap above the buttons. */
 .staxx-statusrow {
   display: flex;
   justify-content: flex-end;
@@ -10183,8 +10192,9 @@ dialog::backdrop {
 @media (max-width: 45rem) {
   /* The one thing the status chips may do on a phone (PLAN_125) — the same
      fact is one tap away on the "Check for updates" button's own feedback,
-     so nothing here is unreachable, just not worth its own row's room. */
-  .staxx-statusrow {
+     so nothing here is unreachable, just not worth the title bar's or its
+     own row's room. */
+  .staxx-statusrow, div.title .staxx-titlebar {
     display: none;
   }
 

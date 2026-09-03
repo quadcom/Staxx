@@ -17233,30 +17233,37 @@
   // of throwing.
   var checkUpdatesBtn = document.getElementById('staxx-check-updates');
 
-  // PLAN_125: the status line was tried inside Unraid's own title bar first,
-  // but Adrian saw it live and asked for the chips lower — their own
-  // right-aligned line sitting directly above the buttons row, in every
-  // mode the page can be mounted in, rather than a home that shifts with
-  // Unraid's layout. So it goes into a wrapper of our own, inserted right
-  // before the buttons row (`.staxx-bar.staxx-bar--end`); if that row is
-  // ever missing — a markup change — it falls back to sitting before
-  // `#staxx-update-queue` instead, so the information is never silently lost.
+  // Unraid draws a per-page title bar (`div.title`) when its own "tabbed
+  // view" display setting is off, and the chips belong there, right-aligned,
+  // as they always did. Tabbed view replaces that bar with a shared `.tabs`
+  // strip the page does not own, and Adrian saw the chips land in that strip
+  // and asked for them lower — so only then do they get a row of our own,
+  // inserted right before the buttons row (`.staxx-bar.staxx-bar--end`); if
+  // that row is ever missing — a markup change — it falls back to sitting
+  // before `#staxx-update-queue` instead, so the information is never
+  // silently lost.
   var updatesLine = document.getElementById('staxx-updates-line');
   if (!updatesLine) {
     updatesLine = document.createElement('span');
     updatesLine.id = 'staxx-updates-line';
     updatesLine.className = 'staxx-titlebar';
     updatesLine.hidden = true;
-    var statusRow = document.createElement('div');
-    statusRow.className = 'staxx-statusrow';
-    statusRow.appendChild(updatesLine);
-    var buttonsBar = document.querySelector('.staxx-bar.staxx-bar--end');
-    if (buttonsBar && buttonsBar.parentNode) {
-      buttonsBar.parentNode.insertBefore(statusRow, buttonsBar);
+    var titleBar = document.querySelector('div.title');
+    if (titleBar) {
+      titleBar.classList.add('staxx-has-titlebar');
+      titleBar.appendChild(updatesLine);
     } else {
-      var updateQueueEl = document.getElementById('staxx-update-queue');
-      if (updateQueueEl && updateQueueEl.parentNode) {
-        updateQueueEl.parentNode.insertBefore(statusRow, updateQueueEl);
+      var statusRow = document.createElement('div');
+      statusRow.className = 'staxx-statusrow';
+      statusRow.appendChild(updatesLine);
+      var buttonsBar = document.querySelector('.staxx-bar.staxx-bar--end');
+      if (buttonsBar && buttonsBar.parentNode) {
+        buttonsBar.parentNode.insertBefore(statusRow, buttonsBar);
+      } else {
+        var updateQueueEl = document.getElementById('staxx-update-queue');
+        if (updateQueueEl && updateQueueEl.parentNode) {
+          updateQueueEl.parentNode.insertBefore(statusRow, updateQueueEl);
+        }
       }
     }
   }
