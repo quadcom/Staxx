@@ -9425,6 +9425,14 @@
     padding-left: 0;
   }
 
+  /* The update chip's 4px left margin is the table's spacing from the running
+     pill beside it. Stacked underneath it here, that margin only pushes the
+     chip 2px off centre. */
+  .staxx-stacks .staxx-stack-row .staxx-cell--state .staxx-updatepill,
+  .staxx-stacks .staxx-container-row .staxx-cell--state .staxx-updatepill {
+    margin-left: 0;
+  }
+
   .staxx-stacks .staxx-stack-row .staxx-cell--address,
   .staxx-stacks .staxx-container-row .staxx-cell--address {
     grid-column: 2;
