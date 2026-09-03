@@ -346,19 +346,10 @@ endif;
     </div>
   </div>
 
-  <!-- Filled in by refreshUpdates() the moment the page runs — there is
-       nothing to say about update checking before that first reply lands. -->
-  <p class="staxx-hint" id="staxx-updates-line"></p>
-
   <!-- PLAN_45 phase 4-8. Hidden until update-queue-start begins one, and
        painted entirely by paintUpdateQueue() in stacks.js — a queue's own
        progress is polled from the browser, not part of the page's render. -->
   <div class="staxx-updatequeue" id="staxx-update-queue" hidden></div>
-
-  <p class="staxx-hint">
-    <?= sprintf(_('Each stack is a folder holding one compose file, kept in %s.'), htmlspecialchars($root)) ?>
-    <?= _('Anything you put there by hand shows up here, and anything added here is an ordinary compose file you can copy elsewhere.') ?>
-  </p>
 
   <!-- A quiet status line, empty and hidden until something needs it — see
        setPushStatus() in stacks.js, the live-feed-degraded notice. Used to

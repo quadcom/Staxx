@@ -18,6 +18,12 @@ before that were dates.
 
 ## Unreleased
 
+- **The update status now lives at the top of the page, not above the table.** Last checked, how
+  many updates are waiting, and how many author-example findings there are now show as small tags at
+  the right end of the title bar, next to "StaXX". The explanatory paragraph that used to sit above
+  the table is gone — the store's location is already on the Settings page — and the table now starts
+  a little higher, so one more row fits on screen.
+
 - **On a tablet-sized window, the stack list is now a grid of cards instead of a squeezed table.**
   Each stack gets its own card — icon, name, state, address and its little graphs, three across —
   and a folder becomes a heading above its own row of cards. A stack running several services shows

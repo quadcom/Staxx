@@ -64,7 +64,7 @@
 
 /* ---- Theme tokens ------------------------------------------------------- */
 
-.staxx-scaffold {
+.staxx-scaffold, .staxx-titlebar {
   /* Mapped from tokens verified to hold colours — see trap 1 above. */
   --sm-bg:     var(--background-color, #1c1c1c);
   --sm-fg:     var(--text-color, #e0e0e0);
@@ -287,6 +287,69 @@
    where they have always been. */
 .staxx-bar--end {
   justify-content: flex-end;
+}
+
+/* ---- Title bar status chips (PLAN_125) ----
+ *
+ * Unraid's own title bar sets 1.8px letter-spacing and a 1.4rem font size for
+ * its page name — both wrong on a chip, so this span resets them rather than
+ * inheriting. The colour tokens the chips need are declared on this class
+ * itself (see the .staxx-scaffold rule above) because the title bar sits
+ * outside .staxx-scaffold in the page's own markup — nothing here would show
+ * a colour otherwise. */
+.staxx-titlebar {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  letter-spacing: normal;
+  font-size: 1rem;
+}
+
+/* A touch smaller than the table's own pills, so the chips sit inside the
+   bar's height instead of fattening it. */
+.staxx-titlebar .staxx-pill {
+  font-size: 1.05rem;
+  padding: 0.2rem 0.8rem;
+}
+
+/* The findings chip is a real <button> (see stacks.js), so it needs the same
+   specificity fight against Unraid's `.unapi button` reset that
+   .staxx-scaffold .staxx-pill--busy already wins inside the table — but this
+   button lives in the title bar, outside .staxx-scaffold, so that selector
+   does not reach it. Two classes still outrank Unraid's one-class-one-element
+   rule regardless of which ancestor supplies them. */
+/* A real <button> outside .staxx-scaffold, so Unraid's own button rules reach
+   it — uppercase, wide letter-spacing, a gradient border and its own padding.
+   Each of those is put back to the pill's shape explicitly here; the first
+   deploy showed the chip shouting in capitals beside two quiet ones. */
+.staxx-titlebar .staxx-pill--busy {
+  cursor: pointer;
+  border-radius: 1rem;
+  border: 0.1rem dashed var(--sm-accent);
+  font: inherit;
+  font-size: 1.05rem;
+  text-transform: none;
+  letter-spacing: normal;
+  line-height: inherit;
+  padding: 0.2rem 0.8rem;
+  margin: 0;
+  background: transparent;
+  background-image: none;
+  box-shadow: none;
+  color: var(--sm-accent);
+}
+
+.staxx-titlebar .staxx-pill--busy:hover,
+.staxx-titlebar .staxx-pill--busy:focus-visible {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.1rem;
+}
+
+/* The gap under the title bar matches the buttons row's own 0.6rem — see
+   .staxx-bar above — so more of the table shows. Set by the script (not
+   :has()) on the one class we know is there once our span has been added. */
+div.title.staxx-has-titlebar {
+  margin-bottom: 0.6rem;
 }
 
 /* ---- Buttons ------------------------------------------------------------ */
@@ -9823,6 +9886,13 @@
    side and lets each graph stretch into the space that was going spare, which
    roughly halves the height of every row. */
 @media (max-width: 45rem) {
+  /* The one thing the status chips may do on a phone (PLAN_125) — the same
+     fact is one tap away on the "Check for updates" button's own feedback,
+     so nothing here is unreachable, just not worth the title bar's room. */
+  .staxx-titlebar {
+    display: none;
+  }
+
   /* ---- The tracks: eight columns become six ---------------------------------
    *
    * Everything below the tree of tracks — .staxx-body, every

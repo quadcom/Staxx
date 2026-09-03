@@ -17052,60 +17052,110 @@
     return text;
   }
 
-  // The button and its line are the server's own markup now, like every
-  // other control on this page — this just finds them by id and binds.
-  // Guarded rather than assumed, so an older cached page (or a markup
-  // change that drops the id) fails quietly instead of throwing.
+  // The button is the server's own markup, like every other control on this
+  // page — found by id and bound. Guarded rather than assumed, so an older
+  // cached page (or a markup change that drops the id) fails quietly instead
+  // of throwing.
   var checkUpdatesBtn = document.getElementById('staxx-check-updates');
-  var updatesLine     = document.getElementById('staxx-updates-line');
+
+  // PLAN_125: the status line moved out of StacksPage.php's own markup and
+  // into Unraid's title bar, which is drawn by Unraid, not by us — so it is
+  // built here rather than reproducing markup we do not own (the "own the
+  // render" rule, applied in the other direction). If Unraid's bar cannot be
+  // found — a markup change on their side — the span is created where the
+  // old paragraph used to sit instead, so the information is never silently
+  // lost: that is the one guard.
+  var updatesLine = document.getElementById('staxx-updates-line');
+  if (!updatesLine) {
+    updatesLine = document.createElement('span');
+    updatesLine.id = 'staxx-updates-line';
+    updatesLine.className = 'right staxx-titlebar';
+    updatesLine.hidden = true;
+    var titleBar = document.querySelector('div.title');
+    if (titleBar) {
+      titleBar.classList.add('staxx-has-titlebar');
+      titleBar.appendChild(updatesLine);
+    } else {
+      var updateQueueEl = document.getElementById('staxx-update-queue');
+      if (updateQueueEl && updateQueueEl.parentNode) {
+        updateQueueEl.parentNode.insertBefore(updatesLine, updateQueueEl);
+      }
+    }
+  }
 
   var updatesChecking = false;
-
-  // Set by paintUpdatesLine() below, read by the click handler beside it —
-  // whatever is on screen right now is the only thing a click can honestly
-  // open, the same reasoning gapNote's own click handler gives.
-  var lastUpdatesSummary = null;
-
-  function paintUpdatesLine(summary) {
-    if (!updatesLine) return;
-    lastUpdatesSummary = summary;
-    updatesLine.textContent = updatesLineText(summary);
-    // Worth a second look — no updates found is not, silence or a broken
-    // check is.
-    setClass(updatesLine, 'staxx-hint--warn',
-      !!(summary && summary.checked && (!summary.ok || summary.updates)));
-    // Only clickable when there is something behind it to open — a fixed
-    // width cursor either way would invite a click that does nothing.
-    setClass(updatesLine, 'staxx-hint--clickable',
-      !!(summary && summary.checked && (summary.watch || summary.watchReason)));
-  }
 
   // PLAN_62 Stage 4's combined report: every undismissed author-example
   // finding, across every stack, fetched only when someone actually asks —
   // the count already on the line costs nothing extra (staxx_updates_summary()
   // reads the state file alone), so the full list is worth a second request
-  // rather than being carried on every poll.
-  if (updatesLine) {
-    updatesLine.addEventListener('click', function () {
-      if (!lastUpdatesSummary || !lastUpdatesSummary.checked) return;
-      if (!lastUpdatesSummary.watch && !lastUpdatesSummary.watchReason) return;
-      call('watch-report', {}, 15000).then(function (res) {
-        if (!res.ok) {
-          openLogDialog('Author-example findings', res.reason || 'Could not build the report.');
-          return;
-        }
-        if (!res.items.length) {
-          openLogDialog('Author-example findings', 'Nothing to look at.');
-          return;
-        }
-        var lines = res.items.map(function (it) {
-          return stackLabel(it.stack) + ' / ' + it.service + ' (' + it.image + '): ' +
-            (it.side === 'added' ? 'the author\'s example also sets ' : 'the author\'s example does not set ') +
-            it.setting;
-        });
-        openLogDialog('Author-example findings', lines.join('\n'));
+  // rather than being carried on every poll. Now bound to the findings chip
+  // itself (see paintUpdatesLine below) rather than to a click anywhere on
+  // the line, since the line is several separate chips now.
+  function openWatchReport() {
+    call('watch-report', {}, 15000).then(function (res) {
+      if (!res.ok) {
+        openLogDialog('Author-example findings', res.reason || 'Could not build the report.');
+        return;
+      }
+      if (!res.items.length) {
+        openLogDialog('Author-example findings', 'Nothing to look at.');
+        return;
+      }
+      var lines = res.items.map(function (it) {
+        return stackLabel(it.stack) + ' / ' + it.service + ' (' + it.image + '): ' +
+          (it.side === 'added' ? 'the author\'s example also sets ' : 'the author\'s example does not set ') +
+          it.setting;
       });
+      openLogDialog('Author-example findings', lines.join('\n'));
     });
+  }
+
+  // Up to three pills: when the check last ran, how many updates it found
+  // (omitted at zero — the muted when-chip already proves the check ran, so
+  // a green "nothing to update" chip would just be noise), and how many
+  // author-example findings are waiting. updatesLineText() above stays the
+  // whole sentence, set as this span's tooltip so it is still one hover away
+  // and still what a screen reader gets.
+  function paintUpdatesLine(summary) {
+    if (!updatesLine) return;
+    updatesLine.title = updatesLineText(summary);
+    updatesLine.innerHTML = '';
+    updatesLine.hidden = false;
+
+    var checked = !!(summary && summary.checked);
+    var when = document.createElement('span');
+    when.className = 'staxx-pill ' + (checked && summary.ok ? 'staxx-pill--down' : 'staxx-pill--bad');
+    when.textContent = !checked
+      ? 'Never checked'
+      : (summary.ok ? 'Checked ' + timeAgoWords(summary.checked) + ' ago' : 'Could not finish the last check');
+    updatesLine.appendChild(when);
+
+    if (checked && summary.ok && summary.updates) {
+      var n = summary.updates;
+      var updates = document.createElement('span');
+      updates.className = 'staxx-pill staxx-pill--warn';
+      updates.textContent = n + (n === 1 ? ' update waiting' : ' updates waiting');
+      updatesLine.appendChild(updates);
+    }
+
+    if (checked) {
+      if (summary.watchReason) {
+        var reasonChip = document.createElement('span');
+        reasonChip.className = 'staxx-pill staxx-pill--bad';
+        reasonChip.textContent = 'Author-example report unavailable';
+        reasonChip.title = summary.watchReason;
+        updatesLine.appendChild(reasonChip);
+      } else if (summary.watch) {
+        var w = summary.watch;
+        var findingsBtn = document.createElement('button');
+        findingsBtn.type = 'button';
+        findingsBtn.className = 'staxx-pill staxx-pill--busy';
+        findingsBtn.textContent = w + (w === 1 ? ' author-example finding' : ' author-example findings');
+        findingsBtn.addEventListener('click', openWatchReport);
+        updatesLine.appendChild(findingsBtn);
+      }
+    }
   }
 
   // The last `updates` reply's per-row answers, kept so paintState() wiping
