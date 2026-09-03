@@ -100,7 +100,7 @@ credential committed three commits ago is already in the history for good, and i
 than a "sanitised on <date>" marker because a marker is a claim that goes stale on the next edit.
 The `housekeeping` skill carries the sanitising rules the check enforces.
 **COMMENTS AND DOCUMENTATION** Comments and documentation should reflect what something does not what it used to do along with what it now does.
-**WRITING CODE** When writing code, Opus always makes the plan and Multiple SOnnet agents will write the code. Opus will then verify the code that was written. Just before writing starts tell me "Sonnet agents are writing".
+**WRITING CODE** When writing code, Fable (the main session) always makes the plan and multiple Sonnet agents write the code. Fable then verifies the code that was written. Just before writing starts tell me "Sonnet agents are writing". (Fable replaced Opus in the planning and verifying roles on 2026-09-02, for the time being; the Sonnet step is unchanged.)
 **TOKEN USAGE** At all times be conservative on token usage.
 
 
