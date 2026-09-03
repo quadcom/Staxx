@@ -173,7 +173,6 @@ before the array starts — see [where StaXX keeps its things](docs/guide/where-
 | `TAKEOVER_DOCKER_TAB` | `false` | `true` replaces the Docker button entirely. No stock Unraid file is modified either way. |
 | `CATCH_INSTALLS` | `true` | What happens when something is installed from Unraid's own Apps page: `true` brings it in as a stack, `prompt` asks first, `false` leaves it to Unraid. |
 | `ICON_FETCH` | `true` | Fetch container logos. Only the icon's name is sent. |
-| `ICON_ADOPT` | `true` | Record a matched logo in the compose file so it travels with it. |
 | `IMAGE_LOOKUP` | `true` | Read an image's documentation when adding it, for a fuller starting file. |
 | `WATCH_EXAMPLES` | `true` | Compare your file with the publisher's own example during an update check. |
 | `SHELL_ENABLED` | `true` | The root command line inside a container. `false` removes it everywhere. |

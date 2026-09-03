@@ -5595,13 +5595,13 @@ function staxx_write_file(string $rel, string $file, string $body, bool $isText,
     return false;
   }
 
-  // The boot-drive shelf copy (PLAN_103) only ever mirrors the compose file
-  // and its override — an ordinary companion file (a .env, a certificate)
-  // is not the stack's definition and never belongs on it. $mainPath and the
-  // override-name check above already establish which case this is; nothing
-  // further is copied for any other file this function writes.
-  if ($mainPath !== ''
-      && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0) {
+  // The boot-drive shelf copy (PLAN_103) mirrors the stack's definition and
+  // nothing else: the compose file, its override, and — since PLAN_129 — its
+  // .env, without which a file full of ${PLACEHOLDERS} defines nothing. Any
+  // other companion (a certificate, a script) never belongs on the shelf.
+  if ($file === '.env'
+      || ($mainPath !== ''
+          && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0)) {
     $bootNote = '';
     if (!staxx_boot_copy_stack($rel, $bootNote) && $bootNote !== '') {
       error_log('StaXX: boot copy not written for '.$rel.': '.$bootNote);
@@ -5618,12 +5618,14 @@ function staxx_delete_file(string $rel, string $file, string &$error): bool {
   $path = staxx_stack_file($rel, $file, $error);
   if ($path === '') return false;
 
-  // Whether this is the override, checked before it is gone — deleting it
-  // is a change to the stack's own definition, so the shelf copy (PLAN_103)
-  // has to lose it too, the same as staxx_write_file() gives it one.
+  // Whether this is the override or the .env, checked before it is gone —
+  // deleting either is a change to the stack's own definition, so the shelf
+  // copy (PLAN_103) has to lose it too, the same as staxx_write_file() gives
+  // it one. The variable keeps its old name; it means "part of the definition".
   $mainPath = staxx_find_compose_file(dirname($path));
-  $isOverride = $mainPath !== ''
-             && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0;
+  $isOverride = $file === '.env'
+             || ($mainPath !== ''
+                 && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0);
 
   if (is_link($path)) {
     if (!@unlink($path)) { $error = 'Could not delete "'.$file.'".'; return false; }

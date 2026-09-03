@@ -1699,10 +1699,8 @@ switch ($action) {
    * the request — the walk decides that itself, from each stack's own file.
    */
   case 'icon-todo':
-    if (!staxx_cfg_bool('ICON_ADOPT')) {
-      staxx_reply(['ok' => true, 'items' => [], 'done' => true]);
-    }
-
+    // Always on since PLAN_129: a matched icon is recorded in the compose
+    // file so it travels with it. The former ICON_ADOPT switch is gone.
     $skip = array_values(array_filter(
       explode(',', (string)($_POST['skip'] ?? '')),
       'staxx_valid_path'

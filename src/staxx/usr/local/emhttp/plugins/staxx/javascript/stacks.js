@@ -21570,7 +21570,23 @@
         ['true',  'Its own button in the top navigation bar']
       ],
       help: 'Where the stacks view appears. As a Docker tab it sits ahead of Docker Containers ' +
-            'and becomes the default landing tab; nothing is replaced either way.'
+            'and becomes the default landing tab; nothing is replaced either way.',
+      shots: [
+        { value: 'false', src: 'header-menu-tab.png',    caption: 'A tab under Docker' },
+        { value: 'true',  src: 'header-menu-button.png', caption: 'Its own button in the top bar' }
+      ]
+    },
+    {
+      key: 'PLACEMENT_RULES', control: 'choice', label: 'Where stacks may live', tab: 'storage',
+      choices: [
+        ['guided', 'Guide me — grey them out and refuse them'],
+        ['open',   'Get out of the way — warn me, then allow it']
+      ],
+      help: 'How the folder browser treats risky places for the data store: a single array ' +
+            'disk, an unassigned drive, a network mount, or a share set to move onto the array. ' +
+            'Each can lose or hide your stacks. Two places are refused whichever you choose: ' +
+            'memory, which is emptied at every reboot, and a whole share, where every folder in ' +
+            'it would be read as a stack.'
     },
     {
       key: 'STORE_ROOT', control: 'path', label: 'Data store', tab: 'storage',
@@ -21581,103 +21597,79 @@
             'share layer, which a path under /mnt/user does not.'
     },
     {
+      // PLAN_129 item 27: the one allowlisted setting that had no row, found
+      // by the settings audit — until now it could only be changed by editing
+      // the config file by hand.
+      key: 'BOOT_COPY', control: 'choice', label: 'Copies on the flash drive', tab: 'storage',
+      choices: [
+        ['true',  'Keep a copy of every compose file there'],
+        ['false', 'Do not write copies']
+      ],
+      help: 'After every save, a plain copy of the stack\'s compose file is written to the flash ' +
+            'drive, which Unraid already backs up on its own — with its override and its .env ' +
+            'file, if it has them, so the copy is a complete definition. Losing the data store then ' +
+            'never means losing the definition of every container you run. Nothing else in the ' +
+            'stack\'s folder is copied, and StaXX never reads the copies back ' +
+            'while the store is present — restoring from them is always your own choice. Turning ' +
+            'this off leaves any copies already there as they are.'
+    },
+    {
       key: 'TAKEOVER_DOCKER_TAB', control: 'choice', label: 'Docker menu', tab: 'general',
       choices: [
         ['false', 'Leave the Docker menu alone'],
-        ['true',  'Replace it with StaXX']
+        ['true',  'Replace it with StaXX — the Docker button becomes StaXX']
       ],
-      help: 'Off by default. Switched on, the Docker button disappears from the top of the ' +
-            'screen and StaXX takes its place as a menu item of its own. Everything that lived ' +
-            'under the Docker menu goes with it — Unraid\'s own container list included, and any ' +
-            'other plugin\'s Docker pages. Nothing is modified and no container is touched; ' +
-            'turning it back off puts all of it straight back. While this is on, the "Show ' +
-            'StaXX in" setting above has no effect, because StaXX has to be a top-level item ' +
-            'for there to be any way in.'
+      help: 'Off by default. Switched on, the Docker button at the top of the screen becomes ' +
+            'StaXX, and everything that lived under Docker moves with it, Unraid\'s own ' +
+            'container list included. Nothing is modified and no container is touched; turning ' +
+            'it off puts everything straight back. While it is on, the "Show StaXX in" setting ' +
+            'above has no effect.',
+      shots: [
+        { value: 'false', src: 'docker-menu-leave.png',    caption: 'Docker stays where it is' },
+        { value: 'true',  src: 'docker-menu-replace.png',  caption: 'StaXX takes the Docker button\'s place' }
+      ]
     },
     {
       key: 'CATCH_INSTALLS', control: 'choice', label: 'Installs from the Apps page', tab: 'general',
       choices: [
-        ['true',   'Bring them into StaXX'],
-        ['prompt', 'Ask first'],
-        ['false',  'Leave them to Unraid']
+        ['true',   'Bring them into StaXX — the app becomes a stack'],
+        ['prompt', 'Ask first — you are offered the choice each time'],
+        ['false',  'Leave them to Unraid — Unraid installs it as it always has']
       ],
-      help: 'When an app is installed from Unraid\'s own Apps page, StaXX steps in and makes it a ' +
-            'stack instead of an Unraid container; pressing Add Container by hand does the same. ' +
-            '"Ask first" shows an offer before doing either, so nothing is converted without a yes ' +
-            '— the caught-install page itself also offers a way to send a "Bring them into StaXX" ' +
-            'install back to Unraid instead. Opening an existing Unraid container for editing is ' +
-            'only ever offered regardless of this setting — decline and you stay in Unraid\'s own ' +
-            'form, unchanged, and the app can still be brought over later. StaXX also leaves an ' +
-            'Unraid template behind for each app it installs this way, so you can stop using StaXX ' +
-            'and Unraid will still see your apps — the template describes the app as it was ' +
-            'installed, not as it is now. Turning this off puts Unraid\'s own install route back ' +
-            'exactly as it was, and nothing already installed changes.'
+      help: 'What happens when you install an app from Unraid\'s Apps page. Nothing already ' +
+            'installed changes, and StaXX keeps an Unraid template for each app it brings in, ' +
+            'so Unraid can still see them if you stop using StaXX.'
     },
     {
       key: 'ICON_FETCH', control: 'choice', label: 'Container icons', tab: 'icons',
       choices: [
-        ['true',  'Download them automatically'],
-        ['false', 'Do not download anything']
+        ['true',  'Download them automatically — matched by name, or from an address you give'],
+        ['false', 'Do not download anything — saved icons, local files and initials only']
       ],
-      help: 'Each container shows the logo of the software it runs, taken from the ' +
-            '<a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st icon ' +
-            'collection</a>. Your server fetches an icon the first time it sees a container and ' +
-            'then keeps it, so this happens once per icon and never again; the only thing sent ' +
-            'out is the name of the icon being asked for. Turning it off stops all downloading — ' +
-            'icons already saved keep working, and containers with no icon show a coloured tile ' +
-            'with their initials instead. You can always name an icon yourself with ' +
-            '<code>icon:</code> in a service\'s <code>x-unraid</code> section, which works ' +
-            'whichever way this is set.<br><br>Icons are by ' +
+      help: 'Whether StaXX may download icons. A container\'s icon is matched by name against ' +
+            'the <a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st icon ' +
+            'collection</a>, or taken from a web address you name with <code>icon:</code> in its ' +
+            '<code>x-unraid</code> section. An icon is downloaded once and kept; only the icon\'s ' +
+            'name or address is sent. Turned off, nothing is downloaded: icons already saved keep ' +
+            'working, an <code>icon:</code> that names a file in the stack folder or a Font ' +
+            'Awesome glyph still works, and anything else shows a coloured tile with its ' +
+            'initials.<br><br>Icons are by ' +
             '<a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st</a> and ' +
             'used under the <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" ' +
             'rel="noopener">CC BY 4.0</a> licence.'
     },
     {
-      key: 'ICON_ADOPT', control: 'choice', label: 'Keep icons with the stack', tab: 'icons',
-      choices: [
-        ['true',  'Record them in the file'],
-        ['false', 'Work them out each time']
-      ],
-      help: 'When StaXX recognises the software a container runs, it can write that down: the ' +
-            'icon’s name goes into the service’s <code>x-unraid</code> section and a copy of ' +
-            'the picture is saved in the same folder as the compose file. The stack then owns its ' +
-            'icon — it looks the same on any server you copy the folder to, and it cannot change ' +
-            'under you if the icon collection changes. This runs quietly in the background, a few ' +
-            'services at a time, and each file it changes keeps its previous version in that ' +
-            'stack’s own history, so any of it can be undone. An icon you have named yourself is ' +
-            'never touched. Turning this off changes nothing already written; icons are simply ' +
-            'worked out afresh on every page, as they were before.'
-    },
-    {
       key: 'IMAGE_LOOKUP', control: 'choice', label: 'Image documentation', tab: 'icons',
       choices: [
-        ['true',  'Read it automatically'],
-        ['false', 'Do not look anything up']
+        ['true',  'Read it automatically — fuller starting files, details and health checks'],
+        ['false', 'Do not look anything up — nothing leaves the server']
       ],
-      help: 'When you press Add on a Docker Hub or local image, your server reads that image\'s ' +
-            'own documentation from Docker Hub and uses it to build a fuller starting file — with ' +
-            'the ports, paths and settings it describes, instead of just four bare lines. This ' +
-            'only ever happens the moment you add something; it never runs in the background. The ' +
-            'only thing sent out is the name of the image being added, nothing else. Turning it ' +
-            'off gives you the four-line starting file only, instantly, and nothing leaves the ' +
-            'server.'
-    },
-    {
-      key: 'PLACEMENT_RULES', control: 'choice', label: 'Where stacks may live', tab: 'general',
-      choices: [
-        ['guided', 'Guide me — hide and refuse risky locations'],
-        ['open',   'Get out of the way — warn me but allow it']
-      ],
-      help: 'Guided is the default. When choosing where the stacks live, the folder browser shows ' +
-            'the array disks, unassigned drives and network mounts greyed out with the reason, and ' +
-            'picking one is refused — a single array disk has no redundancy of its own, and an ' +
-            'unassigned or network drive can be missing at the next boot with the stacks inside ' +
-            'it. The same applies to a share Unraid is set to move onto the array. Get out of the ' +
-            'way shows everything and lets you choose any of them, saying what the risk is instead ' +
-            'of stopping you. Two things are refused either way, because neither is a risk worth ' +
-            'taking: a location that lives in memory, where the stacks would be gone at the next ' +
-            'reboot, and a whole share as the stacks folder, where every folder in that share ' +
-            'would be read as a stack.'
+      help: 'Whether StaXX may read an image\'s own published page. It uses that to build a ' +
+            'fuller starting file when you add an image, with the ports, paths and settings the ' +
+            'author describes; to fill in a stack\'s description, category, author and project ' +
+            'links; and to offer a health check the author has published. Only the image name is ' +
+            'sent, and only when you add or open a stack. Turned off, you get a bare four-line ' +
+            'starting file and nothing leaves the server.'
     },
     {
       key: 'SHELL_ENABLED', control: 'choice', label: 'Container shells', tab: 'general',
@@ -21694,6 +21686,7 @@
     },
     {
       key: 'UPDATE_CHECK', control: 'choice', label: 'Check for image updates', tab: 'updates',
+      block: 'update-check', sublabel: 'How often',
       group: 'Image updates',
       groupHelp: 'Checking asks each image\'s registry whether a newer version of the same tag ' +
             'exists. It only ever tells you — nothing is downloaded and nothing is restarted. ' +
@@ -21714,32 +21707,21 @@
     },
     {
       key: 'UPDATE_CHECK_TIME', control: 'time', label: 'Time of day to check', tab: 'updates',
+      block: 'update-check', sublabel: 'Time of day',
       help: 'The middle of the night is a sensible time, since a check costs a little server ' +
             'effort even though it is cheap. Enter a 24-hour time, such as 04:00.'
     },
     {
-      key: 'SPEND_READOUT', control: 'readout', label: 'Registry questions', tab: 'updates',
-      help: 'Checking asks a registry a question that normally costs nothing — it does not count ' +
-            'against Docker Hub\'s download allowance unless a registry refuses that free form and ' +
-            'has to be asked the costly way instead. This shows what each registry has been asked ' +
-            'and what, if anything, it cost.'
-    },
-    {
       key: 'WATCH_EXAMPLES', control: 'choice', label: 'Watch the publisher\'s own examples', tab: 'icons',
       choices: [
-        ['true',  'Look, during the same check'],
+        ['true',  'Look, during the same check — spot settings the author has added'],
         ['false', 'Do not look at anything']
       ],
-      help: 'For an image that names its own GitHub project — or that is itself hosted at ' +
-            'ghcr.io, where the project is almost always the matching GitHub repository — your ' +
-            'server looks at whether that project publishes an example compose file, so a later ' +
-            'feature can point out a setting the author added that you do not have. This only ' +
-            'ever runs as part of the update check above, on an image whose tag can actually ' +
-            'change (a pinned version is never looked at), and it talks to GitHub, never Docker ' +
-            'Hub — so it never spends the allowance update checking depends on. The only things ' +
-            'sent out are the project\'s own web address and the path to one file inside it; ' +
-            'nothing about this server, its containers, or its settings ever leaves. Turning it ' +
-            'off stops all of that; update checking itself keeps working exactly as before.'
+      help: 'Many images have a GitHub project that publishes an example compose file. During ' +
+            'the update check, StaXX can look at that example so it can later point out a ' +
+            'setting the author added that you do not have. It asks GitHub, not Docker Hub, so ' +
+            'it costs nothing from the update-check allowance, and only the project\'s address ' +
+            'leaves your server. Pinned images are never looked at.'
     },
     {
       key: 'UPDATE_MODE', control: 'choice', label: 'What to do with what is found', tab: 'updates',
@@ -21753,12 +21735,14 @@
     },
     {
       key: 'UPDATE_DELAY_HOURS', control: 'number', min: 0, max: 720, label: 'Delay before installing', tab: 'updates',
+      block: 'install-timing', sublabel: 'Delay, in hours (0–720)',
       help: 'Only used when the setting above is "Install it by itself". How long an update ' +
             'sits on its row, counting down, before it installs itself. In hours, 0 to 720 ' +
             '(30 days).'
     },
     {
       key: 'UPDATE_WINDOW', control: 'choice', label: 'Only install during a quiet time', tab: 'updates',
+      block: 'install-timing', sublabel: 'Only install during a quiet time',
       choices: [
         ['true',  'Yes'],
         ['false', 'No — install the moment the delay is up']
@@ -21768,11 +21752,13 @@
     },
     {
       key: 'UPDATE_WINDOW_START', control: 'time', label: 'Quiet time starts', tab: 'updates',
+      block: 'install-timing', sublabel: 'Quiet time starts',
       help: 'A 24-hour time, such as 03:00. The quiet time is allowed to run past midnight ' +
             'into the next day.'
     },
     {
       key: 'UPDATE_WINDOW_END', control: 'time', label: 'Quiet time ends', tab: 'updates',
+      block: 'install-timing', sublabel: 'Quiet time ends',
       help: 'A 24-hour time, such as 05:00.'
     },
     {
@@ -21786,8 +21772,8 @@
             'queue finishing, never one per container.'
     },
     {
-      key: 'UPDATE_RETAIN', control: 'number', min: 0, max: 5, label: 'Previous versions to keep', tab: 'updates',
-      help: 'How many older versions of each image this server keeps on disk so an update can ' +
+      key: 'UPDATE_RETAIN', control: 'number', min: 0, max: 5, label: 'Previous image releases to keep', tab: 'updates',
+      help: 'How many older releases of each image this server keeps on disk, so an update can ' +
             'be rolled back afterwards. 0 to 5.'
     },
     {
@@ -21800,15 +21786,23 @@
             'any more — never a general clean-up of everything unused.'
     },
     {
+      // Moved to the end of the tab (second live-tuned round, 2026-09-03) so
+      // the figures sit after every setting they describe, rather than
+      // between the check settings and the ones governing what to do with
+      // what is found.
+      key: 'SPEND_READOUT', control: 'readout', label: 'Update-check activity', tab: 'updates',
+      help: 'How many times each registry has been asked whether an image has changed, and how ' +
+            'many of those asks counted against its allowance. Most asks are free; one only costs ' +
+            'when a registry refuses the free form and has to be asked the costly way.'
+    },
+    {
       key: 'HUB_USER', control: 'text', label: 'Docker Hub username', tab: 'registries',
-      group: 'Docker Hub sign-in',
-      groupHelp: 'Used when checking your containers\' images for updates. Without signing in, ' +
-            'Docker Hub only allows about ten of those checks an hour from this server; signing in ' +
-            'raises that to about a hundred.',
+      block: 'hub-access', sublabel: 'Username',
       help: 'The Docker Hub account name to sign in with. Leave blank to stay signed out.'
     },
     {
       key: 'HUB_TOKEN', control: 'password', label: 'Docker Hub access token', tab: 'registries',
+      block: 'hub-access', sublabel: 'Access token',
       help: "Create one from Docker Hub's Account Settings → Security → Personal access tokens, " +
             'and choose the read-only, public repositories permission. That is all this feature ' +
             "needs, since checking an image's current version is the only thing it ever does — so a " +
@@ -21818,12 +21812,14 @@
             'Leave both fields blank to sign out.'
     },
     {
-      key: 'REGISTRY_TRUST', control: 'text', label: 'Registries you run yourself', tab: 'registries',
-      help: 'Name a registry here and StaXX will trust that machine\'s own certificate, or talk to ' +
-            'it without any encryption at all if it has not been given one — so only name a registry ' +
-            'you actually run, never someone else\'s. Separate several with a comma, e.g. ' +
-            'registry.home.lan, 192.168.1.20:5000. A password is never sent to a registry reached ' +
-            'without encryption. Leave blank to trust nothing but the public internet as normal.'
+      key: 'REGISTRY_TRUST', control: 'list', label: 'Registries you run yourself', tab: 'registries',
+      placeholder: 'registry.home.lan or 192.168.1.20:5000',
+      emptyText: 'None — the public internet is trusted as normal.',
+      help: 'Registries named here are trusted with their own certificate, or reached without ' +
+            'encryption if they have none — so only add a registry you actually run, never ' +
+            'someone else\'s. A password is never sent to a registry reached without encryption. ' +
+            'Give the address as you would in an image name, e.g. registry.home.lan or ' +
+            '192.168.1.20:5000.'
     },
     // Moved to the end of this tab (PLAN_113) so StaXXCrypt's own switch sits
     // beside the credentials it protects, rather than in its old spot among
@@ -21834,10 +21830,10 @@
         ['ondemand', 'Only while hashing (default)'],
         ['always',   'Keep it running']
       ],
-      help: 'Whether the small container StaXX builds to make password hashes (see below) stays ' +
-            'stopped between uses. On demand costs nothing while idle, but each hash starts and ' +
-            'stops it, which takes a couple of seconds. Keeping it running idles at almost no cost and ' +
-            'hashes near-instantly — worth it if you are setting up several logins at once.'
+      help: 'StaXX makes password hashes for you inside a tiny container of its own, because ' +
+            'Unraid\'s PHP cannot make every kind. This chooses whether that container stays ' +
+            'stopped between uses (each hash then starts and stops it, a couple of seconds) or ' +
+            'keeps idling, which costs almost nothing and hashes instantly.'
     }
   ];
   SETTINGS_ROWS.forEach(function (row) {
@@ -21850,6 +21846,36 @@
   // themselves — nothing here needs to know the words.
   var SETTINGS_TABS = ['general', 'storage', 'icons', 'updates', 'registries'];
 
+  // Second live-tuned round, 2026-09-03: a handful of rows share one titled
+  // box instead of each getting its own. The rows themselves stay in
+  // SETTINGS_ROWS (each carries block + a short sublabel) so saving, dirty
+  // tracking and validation need no change at all — this table only gives
+  // each block a tab, a title and the one explanation shown above its grid.
+  var SETTINGS_BLOCKS = {
+    'update-check': {
+      tab: 'updates', label: 'Check for image updates',
+      help: 'How often to check, and when. Leaving this off means nothing is ever looked up. ' +
+            'The middle of the night is a sensible time, since a check costs a little server ' +
+            'effort even though it is cheap.'
+    },
+    'install-timing': {
+      tab: 'updates', label: 'When to install',
+      help: 'Only used when the setting above is “Install it by itself”. An update sits ' +
+            'on its row counting down the delay; if the delay runs out outside the quiet hours, ' +
+            'it waits for them to open rather than installing in the middle of anything. The ' +
+            'quiet time may run past midnight.'
+    },
+    'hub-access': {
+      tab: 'registries', label: 'Docker Hub access',
+      help: 'Used when checking your images for updates. Signed out, Docker Hub allows this ' +
+            'server about ten checks an hour; signed in, about a hundred. Create a token from ' +
+            'Docker Hub’s Account Settings → Security → Personal access tokens, ' +
+            'with the read-only, public repositories permission — that is all checking needs, so ' +
+            'a leaked token could look but never change anything. It is kept in StaXX’s own ' +
+            'settings file, readable only by the administrator. Leave both blank to stay signed out.'
+    }
+  };
+
   // What the open fetched, keyed the same way as SETTINGS_ROWS — compared
   // against the controls on every input/change to decide whether Save may be
   // pressed. Null while the panel is shut, so a stray listener firing late
@@ -21857,19 +21883,22 @@
   var settingsOpenValues = null;
   var settingsBusy = false;
 
-  function settingsFieldHtml(row, value) {
-    var control;
+  // The bare control markup for one row — factored out of settingsFieldHtml()
+  // so a block's subgrid (several rows sharing one titled box, see
+  // SETTINGS_BLOCKS above) can reuse it without the label/help/shots wrapper
+  // that a full-width field also carries.
+  function settingsControlHtml(row, value) {
     if (row.control === 'readout') {
       // Nothing to save here — a static report filled in by loadSpendReadout()
       // once the panel is open, not a value settingsControlValue() can read
       // off an input. Skipped by settingsDirty() and saveSettings() below.
-      control = '<div class="staxx-readout" id="' + row.id + '">Looking…</div>';
+      return '<div class="staxx-readout" id="' + row.id + '">Looking…</div>';
     } else if (row.control === 'choice') {
       var opts = row.choices.map(function (o) {
         return '<option value="' + esc(o[0]) + '"' + (o[0] === value ? ' selected' : '') +
                '>' + esc(o[1]) + '</option>';
       }).join('');
-      control = '<select id="' + row.id + '" aria-label="' + esc(row.label) + '">' + opts + '</select>';
+      return '<select id="' + row.id + '" aria-label="' + esc(row.label) + '">' + opts + '</select>';
     } else if (row.control === 'text' || row.control === 'password' || row.control === 'time' ||
                row.control === 'number') {
       // Docker Hub username/token — an ordinary box, and a masked one. Wears
@@ -21882,14 +21911,28 @@
       // is what actually rejects anything that is not a whole number in range.
       var numAttrs = row.control === 'number'
         ? ' min="' + row.min + '" max="' + row.max + '" step="1"' : '';
-      control = '<input type="' + row.control + '" class="staxx-input" id="' + row.id + '" ' +
+      return '<input type="' + row.control + '" class="staxx-input" id="' + row.id + '" ' +
                      'aria-label="' + esc(row.label) + '" spellcheck="false"' + NOFILL + numAttrs +
                      ' value="' + esc(value) + '">';
+    } else if (row.control === 'list') {
+      // The saved value stays a plain comma-separated string in a hidden
+      // input — nothing downstream (settingsControlValue, save, dirty
+      // tracking) needs to know the entries are edited one at a time.
+      // settingsListDraw() below fills in the visible <ul>.
+      return '<input type="text" id="' + row.id + '" hidden value="' + esc(value) + '">' +
+             '<div class="staxx-list-edit">' +
+               '<div class="staxx-list-add">' +
+                 '<input type="text" class="staxx-input" placeholder="' + esc(row.placeholder || '') + '" ' +
+                      'spellcheck="false"' + NOFILL + '>' +
+                 '<button type="button" class="staxx-btn" data-list-add>Add</button>' +
+               '</div>' +
+               '<ul class="staxx-list-items" data-list-for="' + row.id + '"></ul>' +
+             '</div>';
     } else {
       // A plain <div>, not a <label>, for the same reason boxHtml() above
       // uses one: a label may not hold interactive content besides its own
       // control, and the Browse button beside this box is a second one.
-      control = '<div class="staxx-boxline">' +
+      return '<div class="staxx-boxline">' +
                   '<input type="text" class="staxx-input" id="' + row.id + '" ' +
                        'aria-label="' + esc(row.label) + '" spellcheck="false" value="' + esc(value) + '">' +
                   '<button type="button" class="staxx-browse" data-browse="' + row.id + '" ' +
@@ -21899,6 +21942,10 @@
                   '</button>' +
                 '</div>';
     }
+  }
+
+  function settingsFieldHtml(row, value) {
+    var control = settingsControlHtml(row, value);
     // A row can open a labelled group (Docker Hub sign-in, so far the only
     // one) — the heading and its explanation sit above the first field in
     // that group rather than being a field of their own.
@@ -21969,16 +22016,111 @@
           '</span>' +
         '</div>'
       : '';
-    return head + '<div class="staxx-field">' +
+    // PLAN_129 (redone): the pictures sit inside the field itself, right under
+    // the control, as a row of small figures — not off to one side following
+    // the hover. The one matching the control's current value carries the
+    // orange outline; picking a different figure is a second way to choose it.
+    var shotsHtml = row.shots
+      ? '<div class="staxx-shots">' + row.shots.map(function (s) {
+          return '<figure class="staxx-shot' + (s.value === value ? ' staxx-shot--on' : '') + '" data-value="' + esc(s.value) + '">' +
+                 '<img src="/plugins/staxx/images/settings/' + esc(s.src) + '" alt="' + esc(s.caption) + '">' +
+                 '<figcaption class="staxx-hint">' + esc(s.caption) + '</figcaption></figure>';
+        }).join('') + '</div>'
+      : '';
+    // The crypt state readout belongs inside CRYPT_MODE's own box, under its
+    // dropdown, rather than after it — see settingsCryptBox() above.
+    var cryptHtml = row.key === 'CRYPT_MODE' ? '<div class="staxx-crypt" id="staxx-crypt-state" hidden></div>' : '';
+    return head + '<div class="staxx-field" data-key="' + esc(row.key) + '">' +
              '<span>' + esc(row.label) + '</span>' +
              control +
+             shotsHtml +
              '<span class="staxx-hint">' + row.help + '</span>' +
-           '</div>' + derivedLine + unreachableLine + storageLine;
+             // Inside the field's own box rather than after it: these lines
+             // are part of the data store setting, and outside the border
+             // they read as belonging to nothing.
+             derivedLine + unreachableLine + storageLine + cryptHtml +
+           '</div>';
+  }
+
+  // The titled box a block renders as — SETTINGS_BLOCKS' own label and help,
+  // then one small labelled control per row that claims this block. Called
+  // once, at the block's first row; settingsFieldHtml() is never used here
+  // since a subfield carries no help text or shots of its own.
+  function settingsBlockHtml(blockId, values) {
+    var def = SETTINGS_BLOCKS[blockId];
+    if (!def) return '';
+    var subfields = SETTINGS_ROWS.filter(function (row) {
+      return row.block === blockId;
+    }).map(function (row) {
+      return '<label class="staxx-subfield"><span class="staxx-sublabel">' + esc(row.sublabel) + '</span>' +
+             settingsControlHtml(row, values[row.key] || '') + '</label>';
+    }).join('');
+    return '<div class="staxx-field" data-key="' + esc(blockId) + '">' +
+             '<span>' + esc(def.label) + '</span>' +
+             '<span class="staxx-hint">' + def.help + '</span>' +
+             '<div class="staxx-subgrid">' + subfields + '</div>' +
+           '</div>';
   }
 
   function settingsControlValue(row) {
     var el = document.getElementById(row.id);
     return el ? el.value : '';
+  }
+
+  // A list control's own comma-separated entries, as an array with blanks
+  // and surrounding whitespace stripped — the shape settingsListDraw() and
+  // the add/remove handlers below all work in.
+  function settingsListEntries(real) {
+    return real.value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  // Redraws a list control's visible <ul> from its hidden real input. Called
+  // after every add or remove, and once for each list control when the
+  // panel first opens.
+  function settingsListDraw(real) {
+    if (!real) return;
+    var ul = document.querySelector('[data-list-for="' + real.id + '"]');
+    if (!ul) return;
+    var row = SETTINGS_ROWS.filter(function (r) { return r.id === real.id; })[0];
+    var entries = settingsListEntries(real);
+    ul.innerHTML = entries.length
+      ? entries.map(function (name) {
+          return '<li><span>' + esc(name) + '</span>' +
+                 '<button type="button" class="staxx-list-x" data-list-remove ' +
+                 'aria-label="Remove ' + esc(name) + '">×</button></li>';
+        }).join('')
+      : '<li class="staxx-list-empty">' + esc((row && row.emptyText) || '') + '</li>';
+  }
+
+  // Both handlers below take the button actually clicked and walk up to the
+  // hidden real input, which sits immediately before the .staxx-list-edit
+  // wrapper in every list control settingsControlHtml() builds.
+  function settingsListAdd(addBtn) {
+    var wrap = addBtn.closest('.staxx-list-edit');
+    var box = wrap && wrap.querySelector('.staxx-list-add input');
+    var real = wrap && wrap.previousElementSibling;
+    if (!box || !real) return;
+    var val = box.value.trim();
+    if (!val) return;
+    var list = settingsListEntries(real);
+    if (list.indexOf(val) === -1) list.push(val);
+    real.value = list.join(', ');
+    box.value = '';
+    real.dispatchEvent(new Event('change', { bubbles: true }));
+    settingsListDraw(real);
+  }
+
+  function settingsListRemove(removeBtn) {
+    var li = removeBtn.closest('li');
+    var wrap = removeBtn.closest('.staxx-list-edit');
+    var real = wrap && wrap.previousElementSibling;
+    if (!li || !real) return;
+    var nameEl = li.querySelector('span');
+    var name = nameEl ? nameEl.textContent : '';
+    var list = settingsListEntries(real).filter(function (s) { return s !== name; });
+    real.value = list.join(', ');
+    real.dispatchEvent(new Event('change', { bubbles: true }));
+    settingsListDraw(real);
   }
 
   // One row of the archived-stacks list: name, when it was written, and its
@@ -22125,9 +22267,28 @@
         recipeBodyHtml +
       '</div>';
 
+    // What is actually in the thing, in plain terms, ahead of the raw
+    // recipe below it — five facts true of the shipped Dockerfile and
+    // create command, not a summary that could drift from what is built.
+    var insideHtml =
+      '<div class="staxx-crypt-inside">' +
+        '<h5>What is inside it</h5>' +
+        '<ul>' +
+          '<li><b>Base</b>: Alpine Linux 3.20, the official minimal image, about 8 MB.</li>' +
+          '<li><b>Packages</b>: two, from Alpine’s own repository — <code>argon2</code> ' +
+          '(argon2id) and <code>apache2-utils</code> (<code>htpasswd</code>, bcrypt) — with ' +
+          'SHA-512/256 from <code>mkpasswd</code> already in Alpine.</li>' +
+          '<li><b>Nothing of StaXX’s own</b> copied in — the recipe is three lines.</li>' +
+          '<li><b>Runs with</b> no network, no ports, no host folders, read-only, idling — the ' +
+          'password is handed to it on a command’s input and never written to disk or the ' +
+          'command line.</li>' +
+          '<li><b>Check for yourself</b>: the recipe below, and <code>docker inspect StaXXCrypt</code>.</li>' +
+        '</ul>' +
+      '</div>';
+
     box.innerHTML =
       '<div class="staxx-crypt-line">' + factsHtml + formatsHtml + '</div>' +
-      noticeHtml + buildHtml + recipeHtml +
+      noticeHtml + buildHtml + insideHtml + recipeHtml +
       '<p class="staxx-hint">Not shown in the Stacks or Container lists — StaXXCrypt is StaXX\'s ' +
       'own plumbing, not an application you chose to run.</p>';
   }
@@ -22172,54 +22333,45 @@
     });
   }
 
-  // One plain sentence (or two) per registry host — how many questions it
-  // was asked, what that cost, and whatever is worth saying about it. Kept
-  // to prose rather than a table: SPEND_READOUT's own row is small, and a
-  // table of one row per host would need headings repeating what the
-  // sentence already says. docker.io is named "Docker Hub" throughout,
-  // since nobody who set the sign-in fields above thinks of it any other
-  // way; every other host is shown by its own address.
-  function spendHostLine(row) {
+  // One table row per registry host — the counts in their own columns, and
+  // whatever is worth saying beyond the numbers (an assumed allowance, a
+  // downloads-left figure, a refused free form) in a trailing note column.
+  // docker.io is named "Docker Hub" throughout, since nobody who set the
+  // sign-in fields above thinks of it any other way; every other host is
+  // shown by its own address.
+  function spendHostRow(row) {
     var name = row.host === 'docker.io' ? 'Docker Hub' : esc(row.host);
-    var costText;
-    if (!row.paidHour && !row.paidDay) {
-      // Unmetered hosts never pay at all, so "all free" is the honest
-      // reading; a metered one that happens to have paid for nothing this
-      // run still could have, so it gets the more cautious "paid for none".
-      costText = (row.ceiling === null) ? 'all free' : 'paid for none';
-    } else {
-      costText = 'paid for ' + row.paidHour + (row.paidHour === 1 ? ' question' : ' questions') +
-                 ' this hour (' + row.paidDay + ' today)';
-    }
-
-    var sentence = name + ' — asked ' + row.askedHour + (row.askedHour === 1 ? ' time' : ' times') +
-      ' this hour (' + row.askedDay + ' today), ' + costText + '.';
+    var notes = [];
 
     if (row.assumed) {
       // ceiling is already half of what StaXX is willing to spend, so the
       // allowance it is assuming is double that — see the guard rail in
       // the update pass, which this text is describing.
-      sentence += ' StaXX assumes an allowance of ' + (row.ceiling * 2) + ' an hour until Hub reports one.';
+      notes.push('StaXX assumes an allowance of ' + (row.ceiling * 2) + ' an hour until Hub reports one.');
     } else if (row.remaining !== null && row.limit !== null) {
-      sentence += ' ' + row.remaining + ' of ' + row.limit + ' downloads left this hour.';
+      notes.push(row.remaining + ' of ' + row.limit + ' downloads left this hour.');
     } else if (row.ceiling === null) {
-      sentence += ' This registry reports no limit.';
+      notes.push('This registry reports no limit.');
     }
 
     if (!row.headfree) {
-      sentence += ' This registry refused the free form, so StaXX pays for each question here ' +
-                  'and stops at half the allowance.';
+      notes.push('This registry refused the free form, so StaXX pays for each question here ' +
+                  'and stops at half the allowance.');
     }
     if (row.cli) {
-      sentence += ' ' + row.cli + (row.cli === 1 ? ' question went' : ' questions went') +
-                  ' through Docker itself, which StaXX cannot count.';
+      notes.push(row.cli + (row.cli === 1 ? ' question went' : ' questions went') +
+                 ' through Docker itself, which StaXX cannot count.');
     }
 
     var now = Math.floor(Date.now() / 1000);
-    var prefix = (row.refusedAt && (now - row.refusedAt) < 3600)
-      ? 'Stopped answering ' + timeAgoWords(row.refusedAt) + ' ago. ' : '';
+    if (row.refusedAt && (now - row.refusedAt) < 3600) {
+      notes.unshift('Stopped answering ' + timeAgoWords(row.refusedAt) + ' ago.');
+    }
 
-    return '<p>' + prefix + sentence + '</p>';
+    return '<tr><td>' + name + '</td>' +
+           '<td>' + row.askedHour + '</td><td>' + row.askedDay + '</td>' +
+           '<td>' + row.paidHour + '</td><td>' + row.paidDay + '</td>' +
+           '<td class="staxx-stats-note">' + notes.join(' ') + '</td></tr>';
   }
 
   function loadSpendReadout() {
@@ -22231,7 +22383,9 @@
         return;
       }
       box.innerHTML = res.spend.length
-        ? res.spend.map(spendHostLine).join('')
+        ? '<table class="staxx-stats"><thead><tr><th>Registry</th><th>Asks this hour</th>' +
+          '<th>Asks today</th><th>Counted this hour</th><th>Counted today</th><th></th></tr></thead>' +
+          '<tbody>' + res.spend.map(spendHostRow).join('') + '</tbody></table>'
         : '<p>No registry has been asked yet. Figures appear after the first check.</p>';
     });
   }
@@ -22398,15 +22552,18 @@
       // saving (which reads every control regardless of which pane it is in)
       // needs no change at all.
       settingsBody.innerHTML = SETTINGS_TABS.map(function (tab) {
+        // A blocked row only draws its box once, at the block's first row in
+        // this tab — every later row of the same block draws nothing.
+        var seenBlocks = {};
         var rowsHtml = SETTINGS_ROWS.filter(function (row) {
           return row.tab === tab;
         }).map(function (row) {
-          var html = settingsFieldHtml(row, res.settings[row.key] || '');
-          // PLAN_74 Part A piece 3, moved per feedback: StaXXCrypt's own
-          // state belongs right under the setting that governs it. Not a row
-          // of SETTINGS_ROWS itself — see settingsCryptBox() above.
-          if (row.key === 'CRYPT_MODE') html += '<div class="staxx-crypt" id="staxx-crypt-state" hidden></div>';
-          return html;
+          if (row.block) {
+            if (seenBlocks[row.block]) return '';
+            seenBlocks[row.block] = true;
+            return settingsBlockHtml(row.block, res.settings);
+          }
+          return settingsFieldHtml(row, res.settings[row.key] || '');
         }).join('');
         // Two things that are not settings sit at the end of the tab they
         // are about, rather than pinned to the bottom of the whole panel:
@@ -22416,7 +22573,7 @@
         // so it belongs beside the store it is kept in.
         if (tab === 'icons') {
           rowsHtml +=
-            '<div class="staxx-field">' +
+            '<div class="staxx-field" data-key="scaffold-sweep">' +
               '<span>StaXX fields</span>' +
               '<button type="button" class="staxx-link-btn" id="staxx-scaffold-sweep">' +
               'Add missing StaXX fields to every stack…</button>' +
@@ -22430,7 +22587,10 @@
           // shows the folder, but a failed fetch must not leave a half-drawn
           // section sitting under the settings rows.
           rowsHtml +=
-            '<div class="staxx-field" id="staxx-archive-list" hidden>' +
+            // data-key makes each its own titled box in the panel (see the
+            // .staxx-field[data-key] rules in staxx.css); neither names a
+            // setting, and nothing that reads data-key expects one here.
+            '<div class="staxx-field" data-key="archive-list" id="staxx-archive-list" hidden>' +
               '<span>Archived stacks</span>' +
               '<span class="staxx-hint" id="staxx-archive-hint"></span>' +
               '<ul class="staxx-confirm-list" id="staxx-archive-files"></ul>' +
@@ -22458,6 +22618,11 @@
       loadArchiveList();
       loadCryptState();
       loadSpendReadout();
+      settingsLockTakeover();
+      settingsLockTiming();
+      SETTINGS_ROWS.forEach(function (row) {
+        if (row.control === 'list') settingsListDraw(document.getElementById(row.id));
+      });
     });
   }
 
@@ -22479,6 +22644,10 @@
       bodyHtml: '<p>Settings has changes that have not been saved.</p>',
       goLabel: 'Discard'
     }).then(function (go) {
+      // The Discard button settles the answer but leaves the question open,
+      // since most callers go on to show progress inside it. Nothing to show
+      // here, so close it — or it outlives the panel it was asking about.
+      closeConfirm();
       if (go) settingsModal.close();
     });
   }
@@ -22529,6 +22698,44 @@
     });
   }
 
+  // PLAN_129 item 14: with StaXX as a Docker tab there is no top-level
+  // button for a takeover to replace, so the choice is meaningless — locked
+  // rather than left to fail silently on save. Client-side only; the server
+  // already treats the two settings independently.
+  function settingsLockTakeover() {
+    var header = document.getElementById('staxx-setting-header-menu');
+    var takeover = document.getElementById('staxx-setting-takeover-docker-tab');
+    if (!header || !takeover) return;
+    var field = takeover.closest('.staxx-field[data-key]');
+    if (header.value === 'false') {
+      takeover.disabled = true;
+      if (field) field.classList.add('staxx-field--locked');
+      if (takeover.value !== 'false') {
+        takeover.value = 'false';
+        takeover.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    } else {
+      takeover.disabled = false;
+      if (field) field.classList.remove('staxx-field--locked');
+    }
+  }
+
+  // Item 18: "When to install" only means anything once updates install
+  // themselves — locked the same way the takeover row above locks, but the
+  // block's whole subgrid also collapses to nothing (see the CSS), since a
+  // full row of disabled controls left in view read as broken rather than
+  // as beside the point.
+  function settingsLockTiming() {
+    var mode = document.getElementById('staxx-setting-update-mode');
+    var field = document.querySelector('.staxx-field[data-key="install-timing"]');
+    if (!mode || !field) return;
+    var locked = mode.value !== 'auto';
+    field.classList.toggle('staxx-field--locked', locked);
+    Array.prototype.forEach.call(field.querySelectorAll('select, input'), function (el) {
+      el.disabled = locked;
+    });
+  }
+
   if (settingsModal) {
     if (settingsTabstrip) {
       settingsTabstrip.addEventListener('click', function (event) {
@@ -22540,7 +22747,52 @@
     settingsBody.addEventListener('input', settingsUpdateDirty);
     settingsBody.addEventListener('change', settingsUpdateDirty);
 
+    // PLAN_129 (redone): a picture is a second way to pick the option, not a
+    // separate control — clicking one drives the select, and a change to the
+    // select (however it happened) keeps the outline in step.
+    settingsBody.addEventListener('change', function (event) {
+      var select = event.target;
+      var field = select.closest && select.closest('.staxx-field[data-key]');
+      if (!field) return;
+      var shots = field.querySelector('.staxx-shots');
+      if (!shots) return;
+      Array.prototype.forEach.call(shots.querySelectorAll('.staxx-shot'), function (fig) {
+        fig.classList.toggle('staxx-shot--on', fig.dataset.value === select.value);
+      });
+    });
+
+    settingsBody.addEventListener('change', function (event) {
+      if (event.target && event.target.id === 'staxx-setting-header-menu') settingsLockTakeover();
+      if (event.target && event.target.id === 'staxx-setting-update-mode') settingsLockTiming();
+    });
+
+    // Enter in a list control's add box adds, same as pressing the button —
+    // checked by ancestry rather than a specific id, since every list
+    // control's add box is built the same way.
+    settingsBody.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter') return;
+      var box = event.target.closest('.staxx-list-add');
+      if (!box) return;
+      event.preventDefault();
+      var addBtn = box.querySelector('[data-list-add]');
+      if (addBtn) settingsListAdd(addBtn);
+    });
+
     settingsBody.addEventListener('click', function (event) {
+      var listAdd = event.target.closest('[data-list-add]');
+      if (listAdd) { settingsListAdd(listAdd); return; }
+      var listRemove = event.target.closest('[data-list-remove]');
+      if (listRemove) { settingsListRemove(listRemove); return; }
+      var shot = event.target.closest('.staxx-shot');
+      if (shot) {
+        var field = shot.closest('.staxx-field[data-key]');
+        var select = field && field.querySelector('select');
+        if (select && select.value !== shot.dataset.value) {
+          select.value = shot.dataset.value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return;
+      }
       var btn = event.target.closest('[data-browse]');
       if (btn) {
         var input = document.getElementById(btn.dataset.browse);

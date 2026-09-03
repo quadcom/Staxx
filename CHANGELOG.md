@@ -18,6 +18,28 @@ before that were dates.
 
 ## Unreleased
 
+- **The flash-drive copy of a stack now includes its `.env` file,** and the switch that controls those copies is in the settings panel on the Storage tab. A copy restored from the flash drive is a complete definition again, not a compose file whose placeholders point at nothing.
+
+- **The page no longer scrolls behind an open dialog.** Reaching the end of the editor or the settings panel used to scroll the stacks list underneath; the page now holds still, softly blurred, until the dialog closes.
+
+- **Fixed:** pressing Discard on the settings panel’s "Discard changes?" question now closes the question as well as the panel.
+
+- **Settings can show a picture of what each option looks like.** Under a setting's dropdown, a
+  small screenshot of each option sits in a row, the chosen one outlined; clicking a picture picks
+  that option. It starts with where StaXX appears in the menu.
+
+- **The Settings panel was reworked with Adrian's feedback.** Each setting now sits in its own
+  titled box, with the explanation above the control rather than below it; the Docker menu setting
+  gained its own pair of pictures; several settings were reworded for clarity and brevity; Where
+  stacks may live moved onto the Storage tab; and the Docker menu setting locks itself off, greyed
+  out, while StaXX is shown as a Docker tab, since there is no top-level button for it to replace.
+  Related settings now share one box — the update check's schedule, when an update installs itself,
+  and Docker Hub sign-in; the "when to install" box folds away unless updates are set to install
+  themselves; registries you run yourself are now added one at a time to a list rather than typed as
+  a comma-separated line; the update-check figures now show as a table at the end of that tab instead
+  of a paragraph part-way through it; and the StaXXCrypt setting now explains, in plain words, what is
+  actually inside the little container it builds.
+
 - **The address column lists only ports that are actually reachable.** It shows the ports Docker is
   forwarding, plus the one port a service's web page answers on. Stacks with their own network
   address, or on host networking, no longer carry a row of internal ports nothing outside can reach.
