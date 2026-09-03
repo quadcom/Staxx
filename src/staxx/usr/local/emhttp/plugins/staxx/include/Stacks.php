@@ -2214,27 +2214,28 @@ function staxx_webui_url(
  * explicit statement of a port that answers, so when the two disagree here,
  * the web address wins.
  *
- * Deliberately narrow. Both conditions must hold, or the addresses pass
- * through untouched:
- *
- *   - nothing published   a real binding is hard fact about where the server
- *                          forwards traffic, and is never second-guessed.
- *   - the web port is NOT among the declared ones   when it IS declared,
- *                          nothing is wrong — replacing the list would only
- *                          throw away other real, declared ports (glances
- *                          exposes two; its web button opens one of them).
+ * Deliberately narrow: only when nothing was published, since a real binding
+ * is hard fact about where the server forwards traffic and is never
+ * second-guessed. staxx_container_net() no longer prints an unpublished
+ * container's declared ports at all — see its own comment — so this is now
+ * the ONLY source of a port on such a row, and the whole of that row's port
+ * list, not a merge with anything already there: an unpublished container
+ * has nothing else printed to double up with. When the web address names no
+ * port (a plain default of 80 or 443), no port is shown.
  *
  * @param array<int,array{ip:string,label:string,ports:string[]}> $addresses
  * @param bool     $published whether staxx_container_net()[id]['published'] found a real binding
  * @param string   $webuiUrl  staxx_webui_url()'s result for this container, or '' when none
- * @param string[] $exposed   staxx_container_net()[id]['exposed']
+ * @param string[] $exposed   staxx_container_net()[id]['exposed'] — unused now that an
+ *                            unpublished row has no printed ports to avoid duplicating,
+ *                            kept only so callers need not change their call sites
  * @return array<int,array{ip:string,label:string,ports:string[]}>
  */
 function staxx_address_webui_override(array $addresses, bool $published, string $webuiUrl, array $exposed): array {
   if ($published || $webuiUrl === '') return $addresses;
 
   $port = staxx_webui_literal_port($webuiUrl);
-  if ($port === '' || in_array($port, $exposed, true)) return $addresses;
+  if ($port === '') return $addresses;
 
   foreach ($addresses as &$a) {
     $a['ports'] = [$port];
@@ -2376,9 +2377,14 @@ function staxx_network_drivers(): array {
  *                     forwards to it. What you type is the server's address.
  *
  *   its own address   Unraid's br0.x networks give a container a real address
- *                     on your LAN. Nothing is forwarded and nothing is
- *                     published — you type the container's own address and the
- *                     port the application listens on.
+ *                     on your LAN, or the container sits on host networking.
+ *                     Nothing is forwarded and nothing is published, so no
+ *                     port is recorded here for it — an image's declared
+ *                     ports are a note for the person editing the form, not
+ *                     proof anything outside can reach them. The one port
+ *                     worth stating, the one a service's web page answers on,
+ *                     is filled in afterwards by
+ *                     staxx_address_webui_override().
  *
  * Reporting only the first would leave every br0.x container looking like it
  * has no way in, which is the opposite of the truth.
@@ -2487,18 +2493,27 @@ function staxx_container_net(): array {
     $published = (bool)$byIp;
 
     // ---- or the container's own address ----
+    //
+    // An address is still recorded here even though nothing was published —
+    // host networking and Unraid's br0.x macvlan/ipvlan networks give the
+    // container somewhere real to be reached at, and that is worth stating.
+    // But its port list is left EMPTY: an exposed port that nothing forwards
+    // to is a note on the image for the person editing the form, not a
+    // promise that anything outside can reach it, so printing it here would
+    // say something false. The one exception — the port a service's web page
+    // actually answers on — is filled in afterwards by
+    // staxx_address_webui_override(), which is why `exposed` is still kept
+    // above regardless of this.
     if (!$byIp) {
-      $ports = $exposedPorts;
-
       if ($mode === 'host') {
-        if ($hostIp !== '') $byIp[$hostIp] = $ports;
+        if ($hostIp !== '') $byIp[$hostIp] = [];
       } else {
         foreach (explode(',', $ips) as $ip) {
           $ip = trim($ip);
           // Docker prints the literal string "invalid IP" for a container whose
           // address is unset. It is not an address and must not be shown.
           if ($ip === '' || $ip === 'invalid IP') continue;
-          $byIp[$ip] = $ports;
+          $byIp[$ip] = [];
         }
       }
     }

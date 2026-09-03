@@ -16924,6 +16924,20 @@
     setData(pill, 'updateBack', entry.back ? '1' : '0');
     setData(pill, 'updateWhy', entry.why || '');
     if (note) setData(pill, 'updateNote', note); else delete pill.dataset.updateNote;
+    // PLAN_127 — the hover card's own facts, mirroring staxx_update_pill_html()'s
+    // $cardAttrs exactly: an attribute set when the server hands back a
+    // non-empty value, deleted otherwise, so a repaint that loses a fact (an
+    // update just applied, say) drops that row rather than leaving it stale.
+    [
+      ['updateRunning',    entry.was],
+      ['updateAvailable',  entry.version],
+      ['updateAsked',      entry.askedWords],
+      ['updateNext',       entry.nextWords],
+      ['updateInterval',   entry.intervalWords],
+      ['updateCadenceWhy', entry.cadenceWhy]
+    ].forEach(function (pair) {
+      if (pair[1]) setData(pill, pair[0], pair[1]); else delete pill.dataset[pair[0]];
+    });
 
     var text = entry.label || state;
     if (entry.count > 1) text += ' (' + entry.count + ')';
@@ -17016,6 +17030,167 @@
   function startPageClock() {
     if (!pageClockTimer) pageClockTimer = setInterval(tickPageClocks, 30000);
   }
+
+  /* --------------------------------------------------------- PLAN_127 --
+   * The update pill's hover card: the same facts a browser tooltip already
+   * shows as one long sentence, drawn instead as the page's own small card
+   * with a short lead and a two-column table — a browser tooltip cannot be
+   * styled at all, so matching the rest of the page means drawing this one
+   * ourselves. One element, moved to whichever pill is hovered or focused,
+   * filled from the data-update-* attributes staxx_update_pill_html() (and
+   * paintUpdatePill() above, which keeps them in step on every repaint)
+   * already carry — nothing here asks the server for anything of its own.
+   *
+   * Not offered under NARROW (declared above, the same 45rem phone gate the
+   * rest of the page uses): a phone has no hover, and the pill is already a
+   * button whose own press starts the update, so a tap cannot be repurposed
+   * to open this without breaking that. The sentence stays the pill's title
+   * there, which mobile browsers already surface on a long press.
+   */
+  var updCard = null;
+  var updCardTimer = null;
+  var updCardPill = null;   // the pill currently hovered/focused — set the
+                             // moment it is entered, whether the card has
+                             // actually appeared yet or is still waiting out
+                             // the show delay.
+
+  function ensureUpdCard() {
+    if (!updCard) {
+      updCard = document.createElement('div');
+      updCard.className = 'staxx-updcard';
+      updCard.setAttribute('role', 'tooltip');
+      updCard.hidden = true;
+      // Beside .staxx-scaffold, not <body> — see the bundle/export modals
+      // above for the same reasoning: .staxx-* rules only apply inside it.
+      (document.querySelector('.staxx-scaffold') || document.body).appendChild(updCard);
+    }
+    return updCard;
+  }
+
+  // One fixed lead for 'update' — the state the card exists for and the one
+  // whose sentence names a press that no longer reads naturally once split
+  // from the table below ("Press this" with nothing to point "this" at).
+  // Every other state keeps its own tip, minus the trailing clock sentence
+  // the table's own rows already cover.
+  var UPD_CARD_LEAD = {
+    update: 'A newer version is available. Press the chip to fetch it and rebuild the container on it.'
+  };
+
+  function updCardLead(pill) {
+    var fixed = UPD_CARD_LEAD[pill.dataset.updateState || ''];
+    if (fixed) return fixed;
+    var title = pill.title || '';
+    // staxx_update_when_words() always starts the clock sentence this way —
+    // cutting there leaves exactly the part the table's rows do not already
+    // say, whatever note may follow the tip beyond it.
+    var cut = title.indexOf(' Last asked ');
+    return cut === -1 ? title : title.slice(0, cut);
+  }
+
+  function updCardFacts(pill) {
+    var rows = [
+      ['Running',    pill.dataset.updateRunning,    true],
+      ['Available',  pill.dataset.updateAvailable,  true],
+      ['Last asked', pill.dataset.updateAsked,       false],
+      ['Next check', pill.dataset.updateNext,        false],
+      ['Checked',    pill.dataset.updateInterval,    false],
+      ['Why',        pill.dataset.updateCadenceWhy,  false]
+    ];
+    var html = '';
+    for (var i = 0; i < rows.length; i++) {
+      var val = rows[i][1];
+      if (!val) continue;   // rows that do not apply are left out, not shown blank
+      html += '<dt>' + esc(rows[i][0]) + '</dt><dd' +
+        (rows[i][2] ? ' class="staxx-updcard__mono"' : '') + '>' + esc(val) + '</dd>';
+    }
+    return html;
+  }
+
+  // Below the pill by default, flipped above when there is no room below,
+  // and clamped horizontally so a pill at the right edge of a narrow window
+  // never pushes the card off screen. Measured after the card is already in
+  // the DOM and visible (offsetWidth/Height need layout), so this only runs
+  // once showUpdCard() has set its content and cleared `hidden`.
+  function placeUpdCard(pill) {
+    var r = pill.getBoundingClientRect();
+    var cw = updCard.offsetWidth, ch = updCard.offsetHeight;
+    var top = r.bottom + 8;
+    if (top + ch > window.innerHeight && r.top - ch - 8 >= 0) top = r.top - ch - 8;
+    var left = r.left;
+    if (left + cw > window.innerWidth - 8) left = window.innerWidth - 8 - cw;
+    if (left < 8) left = 8;
+    updCard.style.left = left + 'px';
+    updCard.style.top  = top + 'px';
+  }
+
+  function showUpdCard() {
+    var pill = updCardPill;
+    if (!pill || NARROW.matches) return;
+    var card = ensureUpdCard();
+    card.innerHTML = '<div class="staxx-updcard__lead">' + esc(updCardLead(pill)) + '</div>' +
+      '<dl class="staxx-updcard__facts">' + updCardFacts(pill) + '</dl>';
+    // The pill's title is moved out of the way while the card is up, or the
+    // browser's own tooltip appears on top of this one — the one real trap
+    // here. Restored the moment the card is dismissed, below.
+    if (pill.title) {
+      pill.dataset.updateTitle = pill.title;
+      pill.removeAttribute('title');
+    }
+    card.hidden = false;
+    placeUpdCard(pill);
+  }
+
+  function dismissUpdCard() {
+    if (updCardTimer) { clearTimeout(updCardTimer); updCardTimer = null; }
+    if (updCard) updCard.hidden = true;
+    if (updCardPill && updCardPill.dataset.updateTitle) {
+      updCardPill.title = updCardPill.dataset.updateTitle;
+      delete updCardPill.dataset.updateTitle;
+    }
+    updCardPill = null;
+  }
+
+  function updCardEnter(pill) {
+    if (NARROW.matches || updCardPill === pill) return;
+    dismissUpdCard();
+    updCardPill = pill;
+    updCardTimer = setTimeout(showUpdCard, 250);
+  }
+
+  // mouseenter/mouseleave do not bubble, so this is delegated on the
+  // document in the capture phase instead — a capturing listener still runs
+  // for every element the pointer crosses, bubbling or not (see the same
+  // trade-off wherever else this file listens for them). `relatedTarget` is
+  // what tells a genuine crossing of the pill's own edge apart from moving
+  // between the pill and something nested inside it (PLAN_121's tag icon) —
+  // without that check, moving onto the icon would read as leaving the pill
+  // and dismiss the card while the pointer never left it.
+  document.addEventListener('mouseenter', function (event) {
+    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    if (pill && !pill.contains(event.relatedTarget)) updCardEnter(pill);
+  }, true);
+  document.addEventListener('mouseleave', function (event) {
+    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    if (pill && pill === updCardPill && !pill.contains(event.relatedTarget)) dismissUpdCard();
+  }, true);
+  // focusin bubbles on its own, so this is the keyboard path (Tab onto a
+  // pill) with no delegation trick needed — same card, same delay.
+  document.addEventListener('focusin', function (event) {
+    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    if (pill) updCardEnter(pill);
+  });
+  document.addEventListener('focusout', function (event) {
+    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    if (pill && pill === updCardPill) dismissUpdCard();
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && updCardPill) dismissUpdCard();
+  });
+  // A scrolled row can carry its pill anywhere, including behind the header
+  // — easiest to just close rather than re-place on every scroll tick.
+  window.addEventListener('scroll', function () {
+    if (updCardPill) dismissUpdCard();
+  }, true);
 
   // "less than a minute", "20 minutes", "3 hours" — never "ago" on its own,
   // since every caller says that itself once, around whichever sentence it

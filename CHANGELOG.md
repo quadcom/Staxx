@@ -18,6 +18,10 @@ before that were dates.
 
 ## Unreleased
 
+- **The address column lists only ports that are actually reachable.** It shows the ports Docker is
+  forwarding, plus the one port a service's web page answers on. Stacks with their own network
+  address, or on host networking, no longer carry a row of internal ports nothing outside can reach.
+
 - **The update status now lives at the top of the page, not above the table.** Last checked, how
   many updates are waiting, and how many author-example findings there are now show as small tags at
   the right end of the title bar, next to "StaXX". The explanatory paragraph that used to sit above
@@ -37,6 +41,12 @@ before that were dates.
   and bigger WebUI/Logs/Repo/CA buttons that are easier to click; and an update pill now always
   reads "update ready", with a small tag icon showing when it also knows exactly which version —
   hover it to see both.
+- **Hovering an update pill now shows a small card in the page's own style instead of the browser's
+  plain tooltip.** The running and available versions, when it was last checked, when it is next
+  due and why it is checked as often as it is now lay out as a short table instead of one long
+  sentence. An image whose first check already found an update pending — Radarr was the one that
+  gave this away — now shows its running version too, read straight off the container rather than
+  left blank.
 - **The page no longer grows a second scrollbar of its own.** Collapsing a stack or a folder was
   leaving a sliver of invisible extra room on the page, on top of your browser's own scrollbar —
   fixed at the source, so both scroll the same amount again.

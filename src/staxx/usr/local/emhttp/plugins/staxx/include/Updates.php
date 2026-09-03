@@ -1047,6 +1047,89 @@ function staxx_update_cadence_why(string $image, array $entry): array {
 }
 
 /**
+ * PLAN_127 — staxx_update_cadence_why()'s interval, spelled out the way its
+ * own hand-written sentences already say it ("every six hours") rather than
+ * as a bare number, for the hover card's "Checked" row. Values this function
+ * does not recognise (the doubled interval a quiet image earns) fall back to
+ * staxx_time_span_words() in numeral form — still readable, just not hand-
+ * tuned prose.
+ */
+function staxx_update_interval_words(int $seconds): string {
+  $named = [
+    STAXX_UPDATE_ASK_TTL => 'six hours',
+    86400                => 'a day',
+    7 * 86400            => 'a week',
+    14 * 86400           => 'a fortnight',
+  ];
+  return 'every '.($named[$seconds] ?? staxx_time_span_words($seconds));
+}
+
+/**
+ * PLAN_127 — staxx_update_cadence_why()'s sentence, split at its own "so
+ * checked every…" join into the two short phrases the hover card shows as
+ * separate rows ("Checked" / "Why") instead of one long one that overflowed
+ * the card in the first mockup. Matched by hand against that function's own
+ * fixed sentences, so a new sentence added there needs a line added here too
+ * — there is no way to split English prose apart mechanically that would
+ * survive that function's wording ever changing.
+ *
+ * @return array{interval:string, why:string} why is '' when no sentence here
+ *              recognises the one just returned, rather than guessing.
+ */
+function staxx_update_cadence_why_short(string $image, array $entry): array {
+  $full = staxx_update_cadence_why($image, $entry);
+  $why  = $full['why'];
+  $short = '';
+  if (strpos($why, 'Pinned to one exact build') === 0) {
+    $short = 'pinned to one exact build';
+  } elseif (strpos($why, 'Not compared yet') === 0) {
+    $short = 'not compared yet';
+  } elseif (strpos($why, 'Five checks in a row have failed') === 0) {
+    $short = 'checks have been failing';
+  } elseif (strpos($why, 'The last check did not get an answer') === 0) {
+    $short = 'the last check found no answer';
+  } elseif (strpos($why, 'A moving tag') === 0) {
+    $short = 'a moving tag';
+  } elseif (strpos($why, 'A version-numbered tag') === 0) {
+    $short = 'a version-numbered tag';
+  } elseif (strpos($why, 'Neither a version number') === 0) {
+    $short = 'neither a version number nor a moving tag';
+  } elseif (strpos($why, 'Changed twice in the last fortnight') === 0) {
+    $short = 'changed twice in a fortnight';
+  } elseif (strpos($why, 'Has not changed in over three months') === 0) {
+    $short = 'unchanged for over three months';
+  }
+  return ['interval' => staxx_update_interval_words($full['interval']), 'why' => $short];
+}
+
+/**
+ * PLAN_127 — the same three clock facts staxx_update_when_words() composes
+ * into one sentence, returned instead as the short phrases the hover card's
+ * table rows want. Empty strings throughout when never asked, exactly
+ * mirroring staxx_update_when_words()'s own '' — a caller drops a row whose
+ * value is '' rather than showing it blank.
+ *
+ * @return array{asked:string, next:string, interval:string, why:string}
+ */
+function staxx_update_clock_words(string $image, array $entry, int $now): array {
+  $asked = (int)($entry['asked'] ?? 0);
+  if ($asked === 0) return ['asked' => '', 'next' => '', 'interval' => '', 'why' => ''];
+
+  $nextDue = (int)($entry['nextDue'] ?? 0);
+  $next = $nextDue > $now
+    ? 'in '.staxx_time_span_words($nextDue - $now)
+    : 'at the next pass';
+
+  $cadence = staxx_update_cadence_why_short($image, $entry);
+  return [
+    'asked'    => staxx_time_span_words($now - $asked).' ago',
+    'next'     => $next,
+    'interval' => $cadence['interval'],
+    'why'      => $cadence['why'],
+  ];
+}
+
+/**
  * What the registry currently has for one image reference — digest, version,
  * source and creation time, every key present only when actually known.
  * Returns [] on any failure at all: a failure must never be mistaken for
@@ -2115,7 +2198,19 @@ function staxx_update_check(string $scope, bool $force): array {
       // clock would mean an update never actually arrives. Only a fresh
       // digest (one 'seen' has not already been recorded against) resets it.
       if (($existing['seenDigest'] ?? '') !== $existing['remote']) {
-        $existing['was']        = $images[$image]['version'] ?? ($existing['was'] ?? '');
+        $priorVersion = $images[$image]['version'] ?? '';
+        if ($priorVersion !== '') {
+          $existing['was'] = $priorVersion;
+        } elseif (($existing['was'] ?? '') === '') {
+          // PLAN_127 — nothing was ever recorded as newest-seen before this
+          // pass, which happens whenever the first check StaXX ever makes
+          // already finds an update pending: there is no earlier "was" to
+          // roll forward. Fall back to the running image's own declared
+          // version label instead — staxx_image_local() already read it off
+          // the local image above, no extra docker call needed. An image
+          // that publishes no version label stays blank, which is honest.
+          $existing['was'] = (string)($local['version'] ?? '');
+        }
         // The running image's own build date — 'created' on $existing is the
         // REMOTE image's date and is overwritten every pass, so it cannot
         // serve as "before". $local is what 'was' is being read alongside,
@@ -2472,6 +2567,10 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
   // on offer — see the matching comment in staxx_update_check().
   $skipped = ($entry['skip'] ?? '') !== '' && $entry['skip'] === $remote;
 
+  // PLAN_127 — the same three facts staxx_update_when_words() folds into the
+  // tip sentence below, kept separately too for the hover card's own rows.
+  $clock = staxx_update_clock_words($image, $entry, time());
+
   if ($local !== $remote && !$skipped) {
     $was = (string)($entry['was'] ?? '');
     $ver = (string)($entry['version'] ?? '');
@@ -2490,7 +2589,9 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
                       . 'The one running was built '.$whenWas.', and the new one was built '.$whenNew.'. '
                       . 'Press this to fetch it and rebuild the container on it.'
                       . staxx_update_when_words($image, $entry, time()),
-               'version' => $ver, 'was' => $was];
+               'version' => $ver, 'was' => $was,
+               'askedWords' => $clock['asked'], 'nextWords' => $clock['next'],
+               'intervalWords' => $clock['interval'], 'cadenceWhy' => $clock['why']];
     }
 
     // PLAN_121 item 7: a from-to pair could run to twice the width of every
@@ -2508,7 +2609,9 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
       . 'container on it.';
     $tip .= staxx_update_when_words($image, $entry, time());
     return ['state' => 'update', 'label' => $label, 'source' => $source, 'tip' => $tip,
-             'version' => $ver, 'was' => $was, 'versioned' => $versioned];
+             'version' => $ver, 'was' => $was, 'versioned' => $versioned,
+             'askedWords' => $clock['asked'], 'nextWords' => $clock['next'],
+             'intervalWords' => $clock['interval'], 'cadenceWhy' => $clock['why']];
   }
 
   return [
@@ -2517,6 +2620,8 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
     'source' => $source,
     'tip'    => 'This is running the version currently published in the registry.'
               . staxx_update_when_words($image, $entry, time()),
+    'askedWords' => $clock['asked'], 'nextWords' => $clock['next'],
+    'intervalWords' => $clock['interval'], 'cadenceWhy' => $clock['why'],
   ];
 }
 
@@ -2648,6 +2753,17 @@ function staxx_updates_aggregate(array $pills): array {
     // updates into "N updates ready" never named one version and still
     // does not.
     'versioned' => ($state === 'update' && $updateCount === 1) ? !empty($best['versioned']) : false,
+    // PLAN_127 — the hover card's own facts, carried through on the same
+    // single-service condition as 'versioned' above: a roll-up of several
+    // services cannot name one running/available version or one clock
+    // between them, but a row that turns out to speak for exactly one still
+    // has everything staxx_updates_pill_for_image() worked out for it.
+    'version'       => $updateCount === 1 ? (string)($best['version'] ?? '') : '',
+    'was'           => $updateCount === 1 ? (string)($best['was'] ?? '') : '',
+    'askedWords'    => $total === 1 ? (string)($best['askedWords'] ?? '') : '',
+    'nextWords'     => $total === 1 ? (string)($best['nextWords'] ?? '') : '',
+    'intervalWords' => $total === 1 ? (string)($best['intervalWords'] ?? '') : '',
+    'cadenceWhy'    => $total === 1 ? (string)($best['cadenceWhy'] ?? '') : '',
   ];
 }
 

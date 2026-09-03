@@ -456,6 +456,25 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   $tagIcon = !empty($u['versioned'])
     ? '<i class="fa fa-tag staxx-updatepill__tag" aria-hidden="true"></i>' : '';
 
+  // PLAN_127 — the hover card's own facts, one data attribute each so the
+  // browser can lay them out as a table instead of parsing them back out of
+  // the sentence in $title above. `data-update-cadence-why` is named apart
+  // from the existing `data-update-why` above (the failed-pull chip) since
+  // the two describe different things and both can be present on one pill.
+  // Absent facts are omitted rather than written empty, so the card can tell
+  // "no such row" from "row present but blank".
+  $cardAttrs = '';
+  foreach ([
+    'running'     => (string)($u['was'] ?? ''),
+    'available'   => (string)($u['version'] ?? ''),
+    'asked'       => (string)($u['askedWords'] ?? ''),
+    'next'        => (string)($u['nextWords'] ?? ''),
+    'interval'    => (string)($u['intervalWords'] ?? ''),
+    'cadence-why' => (string)($u['cadenceWhy'] ?? ''),
+  ] as $attr => $val) {
+    if ($val !== '') $cardAttrs .= ' data-update-'.$attr.'="'.htmlspecialchars($val).'"';
+  }
+
   return '<'.$tag.' class="staxx-updatepill '.$cls.'"'.$typeAttr
        . ' data-update-state="'.htmlspecialchars($state).'"'
        . ' data-update-image="'.$image.'"'
@@ -465,6 +484,7 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
        . ' data-update-back="'.(!empty($u['back']) ? '1' : '0').'"'
        . ' data-update-why="'.htmlspecialchars((string)($u['why'] ?? '')).'"'
        . ' data-update-suggest="'.htmlspecialchars((string)($u['suggest'] ?? '')).'"'
+       . $cardAttrs
        . $noteAttr
        . $titleAttr.'>'.$label.$tagIcon.'</'.$tag.'>';
 }

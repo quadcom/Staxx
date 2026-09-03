@@ -5244,6 +5244,82 @@ div.title.staxx-has-titlebar {
   justify-content: flex-end;
 }
 
+/* PLAN_127 — the update pill's hover card. `fixed` because it is one shared
+   element moved to whatever pill is hovered anywhere on the page, not a
+   panel hung off one row the way .staxx-linkpop is; border, radius and
+   shadow are the same tokens .staxx-linkpop already uses, but the fill is
+   the page's own table background (var(--background-color)) rather than
+   --sm-bg's popover fill — Adrian's own correction against the live mockup,
+   2026-09-03. Above the context menu (9999) since either could be open near
+   a pill at once, but below the blocking modals at 10000, which nothing
+   here needs to compete with. */
+.staxx-updcard {
+  position: fixed;
+  z-index: 10000;
+  width: max-content;
+  max-width: 36rem;
+  padding: 1rem 1.2rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--background-color, #1c1c1c);
+  color: var(--sm-fg);
+  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.35);
+  font-size: 1.2rem;
+  line-height: 1.4;
+}
+
+.staxx-updcard[hidden] {
+  display: none;
+}
+
+.staxx-updcard__lead {
+  margin: 0 0 0.8rem;
+}
+
+/* No padding between rows — line-height alone separates them, per the
+   mockup: the first draft's row padding made a five-row card taller than
+   the lead sentence beside it, which nothing else on the page does. */
+.staxx-updcard__facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 1rem;
+  row-gap: 0; /* Unraid's own dl rule sets a 15px gap; the rows sit on line height alone */
+  margin: 0;
+}
+
+/* Unraid's own stylesheet gives every dt and dd on the page padding, a
+   minimum height and a margin, which spaced these rows out as if each were a
+   form field. All of it is zeroed: the rows are separated by line height
+   alone, as the plan asks. */
+.staxx-updcard__facts dt,
+.staxx-updcard__facts dd {
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+  height: auto;
+  line-height: 1.4;
+  font-size: inherit;
+  font-weight: inherit;
+  text-align: left;
+  border: 0;
+  background: transparent;
+}
+
+.staxx-updcard__facts dt {
+  grid-column: 1;
+  color: var(--sm-accent);
+}
+
+.staxx-updcard__facts dd {
+  grid-column: 2;
+}
+
+/* The two version rows read as identifiers, not prose — same monospace
+   stack the Services column already uses for image names. */
+.staxx-updcard__mono {
+  font-family: ui-monospace, Consolas, monospace;
+}
+
 .staxx-scaffold .staxx-required {
   display: block;
   width: 100%;
