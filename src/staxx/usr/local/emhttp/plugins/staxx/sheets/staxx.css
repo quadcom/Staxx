@@ -291,10 +291,11 @@
 
 /* ---- Title bar status chips (PLAN_125) ----
  *
- * Unraid's own title bar sets 1.8px letter-spacing and a 1.4rem font size for
- * its page name — both wrong on a chip, so this span resets them rather than
- * inheriting. The colour tokens the chips need are declared on this class
- * itself (see the .staxx-scaffold rule above) because the title bar sits
+ * Still named -titlebar from when the chips lived inside Unraid's own title
+ * bar (PLAN_125); they now sit in their own row (.staxx-statusrow, below)
+ * which already right-aligns them, so this class only needs the chip
+ * styling itself. The colour tokens the chips need are declared on this
+ * class too (see the .staxx-scaffold rule above) because the chip row sits
  * outside .staxx-scaffold in the page's own markup — nothing here would show
  * a colour otherwise. */
 .staxx-titlebar {
@@ -303,10 +304,6 @@
   align-items: center;
   letter-spacing: normal;
   font-size: 1rem;
-  /* The title bar and the tab strip don't justify their content the same
-     way, so pin the chips to the right end of whichever one they land in
-     rather than relying on the parent's own flex alignment. */
-  margin-left: auto;
 }
 
 /* A touch smaller than the table's own pills, so the chips sit inside the
@@ -349,11 +346,16 @@
   outline-offset: 0.1rem;
 }
 
-/* The gap under the title bar matches the buttons row's own 0.6rem — see
-   .staxx-bar above — so more of the table shows. Set by the script (not
-   :has()) on the one class we know is there once our span has been added. */
-div.title.staxx-has-titlebar {
-  margin-bottom: 0.6rem;
+/* The chip row (PLAN_125) sits right above the buttons row, right-aligned
+   over it. Unraid's own title bar carries a 20px bottom margin we can no
+   longer class (nothing sets .staxx-has-titlebar any more), so this pulls
+   the row up into that gap instead of leaving a double gap above the
+   buttons. */
+.staxx-statusrow {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0 0.4rem;
+  margin-top: -1.2rem;
 }
 
 /* ---- Buttons ------------------------------------------------------------ */
@@ -10181,8 +10183,8 @@ dialog::backdrop {
 @media (max-width: 45rem) {
   /* The one thing the status chips may do on a phone (PLAN_125) — the same
      fact is one tap away on the "Check for updates" button's own feedback,
-     so nothing here is unreachable, just not worth the title bar's room. */
-  .staxx-titlebar {
+     so nothing here is unreachable, just not worth its own row's room. */
+  .staxx-statusrow {
     display: none;
   }
 

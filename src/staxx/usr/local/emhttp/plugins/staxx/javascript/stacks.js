@@ -17233,40 +17233,30 @@
   // of throwing.
   var checkUpdatesBtn = document.getElementById('staxx-check-updates');
 
-  // PLAN_125: the status line moved out of StacksPage.php's own markup and
-  // into Unraid's title bar, which is drawn by Unraid, not by us — so it is
-  // built here rather than reproducing markup we do not own (the "own the
-  // render" rule, applied in the other direction). If Unraid's bar cannot be
-  // found — a markup change on their side — the span is created where the
-  // old paragraph used to sit instead, so the information is never silently
-  // lost: that is the one guard.
+  // PLAN_125: the status line was tried inside Unraid's own title bar first,
+  // but Adrian saw it live and asked for the chips lower — their own
+  // right-aligned line sitting directly above the buttons row, in every
+  // mode the page can be mounted in, rather than a home that shifts with
+  // Unraid's layout. So it goes into a wrapper of our own, inserted right
+  // before the buttons row (`.staxx-bar.staxx-bar--end`); if that row is
+  // ever missing — a markup change — it falls back to sitting before
+  // `#staxx-update-queue` instead, so the information is never silently lost.
   var updatesLine = document.getElementById('staxx-updates-line');
   if (!updatesLine) {
     updatesLine = document.createElement('span');
     updatesLine.id = 'staxx-updates-line';
-    updatesLine.className = 'right staxx-titlebar';
+    updatesLine.className = 'staxx-titlebar';
     updatesLine.hidden = true;
-    var titleBar = document.querySelector('div.title');
-    if (titleBar) {
-      titleBar.classList.add('staxx-has-titlebar');
-      titleBar.appendChild(updatesLine);
+    var statusRow = document.createElement('div');
+    statusRow.className = 'staxx-statusrow';
+    statusRow.appendChild(updatesLine);
+    var buttonsBar = document.querySelector('.staxx-bar.staxx-bar--end');
+    if (buttonsBar && buttonsBar.parentNode) {
+      buttonsBar.parentNode.insertBefore(statusRow, buttonsBar);
     } else {
-      // Unraid draws a per-page title bar when its own Display Settings
-      // "tabbed view" is off, and a shared tab strip (.tabs, holding a
-      // .tabs-container of buttons) instead when it is on — so the chips
-      // need a second home for the strip case. Not checked live on the dev
-      // box, whose tabbed view is off, so this rung is unverified in
-      // practice; the before-the-update-queue fallback still covers a
-      // change to either shape.
-      var tabStrip = document.querySelector('.tabs');
-      if (tabStrip) {
-        tabStrip.classList.add('staxx-has-titlebar');
-        tabStrip.appendChild(updatesLine);
-      } else {
-        var updateQueueEl = document.getElementById('staxx-update-queue');
-        if (updateQueueEl && updateQueueEl.parentNode) {
-          updateQueueEl.parentNode.insertBefore(updatesLine, updateQueueEl);
-        }
+      var updateQueueEl = document.getElementById('staxx-update-queue');
+      if (updateQueueEl && updateQueueEl.parentNode) {
+        updateQueueEl.parentNode.insertBefore(statusRow, updateQueueEl);
       }
     }
   }
