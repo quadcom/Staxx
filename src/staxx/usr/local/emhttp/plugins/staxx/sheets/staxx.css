@@ -9415,9 +9415,14 @@
     grid-column: 1;
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    /* Centred in the card's left half, chips stacked one above the other —
+       left-aligned they sat against the card's edge while the address in the
+       right half floated free, and the two halves read as unrelated. */
+    align-items: center;
+    justify-self: stretch;
+    width: 100%;
     gap: 0.3rem;
-    padding-left: 0.5rem;
+    padding-left: 0;
   }
 
   .staxx-stacks .staxx-stack-row .staxx-cell--address,
