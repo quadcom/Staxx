@@ -303,6 +303,10 @@
   align-items: center;
   letter-spacing: normal;
   font-size: 1rem;
+  /* The title bar and the tab strip don't justify their content the same
+     way, so pin the chips to the right end of whichever one they land in
+     rather than relying on the parent's own flex alignment. */
+  margin-left: auto;
 }
 
 /* A touch smaller than the table's own pills, so the chips sit inside the

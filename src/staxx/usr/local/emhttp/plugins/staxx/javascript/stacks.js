@@ -17251,9 +17251,22 @@
       titleBar.classList.add('staxx-has-titlebar');
       titleBar.appendChild(updatesLine);
     } else {
-      var updateQueueEl = document.getElementById('staxx-update-queue');
-      if (updateQueueEl && updateQueueEl.parentNode) {
-        updateQueueEl.parentNode.insertBefore(updatesLine, updateQueueEl);
+      // Unraid draws a per-page title bar when its own Display Settings
+      // "tabbed view" is off, and a shared tab strip (.tabs, holding a
+      // .tabs-container of buttons) instead when it is on — so the chips
+      // need a second home for the strip case. Not checked live on the dev
+      // box, whose tabbed view is off, so this rung is unverified in
+      // practice; the before-the-update-queue fallback still covers a
+      // change to either shape.
+      var tabStrip = document.querySelector('.tabs');
+      if (tabStrip) {
+        tabStrip.classList.add('staxx-has-titlebar');
+        tabStrip.appendChild(updatesLine);
+      } else {
+        var updateQueueEl = document.getElementById('staxx-update-queue');
+        if (updateQueueEl && updateQueueEl.parentNode) {
+          updateQueueEl.parentNode.insertBefore(updatesLine, updateQueueEl);
+        }
       }
     }
   }
