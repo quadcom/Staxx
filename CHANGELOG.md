@@ -18,6 +18,19 @@ before that were dates.
 
 ## Unreleased
 
+- **On a tablet-sized window, the stack list is now a grid of cards instead of a squeezed table.**
+  Each stack gets its own card — icon, name, state, address and its little graphs, three across —
+  and a folder becomes a heading above its own row of cards. A stack running several services shows
+  a cubes button in its corner; tap it to see those services as cards of their own, without the page
+  underneath changing shape.
+
+- **The stack table reads better on a wide screen.** Ports now stand in their own column beside the
+  address instead of running on in one long line; a stopped stack's dash lines up under its column
+  heading instead of sitting off to one side; the line under the column headings is now one
+  unbroken rule instead of breaking into pieces; stack rows are a little taller, with a bigger icon
+  and bigger WebUI/Logs/Repo/CA buttons that are easier to click; and an update pill now always
+  reads "update ready", with a small tag icon showing when it also knows exactly which version —
+  hover it to see both.
 - **The page no longer grows a second scrollbar of its own.** Collapsing a stack or a folder was
   leaving a sliver of invisible extra room on the page, on top of your browser's own scrollbar —
   fixed at the source, so both scroll the same amount again.

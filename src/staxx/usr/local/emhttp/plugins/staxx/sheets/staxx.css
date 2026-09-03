@@ -83,6 +83,13 @@
 
   --sm-radius: 0.4rem;
 
+  /* The width of a stat column's little graph (.staxx-spark) — and, since
+     PLAN_121, the same width a blank figure or a column heading centres
+     itself across when there is no graph to sit over. One token so all
+     three stay the same footprint by construction rather than by three
+     separately-maintained 8.8rem literals agreeing with each other. */
+  --staxx-graph-w: 8.8rem;
+
   /* Full width. The page previously capped itself at 60rem and left most of a
      wide screen empty; prose is capped individually below instead, so long
      service lists get the room and paragraphs stay readable. */
@@ -939,13 +946,26 @@
   align-content: center;
 }
 
-/* The header row's bold weight and rule-off, same idea as the two grids
-   below and scoped the same way. Centred rather than left, so a heading
-   still sits over its figures once the ~130rem fold below packs cpu/mem/
-   net/gpu into a 2x2 block of centred numbers underneath it. */
+/* The header row's bold weight, same idea as the two grids below and scoped
+   the same way. Centred rather than left, so a heading still sits over its
+   figures once the ~130rem fold below packs cpu/mem/net/gpu into a 2x2
+   block of centred numbers underneath it.
+
+   PLAN_121 item 5: the rule-off used to live here, on every heading
+   individually — harmless while every heading ran the same width, but once
+   the stat headings narrowed to sit over their graphs (commit 8a8b7a9) their
+   own short underlines broke the line under Stack/Services/State/Address
+   into four stray dashes. It now lives on .staxx-head-row itself, below, so
+   one line spans the row regardless of how wide any heading is. The ~130rem
+   fold puts the per-heading borders back — see that block — because there
+   they are the CPU/Memory divider between its two rows of stat headings,
+   which is a different, deliberate line. */
 .staxx-stacks [role="columnheader"] {
   font-weight: 700;
   text-align: center;
+}
+
+.staxx-stacks .staxx-head-row {
   border-bottom: 0.1rem solid var(--sm-line);
 }
 
@@ -962,23 +982,42 @@
    (label + value), which ignores text-align on its single text child —
    only justify-content moves it. One class plus the attribute, (0,3,0),
    outranks that block's plain `.staxx-cell.staxx-num` (0,2,0), so this
-   wins regardless of source order or which container query is live. */
-.staxx-stacks [role="columnheader"].staxx-num {
+   wins regardless of source order or which container query is live.
+
+   PLAN_121 items 1-2: shared with .staxx-num.staxx-cell--blank, added by
+   blankFigures()/updateFolderTotals() in stacks.js and by the server for a
+   row that has never had a figure at all. Without a graph of its own to
+   right-align against, a lone dash otherwise sat at the NUMBER position —
+   hard left of where this heading centres — so a blank cell borrows the
+   same right-hand slot a heading uses instead of the number's usual one.
+   One rule for both is what stops them drifting apart again. */
+.staxx-stacks [role="columnheader"].staxx-num,
+.staxx-stacks .staxx-num.staxx-cell--blank {
   /* A figure cell is pushed to the end of its track (justify-self: end, see
-     .staxx-num above), and its graph — .staxx-spark, or .staxx-bar in the
-     memory/GPU columns, both the same footprint — sits at the cell's right
-     edge inside the cell's own 0.8rem right padding. A heading has no figure
-     of its own to right-align, only a graph beneath it to sit over, so it
-     takes that same right-hand slot and centres its text within it, rather
-     than across the whole track the way a plain centred heading would. */
+     .staxx-num above), and its graph — .staxx-spark, the same footprint in
+     every stat column — sits at the cell's right edge inside the cell's own
+     0.8rem right padding. A heading, or a blank cell with its graph hidden
+     below, has no figure to right-align, only that same slot to sit over, so
+     it centres its text within it rather than across the whole track the
+     way a plain centred heading would. */
   justify-self: end;
-  width: calc(8.8rem + 0.8rem); /* .staxx-spark's width + the cell's own right
-                                    padding — change one, change both */
+  width: calc(var(--staxx-graph-w) + 0.8rem); /* .staxx-spark's width + the
+                                    cell's own right padding — change one,
+                                    change both */
   padding-left: 0;
   justify-content: center;
 }
 
-.staxx-stacks [role="columnheader"].staxx-num::after {
+.staxx-stacks [role="columnheader"].staxx-num::after,
+.staxx-stacks .staxx-num.staxx-cell--blank::after {
+  display: none;
+}
+
+/* The graph itself is still in the markup on a blank cell (paintFigures()
+   left it empty rather than removing it, so a figure landing later has
+   somewhere to draw into) — hidden here so it does not sit doubled up
+   beside the now-centred dash. */
+.staxx-stacks .staxx-num.staxx-cell--blank .staxx-spark {
   display: none;
 }
 
@@ -1071,9 +1110,15 @@
 }
 
 /* Several addresses stack rather than running on: a container on one of
-   Unraid's br0.x networks has its own, and it should not be lost in a line. */
+   Unraid's br0.x networks has its own, and it should not be lost in a line.
+   Each one is itself a small flex row (PLAN_121 item 4): the label stays put,
+   vertically centred, with its ports beside it as their own left-aligned
+   column rather than a comma-joined string running across the cell — see
+   staxx_address_html() in StacksTable.php for the markup this reads. */
 .staxx-addr {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
   white-space: nowrap;
 }
 
@@ -1085,13 +1130,24 @@
    anywhere else. Either way it is the part that identifies WHERE, so it takes
    the foreground colour and the ports follow in the accent.
 
-   The colon between them is real text in the markup, not generated here — see
-   the note in StacksTable.php. */
+   The colon between them is real text in the markup, folded into this same
+   span rather than sitting loose in .staxx-addr — a bare text node next to
+   this one would become its own flex item too, and .staxx-addr's gap would
+   float it away from the word it punctuates. See the note in
+   StacksTable.php. */
 .staxx-addr-label {
   color: var(--sm-fg);
 }
 
+/* One port per line rather than a comma-joined run — see
+   staxx_address_html(), which now writes one <span> per port instead of one
+   text node holding all of them. The join moves out of the text and into
+   this layout: there is no separator character between them any more, only
+   the line break. */
 .staxx-addr-ports {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   color: var(--sm-accent);
   font-family: ui-monospace, Consolas, monospace;
 }
@@ -1133,7 +1189,7 @@
 .staxx-stacks .staxx-num:not(:has(.staxx-spark))::after {
   content: "";
   flex: 0 0 auto;
-  width: 8.8rem;
+  width: var(--staxx-graph-w);
   margin-left: 0.8rem;
 }
 
@@ -1163,7 +1219,7 @@
    vector-effect: non-scaling-stroke rather than scaled with the box. */
 .staxx-spark {
   display: inline-block;
-  width: 8.8rem;
+  width: var(--staxx-graph-w);
   height: 3.2rem;
   margin-left: 0.8rem;
   vertical-align: middle;
@@ -1405,6 +1461,14 @@
   border-radius: 0.3rem;
   color: var(--sm-muted);
   font-size: 1.3rem;
+}
+
+/* A multi-service stack's button is a stack of cubes (PLAN_128), and a cube
+   cannot rotate to say "open" the way the folder arrow does — so the open
+   state is the accent colour instead. Set by setStackExpanded() in stacks.js
+   and by the server for a stack that starts expanded. */
+.staxx-scaffold .staxx-chevron--open {
+  color: var(--sm-accent);
 }
 
 .staxx-scaffold .staxx-chevron:hover {
@@ -2627,6 +2691,17 @@
 .staxx-updatepill--error .staxx-updatepill-clock,
 .staxx-updatepill--tagmissing .staxx-updatepill-clock {
   border-left-color: var(--sm-line);
+}
+
+/* PLAN_121 item 7: every "update" pill now reads the same plain "update
+   ready", whether or not a from/to pair is actually known — a real pair
+   could run to twice the width of every other pill in the column. This
+   small tag icon is the one visible sign that this particular pill has both
+   versions in hand; the sentence naming them is still the pill's title. */
+.staxx-updatepill__tag {
+  font-size: 0.85em;
+  opacity: 0.8;
+  margin-left: 0.15em;
 }
 
 /* The "restart pending" chip (PLAN_71 stage 5) — sits right after the
@@ -9145,178 +9220,583 @@
   color: var(--sm-danger);
 }
 
-/* ---- Container-query reflow (stats fold, then ports wrap) ---------------
+/* ---- Roomier stack rows, wide screens only --------------------------------
  *
- * The eight-track desktop grid has four fixed max-content stat columns (see
- * "The grid" above) that will not shrink. Between the phone breakpoint below
- * and full width there is a band where those four columns — a good deal of
- * fixed width, all told — leave too little room for name/services/state/
- * address: the service list gets crushed to two or three wrapped lines while
- * the stat columns sit frozen, and eventually the whole table scrolls
- * sideways. These two @container blocks close that band in two steps, keyed
- * to .staxx-table-wrap's own inline size (see container-type: inline-size
- * on it, above "---- Context menu ----") rather than the viewport, so the
- * fold happens at the same table width no matter what else is sharing the
- * screen with it.
+ * PLAN_121 item 6: mocked live with Adrian, 2026-09-03 — the stack rows read
+ * as cramped once there is room to spare, so a little more air around every
+ * cell, a bigger icon, and mini buttons (WebUI/Logs/Repo/CA) big enough to
+ * hit without aiming. Numbers below are the mockup's own starting point, not
+ * a spec — tune on the box.
  *
- * ORDER IS LOAD-BEARING — READ BEFORE MOVING EITHER BLOCK. Both @container
- * blocks below MUST stay before the @media (max-width: 45rem) block further
- * down this file. Below 45rem viewport width the table is also always
- * narrower than 130rem, so the first block here and that phone block match
- * AT THE SAME TIME, and several of them set the very same property on the
- * very same selector: a container query contributes no specificity of its
- * own, exactly like a media query, so those ties are settled purely by
- * source order. The phone block has to load after this one to win those ties
- * and get its own six-track layout instead of whatever this two-column fold
- * would otherwise leave in place. Reordering the blocks — or "tidying" one of
- * them to somewhere else in the file — flips those ties the other way and
- * quietly breaks the phone layout; it will not error, it will just start
- * losing fights it used to win. See the note besides each rule the phone
- * block had to neutralise for this reason, further down in that block.
+ * Scoped to .staxx-stack-row alone, never .staxx-folder-row or
+ * .staxx-container-row: a folder row has no icon-plus-buttons block of its
+ * own to grow, and a container row nested under an expanded stack is meant
+ * to read as subordinate, so it keeps today's size.
  *
- * Both max-width figures below are STARTING ESTIMATES worked out from the
- * widths of the fixed columns (state, address, and the four stat columns),
- * not measured against a real render on a real monitor. Treat the numbers as
- * a first guess to refine, not as settled fact.
- */
-
-/* ---- Step 1: fold the four stat columns into a 2×2 block, ~130rem --------
- *
- * Below this width the eight-track row becomes six: CPU and Memory keep row
- * 1 of a two-row cell, Network and GPU move to row 2 directly beneath them —
- * never beside a different figure's graph, which is the one thing this fold
- * must not get wrong. */
-@container staxx-table (max-width: 130rem) {
-  .staxx-stacks {
-    grid-template-columns:
-      auto                    /* name */
-      minmax(14rem, 1fr)      /* services */
-      fit-content(24rem)      /* state — same cap as the base template, see
-                                 PLAN_119 */
-      auto                    /* address */
-      repeat(2, max-content); /* cpu+mem, net+gpu */
+ * min-width, not the ~130rem fold's own max-width query: the two ranges must
+ * never overlap, or a container sitting exactly on the fold's edge would try
+ * to draw both the tablet-width stat block and the wider row spacing at
+ * once. 130.01rem rather than 130rem keeps the two queries from both
+ * matching at exactly the fold's own edge. */
+@container staxx-table (min-width: 130.01rem) {
+  .staxx-stacks .staxx-stack-row .staxx-cell {
+    padding-top: 0.9rem;
+    padding-bottom: 0.9rem;
   }
 
-  /* Two row tracks per row from here down. Safe under subgrid: a subgrid
-     only ever subgrids the axis it names, and grid-template-columns: subgrid
-     — the rule .staxx-body/.staxx-group/.staxx-row all carry, see
-     "The grid" above — subgrids the INLINE axis only. A row's block axis,
-     which is what grid-template-rows controls, is always its own regardless
-     of what the shared columns are doing, so giving a row two row tracks
-     here cannot disturb the columns every other row lines up against. */
-  .staxx-row {
-    grid-template-rows: auto auto;
+  /* 52px against the 44px every other .staxx-icon still uses — see the
+     comment on that rule for why the tile is a fixed square rather than
+     content-sized. Image padding shrinks to match, from 4px to 1px: left at
+     4px on the bigger tile, the logo would stay the same size inside a
+     roomier frame instead of growing with it. */
+  .staxx-scaffold .staxx-stack-row .staxx-icon {
+    width: 5.2rem;
+    height: 5.2rem;
   }
 
-  /* Name, services, state and address each span both new row tracks, so they
-     read as one cell centred against two rows of figures rather than pinned
-     to the top of the first one. .staxx-stacks .staxx-row's own
-     align-items: center (see "The grid" above) does the actual centring —
-     this just hands it the full two-row area to centre within, which is what
-     keeps a row's icon and name looking anchored rather than floating above
-     a second row of numbers that has nothing to do with them.
-
-     The head row's own Stack/Services/State/Address cells carry none of
-     these four modifier classes — only the four data-stat cells do; see the
-     head row's markup in StacksPage.php. Auto-placement alone would seat
-     them in row 1 only, beside the CPU/Memory headings, which drew their
-     own bottom border across the whole row and left them pinned to the top
-     of the two-row block instead of centred against it — see the header
-     rule below, which spans and centres them instead. */
-  .staxx-cell--name,
-  .staxx-cell--services,
-  .staxx-cell--state,
-  .staxx-cell--address {
-    grid-row: 1 / span 2;
+  .staxx-scaffold .staxx-stack-row .staxx-icon img {
+    padding: 0.1rem;
   }
 
-  /* The header row's own text headings (Stack/Services/State/Address) get
-     the same two-row span as their data-row counterparts above, plus the
-     centring auto-placement can't give them: without this they sit in row 1
-     only, so their bottom border cuts a line across the whole header row
-     between the CPU/Memory and Network/GPU headings, and the text rides the
-     top of the block instead of sitting level with it. Spanning both rows
-     moves their bottom border down to meet Network/GPU's, leaving CPU's and
-     Memory's own bottom border as the only divider — correctly scoped to
-     just those two columns rather than the full row. */
-  .staxx-stacks .staxx-head-row [role="columnheader"]:not(.staxx-num) {
-    grid-row: 1 / span 2;
-    align-self: stretch;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  /* 12px against the 11px every other WebUI/Logs/Repo/CA chip still uses,
+     padding grown to match — a taller row deserves a bigger target, and
+     these four are the smallest hit areas on it. */
+  .staxx-scaffold .staxx-stack-row .staxx-webbtn,
+  .staxx-scaffold .staxx-stack-row .staxx-logsbtn {
+    padding: 0.2rem 0.5rem;
+    font-size: 1.2rem;
   }
-
-  /* This flex row's own justify-content: center above would otherwise win
-     back the centring the base rule just turned off for Services — same
-     reasoning, carried into the fold. */
-  .staxx-stacks .staxx-head-row [role="columnheader"].staxx-head--services {
-    justify-content: flex-start;
-  }
-
-  /* The folder heading's one cell still spans columns 1 through 4 of the new
-     five column-lines — colspan="4" on the table this replaced — which is
-     still correct with six tracks: it is short exactly the two stat columns
-     (net, gpu) that folded into row 2 of the existing name/services/state/
-     address neighbours, not two whole new columns of its own. It now also
-     needs the row span its neighbours just got, so the folder name sits
-     centred against its two rows of totals rather than riding the top edge
-     of them. */
-  .staxx-cell--span4 {
-    grid-row: 1 / span 2;
-  }
-
-  /* Each figure stays beside its own graph: cpu and mem keep row 1, net and
-     gpu take row 2, directly under the figure each belongs to rather than
-     sliding into whichever column happens to have room. A grid-column/
-     grid-row placement here is inert on a cell the two GPU-hiding rules near
-     "The GPU column" above have set to display: none — a position on a
-     hidden element does nothing — so this cannot resurrect a GPU column that
-     genuinely has nothing to show. */
-  .staxx-cell[data-stat="cpu"] { grid-column: 5; grid-row: 1; }
-  .staxx-cell[data-stat="mem"] { grid-column: 6; grid-row: 1; }
-  .staxx-cell[data-stat="net"] { grid-column: 5; grid-row: 2; }
-  .staxx-cell[data-stat="gpu"] { grid-column: 6; grid-row: 2; }
-
-  /* .staxx-empty-row's cell needs no rule here. It carries none of the
-     classes or attributes above, so it keeps the unconditional
-     grid-column: 1 / -1 near "The grid" above completely unchanged — which,
-     with six tracks now instead of eight, still means "every column there
-     is". Its grid-row stays the default auto, which places it alone in row
-     1; nothing else asks for row 2 in that same row, so the explicit auto
-     track above sizes to zero there and no stray second row appears. */
 }
 
-/* ---- Step 2: let published ports wrap, ~110rem ---------------------------
+/* ---- Cards below desktop width (PLAN_128) --------------------------------
  *
- * Narrower still than the fold above — a container this width also always
- * matches Step 1's own query, since 110rem sits inside the ≤130rem that one
- * already covers. The address column stops holding every entry on one line
- * and lets a long port list wrap instead of pushing its row wider than the
- * column meant to hold it.
+ * This used to be two @container steps that squeezed the table — folding the
+ * four stat columns into a 2x2 block, then letting ports wrap — but a
+ * squeezed table still read as a table straining for room. PLAN_128 replaces
+ * both with a genuinely different layout below 130rem: each stack becomes a
+ * card, three across at this first breakpoint (two-across and one-across are
+ * PLAN_123/124's job, in their own narrower queries not built yet). Keyed to
+ * .staxx-table-wrap's own inline size, same as before, so this fires at the
+ * same table width regardless of what else shares the screen with it — and,
+ * not incidentally, at the same width inside the services modal below, whose
+ * dialog reuses this exact .staxx-table-wrap > .staxx-stacks structure so
+ * its own narrow width matches this query on its own.
  *
- * The colon between an address's label and its ports is real text in the
- * markup — see the note by staxx_address_html() in include/StacksTable.php
- * — not generated content, so releasing white-space here never touches it;
- * it sits inside .staxx-addr-label, addressed separately below. The ports
- * themselves are already joined with ", " in that same function, so once
- * white-space stops forcing the whole entry onto one line, the port list
- * wraps at those existing spaces on its own — no markup or script change
- * needed for this step either. */
-@container staxx-table (max-width: 110rem) {
-  .staxx-addr {
+ * ORDER IS STILL LOAD-BEARING. This block must stay before the
+ * @media (max-width: 45rem) block further down — below 45rem viewport width
+ * the table is also always narrower than 130rem, so both blocks can set the
+ * same property on the same selector, and a container query contributes no
+ * specificity of its own, exactly like a media query: ties go to whichever
+ * loads later. This block does not yet win every such tie — see this PLAN's
+ * own build report for which phone rules still need reconciling once
+ * PLAN_123/124 pick that up.
+ *
+ * THE WALK FROM GRID TO CARD: every element between .staxx-stacks and a
+ * stack or container row must be `display: contents` (so its children
+ * become grid items in its place) or `display: none` (so it takes no cell at
+ * all) — anything left as a box of its own ends the current row of cards and
+ * starts a new one, which is exactly the "3, then 1, then 2" bug Adrian
+ * spotted live. See plans/PLAN_128-cards-below-desktop-width.md for the
+ * measurements behind every rule below; they were all settled in the browser
+ * with Adrian watching, not guessed at here. */
+@container staxx-table (max-width: 130rem) {
+  .staxx-stacks {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    padding: 0;
+    align-items: stretch;
+    /* One shade lighter than --sm-line, for the card border — see the card
+       shell rule below. Local to the grid rather than a plugin-wide token,
+       since nothing outside the card layout reads it yet. */
+    --staxx-card-line: color-mix(in srgb, var(--sm-line), white 15%);
+  }
+
+  /* Every wrapper between the grid and a card, made transparent to layout.
+     .staxx-body has to be in this list even though it carries no group of
+     its own: it subgrids the column axis only (see "The grid" above), so a
+     row-gap set on .staxx-stacks never reached the actual rows through it —
+     the mockup's vertical gap between cards silently stayed at zero until
+     Adrian spotted it and .staxx-body joined this list. */
+  .staxx-body,
+  .staxx-group--folder,
+  .staxx-group--folder-children,
+  .staxx-folder-inner,
+  .staxx-group--stack {
+    display: contents;
+  }
+
+  /* A stack's container rows do not unfold inline here — the chevron opens
+     a modal instead (see "---- Services modal ----" below) — so this
+     wrapper is display: none outright, not just while collapsed. Left as
+     display: contents (or worse, left to the .staxx-scaffold …[hidden]
+     !important rule below that forces it to display: grid so the desktop
+     slide animation has something to animate — see "Container rows" above),
+     it stayed a full-width, zero-height grid item that ended the current
+     row of cards early: a folder's stacks rendered as 3, then 1, then 2
+     cards per line, which is what Adrian caught first. */
+  .staxx-stacks .staxx-group--children {
+    display: none;
+  }
+
+  /* CRITICAL, and it has to beat two rules, not one. `hidden` needs to mean
+     display: none here exactly as it does everywhere else on this page (see
+     "Collapsing a row or a whole group" near "The grid" above) — but the two
+     sliding wrappers carry `.staxx-scaffold …[hidden] { display: grid
+     !important }` (Folders and Container rows sections above) so their
+     height-collapse animation has a grid to animate. There is no such slide
+     to protect in the card layout — both wrappers are display: contents or
+     display: none here, never a grid whose rows tween 1fr -> 0fr — so
+     [hidden] should win outright. .staxx-scaffold plus two classes plus the
+     attribute is (0,4,0) with !important, which outranks both the (0,3,0)
+     !important animation overrides and the plain (0,2,0) base [hidden] rule
+     regardless of source order. */
+  .staxx-scaffold .staxx-stacks .staxx-group[hidden],
+  .staxx-scaffold .staxx-stacks .staxx-row[hidden] {
+    display: none !important;
+  }
+
+  /* Column headings describe a table that no longer exists at this width —
+     same reasoning as the phone block's identical rule further down. */
+  .staxx-stacks .staxx-head-row {
+    display: none;
+  }
+
+  /* ---- The card shell -----------------------------------------------------
+   *
+   * Shared by a stack row on the grid and a container row inside the
+   * services modal (its dialog's grid also carries the .staxx-stacks class —
+   * see "---- Services modal ----" below) — a service card is the same
+   * design one level down, not a different one. */
+  .staxx-stacks .staxx-stack-row,
+  .staxx-stacks .staxx-container-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto auto 1fr auto auto;
+    grid-column: auto;
+    grid-row: auto;
+    gap: 0.5rem 0.8rem;
+    margin: 0.8rem;
+    padding: 0.8rem 1rem 0.9rem 0.6rem;
+    border: 1px solid var(--staxx-card-line);
+    border-radius: 0.8rem;
+    background: var(--sm-fill);
+    position: relative;
+  }
+
+  /* No grid gap: a collapsed folder row sits flush above the next one, as it
+     does in the table, and this margin is what separates two cards instead —
+     1.6rem between neighbours, 0.8rem in from a folder row or the grid's own
+     edge. A grid gap here would have opened a strip of page background
+     between two collapsed folder rows, since they are grid items too; a
+     negative margin on the second one did not close it — a stretched grid
+     item's negative margin does not pull it into a row gap it does not
+     have. */
+  .staxx-stacks .staxx-stack-row .staxx-cell,
+  .staxx-stacks .staxx-container-row .staxx-cell {
+    grid-row: auto;
+    grid-column: auto;
+    grid-area: auto;
+    padding: 0;
+    justify-self: start;
+    width: auto;
+    align-self: start;
+  }
+
+  .staxx-stacks .staxx-stack-row .staxx-cell--name,
+  .staxx-stacks .staxx-stack-row .staxx-cell--services,
+  .staxx-stacks .staxx-container-row .staxx-cell--name,
+  .staxx-stacks .staxx-container-row .staxx-cell--services {
+    grid-column: 1 / -1;
+  }
+
+  .staxx-stacks .staxx-stack-row .staxx-cell--state,
+  .staxx-stacks .staxx-container-row .staxx-cell--state {
+    grid-column: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.3rem;
+    padding-left: 0.5rem;
+  }
+
+  .staxx-stacks .staxx-stack-row .staxx-cell--address,
+  .staxx-stacks .staxx-container-row .staxx-cell--address {
+    grid-column: 2;
+    text-align: left;
+    justify-self: start;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+    padding-left: 0.5rem;
+  }
+
+  /* A long status line ("Up 11 hours (healthy)") wraps to two centred lines
+     rather than running under the address — the pill's own base rule
+     (near "Live statistics" above) keeps it on one line everywhere else. */
+  .staxx-stacks .staxx-pill {
+    white-space: normal;
+    text-align: center;
+    line-height: 1.2;
+  }
+
+  /* Ports as one wrapping comma line, not the table's one-per-line column
+     (PLAN_121 item 4) — Adrian, seeing RustDesk's five ports stacked in a
+     card, called the column an interruption of the card's flow. The comma is
+     drawn by CSS, since PLAN_121 took it out of the markup. */
+  .staxx-stacks .staxx-addr {
+    display: inline;
     white-space: normal;
   }
 
-  /* Never break a network name or a bare address mid-word — only the ports
-     that follow it are free to wrap. */
-  .staxx-addr-label {
+  .staxx-stacks .staxx-addr-ports {
+    display: inline;
+    flex-direction: row;
+  }
+
+  .staxx-stacks .staxx-addr-ports > span + span::before {
+    content: ", ";
+  }
+
+  .staxx-stacks .staxx-cell--services .staxx-sub,
+  .staxx-stacks .staxx-name-text {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .staxx-addr-ports {
-    overflow-wrap: anywhere;
+  /* ---- Header line: grip, icon, name, chevron ------------------------------
+   *
+   * .staxx-namebox's own 34px left padding is the table's room for the grip
+   * track — zero here, since the card's own 0.6rem left padding is the only
+   * inset a card needs. */
+  .staxx-stacks .staxx-namebox {
+    padding-left: 0;
   }
+
+  /* Only a CARD's name box fills its row. The folder row shares .staxx-namebox
+     and sits in a flex line beside the strip of stack icons; give it 100%
+     too and the strip is squeezed to nothing and stacks its icons one per
+     line down a 200px-tall heading — seen on the first deploy. */
+  .staxx-stacks .staxx-stack-row .staxx-namebox,
+  .staxx-stacks .staxx-container-row .staxx-namebox {
+    width: 100%;
+  }
+
+  .staxx-scaffold .staxx-stacks .staxx-grip {
+    width: 2rem;
+    height: 2.8rem;
+    font-size: 1.5rem;
+    opacity: 0.6;
+  }
+
+  /* Not drawn at all on a single-service stack, rather than the table's
+     invisible-but-present placeholder — a card has no column for it to hold
+     open. */
+  .staxx-scaffold .staxx-stacks .staxx-chevron--empty {
+    display: none;
+  }
+
+  /* The button that opens the services modal, moved to the card's top-right
+     corner as a proper tap target — the same element, restyled, so the
+     existing click handler needs nothing. */
+  .staxx-scaffold .staxx-stacks .staxx-chevron:not(.staxx-chevron--empty) {
+    position: absolute;
+    top: 0.4rem;
+    right: 0.4rem;
+    width: 2.8rem;
+    height: 2.8rem;
+    font-size: 1.6rem;
+    border-radius: 0.6rem;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .staxx-stacks .staxx-stack-row .staxx-nameinfo,
+  .staxx-stacks .staxx-container-row .staxx-nameinfo {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: left;
+    padding-right: 2.6rem;
+  }
+
+  /* In the folder heading the name block keeps its natural width and the icon
+     strip takes what is left — the opposite division to a card's. */
+  .staxx-stacks .staxx-folder-row .staxx-nameinfo {
+    flex: 0 0 auto;
+    padding-right: 0;
+  }
+  .staxx-stacks .staxx-folder-row .staxx-fstrip {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* ---- Figures: a 2x2 block, label + graph, number overlaid ---------------
+   *
+   * The table's stat cell is a fixed footprint (label + 5.5rem number +
+   * 6rem graph, roughly 172px) sat in a card half of about 152px, so the
+   * right-hand column's graph overflowed the card by 20px — measured by
+   * Adrian live. width: 100%/min-width: 0 here plus minmax(0, 1fr) on the
+   * card's own two columns (see the card shell above) is what actually
+   * fixes it: a plain 1fr lets the content's minimum win and the graph
+   * escapes again. */
+  .staxx-stacks .staxx-cell.staxx-num {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    position: relative;
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start;
+    overflow: hidden;
+  }
+
+  .staxx-stacks .staxx-cell.staxx-num::before {
+    content: attr(data-stat);
+    color: var(--sm-muted);
+    font-size: 0.9em;
+    min-width: 0;
+  }
+
+  /* The graph is what gives the cell its width; the number sits on top of
+     it rather than beside it, right-aligned with a dark outline so it reads
+     over the line regardless of where the line itself sits. */
+  .staxx-stacks .staxx-statv {
+    position: absolute;
+    right: 0.4rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.92em;
+    line-height: 1.1;
+    text-shadow: 0 0 3px #000, 0 0 3px #000;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* Scoped under .staxx-stacks on purpose — .staxx-bar is also the class on
+     the toolbar wrapper above the table (.staxx-bar.staxx-bar--end, holding
+     the buttons row). An unscoped rule here meant for the graph collapsed
+     that toolbar to 60px in the mockup and stacked its buttons one per line,
+     which Adrian took for a rendering glitch before it was traced back to
+     this name being shared by two different things. See PLAN_128's "naming
+     trap" section. */
+  .staxx-stacks .staxx-spark,
+  .staxx-stacks .staxx-bar {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 4rem;
+    margin-left: 0;
+    height: 2.6rem;
+  }
+
+  /* The placeholder for a row with no graph at all — not needed once the
+     graph itself is flexible width, and would otherwise sit at the old
+     fixed --staxx-graph-w beside the label. (0,3,0) each, same as the rule
+     it is undoing near "Live statistics" above; the tie is settled by this
+     block loading later in the file. */
+  .staxx-stacks .staxx-stack-row .staxx-num::after,
+  .staxx-stacks .staxx-container-row .staxx-num::after {
+    display: none;
+  }
+
+  /* A cell with no figure at all (PLAN_121's blank-cell case) gets the same
+     flex layout as every other stat cell, with its dash centred rather than
+     pinned to the old fixed-width graph slot it no longer has. (0,4,0) each,
+     beating the (0,3,0) rule this overrides near "Live statistics" above by
+     specificity alone, regardless of order. */
+  .staxx-stacks .staxx-stack-row .staxx-num.staxx-cell--blank,
+  .staxx-stacks .staxx-container-row .staxx-num.staxx-cell--blank {
+    justify-self: start;
+    width: 100%;
+  }
+
+  /* ---- The folder row at card widths ---------------------------------------
+   *
+   * Loses its rolled-up figures — the table's tracks it used to sit on do
+   * not exist here — and becomes a flex line: grip, chevron, icon, name and
+   * the strip of stack icons, nothing else. */
+  .staxx-stacks .staxx-folder-row {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.4rem 0.5rem;
+    margin: 0;
+    grid-column: 1 / -1;
+  }
+
+  .staxx-stacks .staxx-folder-row .staxx-cell {
+    padding: 0;
+  }
+
+  .staxx-stacks .staxx-folder-row .staxx-cell--span4 {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .staxx-stacks .staxx-folder-row .staxx-num {
+    display: none;
+  }
+
+  /* The folder's own chevron stays inline beside the grip rather than
+     pinned to a corner — there is no card to pin it to — while keeping the
+     shared 2.8rem tap target and faint fill the rule above already gives
+     every chevron in the card layout. (0,4,0) plus a pseudo-class, beating
+     that rule's (0,3,0) by specificity alone. */
+  .staxx-scaffold .staxx-stacks .staxx-folder-row .staxx-chevron:not(.staxx-chevron--empty) {
+    position: static;
+    top: auto;
+    right: auto;
+  }
+
+  /* Consecutive collapsed folders butt together (no grid gap — see the card
+     shell's own comment above), so the spacing before and after an EXPANDED
+     folder's cards has to be a margin on the folder row itself, keyed off
+     the same [hidden] the sliding wrapper already uses everywhere else.
+     Measured: folder row to first card 16px, card to card 16px, collapsed
+     folder to next folder 0. */
+  .staxx-stacks .staxx-group--folder:has(> .staxx-group--folder-children:not([hidden])) > .staxx-folder-row {
+    margin-bottom: 0.8rem;
+  }
+
+  .staxx-stacks .staxx-group--folder:has(> .staxx-group--folder-children:not([hidden]))
+    + .staxx-group--folder > .staxx-folder-row {
+    margin-top: 0.8rem;
+  }
+
+  /* ---- Service cards inside the modal: the three differences ---------------
+   *
+   * Everything above already applies unchanged to .staxx-container-row
+   * (see the card shell's own selector list) because the modal's dialog
+   * reuses .staxx-table-wrap > .staxx-stacks verbatim — see "---- Services
+   * modal ----" below for the two custom properties (--staxx-card-track,
+   * --staxx-card-h) the dialog sets to match the grid's own card size. Only
+   * three things differ from a stack card. */
+  .staxx-scaffold .staxx-stacks .staxx-icon--child {
+    width: 4.4rem;
+    height: 4.4rem;
+  }
+
+  .staxx-scaffold .staxx-stacks .staxx-icon--child img {
+    padding: 0.1rem;
+  }
+
+  /* The table's guide line to a parent stack's icon, and the indent it
+     carries, both meaningless once a container is its own card. */
+  .staxx-stacks .staxx-namebox--child {
+    padding-left: 0;
+    margin-left: 0;
+    border-left: 0;
+  }
+
+  /* The dialog's own grid is two cards wide, at the SAME card width the
+     outer grid is using — --staxx-card-track is set inline on the dialog at
+     open time, read from a grid card, never hard-coded (a fixed dialog
+     width made the mockup's first pass come out narrower than the grid's
+     own cards, with a gap down the right — Adrian, 2026-09-03). */
+  .staxx-stacks.staxx-stacks--modal {
+    grid-template-columns: repeat(2, var(--staxx-card-track));
+  }
+
+  /* Likewise --staxx-card-h: a service card carries less content (image
+     line, one pill) and came out shorter than the grid's own cards until
+     given their height explicitly — the charts still pin to the bottom
+     edge, so the extra room opens above them exactly as it does on a card
+     whose neighbour has an update pill. */
+  .staxx-stacks--modal .staxx-container-row {
+    min-height: var(--staxx-card-h);
+  }
+}
+
+/* ---- Services modal (PLAN_128) --------------------------------------------
+ *
+ * A multi-service stack's chevron opens this instead of unfolding rows
+ * inline, so the outer grid never changes shape. Class names agreed with
+ * the JS half of this plan: .staxx-svcmodal is the overlay, .staxx-svcmodal
+ * __dialog the panel, and the grid inside it is .staxx-stacks.staxx-stacks
+ * --modal — the card rules above apply to it unchanged because it is the
+ * same class. Not gated by any width query: whichever width opened it, the
+ * dialog's own inline size is always narrow enough to match the card query
+ * above on its own. */
+.staxx-svcmodal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+  /* Above everything else on the page, context menu (9999, see "Context
+     menu" above) included — a blocking modal has nothing to sit behind. */
+  z-index: 10000;
+}
+
+.staxx-svcmodal__dialog {
+  position: relative;
+  width: max-content;
+  max-width: 92vw;
+  max-height: 88vh;
+  overflow: auto;
+  background: var(--background-color, #1c1c1c);
+  border: 1px solid var(--staxx-card-line, var(--sm-line));
+  border-radius: 0.8rem;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+}
+
+.staxx-svcmodal__head {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.9rem 1.2rem 0.3rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.staxx-svcmodal__icon {
+  display: inline-flex;
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+
+/* The icon is a clone of the stack row's own <img>, dropped inside the span
+   above by openServicesModal() — so it is the image, not the span, that has
+   to be told its size, or it arrives at whatever the row's rule gave it. */
+.staxx-svcmodal__icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* .staxx-table-wrap is the `staxx-table` size container, and an inline-size
+   container contributes NO intrinsic width to its parent — so a dialog sized
+   `max-content` around it collapsed to its header's width (180px) and the
+   card grid scrolled sideways inside it, on the first deploy. The wrap is
+   therefore given its width outright: two card tracks, the same value the
+   grid's columns use, set by openServicesModal() on the dialog. */
+.staxx-svcmodal .staxx-table-wrap {
+  width: calc(2 * var(--staxx-card-track));
+  max-width: 100%;
+}
+
+.staxx-svcmodal__count {
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+  font-weight: 400;
+}
+
+.staxx-svcmodal__close {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  width: 2.8rem;
+  height: 2.8rem;
+  background: transparent;
+  border: 0;
+  color: var(--sm-accent);
+  font-size: 1.9rem;
+  border-radius: 0.6rem;
+  cursor: pointer;
 }
 
 /* ---- Narrow screens ----------------------------------------------------- */
@@ -9462,9 +9942,9 @@
   }
 
   /* Eight column names stacked in a column read as noise above a layout that
-     no longer has eight columns to name. Hiding the row also removes its
-     border-bottom, drawn by .staxx-stacks [role="columnheader"] above —
-     there is nothing left for that selector to match once the row is gone.
+     no longer has eight columns to name. Hiding the row also removes its own
+     border-bottom (.staxx-stacks .staxx-head-row, near the top of this file)
+     — a hidden element draws nothing, borders included.
 
      UNSCOPED ON PURPOSE — this also hides the head row of .staxx-status
      (the Environment section's Check/Result list). That is a second grid

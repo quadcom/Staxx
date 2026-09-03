@@ -2493,15 +2493,22 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
                'version' => $ver, 'was' => $was];
     }
 
-    $label = ($was !== '' && $ver !== '' && $was !== $ver) ? $was.' → '.$ver : 'update ready';
-    $tip = ($was !== '' && $ver !== '' && $was !== $ver)
+    // PLAN_121 item 7: a from-to pair could run to twice the width of every
+    // other pill (Jellyfin's read 40+ characters), so the label is always
+    // the same plain words everyone else gets — the tag icon
+    // (staxx_update_pill_html() below) is what tells this pill apart from
+    // a plain "update ready" with no version known at all. The hover still
+    // spells out both versions in a sentence; only the visible text changed.
+    $versioned = $was !== '' && $ver !== '' && $was !== $ver;
+    $label = 'update ready';
+    $tip = $versioned
       ? 'A newer version, '.$ver.', is available; this is currently running '.$was.'. '
       . 'Press this to fetch it and rebuild the container on it.'
       : 'A newer version of this image is available. Press this to fetch it and rebuild the '
       . 'container on it.';
     $tip .= staxx_update_when_words($image, $entry, time());
     return ['state' => 'update', 'label' => $label, 'source' => $source, 'tip' => $tip,
-             'version' => $ver, 'was' => $was];
+             'version' => $ver, 'was' => $was, 'versioned' => $versioned];
   }
 
   return [
@@ -2636,6 +2643,11 @@ function staxx_updates_aggregate(array $pills): array {
     'due'    => $due,
     'hold'   => $hold,
     'why'    => $why,
+    // PLAN_121 item 7: carried through only for the same single-service case
+    // $label above reused $best['label'] for — a row rolling up several
+    // updates into "N updates ready" never named one version and still
+    // does not.
+    'versioned' => ($state === 'update' && $updateCount === 1) ? !empty($best['versioned']) : false,
   ];
 }
 

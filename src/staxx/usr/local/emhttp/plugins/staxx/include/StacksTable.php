@@ -101,9 +101,21 @@ function staxx_address_html(array $addresses): string {
     // The colon is real text, not a CSS ::before. Generated content is not
     // included when a browser copies a selection, so a styled-in colon would
     // put "192.168.202.598083" on the clipboard — an address nobody can use.
-    $out[] = '<span class="staxx-addr"'.$title.'>'.$name.':'
+    // It lives inside the label span itself rather than loose in .staxx-addr
+    // — see the note there — which is why $name is rebuilt here rather than
+    // reused from above, whose copy has no ports to introduce.
+    //
+    // PLAN_121 item 4: one <span> per port, not one comma-joined text node —
+    // the ports stand in their own column beside the label (see staxx.css),
+    // so the join that used to be ", " in the text is now the layout itself.
+    $out[] = '<span class="staxx-addr"'.$title.'>'
+           . '<span class="staxx-addr-label">'.htmlspecialchars($label).':</span>'
            . '<span class="staxx-addr-ports">'
-           . htmlspecialchars(implode(', ', $ports)).'</span></span>';
+           . implode('', array_map(
+               function ($p) { return '<span>'.htmlspecialchars($p).'</span>'; },
+               $ports
+             ))
+           . '</span></span>';
   }
 
   return $out ? implode('', $out) : '<span class="staxx-sub">—</span>';
@@ -436,6 +448,14 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   // without inventing a new state — the state is still 'error'.
   $cls .= $note !== '' ? ' staxx-updatepill--noted' : '';
 
+  // PLAN_121 item 7: the label itself no longer says which version, so a
+  // small tag icon is the one visible sign that this pill actually knows
+  // both — the sentence naming them is still the title, above. Never shown
+  // on the folder roll-up, which sums several images and never claimed a
+  // version either.
+  $tagIcon = !empty($u['versioned'])
+    ? '<i class="fa fa-tag staxx-updatepill__tag" aria-hidden="true"></i>' : '';
+
   return '<'.$tag.' class="staxx-updatepill '.$cls.'"'.$typeAttr
        . ' data-update-state="'.htmlspecialchars($state).'"'
        . ' data-update-image="'.$image.'"'
@@ -446,7 +466,7 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
        . ' data-update-why="'.htmlspecialchars((string)($u['why'] ?? '')).'"'
        . ' data-update-suggest="'.htmlspecialchars((string)($u['suggest'] ?? '')).'"'
        . $noteAttr
-       . $titleAttr.'>'.$label.'</'.$tag.'>';
+       . $titleAttr.'>'.$label.$tagIcon.'</'.$tag.'>';
 }
 
 /**
@@ -1689,10 +1709,16 @@ function staxx_render_rows(array $rows, bool $canRun): string {
           </span>
 
           <!-- Totals for everything filed in this folder, added up in the
-               browser from the stack rows below it. -->
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="cpu"><span class="staxx-statv">—</span></span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="mem"><span class="staxx-statv">—</span></span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="net"><span class="staxx-statv">—</span></span>
+               browser from the stack rows below it. staxx-cell--blank on the
+               three that start life as a dash (PLAN_121 item 1) gives it the
+               graph footprint their heading centres against, instead of the
+               number's usual hard-left spot; updateFolderTotals() in
+               stacks.js clears it the moment a real total lands. GPU never
+               shows a dash at all (see paintFigures()'s own comment), so it
+               carries no such class here. -->
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="cpu"><span class="staxx-statv">—</span></span>
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="mem"><span class="staxx-statv">—</span></span>
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="net"><span class="staxx-statv">—</span></span>
           <span class="staxx-cell staxx-num" role="gridcell" data-stat="gpu"><span class="staxx-statv">—</span></span>
         </div>
 
@@ -1884,11 +1910,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
             <div class="staxx-namebox">
               <?= staxx_grip_html('stack', $s['leaf'], $sGripOff, $sGripWhy) ?>
               <? if ($expandable): ?>
-                <button type="button" class="staxx-chevron"
+                <button type="button" class="staxx-chevron<?= $expanded ? ' staxx-chevron--open' : '' ?>"
                         data-toggle-stack="<?= htmlspecialchars($s['name']) ?>"
                         aria-expanded="<?= $expanded ? 'true' : 'false' ?>"
-                        title="<?= $expanded ? _('Hide containers') : _('Show containers') ?>">
-                  <i class="fa fa-chevron-<?= $expanded ? 'down' : 'right' ?>"></i>
+                        title="<?= $expanded ? _('Hide this stack\'s services') : _('Show this stack\'s services') ?>">
+                  <i class="fa fa-cubes"></i>
                 </button>
               <? else: ?>
                 <span class="staxx-chevron staxx-chevron--empty"></span>
@@ -2053,22 +2079,28 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 
           <!-- Filled in by the browser from the stats endpoint, and left as an
                em dash if nothing is running. Each cell holds a figure and a
-               small graph of the last couple of minutes. -->
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="cpu">
+               small graph of the last couple of minutes. staxx-cell--blank
+               (PLAN_121 item 1) gives that starting dash the graph's own
+               footprint to centre in, matching the heading above it, until
+               paintFigures() clears the class the moment a real figure
+               lands. -->
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="cpu">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="cpu"></span>
           </span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="mem">
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="mem">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="mem"></span>
           </span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="net">
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="net">
             <span class="staxx-statv staxx-net">—</span>
             <span class="staxx-spark" data-spark="net"></span>
           </span>
           <!-- data-gpu-file carries what the compose file itself asks for, so
                blankFigures() in stacks.js can still paint the vendor badge
-               once the live stats have nothing to say (PLAN_114). -->
+               once the live stats have nothing to say (PLAN_114). No
+               staxx-cell--blank here: GPU never starts life as a dash — see
+               paintFigures()'s own comment on why. -->
           <span class="staxx-cell staxx-num" role="gridcell" data-stat="gpu" data-gpu-file="<?= htmlspecialchars(implode(' ', $sGpuVendors)) ?>">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="gpu"></span>
@@ -2247,15 +2279,15 @@ function staxx_render_rows(array $rows, bool $canRun): string {
               : [])
           ?></span>
 
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="cpu">
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="cpu">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="cpu"></span>
           </span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="mem">
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="mem">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="mem"></span>
           </span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="net">
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="net">
             <span class="staxx-statv staxx-net">—</span>
             <span class="staxx-spark" data-spark="net"></span>
           </span>

@@ -16932,6 +16932,22 @@
     // something to say. Skipped when the label has not changed so a clock
     // ticking away between polls is not torn down and rebuilt every time.
     if (pill.staxxTxt !== text) { pill.textContent = text; pill.staxxTxt = text; }
+    // PLAN_121 item 7: the small tag icon that marks a pill as knowing both
+    // versions, even though the label itself no longer says so — mirrors
+    // staxx_update_pill_html()'s $tagIcon in StacksTable.php. Checked and
+    // fixed up independently of the label text above: 'versioned' can flip
+    // on a poll that leaves the label reading "update ready" either way, and
+    // the two must never drift out of step with what the title claims.
+    var wantIcon = state === 'update' && !!entry.versioned;
+    var icon = pill.querySelector('.staxx-updatepill__tag');
+    if (wantIcon && !icon) {
+      icon = document.createElement('i');
+      icon.className = 'fa fa-tag staxx-updatepill__tag';
+      icon.setAttribute('aria-hidden', 'true');
+      pill.appendChild(icon);
+    } else if (!wantIcon && icon) {
+      icon.parentNode.removeChild(icon);
+    }
     // The note is appended to the tip rather than replacing it, mirroring
     // staxx_update_pill_html() — a stale tooltip after a recovery is worse
     // than none, so this is rebuilt every time rather than only when new.
@@ -18332,6 +18348,13 @@
       // The whole table is replaced below, so without this snapshot every
       // row would look "new" on every refresh and the list would shimmer on
       // the timer instead of staying still for rows that were already there.
+      // PLAN_128: the services modal has moved real container rows out of
+      // this table into itself — if they are still there when the markup
+      // below is thrown away, they go with it, and the modal is left
+      // showing rows now orphaned. closeServicesModal() is a no-op when
+      // nothing is open.
+      closeServicesModal();
+
       var seenRows = {};
       if (rowsHost) {
         Array.prototype.forEach.call(
@@ -24001,9 +24024,11 @@
     row.setAttribute('aria-expanded', open ? 'true' : 'false');
     if (!chevron) return;
     chevron.setAttribute('aria-expanded', open ? 'true' : 'false');
-    chevron.title = open ? 'Hide containers' : 'Show containers';
-    var icon = chevron.querySelector('i');
-    if (icon) icon.className = 'fa fa-chevron-' + (open ? 'down' : 'right');
+    chevron.title = open ? "Hide this stack's services" : "Show this stack's services";
+    // PLAN_128: this glyph is a stack of cubes everywhere, not a chevron —
+    // a cube glyph cannot rotate to show "expanded" the way an arrow did, so
+    // that state is the accent colour on the glyph instead, via this class.
+    chevron.classList.toggle('staxx-chevron--open', open);
   }
 
   // Called after refreshRows() swaps in fresh, always-collapsed markup: puts
@@ -24214,6 +24239,11 @@
       draggingGripSiblings = units.filter(function (u) { return u !== unit; })
         .map(function (u) { return { unit: u, height: u.offsetHeight }; });
       var h = unit.offsetHeight;   // measured now, before it is hidden
+      // PLAN_128: in the card layout a unit is not full width, so the
+      // placeholder needs a width too or the gap it opens is the wrong
+      // shape. In the table this is just the row's own full width, so
+      // setting it unconditionally changes nothing there.
+      var w = unit.offsetWidth;
 
       // Deferred one tick for the same reason the port drag above defers it:
       // Chrome snapshots the drag image asynchronously, so hiding the unit
@@ -24223,6 +24253,7 @@
         gripSlot = document.createElement('div');
         gripSlot.className = 'staxx-drop-slot';
         gripSlot.style.height = h + 'px';
+        gripSlot.style.width = w + 'px';
         unit.parentNode.insertBefore(gripSlot, unit);
         unit.classList.add('staxx-row--dragging');
       }, 0);
@@ -24244,11 +24275,36 @@
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
 
+      // PLAN_128: in a grid several siblings can share the same vertical
+      // band (a row of cards), and the vertical-midpoint test below cannot
+      // tell them apart — it would always pick the first one in the row. So
+      // first collect every sibling whose band the pointer is actually
+      // inside; when more than one qualifies, that IS a card row, and the
+      // horizontal midpoint of each decides which one the pointer is over.
+      // A single column never has two siblings sharing a band — each row's
+      // top/bottom is its own — so this always falls through to the plain
+      // vertical comparison there, exactly as before.
       var target = null;
-      for (var i = 0; i < draggingGripSiblings.length; i++) {
-        var s = draggingGripSiblings[i];
-        var mid = s.unit.getBoundingClientRect().top + s.height / 2;
-        if (mid > event.clientY) { target = s.unit; break; }
+      var rowMates = draggingGripSiblings.filter(function (s) {
+        var r = s.unit.getBoundingClientRect();
+        return event.clientY >= r.top && event.clientY <= r.bottom;
+      });
+      if (rowMates.length > 1) {
+        for (var i = 0; i < rowMates.length; i++) {
+          var r = rowMates[i].unit.getBoundingClientRect();
+          if (r.left + r.width / 2 > event.clientX) { target = rowMates[i].unit; break; }
+        }
+        if (target === null) {
+          // Past every card in this row: land just after its last card.
+          var lastIdx = draggingGripSiblings.indexOf(rowMates[rowMates.length - 1]);
+          target = draggingGripSiblings[lastIdx + 1] ? draggingGripSiblings[lastIdx + 1].unit : null;
+        }
+      } else {
+        for (var j = 0; j < draggingGripSiblings.length; j++) {
+          var s = draggingGripSiblings[j];
+          var mid = s.unit.getBoundingClientRect().top + s.height / 2;
+          if (mid > event.clientY) { target = s.unit; break; }
+        }
       }
       if (gripSlot.nextSibling !== target) container.insertBefore(gripSlot, target);
     });
@@ -24633,6 +24689,12 @@
     var row = rowFor(name);
     if (!row) return;
 
+    // PLAN_128: below desktop width the table's fold is gone and stacks are
+    // cards — a stack's services then open in a modal instead of unfolding
+    // inline, and none of the inline expand/collapse bookkeeping below
+    // applies to that path.
+    if (isCardLayout(row)) { openServicesModal(name, chevron); return; }
+
     var open = row.dataset.expanded !== '1';
     setStackExpanded(row, chevron, open);
 
@@ -24642,6 +24704,125 @@
     else      delete expandedStacks[name];
 
     applyVisibility();
+  }
+
+  /* ---- PLAN_128: a multi-service stack's services, below desktop width --
+   *
+   * At desktop width the table keeps its inline expansion — nothing above
+   * this comment changes for it. Below it the stylesheet hides a stack's
+   * `.staxx-group--children` wrapper outright (its container rows would
+   * otherwise take a grid cell of their own and break the card flow — see
+   * PLAN_128's "why this is cheap to build"), so that same hiding is what
+   * this reads to tell the two layouts apart: no width check here, because
+   * the breakpoint lives in the stylesheet, not in this file.
+   */
+  function isCardLayout(row) {
+    var group   = row.closest('.staxx-group--stack');
+    var wrapper = group && group.querySelector(':scope > .staxx-group--children');
+    if (!wrapper) return false;
+    return getComputedStyle(wrapper).display === 'none';
+  }
+
+  var servicesModal = null;   // the one overlay, built the first time it is needed
+  var svcModalState  = null;  // { moved: [{el, parent, next}], chevron } while open, else null
+
+  function buildServicesModal() {
+    var el = document.createElement('div');
+    el.className = 'staxx-svcmodal';
+    el.hidden = true;
+    el.innerHTML =
+      '<div class="staxx-svcmodal__dialog" role="dialog" aria-modal="true">' +
+        '<div class="staxx-svcmodal__head">' +
+          '<span class="staxx-svcmodal__icon"></span>' +
+          '<span class="staxx-svcmodal__name"></span>' +
+          '<span class="staxx-svcmodal__count"></span>' +
+        '</div>' +
+        '<button type="button" class="staxx-svcmodal__close" aria-label="Close">✕</button>' +
+        '<div class="staxx-table-wrap"><div class="staxx-stacks staxx-stacks--modal" role="grid"></div></div>' +
+      '</div>';
+    // Backdrop click only — a click inside the dialog must not close it.
+    el.addEventListener('click', function (event) {
+      if (event.target === el) closeServicesModal();
+    });
+    el.querySelector('.staxx-svcmodal__close').addEventListener('click', function () {
+      closeServicesModal();
+    });
+    // Inside .staxx-scaffold, not <body> — see the bundle/export modals
+    // above for the same reasoning: .staxx-btn and the card rules this
+    // modal depends on are only styled inside the scaffold.
+    (document.querySelector('.staxx-scaffold') || document.body).appendChild(el);
+    return el;
+  }
+
+  function onServicesModalKeydown(event) {
+    if (event.key === 'Escape') closeServicesModal();
+  }
+
+  function openServicesModal(name, chevron) {
+    var row = rowFor(name);
+    if (!row) return;
+    var group   = row.closest('.staxx-group--stack');
+    var wrapper = group && group.querySelector(':scope > .staxx-group--children');
+    if (!wrapper) return;
+    var rows = Array.prototype.slice.call(wrapper.querySelectorAll('.staxx-container-row'));
+    if (!rows.length) return;
+
+    if (!servicesModal) servicesModal = buildServicesModal();
+    var dialog = servicesModal.querySelector('.staxx-svcmodal__dialog');
+    var grid   = servicesModal.querySelector('.staxx-stacks--modal');
+
+    // The dialog's own card size is read from a real card on screen right
+    // now, at this width — never hard-coded (PLAN_128). The margin is added
+    // back in because the grid's cards carry their spacing as their own
+    // margin, not a grid gap (see the folder-row note in the plan).
+    var sampleCard = row.closest('.staxx-stack-row') || row;
+    var cardRect   = sampleCard.getBoundingClientRect();
+    var cardMargin = parseFloat(getComputedStyle(sampleCard).marginLeft) || 0;
+    dialog.style.setProperty('--staxx-card-track', (cardRect.width + cardMargin * 2) + 'px');
+    dialog.style.setProperty('--staxx-card-h', cardRect.height + 'px');
+
+    var iconBtn  = row.querySelector('.staxx-icon');
+    var iconHost = servicesModal.querySelector('.staxx-svcmodal__icon');
+    iconHost.innerHTML = '';
+    if (iconBtn && iconBtn.firstElementChild) {
+      iconHost.appendChild(iconBtn.firstElementChild.cloneNode(true));
+    }
+    servicesModal.querySelector('.staxx-svcmodal__name').textContent =
+      (iconBtn && iconBtn.dataset.label) || name;
+    servicesModal.querySelector('.staxx-svcmodal__count').textContent =
+      rows.length + (rows.length === 1 ? ' service' : ' services');
+
+    // Moved, not cloned — the grips and the buttons on each row must keep
+    // their live handlers (PLAN_128). Where each one came from is
+    // remembered so closing the modal can put it straight back in order.
+    var moved = rows.map(function (r) {
+      return { el: r, parent: r.parentNode, next: r.nextSibling };
+    });
+    grid.innerHTML = '';
+    moved.forEach(function (m) { grid.appendChild(m.el); });
+
+    svcModalState = { moved: moved, chevron: chevron };
+    servicesModal.hidden = false;
+    document.addEventListener('keydown', onServicesModalKeydown);
+    var closeBtn = servicesModal.querySelector('.staxx-svcmodal__close');
+    if (closeBtn) closeBtn.focus();
+  }
+
+  function closeServicesModal() {
+    if (!servicesModal || servicesModal.hidden) return;
+    var state = svcModalState;
+    svcModalState = null;
+    servicesModal.hidden = true;
+    document.removeEventListener('keydown', onServicesModalKeydown);
+    if (!state) return;
+    // Put every moved row back exactly where it was, in order — refreshRows()
+    // may already have thrown the original parent away, in which case there
+    // is nowhere left to put it back and the row is simply discarded along
+    // with the rest of the replaced markup.
+    state.moved.forEach(function (m) {
+      if (m.parent && m.parent.isConnected) m.parent.insertBefore(m.el, m.next);
+    });
+    if (state.chevron && state.chevron.isConnected) state.chevron.focus();
   }
 
   // Shares askNewFolder() with the New folder item on a stack's own menu — see
@@ -25532,7 +25713,7 @@
    * is identical, so on a mostly idle server this is the difference between
    * rewriting every cell of every row three times a minute and touching
    * nothing at all. */
-  function setCell(row, metric, text, values, peakFloor) {
+  function setCell(row, metric, text, values, peakFloor, blank) {
     var td = cell(row, metric);
     if (!td) return;
     var value = td.querySelector('.staxx-statv');
@@ -25541,6 +25722,13 @@
       value.staxxTxt = text;
     }
     sparkline(td.querySelector('.staxx-spark'), values, peakFloor);
+    // PLAN_121 item 1: a blank cell (no live figure — stopped, never run, the
+    // collector still warming up) has no graph to sit its dash against, so it
+    // borrows the graph's own footprint instead — see .staxx-cell--blank in
+    // staxx.css. Toggled here rather than left to the caller so a figure
+    // landing later always clears it, whichever of setCell's several callers
+    // painted the blank dash in the first place.
+    setClass(td, 'staxx-cell--blank', !!blank);
   }
 
   // Same reasoning as setCell for the two things a row carries outside its
@@ -25652,9 +25840,9 @@
   }
 
   function blankFigures(row) {
-    setCell(row, 'cpu', '—', null);
-    setCell(row, 'mem', '—', null);
-    setCell(row, 'net', '—', null);
+    setCell(row, 'cpu', '—', null, undefined, true);
+    setCell(row, 'mem', '—', null, undefined, true);
+    setCell(row, 'net', '—', null, undefined, true);
     setData(row, 'statCpu', '');
     setData(row, 'statGpuMapped', '');
 
@@ -25763,23 +25951,31 @@
         }
       });
 
-      var put = function (metric, text) {
-        var td = tr.querySelector('[data-stat="' + metric + '"] .staxx-statv');
+      // `blank` mirrors setCell's own new parameter (PLAN_121 item 1): a
+      // folder total has no graph of its own, ever, so the same
+      // .staxx-cell--blank class gives its dash the graph's slot to centre
+      // in instead of the number's usual one, matching the heading above it.
+      // A numeric total is left exactly where it already sat — folder totals
+      // are right-aligned by design and only the blank state was wrong.
+      var put = function (metric, text, blank) {
+        var wrap = tr.querySelector('[data-stat="' + metric + '"]');
+        var td = wrap && wrap.querySelector('.staxx-statv');
         if (td && td.staxxTxt !== text) {        // see setCell
           td.innerHTML = text;
           td.staxxTxt = text;
         }
+        if (wrap) setClass(wrap, 'staxx-cell--blank', !!blank);
       };
 
       if (!any) {
-        put('cpu', '—'); put('mem', '—'); put('net', '—'); put('gpu', '');
+        put('cpu', '—', true); put('mem', '—', true); put('net', '—', true); put('gpu', '', false);
         return;
       }
-      put('cpu', sum.cpu.toFixed(1) + '<small>%</small>');
-      put('mem', bytes(sum.mem));
-      put('net', rate(sum.net) + '<small>/s</small>');
+      put('cpu', sum.cpu.toFixed(1) + '<small>%</small>', false);
+      put('mem', bytes(sum.mem), false);
+      put('net', rate(sum.net) + '<small>/s</small>', false);
       // Only folders holding a GPU stack get a GPU total.
-      put('gpu', anyGpu ? sum.gpu.toFixed(1) + '<small>%</small>' : '');
+      put('gpu', anyGpu ? sum.gpu.toFixed(1) + '<small>%</small>' : '', false);
     });
   }
 

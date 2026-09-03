@@ -570,9 +570,11 @@ ok('moving tag: a missing build date falls back to "update ready"',
 ok('moving tag: the fallback never claims a new build with no dates',
    strpos($noDatePill['label'], 'new build') === false, $noDatePill['label']);
 
-// Different version strings must still read as the plain arrow, even when
-// both build dates happen to be known — this is the regression this whole
-// feature must never cause.
+// PLAN_121 item 7: different version strings no longer spell out an arrow —
+// a real pair could run to twice the width of every other pill — so the
+// label reads the same plain words as every other update, and 'versioned'
+// is the one flag saying this pill actually knows both. The full sentence
+// still lives in the tip, unchanged.
 $state = staxx_update_state();
 $state['images'][$movingImage] = [
   'local' => 'sha256:aaa', 'remote' => 'sha256:bbb',
@@ -582,17 +584,24 @@ $state['images'][$movingImage] = [
 staxx_update_state_save($state);
 
 $arrowPill = staxx_updates_pill_for_image($movingImage, staxx_update_state()['images']);
-ok('different versions: label is still the plain arrow, unchanged',
-   $arrowPill['label'] === '1.0 → 1.1', $arrowPill['label']);
+ok('different versions: label is the plain "update ready", not an arrow',
+   $arrowPill['label'] === 'update ready', $arrowPill['label']);
+ok('different versions: versioned flag is set, so the pill can show its tag icon',
+   $arrowPill['versioned'] === true, json_encode($arrowPill));
+ok('different versions: the tip still names both versions',
+   strpos($arrowPill['tip'], '1.0') !== false && strpos($arrowPill['tip'], '1.1') !== false,
+   $arrowPill['tip']);
 
 // No version strings at all (neither label ever populated) must still read
-// as the original generic "update ready", unchanged.
+// as the original generic "update ready", unchanged — and never claim to
+// know a version it does not.
 $state = staxx_update_state();
 $state['images'][$movingImage] = ['local' => 'sha256:aaa', 'remote' => 'sha256:bbb'];
 staxx_update_state_save($state);
 
 $blankPill = staxx_updates_pill_for_image($movingImage, staxx_update_state()['images']);
 ok('no version strings: label is "update ready", unchanged', $blankPill['label'] === 'update ready', $blankPill['label']);
+ok('no version strings: versioned flag is not set', empty($blankPill['versioned']), json_encode($blankPill));
 
 printf("\n%s — %d failure%s, %d skipped\n",
        $fails ? 'FAILED' : 'passed', $fails, $fails === 1 ? '' : 's', $skips);
