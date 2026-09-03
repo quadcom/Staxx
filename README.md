@@ -1,4 +1,6 @@
-# StaXX — Docker on Unraid, built on compose files
+<p align="center"><img src="Logo/staxx-lockup-1024.png" alt="StaXX" width="420"></p>
+
+<h3 align="center">Docker on Unraid, built on compose files</h3>
 
 > **Where this is up to.** In daily use on the author's own server and far enough along to judge on
 > its merits. Not on Community Applications, and not meant to be yet — but numbered releases do
