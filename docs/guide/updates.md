@@ -129,7 +129,7 @@ Update and Pull images. See [the row menu](the-stack-list.md#the-row-menu) for h
 
 ## The countdown
 
-<!-- SHOT: updates-countdown-chip | close-up | a stack row showing the countdown chip beside the update pill, with its reason text if the countdown is not actually running -->
+![A running pill beside an update ready pill that carries a countdown chip reading 1h 41m](../images/guide/updates-countdown-chip.png)
 
 A countdown only appears when [settings](settings.md#image-updates) has "What to do with what is
 found" set to install it by itself. It starts the moment the new build was first seen — reloading
@@ -173,7 +173,7 @@ A folder has the same two actions for just what is inside it — see [folders](t
 
 ## Docker Hub's limit
 
-<!-- SHOT: updates-could-not-check | close-up | a stack row with a "could not check" pill, its tooltip open showing the failure reason -->
+![A running pill beside a grey could not check pill, with its hover card open explaining the registry could not be reached, and rows for last asked, next check, how often and why](../images/guide/updates-could-not-check.png)
 
 Docker Hub only lets one address download so many images an hour — about a hundred from a server
 that has not signed in, and about two hundred signed in with an access token. Add the token under

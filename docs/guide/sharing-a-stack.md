@@ -75,7 +75,7 @@ own stack list to bring it in — see [Opening one you receive](#opening-one-you
 
 ## The exported file
 
-<!-- SHOT: sharing-a-stack-comment | close-up | the exported compose file open in a text editor, showing the comment block at the top and a REPLACE-ME value further down -->
+![The exported compose file as plain text: a comment block at the top saying which values were blanked, and further down a DEMO PASSWORD line reading REPLACE-ME](../images/guide/sharing-a-stack-comment.png)
 
 A blanked value becomes `REPLACE-ME` — never a value that looks real. StaXX refuses to start any
 stack still holding one, and says which settings are still waiting.
@@ -108,7 +108,7 @@ not by rule — there is no "everything except the risky bits" here.
 
 ## Opening one you receive
 
-<!-- SHOT: sharing-a-stack-preview | full frame | the import preview shown after dropping a .staxx file: what it holds, where it will land, and the sender's note listing values to fill in -->
+![The Import a bundle window after a drop: the folder it will land in, a Stack name box, the covering note listing what still needs filling in, and a What is inside list naming the compose file and a picture, with Cancel and Import buttons](../images/guide/sharing-a-stack-preview.png)
 
 Drag a `.staxx` file onto the stack list and drop it. Drop it on a folder to land there; drop it on
 a stack to join that stack's folder; drop it anywhere else to land at the top level.

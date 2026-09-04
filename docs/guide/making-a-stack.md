@@ -71,7 +71,7 @@ If no data store has been chosen yet, the whole page is replaced by a prompt to 
 
 ## The result
 
-<!-- SHOT: making-a-stack-result | full frame | the new stack's compose file open in a plain text editor outside StaXX, showing it is an ordinary file -->
+![The stack's compose file opened as plain text outside StaXX: an x-unraid block, then one service with its image, container name, restart policy, environment and command](../images/guide/making-a-stack-result.png)
 
 A folder named after your stack, holding an ordinary compose file. Nothing else — no database, no hidden index. Open it in any text editor, copy it anywhere, or run it with a plain `docker compose up` on a machine that has never heard of StaXX, and it behaves the same. Delete the commented settings and nothing about how the stack runs changes.
 

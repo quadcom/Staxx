@@ -72,7 +72,7 @@ you are looking at once it is open.
 
 ## The import lock
 
-<!-- SHOT: bringing-in-a-container-refusal | close-up | the message shown when Start is pressed on a stack still marked needs review -->
+![A Could not start dialog: this stack was imported and has not been reviewed yet, open it, read NEEDS-REVIEW.md, then choose Take over and start or Clear the lock only before starting it](../images/guide/bringing-in-a-container-refusal.png)
 
 Each import becomes a stack folder holding a normal compose file — one that would run anywhere,
 with no dependence on StaXX. A Compose Manager project is copied exactly as written, byte for byte.

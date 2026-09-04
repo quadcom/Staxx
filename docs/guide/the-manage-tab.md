@@ -19,11 +19,11 @@ Manage gives you a live console for one running container: its log, a real comma
 | Shell | A real command line, running as root, inside the container. |
 | Files | Browsing, opening, editing and managing files the container can see. |
 
-<!-- SHOT: the-manage-tab-whole | full frame | the whole Manage tab open, with the container picker along the top and all three panes — Log, Shell and Files — visible side by side -->
+![The whole Manage tab: the container picker along the top with one container tab lit green, the Stop, Start, Restart, Recreate and Update buttons, the Log pane on the left showing timestamped lines, the Shell pane top right with a command typed and answered, and the Files pane below it listing the container's root folders](../images/guide/the-manage-tab-whole.png)
 
 ## The container picker
 
-<!-- SHOT: the-manage-tab-picker | close-up | the row of container tabs along the top of Manage, including the All tab, a running light beside a container's name, and its CPU/memory reading -->
+![The container picker: an All tab, then the demo container's tab with a green light and its CPU and memory reading, and beneath it an Up 41 seconds pill with the Stop, Start, Restart, Recreate and Update buttons marked This container](../images/guide/the-manage-tab-picker.png)
 
 Along the top sits one tab per container in the stack, plus **All**. Each container's tab carries a light for its state, a warning mark if it is doing something other than plainly running or plainly stopped, and its CPU and memory reading. Picking **All** merges every container's log into one view; there is no shared shell or file browser for the whole stack, so Shell and Files ask you to pick one container first.
 
@@ -60,7 +60,7 @@ Shell only works while the **Container shells** setting, in Settings, is switche
 
 ## The Files pane
 
-<!-- SHOT: the-manage-tab-files | close-up | the Files pane open on a folder listing, showing the toolbar, a folder marked as coming from the server, and the Open/Download/O-P/Rename/Delete buttons on a row -->
+![The Files pane at the container's root: Up, the path, Refresh, New folder and Upload above a list of files and folders with size, owner and permissions, and Open, Download, O/P, Rename and Delete buttons on each row](../images/guide/the-manage-tab-files.png)
 
 Files browses whatever this one container can see — its own filesystem, exactly as it is right now. A folder marked with a house symbol is one this container's compose file actually mounts from your server; anything else lives inside the container only, and is gone the next time it is rebuilt.
 

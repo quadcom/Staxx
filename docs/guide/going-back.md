@@ -62,7 +62,7 @@ Never saved or opened here at all? You get the blank starting file instead — s
 
 ## Versions tab
 
-<!-- SHOT: going-back-versions-tab | full frame | the Versions tab open, showing the list of services on the left and one service's recorded builds on the right -->
+![The Versions tab: a list of services down the left with each one's image, and on the right the selected service's one recorded build with its date, fingerprint and a Running now mark](../images/guide/going-back-versions-tab.png)
 
 1. Open the stack. Click **Versions**.
 2. Pick a service on the left. Its recorded builds appear on the right.

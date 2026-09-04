@@ -152,7 +152,7 @@ next to it. If the machine has no pool it can reach, it says so and offers the s
 remaining choices instead. Typing your own path shows what StaXX can tell about it — free space,
 and a warning if it goes through Unraid's share layer rather than a pool directly.
 
-<!-- SHOT: settings-first-run | full frame | the "No data store has been chosen yet" notice with its two buttons, before any store is picked -->
+![The page before a data store is chosen: an orange-edged notice saying no data store has been chosen yet, with Choose a data store and Go to Settings buttons](../images/guide/settings-first-run.png)
 
 ## Self-test
 
