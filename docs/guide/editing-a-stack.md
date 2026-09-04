@@ -62,7 +62,7 @@ A container already running keeps running on its old settings until you restart 
 changes what the file says should happen next. If the two have drifted apart, the row shows a
 "Restart to apply" mark once you close the editor — see [the stack list](the-stack-list.md).
 
-Made a mistake? See [going back](going-back.md) for undoing a save.
+Made a mistake? See [recovery and redundancy](recovery-and-redundancy.md) for undoing a save.
 
 ## Ports on a container with its own address
 
@@ -137,7 +137,7 @@ it is StaXX declining to guess, not a fault.
 
 Tidying lands as an ordinary unsaved change: Save keeps it, Undo puts it straight back. The version
 from before it was tidied — arrival or button alike — is in the stack's history if you want it back
-later; see [going back](going-back.md).
+later; see [recovery and redundancy](recovery-and-redundancy.md).
 
 Either way, what happened appears as its own message above the file, not just on the small status
 line below it — so a refusal is something you will actually notice.

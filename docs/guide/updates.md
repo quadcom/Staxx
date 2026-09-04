@@ -151,7 +151,7 @@ says why:
   change your mind, or choose **Resume the countdown** from the row menu.
 - **Skip this version** turns down one particular new build without cancelling future ones.
 - **Rolling back** puts a service back on the build it ran before, and remembers the declined version
-  so it is never offered again as new. See [going back](going-back.md).
+  so it is never offered again as new. See [recovery and redundancy](recovery-and-redundancy.md).
 - **Pinning** fixes a service to one exact build for good. A pinned build is never asked about — see
   the cadence table above.
 

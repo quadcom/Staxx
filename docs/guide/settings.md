@@ -104,7 +104,7 @@ This tab is explained fully in [checking for updates](updates.md). What the pane
 | Only install during a quiet time | Yes / No | Yes | An update whose delay runs out outside quiet hours waits for them to open. |
 | Quiet time starts / ends | A 24-hour time | 03:00 / 05:00 | The quiet window. It may run past midnight. |
 | Notify me | Never / When a check finds something / That, and again once installed | Never | One message per check or queue, never one per container. |
-| Previous image releases to keep | 0 to 5 | 2 | How many older image versions stay on disk so an update can be undone. See [version history](going-back.md). |
+| Previous image releases to keep | 0 to 5 | 2 | How many older image versions stay on disk so an update can be undone. See [version history](recovery-and-redundancy.md). |
 | Remove old images automatically | No / Yes, once a week | No | Only ever removes an image nothing is running and no roll-back still needs. |
 
 The "when to install" box — Delay before installing, through the quiet time — folds away out of

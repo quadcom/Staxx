@@ -51,8 +51,8 @@ This guide is written in English only.
   to it, and how to get it back.
 - **[Export and import a stack](sharing-a-stack.md)** — how Export blanks your passwords and paths
   out of a copy, what it refuses to send, and what the other person has to fill in.
-- **[Version history and rollback](going-back.md)** — how to return to an earlier version of a
-  stack's file, or to an earlier build of one of its images, what each list holds, and why some
+- **[Recovery and redundancy](recovery-and-redundancy.md)** — how to return to an earlier version of
+  a stack's file, or to an earlier build of one of its images, what each list holds, and why some
   things cannot be gone back to.
 - **[Settings](settings.md)** — every setting behind the cog, group by group, plus the self-test and
   the first-run screen.
