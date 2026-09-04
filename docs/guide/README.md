@@ -61,6 +61,9 @@ This guide is written in English only.
 
 ## Something wrong, or missing?
 
+This guide is a work in progress. StaXX is still being built, and new sections are added here every
+day, so some things may not have a page yet or may be described a step behind the screen.
+
 Anything that is broken, confusing or not there yet goes on the feedback board at
 <https://staxxfb.quadcom.ca> — including a page here that turned out to be wrong. It is read.
 
