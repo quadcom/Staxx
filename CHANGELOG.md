@@ -16,7 +16,7 @@ before that were dates.
 
 ---
 
-## 00.02.00 — released 2026-09-03
+## Unreleased
 
 - **The shell in the Manage tab is now Unraid's own terminal,** the same one the Console button opens, so nano, htop and anything else that draws a full screen work in it. When the shell ends the pane greys out with its last screen still readable, and Reconnect opens a fresh one.
 
