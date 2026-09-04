@@ -9092,6 +9092,78 @@ dialog::backdrop {
 .staxx-shot--on img { border-color: var(--sm-accent); }
 .staxx-shot figcaption { margin-top: 0.4rem; }
 
+/* PLAN_135: samples illustrate what "Container icons" fetches — they are
+ * not a choice, so none of the outline/hover affordance that marks a
+ * clickable picture applies, and six small icons sit closer together than
+ * the two large before/after pictures the shots row was built for. */
+/* Sits with the help text rather than under the control: order: -1 puts it
+ * in the same flex-order group as the help paragraph, and since it is
+ * written out after that paragraph in settingsFieldHtml() (ties within one
+ * order value fall back to document order), it lands directly beneath it,
+ * ahead of the dropdown. */
+.staxx-shots--samples { gap: 1.6rem; justify-content: center; padding: 0.6rem 0 0.4rem; order: -1; }
+.staxx-shot--sample { cursor: default; }
+.staxx-shot--sample img { width: 40px; height: 40px; object-fit: contain; border: 0; outline: 0; box-shadow: none; background: transparent; }
+.staxx-shot--sample:hover img { border: 0; outline: 0; box-shadow: none; }
+
+/* Reads as its own line under the sample row, not run on from the help
+ * paragraph above it — this span also matches the general
+ * `span.staxx-hint { order: -1 }` rule above, which is what keeps it above
+ * the control alongside the help text and the samples. */
+.staxx-attribution { display: block; margin-top: 0.6rem; }
+
+/* PLAN_134: a row.within control (so far only "Protect me from myself") sits
+ * as a line of its own inside its host field's box, so it needs a little
+ * space above it rather than butting straight against the folder button. */
+.staxx-within { margin-top: 1.2rem; }
+
+/* A settings toggle — plain checkbox, hidden, driving a hand-drawn track and
+ * knob, so it looks the same across every browser rather than borrowing
+ * whatever a native switch looks like on the day. */
+.staxx-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+}
+.staxx-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.staxx-switch-track {
+  position: relative;
+  display: inline-block;
+  width: 2.2rem;
+  height: 1.2rem;
+  border-radius: 0.6rem;
+  background: var(--sm-line);
+  transition: background-color .15s;
+  flex: 0 0 auto;
+}
+.staxx-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 0.1rem;
+  left: 0.1rem;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: var(--sm-fg);
+  transition: transform .15s;
+}
+.staxx-switch input:checked ~ .staxx-switch-track {
+  background: var(--sm-accent);
+}
+.staxx-switch input:checked ~ .staxx-switch-track::after {
+  transform: translateX(1rem);
+}
+.staxx-switch input:focus-visible ~ .staxx-switch-track {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.15rem;
+}
+
 /* Docker menu is greyed out and unclickable while Show StaXX in is the
  * Docker tab — see settingsLockTakeover() in stacks.js for the interlock. */
 .staxx-field--locked { opacity: .5; }
@@ -10175,7 +10247,7 @@ dialog::backdrop {
   max-width: 92vw;
   max-height: 88vh;
   overflow: auto;
-  background: var(--background-color, #1c1c1c);
+  background: #fff;
   border: 1px solid var(--staxx-card-line, var(--sm-line));
   border-radius: 0.8rem;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);

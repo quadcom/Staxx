@@ -18,6 +18,9 @@ before that were dates.
 
 ## Unreleased
 
+- The Storage tab's "Where stacks may live" box is gone. The same choice now sits inside the Data store box as a switch, **Protect me from myself**: on, the folder picker greys out and refuses places that can lose or hide your stacks; off, it warns and lets you choose. Nothing you had set changes.
+- The Container icons setting now shows a row of six sample icons under its dropdown, so you can see the kind of icon it fetches before you decide.
+
 ## 00.02.00 — released 2026-09-03
 
 - **The shell in the Manage tab is now Unraid's own terminal,** the same one the Console button opens, so nano, htop and anything else that draws a full screen work in it. When the shell ends the pane greys out with its last screen still readable, and Reconnect opens a fresh one.

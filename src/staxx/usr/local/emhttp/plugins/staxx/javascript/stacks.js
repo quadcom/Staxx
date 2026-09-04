@@ -21752,16 +21752,14 @@
       ]
     },
     {
-      key: 'PLACEMENT_RULES', control: 'choice', label: 'Where stacks may live', tab: 'storage',
-      choices: [
-        ['guided', 'Guide me — grey them out and refuse them'],
-        ['open',   'Get out of the way — warn me, then allow it']
-      ],
-      help: 'How the folder browser treats risky places for the data store: a single array ' +
-            'disk, an unassigned drive, a network mount, or a share set to move onto the array. ' +
-            'Each can lose or hide your stacks. Two places are refused whichever you choose: ' +
-            'memory, which is emptied at every reboot, and a whole share, where every folder in ' +
-            'it would be read as a stack.'
+      // PLAN_134: was its own box ahead of the Data store one, for what is
+      // really a switch about how that box's folder picker behaves — now
+      // rendered inside it instead (see settingsFieldHtml()'s STORE_ROOT
+      // branch). Key and values are unchanged, so nothing on disk differs.
+      key: 'PLACEMENT_RULES', control: 'toggle', label: 'Protect me from myself', tab: 'storage',
+      within: 'STORE_ROOT', on: 'guided', off: 'open',
+      help: 'On, the folder picker greys out and refuses places that can lose or hide your ' +
+            'stacks. Off, it warns and lets you choose.'
     },
     {
       key: 'STORE_ROOT', control: 'path', label: 'Data store', tab: 'storage',
@@ -21828,10 +21826,27 @@
             'name or address is sent. Turned off, nothing is downloaded: icons already saved keep ' +
             'working, an <code>icon:</code> that names a file in the stack folder or a Font ' +
             'Awesome glyph still works, and anything else shows a coloured tile with its ' +
-            'initials.<br><br>Icons are by ' +
+            'initials.',
+      // Split from `help` so it can be drawn after the sample icons rather
+      // than run on inside the same paragraph — settingsFieldHtml() places
+      // it as its own line.
+      attribution: 'Icons are by ' +
             '<a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st</a> and ' +
             'used under the <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" ' +
-            'rel="noopener">CC BY 4.0</a> licence.'
+            'rel="noopener">CC BY 4.0</a> licence.',
+      // PLAN_135: this box talks about icons without showing one. These six
+      // are illustrations of what the setting fetches, not a choice — bundled
+      // with the plugin rather than pulled from the collection when the panel
+      // opens, so nothing is downloaded while the setting itself says nothing
+      // is downloaded.
+      samples: [
+        { src: 'samples/jellyfin.png',       caption: 'Jellyfin' },
+        { src: 'samples/plex.png',           caption: 'Plex' },
+        { src: 'samples/nextcloud.png',      caption: 'Nextcloud' },
+        { src: 'samples/home-assistant.png', caption: 'Home Assistant' },
+        { src: 'samples/pi-hole.png',        caption: 'Pi-hole' },
+        { src: 'samples/vaultwarden.png',    caption: 'Vaultwarden' }
+      ]
     },
     {
       key: 'IMAGE_LOOKUP', control: 'choice', label: 'Image documentation', tab: 'icons',
@@ -22068,6 +22083,18 @@
       // once the panel is open, not a value settingsControlValue() can read
       // off an input. Skipped by settingsDirty() and saveSettings() below.
       return '<div class="staxx-readout" id="' + row.id + '">Looking…</div>';
+    } else if (row.control === 'toggle') {
+      // A checkbox rather than a select, so the two stored values never
+      // appear as option text — data-on/data-off is all settingsControlValue()
+      // needs to read back the same 'guided'/'open' strings the choice
+      // control used to write. '' (never saved yet) checks as on, since
+      // guided is the server's own default.
+      var checked = (value === row.on || value === '') ? ' checked' : '';
+      return '<label class="staxx-switch"><input type="checkbox" role="switch" id="' + row.id +
+             '" data-on="' + esc(row.on) + '" data-off="' + esc(row.off) + '" aria-label="' +
+             esc(row.label) + '"' + checked + '>' +
+             '<span class="staxx-switch-track" aria-hidden="true"></span>' +
+             '<span class="staxx-switch-text">' + esc(row.label) + '</span></label>';
     } else if (row.control === 'choice') {
       var opts = row.choices.map(function (o) {
         return '<option value="' + esc(o[0]) + '"' + (o[0] === value ? ' selected' : '') +
@@ -22119,7 +22146,7 @@
     }
   }
 
-  function settingsFieldHtml(row, value) {
+  function settingsFieldHtml(row, value, values) {
     var control = settingsControlHtml(row, value);
     // A row can open a labelled group (Docker Hub sign-in, so far the only
     // one) — the heading and its explanation sit above the first field in
@@ -22202,18 +22229,52 @@
                  '<figcaption class="staxx-hint">' + esc(s.caption) + '</figcaption></figure>';
         }).join('') + '</div>'
       : '';
+    // PLAN_135: samples are illustrations of the outcome, not a choice — no
+    // data-value, so the click-to-choose handler below leaves them alone.
+    var samplesHtml = row.samples
+      ? '<div class="staxx-shots staxx-shots--samples">' + row.samples.map(function (s) {
+          return '<figure class="staxx-shot staxx-shot--sample">' +
+                 '<img src="/plugins/staxx/images/settings/' + esc(s.src) + '" alt="' + esc(s.caption) + '">' +
+                 '<figcaption class="staxx-hint">' + esc(s.caption) + '</figcaption></figure>';
+        }).join('') + '</div>'
+      : '';
     // The crypt state readout belongs inside CRYPT_MODE's own box, under its
     // dropdown, rather than after it — see settingsCryptBox() above.
     var cryptHtml = row.key === 'CRYPT_MODE' ? '<div class="staxx-crypt" id="staxx-crypt-state" hidden></div>' : '';
+    // PLAN_134: a row.within row (so far only PLACEMENT_RULES) is drawn here,
+    // inside its host's own box, rather than laid out as a field of its own
+    // — the layout loop above already skips it. Sits before derivedLine so
+    // the switch reads as governing the folder button just above it, ahead
+    // of the derived-folder lines beneath.
+    var withinHtml = '';
+    if (row.key === 'STORE_ROOT' && values) {
+      withinHtml = SETTINGS_ROWS.filter(function (r) { return r.within === row.key; })
+        .map(function (subRow) {
+          return '<div class="staxx-within" data-key="' + esc(subRow.key) + '">' +
+                 settingsControlHtml(subRow, values[subRow.key] || '') +
+                 '<span class="staxx-hint">' + subRow.help + '</span></div>';
+        }).join('');
+    }
+    // The help paragraph carries order: -1 (see staxx.css), which is what
+    // actually lifts it above the control on screen — DOM position here
+    // does not decide that. samplesHtml and the attribution line are given
+    // the same order so they land between the help text and the control:
+    // among elements sharing one order value, flex falls back to document
+    // order, so they must be written out in the order they should appear.
+    var attributionHtml = row.attribution
+      ? '<span class="staxx-hint staxx-attribution">' + row.attribution + '</span>'
+      : '';
     return head + '<div class="staxx-field" data-key="' + esc(row.key) + '">' +
              '<span>' + esc(row.label) + '</span>' +
              control +
              shotsHtml +
              '<span class="staxx-hint">' + row.help + '</span>' +
+             samplesHtml +
+             attributionHtml +
              // Inside the field's own box rather than after it: these lines
              // are part of the data store setting, and outside the border
              // they read as belonging to nothing.
-             derivedLine + unreachableLine + storageLine + cryptHtml +
+             withinHtml + derivedLine + unreachableLine + storageLine + cryptHtml +
            '</div>';
   }
 
@@ -22239,7 +22300,10 @@
 
   function settingsControlValue(row) {
     var el = document.getElementById(row.id);
-    return el ? el.value : '';
+    if (!el) return '';
+    // A toggle's real value is one of its two data-* strings, not the
+    // checkbox's own on/off state.
+    return el.type === 'checkbox' ? (el.checked ? el.dataset.on : el.dataset.off) : el.value;
   }
 
   // A list control's own comma-separated entries, as an array with blanks
@@ -22731,14 +22795,16 @@
         // this tab — every later row of the same block draws nothing.
         var seenBlocks = {};
         var rowsHtml = SETTINGS_ROWS.filter(function (row) {
-          return row.tab === tab;
+          // A row.within row is drawn by its host row (settingsFieldHtml()'s
+          // STORE_ROOT branch), not laid out here — same idea as row.block.
+          return row.tab === tab && !row.within;
         }).map(function (row) {
           if (row.block) {
             if (seenBlocks[row.block]) return '';
             seenBlocks[row.block] = true;
             return settingsBlockHtml(row.block, res.settings);
           }
-          return settingsFieldHtml(row, res.settings[row.key] || '');
+          return settingsFieldHtml(row, res.settings[row.key] || '', res.settings);
         }).join('');
         // Two things that are not settings sit at the end of the tab they
         // are about, rather than pinned to the bottom of the whole panel:
@@ -22959,6 +23025,10 @@
       var listRemove = event.target.closest('[data-list-remove]');
       if (listRemove) { settingsListRemove(listRemove); return; }
       var shot = event.target.closest('.staxx-shot');
+      // PLAN_135: a sample figure is an illustration, not a choice — it
+      // carries no data-value, so without this guard it would set the
+      // select to the literal string "undefined" and clear the selection.
+      if (shot && shot.dataset.value === undefined) return;
       if (shot) {
         var field = shot.closest('.staxx-field[data-key]');
         var select = field && field.querySelector('select');
