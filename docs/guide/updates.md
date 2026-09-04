@@ -6,7 +6,7 @@
 
 
 ![The Check for updates button while a check is running, greyed out and reading "Checking…"](../images/guide/updates-checking.png)
-![The update summary line reading "Checked 4 minutes ago, 19 updates waiting."](../images/guide/updates-summary-line.png)
+![The title bar's right end after a check: a chip saying when it was last checked, a chip counting updates waiting, and a chip counting author-example findings](../images/guide/the-stack-list-title-chips.png)
 
 A check asks each image's registry one question: is a newer build published under the same tag?
 Nothing is downloaded. Nothing restarts. The answer sits until you press the pill or the countdown
