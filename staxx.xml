@@ -5,6 +5,8 @@
   <Support>https://staxxfb.quadcom.ca</Support>
   <Project>https://github.com/quadcom/Staxx</Project>
   <Overview>
+    StaXX is early software and is marked beta here on purpose: expect rough edges, and read the changelog before pressing update.
+    [br][br]
     StaXX manages your Docker containers with standard compose files instead of Unraid's own
     template format, and draws those compose files as an ordinary form so you never have to edit
     indented text.
@@ -24,4 +26,5 @@
   </Overview>
   <Icon>https://raw.githubusercontent.com/quadcom/Staxx/main/Logo/staxx-icon.svg</Icon>
   <Category>Tools:System</Category>
+  <Beta>true</Beta>
 </Plugin>
