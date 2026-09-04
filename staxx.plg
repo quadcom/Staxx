@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.03.00">
+<!ENTITY version              "00.02.01">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -418,7 +418,9 @@ find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null 
 # made removal look complete while a stale record stayed in the package
 # database, confusing a later upgradepkg.
 removepkg /var/log/packages/staxx-* 2>/dev/null || true
-removepkg /var/log/packages/stack.manager-* 2>/dev/null || true   # a pre-rename install
+# A pre-rename install. removepkg reports "No such package" on stdout, not stderr,
+# so it is silenced whole rather than left to alarm somebody reading the removal.
+removepkg /var/log/packages/stack.manager-* >/dev/null 2>&1 || true
 rm -rf "/usr/local/emhttp/plugins/staxx"
 rm -f  "/boot/config/plugins/staxx/"*.txz
 
@@ -440,8 +442,8 @@ rm -rf "/tmp/staxx"   # job logs, stats snapshots, icon cache — all regenerate
 echo ""
 echo "-----------------------------------------------------------"
 echo " StaXX has been removed."
-echo " Your configuration and stack definitions were kept at:"
-echo "   /boot/config/plugins/staxx"
+echo " Your settings were kept at /boot/config/plugins/staxx, and your stacks"
+echo " were kept in the data store you chose. Nothing you configured was touched."
 echo "-----------------------------------------------------------"
 echo ""
 ]]>
