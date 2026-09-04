@@ -542,14 +542,12 @@ names burnt while releases were immutable, since `01.02.00` is not `1.2.0`.
 
 `01.00.00` is the first release meant for general use; the `00.xx.xx` line is the run-up to it.
 
-**While StaXX is in alpha, every release is a minor one on the `00.xx.xx` line. Never propose a
-`01.00.00`, and never argue a change up to major because of its shape.** Adrian's standing
-instruction, 2026-08-30. Nobody is running the plugin — it is not listed on Community Applications,
-which is the only way anyone would find it. **Applying for that listing is what starts the `1.0.0`
-conversation, and it is his call and his alone.** Until he says so, a change that would otherwise be
-major is simply the next minor.
-
-The same reasoning retires the migration rule that used to sit below — see the next heading.
+**Patch and minor releases on the `00.xx.xx` line; never propose a `01.00.00`, and never argue a
+change up to major because of its shape.** Adrian's standing instructions: 2026-08-30 (minor only,
+while alpha) and 2026-09-04 (**patch releases allowed from now on**, the day he called StaXX beta and
+submitted it to Community Applications). So a release carrying only fixes is a patch (`00.02.01`),
+one carrying anything new is a minor, and `01.00.00` stays his call alone — the listing is in, so
+that conversation is open, but nobody starts it but him.
 
 **The number is decided by what has accumulated on `dev`, and it is decided once.** A dev build
 carries the number `main` is heading towards — cut `00.02.00_dev...` and you have declared the next
@@ -557,11 +555,12 @@ stable release to be `00.02.00`. If something landing later turns out to be a ma
 number moves and the next dev build says so; nothing is burnt either way, because a dev tag can
 never collide with the stable tag it is heading towards.
 
-**While StaXX is in alpha, a plan does not have to migrate what is already on disk.** Adrian's
-standing instruction, 2026-08-30, and the same reasoning as the version rule above: nobody is running
-the plugin, so there is no installed base to carry forward. Take the clean shape and leave the old
-one behind. **Do not build migration machinery, upgrade paths, or code that goes on reading a shape
-StaXX no longer writes** — every one of those is permanent weight bought for nobody.
+**A plan does not have to migrate what is already on disk — and this rule stays in beta.** Adrian's
+standing instruction, 2026-08-30, reaffirmed 2026-09-04 with his reasoning: there is no database,
+and the compose YAML shape is locked in, so he does not expect a migration to ever be needed. Take
+the clean shape and leave the old one behind. **Do not build migration machinery, upgrade paths, or
+code that goes on reading a shape StaXX no longer writes** — every one of those is permanent weight
+bought for nobody.
 
 The one real server is Adrian's, and it is **patched by hand, as needed**: when a change would make
 something on his box read wrong, say so plainly and offer a one-off fix for those files. That is a
