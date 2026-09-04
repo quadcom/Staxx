@@ -2591,6 +2591,18 @@ div.title.staxx-has-titlebar {
   outline-offset: 0.1rem;
 }
 
+/* The three button pills above say `font: inherit` to shed the browser's own
+   button typeface — but that shorthand also inherits the CELL's font size,
+   and being two classes deep it outranks .staxx-pill's single-class 1.1rem.
+   So a clickable "running(1)" drew two pixels taller and ten wider than the
+   plain one on the row below it (measured 2026-09-04: 13px against 11px).
+   Restated here, once, at the same specificity, after the rules it corrects. */
+.staxx-scaffold .staxx-pill--fail,
+.staxx-scaffold .staxx-pill--offer,
+.staxx-scaffold .staxx-pill--busy {
+  font-size: 1.1rem;
+}
+
 /* Two pills on the name's second line: a stack imported with its run buttons
    locked, and a container waiting for its handover to be confirmed. Outlined
    rather than filled, so they read as "check this" and not as an error — the
