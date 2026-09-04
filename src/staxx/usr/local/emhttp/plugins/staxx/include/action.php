@@ -521,6 +521,12 @@ switch ($action) {
     staxx_folders_update(function (array $data) use ($folder, $leaf, $name): array {
       $start = $data['start'];
       $start['stacks'][$folder] = staxx_start_list_remove($start['stacks'][$folder] ?? [], $leaf);
+      // A loose stack also has its own spot in the top-level order — gone
+      // once the stack itself is, or a later stack could inherit its place.
+      if ($folder === '') {
+        $ridx = array_search('stack:'.$leaf, $start['root'], true);
+        if ($ridx !== false) array_splice($start['root'], $ridx, 1);
+      }
       staxx_start_drop($start, $name);
       $data['start'] = $start;
       return $data;
@@ -819,26 +825,22 @@ switch ($action) {
     if ($text === '' && $error !== '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'text' => $text]);
 
-  /* ---- the shell: open, write to, read from and close a session in a
-   * running container. See the "exec" section of Stacks.php for the
-   * mechanism and the security rules this depends on — the container name is
-   * resolved server-side; only the stack path and service name ever arrive
-   * from the browser, and neither reaches a shell unchecked. */
+  /* ---- the shell: open, poll and close a real terminal (ttyd) in a running
+   * container. See the "exec" section of Stacks.php for the mechanism and the
+   * security rules this depends on — the container name is resolved
+   * server-side; only the stack path and service name ever arrive from the
+   * browser, and neither reaches a shell unchecked. The browser talks to the
+   * terminal itself through an iframe onto nginx's own /logterminal/ proxy,
+   * not through this endpoint — exec-alive is only the liveness poll that
+   * doubles as the session's keep-alive. */
   case 'exec-open':
     $service = (string)($_POST['service'] ?? '');
     $id      = staxx_exec_start($name, $service, $error);
     if ($id === '') staxx_reply(['ok' => false, 'error' => $error]);
     staxx_reply(['ok' => true, 'id' => $id]);
 
-  case 'exec-write':
-    if (!staxx_exec_write((string)($_POST['id'] ?? ''), (string)($_POST['bytes'] ?? ''), $error)) {
-      staxx_reply(['ok' => false, 'error' => $error]);
-    }
-    staxx_reply(['ok' => true]);
-
-  case 'exec-read':
-    staxx_reply(['ok' => true]
-      + staxx_exec_read((string)($_POST['id'] ?? ''), (int)($_POST['offset'] ?? 0)));
+  case 'exec-alive':
+    staxx_reply(['ok' => true, 'alive' => staxx_exec_alive((string)($_POST['id'] ?? ''))]);
 
   case 'exec-close':
     staxx_exec_stop((string)($_POST['id'] ?? ''));
@@ -1532,15 +1534,32 @@ switch ($action) {
    *
    * staxx_update_rollback() refuses outright when the digest history points
    * to has already been removed locally, rather than guessing at a pull.
+   *
+   * Two shapes reach here: the single "Put this back" button posts
+   * `service`+`digest`, and the Versions tab's several-at-once mode posts
+   * `services`+`digests` as ";"-joined lists of equal length. Either way it
+   * becomes one service=>digest map, and one call, so several services roll
+   * back in a single save and a single recreate job.
    */
   case 'update-rollback':
     if (!staxx_valid_path($name)) {
       staxx_reply(['ok' => false, 'error' => 'Invalid stack name.']);
     }
+    if (isset($_POST['services']) || isset($_POST['digests'])) {
+      $svcList    = array_filter(explode(';', (string)($_POST['services'] ?? '')), fn($v) => $v !== '');
+      $digestList = array_filter(explode(';', (string)($_POST['digests'] ?? '')), fn($v) => $v !== '');
+      $svcList    = array_values($svcList);
+      $digestList = array_values($digestList);
+      if (!$svcList || count($svcList) !== count($digestList)) {
+        staxx_reply(['ok' => false, 'error' => 'The list of services and the list of versions do not match, so nothing was changed.']);
+      }
+      $targets = array_combine($svcList, $digestList);
+    } else {
+      $targets = [(string)($_POST['service'] ?? '') => (string)($_POST['digest'] ?? '')];
+    }
     $rbNote = '';
     $job = staxx_update_rollback(
-      $name, (string)($_POST['service'] ?? ''), $error, (string)($_POST['digest'] ?? ''),
-      (string)($_POST['yaml'] ?? ''), $rbNote
+      $name, $targets, $error, (string)($_POST['yaml'] ?? ''), $rbNote
     );
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
     // A pin is only acceptable because it can be undone from the file history,
@@ -2161,6 +2180,11 @@ switch ($action) {
         $pos   = array_search(staxx_path_leaf($name), $list, true);
         if ($pos !== false) $list[$pos] = staxx_path_leaf($renamed);
         $start['stacks'][$folder] = $list;
+        // A loose stack's top-level token carries its leaf name too.
+        if ($folder === '') {
+          $ridx = array_search('stack:'.staxx_path_leaf($name), $start['root'], true);
+          if ($ridx !== false) $start['root'][$ridx] = 'stack:'.staxx_path_leaf($renamed);
+        }
         staxx_start_rekey($start, $name, $renamed);
         $data['start'] = $start;
         return $data;

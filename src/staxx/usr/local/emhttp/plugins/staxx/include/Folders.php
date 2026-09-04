@@ -194,6 +194,7 @@ function staxx_start_defaults(): array {
     'delay'    => [],
     'seen'     => '',
     'pending'  => false,
+    'root'     => [],
   ];
 }
 
@@ -210,6 +211,13 @@ function staxx_start_normalise($raw): array {
 
   if (is_array($raw['folders'] ?? null)) {
     $out['folders'] = array_values(array_filter($raw['folders'], 'is_string'));
+  }
+
+  // The top level's own order — folder and loose-stack tokens interleaved.
+  // Absent (or foreign) on an older file, which is exactly what makes a file
+  // with no `root` key draw folders-then-loose-stacks, today's behaviour.
+  if (is_array($raw['root'] ?? null)) {
+    $out['root'] = array_values(array_filter($raw['root'], 'is_string'));
   }
 
   foreach (['stacks', 'services'] as $key) {
@@ -291,6 +299,26 @@ function staxx_start_sort(array $names, array $order): array {
   return $result;
 }
 
+/**
+ * The top level's own order, as one interleaved list of tokens —
+ * `folder:<name>` or `stack:<leaf>` — shared by the on-screen layout and the
+ * boot projection so the two cannot disagree.
+ *
+ * $orderedFolders and $orderedLeaves are already sorted by their own lists
+ * (the folder order and the '' stack order); this only decides how the two
+ * SETS interleave, via `root`. A token `root` does not mention keeps today's
+ * shape, because staxx_start_sort() falls back to the order it was handed —
+ * every folder token before every loose-stack token — so a record with no
+ * `root` key draws exactly what it always has.
+ */
+function staxx_start_root_tokens(array $orderedFolders, array $orderedLeaves, array $root): array {
+  $tokens = array_merge(
+    array_map(fn($f) => 'folder:'.$f, $orderedFolders),
+    array_map(fn($s) => 'stack:'.$s, $orderedLeaves)
+  );
+  return staxx_start_sort($tokens, $root);
+}
+
 /** Is this a name compose would accept for a service? */
 function staxx_start_valid_service_name(string $name): bool {
   return $name !== '' && strlen($name) <= 63 && (bool)preg_match('/^[A-Za-z0-9._-]+$/', $name);
@@ -305,11 +333,11 @@ function staxx_start_valid_service_name(string $name): bool {
 function staxx_start_order_set(string $scope, string $parent, array $names, string &$error): bool {
   $error = '';
 
-  if (!in_array($scope, ['folders', 'stacks', 'services'], true)) {
+  if (!in_array($scope, ['folders', 'stacks', 'services', 'root'], true)) {
     $error = 'That is not something StaXX knows how to order.';
     return false;
   }
-  if ($scope === 'folders' && $parent !== '') {
+  if (($scope === 'folders' || $scope === 'root') && $parent !== '') {
     $error = 'Folders have no parent to be ordered within.';
     return false;
   }
@@ -326,25 +354,61 @@ function staxx_start_order_set(string $scope, string $parent, array $names, stri
     return false;
   }
 
+  // The top level's own order is a mix of two kinds of thing, so each token
+  // carries which kind it names — a bare name would be ambiguous the day a
+  // folder and a loose stack happened to share one.
+  $rootFolders = [];
+  $rootLeaves  = [];
   foreach ($names as $name) {
-    $valid = is_string($name) && (
-      $scope === 'services' ? staxx_start_valid_service_name($name) : staxx_valid_name($name)
-    );
-    if (!$valid) {
-      $error = $scope === 'services'
-        ? 'Service names may only contain letters, numbers, dots, dashes and underscores, '
-        . 'and must be 63 characters or fewer.'
-        : staxx_folder_name_rule();
+    if ($scope !== 'root') {
+      $valid = is_string($name) && (
+        $scope === 'services' ? staxx_start_valid_service_name($name) : staxx_valid_name($name)
+      );
+      if (!$valid) {
+        $error = $scope === 'services'
+          ? 'Service names may only contain letters, numbers, dots, dashes and underscores, '
+          . 'and must be 63 characters or fewer.'
+          : staxx_folder_name_rule();
+        return false;
+      }
+      continue;
+    }
+
+    if (!is_string($name)) {
+      $error = 'That is not something StaXX can place at the top level.';
+      return false;
+    }
+    if (str_starts_with($name, 'folder:')) {
+      $folder = substr($name, 7);
+      if (!in_array($folder, staxx_folder_names(), true)) {
+        $error = 'No such folder.';
+        return false;
+      }
+      $rootFolders[] = $folder;
+    } elseif (str_starts_with($name, 'stack:')) {
+      $leaf = substr($name, 6);
+      if (!staxx_valid_name($leaf)) { $error = staxx_folder_name_rule(); return false; }
+      $rootLeaves[] = $leaf;
+    } else {
+      $error = 'That is not something StaXX can place at the top level.';
       return false;
     }
   }
 
   $names = array_values($names);
 
-  return staxx_start_update(function (array $start) use ($scope, $parent, $names): array {
+  return staxx_start_update(function (array $start) use ($scope, $parent, $names, $rootFolders, $rootLeaves): array {
     if ($scope === 'folders')    $start['folders']          = $names;
     elseif ($scope === 'stacks') $start['stacks'][$parent]   = $names;
-    else                         $start['services'][$parent] = $names;
+    elseif ($scope === 'services') $start['services'][$parent] = $names;
+    else {
+      // `root` is the top level's own order, but `folders` and the ''
+      // stack list still have to agree with it — everything else in the
+      // plugin reads one of those two, not `root` itself.
+      $start['root']        = $names;
+      $start['folders']     = $rootFolders;
+      $start['stacks']['']  = $rootLeaves;
+    }
     return $start;
   }, $error);
 }
@@ -515,6 +579,8 @@ function staxx_folder_rename(string $from, string $to, string &$error): bool {
     $start = $data['start'];
     $idx = array_search($from, $start['folders'], true);
     if ($idx !== false) $start['folders'][$idx] = $to;
+    $ridx = array_search('folder:'.$from, $start['root'], true);
+    if ($ridx !== false) $start['root'][$ridx] = 'folder:'.$to;
     if (isset($start['stacks'][$from])) {
       $start['stacks'][$to] = $start['stacks'][$from];
       unset($start['stacks'][$from]);
@@ -593,6 +659,8 @@ function staxx_folder_delete(string $name, string &$error): bool {
     if ($moved) {
       $ordered = staxx_start_sort($moved, $start['stacks'][$name] ?? []);
       $start['stacks'][''] = array_values(array_merge($start['stacks'][''] ?? [], $ordered));
+    } else {
+      $ordered = [];
     }
 
     if ($failedLeaf === '') {
@@ -600,6 +668,14 @@ function staxx_folder_delete(string $name, string &$error): bool {
       $idx = array_search($name, $start['folders'], true);
       if ($idx !== false) array_splice($start['folders'], $idx, 1);
       unset($data['collapsed'][$name]);
+
+      // The folder's own spot in the top-level order is taken by the stacks
+      // it held, in the order they just left it — an empty folder simply
+      // vanishes from `root` rather than leaving a gap.
+      $ridx = array_search('folder:'.$name, $start['root'], true);
+      $tokens = array_map(fn($leaf) => 'stack:'.$leaf, $ordered);
+      if ($ridx !== false) array_splice($start['root'], $ridx, 1, $tokens);
+      else $start['root'] = array_merge($start['root'], $tokens);
     } else {
       // A sibling is still in the folder, so its own order entry has to
       // survive — just without the leaves that already left.
@@ -708,6 +784,16 @@ function staxx_folder_assign(string $stack, string $folder, string &$error): str
     $newList[] = $leaf;
     $start['stacks'][$folder] = $newList;
 
+    // `root` only ever names the top level, so a stack loses its token on
+    // the way into a folder and gains a fresh one, at the end, on the way
+    // back out — the same "new stacks land at the bottom" rule as everywhere
+    // else, rather than trying to guess where it should reappear.
+    if ($oldFolder === '') {
+      $ridx = array_search('stack:'.$leaf, $start['root'], true);
+      if ($ridx !== false) array_splice($start['root'], $ridx, 1);
+    }
+    if ($folder === '') $start['root'][] = 'stack:'.$leaf;
+
     staxx_start_rekey($start, $stack, $rel);
     $data['start'] = $start;
     return $data;
@@ -743,11 +829,28 @@ function staxx_folder_layout(array $stacks): array {
   $start = $data['start'];
   $rows  = [];
 
-  // Every folder on disk, including the empty ones — an empty folder you just
-  // made must appear, or it looks as though the button did nothing. Ordered by
-  // the stored drag order, folders nobody has dragged falling back to
-  // whatever staxx_folder_names() already returns them in.
-  foreach (staxx_start_sort(staxx_folder_names(), $start['folders']) as $folder) {
+  // Folders, in the stored drag order (folders nobody has dragged fall back
+  // to whatever staxx_folder_names() already returns them in), and the loose
+  // stacks at the top level, in the '' list's order. `root` then decides how
+  // the two interleave — see staxx_start_root_tokens().
+  $folderOrder = staxx_start_sort(staxx_folder_names(), $start['folders']);
+
+  $top = array_values(array_filter($stacks, fn($s) => ($s['folder'] ?? '') === ''));
+  $topByLeaf = [];
+  foreach ($top as $s) $topByLeaf[$s['leaf']] = $s;
+  $looseOrder = staxx_start_sort(array_keys($topByLeaf), $start['stacks'][''] ?? []);
+
+  foreach (staxx_start_root_tokens($folderOrder, $looseOrder, $start['root']) as $token) {
+    if (str_starts_with($token, 'stack:')) {
+      $leaf = substr($token, 6);
+      $rows[] = ['type' => 'stack', 'folder' => '', 'hidden' => false, 'stack' => $topByLeaf[$leaf],
+                 'expanded' => false];
+      continue;
+    }
+
+    // Every folder on disk, including the empty ones — an empty folder you
+    // just made must appear, or it looks as though the button did nothing.
+    $folder = substr($token, 7);
     $members = array_values(array_filter($stacks, fn($s) => ($s['folder'] ?? '') === $folder));
 
     // Sorted by leaf name — the folder's stored order — not by the whole
@@ -779,16 +882,6 @@ function staxx_folder_layout(array $stacks): array {
                  'hidden' => $collapsed, 'stack' => $m,
                  'expanded' => false];
     }
-  }
-
-  $top = array_values(array_filter($stacks, fn($s) => ($s['folder'] ?? '') === ''));
-  $byLeaf = [];
-  foreach ($top as $s) $byLeaf[$s['leaf']] = $s;
-  $order = staxx_start_sort(array_keys($byLeaf), $start['stacks'][''] ?? []);
-
-  foreach ($order as $leaf) {
-    $rows[] = ['type' => 'stack', 'folder' => '', 'hidden' => false, 'stack' => $byLeaf[$leaf],
-               'expanded' => false];
   }
 
   return $rows;

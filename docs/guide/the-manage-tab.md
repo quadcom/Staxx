@@ -46,13 +46,13 @@ Reading follows the container's own output as it arrives, keeping up to 4,000 li
 
 ## The Shell pane
 
-Shell gives you a genuine command line inside the running container, working as root. Type into it as you would any terminal — arrow keys, Ctrl-C, Ctrl-L, Tab and the rest all work, and pasting is read straight off your clipboard.
+Shell is Unraid's own terminal, the same one its **Console** button opens, sitting inside this pane rather than in a pop-up window. It gives a genuine command line inside the running container, working as root — type into it as you would any terminal, and full-screen programs like nano, htop or mc all work properly, with their own colours, redraws and cursor movement.
 
 Know what this is: it has the same reach as signing into the machine itself, only scoped to whatever this one container can see. Anything you change this way is gone the next time the container is rebuilt — an update, a recreate, or simply the image being pulled again all start it fresh, so a real fix belongs in the compose file, not typed here.
 
 The first time you open a shell on this server, a notice explains this and asks you to confirm it — once per server, never once per container.
 
-A program that wants a full screen — nano, htop, or anything like them — cannot be shown in this pane. It offers a plain notice and a **Send Ctrl-C** button instead; open Unraid's own terminal for that kind of program. Once a session has ended — the container stopped, or the shell process itself exited — the pane says so and offers **Reconnect** for a fresh one.
+Once a session has ended — the container stopped, or the shell process itself exited — the pane greys out and shows **Reconnect** for a fresh one; whatever the screen last showed stays visible underneath the dimming.
 
 Shell only works while the **Container shells** setting, in Settings, is switched on. Turning it off refuses every shell on the server outright, not merely hides the tab — there is no way around it from the page.
 

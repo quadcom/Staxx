@@ -697,79 +697,63 @@
 .staxx-manage-shell-screenwrap {
   flex: 1 1 auto;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
+  position: relative; /* frames inside are absolutely positioned to fill this */
 }
 
 .staxx-manage-shell-screenwrap--hidden { display: none; }
 
-/* The refusal banner for a full-screen program (PLAN_44 D4) replaces the
-   scrollback entirely rather than sitting over it — there is nothing under
-   it worth seeing once the program that wants a real terminal has taken
-   over, and overlaying would only invite scrolling to see text that no
-   longer means anything. */
-.staxx-manage-shell-alt {
-  flex: 1 1 auto;
+/* PLAN_133 — one of these per service, all kept in the DOM at once (see
+   ensureShellFrame() in manage.js) so a background session's terminal never
+   drops its connection on a tab switch; only the active one is unhidden. */
+.staxx-manage-shell-frame {
+  position: absolute;
+  inset: 0;
+}
+
+.staxx-manage-shell-frame--hidden { display: none; }
+
+.staxx-manage-shell-iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  /* Colours and font come from ttyd/Unraid's own terminal settings, not this
+     stylesheet — a same-origin iframe cannot be styled into from outside it,
+     and that is the right answer here: it should look exactly like the
+     terminal the Console button already opens. */
+}
+
+/* Sits over the iframe rather than replacing it — "Opening a shell…" while
+   ttyd starts, an error, or "session ended" once it dies. The frame itself
+   is never removed on death, so whatever was last on screen stays legible
+   underneath (see the --dead modifier below). */
+.staxx-manage-shell-overlay {
+  position: absolute;
+  inset: 0;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  gap: 0.6rem;
-  padding: 0.8rem;
-}
-
-.staxx-manage-shell-alt--hidden { display: none; }
-
-.staxx-manage-shell-alt p { margin: 0; color: var(--sm-muted); }
-
-.staxx-scaffold .staxx-manage-shell-ctrlc {
-  padding: 0.35rem 0.6rem;
-  border: 1px solid var(--sm-line);
-  border-radius: var(--sm-radius);
-  background-color: var(--sm-fill-0, var(--sm-fill));
-}
-
-.staxx-scaffold .staxx-manage-shell-ctrlc:hover,
-.staxx-scaffold .staxx-manage-shell-ctrlc:focus-visible {
-  border-color: var(--sm-accent);
-}
-
-/* Font stack copied from the log pane's own lines — a terminal needs the
-   same monospace treatment. Wrapped, not scrolled sideways: a shell line
-   that runs off the edge is still more readable wrapped than hidden. */
-.staxx-manage-shell-lines {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  padding: 0.5rem 0.7rem;
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 1.25rem;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* Typing goes somewhere invisible without this — a real, visible outline
-   the moment the pane has keyboard focus, per the plan's own requirement. */
-.staxx-manage-shell-lines:focus-visible {
-  outline: 2px solid var(--sm-accent);
-  outline-offset: -2px;
-}
-
-.staxx-manage-shell-line--note {
-  color: var(--sm-accent);
+  text-align: center;
+  padding: 1rem;
+  color: var(--sm-muted);
   font-style: italic;
 }
 
-.staxx-manage-shell-cur::after {
-  content: '';
-  display: inline-block;
-  width: 0.5em;
-  height: 1em;
-  margin-left: 1px;
-  vertical-align: -0.15em;
-  background-color: currentColor;
-  opacity: 0.6;
+.staxx-manage-shell-overlay--hidden { display: none; }
+
+/* A dead session's frame is dimmed and stops taking clicks — the pointer
+   events would otherwise reach a websocket that no longer answers, which
+   read as the pane being stuck rather than ended. */
+.staxx-manage-shell-frame--dead .staxx-manage-shell-iframe {
+  filter: grayscale(0.7) brightness(0.55);
+  pointer-events: none;
+}
+
+.staxx-manage-shell-frame--dead .staxx-manage-shell-overlay {
+  background-color: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-style: normal;
+  pointer-events: none;
 }
 
 /* ---- D5: the file pane ----------------------------------------------------
@@ -1108,20 +1092,6 @@
   opacity: 0.5;
   cursor: default;
 }
-
-/* The eight ANSI foreground colours plus bold (PLAN_44 D4's own floor —
-   "at minimum the eight foreground colours, bold, and reset"). Fixed
-   values, not theme tokens: these carry their own meaning independent of
-   Unraid's light/dark choice, the same way they would in any terminal. */
-.staxx-sh-fg-k { color: #6e7681; }
-.staxx-sh-fg-r { color: #e5534b; }
-.staxx-sh-fg-g { color: #57ab5a; }
-.staxx-sh-fg-y { color: #c69026; }
-.staxx-sh-fg-b { color: #539bf5; }
-.staxx-sh-fg-m { color: #b083f0; }
-.staxx-sh-fg-c { color: #39c5cf; }
-.staxx-sh-fg-w { color: inherit; }
-.staxx-sh-b    { font-weight: 700; }
 
 /* ---- D7: the narrow layout itself ----------------------------------------
  * Collapses the (log / handle / (shell over files)) split into a single

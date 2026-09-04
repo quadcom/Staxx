@@ -7,16 +7,19 @@
  * staxx_log_read(), staxx_log_stop() and staxx_log_reap() — covered further
  * down under "log follower".
  *
- * PLAN_44 phase 4 adds the shell — staxx_exec_start(), staxx_exec_write(),
- * staxx_exec_read(), staxx_exec_stop() and staxx_exec_reap() — covered
- * further down under "exec". Nothing there ever opens a real session either:
- * every staxx_exec_start() call below is refused before it ever calls
- * exec(), and the offset/heartbeat/reap cases only ever touch fake session
- * files this script writes by hand under STAXX_EXEC_DIR, with a pid that is
- * never a real process. The one exception, by design, is the "does not
- * appear to be running" case, which asks real docker/compose read-only
+ * PLAN_44 phase 4 / PLAN_133 add the shell — staxx_exec_start(),
+ * staxx_exec_alive(), staxx_exec_stop() and staxx_exec_reap() — covered
+ * further down under "exec". Nothing there ever starts a real ttyd or
+ * touches docker: every staxx_exec_start() call below is refused before it
+ * ever calls exec(), and the liveness/kill/reap cases only ever touch fake
+ * session files this script writes by hand under STAXX_EXEC_DIR, with a pid
+ * that is never one of ttyd's. The one exception, by design, is the "does
+ * not appear to be running" case, which asks real docker/compose read-only
  * questions about a stack that was deliberately never started — see the
- * comment beside it.
+ * comment beside it. staxx_exec_kill()'s own guard test is the other
+ * exception: it starts one harmless `sleep`, purely to prove the guard
+ * leaves a pid alone that is not a ttyd naming this session's socket, and
+ * kills that sleep itself once the assertion is made.
  *
  * PLAN_44 phase 5 adds the container file manager — staxx_cfile_list(),
  * staxx_cfile_read(), staxx_cfile_write(), staxx_cfile_rename(),
@@ -106,6 +109,42 @@ foreach (['recreate', 'update'] as $verb) {
        $r === '' && stripos($err, 'no compose file') !== false, $err);
   }
 }
+
+/* An empty list is scope 'whole stack' exactly as '' is, and a list is
+ * accepted at service scope exactly as a single string is — both get past
+ * the scope check on this never-created stack and are refused one step
+ * later, for "no compose file", proving the scope gate treats a list the
+ * same as a lone name. */
+$err = '';
+$r = staxx_start_job($none, 'recreate', $err, []);
+ok('an empty $service list is whole-stack scope, same as \'\'',
+   $r === '' && stripos($err, 'no compose file') !== false, $err);
+
+$err = '';
+$r = staxx_start_job($none, 'recreate', $err, ['a', 'b']);
+ok('a list of service names is accepted at service scope, same as one name',
+   $r === '' && stripos($err, 'no compose file') !== false, $err);
+
+/* -------------------------------------------- $service as a list: membership -- */
+//
+// The membership check is per name, so a list naming a real service AND one
+// the file does not declare has to refuse — this needs an actual compose
+// file to check against, same fixture shape as the log follower section
+// below ($plainRel): a real, on-disk-but-never-started stack, one real
+// service, checked and removed immediately.
+$svcsRoot = staxx_stack_root();
+$svcsRel  = 'zzc2svcs';
+$svcsDir  = $svcsRoot.'/'.$svcsRel;
+@exec('rm -rf '.escapeshellarg($svcsDir));
+mkdir($svcsDir, 0755, true);
+file_put_contents($svcsDir.'/compose.yaml', "services:\n  web:\n    image: alpine:3.20\n");
+
+$err = '';
+$r = staxx_start_job($svcsRel, 'recreate', $err, ['web', 'ghost']);
+ok('a $service list naming one real and one unknown service is refused with the existing message',
+   $r === '' && stripos($err, 'no service called') !== false && stripos($err, 'ghost') !== false, $err);
+
+@exec('rm -rf '.escapeshellarg($svcsDir));
 
 /* ------------------------------------------------ unknown verb first --- */
 
@@ -404,133 +443,50 @@ if (staxx_cfg_bool('SHELL_ENABLED')) {
 @exec('rm -rf '.escapeshellarg($xLockedDir));
 @exec('rm -rf '.escapeshellarg($xPlainDir));
 
-/* ------------------------------------------------------- session id shape -- */
-
-$badExecIds = [
-  '15 characters'  => str_repeat('a', 15),
-  '17 characters'  => str_repeat('a', 17),
-  'uppercase hex'  => str_repeat('A', 16),
-  'path traversal' => '../../etc/passwd',
-];
-foreach ($badExecIds as $label => $id) {
-  $err = '';
-  $rw = staxx_exec_write($id, 'x', $err);
-  ok("a malformed session id ($label) is refused by write before any path is built",
-     $rw === false && stripos($err, 'invalid') !== false, $err);
-
-  $rr = staxx_exec_read($id, 0);
-  ok("a malformed session id ($label) is refused by read before any path is built",
-     $rr === ['text' => '', 'offset' => 0, 'alive' => false], json_encode($rr));
-}
-
-$err = '';
-$rw = staxx_exec_write(bin2hex(random_bytes(8)), 'x', $err);
-ok('write refuses an unknown but well-shaped session id',
-   $rw === false && stripos($err, 'ended') !== false, $err);
-
-$rr = staxx_exec_read(bin2hex(random_bytes(8)), 0);
-ok('read refuses an unknown but well-shaped session id the same way',
-   $rr === ['text' => '', 'offset' => 0, 'alive' => false], json_encode($rr));
-
-/* -------------------------------------------------------- the write cap -- */
+/* ------------------------------------------------ exec-alive / exec-kill -- */
 
 if (!is_dir(STAXX_EXEC_DIR)) mkdir(STAXX_EXEC_DIR, 0755, true);
 
-$capId  = bin2hex(random_bytes(8));
-$capDir = STAXX_EXEC_DIR.'/'.$capId;
-mkdir($capDir, 0700, true);
-// A plain file stands in for the fifo — fopen()'s append mode does not care
-// which it is, and it is far easier to assert against than a real pipe. No
-// pid file is written, so staxx_exec_alive() reads this session as alive —
-// see its own doc comment for why a missing pid file means "still starting"
-// rather than "gone".
-file_put_contents($capDir.'/fifo', '');
+// An unknown but well-shaped id — never written anywhere — has no socket to
+// find, so it reads as dead without needing a directory at all.
+ok('exec-alive on an unknown id is dead',
+   staxx_exec_alive(bin2hex(random_bytes(8))) === false);
 
-$err = '';
-$rw = staxx_exec_write($capId, str_repeat('x', STAXX_EXEC_WRITE_MAX + 1), $err);
-ok('a write over the cap is refused', $rw === false && stripos($err, 'smaller') !== false, $err);
-ok('...and nothing was written', filesize($capDir.'/fifo') === 0);
-
-/* --------------------------------------------- bytes reach the pipe as-is -- */
-//
-// The one case that matters most: nothing here is ever handed to a shell, so
-// a payload full of shell metacharacters must land byte for byte, proving
-// nothing interpolated it.
-
-$mischief = "hello `whoami` \$(id) ; rm -rf / \n it's \"quoted\"\n";
-$err = '';
-$rw = staxx_exec_write($capId, $mischief, $err);
-ok('a write within the cap succeeds', $rw === true, $err);
-ok('...and the exact bytes reach the pipe, untouched',
-   file_get_contents($capDir.'/fifo') === $mischief);
-
-@exec('rm -rf '.escapeshellarg($capDir));
-
-/* --------------------------------------------------- offset reader (fake) -- */
-
-$fid  = bin2hex(random_bytes(8));
-$fDir = STAXX_EXEC_DIR.'/'.$fid;
-mkdir($fDir, 0700, true);
-$fOut = $fDir.'/out';
-$fHb  = $fDir.'/hb';
-
-file_put_contents($fOut, "line one\n");
-$size1 = filesize($fOut);
-
-$hbBefore = time() - 30; // deliberately stale-ish, so the touch below is provable
-file_put_contents($fHb, (string)$hbBefore);
-
-$fr1 = staxx_exec_read($fid, 0);
-ok('reading from 0 returns everything', $fr1['text'] === "line one\n");
-ok('…and the new offset is the file size', $fr1['offset'] === $size1);
-ok('…and a session with no pid file yet reads as alive', $fr1['alive'] === true);
-
-$hbAfterFirstRead = (int)trim((string)file_get_contents($fHb));
-ok('reading touched the heartbeat', $hbAfterFirstRead > $hbBefore);
-
-$fr2 = staxx_exec_read($fid, $fr1['offset']);
-ok('reading again from that offset returns nothing new',
-   $fr2['text'] === '' && $fr2['offset'] === $size1);
-
-file_put_contents($fOut, " line two\n", FILE_APPEND);
-$size2 = filesize($fOut);
-
-$fr3 = staxx_exec_read($fid, $fr1['offset']);
-ok('reading from the remembered offset returns only the new bytes', $fr3['text'] === " line two\n");
-ok('…with its leading whitespace intact', $fr3['text'][0] === ' ');
-ok('…and the offset now matches the new file size', $fr3['offset'] === $size2);
-
-@exec('rm -rf '.escapeshellarg($fDir));
-
-/* --------------------------------------------------------- staxx_exec_reap -- */
-
-// A "stale" fixture: heartbeat older than STAXX_LOG_STALE, and a pid that is
-// never a real process — /proc/<pid> will not exist for it, so
-// staxx_exec_kill() returns at its very first check and no kill() is ever
-// attempted. This is what makes it safe to reap without going near Docker.
+// A "fake session" with a stale heartbeat and a pid that is never a real
+// process (/proc/<pid> will not exist for it, so staxx_exec_kill() returns
+// at its very first check and no kill() is ever attempted). No socket file
+// is created either, so this also proves the reap fires regardless of
+// whether one ever existed.
 $staleId  = bin2hex(random_bytes(8));
 $staleDir = STAXX_EXEC_DIR.'/'.$staleId;
 mkdir($staleDir, 0700, true);
-file_put_contents($staleDir.'/out', "old output\n");
 file_put_contents($staleDir.'/pid', '999999999'); // not a real pid on any Linux box
 file_put_contents($staleDir.'/hb',  (string)(time() - STAXX_LOG_STALE - 5));
 
-// A "fresh" fixture, heartbeat well within the stale window, that a reap
-// must leave alone.
-$freshId  = bin2hex(random_bytes(8));
-$freshDir = STAXX_EXEC_DIR.'/'.$freshId;
-mkdir($freshDir, 0700, true);
-file_put_contents($freshDir.'/out', "still going\n");
-file_put_contents($freshDir.'/hb',  (string)time());
-
-staxx_exec_reap();
-
-ok('a stale session\'s whole folder is removed', !is_dir($staleDir));
-ok('a fresh session\'s folder is left alone', is_dir($freshDir));
-ok('…and its heartbeat is left alone', is_file($freshDir.'/hb'));
+ok('exec-alive on a fake session directory with a stale heartbeat is dead',
+   staxx_exec_alive($staleId) === false);
+ok('...and the directory is reaped', !is_dir($staleDir));
 
 @exec('rm -rf '.escapeshellarg($staleDir));
-@exec('rm -rf '.escapeshellarg($freshDir));
+
+// staxx_exec_kill() must refuse a pid unless its own command line names both
+// "ttyd" and this session's own socket — checked against a real, harmless
+// process (a backgrounded `sleep`) rather than a made-up pid, so the guard
+// is proved against an actual /proc/<pid>/cmdline rather than a pid that
+// would fail on the is_dir() check alone and never reach the guard at all.
+$dummyPid = (int)trim((string)shell_exec("sh -c 'sleep 30 & echo \$!'"));
+$safeId   = bin2hex(random_bytes(8));
+$safeDir  = STAXX_EXEC_DIR.'/'.$safeId;
+mkdir($safeDir, 0700, true);
+file_put_contents($safeDir.'/pid', (string)$dummyPid);
+file_put_contents($safeDir.'/hb',  (string)time());
+
+staxx_exec_kill($safeId);
+ok("staxx_exec_kill() refuses a pid whose command line is not a ttyd on the session's own socket",
+   $dummyPid > 0 && is_dir('/proc/'.$dummyPid));
+
+@exec('kill -TERM '.$dummyPid.' 2>/dev/null'); // clean up the dummy sleep itself
+@exec('rm -rf '.escapeshellarg($safeDir));
 
 /* ==================================================== container files === */
 

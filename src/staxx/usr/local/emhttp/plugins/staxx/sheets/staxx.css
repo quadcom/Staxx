@@ -3940,6 +3940,31 @@ div.title.staxx-has-titlebar {
   flex: 0 0 auto;
 }
 
+/* "Put back several at once" — the toggle sits above the version list and
+ * the footer below it. A chosen row's button and the toggle itself, once
+ * on, both borrow .staxx-btn--active rather than a colour of their own. */
+.staxx-versions-multi-toggle {
+  margin-bottom: 0.2rem;
+}
+
+.staxx-versions-multi-footer {
+  margin-top: 0.4rem;
+  padding-top: 0.8rem;
+  border-top: 0.1rem solid var(--sm-line);
+}
+
+.staxx-versions-multi-footer .staxx-btn {
+  width: 100%;
+}
+
+/* The small tick beside a service that already has a choice, in the list
+ * on the left — never the only signal (the row itself also changes), but
+ * enough to scan the whole list at a glance. */
+.staxx-versions-service-chosen {
+  margin-left: 0.4rem;
+  color: var(--sm-accent);
+}
+
 .staxx-versions-single {
   display: flex;
   align-items: center;
@@ -9625,6 +9650,31 @@ dialog::backdrop {
     padding: 0.1rem;
   }
 
+  /* Centred chips are right where the pills wrap onto a second line (see the
+     base .staxx-cell--state rule) and right again in the card layout, which
+     stacks them centred on purpose — but in this wide table, where they
+     never wrap, centred chips float away from the left-aligned name beside
+     them. State's header span carries no class of its own to hang this on
+     (unlike Services' staxx-head--services), so :nth-child(3) reaches it by
+     its fixed position — see staxx_header_row_html()'s column order. */
+  .staxx-stacks .staxx-stack-row .staxx-cell--state,
+  .staxx-stacks .staxx-container-row .staxx-cell--state {
+    justify-content: flex-start;
+  }
+
+  .staxx-stacks .staxx-head-row [role="columnheader"]:nth-child(3) {
+    text-align: left;
+  }
+
+  /* The spinner is sized explicitly rather than inset: 0 (see the base
+     .staxx-spinner rule) so it must be grown to match every icon-size
+     override in step, or it sits short in the tile's corner. Radius stays
+     0.8rem — the 5.2rem tile above does not change it either. */
+  .staxx-scaffold .staxx-stack-row .staxx-spinner {
+    width: 5.2rem;
+    height: 5.2rem;
+  }
+
   /* 12px against the 11px every other WebUI/Logs/Repo/CA chip still uses,
      padding grown to match — a taller row deserves a bigger target, and
      these four are the smallest hit areas on it. */
@@ -10057,6 +10107,15 @@ dialog::backdrop {
 
   .staxx-scaffold .staxx-stacks .staxx-icon--child img {
     padding: 0.1rem;
+  }
+
+  /* Same reasoning as the stack row's own spinner above: sized explicitly,
+     so it has to grow with the icon it sits on rather than the base
+     3rem .staxx-container-row .staxx-spinner rule (sized for the icon's
+     un-carded 3rem). */
+  .staxx-scaffold .staxx-stacks .staxx-container-row .staxx-spinner {
+    width: 4.4rem;
+    height: 4.4rem;
   }
 
   /* The table's guide line to a parent stack's icon, and the indent it

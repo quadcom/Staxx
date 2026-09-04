@@ -51,6 +51,13 @@
   var LOG_POLL_IDLE = POLL_MS;
   var LOG_POLL_EASE = 1.6;
 
+  // While the tab is hidden, poll this slowly instead — PLAN_132 B. Must
+  // stay under the server's 45-second STAXX_LOG_STALE, or a follower left
+  // running in a background tab is reaped for want of a read; 30s leaves a
+  // comfortable margin. The offset still advances at this rate, so nothing
+  // is lost — the next read just brings more at once.
+  var LOG_POLL_HIDDEN = 30000;
+
   // PLAN_44 D7. The same 45rem the stylesheet uses, and deliberately the
   // same string — stacks.js's own NARROW carries the reasoning (a rem inside
   // a media query is the browser's default font size, not the 62.5% Unraid
@@ -76,180 +83,13 @@
   // sitting alongside the one above rather than replacing it.
   var bodyRatio = 1;
 
-  // PLAN_44 D4, the shell.
+  // PLAN_44 D4 / PLAN_133, the shell.
   //
-  // Completed lines kept per session - smaller than LOG_CAP because a shell
-  // is a conversation someone is watching live, not a record kept for later,
-  // and a session outlives the tab it started on so this bounds every one of
-  // them at once, not just the visible one.
-  var SHELL_LINE_CAP = 2000;
-
-  // Control bytes built at runtime rather than written as escape literals in
-  // this file - see the header note on grepping for raw control bytes: a
-  // literal one has already made a tool read this file as binary once, and
-  // String.fromCharCode() cannot repeat that mistake.
-  var CH = {
-    NUL: String.fromCharCode(0),
-    BEL: String.fromCharCode(7),
-    FF:  String.fromCharCode(12),  // Ctrl-L
-    ESC: String.fromCharCode(27),
-    ETX: String.fromCharCode(3),   // Ctrl-C
-    EOT: String.fromCharCode(4),   // Ctrl-D
-    NAK: String.fromCharCode(21),  // Ctrl-U
-    SUB: String.fromCharCode(26),  // Ctrl-Z
-    DEL: String.fromCharCode(127)  // Backspace, as most shells expect it
-  };
-
-  // Foreground colour classes for SGR codes 30-37/90-97. Bright and normal
-  // share a class each - this pane renders eight colours, not sixteen, which
-  // is the plan's own floor and keeps the map small enough to read at a
-  // glance. Picked for legibility on both a light and a dark Unraid theme,
-  // not copied from any one terminal's palette.
-  var SHELL_FG_CLASS = {
-    30: 'k', 31: 'r', 32: 'g', 33: 'y', 34: 'b', 35: 'm', 36: 'c', 37: 'w',
-    90: 'k', 91: 'r', 92: 'g', 93: 'y', 94: 'b', 95: 'm', 96: 'c', 97: 'w'
-  };
-
-  // A fresh terminal model: the lines a session has finished, the one it is
-  // still writing, and the SGR/alternate-screen state that decides how the
-  // next byte is rendered. One of these lives inside every shell session for
-  // as long as that session does - see Instance's shell.sessions.
-  function newShellTerm() {
-    return {
-      lines: [], cur: [], curCls: '', bold: false, fg: null, altScreen: false, pending: '',
-      dropped: 0 // lines ever evicted by SHELL_LINE_CAP, so a renderer can keep its own count in step
-    };
-  }
-
-  // Finds one complete escape sequence starting at text[i] (text[i] is
-  // already known to be ESC), or returns null when the bytes seen so far
-  // could still be the start of a longer one and more should be waited for.
-  // Real terminal output arrives in arbitrary-sized chunks from a byte-offset
-  // read, so a sequence split across two polls is routine, not an edge case.
-  // The length caps exist so genuinely malformed input cannot stall
-  // rendering forever waiting for a terminator that will never arrive.
-  function matchShellEscape(text, i) {
-    if (text.charAt(i + 1) === '[') {
-      // Matched against what follows the ESC, then handed back WITH the ESC
-      // back on the front — the caller advances by the returned length, so
-      // dropping ESC here would leave it unconsumed and seen again forever.
-      var m = /^\[[0-?]*[ -\/]*[@-~]/.exec(text.slice(i + 1));
-      if (m) return CH.ESC + m[0];
-      if (text.length - i < 32) return null;
-      return text.slice(i, i + 2); // gives up and drops just the opener, rather than hanging forever
-    }
-    if (text.charAt(i + 1) === ']') {
-      var tail = text.slice(i + 2);
-      var belAt = tail.indexOf(CH.BEL);
-      var escAt = tail.indexOf(CH.ESC + '\\');
-      var end = belAt === -1 ? escAt : (escAt === -1 ? belAt : Math.min(belAt, escAt));
-      if (end === -1) {
-        if (text.length - i < 256) return null;
-        return text.slice(i, i + 2);
-      }
-      var termLen = (end === belAt) ? 1 : 2;
-      return text.slice(i, i + 2 + end + termLen);
-    }
-    if (text.length - i < 2) return null;
-    return text.slice(i, i + 2); // a lone ESC + one byte - consumed and ignored
-  }
-
-  function applyShellSgr(term, params) {
-    var codes = params === '' ? [0] : params.split(';').map(function (s) { return parseInt(s, 10) || 0; });
-    codes.forEach(function (c) {
-      if (c === 0) { term.bold = false; term.fg = null; }
-      else if (c === 1) { term.bold = true; }
-      else if (c === 22) { term.bold = false; }
-      else if (c === 39) { term.fg = null; }
-      else if (SHELL_FG_CLASS[c]) { term.fg = SHELL_FG_CLASS[c]; }
-    });
-    var cls = [];
-    if (term.bold) cls.push('staxx-sh-b');
-    if (term.fg) cls.push('staxx-sh-fg-' + term.fg);
-    term.curCls = cls.join(' ');
-  }
-
-  // Built with `new RegExp` rather than a literal, same reasoning as
-  // SHELL_SPECIAL_RE below: ESC has no safe way to sit in a regex literal in
-  // this file's source, only as the CH.ESC value built at runtime.
-  var SHELL_CSI_RE = new RegExp('^' + CH.ESC + '\\[([0-?]*)[ -\\/]*([@-~])$');
-
-  // Only colour and the alternate-screen request change how anything is
-  // shown; every other CSI (cursor moves, bracketed-paste toggling, scroll
-  // regions...) is recognised, consumed and silently dropped - rendered as
-  // nothing rather than as the gibberish it would be printed as verbatim.
-  function applyShellEscape(term, seq) {
-    var m = SHELL_CSI_RE.exec(seq);
-    if (!m) return; // an OSC (window title) or a lone ESC+byte - nothing to render either way
-    var params = m[1], final = m[2];
-    if (final === 'h' && params === '?1049') { term.altScreen = true; term.cur = []; return; }
-    if (final === 'l' && params === '?1049') { term.altScreen = false; return; }
-    if (final !== 'm') return;
-    applyShellSgr(term, params);
-  }
-
-  function shellAppendText(term, run) {
-    if (term.altScreen || !run) return;
-    term.cur.push({ text: run, cls: term.curCls });
-  }
-
-  function shellPushLine(term) {
-    if (term.altScreen) return;
-    term.lines.push(term.cur);
-    term.cur = [];
-    if (term.lines.length > SHELL_LINE_CAP) { term.lines.shift(); term.dropped++; }
-  }
-
-  function shellBackspace(term) {
-    if (term.altScreen) return;
-    while (term.cur.length) {
-      var seg = term.cur[term.cur.length - 1];
-      if (seg.text.length > 1) { seg.text = seg.text.slice(0, -1); return; }
-      term.cur.pop();
-      return;
-    }
-  }
-
-  // Anything that ends a plain run of text: ESC (built at runtime, see CH
-  // above - a literal in a regex here would be exactly the trap this file
-  // has already fallen into once), CR, LF and backspace.
-  var SHELL_SPECIAL_RE = new RegExp('[' + CH.ESC + '\\r\\n\\b]');
-
-  // Consumes one chunk of raw session output - only the new bytes since the
-  // last read, per the contract exec-read hands back. A bare CR (not
-  // followed by LF) is a real carriage return, which is how a progress bar
-  // redraws its own line; CRLF, the ending every line actually uses, is just
-  // a newline once the redundant CR is folded away.
-  function feedShellTerm(term, chunk) {
-    var text = term.pending + chunk;
-    term.pending = '';
-    var i = 0;
-    while (i < text.length) {
-      var ch = text.charAt(i);
-      if (ch === CH.ESC) {
-        var seq = matchShellEscape(text, i);
-        if (seq === null) { term.pending = text.slice(i); break; }
-        i += seq.length;
-        applyShellEscape(term, seq);
-        continue;
-      }
-      if (ch === '\r') {
-        if (text.charAt(i + 1) === '\n') { i++; continue; }
-        if (!term.altScreen) term.cur = [];
-        i++;
-        continue;
-      }
-      if (ch === '\n') { shellPushLine(term); i++; continue; }
-      if (ch === '\b') { shellBackspace(term); i++; continue; }
-      if (ch === CH.BEL) { i++; continue; } // nothing visible, and never a sound
-      if (ch === CH.NUL) { i++; continue; } // script(1)'s stray leading NUL
-      var rest = text.slice(i);
-      var stop = rest.search(SHELL_SPECIAL_RE);
-      var run = stop === -1 ? rest : rest.slice(0, stop);
-      shellAppendText(term, run);
-      i += run.length;
-    }
-  }
+  // How often a session's liveness is polled while its pane is showing. This
+  // IS the session's keep-alive — see staxx_exec_alive() — so it has to stay
+  // comfortably under the server's 45-second stale window, the same
+  // reasoning LOG_POLL_HIDDEN carries for the log follower.
+  var SHELL_ALIVE_POLL_MS = 3000;
 
   // A line compose printed carries a timestamp because the follower always
   // asks for one; the "prefix" a multi-container "All" tab adds (the
@@ -333,6 +173,11 @@
     // unmount would render into DOM nodes no longer attached to anything —
     // invisible, not merely stale. See mount() below.
     var torndown = false;
+
+    // PLAN_132 B — registered once for this Instance's whole life (it is
+    // never recreated, see above), not per mount/unmount, so it is removed
+    // only when the Instance itself goes away.
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     function build() {
       host.innerHTML = '';
@@ -885,6 +730,18 @@
       log.pollTimer = setTimeout(function () { doPoll(mySeq); }, delay);
     }
 
+    // PLAN_132 B. The tab going hidden needs no action here — the next scheduled
+    // poll simply arrives at the slow rate on its own (see doPoll). Coming back
+    // visible is the case worth acting on: rather than wait out whatever slow
+    // delay is already ticking, jump the queue and poll now, which also puts
+    // the cadence back to normal. Nothing to do if the follower already died —
+    // the pane shows that already, and the person restarts it as today.
+    function onVisibilityChange() {
+      if (document.hidden || !log.alive || !log.id) return;
+      if (log.pollTimer) { clearTimeout(log.pollTimer); log.pollTimer = null; }
+      doPoll(log.pollSeq);
+    }
+
     function doPoll(mySeq) {
       if (mySeq !== log.pollSeq || !log.id) return;
       var id = log.id;
@@ -896,7 +753,9 @@
           if (typeof res.offset === 'number') log.offset = res.offset;
           updateEmptyState();
           // Text means more is probably on its way, so chase it; silence
-          // eases back towards the idle rate. See LOG_POLL_FAST.
+          // eases back towards the idle rate. See LOG_POLL_FAST. A hidden
+          // tab ignores all of that and polls at the slow, keep-alive-only
+          // rate regardless of whether text just arrived — see LOG_POLL_HIDDEN.
           log.pollDelay = res.text
             ? LOG_POLL_FAST
             : Math.min(LOG_POLL_IDLE, Math.round(log.pollDelay * LOG_POLL_EASE));
@@ -904,7 +763,7 @@
         // alive:false means the follower ended on its own (nothing left to
         // tail, or the container was removed) — the pane already shows
         // everything there was, so polling stops rather than spinning.
-        if (log.alive) schedulePoll(mySeq, log.pollDelay);
+        if (log.alive) schedulePoll(mySeq, document.hidden ? LOG_POLL_HIDDEN : log.pollDelay);
       });
     }
 
@@ -990,23 +849,22 @@
     }
 
     // ---- D4: the shell -----------------------------------------------------
+    // PLAN_133 — the pane shows Unraid's own ttyd terminal in an iframe
+    // rather than relaying keystrokes itself. See Stacks.php's "exec"
+    // section for the mechanism.
     //
     // One session per container, kept open server-side for as long as the
-    // editor is (PLAN_44 D4's "until the editor closes, half-typed line
-    // included"), but only the visible one is ever polled — a background
-    // session's own output keeps landing in its exec log regardless, so the
-    // next poll after switching back to it catches up in one read rather
-    // than losing anything. shellState.sessions is keyed by service name;
-    // there is deliberately no entry for 'all', which has no shell at all.
+    // editor is (PLAN_44 D4's "until the editor closes"), but only the
+    // visible one's liveness is ever polled — a background session's own
+    // ttyd keeps running regardless, so switching back to it just resumes
+    // watching the frame that has been sitting there the whole time.
+    // shellState.sessions is keyed by service name; there is deliberately no
+    // entry for 'all', which has no shell at all.
     var shellState = {
       warned:  null,   // null = not yet asked the server; true/false once known — see checkShellWarned()
       warning: false,  // an settings-save for SHELL_WARNED is in flight
       sessions: {},
-      active:   null,  // the service whose session currently owns the screen and the poll loop
-      // Whether the pane should follow new output to the bottom. One flag
-      // for the whole pane, not per session, because the pane only ever
-      // shows one session at a time.
-      stick: true
+      active:   null   // the service whose session currently owns the screen and the poll loop
     };
 
     function buildShellBody(bodyEl) {
@@ -1019,8 +877,9 @@
       var warn = document.createElement('div');
       warn.className = 'staxx-manage-shell-warn staxx-manage-shell-warn--hidden';
       warn.innerHTML =
-        '<p>A shell gives a root command line inside the container — the same reach as signing ' +
-        'into the machine itself, but scoped to whatever this one container can see.</p>' +
+        '<p>This shell is Unraid’s own terminal — the same one the Console button opens — a root ' +
+        'command line inside the container, with the same reach as signing into the machine itself ' +
+        'but scoped to whatever this one container can see.</p>' +
         '<p>Anything changed this way is gone the next time the container is rebuilt — a recreate, ' +
         'an update, or simply the image being pulled again all start it fresh.</p>';
       var warnBtn = document.createElement('button');
@@ -1033,41 +892,16 @@
       var screenWrap = document.createElement('div');
       screenWrap.className = 'staxx-manage-shell-screenwrap staxx-manage-shell-screenwrap--hidden';
 
-      var alt = document.createElement('div');
-      alt.className = 'staxx-manage-shell-alt staxx-manage-shell-alt--hidden';
-      var altP = document.createElement('p');
-      altP.textContent = 'This program wants a full screen — something like nano, htop or mc — ' +
-        'which this pane cannot show. Open Unraid’s own terminal for it instead.';
-      var ctrlBtn = document.createElement('button');
-      ctrlBtn.type = 'button';
-      ctrlBtn.className = 'staxx-manage-shell-ctrlc';
-      ctrlBtn.textContent = 'Send Ctrl-C';
-      ctrlBtn.addEventListener('click', function () { sendShellChunk(state.selected, CH.ETX); });
-      alt.appendChild(altP);
-      alt.appendChild(ctrlBtn);
-
-      var lines = document.createElement('div');
-      lines.className = 'staxx-manage-shell-lines';
-      lines.tabIndex = 0;
-      lines.setAttribute('role', 'log');
-      lines.setAttribute('aria-label', 'Shell');
-      lines.title = 'Click here, then type — this is a real shell inside the container.';
-      lines.addEventListener('keydown', shellKeydown);
-      lines.addEventListener('paste', shellPaste);
-      // Same shape as the log pane's own onScroll — scrolling away from the
-      // bottom pauses following, and coming back to it resumes.
-      lines.addEventListener('scroll', function () {
-        shellState.stick = lines.scrollHeight - lines.scrollTop - lines.clientHeight < 24;
-      });
-
-      screenWrap.appendChild(alt);
-      screenWrap.appendChild(lines);
-
       bodyEl.appendChild(msg);
       bodyEl.appendChild(warn);
       bodyEl.appendChild(screenWrap);
 
-      els.shellUI = { msg: msg, warn: warn, warnBtn: warnBtn, screenWrap: screenWrap, alt: alt, lines: lines };
+      // frames holds one { wrap, iframe, overlay } per service, created
+      // lazily and kept in the DOM (merely hidden, never removed) for as
+      // long as its session lives — see ensureShellFrame(). That is what
+      // lets switching back to a container resume the same live terminal
+      // rather than reloading it.
+      els.shellUI = { msg: msg, warn: warn, warnBtn: warnBtn, screenWrap: screenWrap, frames: {} };
     }
 
     function shellPanel(which) {
@@ -1077,9 +911,44 @@
       ui.screenWrap.classList.toggle('staxx-manage-shell-screenwrap--hidden', which !== 'screen');
     }
 
+    // One iframe+overlay pair per service, created once and reused for as
+    // long as that service's session lives — see buildShellBody()'s comment.
+    function ensureShellFrame(service) {
+      var frames = els.shellUI.frames;
+      if (frames[service]) return frames[service];
+
+      var wrap = document.createElement('div');
+      wrap.className = 'staxx-manage-shell-frame staxx-manage-shell-frame--hidden';
+
+      var iframe = document.createElement('iframe');
+      iframe.className = 'staxx-manage-shell-iframe';
+      iframe.title = 'Shell in ' + service;
+      // No `allow` attribute — a websocket back to the same host needs no
+      // permission grant, and an empty allowlist is the least this could ask
+      // for.
+
+      var overlay = document.createElement('div');
+      overlay.className = 'staxx-manage-shell-overlay staxx-manage-shell-overlay--hidden';
+
+      wrap.appendChild(iframe);
+      wrap.appendChild(overlay);
+      els.shellUI.screenWrap.appendChild(wrap);
+
+      var frame = { wrap: wrap, iframe: iframe, overlay: overlay };
+      frames[service] = frame;
+      return frame;
+    }
+
+    function removeShellFrame(service) {
+      var frame = els.shellUI && els.shellUI.frames[service];
+      if (!frame) return;
+      if (frame.wrap.parentNode) frame.wrap.parentNode.removeChild(frame.wrap);
+      delete els.shellUI.frames[service];
+    }
+
     // Stops the poll loop without closing the session — the difference
-    // matters: leaving a container's tab must not lose its half-typed line
-    // or its scrollback, only the one-second read nobody is watching for.
+    // matters: leaving a container's tab must not end its terminal, only the
+    // liveness poll nobody is watching for.
     function pauseShellPoll() {
       var svc = shellState.active;
       if (svc && shellState.sessions[svc]) {
@@ -1128,9 +997,10 @@
     function ensureShellSession(service) {
       if (shellState.sessions[service]) return;
       var sess = {
-        id: null, offset: 0, pollTimer: null, pollSeq: 0,
-        opening: true, error: '', ended: false, term: newShellTerm(), rendered: 0,
-        dropped: 0 // how much of term.dropped this session's DOM has already trimmed for
+        id: null, pollTimer: null, pollSeq: 0,
+        opening: true, error: '', ended: false,
+        srcTries: 0,   // how many times the iframe's src has been (re)set — see loadShellFrame()
+        startedAt: 0   // Date.now() once opened, for the one-retry window below
       };
       shellState.sessions[service] = sess;
       call('exec-open', { name: state.stack, service: service }).then(function (res) {
@@ -1150,10 +1020,24 @@
           return;
         }
         sess.id = res.id;
+        sess.startedAt = Date.now();
         renderShellIfActive(service);
         renderJobsBar();
+        loadShellFrame(service, sess.id);
         resumeShellPoll(service);
       });
+    }
+
+    // Points a session's iframe at ttyd, after giving it a moment to be
+    // listening — the same 200ms wait Unraid's own Console button gives it.
+    function loadShellFrame(service, id) {
+      var frame = ensureShellFrame(service);
+      setTimeout(function () {
+        var live = shellState.sessions[service];
+        if (!live || live.id !== id || live.ended) return;
+        frame.iframe.src = '/logterminal/staxx-' + id + '/';
+        live.srcTries++;
+      }, 200);
     }
 
     function renderShellIfActive(service) {
@@ -1167,235 +1051,69 @@
       sess.pollTimer = setTimeout(function () { pollShell(service, mySeq); }, 0);
     }
 
+    // Polls exec-alive — this IS the session's keep-alive now, replacing the
+    // old one-second exec-read poll with something far cheaper, since there
+    // is no output left here to fetch.
     function pollShell(service, mySeq) {
       var sess = shellState.sessions[service];
       if (!sess || mySeq !== sess.pollSeq || !sess.id || service !== shellState.active) return;
       var id = sess.id;
-      call('exec-read', { id: id, offset: sess.offset }).then(function (res) {
+      call('exec-alive', { id: id }).then(function (res) {
         var live = shellState.sessions[service];
         if (!live || mySeq !== live.pollSeq || live.id !== id) return; // superseded meanwhile
         live.pollTimer = null;
-        if (res.ok) {
-          if (res.text) feedShellTerm(live.term, res.text);
-          if (typeof res.offset === 'number') live.offset = res.offset;
-          // Gated on there being new bytes: appendShellRender() ends by
-          // replacing the cursor element, which collapses any text selection
-          // touching the last line — an idle prompt must not do that once a
-          // second forever. The other redraw paths (session ended, a write
-          // error, entering the alt screen) all have their own call to
-          // fullShellRender()/appendShellRender() and are unaffected.
-          if (res.text && service === shellState.active) appendShellRender(service);
+        var alive = !!(res.ok && res.alive);
+        if (!alive) {
+          // Within the first two seconds the socket may simply not exist
+          // yet — retry the frame's src once before calling the session
+          // dead, the same grace loadShellFrame()'s own wait already gives
+          // ttyd to start listening.
+          if (live.srcTries < 2 && Date.now() - live.startedAt < 2000) {
+            setTimeout(function () {
+              var still = shellState.sessions[service];
+              if (!still || still.id !== id || still.ended) return;
+              ensureShellFrame(service).iframe.src = '/logterminal/staxx-' + id + '/';
+              still.srcTries++;
+            }, 500);
+          } else {
+            live.ended = true;
+            if (service === shellState.active) { fullShellRender(service); renderJobsBar(); }
+            return; // the session is done — nothing left to poll for
+          }
         }
-        // alive:false means the session ended on its own — the container
-        // stopped, or the shell process exited — so polling stops rather
-        // than spinning against a session that will never answer again. It is
-        // also recorded, because a pane that simply stops updating looks
-        // broken: the note below and the heading's Reconnect both read this.
-        if (res.ok && res.alive === false) {
-          live.ended = true;
-          if (service === shellState.active) { fullShellRender(service); renderJobsBar(); }
-        } else if (res.ok && service === shellState.active) {
-          live.pollTimer = setTimeout(function () { pollShell(service, mySeq); }, POLL_MS);
+        if (service === shellState.active) {
+          live.pollTimer = setTimeout(function () { pollShell(service, mySeq); }, SHELL_ALIVE_POLL_MS);
         }
       });
     }
 
-    function shellNoteEl(text) {
-      var d = document.createElement('div');
-      d.className = 'staxx-manage-shell-line staxx-manage-shell-line--note';
-      d.textContent = text;
-      return d;
-    }
-
-    function shellSegEl(seg) {
-      var span = document.createElement('span');
-      if (seg.cls) span.className = seg.cls;
-      span.textContent = seg.text;
-      return span;
-    }
-
-    function shellLineEl(segments) {
-      var d = document.createElement('div');
-      d.className = 'staxx-manage-shell-line';
-      segments.forEach(function (seg) { d.appendChild(shellSegEl(seg)); });
-      return d;
-    }
-
-    function shellCurEl(term) {
-      var d = document.createElement('div');
-      d.className = 'staxx-manage-shell-line staxx-manage-shell-cur';
-      term.cur.forEach(function (seg) { d.appendChild(shellSegEl(seg)); });
-      return d;
-    }
-
-    function scrollShellBottom() {
-      if (!shellState.stick) return; // the reader has scrolled up on purpose — leave them where they are
-      var el = els.shellUI.lines;
-      el.scrollTop = el.scrollHeight;
-    }
-
-    // Full rebuild — used whenever the visible session itself changes
-    // (a tab switch, a session opening, an error arriving) rather than just
-    // gaining another line. The one-second poll below never calls this
-    // directly; see appendShellRender().
+    // Full rebuild — used whenever the visible session's own state changes
+    // (a tab switch, a session opening, an error, the session ending).
+    // Everything the terminal itself shows is ttyd's, not this pane's, so
+    // there is nothing here that changes on every poll tick the way the log
+    // pane's incremental append does.
     function fullShellRender(service) {
       var sess = shellState.sessions[service];
-      var ui = els.shellUI;
       if (!sess) return;
       shellPanel('screen');
-      ui.alt.classList.add('staxx-manage-shell-alt--hidden');
-      ui.lines.innerHTML = '';
-      if (sess.opening) { ui.lines.appendChild(shellNoteEl('Opening a shell…')); sess.rendered = 0; sess.dropped = sess.term.dropped; return; }
-      if (sess.error) { ui.lines.appendChild(shellNoteEl(sess.error)); sess.rendered = 0; sess.dropped = sess.term.dropped; return; }
-      if (sess.term.altScreen) {
-        ui.alt.classList.remove('staxx-manage-shell-alt--hidden');
-        sess.rendered = sess.term.lines.length; sess.dropped = sess.term.dropped;
-        return;
-      }
-      sess.term.lines.forEach(function (line) { ui.lines.appendChild(shellLineEl(line)); });
-      // No cursor line on a session that has ended — a blinking prompt that
-      // takes no keystrokes is the thing that read as "dead with no way back".
-      if (sess.ended) {
-        ui.lines.appendChild(shellNoteEl('That session has ended. Press Reconnect above for a new one.'));
-      } else {
-        ui.lines.appendChild(shellCurEl(sess.term));
-      }
-      sess.rendered = sess.term.lines.length;
-      sess.dropped = sess.term.dropped;
-      shellState.stick = true; // a rebuild here means a tab/session switch — the reader wants the bottom
-      scrollShellBottom();
-    }
-
-    // Appends only what changed since the last tick: newly finished lines,
-    // plus a fresh redraw of the one line still being written. Rebuilding
-    // every line on every one-second poll is what the log pane's own
-    // appendNewLines() avoids for the same reason — see its comment.
-    function appendShellRender(service) {
-      if (service !== shellState.active) return;
-      var sess = shellState.sessions[service];
-      var ui = els.shellUI;
-      if (!sess || sess.opening || sess.error || sess.ended) { fullShellRender(service); return; }
-      if (sess.term.altScreen) { fullShellRender(service); return; }
-      var curEl = ui.lines.lastChild;
-      if (!curEl || !curEl.classList || !curEl.classList.contains('staxx-manage-shell-cur')) {
-        fullShellRender(service); return; // nothing rendered yet for this session — e.g. resuming after "All"
-      }
-      // Lines evicted by SHELL_LINE_CAP since the last render are already
-      // gone from sess.term.lines — trim the same count of stale leading
-      // elements from the DOM (never the cursor line itself) and pull
-      // sess.rendered back in step, or the index below drifts and new
-      // output stops appearing once the cap is ever reached.
-      var dropNow = sess.term.dropped - (sess.dropped || 0);
-      for (var d = 0; d < dropNow && ui.lines.firstChild !== curEl; d++) {
-        ui.lines.removeChild(ui.lines.firstChild);
-      }
-      sess.rendered = Math.max(0, sess.rendered - dropNow);
-      sess.dropped = sess.term.dropped;
-      for (var i = sess.rendered; i < sess.term.lines.length; i++) {
-        ui.lines.insertBefore(shellLineEl(sess.term.lines[i]), curEl);
-      }
-      sess.rendered = sess.term.lines.length;
-      ui.lines.replaceChild(shellCurEl(sess.term), curEl);
-      scrollShellBottom();
-    }
-
-    // Everything typed goes through one queue per session, and only one write
-    // is ever in flight for it.
-    //
-    // This is not tidiness. Each keystroke used to be its own request, and
-    // separate requests finish in whatever order the network and the server
-    // give them — so typing "echo SHELL" arrived in the container as
-    // "echoS HLELP-NAE". Measured, not imagined. Ordering is the whole point
-    // of a terminal, so the next write waits for the previous one to land.
-    //
-    // Queueing also coalesces: anything typed while a write is out goes in one
-    // request rather than one each, so typing fast means fewer requests, not
-    // more. The 4096-byte cap exec-write enforces is what bounds each one — a
-    // keystroke is never near it, a paste usually is.
-    function sendShellChunk(service, text) {
-      var sess = shellState.sessions[service];
-      if (!sess || !sess.id || !text) return;
-      sess.outbox = (sess.outbox || '') + text;
-      flushShellOutbox(service);
-      // Typing or pasting means the reader is watching what they type —
-      // pull the pane back to the bottom even if they had scrolled away.
-      if (service === shellState.active) { shellState.stick = true; scrollShellBottom(); }
-    }
-
-    function flushShellOutbox(service) {
-      var sess = shellState.sessions[service];
-      if (!sess || !sess.id || sess.writing || !sess.outbox) return;
-
-      var CAP  = 4096;
-      var part = sess.outbox.slice(0, CAP);
-      sess.outbox = sess.outbox.slice(CAP);
-      sess.writing = true;
-
-      call('exec-write', { id: sess.id, bytes: part }).then(function (res) {
-        sess.writing = false;
-        if (!res.ok) {
-          // What was still queued is dropped on purpose: it was typed at a
-          // session that is no longer listening, and sending the rest of it
-          // somewhere else later would be worse than losing it.
-          sess.outbox = '';
-          sess.error = res.error || 'The shell stopped accepting input.';
-          if (service === shellState.active) fullShellRender(service);
-          return;
-        }
-        flushShellOutbox(service);
+      var frames = els.shellUI.frames;
+      Object.keys(frames).forEach(function (svc) {
+        frames[svc].wrap.classList.toggle('staxx-manage-shell-frame--hidden', svc !== service);
       });
-    }
-
-    // The keys a single-line input could never carry: Ctrl-C/D/L/U/Z, tab
-    // completion, arrow-key history, Home/End/Delete. Copy, paste and
-    // select-all are deliberately left alone — see the two exceptions below.
-    function shellKeydown(ev) {
-      var service = state.selected;
-      if (service === 'all') return;
-      var sess = shellState.sessions[service];
-      if (!sess || !sess.id) return;
-
-      if (ev.ctrlKey) {
-        var lower = ev.key.length === 1 ? ev.key.toLowerCase() : '';
-        if (lower === 'c') {
-          // A selection means the person wants to copy it — the browser's
-          // own shortcut, left untouched. No selection means the shell's
-          // own Ctrl-C, sent as the interrupt byte it always is.
-          if (window.getSelection && String(window.getSelection()) !== '') return;
-          ev.preventDefault(); sendShellChunk(service, CH.ETX); return;
-        }
-        if (lower === 'd') { ev.preventDefault(); sendShellChunk(service, CH.EOT); return; }
-        if (lower === 'l') { ev.preventDefault(); sendShellChunk(service, CH.FF); return; }
-        if (lower === 'u') { ev.preventDefault(); sendShellChunk(service, CH.NAK); return; }
-        if (lower === 'z') { ev.preventDefault(); sendShellChunk(service, CH.SUB); return; }
-        return; // every other Ctrl chord — A, V, and the rest — is left to the browser
+      var frame = ensureShellFrame(service);
+      frame.wrap.classList.toggle('staxx-manage-shell-frame--dead', !!sess.ended);
+      if (sess.opening) {
+        frame.overlay.textContent = 'Opening a shell…';
+        frame.overlay.classList.remove('staxx-manage-shell-overlay--hidden');
+      } else if (sess.error) {
+        frame.overlay.textContent = sess.error;
+        frame.overlay.classList.remove('staxx-manage-shell-overlay--hidden');
+      } else if (sess.ended) {
+        frame.overlay.textContent = 'That session has ended. Press Reconnect above for a new one.';
+        frame.overlay.classList.remove('staxx-manage-shell-overlay--hidden');
+      } else {
+        frame.overlay.classList.add('staxx-manage-shell-overlay--hidden');
       }
-
-      var special = {
-        Enter: '\r', Backspace: CH.DEL, Tab: '\t', Escape: CH.ESC,
-        ArrowUp: CH.ESC + '[A', ArrowDown: CH.ESC + '[B', ArrowRight: CH.ESC + '[C', ArrowLeft: CH.ESC + '[D',
-        Home: CH.ESC + '[H', End: CH.ESC + '[F', Delete: CH.ESC + '[3~'
-      };
-      if (Object.prototype.hasOwnProperty.call(special, ev.key)) {
-        ev.preventDefault(); sendShellChunk(service, special[ev.key]); return;
-      }
-      if (ev.key.length === 1 && !ev.metaKey && !ev.altKey) {
-        ev.preventDefault(); sendShellChunk(service, ev.key);
-      }
-    }
-
-    // Paste is its own event rather than a Ctrl-V keydown — the pane holds
-    // no editable field for the browser to paste into, so there is no
-    // default behaviour here to override, only clipboard text to forward.
-    function shellPaste(ev) {
-      var service = state.selected;
-      if (service === 'all') return;
-      var sess = shellState.sessions[service];
-      if (!sess || !sess.id) return;
-      ev.preventDefault();
-      var cd = ev.clipboardData || window.clipboardData;
-      var text = cd ? cd.getData('text') : '';
-      if (text) sendShellChunk(service, text);
     }
 
     // Closes every open session — called on unmount() (the editor closing)
@@ -1406,6 +1124,7 @@
         var sess = shellState.sessions[svc];
         if (sess.pollTimer) clearTimeout(sess.pollTimer);
         if (sess.id) call('exec-close', { id: sess.id });
+        removeShellFrame(svc);
       });
       shellState.sessions = {};
       shellState.active = null;
@@ -1416,7 +1135,8 @@
     // the poll loop to match. Mirrors syncLogFollower()'s place in render(),
     // but a shell's session is never restarted on a re-render the way a log
     // follower is: switching back to a container already open just resumes
-    // its own poll loop exactly where it left off.
+    // its own poll loop against the same terminal that has been running the
+    // whole time.
     function syncShellPane() {
       var service = state.selected;
 
@@ -1443,9 +1163,7 @@
       pauseShellPoll();
       shellState.active = service;
       ensureShellSession(service);
-      var sess = shellState.sessions[service];
-      if (sess.id || sess.error) fullShellRender(service);
-      else { shellPanel('screen'); els.shellUI.lines.innerHTML = ''; els.shellUI.lines.appendChild(shellNoteEl('Opening a shell…')); }
+      fullShellRender(service);
       resumeShellPoll(service);
     }
 
@@ -2335,6 +2053,7 @@
       if (sess && sess.id) call('exec-close', { id: sess.id });
       pauseShellPoll();
       delete shellState.sessions[service];
+      removeShellFrame(service); // the old iframe points at a dead ttyd — a fresh session gets a fresh one
       // syncShellPane() returns early while this still names the service, so
       // clearing it is what makes the next render open a session instead of
       // deciding one is already showing.

@@ -1554,6 +1554,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
     $groupCounts[$r['folder']] = ($groupCounts[$r['folder']] ?? 0) + 1;
     if ($r['folder'] !== '') $folderStacks[$r['folder']][] = $r['stack'];
   }
+  // PLAN_131 C — the top level's own siblings are folders AND loose stacks
+  // together now, so a single loose stack beside two folders (or the other
+  // way round) still gets a live grip.
+  $topLevelCount = $folderCount + ($groupCounts[''] ?? 0);
+
   $autostart = staxx_autostart_state($stackList);
 
   // Gathered once for the same reason as $autostart above: this walks at
@@ -1617,9 +1622,10 @@ function staxx_render_rows(array $rows, bool $canRun): string {
         ? staxx_boot_title($fBoot['mode'], $fWait, false, _('stacks'))
         : _('The boot list cannot be read while Docker is stopped.');
       // This grip drags the FOLDER itself, to trade places with another
-      // folder — how many stacks sit inside it is irrelevant to that; only
-      // whether there is a second folder to trade places with is.
-      $fGripOff = $folderCount < 2;
+      // folder or a loose stack at the top level — how many stacks sit
+      // inside it is irrelevant to that; only whether there is a second
+      // top-level unit to trade places with is.
+      $fGripOff = $topLevelCount < 2;
       $fGripWhy = _('There is only one folder, so there is nothing to reorder it against.');
       // Sums its stacks' own pills (see PLAN_45 Part H) — a folder has no
       // image of its own to check.
@@ -1849,9 +1855,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
       $sTitle  = $autostart['available']
         ? staxx_boot_title($sBoot['mode'], $sWait, $sInterleaved, _('services'))
         : _('The boot list cannot be read while Docker is stopped.');
-      // Nothing to drag when this stack is the only one in its folder (or,
-      // for an unfiled stack, the only one at the top level).
-      $sGripOff = ($groupCounts[$row['folder']] ?? 0) < 2;
+      // Nothing to drag when this stack is the only one in its folder — or,
+      // for an unfiled stack, when it is the only thing at the top level,
+      // folders counted in alongside the other loose stacks now that the two
+      // share one order there.
+      $sGripOff = ($row['folder'] === '' ? $topLevelCount : ($groupCounts[$row['folder']] ?? 0)) < 2;
       $sGripWhy = _('This stack is alone in its group, so there is nothing to reorder it against.');
 
       // Whole-stack pill (see PLAN_45 Part H) — one image, or several rolled

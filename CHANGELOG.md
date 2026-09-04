@@ -18,6 +18,22 @@ before that were dates.
 
 ## Unreleased
 
+- **The shell in the Manage tab is now Unraid's own terminal,** the same one the Console button opens, so nano, htop and anything else that draws a full screen work in it. When the shell ends the pane greys out with its last screen still readable, and Reconnect opens a fresh one.
+
+- **Put several services back to earlier versions in one go.** The Versions tab has a "Put back several at once" mode: choose a version for each service, press once, and the stack is edited, saved to History and recreated in a single step rather than one service at a time.
+
+- **A stack outside any folder can now be placed above a folder,** and starts in that order at boot. The top level used to draw every folder first, whatever you did.
+
+- **Refreshing the page reopens the stack you were editing.** The open stack's name rides in the address bar, so a refresh, or a pasted link, lands back in the same editor.
+
+- **A log left open in a background tab now checks in every half-minute instead of every second,** and catches up the moment you return to it.
+
+- **Fixed:** the dimmed square shown over a stack's icon while it starts now fits the larger icon in the wide layout instead of sitting in its corner.
+
+- **Fixed:** pressing "Write each one twice" on the dollar-sign dialog now closes the dialog as well as making the change.
+
+- **Fixed:** in the wide table the state chips sit flush left under a left-aligned heading rather than floating in the middle of the column.
+
 - **The flash-drive copy of a stack now includes its `.env` file,** and the switch that controls those copies is in the settings panel on the Storage tab. A copy restored from the flash drive is a complete definition again, not a compose file whose placeholders point at nothing.
 
 - **The page no longer scrolls behind an open dialog.** Reaching the end of the editor or the settings panel used to scroll the stacks list underneath; the page now holds still, softly blurred, until the dialog closes.

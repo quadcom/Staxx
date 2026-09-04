@@ -1042,6 +1042,12 @@
   var versionsSelected     = null;   // the service name shown on the right, or null
   var versionsLoadError    = '';     // image-versions itself failed — nothing else in the pane can be trusted
   var versionsActionError  = '';     // a failed rollback, shown above an otherwise normal list
+  // "Put back several at once" mode — off by default. versionsChoices holds
+  // at most one chosen digest per service; both are dropped whenever the
+  // stack changes (versionsSeq bump above) or the mode is switched off, so a
+  // choice never survives to be applied against a different stack.
+  var versionsMulti        = false;
+  var versionsChoices      = {};     // service -> chosen digest
   // A one-shot handover for "open the editor on Versions, showing this
   // service": set just before editStack(), read and cleared by openEditor().
   // The editor is reached through editStack() -> openEditor(), and openEditor()
@@ -5815,6 +5821,11 @@
       goLabel: 'Write each one twice',
       cancelLabel: 'Leave them'
     }).then(function (go) {
+      // The Go handler only settles the promise — most callers start a
+      // request and close the dialog themselves once it finishes. This
+      // caller has no request in flight, so it has to close it itself or
+      // the dialog just sits there looking like the button did nothing.
+      closeConfirm();
       if (go) applyAllDollarFixes(flagged.map(function (f) { return f.id; }));
     });
   }
@@ -13207,6 +13218,8 @@
     versionsSelected = null;
     versionsLoadError = '';
     versionsActionError = '';
+    versionsMulti = false;
+    versionsChoices = {};
     if (versionsHost) {
       versionsHost.innerHTML = '';
       versionsHost.classList.remove('staxx-modal-versions--single');
@@ -13318,6 +13331,16 @@
 
     lockScroll(true);
     modal.showModal();
+
+    // Put the open stack in the address bar the same way #settings already
+    // does, so a refresh reopens it — replaceState, never pushState, or Back
+    // would walk through every stack ever opened. A new, unsaved stack has
+    // nothing to reopen, so it writes nothing. window.history, spelled out:
+    // this file declares its own `history` (the stats graphs' sample
+    // arrays), so the bare name would silently do nothing here.
+    if (!isNew && openedName) {
+      window.history.replaceState(null, '', location.pathname + location.search + '#stack=' + encodeURIComponent(openedName));
+    }
 
     // After showModal(), not before. A closed dialog is display: none, so the
     // gutter measures zero wide and every band would be positioned against a
@@ -13492,6 +13515,14 @@
     // by closeEditor() above — this catches the paths that never went through
     // it, Escape among them.
     stopManage();
+
+    // Clear the #stack= fragment openEditor() wrote, so a refresh after
+    // closing lands on the list rather than reopening a stack that is no
+    // longer open. replaceState, matching how it was written — window.history,
+    // spelled out, for the same shadowing reason as openEditor()'s own write.
+    if (location.hash.indexOf('#stack=') === 0) {
+      window.history.replaceState(null, '', location.pathname + location.search);
+    }
 
     lockScroll(false);
     clearError();
@@ -20759,9 +20790,12 @@
   // the image it points at, so a service can be told apart from another
   // built off a shared base image.
   function versionsServiceRowHtml(svc) {
+    var chosenMark = (versionsMulti && versionsChoices[svc.service])
+      ? '<span class="staxx-versions-service-chosen" aria-label="' + esc('A version is chosen') + '">✓</span>'
+      : '';
     return '<button type="button" class="staxx-versions-service" data-versions-service="' +
       esc(svc.service) + '" aria-current="' + (versionsSelected === svc.service ? 'true' : 'false') + '">' +
-      '<div>' + esc(svc.service) + '</div>' +
+      '<div>' + esc(svc.service) + chosenMark + '</div>' +
       '<div style="color:var(--sm-muted);font-size:1.1rem;">' + esc(svc.image) + '</div>' +
       '</button>';
   }
@@ -20791,11 +20825,20 @@
     var sourceHtml = source
       ? '<div><a href="' + esc(source) + '" target="_blank" rel="noopener">' + esc('See the source') +
         '</a></div>' : '';
-    var actionHtml = isCurrent
-      ? '<div class="staxx-version-current">' + esc('Running now') + '</div>'
-      : '<button type="button" class="staxx-btn staxx-btn--small staxx-version-rollback" ' +
+    var actionHtml;
+    if (isCurrent) {
+      actionHtml = '<div class="staxx-version-current">' + esc('Running now') + '</div>';
+    } else if (versionsMulti) {
+      var chosen = versionsChoices[svc.service] === v.digest;
+      actionHtml = '<button type="button" class="staxx-btn staxx-btn--small staxx-version-rollback' +
+        (chosen ? ' staxx-btn--active' : '') + '" aria-pressed="' + (chosen ? 'true' : 'false') + '" ' +
+        'data-version-service="' + esc(svc.service) + '" data-version-choose="' + esc(v.digest) + '">' +
+        esc(chosen ? 'Chosen' : 'Choose this') + '</button>';
+    } else {
+      actionHtml = '<button type="button" class="staxx-btn staxx-btn--small staxx-version-rollback" ' +
         'data-version-service="' + esc(svc.service) + '" data-version-rollback="' + esc(v.digest) + '">' +
         esc('Put this back') + '</button>';
+    }
     // Notes were captured once, at pull time, and stored — nothing here ever
     // fetches them, which is the whole point. Most entries have none (they
     // predate this, or the image's registry gave nothing usable), and that
@@ -20885,18 +20928,42 @@
       '</div>';
   }
 
+  // The toggle sits above everything else in the right column, so it reads
+  // the same regardless of which service is picked. aria-pressed carries
+  // the on/off state for anyone not reading it by colour.
+  function versionsMultiToggleHtml() {
+    return '<div class="staxx-versions-multi-toggle">' +
+      '<button type="button" class="staxx-btn staxx-btn--small' +
+      (versionsMulti ? ' staxx-btn--active' : '') + '" aria-pressed="' +
+      (versionsMulti ? 'true' : 'false') + '" data-versions-multi-toggle>' +
+      esc('Put back several at once') + '</button></div>';
+  }
+
+  // The footer only appears in multi mode, and is disabled at zero choices
+  // rather than hidden — a person who has just cleared their last choice
+  // should still see where the button is.
+  function versionsMultiFooterHtml() {
+    var n = Object.keys(versionsChoices).length;
+    return '<div class="staxx-versions-multi-footer">' +
+      '<button type="button" class="staxx-btn staxx-btn--primary" data-versions-multi-go' +
+      (n === 0 ? ' disabled' : '') + '>' + esc('Put back ' + n + (n === 1 ? ' service' : ' services')) +
+      '</button></div>';
+  }
+
   function versionsContentHtml() {
+    var toggle = versionsMultiToggleHtml();
     var svc = null;
     for (var i = 0; i < versionsServices.length; i++) {
       if (versionsServices[i].service === versionsSelected) { svc = versionsServices[i]; break; }
     }
-    if (!svc) return '<p class="staxx-form-empty">Pick a service on the left.</p>';
+    var footer = versionsMulti ? versionsMultiFooterHtml() : '';
+    if (!svc) return toggle + '<p class="staxx-form-empty">Pick a service on the left.</p>' + footer;
     var band = pinnedBandHtml(svc);
     if (!svc.entries.length) {
-      return band + '<p class="staxx-form-empty">Nothing has been recorded for ' + esc(svc.service) + ' yet. ' +
-        'A version is recorded the first time StaXX updates this image.</p>';
+      return toggle + band + '<p class="staxx-form-empty">Nothing has been recorded for ' + esc(svc.service) +
+        ' yet. A version is recorded the first time StaXX updates this image.</p>' + footer;
     }
-    return band + svc.entries.map(function (v) { return versionRowHtml(svc, v); }).join('');
+    return toggle + band + svc.entries.map(function (v) { return versionRowHtml(svc, v); }).join('') + footer;
   }
 
   // The one function that draws #staxx-modal-versions — same "rebuilt
@@ -20999,11 +21066,11 @@
   // throwaway parse of currentText(), not on the live MODEL, so a refusal
   // from the server below leaves the real editor state untouched — only a
   // confirmed write is allowed to reach the box.
-  function pinServiceImage(service, digest) {
+  function pinServiceImage(service, digest, text) {
     if (!YAML || typeof YAML.pinnedImageRef !== 'function') {
       return { ok: false, why: 'This version of StaXX cannot pin images yet — reload the page and try again.' };
     }
-    var doc = YAML.parse(currentText());
+    var doc = YAML.parse(text);
     var form = YAML.buildForm(doc, netDrivers());
     form.doc = doc;
     var field = null;
@@ -21020,13 +21087,44 @@
     return { ok: true, yaml: YAML.serialise(doc) };
   }
 
+  // The tail shared by a single rollback and a several-at-once one, once the
+  // server has actually accepted the save: put the new text on screen,
+  // stamp the fresh fingerprint (the file on disk just changed under this
+  // editor), mark every rolled-back service's rows busy, and follow the one
+  // recreate job. Factored out so the two callers cannot drift apart.
+  function finishRollback(res, yaml, services, noticeHtml) {
+    versionsActionError = '';
+    adoptRolledBackText(yaml);
+    fingerprintAtOpen = res.fingerprint || '';
+    showPageNotice(res.historyNote || noticeHtml);
+    var rows = [];
+    services.forEach(function (service) { rows = rows.concat(containerRows(openedName, service)); });
+    if (rows.length) setBusy(rows, 'Rolling back…');
+    track(res.job, {
+      rows: rows, verb: 'recreate',
+      done: function (job) {
+        clearBusy(rows);
+        if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'recreate', res.job);
+        services.forEach(function (service) { refreshUpdates(openedName, service); });
+        refreshStateSoon();
+        // A rollback changes which build is on disk, so "Running now" in
+        // the list this was launched from now points at the wrong row.
+        // Drop it: re-read while the tab is still up, and otherwise let it
+        // load fresh the next time the tab is opened.
+        versionsLoaded = false;
+        if (modal.dataset.tab === 'versions') ensureVersionsLoaded();
+        else renderVersionsPane();
+      }
+    });
+  }
+
   // Asks first, since this now edits the compose file as well as changing
   // what is running, then follows the job the way every other run does — the
   // table row goes busy and a failed run is marked the same as any other
-  // failed run. This is the only place a rollback happens; the stack row's
-  // menu item just opens the editor here.
+  // failed run. This is the only place a single rollback happens; the stack
+  // row's menu item just opens the editor here.
   function rollbackToVersion(service, digest, label) {
-    var pinned = pinServiceImage(service, digest);
+    var pinned = pinServiceImage(service, digest, currentText());
     if (!pinned.ok) {
       versionsActionError = pinned.why;
       renderVersionsPane();
@@ -21039,34 +21137,92 @@
         renderVersionsPane();
         return;
       }
-      versionsActionError = '';
-      // What is on screen has to match what the server just wrote, the same
-      // as after any other save — the person has had their file changed and
-      // must be able to see it.
-      adoptRolledBackText(pinned.yaml);
-      // The file on disk has changed, so the stamp this editor is holding is
-      // stale. Without this the next Save is refused as a conflict with a
-      // change the person made themselves a moment ago.
-      fingerprintAtOpen = res.fingerprint || '';
-      showPageNotice(res.historyNote ||
-        ('The compose file now pins "' + service + '" to this version. The file it replaces is kept in History.'));
-      var rows = containerRows(openedName, service);
-      if (rows.length) setBusy(rows, 'Rolling back…');
-      track(res.job, {
-        rows: rows, verb: 'recreate',
-        done: function (job) {
-          clearBusy(rows);
-          if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'recreate', res.job);
-          refreshUpdates(openedName, service);
-          refreshStateSoon();
-          // A rollback changes which build is on disk, so "Running now" in
-          // the list this was launched from now points at the wrong row.
-          // Drop it: re-read while the tab is still up, and otherwise let it
-          // load fresh the next time the tab is opened.
-          versionsLoaded = false;
-          if (modal.dataset.tab === 'versions') ensureVersionsLoaded();
-          else renderVersionsPane();
+      finishRollback(res, pinned.yaml, [service],
+        'The compose file now pins "' + service + '" to this version. The file it replaces is kept in History.');
+    });
+  }
+
+  // Switching the mode off drops any choices made under it — a choice made
+  // while comparing versions is not something that should survive quietly
+  // into an ordinary single rollback later.
+  function toggleVersionsMulti() {
+    versionsMulti = !versionsMulti;
+    versionsChoices = {};
+    renderVersionsPane();
+  }
+
+  // Choosing the version a service is already chosen for clears it again —
+  // there is no separate "un-choose" control, just the one button toggling.
+  function chooseVersionsTarget(service, digest) {
+    if (versionsChoices[service] === digest) delete versionsChoices[service];
+    else versionsChoices[service] = digest;
+    renderVersionsPane();
+  }
+
+  // The go button for "several at once": one confirmation naming every
+  // chosen service and version, then one file edit built by pinning each
+  // choice in turn onto the previous one's result, and one call. Mirrors
+  // performRollback()/rollbackToVersion() below, just for a list rather than
+  // a single service.
+  function performMultiRollback() {
+    var services = Object.keys(versionsChoices);
+    if (!services.length) return;
+    var hasOverride = FILES.some(function (f) { return isStackOverride(f.name); });
+    var picks = services.map(function (service) {
+      var digest = versionsChoices[service];
+      var svc = null, entry = null;
+      for (var i = 0; i < versionsServices.length; i++) {
+        if (versionsServices[i].service === service) { svc = versionsServices[i]; break; }
+      }
+      if (svc) {
+        for (var j = 0; j < svc.entries.length; j++) {
+          if (svc.entries[j].digest === digest) { entry = svc.entries[j]; break; }
         }
+      }
+      return { service: service, digest: digest, label: entry ? (entry.version || historyWhen(entry.at)) : digest };
+    });
+    var listHtml = '<ul>' + picks.map(function (p) {
+      return '<li>' + esc(p.service) + ' → ' + esc(p.label) + '</li>';
+    }).join('') + '</ul>';
+    askConfirm({
+      title: 'Put ' + picks.length + (picks.length === 1 ? ' version' : ' versions') + ' back?',
+      bodyHtml: listHtml +
+        '<p>This edits the compose file so each service names its exact version, which is what makes it ' +
+        'stick — a pull will not move off it. The file as it stands now is kept in History, so this can ' +
+        'be undone.' +
+        (hasOverride ? ' This stack has an override file, though, and an image set there can win over ' +
+          'a pin and make it look as though nothing happened.' : '') +
+        '</p>' +
+        '<p>The versions you are moving away from will not come back on their own.</p>',
+      goLabel: 'Put them back'
+    }).then(function (go) {
+      closeConfirm();
+      if (!go) return;
+      var text = currentText();
+      for (var i = 0; i < picks.length; i++) {
+        var pinned = pinServiceImage(picks[i].service, picks[i].digest, text);
+        if (!pinned.ok) {
+          versionsActionError = pinned.why;
+          renderVersionsPane();
+          return;
+        }
+        text = pinned.yaml;
+      }
+      call('update-rollback', {
+        name: openedName,
+        services: picks.map(function (p) { return p.service; }).join(';'),
+        digests: picks.map(function (p) { return p.digest; }).join(';'),
+        yaml: withEol(text, composeEol)
+      }).then(function (res) {
+        if (!res || !res.ok) {
+          versionsActionError = (res && res.error) || 'Could not put those versions back.';
+          renderVersionsPane();
+          return;
+        }
+        versionsChoices = {};
+        finishRollback(res, text, picks.map(function (p) { return p.service; }),
+          'The compose file now pins ' + picks.length + ' service' + (picks.length === 1 ? '' : 's') +
+          ' to the chosen versions. The files they replace are kept in History.');
       });
     });
   }
@@ -21448,6 +21604,15 @@
 
       var unpinBtn = event.target.closest('[data-version-unpin]');
       if (unpinBtn) { performUnpin(unpinBtn.dataset.versionUnpin); return; }
+
+      var multiToggle = event.target.closest('[data-versions-multi-toggle]');
+      if (multiToggle) { toggleVersionsMulti(); return; }
+
+      var multiGo = event.target.closest('[data-versions-multi-go]');
+      if (multiGo) { if (!multiGo.disabled) performMultiRollback(); return; }
+
+      var chooseBtn = event.target.closest('[data-version-choose]');
+      if (chooseBtn) { chooseVersionsTarget(chooseBtn.dataset.versionService, chooseBtn.dataset.versionChoose); return; }
 
       var rollbackBtn = event.target.closest('[data-version-rollback]');
       if (rollbackBtn) {
@@ -24593,20 +24758,48 @@
     return unit.matches(sel) ? unit : unit.querySelector(sel);
   }
 
+  // PLAN_131 C — a folder's siblings, and an unfiled stack's, are no longer
+  // two separate groups: the top level is drawn as one interleaved order of
+  // folders and loose stacks, so dragging either kind against the other has
+  // to see the whole set. True for a folder grip always (folders have no
+  // parent), and for a stack grip whose folder key is '' (unfiled).
+  function isRootGripGroup(kind, parentKey) {
+    return kind === 'folder' || (kind === 'stack' && parentKey === '');
+  }
+
+  // Which of the two top-level kinds a mixed-group unit actually is — a
+  // folder unit always wraps a heading row carrying data-folder-row, a
+  // loose-stack unit never does.
+  function gripUnitKind(unit) {
+    return (unit.matches('[data-folder-row]') || unit.querySelector('[data-folder-row]'))
+      ? 'folder' : 'stack';
+  }
+
   // Every unit this grip's row can trade places with, in document order —
   // read fresh from the DOM every time rather than cached, since the whole
   // point is that it changes mid-drag.
   function gripSiblingUnits(kind, parentKey) {
-    var sel = kind === 'folder' ? '[data-folder-row]'
-            : kind === 'stack'  ? '[data-stack-row]'
-            :                     '.staxx-container-row';
-    var rows = rowsHost ? Array.prototype.slice.call(rowsHost.querySelectorAll(sel)) : [];
-    if (kind !== 'folder') {
+    if (isRootGripGroup(kind, parentKey)) {
+      var rows = rowsHost
+        ? Array.prototype.slice.call(rowsHost.querySelectorAll('[data-folder-row],[data-stack-row]'))
+        : [];
       rows = rows.filter(function (r) {
-        var key = kind === 'stack' ? (r.dataset.inFolder || '') : (r.dataset.inStack || '');
-        return key === parentKey;
+        return r.matches('[data-folder-row]') || (r.dataset.inFolder || '') === '';
       });
+      var units = [];
+      rows.forEach(function (r) {
+        var u = gripUnit(r, gripUnitKind(r));
+        if (units.indexOf(u) === -1) units.push(u);
+      });
+      return units;
     }
+
+    var sel = kind === 'stack' ? '[data-stack-row]' : '.staxx-container-row';
+    var rows = rowsHost ? Array.prototype.slice.call(rowsHost.querySelectorAll(sel)) : [];
+    rows = rows.filter(function (r) {
+      var key = kind === 'stack' ? (r.dataset.inFolder || '') : (r.dataset.inStack || '');
+      return key === parentKey;
+    });
     var units = [];
     rows.forEach(function (r) {
       var u = gripUnit(r, kind);
@@ -24619,8 +24812,20 @@
   // start-order wants them — see the endpoint contract: a folder id, a
   // stack's own leaf name (never the full path), or a service's real compose
   // name (data-order-key), de-duplicated because a scaled service has one
-  // row per container.
-  function gripOrderNames(kind, units) {
+  // row per container. At the top level (see isRootGripGroup()) the group
+  // mixes both kinds, so each unit's own kind decides its token —
+  // `folder:<name>` or `stack:<leaf>` — rather than the kind the drag itself
+  // started from.
+  function gripOrderNames(kind, units, parentKey) {
+    if (isRootGripGroup(kind, parentKey)) {
+      return units.map(function (u) {
+        var uk  = gripUnitKind(u);
+        var row = gripUnitRow(u, uk);
+        if (uk === 'folder') return 'folder:' + row.dataset.folderRow;
+        var full = row.dataset.stackRow || '';
+        return 'stack:' + full.slice(full.lastIndexOf('/') + 1);
+      });
+    }
     var names = units.map(function (u) {
       var row = gripUnitRow(u, kind);
       if (kind === 'folder') return row.dataset.folderRow;
@@ -24638,12 +24843,15 @@
 
   // Shared by the drag drop and the keyboard move: post the whole finished
   // order, then let the server's own render settle where everything landed
-  // — a whole-list save, so it can never come back half-applied.
+  // — a whole-list save, so it can never come back half-applied. The top
+  // level saves under scope 'root' with an empty parent, whichever kind of
+  // grip the drag started from — see isRootGripGroup().
   function postStartOrder(kind, parent, units, afterRefresh) {
+    var root = isRootGripGroup(kind, parent);
     call('start-order', {
-      scope: kind + 's',
-      parent: parent,
-      names: gripOrderNames(kind, units).join(';')
+      scope: root ? 'root' : kind + 's',
+      parent: root ? '' : parent,
+      names: gripOrderNames(kind, units, parent).join(';')
     }).then(function (r) {
       if (!r.ok) { failed('Could not save that order', r.error); return; }
       // The order itself is saved either way — a refusal here is only about
@@ -26708,6 +26916,27 @@
   // The signpost page (Settings → StaXX) links here to open the
   // panel directly, for whoever followed it from the Plugins list.
   if (location.hash === '#settings') openSettings();
+
+  // PLAN_132 A: a #stack= fragment means the editor was open on the last
+  // refresh — reopen it, exactly as its icon's own click would. Rows are
+  // already in the document by here (rowsHost is read at script parse
+  // time), so rowFor() below can answer straight away. A stack that no
+  // longer exists (deleted from another tab, or a mistyped fragment) is
+  // not an error — the fragment is simply dropped.
+  (function () {
+    var stackMatch = location.hash.match(/^#stack=(.+)$/);
+    if (!stackMatch) return;
+    // A hand-mangled fragment ("%" with nothing after it) makes decoding
+    // throw, and this runs in the page's own set-up, so a throw here would
+    // take everything below it down with it. Treat it as "no such stack".
+    var wantStack = '';
+    try { wantStack = decodeURIComponent(stackMatch[1]); } catch (e) { wantStack = ''; }
+    if (wantStack && rowFor(wantStack)) {
+      editStack(wantStack, stackLabel(wantStack));
+    } else {
+      window.history.replaceState(null, '', location.pathname + location.search);
+    }
+  })();
 
   // PLAN_63 Phase C: an install caught on Unraid's own Add Container page
   // lands here with '?staxx-install=<id>' — see shadow/AddContainer.page.tmpl

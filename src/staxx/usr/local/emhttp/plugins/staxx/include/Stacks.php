@@ -73,11 +73,6 @@ define('STAXX_LOG_DOWNLOAD_MAX', 2097152); // 2 MiB
 // worthless after a reboot, and noisy.
 define('STAXX_EXEC_DIR', '/tmp/staxx/exec');
 
-// A single write down a session's pipe is a keystroke or a short pasted
-// line, never a file. This is what stops the input box being used to
-// smuggle something much larger through a pipe meant for typing.
-define('STAXX_EXEC_WRITE_MAX', 4096);
-
 // Compose reads whichever of these it finds first, in this order.
 const STAXX_COMPOSE_FILENAMES = [
   'compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
@@ -5990,11 +5985,19 @@ function staxx_placeholders(string $file): array {
  * request that waits for them will simply time out. So the command is detached
  * and its output collected in a file, which the page then follows.
  *
- * @param string $service '' for the whole stack, or one compose service name
- *                         to scope the command to a single container.
+ * @param string|array $service '' (or an empty list) for the whole stack, one
+ *                               compose service name, or a list of several —
+ *                               a rollback across several services needs one
+ *                               job naming all of them, not several racing
+ *                               each other against the same project.
  */
-function staxx_start_job(string $name, string $verb, string &$error, string $service = ''): string {
+function staxx_start_job(string $name, string $verb, string &$error, $service = ''): string {
   $error = '';
+
+  // Normalise to a list once, up front, so every check and every step below
+  // reads $names rather than juggling the string-or-array shape itself.
+  // An empty list means whole-stack scope, exactly as '' always has.
+  $names = is_array($service) ? array_values($service) : ($service === '' ? [] : [$service]);
 
   $verbs = staxx_job_verbs();
   if (!isset($verbs[$verb]))       { $error = 'Unknown action.';     return ''; }
@@ -6026,7 +6029,7 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   $startsSomething = false;
   foreach ($brings as $step) if (strpos($step, 'up ') === 0) $startsSomething = true;
 
-  if ($service === '' && $startsSomething) {
+  if (!$names && $startsSomething) {
     $holders = array_map(fn($t) => $t['name'], staxx_foreign_holders($name));
     if ($holders) {
       $error = (count($holders) === 1
@@ -6052,7 +6055,7 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   // stack does not exist on disk either — which is what lets
   // tests/server/console.php prove the scope rule with a made-up stack name
   // and never go anywhere near a real compose file.
-  $args = $service !== '' ? ($verbs[$verb]['svc'] ?? '') : ($verbs[$verb]['args'] ?? '');
+  $args = $names ? ($verbs[$verb]['svc'] ?? '') : ($verbs[$verb]['args'] ?? '');
   // A verb with no form for a given scope simply has no key for it — `remove`
   // carries no `args` at all, `config` no `svc` — so the `?? ''` above is what
   // actually catches those. The `[]` test alongside it is
@@ -6060,7 +6063,7 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   // list of steps rather than omitting the key: an empty chain would
   // otherwise build a command that runs nothing and then reports success.
   if ($args === '' || $args === []) {
-    $error = $service !== ''
+    $error = $names
       ? 'That action cannot be run against a single container.'
       : 'That action cannot be run against a whole stack.';
     return '';
@@ -6109,24 +6112,30 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
     }
   }
 
-  if ($service !== '') {
-    // The allowlist for a service name: it must be a key of the services the
-    // compose file itself declares, the same shape of guarantee
+  if ($names) {
+    // The allowlist for a service name: each must be a key of the services
+    // the compose file itself declares, the same shape of guarantee
     // staxx_valid_name() gives for stack names. A regex on the shape of
     // the string would accept a service that simply does not exist in this
     // stack; this is a real membership check against the file.
     $services = staxx_compose_meta($file)['services'];
-    if (!isset($services[$service])) {
-      $error = 'No service called "'.$service.'" in this stack.';
-      return '';
+    foreach ($names as $one) {
+      if (!isset($services[$one])) {
+        $error = 'No service called "'.$one.'" in this stack.';
+        return '';
+      }
     }
     // Belt and braces on top of that allowlist: even a validated name is
     // quoted before it reaches the shell, rather than trusted to already be
-    // shell-safe. Every step gets it appended, not just the first — a
-    // multi-step verb like `update` runs `pull` and `up -d` as two separate
-    // compose invocations, and both have to be scoped to this one service or
-    // the second would quietly act on the whole stack instead.
-    $steps = array_map(fn($step) => $step.' '.escapeshellarg($service), $steps);
+    // shell-safe. Every step gets every name appended, not just the
+    // first — a multi-step verb like `update` runs `pull` and `up -d` as two
+    // separate compose invocations, and both have to be scoped to the same
+    // services or the second would quietly act on the whole stack instead.
+    // Several names on one step (`compose up -d --force-recreate a b`) is
+    // also what lets a multi-service rollback recreate every chosen service
+    // in one job, rather than several racing each other on the same project.
+    $quoted = implode(' ', array_map('escapeshellarg', $names));
+    $steps  = array_map(fn($step) => $step.' '.$quoted, $steps);
   }
 
   if (!staxx_private_dir(STAXX_JOB_DIR)) {
@@ -6553,38 +6562,52 @@ function staxx_log_download(string $stack, string $service, string &$error): str
 
 /* ========================================================== exec (D4) =====
  *
- * A real shell inside a running container. See PLAN_44 section D4. This is
- * the one place in the plugin where user input reaches a shell with no verb
- * allowlist standing in front of it — docker exec runs whatever the person
- * inside the session types. Every guard below exists because of that.
+ * A real terminal inside a running container. See PLAN_44 section D4 and
+ * PLAN_133. This is the one place in the plugin where user input reaches a
+ * shell with no verb allowlist standing in front of it — docker exec runs
+ * whatever the person inside the session types. Every guard below exists
+ * because of that.
  *
- * The mechanism, proved by hand on the real server before any of this was
- * written (socat is not installed there; script, mkfifo and setsid are):
+ * The terminal itself is not ours: it is ttyd, the same terminal server
+ * Unraid's own Console button starts (`/usr/local/sbin/ttyd-exec`, backed by
+ * `/usr/bin/ttyd`), which nginx already proxies at `/logterminal/<tag>/…`
+ * onto a unix socket, websocket included, and whose response headers already
+ * allow a same-origin frame. So this section's only job is to start ttyd
+ * against the right container and keep track of it — the terminal emulation,
+ * the websocket handling and the browser-side rendering are all ttyd's, not
+ * a client-side library this project would otherwise have had to add.
  *
- *   echo $$ > pid; exec 9<> fifo; script -qfc "<docker exec …>" /dev/null \
- *     <&9 >>out 2>&1
+ * Started with:
  *
- * `script -qfc` is what allocates a pseudo-terminal — without one there is
- * no prompt, no tab completion and no Ctrl-C, because `docker exec -it`
- * refuses outright when its stdin is a plain pipe rather than a terminal.
- * `exec 9<>` opens the fifo READ-WRITE in the session's own shell, so that
- * shell is always a second writer holding the pipe open on top of whatever
- * PHP does. That is what lets a web request fopen() the fifo, write one
- * keystroke, and close it again — once per request — without the far end
- * ever seeing end-of-input. Proved the failure case too: a writer that only
- * opens and closes per keystroke, with nobody else holding the pipe open,
- * kills the shell immediately. Do not "simplify" this by dropping the
- * `exec 9<>` line — it is not decorative.
+ *   ttyd-exec -s9 -om1 -i /var/tmp/staxx-<id>.sock docker exec -it \
+ *     '<container>' <shell>
  *
- * Four files per session, all under STAXX_EXEC_DIR/<id>/, the same shape a
- * log follower already uses:
- *   fifo  the named pipe PHP writes keystrokes into
- *   out   the accumulated output, read by offset like a job's log
- *   pid   the pid of the detached session leader (the outer `sh -c`), so it
- *         can be found again and killed
- *   hb    the epoch second of the last poll — the same heartbeat rule
- *         staxx_log_reap() already proved; STAXX_LOG_STALE is reused rather
- *         than inventing a second number for the same idea
+ * `-om1` is one client only and exit when it goes, `-i` names the unix
+ * socket nginx proxies. A StaXX session gets its own socket, named
+ * `staxx-<id>.sock` rather than Unraid's own `<container>.sock`: Unraid's is
+ * one-client-only, so the Console button and this pane would otherwise fight
+ * over the same socket, and the `staxx-` prefix is what lets
+ * staxx_exec_kill() recognise a session as one this code started rather than
+ * risk touching Unraid's own terminal.
+ *
+ * `ttyd-exec` backgrounds ttyd itself and returns immediately (its last line
+ * is `exec ttyd … &`), so the pid it hands back is not ttyd's — the real pid
+ * is found afterwards by asking the process table for whoever has this
+ * session's socket path on its command line, the same "trust what the
+ * process actually says, not what a wrapper claims" pattern
+ * staxx_exec_resolve_container() uses for the container name.
+ *
+ * Two files per session, under STAXX_EXEC_DIR/<id>/ — half the log
+ * follower's shape, because there is no output to buffer or input to relay
+ * any more:
+ *   pid  ttyd's own pid, found after it starts, so it can be found again and
+ *        killed
+ *   hb   the epoch second of the last liveness poll — the same heartbeat
+ *        rule staxx_log_reap() already proved; STAXX_LOG_STALE is reused
+ *        rather than inventing a second number for the same idea
+ * The socket itself lives at the fixed path nginx expects,
+ * /var/tmp/staxx-<id>.sock, not under STAXX_EXEC_DIR — ttyd, not this code,
+ * owns that file's lifetime.
  */
 
 /**
@@ -6683,6 +6706,17 @@ function staxx_exec_start(string $stack, string $service, string &$error): strin
   // that touches one reaps stale sessions first, this one included.
   staxx_exec_reap();
 
+  // Both ship with Unraid 7, but naming what is missing beats a blank frame
+  // that gives no reason.
+  if (!is_file('/usr/local/sbin/ttyd-exec')) {
+    $error = 'Could not open a shell: /usr/local/sbin/ttyd-exec is missing.';
+    return '';
+  }
+  if (!is_file('/usr/bin/ttyd')) {
+    $error = 'Could not open a shell: /usr/bin/ttyd is missing.';
+    return '';
+  }
+
   if (!is_dir(STAXX_EXEC_DIR) && !@mkdir(STAXX_EXEC_DIR, 0755, true)) {
     $error = 'Could not create '.STAXX_EXEC_DIR;
     return '';
@@ -6695,196 +6729,117 @@ function staxx_exec_start(string $stack, string $service, string &$error): strin
     return '';
   }
 
-  $fifo = $sessDir.'/fifo';
-  $out  = $sessDir.'/out';
-  $pid  = $sessDir.'/pid';
-  $hb   = $sessDir.'/hb';
+  $pidFile = $sessDir.'/pid';
+  $hb      = $sessDir.'/hb';
+  $sock    = '/var/tmp/staxx-'.$id.'.sock';
 
-  // mkfifo, not touch — a plain file here would let the write below succeed
-  // by simply appending to it, with nothing on the other end ever reading a
-  // byte, and the session would look open while going nowhere.
-  @exec('mkfifo -m 600 '.escapeshellarg($fifo));
-  if (!file_exists($fifo)) {
-    @exec('rm -rf '.escapeshellarg($sessDir));
-    $error = 'Could not create the input pipe.';
-    return '';
-  }
-  @touch($out);
-
-  // Written before the session even starts, exactly as staxx_log_start()
-  // writes its heartbeat first — a poll landing in the gap between this call
-  // returning and the process actually existing still sees a fresh
-  // timestamp rather than reading as stale.
+  // Written before ttyd even starts, exactly as staxx_log_start() writes its
+  // heartbeat first — a poll landing in the gap between this call returning
+  // and ttyd actually listening still sees a fresh timestamp rather than
+  // reading as stale.
   @file_put_contents($hb, (string)time());
 
   // Root inside the container, falling back to sh for an image with no bash.
   //
   // Written `exec bash || exec sh` this never fell back and every bash-less
   // image — which is most Alpine ones — got a session that died the instant
-  // it started, showing "bash: not found" and then refusing every keystroke
-  // as a session that had ended. A failed `exec` TERMINATES a
-  // non-interactive shell, so the `||` branch is unreachable; measured on
-  // the server, `sh -c 'exec nosuchcmd || exec echo ran'` prints the error
-  // and exits 127 without ever running the echo. Asking first, with
-  // `command -v`, is what makes the choice instead of hoping a failure is
-  // recoverable.
+  // it started. A failed `exec` TERMINATES a non-interactive shell, so the
+  // `||` branch is unreachable; measured on the server, `sh -c 'exec
+  // nosuchcmd || exec echo ran'` prints the error and exits 127 without ever
+  // running the echo. Asking first, with `command -v`, is what makes the
+  // choice instead of hoping a failure is recoverable.
   //
-  // If neither shell exists, docker exec itself fails and its own error text
-  // lands in $out — staxx_exec_read() then reports alive:false with that
-  // text already in it, which is the honest answer for an image with no
-  // shell at all, not an empty session that looks broken.
+  // If neither shell exists, docker exec itself fails and ttyd's terminal
+  // shows its error text and then a closed session — the honest answer for
+  // an image with no shell at all.
   $execCmd = escapeshellarg(staxx_docker_bin())
            . ' exec -u 0 -it '.escapeshellarg($container)
            . ' sh -c '.escapeshellarg('command -v bash >/dev/null 2>&1 && exec bash; exec sh');
 
-  // `echo $$` runs in the outer shell before anything else, capturing the
-  // session leader's own pid — and because setsid below makes this shell the
-  // leader of a new session, that pid is also the process group id the
-  // whole session can later be killed by, the same trick staxx_log_start()
-  // uses for its follower.
-  $inner = 'echo $$ > '.escapeshellarg($pid).'; '
-         . 'exec 9<> '.escapeshellarg($fifo).'; '
-         . 'script -qfc '.escapeshellarg($execCmd).' /dev/null <&9 >> '.escapeshellarg($out).' 2>&1';
+  // ttyd-exec backgrounds ttyd itself and returns at once, so staxx_sh()'s
+  // timeout never bites; setsid puts ttyd in a session of its own so it
+  // outlives the wrapper shell cleanly, the same way staxx_start_job()
+  // detaches a compose job. The pid has to be found afterwards — see the doc
+  // block above.
+  staxx_sh('setsid /usr/local/sbin/ttyd-exec -s9 -om1 -i '.escapeshellarg($sock).' '.$execCmd, 5);
 
-  // NOT wrapped in staxx_sh()'s timeout, deliberately — a session is meant
-  // to live for as long as the editor tab stays open, not for a fixed number
-  // of seconds. Its lifetime is the heartbeat above and staxx_exec_reap()
-  // below, exactly as staxx_log_start() already argues for its own
-  // follower. Do not "fix" this by adding a timeout.
-  @exec('setsid sh -c '.escapeshellarg($inner).' </dev/null >/dev/null 2>&1 &');
+  // Give ttyd a moment to fork and start listening before asking the process
+  // table for it — the same 200ms gap the browser waits before loading the
+  // frame, measured on the server as comfortably enough.
+  //
+  // `pgrep -f` matches every process whose command line carries the socket
+  // path, and that includes the `sh -c` staxx_sh() wraps the pgrep itself in
+  // — so the answer is read back from /proc and only a pid that is actually
+  // ttyd is kept. Without that the pid file could name a shell that had
+  // already exited, and staxx_exec_alive() would call the session dead the
+  // moment it was born.
+  usleep(200000);
+  $pids = preg_split('/\s+/', trim(staxx_sh('pgrep -f '.escapeshellarg($sock), 5)), -1, PREG_SPLIT_NO_EMPTY);
+  foreach ($pids as $candidate) {
+    if (!ctype_digit($candidate)) continue;
+    $cmdline = str_replace("\0", ' ', (string)@file_get_contents('/proc/'.$candidate.'/cmdline'));
+    // The first word, not anywhere in the line: the docker exec inside
+    // ttyd's own arguments carries an `sh -c` of its own, so "contains
+    // ttyd and not sh -c" would exclude the very process wanted.
+    if (preg_match('#^(?:/usr/bin/)?ttyd\s#', $cmdline)) {
+      @file_put_contents($pidFile, $candidate);
+      break;
+    }
+  }
 
   return $id;
 }
 
 /**
- * Is this session's leader still running? A missing pid file reads as
- * alive — staxx_exec_start() writes it from inside the detached shell, a
- * moment after this call already returned an id, the same timing gap
- * staxx_log_read() already tolerates for a follower's pid file.
+ * Whether a session's terminal is still there to reconnect to: the socket
+ * ttyd listens on exists, and the pid recorded for it is still a running
+ * ttyd naming that same socket on its command line — not some unrelated
+ * process that has since been handed the same pid. Touches the heartbeat:
+ * this is now the only thing the browser polls while a shell pane is open,
+ * so it has to be what keeps staxx_exec_reap() from calling the session
+ * stale, the same role staxx_log_read() plays for a log follower.
  */
 function staxx_exec_alive(string $id): bool {
-  $pidfile = STAXX_EXEC_DIR.'/'.$id.'/pid';
-  if (!is_file($pidfile)) return true;
-  $pid = (int)trim((string)@file_get_contents($pidfile));
-  return $pid > 0 && is_dir('/proc/'.$pid);
-}
-
-/**
- * Write one keystroke or short paste into a session's input pipe.
- *
- * The bytes go in through fopen(), fwrite() and fclose() only — never
- * assembled into a shell command line. That is the single most important
- * line in this whole file: there is no quoting to get wrong if no shell ever
- * sees these bytes as anything other than raw input.
- *
- * The alive check narrows, but cannot fully close, the gap between "the
- * session leader just exited" and this write actually happening — a fifo's
- * write side blocks until a reader is present, so writing into one with
- * nobody left to read it would hang this request rather than fail it. The
- * residual race (the leader dying in the instant between the check and the
- * fopen()) is accepted rather than engineered around, the same way
- * staxx_log_kill() accepts a narrow pid-reuse window: the worst case here is
- * one request blocking briefly, not a wrong container being touched.
- */
-function staxx_exec_write(string $id, string $bytes, string &$error): bool {
-  $error = '';
-
-  if (!preg_match('/^[0-9a-f]{16}$/', $id)) { $error = 'Invalid session id.'; return false; }
-
   staxx_exec_reap();
 
-  if (strlen($bytes) > STAXX_EXEC_WRITE_MAX) {
-    $error = 'That is too much to send at once — paste it in smaller pieces.';
-    return false;
-  }
+  if (!preg_match('/^[0-9a-f]{16}$/', $id)) return false;
 
-  $fifo = STAXX_EXEC_DIR.'/'.$id.'/fifo';
-  if (!file_exists($fifo) || !staxx_exec_alive($id)) {
-    $error = 'That session has ended.';
-    return false;
-  }
-
-  // 'r+', not 'a'. Opening a pipe for writing alone BLOCKS until something
-  // opens the other end, and if the session has just died nothing ever will —
-  // so a keystroke arriving in that gap would hang this request for ever, with
-  // no timeout to save it. Opening read-write never blocks, which is the same
-  // trick the session's own launcher uses (`exec 9<>`) to keep the pipe from
-  // seeing end-of-input. Measured on the server: with no reader, 'a' was still
-  // blocked after two seconds and 'r+' returned in a tenth of one.
-  //
-  // The bytes never touch a shell command line — this is a file write, not a
-  // command — which is what makes a shell session safe to expose at all: there
-  // is no quoting to get wrong, whatever somebody types.
-  $fh = @fopen($fifo, 'r+');
-  if ($fh === false) { $error = 'Could not write to that session.'; return false; }
-  fwrite($fh, $bytes);
-  fclose($fh);
-  return true;
-}
-
-/**
- * Read the bytes a session's output has gained since $offset — the same
- * offset contract as staxx_job_log() and staxx_log_read(): only the new
- * bytes since the caller's last poll, measured on the raw chunk, leading
- * whitespace left intact rather than trimmed away.
- *
- * Asking for output IS the keep-alive signal, exactly as it is for a log
- * follower — this is the only place a session's heartbeat gets touched.
- *
- * @return array{text:string, offset:int, alive:bool}
- */
-function staxx_exec_read(string $id, int $offset): array {
-  if (!preg_match('/^[0-9a-f]{16}$/', $id)) {
-    return ['text' => '', 'offset' => 0, 'alive' => false];
-  }
-
-  staxx_exec_reap();
-
-  $out = STAXX_EXEC_DIR.'/'.$id.'/out';
-  if (!is_file($out)) return ['text' => '', 'offset' => 0, 'alive' => false];
-
-  // Same clamp staxx_job_log() and staxx_log_read() use: a negative offset
-  // would otherwise seek backward from the end of the file instead of being
-  // refused outright.
-  if ($offset < 0) $offset = 0;
-
-  // Capped for the same reason as staxx_job_log() and staxx_log_read().
-  $chunk = @file_get_contents($out, false, null, $offset, STAXX_LOG_CHUNK_MAX);
-  if ($chunk === false) $chunk = '';
-  $newOffset = $offset + strlen($chunk);
-
-  // Written after the read, not before, so a request that fails partway
-  // through never claims a poll that did not actually happen.
   @file_put_contents(STAXX_EXEC_DIR.'/'.$id.'/hb', (string)time());
 
-  return ['text' => $chunk, 'offset' => $newOffset, 'alive' => staxx_exec_alive($id)];
+  if (!file_exists('/var/tmp/staxx-'.$id.'.sock')) return false;
+
+  $pid = (int)trim((string)@file_get_contents(STAXX_EXEC_DIR.'/'.$id.'/pid'));
+  if ($pid <= 0 || !is_dir('/proc/'.$pid)) return false;
+
+  $cmdline = str_replace("\0", ' ', (string)@file_get_contents('/proc/'.$pid.'/cmdline'));
+  return strpos($cmdline, 'ttyd') !== false && strpos($cmdline, 'staxx-'.$id.'.sock') !== false;
 }
 
 /**
  * Kill the session named by $id, if its pid file names a process that is
- * still plausibly ours — the same pid-reuse defence staxx_log_kill() uses,
- * checked here against "script", the one program every session this
- * function ever started is running inside its detached shell.
+ * still plausibly ours — checked against both "ttyd" and this session's own
+ * socket path, never against "ttyd" alone, so this can never reach out and
+ * kill Unraid's own Console terminal, which is also a ttyd process, just
+ * one listening on a different socket.
  */
 function staxx_exec_kill(string $id): void {
-  $pid = (int)trim((string)@file_get_contents(STAXX_EXEC_DIR.'/'.$id.'/pid'));
-  if ($pid <= 0 || !is_dir('/proc/'.$pid)) return;
-
-  $cmdline = str_replace("\0", ' ', (string)@file_get_contents('/proc/'.$pid.'/cmdline'));
-  if (strpos($cmdline, 'script') === false) return;
-
-  // setsid made this pid the leader of its own process group when the
-  // session started, so signalling the NEGATIVE pid reaches the whole
-  // group — the shell, script, and docker exec itself — not just this one
-  // process.
-  @exec('kill -TERM -'.$pid.' 2>/dev/null');
+  $sock = 'staxx-'.$id.'.sock';
+  $pid  = (int)trim((string)@file_get_contents(STAXX_EXEC_DIR.'/'.$id.'/pid'));
+  if ($pid > 0 && is_dir('/proc/'.$pid)) {
+    $cmdline = str_replace("\0", ' ', (string)@file_get_contents('/proc/'.$pid.'/cmdline'));
+    if (strpos($cmdline, 'ttyd') !== false && strpos($cmdline, $sock) !== false) {
+      @exec('kill -TERM '.$pid.' 2>/dev/null');
+    }
+  }
+  @unlink('/var/tmp/'.$sock);
 }
 
 /**
  * Stop one session outright — the editor closed, or the container tab
  * switched away and its shell is being ended for good, not merely left to
- * time out. Kills the process group if it is still going, then removes the
- * whole session directory so staxx_exec_reap() has nothing left to find.
+ * time out. Kills ttyd if it is still going and removes its socket, then
+ * removes the whole session directory so staxx_exec_reap() has nothing left
+ * to find.
  */
 function staxx_exec_stop(string $id): void {
   if (!preg_match('/^[0-9a-f]{16}$/', $id)) return;

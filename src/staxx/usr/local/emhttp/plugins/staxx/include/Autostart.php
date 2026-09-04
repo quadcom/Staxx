@@ -436,21 +436,33 @@ function staxx_autostart_project(array $stacks, string &$error): bool {
   foreach ($stacks as $s) $byFolder[$s['folder'] ?? ''][] = $s;
 
   $folderOrder = staxx_start_sort(staxx_folder_names(), (array)($start['folders'] ?? []));
+  $looseLeaves = array_map(fn($s) => $s['leaf'] ?? staxx_path_leaf($s['name']), $byFolder[''] ?? []);
+  $looseOrder  = staxx_start_sort($looseLeaves, (array)($start['stacks'][''] ?? []));
+  $byLeaf      = [];
+  foreach ($byFolder[''] ?? [] as $s) $byLeaf[$s['leaf'] ?? staxx_path_leaf($s['name'])] = $s;
 
+  // Same top-level order as staxx_folder_layout() — folders and loose stacks
+  // interleaved by `root` — so the boot list matches what the row order
+  // shows. A loose stack is projected as a one-stack '' group of its own;
+  // staxx_autostart_group_lines() never adds a folder-level wait when its
+  // $folder argument is '', so that reads identically whether the group
+  // holds one stack or all of them.
   $ourRun = [];
-  foreach ($folderOrder as $folder) {
+  foreach (staxx_start_root_tokens($folderOrder, $looseOrder, (array)($start['root'] ?? [])) as $token) {
+    if (str_starts_with($token, 'stack:')) {
+      $leaf = substr($token, 6);
+      if (!isset($byLeaf[$leaf])) continue;
+      $ourRun = array_merge(
+        $ourRun,
+        staxx_autostart_group_lines('', [$byLeaf[$leaf]], $start, $idx, $onMap, $delay, $curLines)
+      );
+      continue;
+    }
+    $folder = substr($token, 7);
     if (empty($byFolder[$folder])) continue;
     $ourRun = array_merge(
       $ourRun,
       staxx_autostart_group_lines($folder, $byFolder[$folder], $start, $idx, $onMap, $delay, $curLines)
-    );
-  }
-  // Ungrouped stacks always come after every real folder, same as
-  // staxx_folder_layout() shows them.
-  if (!empty($byFolder[''])) {
-    $ourRun = array_merge(
-      $ourRun,
-      staxx_autostart_group_lines('', $byFolder[''], $start, $idx, $onMap, $delay, $curLines)
     );
   }
 
