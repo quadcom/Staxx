@@ -124,3 +124,5 @@ Nothing moves unless all of them can:
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

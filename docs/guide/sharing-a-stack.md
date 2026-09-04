@@ -127,3 +127,5 @@ Prefer to do it by hand? Make a new stack and paste the compose text in.
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

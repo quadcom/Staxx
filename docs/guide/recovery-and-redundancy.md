@@ -149,3 +149,5 @@ you had before — whether it still works alongside everything else that has cha
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

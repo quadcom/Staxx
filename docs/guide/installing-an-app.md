@@ -124,3 +124,5 @@ address, is dropped rather than written in broken.
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

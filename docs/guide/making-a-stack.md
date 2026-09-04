@@ -105,3 +105,5 @@ If the folder already has a compose file, this is refused, and points you at Edi
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

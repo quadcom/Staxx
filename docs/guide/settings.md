@@ -156,3 +156,5 @@ says they are, whether you really have a backup is still your call.
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

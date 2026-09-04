@@ -94,3 +94,5 @@ open, it would undo the whole point in one click.
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

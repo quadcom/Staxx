@@ -133,3 +133,5 @@ Each service then gets its own set of groups. Most are hidden until you switch t
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).
