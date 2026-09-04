@@ -24,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 StaXX is an Unraid 7.2+ webGUI plugin that replaces Unraid's proprietary XML Docker
 templates with standard Compose files, and renders those compose files as a form so non-technical
-users can configure containers without touching YAML. Pre-alpha; see `README.md` for the design
+users can configure containers without touching YAML. In beta (Adrian's word, 2026-09-04); see `README.md` for the design
 commitments and `docs/README.md` for the plain-English overview.
 
 Two rules override most other judgement calls:
@@ -382,9 +382,10 @@ at `/boot/config/plugins/staxx/`.
 
 ## How StaXX is actually delivered right now
 
-**This is pre-alpha and deliberately not on Community Applications.** That is a listing, not a
-file format: it is how people would *find* StaXX and be told it had updated. Not applying for it is
-a decision, not an omission — do not do work towards it unasked.
+**Submitted to Community Applications on 2026-09-04, as beta.** That is a listing, not a file
+format: it is how people find StaXX and are told it has updated. `SUBMISSION.md` records what was
+proved for it; `staxx.xml` and `ca_profile.xml` in the root are what it reads, committed on `main`
+directly and copied to `dev`.
 
 **The packaging chain itself is complete, and the manifest is the way in people should be pointed
 at.** Paste the manifest address into Unraid's **Plugins → Install Plugin** box and it installs like

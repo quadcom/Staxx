@@ -377,7 +377,7 @@ chmod +x /usr/local/emhttp/plugins/staxx/scripts/* 2>/dev/null || true
 echo ""
 echo "-----------------------------------------------------------"
 echo " StaXX has been installed."
-echo " Stack management is up and running. Still pre-alpha — expect rough edges."
+echo " Stack management is up and running. StaXX is in beta — expect the occasional rough edge."
 echo "-----------------------------------------------------------"
 echo ""
 ]]>
