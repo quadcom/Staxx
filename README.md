@@ -1,5 +1,39 @@
 <p align="center"><img src="Logo/staxx-lockup-1024.png" alt="StaXX" width="420"></p>
 
+<!-- dev-banner -->
+> [!CAUTION]
+> ## Development branch — the bleeding edge, not the stable release
+>
+> This is where work in progress lands. Features here may be half-finished, broken, or in the middle
+> of being changed, and the text and screenshots below may describe things that do not work yet.
+>
+> You *can* install this — but take it only if you want to see things early and do not mind the
+> occasional rough edge. For the stable release, read [`main`](../../blob/main/README.md).
+>
+> You are on one channel at a time. Going back to stable means pasting main's address into
+> **Install Plugin** yourself: it will never appear as an available update, because a development
+> build always sorts as the newer of the two.
+>
+> ### To install this branch
+>
+> **Every install address further down this page is the stable one.** This is the address for
+> *this* branch — paste it into Unraid's **Plugins → Install Plugin** box:
+>
+> ```
+> https://raw.githubusercontent.com/quadcom/Staxx/dev/staxx.plg
+> ```
+>
+> **The user guide for this branch** is at
+> **[quadcom.github.io/Staxx/dev](https://quadcom.github.io/Staxx/dev/)** — it describes what is
+> here, rather than what is in the release. The [stable guide](https://quadcom.github.io/Staxx/)
+> covers the release instead.
+>
+> **A new build goes out most nights.** Whenever there is new work here, a release is cut
+> automatically overnight, and your server will offer it to you like any other plugin update. That
+> is the point of this channel — but it does mean updates arrive often, and each one carries whatever
+> landed that day. Quiet days produce nothing at all.
+<!-- /dev-banner -->
+
 <h3 align="center">Docker on Unraid, built on compose files</h3>
 
 > Version **[00.02.00](https://github.com/quadcom/Staxx/releases)** · [changelog](CHANGELOG.md)
