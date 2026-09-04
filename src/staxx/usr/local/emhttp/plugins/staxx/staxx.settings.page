@@ -2,7 +2,7 @@ Menu="Utilities"
 Type="xmenu"
 Title="StaXX"
 Tag="cubes"
-Icon="cubes"
+Icon="staxx.png"
 ---
 <?PHP
 /* StaXX — settings.

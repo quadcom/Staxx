@@ -356,10 +356,14 @@ $dir = $root.'/'.$rel;
 $err = '';
 ok('a write succeeds', staxx_import_write($rel, $yaml, $about, $err), $err);
 
+// Stale note fixed in passing, unrelated to PLAN_106: staxx_save_stack()
+// now writes its own .staxx folder (history, record.json) beside the
+// compose file on every save — this assertion predates that and was
+// failing before this plan touched anything.
 $entries = array_values(array_diff((array)@scandir($dir), ['.', '..']));
 sort($entries);
-ok('the folder holds exactly the compose file and the note',
-   $entries === ['NEEDS-REVIEW.md', 'compose.yaml'], implode(', ', $entries));
+ok('the folder holds exactly the compose file, the note, and .staxx',
+   $entries === ['.staxx', 'NEEDS-REVIEW.md', 'compose.yaml'], implode(', ', $entries));
 
 ok('the written stack reads as locked', staxx_review_locked($rel));
 
@@ -427,6 +431,57 @@ $err6 = '';
 ok('a write into an existing folder succeeds',
    staxx_import_write($folder.'/leaf', $yaml, $about, $err6), $err6);
 ok('...and lands at Folder/leaf', is_file($folderDir.'/leaf/compose.yaml'));
+
+// ---- case 7: PLAN_106 phase 5 — the as-is text lands in the stack's own
+// history. staxx_save_stack() captures BOTH what it is about to overwrite
+// and what it has just written, so the as-is save alone (the first of the
+// two staxx_import_write() now makes) already files it as version 1 the
+// moment it lands; the second save then files the escaped text actually
+// left running as version 2 the same way. Either capture on its own would
+// have kept the as-is wording — this proves both land, in the right order.
+
+$relAsIs = 'zzb1importasis';
+$dirAsIs = $root.'/'.$relAsIs;
+@exec('rm -rf '.escapeshellarg($dirAsIs));
+
+$asIsYaml   = "services:\n  a:\n    environment:\n      TOKEN: \"\$argon2id\$v=19\$m=6\"\n    image: alpine:3.20\n";
+$escapedYaml = "services:\n  a:\n    environment:\n      TOKEN: \"\$\$argon2id\$\$v=19\$\$m=6\"\n    image: alpine:3.20\n";
+
+$err7 = '';
+ok('a write carrying an as-is text succeeds',
+   staxx_import_write($relAsIs, $escapedYaml, $about, $err7, $asIsYaml), $err7);
+ok('...and the file on disk is the escaped version, not the as-is one',
+   file_get_contents($dirAsIs.'/compose.yaml') === $escapedYaml);
+
+$historyAsIs = staxx_record_list($relAsIs);
+ok('...and both saves filed their own history version', count($historyAsIs) === 2, json_encode($historyAsIs));
+$asIsVersion = null;
+foreach ($historyAsIs as $v) { if ($v['n'] === 1) $asIsVersion = $v; }
+if ($asIsVersion !== null) {
+  $kept = staxx_record_get($relAsIs, 1);
+  ok('...and the earlier one holds the as-is wording, dollar signs single',
+     $kept === $asIsYaml, (string)$kept);
+}
+
+@exec('rm -rf '.escapeshellarg($dirAsIs));
+
+// ---- case 8: an as-is text identical to what is being written is never
+// saved twice — staxx_import_write() only makes the extra save when the two
+// actually differ, so a template with no dollar sign in it writes exactly
+// once, the same as an ordinary import always has.
+
+$relSame = 'zzb1importsame';
+$dirSame = $root.'/'.$relSame;
+@exec('rm -rf '.escapeshellarg($dirSame));
+
+$err8 = '';
+ok('a write with an as-is text identical to the body still succeeds',
+   staxx_import_write($relSame, $yaml, $about, $err8, $yaml), $err8);
+$historySame = staxx_record_list($relSame);
+ok('...and files exactly one history version, same as an ordinary first save',
+   count($historySame) === 1, json_encode($historySame));
+
+@exec('rm -rf '.escapeshellarg($dirSame));
 
 @exec('rm -rf '.escapeshellarg($folderDir));
 

@@ -3,8 +3,8 @@
  * Copyright 2026, StaXX contributors.
  *
  * PLAN_103. The data store holds the real stacks; this is a second, plain
- * copy of each stack's compose file (and its override, if it has one) kept
- * at /boot/staxx so a person who loses the store — a dead pool, nothing
+ * copy of each stack's compose file (with its override and its .env file,
+ * if it has them) kept at /boot/staxx so a person who loses the store — a dead pool, nothing
  * else — has not lost the definition of every container they run. Unraid
  * backs up the whole flash drive on its own, so this copy leaves the
  * machine without anyone arranging it.
@@ -27,8 +27,8 @@
  *      shelf is a person's decision, made elsewhere (PLAN_103 pass 2); this
  *      file only ever writes to, or removes from, /boot/staxx.
  *
- * History is deliberately not copied — only the compose file and its
- * override, mirroring the store's own shape. That stays beside the compose
+ * History is deliberately not copied — only the compose file, its override
+ * and its .env, mirroring the store's own shape. That stays beside the compose
  * file where it belongs; see PLAN_103.
  *
  * This program is free software; you can redistribute it and/or
@@ -181,8 +181,8 @@ function staxx_boot_write_file(string $target, string $content, string &$error):
 }
 
 /**
- * Copy one stack's compose file, and its override if it has one, to the
- * shelf. A no-op returning true when the setting is off — every call site
+ * Copy one stack's compose file, with its override and .env if it has them,
+ * to the shelf. A no-op returning true when the setting is off — every call site
  * below simply calls this after its own work has already succeeded, so a
  * caller never needs its own "if enabled" check.
  *
@@ -236,6 +236,22 @@ function staxx_boot_copy_stack(string $rel, string &$error): bool {
   $overrideName = staxx_expected_override_basename($main);
   if ($overrideName !== '' && !in_array($overrideName, $wanted, true)) {
     @unlink($dir.'/'.$overrideName);
+  }
+
+  // The .env file too, since a compose file full of ${PLACEHOLDERS} is not
+  // a definition of anything without it — a restore from the shelf alone
+  // would give a stack that cannot start. Overwritten on every copy, and
+  // removed from the shelf when the stack no longer has one, for the same
+  // reason as the override above. Adrian's call, 2026-09-03 (PLAN_129 item
+  // 27): the compose file itself may already carry secrets in plain text, so
+  // this is no new exposure, and an incomplete copy is the worse failure.
+  $envSrc = $srcDir.'/.env';
+  if (is_file($envSrc)) {
+    $content = staxx_boot_read_source($envSrc, $error);
+    if ($content === null) return false;
+    if (!staxx_boot_write_file($dir.'/.env', $content, $error)) return false;
+  } else {
+    @unlink($dir.'/.env');
   }
 
   return true;

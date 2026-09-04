@@ -58,6 +58,7 @@
   // wherever it is used, the same way paintInk() guards for YAML.highlight.
   var yamlDots    = yamlNums.querySelector('.staxx-yamldots');
   var yamlStatus  = document.getElementById('staxx-yaml-status');
+  var yamlNotice  = document.getElementById('staxx-yaml-notice');
   // The autocomplete list and the hover-help panel, both siblings of the
   // textarea inside yamlWrap. May be null while the markup has not landed
   // yet — guarded everywhere they are used, the same way yamlDots is above.
@@ -151,6 +152,13 @@
   // container still running the old way behind it, so a save worth offering
   // the handover for. Lives and dies alongside pendingHandoffId above.
   var pendingHandoffEdit = false;
+  // PLAN_106 phase 5 gap: the template's own, unescaped wording for a caught
+  // install, so the first save of the new stack can file it into history
+  // before the escaped text overwrites it — the CA import panel already gets
+  // this for free through the write it makes itself; the single-app editor
+  // route has no such write to piggyback on, so it sends this once instead.
+  // Lives and dies alongside pendingHandoffId above, same reasoning.
+  var pendingBodyAsIs = '';
   var pageNotice   = document.getElementById('staxx-page-notice');
   var pageNoticeIcon   = pageNotice ? pageNotice.querySelector('.fa') : null;
   var pageNoticeAction = document.getElementById('staxx-page-notice-action');
@@ -192,6 +200,11 @@
   // ever shown alongside the quiet automatic lookup's own found-something
   // state, see showDetailOfferBar() further down.
   var scaffoldDismiss = document.getElementById('staxx-scaffold-dismiss');
+  // PLAN_106 phase 4: latches true the first time this editor session's
+  // reparse() finds a flagged dollar sign, so the modal is offered once per
+  // open rather than reopening itself on every keystroke reparse() already
+  // runs on — openEditor() is the only place that clears it back to false.
+  var dollarModalOffered = false;
   var makePathsNote = document.getElementById('staxx-makepaths');
   var inUseNote     = document.getElementById('staxx-inusepaths');
 
@@ -218,6 +231,12 @@
   var confirmMsg    = document.getElementById('staxx-confirm-msg');
   var confirmCancel = document.getElementById('staxx-confirm-cancel');
   var confirmGo     = document.getElementById('staxx-confirm-go');
+  // The PHP-rendered label ("Cancel"), read once before any caller's own
+  // wording overwrites it — PLAN_106's dollar-sign modal is the first caller
+  // that wants something less generic ("Leave them") on the dismiss button,
+  // and every other caller keeps reading as it always has by simply never
+  // setting opts.cancelLabel.
+  var confirmCancelDefault = confirmCancel ? confirmCancel.textContent : 'Cancel';
   // The optional third answer (PLAN_44 C2) — null-guarded the same way the
   // rest of this dialog already is, and hidden except when a caller passes
   // askConfirm() an extraLabel.
@@ -237,6 +256,7 @@
   // The Settings panel. May be null on a stale page — guarded the same way
   // confirmModal is above; openSettings() itself is a no-op without it.
   var settingsModal  = document.getElementById('staxx-settings');
+  var settingsTabstrip = document.getElementById('staxx-settings-tabstrip');
   var settingsBody   = document.getElementById('staxx-settings-body');
   var settingsMsg    = document.getElementById('staxx-settings-msg');
   var settingsCancel = document.getElementById('staxx-settings-cancel');
@@ -276,6 +296,18 @@
   var saveBtn  = document.getElementById('staxx-save');
   var startBtn = document.getElementById('staxx-save-start');
   var undoBtn  = document.getElementById('staxx-undo');
+
+  // PLAN_67 step 1's "Tidy this file" button. Built here rather than added to
+  // the page's own markup, the same reasoning as iconAdoptNotice further
+  // down — one more button in that row is not worth a PHP change for. Same
+  // class as Undo, which it sits beside: it is the same kind of action, an
+  // edit to the whole file that Undo can put straight back.
+  var tidyBtn = document.createElement('button');
+  tidyBtn.type = 'button';
+  tidyBtn.className = 'staxx-btn';
+  tidyBtn.id = 'staxx-tidy';
+  tidyBtn.textContent = 'Tidy this file';
+  if (undoBtn && undoBtn.parentNode) undoBtn.parentNode.insertBefore(tidyBtn, undoBtn);
 
   // The lists a service can gain an entry in. The buttons that add one belong
   // to the SERVICE, never to the list: removing the last port has to take the
@@ -1010,6 +1042,12 @@
   var versionsSelected     = null;   // the service name shown on the right, or null
   var versionsLoadError    = '';     // image-versions itself failed — nothing else in the pane can be trusted
   var versionsActionError  = '';     // a failed rollback, shown above an otherwise normal list
+  // "Put back several at once" mode — off by default. versionsChoices holds
+  // at most one chosen digest per service; both are dropped whenever the
+  // stack changes (versionsSeq bump above) or the mode is switched off, so a
+  // choice never survives to be applied against a different stack.
+  var versionsMulti        = false;
+  var versionsChoices      = {};     // service -> chosen digest
   // A one-shot handover for "open the editor on Versions, showing this
   // service": set just before editStack(), read and cleared by openEditor().
   // The editor is reached through editStack() -> openEditor(), and openEditor()
@@ -2890,6 +2928,22 @@
              'title="Declares ' + esc(f.declareMissing) + ' as a network created outside this file, ' +
              'which is what an Unraid network is.">Add it to this file</button>';
     }
+    // PLAN_105/PLAN_106: the model has already said, above, that this value
+    // carries a dollar sign compose cannot read as a working reference. This
+    // is the fix for it — one press, through the ordinary field-writing path,
+    // with its own undo snapshot taken first, the same way the network fix
+    // below earns one. The doubled string is NOT put in an attribute here:
+    // it is a live credential, and the click reads it back off the model
+    // instead, which also means a redraw can never leave a button holding a
+    // value the file has since moved past. The title is the model's own
+    // reason for the FIRST flagged part (hashEscape only ever names one),
+    // not a copy of it kept here — it travels on the fix itself.
+    if (f.hashEscape) {
+      var hashReason = dollarFixSentences(f)[0] || 'a dollar sign here needs writing twice for compose to keep it';
+      out += '<button type="button" class="staxx-declfix" data-fix-hash="1" ' +
+             'title="' + esc(hashReason.charAt(0).toUpperCase() + hashReason.slice(1) + '.') + '">' +
+             'Write each dollar sign twice</button>';
+    }
     // PLAN_64 phase C: not a greyed-out row for each network that was set
     // aside — section 6 rules that out on purpose, since a disabled row
     // reads as file content switched off, when in truth it has been removed.
@@ -3323,13 +3377,18 @@
       // is attached. Browsing /dev by hand is what never finds what you came
       // for, which is why there was no button here before.
       var hint = kit ? kit.hint : 'path to the device on this server';
-      var head = headHtml(kit ? kit.label : f.title, [roTag, lostTag]);
+      // A direct child of the row, not the `head` slot inside a box, so the
+      // rule that spans a heading across the whole row (see .staxx-fieldrow
+      // > .staxx-fieldhead in the stylesheet) puts it above both boxes
+      // instead of inside whichever one happens to carry it — which is what
+      // let the shorter Notes box centre against the taller path box below.
+      bits.push(headHtml(kit ? kit.label : f.title, [roTag, lostTag]));
 
       if (solo) {
         // Written as one path, so there is no second one to fold away.
-        bits.push(boxHtml(f, index, 'container', hint, 'device', head));
+        bits.push(boxHtml(f, index, 'container', hint, 'device'));
       } else {
-        bits.push(boxHtml(f, index, 'host', hint, 'device', head));
+        bits.push(boxHtml(f, index, 'host', hint, 'device'));
 
         var into = f.parts.container;
         if (into) {
@@ -3586,6 +3645,16 @@
                ' data-add="' + g.add + '" data-service="' + esc(serviceName) + '">' +
                '<i class="fa fa-plus" aria-hidden="true"></i> ' + esc(addWord(g.add)) +
                '</button>');
+    }
+    // PLAN_108 stage 5 — the editor's own door onto the same offer the row's
+    // state pill opens. Health has no `add` (see the comment on GROUPS above:
+    // its leaves are always present as fields), so this is its own button
+    // rather than the g.add branch just above — shown unconditionally rather
+    // than only when the group is empty, since offerHealthCheck() itself
+    // already refuses cleanly when there is nothing to add.
+    if (g.key === 'health') {
+      bits.push('<button type="button" class="staxx-add" data-health-offer="' + esc(serviceName) + '">' +
+               '<i class="fa fa-heartbeat" aria-hidden="true"></i> Work out a health check</button>');
     }
     bits.push('</div>');
     // After .staxx-grouphead's own closing tag, not inside it — a
@@ -3888,6 +3957,35 @@
 
   function setYamlStatus(text) {
     yamlStatus.textContent = text || '';
+  }
+
+  // PLAN_117 step 3 — Tidy's own result, shown where it can actually be seen:
+  // the same .staxx-notice shape used elsewhere on the page, dismissible, and
+  // scrolled into view, rather than the muted status line below the pane —
+  // that line sits under the fold on a tall file and carries no colour or
+  // icon, which is what let a refusal go unnoticed until a screenshot
+  // finally caught its wording. yamlStatus itself is untouched — other
+  // callers (the password-fill note, reparse()'s own warning line) still use
+  // it exactly as before.
+  function hideYamlNotice() {
+    if (!yamlNotice) return;
+    yamlNotice.innerHTML = '';
+    yamlNotice.hidden = true;
+  }
+
+  function showYamlNotice(text, bad) {
+    if (!yamlNotice) return;
+    if (!text) { hideYamlNotice(); return; }
+    yamlNotice.innerHTML =
+      '<div class="staxx-notice' + (bad ? ' staxx-notice--bad' : ' staxx-notice--good') + '">' +
+      '<i class="fa ' + (bad ? 'fa-info-circle' : 'fa-check-circle') + '" aria-hidden="true"></i>' +
+      '<div>' + esc(text) + '</div>' +
+      '<button type="button" class="staxx-notice-close" title="Dismiss" aria-label="Dismiss">' +
+        '<i class="fa fa-times" aria-hidden="true"></i></button>' +
+      '</div>';
+    yamlNotice.hidden = false;
+    yamlNotice.querySelector('.staxx-notice-close').addEventListener('click', hideYamlNotice);
+    yamlNotice.scrollIntoView({ block: 'nearest' });
   }
 
   /* ---- required fields ---- */
@@ -5569,7 +5667,7 @@
     if (!YAML) { formHost.innerHTML = '<p class="staxx-form-empty">The form view could not load.</p>'; return; }
 
     var doc  = YAML.parse(currentText());
-    var form = YAML.buildForm(doc, netDrivers());
+    var form = YAML.buildForm(doc, netDrivers(), envNameList());
     form.doc = doc;
     MODEL = form;
     applyMovedAdvice();   // before renderForm() below, so its first paint already carries the fact
@@ -5597,6 +5695,7 @@
     updateRequired();
     updateMissing();
     updateScaffoldNote();
+    maybeOfferDollarFixes();   // PLAN_106 phase 4 — latched, so this is a no-op after the first call
     checkImageSettle();   // PLAN_84 phase 5 — the automatic "fill in details" trigger
     relint();
     checkHostPaths();   // ask the server about any volume host path not already cached
@@ -5605,6 +5704,130 @@
     // still on screen has to have it locked again — find and replace is the
     // one path that reaches this from a companion tab.
     if (fileOpen !== null) lockForm();
+  }
+
+  /* ---- PLAN_106 phase 4: the whole-file dollar-sign modal ---- */
+
+  // Every field the model has flagged for a literal dollar sign compose
+  // would otherwise strip, in file order.
+  function dollarFlaggedFields() {
+    if (!MODEL || !MODEL.ok || !MODEL.fields) return [];
+    return MODEL.fields.filter(function (f) { return f.dollarFixes && f.dollarFixes.length; });
+  }
+
+  // Each fix carries its own reason (compose-model.js), so the sentence for a
+  // part is read straight off it. Matching the wording out of the field's
+  // advice list would work today and break the day the model rephrases one,
+  // silently and with nothing to point at it.
+  function dollarFixSentences(f) {
+    return (f.dollarFixes || []).map(function (fix) { return fix.reason; })
+                                .filter(function (s) { return !!s; });
+  }
+
+  // One row per flagged PART, not per field — a mapped volume whose host and
+  // container halves are both bad needs both named, the same reason
+  // dollarFixes itself is a list rather than a single entry.
+  function dollarModalRows(fields) {
+    var rows = [];
+    fields.forEach(function (f) {
+      f.dollarFixes.forEach(function (fix) {
+        var part = f.parts && f.parts[fix.part];
+        rows.push({ fieldId: f.id, service: f.service, key: f.target, value: part ? part.value : '' });
+      });
+    });
+    return rows;
+  }
+
+  // Width only — PLAN_105 already settled that a value belongs on screen
+  // here, since it is already on screen in the field it came from.
+  function truncateDollarValue(v) {
+    v = String(v == null ? '' : v);
+    return v.length > 48 ? v.slice(0, 45) + '…' : v;
+  }
+
+  function dollarModalBodyHtml(rows) {
+    var many = rows.length > 1;
+    // Four cells rather than one run-on line, because the layout is a grid
+    // (staxx-dollar-list) — these are read down the columns, and the shared
+    // list's own row spacing puts every row's setting somewhere different.
+    var list = '<ul class="staxx-confirm-list staxx-dollar-list">' + rows.map(function (r) {
+      return '<li><strong>' + esc(r.service) + '</strong><span aria-hidden="true">→</span>' +
+             '<code>' + esc(r.key) + '</code>' +
+             '<code>' + esc(truncateDollarValue(r.value)) + '</code></li>';
+    }).join('') + '</ul>';
+    return list + '<p>A dollar sign is where Compose starts reading a variable name, so it deletes ' +
+      (many ? 'these' : 'this one') + ' before the container ever sees ' + (many ? 'them' : 'it') +
+      '. Writing each one twice is the fix, and the container still receives ' +
+      (many ? 'them' : 'it') + ' exactly as ' + (many ? 'they read' : 'it reads') + ' above.</p>';
+  }
+
+  // Fixes one field's own flagged parts, one write at a time — re-reading
+  // the field off MODEL before every write, the way the single-field button
+  // (data-fix-hash, below) already does, since MODEL is rebuilt by commit()
+  // under it on every pass. Returns whether anything actually landed, so the
+  // caller can tell a field that changed out from under it from one that
+  // never had a box to write through in the first place.
+  function applyDollarFieldFixes(fid) {
+    var did = false, guard = 0;
+    while (guard++ < 8) {
+      var f = YAML.fieldById(MODEL, fid);
+      if (!f || !f.dollarFixes || !f.dollarFixes.length) break;
+      var fix = f.dollarFixes[0];
+      var row = formHost.querySelector('[data-field-row="' + fid.replace(/"/g, '\\"') + '"]');
+      var box = row && row.querySelector('input[data-part="' + fix.part + '"]');
+      if (!box) break;   // not on the form to write through — nothing more to do here
+      box.value = fix.to;
+      commit(box);
+      did = true;
+    }
+    return did;
+  }
+
+  // "Write each one twice" — one undo entry for the whole set, same as the
+  // single-field button earns for its one field.
+  function applyAllDollarFixes(fieldIds) {
+    flushPending();
+    pushUndo('writing each dollar sign twice');
+    var appliedAny = false;
+    fieldIds.forEach(function (fid) { if (applyDollarFieldFixes(fid)) appliedAny = true; });
+    if (!appliedAny) { undoStack.pop(); updateUndo(); }   // every one of them had already changed — nothing to keep
+    else setYamlStatus('Wrote each flagged dollar sign twice.');
+  }
+
+  // Offered once per editor session — dollarModalOffered is cleared only by
+  // openEditor(), never recomputed away by the next reparse(), which is what
+  // stops this reopening itself on every keystroke while someone is typing.
+  // Re-parse once the .env answer lands, so the offer below judges a name
+  // against what actually declares it. Without this the offer would fire on
+  // the first parse, when every .env name still reads as declared by
+  // nothing — and its own latch would make that the only time it ever asked.
+  function dollarRecheck() {
+    if (openedName && MODEL) reparse();
+  }
+
+  function maybeOfferDollarFixes() {
+    if (dollarModalOffered || !confirmModal) return;
+    // null is "not fetched yet", not "nothing is declared" — the same
+    // distinction envVars exists to keep, for the same reason.
+    if (envKeys() === null) return;
+    var flagged = dollarFlaggedFields();
+    if (!flagged.length) return;
+    dollarModalOffered = true;
+    var rows = dollarModalRows(flagged);
+    askConfirm({
+      title: rows.length === 1 ? 'This stack has 1 value Compose will damage'
+                                : 'This stack has ' + rows.length + ' values Compose will damage',
+      bodyHtml: dollarModalBodyHtml(rows),
+      goLabel: 'Write each one twice',
+      cancelLabel: 'Leave them'
+    }).then(function (go) {
+      // The Go handler only settles the promise — most callers start a
+      // request and close the dialog themselves once it finishes. This
+      // caller has no request in flight, so it has to close it itself or
+      // the dialog just sits there looking like the button did nothing.
+      closeConfirm();
+      if (go) applyAllDollarFixes(flagged.map(function (f) { return f.id; }));
+    });
   }
 
   /* ---- form -> file ---- */
@@ -5616,7 +5839,7 @@
 
   function refreshRanges() {
     var doc   = MODEL.doc;
-    var fresh = YAML.buildForm(doc, netDrivers());
+    var fresh = YAML.buildForm(doc, netDrivers(), envNameList());
     fresh.doc = doc;
     MODEL = fresh;
     applyMovedAdvice();   // rows already exist here, so this brings them into line itself
@@ -6395,6 +6618,12 @@
     // on, and undoing there writes the compose file's text into that file.
     undoBtn.disabled = sanitised || fileOpen !== null || !top;
     undoBtn.title = top ? 'Undo ' + top.what : 'Nothing to undo yet';
+    // Same guard as Undo, minus "is there anything to undo" — Tidy always has
+    // something to look at, it just may find nothing to move. Sanitise hides
+    // real values behind placeholders, and a companion file's tab means the
+    // box on screen is not the compose file at all; either way there is
+    // nothing here that Tidy should be reordering.
+    if (tidyBtn) tidyBtn.disabled = sanitised || fileOpen !== null;
   }
 
   // Called BEFORE the document is touched. The compose pane and the model are
@@ -6494,6 +6723,16 @@
       return;
     }
 
+    // PLAN_108 stage 5 — the Health check group's own "Work out a check for
+    // me" button. openedName is what offerHealthCheck() itself checks to
+    // know it may write straight into the open document rather than reading
+    // the file fresh, so nothing beyond the service name needs passing here.
+    var healthOfferBtn = event.target.closest('[data-health-offer]');
+    if (healthOfferBtn) {
+      offerHealthCheck(openedName, healthOfferBtn.dataset.healthOffer);
+      return;
+    }
+
     var secBtn = event.target.closest('[data-sections]');
     if (secBtn) {
       // Stopped here, not left to bubble: the document-level listener below
@@ -6528,6 +6767,40 @@
         return;
       }
       structuralEdit(nLine, '');
+      return;
+    }
+
+    // PLAN_105's "Write each dollar sign twice", beside a hash the file is
+    // carrying with single ones (adviceText()). Deliberately writes through
+    // the field's own box and commit(), rather than calling setPart here:
+    // that is the one path that already reparses, redraws, autosaves and
+    // reports its own refusals, and a second write path for one button is
+    // exactly the kind of thing that drifts out of step with it.
+    var fixHash = event.target.closest('[data-fix-hash]');
+    if (fixHash) {
+      var hRow = fixHash.closest('[data-field-row]');
+      var hf   = hRow ? YAML.fieldById(MODEL.form, hRow.dataset.fieldRow) : null;
+      // Read fresh, never from the button: between the render and this press
+      // the file may have been edited elsewhere, and writing a stale doubled
+      // string would overwrite whatever replaced it.
+      if (!hf || !hf.hashEscape) {
+        setYamlStatus('That value has changed since the note appeared — nothing was written.');
+        return;
+      }
+      // A named attribute of its own, not data-part: several places on this
+      // page find a row's input with querySelector('[data-part="value"]'),
+      // and a button answering to that selector inside the same row is a
+      // silent mix-up waiting to happen.
+      var hBox = hRow.querySelector('input[data-part="' + hf.hashEscape.part + '"]');
+      if (!hBox) {
+        setYamlStatus('That value cannot be written from the form — write it in the Compose view instead.');
+        return;
+      }
+      flushPending();
+      pushUndo('writing each dollar sign twice');
+      hBox.value = hf.hashEscape.to;
+      commit(hBox);
+      hBox.focus();
       return;
     }
 
@@ -8136,7 +8409,12 @@
         if (pwgenHashValue) pwgenHashValue.value = res.hash;
         if (pwgenHashCopy) pwgenHashCopy.disabled = false;
         updatePwgenAvailability();
-        setPwgenHashNote('Done.');
+        // Said here, permanently, so the Copy dialog below is a reminder
+        // rather than a surprise — a hash always starts with a dollar sign
+        // and holds several more, so this fires on essentially every hash.
+        setPwgenHashNote('A hash always contains dollar signs. Both Fill and Copy write each one '
+          + 'twice, so Compose passes the hash through untouched. The box above holds the plain '
+          + 'hash if something other than a compose file needs it.');
       });
     });
   }
@@ -8219,24 +8497,96 @@
     });
   }
 
-  // Shared by the password's own Copy and the hash's — same clipboard
-  // dance, only the source box and where the status line goes differ.
-  function pwgenDoCopy(input, sayFn) {
-    var val = input ? input.value : '';
-    if (!val) return;
+  // Every other typeof-YAML guard on this page falls back to a safe neutral
+  // — an early return, an empty list. This one must not: the neutral answer
+  // here is the value with its dollar signs left single, which is precisely
+  // the silent breakage this whole feature exists to stop. So it returns
+  // null and both callers refuse instead, which is only ever reachable from
+  // a stale cached copy of the model.
+  function pwgenEscape(val) {
+    if (!YAML || typeof YAML.escapeDollars !== 'function') return null;
+    return YAML.escapeDollars(val);
+  }
+
+  // The actual clipboard write, factored out of pwgenDoCopy() below because
+  // the text that ends up on the clipboard is sometimes the doubled-$ form
+  // rather than whatever the box is currently showing (see the dialog
+  // branch below). The execCommand fallback only ever copies a field's own
+  // selection, so where the two differ the field is swapped to the text
+  // being copied, selected, copied, then put back exactly as it was.
+  function pwgenCopyText(input, text, sayFn) {
     var said = function (ok) {
       sayFn(ok ? 'Copied to the clipboard.' : 'Could not copy — select the value and copy it by hand.');
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(val).then(function () { said(true); }, function () { said(false); });
-    } else {
-      // A browser with no Clipboard API — select what is already on screen
-      // and fall back to the old copy command.
-      input.select();
-      var ok = false;
-      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-      said(ok);
+      navigator.clipboard.writeText(text).then(function () { said(true); }, function () { said(false); });
+      return;
     }
+    // finally, not a plain sequence: the box is holding text the person did
+    // not put there for as long as this runs, and a throw anywhere in the
+    // middle would leave the doubled form sitting in it as though it had
+    // been typed.
+    var was = input.value;
+    var ok = false;
+    try {
+      input.value = text;
+      input.select();
+      ok = document.execCommand('copy');
+    } catch (e) {
+      ok = false;
+    } finally {
+      input.value = was;
+    }
+    said(ok);
+  }
+
+  // Shared by the password's own Copy and the hash's. A value with no
+  // dollar sign in it copies exactly as before. One that does holds a
+  // compose-only variable trigger, so — before anything reaches the
+  // clipboard — this explains what is about to happen and copies the
+  // doubled form only once that is acknowledged; every other way out of the
+  // dialog (Escape, the backdrop, Cancel) copies nothing, same as any other
+  // question on this page.
+  function pwgenDoCopy(input, sayFn) {
+    var val = input ? input.value : '';
+    if (!val) return;
+    if (val.indexOf('$') === -1) { pwgenCopyText(input, val, sayFn); return; }
+
+    var escaped = pwgenEscape(val);
+    if (escaped === null) {
+      sayFn('Could not copy — reload the page and try again.');
+      return;
+    }
+
+    // The value itself is never shown here — unlike the overwrite question
+    // above, which shows a value already on screen and in the file, a
+    // freshly generated password or hash is neither, and a dialog is a
+    // place a live credential can end up somewhere the Sanitise screenshot
+    // tick cannot reach. A generic example carries the point instead.
+    var plainMsg = 'This value contains a dollar sign. In a compose file, a dollar sign is where '
+      + 'Compose starts reading the name of a variable, so the copy has each dollar sign written '
+      + 'twice — for example, a single $ becomes $$ — which is how you tell Compose you mean a real '
+      + 'dollar sign. The container still receives the value exactly as it reads on screen. If you '
+      + 'are pasting this somewhere that is not a compose file — an .env file, or an application\'s '
+      + 'own settings — a single dollar sign is what belongs there, and the box above holds that '
+      + 'plain version for you to select and copy by hand. Copy the doubled version now?';
+
+    if (!confirmModal) {
+      if (window.confirm(plainMsg)) pwgenCopyText(input, escaped, sayFn);
+      return;
+    }
+    askConfirm({
+      title: 'This value contains a dollar sign',
+      bodyHtml: '<p>In a compose file, a dollar sign is where Compose starts reading the name of a '
+        + 'variable.</p>'
+        + '<p>The copy therefore has each dollar sign written twice — for example, a single '
+        + '<code>$</code> becomes <code>$$</code> — which is how you tell Compose you mean a real '
+        + 'dollar sign. The container still receives the value exactly as it reads on screen.</p>'
+        + '<p>If you are pasting this somewhere that is not a compose file — an <code>.env</code> '
+        + 'file, or an application’s own settings — a single dollar sign is what belongs there. '
+        + 'The box above holds that plain version, and you can select and copy it by hand.</p>',
+      goLabel: 'I understand'
+    }).then(function (go) { if (go) { closeConfirm(); pwgenCopyText(input, escaped, sayFn); } });
   }
 
   if (pwgenCopy) {
@@ -8258,11 +8608,28 @@
     el = pwgenTargetEl();
     if (!el) { updatePwgenAvailability(); return; }
 
+    // Compose reads a single $ as the start of a variable name and
+    // substitutes it away, so a value containing one — every hash this tool
+    // makes starts with one and holds four or five more — would arrive at
+    // the container shredded. Doubling is what Compose reads back as a
+    // literal $, and it is a no-op for an ordinary password, so nothing
+    // looks different in the common case. Left visible afterwards on
+    // purpose: it is what the file has to contain.
+    var escaped = pwgenEscape(val);
+    if (escaped === null) {
+      setPwgenNote('Could not fill — reload the page and try again.');
+      return;
+    }
+
     function doFill() {
-      el.value = val;
+      el.value = escaped;
       commit(el);       // the ordinary field-writing path — history, undo and reparse all come from here
       el.focus();
-      closePwgen();
+      closePwgen();     // clears the pwgen panel, so the doubled-$ note below goes on the editor's own status line, not in it
+      if (escaped !== val) {
+        setYamlStatus('Filled with each $ written twice, so Compose passes it through as typed — '
+          + 'the container still receives the value exactly as it was generated.');
+      }
     }
 
     var was = String(el.value || '').trim();
@@ -8313,6 +8680,59 @@
     paintInk();
     reparse();
     setYamlStatus('Undid ' + step.what + '.');
+    updateUndo();
+  });
+
+  // PLAN_67 step 4 — the one place both the Tidy button and every arrival
+  // route that lays a file out the moment it becomes a stack get their
+  // wording from, so "what happened to this file" is never spelled out by
+  // hand more than once. Returns null for "say nothing" — a fresh import
+  // that tidy() found nothing to move in is not news, so an arrival route is
+  // free to skip the notice entirely rather than announce a no-op.
+  function tidyResultMessage(result) {
+    var refusalText = (result.refusals || []).map(function (r) { return r.why; }).join(' ');
+    if (!result.changed) return refusalText ? 'Nothing was tidied — ' + refusalText : null;
+    return 'This file was tidied into StaXX’s layout. Nothing was lost.' +
+      (refusalText ? ' Left alone: ' + refusalText : '');
+  }
+
+  // Runs tidy() over a file that has just arrived — a conversion, an import,
+  // or a brand-new paste — and never blocks on a refusal: a refusal just
+  // means it arrives as it was, exactly as PLAN_67 asks. YAML.tidy() may not
+  // exist yet on a page deployed mid-build, so this checks rather than
+  // assumes, same guard the button below always had.
+  function tidyOnArrival(text) {
+    if (!YAML || typeof YAML.tidy !== 'function') return { text: text, message: null, bad: false };
+    var result = YAML.tidy(text);
+    // "bad" only when something was actually left alone — a clean tidy (or a
+    // file already in house order) is good news even though nothing changed.
+    var bad = (result.refusals || []).length > 0;
+    if (!result.changed) return { text: text, message: tidyResultMessage(result), bad: bad };
+    return { text: result.text, message: tidyResultMessage(result), bad: bad };
+  }
+
+  if (tidyBtn) tidyBtn.addEventListener('click', function () {
+    if (sanitised || fileOpen !== null || !YAML || typeof YAML.tidy !== 'function') return;
+
+    var outcome = tidyOnArrival(currentText());
+    if (outcome.text === currentText()) {
+      // Same one-sentence rule whether nothing needed moving or everything
+      // refused — PLAN_67 is explicit that "changed nothing" must still say
+      // so, rather than a silent no-op that looks like the button did nothing.
+      showYamlNotice(outcome.message || 'This file is already in StaXX’s house layout — nothing to change.', outcome.bad);
+      return;
+    }
+
+    // A whole-file replacement, landed the same way restoring a version from
+    // history does: pushUndo() first so one click puts it straight back, then
+    // the ordinary reparse a programmatic edit always gets. Never saved here —
+    // the person decides whether to keep it.
+    pushUndo('tidying the file');
+    yamlPane.value = outcome.text;
+    paintGutter();
+    paintInk();
+    reparse();
+    showYamlNotice(outcome.message, outcome.bad);
     updateUndo();
   });
 
@@ -10249,6 +10669,62 @@
     return name + '-' + n;
   }
 
+  // PLAN_106 phase 2: one sentence for the editor's own banner, naming this
+  // stack's own doubled values — no stack name to give, unlike the bulk
+  // summary below, since a banner only ever belongs to the stack it is on.
+  function dollarsEscapedBannerHtml(list) {
+    var n = list.length;
+    var names = list.map(function (d) { return '“' + esc(d.key) + '”'; }).join(', ');
+    return '<strong>' + (n === 1 ? '1 value changed.' : n + ' values changed.') + '</strong> ' +
+      'The value' + (n === 1 ? ' for ' : 's for ') + names + ' contained a dollar sign. Unraid ' +
+      'passes those through as typed; a compose file does not, so each one is now written twice ' +
+      '— the container still receives ' + (n === 1 ? 'it' : 'them') + ' exactly as before. ' +
+      'Undo (below) puts it back if you would rather see it as it arrived.';
+  }
+
+  // PLAN_106 phase 2: convert() has already doubled every dollar sign it
+  // found (Phase 1) before this ever runs, so the file caOpenConverted()
+  // below loads into the editor is already correct. This only gives Undo
+  // something real to put back: each flagged value is halved, the pane is
+  // snapshotted in THAT state, then the doubled value is written straight
+  // back through the same YAML.setValue() commit() itself calls — one calm
+  // write for what convert() already decided, not a choice offered the way
+  // the PLAN_106 phase 4 modal is. Has to run right after openEditor()
+  // (whose own reparse() built MODEL against result.yaml), before anything
+  // else touches the pane.
+  function seedDollarEscapeUndo(dollarsEscaped) {
+    if (!MODEL || !MODEL.doc || !YAML || !dollarsEscaped || !dollarsEscaped.length) return;
+    var doubledKeys = {};
+    dollarsEscaped.forEach(function (d) { doubledKeys[d.key] = true; });
+    var toRestore = [];
+    MODEL.fields.forEach(function (f) {
+      var pv = f.parts && f.parts.value;
+      if (doubledKeys[f.target] && pv && typeof pv.value === 'string' && pv.value.indexOf('$$') >= 0) {
+        toRestore.push({ id: f.id, plain: pv.value.replace(/\$\$/g, '$'), escaped: pv.value });
+      }
+    });
+    if (!toRestore.length) return;
+
+    var doc = MODEL.doc, form = MODEL;
+    toRestore.forEach(function (t) {
+      var f = YAML.fieldById(form, t.id);
+      if (f) { YAML.setValue(doc, form, f.id, t.plain); form = YAML.buildForm(doc); }
+    });
+    // pushUndo() snapshots currentText(), which is yamlPane.value — so the
+    // pane has to actually show the halved values before the snapshot, or
+    // Undo would restore to the very text already on screen.
+    yamlPane.value = YAML.serialise(doc);
+    pushUndo('writing each dollar sign twice');
+    toRestore.forEach(function (t) {
+      var f = YAML.fieldById(form, t.id);
+      if (f) { YAML.setValue(doc, form, f.id, t.escaped); form = YAML.buildForm(doc); }
+    });
+    yamlPane.value = YAML.serialise(doc);
+    paintGutter();
+    paintInk();
+    reparse();
+  }
+
   // The shared tail of the import path: convert an already-fetched record and
   // open the editor on it. caImport() reaches this after closing the CA
   // dialog; the handoff hook at the end of this file reaches it with no CA
@@ -10293,15 +10769,36 @@
     // a form that has only just opened.
     var openName = kind === 'user' ? staxxFreeName(result.name, staxxTakenNames()) : result.name;
 
-    openEditor(openName, result.yaml, true, '');
+    // PLAN_67 step 4 — laid out once, the moment this becomes a stack. A
+    // refusal just means it opens as the converter wrote it; nothing here
+    // blocks on one.
+    var tidied = tidyOnArrival(result.yaml);
+
+    openEditor(openName, tidied.text, true, '');
+    // After openEditor(), not before — its own hideYamlNotice() call would
+    // otherwise clear this straight back off again.
+    if (tidied.message) showYamlNotice(tidied.message, tidied.bad);
     if (handoffId) pendingHandoffId = handoffId;
     pendingHandoffEdit = kind === 'edit';
+    // PLAN_106 phase 5 gap: yamlAsWritten is null when convert() escaped
+    // nothing, and openEditor() just above has already cleared this to ''
+    // for every other route — only set it when there is a genuine original
+    // wording to recover.
+    pendingBodyAsIs = result.yamlAsWritten || '';
+    seedDollarEscapeUndo(result.dollarsEscaped);
 
     // Not folded into the warnings below: this is context, not a problem, and
     // the error box is red. openEditor() hides this banner again on its way
-    // in, so it never survives into the next stack someone opens.
-    if (intro) {
-      installNote.querySelector('div').textContent = intro;
+    // in, so it never survives into the next stack someone opens. Two
+    // unrelated facts can both be true of the same fresh stack, so each gets
+    // its own paragraph rather than one overwriting the other.
+    var bannerLines = [];
+    if (intro) bannerLines.push('<p>' + esc(intro) + '</p>');
+    if (result.dollarsEscaped && result.dollarsEscaped.length) {
+      bannerLines.push('<p>' + dollarsEscapedBannerHtml(result.dollarsEscaped) + '</p>');
+    }
+    if (bannerLines.length) {
+      installNote.querySelector('div').innerHTML = bannerLines.join('');
       installNote.hidden = false;
     }
     // Set unconditionally, whether or not intro fired above — every caller
@@ -10427,7 +10924,16 @@
     function finish(result) {
       settle();
       caModal.close();
-      openEditor(result.name, result.yaml, true, '');
+
+      // PLAN_67 step 4 — laid out once, the moment this becomes a stack. Only
+      // the real importer's own output, never the plain caSkeleton() fallback
+      // below — that one is six lines of comments and a bare image line, with
+      // nothing in house order to be out of.
+      var tidied = tidyOnArrival(result.yaml);
+
+      openEditor(result.name, tidied.text, true, '');
+      // After openEditor(), not before — same reasoning as caOpenConverted().
+      if (tidied.message) showYamlNotice(tidied.message, tidied.bad);
 
       // caImport()'s own three wordings, in shape: warnings are settings a
       // correction had nothing to put right, notes are values filled in on
@@ -11251,6 +11757,18 @@
   // caImport() guards it (:5701 or thereabouts), because a stale cached
   // script must leave the row without a preview rather than throw and take
   // the whole page down with it.
+  // PLAN_106 phase 2: convert()'s dollarsEscaped list, worded for a reader
+  // who has never seen the concept. A key here can be a --log-opt option as
+  // well as an environment or label name (ca-convert.js merges all three
+  // into the one list), so this never calls it "the environment variable" —
+  // only ever "the value for KEY", which is true of all three.
+  function dollarsEscapedLine(d) {
+    return 'The value for “' + esc(d.key) + '” contained ' +
+      (d.count > 1 ? d.count + ' dollar signs' : 'a dollar sign') +
+      '. Unraid passes those through as typed; a compose file does not, so each one is now ' +
+      'written twice. The container still receives it exactly as before.';
+  }
+
   function importTemplatePreviewHtml(entry) {
     if (!window.StaxxCA || typeof window.StaxxCA.convert !== 'function') {
       return '<p class="staxx-form-empty">The app converter has not loaded. Reload the page and try again.</p>';
@@ -11278,6 +11796,15 @@
       bits.push('<p class="staxx-import-warn">Filled in for you — check these before starting:</p>' +
         '<ul class="staxx-import-notes">' +
           result.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
+        '</ul>');
+    }
+    // PLAN_106: a preview, so this is information rather than a question —
+    // the write already happened above, in memory, the moment convert() ran.
+    if (result.dollarsEscaped && result.dollarsEscaped.length) {
+      bits.push('<p class="staxx-import-warn">Dollar signs doubled so compose does not read them ' +
+        'as the start of a variable name:</p>' +
+        '<ul class="staxx-import-notes">' +
+          result.dollarsEscaped.map(function (d) { return '<li>' + dollarsEscapedLine(d) + '</li>'; }).join('') +
         '</ul>');
     }
     return bits.join('');
@@ -11780,6 +12307,27 @@
   // Writes every ticked row one at a time. Sequential on purpose — each
   // write runs compose's own validation on the server, and firing them all
   // at once would bury the box rather than show progress.
+  // PLAN_106 phase 2: the bulk run writes straight to the server with no
+  // editor open, so there is no Undo button to offer — each write already
+  // landed in that stack's own history the moment it was written, and this
+  // says so rather than promising a button that is not there.
+  function dollarTouchesSummaryHtml(touches) {
+    var n = touches.length;
+    var head = (n === 1 ? '1 value changed.' : n + ' values changed.') +
+      ' Unraid passes a dollar sign through as typed; a compose file does not, so ' +
+      (n === 1 ? 'it has' : 'each one has') + ' been written twice — the container' +
+      (n === 1 ? '' : 's') + ' still receive' + (n === 1 ? 's' : '') + ' ' + (n === 1 ? 'it' : 'them') +
+      ' exactly as before. Find ' + (n === 1 ? 'it' : 'each') + ' in ' +
+      (n === 1 ? 'that stack' : 'its own stack') + '’s own history if you want it back as it arrived.';
+    return '<p class="staxx-import-summarymsg">' + head + '</p>' +
+      '<ul class="staxx-import-summaryfails">' +
+        touches.map(function (t) {
+          return '<li><strong>' + esc(t.key) + '</strong> in “' + esc(t.name) + '”' +
+            (t.count > 1 ? ' (' + t.count + ' dollar signs)' : '') + '</li>';
+        }).join('') +
+      '</ul>';
+  }
+
   function importRunSelected() {
     var idxs = [];
     for (var k in importSelected) if (importSelected[k]) idxs.push(Number(k));
@@ -11794,6 +12342,7 @@
     var written = 0;
     var failures = [];
     var folderFailures = {};   // folderName -> error, filled in only in Match mode
+    var dollarTouches = [];    // PLAN_106 phase 2 — {name, key, count}, one per value doubled
 
     // Two ticked rows that would land on the very same (folder, name) collide
     // silently otherwise — the second write lands on top of the first
@@ -11869,6 +12418,16 @@
       // where it is going. staxx_import_write_project() re-reads the project
       // itself by id and overwrites every field of 'about' with its own
       // trusted values, so there is nothing genuine to put in it here.
+      //
+      // PLAN_67 step 4 — deliberately NOT tidied here. staxx_import_write_
+      // project() writes the file raw, with no history capture of its own
+      // (unlike staxx_import_write() below, which routes through the ordinary
+      // save path) — so the untouched original stays uncaptured on disk until
+      // the server's own read-time seed catches it the moment somebody first
+      // opens this stack's editor. Tidying the write would make THAT the
+      // first thing ever captured, losing the byte-for-byte original the
+      // whole point of this route is to keep. See editStack()'s own tidy
+      // call for where this is put right instead.
       if (entry.source === 'project') {
         call('import-project', { name: stackName, id: entry.id, about: '{}' }, 20000).then(function (res) {
           if (res.ok) {
@@ -11895,6 +12454,14 @@
         return;
       }
 
+      // PLAN_106 phase 2: this run writes straight to the server with no
+      // editor open, so its own history record (a save already writes one)
+      // is the only undo — the summary below says so rather than offering a
+      // button that has nothing to press.
+      (result.dollarsEscaped || []).forEach(function (d) {
+        dollarTouches.push({ name: entry.name, key: d.key, count: d.count });
+      });
+
       var about = JSON.stringify({
         source: 'template',
         id: entry.id,
@@ -11917,7 +12484,21 @@
         if (!scaffolded.error) writeBody = scaffolded.yaml;
       }
 
-      call('import-write', { name: stackName, body: writeBody, about: about }, 20000).then(function (res) {
+      // PLAN_67 step 4 — laid out once, here, since this route writes straight
+      // to the server with no editor to do it in later. staxx_import_write()
+      // routes through the ordinary save path, so this write IS what seeds
+      // the stack's history — a refusal from tidy() just means it lands as
+      // the converter (and scaffold()) wrote it.
+      writeBody = tidyOnArrival(writeBody).text;
+
+      // PLAN_106 phase 5: the template's own wording, before any dollar sign
+      // was doubled — sent alongside the write so the server can save it
+      // first and let the ordinary history mechanism keep it. '' when
+      // nothing was escaped, which staxx_import_write() treats as "no as-is
+      // text to save".
+      var writeBodyAsIs = result.yamlAsWritten || '';
+
+      call('import-write', { name: stackName, body: writeBody, bodyAsIs: writeBodyAsIs, about: about }, 20000).then(function (res) {
         if (res.ok) {
           written++;
           importExisting.push({ folder: destFolder, leaf: leaf });
@@ -11955,6 +12536,9 @@
           }).join('') +
         '</ul>');
       }
+
+      if (dollarTouches.length) bits.push(dollarTouchesSummaryHtml(dollarTouches));
+
       importSummary.innerHTML = bits.join('');
       importSummary.hidden = false;
 
@@ -12599,9 +13183,11 @@
     viewBeforeFile = null;
     FILES = [];
     envVars = null;   // yesterday's .env answer is meaningless against today's stack
+    dollarModalOffered = false;   // a fresh session gets its own one-time offer
     fileDots = {};
     fileMime = {};
     hideBinPanel();   // yesterday's stack may have left this showing
+    hideYamlNotice(); // ditto for a previous Tidy result — a caller wanting one shown re-shows it below
 
     // Yesterday's history is meaningless against today's stack — bumping the
     // sequence is what stops a history-list/-read reply still in flight from
@@ -12632,6 +13218,8 @@
     versionsSelected = null;
     versionsLoadError = '';
     versionsActionError = '';
+    versionsMulti = false;
+    versionsChoices = {};
     if (versionsHost) {
       versionsHost.innerHTML = '';
       versionsHost.classList.remove('staxx-modal-versions--single');
@@ -12688,6 +13276,7 @@
     pendingNote.hidden = true;
     pendingHandoffId = '';
     pendingHandoffEdit = false;
+    pendingBodyAsIs = '';
     yamlPane.readOnly = false;
 
     // A new stack starts with one service rather than an empty box. The Add
@@ -12742,6 +13331,16 @@
 
     lockScroll(true);
     modal.showModal();
+
+    // Put the open stack in the address bar the same way #settings already
+    // does, so a refresh reopens it — replaceState, never pushState, or Back
+    // would walk through every stack ever opened. A new, unsaved stack has
+    // nothing to reopen, so it writes nothing. window.history, spelled out:
+    // this file declares its own `history` (the stats graphs' sample
+    // arrays), so the bare name would silently do nothing here.
+    if (!isNew && openedName) {
+      window.history.replaceState(null, '', location.pathname + location.search + '#stack=' + encodeURIComponent(openedName));
+    }
 
     // After showModal(), not before. A closed dialog is display: none, so the
     // gutter measures zero wide and every band would be positioned against a
@@ -12916,6 +13515,14 @@
     // by closeEditor() above — this catches the paths that never went through
     // it, Escape among them.
     stopManage();
+
+    // Clear the #stack= fragment openEditor() wrote, so a refresh after
+    // closing lands on the list rather than reopening a stack that is no
+    // longer open. replaceState, matching how it was written — window.history,
+    // spelled out, for the same shadowing reason as openEditor()'s own write.
+    if (location.hash.indexOf('#stack=') === 0) {
+      window.history.replaceState(null, '', location.pathname + location.search);
+    }
 
     lockScroll(false);
     clearError();
@@ -13127,6 +13734,15 @@
     return envVars;
   }
 
+  // buildForm()'s third argument wants a plain array of names, not the
+  // name->true map envVars keeps for varDots()'s own O(1) lookup — this is
+  // the one conversion, called everywhere buildForm() feeds the visible
+  // form, so a name declared in the stack's .env file is never flagged by
+  // PLAN_106's dollar-sign check as though nothing declared it.
+  function envNameList() {
+    return envVars ? Object.keys(envVars) : [];
+  }
+
   // "export FOO=1" as well as "FOO=1" — the former is common enough in
   // hand-written .env files to be worth allowing. A "#" comment line never
   // matches this at all, since '#' is not a legal first character of NAME.
@@ -13142,7 +13758,7 @@
       var c = FILES[i];
       if (c.name === '.env' && !c.dir && !c.link && c.text) { f = c; break; }
     }
-    if (!f) { envVars = {}; relint(); return; }
+    if (!f) { envVars = {}; relint(); dollarRecheck(); return; }
 
     var was = openedName;
     return call('file-read', { name: openedName, file: '.env' }).then(function (res) {
@@ -13156,6 +13772,7 @@
       }
       envVars = names;
       relint();
+      dollarRecheck();
     });
   }
 
@@ -13808,6 +14425,13 @@
   var FILENAME_RE = /^\.?[A-Za-z0-9][A-Za-z0-9._-]*$/;
   var COMPOSE_FILENAMES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'];
   var STAXX_FILE_MAX = 262144;   // 256 KB
+
+  // The cap for a dropped .staxx bundle — a different, bigger limit than a
+  // companion file, because a bundle carries a whole stack's compose file,
+  // companions and picture together. See PLAN_101a decision 4: 4 MiB raw is
+  // 5.5 MiB once base64-encoded, comfortably under the server's own request
+  // limit, and no bundle StaXX itself ever writes can approach it.
+  var STAXX_BUNDLE_MAX = 4194304;   // 4 MiB
 
   function validFilename(file) {
     if (!file || file.length > 63) return false;
@@ -15173,6 +15797,12 @@
       : openedName;
     var body = currentText();
 
+    // PLAN_67 step 4 — a brand-new stack is laid out once, on its first save,
+    // never on an ordinary edit's save. No notice needed either way: isNew
+    // always closes the editor once this save lands (see finishSave()), so
+    // there is nowhere left on screen to show one by the time it would apply.
+    if (isNew) body = tidyOnArrival(body).text;
+
     if (!leaf) { showError('Give the stack a name.'); nameInput.focus(); return; }
 
     clearError();
@@ -15196,6 +15826,10 @@
     // route leaves it unset, so the name-clash refusal still applies to them.
     if (isNew && modal.dataset.adopt === '1') payload.adopt = '1';
     if (isNew && pendingHandoffId) payload.handoff = pendingHandoffId;
+    // PLAN_106 phase 5 gap: rides along only on the first save of a caught
+    // install, same shape as handoff above — cleared on success below so a
+    // second save in the same session never repeats it.
+    if (isNew && pendingBodyAsIs) payload.bodyAsIs = pendingBodyAsIs;
 
     call('save', payload)
       .then(function (res) {
@@ -15217,6 +15851,10 @@
         // app that lost its exit route because the first save needed a
         // different name would lose it silently.
         pendingHandoffId = '';
+        // Same reasoning as pendingHandoffId just above: a refused save
+        // above returns before this line, so a retry still carries the
+        // original wording along with it.
+        pendingBodyAsIs = '';
 
         // Read before clearing, same reasoning: a refused save must still
         // leave the offer waiting for the retry that actually lands.
@@ -15442,6 +16080,24 @@
   // anything that has to survive it cannot live only on the DOM node.
   var rowFailures = {};
 
+  // Turns a rowKey() back into the live row(s) it names — used both by a
+  // sticky failure marker and by a job still in flight (restoreBusy() below)
+  // to find whatever fresh rows now match, once refreshRows() has thrown the
+  // old ones away.
+  function rowsForKey(key) {
+    var sep = key.indexOf('\u0000');
+    if (sep === -1) return stackRows(key);
+    var stack = key.slice(0, sep), service = key.slice(sep + 1);
+    var rows = [];
+    Array.prototype.forEach.call(
+      document.querySelectorAll(
+        '.staxx-container-row[data-in-stack="' + stack + '"][data-service="' + service + '"]'
+      ),
+      function (r) { rows.push(r); }
+    );
+    return rows;
+  }
+
   function paintFailure(rows, verb) {
     var label = FAIL_LABEL[verb] || 'Failed';
     rows.forEach(function (row) {
@@ -15483,22 +16139,55 @@
   // the same reason.
   function restoreFailures() {
     Object.keys(rowFailures).forEach(function (key) {
-      var sep = key.indexOf('\u0000');
-      var rows;
-      if (sep === -1) {
-        rows = stackRows(key);
-      } else {
-        var stack = key.slice(0, sep), service = key.slice(sep + 1);
-        rows = [];
-        Array.prototype.forEach.call(
-          document.querySelectorAll(
-            '.staxx-container-row[data-in-stack="' + stack + '"][data-service="' + service + '"]'
-          ),
-          function (r) { rows.push(r); }
-        );
-      }
+      var rows = rowsForKey(key);
       if (rows.length) paintFailure(rows, rowFailures[key].verb);
     });
+  }
+
+  // Same problem, same fix, for a job still running: refreshRows() throws
+  // every row away, so a stack started from "Save and start" — whose row did
+  // not exist when the job began — and any other row mid-command would
+  // otherwise come back reading "stopped" until the job finishes. One job
+  // can own several keys (a whole-stack job also spins its container rows),
+  // so rows are gathered per job before repainting rather than repainted key
+  // by key, or only the last key's rows would end up remembered.
+  function restoreBusy() {
+    var rowsByJob = {};
+    Object.keys(rowJobs).forEach(function (key) {
+      var job = rowJobs[key];
+      if (!jobs[job]) { delete rowJobs[key]; return; }
+      var rows = rowsForKey(key);
+      if (rows.length) (rowsByJob[job] || (rowsByJob[job] = [])).push.apply(rowsByJob[job], rows);
+    });
+    Object.keys(rowsByJob).forEach(function (job) {
+      var entry = jobs[job];
+      entry.rows = rowsByJob[job];
+      setBusy(entry.rows, entry.pillLabel);
+    });
+  }
+
+  // A real <button>, not a styled span — like the fail pill below, so that
+  // a job still running can be opened and streamed rather than only a
+  // finished one. See paintBusyLabel() for the one place that writes it, and
+  // .staxx-scaffold .staxx-pill--busy in staxx.css for why it needs the same
+  // specificity trick the fail pill already carries.
+  function busyPillHtml(label) {
+    return '<button type="button" class="staxx-pill staxx-pill--busy">' + label + '</button>';
+  }
+
+  function paintBusyLabel(row, label) {
+    var td = row.querySelector('[data-cell="state"]');
+    if (td) {
+      td.innerHTML = busyPillHtml(label);
+
+      // paintState skips a cell whose HTML has not changed since it last
+      // wrote one. "Starting…" was put here by this function instead, so
+      // that record has to go: without it a stack that ends up back in the
+      // state it started in — a restart, or a start that failed — keeps the
+      // busy pill for ever, because the state arriving afterwards matches
+      // what paintState last wrote and gets skipped.
+      td.staxxTxt = '';
+    }
   }
 
   function setBusy(rows, label) {
@@ -15510,18 +16199,7 @@
       // paint the old state over the top of "Starting…".
       row.dataset.busy = '1';
       spin(row, true);
-      var td = row.querySelector('[data-cell="state"]');
-      if (td) {
-        td.innerHTML = '<span class="staxx-pill staxx-pill--busy">' + label + '</span>';
-
-        // paintState skips a cell whose HTML has not changed since it last
-        // wrote one. "Starting…" was put here by this function instead, so
-        // that record has to go: without it a stack that ends up back in the
-        // state it started in — a restart, or a start that failed — keeps the
-        // busy pill for ever, because the state arriving afterwards matches
-        // what paintState last wrote and gets skipped.
-        td.staxxTxt = '';
-      }
+      paintBusyLabel(row, label);
     });
   }
 
@@ -15547,6 +16225,57 @@
 
   var jobs      = {};    // job id -> { rows, verb, show, atBottom, offset, text, done }
   var jobTicker = null;
+
+  // rowKey() -> job id, for every row a job in `jobs` is currently spinning.
+  // Kept separate from `jobs` itself because a whole-stack job spins several
+  // rows under several different keys (the stack row, plus one per container
+  // row) that all have to lead back to the one entry — see track() below,
+  // where this is filled in, and restoreBusy() where it survives a
+  // refreshRows() table-body swap the way rowFailures already does.
+  var rowJobs = {};
+
+  // Reads compose's own plain-text progress lines (forced by --progress
+  // plain — see STAXX_COMPOSE_PROGRESS_PLAIN in Stacks.php, where the
+  // command is built) to say whether an image is downloading right now, and
+  // roughly how much of it is done. Returns null when there is nothing to
+  // say yet — the base BUSY_LABEL stands in that case — because a `restart`
+  // or a plain `up` on images already on disk should never claim to be
+  // downloading anything.
+  //
+  // The state machine reads every line rather than just the newest one,
+  // because compose interleaves several services' lines together and a
+  // trailing blank line from the last poll would otherwise look like "not
+  // downloading any more".
+  function pullProgressLabel(text) {
+    var downloading = false;
+    var lines = text.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      if (/Pull complete|Pulled|Creating|Starting|Started/.test(lines[i])) downloading = false;
+      else if (/Pulling|Downloading|Extracting/.test(lines[i])) downloading = true;
+    }
+    if (!downloading) return null;
+    // Each layer prints one "Pulling fs layer" line and, once done, one
+    // "Pull complete" line — counting both gives a rough "N of M" without
+    // decoding a percentage. Capped at the layer count so a line this has
+    // not seen before (a registry wording this has not met yet) cannot
+    // print something like "14 of 12".
+    var layers   = (text.match(/Pulling fs layer/g) || []).length;
+    var complete = (text.match(/Pull complete/g) || []).length;
+    return layers ? 'Downloading image… ' + Math.min(complete, layers) + ' of ' + layers
+                  : 'Downloading image…';
+  }
+
+  // Wires the output pane's scroll listener onto one job — shared by track()
+  // (a job started with the dialog already open) and by clicking a busy
+  // pill (a job the dialog is only now being opened onto).
+  function followScroll(job) {
+    logBox.onscroll = function () {
+      var entry = jobs[job];
+      if (entry) {
+        entry.atBottom = logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 30;
+      }
+    };
+  }
 
   function startTicker() {
     if (!jobTicker) jobTicker = setInterval(tickJobs, 1000);
@@ -15580,6 +16309,19 @@
         entry.text  += part.text || '';
         entry.offset = part.offset;
 
+        // The busy pill says what compose is actually doing, for the three
+        // verbs that can pull an image — only worth recomputing when new
+        // text arrived, and only worth repainting when it changed.
+        if (part.text && (entry.verb === 'up' || entry.verb === 'pull' || entry.verb === 'update')) {
+          var pillLabel = pullProgressLabel(entry.text) || BUSY_LABEL[entry.verb] || 'Working…';
+          if (pillLabel !== entry.pillLabel) {
+            entry.pillLabel = pillLabel;
+            entry.rows.forEach(function (row) {
+              if (row.dataset.busy) paintBusyLabel(row, pillLabel);
+            });
+          }
+        }
+
         // Reassigning the whole of the pane's text destroys and recreates its
         // text node, which collapses any selection the reader has made inside
         // it. A tick that brought no new output must therefore write nothing.
@@ -15594,6 +16336,11 @@
 
         if (part.done) {
           delete jobs[id];
+          // Every rowKey() this job was filed under leads back to `id` —
+          // see track() below, where they are added.
+          Object.keys(rowJobs).forEach(function (key) {
+            if (rowJobs[key] === id) delete rowJobs[key];
+          });
           if (entry.show) {
             logTitle.textContent += (part.exit !== 0 && part.exit !== null)
               ? ' — failed (exit ' + part.exit + ')'
@@ -15624,23 +16371,21 @@
   function track(job, opts) {
     opts = opts || {};
     jobs[job] = {
-      rows:     opts.rows || [],
-      verb:     opts.verb || '',
-      show:     !!opts.show,
-      atBottom: true,
-      offset:   0,
-      text:     '',
-      shown:    '',   // what the output pane already holds, so an idle tick can skip writing it
-      done:     opts.done
+      rows:      opts.rows || [],
+      verb:      opts.verb || '',
+      show:      !!opts.show,
+      atBottom:  true,
+      offset:    0,
+      text:      '',
+      shown:     '',   // what the output pane already holds, so an idle tick can skip writing it
+      pillLabel: BUSY_LABEL[opts.verb] || 'Working…',
+      done:      opts.done
     };
-    if (opts.show) {
-      logBox.onscroll = function () {
-        var entry = jobs[job];
-        if (entry) {
-          entry.atBottom = logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 30;
-        }
-      };
-    }
+    (opts.rows || []).forEach(function (row) {
+      var key = rowKey(row);
+      if (key) rowJobs[key] = job;
+    });
+    if (opts.show) followScroll(job);
     startTicker();
   }
 
@@ -15809,7 +16554,7 @@
   // machine that HTML is identical poll after poll — so it is compared and
   // skipped the same way a figure is. See setCell for why the comparison is
   // against what we were handed rather than against innerHTML.
-  function paintState(row, html, isUp, address) {
+  function paintState(row, html, isUp, address, sick) {
     // Suppressed the same way a busy row is: a real state landing here would
     // otherwise paint the sticky failure marker away one poll after it
     // appeared. See markFailed()/clearFailure() for how it comes and goes.
@@ -15824,7 +16569,11 @@
       addr.innerHTML = address;
       addr.staxxTxt = address;
     }
-    setClass(row.querySelector('.staxx-dot'), 'staxx-dot--up', !!isUp);
+    var dot = row.querySelector('.staxx-dot');
+    setClass(dot, 'staxx-dot--up', !!isUp);
+    // A sick container is still up, so --sick is drawn over --up by CSS
+    // rather than replacing it — both classes can be present together.
+    setClass(dot, 'staxx-dot--sick', !!sick);
   }
 
   // "2 of 3 running". Counted from the rows on screen rather than sent by the
@@ -15948,7 +16697,7 @@
       // The cell's contents come from the server already rendered, so a pill
       // that appears without a page load is identical to one that came with
       // it — including its translated wording.
-      paintState(row, s.html, s.running, s.address);
+      paintState(row, s.html, s.running, s.address, s.sick);
 
       // The menu is rebuilt from these attributes every time it opens, so
       // updating them is what turns Start into Restart and enables Stop.
@@ -15978,7 +16727,7 @@
           // not a missing reading.
           setData(kid, 'container', '');
           setData(kid, 'state', '');
-          paintState(kid, res.notCreated || '', false, res.noAddress || '');
+          paintState(kid, res.notCreated || '', false, res.noAddress || '', false);
           paintContainerImage(kid, '', res.notCreatedImage);
           return;
         }
@@ -15989,7 +16738,7 @@
         setData(kid, 'container', c.container);
         setData(kid, 'state', c.state);
         if (c.state === 'running') up++;
-        paintState(kid, c.html, c.state === 'running', c.address);
+        paintState(kid, c.html, c.state === 'running', c.address, c.sick);
         paintContainerImage(kid, c.image, res.notCreatedImage);
       });
 
@@ -16206,6 +16955,20 @@
     setData(pill, 'updateBack', entry.back ? '1' : '0');
     setData(pill, 'updateWhy', entry.why || '');
     if (note) setData(pill, 'updateNote', note); else delete pill.dataset.updateNote;
+    // PLAN_127 — the hover card's own facts, mirroring staxx_update_pill_html()'s
+    // $cardAttrs exactly: an attribute set when the server hands back a
+    // non-empty value, deleted otherwise, so a repaint that loses a fact (an
+    // update just applied, say) drops that row rather than leaving it stale.
+    [
+      ['updateRunning',    entry.was],
+      ['updateAvailable',  entry.version],
+      ['updateAsked',      entry.askedWords],
+      ['updateNext',       entry.nextWords],
+      ['updateInterval',   entry.intervalWords],
+      ['updateCadenceWhy', entry.cadenceWhy]
+    ].forEach(function (pair) {
+      if (pair[1]) setData(pill, pair[0], pair[1]); else delete pill.dataset[pair[0]];
+    });
 
     var text = entry.label || state;
     if (entry.count > 1) text += ' (' + entry.count + ')';
@@ -16214,6 +16977,22 @@
     // something to say. Skipped when the label has not changed so a clock
     // ticking away between polls is not torn down and rebuilt every time.
     if (pill.staxxTxt !== text) { pill.textContent = text; pill.staxxTxt = text; }
+    // PLAN_121 item 7: the small tag icon that marks a pill as knowing both
+    // versions, even though the label itself no longer says so — mirrors
+    // staxx_update_pill_html()'s $tagIcon in StacksTable.php. Checked and
+    // fixed up independently of the label text above: 'versioned' can flip
+    // on a poll that leaves the label reading "update ready" either way, and
+    // the two must never drift out of step with what the title claims.
+    var wantIcon = state === 'update' && !!entry.versioned;
+    var icon = pill.querySelector('.staxx-updatepill__tag');
+    if (wantIcon && !icon) {
+      icon = document.createElement('i');
+      icon.className = 'fa fa-tag staxx-updatepill__tag';
+      icon.setAttribute('aria-hidden', 'true');
+      pill.appendChild(icon);
+    } else if (!wantIcon && icon) {
+      icon.parentNode.removeChild(icon);
+    }
     // The note is appended to the tip rather than replacing it, mirroring
     // staxx_update_pill_html() — a stale tooltip after a recovery is worse
     // than none, so this is rebuilt every time rather than only when new.
@@ -16283,6 +17062,167 @@
     if (!pageClockTimer) pageClockTimer = setInterval(tickPageClocks, 30000);
   }
 
+  /* --------------------------------------------------------- PLAN_127 --
+   * The update pill's hover card: the same facts a browser tooltip already
+   * shows as one long sentence, drawn instead as the page's own small card
+   * with a short lead and a two-column table — a browser tooltip cannot be
+   * styled at all, so matching the rest of the page means drawing this one
+   * ourselves. One element, moved to whichever pill is hovered or focused,
+   * filled from the data-update-* attributes staxx_update_pill_html() (and
+   * paintUpdatePill() above, which keeps them in step on every repaint)
+   * already carry — nothing here asks the server for anything of its own.
+   *
+   * Not offered under NARROW (declared above, the same 45rem phone gate the
+   * rest of the page uses): a phone has no hover, and the pill is already a
+   * button whose own press starts the update, so a tap cannot be repurposed
+   * to open this without breaking that. The sentence stays the pill's title
+   * there, which mobile browsers already surface on a long press.
+   */
+  var updCard = null;
+  var updCardTimer = null;
+  var updCardPill = null;   // the pill currently hovered/focused — set the
+                             // moment it is entered, whether the card has
+                             // actually appeared yet or is still waiting out
+                             // the show delay.
+
+  function ensureUpdCard() {
+    if (!updCard) {
+      updCard = document.createElement('div');
+      updCard.className = 'staxx-updcard';
+      updCard.setAttribute('role', 'tooltip');
+      updCard.hidden = true;
+      // Beside .staxx-scaffold, not <body> — see the bundle/export modals
+      // above for the same reasoning: .staxx-* rules only apply inside it.
+      (document.querySelector('.staxx-scaffold') || document.body).appendChild(updCard);
+    }
+    return updCard;
+  }
+
+  // One fixed lead for 'update' — the state the card exists for and the one
+  // whose sentence names a press that no longer reads naturally once split
+  // from the table below ("Press this" with nothing to point "this" at).
+  // Every other state keeps its own tip, minus the trailing clock sentence
+  // the table's own rows already cover.
+  var UPD_CARD_LEAD = {
+    update: 'A newer version is available. Press the chip to fetch it and rebuild the container on it.'
+  };
+
+  function updCardLead(pill) {
+    var fixed = UPD_CARD_LEAD[pill.dataset.updateState || ''];
+    if (fixed) return fixed;
+    var title = pill.title || '';
+    // staxx_update_when_words() always starts the clock sentence this way —
+    // cutting there leaves exactly the part the table's rows do not already
+    // say, whatever note may follow the tip beyond it.
+    var cut = title.indexOf(' Last asked ');
+    return cut === -1 ? title : title.slice(0, cut);
+  }
+
+  function updCardFacts(pill) {
+    var rows = [
+      ['Running',    pill.dataset.updateRunning,    true],
+      ['Available',  pill.dataset.updateAvailable,  true],
+      ['Last asked', pill.dataset.updateAsked,       false],
+      ['Next check', pill.dataset.updateNext,        false],
+      ['Checked',    pill.dataset.updateInterval,    false],
+      ['Why',        pill.dataset.updateCadenceWhy,  false]
+    ];
+    var html = '';
+    for (var i = 0; i < rows.length; i++) {
+      var val = rows[i][1];
+      if (!val) continue;   // rows that do not apply are left out, not shown blank
+      html += '<dt>' + esc(rows[i][0]) + '</dt><dd' +
+        (rows[i][2] ? ' class="staxx-updcard__mono"' : '') + '>' + esc(val) + '</dd>';
+    }
+    return html;
+  }
+
+  // Below the pill by default, flipped above when there is no room below,
+  // and clamped horizontally so a pill at the right edge of a narrow window
+  // never pushes the card off screen. Measured after the card is already in
+  // the DOM and visible (offsetWidth/Height need layout), so this only runs
+  // once showUpdCard() has set its content and cleared `hidden`.
+  function placeUpdCard(pill) {
+    var r = pill.getBoundingClientRect();
+    var cw = updCard.offsetWidth, ch = updCard.offsetHeight;
+    var top = r.bottom + 8;
+    if (top + ch > window.innerHeight && r.top - ch - 8 >= 0) top = r.top - ch - 8;
+    var left = r.left;
+    if (left + cw > window.innerWidth - 8) left = window.innerWidth - 8 - cw;
+    if (left < 8) left = 8;
+    updCard.style.left = left + 'px';
+    updCard.style.top  = top + 'px';
+  }
+
+  function showUpdCard() {
+    var pill = updCardPill;
+    if (!pill || NARROW.matches) return;
+    var card = ensureUpdCard();
+    card.innerHTML = '<div class="staxx-updcard__lead">' + esc(updCardLead(pill)) + '</div>' +
+      '<dl class="staxx-updcard__facts">' + updCardFacts(pill) + '</dl>';
+    // The pill's title is moved out of the way while the card is up, or the
+    // browser's own tooltip appears on top of this one — the one real trap
+    // here. Restored the moment the card is dismissed, below.
+    if (pill.title) {
+      pill.dataset.updateTitle = pill.title;
+      pill.removeAttribute('title');
+    }
+    card.hidden = false;
+    placeUpdCard(pill);
+  }
+
+  function dismissUpdCard() {
+    if (updCardTimer) { clearTimeout(updCardTimer); updCardTimer = null; }
+    if (updCard) updCard.hidden = true;
+    if (updCardPill && updCardPill.dataset.updateTitle) {
+      updCardPill.title = updCardPill.dataset.updateTitle;
+      delete updCardPill.dataset.updateTitle;
+    }
+    updCardPill = null;
+  }
+
+  function updCardEnter(pill) {
+    if (NARROW.matches || updCardPill === pill) return;
+    dismissUpdCard();
+    updCardPill = pill;
+    updCardTimer = setTimeout(showUpdCard, 250);
+  }
+
+  // mouseenter/mouseleave do not bubble, so this is delegated on the
+  // document in the capture phase instead — a capturing listener still runs
+  // for every element the pointer crosses, bubbling or not (see the same
+  // trade-off wherever else this file listens for them). `relatedTarget` is
+  // what tells a genuine crossing of the pill's own edge apart from moving
+  // between the pill and something nested inside it (PLAN_121's tag icon) —
+  // without that check, moving onto the icon would read as leaving the pill
+  // and dismiss the card while the pointer never left it.
+  document.addEventListener('mouseenter', function (event) {
+    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    if (pill && !pill.contains(event.relatedTarget)) updCardEnter(pill);
+  }, true);
+  document.addEventListener('mouseleave', function (event) {
+    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    if (pill && pill === updCardPill && !pill.contains(event.relatedTarget)) dismissUpdCard();
+  }, true);
+  // focusin bubbles on its own, so this is the keyboard path (Tab onto a
+  // pill) with no delegation trick needed — same card, same delay.
+  document.addEventListener('focusin', function (event) {
+    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    if (pill) updCardEnter(pill);
+  });
+  document.addEventListener('focusout', function (event) {
+    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    if (pill && pill === updCardPill) dismissUpdCard();
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && updCardPill) dismissUpdCard();
+  });
+  // A scrolled row can carry its pill anywhere, including behind the header
+  // — easiest to just close rather than re-place on every scroll tick.
+  window.addEventListener('scroll', function () {
+    if (updCardPill) dismissUpdCard();
+  }, true);
+
   // "less than a minute", "20 minutes", "3 hours" — never "ago" on its own,
   // since every caller says that itself once, around whichever sentence it
   // is building.
@@ -16318,60 +17258,120 @@
     return text;
   }
 
-  // The button and its line are the server's own markup now, like every
-  // other control on this page — this just finds them by id and binds.
-  // Guarded rather than assumed, so an older cached page (or a markup
-  // change that drops the id) fails quietly instead of throwing.
+  // The button is the server's own markup, like every other control on this
+  // page — found by id and bound. Guarded rather than assumed, so an older
+  // cached page (or a markup change that drops the id) fails quietly instead
+  // of throwing.
   var checkUpdatesBtn = document.getElementById('staxx-check-updates');
-  var updatesLine     = document.getElementById('staxx-updates-line');
+
+  // Unraid draws a per-page title bar (`div.title`) when its own "tabbed
+  // view" display setting is off, and the chips belong there, right-aligned,
+  // as they always did. Tabbed view replaces that bar with a shared `.tabs`
+  // strip the page does not own, and Adrian saw the chips land in that strip
+  // and asked for them lower — so only then do they get a row of our own,
+  // inserted right before the buttons row (`.staxx-bar.staxx-bar--end`); if
+  // that row is ever missing — a markup change — it falls back to sitting
+  // before `#staxx-update-queue` instead, so the information is never
+  // silently lost.
+  var updatesLine = document.getElementById('staxx-updates-line');
+  if (!updatesLine) {
+    updatesLine = document.createElement('span');
+    updatesLine.id = 'staxx-updates-line';
+    updatesLine.className = 'staxx-titlebar';
+    updatesLine.hidden = true;
+    var titleBar = document.querySelector('div.title');
+    if (titleBar) {
+      titleBar.classList.add('staxx-has-titlebar');
+      titleBar.appendChild(updatesLine);
+    } else {
+      var statusRow = document.createElement('div');
+      statusRow.className = 'staxx-statusrow';
+      statusRow.appendChild(updatesLine);
+      var buttonsBar = document.querySelector('.staxx-bar.staxx-bar--end');
+      if (buttonsBar && buttonsBar.parentNode) {
+        buttonsBar.parentNode.insertBefore(statusRow, buttonsBar);
+      } else {
+        var updateQueueEl = document.getElementById('staxx-update-queue');
+        if (updateQueueEl && updateQueueEl.parentNode) {
+          updateQueueEl.parentNode.insertBefore(statusRow, updateQueueEl);
+        }
+      }
+    }
+  }
 
   var updatesChecking = false;
-
-  // Set by paintUpdatesLine() below, read by the click handler beside it —
-  // whatever is on screen right now is the only thing a click can honestly
-  // open, the same reasoning gapNote's own click handler gives.
-  var lastUpdatesSummary = null;
-
-  function paintUpdatesLine(summary) {
-    if (!updatesLine) return;
-    lastUpdatesSummary = summary;
-    updatesLine.textContent = updatesLineText(summary);
-    // Worth a second look — no updates found is not, silence or a broken
-    // check is.
-    setClass(updatesLine, 'staxx-hint--warn',
-      !!(summary && summary.checked && (!summary.ok || summary.updates)));
-    // Only clickable when there is something behind it to open — a fixed
-    // width cursor either way would invite a click that does nothing.
-    setClass(updatesLine, 'staxx-hint--clickable',
-      !!(summary && summary.checked && (summary.watch || summary.watchReason)));
-  }
 
   // PLAN_62 Stage 4's combined report: every undismissed author-example
   // finding, across every stack, fetched only when someone actually asks —
   // the count already on the line costs nothing extra (staxx_updates_summary()
   // reads the state file alone), so the full list is worth a second request
-  // rather than being carried on every poll.
-  if (updatesLine) {
-    updatesLine.addEventListener('click', function () {
-      if (!lastUpdatesSummary || !lastUpdatesSummary.checked) return;
-      if (!lastUpdatesSummary.watch && !lastUpdatesSummary.watchReason) return;
-      call('watch-report', {}, 15000).then(function (res) {
-        if (!res.ok) {
-          openLogDialog('Author-example findings', res.reason || 'Could not build the report.');
-          return;
-        }
-        if (!res.items.length) {
-          openLogDialog('Author-example findings', 'Nothing to look at.');
-          return;
-        }
-        var lines = res.items.map(function (it) {
-          return stackLabel(it.stack) + ' / ' + it.service + ' (' + it.image + '): ' +
-            (it.side === 'added' ? 'the author\'s example also sets ' : 'the author\'s example does not set ') +
-            it.setting;
-        });
-        openLogDialog('Author-example findings', lines.join('\n'));
+  // rather than being carried on every poll. Now bound to the findings chip
+  // itself (see paintUpdatesLine below) rather than to a click anywhere on
+  // the line, since the line is several separate chips now.
+  function openWatchReport() {
+    call('watch-report', {}, 15000).then(function (res) {
+      if (!res.ok) {
+        openLogDialog('Author-example findings', res.reason || 'Could not build the report.');
+        return;
+      }
+      if (!res.items.length) {
+        openLogDialog('Author-example findings', 'Nothing to look at.');
+        return;
+      }
+      var lines = res.items.map(function (it) {
+        return stackLabel(it.stack) + ' / ' + it.service + ' (' + it.image + '): ' +
+          (it.side === 'added' ? 'the author\'s example also sets ' : 'the author\'s example does not set ') +
+          it.setting;
       });
+      openLogDialog('Author-example findings', lines.join('\n'));
     });
+  }
+
+  // Up to three pills: when the check last ran, how many updates it found
+  // (omitted at zero — the muted when-chip already proves the check ran, so
+  // a green "nothing to update" chip would just be noise), and how many
+  // author-example findings are waiting. updatesLineText() above stays the
+  // whole sentence, set as this span's tooltip so it is still one hover away
+  // and still what a screen reader gets.
+  function paintUpdatesLine(summary) {
+    if (!updatesLine) return;
+    updatesLine.title = updatesLineText(summary);
+    updatesLine.innerHTML = '';
+    updatesLine.hidden = false;
+
+    var checked = !!(summary && summary.checked);
+    var when = document.createElement('span');
+    when.className = 'staxx-pill ' + (checked && summary.ok ? 'staxx-pill--down' : 'staxx-pill--bad');
+    when.textContent = !checked
+      ? 'Never checked'
+      : (summary.ok ? 'Checked ' + timeAgoWords(summary.checked) + ' ago' : 'Could not finish the last check');
+    updatesLine.appendChild(when);
+
+    if (checked && summary.ok && summary.updates) {
+      var n = summary.updates;
+      var updates = document.createElement('span');
+      updates.className = 'staxx-pill staxx-pill--warn';
+      updates.textContent = n + (n === 1 ? ' update waiting' : ' updates waiting');
+      updatesLine.appendChild(updates);
+    }
+
+    if (checked) {
+      if (summary.watchReason) {
+        var reasonChip = document.createElement('span');
+        reasonChip.className = 'staxx-pill staxx-pill--bad';
+        reasonChip.textContent = 'Author-example report unavailable';
+        reasonChip.title = summary.watchReason;
+        updatesLine.appendChild(reasonChip);
+      } else if (summary.watch) {
+        var w = summary.watch;
+        var findingsBtn = document.createElement('button');
+        findingsBtn.type = 'button';
+        findingsBtn.className = 'staxx-pill staxx-pill--busy';
+        findingsBtn.textContent = w + (w === 1 ? ' author-example finding' : ' author-example findings');
+        findingsBtn.addEventListener('click', openWatchReport);
+        updatesLine.appendChild(findingsBtn);
+      }
+    }
   }
 
   // The last `updates` reply's per-row answers, kept so paintState() wiping
@@ -17614,6 +18614,13 @@
       // The whole table is replaced below, so without this snapshot every
       // row would look "new" on every refresh and the list would shimmer on
       // the timer instead of staying still for rows that were already there.
+      // PLAN_128: the services modal has moved real container rows out of
+      // this table into itself — if they are still there when the markup
+      // below is thrown away, they go with it, and the modal is left
+      // showing rows now orphaned. closeServicesModal() is a no-op when
+      // nothing is open.
+      closeServicesModal();
+
       var seenRows = {};
       if (rowsHost) {
         Array.prototype.forEach.call(
@@ -17640,6 +18647,7 @@
       // and every row was just thrown away. rowFailures is the record that
       // survives the swap; this puts the markers back on the new rows.
       restoreFailures();
+      restoreBusy();
 
       // Every row in the fresh markup starts with no tabindex at all, the
       // same situation the very first page load was in — rebuild the
@@ -17931,6 +18939,11 @@
     openSettings('staxx-setting-hub-user');
   });
 
+  var spendReadoutBtn = document.getElementById('staxx-open-spend-readout');
+  if (spendReadoutBtn) spendReadoutBtn.addEventListener('click', function () {
+    openSettings('staxx-setting-spend-readout');
+  });
+
   document.getElementById('staxx-add').addEventListener('click', function () {
     openEditor('', '', true, '');
   });
@@ -18082,7 +19095,31 @@
       // consumed has to be dropped here instead — a left-behind handover
       // would silently open the *next* stack on Versions.
       if (!res.ok) { pendingVersionsService = null; failed('Could not open ' + label, res.error); return; }
-      openEditor(res.name, res.body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch, res.icons);
+
+      // PLAN_67 step 4 — an adopted project's own arrival route (import-
+      // project) deliberately writes byte for byte with no tidy and no
+      // history capture of its own; the server's read-time seed just above
+      // (staxx_record_seed(), in the 'read' action this call just made) is
+      // what actually keeps that untouched original as version one. Tidying
+      // is safe from this point on, and idempotent, so it costs nothing to
+      // redo on a second look before the review lock is cleared — a stack
+      // still awaiting review is exactly one nobody has ever saved through
+      // StaXX yet, adopted project or otherwise.
+      var row = rowFor(name);
+      var menuBtn = row ? row.querySelector('[data-menu="stack"]') : null;
+      var body = res.body;
+      var tidyNote = null, tidyBad = false;
+      if (menuBtn && menuBtn.dataset.review === '1') {
+        var outcome = tidyOnArrival(body);
+        body = outcome.text;
+        tidyNote = outcome.message;
+        tidyBad = outcome.bad;
+      }
+
+      openEditor(res.name, body, false, res.fingerprint, focusService, manageSelect, focusField, res.moved, res.watch, res.icons);
+      // After openEditor(), not before — same reasoning as every other
+      // arrival route's own notice.
+      if (tidyNote) showYamlNotice(tidyNote, tidyBad);
     });
   }
 
@@ -18217,6 +19254,7 @@
     confirmTitle.textContent = opts.title;
     confirmBody.innerHTML = opts.bodyHtml;
     confirmGo.textContent = opts.goLabel;
+    confirmCancel.textContent = opts.cancelLabel || confirmCancelDefault;
     if (confirmExtra) {
       confirmExtra.hidden = !opts.extraLabel;
       confirmExtra.textContent = opts.extraLabel || '';
@@ -18363,9 +19401,14 @@
               // The dialog stays open rather than closing: there is nothing
               // left to confirm, but naming where the archive landed is
               // worth a beat before Done is the only thing left to press.
+              // PLAN_118 — set only when this folder shared its compose
+              // project name with another stack, so `down` was skipped
+              // rather than stopping that other stack's containers.
+              var noteHtml = res.note ? '<p>' + esc(res.note) + '</p>' : '';
               askConfirm({
                 title: 'Removed "' + label + '"',
                 bodyHtml: '<p>Its folder is now kept as <code>' + esc(res.archive) + '</code>.</p>' +
+                  noteHtml +
                   '<p>Unzipping it back into the stacks folder puts the stack back.</p>',
                 goLabel: 'Done'
               }).then(function () { closeConfirm(); });
@@ -19747,9 +20790,12 @@
   // the image it points at, so a service can be told apart from another
   // built off a shared base image.
   function versionsServiceRowHtml(svc) {
+    var chosenMark = (versionsMulti && versionsChoices[svc.service])
+      ? '<span class="staxx-versions-service-chosen" aria-label="' + esc('A version is chosen') + '">✓</span>'
+      : '';
     return '<button type="button" class="staxx-versions-service" data-versions-service="' +
       esc(svc.service) + '" aria-current="' + (versionsSelected === svc.service ? 'true' : 'false') + '">' +
-      '<div>' + esc(svc.service) + '</div>' +
+      '<div>' + esc(svc.service) + chosenMark + '</div>' +
       '<div style="color:var(--sm-muted);font-size:1.1rem;">' + esc(svc.image) + '</div>' +
       '</button>';
   }
@@ -19779,11 +20825,20 @@
     var sourceHtml = source
       ? '<div><a href="' + esc(source) + '" target="_blank" rel="noopener">' + esc('See the source') +
         '</a></div>' : '';
-    var actionHtml = isCurrent
-      ? '<div class="staxx-version-current">' + esc('Running now') + '</div>'
-      : '<button type="button" class="staxx-btn staxx-btn--small staxx-version-rollback" ' +
+    var actionHtml;
+    if (isCurrent) {
+      actionHtml = '<div class="staxx-version-current">' + esc('Running now') + '</div>';
+    } else if (versionsMulti) {
+      var chosen = versionsChoices[svc.service] === v.digest;
+      actionHtml = '<button type="button" class="staxx-btn staxx-btn--small staxx-version-rollback' +
+        (chosen ? ' staxx-btn--active' : '') + '" aria-pressed="' + (chosen ? 'true' : 'false') + '" ' +
+        'data-version-service="' + esc(svc.service) + '" data-version-choose="' + esc(v.digest) + '">' +
+        esc(chosen ? 'Chosen' : 'Choose this') + '</button>';
+    } else {
+      actionHtml = '<button type="button" class="staxx-btn staxx-btn--small staxx-version-rollback" ' +
         'data-version-service="' + esc(svc.service) + '" data-version-rollback="' + esc(v.digest) + '">' +
         esc('Put this back') + '</button>';
+    }
     // Notes were captured once, at pull time, and stored — nothing here ever
     // fetches them, which is the whole point. Most entries have none (they
     // predate this, or the image's registry gave nothing usable), and that
@@ -19873,18 +20928,42 @@
       '</div>';
   }
 
+  // The toggle sits above everything else in the right column, so it reads
+  // the same regardless of which service is picked. aria-pressed carries
+  // the on/off state for anyone not reading it by colour.
+  function versionsMultiToggleHtml() {
+    return '<div class="staxx-versions-multi-toggle">' +
+      '<button type="button" class="staxx-btn staxx-btn--small' +
+      (versionsMulti ? ' staxx-btn--active' : '') + '" aria-pressed="' +
+      (versionsMulti ? 'true' : 'false') + '" data-versions-multi-toggle>' +
+      esc('Put back several at once') + '</button></div>';
+  }
+
+  // The footer only appears in multi mode, and is disabled at zero choices
+  // rather than hidden — a person who has just cleared their last choice
+  // should still see where the button is.
+  function versionsMultiFooterHtml() {
+    var n = Object.keys(versionsChoices).length;
+    return '<div class="staxx-versions-multi-footer">' +
+      '<button type="button" class="staxx-btn staxx-btn--primary" data-versions-multi-go' +
+      (n === 0 ? ' disabled' : '') + '>' + esc('Put back ' + n + (n === 1 ? ' service' : ' services')) +
+      '</button></div>';
+  }
+
   function versionsContentHtml() {
+    var toggle = versionsMultiToggleHtml();
     var svc = null;
     for (var i = 0; i < versionsServices.length; i++) {
       if (versionsServices[i].service === versionsSelected) { svc = versionsServices[i]; break; }
     }
-    if (!svc) return '<p class="staxx-form-empty">Pick a service on the left.</p>';
+    var footer = versionsMulti ? versionsMultiFooterHtml() : '';
+    if (!svc) return toggle + '<p class="staxx-form-empty">Pick a service on the left.</p>' + footer;
     var band = pinnedBandHtml(svc);
     if (!svc.entries.length) {
-      return band + '<p class="staxx-form-empty">Nothing has been recorded for ' + esc(svc.service) + ' yet. ' +
-        'A version is recorded the first time StaXX updates this image.</p>';
+      return toggle + band + '<p class="staxx-form-empty">Nothing has been recorded for ' + esc(svc.service) +
+        ' yet. A version is recorded the first time StaXX updates this image.</p>' + footer;
     }
-    return band + svc.entries.map(function (v) { return versionRowHtml(svc, v); }).join('');
+    return toggle + band + svc.entries.map(function (v) { return versionRowHtml(svc, v); }).join('') + footer;
   }
 
   // The one function that draws #staxx-modal-versions — same "rebuilt
@@ -19987,11 +21066,11 @@
   // throwaway parse of currentText(), not on the live MODEL, so a refusal
   // from the server below leaves the real editor state untouched — only a
   // confirmed write is allowed to reach the box.
-  function pinServiceImage(service, digest) {
+  function pinServiceImage(service, digest, text) {
     if (!YAML || typeof YAML.pinnedImageRef !== 'function') {
       return { ok: false, why: 'This version of StaXX cannot pin images yet — reload the page and try again.' };
     }
-    var doc = YAML.parse(currentText());
+    var doc = YAML.parse(text);
     var form = YAML.buildForm(doc, netDrivers());
     form.doc = doc;
     var field = null;
@@ -20008,13 +21087,44 @@
     return { ok: true, yaml: YAML.serialise(doc) };
   }
 
+  // The tail shared by a single rollback and a several-at-once one, once the
+  // server has actually accepted the save: put the new text on screen,
+  // stamp the fresh fingerprint (the file on disk just changed under this
+  // editor), mark every rolled-back service's rows busy, and follow the one
+  // recreate job. Factored out so the two callers cannot drift apart.
+  function finishRollback(res, yaml, services, noticeHtml) {
+    versionsActionError = '';
+    adoptRolledBackText(yaml);
+    fingerprintAtOpen = res.fingerprint || '';
+    showPageNotice(res.historyNote || noticeHtml);
+    var rows = [];
+    services.forEach(function (service) { rows = rows.concat(containerRows(openedName, service)); });
+    if (rows.length) setBusy(rows, 'Rolling back…');
+    track(res.job, {
+      rows: rows, verb: 'recreate',
+      done: function (job) {
+        clearBusy(rows);
+        if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'recreate', res.job);
+        services.forEach(function (service) { refreshUpdates(openedName, service); });
+        refreshStateSoon();
+        // A rollback changes which build is on disk, so "Running now" in
+        // the list this was launched from now points at the wrong row.
+        // Drop it: re-read while the tab is still up, and otherwise let it
+        // load fresh the next time the tab is opened.
+        versionsLoaded = false;
+        if (modal.dataset.tab === 'versions') ensureVersionsLoaded();
+        else renderVersionsPane();
+      }
+    });
+  }
+
   // Asks first, since this now edits the compose file as well as changing
   // what is running, then follows the job the way every other run does — the
   // table row goes busy and a failed run is marked the same as any other
-  // failed run. This is the only place a rollback happens; the stack row's
-  // menu item just opens the editor here.
+  // failed run. This is the only place a single rollback happens; the stack
+  // row's menu item just opens the editor here.
   function rollbackToVersion(service, digest, label) {
-    var pinned = pinServiceImage(service, digest);
+    var pinned = pinServiceImage(service, digest, currentText());
     if (!pinned.ok) {
       versionsActionError = pinned.why;
       renderVersionsPane();
@@ -20027,34 +21137,365 @@
         renderVersionsPane();
         return;
       }
-      versionsActionError = '';
-      // What is on screen has to match what the server just wrote, the same
-      // as after any other save — the person has had their file changed and
-      // must be able to see it.
-      adoptRolledBackText(pinned.yaml);
-      // The file on disk has changed, so the stamp this editor is holding is
-      // stale. Without this the next Save is refused as a conflict with a
-      // change the person made themselves a moment ago.
-      fingerprintAtOpen = res.fingerprint || '';
-      showPageNotice(res.historyNote ||
-        ('The compose file now pins "' + service + '" to this version. The file it replaces is kept in History.'));
-      var rows = containerRows(openedName, service);
-      if (rows.length) setBusy(rows, 'Rolling back…');
-      track(res.job, {
-        rows: rows, verb: 'recreate',
-        done: function (job) {
-          clearBusy(rows);
-          if (job.exit !== 0 && job.exit !== null) markFailed(rows, 'recreate', res.job);
-          refreshUpdates(openedName, service);
-          refreshStateSoon();
-          // A rollback changes which build is on disk, so "Running now" in
-          // the list this was launched from now points at the wrong row.
-          // Drop it: re-read while the tab is still up, and otherwise let it
-          // load fresh the next time the tab is opened.
-          versionsLoaded = false;
-          if (modal.dataset.tab === 'versions') ensureVersionsLoaded();
-          else renderVersionsPane();
+      finishRollback(res, pinned.yaml, [service],
+        'The compose file now pins "' + service + '" to this version. The file it replaces is kept in History.');
+    });
+  }
+
+  // Switching the mode off drops any choices made under it — a choice made
+  // while comparing versions is not something that should survive quietly
+  // into an ordinary single rollback later.
+  function toggleVersionsMulti() {
+    versionsMulti = !versionsMulti;
+    versionsChoices = {};
+    renderVersionsPane();
+  }
+
+  // Choosing the version a service is already chosen for clears it again —
+  // there is no separate "un-choose" control, just the one button toggling.
+  function chooseVersionsTarget(service, digest) {
+    if (versionsChoices[service] === digest) delete versionsChoices[service];
+    else versionsChoices[service] = digest;
+    renderVersionsPane();
+  }
+
+  // The go button for "several at once": one confirmation naming every
+  // chosen service and version, then one file edit built by pinning each
+  // choice in turn onto the previous one's result, and one call. Mirrors
+  // performRollback()/rollbackToVersion() below, just for a list rather than
+  // a single service.
+  function performMultiRollback() {
+    var services = Object.keys(versionsChoices);
+    if (!services.length) return;
+    var hasOverride = FILES.some(function (f) { return isStackOverride(f.name); });
+    var picks = services.map(function (service) {
+      var digest = versionsChoices[service];
+      var svc = null, entry = null;
+      for (var i = 0; i < versionsServices.length; i++) {
+        if (versionsServices[i].service === service) { svc = versionsServices[i]; break; }
+      }
+      if (svc) {
+        for (var j = 0; j < svc.entries.length; j++) {
+          if (svc.entries[j].digest === digest) { entry = svc.entries[j]; break; }
         }
+      }
+      return { service: service, digest: digest, label: entry ? (entry.version || historyWhen(entry.at)) : digest };
+    });
+    var listHtml = '<ul>' + picks.map(function (p) {
+      return '<li>' + esc(p.service) + ' → ' + esc(p.label) + '</li>';
+    }).join('') + '</ul>';
+    askConfirm({
+      title: 'Put ' + picks.length + (picks.length === 1 ? ' version' : ' versions') + ' back?',
+      bodyHtml: listHtml +
+        '<p>This edits the compose file so each service names its exact version, which is what makes it ' +
+        'stick — a pull will not move off it. The file as it stands now is kept in History, so this can ' +
+        'be undone.' +
+        (hasOverride ? ' This stack has an override file, though, and an image set there can win over ' +
+          'a pin and make it look as though nothing happened.' : '') +
+        '</p>' +
+        '<p>The versions you are moving away from will not come back on their own.</p>',
+      goLabel: 'Put them back'
+    }).then(function (go) {
+      closeConfirm();
+      if (!go) return;
+      var text = currentText();
+      for (var i = 0; i < picks.length; i++) {
+        var pinned = pinServiceImage(picks[i].service, picks[i].digest, text);
+        if (!pinned.ok) {
+          versionsActionError = pinned.why;
+          renderVersionsPane();
+          return;
+        }
+        text = pinned.yaml;
+      }
+      call('update-rollback', {
+        name: openedName,
+        services: picks.map(function (p) { return p.service; }).join(';'),
+        digests: picks.map(function (p) { return p.digest; }).join(';'),
+        yaml: withEol(text, composeEol)
+      }).then(function (res) {
+        if (!res || !res.ok) {
+          versionsActionError = (res && res.error) || 'Could not put those versions back.';
+          renderVersionsPane();
+          return;
+        }
+        versionsChoices = {};
+        finishRollback(res, text, picks.map(function (p) { return p.service; }),
+          'The compose file now pins ' + picks.length + ' service' + (picks.length === 1 ? '' : 's') +
+          ' to the chosen versions. The files they replace are kept in History.');
+      });
+    });
+  }
+
+  /* =====================================================================
+   * PLAN_108 stage 5 — offering a health check.
+   *
+   * One flow, reached from two doors: a running container's own state pill
+   * (staxx_container_pill()'s 'none' case, made a click target server-side)
+   * and a button in the editor's own Health check group. Both call
+   * offerHealthCheck() below; everything else here is that flow's own
+   * machinery, kept in one place so there is only ever one wording for "here
+   * is why nothing is offered" and one way of writing an accepted offer in.
+   * ===================================================================== */
+
+  // The service's own environment, read from a parsed form the same shape
+  // reparse() builds — a map-style `environment:` entry is one field per
+  // name, binder 'env', so this is a plain filter rather than a second
+  // reader. A sequence-style `environment: [KEY=value]` list is not covered
+  // (its fields carry a synthetic '@environment#n' target, not a name) — a
+  // recipe that needs a value it cannot see this way is simply refused as
+  // 'recipe-needs-a-value', never offered wrongly, so the gap costs nothing
+  // beyond an occasional over-cautious refusal.
+  function envForService(form, service) {
+    var env = {};
+    (form.fields || []).forEach(function (f) {
+      if (f.service === service && f.binder === 'env' && f.parts && f.parts.value) {
+        env[f.target] = f.parts.value.value;
+      }
+    });
+    return env;
+  }
+
+  // A courtesy line, not a refusal — so a plain scan of the file's own text
+  // is enough. The real answer would mean walking every OTHER service's
+  // depends_on block through the parser for one sentence nobody's safety
+  // depends on; this looks for the one shape the plan actually cares about,
+  // long-form depends_on naming this service with a service_healthy
+  // condition, within a few lines of its own name.
+  function anotherServiceWaitsOn(bodyText, service) {
+    var safe = service.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    var re = new RegExp('\\b' + safe + ':\\s*\\r?\\n(?:[ \\t]+\\S[^\\r\\n]*\\r?\\n){0,3}?\\s*condition:\\s*service_healthy');
+    return re.test(bodyText);
+  }
+
+  // The plain sentence for every way chooseHealthCheck() can decline. Each
+  // reason is a different fact, so each gets its own wording — see
+  // health-offer.js's own comment on why "already checks itself" and
+  // "nothing worth asking" must never share a sentence.
+  function noOfferSentence(reason, toolsError) {
+    switch (reason) {
+      case 'already-in-file':
+        return 'This service already has a health check written into the file — there is nothing to add.';
+      case 'image-checks-itself':
+        return 'This image already checks itself, so Docker is already watching it. There is nothing for StaXX to add.';
+      case 'recipe-needs-a-value':
+        return 'StaXX knows a health check for this image, but it needs a setting that is not filled in here yet.';
+      case 'needs-a-trial':
+        // Reached only when the probe itself could not find out what is
+        // available inside the container — a real failure, not "ask for a
+        // trial" (the probe already ran one), so it is explained as one.
+        return 'StaXX could not look inside the container to see what it could check with' +
+               (toolsError ? ': ' + toolsError : '.');
+      default:
+        return 'StaXX has no health check to offer for this image — no known recipe for it, and no web ' +
+               'address to try. Docker will keep reporting nothing has checked it.';
+    }
+  }
+
+  // Shows a message wherever it can actually be seen. `inEditor` names
+  // whether THIS flow's own stack is the one open in the editor right now —
+  // not merely whether some dialog happens to be open, since a stack's own
+  // row pill can be clicked while a DIFFERENT stack's editor is open, and a
+  // message about the row would otherwise land silently in that unrelated
+  // dialog's footer. A page-level notice would be invisible behind an open
+  // dialog either way — showModal() paints it in the top layer — so the
+  // editor's own error box is the only place left to put it when it applies.
+  function healthNotice(message, inEditor) {
+    if (inEditor) showError(message); else showPageNotice(message);
+  }
+
+  // test[0] is CMD, CMD-SHELL or NONE (health-offer.js and db-images.json
+  // never produce anything else) — this is only ever for display, so the
+  // words after it are simply joined back into the one line a person reads.
+  function offerCommandText(test) {
+    return (test || []).slice(1).join(' ');
+  }
+
+  // Writes an accepted offer into a throwaway parse of `bodyText` — never
+  // the live editor state directly, same reasoning as pinServiceImage()
+  // above: a refusal here must leave whatever is actually open untouched.
+  // Returns the new document text, or null if the file could not take the
+  // write (a sealed healthcheck: block, most likely).
+  function applyHealthOfferToText(bodyText, service, offer) {
+    var doc = YAML.parse(bodyText);
+    var form = YAML.buildForm(doc);
+
+    var test = offer.test || [];
+    var mode = test[0] === 'NONE' ? 'none' : (test[0] === 'CMD-SHELL' ? 'shell' : (test[0] === 'CMD' ? 'cmd' : null));
+    if (!mode || !YAML.writeTest(doc, form, service, mode, offerCommandText(test))) return null;
+
+    // writeTest() may have just created healthcheck: itself, so the leaf
+    // fields harvestLeaves() always synthesises have to be found again
+    // against a fresh form built on the doc it just edited.
+    form = YAML.buildForm(doc);
+    var leafTargets = { interval: 'healthcheck.interval', timeout: 'healthcheck.timeout',
+                         retries: 'healthcheck.retries', start_period: 'healthcheck.start_period' };
+    var ok = true;
+    Object.keys(leafTargets).forEach(function (key) {
+      var value = offer[key];
+      if (value === undefined || value === null || value === '') return;
+      var field = null;
+      for (var i = 0; i < form.fields.length; i++) {
+        var f = form.fields[i];
+        if (f.service === service && f.target === leafTargets[key]) { field = f; break; }
+      }
+      if (!field || !YAML.setValue(doc, form, field.id, String(value))) ok = false;
+    });
+    if (!ok) return null;
+    return YAML.serialise(doc);
+  }
+
+  // The confirmation itself — the claim in full, the exact command, the
+  // timing, and the plan's two required disclosures: that working this out
+  // ran a short command inside the container (probe.note), and, only where
+  // it applies, that another service is written to wait for this one.
+  function confirmHealthOffer(service, choice, probe, bodyText) {
+    var offer = choice.offer;
+    var waited = anotherServiceWaitsOn(bodyText, service);
+    // The claims are written as fragments in the table they come from, so
+    // they read correctly after "...a check that proves". Standing alone as
+    // the first sentence of the offer they need a capital, which is cheaper
+    // to add here than to write two spellings of every claim.
+    var claim = choice.claim ? choice.claim.charAt(0).toUpperCase() + choice.claim.slice(1) : '';
+    var lines = [
+      '<p>' + esc(claim) + '.</p>',
+      '<p><code>' + esc(offerCommandText(offer.test)) + '</code></p>',
+      '<p>Runs every ' + esc(offer.interval) + ', times out after ' + esc(offer.timeout) +
+        ', and is allowed ' + esc(String(offer.retries)) + ' tries before being called unhealthy' +
+        (offer.start_period ? ', with ' + esc(offer.start_period) + ' of grace after the container starts' : '') +
+        '.</p>',
+      '<p>' + esc(probe.note) + '</p>'
+    ];
+    if (waited) {
+      lines.push('<p>Another service in this file is written to wait for "' + esc(service) +
+        '" to become healthy before it starts. Right now that wait always passes at once — adding this ' +
+        'check turns it into a real gate.</p>');
+    }
+    return askConfirm({
+      title: 'Add a health check for "' + service + '"?',
+      bodyHtml: lines.join(''),
+      goLabel: 'Add it'
+    });
+  }
+
+  // The one entry point both doors call. Never writes or applies anything on
+  // its own — every branch either says why nothing is offered, or asks
+  // before touching the file, and only a "yes" from confirmHealthOffer()
+  // above reaches the write itself.
+  function offerHealthCheck(stack, service) {
+    // Fixed for the whole flow, not re-read later — whether the editor gets
+    // opened or closed while a request is in flight must not change which
+    // stack this offer is about, or where its messages are shown.
+    var open = modal.open && openedName === stack;
+
+    if (!window.StaxxHealthOffer || !window.StaxxDbImages) {
+      healthNotice('This version of StaXX cannot work out a health check yet — reload the page and try again.', open);
+      return;
+    }
+
+    call('health-probe', { name: stack, service: service }).then(function (probe) {
+      if (!probe || !probe.ok) {
+        healthNotice('Could not look into "' + service + '": ' + ((probe && probe.error) || 'no reason given.'), open);
+        return;
+      }
+
+      // The compose file the browser already has, when this stack's own
+      // editor is open — its in-memory text, unsaved edits and all, since
+      // that is the file an acceptance would actually be adding to.
+      // Otherwise there is nothing in memory to read, so this is the one
+      // place in the flow that reads the file itself — carrying the server's
+      // own fingerprint along, since a direct save() below needs it and
+      // there is no editor state here to hold one instead.
+      (open ? Promise.resolve({ text: currentText(), fingerprint: fingerprintAtOpen })
+            : call('read', { name: stack }).then(function (r) {
+                return (r && r.ok) ? { text: r.body, fingerprint: r.fingerprint } : null;
+              })
+      ).then(function (read) {
+        if (!read) {
+          healthNotice('Could not read "' + stack + '".', open);
+          return;
+        }
+
+        // A textarea always hands its value back as LF, whatever went into
+        // it — reading the file directly skips that, so CRLF is normalised
+        // by hand here and put back on the way out, the same trade withEol()
+        // documents for every other writer in this file.
+        var eol = read.text.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
+        var bodyText = eol === '\r\n' ? read.text.replace(/\r\n/g, '\n') : read.text;
+
+        var form = YAML.buildForm(YAML.parse(bodyText));
+        var facts = {
+          image: probe.image,
+          ownCheck: probe.declared,
+          fileCheck: probe.inFile,
+          dbEntry: window.StaxxDbImages.lookupImage(probe.image),
+          env: envForService(form, service),
+          webPort: probe.port,
+          tools: probe.tools,
+          // Only ever looked for when nothing else already answers, so this
+          // is null far more often than not — and null is the honest
+          // "nothing published", never an empty object standing in for one.
+          published: probe.published || null
+        };
+        var choice = window.StaxxHealthOffer.chooseHealthCheck(facts);
+
+        if (!choice.offer) {
+          healthNotice(noOfferSentence(choice.reason, probe.toolsError), open);
+          return;
+        }
+
+        call('health-try', { name: stack, service: service, test: JSON.stringify(choice.offer.test) })
+          .then(function (tryRes) {
+            if (!tryRes || !tryRes.ok) {
+              healthNotice('Could not try that check: ' + ((tryRes && tryRes.error) || 'no reason given.'), open);
+              return;
+            }
+            // The whole safety property of this feature: a candidate that
+            // does not actually run must never be offered anyway.
+            if (!tryRes.canRun) {
+              healthNotice('StaXX found a possible check for "' + service + '", but it did not work when ' +
+                            'tried: ' + tryRes.why, open);
+              return;
+            }
+
+            confirmHealthOffer(service, choice, probe, bodyText).then(function (go) {
+              closeConfirm();
+              if (!go) return;
+
+              var newText = applyHealthOfferToText(bodyText, service, choice.offer);
+              if (newText === null) {
+                healthNotice('That health check could not be written into the file. Add it in the ' +
+                              'Compose view instead.', open);
+                return;
+              }
+
+              if (open) {
+                // The editor is already open on exactly this stack — write
+                // into the box the same way any other structural edit does,
+                // then save() through the same button every other edit uses.
+                pushUndo('adding a health check for ' + service);
+                yamlPane.value = newText;
+                paintGutter();
+                paintInk();
+                reparse();
+                save(false);
+              } else {
+                // No editor open to write into — save() reads its payload
+                // from the dialog's own state, none of which exists here, so
+                // this goes through the plain save action directly instead,
+                // carrying the fingerprint the 'read' above already gave us.
+                call('save', { name: stack, body: withEol(newText, eol), 'new': '0', fingerprint: read.fingerprint })
+                  .then(function (res) {
+                    if (!res || !res.ok) {
+                      showPageNotice((res && res.error) || 'Could not save the health check.');
+                      return;
+                    }
+                    showPageNotice('Added a health check for "' + service + '" in "' + stackLabel(stack) + '".');
+                    refreshRows();
+                  });
+              }
+            });
+          });
       });
     });
   }
@@ -20163,6 +21604,15 @@
 
       var unpinBtn = event.target.closest('[data-version-unpin]');
       if (unpinBtn) { performUnpin(unpinBtn.dataset.versionUnpin); return; }
+
+      var multiToggle = event.target.closest('[data-versions-multi-toggle]');
+      if (multiToggle) { toggleVersionsMulti(); return; }
+
+      var multiGo = event.target.closest('[data-versions-multi-go]');
+      if (multiGo) { if (!multiGo.disabled) performMultiRollback(); return; }
+
+      var chooseBtn = event.target.closest('[data-version-choose]');
+      if (chooseBtn) { chooseVersionsTarget(chooseBtn.dataset.versionService, chooseBtn.dataset.versionChoose); return; }
 
       var rollbackBtn = event.target.closest('[data-version-rollback]');
       if (rollbackBtn) {
@@ -20289,16 +21739,32 @@
    */
   var SETTINGS_ROWS = [
     {
-      key: 'HEADER_MENU', control: 'choice', label: 'Show StaXX in',
+      key: 'HEADER_MENU', control: 'choice', label: 'Show StaXX in', tab: 'general',
       choices: [
         ['false', 'A tab under the Docker menu'],
         ['true',  'Its own button in the top navigation bar']
       ],
       help: 'Where the stacks view appears. As a Docker tab it sits ahead of Docker Containers ' +
-            'and becomes the default landing tab; nothing is replaced either way.'
+            'and becomes the default landing tab; nothing is replaced either way.',
+      shots: [
+        { value: 'false', src: 'header-menu-tab.png',    caption: 'A tab under Docker' },
+        { value: 'true',  src: 'header-menu-button.png', caption: 'Its own button in the top bar' }
+      ]
     },
     {
-      key: 'STORE_ROOT', control: 'path', label: 'Data store',
+      key: 'PLACEMENT_RULES', control: 'choice', label: 'Where stacks may live', tab: 'storage',
+      choices: [
+        ['guided', 'Guide me — grey them out and refuse them'],
+        ['open',   'Get out of the way — warn me, then allow it']
+      ],
+      help: 'How the folder browser treats risky places for the data store: a single array ' +
+            'disk, an unassigned drive, a network mount, or a share set to move onto the array. ' +
+            'Each can lose or hide your stacks. Two places are refused whichever you choose: ' +
+            'memory, which is emptied at every reboot, and a whole share, where every folder in ' +
+            'it would be read as a stack.'
+    },
+    {
+      key: 'STORE_ROOT', control: 'path', label: 'Data store', tab: 'storage',
       help: 'The one folder holding everything StaXX keeps: your stacks and the archived copies of ' +
             'ones you have removed. A storage pool is mounted before Docker itself even starts, so ' +
             'keeping this on the flash device buys nothing and only wears out the drive; a pool ' +
@@ -20306,117 +21772,82 @@
             'share layer, which a path under /mnt/user does not.'
     },
     {
-      key: 'TAKEOVER_DOCKER_TAB', control: 'choice', label: 'Docker menu',
+      // PLAN_129 item 27: the one allowlisted setting that had no row, found
+      // by the settings audit — until now it could only be changed by editing
+      // the config file by hand.
+      key: 'BOOT_COPY', control: 'choice', label: 'Copies on the flash drive', tab: 'storage',
+      choices: [
+        ['true',  'Keep a copy of every compose file there'],
+        ['false', 'Do not write copies']
+      ],
+      help: 'After every save, a plain copy of the stack\'s compose file is written to the flash ' +
+            'drive, which Unraid already backs up on its own — with its override and its .env ' +
+            'file, if it has them, so the copy is a complete definition. Losing the data store then ' +
+            'never means losing the definition of every container you run. Nothing else in the ' +
+            'stack\'s folder is copied, and StaXX never reads the copies back ' +
+            'while the store is present — restoring from them is always your own choice. Turning ' +
+            'this off leaves any copies already there as they are.'
+    },
+    {
+      key: 'TAKEOVER_DOCKER_TAB', control: 'choice', label: 'Docker menu', tab: 'general',
       choices: [
         ['false', 'Leave the Docker menu alone'],
-        ['true',  'Replace it with StaXX']
+        ['true',  'Replace it with StaXX — the Docker button becomes StaXX']
       ],
-      help: 'Off by default. Switched on, the Docker button disappears from the top of the ' +
-            'screen and StaXX takes its place as a menu item of its own. Everything that lived ' +
-            'under the Docker menu goes with it — Unraid\'s own container list included, and any ' +
-            'other plugin\'s Docker pages. Nothing is modified and no container is touched; ' +
-            'turning it back off puts all of it straight back. While this is on, the "Show ' +
-            'StaXX in" setting above has no effect, because StaXX has to be a top-level item ' +
-            'for there to be any way in.'
+      help: 'Off by default. Switched on, the Docker button at the top of the screen becomes ' +
+            'StaXX, and everything that lived under Docker moves with it, Unraid\'s own ' +
+            'container list included. Nothing is modified and no container is touched; turning ' +
+            'it off puts everything straight back. While it is on, the "Show StaXX in" setting ' +
+            'above has no effect.',
+      shots: [
+        { value: 'false', src: 'docker-menu-leave.png',    caption: 'Docker stays where it is' },
+        { value: 'true',  src: 'docker-menu-replace.png',  caption: 'StaXX takes the Docker button\'s place' }
+      ]
     },
     {
-      key: 'CATCH_INSTALLS', control: 'choice', label: 'Installs from the Apps page',
+      key: 'CATCH_INSTALLS', control: 'choice', label: 'Installs from the Apps page', tab: 'general',
       choices: [
-        ['true',   'Bring them into StaXX'],
-        ['prompt', 'Ask first'],
-        ['false',  'Leave them to Unraid']
+        ['true',   'Bring them into StaXX — the app becomes a stack'],
+        ['prompt', 'Ask first — you are offered the choice each time'],
+        ['false',  'Leave them to Unraid — Unraid installs it as it always has']
       ],
-      help: 'When an app is installed from Unraid\'s own Apps page, StaXX steps in and makes it a ' +
-            'stack instead of an Unraid container; pressing Add Container by hand does the same. ' +
-            '"Ask first" shows an offer before doing either, so nothing is converted without a yes ' +
-            '— the caught-install page itself also offers a way to send a "Bring them into StaXX" ' +
-            'install back to Unraid instead. Opening an existing Unraid container for editing is ' +
-            'only ever offered regardless of this setting — decline and you stay in Unraid\'s own ' +
-            'form, unchanged, and the app can still be brought over later. StaXX also leaves an ' +
-            'Unraid template behind for each app it installs this way, so you can stop using StaXX ' +
-            'and Unraid will still see your apps — the template describes the app as it was ' +
-            'installed, not as it is now. Turning this off puts Unraid\'s own install route back ' +
-            'exactly as it was, and nothing already installed changes.'
+      help: 'What happens when you install an app from Unraid\'s Apps page. Nothing already ' +
+            'installed changes, and StaXX keeps an Unraid template for each app it brings in, ' +
+            'so Unraid can still see them if you stop using StaXX.'
     },
     {
-      key: 'ICON_FETCH', control: 'choice', label: 'Container icons',
+      key: 'ICON_FETCH', control: 'choice', label: 'Container icons', tab: 'icons',
       choices: [
-        ['true',  'Download them automatically'],
-        ['false', 'Do not download anything']
+        ['true',  'Download them automatically — matched by name, or from an address you give'],
+        ['false', 'Do not download anything — saved icons, local files and initials only']
       ],
-      help: 'Each container shows the logo of the software it runs, taken from the ' +
-            '<a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st icon ' +
-            'collection</a>. Your server fetches an icon the first time it sees a container and ' +
-            'then keeps it, so this happens once per icon and never again; the only thing sent ' +
-            'out is the name of the icon being asked for. Turning it off stops all downloading — ' +
-            'icons already saved keep working, and containers with no icon show a coloured tile ' +
-            'with their initials instead. You can always name an icon yourself with ' +
-            '<code>icon:</code> in a stack\'s <code>x-unraid</code> section, which works whichever ' +
-            'way this is set.<br><br>Icons are by ' +
+      help: 'Whether StaXX may download icons. A container\'s icon is matched by name against ' +
+            'the <a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st icon ' +
+            'collection</a>, or taken from a web address you name with <code>icon:</code> in its ' +
+            '<code>x-unraid</code> section. An icon is downloaded once and kept; only the icon\'s ' +
+            'name or address is sent. Turned off, nothing is downloaded: icons already saved keep ' +
+            'working, an <code>icon:</code> that names a file in the stack folder or a Font ' +
+            'Awesome glyph still works, and anything else shows a coloured tile with its ' +
+            'initials.<br><br>Icons are by ' +
             '<a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st</a> and ' +
             'used under the <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" ' +
             'rel="noopener">CC BY 4.0</a> licence.'
     },
     {
-      key: 'ICON_ADOPT', control: 'choice', label: 'Keep icons with the stack',
+      key: 'IMAGE_LOOKUP', control: 'choice', label: 'Image documentation', tab: 'icons',
       choices: [
-        ['true',  'Record them in the file'],
-        ['false', 'Work them out each time']
+        ['true',  'Read it automatically — fuller starting files, details and health checks'],
+        ['false', 'Do not look anything up — nothing leaves the server']
       ],
-      help: 'When StaXX recognises the software a container runs, it can write that down: the ' +
-            'icon’s name goes into the service’s <code>x-unraid</code> section and a copy of ' +
-            'the picture is saved in the same folder as the compose file. The stack then owns its ' +
-            'icon — it looks the same on any server you copy the folder to, and it cannot change ' +
-            'under you if the icon collection changes. This runs quietly in the background, a few ' +
-            'services at a time, and each file it changes keeps its previous version in that ' +
-            'stack’s own history, so any of it can be undone. An icon you have named yourself is ' +
-            'never touched. Turning this off changes nothing already written; icons are simply ' +
-            'worked out afresh on every page, as they were before.'
+      help: 'Whether StaXX may read an image\'s own published page. It uses that to build a ' +
+            'fuller starting file when you add an image, with the ports, paths and settings the ' +
+            'author describes; to fill in a stack\'s description, category, author and project ' +
+            'links; and to offer a health check the author has published. Only the image name is ' +
+            'sent, and only when you add or open a stack. Turned off, you get a bare four-line ' +
+            'starting file and nothing leaves the server.'
     },
     {
-      key: 'CRYPT_MODE', control: 'choice', label: 'StaXXCrypt hashing container',
-      choices: [
-        ['ondemand', 'Only while hashing (default)'],
-        ['always',   'Keep it running']
-      ],
-      help: 'Whether the small container StaXX builds to make password hashes (see below) stays ' +
-            'stopped between uses. On demand costs nothing while idle, but each hash starts and ' +
-            'stops it, which takes a couple of seconds. Keeping it running idles at almost no cost and ' +
-            'hashes near-instantly — worth it if you are setting up several logins at once.'
-    },
-    {
-      key: 'IMAGE_LOOKUP', control: 'choice', label: 'Image documentation',
-      choices: [
-        ['true',  'Read it automatically'],
-        ['false', 'Do not look anything up']
-      ],
-      help: 'When you press Add on a Docker Hub or local image, your server reads that image\'s ' +
-            'own documentation from Docker Hub and uses it to build a fuller starting file — with ' +
-            'the ports, paths and settings it describes, instead of just four bare lines. This ' +
-            'only ever happens the moment you add something; it never runs in the background. The ' +
-            'only thing sent out is the name of the image being added, nothing else. Turning it ' +
-            'off gives you the four-line starting file only, instantly, and nothing leaves the ' +
-            'server.'
-    },
-    {
-      key: 'PLACEMENT_RULES', control: 'choice', label: 'Where stacks may live',
-      choices: [
-        ['guided', 'Guide me — hide and refuse risky locations'],
-        ['open',   'Get out of the way — warn me but allow it']
-      ],
-      help: 'Guided is the default. When choosing where the stacks live, the folder browser shows ' +
-            'the array disks, unassigned drives and network mounts greyed out with the reason, and ' +
-            'picking one is refused — a single array disk has no redundancy of its own, and an ' +
-            'unassigned or network drive can be missing at the next boot with the stacks inside ' +
-            'it. The same applies to a share Unraid is set to move onto the array. Get out of the ' +
-            'way shows everything and lets you choose any of them, saying what the risk is instead ' +
-            'of stopping you. Two things are refused either way, because neither is a risk worth ' +
-            'taking: a location that lives in memory, where the stacks would be gone at the next ' +
-            'reboot, and a whole share as the stacks folder, where every folder in that share ' +
-            'would be read as a stack.'
-    },
-    {
-      key: 'SHELL_ENABLED', control: 'choice', label: 'Container shells',
+      key: 'SHELL_ENABLED', control: 'choice', label: 'Container shells', tab: 'general',
       choices: [
         ['true',  'Allow opening a shell'],
         ['false', 'Do not allow shells']
@@ -20429,7 +21860,8 @@
             'it from the page.'
     },
     {
-      key: 'UPDATE_CHECK', control: 'choice', label: 'Check for image updates',
+      key: 'UPDATE_CHECK', control: 'choice', label: 'Check for image updates', tab: 'updates',
+      block: 'update-check', sublabel: 'How often',
       group: 'Image updates',
       groupHelp: 'Checking asks each image\'s registry whether a newer version of the same tag ' +
             'exists. It only ever tells you — nothing is downloaded and nothing is restarted. ' +
@@ -20449,29 +21881,25 @@
             'about more often than others</a>.'
     },
     {
-      key: 'UPDATE_CHECK_TIME', control: 'time', label: 'Time of day to check',
+      key: 'UPDATE_CHECK_TIME', control: 'time', label: 'Time of day to check', tab: 'updates',
+      block: 'update-check', sublabel: 'Time of day',
       help: 'The middle of the night is a sensible time, since a check costs a little server ' +
             'effort even though it is cheap. Enter a 24-hour time, such as 04:00.'
     },
     {
-      key: 'WATCH_EXAMPLES', control: 'choice', label: 'Watch the publisher\'s own examples',
+      key: 'WATCH_EXAMPLES', control: 'choice', label: 'Watch the publisher\'s own examples', tab: 'icons',
       choices: [
-        ['true',  'Look, during the same check'],
+        ['true',  'Look, during the same check — spot settings the author has added'],
         ['false', 'Do not look at anything']
       ],
-      help: 'For an image that names its own GitHub project — or that is itself hosted at ' +
-            'ghcr.io, where the project is almost always the matching GitHub repository — your ' +
-            'server looks at whether that project publishes an example compose file, so a later ' +
-            'feature can point out a setting the author added that you do not have. This only ' +
-            'ever runs as part of the update check above, on an image whose tag can actually ' +
-            'change (a pinned version is never looked at), and it talks to GitHub, never Docker ' +
-            'Hub — so it never spends the allowance update checking depends on. The only things ' +
-            'sent out are the project\'s own web address and the path to one file inside it; ' +
-            'nothing about this server, its containers, or its settings ever leaves. Turning it ' +
-            'off stops all of that; update checking itself keeps working exactly as before.'
+      help: 'Many images have a GitHub project that publishes an example compose file. During ' +
+            'the update check, StaXX can look at that example so it can later point out a ' +
+            'setting the author added that you do not have. It asks GitHub, not Docker Hub, so ' +
+            'it costs nothing from the update-check allowance, and only the project\'s address ' +
+            'leaves your server. Pinned images are never looked at.'
     },
     {
-      key: 'UPDATE_MODE', control: 'choice', label: 'What to do with what is found',
+      key: 'UPDATE_MODE', control: 'choice', label: 'What to do with what is found', tab: 'updates',
       choices: [
         ['off',    'Nothing — just show it on the row'],
         ['notify', 'Wait for you to press Update, on the row\'s badge or its menu'],
@@ -20481,13 +21909,15 @@
             'file, and that wins over this.'
     },
     {
-      key: 'UPDATE_DELAY_HOURS', control: 'number', min: 0, max: 720, label: 'Delay before installing',
+      key: 'UPDATE_DELAY_HOURS', control: 'number', min: 0, max: 720, label: 'Delay before installing', tab: 'updates',
+      block: 'install-timing', sublabel: 'Delay, in hours (0–720)',
       help: 'Only used when the setting above is "Install it by itself". How long an update ' +
             'sits on its row, counting down, before it installs itself. In hours, 0 to 720 ' +
             '(30 days).'
     },
     {
-      key: 'UPDATE_WINDOW', control: 'choice', label: 'Only install during a quiet time',
+      key: 'UPDATE_WINDOW', control: 'choice', label: 'Only install during a quiet time', tab: 'updates',
+      block: 'install-timing', sublabel: 'Only install during a quiet time',
       choices: [
         ['true',  'Yes'],
         ['false', 'No — install the moment the delay is up']
@@ -20496,16 +21926,18 @@
             'waits for them to open rather than installing itself in the middle of anything.'
     },
     {
-      key: 'UPDATE_WINDOW_START', control: 'time', label: 'Quiet time starts',
+      key: 'UPDATE_WINDOW_START', control: 'time', label: 'Quiet time starts', tab: 'updates',
+      block: 'install-timing', sublabel: 'Quiet time starts',
       help: 'A 24-hour time, such as 03:00. The quiet time is allowed to run past midnight ' +
             'into the next day.'
     },
     {
-      key: 'UPDATE_WINDOW_END', control: 'time', label: 'Quiet time ends',
+      key: 'UPDATE_WINDOW_END', control: 'time', label: 'Quiet time ends', tab: 'updates',
+      block: 'install-timing', sublabel: 'Quiet time ends',
       help: 'A 24-hour time, such as 05:00.'
     },
     {
-      key: 'UPDATE_NOTIFY', control: 'choice', label: 'Notify me',
+      key: 'UPDATE_NOTIFY', control: 'choice', label: 'Notify me', tab: 'updates',
       choices: [
         ['off',     'Never'],
         ['found',   'When a check finds something waiting'],
@@ -20515,12 +21947,12 @@
             'queue finishing, never one per container.'
     },
     {
-      key: 'UPDATE_RETAIN', control: 'number', min: 0, max: 5, label: 'Previous versions to keep',
-      help: 'How many older versions of each image this server keeps on disk so an update can ' +
+      key: 'UPDATE_RETAIN', control: 'number', min: 0, max: 5, label: 'Previous image releases to keep', tab: 'updates',
+      help: 'How many older releases of each image this server keeps on disk, so an update can ' +
             'be rolled back afterwards. 0 to 5.'
     },
     {
-      key: 'UPDATE_CLEANUP', control: 'choice', label: 'Remove old images automatically',
+      key: 'UPDATE_CLEANUP', control: 'choice', label: 'Remove old images automatically', tab: 'updates',
       choices: [
         ['off',    'No — leave old images where they are'],
         ['weekly', 'Yes, once a week']
@@ -20529,15 +21961,23 @@
             'any more — never a general clean-up of everything unused.'
     },
     {
-      key: 'HUB_USER', control: 'text', label: 'Docker Hub username',
-      group: 'Docker Hub sign-in',
-      groupHelp: 'Used when checking your containers\' images for updates. Without signing in, ' +
-            'Docker Hub only allows about ten of those checks an hour from this server; signing in ' +
-            'raises that to about a hundred.',
+      // Moved to the end of the tab (second live-tuned round, 2026-09-03) so
+      // the figures sit after every setting they describe, rather than
+      // between the check settings and the ones governing what to do with
+      // what is found.
+      key: 'SPEND_READOUT', control: 'readout', label: 'Update-check activity', tab: 'updates',
+      help: 'How many times each registry has been asked whether an image has changed, and how ' +
+            'many of those asks counted against its allowance. Most asks are free; one only costs ' +
+            'when a registry refuses the free form and has to be asked the costly way.'
+    },
+    {
+      key: 'HUB_USER', control: 'text', label: 'Docker Hub username', tab: 'registries',
+      block: 'hub-access', sublabel: 'Username',
       help: 'The Docker Hub account name to sign in with. Leave blank to stay signed out.'
     },
     {
-      key: 'HUB_TOKEN', control: 'password', label: 'Docker Hub access token',
+      key: 'HUB_TOKEN', control: 'password', label: 'Docker Hub access token', tab: 'registries',
+      block: 'hub-access', sublabel: 'Access token',
       help: "Create one from Docker Hub's Account Settings → Security → Personal access tokens, " +
             'and choose the read-only, public repositories permission. That is all this feature ' +
             "needs, since checking an image's current version is the only thing it ever does — so a " +
@@ -20547,17 +21987,69 @@
             'Leave both fields blank to sign out.'
     },
     {
-      key: 'REGISTRY_TRUST', control: 'text', label: 'Registries you run yourself',
-      help: 'Name a registry here and StaXX will trust that machine\'s own certificate, or talk to ' +
-            'it without any encryption at all if it has not been given one — so only name a registry ' +
-            'you actually run, never someone else\'s. Separate several with a comma, e.g. ' +
-            'registry.home.lan, 192.168.1.20:5000. A password is never sent to a registry reached ' +
-            'without encryption. Leave blank to trust nothing but the public internet as normal.'
+      key: 'REGISTRY_TRUST', control: 'list', label: 'Registries you run yourself', tab: 'registries',
+      placeholder: 'registry.home.lan or 192.168.1.20:5000',
+      emptyText: 'None — the public internet is trusted as normal.',
+      help: 'Registries named here are trusted with their own certificate, or reached without ' +
+            'encryption if they have none — so only add a registry you actually run, never ' +
+            'someone else\'s. A password is never sent to a registry reached without encryption. ' +
+            'Give the address as you would in an image name, e.g. registry.home.lan or ' +
+            '192.168.1.20:5000.'
+    },
+    // Moved to the end of this tab (PLAN_113) so StaXXCrypt's own switch sits
+    // beside the credentials it protects, rather than in its old spot among
+    // the icon settings — a hangover from before the panel had tabs at all.
+    {
+      key: 'CRYPT_MODE', control: 'choice', label: 'StaXXCrypt hashing container', tab: 'registries',
+      choices: [
+        ['ondemand', 'Only while hashing (default)'],
+        ['always',   'Keep it running']
+      ],
+      help: 'StaXX makes password hashes for you inside a tiny container of its own, because ' +
+            'Unraid\'s PHP cannot make every kind. This chooses whether that container stays ' +
+            'stopped between uses (each hash then starts and stops it, a couple of seconds) or ' +
+            'keeps idling, which costs almost nothing and hashes instantly.'
     }
   ];
   SETTINGS_ROWS.forEach(function (row) {
     row.id = 'staxx-setting-' + row.key.toLowerCase().replace(/_/g, '-');
   });
+
+  // PLAN_113: the five tabs the panel is now split into, in the order the
+  // tab strip in StacksPage.php lists its buttons. Kept as plain keys rather
+  // than a {key, label} pair, because the labels already live on the buttons
+  // themselves — nothing here needs to know the words.
+  var SETTINGS_TABS = ['general', 'storage', 'icons', 'updates', 'registries'];
+
+  // Second live-tuned round, 2026-09-03: a handful of rows share one titled
+  // box instead of each getting its own. The rows themselves stay in
+  // SETTINGS_ROWS (each carries block + a short sublabel) so saving, dirty
+  // tracking and validation need no change at all — this table only gives
+  // each block a tab, a title and the one explanation shown above its grid.
+  var SETTINGS_BLOCKS = {
+    'update-check': {
+      tab: 'updates', label: 'Check for image updates',
+      help: 'How often to check, and when. Leaving this off means nothing is ever looked up. ' +
+            'The middle of the night is a sensible time, since a check costs a little server ' +
+            'effort even though it is cheap.'
+    },
+    'install-timing': {
+      tab: 'updates', label: 'When to install',
+      help: 'Only used when the setting above is “Install it by itself”. An update sits ' +
+            'on its row counting down the delay; if the delay runs out outside the quiet hours, ' +
+            'it waits for them to open rather than installing in the middle of anything. The ' +
+            'quiet time may run past midnight.'
+    },
+    'hub-access': {
+      tab: 'registries', label: 'Docker Hub access',
+      help: 'Used when checking your images for updates. Signed out, Docker Hub allows this ' +
+            'server about ten checks an hour; signed in, about a hundred. Create a token from ' +
+            'Docker Hub’s Account Settings → Security → Personal access tokens, ' +
+            'with the read-only, public repositories permission — that is all checking needs, so ' +
+            'a leaked token could look but never change anything. It is kept in StaXX’s own ' +
+            'settings file, readable only by the administrator. Leave both blank to stay signed out.'
+    }
+  };
 
   // What the open fetched, keyed the same way as SETTINGS_ROWS — compared
   // against the controls on every input/change to decide whether Save may be
@@ -20566,14 +22058,22 @@
   var settingsOpenValues = null;
   var settingsBusy = false;
 
-  function settingsFieldHtml(row, value) {
-    var control;
-    if (row.control === 'choice') {
+  // The bare control markup for one row — factored out of settingsFieldHtml()
+  // so a block's subgrid (several rows sharing one titled box, see
+  // SETTINGS_BLOCKS above) can reuse it without the label/help/shots wrapper
+  // that a full-width field also carries.
+  function settingsControlHtml(row, value) {
+    if (row.control === 'readout') {
+      // Nothing to save here — a static report filled in by loadSpendReadout()
+      // once the panel is open, not a value settingsControlValue() can read
+      // off an input. Skipped by settingsDirty() and saveSettings() below.
+      return '<div class="staxx-readout" id="' + row.id + '">Looking…</div>';
+    } else if (row.control === 'choice') {
       var opts = row.choices.map(function (o) {
         return '<option value="' + esc(o[0]) + '"' + (o[0] === value ? ' selected' : '') +
                '>' + esc(o[1]) + '</option>';
       }).join('');
-      control = '<select id="' + row.id + '" aria-label="' + esc(row.label) + '">' + opts + '</select>';
+      return '<select id="' + row.id + '" aria-label="' + esc(row.label) + '">' + opts + '</select>';
     } else if (row.control === 'text' || row.control === 'password' || row.control === 'time' ||
                row.control === 'number') {
       // Docker Hub username/token — an ordinary box, and a masked one. Wears
@@ -20586,14 +22086,28 @@
       // is what actually rejects anything that is not a whole number in range.
       var numAttrs = row.control === 'number'
         ? ' min="' + row.min + '" max="' + row.max + '" step="1"' : '';
-      control = '<input type="' + row.control + '" class="staxx-input" id="' + row.id + '" ' +
+      return '<input type="' + row.control + '" class="staxx-input" id="' + row.id + '" ' +
                      'aria-label="' + esc(row.label) + '" spellcheck="false"' + NOFILL + numAttrs +
                      ' value="' + esc(value) + '">';
+    } else if (row.control === 'list') {
+      // The saved value stays a plain comma-separated string in a hidden
+      // input — nothing downstream (settingsControlValue, save, dirty
+      // tracking) needs to know the entries are edited one at a time.
+      // settingsListDraw() below fills in the visible <ul>.
+      return '<input type="text" id="' + row.id + '" hidden value="' + esc(value) + '">' +
+             '<div class="staxx-list-edit">' +
+               '<div class="staxx-list-add">' +
+                 '<input type="text" class="staxx-input" placeholder="' + esc(row.placeholder || '') + '" ' +
+                      'spellcheck="false"' + NOFILL + '>' +
+                 '<button type="button" class="staxx-btn" data-list-add>Add</button>' +
+               '</div>' +
+               '<ul class="staxx-list-items" data-list-for="' + row.id + '"></ul>' +
+             '</div>';
     } else {
       // A plain <div>, not a <label>, for the same reason boxHtml() above
       // uses one: a label may not hold interactive content besides its own
       // control, and the Browse button beside this box is a second one.
-      control = '<div class="staxx-boxline">' +
+      return '<div class="staxx-boxline">' +
                   '<input type="text" class="staxx-input" id="' + row.id + '" ' +
                        'aria-label="' + esc(row.label) + '" spellcheck="false" value="' + esc(value) + '">' +
                   '<button type="button" class="staxx-browse" data-browse="' + row.id + '" ' +
@@ -20603,6 +22117,10 @@
                   '</button>' +
                 '</div>';
     }
+  }
+
+  function settingsFieldHtml(row, value) {
+    var control = settingsControlHtml(row, value);
     // A row can open a labelled group (Docker Hub sign-in, so far the only
     // one) — the heading and its explanation sit above the first field in
     // that group rather than being a field of their own.
@@ -20673,16 +22191,111 @@
           '</span>' +
         '</div>'
       : '';
-    return head + '<div class="staxx-field">' +
+    // PLAN_129 (redone): the pictures sit inside the field itself, right under
+    // the control, as a row of small figures — not off to one side following
+    // the hover. The one matching the control's current value carries the
+    // orange outline; picking a different figure is a second way to choose it.
+    var shotsHtml = row.shots
+      ? '<div class="staxx-shots">' + row.shots.map(function (s) {
+          return '<figure class="staxx-shot' + (s.value === value ? ' staxx-shot--on' : '') + '" data-value="' + esc(s.value) + '">' +
+                 '<img src="/plugins/staxx/images/settings/' + esc(s.src) + '" alt="' + esc(s.caption) + '">' +
+                 '<figcaption class="staxx-hint">' + esc(s.caption) + '</figcaption></figure>';
+        }).join('') + '</div>'
+      : '';
+    // The crypt state readout belongs inside CRYPT_MODE's own box, under its
+    // dropdown, rather than after it — see settingsCryptBox() above.
+    var cryptHtml = row.key === 'CRYPT_MODE' ? '<div class="staxx-crypt" id="staxx-crypt-state" hidden></div>' : '';
+    return head + '<div class="staxx-field" data-key="' + esc(row.key) + '">' +
              '<span>' + esc(row.label) + '</span>' +
              control +
+             shotsHtml +
              '<span class="staxx-hint">' + row.help + '</span>' +
-           '</div>' + derivedLine + unreachableLine + storageLine;
+             // Inside the field's own box rather than after it: these lines
+             // are part of the data store setting, and outside the border
+             // they read as belonging to nothing.
+             derivedLine + unreachableLine + storageLine + cryptHtml +
+           '</div>';
+  }
+
+  // The titled box a block renders as — SETTINGS_BLOCKS' own label and help,
+  // then one small labelled control per row that claims this block. Called
+  // once, at the block's first row; settingsFieldHtml() is never used here
+  // since a subfield carries no help text or shots of its own.
+  function settingsBlockHtml(blockId, values) {
+    var def = SETTINGS_BLOCKS[blockId];
+    if (!def) return '';
+    var subfields = SETTINGS_ROWS.filter(function (row) {
+      return row.block === blockId;
+    }).map(function (row) {
+      return '<label class="staxx-subfield"><span class="staxx-sublabel">' + esc(row.sublabel) + '</span>' +
+             settingsControlHtml(row, values[row.key] || '') + '</label>';
+    }).join('');
+    return '<div class="staxx-field" data-key="' + esc(blockId) + '">' +
+             '<span>' + esc(def.label) + '</span>' +
+             '<span class="staxx-hint">' + def.help + '</span>' +
+             '<div class="staxx-subgrid">' + subfields + '</div>' +
+           '</div>';
   }
 
   function settingsControlValue(row) {
     var el = document.getElementById(row.id);
     return el ? el.value : '';
+  }
+
+  // A list control's own comma-separated entries, as an array with blanks
+  // and surrounding whitespace stripped — the shape settingsListDraw() and
+  // the add/remove handlers below all work in.
+  function settingsListEntries(real) {
+    return real.value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  // Redraws a list control's visible <ul> from its hidden real input. Called
+  // after every add or remove, and once for each list control when the
+  // panel first opens.
+  function settingsListDraw(real) {
+    if (!real) return;
+    var ul = document.querySelector('[data-list-for="' + real.id + '"]');
+    if (!ul) return;
+    var row = SETTINGS_ROWS.filter(function (r) { return r.id === real.id; })[0];
+    var entries = settingsListEntries(real);
+    ul.innerHTML = entries.length
+      ? entries.map(function (name) {
+          return '<li><span>' + esc(name) + '</span>' +
+                 '<button type="button" class="staxx-list-x" data-list-remove ' +
+                 'aria-label="Remove ' + esc(name) + '">×</button></li>';
+        }).join('')
+      : '<li class="staxx-list-empty">' + esc((row && row.emptyText) || '') + '</li>';
+  }
+
+  // Both handlers below take the button actually clicked and walk up to the
+  // hidden real input, which sits immediately before the .staxx-list-edit
+  // wrapper in every list control settingsControlHtml() builds.
+  function settingsListAdd(addBtn) {
+    var wrap = addBtn.closest('.staxx-list-edit');
+    var box = wrap && wrap.querySelector('.staxx-list-add input');
+    var real = wrap && wrap.previousElementSibling;
+    if (!box || !real) return;
+    var val = box.value.trim();
+    if (!val) return;
+    var list = settingsListEntries(real);
+    if (list.indexOf(val) === -1) list.push(val);
+    real.value = list.join(', ');
+    box.value = '';
+    real.dispatchEvent(new Event('change', { bubbles: true }));
+    settingsListDraw(real);
+  }
+
+  function settingsListRemove(removeBtn) {
+    var li = removeBtn.closest('li');
+    var wrap = removeBtn.closest('.staxx-list-edit');
+    var real = wrap && wrap.previousElementSibling;
+    if (!li || !real) return;
+    var nameEl = li.querySelector('span');
+    var name = nameEl ? nameEl.textContent : '';
+    var list = settingsListEntries(real).filter(function (s) { return s !== name; });
+    real.value = list.join(', ');
+    real.dispatchEvent(new Event('change', { bubbles: true }));
+    settingsListDraw(real);
   }
 
   // One row of the archived-stacks list: name, when it was written, and its
@@ -20829,9 +22442,28 @@
         recipeBodyHtml +
       '</div>';
 
+    // What is actually in the thing, in plain terms, ahead of the raw
+    // recipe below it — five facts true of the shipped Dockerfile and
+    // create command, not a summary that could drift from what is built.
+    var insideHtml =
+      '<div class="staxx-crypt-inside">' +
+        '<h5>What is inside it</h5>' +
+        '<ul>' +
+          '<li><b>Base</b>: Alpine Linux 3.20, the official minimal image, about 8 MB.</li>' +
+          '<li><b>Packages</b>: two, from Alpine’s own repository — <code>argon2</code> ' +
+          '(argon2id) and <code>apache2-utils</code> (<code>htpasswd</code>, bcrypt) — with ' +
+          'SHA-512/256 from <code>mkpasswd</code> already in Alpine.</li>' +
+          '<li><b>Nothing of StaXX’s own</b> copied in — the recipe is three lines.</li>' +
+          '<li><b>Runs with</b> no network, no ports, no host folders, read-only, idling — the ' +
+          'password is handed to it on a command’s input and never written to disk or the ' +
+          'command line.</li>' +
+          '<li><b>Check for yourself</b>: the recipe below, and <code>docker inspect StaXXCrypt</code>.</li>' +
+        '</ul>' +
+      '</div>';
+
     box.innerHTML =
       '<div class="staxx-crypt-line">' + factsHtml + formatsHtml + '</div>' +
-      noticeHtml + buildHtml + recipeHtml +
+      noticeHtml + buildHtml + insideHtml + recipeHtml +
       '<p class="staxx-hint">Not shown in the Stacks or Container lists — StaXXCrypt is StaXX\'s ' +
       'own plumbing, not an application you chose to run.</p>';
   }
@@ -20876,6 +22508,63 @@
     });
   }
 
+  // One table row per registry host — the counts in their own columns, and
+  // whatever is worth saying beyond the numbers (an assumed allowance, a
+  // downloads-left figure, a refused free form) in a trailing note column.
+  // docker.io is named "Docker Hub" throughout, since nobody who set the
+  // sign-in fields above thinks of it any other way; every other host is
+  // shown by its own address.
+  function spendHostRow(row) {
+    var name = row.host === 'docker.io' ? 'Docker Hub' : esc(row.host);
+    var notes = [];
+
+    if (row.assumed) {
+      // ceiling is already half of what StaXX is willing to spend, so the
+      // allowance it is assuming is double that — see the guard rail in
+      // the update pass, which this text is describing.
+      notes.push('StaXX assumes an allowance of ' + (row.ceiling * 2) + ' an hour until Hub reports one.');
+    } else if (row.remaining !== null && row.limit !== null) {
+      notes.push(row.remaining + ' of ' + row.limit + ' downloads left this hour.');
+    } else if (row.ceiling === null) {
+      notes.push('This registry reports no limit.');
+    }
+
+    if (!row.headfree) {
+      notes.push('This registry refused the free form, so StaXX pays for each question here ' +
+                  'and stops at half the allowance.');
+    }
+    if (row.cli) {
+      notes.push(row.cli + (row.cli === 1 ? ' question went' : ' questions went') +
+                 ' through Docker itself, which StaXX cannot count.');
+    }
+
+    var now = Math.floor(Date.now() / 1000);
+    if (row.refusedAt && (now - row.refusedAt) < 3600) {
+      notes.unshift('Stopped answering ' + timeAgoWords(row.refusedAt) + ' ago.');
+    }
+
+    return '<tr><td>' + name + '</td>' +
+           '<td>' + row.askedHour + '</td><td>' + row.askedDay + '</td>' +
+           '<td>' + row.paidHour + '</td><td>' + row.paidDay + '</td>' +
+           '<td class="staxx-stats-note">' + notes.join(' ') + '</td></tr>';
+  }
+
+  function loadSpendReadout() {
+    var box = document.getElementById('staxx-setting-spend-readout');
+    if (!box) return;
+    call('spend', {}).then(function (res) {
+      if (!res.ok || !Array.isArray(res.spend)) {
+        box.textContent = 'Could not read the figures just now.';
+        return;
+      }
+      box.innerHTML = res.spend.length
+        ? '<table class="staxx-stats"><thead><tr><th>Registry</th><th>Asks this hour</th>' +
+          '<th>Asks today</th><th>Counted this hour</th><th>Counted today</th><th></th></tr></thead>' +
+          '<tbody>' + res.spend.map(spendHostRow).join('') + '</tbody></table>'
+        : '<p>No registry has been asked yet. Figures appear after the first check.</p>';
+    });
+  }
+
   // The crypt block's own clicks are handled by the delegated
   // settingsBody listener below — it is built by script after the panel
   // opens, so nothing here can be listened on directly at load time.
@@ -20889,6 +22578,7 @@
   function settingsDirty() {
     if (!settingsOpenValues) return false;
     return SETTINGS_ROWS.some(function (row) {
+      if (row.control === 'readout') return false;   // nothing to save, so never dirty
       return settingsControlValue(row) !== settingsOpenValues[row.key];
     });
   }
@@ -21006,6 +22696,21 @@
     });
   }
 
+  // Same idea as the editor's setTab(): a data-tab attribute on the dialog
+  // itself, read by CSS to show the matching pane, plus aria-selected on the
+  // buttons for anyone using a screen reader rather than looking at the
+  // strip. Safe to call before showModal() — nothing here depends on the
+  // dialog being open yet.
+  function setSettingsTab(tab) {
+    if (!settingsModal) return;
+    settingsModal.dataset.tab = tab;
+    if (settingsTabstrip) {
+      Array.prototype.forEach.call(settingsTabstrip.querySelectorAll('.staxx-tab'), function (btn) {
+        btn.setAttribute('aria-selected', btn.dataset.tab === tab ? 'true' : 'false');
+      });
+    }
+  }
+
   function openSettings(focusId) {
     if (!settingsModal) return;
     call('settings', {}).then(function (res) {
@@ -21016,36 +22721,64 @@
       settingsOpenValues = res.settings;
       settingsMsg.textContent = '';
       settingsMsg.classList.remove('staxx-settings-msg--bad');
-      settingsBody.innerHTML = SETTINGS_ROWS.map(function (row) {
-        var html = settingsFieldHtml(row, res.settings[row.key] || '');
-        // PLAN_74 Part A piece 3, moved per feedback: StaXXCrypt's own state
-        // belongs right under the setting that governs it, not pinned to the
-        // bottom of the whole panel however far you have scrolled past it.
-        // Not a row of SETTINGS_ROWS itself — see settingsCryptBox() above.
-        if (row.key === 'CRYPT_MODE') html += '<div class="staxx-crypt" id="staxx-crypt-state" hidden></div>';
-        return html;
-      }).join('') +
-        // PLAN_83: nothing here is a setting to save — pressing it reads and
-        // checks every stack there and then, so it sits as its own action
-        // row rather than one of SETTINGS_ROWS. See runScaffoldSweep().
-        '<div class="staxx-field">' +
-          '<span>StaXX fields</span>' +
-          '<button type="button" class="staxx-link-btn" id="staxx-scaffold-sweep">' +
-          'Add missing StaXX fields to every stack…</button>' +
-          '<span class="staxx-hint">Checks every stack for its icon, links and description ' +
-          'fields, and offers to add whatever is missing as commented placeholders — nothing ' +
-          'already there is changed.</span>' +
-        '</div>' +
-        // Hidden until loadArchiveList() below hears back with something
-        // definite to show — a folder holding nothing archived yet still
-        // shows the folder, but a failed fetch must not leave a half-drawn
-        // section sitting under the settings rows.
-        '<div class="staxx-field" id="staxx-archive-list" hidden>' +
-          '<span>Archived stacks</span>' +
-          '<span class="staxx-hint" id="staxx-archive-hint"></span>' +
-          '<ul class="staxx-confirm-list" id="staxx-archive-files"></ul>' +
-        '</div>';
+      // PLAN_113: one pane per tab rather than one long scroll. Each row
+      // still keeps its id, its help text and its place in SETTINGS_ROWS —
+      // this only sorts the rendered HTML into five buckets by row.tab, so
+      // saving (which reads every control regardless of which pane it is in)
+      // needs no change at all.
+      settingsBody.innerHTML = SETTINGS_TABS.map(function (tab) {
+        // A blocked row only draws its box once, at the block's first row in
+        // this tab — every later row of the same block draws nothing.
+        var seenBlocks = {};
+        var rowsHtml = SETTINGS_ROWS.filter(function (row) {
+          return row.tab === tab;
+        }).map(function (row) {
+          if (row.block) {
+            if (seenBlocks[row.block]) return '';
+            seenBlocks[row.block] = true;
+            return settingsBlockHtml(row.block, res.settings);
+          }
+          return settingsFieldHtml(row, res.settings[row.key] || '');
+        }).join('');
+        // Two things that are not settings sit at the end of the tab they
+        // are about, rather than pinned to the bottom of the whole panel:
+        // PLAN_83's sweep reads and checks every stack there and then, so it
+        // belongs beside the icon/description fields it fills in, and the
+        // archive list is a read-only view of what removeStack() has kept,
+        // so it belongs beside the store it is kept in.
+        if (tab === 'icons') {
+          rowsHtml +=
+            '<div class="staxx-field" data-key="scaffold-sweep">' +
+              '<span>StaXX fields</span>' +
+              '<button type="button" class="staxx-link-btn" id="staxx-scaffold-sweep">' +
+              'Add missing StaXX fields to every stack…</button>' +
+              '<span class="staxx-hint">Checks every stack for its icon, links and description ' +
+              'fields, and offers to add whatever is missing as commented placeholders — nothing ' +
+              'already there is changed.</span>' +
+            '</div>';
+        } else if (tab === 'storage') {
+          // Hidden until loadArchiveList() below hears back with something
+          // definite to show — a folder holding nothing archived yet still
+          // shows the folder, but a failed fetch must not leave a half-drawn
+          // section sitting under the settings rows.
+          rowsHtml +=
+            // data-key makes each its own titled box in the panel (see the
+            // .staxx-field[data-key] rules in staxx.css); neither names a
+            // setting, and nothing that reads data-key expects one here.
+            '<div class="staxx-field" data-key="archive-list" id="staxx-archive-list" hidden>' +
+              '<span>Archived stacks</span>' +
+              '<span class="staxx-hint" id="staxx-archive-hint"></span>' +
+              '<ul class="staxx-confirm-list" id="staxx-archive-files"></ul>' +
+            '</div>';
+        }
+        return '<div class="staxx-settings-pane" data-pane="' + tab + '">' + rowsHtml + '</div>';
+      }).join('');
       settingsSave.disabled = true;
+      // Default tab is General, with no memory of the last one opened — a
+      // caller asking for a specific field wins over that default so
+      // #settings links and signposts still land on the right pane.
+      var focusRow = focusId ? SETTINGS_ROWS.filter(function (row) { return row.id === focusId; })[0] : null;
+      setSettingsTab(focusRow ? focusRow.tab : SETTINGS_TABS[0]);
       settingsModal.showModal();
       // Explicit, and after showModal(), for the same reason every dialog in
       // this file sets focus by hand: the browser's own "first focusable
@@ -21059,6 +22792,12 @@
       }
       loadArchiveList();
       loadCryptState();
+      loadSpendReadout();
+      settingsLockTakeover();
+      settingsLockTiming();
+      SETTINGS_ROWS.forEach(function (row) {
+        if (row.control === 'list') settingsListDraw(document.getElementById(row.id));
+      });
     });
   }
 
@@ -21080,6 +22819,10 @@
       bodyHtml: '<p>Settings has changes that have not been saved.</p>',
       goLabel: 'Discard'
     }).then(function (go) {
+      // The Discard button settles the answer but leaves the question open,
+      // since most callers go on to show progress inside it. Nothing to show
+      // here, so close it — or it outlives the panel it was asking about.
+      closeConfirm();
       if (go) settingsModal.close();
     });
   }
@@ -21088,7 +22831,10 @@
     if (!settingsOpenValues || settingsBusy) return;
 
     var fields = {};
-    SETTINGS_ROWS.forEach(function (row) { fields[row.key] = settingsControlValue(row); });
+    SETTINGS_ROWS.forEach(function (row) {
+      if (row.control === 'readout') return;   // a report, not a setting
+      fields[row.key] = settingsControlValue(row);
+    });
 
     settingsBusy = true;
     settingsSave.disabled = true;
@@ -21127,11 +22873,101 @@
     });
   }
 
+  // PLAN_129 item 14: with StaXX as a Docker tab there is no top-level
+  // button for a takeover to replace, so the choice is meaningless — locked
+  // rather than left to fail silently on save. Client-side only; the server
+  // already treats the two settings independently.
+  function settingsLockTakeover() {
+    var header = document.getElementById('staxx-setting-header-menu');
+    var takeover = document.getElementById('staxx-setting-takeover-docker-tab');
+    if (!header || !takeover) return;
+    var field = takeover.closest('.staxx-field[data-key]');
+    if (header.value === 'false') {
+      takeover.disabled = true;
+      if (field) field.classList.add('staxx-field--locked');
+      if (takeover.value !== 'false') {
+        takeover.value = 'false';
+        takeover.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    } else {
+      takeover.disabled = false;
+      if (field) field.classList.remove('staxx-field--locked');
+    }
+  }
+
+  // Item 18: "When to install" only means anything once updates install
+  // themselves — locked the same way the takeover row above locks, but the
+  // block's whole subgrid also collapses to nothing (see the CSS), since a
+  // full row of disabled controls left in view read as broken rather than
+  // as beside the point.
+  function settingsLockTiming() {
+    var mode = document.getElementById('staxx-setting-update-mode');
+    var field = document.querySelector('.staxx-field[data-key="install-timing"]');
+    if (!mode || !field) return;
+    var locked = mode.value !== 'auto';
+    field.classList.toggle('staxx-field--locked', locked);
+    Array.prototype.forEach.call(field.querySelectorAll('select, input'), function (el) {
+      el.disabled = locked;
+    });
+  }
+
   if (settingsModal) {
+    if (settingsTabstrip) {
+      settingsTabstrip.addEventListener('click', function (event) {
+        var btn = event.target.closest('.staxx-tab');
+        if (btn) setSettingsTab(btn.dataset.tab);
+      });
+    }
+
     settingsBody.addEventListener('input', settingsUpdateDirty);
     settingsBody.addEventListener('change', settingsUpdateDirty);
 
+    // PLAN_129 (redone): a picture is a second way to pick the option, not a
+    // separate control — clicking one drives the select, and a change to the
+    // select (however it happened) keeps the outline in step.
+    settingsBody.addEventListener('change', function (event) {
+      var select = event.target;
+      var field = select.closest && select.closest('.staxx-field[data-key]');
+      if (!field) return;
+      var shots = field.querySelector('.staxx-shots');
+      if (!shots) return;
+      Array.prototype.forEach.call(shots.querySelectorAll('.staxx-shot'), function (fig) {
+        fig.classList.toggle('staxx-shot--on', fig.dataset.value === select.value);
+      });
+    });
+
+    settingsBody.addEventListener('change', function (event) {
+      if (event.target && event.target.id === 'staxx-setting-header-menu') settingsLockTakeover();
+      if (event.target && event.target.id === 'staxx-setting-update-mode') settingsLockTiming();
+    });
+
+    // Enter in a list control's add box adds, same as pressing the button —
+    // checked by ancestry rather than a specific id, since every list
+    // control's add box is built the same way.
+    settingsBody.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter') return;
+      var box = event.target.closest('.staxx-list-add');
+      if (!box) return;
+      event.preventDefault();
+      var addBtn = box.querySelector('[data-list-add]');
+      if (addBtn) settingsListAdd(addBtn);
+    });
+
     settingsBody.addEventListener('click', function (event) {
+      var listAdd = event.target.closest('[data-list-add]');
+      if (listAdd) { settingsListAdd(listAdd); return; }
+      var listRemove = event.target.closest('[data-list-remove]');
+      if (listRemove) { settingsListRemove(listRemove); return; }
+      var shot = event.target.closest('.staxx-shot');
+      if (shot) {
+        var field = shot.closest('.staxx-field[data-key]');
+        var select = field && field.querySelector('select');
+        if (select && select.value !== shot.dataset.value) {
+          select.value = shot.dataset.value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return;
+      }
       var btn = event.target.closest('[data-browse]');
       if (btn) {
         var input = document.getElementById(btn.dataset.browse);
@@ -22840,9 +24676,11 @@
     row.setAttribute('aria-expanded', open ? 'true' : 'false');
     if (!chevron) return;
     chevron.setAttribute('aria-expanded', open ? 'true' : 'false');
-    chevron.title = open ? 'Hide containers' : 'Show containers';
-    var icon = chevron.querySelector('i');
-    if (icon) icon.className = 'fa fa-chevron-' + (open ? 'down' : 'right');
+    chevron.title = open ? "Hide this stack's services" : "Show this stack's services";
+    // PLAN_128: this glyph is a stack of cubes everywhere, not a chevron —
+    // a cube glyph cannot rotate to show "expanded" the way an arrow did, so
+    // that state is the accent colour on the glyph instead, via this class.
+    chevron.classList.toggle('staxx-chevron--open', open);
   }
 
   // Called after refreshRows() swaps in fresh, always-collapsed markup: puts
@@ -22920,20 +24758,48 @@
     return unit.matches(sel) ? unit : unit.querySelector(sel);
   }
 
+  // PLAN_131 C — a folder's siblings, and an unfiled stack's, are no longer
+  // two separate groups: the top level is drawn as one interleaved order of
+  // folders and loose stacks, so dragging either kind against the other has
+  // to see the whole set. True for a folder grip always (folders have no
+  // parent), and for a stack grip whose folder key is '' (unfiled).
+  function isRootGripGroup(kind, parentKey) {
+    return kind === 'folder' || (kind === 'stack' && parentKey === '');
+  }
+
+  // Which of the two top-level kinds a mixed-group unit actually is — a
+  // folder unit always wraps a heading row carrying data-folder-row, a
+  // loose-stack unit never does.
+  function gripUnitKind(unit) {
+    return (unit.matches('[data-folder-row]') || unit.querySelector('[data-folder-row]'))
+      ? 'folder' : 'stack';
+  }
+
   // Every unit this grip's row can trade places with, in document order —
   // read fresh from the DOM every time rather than cached, since the whole
   // point is that it changes mid-drag.
   function gripSiblingUnits(kind, parentKey) {
-    var sel = kind === 'folder' ? '[data-folder-row]'
-            : kind === 'stack'  ? '[data-stack-row]'
-            :                     '.staxx-container-row';
-    var rows = rowsHost ? Array.prototype.slice.call(rowsHost.querySelectorAll(sel)) : [];
-    if (kind !== 'folder') {
+    if (isRootGripGroup(kind, parentKey)) {
+      var rows = rowsHost
+        ? Array.prototype.slice.call(rowsHost.querySelectorAll('[data-folder-row],[data-stack-row]'))
+        : [];
       rows = rows.filter(function (r) {
-        var key = kind === 'stack' ? (r.dataset.inFolder || '') : (r.dataset.inStack || '');
-        return key === parentKey;
+        return r.matches('[data-folder-row]') || (r.dataset.inFolder || '') === '';
       });
+      var units = [];
+      rows.forEach(function (r) {
+        var u = gripUnit(r, gripUnitKind(r));
+        if (units.indexOf(u) === -1) units.push(u);
+      });
+      return units;
     }
+
+    var sel = kind === 'stack' ? '[data-stack-row]' : '.staxx-container-row';
+    var rows = rowsHost ? Array.prototype.slice.call(rowsHost.querySelectorAll(sel)) : [];
+    rows = rows.filter(function (r) {
+      var key = kind === 'stack' ? (r.dataset.inFolder || '') : (r.dataset.inStack || '');
+      return key === parentKey;
+    });
     var units = [];
     rows.forEach(function (r) {
       var u = gripUnit(r, kind);
@@ -22946,8 +24812,20 @@
   // start-order wants them — see the endpoint contract: a folder id, a
   // stack's own leaf name (never the full path), or a service's real compose
   // name (data-order-key), de-duplicated because a scaled service has one
-  // row per container.
-  function gripOrderNames(kind, units) {
+  // row per container. At the top level (see isRootGripGroup()) the group
+  // mixes both kinds, so each unit's own kind decides its token —
+  // `folder:<name>` or `stack:<leaf>` — rather than the kind the drag itself
+  // started from.
+  function gripOrderNames(kind, units, parentKey) {
+    if (isRootGripGroup(kind, parentKey)) {
+      return units.map(function (u) {
+        var uk  = gripUnitKind(u);
+        var row = gripUnitRow(u, uk);
+        if (uk === 'folder') return 'folder:' + row.dataset.folderRow;
+        var full = row.dataset.stackRow || '';
+        return 'stack:' + full.slice(full.lastIndexOf('/') + 1);
+      });
+    }
     var names = units.map(function (u) {
       var row = gripUnitRow(u, kind);
       if (kind === 'folder') return row.dataset.folderRow;
@@ -22965,12 +24843,15 @@
 
   // Shared by the drag drop and the keyboard move: post the whole finished
   // order, then let the server's own render settle where everything landed
-  // — a whole-list save, so it can never come back half-applied.
+  // — a whole-list save, so it can never come back half-applied. The top
+  // level saves under scope 'root' with an empty parent, whichever kind of
+  // grip the drag started from — see isRootGripGroup().
   function postStartOrder(kind, parent, units, afterRefresh) {
+    var root = isRootGripGroup(kind, parent);
     call('start-order', {
-      scope: kind + 's',
-      parent: parent,
-      names: gripOrderNames(kind, units).join(';')
+      scope: root ? 'root' : kind + 's',
+      parent: root ? '' : parent,
+      names: gripOrderNames(kind, units, parent).join(';')
     }).then(function (r) {
       if (!r.ok) { failed('Could not save that order', r.error); return; }
       // The order itself is saved either way — a refusal here is only about
@@ -23053,6 +24934,11 @@
       draggingGripSiblings = units.filter(function (u) { return u !== unit; })
         .map(function (u) { return { unit: u, height: u.offsetHeight }; });
       var h = unit.offsetHeight;   // measured now, before it is hidden
+      // PLAN_128: in the card layout a unit is not full width, so the
+      // placeholder needs a width too or the gap it opens is the wrong
+      // shape. In the table this is just the row's own full width, so
+      // setting it unconditionally changes nothing there.
+      var w = unit.offsetWidth;
 
       // Deferred one tick for the same reason the port drag above defers it:
       // Chrome snapshots the drag image asynchronously, so hiding the unit
@@ -23062,6 +24948,7 @@
         gripSlot = document.createElement('div');
         gripSlot.className = 'staxx-drop-slot';
         gripSlot.style.height = h + 'px';
+        gripSlot.style.width = w + 'px';
         unit.parentNode.insertBefore(gripSlot, unit);
         unit.classList.add('staxx-row--dragging');
       }, 0);
@@ -23083,11 +24970,36 @@
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
 
+      // PLAN_128: in a grid several siblings can share the same vertical
+      // band (a row of cards), and the vertical-midpoint test below cannot
+      // tell them apart — it would always pick the first one in the row. So
+      // first collect every sibling whose band the pointer is actually
+      // inside; when more than one qualifies, that IS a card row, and the
+      // horizontal midpoint of each decides which one the pointer is over.
+      // A single column never has two siblings sharing a band — each row's
+      // top/bottom is its own — so this always falls through to the plain
+      // vertical comparison there, exactly as before.
       var target = null;
-      for (var i = 0; i < draggingGripSiblings.length; i++) {
-        var s = draggingGripSiblings[i];
-        var mid = s.unit.getBoundingClientRect().top + s.height / 2;
-        if (mid > event.clientY) { target = s.unit; break; }
+      var rowMates = draggingGripSiblings.filter(function (s) {
+        var r = s.unit.getBoundingClientRect();
+        return event.clientY >= r.top && event.clientY <= r.bottom;
+      });
+      if (rowMates.length > 1) {
+        for (var i = 0; i < rowMates.length; i++) {
+          var r = rowMates[i].unit.getBoundingClientRect();
+          if (r.left + r.width / 2 > event.clientX) { target = rowMates[i].unit; break; }
+        }
+        if (target === null) {
+          // Past every card in this row: land just after its last card.
+          var lastIdx = draggingGripSiblings.indexOf(rowMates[rowMates.length - 1]);
+          target = draggingGripSiblings[lastIdx + 1] ? draggingGripSiblings[lastIdx + 1].unit : null;
+        }
+      } else {
+        for (var j = 0; j < draggingGripSiblings.length; j++) {
+          var s = draggingGripSiblings[j];
+          var mid = s.unit.getBoundingClientRect().top + s.height / 2;
+          if (mid > event.clientY) { target = s.unit; break; }
+        }
       }
       if (gripSlot.nextSibling !== target) container.insertBefore(gripSlot, target);
     });
@@ -23146,6 +25058,299 @@
     });
   }
 
+  /* ---- dropping a .staxx bundle onto the grid (PLAN_101 / PLAN_101a) ----
+   *
+   * rowsHost already has a drag handler above, for reordering rows. That one
+   * only ever starts from a pointerdown on a grip, so draggingGripRow is
+   * null for anything dragged in from outside the page — and a file drag
+   * never sets it either. The two are told apart simply by asking whether
+   * the drag carries files at all (dragHasFiles below); each listener bails
+   * out of the case that is not its own, so a row reorder keeps working
+   * exactly as it did and the two paths never interfere.
+   *
+   * The server does all the reading — no zip library ships with this page —
+   * so this half only gets the file to base64, previews what bundle-inspect
+   * reports, and on confirmation hands the same bytes to bundle-import. */
+
+  function dragHasFiles(event) {
+    var dt = event.dataTransfer;
+    if (!dt || !dt.types) return false;
+    for (var i = 0; i < dt.types.length; i++) if (dt.types[i] === 'Files') return true;
+    return false;
+  }
+
+  // Where a bundle dropped at this point in the grid would land, and which
+  // row (if any) stands for that folder — used to mark it while dragging.
+  // A folder header row wins outright; a stack row's own folder is next;
+  // failing that, anywhere still inside an open folder's body counts as
+  // that folder too. Anything else is the top level.
+  function bundleDropTarget(target) {
+    if (!target || !target.closest || !rowsHost) return { folder: '', row: null };
+    var folderRow = target.closest('[data-folder-row]');
+    if (folderRow) return { folder: folderRow.getAttribute('data-folder-row'), row: folderRow };
+    var stackRow = target.closest('[data-stack-row]');
+    if (stackRow) {
+      var fid = stackRow.dataset.inFolder || '';
+      return { folder: fid, row: fid ? rowsHost.querySelector('[data-folder-row="' + fid + '"]') : null };
+    }
+    var group = target.closest('[data-folder-group]');
+    if (group) {
+      var gid = group.getAttribute('data-folder-group');
+      return { folder: gid, row: rowsHost.querySelector('[data-folder-row="' + gid + '"]') };
+    }
+    return { folder: '', row: null };
+  }
+
+  var bundleDropRowMarked = null;
+
+  function markBundleDropRow(row) {
+    if (bundleDropRowMarked === row) return;
+    if (bundleDropRowMarked) bundleDropRowMarked.classList.remove('staxx-folder-row--drop-target');
+    bundleDropRowMarked = row;
+    if (bundleDropRowMarked) bundleDropRowMarked.classList.add('staxx-folder-row--drop-target');
+  }
+
+  // Only the first .staxx entry is read (PLAN_101 decision 2 — several
+  // dropped at once take the first, and the preview says so) rather than a
+  // queue nobody asked for.
+  function handleBundleDrop(files, folder) {
+    var dropped = Array.prototype.slice.call(files || []);
+    var staxxFiles = dropped.filter(function (f) { return /\.staxx$/i.test(f.name); });
+    if (!staxxFiles.length) {
+      failed('Nothing to import', dropped.length
+        ? 'Only a ".staxx" bundle can be dropped here.'
+        : 'Nothing was dropped.');
+      return;
+    }
+    var file = staxxFiles[0];
+    if (file.size > STAXX_BUNDLE_MAX) {
+      failed('Bundle too large', '"' + file.name + '" is ' + bytes(file.size) +
+        ', over the ' + bytes(STAXX_BUNDLE_MAX) + ' limit for a bundle.');
+      return;
+    }
+    var reader = new FileReader();
+    reader.onerror = function () {
+      failed('Could not read the file', '"' + file.name + '" could not be read from this computer.');
+    };
+    reader.onload = function () {
+      var b64 = bytesToBase64(new Uint8Array(reader.result));
+      openBundleModal(file.name, folder, b64, staxxFiles.length > 1);
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  if (rowsHost) {
+    rowsHost.addEventListener('dragenter', function (event) {
+      if (!dragHasFiles(event)) return;
+      event.preventDefault();   // else the browser opens the file and leaves the page
+      rowsHost.classList.add('staxx-rows--drop');
+    });
+
+    rowsHost.addEventListener('dragover', function (event) {
+      if (!dragHasFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      markBundleDropRow(bundleDropTarget(event.target).row);
+    });
+
+    rowsHost.addEventListener('dragleave', function (event) {
+      if (!dragHasFiles(event)) return;
+      // relatedTarget still sits inside rowsHost when the pointer merely
+      // crosses from one child to another — only clear once it truly leaves.
+      if (event.relatedTarget && rowsHost.contains(event.relatedTarget)) return;
+      rowsHost.classList.remove('staxx-rows--drop');
+      markBundleDropRow(null);
+    });
+
+    rowsHost.addEventListener('drop', function (event) {
+      if (!dragHasFiles(event)) return;
+      event.preventDefault();
+      rowsHost.classList.remove('staxx-rows--drop');
+      var target = bundleDropTarget(event.target);
+      markBundleDropRow(null);
+      handleBundleDrop(event.dataTransfer.files, target.folder);
+    });
+  }
+
+  // Page-wide safety net: a drop that lands a few pixels off the grid is
+  // not caught by rowsHost's own listener above, and with nothing to
+  // preventDefault() it the browser opens the file and navigates away,
+  // losing whatever was on screen. This is the same trap the editor's own
+  // drop zone documents; here it is guarded page-wide since the target is
+  // the whole grid rather than one modal.
+  window.addEventListener('dragover', function (event) { event.preventDefault(); });
+  window.addEventListener('drop', function (event) { event.preventDefault(); });
+
+  var bundleModal = null;
+  var bundleState = null;   // { zip, folder, busy, done } while the preview dialog is open
+
+  function bundleDialogEl() {
+    if (bundleModal) return bundleModal;
+    bundleModal = document.createElement('dialog');
+    bundleModal.className = 'staxx-confirm staxx-bundle';
+    bundleModal.setAttribute('aria-labelledby', 'staxx-bundle-title');
+    bundleModal.innerHTML =
+      '<div class="staxx-confirm-head"><h3 class="staxx-confirm-title" id="staxx-bundle-title">Import a bundle</h3></div>' +
+      '<div class="staxx-confirm-body" id="staxx-bundle-body"></div>' +
+      '<div class="staxx-confirm-foot">' +
+        '<p class="staxx-confirm-msg" id="staxx-bundle-msg" role="status" aria-live="polite"></p>' +
+        '<div class="staxx-buttons staxx-buttons--inline">' +
+          '<button type="button" class="staxx-btn" id="staxx-bundle-cancel">Cancel</button>' +
+          '<button type="button" class="staxx-btn staxx-btn--primary" id="staxx-bundle-import" disabled>Import</button>' +
+        '</div>' +
+      '</div>';
+    // Appended beside .staxx-scaffold, not <body> — everything .staxx-btn
+    // and friends style is scoped there, the same reason openExportModal()
+    // does this for its own dialog.
+    (document.querySelector('.staxx-scaffold') || document.body).appendChild(bundleModal);
+
+    bundleModal.querySelector('#staxx-bundle-cancel').addEventListener('click', closeBundleModal);
+    bundleModal.querySelector('#staxx-bundle-import').addEventListener('click', onBundleImportClick);
+    bundleModal.addEventListener('close', function () { bundleState = null; });
+
+    // Same backdrop hit-test every <dialog> on this page uses.
+    bundleModal.addEventListener('click', function (event) {
+      if (event.target !== bundleModal || (bundleState && bundleState.busy)) return;
+      var r = bundleModal.getBoundingClientRect();
+      if (event.clientX < r.left || event.clientX > r.right ||
+          event.clientY < r.top  || event.clientY > r.bottom) closeBundleModal();
+    });
+    bundleModal.addEventListener('cancel', function (event) {
+      if (bundleState && bundleState.busy) event.preventDefault();
+    });
+
+    return bundleModal;
+  }
+
+  function closeBundleModal() {
+    var el = bundleDialogEl();
+    if (el.open) el.close();
+    bundleState = null;
+  }
+
+  function bundleSetMsg(text) {
+    bundleDialogEl().querySelector('#staxx-bundle-msg').textContent = text || '';
+  }
+
+  // zipB64 is read once, up front, and reused for both calls — bundle-import
+  // uploads it again rather than the server holding it between the two, so
+  // there is nothing here to go stale while the preview sits open.
+  function openBundleModal(fileName, folder, zipB64, multiple) {
+    var el = bundleDialogEl();
+    el.querySelector('#staxx-bundle-body').innerHTML = '<p>Reading the bundle…</p>';
+    bundleSetMsg('');
+    el.querySelector('#staxx-bundle-import').disabled = true;
+    el.querySelector('#staxx-bundle-cancel').hidden = false;
+    if (!el.open) el.showModal();
+
+    bundleState = { zip: zipB64, folder: folder, busy: false, done: false };
+
+    call('bundle-inspect', { zip: zipB64 }, 60000).then(function (res) {
+      if (bundleState === null) return;   // closed while this was in flight
+      if (!res.ok) { closeBundleModal(); failed('Could not read the bundle', res.error); return; }
+      renderBundlePreview(fileName, folder, res, multiple);
+    }).catch(function () {
+      if (bundleState === null) return;
+      closeBundleModal();
+      failed('Could not read the bundle', 'The request did not complete.');
+    });
+  }
+
+  function renderBundlePreview(fileName, folder, info, multiple) {
+    var el = bundleDialogEl();
+    var defaultName = info.suggest || fileName.replace(/\.staxx$/i, '');
+    var where = folder ? ('inside "' + esc(folder) + '"') : 'at the top level';
+
+    var html = '';
+    if (multiple) {
+      html += '<p class="staxx-export-hint">Several files were dropped — only "' + esc(fileName) +
+        '" is being imported.</p>';
+    }
+    if (info.marked === false) {
+      html += '<p class="staxx-export-hint">This bundle predates the version marker, so it is being ' +
+        'read as the earliest kind.</p>';
+    }
+
+    html += '<div class="staxx-export-section"><h4>Name and location</h4>' +
+      '<p class="staxx-export-hint">This will land ' + where + '.</p>' +
+      '<div class="staxx-field"><span>Stack name</span>' +
+        '<input type="text" class="staxx-input" id="staxx-bundle-name" spellcheck="false" value="' +
+        esc(defaultName) + '"></div>' +
+      '</div>';
+
+    // The export's own covering note, shown exactly as it wrote it — this is
+    // "what you must supply before this will run" in the export's own words,
+    // so the preview never has to keep a second list of the same thing.
+    html += '<div class="staxx-export-section"><h4>Before this will start</h4>';
+    html += info.note
+      ? '<pre class="staxx-export-pre">' + esc(info.note) + '</pre>'
+      : '<p class="staxx-export-hint">This bundle carries no covering note.</p>';
+    if (info.placeholders) {
+      html += '<p class="staxx-export-hint">' + info.placeholders + ' value' +
+        (info.placeholders === 1 ? '' : 's') + ' still need' + (info.placeholders === 1 ? 's' : '') +
+        ' filling in before this will start.</p>';
+    }
+    html += '</div>';
+
+    html += '<div class="staxx-export-section"><h4>What is inside</h4><ul class="staxx-export-list">';
+    html += '<li>' + esc(info.compose.name) + '</li>';
+    (info.files || []).forEach(function (f) {
+      html += '<li>' + esc(f.name) + ' <span class="staxx-export-size">(' + bytes(f.size) + ')</span></li>';
+    });
+    html += info.icon
+      ? '<li>A picture — ' + esc(info.icon.name) + ' <span class="staxx-export-size">(' +
+        bytes(info.icon.size) + ')</span></li>'
+      : '<li>No picture</li>';
+    html += '</ul></div>';
+
+    el.querySelector('#staxx-bundle-body').innerHTML = html;
+    el.querySelector('#staxx-bundle-import').disabled = false;
+  }
+
+  function onBundleImportClick() {
+    if (!bundleState || bundleState.busy) return;
+    var el = bundleDialogEl();
+    if (bundleState.done) { closeBundleModal(); return; }
+
+    var nameBox = el.querySelector('#staxx-bundle-name');
+    var leaf = (nameBox.value || '').trim();
+    if (!leaf) { bundleSetMsg('Give the stack a name.'); return; }
+    var full = bundleState.folder ? (bundleState.folder + '/' + leaf) : leaf;
+
+    bundleState.busy = true;
+    el.querySelector('#staxx-bundle-import').disabled = true;
+    el.querySelector('#staxx-bundle-cancel').disabled = true;
+    bundleSetMsg('Importing…');
+
+    call('bundle-import', { zip: bundleState.zip, name: full }, 60000).then(function (res) {
+      if (bundleState === null) return;   // closed while this was in flight
+      bundleState.busy = false;
+      el.querySelector('#staxx-bundle-cancel').disabled = false;
+      if (!res.ok) {
+        // Left open on refusal — a name already in use is the expected case,
+        // and it must be recoverable by changing the name, not by starting over.
+        el.querySelector('#staxx-bundle-import').disabled = false;
+        bundleSetMsg(res.error || 'Could not import this bundle.');
+        return;
+      }
+      refreshRows();   // the 'rows' refresh: the set of stacks just changed
+      bundleState.done = true;
+      el.querySelector('#staxx-bundle-body').innerHTML =
+        '<p>"' + esc(res.name) + '" has been created, stopped, with its values still to fill in.</p>';
+      el.querySelector('#staxx-bundle-cancel').hidden = true;
+      var btn = el.querySelector('#staxx-bundle-import');
+      btn.textContent = 'Close';
+      btn.disabled = false;
+      bundleSetMsg('');
+    }).catch(function () {
+      if (bundleState === null) return;
+      bundleState.busy = false;
+      el.querySelector('#staxx-bundle-import').disabled = false;
+      el.querySelector('#staxx-bundle-cancel').disabled = false;
+      bundleSetMsg('The request did not complete.');
+    });
+  }
+
   function toggleFolder(id, chevron) {
     var open = chevron.getAttribute('aria-expanded') !== 'true';
 
@@ -23179,6 +25384,12 @@
     var row = rowFor(name);
     if (!row) return;
 
+    // PLAN_128: below desktop width the table's fold is gone and stacks are
+    // cards — a stack's services then open in a modal instead of unfolding
+    // inline, and none of the inline expand/collapse bookkeeping below
+    // applies to that path.
+    if (isCardLayout(row)) { openServicesModal(name, chevron); return; }
+
     var open = row.dataset.expanded !== '1';
     setStackExpanded(row, chevron, open);
 
@@ -23188,6 +25399,125 @@
     else      delete expandedStacks[name];
 
     applyVisibility();
+  }
+
+  /* ---- PLAN_128: a multi-service stack's services, below desktop width --
+   *
+   * At desktop width the table keeps its inline expansion — nothing above
+   * this comment changes for it. Below it the stylesheet hides a stack's
+   * `.staxx-group--children` wrapper outright (its container rows would
+   * otherwise take a grid cell of their own and break the card flow — see
+   * PLAN_128's "why this is cheap to build"), so that same hiding is what
+   * this reads to tell the two layouts apart: no width check here, because
+   * the breakpoint lives in the stylesheet, not in this file.
+   */
+  function isCardLayout(row) {
+    var group   = row.closest('.staxx-group--stack');
+    var wrapper = group && group.querySelector(':scope > .staxx-group--children');
+    if (!wrapper) return false;
+    return getComputedStyle(wrapper).display === 'none';
+  }
+
+  var servicesModal = null;   // the one overlay, built the first time it is needed
+  var svcModalState  = null;  // { moved: [{el, parent, next}], chevron } while open, else null
+
+  function buildServicesModal() {
+    var el = document.createElement('div');
+    el.className = 'staxx-svcmodal';
+    el.hidden = true;
+    el.innerHTML =
+      '<div class="staxx-svcmodal__dialog" role="dialog" aria-modal="true">' +
+        '<div class="staxx-svcmodal__head">' +
+          '<span class="staxx-svcmodal__icon"></span>' +
+          '<span class="staxx-svcmodal__name"></span>' +
+          '<span class="staxx-svcmodal__count"></span>' +
+        '</div>' +
+        '<button type="button" class="staxx-svcmodal__close" aria-label="Close">✕</button>' +
+        '<div class="staxx-table-wrap"><div class="staxx-stacks staxx-stacks--modal" role="grid"></div></div>' +
+      '</div>';
+    // Backdrop click only — a click inside the dialog must not close it.
+    el.addEventListener('click', function (event) {
+      if (event.target === el) closeServicesModal();
+    });
+    el.querySelector('.staxx-svcmodal__close').addEventListener('click', function () {
+      closeServicesModal();
+    });
+    // Inside .staxx-scaffold, not <body> — see the bundle/export modals
+    // above for the same reasoning: .staxx-btn and the card rules this
+    // modal depends on are only styled inside the scaffold.
+    (document.querySelector('.staxx-scaffold') || document.body).appendChild(el);
+    return el;
+  }
+
+  function onServicesModalKeydown(event) {
+    if (event.key === 'Escape') closeServicesModal();
+  }
+
+  function openServicesModal(name, chevron) {
+    var row = rowFor(name);
+    if (!row) return;
+    var group   = row.closest('.staxx-group--stack');
+    var wrapper = group && group.querySelector(':scope > .staxx-group--children');
+    if (!wrapper) return;
+    var rows = Array.prototype.slice.call(wrapper.querySelectorAll('.staxx-container-row'));
+    if (!rows.length) return;
+
+    if (!servicesModal) servicesModal = buildServicesModal();
+    var dialog = servicesModal.querySelector('.staxx-svcmodal__dialog');
+    var grid   = servicesModal.querySelector('.staxx-stacks--modal');
+
+    // The dialog's own card size is read from a real card on screen right
+    // now, at this width — never hard-coded (PLAN_128). The margin is added
+    // back in because the grid's cards carry their spacing as their own
+    // margin, not a grid gap (see the folder-row note in the plan).
+    var sampleCard = row.closest('.staxx-stack-row') || row;
+    var cardRect   = sampleCard.getBoundingClientRect();
+    var cardMargin = parseFloat(getComputedStyle(sampleCard).marginLeft) || 0;
+    dialog.style.setProperty('--staxx-card-track', (cardRect.width + cardMargin * 2) + 'px');
+    dialog.style.setProperty('--staxx-card-h', cardRect.height + 'px');
+
+    var iconBtn  = row.querySelector('.staxx-icon');
+    var iconHost = servicesModal.querySelector('.staxx-svcmodal__icon');
+    iconHost.innerHTML = '';
+    if (iconBtn && iconBtn.firstElementChild) {
+      iconHost.appendChild(iconBtn.firstElementChild.cloneNode(true));
+    }
+    servicesModal.querySelector('.staxx-svcmodal__name').textContent =
+      (iconBtn && iconBtn.dataset.label) || name;
+    servicesModal.querySelector('.staxx-svcmodal__count').textContent =
+      rows.length + (rows.length === 1 ? ' service' : ' services');
+
+    // Moved, not cloned — the grips and the buttons on each row must keep
+    // their live handlers (PLAN_128). Where each one came from is
+    // remembered so closing the modal can put it straight back in order.
+    var moved = rows.map(function (r) {
+      return { el: r, parent: r.parentNode, next: r.nextSibling };
+    });
+    grid.innerHTML = '';
+    moved.forEach(function (m) { grid.appendChild(m.el); });
+
+    svcModalState = { moved: moved, chevron: chevron };
+    servicesModal.hidden = false;
+    document.addEventListener('keydown', onServicesModalKeydown);
+    var closeBtn = servicesModal.querySelector('.staxx-svcmodal__close');
+    if (closeBtn) closeBtn.focus();
+  }
+
+  function closeServicesModal() {
+    if (!servicesModal || servicesModal.hidden) return;
+    var state = svcModalState;
+    svcModalState = null;
+    servicesModal.hidden = true;
+    document.removeEventListener('keydown', onServicesModalKeydown);
+    if (!state) return;
+    // Put every moved row back exactly where it was, in order — refreshRows()
+    // may already have thrown the original parent away, in which case there
+    // is nowhere left to put it back and the row is simply discarded along
+    // with the rest of the replaced markup.
+    state.moved.forEach(function (m) {
+      if (m.parent && m.parent.isConnected) m.parent.insertBefore(m.el, m.next);
+    });
+    if (state.chevron && state.chevron.isConnected) state.chevron.focus();
   }
 
   // Shares askNewFolder() with the New folder item on a stack's own menu — see
@@ -23308,6 +25638,34 @@
         if (td) { td.innerHTML = ''; td.staxxTxt = ''; }
         openJobOutput(record);
         refreshStateSoon();   // repaint the real state now the marker is gone
+      }
+      return;
+    }
+
+    // PLAN_108 stage 5 — the state pill's own offer: a running container
+    // nothing checks, made a click target server-side (staxx_container_pill()
+    // carries the stack and service right on the button, since a container
+    // row's pill has no other reachable name for either).
+    if (el.classList.contains('staxx-pill--offer')) {
+      if (el.dataset.stack && el.dataset.service) offerHealthCheck(el.dataset.stack, el.dataset.service);
+      return;
+    }
+
+    // A busy pill names a job still running — open the same output dialog
+    // the failure pill uses, but live: mark it `show` so the next tick (and
+    // every one after) streams into it, rather than the one-off fetch
+    // openJobOutput() does for a job that has already finished.
+    if (el.classList.contains('staxx-pill--busy')) {
+      var busyRow = el.closest('[data-stack-row], .staxx-container-row');
+      var busyKey = busyRow ? rowKey(busyRow) : null;
+      var busyJob = busyKey ? rowJobs[busyKey] : null;
+      var busyEntry = busyJob ? jobs[busyJob] : null;
+      if (busyEntry) {
+        openLogDialog(BUSY_LABEL[busyEntry.verb] || 'Output', busyEntry.text || 'Working…');
+        busyEntry.show     = true;
+        busyEntry.shown    = busyEntry.text || 'Working…';
+        busyEntry.atBottom = true;
+        followScroll(busyJob);
       }
       return;
     }
@@ -23906,9 +26264,10 @@
   }
   rebindStatRows();
 
-  var strip    = document.getElementById('staxx-strip');
-  var stripGpu = document.getElementById('staxx-strip-gpu');
-  var stripAge = document.getElementById('staxx-strip-age');
+  // See setPushStatus() below — the only thing left that ever shows in here,
+  // now the whole-machine GPU card and the staleness line have both moved
+  // onto the row itself (PLAN_114).
+  var strip = document.getElementById('staxx-strip');
 
   var history  = {};    // project -> { cpu:[], mem:[], net:[], gpu:[] }
   var previous = {};    // project -> last cumulative counters
@@ -24049,7 +26408,7 @@
    * is identical, so on a mostly idle server this is the difference between
    * rewriting every cell of every row three times a minute and touching
    * nothing at all. */
-  function setCell(row, metric, text, values, peakFloor) {
+  function setCell(row, metric, text, values, peakFloor, blank) {
     var td = cell(row, metric);
     if (!td) return;
     var value = td.querySelector('.staxx-statv');
@@ -24058,6 +26417,13 @@
       value.staxxTxt = text;
     }
     sparkline(td.querySelector('.staxx-spark'), values, peakFloor);
+    // PLAN_121 item 1: a blank cell (no live figure — stopped, never run, the
+    // collector still warming up) has no graph to sit its dash against, so it
+    // borrows the graph's own footprint instead — see .staxx-cell--blank in
+    // staxx.css. Toggled here rather than left to the caller so a figure
+    // landing later always clears it, whichever of setCell's several callers
+    // painted the blank dash in the first place.
+    setClass(td, 'staxx-cell--blank', !!blank);
   }
 
   // Same reasoning as setCell for the two things a row carries outside its
@@ -24161,25 +26527,36 @@
     setClass(row, 'staxx-row--no-gpu', !s.gpuMapped);
   }
 
+  // The vendors a row's compose file asks for, read off the GPU cell — that
+  // is where staxx_render_rows() writes data-gpu-file, not on the row itself.
+  function gpuFileVendors(row) {
+    var td = cell(row, 'gpu');
+    return ((td && td.dataset.gpuFile) || '').split(/\s+/).filter(Boolean);
+  }
+
   function blankFigures(row) {
-    setCell(row, 'cpu', '—', null);
-    setCell(row, 'mem', '—', null);
-    setCell(row, 'net', '—', null);
-    setCell(row, 'gpu', '', null);          // blank, never a dash
+    setCell(row, 'cpu', '—', null, undefined, true);
+    setCell(row, 'mem', '—', null, undefined, true);
+    setCell(row, 'net', '—', null, undefined, true);
     setData(row, 'statCpu', '');
     setData(row, 'statGpuMapped', '');
 
-    // No stats at all this poll — container stopped, never created, or its
-    // whole stack is down — means no way to know whether a GPU is mapped
-    // either. Hiding the cell here too, rather than leaving it as whatever
-    // paintFigures last decided: the alternative is a class that keeps
-    // whatever value it happened to have from the last time stats WERE
-    // available, which is fine while a row bounces between running and
-    // stopped in the ordinary case, but leaves a row that has NEVER had
-    // stats (a service declared in the compose file but never started) with
-    // no class at all and its GPU cell visible — showing the empty label
-    // this whole feature exists to remove.
-    setClass(row, 'staxx-row--no-gpu', true);
+    // No LIVE figure to show — container stopped, never created, or its whole
+    // stack is down — but what the compose file itself asks for (see
+    // data-gpu-file, written by staxx_render_rows()) is not a live figure, so
+    // it survives here (PLAN_114): a stopped stack with a GPU in its file
+    // still carries the badge, just with nothing beside it.
+    var gpuTd   = cell(row, 'gpu');
+    var vendors = gpuFileVendors(row);
+    setCell(row, 'gpu', gpuBadge(vendors), null);
+    setTitle(gpuTd, vendors.length
+      ? vendors.map(function (v) { return GPU_NAMES[v] || v; }).join(' + ') + ' GPU'
+      : '');
+
+    // Only a row with nothing declared and nothing running drops the cell
+    // entirely — see .staxx-row--no-gpu in staxx.css. One with a badge to
+    // show keeps the cell, badge and all, exactly like a running one does.
+    setClass(row, 'staxx-row--no-gpu', vendors.length === 0);
   }
 
   /* ---- applying a snapshot ---- */
@@ -24188,64 +26565,11 @@
     if (!res || !res.ok) return;
     manageUpdateStats(res);
 
-    // Say how stale the figures are rather than letting an unchanging table
-    // look like a quiet server.
-    if (strip) strip.hidden = false;
-    if (stripAge) {
-      if (res.warming) {
-        stripAge.textContent = 'Collecting first sample…';
-      } else if (res.age === null || res.age > 30) {
-        stripAge.textContent = 'Figures are ' + (res.age || '?') + 's old' +
-                               (res.collector ? '' : ' — collector not running');
-      } else {
-        stripAge.textContent = 'Updated ' + res.age + 's ago';
-      }
-    }
-
-    // The machine's own GPU figures, one card per entry.
-    //
-    // EVERY CARD IS WRITTEN THE SAME WAY: a count of what it is running, then
-    // how busy it is. This used to describe an unused Intel card as "idle" and
-    // an unused AMD card as "0%", which is the same state told two ways and
-    // reads as though the two cards differ. Whatever a card is doing, it is now
-    // described in the same shape as its neighbour.
-    if (stripGpu) {
-      var g = res.gpu || {};
-
-      var card = function (label, c) {
-        if (!c) return null;
-
-        var n = c.clients || 0;
-        var busy = (typeof c.busy === 'number' ? c.busy : 0);
-
-        // Engines only ever appear for a card that has some, and only while
-        // something is on them, so they cannot reintroduce the asymmetry.
-        var engines = Object.keys(c.engines || {})
-          .map(function (k) { return esc(k) + ' ' + c.engines[k] + '%'; });
-
-        return '<b>' + label + '</b> ' +
-               n + ' thread' + (n === 1 ? '' : 's') + ' &middot; ' + busy + '%' +
-               (engines.length ? ' <i>(' + engines.join(', ') + ')</i>' : '');
-      };
-
-      var parts = [card('Intel GPU', g.intel), card('AMD GPU', g.amd)]
-        .filter(function (p) { return p !== null; });
-
-      var strapline = parts.join(' &nbsp;&middot;&nbsp; ');
-      if (stripGpu.staxxTxt !== strapline) {      // see setCell
-        stripGpu.innerHTML = strapline;
-        stripGpu.staxxTxt = strapline;
-      }
-      stripGpu.hidden = parts.length === 0;
-
-      // The AMD figure comes from radeontop, which watches the card as a whole
-      // and has no per-process breakdown; the Intel one can be attributed to a
-      // container. That is a real difference in what the numbers mean, so it is
-      // said here rather than being allowed to distort how they are printed.
-      setTitle(stripGpu, 'Whole-machine GPU figures. '
-                       + 'The thread count is the number of separate pieces of work each card is '
-                       + 'running, counted the same way for every card.');
-    }
+    // A snapshot old enough that the collector has plainly stopped keeping up
+    // (or never started) is worse than no figures at all if left on screen —
+    // it would sit there looking current. Treated exactly like a stopped row:
+    // blanked, with only the GPU badge (never a live figure) surviving.
+    var stale = res.warming || !res.collector || (typeof res.age === 'number' && res.age > 30);
 
     // Only a snapshot the server has actually refreshed advances the graphs.
     var fresh = res.sampledAt && res.sampledAt !== lastAt;
@@ -24258,7 +26582,12 @@
       var s       = stacks[project];
       var kids    = kidRows[row.dataset.stackRow] || [];
 
-      if (!s) {
+      // Declared in the file counts towards showing the column even while
+      // stopped or stale — that is the whole point of PLAN_114's badge.
+      if (gpuFileVendors(row).length) anyGpu = true;
+      kids.forEach(function (kid) { if (gpuFileVendors(kid).length) anyGpu = true; });
+
+      if (!s || stale) {
         blankFigures(row);
         kids.forEach(blankFigures);
         return;
@@ -24286,7 +26615,8 @@
 
     // Nothing on this page has a GPU, so the column is dropped entirely rather
     // than left as a full-height strip of empty cells. It reappears by itself
-    // the moment a stack with a GPU starts.
+    // the moment a stack with a GPU starts, or the moment one is added to a
+    // file — the row does not have to be running for its badge to count.
     var table = document.querySelector('.staxx-stacks');
     if (table) setClass(table, 'staxx-no-gpu', !anyGpu);
 
@@ -24316,23 +26646,31 @@
         }
       });
 
-      var put = function (metric, text) {
-        var td = tr.querySelector('[data-stat="' + metric + '"] .staxx-statv');
+      // `blank` mirrors setCell's own new parameter (PLAN_121 item 1): a
+      // folder total has no graph of its own, ever, so the same
+      // .staxx-cell--blank class gives its dash the graph's slot to centre
+      // in instead of the number's usual one, matching the heading above it.
+      // A numeric total is left exactly where it already sat — folder totals
+      // are right-aligned by design and only the blank state was wrong.
+      var put = function (metric, text, blank) {
+        var wrap = tr.querySelector('[data-stat="' + metric + '"]');
+        var td = wrap && wrap.querySelector('.staxx-statv');
         if (td && td.staxxTxt !== text) {        // see setCell
           td.innerHTML = text;
           td.staxxTxt = text;
         }
+        if (wrap) setClass(wrap, 'staxx-cell--blank', !!blank);
       };
 
       if (!any) {
-        put('cpu', '—'); put('mem', '—'); put('net', '—'); put('gpu', '');
+        put('cpu', '—', true); put('mem', '—', true); put('net', '—', true); put('gpu', '', false);
         return;
       }
-      put('cpu', sum.cpu.toFixed(1) + '<small>%</small>');
-      put('mem', bytes(sum.mem));
-      put('net', rate(sum.net) + '<small>/s</small>');
+      put('cpu', sum.cpu.toFixed(1) + '<small>%</small>', false);
+      put('mem', bytes(sum.mem), false);
+      put('net', rate(sum.net) + '<small>/s</small>', false);
       // Only folders holding a GPU stack get a GPU total.
-      put('gpu', anyGpu ? sum.gpu.toFixed(1) + '<small>%</small>' : '');
+      put('gpu', anyGpu ? sum.gpu.toFixed(1) + '<small>%</small>' : '', false);
     });
   }
 
@@ -24437,10 +26775,9 @@
   var PUSH_FALLBACK = 20000;
   var pushFallbackTimer = null;
 
-  // The one place on the page that already says quietly how stale its own
-  // figures are (see applyStats' stripAge) — a degraded feed is the same
-  // kind of fact, so it is shown the same way rather than in a dialog that
-  // would interrupt whatever the user is doing.
+  // The one quiet status line the page has (see the strip's own comment in
+  // StacksPage.php) — a degraded feed is shown here rather than in a dialog
+  // that would interrupt whatever the user is doing.
   var pushStatusEl = document.createElement('span');
   pushStatusEl.className = 'staxx-strip-item';
   pushStatusEl.hidden = true;
@@ -24579,6 +26916,27 @@
   // The signpost page (Settings → StaXX) links here to open the
   // panel directly, for whoever followed it from the Plugins list.
   if (location.hash === '#settings') openSettings();
+
+  // PLAN_132 A: a #stack= fragment means the editor was open on the last
+  // refresh — reopen it, exactly as its icon's own click would. Rows are
+  // already in the document by here (rowsHost is read at script parse
+  // time), so rowFor() below can answer straight away. A stack that no
+  // longer exists (deleted from another tab, or a mistyped fragment) is
+  // not an error — the fragment is simply dropped.
+  (function () {
+    var stackMatch = location.hash.match(/^#stack=(.+)$/);
+    if (!stackMatch) return;
+    // A hand-mangled fragment ("%" with nothing after it) makes decoding
+    // throw, and this runs in the page's own set-up, so a throw here would
+    // take everything below it down with it. Treat it as "no such stack".
+    var wantStack = '';
+    try { wantStack = decodeURIComponent(stackMatch[1]); } catch (e) { wantStack = ''; }
+    if (wantStack && rowFor(wantStack)) {
+      editStack(wantStack, stackLabel(wantStack));
+    } else {
+      window.history.replaceState(null, '', location.pathname + location.search);
+    }
+  })();
 
   // PLAN_63 Phase C: an install caught on Unraid's own Add Container page
   // lands here with '?staxx-install=<id>' — see shadow/AddContainer.page.tmpl

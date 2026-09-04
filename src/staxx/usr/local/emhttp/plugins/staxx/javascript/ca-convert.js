@@ -57,6 +57,33 @@
       .replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
   }
 
+  // Unraid does no variable substitution at all, so every "$" arriving in a
+  // template's environment/label value is literal by definition — but a
+  // compose file reads a bare "$" as the start of a variable reference and
+  // silently drops it. Doubling it here is right only for values written
+  // into compose YAML; it must never be applied to ports, paths, devices or
+  // the image name, where a "$" cannot legitimately appear at all, so this
+  // is called at each write site rather than folded into dq()/scalarOut(),
+  // which those other fields share. Matches compose-model.js's own
+  // escapeDollars() byte for byte; kept as a local copy rather than a cross-
+  // file reach because this module is required stand-alone under Node.
+  function escapeDollars(s) {
+    return String(s == null ? '' : s).replace(/\$/g, '$$$$');
+  }
+
+  // Doubles a value's dollars and records what it touched, so convert() can
+  // report every environment/label key it changed without every call site
+  // repeating the counting logic. noEscape makes this a pass-through — used
+  // to get the template's own unescaped wording back out of the same code
+  // path, rather than trying to reverse the doubling after the fact.
+  function escapeDollarsTracked(val, key, dollarsEscaped, noEscape) {
+    var s = String(val == null ? '' : val);
+    if (noEscape) return s;
+    var n = (s.match(/\$/g) || []).length;
+    if (n > 0) dollarsEscaped.push({ key: key, count: n });
+    return escapeDollars(s);
+  }
+
   var UNSAFE_LEAD = /^[\s\-?:,\[\]{}#&*!|>'"%@`]/;
   var YAML_KEYWORD = /^(true|false|yes|no|on|off|null|~)$/i;
   var LOOKS_NUMERIC = /^[-+]?[0-9]+(\.[0-9]+)?$/;
@@ -200,6 +227,41 @@
       }
     });
     return out;
+  }
+
+  // The two "what happened" comment blocks — the only header content that
+  // survives PLAN_67 Step 0's slimming. They appear only when there is
+  // something specific to report, so unlike the standing preamble they
+  // replaced, there is no guaranteed line above them: the first block present
+  // opens with its own heading, not a bare '#' separator, and a leading '#'
+  // is only added ahead of the second block when both are present.
+  function findingsCommentLines(warnings, notes) {
+    var lines = [];
+    if (warnings.length) {
+      lines.push('# Could not be translated automatically:');
+      lines = lines.concat(warningCommentLines(warnings));
+    }
+    if (notes.length) {
+      if (lines.length) lines.push('#');
+      lines.push('# Filled in for you — check these before starting:');
+      lines = lines.concat(warningCommentLines(notes));
+    }
+    return lines;
+  }
+
+  // Local time, not UTC — both callers run in the browser, where "today"
+  // means the day it looks like on the person's own screen.
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function todayStamp() {
+    var d = new Date();
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  // The stamp recording how a generated file came to exist — see
+  // schema/x-unraid.schema.json's $defs/imported. Written once, at
+  // generation time, never touched again afterwards.
+  function importedMetaLines(from) {
+    return ['  imported:', '    from: ' + from, '    on: ' + todayStamp()];
   }
 
   /* =====================================================================
@@ -464,7 +526,12 @@
       tmpfs: [], loggingDriver: '', loggingOptions: [], extraHosts: [],
       entrypoint: '', stopSignal: '', stopGracePeriod: '', cgroup: '',
       macAddress: '', platform: '', workingDir: '', labels: [], environment: [],
-      privileged: false, warnings: [], notes: []
+      privileged: false, warnings: [], notes: [],
+      // --health-* / --no-healthcheck: the one ExtraParams shape this file
+      // turns into a real compose block instead of just naming its
+      // equivalent — see buildHealthcheck() below.
+      healthCmd: '', healthInterval: '', healthTimeout: '', healthRetries: '',
+      healthStartPeriod: '', healthDisable: false
     };
     if (!str) return out;
 
@@ -474,7 +541,9 @@
       '--pid': 'pid', '--ipc': 'ipc', '--stop-signal': 'stopSignal',
       '--cgroupns': 'cgroup', '--mac-address': 'macAddress', '--platform': 'platform',
       '--workdir': 'workingDir', '-w': 'workingDir', '--entrypoint': 'entrypoint',
-      '--log-driver': 'loggingDriver'
+      '--log-driver': 'loggingDriver', '--health-cmd': 'healthCmd',
+      '--health-interval': 'healthInterval', '--health-timeout': 'healthTimeout',
+      '--health-retries': 'healthRetries', '--health-start-period': 'healthStartPeriod'
     };
     var LISTS = {
       '--cap-add': 'capAdd', '--cap-drop': 'capDrop', '--device': 'devices',
@@ -482,7 +551,8 @@
       '--group-add': 'groupAdd', '--tmpfs': 'tmpfs', '--log-opt': 'loggingOptions',
       '--add-host': 'extraHosts'
     };
-    var BOOLS = { '--read-only': 'readOnly', '--init': 'init', '--privileged': 'privileged' };
+    var BOOLS = { '--read-only': 'readOnly', '--init': 'init', '--privileged': 'privileged',
+                  '--no-healthcheck': 'healthDisable' };
     var KV = { '--label': 'labels', '--env': 'environment', '-e': 'environment' };
     var NO_VALUE_DROP = { '-d': 1, '--detach': 1, '-it': 1, '-i': 1, '-t': 1,
                            '--tty': 1, '--interactive': 1, '--rm': 1 };
@@ -557,6 +627,73 @@
     return out;
   }
 
+  // Docker's own duration/count spellings, which compose reads unchanged:
+  // one or more (number + unit) pairs for a duration ("30s", "1m30s") and a
+  // bare whole number for retries. Checked for general shape only — never
+  // reformatted — so a value compose would reject is left out rather than
+  // guessed at.
+  var HEALTH_DURATION_RE = /^([0-9]+(\.[0-9]+)?(h|m|s|ms|us|µs|ns))+$/;
+  var HEALTH_RETRIES_RE = /^[0-9]+$/;
+
+  // The wording FLAG_HINTS already gives an unmapped --health-* flag, reused
+  // here for the one case that still has nothing to translate: a timing flag
+  // with no --health-cmd to attach it to configures nothing on its own.
+  function healthFlagNote(flag, value) {
+    var shown = value !== '' ? (flag + '=' + value) : flag;
+    var hint = FLAG_HINTS.hasOwnProperty(flag) ? ' ' + FLAG_HINTS[flag] : '';
+    return 'The Docker option "' + shown + '" could not be translated to a Compose setting and was not applied. Check whether it is still needed.' + hint;
+  }
+
+  // Turns ExtraParams' --health-* / --no-healthcheck flags into the lines
+  // that go inside a healthcheck: block (see PLAN_108's "a fifth source,
+  // nearly free"). The command comes from the same Community Applications
+  // template that already supplied this service's image, ports and volumes
+  // — it is not a new trust boundary, so health-offer.js's narrower shape
+  // rules for a user-typed command deliberately do not apply here.
+  function buildHealthcheck(extra, dollarsEscaped, noEscape, warnings, notes) {
+    var TIMING = [
+      { key: 'healthInterval', flag: '--health-interval', out: 'interval', re: HEALTH_DURATION_RE, kind: 'duration' },
+      { key: 'healthTimeout', flag: '--health-timeout', out: 'timeout', re: HEALTH_DURATION_RE, kind: 'duration' },
+      { key: 'healthRetries', flag: '--health-retries', out: 'retries', re: HEALTH_RETRIES_RE, kind: 'whole number' },
+      { key: 'healthStartPeriod', flag: '--health-start-period', out: 'start_period', re: HEALTH_DURATION_RE, kind: 'duration' }
+    ];
+
+    if (extra.healthDisable) {
+      // disable: true wins outright — Docker never runs the check at all —
+      // so anything else the template set for it would be silently unused.
+      // Named so, rather than translated and then ignored.
+      var dropped = [];
+      if (extra.healthCmd) dropped.push('--health-cmd');
+      TIMING.forEach(function (f) { if (extra[f.key]) dropped.push(f.flag); });
+      if (dropped.length) {
+        notes.push('--no-healthcheck was also set on this template, which switches the health ' +
+          'check off entirely; ' + dropped.join(', ') + ' were not applied.');
+      }
+      return ['      disable: true'];
+    }
+
+    if (!extra.healthCmd) {
+      // No command means no check exists to configure — each timing flag
+      // keeps its own "could not be translated" note rather than being
+      // folded into a block that would do nothing.
+      TIMING.forEach(function (f) {
+        if (extra[f.key]) warnings.push(healthFlagNote(f.flag, extra[f.key]));
+      });
+      return [];
+    }
+
+    var cmd = escapeDollarsTracked(extra.healthCmd, 'healthcheck.test', dollarsEscaped, noEscape);
+    var lines = ['      test: ["CMD-SHELL", ' + dq(cmd) + ']'];
+    TIMING.forEach(function (f) {
+      var v = extra[f.key];
+      if (!v) return;
+      if (f.re.test(v)) lines.push('      ' + f.out + ': ' + v);
+      else warnings.push('The Docker option "' + f.flag + '=' + v + '" was not applied: "' + v +
+        '" is not a ' + f.kind + ' Docker would accept there, so it was left out of the health check.');
+    });
+    return lines;
+  }
+
   /* =====================================================================
    * Config array — Port / Path / Device / Variable / Label
    * ===================================================================== */
@@ -569,7 +706,7 @@
     return def.indexOf('|') >= 0 ? def.split('|')[0] : def;
   }
 
-  function processConfig(configArr, name, warnings, notes, appdataRoot) {
+  function processConfig(configArr, name, warnings, notes, appdataRoot, dollarsEscaped, noEscape) {
     var ports = [], volumes = [], devices = [], environment = [], labels = [];
     if (!Array.isArray(configArr)) configArr = [];
 
@@ -629,9 +766,11 @@
       } else if (type === 'Variable') {
         // Emitted even when empty: the form shows it with its description,
         // which is the whole point of importing the metadata.
-        environment.push({ content: '      ' + keyOut(target) + ': ' + dq(val), comment: comment });
+        var venv = escapeDollarsTracked(val, target, dollarsEscaped, noEscape);
+        environment.push({ content: '      ' + keyOut(target) + ': ' + dq(venv), comment: comment });
       } else if (type === 'Label') {
-        labels.push({ content: '      ' + keyOut(target) + ': ' + dq(val), comment: comment });
+        var vlbl = escapeDollarsTracked(val, target, dollarsEscaped, noEscape);
+        labels.push({ content: '      ' + keyOut(target) + ': ' + dq(vlbl), comment: comment });
       } else {
         warnings.push('The setting "' + label + '" has the unrecognised type "' + type + '" and was skipped.');
       }
@@ -712,6 +851,8 @@
     appdataRoot = appdataRoot.replace(/\/*$/, '/');
     var warnings = [];
     var notes = [];
+    var dollarsEscaped = [];
+    var noEscape = !!opts.noDollarEscape;
     var name = normaliseName(app.Name);
     var service = name;
 
@@ -723,7 +864,7 @@
     notes = notes.concat(extra.notes);
     var net = networkInfo(app, notes, warnings, extra.macAddress,
       (opts.stackServices || []).filter(function (s) { return s !== service; }));
-    var cfg = processConfig(app.Config, name, warnings, notes, appdataRoot);
+    var cfg = processConfig(app.Config, name, warnings, notes, appdataRoot, dollarsEscaped, noEscape);
     reorderPortsForWebUI(cfg.ports, app.WebUI, notes);
 
     var privileged = app.Privileged === 'true' || extra.privileged;
@@ -732,10 +873,12 @@
       return { content: '      - ' + scalarOut(v), comment: '' };
     }));
     var environment = cfg.environment.concat(extra.environment.map(function (kv) {
-      return { content: '      ' + keyOut(kv.key) + ': ' + dq(kv.value), comment: '' };
+      var v = escapeDollarsTracked(kv.value, kv.key, dollarsEscaped, noEscape);
+      return { content: '      ' + keyOut(kv.key) + ': ' + dq(v), comment: '' };
     }));
     var labels = cfg.labels.concat(extra.labels.map(function (kv) {
-      return { content: '      ' + keyOut(kv.key) + ': ' + dq(kv.value), comment: '' };
+      var v = escapeDollarsTracked(kv.value, kv.key, dollarsEscaped, noEscape);
+      return { content: '      ' + keyOut(kv.key) + ': ' + dq(v), comment: '' };
     }));
 
     /* ---- the service body -------------------------------------------- */
@@ -820,6 +963,12 @@
     if (environment.length) { svc.push('    environment:'); emitAlignedBlock(environment).forEach(function (l) { svc.push(l); }); }
     if (labels.length) { svc.push('    labels:'); emitAlignedBlock(labels).forEach(function (l) { svc.push(l); }); }
 
+    var healthLines = buildHealthcheck(extra, dollarsEscaped, noEscape, warnings, notes);
+    if (healthLines.length) {
+      svc.push('    healthcheck:');
+      healthLines.forEach(function (l) { svc.push(l); });
+    }
+
     pushListBlock(svc, 'cap_add', extra.capAdd);
     pushListBlock(svc, 'cap_drop', extra.capDrop);
     pushListBlock(svc, 'security_opt', extra.securityOpt);
@@ -837,7 +986,8 @@
           var oeq = opt.indexOf('=');
           var optKey = oeq >= 0 ? opt.slice(0, oeq) : opt;
           var optVal = oeq >= 0 ? opt.slice(oeq + 1) : '';
-          svc.push('        ' + keyOut(optKey) + ': ' + dq(optVal));
+          var ov = escapeDollarsTracked(optVal, optKey, dollarsEscaped, noEscape);
+          svc.push('        ' + keyOut(optKey) + ': ' + dq(ov));
         });
       }
     }
@@ -849,8 +999,13 @@
     // stack's one link. readme has no service-level key — it stays stack-only.
     var svcProject = scalarPresent(app.Project) ? scalarOut(app.Project) : '';
     var svcSupport = scalarPresent(app.Support) ? scalarOut(app.Support) : '';
-    if (scalarPresent(app.WebUI) || svcProject || svcSupport) {
+    // icon lives here, not in stack-level x-unraid below: a stack's picture
+    // is derived from its services, never stated (PLAN_105), and a converted
+    // file is always single-service, so this is the same catalogue picture
+    // written where it is now read.
+    if (scalarPresent(app.WebUI) || svcProject || svcSupport || scalarPresent(app.Icon)) {
       svc.push('    x-unraid:');
+      if (scalarPresent(app.Icon)) svc.push('      icon: ' + scalarOut(app.Icon));
       if (scalarPresent(app.WebUI)) svc.push('      webui: ' + dq(app.WebUI));
       if (svcProject) svc.push('      project: ' + svcProject);
       if (svcSupport) svc.push('      support: ' + svcSupport);
@@ -859,7 +1014,7 @@
     /* ---- stack-level x-unraid ------------------------------------------ */
 
     var stackMeta = ['  version: 1'];
-    if (scalarPresent(app.Icon)) stackMeta.push('  icon: ' + scalarOut(app.Icon));
+    stackMeta = stackMeta.concat(importedMetaLines(opts.origin === 'template' ? 'unraid-template' : 'community-applications'));
     var category = normaliseCategory(app);
     if (category) stackMeta.push('  category: ' + scalarOut(category));
     // scalarPresent(), not bare truthiness — same empty-XML-element bug as
@@ -879,32 +1034,14 @@
 
     /* ---- whole file ------------------------------------------------------ */
 
-    // The importer runs this same converter on a user's own Unraid template,
-    // not just a Community Applications catalogue entry — and "Converted from
-    // the Community Applications template" is simply false there, since that
-    // template was never in the CA feed at all.
-    var subject = app.Name || name;
-    var firstLine = opts.origin === 'template'
-      ? '# Converted from the Unraid template for ' + subject + '.'
-      : '# Converted from the Community Applications template for ' + subject + '.';
-
-    var lines = [];
-    lines.push(firstLine);
-    lines.push('#');
-    lines.push('# This is an ordinary compose file — delete every x-unraid block below and');
-    lines.push('# it still runs with a plain `docker compose up`. Check the ports and paths');
-    lines.push('# before starting it; some may have been filled in with placeholder defaults.');
-    if (warnings.length) {
-      lines.push('#');
-      lines.push('# Could not be translated automatically:');
-      lines = lines.concat(warningCommentLines(warnings));
-    }
-    if (notes.length) {
-      lines.push('#');
-      lines.push('# Filled in for you — check these before starting:');
-      lines = lines.concat(warningCommentLines(notes));
-    }
-    lines.push('');
+    // Where this file came from is now stamped into the metadata (imported:
+    // above) rather than written as a standing comment on every file — see
+    // PLAN_67 Step 0. Only the findings blocks below still earn a place in
+    // the header, because they say something specific to this conversion.
+    var lines = findingsCommentLines(warnings, notes);
+    // Only a separator when there is something above it to separate from: a
+    // clean conversion has no header at all, and must not open on a blank line.
+    if (lines.length) lines.push('');
     lines.push('x-unraid:');
     lines = lines.concat(stackMeta);
     lines.push('');
@@ -921,7 +1058,26 @@
 
     var yaml = lines.join('\n') + '\n';
 
-    return { name: name, service: service, yaml: yaml, warnings: warnings, notes: notes };
+    // The template's own wording, before StaXX doubled anything, so a
+    // caller can keep it (see Import.php's two-save history trick) without
+    // trying to reverse the doubling after the fact — that only has to
+    // agree with what was escaped when something actually was, so a second
+    // run of the same conversion is asked for it directly rather than this
+    // call building two documents at once. Skipped when nothing was
+    // escaped, so a template with no dollar sign is unchanged in every
+    // respect, including this field being absent rather than a duplicate.
+    var yamlAsWritten = null;
+    if (!noEscape && dollarsEscaped.length) {
+      var passthroughOpts = {};
+      for (var k in opts) { if (opts.hasOwnProperty(k)) passthroughOpts[k] = opts[k]; }
+      passthroughOpts.noDollarEscape = true;
+      yamlAsWritten = convert(app, passthroughOpts).yaml;
+    }
+
+    return {
+      name: name, service: service, yaml: yaml, warnings: warnings, notes: notes,
+      dollarsEscaped: dollarsEscaped, yamlAsWritten: yamlAsWritten
+    };
   }
 
   /* =====================================================================
@@ -940,8 +1096,11 @@
     repositoryPath: repositoryPath,
     dq: dq,
     scalarOut: scalarOut,
+    escapeDollars: escapeDollars,
     wrapText: wrapText,
-    warningCommentLines: warningCommentLines
+    warningCommentLines: warningCommentLines,
+    findingsCommentLines: findingsCommentLines,
+    importedMetaLines: importedMetaLines
   };
 
   if (typeof window !== 'undefined') window.StaxxCA = API;

@@ -267,8 +267,28 @@ if [[ "${skip_cron_rewrite}" != "true" ]]; then
       when="daily at ${update_check_time}"
     fi
 
-    cron_lines+=("${cron_minute} ${cron_hour} * * ${cron_dow} ${PLUGIN_DIR}/scripts/update-check check &> /dev/null")
-    echo "Image-update checking will run ${when}."
+    # The jitter minute is derived from a stable local value, never rand() or
+    # $RANDOM: a minute that moves every boot makes the schedule unreadable,
+    # and every StaXX install landing on the hour would look like a stampede
+    # against the abuse limit Docker Hub applies to all traffic, free
+    # questions included. /etc/machine-id is preferred because it is set once
+    # at install and does not change on a rename; hostname is the fallback
+    # for a system without it. 1-59 so it never lands on :00 either.
+    if [[ -s /etc/machine-id ]]; then
+      jitter_seed=$(md5sum /etc/machine-id | cut -c1-4)
+    else
+      jitter_seed=$(hostname | md5sum | cut -c1-4)
+    fi
+    jitter_minute=$(( 16#${jitter_seed} % 58 + 1 ))
+
+    # Two lines, not one: an hourly pass that honours each image's own
+    # cadence, plus the chosen time as a "full" pass that considers every
+    # image regardless of cadence. The daily/weekly setting keeps its old
+    # meaning of "how often everything is looked at", but individual images
+    # can now be asked about more often than that — the guide says so.
+    cron_lines+=("${jitter_minute} * * * * ${PLUGIN_DIR}/scripts/update-check check &> /dev/null")
+    cron_lines+=("${cron_minute} ${cron_hour} * * ${cron_dow} ${PLUGIN_DIR}/scripts/update-check full &> /dev/null")
+    echo "Image-update checking will run hourly (at :$(printf '%02d' "${jitter_minute}") past), with a full look at every image ${when}."
   fi
 
   if [[ "${update_cleanup}" == "weekly" ]]; then

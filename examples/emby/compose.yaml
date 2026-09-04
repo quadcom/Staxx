@@ -6,7 +6,6 @@
 
 x-unraid:
   version: 1
-  icon: https://raw.githubusercontent.com/binhex/templates/main/unraid/binhex/images/emby-icon.png
   category: MediaApp:Video
   project: https://https://emby.media/
   support: https://forums.unraid.net/topic/index.php?topic=46382.0/
@@ -36,4 +35,5 @@ services:
       PGID: "100"                         # Group ID for the running container -!R
       UMASK: "000"                        # UMASK for the running container -!R
     x-unraid:
+      icon: https://raw.githubusercontent.com/binhex/templates/main/unraid/binhex/images/emby-icon.png
       webui: "http://[IP]:[PORT:8096]"

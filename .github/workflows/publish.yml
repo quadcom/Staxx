@@ -262,6 +262,16 @@ jobs:
         run: |
           CHANGELOG_VERSION="$(grep -m1 '^## ' CHANGELOG.md | sed -E 's/^## +([0-9][0-9.]*).*/\1/')"
 
+          # The commonest way this fails now is the rename being forgotten: the
+          # running "Unreleased" section has to become "## <version> — released
+          # <date>" before a stable release is cut. Say so outright rather than
+          # reporting that the heading "says Unreleased", which reads like a
+          # numbering mistake and sends you looking in the wrong place.
+          if grep -qm1 '^## Unreleased' CHANGELOG.md; then
+            echo "::error::CHANGELOG.md still has its running '## Unreleased' section at the top. Rename it to '## ${VERSION} — released <date>' before tagging — that section IS this release's notes."
+            exit 1
+          fi
+
           if [ "${VERSION}" != "${CHANGELOG_VERSION}" ]; then
             echo "::error::Publishing ${VERSION}, but CHANGELOG.md's newest '## ' heading says ${CHANGELOG_VERSION}. Add (or fix) the changelog entry for ${VERSION} before tagging."
             exit 1
@@ -272,22 +282,34 @@ jobs:
             exit 1
           fi
 
-      # Dev only: nobody writes changelog prose for a dev build, so the notes
-      # are the commit subjects since the previous dev tag — or, if this is
-      # the first dev build after a main release, since that main tag.
-      - name: Find the commits since the last dev (or main) release
+      # Dev only: a dev build shows the SAME hand-written prose that becomes the
+      # stable release's notes later, taken from the changelog's running
+      # "Unreleased" section — one story, written once, rather than the same
+      # change described twice in two voices. That section is renamed to the
+      # version when a stable release is cut, which is why reading it here and
+      # reading the newest numbered section there are the same act.
+      #
+      # It refuses on an empty section rather than falling back to commit
+      # subjects. The fallback is the tempting option and it is the wrong one:
+      # it would quietly publish developer shorthand the moment somebody forgot
+      # a bullet, which is exactly when nobody is looking.
+      - name: Read this build's notes from the changelog
         if: env.CHANNEL == 'dev'
         run: |
-          PREV_DEV_TAG="$(git tag -l 'v*_dev*' | grep -vFx "${TAG}" | sort -V | tail -n1 || true)"
-          if [ -n "${PREV_DEV_TAG}" ]; then
-            SINCE="${PREV_DEV_TAG}"
-          else
-            SINCE="$(git tag -l 'v*' | grep -v '_dev' | sort -V | tail -n1 || true)"
-          fi
-          if [ -n "${SINCE}" ]; then
-            git log --pretty='- %s' "${SINCE}..HEAD" > dev-commits.txt
-          else
-            git log --pretty='- %s' HEAD > dev-commits.txt   # no earlier tag at all
+          awk '/^## Unreleased/{n=1; next} /^## /{if(n) exit} n{print}' CHANGELOG.md > dev-commits.txt
+
+          # Peel the section's trailing blanks and its separator rule, the same
+          # way main's extraction below does — a rule mid-section must survive.
+          while [ -s dev-commits.txt ]; do
+            case "$(tail -n 1 dev-commits.txt)" in
+              ''|---) sed -i '$d' dev-commits.txt ;;
+              *) break ;;
+            esac
+          done
+
+          if ! grep -q '[^[:space:]]' dev-commits.txt; then
+            echo "::error::CHANGELOG.md has no '## Unreleased' section, or it is empty. A dev build publishes that section as its notes — add a bullet for what changed before building."
+            exit 1
           fi
 
       # Inserted at the top of the <CHANGES> block, ahead of main's own
@@ -301,8 +323,12 @@ jobs:
           import os, re
 
           version = os.environ["VERSION"]
+          # No fallback for an empty body: the step above already refused an
+          # empty section, so nothing here could be empty without that gate
+          # having broken — and inventing a placeholder would hide it.
           with open("dev-commits.txt", encoding="utf-8") as f:
-              body = f.read().rstrip("\n") or "- No commits since the last release."
+              body = f.read().strip("\n")   # strip, not rstrip: the section opens with a blank line
+
 
           with open("staxx.plg", encoding="utf-8") as f:
               plg = f.read()

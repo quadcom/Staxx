@@ -1,6 +1,6 @@
 Menu="Docker:0"
 Title="StaXX"
-Tag="cubes"
+Tag="staxx.png"
 Markdown="false"
 Cond="($var['fsState'] ?? '') == 'Started' && is_file('/var/run/dockerd.pid') && !file_exists('/boot/config/plugins/staxx/header_menu') && !file_exists('/boot/config/plugins/staxx/takeover_docker_tab')"
 ---

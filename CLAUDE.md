@@ -1,5 +1,23 @@
 # CLAUDE.md
 
+Project: **StaXX**  ·  Plan tag: **`STX`**
+
+- publish: README.md CHANGELOG.md docs/README.md docs/guide docs/glossary.md
+- repo: quadcom/Staxx
+- per-branch: staxx.plg branch
+- release-ignore-tags: 1.* 20[0-9][0-9].*
+
+*The first two lines are read by the `preview-site` skill: what this project publishes to the shared
+preview site, and which repository to render against so a bare issue reference looks right. The tag
+is the folder it publishes into and the prefix its plan files carry.*
+
+*The last two are read by the `cut-a-release` skill. `per-branch` names every value that differs
+between the two branches, so the check can refuse a release whose manifest still says `dev` on
+`main` — the merge step most often forgotten, and the one that quietly offers development builds to
+everyone on the stable channel. `release-ignore-tags` excludes the tags a padded version can never
+sort above: the unpadded `1.x` names burnt while releases were immutable, and the dated scheme used
+before them. Without it every stable release would be refused for ever.*
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What this is
@@ -27,18 +45,62 @@ Two rules override most other judgement calls:
 
 ## Development environment
 
-Development happens on **Windows**; the code runs on a **Linux Unraid server**. There is no PHP,
-no Docker, and no browser on the dev machine, so a webGUI page can never be driven locally. But
+Development happens on **Windows**; the code runs on a **Linux Unraid server**. PHP and Docker live
+on the server, not on the dev machine, so a webGUI page cannot be *rendered* locally — but Chrome is
+here and driven directly, so a page already deployed to the server can be opened, clicked and read.
+Docker questions are answered on the server, where the containers actually are. But
 node and python are both present here, and every JavaScript and schema suite — the compose model's
 own round-trip tests, the Community Applications converter, the image importer, the undeclared-name
 check, the schema self-test — runs on the dev machine, not just a syntax check of it. `compose-
 model.js` is requireable from node directly, so a suspected round-trip bug can be proven with a
 throwaway probe instead of guessed at. Only PHP is genuinely absent locally.
 
+**The interpreter is called `python` here, never `python3`.** Windows keeps a stub named `python3`
+on the path whose only purpose is to print "Python was not found" and offer the Microsoft Store, so
+the habitual Linux spelling fails with exactly the message that looks like Python being missing.
+It is not: 3.13 is installed, with `pyyaml` and `jsonschema` both available, and
+`validate_schema.py` runs locally. Reach for another approach only after `python` itself has failed.
+
 **CRITICAL:** Never rewrite entire files. Provide targeted patch diffs or isolated code blocks only.
-**Execution:** Before executing any multi-file changes, write your proposed architecture to `PLAN.md` and wait for user approval. If during the process there are new sub-plans built. Create PLAN_X.md incrementing 'X' to keep track of all the steps that are outstanding. Once the plan(s) are complete then the plan files can be marked as complete. Keep the plans for future quick reference but move them into a complerted plans folder.
+**Execution:** Before executing any multi-file changes, write your proposed architecture to `PLAN.md` and wait for user approval. If during the process there are new sub-plans built. Create PLAN_X.md incrementing 'X' to keep track of all the steps that are outstanding. Once the plan(s) are complete then the plan files can be marked as complete. Keep the plans for future quick reference but move them into `plans/completed-plans/`.
+
+**Where a plan lives:** every plan is a file in `plans/`. Everything still in play sits in the root
+of that folder — in progress, not started yet, or waiting on a decision. A finished plan moves down
+into `plans/completed-plans/`. Nothing plan-shaped is left loose in the project root.
+
+**A plan file is never deleted. There is no exception to this and no case where deleting one is the
+tidy answer.** A plan has exactly three ends: it is built, and moves to `plans/completed-plans/`; it
+is abandoned, and its status line says so and why, and it moves to `plans/completed-plans/` as the
+record of a road not taken; or it is still open, and it stays in `plans/`. Superseding a plan does not delete it
+either — the old one's status says what replaced it. A number is never reused. **Never remove a plan
+file, never fold two into one by deleting the loser, and never propose deleting one as housekeeping.**
+
+The reason is not sentiment. A plan is the only record of *why* something was decided, and newer
+plans cite older ones by number — so a missing file turns every citation to it into a claim nobody
+can check. This already happened once: 57 finished plans, numbers 1 to 58, disappeared from disk on
+2026-08-25 when the commit that stopped carrying them in the repository took the working copies with
+it. They were recovered from the repository's history on 2026-09-01, but that door is now shut —
+the whole of `plans/` is gitignored, so **git is no longer a safety net for them.** They
+survive on Adrian's own real-time backup of his development directory and nowhere else.
+
+**A commit is checked for private detail before it is made, and it can quietly exclude a file.** A
+local pre-commit hook — in `.git/hooks/`, so never carried in a clone — reads the lines a commit
+*adds* and refuses the commit over an address on the real server's network, a password hash carrying
+real salt and hash material, a private key, a GitHub or Docker Hub token, Adrian's email address, or
+this machine's own name or mapped drive. It ignores the example addresses the code and tests use
+throughout, the bare hash scheme names the docs discuss, and any line ending `# allow-private`. Past
+it once with `STAXX_ALLOW_PRIVATE=1 git commit`, and only with a reason.
+
+**Plan-shaped paths are treated differently and this is the part that surprises people:** a staged
+plan is read in *full*, not just its changed lines, and if anything is found that one file is
+**dropped from the commit** while everything else lands. So a commit can legitimately contain less
+than was staged — the hook says which file it held and why. Nothing is lost; the plan is untouched on
+disk and commits once it has been sanitised. The whole text is read rather than the diff because a
+credential committed three commits ago is already in the history for good, and it is a check rather
+than a "sanitised on <date>" marker because a marker is a claim that goes stale on the next edit.
+The `housekeeping` skill carries the sanitising rules the check enforces.
 **COMMENTS AND DOCUMENTATION** Comments and documentation should reflect what something does not what it used to do along with what it now does.
-**WRITING CODE** When writing code, Opus always makes the plan and Multiple SOnnet agents will write the code. Opus will then verify the code that was written. Just before writing starts tell me "Sonnet agents are writing".
+**WRITING CODE** When writing code, Fable (the main session) always makes the plan and multiple Sonnet agents write the code. Fable then verifies the code that was written. Just before writing starts tell me "Sonnet agents are writing". (Fable replaced Opus in the planning and verifying roles on 2026-09-02, for the time being; the Sonnet step is unchanged.)
 **TOKEN USAGE** At all times be conservative on token usage.
 
 
@@ -49,9 +111,18 @@ node tests/ca_convert.js            # Community Applications template -> compose
 node tests/image_import.js          # Docker Hub / local image -> starting compose file
 node tests/stash_guard.js           # a set-aside may only hold the block it claims to
 node tests/meta_scaffold.js         # the commented x-unraid fields a new stack starts with
+node tests/tidy.js                  # the service-scope layout pass — key spans, refusals, idempotence
 node tests/js_undeclared.js         # names assigned but declared nowhere
 node tests/words.js                 # the passphrase generator's word list — count, shape, uniqueness
 node tests/registry_note.js         # the registry-behaviour note generator's own cases
+node tests/links_detect.js          # spotting that two services need to know about each other
+node tests/links_record.js          # the connection record — writing it, matching it, noticing it is stale
+node tests/crosslinks.js            # the browser half of the same: wording, and the confirmed-link write
+node tests/db_images.js             # the table of well-known database images
+node tests/health_offer.js          # picking a health check, and the narrow door for one found elsewhere
+node tests/pin_image.js             # pinning an image to one exact build
+node tests/export_redact.js         # what export blanks out before a stack leaves the machine
+node tests/guide_coverage.js        # which shipped features the user guide still says nothing about
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 ```
@@ -75,116 +146,97 @@ using StaXX would read it. The one testing-shaped thing that *is* user-facing is
 with a different audience.
 
 `tests/server/` holds PHP checks that can only run **on the server** — copy them up and run them
-there. `files.php` covers the companion-file helpers and the archive confirmation; `record.php` and
-`imagehistory.php` cover each stack's own hidden record — its compose-file history, and the image
-versions kept for a rollback, including the keep-set that decides what may be deleted;
-`pending.php` covers the restart-pending comparison — whether what is running still matches what the
-file now says — and above all its refusals; it needs no config keys and changes nothing, because the
-cases it builds are handed explicit `/tmp` paths rather than moving `STORE_ROOT`;
-`unpin.php` covers releasing a pin, including the one trap in it: the declined-version
-fingerprint is filed under the image's UNPINNED name, so clearing the pinned one instead makes the
-whole feature silently do nothing;
-`rollback.php` covers the image rollback's refusals — above all that the version asked for must be
-one this service itself recorded rather than merely digest-shaped;
-`crypt.php` covers the hashing container's refusals, and needs no config keys at all: every case
-either calls a pure function with made-up data or asks a read-only question, so it builds, starts,
-pulls and removes nothing. The two that matter most are that a hash format is refused unless the
-self-test has actually proven it, and that the superseded-image chooser never picks an image without
-StaXX's own stamp on it — the one place StaXX deletes without asking;
-`releasenotes_live.php` is the one suite that talks to the network, so it is opt-in — it runs only
-with `STAXX_LIVE_NOTES=1` and needs no config keys, because it asks read-only questions and records
-nothing. It proves the notes lookup end to end against a real project, and pins the gap that a
-rolling tag finds no release at all, so those cases flip to green the day PLAN_82a lands. A failure
-there may mean the external repository changed rather than the code being wrong;
-`updateeconomy.php` covers PLAN_90's registry economy — reference parsing including the ghcr/lscr
-no-rewrite rule, the OCI-index-first `Accept` list, the whole cadence table with its churn/floor/
-ceiling clamps, and the failed-image notice's wording once `fails` is already in state. It is
-offline (no stub of a registry exists in this repo, so anything that needs a real HTTP reply is
-left to `registry_live.php` below) and needs no config keys for most of it, but its row-notice
-section reads a real stack off the stacks folder, so `STORE_ROOT` is pointed at `/tmp` and restored the
-same way `record.php` does; `registry_live.php` is `releasenotes_live.php`'s sibling for the same
-plan — opt-in behind `STAXX_LIVE_REGISTRY=1`, needs no config keys, and proves a real `304` against
-a real registry plus that the digest matches what the docker CLI reports, for a Hub, a ghcr and an
-lscr image; `registry_quirks.php` is PLAN_92 Stage 1 — opt-in behind `STAXX_QUIRKS=1`, needs no
-config keys, and asks the same read-only questions of nine real public registries (Docker Hub gets
-just one image; its allowance is the only tight one), printing a summary table of what each one
-turned out to do. It carries the regression guard for the ghcr placeholder-scope fix, run against
-ghcr and codeberg's Gitea-hosted registry alike, and is worth a run whenever the registry code is
-touched, or before a release — an opt-in suite nobody runs is a suite that can rot unnoticed;
-set `STAXX_QUIRKS_JSON=/tmp/quirks.json` alongside it to also save what it measured;
-`registry_selfhosted.php` is PLAN_92 Stage 2 — opt-in behind `STAXX_SELFHOSTED=1`, needs
-`REGISTRY_TRUST` pointed at `127.0.0.1:45000,127.0.0.1:45001,127.0.0.1:45002`, and is the only suite
-here that pulls anything: it starts and removes three throwaway registries on the box itself (open,
-password-protected, and a second implementation) to prove what a self-hosted registry does that a
-public one cannot show. Worth a run alongside `registry_quirks.php` whenever the registry code is
-touched, or before a release — the same "an opt-in suite nobody runs" trap applies twice over here, and
-`STAXX_SELFHOSTED_JSON=/tmp/selfhosted.json` saves what it measured the same way. Hand those two
-files to `node tests/registry_note.js /tmp/quirks.json /tmp/selfhosted.json` to regenerate
-`tests/server/REGISTRY-BEHAVIOUR.md`, the written record of what each of the twelve registries turned
-out to do — regenerate it as part of running the suites rather than as a separate chore somebody
-forgets, and never hand-edit it, since the next run overwrites it. It refuses to write anything from
-a run that reported failures;
-`detail.php` covers PLAN_84 Phase 2's resolver — what the server can find out about a stack's icon,
-description, category, author and links — and needs `STORE_ROOT` pointed at `/tmp/zzdetail-store`
-and `IMAGE_LOOKUP` forced to `"false"`, both refused-without like every other key here; forcing the
-network setting off, rather than merely not needing it, is what keeps this suite from ever touching
-the network at all, since every fixture image is fictional and local inspect always then comes back
-empty. Its negative cases matter most: nothing is invented for an unknown image, a non-`https` value
-is discarded at every link field, an ambiguous icon name yields nothing, a value identical to one
-already stored is never offered again while a genuinely different found value now surfaces as a
-conflict honestly labelled by its real source, and no catalogue or template value is ever labelled
-`stated` — asserted as one invariant over every case's output, alongside every value passing the
-schema's own pattern;
-`links.php` covers
-what happens when a stack folder holds a symlink, and needs `STORE_ROOT` pointed at `/tmp/b1-store`
-for the run because a store left on flash is vfat and cannot hold one; `autostart.php` covers the
-bridge to Unraid's boot-start list, and points `STAXX_AUTOSTART_FILE` at `/tmp` so the real one is
-never touched. Each file's header gives the exact commands. `files.php`, `links.php` and
-`record.php` all point `STORE_ROOT` (the one config key the stacks folder and the archive folder
-both derive from) at a `/tmp` folder, the same way, and each refuses to run without it — leaving it
-out is a first-line abort, not a wrong answer.
+there. **Every file's own header carries the exact command, the config keys that run needs, and how
+it puts them back**, so the table below is an index, not a substitute for reading the header of the
+one you are about to run.
 
-`store.php` covers PLAN_97 Phase 2's Store.php — telling apart a folder that is already a StaXX
-store, a bare pile of compose files, and one that is neither; writing the note a new store carries;
-and creating the store itself. It needs `STORE_ROOT` seeded to a scratch value first, the same
-first-line-abort-if-missing rule as the other suites, but that value is never a real store root here
-— it only proves a stray run cannot be mistaken for one holding Adrian's real data. Its own fixtures
-for the read-only inspector all live under `/tmp`, but the creation cases cannot: the store's own
-placement rules refuse anything outside a real share or pool, so those live under a disposable
-folder nested inside the real appdata share, cleaned up on every exit path the way
-`tests/server/storage.php` already does for its pool fixtures, and its one write to the real flash
-file is backed up and restored the same way `settings.php`'s is — `settings.php` itself backs up
-both halves of the config since PLAN_97 Phase 4 split it in two (the flash pointer file and, once a
-store exists, its own settings file inside `<store>/config`), and proves how the two layer together
-with the shipped defaults, using scratch flash-file states rather than this box's real one. Its two
-negative cases matter
-most: a folder holding a `stacks` folder next to an `archives` folder reads as StaXX's own even
-before any stack inside it has its own hidden record, and a bare pile of compose files with no
-hidden record and no `archives` folder never reads as one. Running creation twice over the same
-folder proves adopting an existing store disturbs nothing already inside it, and a store whose three
-folders exist but hold nothing yet — exactly what creating one leaves behind — still reads as
-StaXX's own rather than as somebody else's folder, which is what stops the first-run screen warning
-a person off the store they chose a moment ago.
+Four rules run through the whole set:
 
-`relocate.php` covers PLAN_97 Phase 3's Relocate.php — relocation now moves the whole data store
-as one tree, not the stacks folder alone, so the fixture it builds is a whole store: two stacks
-under `stacks` (one carrying its own hidden `.staxx` record folder), a file under `archives`
-standing in for a removed stack's zip, and a note under `config`. The Phase 1 blanket refusal is
-gone, so a clean destination is accepted rather than turned away outright, and a destination is
-still refused both for being the store itself and for sitting inside its `stacks` or `archives`
-folders. Its cases that matter most: all three folders and the hidden record folder arrive intact,
-the archive travels byte for byte since it is the only copy of a removed stack, and the fixed order
-— trial run, copy, verify, only then switch the setting, only then delete the original — is proved
-rather than assumed: a failure injected at the verify step is checked against the config file on
-disk, not the process's own memoised copy, so it actually proves `STORE_ROOT` was never touched. A
-failed trial or copy also leaves the destination exactly as it was found, whether that means absent
-or present-and-empty. It needs `STORE_ROOT` seeded to a scratch value first, the same
-first-line-abort-if-missing rule as the other suites, and lives under the real appdata share for the
-same "the store's own placement rules refuse anything outside a real share or pool" reason
-`store.php` does, with one exception: the case-clash cases need a filesystem that folds case, which
-only the flash drive offers, so those live there instead, briefly. The one case that actually
-succeeds runs last, since it is the only one that switches the real config and deletes the throwaway
-source — everything before it must leave both alone.
+- **A suite needing a config key refuses to run without it.** Leaving it out is a first-line abort,
+  never a wrong answer. `staxx_cfg()` memoises on first read, so a key has to be seeded into the
+  config file *before* php starts — it cannot be changed from inside the script.
+- **A suite that redirects `STORE_ROOT` points it at `/tmp` and restores the real value on every exit
+  path, including a fatal error.** `STORE_ROOT` is the one key both the stacks folder and the archive
+  folder derive from, so redirecting it moves both. Never point it at the real store.
+- **Some suites deliberately do not redirect it**, and hand explicit `/tmp` paths to the function
+  under test instead. Moving the store even for one command makes every real stack vanish from the
+  webGUI for as long as it is moved, which is not acceptable on Adrian's box.
+- **Six are opt-in behind an environment flag**, marked below. An opt-in suite nobody runs is a
+  suite that can rot unnoticed — run them when the code they cover is touched, and before a release.
+
+| Suite | What it covers | Needs |
+|---|---|---|
+| `adopt` | Whether a compose file may be written into a folder that already exists, when the caller claims adoption of a fileless one | `STORE_ROOT` |
+| `autostart` | The bridge to Unraid's boot-start list | `STAXX_AUTOSTART_FILE` at `/tmp` |
+| `backup` | Whether the store is named in the Appdata Backup plugin's extras list, against the real installed file | `STORE_ROOT` |
+| `bootcopy` | The shelf of compose copies on the flash drive: the copy after every save, the case-clash refusal, removal and restore | `STORE_ROOT` |
+| `bundle` | The `.staxx` bundle importer's refusals — a crafted entry name, a planted record-folder file, a bad marker, an oversized or unreadable bundle — plus the two accept cases and the write into a fresh store | `STORE_ROOT` (only the two write cases) |
+| `clash` | Two stacks claiming the same compose project name — the list-time detector, the state guard that stops a dormant twin reading as the running one, the delete guard that refuses to tear down a project it does not own, and the one check every creation door calls | `STORE_ROOT` at `/tmp` |
+| `console` | The `recreate` and stack-scope `update` verbs, the scope refusals, the job-log tailer, the log follower and the shell — no real session is ever opened | — |
+| `crypt` | The hashing container's refusals. Builds, starts, pulls and removes nothing | — |
+| `detail` | What the server can find out about a stack's icon, description, category, author and links | `STORE_ROOT`, `IMAGE_LOOKUP=false` |
+| `export` | The export route — placeholders, redaction, and the job that packs a bundle | `STORE_ROOT` (some cases) |
+| `files` | The companion-file helpers and the archive confirmation | `STORE_ROOT` |
+| `handover` | Handover targets, the set-aside name, the state file's round trip, the script text, every refusal | — |
+| `health` | Reading an image's own declared health check, and every refusal of the trial that decides whether a candidate check may ever be offered | — |
+| `icons` | Copying a matched icon into a stack's own folder, and its refusals | — |
+| `imagehistory` | Per-stack image history, and the keep-list image cleanup builds from it | `STORE_ROOT` |
+| `import` | The importer's three readers, the write path, and the per-row icon fallbacks | — |
+| `links` | What happens when a stack folder holds a symlink — needs a filesystem that can hold one, so never flash | `STORE_ROOT` at `/tmp` |
+| `links_match` | The cross-stack matcher and its one-target credentials lookup | `STORE_ROOT` |
+| `meta-cache` | The on-disk memory behind reading a compose file's metadata, keyed on contents plus version | — |
+| `moves` | Noticing when a catalogue app's template has moved registries | backs up three real files |
+| `override` | Two-file compose support, the strict pairing rule, and what it feeds | `STORE_ROOT` at `/tmp` |
+| `paths` | Making and checking volume paths, including how one outside `/mnt` is judged | `STORE_ROOT` |
+| `pending` | The restart-pending comparison — what is running against what the file now says — and above all its refusals | — |
+| `project-links` | Working out an app's own project links | **opt-in**, several `STAXX_CA_*` |
+| `record` | Each stack's own hidden record — its compose-file history — and the two doors that capture into it | `STORE_ROOT` |
+| `registry_live` | A real `304` against a real registry, and that the digest matches what the docker CLI reports | **opt-in** `STAXX_LIVE_REGISTRY=1` |
+| `registry_quirks` | The same read-only questions asked of nine real public registries, with the ghcr placeholder-scope guard | **opt-in** `STAXX_QUIRKS=1` |
+| `registry_selfhosted` | Three throwaway registries started on the box itself — open, password-protected, and a second implementation. The only suite here that pulls anything | **opt-in** `STAXX_SELFHOSTED=1`, `REGISTRY_TRUST` |
+| `releasenotes` | Release notes captured at pull time: the URL builder, the trimmer, and the one shared record-before-a-pull step | `STORE_ROOT` |
+| `releasenotes_live` | The notes lookup end to end against a real project | **opt-in** `STAXX_LIVE_NOTES=1` |
+| `relocate` | Moving the whole data store as one tree, and the fixed order it must happen in | `STORE_ROOT` |
+| `review` | The review lock, the job-runner refusal, and that a rename or a folder move keeps the lock | `STORE_ROOT` at `/tmp` |
+| `rollback` | That a rollback target must be a version this service itself recorded, not merely digest-shaped | `STORE_ROOT` |
+| `settings` | The settings allowlist, validator and atomic writer, and how the two halves of the config layer together | backs up both config files |
+| `startorder` | The top level's own order — folders and loose stacks interleaved by `root`, both directly and through the layout — plus the refusals on save and what a folder rename or removal does to it | `STORE_ROOT` |
+| `storage` | What locations the store could move to | — |
+| `store` | Telling a StaXX store from a bare pile of compose files from neither, and creating one | `STORE_ROOT` seeded to scratch |
+| `takeover` | The route an imported Compose Manager project takes instead of a handover. Every case is a refusal, on purpose | `STORE_ROOT` |
+| `unpin` | Releasing a pin, and what an automatic pass may act on afterwards | `STORE_ROOT` |
+| `updateeconomy` | Reference parsing, the `Accept` list, the whole cadence table, and the failed-image notice's wording | `STORE_ROOT` (row-notice cases) |
+| `updaterun` | The doing side of updates — the clock, the queue, rollback, cleanup, the build-base reader | `STORE_ROOT` |
+| `updates` | The detection core — the state file, the digest probes, the per-image ask, the scope collector | **opt-in**, `STAXX_UPDATE_*` |
+| `watch` | Watching what an image's own publisher publishes | — |
+| `webui` | Resolving the address a service's web-page button opens, across every port and network arrangement | — |
+
+Where the traps are, none of them recoverable from the code:
+
+- **`unpin`** — the declined-version fingerprint is filed under the image's UNPINNED name, so clearing
+  the pinned one instead makes the whole feature silently do nothing.
+- **`crypt`** — the two cases that matter are that a hash format is refused until the self-test has
+  proved it on this machine, and that the superseded-image chooser never picks an image without
+  StaXX's own stamp. That is the one place StaXX deletes without asking.
+- **`detail`** — its negative cases matter most: nothing is invented for an unknown image, a
+  non-`https` value is discarded at every link field, a value identical to one already stored is
+  never offered again, and no catalogue or template value is ever labelled `stated`. Forcing
+  `IMAGE_LOOKUP` off, rather than merely not needing it, is what keeps it off the network at all.
+- **`store`** — a folder holding `stacks` beside `archives` reads as StaXX's own even before any
+  stack inside it has its own record, and a bare pile of compose files never does. That is what stops
+  the first-run screen warning somebody off the store they chose a moment ago.
+- **`relocate`** — the order is proved, not assumed: trial run, copy, verify, only then switch the
+  setting, only then delete the original. A failure injected at the verify step is checked against
+  the config file on disk, not the process's own memoised copy. Its one succeeding case runs last,
+  since it is the only one that switches the real config and deletes the throwaway source.
+- **`releasenotes_live`** — a failure there may mean the external repository changed rather than the
+  code being wrong.
+- **`registry_quirks` and `registry_selfhosted`** — set `STAXX_QUIRKS_JSON` and
+  `STAXX_SELFHOSTED_JSON` to save what they measured, then hand both files to
+  `node tests/registry_note.js` to regenerate `tests/server/REGISTRY-BEHAVIOUR.md`, the written record
+  of what each of the twelve registries turned out to do. Regenerate it as part of the run rather than
+  as a chore somebody forgets, and never hand-edit it — the next run overwrites it, and it refuses to
+  write anything from a run that reported failures.
 
 `validate_schema.py` has no runner or framework. It prints one line per case and exits non-zero on
 failure; its negative cases (what the schema must *reject*) matter more than the positive ones.
@@ -193,9 +245,114 @@ failure; its negative cases (what the schema must *reject*) matter more than the
 compose files, each built to exercise one quirk (comments, anchors, odd indentation, duplicate
 field names, and so on), that `yaml_roundtrip.js` and others parse, edit and write back to prove
 nothing is lost. It lives in the repository so anyone can reproduce the numbers rather than trust
-a claim. `completed-plans/PLAN_60a-parser-reads-part-of-a-file.md` records the parser work that
+a claim. `plans/completed-plans/PLAN_60a-parser-reads-part-of-a-file.md` records the parser work that
 corpus was built to check, including the two writers that splice lines themselves and so need their
 own guard against editing a file only partly read.
+
+## Seeing a page the way GitHub will render it
+
+**Local only — neither script below is in the repository.** They render the guide and write it onto
+Adrian's own box, hardcoding that machine's address and a drive letter only his setup has, so they
+are gitignored in place: on disk here, absent from a clone. Same reasoning as `local/`.
+
+
+```sh
+node tools/preview-docs.js                    # readme, changelog and the whole guide
+node tools/preview-docs.js README.md          # just one
+node tools/preview-docs.js --no-serve         # write the files, do not serve them
+```
+
+Serves the result at `http://localhost:8099`. **It does not approximate GitHub's formatting — it
+asks GitHub to do the rendering**, through the same markdown endpoint the site itself uses, so alert
+blocks, task lists and tables come back exactly as they will appear. A local markdown library gets
+the common cases right and the interesting ones wrong, which is precisely backwards for something
+whose job is to catch a surprise before it ships. It needs the GitHub CLI signed in, and reads no
+token of its own.
+
+Relative images and cross-page links are rewritten so the guide clicks through page to page with its
+pictures loading. The output folder is self-contained — pictures are copied in beside the pages —
+which is what lets it be handed to a web server elsewhere. It lands in `.preview/`, gitignored.
+
+**The local preview site is where all of this is read.** It lives on Adrian's own box and is the
+normal way he looks at anything before it is pushed:
+
+```sh
+bash tools/publish-preview.sh              # everything, from scratch
+bash tools/publish-preview.sh guide        # just the user guide (and the glossary)
+bash tools/publish-preview.sh readme       # just the readme
+bash tools/publish-preview.sh changelog    # just the changelog
+bash tools/publish-preview.sh review       # just the front page and the review history
+bash tools/publish-preview.sh <file.md>…   # just those files
+```
+
+**Every sectioned build also refreshes the changelog**, whichever section was asked for. It gains a
+bullet in the same commit as the change it describes, so it is edited in passing rather than
+deliberately, and it is the one page nobody would think to rebuild. Rendering it costs well under a
+second, which is cheaper than noticing it has gone stale.
+
+**Rebuild only the section you changed.** A full run empties the folder first, which is what makes a
+deleted page vanish; a sectioned run writes over just those pages and leaves everything else alone.
+Either way the last step is the same, so the top bar goes back onto every page it touched and the
+front page is rebuilt from the newest review — navigation never depends on which part was rebuilt.
+The contents page always lists the whole site, not the subset a partial run happened to render.
+
+**Its front page is the newest project review**, written by `tools/publish-review.js` from whatever
+`summaries/` holds, with links across to the readme, the guide and the changelog, and a fixed
+contents list down the left. The bar runs the full width along the top edge, and the index and the
+review sit side by side beneath it — the index fixed and scrolling on its own, the review scrolling
+normally. Both are positioned against the viewport, so the bar's height lives in one CSS variable
+rather than being written out in three places that would drift apart.
+
+Each row of the index is a card of the same shape as the finding it points at,
+carrying that finding's own severity colour down its left edge and its severity word above the
+title, and going green with a tick once the `housekeeping` skill has marked it `addressed`.
+
+The bar is fixed to the top of the window, so every anchor target on a review carries a
+`scroll-margin-top` of the bar's height plus a little — both read from one CSS variable. Without it a
+link from the index scrolls the finding to the very top and straight behind the bar, which looks like
+the link pointing at the wrong thing rather than the page hiding what it found.
+
+The same bar is stamped onto **every** page in the preview folder, not just the review — the docs
+tool's own thin nav is removed on the way past, so there is one bar rather than two that drift. The
+StaXX preview name is the way back to the newest review. Links in the bar take a path prefix,
+because a page inside `reviews/` needs `../` on every one of them; without it they all pointed at
+`reviews/pages.html` and friends, which do not exist.
+
+Everything on the index list — the title, the severity, the colour, the done state — is read out of
+the page itself, so it cannot disagree with what the review says. Two details worth not rediscovering:
+findings are matched on the class rather than the element, because older reviews wrote them as
+`article` and newer ones as `div`; and the severity words differ between reviews ("critical" in one,
+"Do first" in another), so the label is copied rather than mapped. The docs tool's own
+contents list lives at `pages.html` so the two never fight over `index.html`. Earlier reviews stay at
+`reviews/`, which is the one folder the publish script does **not** empty — everything else there is
+rewritten from the repository each run, but a review exists nowhere else on that machine.
+
+Served on port 8099 by a `docs-preview` stack in Adrian's own StaXX store — an ordinary
+nginx container, visible and removable like any other stack, reading a folder it cannot write to.
+It renders nothing itself; the pages are built here, because that is where the signed-in GitHub CLI
+is, and written **straight into the folder nginx serves** over a mapped drive. There is no copy
+step: writing the page is publishing it. Use the host's `.local` name when mapping — the bare name
+does not resolve here, and this shell cannot use a UNC path at all, only a mapped letter.
+
+**The address, the drive letter and the folder it points at are in `local/machine.md`** — read it
+when you need one. They are Adrian's own machine and network, and this file is public, so they live
+in the one place `.gitignore` already keeps out of the repository. Same arrangement as
+`local/dev-server.md`, which holds the server's credentials. Nothing expands automatically: reading
+that file *is* the lookup.
+
+**The whole folder is emptied rather than written over**: a page deleted from the guide has to
+vanish from the preview too, or believing a stale page is current — the one thing this exists to
+prevent — is what it starts causing. The script refuses to empty a drive that does not look like
+the preview folder, since the alternative is destroying whatever it is really pointing at.
+
+**Two Unraid traps, both measured rather than reasoned about.** The container mounts the *pool*
+path, never `/mnt/user/...`: that is a FUSE overlay, and a bind mount through it turns into `Stale
+file handle` the moment the files underneath are deleted and rewritten — which is precisely what
+publishing does, so every page returned 500 until the mount named the pool. And the folder needs
+`chown nobody:users` before Windows can write into it at all.
+
+**Adrian reviews docs here before they are pushed.** Offer it whenever a change to the readme or a
+guide page is waiting on his approval; a page he can look at is worth more than a description of it.
 
 ## Deploying to the test server
 
@@ -262,7 +419,37 @@ to publish a rolling tarball of the deploy bundle; that was retired when `dev` b
 channel, because it was the only thing that ever put `dev-install.sh` in front of the public. The two
 workflows are deliberately separate and neither should grow into the other.
 
+## The changelog is written as the work lands, not at release time
+
+`CHANGELOG.md`'s top section is `## Unreleased`, and **a change that a person would notice gets its
+bullet there in the same commit as the change itself.** This is not bookkeeping deferred to release
+day: a dev build publishes that section verbatim as its own release notes, so a change with no
+bullet is a change nobody outside this repository is ever told about. `publish.yml` refuses a dev
+build whose `Unreleased` section is empty, for exactly that reason.
+
+Cutting a stable release **renames** that heading to `## <version> — released <date>` — the section
+is not written then, it has been filling up all along. The build refuses to publish a stable release
+while the heading still says `Unreleased`.
+
+Three consequences worth stating, because each one is a mistake somebody would otherwise make:
+
+- **One file, no per-branch copy.** `main` only ever receives commits by merging `dev` at a release,
+  so its changelog cannot change at any other time without anyone having to remember anything. A
+  separate dev changelog would become a third thing to put back by hand at every merge, alongside the
+  readme banner and the branch entity — and those two are already the step most often forgotten.
+- **Bullets are user-facing prose, not commit subjects.** Say what a person can now do and what it
+  means for them. The commit message is for whoever reads the code; this is for whoever runs it.
+- **The feedback board's changelog mirrors `main`'s**, published by hand at release time from the
+  same section. It is the only one of the three that reaches people who never look at the repository,
+  and publishing it is visible to everyone at once — so it stays a deliberate act, never a build step.
+
 ## Two release channels
+
+**`RELEASING.md` is the runbook — follow it to the letter when cutting either kind of release.** It
+carries the ordered steps, every refusal the build can produce and what each one means, and the two
+per-branch values a merge will get wrong. What follows here is the reasoning behind it, which is
+what you need when changing the machinery rather than using it.
+
 
 Same plugin, two channels, chosen by which manifest address somebody pastes into **Install Plugin**.
 Switching is pasting the other one.
@@ -346,19 +533,36 @@ names burnt while releases were immutable, since `01.02.00` is not `1.2.0`.
 
 `01.00.00` is the first release meant for general use; the `00.xx.xx` line is the run-up to it.
 
+**While StaXX is in alpha, every release is a minor one on the `00.xx.xx` line. Never propose a
+`01.00.00`, and never argue a change up to major because of its shape.** Adrian's standing
+instruction, 2026-08-30. Nobody is running the plugin — it is not listed on Community Applications,
+which is the only way anyone would find it. **Applying for that listing is what starts the `1.0.0`
+conversation, and it is his call and his alone.** Until he says so, a change that would otherwise be
+major is simply the next minor.
+
+The same reasoning retires the migration rule that used to sit below — see the next heading.
+
 **The number is decided by what has accumulated on `dev`, and it is decided once.** A dev build
 carries the number `main` is heading towards — cut `00.02.00_dev...` and you have declared the next
 stable release to be `00.02.00`. If something landing later turns out to be a major change, the base
 number moves and the next dev build says so; nothing is burnt either way, because a dev tag can
 never collide with the stable tag it is heading towards.
 
-**Standing rule: any plan that changes the shape of something StaXX has already written on
-somebody's server must carry its own migration step, and must say plainly which version reads which
-shape.** This matters more now than it used to — StaXX is no longer just the author's own server,
-other people are starting to run it, and a plan with no migration step is a plan that breaks their
-box silently the day it lands.
+**While StaXX is in alpha, a plan does not have to migrate what is already on disk.** Adrian's
+standing instruction, 2026-08-30, and the same reasoning as the version rule above: nobody is running
+the plugin, so there is no installed base to carry forward. Take the clean shape and leave the old
+one behind. **Do not build migration machinery, upgrade paths, or code that goes on reading a shape
+StaXX no longer writes** — every one of those is permanent weight bought for nobody.
 
-## Verifying a change with no browser
+The one real server is Adrian's, and it is **patched by hand, as needed**: when a change would make
+something on his box read wrong, say so plainly and offer a one-off fix for those files. That is a
+deliberate act at the time, not a feature in the plugin.
+
+What still holds is the *saying*: a change that alters the shape of something already written must
+state plainly what now reads differently, so the hand-patch can be aimed. Silence is the failure
+here, not the absence of a migration.
+
+## Verifying server-side logic without the UI
 
 For server-side logic, calling plugin functions from a throwaway PHP script beats driving the UI.
 `staxx_start_job()` returns `''` plus an error string for every refusal, so guard and allowlist
@@ -508,6 +712,12 @@ piece of engineering in the repository, and the reason the rest of this exists.
   line as content, and one syntax error makes it reject the *whole file* and return `false` —
   silently. The failure only surfaces the day a new key is added, because existing user configs
   already hold every older key.
+- **`_()` returns HTML, not plain text.** Unraid's own translator turns an apostrophe into
+  `&apos;` and `**bold**`/`*italic*` into tags before handing the string back, so
+  `htmlspecialchars(_('the app\'s own check'))` escapes that entity's ampersand and prints
+  `&apos;` on screen. Interpolate `_()` straight into markup and escape only the untrusted values
+  you are splicing into it. Existing double-escaping call sites are harmless only because none of
+  their strings contain an apostrophe.
 - **Asset URLs carry `filemtime()`.** Without it an edited stylesheet or script sits in the browser
   cache and looks exactly like a change that did not work.
 - **Own the render.** Stock Unraid CSS classes are not borrowed for layout — their rules are

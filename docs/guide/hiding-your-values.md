@@ -1,136 +1,95 @@
-# Hiding your values for a screenshot
+# Sanitise mode
 
-<!-- index: 45 | the Sanitise tick that hides the values you marked secret while you photograph the editor, exactly what it leaves showing, what it switches off while it is on, and the one tab it cannot cover. -->
+<!-- index: 45 | the Sanitise tick that hides values marked secret while you photograph the editor, exactly what it leaves showing, what it switches off while it is on, and the one tab it cannot cover. -->
 
-Sooner or later you want to show somebody your screen — a post on a forum, a message to a friend,
-a picture attached to a question. The trouble is that the settings you need to show sit right beside
-the ones you do not: a password, a key, a token you would rather nobody read off a photograph.
+**Sanitise** hides the values you marked secret so you can take a screenshot. It sits as a tick box
+on the top row of [the stack editor](the-stack-editor.md), beside the stack's name and just left of
+the **Password** button. It always starts off.
 
-**Sanitise** is the answer to that one problem. Tick it and the values you have marked as secret
-stop showing on screen, so you can take the picture. Untick it and everything is back. It is a way
-of looking at the screen and nothing more — see [what this never does](#what-this-never-does).
+Be blunt with yourself about what it does: it hides values from a picture. It does not hide them
+from anyone using this browser.
 
-You will find it as a tick box on the top row of a stack's editor, beside the stack's name and just
-left of the **Password** button. You need a stack open to reach it, and it always starts off — it is
-never remembered from the last time.
+## Steps
 
-## The short version
+![The Sanitise tick box on the editor's top row, unticked, outlined, with the Password button beside it](../images/guide/hiding-your-values-tick.png)
 
 1. Open the stack you want to photograph.
-2. Tick **Sanitise** on the top row. A banner appears and the editor locks.
-3. Take your picture — then look at it yourself before you send it.
+2. Tick **Sanitise**. A banner appears and the editor locks.
+3. Take your picture, then look at it yourself before you send it.
 4. Untick **Sanitise** to get back to editing.
 
-## What you see while it is on
-
-A banner sits across the top of the editor for as long as it is on:
-
-> **Sanitised for screenshots.** Values marked sensitive are hidden and nothing can be changed.
-> Turn Sanitise off to make edits. The real values are still in the page — this hides them from a
-> picture, not from anyone with access to this browser.
-
-![The "Sanitised for screenshots" banner across the top of the editor, with the History tab greyed out beside the still-usable Configure, Manage and Versions tabs](../images/guide/hiding-your-values-banner.png)
-
-And the values themselves change, differently in each of the two panes:
+## What it hides, and where
 
 | Where | What happens to a hidden value |
 |---|---|
-| The file, shown as text | The value is replaced on screen with `**REDACTED**`, in the exact spot the real one sat. |
-| The form | The box is blurred, keeping its real width so the shape of the page stays honest. |
+| The file, shown as text | Replaced on screen with `**REDACTED**`, in the exact spot the real value sat. |
+| The form | The box is blurred, keeping its real width so the page's shape stays honest. |
 
 ![The compose file as text, with two values swapped for the word REDACTED while the names of both settings and the notes written beside them stay perfectly readable](../images/guide/hiding-your-values-file.png)
 
 ![The same two settings shown as boxes on the form: their names and the notes underneath are readable, and only the two values themselves are blurred out](../images/guide/hiding-your-values-form.png)
 
-## It never guesses what is secret
+It only hides a value the file itself marks **Secret**, described in
+[editing a stack](editing-a-stack.md). Nothing is guessed from a name. Check your values carry the
+mark before you photograph anything.
 
-Nothing here is worked out from the look of a name. A box called `ADMIN_PASSWORD` is hidden only if
-the file itself says that value is secret — which is the **Secret** mark described in
-[editing a stack](editing-a-stack.md). If you have not marked a value, Sanitise leaves it in plain
-sight, because a guess about a secret is a guess that gets it wrong in somebody else's direction.
-
-So the first thing to do, before you photograph anything, is check that the values you care about
-actually carry the mark.
-
-## What it does not hide
-
-This is the part worth reading twice. Sanitise covers less than a quick glance suggests.
+## What stays visible
 
 | Still visible | Why |
 |---|---|
-| The **name** of a setting | `ADMIN_TOKEN` still reads as `ADMIN_TOKEN`; only the value goes. Hiding both would make the picture unreadable for no gain — and when you are reporting a problem, the name of the setting is usually the part somebody needs. |
-| The **note** written beside a secret | The sentence you wrote about a setting is not the setting's value. |
-| The **container side of a port** | The port inside the container is not the secret half of the pair. |
-| The whole **Versions** tab | An image name and a version number are not values you wrote, so there is nothing there for this to hide. |
-| **Everything behind the dialog** | The stack list underneath is untouched. If it is in the frame, it is in the picture. |
+| The **name** of a setting | Only the value goes. The name is usually what somebody needs to help you. |
+| The **note** written beside a secret | The note is not the value. |
+| The **container side of a port** | Not the secret half of the pair. |
+| The whole **Versions** tab | An image name and a version are not values you wrote. |
+| **Everything behind the dialog** | The stack list underneath is untouched. |
 
-And one thing that is not about the screen at all:
+The real values are still in the page. They come straight back the moment the tick comes off.
 
-**The real values are still in the page.** They have not been removed, replaced or scrambled —
-they are simply not being drawn. Anyone sitting at this browser can still reach them, and they come
-straight back the moment the tick comes off. This hides your values from a photograph. It does not
-hide them from a person.
+## Second file tabs
 
-### The one it cannot cover: a second file
+A stack can hold more than a compose file — a settings file such as `.env`, or anything else kept
+beside it. Those open as extra tabs, and opening one switches Sanitise off by itself. The tick
+clears, everything is visible again, and the tick box goes dead with the note *"The compose file is
+on the first tab."* You cannot turn it back on until you return to the first tab.
 
-A stack can hold more than a compose file — a settings file such as `.env`, or anything else you
-keep beside it. Those open as extra tabs along the top of the editor, and this is where Sanitise
-stops:
-
-**Opening one of those tabs switches Sanitise off by itself.** The tick clears, everything is
-visible again, and the tick box goes dead with the note *"The compose file is on the first tab."*
-You cannot turn it back on until you return to the first tab.
-
-So a screenshot taken while one of those tabs is on screen shows **everything in that file, in
-full**, and there is no way to hide it. A settings file is usually where the passwords actually
-live, which makes this the easiest mistake on the whole page to make. If you are photographing a
-second file, you are photographing all of it.
+A screenshot taken on one of those tabs shows everything in that file, in full. A settings file is
+usually where passwords actually live, so this is the easiest mistake to make on this page.
 
 ## What is switched off while it is on
 
-While Sanitise is on the editor is locked. That is the safety of it, not an inconvenience: what you
-are looking at is a screen full of placeholders, so if anything could be saved in that state,
-`**REDACTED**` would be written into your real file.
+The editor locks while Sanitise is on. That is the safety of it: the screen is full of
+placeholders, so nothing may write one of them into your real file.
 
 | Turned off | What that means |
 |---|---|
-| **Save** and **Save and start** | Nothing can be written to the file while placeholders are on screen. |
-| The file pane | Read-only — you can scroll and select, but not type. |
-| Every box and button on the form | All disabled. Anything that was already disabled before stays that way when you switch back. |
-| **Undo** | There is nothing to undo, because nothing can be changed. |
-| **Replace** in the find bar | Replacing would edit the placeholder copy on screen, which is thrown away. **Find** still works — searching hidden text is just less useful. |
-| **Fill** on the password generator | The panel and its **Copy** button keep working; only writing into a box stops, with the note *"Sanitise is on, so writing to the file is turned off. Turn it off to fill a box."* |
-| The **History** tab | Disabled, with the message *"Not available while Sanitised. An old version holds the real, unhidden values, so history is hidden until Sanitise is turned off."* |
+| **Save** and **Save and start** | Nothing can be written while placeholders are on screen. |
+| The file pane | Read-only. You can scroll and select, not type. |
+| Every box and button on the form | All disabled. Anything already disabled stays that way when you switch back. |
+| **Undo** | Nothing to undo, because nothing can change. |
+| **Replace** in the find bar | Would edit the placeholder copy on screen, which is thrown away. **Find** still works. |
+| **Fill** on the password generator | The panel and **Copy** keep working. Only writing into a box stops, with the note *"Sanitise is on, so writing to the file is turned off. Turn it off to fill a box."* See [password generator and hashing tool](passwords-and-hashes.md). |
+| The **History** tab | Disabled, with the message *"Not available while Sanitised. An old version holds the real, unhidden values, so history is hidden until Sanitise is turned off."* See [going back](going-back.md). |
 
-That last one is worth its own sentence. Every older copy of your file holds the values before you
-hid them, so leaving history open would undo the whole exercise in a single click — it is closed
-along with everything else, whether or not you were already looking at it.
+History is closed because an old copy of your file holds the values from before you hid them. Left
+open, it would undo the whole point in one click.
+
+![The "Sanitised for screenshots" banner across the top of the editor, with the History tab greyed out beside the still-usable Configure, Manage and Versions tabs](../images/guide/hiding-your-values-banner.png)
 
 ## What this never does
 
-- **It never changes your file.** Nothing is written, nothing is saved, and the file on your server
-  is the same file when you untick it as it was when you ticked it.
-- **It never sends anything anywhere.** No copy is made and nothing leaves your server. It is purely
-  a change to what is drawn on your screen.
-- **It never removes a value.** The values are all still there, in the page, one tick away.
-- **It never tells you a picture is safe to share.** It hides what you marked, and only what you
-  marked. Whether the screenshot you just took is fit to post is your judgement and stays your
-  judgement — look at the picture itself before you send it, every time.
-
-## The related thing that is not this
-
-Giving somebody a copy of a stack to run themselves is a different job, done by **Export**, which
-writes `REPLACE-ME` into a copy it hands you and lets you choose what goes. The two share the same
-machinery for working out what to hide, but Sanitise produces nothing and changes nothing, while
-Export produces a file you send. See [sharing a stack](sharing-a-stack.md) for that.
+- It never changes your file. Nothing is written or saved.
+- It never sends anything anywhere. No copy is made and nothing leaves your server.
+- It never removes a value. Every value is still there, one tick away.
+- It never tells you a picture is safe to share. Whether your screenshot is fit to post is your
+  judgement, every time.
+- It is not a way to send a stack to somebody else — that is Export, which writes a real file with
+  `REPLACE-ME` in place of your values. See [sharing a stack](sharing-a-stack.md).
 
 ## Left out, for now
 
-Two things Sanitise cannot do. Both are honest gaps rather than oversights:
-
-- Hiding a value just for one screenshot, without marking it secret in the file first. That is what
-  keeps Sanitise from ever guessing.
-- Hiding the extra tabs at all. That is why the warning above is on this page.
+- Hiding a value for one screenshot without marking it secret first. That is what keeps Sanitise
+  from ever guessing.
+- Hiding the extra tabs at all.
 
 ## Terms used here
 

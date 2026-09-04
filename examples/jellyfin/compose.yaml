@@ -6,17 +6,17 @@
 # just get a plainer form, with the names worked out from the file.
 #
 # Note where the two kinds of information sit. x-unraid describes the stack and
-# the container: what it is called, its logo, what it is for. What each
-# individual setting is for is written in the comment beside that setting, which
-# is where a person would have written it anyway. Two markers ride at the END of
-# a comment, after the prose:
+# the container: what it is called, its logo (given per container — a stack's
+# own picture is just its containers' logos, tiled together), what it is for.
+# What each individual setting is for is written in the comment beside that
+# setting, which is where a person would have written it anyway. Two markers
+# ride at the END of a comment, after the prose:
 #
 #   -!S   this value is a secret — hidden when Sanitise is on
 #   -!R   this value must not be left empty
 
 x-unraid:
   version: 1
-  icon: https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/SVG/icon-transparent.svg
   category: MediaApp:Video
   project: https://jellyfin.org
   support: https://forum.jellyfin.org
@@ -45,6 +45,7 @@ services:
       JELLYFIN_PublishedServerUrl: ""           # external address, if you reach this through a reverse proxy
 
     x-unraid:
+      icon: https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/SVG/icon-transparent.svg
       webui: "http://[IP]:[PORT:8096]/"
       overview: |
         On first run, open the web interface to complete setup. Point the

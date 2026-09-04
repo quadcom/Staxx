@@ -81,10 +81,12 @@ function staxx_update_state_defaults(): array {
     'inspector' => '',
     'inspector_at' => 0,
     'paused'    => false,
-    'limited'   => false, // drives the page's rate-limited notice; cleared by the next pass that isn't refused
-    // Which registries did the refusing, so the notice can name them and only
-    // offer the Docker Hub sign-in when Docker Hub is one of them.
-    'limitedBy' => [],
+    // PLAN_112 Phase B — the spend ledger, keyed by registry host. Replaces
+    // the old 'limited'/'limitedBy' pair: staxx_spend_refusers() reads this
+    // (falling back to the old shape for one pass on an existing box) to
+    // say who is refusing right now, instead of one flag good for the whole
+    // machine.
+    'spend'     => [],
     'images'    => [],
     // PLAN_90 Stage 1 — per registry host, whether the direct HTTP route
     // works there at all, and whether a 304 has ever actually been seen —
@@ -699,10 +701,14 @@ function staxx_remote_failure_reason(string $out, string $image = '', ?array &$t
  */
 function staxx_image_registry(string $image): string {
   $ref = preg_replace('/@sha256:[0-9a-f]+$/', '', trim($image));
-  $first = explode('/', $ref)[0];
-  // A first segment carrying a dot or a colon is a host name; anything else
-  // is Docker Hub's implied default.
-  return (strpos($first, '.') !== false || strpos($first, ':') !== false)
+  $parts = explode('/', $ref);
+  $first = $parts[0];
+  // A first segment carrying a dot or a colon is a host name — but only when
+  // something follows it. In a one-segment reference such as nginx:alpine the
+  // colon introduces the tag, not a port, and reading it as a host gave that
+  // image a registry of its own in the spend ledger (seen on the box
+  // 2026-09-02). Anything else is Docker Hub's implied default.
+  return (count($parts) > 1 && (strpos($first, '.') !== false || strpos($first, ':') !== false))
     ? strtolower($first) : 'docker.io';
 }
 
@@ -739,6 +745,189 @@ function staxx_update_host_note(string $host, array $patch): void {
 }
 
 /**
+ * PLAN_112 Phase B — the ledger. One pure function folds a single event
+ * ('free', 'paid', 'refused' or 'cli') into one host's own bucket of
+ * $spend, which is keyed by registry host and never touches another host's
+ * entry. Pure and canned-clock so it can be tested without a real pass.
+ *
+ * An hour bucket ('hour', 'free', 'paid', 'refused', 'cli') rolls to zero
+ * the moment $now lands in a new hour; a day bucket ('day', 'dayFree',
+ * 'dayPaid') rolls the same way but only counts the two kinds a person
+ * would call "asked" (a refusal or a CLI question, which StaXX cannot see
+ * the price of, are not part of that count). The registry's own reported
+ * ceiling — 'limit', 'remaining', 'window' — is carried forward untouched
+ * when $event omits it, so an unmetered ask does not erase what the last
+ * metered one learned.
+ *
+ * @param array $event ['kind'=>'free'|'paid'|'refused'|'cli', 'limit'=>?array,
+ *                       'headfree'=>?bool]
+ */
+function staxx_spend_record(array $spend, string $host, array $event, int $now): array {
+  $hour = intdiv($now, 3600);
+  $day  = intdiv($now, 86400);
+
+  $entry = (array)($spend[$host] ?? []);
+  if ((int)($entry['hour'] ?? -1) !== $hour) {
+    $entry['hour'] = $hour;
+    $entry['free'] = 0;
+    $entry['paid'] = 0;
+    $entry['refused'] = 0;
+    $entry['cli'] = 0;
+  }
+  if ((int)($entry['day'] ?? -1) !== $day) {
+    $entry['day'] = $day;
+    $entry['dayFree'] = 0;
+    $entry['dayPaid'] = 0;
+  }
+
+  $kind = (string)($event['kind'] ?? '');
+  switch ($kind) {
+    case 'free':
+      $entry['free']++;
+      $entry['dayFree']++;
+      break;
+    case 'paid':
+      $entry['paid']++;
+      $entry['dayPaid']++;
+      break;
+    case 'refused':
+      $entry['refused']++;
+      $entry['refusedAt'] = $now;
+      break;
+    case 'cli':
+      $entry['cli']++;
+      break;
+  }
+
+  if (isset($event['limit']) && is_array($event['limit'])) {
+    $limit = $event['limit'];
+    if (isset($limit['limit']))     $entry['limit']     = (int)$limit['limit'];
+    if (isset($limit['remaining'])) $entry['remaining'] = (int)$limit['remaining'];
+    $entry['window'] = (int)($limit['window'] ?? ($entry['window'] ?? 3600));
+  }
+  if (isset($event['headfree'])) $entry['headfree'] = (bool)$event['headfree'];
+
+  $spend[$host] = $entry;
+  return $spend;
+}
+
+/**
+ * The ceiling a host's own reported limit implies StaXX may spend on
+ * CHARGED questions in one hour — half of it, so a real pull the user
+ * makes always has room. With no reported limit, Docker Hub is assumed to
+ * allow fifty (half of the anonymous hundred), every other host is treated
+ * as unmetered (PHP_INT_MAX), and 'assumed' says which of those two guesses
+ * this is, for the readout to say so honestly.
+ *
+ * @return array{ceiling:int, assumed:bool}
+ */
+function staxx_spend_ceiling(array $hostSpend, string $host): array {
+  if (isset($hostSpend['limit'])) {
+    return ['ceiling' => intdiv((int)$hostSpend['limit'], 2), 'assumed' => false];
+  }
+  if ($host === 'docker.io') {
+    return ['ceiling' => 50, 'assumed' => true];
+  }
+  return ['ceiling' => PHP_INT_MAX, 'assumed' => false];
+}
+
+/**
+ * May a CHARGED question be sent to this host right now? Free questions
+ * never consult this — the whole point of the free form is that it costs
+ * nothing to ask. Prefers the registry's own reported 'remaining' while it
+ * is still this hour's figure; otherwise falls back to counting what this
+ * box itself has paid this hour, which is the only figure left once the
+ * registry's own count has gone stale.
+ */
+function staxx_spend_may_pay(array $hostSpend, string $host, int $now): bool {
+  $ceiling = staxx_spend_ceiling($hostSpend, $host)['ceiling'];
+  $hour = intdiv($now, 3600);
+
+  if (isset($hostSpend['remaining']) && (int)($hostSpend['hour'] ?? -1) === $hour) {
+    return (int)$hostSpend['remaining'] > $ceiling;
+  }
+
+  $paid = ((int)($hostSpend['hour'] ?? -1) === $hour) ? (int)($hostSpend['paid'] ?? 0) : 0;
+  return $paid < $ceiling;
+}
+
+/**
+ * Which hosts are refusing questions right now — a 'refusedAt' inside the
+ * last hour. The one place both the current 'spend' shape and the old
+ * 'limited'/'limitedBy' pair are read: a state file with no 'spend' key at
+ * all yet falls back to the old flags, purely so a box updated mid-hour
+ * does not show a broken notice for the hour it takes the next pass to
+ * fill the ledger in — there is no installed base here to migrate for real.
+ */
+function staxx_spend_refusers(array $state, int $now): array {
+  if (!isset($state['spend'])) {
+    return !empty($state['limited']) ? (array)($state['limitedBy'] ?? ['docker.io']) : [];
+  }
+  $refusers = [];
+  foreach ((array)$state['spend'] as $host => $entry) {
+    if (($now - (int)($entry['refusedAt'] ?? 0)) < 3600 && isset($entry['refusedAt'])) {
+      $refusers[] = $host;
+    }
+  }
+  return $refusers;
+}
+
+/**
+ * The readout — one row per host in the ledger, sorted docker.io first
+ * (the one everybody recognises) then alphabetically. What the settings
+ * panel draws and what the pass prints a summary line from, so the keys
+ * here are the whole contract: stale hour/day buckets read as zero rather
+ * than showing a figure from the hour before last.
+ *
+ * @return list<array{host:string, askedHour:int, askedDay:int, freeHour:int,
+ *   freeDay:int, paidHour:int, paidDay:int, refused:int, cli:int,
+ *   remaining:?int, limit:?int, window:?int, headfree:bool, refusedAt:int,
+ *   ceiling:?int, assumed:bool}>
+ */
+function staxx_spend_report(array $state, int $now): array {
+  $hour = intdiv($now, 3600);
+  $day  = intdiv($now, 86400);
+
+  $hosts = array_keys((array)($state['spend'] ?? []));
+  usort($hosts, function ($a, $b) {
+    if ($a === 'docker.io') return -1;
+    if ($b === 'docker.io') return 1;
+    return strcmp($a, $b);
+  });
+
+  $rows = [];
+  foreach ($hosts as $host) {
+    $entry = (array)$state['spend'][$host];
+    $curHour = (int)($entry['hour'] ?? -1) === $hour;
+    $curDay  = (int)($entry['day']  ?? -1) === $day;
+
+    $freeHour = $curHour ? (int)($entry['free'] ?? 0) : 0;
+    $paidHour = $curHour ? (int)($entry['paid'] ?? 0) : 0;
+    $ceilingInfo = staxx_spend_ceiling($entry, $host);
+
+    $rows[] = [
+      'host'      => $host,
+      'askedHour' => $freeHour + $paidHour,
+      'askedDay'  => $curDay ? ((int)($entry['dayFree'] ?? 0) + (int)($entry['dayPaid'] ?? 0)) : 0,
+      'freeHour'  => $freeHour,
+      'freeDay'   => $curDay ? (int)($entry['dayFree'] ?? 0) : 0,
+      'paidHour'  => $paidHour,
+      'paidDay'   => $curDay ? (int)($entry['dayPaid'] ?? 0) : 0,
+      'refused'   => $curHour ? (int)($entry['refused'] ?? 0) : 0,
+      'cli'       => $curHour ? (int)($entry['cli'] ?? 0) : 0,
+      'remaining' => (isset($entry['remaining']) && $curHour) ? (int)$entry['remaining'] : null,
+      'limit'     => isset($entry['limit']) ? (int)$entry['limit'] : null,
+      'window'    => isset($entry['window']) ? (int)$entry['window'] : null,
+      'headfree'  => (bool)($entry['headfree'] ?? true),
+      'refusedAt' => (int)($entry['refusedAt'] ?? 0),
+      'ceiling'   => $ceilingInfo['ceiling'] === PHP_INT_MAX ? null : $ceilingInfo['ceiling'],
+      'assumed'   => $ceilingInfo['assumed'],
+    ];
+  }
+  return $rows;
+}
+
+/**
  * "5 hours", "2 days" — a duration in words, plain and small on purpose:
  * this only ever fills a gap in one sentence (staxx_updates_pill_for_image()'s
  * repeated-failure notice), so it does not need stacks.js's timeAgoWords()
@@ -756,21 +945,42 @@ function staxx_time_span_words(int $seconds): string {
 
 /**
  * PLAN_90 Stage 3 — how long a remembered answer for this image is trusted
- * before it is worth asking again. Pure: no network, no state read beyond
- * the $entry the caller already has in hand, so it is cheaply testable and
- * safe to call once per image every pass.
+ * before it is worth asking again. A one-liner over staxx_update_cadence_why()
+ * so there is exactly one cadence rule and no call site here has to change
+ * shape for PLAN_112 Phase C's sentences to exist.
  *
  * A digest-pinned reference never reaches here — staxx_update_check() already
  * handles that as 'pinned' before the cadence is ever asked about.
  */
 function staxx_update_cadence(string $image, array $entry): int {
+  return staxx_update_cadence_why($image, $entry)['interval'];
+}
+
+/**
+ * PLAN_112 Phase C — the same rule as staxx_update_cadence(), but returning
+ * the reasoning as a plain sentence alongside the interval, so the settings
+ * readout and the pill's tooltip can say WHY an image is checked as often as
+ * it is without re-deriving the rule and risking the two drifting apart.
+ *
+ * @return array{interval:int, why:string}
+ */
+function staxx_update_cadence_why(string $image, array $entry): array {
   $floor   = STAXX_UPDATE_ASK_TTL; // 6 hours
   $daily   = 86400;
   $ceiling = 14 * 86400;
 
+  // A digest-pinned reference names one exact build, so asking could only
+  // ever fetch the same build again.
+  if (strpos($image, '@sha256:') !== false) {
+    return ['interval' => $ceiling,
+            'why' => 'Pinned to one exact build, so never checked — pulling it could only fetch the same build again.'];
+  }
+
   // Override 1 — no baseline yet, so there is nothing to compare a slower
   // interval against. Ask promptly.
-  if ((int)($entry['asked'] ?? 0) === 0) return $floor;
+  if ((int)($entry['asked'] ?? 0) === 0) {
+    return ['interval' => $floor, 'why' => 'Not compared yet, so asked at the next pass.'];
+  }
 
   // Override 2 — an errored image retries fast so it clears itself the
   // moment the registry answers again, UNLESS Stage 3b has already flagged
@@ -779,17 +989,25 @@ function staxx_update_cadence(string $image, array $entry): int {
   // a rate refusal, a withdrawn tag, or a permanent 'not found'/'unsupported'
   // answer), in which case daily is plenty.
   if ((string)($entry['error'] ?? '') !== '') {
-    return ((int)($entry['fails'] ?? 0) >= 5) ? $daily : $floor;
+    if ((int)($entry['fails'] ?? 0) >= 5) {
+      return ['interval' => $daily,
+              'why' => 'Five checks in a row have failed, so asked once a day until the registry answers again.'];
+    }
+    return ['interval' => $floor,
+            'why' => 'The last check did not get an answer, so asked again within six hours.'];
   }
 
   $tag = (string)(staxx_registry_ref($image)['tag'] ?? '');
   $rolling = ['latest', 'main', 'master', 'develop', 'nightly', 'edge', 'stable', 'beta', 'dev'];
   if ($tag === '' || in_array(strtolower($tag), $rolling, true)) {
     $interval = $floor;
+    $why = 'A moving tag, so checked every six hours.';
   } elseif (preg_match('/^v?[0-9]+(\.[0-9]+){0,4}(-[A-Za-z0-9]+)?$/', $tag)) {
     $interval = 7 * 86400;
+    $why = 'A version-numbered tag, so checked once a week — a numbered release does not quietly change under the same number.';
   } else {
     $interval = $daily;
+    $why = 'Neither a version number nor a moving tag, so checked once a day.';
   }
 
   // Churn modulation — 'moves' is a ring of at most the last 5 timestamps at
@@ -805,8 +1023,10 @@ function staxx_update_cadence(string $image, array $entry): int {
     if ($m > $newestMove) $newestMove = $m;
     if ($now - $m < 14 * 86400) $recentMoves++;
   }
+  $quiet = false;
   if ($recentMoves >= 2) {
     $interval = $floor;
+    $why = 'Changed twice in the last fortnight, so checked every six hours.';
   } elseif ($newestMove > 0 && ($now - $newestMove) > 90 * 86400) {
     // Only stretched on evidence. An empty ring is not proof of a quiet
     // image, it is proof of a short memory — every image has one the pass
@@ -814,9 +1034,99 @@ function staxx_update_cadence(string $image, array $entry): int {
     // how often a rolling tag is checked, which is not what the tag shape
     // above promises.
     $interval *= 2;
+    $quiet = true;
   }
 
-  return max($floor, min($interval, $ceiling));
+  $interval = max($floor, min($interval, $ceiling));
+  // Said against the interval actually returned (after the clamp), not the
+  // pre-doubling one, so the sentence never names an interval the rule
+  // cannot actually produce.
+  if ($quiet) $why = 'Has not changed in over three months, so checked every '.staxx_time_span_words($interval).'.';
+
+  return ['interval' => $interval, 'why' => $why];
+}
+
+/**
+ * PLAN_127 — staxx_update_cadence_why()'s interval, spelled out the way its
+ * own hand-written sentences already say it ("every six hours") rather than
+ * as a bare number, for the hover card's "Checked" row. Values this function
+ * does not recognise (the doubled interval a quiet image earns) fall back to
+ * staxx_time_span_words() in numeral form — still readable, just not hand-
+ * tuned prose.
+ */
+function staxx_update_interval_words(int $seconds): string {
+  $named = [
+    STAXX_UPDATE_ASK_TTL => 'six hours',
+    86400                => 'a day',
+    7 * 86400            => 'a week',
+    14 * 86400           => 'a fortnight',
+  ];
+  return 'every '.($named[$seconds] ?? staxx_time_span_words($seconds));
+}
+
+/**
+ * PLAN_127 — staxx_update_cadence_why()'s sentence, split at its own "so
+ * checked every…" join into the two short phrases the hover card shows as
+ * separate rows ("Checked" / "Why") instead of one long one that overflowed
+ * the card in the first mockup. Matched by hand against that function's own
+ * fixed sentences, so a new sentence added there needs a line added here too
+ * — there is no way to split English prose apart mechanically that would
+ * survive that function's wording ever changing.
+ *
+ * @return array{interval:string, why:string} why is '' when no sentence here
+ *              recognises the one just returned, rather than guessing.
+ */
+function staxx_update_cadence_why_short(string $image, array $entry): array {
+  $full = staxx_update_cadence_why($image, $entry);
+  $why  = $full['why'];
+  $short = '';
+  if (strpos($why, 'Pinned to one exact build') === 0) {
+    $short = 'pinned to one exact build';
+  } elseif (strpos($why, 'Not compared yet') === 0) {
+    $short = 'not compared yet';
+  } elseif (strpos($why, 'Five checks in a row have failed') === 0) {
+    $short = 'checks have been failing';
+  } elseif (strpos($why, 'The last check did not get an answer') === 0) {
+    $short = 'the last check found no answer';
+  } elseif (strpos($why, 'A moving tag') === 0) {
+    $short = 'a moving tag';
+  } elseif (strpos($why, 'A version-numbered tag') === 0) {
+    $short = 'a version-numbered tag';
+  } elseif (strpos($why, 'Neither a version number') === 0) {
+    $short = 'neither a version number nor a moving tag';
+  } elseif (strpos($why, 'Changed twice in the last fortnight') === 0) {
+    $short = 'changed twice in a fortnight';
+  } elseif (strpos($why, 'Has not changed in over three months') === 0) {
+    $short = 'unchanged for over three months';
+  }
+  return ['interval' => staxx_update_interval_words($full['interval']), 'why' => $short];
+}
+
+/**
+ * PLAN_127 — the same three clock facts staxx_update_when_words() composes
+ * into one sentence, returned instead as the short phrases the hover card's
+ * table rows want. Empty strings throughout when never asked, exactly
+ * mirroring staxx_update_when_words()'s own '' — a caller drops a row whose
+ * value is '' rather than showing it blank.
+ *
+ * @return array{asked:string, next:string, interval:string, why:string}
+ */
+function staxx_update_clock_words(string $image, array $entry, int $now): array {
+  $asked = (int)($entry['asked'] ?? 0);
+  if ($asked === 0) return ['asked' => '', 'next' => '', 'interval' => '', 'why' => ''];
+
+  $nextDue = (int)($entry['nextDue'] ?? 0);
+  $next = $nextDue > $now
+    ? 'in '.staxx_time_span_words($nextDue - $now)
+    : 'at the next pass';
+
+  $cadence = staxx_update_cadence_why_short($image, $entry);
+  return [
+    'asked'    => staxx_time_span_words($now - $asked).' ago',
+    'next'     => $next,
+    'interval' => $cadence['interval'],
+    'why'      => $cadence['why'],
+  ];
 }
 
 /**
@@ -915,7 +1225,7 @@ function staxx_image_remote(string $image, string &$why = null, ?array &$tags = 
     $labels = $config['config']['Labels'] ?? ($config['Labels'] ?? []);
     $labels = is_array($labels) ? $labels : [];
 
-    return ['digest' => $digest] + staxx_update_labels_meta($labels);
+    return ['digest' => $digest, 'spent' => ['kind' => 'cli']] + staxx_update_labels_meta($labels);
   }
 
   // Only 'manifest' left — imagetools was handled and returned above, and
@@ -938,7 +1248,7 @@ function staxx_image_remote(string $image, string &$why = null, ?array &$tags = 
   if ($digest === '') { $why = staxx_remote_failure_reason($out, $image, $tags); return []; }
 
   // No labels available on this route.
-  return ['digest' => $digest];
+  return ['digest' => $digest, 'spent' => ['kind' => 'cli']];
 }
 
 /**
@@ -985,7 +1295,13 @@ function staxx_registry_remote_http(
 
   if ($status === 304) {
     staxx_update_host_note($host, ['saw304' => true]);
-    return ['unchanged' => true];
+    // A 304 carries no 'charged' key at all — staxx_registry_digest() only
+    // sets it on a 200 — so the price is read off the same memo that
+    // decided which form was actually sent: free while the header-only
+    // form still works here, paid on a host that has fallen back to a full
+    // GET for everything.
+    $kind = staxx_registry_headfree($host) ? 'free' : 'paid';
+    return ['unchanged' => true, 'spent' => ['kind' => $kind]];
   }
 
   if ($status !== 200) {
@@ -1017,7 +1333,9 @@ function staxx_registry_remote_http(
   // entity tag sent — the caller stamps the clock that governs when the next
   // one is due.
   $out = ['digest' => $digest, 'etag' => (string)($result['etag'] ?? ''), 'accept' => $acceptId,
-          'fresh' => $etag === ''];
+          'fresh' => $etag === '',
+          'spent' => ['kind' => ($result['charged'] ?? false) ? 'paid' : 'free']];
+  if (isset($result['limit'])) $out['limit'] = $result['limit'];
   if ($prevRemote !== '' && $prevRemote === $digest) return $out;
 
   // The digest has genuinely moved, so the version labels are worth the
@@ -1033,6 +1351,10 @@ function staxx_registry_remote_http(
   // editor, which only ever wants Hub's opinion, but wrong here, where a
   // compose file naming ghcr must never be answered by Hub about anything.
   $labels = staxx_registry_labels($host, $repo, $tag);
+  // The index and manifest fetches this walk makes are charged; the config
+  // blob at the end of it is not — measured 2026-09-02, same pass as the
+  // header-only form itself.
+  $out['spent']['extraPaid'] = 2;
   return $out + staxx_update_labels_meta($labels);
 }
 
@@ -1045,6 +1367,22 @@ function staxx_array_is_list(array $arr): bool {
 }
 
 /**
+ * Sorts `docker image inspect`'s raw output into what it actually said,
+ * pulled out as its own pure function so the two very different reasons for
+ * an empty answer can be told apart without a live docker call: a decoded
+ * JSON object means the image is on disk; "No such image" (the daemon's own
+ * wording, case-insensitive) means it genuinely is not; anything else —
+ * empty output, a socket error, a timeout — means the question itself
+ * failed and nothing has been learned either way.
+ */
+function staxx_image_local_verdict(string $out): array {
+  $data = json_decode($out, true);
+  if (is_array($data)) return $data;
+  if (stripos($out, 'No such image') !== false) return [];
+  return ['unknown' => true];
+}
+
+/**
  * What is actually sitting on disk for one image reference — the digest
  * Docker recorded when it pulled it, comparable to staxx_image_remote()'s
  * digest with no conversion either side.
@@ -1052,6 +1390,10 @@ function staxx_array_is_list(array $arr): bool {
  * Not present locally → []. Present but with no RepoDigests (built here or
  * side-loaded, never pulled) → ['built' => true] with no digest, so the
  * caller does not mistake a locally-built image for one that is up to date.
+ * The inspect call itself failed — socket down, timeout, garbage back —
+ * → ['unknown' => true]: unlike [], this is not an answer, and callers that
+ * treat an absent digest as "nothing to compare" already handle it the same
+ * as [] without any change, but staxx_update_check() treats the two apart.
  */
 function staxx_image_local(string $image): array {
   // 2>&1 here for the same reason as the imagetools route above.
@@ -1059,8 +1401,8 @@ function staxx_image_local(string $image): array {
     staxx_docker_bin().' image inspect '.escapeshellarg($image).' --format '.escapeshellarg('{{json .}}').' 2>&1',
     15
   );
-  $data = json_decode($out, true);
-  if (!is_array($data)) return [];
+  $data = staxx_image_local_verdict($out);
+  if ($data === [] || !empty($data['unknown'])) return $data;
 
   $repo = staxx_hub_repo_path($image);
   // The reference's own repository half, used to pick the matching
@@ -1231,7 +1573,17 @@ function staxx_update_refresh_after_run(string $stack, string $service = ''): bo
     // disk has just been re-measured — an image that was absent or built
     // here has plainly been pulled since. Every other remembered error is a
     // statement about the registry and is none of this function's business.
-    if (($entry['error'] ?? '') === 'not installed') unset($entry['error']);
+    if (($entry['error'] ?? '') === 'not installed') {
+      unset($entry['error']);
+      // The 'not installed' short-circuit stamps 'asked'/'nextDue' so the
+      // ask itself is skipped while the image stays absent — but the image
+      // has plainly just appeared, so that cadence is stale the moment it
+      // is cleared. Left in place, the next check pass would wait out
+      // whatever interval was stamped while there was nothing to ask about,
+      // instead of asking the registry promptly now there is something to
+      // compare against.
+      unset($entry['asked'], $entry['nextDue']);
+    }
     if (!empty($entry['built'])) unset($entry['built'], $entry['error']);
     // Up to date now, so the countdown running against that version has
     // nothing left to fire on — cleared by the same four keys
@@ -1361,6 +1713,20 @@ function staxx_update_check(string $scope, bool $force): array {
   $rebuilds = (array)$state['rebuilds'];
   // PLAN_62 Stage 2 findings, keyed by stack — see staxx_update_state_defaults().
   $stacksState = (array)$state['stacks'];
+  // PLAN_112 Phase B — the spend ledger, updated as this pass asks and read
+  // before every charged ask to decide whether this host may still be paid.
+  $spend  = (array)($state['spend'] ?? []);
+  // PLAN_112 Phase C — staxx_registry_headfree()'s memory is a static array,
+  // reset every process, but the ledger itself remembers a host's last
+  // known answer across passes. Without seeding it back in here, every pass
+  // would re-probe a host that has already proved it refuses the free form,
+  // and the guard rail just below — which only ever consults hosts whose
+  // memory reads false — could never bite a second time.
+  foreach ($spend as $host => $spendEntry) {
+    if (isset($spendEntry['headfree']) && !$spendEntry['headfree']) {
+      staxx_registry_headfree($host, false);
+    }
+  }
   $now    = time();
   $failedNames = [];
   $newlyFound = 0; // images whose 'seen' clock started fresh THIS pass, for the "found" notification
@@ -1542,6 +1908,26 @@ function staxx_update_check(string $scope, bool $force): array {
     $tags   = null;
     $local  = staxx_image_local($image);
 
+    // Genuinely absent — never the 'unknown' shape, which means the
+    // question itself failed rather than answering "no". With no local
+    // digest, no answer from the registry could change anything, so the
+    // ask is skipped and
+    // that skip is stamped like any other, the same shape as the
+    // digest-pinned short-circuit just below. Without this every image
+    // nobody has installed was asked about on every single pass, for an
+    // answer thrown away a few lines down, and never earned a cadence of
+    // its own.
+    if ($local === []) {
+      $existing['error'] = 'not installed';
+      unset($existing['local']);
+      $existing['asked'] = $now;
+      $existing['nextDue'] = $now + staxx_update_cadence($image, $existing);
+      $images[$image] = $existing;
+      $result['missing']++;
+      echo $image." — not installed here, not asked\n";
+      continue;
+    }
+
     // repo:tag@sha256:<digest> names one exact build — the registry can only
     // ever answer with the digest already written in the reference, so
     // asking is guaranteed waste, and on a limited allowance that waste is
@@ -1552,9 +1938,37 @@ function staxx_update_check(string $scope, bool $force): array {
         if (isset($local[$carry])) $remote[$carry] = $local[$carry];
       }
       $result['pinned']++;
+    } elseif (!staxx_registry_headfree($registry)
+           && !staxx_spend_may_pay($spend[$registry] ?? [], $registry, $now)) {
+      // PLAN_112 Phase B's guard rail. Only reached once a host has fallen
+      // back to the charged form everywhere — the free header-only form
+      // never consults this at all. StaXX must never be the reason a real
+      // pull the user makes is refused, so it stops asking a charged host
+      // once its own half of that host's allowance is spent, and leaves the
+      // rest of this pass's images against it for next time, exactly like
+      // the per-registry stand-down above.
+      $result['unchecked']++;
+      $unchecked[] = $image;
+      echo $image.' — '.$registry.' only answers the charged way here now, and StaXX is keeping '
+         . "half its allowance free for you; asking again next pass\n";
+      continue;
     } else {
       $remote = staxx_image_remote($image, $why, $tags, $existing);
       $result['asked']++;
+      if (isset($remote['spent']) && is_array($remote['spent'])) {
+        $spentEvent = $remote['spent'];
+        $spend = staxx_spend_record($spend, $registry, [
+          'kind'     => $spentEvent['kind'] ?? 'free',
+          'limit'    => $remote['limit'] ?? null,
+          'headfree' => staxx_registry_headfree($registry),
+        ], $now);
+        // The label walk this ask triggered is charged twice more — record
+        // those as their own paid events rather than folding them into the
+        // one above, so the hourly count reflects what was actually asked.
+        for ($extra = (int)($spentEvent['extraPaid'] ?? 0); $extra > 0; $extra--) {
+          $spend = staxx_spend_record($spend, $registry, ['kind' => 'paid'], $now);
+        }
+      }
     }
 
     // PLAN_90 Stage 2 — the registry confirmed nothing has moved. 'asked' and
@@ -1612,6 +2026,7 @@ function staxx_update_check(string $scope, bool $force): array {
       $images[$image] = $existing;
       $limited = true;
       $limitedRegistries[$registry] = true;
+      $spend = staxx_spend_record($spend, $registry, ['kind' => 'refused'], $now);
       echo $image.' — '.$registry." is limiting how often this server may ask; "
          . "skipping the rest of its images this pass\n";
       continue;
@@ -1677,6 +2092,23 @@ function staxx_update_check(string $scope, bool $force): array {
       continue;
     }
 
+    // The registry answered fine but reading what is actually on disk
+    // failed — a broken docker socket, a timeout, garbage back. Recording
+    // this as "not installed" would be a lie the moment the image turns out
+    // to be sitting right there; the previously recorded local digest (if
+    // any) is left alone rather than overwritten with nothing learned.
+    // Stamped and cadenced the same as any other completed ask, since the
+    // registry question itself did succeed — only the local half is unknown.
+    if (!empty($local['unknown'])) {
+      $existing['error'] = 'local image could not be read';
+      $existing['asked'] = $now;
+      $existing['nextDue'] = $now + staxx_update_cadence($image, $existing);
+      $images[$image] = $existing;
+      $result['failed']++;
+      echo $image." — local image could not be read\n";
+      continue;
+    }
+
     // A locally-built or side-loaded image has no pulled digest to compare —
     // saying "up to date" would be a lie. Phase 7 of PLAN_45 will read the
     // build recipe's base image properly; for now just say so, honestly.
@@ -1708,9 +2140,11 @@ function staxx_update_check(string $scope, bool $force): array {
       continue;
     }
 
-    // Not on this box at all — a service that has never been started. Leave
-    // any previously-remembered seen/was/seenDigest alone; there is simply
-    // nothing new to say this pass.
+    // Unreachable in practice: the early exit above already sends a
+    // genuinely absent image straight to `continue` before the registry is
+    // ever asked, and nothing between there and here reassigns $local. Kept
+    // as a guard rather than deleted, since a future reordering of the loop
+    // could put an ask ahead of that exit again without anyone noticing.
     if ($local === []) {
       $existing['error'] = 'not installed';
       unset($existing['local']);
@@ -1764,7 +2198,19 @@ function staxx_update_check(string $scope, bool $force): array {
       // clock would mean an update never actually arrives. Only a fresh
       // digest (one 'seen' has not already been recorded against) resets it.
       if (($existing['seenDigest'] ?? '') !== $existing['remote']) {
-        $existing['was']        = $images[$image]['version'] ?? ($existing['was'] ?? '');
+        $priorVersion = $images[$image]['version'] ?? '';
+        if ($priorVersion !== '') {
+          $existing['was'] = $priorVersion;
+        } elseif (($existing['was'] ?? '') === '') {
+          // PLAN_127 — nothing was ever recorded as newest-seen before this
+          // pass, which happens whenever the first check StaXX ever makes
+          // already finds an update pending: there is no earlier "was" to
+          // roll forward. Fall back to the running image's own declared
+          // version label instead — staxx_image_local() already read it off
+          // the local image above, no extra docker call needed. An image
+          // that publishes no version label stays blank, which is honest.
+          $existing['was'] = (string)($local['version'] ?? '');
+        }
         // The running image's own build date — 'created' on $existing is the
         // REMOTE image's date and is overwritten every pass, so it cannot
         // serve as "before". $local is what 'was' is being read alongside,
@@ -1825,13 +2271,22 @@ function staxx_update_check(string $scope, bool $force): array {
   // The rate-limited sentence takes precedence over the failed-images summary
   // when both apply, and is what the grid's last-checked line will show.
   if ($limited) {
-    $refusers = array_keys($limitedRegistries);
-    $names = count($refusers) === 1 ? $refusers[0] : implode(' and ', $refusers);
-    $result['error'] = $names.(count($refusers) === 1 ? ' is' : ' are')
-      . ' limiting how often this server may ask about images. '
-      . (in_array('docker.io', $refusers, true)
-          ? 'Sign in under Settings to raise the limit, or try again in an hour.'
-          : 'Try again in an hour.');
+    // PLAN_112 Phase B/C — the sentence now says what actually happened
+    // instead of naming an assumed cause. Checking is free everywhere but
+    // docker.io, so a stand-down on any other host means it is refusing
+    // outright rather than metering; docker.io's own refusal is almost
+    // always someone's real pulls on this address, not StaXX's own asking.
+    $sentences = [];
+    foreach (array_keys($limitedRegistries) as $refuser) {
+      $sentences[] = $refuser === 'docker.io'
+        ? 'Docker Hub has stopped answering questions from this address for now. Checking costs '
+          . 'nothing, so this is usually caused by images being downloaded — by you, or by anything '
+          . 'else on your network sharing this address. Anything StaXX did not get to still shows the '
+          . 'answer it gave last time, and it will try again within the hour.'
+        : $refuser.' has stopped answering questions from this server for now. Anything it was not '
+          . 'asked about still shows the answer it gave last time; the next pass will ask again.';
+    }
+    $result['error'] = implode(' ', $sentences);
   } else {
     $result['error'] = $result['failed'] > 0 ? 'Could not check: '.implode(', ', $failedNames) : '';
   }
@@ -1862,14 +2317,24 @@ function staxx_update_check(string $scope, bool $force): array {
     'checked'  => $now,
     'ok'       => $result['ok'],
     'error'    => $result['error'],
-    'limited'  => $limited,
-    'limitedBy' => array_keys($limitedRegistries),
+    'spend'    => $spend,
     'images'   => $images,
     'rebuilds' => $rebuilds,
     'stacks'   => $stacksState,
   ]);
 
   staxx_update_unlock();
+
+  // The shell readout — one line per host that has asked anything at all
+  // this pass or before, so a log tail reads the same figures the settings
+  // panel draws from staxx_spend_report().
+  foreach (staxx_spend_report(['spend' => $spend], $now) as $row) {
+    $bit = ($row['limit'] !== null && $row['remaining'] !== null)
+      ? $row['remaining'].' of '.$row['limit'].' left'
+      : 'no limit reported';
+    echo 'spent: '.$row['host'].' — '.$row['askedHour'].' asked this hour, '
+       . ($row['paidHour'] === 0 ? 'all free' : $row['paidHour'].' paid').', '.$bit."\n";
+  }
 
   // One notification for the whole pass, never one per image — see the
   // matching reasoning on staxx_update_notify() itself. staxx_update_settings()
@@ -1964,6 +2429,25 @@ function staxx_update_check_start(string $scope, bool $force, string &$error): s
  * the pause switch, automatic updating and roll back are later phases; this
  * only reports what is already known.
  */
+
+/**
+ * PLAN_112 Phase C — one sentence saying when this image was last asked
+ * about, when it is next due, and why that cadence applies, for the pill's
+ * tooltip. Empty when never asked, so the "never checked" tip above is not
+ * followed by a sentence describing a clock that has not started yet.
+ */
+function staxx_update_when_words(string $image, array $entry, int $now): string {
+  $asked = (int)($entry['asked'] ?? 0);
+  if ($asked === 0) return '';
+
+  $nextDue = (int)($entry['nextDue'] ?? 0);
+  $next = $nextDue > $now
+    ? 'next check in '.staxx_time_span_words($nextDue - $now)
+    : 'next check at the next pass';
+
+  $why = staxx_update_cadence_why($image, $entry)['why'];
+  return ' Last asked '.staxx_time_span_words($now - $asked).' ago; '.$next.'. '.$why;
+}
 
 /**
  * Classify one image reference against the state file — the one place that
@@ -2083,6 +2567,10 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
   // on offer — see the matching comment in staxx_update_check().
   $skipped = ($entry['skip'] ?? '') !== '' && $entry['skip'] === $remote;
 
+  // PLAN_127 — the same three facts staxx_update_when_words() folds into the
+  // tip sentence below, kept separately too for the hover card's own rows.
+  $clock = staxx_update_clock_words($image, $entry, time());
+
   if ($local !== $remote && !$skipped) {
     $was = (string)($entry['was'] ?? '');
     $ver = (string)($entry['version'] ?? '');
@@ -2099,25 +2587,41 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
       return ['state' => 'update', 'label' => $ver.' · new build', 'source' => $source,
                'tip' => 'This tag always points at the newest build, so its name never changes. '
                       . 'The one running was built '.$whenWas.', and the new one was built '.$whenNew.'. '
-                      . 'Press this to fetch it and rebuild the container on it.',
-               'version' => $ver, 'was' => $was];
+                      . 'Press this to fetch it and rebuild the container on it.'
+                      . staxx_update_when_words($image, $entry, time()),
+               'version' => $ver, 'was' => $was,
+               'askedWords' => $clock['asked'], 'nextWords' => $clock['next'],
+               'intervalWords' => $clock['interval'], 'cadenceWhy' => $clock['why']];
     }
 
-    $label = ($was !== '' && $ver !== '' && $was !== $ver) ? $was.' → '.$ver : 'update ready';
-    $tip = ($was !== '' && $ver !== '' && $was !== $ver)
+    // PLAN_121 item 7: a from-to pair could run to twice the width of every
+    // other pill (Jellyfin's read 40+ characters), so the label is always
+    // the same plain words everyone else gets — the tag icon
+    // (staxx_update_pill_html() below) is what tells this pill apart from
+    // a plain "update ready" with no version known at all. The hover still
+    // spells out both versions in a sentence; only the visible text changed.
+    $versioned = $was !== '' && $ver !== '' && $was !== $ver;
+    $label = 'update ready';
+    $tip = $versioned
       ? 'A newer version, '.$ver.', is available; this is currently running '.$was.'. '
       . 'Press this to fetch it and rebuild the container on it.'
       : 'A newer version of this image is available. Press this to fetch it and rebuild the '
       . 'container on it.';
+    $tip .= staxx_update_when_words($image, $entry, time());
     return ['state' => 'update', 'label' => $label, 'source' => $source, 'tip' => $tip,
-             'version' => $ver, 'was' => $was];
+             'version' => $ver, 'was' => $was, 'versioned' => $versioned,
+             'askedWords' => $clock['asked'], 'nextWords' => $clock['next'],
+             'intervalWords' => $clock['interval'], 'cadenceWhy' => $clock['why']];
   }
 
   return [
     'state'  => 'current',
     'label'  => 'up to date',
     'source' => $source,
-    'tip'    => 'This is running the version currently published in the registry.',
+    'tip'    => 'This is running the version currently published in the registry.'
+              . staxx_update_when_words($image, $entry, time()),
+    'askedWords' => $clock['asked'], 'nextWords' => $clock['next'],
+    'intervalWords' => $clock['interval'], 'cadenceWhy' => $clock['why'],
   ];
 }
 
@@ -2244,6 +2748,22 @@ function staxx_updates_aggregate(array $pills): array {
     'due'    => $due,
     'hold'   => $hold,
     'why'    => $why,
+    // PLAN_121 item 7: carried through only for the same single-service case
+    // $label above reused $best['label'] for — a row rolling up several
+    // updates into "N updates ready" never named one version and still
+    // does not.
+    'versioned' => ($state === 'update' && $updateCount === 1) ? !empty($best['versioned']) : false,
+    // PLAN_127 — the hover card's own facts, carried through on the same
+    // single-service condition as 'versioned' above: a roll-up of several
+    // services cannot name one running/available version or one clock
+    // between them, but a row that turns out to speak for exactly one still
+    // has everything staxx_updates_pill_for_image() worked out for it.
+    'version'       => $updateCount === 1 ? (string)($best['version'] ?? '') : '',
+    'was'           => $updateCount === 1 ? (string)($best['was'] ?? '') : '',
+    'askedWords'    => $total === 1 ? (string)($best['askedWords'] ?? '') : '',
+    'nextWords'     => $total === 1 ? (string)($best['nextWords'] ?? '') : '',
+    'intervalWords' => $total === 1 ? (string)($best['intervalWords'] ?? '') : '',
+    'cadenceWhy'    => $total === 1 ? (string)($best['cadenceWhy'] ?? '') : '',
   ];
 }
 
@@ -2402,7 +2922,10 @@ function staxx_updates_summary(): array {
     'checked'     => (int)$state['checked'],
     'ok'          => (bool)$state['ok'],
     'error'       => (string)$state['error'],
-    'limited'     => (bool)$state['limited'],
+    // PLAN_112 Phase B — read through staxx_spend_refusers() rather than the
+    // old flat flag, so a state file from before the ledger existed still
+    // shows correctly for the one pass it takes to fill it in.
+    'limited'     => staxx_spend_refusers($state, time()) !== [],
     'updates'     => $updates,
     'tagmissing'  => $tagmissing,
     'known'       => $known,

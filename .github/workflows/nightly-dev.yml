@@ -1,0 +1,136 @@
+# StaXX — decide each night whether dev has earned a new development release,
+# and if so, press the button on its behalf.
+#
+# Deliberately a SEPARATE file from publish.yml, never a new trigger added to
+# it. publish.yml derives the version by reading staxx.plg off whatever ref it
+# was run on, and packages that ref's code. A schedule: trigger runs from the
+# repository's DEFAULT branch (main), so a schedule bolted onto publish.yml
+# would read main's manifest and package main's code, then publish the result
+# as a dev release — silently wrong in a way nobody would notice until the
+# dev channel started shipping stable code under a dev-shaped version. This
+# file carries none of the release machinery: it only decides yes/no, then
+# dispatches publish.yml against dev explicitly, the identical path a human
+# takes when they pick "dev" and leave the version box blank.
+#
+# Stable (main) releases are untouched by this file and stay entirely manual
+# — nothing here can name a version or a branch other than dev.
+#
+# Copyright 2026, StaXX contributors. GPL-2.0.
+
+name: Nightly dev release
+
+on:
+  schedule:
+    # 07:00 UTC daily. Cron here is always UTC, and the dated version this
+    # produces is built with `date -u`, so a UTC-morning run lands on the
+    # calendar date it looks like it should. GitHub disables a schedule
+    # trigger after 60 days with no repository activity at all — after a long
+    # quiet spell this needs re-enabling by hand from the Actions tab.
+    - cron: '0 7 * * *'
+  workflow_dispatch:   # lets the gate itself be tested by hand, without waiting for the night
+
+permissions:
+  actions: write   # to dispatch publish.yml
+  contents: read    # only ever reads tags and commits here; nothing is written
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # need every tag and branch to find the last dev tag and count commits since it
+
+      - name: Fetch dev
+        run: git fetch origin dev
+
+      # Byte order, not version order — sort -V would treat the trailing
+      # letter suffix (b, c, ...) oddly, and byte order is what Unraid's own
+      # strcmp does, so it is the correct comparison here too, not merely a
+      # convenient one. The date suffix is fixed width, so text order and
+      # time order agree.
+      - name: Find the newest existing dev tag
+        run: |
+          LAST_TAG="$(git tag -l 'v*_dev*' | LC_ALL=C sort | tail -n1)"
+          echo "LAST_TAG=${LAST_TAG}" >> "$GITHUB_ENV"
+          echo "Newest dev tag on record: ${LAST_TAG:-<none>}"
+
+      # No dev tag at all means no dev release has ever been cut — that is
+      # itself reason enough to cut the first one, so there is nothing to
+      # count against.
+      #
+      # Otherwise: count commits on dev since that tag, but NOT the ones that
+      # only touch staxx.plg. publish.yml's own last step commits a freshly
+      # stamped manifest back to the channel branch at the end of every
+      # release — so the night after any dev release, dev always carries
+      # exactly one new commit: the release bot's own stamp. Counted naively,
+      # that commit alone would look like "new work", the nightly would cut
+      # another release for it, that release would stamp the manifest again,
+      # and the loop would repeat forever. Excluding staxx.plg from the count
+      # is what breaks that loop — it is the one file a dev release itself
+      # always changes, so it cannot also be evidence that a release is due.
+      - name: Decide whether dev has new work since that tag
+        run: |
+          if [ -z "${LAST_TAG}" ]; then
+            echo "COUNT=first" >> "$GITHUB_ENV"
+            echo "No dev tag exists yet — this would be the first ever dev build." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            COUNT="$(git rev-list --count "${LAST_TAG}..origin/dev" -- . ':(exclude)staxx.plg')"
+            echo "COUNT=${COUNT}" >> "$GITHUB_ENV"
+            {
+              echo "Newest dev tag: ${LAST_TAG}"
+              echo "Commits on dev since that tag, excluding the manifest stamp: ${COUNT}"
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # A skipped night must be a quiet, green run — never a failure. Adrian
+      # gets notified about failures, and a nightly that cries wolf over
+      # nothing gets muted, which defeats the point of having it at all.
+      - name: Skip quietly if there is nothing new
+        if: env.COUNT == '0'
+        run: |
+          echo "Nothing beyond the manifest stamp since the last dev release. Skipping." | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      # THE ONE LINE THAT KEEPS STABLE RELEASES MANUAL: the ref below is the
+      # literal string dev, and no version input is passed — which is what
+      # makes publish.yml compute a dated dev version rather than a stable
+      # one. Both are hard-coded on purpose. Should a future edit ever make
+      # either of them a variable, that edit needs a real check that the
+      # target is dev; there is deliberately no such check here, because a
+      # comparison of a literal against itself can never fail and would only
+      # look like protection.
+      #
+      # A workflow_dispatch is one of the two events the built-in token IS
+      # allowed to raise — every other event it raises is swallowed to stop
+      # workflows triggering themselves — so no personal access token is
+      # needed for this hop.
+      - name: Dispatch publish.yml against dev
+        if: env.COUNT != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "New work found on dev — dispatching a dev release." | tee -a "$GITHUB_STEP_SUMMARY"
+          gh workflow run publish.yml --ref dev
+
+      # Asked for, not assumed. `gh workflow run` reports success once the
+      # request is accepted, which is not the same as a run existing — and a
+      # nightly that goes green while quietly releasing nothing is the one
+      # failure here nobody would ever notice. Bounded on purpose: a fixed
+      # number of short waits, never an open-ended poll.
+      - name: Check the release run actually started
+        if: env.COUNT != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for _ in 1 2 3 4 5 6; do
+            sleep 10
+            FOUND="$(gh run list --workflow publish.yml --branch dev --event workflow_dispatch                        --limit 1 --json databaseId --jq 'length')"
+            if [ "${FOUND}" = "1" ]; then
+              echo "The dev release run has started." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+          echo "::error::The dispatch was accepted but no dev release run appeared within a minute. Nothing has been released — start one by hand from the Actions tab."
+          exit 1

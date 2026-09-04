@@ -617,13 +617,17 @@ function staxx_update_history(string $stack, string $service): array {
 /* ------------------------------------------------------------------- roll back -- */
 
 /**
- * Point one service's image back at a version it has run before, and bring
- * it up. With no $target that is the one recorded just before its last
- * update; with one, any version this service itself recorded — which the
+ * Point one or more services' images back at a version each has run
+ * before, and bring them all up in ONE recreate job. $targets is
+ * service => digest, any version that service itself recorded — which the
  * Versions tab needs, since it lists them all rather than only the newest.
+ * A single rollback is simply a one-entry map; there is no "roll back to
+ * whatever came before" shorthand any more; the Versions tab is the only
+ * real caller and it always knows the exact digest it is asking for, so
+ * that guesswork is not worth the second code path.
  *
  * The compose file is the authority: the browser-side editor has already
- * rewritten this service's image line to carry the digest, and this
+ * rewritten each chosen service's image line to carry its digest, and this
  * function's job is to check that edit and save it through the normal path,
  * rather than to write YAML itself — the only round-trip-safe compose editor
  * is the browser's, and PHP must not grow a second one. $yaml is therefore
@@ -631,16 +635,23 @@ function staxx_update_history(string $stack, string $service): array {
  * anything. See the checks below for why the supplied text is re-parsed
  * rather than trusted.
  *
+ * Every check below runs for every target BEFORE anything is saved: a
+ * request naming several services refuses as a whole on the first bad one,
+ * naming which service failed, rather than saving some of them and quietly
+ * dropping the rest.
+ *
  * $note reports a save whose previous version could not be kept. It matters
  * here more than most places: what makes a pin acceptable is that it can be
  * undone from the file history, so a pin saved without one has to say so.
  *
+ * @param array<string,string> $targets service name => digest to roll it back to
  * @return string a job id, or '' with $error set on refusal
  */
-function staxx_update_rollback(string $stack, string $service, string &$error, string $target = '', string $yaml = '', ?string &$note = null): string {
+function staxx_update_rollback(string $stack, array $targets, string &$error, string $yaml = '', ?string &$note = null): string {
   $error = '';
 
   if (!staxx_valid_path($stack)) { $error = 'Invalid stack name.'; return ''; }
+  if (empty($targets)) { $error = 'No service was named to roll back.'; return ''; }
 
   $file = '';
   foreach (staxx_list_stacks() as $s) {
@@ -649,103 +660,109 @@ function staxx_update_rollback(string $stack, string $service, string &$error, s
   if ($file === '') { $error = 'No compose file found in this stack.'; return ''; }
 
   $meta = staxx_compose_meta($file);
-  if (!$meta['ok'] || !isset($meta['services'][$service])) {
-    $error = 'No service called "'.$service.'" in this stack.';
-    return '';
-  }
+  if (!$meta['ok']) { $error = 'The compose file could not be read.'; return ''; }
 
-  $image = trim((string)($meta['services'][$service]['image'] ?? ''));
-  if ($image === '') {
-    $error = 'This service has no image set, so there is nothing to roll back.';
-    return '';
-  }
-
-  $history = staxx_update_history($stack, $service);
-  if ($target === '') {
-    $previous = $history[0] ?? '';
-    if ($previous === '') {
-      $error = 'There is no earlier version recorded for this service, so it cannot be rolled back.';
+  // Membership first, for every target, before $yaml is even looked at: a
+  // shape check on a digest (does it look like "algo:hex"?) is not a
+  // substitute for confirming it against this service's OWN recorded
+  // history, or a request could re-tag a service's image to any digest
+  // present anywhere on the server, not just one it has actually run. This
+  // runs ahead of the "no file text" gate below so a request naming a
+  // digest no service ever ran is refused for that reason even when no
+  // $yaml was supplied at all.
+  $images = [];
+  foreach ($targets as $service => $target) {
+    if (!isset($meta['services'][$service])) {
+      $error = 'No service called "'.$service.'" in this stack.';
       return '';
     }
-  } else {
-    // A shape check on $target (does it look like "algo:hex"?) is not a
-    // substitute for this: without confirming it against this service's OWN
-    // recorded history, a request could re-tag this service's image to any
-    // digest present anywhere on the server, not just one it has actually run.
+
+    $image = trim((string)($meta['services'][$service]['image'] ?? ''));
+    if ($image === '') {
+      $error = 'The "'.$service.'" service has no image set, so there is nothing to roll back.';
+      return '';
+    }
+
+    $history = staxx_update_history($stack, $service);
     if (!in_array($target, $history, true)) {
-      $error = 'That version is not one recorded for this service, so it cannot be rolled back to.';
+      $error = 'That version is not one recorded for the "'.$service.'" service, so it cannot be rolled back to.';
       return '';
     }
-    $previous = $target;
+
+    $images[$service] = $image;
   }
 
-  // This check sits ahead of the "is the image actually on disk" check
-  // below, even though both are pure checks with no side effects and could
-  // run in either order. Reachability is why: put after the presence check,
-  // this could only ever be exercised on a machine that already has a real
-  // matching image pulled — untestable from fixtures alone, and any test
-  // that arranged one would then fall through into the save and the job
-  // below, which a test run must never do. Here, every refusal is reachable
-  // with fixtures and none of them reach anything that writes.
-  //
-  // A save that claims to be a rollback while actually carrying an
-  // unrelated edit is the exact failure this project cares about most, so
-  // the text the browser posted is never trusted at face value: it is
-  // parsed properly and checked to actually name the version this call was
-  // asked to roll back to. A plain strpos() on the raw text would not do —
-  // the digest could just as easily appear inside a comment.
   // No file text, no rollback. The old behaviour re-pointed the image's local
   // TAG instead of editing the file, and both halves of that were wrong: a tag
   // is per-machine, so it rolled back every other stack sharing the image the
   // next time anything recreated them, and the file still said `latest`, so any
   // deliberate pull undid it. It is refused rather than kept as a fallback,
   // because a rollback that quietly does the weaker thing is worse than one
-  // that says it cannot — and a path no caller uses is a footgun waiting for
-  // the next person who passes four arguments.
+  // that says it cannot.
   if ($yaml === '') {
     $error = 'A rollback now pins the compose file, and no file text was supplied, so nothing was changed.';
     return '';
   }
 
-  {
-    $tmp = tempnam(sys_get_temp_dir(), 'staxx-rb-');
-    if ($tmp === false) {
-      $error = 'Could not check the supplied file, so nothing was changed.';
-      return '';
-    }
-    file_put_contents($tmp, $yaml);
-    $checkMeta = staxx_compose_meta($tmp);
-    @unlink($tmp);
+  $tmp = tempnam(sys_get_temp_dir(), 'staxx-rb-');
+  if ($tmp === false) {
+    $error = 'Could not check the supplied file, so nothing was changed.';
+    return '';
+  }
+  file_put_contents($tmp, $yaml);
+  $checkMeta = staxx_compose_meta($tmp);
+  @unlink($tmp);
+  if (!$checkMeta['ok']) {
+    $error = 'The supplied file could not be checked, so nothing was changed.';
+    return '';
+  }
 
-    if (!$checkMeta['ok'] || !isset($checkMeta['services'][$service])) {
+  // A save that claims to be a rollback while actually carrying an
+  // unrelated edit is the exact failure this project cares about most, so
+  // the text the browser posted is never trusted at face value: it is
+  // parsed properly and checked to actually name the version this call was
+  // asked to roll back to, for every service being rolled back — a plain
+  // strpos() on the raw text would not do, since the digest could just as
+  // easily appear inside a comment.
+  foreach ($targets as $service => $target) {
+    if (!isset($checkMeta['services'][$service])) {
       $error = 'The supplied file could not be checked, so nothing was changed.';
       return '';
     }
     $checkImage = (string)($checkMeta['services'][$service]['image'] ?? '');
-    if (strpos($checkImage, '@'.$previous) === false) {
-      $error = 'The supplied file does not pin this service to the requested version, so nothing was changed.';
+    if (strpos($checkImage, '@'.$target) === false) {
+      $error = 'The supplied file does not pin the "'.$service.'" service to the requested version, so nothing was changed.';
       return '';
     }
   }
 
-  $repo = staxx_hub_repo_path($image);
-  if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($image));
+  // This check sits ahead of the "is the image actually on disk" check for
+  // every target, even though both are pure checks with no side effects and
+  // could run in either order. Reachability is why: run after the presence
+  // check, this could only ever be exercised on a machine that already has a
+  // real matching image pulled — untestable from fixtures alone, and any
+  // test that arranged one would then fall through into the save and the job
+  // below, which a test run must never do.
+  foreach ($targets as $service => $target) {
+    $repo = staxx_hub_repo_path($images[$service]);
+    if ($repo === '') $repo = preg_replace('/:[^\/]*$/', '', trim($images[$service]));
 
-  $checkCode = 1;
-  staxx_sh(
-    staxx_docker_bin().' image inspect '.escapeshellarg($repo.'@'.$previous)
-      .' --format '.escapeshellarg('{{.Id}}').' 2>&1',
-    10, $checkCode
-  );
-  if ($checkCode !== 0) {
-    $error = 'The previous version is no longer present on this server, so it cannot be rolled back to.';
-    return '';
+    $checkCode = 1;
+    staxx_sh(
+      staxx_docker_bin().' image inspect '.escapeshellarg($repo.'@'.$target)
+        .' --format '.escapeshellarg('{{.Id}}').' 2>&1',
+      10, $checkCode
+    );
+    if ($checkCode !== 0) {
+      $error = 'The previous version for the "'.$service.'" service is no longer present on this server, so it cannot be rolled back to.';
+      return '';
+    }
   }
 
   // The file is the authority, so this is a save like any other — it lands in
-  // the same edit history, which is what makes the pin undoable and the whole
-  // reason the edit is saved here rather than left in the browser. Nothing
-  // runs `docker tag`: see the refusal above for why that came out.
+  // the same edit history, which is what makes every pin undoable and the
+  // whole reason the edit is saved here rather than left in the browser.
+  // Nothing runs `docker tag`: see the refusal above for why that came out.
   //
   // $note carries "the file was saved but its previous version could not be
   // kept". That has to reach the person, because the confirmation they just
@@ -754,19 +771,23 @@ function staxx_update_rollback(string $stack, string $service, string &$error, s
     return '';
   }
 
-  // Remember the version this rolled back FROM as this image's skip
+  // Remember the version each service rolled back FROM as its image's skip
   // fingerprint, so the clock does not immediately try to reinstall the very
   // update just backed out of. Belt-and-braces on the $yaml path — the file
   // itself is what stops the next update now — but it is also what silences
   // the "an update is available" nag for a version deliberately declined.
   $state  = staxx_update_state();
-  $images = (array)$state['images'];
-  if (isset($images[$image]) && ($images[$image]['remote'] ?? '') !== '') {
-    $images[$image]['skip'] = $images[$image]['remote'];
-    staxx_update_state_save(['images' => $images]);
+  $stImages = (array)$state['images'];
+  $changed  = false;
+  foreach ($images as $image) {
+    if (isset($stImages[$image]) && ($stImages[$image]['remote'] ?? '') !== '') {
+      $stImages[$image]['skip'] = $stImages[$image]['remote'];
+      $changed = true;
+    }
   }
+  if ($changed) staxx_update_state_save(['images' => $stImages]);
 
-  return staxx_start_job($stack, 'recreate', $error, $service);
+  return staxx_start_job($stack, 'recreate', $error, array_keys($targets));
 }
 
 /**

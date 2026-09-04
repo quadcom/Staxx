@@ -11,12 +11,14 @@
  * refusals, which are what matter and what can be asserted safely on a live
  * server. staxx_webui_try() is asserted properly: it never touches disk.
  *
- * Also staxx_address_webui_override() — the Address column's own correction
- * for the case the two functions above cannot see: a container that
- * publishes nothing, where the image's declared ports and the web button's
- * own resolved port disagree (it-tools: declares 8080, the app actually
- * listens on 80 because of a PORT environment variable). Exhaustive, since
- * it is a pure function of its arguments and touches neither disk nor Docker.
+ * Also staxx_address_webui_override() — the only source of a port on the
+ * Address column's row for a container that publishes nothing (the grid no
+ * longer prints an unpublished container's declared ports at all, since
+ * nothing outside can reach them): when the web button resolves a port, that
+ * one port becomes the row's whole list, whatever the image itself declares
+ * (it-tools: declares 8080, the app actually listens on 80 because of a PORT
+ * environment variable). Exhaustive, since it is a pure function of its
+ * arguments and touches neither disk nor Docker.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine:
  *
@@ -246,10 +248,12 @@ ok("nothing listening on that port => false, code 0, and it did not hang ({$ms}m
 
 /* ------------------------------------------ staxx_address_webui_override() -- */
 
-// The Address column's own correction: the image's declared (EXPOSE'd) ports
-// are only a fallback for when nothing is published, and a PORT-style
-// environment variable can move the running application off that declared
-// port without Docker ever noticing. See the function's own doc comment.
+// The Address column no longer prints an unpublished container's declared
+// (EXPOSE'd) ports at all — nothing outside can reach them. This is the one
+// door back in: the port the web button resolves becomes the row's whole
+// port list, since a PORT-style environment variable can move the running
+// application off whatever the image declares without Docker ever noticing.
+// See the function's own doc comment.
 
 function addrs(string $port): array {
   return [['ip' => '192.168.202.64', 'label' => '192.168.202.64', 'ports' => [$port]]];
@@ -259,11 +263,11 @@ ok('nothing published, declared 8080, button opens 80 => the list becomes 80 (it
    staxx_address_webui_override(addrs('8080'), false, 'http://192.168.202.64:80/', ['8080'])
      === [['ip' => '192.168.202.64', 'label' => '192.168.202.64', 'ports' => ['80']]]);
 
-ok('nothing published, declared 61208+61209, button opens 61208 => unchanged, both stay (glances)',
+ok('nothing published, declared 61208+61209, button opens 61208 => list becomes just 61208 (glances)',
    staxx_address_webui_override(
      [['ip' => '10.0.0.5', 'label' => 'host', 'ports' => ['61208', '61209']]],
      false, 'http://10.0.0.5:61208/', ['61208', '61209']
-   ) === [['ip' => '10.0.0.5', 'label' => 'host', 'ports' => ['61208', '61209']]]);
+   ) === [['ip' => '10.0.0.5', 'label' => 'host', 'ports' => ['61208']]]);
 
 ok('something published => unchanged regardless of what the web address says',
    staxx_address_webui_override(addrs('8080'), true, 'http://192.168.202.64:80/', ['8080'])
@@ -290,11 +294,11 @@ ok('more than one address entry: each one gets the port swapped',
      ['ip' => '192.168.202.65', 'label' => '192.168.202.65', 'ports' => ['80']],
    ]);
 
-ok('the web port matches one of several declared ports => unchanged',
+ok('the web port matches one of several declared ports => the list still becomes just that one',
    staxx_address_webui_override(
      [['ip' => '10.0.0.5', 'label' => 'host', 'ports' => ['8080', '9000']]],
      false, 'http://10.0.0.5:9000/', ['8080', '9000']
-   ) === [['ip' => '10.0.0.5', 'label' => 'host', 'ports' => ['8080', '9000']]]);
+   ) === [['ip' => '10.0.0.5', 'label' => 'host', 'ports' => ['9000']]]);
 
 /* ---------------------------------------- the route each service would take -- */
 

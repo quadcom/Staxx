@@ -115,6 +115,9 @@ $caFile  = STAXX_ROOT.'/javascript/ca-convert.js';
 $imageFile = STAXX_ROOT.'/javascript/image-import.js';
 $scaffoldFile = STAXX_ROOT.'/javascript/meta-scaffold.js';
 $dbImagesFile = STAXX_ROOT.'/javascript/db-images.js';
+// PLAN_108 stage 5: the health-check chooser. Reads window.StaxxDbImages, so
+// it must load after db-images.js — see the script tag order below.
+$healthOfferFile = STAXX_ROOT.'/javascript/health-offer.js';
 // The Manage tab's own script and stylesheet (PLAN_44 phase 2) — written by a
 // separate agent in parallel with this file, so neither is guaranteed to exist
 // yet at any given moment. Guarded the same way the three scripts above are:
@@ -128,6 +131,7 @@ $caTag   = $assets.'/javascript/ca-convert.js?v='.(is_file($caFile) ? filemtime(
 $imageTag = $assets.'/javascript/image-import.js?v='.(is_file($imageFile) ? filemtime($imageFile) : '0');
 $scaffoldTag = $assets.'/javascript/meta-scaffold.js?v='.(is_file($scaffoldFile) ? filemtime($scaffoldFile) : '0');
 $dbImagesTag = $assets.'/javascript/db-images.js?v='.(is_file($dbImagesFile) ? filemtime($dbImagesFile) : '0');
+$healthOfferTag = $assets.'/javascript/health-offer.js?v='.(is_file($healthOfferFile) ? filemtime($healthOfferFile) : '0');
 $manageJsTag  = $assets.'/javascript/manage.js?v='.(is_file($manageJsFile) ? filemtime($manageJsFile) : '0');
 $manageCssTag = $assets.'/sheets/manage.css?v='.(is_file($manageCssFile) ? filemtime($manageCssFile) : '0');
 $cssTag  = $assets.'/sheets/staxx.css?v='.(is_file($cssFile) ? filemtime($cssFile) : '0');
@@ -247,24 +251,28 @@ endif;
        accent colour, which is what --hint--warn below also uses for "worth
        a look, not broken"; --bad exists precisely to override that to red for
        the two "act now" conditions above, which this is not. -->
-  <? if (!empty($updateState['limited'])):
-    // Any registry can be the one refusing, not only Docker Hub — so the
-    // notice names whoever did, and the sign-in offer below is shown only
-    // when Docker Hub is among them, because it helps with nothing else.
-    // A state file written before this was recorded has no list at all;
-    // Docker Hub was the only thing that could refuse back then.
-    $refusers = (array)($updateState['limitedBy'] ?? []);
-    if ($refusers === []) $refusers = ['docker.io'];
+  <? // PLAN_112 Phase C — staxx_spend_refusers() reads the ledger's own
+     // per-host refusal clock, falling back to the old flat flag for a
+     // state file the ledger has not filled in yet. After A0 the ordinary
+     // update question costs Docker Hub nothing, so a Hub refusal is
+     // evidence that something ELSE spent the allowance — a user's own pull,
+     // or another machine on the same address — never that checking was
+     // greedy, hence the rewritten wording naming Hub specifically.
+     $refusers = staxx_spend_refusers($updateState, time());
+     if ($refusers !== []):
   ?>
     <div class="staxx-notice">
       <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
       <div>
-        <strong><?= htmlspecialchars(implode(' and ', $refusers)) ?> <?= _('stopped answering questions about images from this server for now. Anything it was not asked about still shows the answer it gave last time.') ?></strong>
         <? if (in_array('docker.io', $refusers, true)): ?>
-        <?= _('Signing in to a Docker Hub account in the') ?> <button type="button" id="staxx-open-hub-settings" class="staxx-link-btn"><?= _('settings panel') ?></button> <?= _('raises the limit, or you can just leave it to try again later.') ?>
+        <strong><?= _('Docker Hub has stopped answering questions from this address for now.') ?></strong>
+        <?= _('Checking for updates costs nothing, so this is usually caused by images being downloaded — by you, or by anything else on your network sharing this address. Anything StaXX did not get to still shows the answer it gave last time, and it will try again within the hour.') ?>
+        <?= _('Signing in to a Docker Hub account in the') ?> <button type="button" id="staxx-open-hub-settings" class="staxx-link-btn"><?= _('settings panel') ?></button> <?= _('gives this address a larger download allowance.') ?>
         <? else: ?>
-        <?= _('The next check will ask again.') ?>
+        <strong><?= htmlspecialchars(implode(' and ', $refusers)) ?> <?= _('stopped answering questions from this server for now.') ?></strong>
+        <?= _('Anything it was not asked about still shows the answer it gave last time. The next check will ask again.') ?>
         <? endif; ?>
+        <button type="button" id="staxx-open-spend-readout" class="staxx-link-btn"><?= _('See what each registry was asked') ?></button>
       </div>
     </div>
   <? endif; ?>
@@ -338,31 +346,18 @@ endif;
     </div>
   </div>
 
-  <!-- Filled in by refreshUpdates() the moment the page runs — there is
-       nothing to say about update checking before that first reply lands. -->
-  <p class="staxx-hint" id="staxx-updates-line"></p>
-
   <!-- PLAN_45 phase 4-8. Hidden until update-queue-start begins one, and
        painted entirely by paintUpdateQueue() in stacks.js — a queue's own
        progress is polled from the browser, not part of the page's render. -->
   <div class="staxx-updatequeue" id="staxx-update-queue" hidden></div>
 
-  <p class="staxx-hint">
-    <?= sprintf(_('Each stack is a folder holding one compose file, kept in %s.'), htmlspecialchars($root)) ?>
-    <?= _('Anything you put there by hand shows up here, and anything added here is an ordinary compose file you can copy elsewhere.') ?>
-  </p>
-
-  <!-- Machine-wide figures, kept separate from the table on purpose.
-       Per-container GPU comes from /proc/<pid>/fdinfo and works for both Intel
-       and AMD, so the table's own GPU column is the real reading. What is shown
-       here is the whole card, including whatever is using it from outside
-       docker — and it is labelled as the whole machine's rather than being
-       divided between containers, which would be a guess wearing a number's
-       clothes. -->
-  <div class="staxx-strip" id="staxx-strip" hidden>
-    <span class="staxx-strip-item" id="staxx-strip-gpu" hidden></span>
-    <span class="staxx-strip-item" id="staxx-strip-age"></span>
-  </div>
+  <!-- A quiet status line, empty and hidden until something needs it — see
+       setPushStatus() in stacks.js, the live-feed-degraded notice. Used to
+       also carry the whole-machine GPU card and a staleness line (PLAN_114
+       moved a stack's GPU badge onto its own row instead, where it survives
+       the stack being stopped, and dropped the strip's age line — a stale
+       snapshot now just blanks the row like a stopped one, see applyStats()). -->
+  <div class="staxx-strip" id="staxx-strip" hidden></div>
 
   <!-- The table is always here, even with nothing in it.
        The browser replaces this table's body in place rather than reloading
@@ -371,18 +366,11 @@ endif;
        nothing to put the next one into. "No stacks yet" is a row inside it. -->
   <div class="staxx-table-wrap">
     <div class="staxx-stacks" role="treegrid" aria-label="<?= _('Stacks') ?>">
-      <div class="staxx-row staxx-head-row" role="row">
-        <span class="staxx-cell" role="columnheader"><?= _('Stack') ?></span>
-        <span class="staxx-cell" role="columnheader"><?= _('Services') ?></span>
-        <span class="staxx-cell" role="columnheader"><?= _('State') ?></span>
-        <span class="staxx-cell" role="columnheader"><?= _('Address') ?></span>
-        <span class="staxx-cell staxx-num" role="columnheader" data-stat="cpu"><?= _('CPU') ?></span>
-        <span class="staxx-cell staxx-num" role="columnheader" data-stat="mem"><?= _('Memory') ?></span>
-        <span class="staxx-cell staxx-num" role="columnheader" data-stat="net"><?= _('Network') ?></span>
-        <!-- data-stat on the heading too, so the whole column can be hidden
-             with one rule when nothing on the page has a GPU. -->
-        <span class="staxx-cell staxx-num" role="columnheader" data-stat="gpu"><?= _('GPU') ?></span>
-      </div>
+      <!-- No header row here any more (PLAN_120): the single row of column
+           titles sat above the folder rows, which have nothing to do with
+           most of those titles. staxx_render_rows() now prints one copy
+           inside every folder, directly above that folder's own stacks, and
+           one more above the loose stacks below the last folder. -->
 
       <!-- Rendered by the same function the JSON endpoint calls, so a row that
            arrives without a page load is identical to one that arrived with
@@ -480,6 +468,8 @@ endif;
                 <input type="checkbox" id="staxx-pwgen-punct">
                 <span><?= _('Punctuation') ?></span>
               </label>
+              <div class="staxx-pwgen-hint"><?= _('The dollar sign is left out on purpose — in a compose file it is where Compose starts reading the name of a variable.') ?>
+                <a href="https://github.com/quadcom/Staxx/blob/main/docs/guide/passwords-and-hashes.md" target="_blank" rel="noopener"><?= _('Why') ?></a></div>
             </div>
             <div id="staxx-pwgen-words" hidden>
               <label class="staxx-pwgen-row">
@@ -729,6 +719,12 @@ endif;
              the colour. It works without mirroring the text because the box
              never wraps (wrap="off", white-space: pre) and the line height is
              fixed, which puts line N at exactly (N-1) x lineHeight. -->
+        <!-- PLAN_117 step 3 — what Tidy did, said where it can be seen rather
+             than only on the muted status line below the pane (which a
+             refusal used to reach with nothing else on screen to explain
+             it). Empty and hidden until script has something to say;
+             script fills it with an ordinary .staxx-notice. -->
+        <div class="staxx-yaml-notice" id="staxx-yaml-notice" hidden></div>
         <div class="staxx-yamlwrap" id="staxx-yamlwrap">
           <!-- The gutter is painted OVER the textarea, not beside it. A
                textarea scrolls its own padding away horizontally, so a long
@@ -1242,12 +1238,31 @@ endif;
 
   <!-- The eighth dialog, a sibling of the seven above for the same reason:
        outside .staxx-table-wrap, inside the scaffold. No <form> wrapper,
-       for the same reason as the editor above. The body starts empty; script
-       fills it from the settings-read action before showModal(). -->
-  <dialog class="staxx-settings" id="staxx-settings" aria-labelledby="staxx-settings-title">
+       for the same reason as the editor above. staxx-settings--wide (PLAN_113)
+       sizes this dialog like the stack editor and switches it to the same
+       head/tab-strip/body/foot grid — a modifier rather than a change to
+       .staxx-settings itself, since the storage and backup dialogs below
+       share that class and stay a plain list with no tabs. The body starts
+       empty; script fills it, sorted into the panes below, from the
+       settings-read action before showModal(). -->
+  <dialog class="staxx-settings staxx-settings--wide" id="staxx-settings" aria-labelledby="staxx-settings-title">
 
     <div class="staxx-settings-head">
       <h3 class="staxx-settings-title" id="staxx-settings-title"><?= _('Settings') ?></h3>
+    </div>
+
+    <!-- Same tab pattern as the editor's Configure/Manage/History/Versions
+         strip further up this file: plain .staxx-tabstrip/.staxx-tab
+         buttons, switched by setSettingsTab() writing data-tab onto the
+         dialog itself (stacks.js), with a .staxx-settings-pane[data-pane]
+         per tab shown by CSS. #settings and every focus-a-field link still
+         work — openSettings() switches to the right tab before focusing. -->
+    <div class="staxx-tabstrip staxx-settings-tabstrip" id="staxx-settings-tabstrip" role="tablist" aria-label="<?= _('Settings section') ?>">
+      <button type="button" class="staxx-tab" role="tab" aria-selected="true" data-tab="general"><?= _('General') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="storage"><?= _('Storage') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="icons"><?= _('Icons and images') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="updates"><?= _('Updates') ?></button>
+      <button type="button" class="staxx-tab" role="tab" aria-selected="false" data-tab="registries"><?= _('Registries and security') ?></button>
     </div>
 
     <!-- PLAN_74 Part A piece 3: StaXXCrypt is StaXX's own plumbing, not an
@@ -1256,7 +1271,7 @@ endif;
          hidden from you. Its whole state (built or not, running, recipe
          version, self-test results, the build/rebuild button, and the
          recipe disclosure) is built by script directly under the CRYPT_MODE
-         row inside the body above, not pinned here as a fixed sibling of it. -->
+         row inside the body below, not pinned here as a fixed sibling of it. -->
 
     <div class="staxx-settings-body" id="staxx-settings-body"></div>
 
@@ -1483,6 +1498,12 @@ endif;
      scripts above. -->
 <? if (is_file($dbImagesFile)): ?>
 <script src="<?= $dbImagesTag ?>"></script>
+<? endif; ?>
+<!-- PLAN_108 stage 5: the health-check chooser — reads window.StaxxDbImages,
+     set by the script just above, so this must load after it. Conditional
+     for the same reason as the scripts above. -->
+<? if (is_file($healthOfferFile)): ?>
+<script src="<?= $healthOfferTag ?>"></script>
 <? endif; ?>
 <!-- The Manage tab (PLAN_44 Part D), a separate file for the same reason as
      the three above: a bad edit there costs the Manage tab, not the rest of

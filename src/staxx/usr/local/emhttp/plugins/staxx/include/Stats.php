@@ -18,22 +18,14 @@
  *   Nvidia GPU                    needs nvidia-smi; the proprietary driver does
  *                                 not fill in fdinfo.
  *
- * radeontop and the Intel sysfs counters are still sampled, but only as a
- * machine-wide backstop — and they are the WEAKER reading, not the stronger
- * one. During a real AMD encode both radeontop and the kernel's own
- * gpu_busy_percent report 0%, because they watch the graphics pipe while the
- * work is on the video encode engine. fdinfo saw it the whole time. On a
- * media server that is the case that matters, so the per-process figures come
- * first and these are only a fallback.
- *
- * The Intel figure no longer comes from intel_gpu_top. That tool attaches to
- * the i915 perf/PMU interface, and the collector was starting it and then
- * killing it under a timeout every few seconds, indefinitely, for as long as
- * any StaXX page stayed open. On a server whose discrete Arc card also does
- * the Plex hardware transcode and which had unexplained GPU crashes, that is
- * a needless risk for a number plain sysfs reads already give: the busy
- * percentage is worked out from how much the card's idle-time counter grew
- * between two readings, with nothing ever attached to the GPU.
+ * PLAN_114 removed the whole-machine GPU card these per-process figures used
+ * to sit beside — a stack's own row is now the only place a GPU figure is
+ * shown, so a card-wide reading with no container to attach it to has no
+ * home left to be drawn in. The kernel's own gpu_busy_percent and radeontop
+ * would have read 0% during a real AMD encode anyway, because they watch the
+ * graphics pipe while the work is on the video encode engine — fdinfo saw it
+ * the whole time, which is why the per-process figures were always preferred
+ * over them for AMD too.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License version 2,
@@ -191,111 +183,6 @@ function staxx_stats_containers(): array {
 }
 
 /* ------------------------------------------------------------------ GPU -- */
-
-/**
- * Parse one intel.raw/intel.prev sysfs sample.
- *
- * First line is a millisecond timestamp; the rest are "i <card> <rc6_ms>
- * <freq_mhz> <max_freq_mhz>", one per Intel card found — see sample_intel()
- * in the collector.
- *
- * @return array{at: float, cards: array<string, array{rc6: float, freq: float, max: float}>}
- */
-function staxx_gpu_intel_sample(string $file): array {
-  $lines = @file($file, FILE_IGNORE_NEW_LINES) ?: [];
-  if (!$lines) return ['at' => 0.0, 'cards' => []];
-
-  $at = (float)array_shift($lines);
-
-  $cards = [];
-  foreach ($lines as $line) {
-    $f = explode(' ', $line);
-    if (count($f) < 5 || $f[0] !== 'i') continue;
-    $cards[$f[1]] = ['rc6' => (float)$f[2], 'freq' => (float)$f[3], 'max' => (float)$f[4]];
-  }
-
-  return ['at' => $at, 'cards' => $cards];
-}
-
-/**
- * A card's busy percentage from two idle-residency readings.
- *
- * rc6_residency_ms counts upward, in milliseconds, the total time the card
- * has spent in its idle power state — so the share of the elapsed interval it
- * was NOT idle is the busy figure. Verified on the real hardware: over a
- * 2004ms interval the idle counter grew by 2002ms, i.e. 0% busy, agreeing
- * with a clock speed of 0 MHz at the same moment.
- *
- * Clamped to 0–100 rather than trusted outright, because the counter can go
- * backwards — a card reset, or the 32-bit value wrapping — and an interval of
- * zero (two readings taken in the same millisecond) must read as "no data"
- * rather than divide by zero.
- *
- * @param float $idleBefore rc6_residency_ms at the earlier reading
- * @param float $idleAfter  rc6_residency_ms at the later reading
- * @param float $elapsedMs  wall time between the two readings
- */
-function staxx_gpu_busy_percent(float $idleBefore, float $idleAfter, float $elapsedMs): float {
-  if ($elapsedMs <= 0) return 0.0;
-
-  $idleDelta = $idleAfter - $idleBefore;
-  if ($idleDelta < 0) return 0.0;               // counter reset or wrapped
-
-  $idlePercent = ($idleDelta / $elapsedMs) * 100;
-  $busy = 100 - $idlePercent;
-
-  if ($busy < 0)   $busy = 0.0;                 // idle grew faster than time itself
-  if ($busy > 100) $busy = 100.0;
-
-  return $busy;
-}
-
-/**
- * Intel GPU figures, read straight from sysfs — no external tool, nothing
- * attached to the card. See sample_intel() in the collector for why this
- * replaced intel_gpu_top, and staxx_gpu_busy_percent() for the maths.
- *
- * `engines` is always empty here: only intel_gpu_top ever broke usage down by
- * render/video/enhance engine, and nothing in sysfs offers that. The strip
- * already draws an empty engines list for the AMD card, so this path is
- * already exercised elsewhere on the page.
- *
- * `byContainer` is deliberately left empty too. Per-container attribution for
- * Intel now comes only from the kernel's own per-process accounting in
- * staxx_stats_gpu_procs() (fdinfo), which staxx_stats_snapshot() already
- * prefers over this figure — this used to be a second, weaker route to the
- * same number and duplicating it would double-count nothing usefully.
- *
- * @return array{byContainer: array<string,float>, engines: array<string,float>, total: float, present: bool}
- */
-function staxx_stats_intel_gpu(): array {
-  $empty = ['byContainer' => [], 'engines' => [], 'total' => 0.0, 'present' => false];
-
-  $now  = staxx_gpu_intel_sample(STAXX_STATS_DIR.'/intel.raw');
-  $then = staxx_gpu_intel_sample(STAXX_STATS_DIR.'/intel.prev');
-  if (!$now['cards']) return $empty;
-
-  $elapsedMs = $now['at'] - $then['at'];
-
-  $busiest = 0.0;
-  foreach ($now['cards'] as $card => $reading) {
-    $before = $then['cards'][$card] ?? null;
-    if ($before === null) continue;             // first sighting: no rate yet
-
-    $busy = staxx_gpu_busy_percent($before['rc6'], $reading['rc6'], $elapsedMs);
-    $busiest = max($busiest, $busy);
-  }
-
-  return [
-    'byContainer' => [],
-    'engines'     => [],
-    'total'       => round($busiest, 1),
-    // A card that answered is reported even when it is idle. Dropping it
-    // while idle would make a working GPU look like a missing one, which is
-    // the opposite of what the reading is for.
-    'present'     => true,
-  ];
-}
 
 /* -------------------------------------------- per-container GPU, kernel -- */
 
@@ -525,218 +412,6 @@ function staxx_stats_gpu_mapped(): array {
   return $out;
 }
 
-/**
- * Which vendor owns each DRM minor device number.
- *
- * The kernel's client list identifies a card by its minor number — 129 rather
- * than renderD129 — so the node names staxx_gpu_nodes() knows about have to
- * be turned into numbers. /sys/class/drm/<node>/dev holds "226:129".
- *
- * @return array<int,string> minor => 'intel' | 'amd' | 'nvidia'
- */
-function staxx_gpu_minors(): array {
-  static $minors = null;
-  if ($minors !== null) return $minors;
-
-  $minors = [];
-  foreach (staxx_gpu_nodes() as $node => $vendor) {
-    $dev = trim((string)@file_get_contents('/sys/class/drm/'.$node.'/dev'));
-    if (preg_match('/^\d+:(\d+)$/', $dev, $m)) $minors[(int)$m[1]] = $vendor;
-  }
-  return $minors;
-}
-
-/**
- * How many pieces of work each card is running, machine-wide.
- *
- * COUNTED THE SAME WAY FOR EVERY CARD, which is the point of it. The busy
- * figures come from different tools that disagree about how to describe an
- * unused card, and a header line reading "Intel idle, AMD 0%" is one state told
- * two ways — it looks like the two cards differ when they do not.
- *
- * A card that exists always appears, with 0 if nothing is on it: absent and
- * idle are different, and the line has to be able to say which.
- *
- * @return array<string,int> vendor => number of clients
- */
-function staxx_stats_gpu_clients(): array {
-  $out    = ['intel' => 0, 'amd' => 0, 'nvidia' => 0];
-  $minors = staxx_gpu_minors();
-
-  foreach (@file(STAXX_STATS_DIR.'/gpuclients.raw', FILE_IGNORE_NEW_LINES) ?: [] as $line) {
-    $f = explode(' ', trim($line));
-    if (count($f) < 3 || $f[0] !== 'c') continue;
-
-    $vendor = $minors[(int)$f[1]] ?? '';
-    if ($vendor !== '') $out[$vendor]++;
-  }
-
-  return $out;
-}
-
-/* ------------------------------------------------- AMD video engine -- */
-
-/**
- * Where the multimedia-engine activity field sits in each version of AMD's
- * gpu_metrics table, keyed "format.content".
- *
- * The table is a versioned C structure published byte for byte through sysfs,
- * and the layout is fixed for a given version — the offsets below are counted
- * from the struct definitions the driver exposes. Two families:
- *
- *   v1.x  discrete cards. Six temperatures, then gfx, umc and mm activity.
- *   v2.x  APUs. Two temperatures, eight per-core, two L3, then gfx and mm.
- *
- * The v2.1 entry is MEASURED, on a Phoenix2 APU: 100% during a flat-out VAAPI
- * encode while radeontop and gpu_busy_percent both read 0%, and the 120-byte
- * size the table declared matched the struct exactly. The rest are read from
- * the same struct definitions but have not been seen on real hardware here, so
- * every reading is bounds-checked below before it is believed.
- *
- * Newer APUs publish a v3.x table with a different shape. It is deliberately
- * absent: an offset nobody has checked is a wrong number waiting to happen,
- * and a card that is not listed simply falls back to radeontop.
- */
-const STAXX_GPU_METRICS_MM = [
-  '1.0' => 20, '1.1' => 20, '1.2' => 20, '1.3' => 20,
-  '2.0' => 30, '2.1' => 30, '2.2' => 30, '2.3' => 30, '2.4' => 30,
-];
-
-/**
- * How busy each card's video engine has been, as a share of the last second.
- *
- * The AVERAGE of the samples, not the highest of them. Each sample is an
- * instant, and a transcode keeping pace with real time is genuinely idle
- * between frames, so the readings alternate between nothing and everything.
- * Taking the highest would report 100% for any transcode at all, whether it
- * was one stream or six — true, and useless for judging what the card has
- * left. Averaging instants sampled across a second measures how much of that
- * second the engine was working, which is what "busy" means everywhere else
- * on this page: the Intel figure is the same statistic, reached a different
- * way — the share of the interval its idle-time counter did NOT grow by, see
- * staxx_gpu_busy_percent().
- *
- * The peak is kept as well, since a card that touches 100% is worth knowing
- * about even when its average is modest.
- *
- * @return array<int,array{busy:float, peak:float}> drm minor => figures
- */
-function staxx_stats_gpu_media(): array {
-  $samples = [];
-
-  foreach (@file(STAXX_STATS_DIR.'/gpumetrics.raw', FILE_IGNORE_NEW_LINES) ?: [] as $line) {
-    $f = explode(' ', trim($line));
-    if (count($f) < 3 || $f[0] !== 'g') continue;
-
-    $minor = (int)$f[1];
-    $blob  = @hex2bin($f[2]);
-    if ($blob === false || strlen($blob) < 8) continue;
-
-    $header = unpack('vsize/Cformat/Ccontent', $blob);
-
-    // The table says how long it is. If that disagrees with what arrived, this
-    // is not the structure it claims to be and none of the offsets apply.
-    if ($header['size'] !== strlen($blob)) continue;
-
-    $offset = STAXX_GPU_METRICS_MM[$header['format'].'.'.$header['content']] ?? null;
-    if ($offset === null || $offset + 2 > strlen($blob)) continue;
-
-    $raw = unpack('v', substr($blob, $offset, 2))[1];
-
-    // 0xFFFF is the driver's "this chip does not report it" marker. Checked
-    // FIRST: it would otherwise sail through the scaling below as 655%.
-    if ($raw === 0xFFFF) continue;
-
-    // The scale is not consistent between chips. The Phoenix2 measured here
-    // reports hundredths of a percent — 10000 at full load — while the field
-    // is documented as a plain percentage. Reading it either way costs nothing
-    // and cannot go far wrong: the only ambiguous readings are between 1 and
-    // 100, where the two interpretations differ by less than one percent of
-    // the card. Anything that survives this and is still out of range is not
-    // the field we think it is, and is dropped.
-    $percent = $raw > 100 ? $raw / 100 : (float)$raw;
-    if ($percent < 0 || $percent > 100) continue;
-
-    $samples[$minor][] = $percent;
-  }
-
-  $out = [];
-  foreach ($samples as $minor => $values) {
-    $out[$minor] = [
-      'busy' => round(array_sum($values) / count($values), 1),
-      'peak' => round(max($values), 1),
-    ];
-  }
-  return $out;
-}
-
-/**
- * AMD figures. Machine-wide — see the note at the top of this file.
- *
- * Two sources, because neither alone describes the card:
- *
- *   radeontop     the graphics pipe, plus how much video memory is in use.
- *                 Reads 0% throughout a video transcode.
- *   gpu_metrics   the video engine, which is where a transcode actually runs,
- *                 and nothing else.
- *
- * The headline figure is whichever is higher, and the video engine is listed
- * separately so the two are never confused. Either source may be missing: a
- * machine with no radeontop still gets the transcode figure, and a card whose
- * table version is not recognised still gets the graphics one.
- */
-function staxx_stats_amd(): ?array {
-  $media = null;
-  $peak  = 0.0;
-  foreach (staxx_stats_gpu_media() as $minor => $figures) {
-    if ((staxx_gpu_minors()[$minor] ?? '') !== 'amd') continue;
-    $media = max($media ?? 0.0, $figures['busy']);
-    $peak  = max($peak, $figures['peak']);
-  }
-
-  $fallback = $media === null ? null : [
-    'busy'    => $media,
-    'scope'   => 'machine',
-    'engines' => $peak > 0 ? ['Video' => $media] : [],
-    'peak'    => $peak,
-  ];
-
-  $raw = trim((string)@file_get_contents(STAXX_STATS_DIR.'/amd.raw'));
-  if ($raw === '') return $fallback;
-
-  $lines = array_filter(explode("\n", $raw), fn($l) => strpos($l, 'gpu ') !== false);
-  if (!$lines) return $fallback;
-  $line = (string)end($lines);
-
-  $get = function (string $key) use ($line): ?float {
-    return preg_match('/\b'.preg_quote($key, '/').'\s+([0-9.]+)%/', $line, $m)
-      ? (float)$m[1] : null;
-  };
-
-  $busy = $get('gpu');
-  if ($busy === null) return $fallback;
-
-  if ($media !== null) {
-    // The graphics figure alone would report a transcoding card as idle, which
-    // is the whole reason the second source exists.
-    $busy = max($busy, $media);
-  }
-
-  $out = [
-    'busy'    => round($busy, 1),
-    'scope'   => 'machine',
-    // Listed whenever the engine did anything at all, even if the average
-    // rounds to nothing: "Video 0.4%" says a transcode is running, where a
-    // bare 0% next to a thread count says nothing useful.
-    'engines' => $peak > 0 ? ['Video' => $media] : [],
-    'peak'    => $peak,
-  ];
-  if (preg_match('/\bvram\s+[0-9.]+%\s+([0-9.]+)mb/i', $line, $m)) {
-    $out['vram'] = (float)$m[1] * 1024 * 1024;
-  }
-  return $out;
-}
-
 /* ------------------------------------------------------------- snapshot -- */
 
 /**
@@ -751,19 +426,15 @@ function staxx_stats_snapshot(): array {
 
   $index      = staxx_stats_index();
   $containers = staxx_stats_containers();
-  $intel      = staxx_stats_intel_gpu();
-  $amd        = staxx_stats_amd();
   $mapped     = staxx_stats_gpu_mapped();
   $support    = staxx_gpu_support();
   $gpuProcs   = staxx_stats_gpu_procs();
-  $clients    = staxx_stats_gpu_clients();
 
   // Attach GPU usage to the container it belongs to.
   foreach ($containers as $name => &$c) {
     // The kernel's own per-process figures cover both Intel and AMD, and see
-    // the video engines that the machine-wide readings miss entirely, so they
-    // are the only per-container GPU source now — see staxx_stats_intel_gpu()
-    // for why the sysfs reading no longer offers a second one.
+    // the video engines a machine-wide reading would miss entirely, so they
+    // are the only per-container GPU source.
     if (isset($gpuProcs[$c['id']])) {
       $c['gpu']        = $gpuProcs[$c['id']]['busy'];
       $c['gpuEngines'] = $gpuProcs[$c['id']]['engines'];
@@ -868,21 +539,6 @@ function staxx_stats_snapshot(): array {
 
   return [
     'stacks'    => $stacks,
-    // Both cards answer in the same shape — busy, clients, engines, scope — so
-    // the header line can render them with one piece of code and cannot end up
-    // describing the same state two different ways.
-    'gpu'       => [
-      'intel' => $intel['present']
-        ? ['busy'    => $intel['total'],
-           'clients' => $clients['intel'],
-           'engines' => $intel['engines'],
-           'scope'   => 'container']
-        : null,
-      'amd'   => $amd === null ? null : $amd + [
-        'clients' => $clients['amd'],
-        'engines' => [],
-      ],
-    ],
     // The page shows how old the figures are rather than implying they are
     // live. A collector that has died is then obvious instead of looking like
     // a server that has gone quiet.

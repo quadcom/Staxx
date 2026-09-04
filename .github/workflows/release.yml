@@ -30,7 +30,13 @@ jobs:
       SRC: src/staxx/usr/local/emhttp/plugins/staxx
 
     steps:
+      # Full history and tags, for the documentation warning at the end of this
+      # job: it compares against the newest dev tag, and the shallow clone
+      # checkout defaults to shares no history with one. Nothing else here
+      # needs it, and nothing else here is affected by having it.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:
@@ -69,4 +75,47 @@ jobs:
           if [ "${PLG_BRANCH}" != "${GITHUB_REF_NAME}" ]; then
             echo "::error::staxx.plg's <!ENTITY branch> says \"${PLG_BRANCH}\", but this is ${GITHUB_REF_NAME}. An installed plugin polls that branch for updates, so on ${GITHUB_REF_NAME} it must say ${GITHUB_REF_NAME}. This is almost always a merge carrying the other branch's value across."
             exit 1
+          fi
+
+      # The one surviving fragment of PLAN_109, which would have had the dev
+      # release trigger refuse to build until both halves were present. That
+      # plan was shelved: holding a push back until the unit is finished
+      # removes the cause, where the workflow would only have detected it. This
+      # warning is what is worth keeping — it catches the slip without going
+      # anywhere near release machinery, so it cannot loop and cannot publish.
+      #
+      # A WARNING, never a failure, and that is not timidity. A code-first push
+      # on the way to a documented one is ordinary work, and a job that fails
+      # on ordinary work is a job everybody learns to ignore — at which point
+      # it stops catching the case it exists for.
+      #
+      # dev only. main receives finished merges, where both halves arrived
+      # together by definition, so the same warning there would be noise.
+      #
+      # `staxx.plg` needs no excluding here even though a release commits a
+      # stamped copy of it: it sits at the repository root, not under the
+      # plugin tree this looks at, so the release bot's own commit can never
+      # trip this.
+      - name: Warn if the plugin changed but nothing was written down
+        if: github.ref_name == 'dev'
+        run: |
+          LAST_TAG="$(git tag -l 'v*_dev*' | LC_ALL=C sort | tail -n1)"
+          if [ -z "${LAST_TAG}" ]; then
+            echo "No dev release has ever been cut, so there is nothing to compare against."
+            exit 0
+          fi
+
+          CODE="$(git diff --name-only "${LAST_TAG}..HEAD" -- "${SRC}" | head -n1)"
+          DOCS="$(git diff --name-only "${LAST_TAG}..HEAD" -- README.md docs CHANGELOG.md | head -n1)"
+
+          if [ -n "${CODE}" ] && [ -z "${DOCS}" ]; then
+            echo "::warning::The plugin has changed since ${LAST_TAG}, but the README, docs and changelog have not. A dev build cut now would carry features nothing tells anyone about. Add the changelog bullet (and a guide page if it needs one) before the next build."
+            {
+              echo "### Nothing written down yet"
+              echo
+              echo "Plugin files have changed since \`${LAST_TAG}\`, but no documentation has."
+              echo "A dev build cut now would ship changes nobody is told about."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Plugin changed since ${LAST_TAG}: ${CODE:-no}. Documentation changed: ${DOCS:-no}. Nothing to warn about."
           fi

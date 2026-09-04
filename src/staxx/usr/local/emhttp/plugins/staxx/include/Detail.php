@@ -7,8 +7,8 @@
  * PLAN_84 Phase 2. One entry point, staxx_detail_discover(), that asks every
  * existing source — image labels, the Community Applications catalogue, a
  * local Unraid template, Docker Hub, a registry, a live probe — what they
- * know about a stack's icon, description, category, author, links and web
- * page address, and hands back an answer for each field with a plain-English
+ * know about a stack's description, category, author, links and web page
+ * address, and hands back an answer for each field with a plain-English
  * sentence saying where it came from and how much to trust it.
  *
  * NOTHING IS WRITTEN HERE. This is discovery only — see include/action.php's
@@ -112,8 +112,6 @@ function staxx_detail_schema_ok(string $field, string $value): bool {
     case 'readme':
     case 'webui':
       return preg_match('#^https?://#', $value) === 1;
-    case 'icon':
-      return preg_match('/^(https?:\/\/\S+|\.\/\S+|fa-[a-z0-9-]+|[A-Za-z0-9][A-Za-z0-9._-]*)$/', $value) === 1;
     case 'overview':
     case 'category':
     case 'author':
@@ -291,6 +289,166 @@ function staxx_detail_hub_url(string $image): string {
     : 'https://hub.docker.com/r/'.$repo.'/';
 }
 
+/* --------------------------------------------------- PLAN_108 source 2 -- */
+
+/**
+ * A health check found in the project's own published compose example — the
+ * one source that carries a trust question, so it is the narrowest of the
+ * four (see PLAN_108's "one decision left for Adrian"): only ever handed to
+ * javascript/health-offer.js's acceptPublishedCheck(), which discards
+ * anything not already a shape StaXX writes itself.
+ *
+ * Best-effort and silent throughout — no repository, nothing published, a
+ * network hiccup, an oversized or unparseable file all read as "nothing
+ * found", never an error a person sees. Reuses staxx_watch_home() (the same
+ * repository resolution the release-notes feature already does from an
+ * image's labels or a ghcr.io address) and staxx_watch_curl() (the same curl
+ * wrapper, called directly rather than through staxx_watch_fetch() so this
+ * can set its own, tighter size cap — a compose example is a few kilobytes;
+ * anything past 64KB is not one). Cached in the same per-image bundle
+ * staxx_detail_image_facts() already writes under STAXX_DETAIL_DIR, so an
+ * image looked at twice in one TTL window is never fetched twice.
+ */
+const STAXX_HEALTH_PUBLISHED_MAX_BYTES = 64 * 1024;
+
+/**
+ * Pull a service's healthcheck.test out of already-fetched compose text, and
+ * only that field's shape this reader actually understands: a single-line
+ * flow list ("test: [\"CMD-SHELL\", \"...\"]") or compose's own bare-string
+ * shorthand. A multi-line sequence, an anchor, or anything else staxx_yaml_
+ * flatten() itself cannot see is not guessed at — the same "skip rather than
+ * guess" rule that function's own header states. Giving up is always the
+ * safe answer here.
+ */
+function staxx_health_parse_published_test(string $raw): ?array {
+  $raw = trim($raw);
+  if ($raw === '') return null;
+
+  if ($raw[0] === '[') {
+    // Only the properly double-quoted JSON-ish form parses; a looser flow
+    // list (single quotes, bare unquoted words) is refused rather than
+    // patched up — this reader does not repair somebody else's YAML.
+    $items = json_decode($raw, true);
+    if (!is_array($items) || $items === []) return null;
+    $items = array_values(array_map('strval', $items));
+  } else {
+    $items = ['CMD-SHELL', $raw];   // compose's own bare-string shorthand
+  }
+
+  $mode = $items[0] ?? '';
+  if ($mode === 'NONE') return null;   // the author explicitly disabled it here
+  if (($mode !== 'CMD' && $mode !== 'CMD-SHELL') || count($items) < 2) return null;
+
+  return $items;
+}
+
+/**
+ * The same reader, applied to one already-downloaded compose file's text —
+ * split out from the network side so it can be tested with plain strings and
+ * no server at all. Matches services by repository path, not by name: a
+ * published example almost never names its service the same as ours.
+ *
+ * @return array{test:string[], interval:string, timeout:string,
+ *               retries:int, start_period:string}|null
+ */
+function staxx_health_published_extract(string $composeText, string $image): ?array {
+  // Belt and braces on top of the network side's own cap — this function is
+  // also handed real fetched text directly, so it must refuse an oversized
+  // one on its own rather than trust every caller to have checked first.
+  if (strlen($composeText) > STAXX_HEALTH_PUBLISHED_MAX_BYTES) return null;
+
+  $flat = staxx_yaml_flatten($composeText);
+  if ($flat === []) return null;
+
+  $wantRepo = strtolower(staxx_links_repo_path($image));
+  if ($wantRepo === '') return null;
+
+  // Every top-level service name, read straight off the flattened paths —
+  // there is no separate service list to consult.
+  $services = [];
+  foreach (array_keys($flat) as $key) {
+    $parts = explode("\0", $key);
+    if (($parts[0] ?? '') === 'services' && isset($parts[1])) $services[$parts[1]] = true;
+  }
+
+  foreach (array_keys($services) as $svc) {
+    $svcImage = $flat["services\0$svc\0image"] ?? '';
+    if ($svcImage === '' || strtolower(staxx_links_repo_path($svcImage)) !== $wantRepo) continue;
+
+    $raw = $flat["services\0$svc\0healthcheck\0test"] ?? '';
+    if ($raw === '') return null;   // this is the matching service; it declares no check
+
+    $test = staxx_health_parse_published_test($raw);
+    if ($test === null) return null;   // declares one, but not in a shape read here
+
+    return [
+      'test'         => $test,
+      // Docker's own real defaults for whatever the author left unwritten —
+      // filling these in states what actually happens if this check runs
+      // as published, not a guess at what the author meant.
+      'interval'     => $flat["services\0$svc\0healthcheck\0interval"] ?? '30s',
+      'timeout'      => $flat["services\0$svc\0healthcheck\0timeout"] ?? '30s',
+      'retries'      => isset($flat["services\0$svc\0healthcheck\0retries"])
+                           ? (int)$flat["services\0$svc\0healthcheck\0retries"] : 3,
+      'start_period' => $flat["services\0$svc\0healthcheck\0start_period"] ?? '0s',
+    ];
+  }
+
+  return null;   // no service in this file matches the image at all
+}
+
+/**
+ * The network half: resolve the project's repository, try each conventional
+ * filename at its root, and stop at the first that actually exists — never a
+ * crawl of the repository looking for one. Only ever reads HEAD; there is no
+ * write path here or anywhere near it.
+ */
+function staxx_health_published_fetch(string $image): ?array {
+  [$home] = staxx_watch_home($image);
+  if ($home === '') return null;
+
+  $parts = staxx_watch_github_repo($home);
+  if ($parts === []) return null;
+  [$owner, $repo] = $parts;
+
+  foreach (['compose.yaml', 'compose.yml', 'docker-compose.yml', 'docker-compose.yaml'] as $filename) {
+    $url = 'https://raw.githubusercontent.com/'.rawurlencode($owner).'/'.rawurlencode($repo).'/HEAD/'.$filename;
+    $resp = staxx_watch_curl($url, [], STAXX_HEALTH_PUBLISHED_MAX_BYTES, 6);
+    if ($resp['code'] !== 200 || $resp['body'] === '') continue;   // this name isn't there — try the next
+
+    // Found the file itself — stop here regardless of what comes next.
+    // Oversized (curl's own --max-filesize should already have aborted
+    // this, but the check is cheap insurance) reads as nothing found too.
+    if (strlen($resp['body']) > STAXX_HEALTH_PUBLISHED_MAX_BYTES) return null;
+    return staxx_health_published_extract($resp['body'], $image);
+  }
+
+  return null;
+}
+
+/**
+ * The one entry point action.php calls. Cached in the shared per-image
+ * bundle so a stack revisited within the TTL costs nothing, and gated on the
+ * same "may StaXX reach the internet" setting the rest of this file honours.
+ */
+function staxx_health_published_check(string $image): ?array {
+  if ((staxx_cfg()['IMAGE_LOOKUP'] ?? 'true') === 'false') return null;
+
+  $cached = staxx_detail_cache_read($image);
+  if ($cached !== null && ($cached['published_checked'] ?? false)) {
+    return $cached['published_healthcheck'] ?? null;
+  }
+
+  $result = staxx_health_published_fetch($image);
+
+  $bundle = staxx_detail_cache_read($image) ?? [];
+  $bundle['published_checked']     = true;
+  $bundle['published_healthcheck'] = $result;
+  staxx_detail_cache_write($image, $bundle);
+
+  return $result;
+}
+
 /* ---------------------------------------------------------------- template -- */
 
 /**
@@ -301,7 +459,7 @@ function staxx_detail_hub_url(string $image): string {
  * view neither of them needs. Widened from Watch.php's Repository+Project
  * pair to the fields this feature's cascades ask for.
  *
- * @return array{icon:string, overview:string, category:string, author:string, webui:string}|null
+ * @return array{overview:string, category:string, author:string, webui:string}|null
  */
 // $dir defaults to the real template folder, and every caller in this plugin
 // uses that default — only a test passes another one, the same arrangement
@@ -330,7 +488,6 @@ function staxx_detail_template_match(string $image, string $dir = STAXX_IMPORT_T
     if (strtolower(staxx_links_repo_path((string)($xml->Repository ?? ''))) !== $repo) continue;
 
     $found = [
-      'icon'     => trim((string)($xml->Icon ?? '')),
       'overview' => trim((string)($xml->Overview ?? '')),
       'category' => trim((string)($xml->Category ?? '')),
       'author'   => trim((string)($xml->Author ?? '')),
@@ -369,31 +526,6 @@ function staxx_detail_normalise_category(string $raw): string {
 }
 
 /* --------------------------------------------------------------- one answer -- */
-
-/**
- * A picture the chooser can actually show for one icon value, resolved the
- * same way the table resolves the icons it draws — never by the browser
- * guessing a public address for itself. The chooser puts the stored icon
- * beside the found one as two real pictures (PLAN_84's 2026-08-27 revision),
- * and that comparison is the whole reason the icon is in the chooser at all,
- * so a guessed URL that silently fails to load would quietly remove the one
- * safeguard the icon has.
- *
- * Fetches when it must and the setting allows it, exactly as the table's own
- * sweep does; a picture that cannot be had comes back as '' and the chooser
- * says so in words rather than showing a broken image.
- *
- * @return array{fa:string, url:string}
- */
-function staxx_detail_icon_preview(string $icon, string $dir, string $image): array {
-  if (trim($icon) === '') return ['fa' => '', 'url' => ''];
-  $r = staxx_icon_resolve($icon, $dir, $image);
-  if ($r['fa'] !== '') return ['fa' => $r['fa'], 'url' => ''];
-  if ($r['url'] === '' && $r['ref'] !== '' && staxx_icon_fetching()) {
-    $r['url'] = staxx_icon_fetch($r['ref'], $r['remote']);
-  }
-  return ['fa' => '', 'url' => (string)$r['url']];
-}
 
 /** One answer, or null when there is nothing to offer — either no source
  *  answered, or the only source that did equals what the file already
@@ -478,53 +610,6 @@ function staxx_detail_project_support(
   }
 
   return ['project' => $project, 'support' => $support, 'currentProject' => $currentProject, 'currentSupport' => $currentSupport];
-}
-
-function staxx_detail_icon(
-  string $image, array $stackX, string $leadService, string $stackLeaf, ?array $template
-): ?array {
-  $current = trim((string)($stackX['icon'] ?? ''));
-
-  $repo = strtolower(staxx_links_repo_path($image));
-  $catIcon = '';
-  if ($repo !== '') {
-    $ordinal = staxx_links_ca_map()[$repo] ?? null;
-    if ($ordinal !== null) {
-      $app = staxx_ca_app($ordinal);
-      $catIcon = is_array($app) ? trim((string)($app['Icon'] ?? '')) : '';
-    }
-  }
-  if ($catIcon !== '' && staxx_detail_schema_ok('icon', $catIcon)) {
-    return staxx_detail_answer($catIcon, 'catalog', 'claimed',
-      'The Community Applications catalogue lists this icon for the image.', $current);
-  }
-
-  // Template icons are only ever taken when they are a real URL — a
-  // template naming an absolute local path on its own author's server is
-  // meaningless here, because the compose file this writes into must run
-  // unmodified anywhere (rule 1). This is narrower than the schema itself,
-  // which also allows a bare selfh.st name or a relative ./path from a
-  // template, because a template's own path convention cannot be trusted to
-  // mean the same thing once it is somebody else's stack.
-  $tplIcon = trim((string)($template['icon'] ?? ''));
-  if ($tplIcon !== '' && preg_match('#^https?://#', $tplIcon) && staxx_detail_schema_ok('icon', $tplIcon)) {
-    return staxx_detail_answer($tplIcon, 'template', 'claimed',
-      'A local Unraid template names this as the icon.', $current);
-  }
-
-  // The unique-hit matcher — a guess, and the one answer here that is
-  // written with a trailing comment saying so (see 'auto_comment' below).
-  // Icons.php's own header explains why a wrong icon is worse than none.
-  $matched = staxx_icon_match($image, $leadService, $stackLeaf);
-  if ($matched !== '' && staxx_detail_schema_ok('icon', $matched)) {
-    $answer = staxx_detail_answer($matched, 'matcher', 'guess',
-      "Matched automatically from the image's name — exactly one icon in StaXX's collection fits.",
-      $current);
-    if ($answer !== null) $answer['auto_comment'] = true;
-    return $answer;
-  }
-
-  return null;
 }
 
 function staxx_detail_overview(
@@ -867,19 +952,6 @@ function staxx_detail_discover(string $stackName): array {
     $ps = staxx_detail_project_support($image, $stackX, $serviceX, $budget);
     $stack['project']  = ['current' => $ps['currentProject'], 'answer' => $ps['project'],  'skipped' => null];
     $stack['support']  = ['current' => $ps['currentSupport'], 'answer' => $ps['support'],  'skipped' => null];
-
-    $iconAnswer = staxx_detail_icon($image, $stackX, $lead, $leaf, $template);
-    $currentIcon = trim((string)($stackX['icon'] ?? ''));
-    $stack['icon'] = [
-      'current' => $currentIcon,
-      'answer'  => $iconAnswer,
-      'skipped' => null,
-      // Both sides as real pictures, resolved here rather than in the browser.
-      'preview'        => staxx_detail_icon_preview($currentIcon, $dir, $image),
-      'answer_preview' => $iconAnswer === null
-        ? ['fa' => '', 'url' => '']
-        : staxx_detail_icon_preview((string)$iconAnswer['value'], $dir, $image),
-    ];
 
     $overviewCurrent = trim((string)($stackX['overview'] ?? ''));
     $overviewAnswer  = staxx_detail_overview($image, $stackX, $template, $budget);

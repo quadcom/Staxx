@@ -406,6 +406,120 @@ function staxx_compose_devices(string $yaml): array {
 }
 
 /**
+ * Which GPU vendors a compose file's own text asks for, per service — so a
+ * stack can carry its vendor badge whether it is running or not (PLAN_114).
+ * Live stats (staxx_stats_gpu_mapped()) answer "what is this container
+ * actually using right now", which goes blank the moment a container stops;
+ * this answers "what would it use if it started", straight from the file.
+ *
+ * Three shapes are read, none of which staxx_compose_devices() reports:
+ * a `/dev/dri` (or a specific node under it), resolved to Intel or AMD
+ * through the host's own staxx_gpu_nodes() map; `runtime: nvidia` or a bare
+ * `gpus:` key; and a `deploy.resources.reservations.devices` entry naming
+ * `driver: nvidia` or `capabilities: [gpu]` — the one place Nvidia is asked
+ * for without a `/dev/nvidia*` path in sight. Built as its own line walk
+ * rather than on top of staxx_compose_devices(), because that function
+ * deliberately skips the reservations list (see its own comment) — the two
+ * questions share a shape but not an answer.
+ *
+ * @return array<string, string[]> service name (within the one file handed
+ *   in, same as staxx_compose_devices()) => de-duplicated vendors
+ */
+function staxx_compose_gpu_vendors(string $yaml): array {
+  $nodes = staxx_gpu_nodes();
+  $out   = [];
+
+  $add = function (string $service, string $vendor) use (&$out) {
+    if ($service === '' || $vendor === '') return;
+    if (!in_array($vendor, $out[$service] ?? [], true)) $out[$service][] = $vendor;
+  };
+
+  $inSvc   = false;
+  $svcAt   = -1;
+  $service = '';
+  $keyAt   = -1;
+  $devAt   = -1;   // indent of the service's own /dev-path devices: list, or -1
+  $resAt   = -1;   // indent of a deeper, reservations-shaped devices: list, or -1
+
+  foreach (explode("\n", $yaml) as $raw) {
+    $line = rtrim($raw, "\r");
+    if (trim($line) === '' || preg_match('/^\s*#/', $line)) continue;
+
+    $indent = strlen($line) - strlen(ltrim($line, ' '));
+    $body   = ltrim($line, ' ');
+    $isItem = strncmp($body, '- ', 2) === 0 || $body === '-';
+
+    if ($isItem) {
+      if ($devAt >= 0 && $indent > $devAt) {
+        $host = staxx_device_host(substr($body, 1));
+        if (strncmp($host, '/dev/nvidia', 11) === 0) {
+          $add($service, 'nvidia');
+        } elseif (preg_match('#^/dev/dri(?:/(\w+))?$#', $host, $mm)) {
+          if (isset($mm[1])) {
+            $add($service, $nodes[$mm[1]] ?? '');
+          } else {
+            foreach (array_unique(array_values($nodes)) as $v) $add($service, $v);
+          }
+        }
+      }
+      // A reservations entry's own first line ("- driver: nvidia") is an
+      // item too, so it is checked here rather than falling through to the
+      // key match below, which never runs for an item line.
+      if ($resAt >= 0 && $indent > $resAt) {
+        $item = substr($body, 1);
+        if (preg_match('/\bdriver\s*:\s*["\']?nvidia/i', $item)
+          || preg_match('/\bcapabilities\s*:\s*\[[^\]]*gpu/i', $item)) {
+          $add($service, 'nvidia');
+        }
+      }
+      continue;
+    }
+
+    if (!preg_match('/^("[^"]*"|\'[^\']*\'|[^:#]+):(.*)$/', $body, $m)) continue;
+    $key = trim($m[1], " \"'");
+    $val = trim($m[2]);
+
+    if ($devAt >= 0 && $indent <= $devAt) $devAt = -1;
+    if ($resAt >= 0 && $indent <= $resAt) $resAt = -1;
+
+    // A reservations entry's continuation lines ("capabilities: [gpu]" sat
+    // under "- driver: nvidia") are plain key: value lines, not items.
+    if ($resAt >= 0 && $indent > $resAt) {
+      if (($key === 'driver' && stripos($val, 'nvidia') !== false)
+        || ($key === 'capabilities' && stripos($val, 'gpu') !== false)) {
+        $add($service, 'nvidia');
+      }
+    }
+
+    if (!$inSvc) {
+      if ($indent === 0 && $key === 'services') $inSvc = true;
+      continue;
+    }
+    if ($indent === 0) {
+      $inSvc = false; $svcAt = -1; $service = ''; $keyAt = -1; $devAt = -1; $resAt = -1;
+      continue;
+    }
+
+    if ($svcAt < 0) $svcAt = $indent;
+    if ($indent === $svcAt) { $service = $key; $keyAt = -1; $devAt = -1; $resAt = -1; continue; }
+    if ($keyAt < 0) $keyAt = $indent;
+
+    if ($service === '') continue;
+
+    if ($key === 'devices' && $indent === $keyAt) { $devAt = $indent; continue; }
+    // Any OTHER devices: list, deeper than the service's own keys, is the
+    // deploy.resources.reservations shape rather than a path list — see
+    // staxx_compose_devices()'s comment on why that indent alone tells them
+    // apart.
+    if ($key === 'devices' && $indent > $keyAt) { $resAt = $indent; continue; }
+    if ($key === 'runtime' && strtolower(trim($val, " \"'")) === 'nvidia') { $add($service, 'nvidia'); continue; }
+    if ($key === 'gpus') { $add($service, 'nvidia'); continue; }
+  }
+
+  return $out;
+}
+
+/**
  * Which stack and service has already claimed each device.
  *
  * Two containers holding one Zigbee stick is a setup that looks fine and never

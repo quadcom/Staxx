@@ -326,7 +326,13 @@ b2_reset_stack($doorDir, "services:\n  a:\n    image: alpine:3.20\n");
 $doorErr = '';
 ok('staxx_save_stack() on an existing stack succeeds',
    staxx_save_stack($doorRel, "services:\n  a:\n    image: alpine:3.21\n", $doorErr), $doorErr);
-ok('...and produces exactly one version', count(staxx_record_list($doorRel)) === 1);
+// Two, not one: staxx_save_stack() captures on both sides of the write —
+// what it is about to replace, and what it has just written — so the version
+// nobody else holds a copy of is kept even if the file is lost before the
+// next save. The companion-file door below captures only on the way in, so
+// the two doors deliberately produce different counts for one save each.
+ok('...and produces two versions, the replaced one and the written one',
+   count(staxx_record_list($doorRel)) === 2, 'count='.count(staxx_record_list($doorRel)));
 
 // The compose file itself cannot be reached through the companion-file
 // editor at all — staxx_valid_filename() refuses all four of its names, so
@@ -336,7 +342,7 @@ ok('the file editor cannot write the compose file at all',
    staxx_write_file($doorRel, 'compose.yaml', "services:\n  a:\n    image: alpine:3.22\n", true, $doorErr) === false,
    $doorErr);
 ok('...and that refusal left the history alone',
-   count(staxx_record_list($doorRel)) === 1);
+   count(staxx_record_list($doorRel)) === 2, 'count='.count(staxx_record_list($doorRel)));
 
 // The override IS reachable that way, and is compose configuration just as
 // much as the main file — so it is the real second door.
@@ -345,15 +351,15 @@ ok('the file editor can write the override file',
    staxx_write_file($doorRel, 'compose.override.yaml', "services:\n  a:\n    cpus: 1\n", true, $doorErr),
    $doorErr);
 ok('...the first override save keeps nothing, there being no previous version',
-   count(staxx_record_list($doorRel)) === 1);
+   count(staxx_record_list($doorRel)) === 2, 'count='.count(staxx_record_list($doorRel)));
 
 $doorErr = '';
 ok('the file editor can write the override file a second time',
    staxx_write_file($doorRel, 'compose.override.yaml', "services:\n  a:\n    cpus: 2\n", true, $doorErr),
    $doorErr);
 $doorVersions = staxx_record_list($doorRel);
-ok('...and that overwrite IS kept, giving two versions',
-   count($doorVersions) === 2, 'count='.count($doorVersions));
+ok('...and that overwrite IS kept, adding a third version',
+   count($doorVersions) === 3, 'count='.count($doorVersions));
 ok('...recorded against the override, not the main file',
    ($doorVersions[0]['file'] ?? '') === 'compose.override.yaml',
    'file='.($doorVersions[0]['file'] ?? '?'));
@@ -363,7 +369,8 @@ ok('...holding what the override said before that save',
 $doorErr = '';
 ok('staxx_write_file() writing a non-compose companion file succeeds',
    staxx_write_file($doorRel, '.env', "A=1\n", true, $doorErr), $doorErr);
-ok('...and produces no additional version', count(staxx_record_list($doorRel)) === 2);
+ok('...and produces no additional version', count(staxx_record_list($doorRel)) === 3,
+   'count='.count(staxx_record_list($doorRel)));
 
 // A path where a filename belongs used to keep nothing and report success —
 // the exact way the first wiring of door one shipped broken and silent.
@@ -430,6 +437,60 @@ $zipList = staxx_sh('unzip -l '.escapeshellarg($archive));
 foreach (["$travelRel/.staxx/record.json", "$travelRel/.staxx/history/"] as $want) {
   ok('the archive contains '.$want, strpos($zipList, $want) !== false);
 }
+
+/* ------------------------------------------------------ caught install -- */
+
+// PLAN_106 phase 5 gap: action.php's 'save' case saves a caught install's
+// as-is wording first, then the real body, for a brand-new stack only —
+// exactly the two-call shape staxx_import_write() already uses and
+// tests/server/import.php's cases 7 and 8 already prove. action.php itself
+// cannot be driven from here (its staxx_reply() calls exit()), so this
+// proves the same underlying staxx_save_stack() sequence action.php now
+// makes, rather than the HTTP wiring around it.
+
+$caRel = 'zzb2caasis';
+$caDir = $root.'/'.$caRel;
+@exec('rm -rf '.escapeshellarg($caDir));
+
+$caAsIs    = "services:\n  a:\n    environment:\n      TOKEN: \"\$argon2id\$v=19\$m=6\"\n    image: alpine:3.20\n";
+$caEscaped = "services:\n  a:\n    environment:\n      TOKEN: \"\$\$argon2id\$\$v=19\$\$m=6\"\n    image: alpine:3.20\n";
+
+$caErr1 = '';
+ok('a caught install\'s as-is save succeeds (new stack, as-is differs from body)',
+   staxx_save_stack($caRel, $caAsIs, $caErr1), $caErr1);
+$caErr2 = '';
+ok('...and the escaped save that follows also succeeds',
+   staxx_save_stack($caRel, $caEscaped, $caErr2), $caErr2);
+ok('...leaving the escaped text on disk',
+   file_get_contents($caDir.'/compose.yaml') === $caEscaped);
+
+$caHistory = staxx_record_list($caRel);
+ok('...and both saves filed their own history version', count($caHistory) === 2, json_encode($caHistory));
+$caEarliest = null;
+foreach ($caHistory as $v) { if ($v['n'] === 1) $caEarliest = $v; }
+if ($caEarliest !== null) {
+  ok('...and the earlier one holds the as-is wording, dollar signs single',
+     staxx_record_get($caRel, 1) === $caAsIs);
+}
+
+@exec('rm -rf '.escapeshellarg($caDir));
+
+// action.php only makes the as-is save when isNew is true — an ordinary
+// edit of an existing stack must never double-save, so an edit reaches
+// staxx_save_stack() exactly once, whatever bodyAsIs the request carried.
+// Proved here at that level: one call, the ordinary before-and-after
+// capture pair any first save makes — not the deliberate two full calls the
+// caught-install case above makes on purpose.
+$caEditRel = 'zzb2caedit';
+$caEditDir = $root.'/'.$caEditRel;
+b2_reset_stack($caEditDir, $caAsIs);
+$caEditErr = '';
+ok('a single staxx_save_stack() call (the isNew=false edit path) still succeeds',
+   staxx_save_stack($caEditRel, $caEscaped, $caEditErr), $caEditErr);
+ok('...filing the ordinary two versions one call produces, not three',
+   count(staxx_record_list($caEditRel)) === 2, json_encode(staxx_record_list($caEditRel)));
+
+@exec('rm -rf '.escapeshellarg($caEditDir));
 
 /* ---------------------------------------------------------------------- */
 

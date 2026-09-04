@@ -56,6 +56,9 @@ function wordDigestFrom(v) {
   return { header: "from the registry's header",
            'computed (no header)': 'computed from the bytes served', '?': 'unknown' }[v] || v;
 }
+function wordHeadCharged(v) {
+  return { yes: 'yes', no: 'no', 'not sent': 'no figure reported', '?': 'unknown' }[v] || v;
+}
 
 /* ---- small helpers -------------------------------------------------------- */
 
@@ -132,17 +135,28 @@ function buildHeader(quirks, selfhosted) {
 }
 
 function buildPublicTable(rows) {
+  // head_charged is only ever present from PLAN_112 A0 onward — an older
+  // dump simply lacks the field, and the column is left out rather than
+  // shown as "unknown" for every row, which would claim a measurement that
+  // was never taken.
+  var hasHeadCharged = rows.some(function (r) { return r.head_charged !== undefined; });
+
   var lines = [];
   lines.push('## Public registries');
   lines.push('');
-  lines.push(row(['Registry', 'Sign-in challenge', 'Token needed', 'Conditional re-ask honoured',
-                  'Reports its own allowance', 'Digest matched the docker CLI', 'Digest came from']));
-  lines.push(row(['---', '---', '---', '---', '---', '---', '---']));
+  var headings = ['Registry', 'Sign-in challenge', 'Token needed', 'Conditional re-ask honoured',
+                  'Reports its own allowance', 'Digest matched the docker CLI', 'Digest came from'];
+  var rule = ['---', '---', '---', '---', '---', '---', '---'];
+  if (hasHeadCharged) { headings.push('Header-only request charged'); rule.push('---'); }
+  lines.push(row(headings));
+  lines.push(row(rule));
   rows.forEach(function (r) {
-    lines.push(row([
+    var cells = [
       r.registry, wordChallenge(r.challenge), wordToken(r.token), word304(r['304']),
       wordRatelimit(r.ratelimit), wordDigestMatch(r.digest_match), wordDigestFrom(r.digest_from)
-    ]));
+    ];
+    if (hasHeadCharged) cells.push(wordHeadCharged(r.head_charged));
+    lines.push(row(cells));
   });
   lines.push('');
   return lines;
@@ -202,7 +216,8 @@ function buildFacts(publicRows, selfhostedRows) {
     lines.push('- ' + noConditional.length + ' of the ' + measured304.length + ' registries this run ' +
       'reached (' + joinList(noConditional.map(function (r) { return r.registry; })) +
       ') do not honour the cheap conditional re-ask PLAN_90 relies on — asking "has this changed?" ' +
-      'saves nothing at those registries, and a full digest fetch is paid every pass regardless.');
+      'saves nothing there. Since PLAN_112 A0 that question is a header-only request regardless, and ' +
+      'costs no Docker Hub allowance where any was measured — see the header-only column below.');
   }
   var unmeasured = publicRows.filter(function (r) { return measured304.indexOf(r) === -1; });
   if (unmeasured.length > 0) {
@@ -231,6 +246,21 @@ function buildFacts(publicRows, selfhostedRows) {
     lines.push('- ' + joinList(computed.map(function (r) { return r.registry; })) +
       ' names no digest in its reply, which is why the computed-from-the-bytes fallback exists at all: ' +
       'without it those registries would report no digest, not a wrong one.');
+  }
+
+  // head_charged only exists from PLAN_112 A0 onward — an older dump has no
+  // such field on any row, and the fact is skipped entirely rather than
+  // claiming a measurement this run never took.
+  var headMeasured = publicRows.filter(function (r) {
+    return r.head_charged === 'yes' || r.head_charged === 'no';
+  });
+  if (headMeasured.length > 0) {
+    var headMoved = headMeasured.filter(function (r) { return r.head_charged === 'yes'; });
+    lines.push('- of the registries that reported their own allowance (' +
+      joinList(headMeasured.map(function (r) { return r.registry; })) +
+      '), the header-only manifest request moved the figure for ' +
+      (headMoved.length > 0 ? joinList(headMoved.map(function (r) { return r.registry; })) : 'none of them') +
+      ' — asking for headers alone costs no allowance everywhere else it was measured.');
   }
 
   // The exception to "key off a column": the realm host is not itself a

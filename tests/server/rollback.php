@@ -1,7 +1,12 @@
 <?php
-/* Rollback target membership (staxx_update_rollback()'s $target parameter,
- * include/UpdateRun.php) and what the update clock does afterwards
- * (staxx_updates_pill_for_image(), include/Updates.php).
+/* Rollback target membership (staxx_update_rollback()'s $targets map,
+ * service => digest, include/UpdateRun.php) and what the update clock does
+ * afterwards (staxx_updates_pill_for_image(), include/Updates.php).
+ *
+ * staxx_update_rollback() now takes a map of one or more targets rather
+ * than a single service/digest pair, so every case below wraps its service
+ * and digest in a one-entry array — the shape a single "Put this back"
+ * request still sends. Part D covers a genuine multi-target request.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STORE_ROOT
  * pointed at /tmp/b4-store, the same way tests/server/imagehistory.php points
@@ -100,9 +105,9 @@ function b4_make_stack(string $rel, string $service = 'web', string $image = 'al
 /* ======================================================================= *
  * Part A — the rollback's target membership rule.
  *
- * staxx_update_rollback()'s optional fourth parameter, $target, must be
- * checked for strict membership in staxx_update_history($stack, $service)
- * before anything else happens. This is the security boundary: without it a
+ * Every digest in staxx_update_rollback()'s $targets map must be checked
+ * for strict membership in staxx_update_history($stack, $service) before
+ * anything else happens. This is the security boundary: without it a
  * request could re-tag a service's image to any digest present on the
  * server, not just one it actually ran.
  *
@@ -148,11 +153,15 @@ staxx_image_history_push('zzb4elsewhere', 'web', dg('t-otherstack'), []);
 function refusedBecause(string $err, string $fragment): bool {
   return $err !== '' && strpos($err, $fragment) !== false;
 }
-const NOT_RECORDED = 'not one recorded for this service';
+// The message now names the offending service ('...for the "web" service...'),
+// since a multi-target request has to say which one failed — so the
+// fragment matched here drops the old "this service" wording rather than
+// tying every case below to one particular service name.
+const NOT_RECORDED = 'is not one recorded for the';
 
 /* 1. Correctly shaped, but never recorded for this service at all. */
 $err = '';
-$res = staxx_update_rollback('zzb4target', 'web', $err, dg('t-never-recorded'));
+$res = staxx_update_rollback('zzb4target', ['web' => dg('t-never-recorded')], $err);
 ok('a well-shaped digest never recorded for this service is refused BY the '
  . 'membership test, not by docker further down',
    $res === '' && refusedBecause($err, NOT_RECORDED), $err);
@@ -176,7 +185,7 @@ staxx_scan_stacks_reset();
 staxx_image_history_push('zzb4twosvc', 'db', dg('t-dbonly'), []);
 
 $err = '';
-$res = staxx_update_rollback('zzb4twosvc', 'web', $err, dg('t-dbonly'));
+$res = staxx_update_rollback('zzb4twosvc', ['web' => dg('t-dbonly')], $err);
 ok('a digest recorded for a sibling service in the SAME stack is refused',
    $res === '' && refusedBecause($err, NOT_RECORDED), $err);
 
@@ -188,14 +197,14 @@ ok('a digest recorded for a sibling service in the SAME stack is refused',
 // this asserts exactly where it stops rather than merely where it does not.
 const NO_YAML = 'no file text was supplied';
 $err = '';
-staxx_update_rollback('zzb4twosvc', 'db', $err, dg('t-dbonly'));
+staxx_update_rollback('zzb4twosvc', ['db' => dg('t-dbonly')], $err);
 ok('...while the service that DID record it gets past the membership test, '
  . 'and is refused next for having no file text',
    !refusedBecause($err, NOT_RECORDED) && refusedBecause($err, NO_YAML), $err);
 
 /* 3. Recorded, but for the SAME service name in a DIFFERENT stack. */
 $err = '';
-$res = staxx_update_rollback('zzb4target', 'web', $err, dg('t-otherstack'));
+$res = staxx_update_rollback('zzb4target', ['web' => dg('t-otherstack')], $err);
 ok('a digest recorded for the same service name in a different stack is refused',
    $res === '' && refusedBecause($err, NOT_RECORDED), $err);
 
@@ -208,21 +217,21 @@ $malformed = [
 ];
 foreach ($malformed as $label => $bad) {
   $err = '';
-  $res = staxx_update_rollback('zzb4target', 'web', $err, $bad);
+  $res = staxx_update_rollback('zzb4target', ['web' => $bad], $err);
   ok('a malformed target ('.$label.') is refused before anything runs',
      $res === '' && refusedBecause($err, NOT_RECORDED), $err);
 }
 
 /* 5. A stack that does not exist, and a service that does not exist in a
- * real stack — refused with a full sentence, and $target being non-empty
- * must not change that. */
+ * real stack — refused with a full sentence, and the target digest being
+ * well-formed must not change that. */
 $err = '';
-$res = staxx_update_rollback('zzb4neverexisted', 'web', $err, dg('t-real'));
+$res = staxx_update_rollback('zzb4neverexisted', ['web' => dg('t-real')], $err);
 ok('a stack that does not exist is refused with a full sentence',
    $res === '' && str_word_count($err) >= 3, $err);
 
 $err = '';
-$res = staxx_update_rollback('zzb4target', 'noservice', $err, dg('t-real'));
+$res = staxx_update_rollback('zzb4target', ['noservice' => dg('t-real')], $err);
 ok('a service that does not exist in a real stack is refused with a full sentence',
    $res === '' && str_word_count($err) >= 3, $err);
 
@@ -238,19 +247,29 @@ file_put_contents($root.'/zzb4noimage/compose.yaml',
 staxx_scan_stacks_reset();
 staxx_image_history_push('zzb4noimage', 'bare', dg('t-real'), []);
 $err = '';
-$res = staxx_update_rollback('zzb4noimage', 'bare', $err, dg('t-real'));
+$res = staxx_update_rollback('zzb4noimage', ['bare' => dg('t-real')], $err);
 ok('a service with no image set is refused for THAT reason, not as unknown',
    $res === '' && refusedBecause($err, 'no image set'), $err);
 
-/* 7. The old, untargeted path must be untouched by the new parameter. With
- * no history at all and no target, the refusal must still be the original
- * "nothing recorded" one — not the membership message, which would mean the
- * new branch had swallowed the default. */
+/* 7. There is no "roll back to whatever came before" shortcut any more —
+ * the Versions tab is the only real caller and it always supplies the exact
+ * digest it wants, so a target of '' is simply never one this service
+ * recorded, and falls into the ordinary membership refusal rather than a
+ * dedicated "nothing recorded" message. This is the direct replacement for
+ * the old untargeted-path case. */
 b4_make_stack('zzb4nohistory', 'web', 'ghcr.io/example/nohistory:latest');
 $err = '';
-$res = staxx_update_rollback('zzb4nohistory', 'web', $err);
-ok('with no target and no history, the original refusal is unchanged',
-   $res === '' && refusedBecause($err, 'no earlier version recorded'), $err);
+$res = staxx_update_rollback('zzb4nohistory', ['web' => ''], $err);
+ok('an empty target with no history at all is refused by the membership test',
+   $res === '' && refusedBecause($err, NOT_RECORDED), $err);
+
+/* 7b. An empty $targets map altogether is refused outright — there is
+ * nothing to name, so this must not silently read as whole-stack scope or
+ * some other default. */
+$err = '';
+$res = staxx_update_rollback('zzb4nohistory', [], $err);
+ok('an empty $targets map is refused outright',
+   $res === '' && $err !== '', $err);
 
 /* ======================================================================= *
  * Part B — what the update clock does after a rollback.
@@ -322,8 +341,8 @@ echo "note   hold-clearing lives in staxx_update_check(), not in the pure pill
 /* ======================================================================= *
  * Part C — the supplied $yaml is not trusted.
  *
- * staxx_update_rollback()'s fifth parameter, $yaml, is the browser's own
- * edited compose text. It is never taken at face value: it is written to a
+ * staxx_update_rollback()'s $yaml parameter is the browser's own edited
+ * compose text. It is never taken at face value: it is written to a
  * temp file, parsed properly with staxx_compose_meta(), and the requested
  * service's image must be shown to actually carry '@'.$target — a plain
  * strpos() on the raw text would not do, since the digest could just as
@@ -348,7 +367,8 @@ echo "note   hold-clearing lives in staxx_update_check(), not in the pure pill
  * this section's own check being exercised, not the empty-string one.
  * ======================================================================= */
 
-const NOT_PINNED    = 'does not pin this service to the requested version';
+// Same reasoning as NOT_RECORDED above: the message now names the service.
+const NOT_PINNED    = 'does not pin the';
 const COULD_NOT_CHECK = 'The supplied file could not be checked';
 
 /* A stack with one recorded digest, reused by most of the cases below. A
@@ -373,7 +393,7 @@ services:
     image: ghcr.io/example/text:latest
 YAML;
 $err = '';
-$res = staxx_update_rollback('zzb4textcase', 'web', $err, $cReal, $yaml1);
+$res = staxx_update_rollback('zzb4textcase', ['web' => $cReal], $err, $yaml1);
 ok('an unpinned image is refused by the text check',
    $res === '' && refusedBecause($err, NOT_PINNED), $err);
 
@@ -386,7 +406,7 @@ services:
     image: ghcr.io/example/text:latest@{$cOlder}
 YAML;
 $err = '';
-$res = staxx_update_rollback('zzb4textcase', 'web', $err, $cReal, $yaml2);
+$res = staxx_update_rollback('zzb4textcase', ['web' => $cReal], $err, $yaml2);
 ok('text pinned to a different recorded digest than $target is refused',
    $res === '' && refusedBecause($err, NOT_PINNED), $err);
 
@@ -399,7 +419,7 @@ services:
     image: "unterminated
 YAML;
 $err = '';
-$res = staxx_update_rollback('zzb4textcase', 'web', $err, $cReal, $yaml3);
+$res = staxx_update_rollback('zzb4textcase', ['web' => $cReal], $err, $yaml3);
 ok('text that does not parse at all is refused',
    $res === '' && refusedBecause($err, COULD_NOT_CHECK), $err);
 
@@ -411,7 +431,7 @@ services:
     image: ghcr.io/example/text:latest@{$cReal}
 YAML;
 $err = '';
-$res = staxx_update_rollback('zzb4textcase', 'web', $err, $cReal, $yaml4);
+$res = staxx_update_rollback('zzb4textcase', ['web' => $cReal], $err, $yaml4);
 ok('text with the requested service renamed away is refused',
    $res === '' && refusedBecause($err, COULD_NOT_CHECK), $err);
 
@@ -428,7 +448,7 @@ services:
     image: ghcr.io/example/cross-db:latest@{$cCross}
 YAML;
 $err = '';
-$res = staxx_update_rollback('zzb4crosssvc', 'web', $err, $cCross, $yaml5);
+$res = staxx_update_rollback('zzb4crosssvc', ['web' => $cCross], $err, $yaml5);
 ok('the right digest pinned to a sibling service does not count for the '
  . 'requested one',
    $res === '' && refusedBecause($err, NOT_PINNED), $err);
@@ -438,7 +458,7 @@ ok('the right digest pinned to a sibling service does not count for the '
  * tag-moving behaviour. */
 foreach (['a bare newline' => "\n", 'a comment only' => "# just a comment\n"] as $label => $yaml6) {
   $err = '';
-  $res = staxx_update_rollback('zzb4textcase', 'web', $err, $cReal, $yaml6);
+  $res = staxx_update_rollback('zzb4textcase', ['web' => $cReal], $err, $yaml6);
   ok('empty-ish but non-empty text ('.$label.') is checked and refused, not '
    . 'treated as no-$yaml',
      $res === '' && $yaml6 !== '' && refusedBecause($err, COULD_NOT_CHECK), $err);
@@ -455,28 +475,86 @@ services:
     image: ghcr.io/example/text:latest@{$cNeverRecorded}
 YAML;
 $err = '';
-$res = staxx_update_rollback('zzb4textcase', 'web', $err, $cNeverRecorded, $yaml7);
+$res = staxx_update_rollback('zzb4textcase', ['web' => $cNeverRecorded], $err, $yaml7);
 ok('a $yaml correctly pinned to a digest never recorded for this service '
  . 'is still caught by the membership test, not the text check',
    $res === '' && refusedBecause($err, NOT_RECORDED), $err);
 
-/* 8. A four-argument call — a real, recorded target, but no $yaml — is
- * refused outright, by the NO_YAML message specifically and no other. The
- * old behaviour (re-point the local tag, file untouched) is gone: an empty
- * $yaml is no longer a weaker-but-working fallback, it is a footgun closed
- * off. $cReal is genuinely recorded for this stack/service, so this proves
- * the refusal is the "no file text" one and not a membership failure in
- * disguise. */
+/* 8. A real, recorded target, but no $yaml — is refused outright, by the
+ * NO_YAML message specifically and no other. The old behaviour (re-point
+ * the local tag, file untouched) is gone: an empty $yaml is no longer a
+ * weaker-but-working fallback, it is a footgun closed off. $cReal is
+ * genuinely recorded for this stack/service, so this proves the refusal is
+ * the "no file text" one and not a membership failure in disguise. */
 $err = '';
-$res = staxx_update_rollback('zzb4textcase', 'web', $err, $cReal);
-ok('a four-argument call with no $yaml is refused for having no file text, '
- . 'not waved through to the old tag-moving behaviour',
+$res = staxx_update_rollback('zzb4textcase', ['web' => $cReal], $err);
+ok('a call with no $yaml is refused for having no file text, not waved '
+ . 'through to the old tag-moving behaviour',
    $res === '' && refusedBecause($err, NO_YAML) && !refusedBecause($err, NOT_RECORDED), $err);
 
 $tmpAfter = glob(sys_get_temp_dir().'/staxx-rb-*');
 ok('none of the temp files this batch created are still on disk',
    count($tmpBefore) === count($tmpAfter),
    count($tmpBefore).' before, '.count($tmpAfter).' after');
+
+/* ======================================================================= *
+ * Part D — a genuine multi-target request (PLAN_131 item D): several
+ * services rolled back in one call. Every check above already runs once
+ * per target, inside the loop in staxx_update_rollback() itself; these two
+ * cases prove the WHOLE request refuses when just one target is bad, and
+ * that nothing reaches staxx_save_stack() when it does not — the file on
+ * disk must be byte-for-byte unchanged after a refusal, not just "no job
+ * started".
+ * ======================================================================= */
+
+$multiDir = $root.'/zzb4multi';
+@exec('rm -rf '.escapeshellarg($multiDir));
+mkdir($multiDir, 0755, true);
+file_put_contents($multiDir.'/compose.yaml',
+  "services:\n  web:\n    image: ghcr.io/example/multi-web:latest\n"
+ ."  db:\n    image: ghcr.io/example/multi-db:latest\n");
+staxx_scan_stacks_reset();
+$mWeb = dg('d-web');
+$mDb  = dg('d-db');
+staxx_image_history_push('zzb4multi', 'web', $mWeb, []);
+staxx_image_history_push('zzb4multi', 'db', $mDb, []);
+
+$beforeMulti = file_get_contents($multiDir.'/compose.yaml');
+
+/* 1. Two targets, one of them a digest never recorded for its service — the
+ * whole request refuses, naming that service, and the file on disk is left
+ * exactly as it was. */
+$yamlMulti1 = <<<YAML
+services:
+  web:
+    image: ghcr.io/example/multi-web:latest@{$mWeb}
+  db:
+    image: ghcr.io/example/multi-db:latest@{$mDb}
+YAML;
+$err = '';
+$res = staxx_update_rollback('zzb4multi', ['web' => $mWeb, 'db' => dg('d-never-recorded')], $err, $yamlMulti1);
+ok('a two-target request where one digest is not recorded is refused, naming the service',
+   $res === '' && refusedBecause($err, NOT_RECORDED) && strpos($err, 'db') !== false, $err);
+ok('...and the file on disk is unchanged',
+   file_get_contents($multiDir.'/compose.yaml') === $beforeMulti, 'file changed');
+
+/* 2. Two real, recorded targets, but the supplied text only pins one of
+ * them — refused for the other, and the file on disk is unchanged. */
+$yamlMulti2 = <<<YAML
+services:
+  web:
+    image: ghcr.io/example/multi-web:latest@{$mWeb}
+  db:
+    image: ghcr.io/example/multi-db:latest
+YAML;
+$err = '';
+$res = staxx_update_rollback('zzb4multi', ['web' => $mWeb, 'db' => $mDb], $err, $yamlMulti2);
+ok('a two-target request whose text pins only one of them is refused',
+   $res === '' && refusedBecause($err, NOT_PINNED), $err);
+ok('...and the file on disk is unchanged',
+   file_get_contents($multiDir.'/compose.yaml') === $beforeMulti, 'file changed');
+
+@exec('rm -rf '.escapeshellarg($multiDir));
 
 /* ---------------------------------------------------------------------- */
 

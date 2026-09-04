@@ -32,12 +32,9 @@ desktop.ini
 # Review artifacts — kept locally for comparison, not part of the source
 /audits/
 
-# Finished plans — kept on disk for reference, not carried in the repository
-/completed-plans/
-
-# Working plans — kept on disk while a piece is being built, not carried in the repository
-/PLAN.md
-/PLAN_*.md
+# Plans — kept on disk for reference, not carried in the repository. Everything still in
+# play sits in plans/ itself; finished ones move down into plans/completed-plans/.
+/plans/
 
 # Project review reports, written by the order95 skill. Derived entirely from the plans
 # and the code, and the plans themselves are not in the repository either — so a report
@@ -59,3 +56,16 @@ desktop.ini
 # approach ever returns.
 /.claude/
 /.mcp.json
+
+# Locally rendered previews of the readme and the guide, written by
+# tools/preview-docs.js. Generated HTML plus a cached stylesheet — it exists to
+# be looked at before a push and is stale the moment the markdown changes.
+/.preview/
+
+# The docs preview tooling. Entirely local: it renders the guide and writes it
+# onto Adrian's own box, hardcoding that machine's address and a drive letter
+# only his Windows setup has. Useful every day here and useful to nobody who
+# clones this, so it stays on disk and out of the repository.
+/tools/preview-docs.js
+/tools/publish-preview.sh
+/tools/publish-review.js

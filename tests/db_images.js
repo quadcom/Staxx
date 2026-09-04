@@ -190,6 +190,55 @@ console.log('\nE. The shared JSON file');
 })();
 
 /* =========================================================================
+ * F. The optional healthcheck recipe, where an entry carries one (PLAN_108
+ * stage 3) — shape only, not whether the command is a good idea, which is a
+ * judgement made once against the image's own documentation when the recipe
+ * is written, not something a test can re-derive.
+ * ========================================================================= */
+
+console.log('\nF. Healthcheck recipe shape');
+
+(function () {
+  var DURATION_RE = /^\d+(\.\d+)?(ms|s|m|h)$/;
+  var HTTPS_RE = /^https:\/\//;
+
+  (TABLE.images || []).forEach(function (entry) {
+    var hc = entry.healthcheck;
+    if (hc === undefined) return; // no recipe is a valid, deliberate choice
+
+    ok(entry.id + ': healthcheck.test is an array', Array.isArray(hc.test));
+    ok(entry.id + ': healthcheck.test starts CMD or CMD-SHELL',
+       Array.isArray(hc.test) && (hc.test[0] === 'CMD' || hc.test[0] === 'CMD-SHELL'));
+
+    ['interval', 'timeout', 'start_period'].forEach(function (field) {
+      ok(entry.id + ': healthcheck.' + field + ' is a duration string',
+         typeof hc[field] === 'string' && DURATION_RE.test(hc[field]), hc[field]);
+    });
+
+    ok(entry.id + ': healthcheck.retries is a positive integer',
+       Number.isInteger(hc.retries) && hc.retries > 0);
+
+    ok(entry.id + ': healthcheck.claim is a non-empty sentence',
+       typeof hc.claim === 'string' && hc.claim.trim().length > 0);
+
+    ok(entry.id + ': healthcheck.source is an https URL',
+       typeof hc.source === 'string' && HTTPS_RE.test(hc.source));
+
+    // A literal '$' must always be doubled to survive compose's own
+    // variable substitution — a lone '$' left in the command would either
+    // vanish (compose treats it as an empty variable reference) or, worse,
+    // pull in whatever the *host's* environment happens to hold under that
+    // name. Strip every correctly-doubled "$$" first; anything left with a
+    // single '$' is the mistake this check exists to catch.
+    (hc.test || []).forEach(function (part) {
+      if (typeof part !== 'string') return;
+      var stripped = part.replace(/\$\$/g, '');
+      ok(entry.id + ': no lone "$" in "' + part + '"', stripped.indexOf('$') === -1);
+    });
+  });
+})();
+
+/* =========================================================================
  * Summary
  * ========================================================================= */
 

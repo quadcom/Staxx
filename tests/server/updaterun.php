@@ -339,7 +339,7 @@ staxx_update_history_push($fixtureName, 'stack-only', 'sha256:' . str_repeat('0'
  * so nothing is saved and no job starts. */
 $pinnedYaml = "services:\n  stack-only:\n    image: alpine:3.20@sha256:0000000000000000000000000000000000000000000000000000000000000000\n";
 $err = '';
-$rbJob = staxx_update_rollback($fixtureName, 'stack-only', $err, 'sha256:'.str_repeat('0', 64), $pinnedYaml);
+$rbJob = staxx_update_rollback($fixtureName, ['stack-only' => 'sha256:'.str_repeat('0', 64)], $err, $pinnedYaml);
 ok('rollback: refuses when the previous image is no longer present locally, with a sentence',
    $rbJob === '' && strpos($err, 'no longer present') !== false, $err);
 
@@ -347,7 +347,12 @@ $err = '';
 $state = staxx_update_state();
 unset($state['history'][$fixtureName . '::built-ok']);
 staxx_update_state_save($state);
-$rbJob2 = staxx_update_rollback($fixtureName, 'built-ok', $err);
+// staxx_update_rollback() no longer has a "roll back to whatever came
+// before" shortcut for an omitted target — the Versions tab, its only real
+// caller, always supplies the exact digest it wants — so an empty history
+// is exercised here by asking for a digest that, with nothing recorded at
+// all, can never be a member of it.
+$rbJob2 = staxx_update_rollback($fixtureName, ['built-ok' => 'sha256:' . str_repeat('1', 64)], $err);
 ok('rollback: refuses when there is no history at all for the service, with a sentence',
    $rbJob2 === '' && $err !== '', $err);
 

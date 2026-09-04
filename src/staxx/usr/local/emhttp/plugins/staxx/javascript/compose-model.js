@@ -763,6 +763,39 @@
   var TOP_SPEC_SET = specSetOf(TOP_SPEC_KEYS);
   var SERVICE_SPEC_SET = specSetOf(SERVICE_SPEC_KEYS);
 
+  // PLAN_67 step 1: the house order tidy() lays a service's own keys into.
+  // This is the order the form already renders its groups in — stacks.js's
+  // GROUPS table — so the file and the form teach the same shape. tests/
+  // tidy.js checks the two tables agree, so a group added to one and
+  // forgotten in the other is caught rather than silently drifting apart.
+  // `<<` and `x-unraid` are not listed: tidy() pins the merge key first and
+  // x-unraid last in every service regardless of this table, because both
+  // would otherwise sort in the wrong place by accident of spelling. Any
+  // service key not named here (a real compose key the form has no control
+  // for yet, or a typo) keeps its existing relative order, placed after the
+  // known keys and before x-unraid.
+  var SERVICE_ORDER = [
+    'image', 'container_name', 'restart', 'network_mode', 'networks', 'ports',
+    'volumes', 'environment', 'devices', 'labels', 'healthcheck', 'deploy',
+    'build', 'depends_on', 'secrets', 'configs', 'profiles', 'dns', 'cap_add',
+    'cap_drop', 'expose', 'env_file', 'logging'
+  ];
+
+  // PLAN_67 step 2: the house order for the file's own TOP-LEVEL keys —
+  // a different table from SERVICE_ORDER above, and a different rule for
+  // where x-unraid sits. Inside a service x-unraid is StaXX's own tail of
+  // settings and is pinned LAST; at the top level it is metadata about the
+  // whole file, sits with the other two housekeeping keys, and is pinned
+  // nowhere here because its place — third, above services: — is simply
+  // written into this list, matching what the converter already emits.
+  // Any top-level key not named here keeps its own relative order, placed
+  // after the known ones (there is no "before x-unraid" pin to place it
+  // ahead of, unlike a service's tail).
+  var TOP_ORDER = [
+    'name', 'include', 'x-unraid', 'services', 'networks', 'volumes',
+    'configs', 'secrets'
+  ];
+
   // Nested values the form can edit. The parser reaches these already and
   // writeScalar needs only a spot — the only thing missing was a field pointing
   // at one. An ABSENT leaf is never offered: creating a healthcheck block means
@@ -2180,13 +2213,104 @@
     return /\$\{|\$[A-Za-z_]/.test(stripped);
   }
 
+  // Doubling every $ is the whole fix for PLAN_105: Compose reads a single
+  // $ as the start of a variable name at every point a value passes through
+  // it, so a literal one only survives written as $$.
+  function escapeDollars(s) {
+    return String(s).replace(/\$/g, '$$$$');
+  }
+
+  // All four hash formats StaXX's own hashing tool makes — and every other
+  // common one a person could arrive with — start "$scheme$", and Compose
+  // deletes each bare $ before the container ever sees the value (PLAN_105).
+  // Matching the scheme name itself, rather than "any dollar", is what keeps
+  // this quiet for an ordinary ${VAR} or $VAR reference — those never match.
+  // Longer scheme names are listed before any name they start with (argon2id
+  // before argon2i, 2y/2b/2a before bare 2) so the alternation cannot stop
+  // early and leave a trailing "d" or "y" unaccounted for against the "$"
+  // that must follow. A leading "$$" already fails here on its own: the
+  // second character has to be one of these scheme names, and none of them
+  // starts with "$", so an already-escaped value is never re-flagged.
+  var HASH_SCHEME_RE = /^\$(argon2id|argon2i|argon2d|apr1|2y|2b|2a|2|1|5|6|7|y)\$/;
+  function hashNeedsEscaping(s) {
+    if (typeof s !== 'string') return false;
+    return HASH_SCHEME_RE.test(s);
+  }
+
+  // A bare $ straight after another dollar's worth of first character —
+  // \{ for a deliberate ${...} reference, or a legal name start — is caught
+  // below; anything else (a digit, punctuation, whitespace, or the value
+  // simply ending) is something Compose cannot read as a variable name at
+  // all, so a literal dollar sitting there is silently deleted the same way
+  // a hash's dollars are.
+  var DOLLAR_RE = /\$(\{|[A-Za-z_][A-Za-z0-9_]*)?/g;
+
+  // dollarsNeedEscaping(value, declared) -> {reason, to} | null
+  //
+  // PLAN_106: hashNeedsEscaping() alone only ever caught a value that
+  // STARTS with a known hash scheme. Measured against real Unraid
+  // templates that missed most of the actual damage — a generated
+  // password's own random characters carry a literal "$" just as often,
+  // and none of them look like a hash. This widens the same question to
+  // every dollar Compose cannot read as a working reference: a name
+  // nothing in the file declares, or a character straight after the $ that
+  // cannot start a variable name at all. Checked first and kept as its own
+  // branch so its clearer, hash-specific wording wins over the generic one
+  // below when both would otherwise fire.
+  //
+  // $$ pairs are an escaped literal already and are stripped first, exactly
+  // as interpolates() does, so "$$LITERAL" is never touched. `declared` is
+  // the set of names this file can actually resolve — built once per parse
+  // by the caller (the file's own top-level variables: block, plus any
+  // env_file's own names) and handed in here rather than looked up, so this
+  // stays pure and the test suite can drive it directly with any set it likes.
+  function dollarsNeedEscaping(value, declared) {
+    if (typeof value !== 'string') return null;
+    if (hashNeedsEscaping(value)) {
+      return {
+        reason: 'this looks like a password hash — compose reads each dollar sign as ' +
+                'the start of a variable name and will strip every one out before the ' +
+                'container ever sees the value, so each dollar sign needs writing ' +
+                'twice for the hash to arrive intact',
+        to: escapeDollars(value)
+      };
+    }
+    var known = declared || {};
+    var stripped = value.replace(/\$\$/g, '');
+    DOLLAR_RE.lastIndex = 0;
+    var m;
+    while ((m = DOLLAR_RE.exec(stripped))) {
+      var after = m[1];
+      if (after === '{') continue;                 // a deliberate ${...} reference — leave it
+      // hasOwnProperty rather than a plain lookup: a variable legitimately
+      // named "constructor" or "toString" would otherwise read as declared
+      // off Object's own prototype, and be left to be silently deleted.
+      if (after && Object.prototype.hasOwnProperty.call(known, after)) continue;
+      if (after) {
+        return {
+          reason: 'nothing in this file declares a variable called "' + after + '", so compose ' +
+                  'will replace "$' + after + '" with nothing before the container sees the ' +
+                  'value — a real dollar sign needs writing twice',
+          to: escapeDollars(value)
+        };
+      }
+      var nextCh = stripped.charAt(m.index + 1);
+      return {
+        reason: 'compose cannot read "$' + nextCh + '" as a variable name, so this value will ' +
+                'not arrive as it reads here — a real dollar sign needs writing twice',
+        to: escapeDollars(value)
+      };
+    }
+    return null;
+  }
+
   /* ---- putting a service's fields together ------------------------------- */
 
   // Fields come out in the order the file has them, and everything about them
   // beyond the value is either worked out from the file or read from the
   // comment beside it. There is nothing to match up, so there is nothing to
   // fall out of step.
-  function fieldsFor(serviceName, serviceMap, lines) {
+  function fieldsFor(serviceName, serviceMap, lines, declared) {
     var targets = harvest(serviceMap, lines);
     var fields = [];
 
@@ -2204,15 +2328,47 @@
                     t.absent || t.blocked;
       var fixed   = t.binder === 'setting' && ALWAYS_KEYS.indexOf(t.target) >= 0;
 
-      // 1f: a value that reaches into a variable defined outside the file
-      // (a .env entry, a shell export) stops being a plain string the moment
-      // someone types over it — flag every part that carries one.
+      // 1f/PLAN_106: a value that reaches into a variable defined outside the
+      // file (a .env entry, a shell export) stops being a plain string the
+      // moment someone types over it. A value that instead carries a dollar
+      // Compose cannot read as a working reference — a password hash, or any
+      // other literal $ (dollarsNeedEscaping()) — gets its own specific
+      // sentence in place of this generic one, plus the fix itself, since
+      // Compose would otherwise strip it silently. Every part is checked
+      // (not just the first one that matches) so a field whose host AND
+      // container both carry a bad dollar reports both, rather than one
+      // going unmentioned because the loop stopped early.
       var advice = t.advice.slice();
+      var hashEscape = null;
+      var dollarFixes = [];
+      var saidInterpolates = false;
       for (var pk in t.parts) {
-        if (t.parts.hasOwnProperty(pk) && t.parts[pk] && interpolates(t.parts[pk].value)) {
+        if (!t.parts.hasOwnProperty(pk) || !t.parts[pk]) continue;
+        var pv = t.parts[pk].value;
+        var bad = dollarsNeedEscaping(pv, declared);
+        if (bad) {
+          advice.push(bad.reason);
+          // The reason travels ON the fix, not just in advice: the page needs
+          // the sentence for this exact part, and picking it back out of
+          // advice by its wording would be a second copy of that wording
+          // living somewhere it can silently fall out of step.
+          var fix = { part: pk, to: bad.to, reason: bad.reason };
+          dollarFixes.push(fix);
+          // hashEscape keeps naming only the FIRST flagged part — the shape
+          // the existing single one-click fix in stacks.js already reads.
+          // dollarFixes carries every part, for a fix that offers all of them.
+          if (!hashEscape) hashEscape = fix;
+          continue;
+        }
+        // Said once per field, however many parts carry a reference: the
+        // sentence is about the field, not about one half of it, so a port
+        // with a variable on both sides would otherwise repeat it verbatim.
+        // The dollar sentences above are the opposite — each names its own
+        // part and its own fix, so those do repeat, deliberately.
+        if (!saidInterpolates && interpolates(pv)) {
+          saidInterpolates = true;
           advice.push('this value uses a variable defined outside the compose file — ' +
                        'typing over it replaces the variable with a fixed value');
-          break;
         }
       }
 
@@ -2252,6 +2408,20 @@
         absent: t.absent,
         blocked: t.blocked,
         advice: advice,
+        // Set only when dollarsNeedEscaping() fired above for at least one
+        // part — { part, to } names the FIRST such part and the doubled
+        // string to write into it, kept for the existing one-click fix in
+        // stacks.js that reads only this. Always present and null when
+        // nothing fired, rather than left undefined the way declareMissing
+        // below is — one shape for every field means a consumer can read it
+        // without guarding for a missing property.
+        hashEscape: hashEscape,
+        // PLAN_106: the same information as hashEscape, but naming every
+        // flagged part rather than only the first — { part, to } per entry,
+        // in part order, [] when nothing fired. A field whose host AND
+        // container parts both carry a bad dollar needs both fixed, which
+        // hashEscape alone cannot say.
+        dollarFixes: dollarFixes,
         fixed: fixed,
         // Neither name is genuinely required: a service with build: and no
         // image: is valid compose, and nothing reads container_name's value
@@ -2614,12 +2784,34 @@
     return wt;
   }
 
+  // knownVarNames(doc, envNames) -> {NAME: true, ...}
+  //
+  // PLAN_106: the set dollarsNeedEscaping() treats as genuinely resolvable —
+  // built once per parse, not per field. compose-model.js has no filesystem
+  // access, so it can read the file's own top-level `variables:` block
+  // itself but cannot read an env_file's contents; a caller that has (e.g.
+  // stacks.js, which already loads env files for its own envKeys() check)
+  // passes those names in as `envNames` and they are folded in here.
+  function knownVarNames(doc, envNames) {
+    var out = {};
+    var vp = doc.root && doc.root.pairs && doc.root.pairs['variables'];
+    if (vp && vp.value && vp.value.kind === 'map') {
+      for (var i = 0; i < vp.value.keys.length; i++) out[vp.value.keys[i]] = true;
+    }
+    if (envNames) {
+      for (var j = 0; j < envNames.length; j++) out[envNames[j]] = true;
+    }
+    return out;
+  }
+
   // netDrivers: name -> driver for this server's own docker networks, from
   // stacks.js's netDrivers() — null/omitted means "not answered yet", which
   // this treats exactly like "no networks", so every one of the ~25 existing
   // callers (and tests/yaml_roundtrip.js) that omit it keep seeing bridge
-  // everywhere, unchanged.
-  function buildForm(doc, netDrivers) {
+  // everywhere, unchanged. envNames: optional list of names an env_file
+  // supplies, folded into dollarsNeedEscaping()'s declared set — see
+  // knownVarNames() above.
+  function buildForm(doc, netDrivers, envNames) {
     // `declared` is seeded here rather than where it is filled in, because both
     // early returns below happen first — a caller reading declared.networks on
     // an unreadable file must find an empty list, not undefined.
@@ -2640,6 +2832,9 @@
 
     var xs = doc.root.pairs['x-unraid'];
     out.stack = xs && xs.value ? flatOf(xs.value) : {};
+
+    // Built once per parse, not once per field — see knownVarNames() above.
+    var dollarDeclared = knownVarNames(doc, envNames);
 
     // Top-level include: — read before the no-services return below, since an
     // include-only file (PLAN_20's measured case) is exactly what that branch
@@ -2702,7 +2897,7 @@
         if (vv && vv.kind === 'opaque' && (vv.reason === 'merge' || vv.reason === 'alias')) shared = true;
       }
 
-      var fields = fieldsFor(name, p.value, doc.lines);
+      var fields = fieldsFor(name, p.value, doc.lines, dollarDeclared);
       out.fields = out.fields.concat(fields);
       out.services.push({
         name: name,
@@ -3619,6 +3814,14 @@
     // belongs to nothing and compose refuses the file.
     var indent = map ? map.indent : pair.indent + 2;
 
+    // "before" only actually works when that key is the LAST one in the map:
+    // this walks every child, skipping the named one, and keeps whichever
+    // pair it saw last — which is the true last key whenever "before" itself
+    // sits anywhere but the end. At the top level x-unraid is rarely last
+    // (services: etc. follow it), so callers passing before: 'x-unraid' here
+    // have always actually appended at the end of the map, not landed just
+    // above it. PLAN_67 names this outright rather than "fixing" it: nothing
+    // relies on it being fixed, and top-level ordering is now tidy()'s job.
     var after = null, i;
     if (map) {
       for (i = 0; i < map.keys.length; i++) {
@@ -3855,7 +4058,7 @@
   /**
    * addNested's sibling resolving against the document root rather than a
    * service — PLAN_84 phase 1. Nothing before this could write a top-level
-   * x-unraid key at all: the icon, description, category, author and
+   * x-unraid key at all: the description, category, author and
    * documentation link have nowhere to go until one exists. Same
    * snapshot-and-rollback, same "level is scalar/opaque/sealed -> refuse"
    * guard as addNested/addDeclNested, and the same placeholder retraction for
@@ -3884,7 +4087,7 @@
   /**
    * Shared body for replaceNested/replaceRootNested (PLAN_84 phase 1b) — the
    * in-place value writer the form's own presentation fields never needed
-   * until now (project, author, description, icon and category are not form
+   * until now (project, author, description and category are not form
    * fields at all, so the ordinary setPart()/writeScalar() path can never
    * reach them). `getPair` is the same seam ensurePath already takes, so
    * this needs no service/root variant of its own.
@@ -4171,6 +4374,489 @@
 
     splice(doc, insertAt, 0, block);
     return { ok: true };
+  }
+
+  /* =====================================================================
+   * PLAN_67 steps 1-3: laying a whole file into the house order
+   * ===================================================================== */
+
+  // leadOf() (used everywhere else) claims a comment run above a key when it
+  // is AT LEAST as indented as the key — correct for its callers, which walk
+  // outward from one key and want a deeper, nested comment to travel with a
+  // shallower one above it. Under a full reorder of a scope's keys that
+  // rule is a silent corruption: a note sitting at the end of one key's block
+  // gets claimed by whatever key comes next merely because it is indented no
+  // shallower, and moving that next key carries the note away from what it
+  // annotates. At the TOP level the same rule's test is "at least zero",
+  // which is always true, so the hazard is unbounded there — a comment
+  // stranded mid-service would be claimed by the next TOP-level key and
+  // leave the service entirely the moment that key moves. tidy() therefore
+  // needs its own, stricter version — indent must match exactly — kept
+  // local rather than changing leadOf() itself, which every other caller
+  // still needs as it is.
+  function tidyLeadStart(lines, at, indent) {
+    var i = at - 1;
+    while (i >= 0) {
+      var c = classify(lines[i], i);
+      if (c.kind !== 'comment' || c.indent !== indent) break;
+      i--;
+    }
+    return i + 1;
+  }
+
+  // Whether `line` is blank, by the same test the parser's own classify()
+  // uses — kept as a one-liner here because the blank-line pass (step 3)
+  // asks it of a single already-known line, never a whole document.
+  function isBlankLine(line) {
+    return classify(line, 0).kind === 'blank';
+  }
+
+  // Whether a pair's value is a '|+' or '>+' block scalar — the "keep"
+  // chomping indicator, the one case where the trailing blank lines a span
+  // deliberately excludes (see blockEnd()) are actually part of the value's
+  // own text. Moving the span without them would silently shorten the
+  // string, so tidy() refuses the whole scope rather than risk it.
+  function keepChompScalar(doc, pair) {
+    if (!pair.value || pair.value.kind !== 'opaque' || pair.value.reason !== 'block-scalar') return false;
+    var line = doc.lines[pair.start];
+    var idx = line.indexOf(':', pair.indent + pair.keyRaw.length);
+    if (idx < 0) return false;
+    var m = /^\s*[|>]([+-]?\d*[+-]?)/.exec(line.slice(idx + 1));
+    return !!(m && m[1].indexOf('+') >= 0);
+  }
+
+  // Whether inserting a fresh blank line right at document position `end`
+  // would actually land INSIDE a '|+'/'>+' block scalar's own value, which
+  // real YAML absorbs trailing blank lines into up to the next dedent —
+  // even though blockEnd() (deliberately, see keepChompScalar() above)
+  // excludes them from every span. A block scalar's own end propagates
+  // unchanged through every enclosing map's `.end` for as long as it stays
+  // the LAST key at each level, so checking `end` against doc.sealed catches
+  // this however deep the value sits: a whole service, or even the whole
+  // services: block, can end this way. Step 3 (blank lines) is the only
+  // caller — step 1/2's own keepChompScalar refusal already stops such a
+  // key from being reordered at all.
+  function endsInKeepChomp(doc, end) {
+    for (var s = 0; s < doc.sealed.length; s++) {
+      var region = doc.sealed[s];
+      if (region.end !== end || region.reason !== 'block-scalar') continue;
+      var m = /:\s*[|>]([+-]?\d*[+-]?)/.exec(doc.lines[region.start]);
+      if (m && m[1].indexOf('+') >= 0) return true;
+    }
+    return false;
+  }
+
+  // Is `b` the same multiset of lines as `a`? The building block for the
+  // stronger whole-file check below — sorting turns "did every line survive,
+  // exactly once" into a straight array comparison.
+  function sameMultiset(a, b) {
+    if (a.length !== b.length) return false;
+    var sa = a.slice().sort(), sb = b.slice().sort();
+    for (var i = 0; i < sa.length; i++) { if (sa[i] !== sb[i]) return false; }
+    return true;
+  }
+
+  // The whole-file guard tidyLines() commits on. A plain sameMultiset would
+  // reject step 3's one legitimate change — an ADDED blank line — so this
+  // replaces it with a strictly STRONGER pair rather than a looser one:
+  // every line that actually holds something must survive, unchanged in
+  // count, exactly once; and blank lines may only ever increase in number,
+  // never decrease. Nothing with content can be lost, duplicated or altered
+  // either way.
+  function sameNonBlankPermutation(a, b) {
+    var na = a.filter(function (l) { return !isBlankLine(l); });
+    var nb = b.filter(function (l) { return !isBlankLine(l); });
+    if (!sameMultiset(na, nb)) return false;
+    return (b.length - nb.length) >= (a.length - na.length);
+  }
+
+  // One map's direct children as the spans tidy() moves as whole blocks —
+  // shared by every scope (a service's own keys, the file's top-level keys,
+  // and the list of services itself) since the unit is always the same: a
+  // key, its value, and the strict lead comment directly over it.
+  function buildSpans(doc, mapNode) {
+    var keys = mapNode.keys, spans = [];
+    for (var i = 0; i < keys.length; i++) {
+      var p = mapNode.pairs[keys[i]];
+      spans.push({ key: keys[i], pair: p, start: tidyLeadStart(doc.lines, p.start, p.indent), end: p.end });
+    }
+
+    // A comment sitting AFTER a key's last child, indented deeper than the
+    // key's own column, belongs to that block — rule 2 in CLAUDE.md: a
+    // comment travels with what it annotates, and by indentation that block
+    // is what it annotates. (A comment at the key's own column stays a lead
+    // for whatever key comes next, as tidyLeadStart above already gives it.)
+    // Without this, PLAN_117: the commented-out example meta_scaffold writes
+    // under x-unraid sits deeper than x-unraid's own column but shallower
+    // than nothing that follows it, so it belonged to no span at all and
+    // tidy refused every scaffolded file on sight.
+    //
+    // Blanks between two such comments are absorbed along with them; a
+    // trailing run of blanks with no further comment after it is left alone
+    // — that gap belongs to the blank-line pass (step 3), not to this block.
+    for (i = 0; i < spans.length; i++) {
+      var limit = i + 1 < spans.length ? spans[i + 1].start : mapNode.end;
+      var j = spans[i].end, lastComment = j;
+      while (j < limit) {
+        var c = classify(doc.lines[j], j);
+        if (c.kind === 'blank') { j++; continue; }
+        if (c.kind === 'comment' && c.indent > spans[i].pair.indent) { j++; lastComment = j; continue; }
+        break;
+      }
+      spans[i].end = lastComment;
+    }
+    return spans;
+  }
+
+  // Works out the house order for one map's own direct children, or refuses
+  // to touch them. Used for a service's keys (order: SERVICE_ORDER, pinned
+  // '<<' first and 'x-unraid' last), for a file's top-level keys (order:
+  // TOP_ORDER, no pins — x-unraid's place is already written into that
+  // table), and for the list of services itself (order: its own current
+  // keys, i.e. never actually reordered — see tidyLines(), which only calls
+  // this on the services map to add blank-line gaps, step 3).
+  //
+  // Returns { changed: false } when nothing needs doing, { refusal:
+  // '<sentence>' } when this scope cannot safely be touched, or
+  // { changed: true, start, end, lines } holding the whole replacement span.
+  // Never edits `doc` itself, and never reads content from `doc.lines` for
+  // the lines it hands back — `sourceLines` (which may already carry an
+  // inner scope's own reordering, same length as `doc.lines`) is what
+  // actually gets sliced, so several scopes can be worked out against one
+  // parse and stitched together before anything is committed.
+  //
+  // `sectionGaps`, when true, also adds a single blank line after any block
+  // in the FINAL order that does not already end in one (step 3) — never
+  // after the last block, and never where that would land inside a
+  // keep-chomp value's own text (see endsInKeepChomp()). This is skipped for
+  // a service's own keys: blank lines are a thing between whole SECTIONS —
+  // top-level keys, or whole services — not between one key and the next
+  // inside a single service.
+  function layoutScope(doc, mapNode, order, pinFirst, pinLast, scopeName, sourceLines, sectionGaps) {
+    var keys = mapNode.keys, i, s, region;
+    if (!keys.length) return { changed: false };
+
+    var spans = buildSpans(doc, mapNode);
+    var totalStart = spans[0].start, totalEnd = mapNode.end;
+
+    // Refusal: every non-blank line here must belong to exactly one span.
+    // This is what turns the stricter lead-comment rule above from a silent
+    // corruption into a visible "left this alone" — a comment the old rule
+    // would have swallowed now shows up as an uncovered line — and it is
+    // also what catches a duplicate key: the parser keeps the first pair and
+    // discards the second, but the second's lines are still sitting in the
+    // file, claimed by nothing.
+    var covered = new Array(totalEnd - totalStart);
+    for (i = 0; i < spans.length; i++) {
+      for (var l = spans[i].start; l < spans[i].end; l++) covered[l - totalStart] = true;
+    }
+    for (l = totalStart; l < totalEnd; l++) {
+      if (covered[l - totalStart]) continue;
+      var stray = classify(doc.lines[l], l);
+      if (stray.kind !== 'blank') {
+        return { refusal: describeUncoveredLine(spans, mapNode, doc.lines[l], l, stray, scopeName) };
+      }
+    }
+
+    // Refusal: a keep-chomped block scalar's trailing blank lines are part
+    // of its value and a span's end excludes them — see keepChompScalar().
+    for (i = 0; i < spans.length; i++) {
+      if (keepChompScalar(doc, spans[i].pair)) {
+        return { refusal: 'The "' + spans[i].key + '" value keeps its trailing blank lines as part of its text, so ' + scopeName + ' was left alone.' };
+      }
+    }
+
+    // Which spans hold an anchor, alias or merge key anywhere inside them —
+    // doc.sealed records every such region in the whole document, however
+    // deeply nested, so this also catches one buried inside a list or a
+    // nested map, not only a bare "key: &anchor value".
+    var special = [];
+    for (i = 0; i < spans.length; i++) {
+      var hit = false;
+      for (s = 0; s < doc.sealed.length; s++) {
+        region = doc.sealed[s];
+        if (region.start >= spans[i].start && region.end <= spans[i].end &&
+            (region.reason === 'anchor' || region.reason === 'alias' || region.reason === 'merge')) {
+          hit = true; break;
+        }
+      }
+      if (hit) special.push(i);
+    }
+
+    // Refusal: belt and braces alongside the per-line coverage check above —
+    // every sealed region overlapping this scope must sit entirely inside
+    // one span, the same overlap moveItem() guards against. The coverage
+    // check already proves this in the ordinary case; this is what catches
+    // it even if a sealed region ever straddled two spans, which would mean
+    // the span boundaries themselves could not be trusted.
+    for (s = 0; s < doc.sealed.length; s++) {
+      region = doc.sealed[s];
+      if (region.start < totalEnd && region.end > totalStart) {
+        var contained = false;
+        for (i = 0; i < spans.length; i++) {
+          if (region.start >= spans[i].start && region.end <= spans[i].end) { contained = true; break; }
+        }
+        if (!contained) {
+          return { refusal: 'Something in ' + scopeName + ' could not be safely split into its own pieces, so it was left alone.' };
+        }
+      }
+    }
+
+    // The target order: `order`'s keys that are present, then any
+    // unrecognised key keeping its own relative order, then pinFirst (if
+    // given) pinned first and pinLast (if given) pinned last.
+    var present = {}, used = {};
+    for (i = 0; i < keys.length; i++) present[keys[i]] = true;
+    var ordered = [];
+    for (i = 0; i < order.length; i++) {
+      if (present[order[i]]) { ordered.push(order[i]); used[order[i]] = true; }
+    }
+    for (i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      if (k !== pinFirst && k !== pinLast && !used[k]) ordered.push(k);
+    }
+    if (pinFirst && present[pinFirst]) ordered.unshift(pinFirst);
+    if (pinLast && present[pinLast]) ordered.push(pinLast);
+
+    // Refusal: the planned order must not reverse two anchor/alias/merge
+    // spans relative to each other. special[] was built walking the spans in
+    // file order, so within it `a` always precedes `b` today; if the target
+    // order puts `b` first, the two have crossed.
+    if (special.length > 1) {
+      var indexOf = {};
+      for (i = 0; i < ordered.length; i++) indexOf[ordered[i]] = i;
+      for (i = 0; i < special.length - 1; i++) {
+        for (var j = i + 1; j < special.length; j++) {
+          var a = spans[special[i]].key, b = spans[special[j]].key;
+          if (indexOf[b] < indexOf[a]) {
+            return { refusal: 'Reordering would change which comes first, "' + a + '" or "' + b +
+                     '" — one may be a shared block the other reuses — so ' + scopeName + ' was left alone.' };
+          }
+        }
+      }
+    }
+
+    // Each span's own trailing gap (already proved blank-only above) travels
+    // with the span that precedes it, so relocating a key relocates the
+    // blank line that used to sit under it too — nothing is added or
+    // removed here, only carried along and (for sectionGaps) topped up.
+    var blocks = {}, spanEnd = {};
+    for (i = 0; i < spans.length; i++) {
+      var to = i + 1 < spans.length ? spans[i + 1].start : totalEnd;
+      blocks[spans[i].key] = sourceLines.slice(spans[i].start, to);
+      spanEnd[spans[i].key] = spans[i].end;
+    }
+
+    var gapsAdded = false;
+    if (sectionGaps) {
+      for (i = 0; i < ordered.length - 1; i++) {
+        var blk = blocks[ordered[i]];
+        if (blk.length && isBlankLine(blk[blk.length - 1])) continue;      // already has a gap
+        if (endsInKeepChomp(doc, spanEnd[ordered[i]])) continue;           // would land inside the value
+        blk.push('');
+        gapsAdded = true;
+      }
+    }
+
+    var same = !gapsAdded;
+    if (same) {
+      for (i = 0; i < keys.length; i++) { if (ordered[i] !== keys[i]) { same = false; break; } }
+    }
+    if (same) return { changed: false };
+
+    var out = [];
+    for (i = 0; i < ordered.length; i++) out = out.concat(blocks[ordered[i]]);
+
+    return { changed: true, start: totalStart, end: totalEnd, lines: out };
+  }
+
+  // Builds the refusal sentence for a line the spans above don't cover —
+  // PLAN_117 step 4: naming a line number told Adrian nothing about what was
+  // actually on it, so a real screenshot of it was needed to diagnose the
+  // scaffold bug at all. Quotes the trimmed line and, where it can tell,
+  // says what it is: the second copy of a key already read (the parser
+  // keeps the first and discards the second, but its lines are still in the
+  // file), or a comment nothing owns — named after the last key at this
+  // scope that starts before it, if any.
+  function describeUncoveredLine(spans, mapNode, line, l, cls, scopeName) {
+    var trimmed = line.replace(/^\s+/, '').replace(/\s+$/, '');
+    var quoted = '`' + trimmed + '`';
+    var why;
+    if (cls.kind === 'key' && mapNode.pairs[cls.key]) {
+      why = 'repeats a setting already given above it';
+    } else if (cls.kind === 'comment') {
+      var owner = null;
+      for (var i = 0; i < spans.length; i++) {
+        if (spans[i].start <= l) owner = spans[i].key; else break;
+      }
+      why = 'is a comment' + (owner ? ' indented under ' + owner : '') +
+            ', but it follows nothing that could own it';
+    } else {
+      why = 'is not part of any setting here';
+    }
+    return 'Line ' + (l + 1) + ' (' + quoted + ') ' + why + ', so ' + scopeName + ' was left alone.';
+  }
+
+  function layoutService(doc, svcMap) {
+    return layoutScope(doc, svcMap, SERVICE_ORDER, '<<', 'x-unraid', 'this service', doc.lines, false);
+  }
+
+  // PLAN_67 step 2. Top-level keys are pinned nowhere (see TOP_ORDER's own
+  // comment) — the whole document root is one scope, laid out the same way
+  // a service's keys are, and blank-line gaps between top-level sections
+  // (step 3) are added in the same pass.
+  function layoutTop(doc, sourceLines) {
+    return layoutScope(doc, doc.root, TOP_ORDER, null, null, 'the top of this file', sourceLines, true);
+  }
+
+  // Applies a set of non-overlapping {start,end,lines} replacements (sorted
+  // by start) to `lines`, splicing each region out and the replacement in.
+  // Shared by tidyLines()'s per-service pass (several replacements at once)
+  // and its top-level/services-gap passes (always exactly one).
+  function applyReplacements(lines, replacements) {
+    if (!replacements.length) return lines;
+    replacements = replacements.slice().sort(function (a, b) { return a.start - b.start; });
+    var out = [], pos = 0, r;
+    for (var i = 0; i < replacements.length; i++) {
+      r = replacements[i];
+      while (pos < r.start) { out.push(lines[pos]); pos++; }
+      out = out.concat(r.lines);
+      pos = r.end;
+    }
+    while (pos < lines.length) { out.push(lines[pos]); pos++; }
+    return out;
+  }
+
+  /**
+   * Lays one file's compose keys into the house order (PLAN_67 steps 1-3):
+   * a service's own keys, the file's top-level keys, and a single blank
+   * line added between sections and between services wherever one is
+   * missing. A pure function: takes the file's text, returns what the
+   * tidied text would be, and never writes anything itself — the caller
+   * decides whether to save it.
+   *
+   * Never throws, whatever the input, including '', null or a file that is
+   * nothing but comments — a crash here would leave the caller not knowing
+   * whether anything had changed, which is worse than a refusal.
+   *
+   * Refuses per scope, and the whole file when the parser itself could not
+   * read it — see layoutScope() above for what each refusal means. A
+   * refusal changes nothing for that scope: when everything refuses,
+   * `changed` is false and `text` is the input back byte for byte.
+   *
+   * -> { text: <string>, changed: <bool>, refusals: [{ scope, why }] }
+   */
+  function tidy(text) {
+    var input = String(text == null ? '' : text);
+    try {
+      return tidyLines(input);
+    } catch (e) {
+      return { text: input, changed: false,
+               refusals: [{ scope: 'file', why: 'Something unexpected stopped this file being checked, so nothing was changed.' }] };
+    }
+  }
+
+  function tidyLines(input) {
+    var doc = parse(input);
+
+    // Any region of the file failing to parse means reordering around it is
+    // guessing, so the whole file refuses rather than one scope. unreadTail
+    // is the parser's own "stopped partway through" signal (see the comment
+    // above it in parse()); a root that never became a map at all is the
+    // same situation caught one step earlier — the whole-file seals for tab
+    // indentation, a YAML directive, or more than one document.
+    if (!doc.root || doc.root.kind !== 'map' || doc.unreadTail) {
+      return { text: input, changed: false,
+               refusals: [{ scope: 'file', why: 'Part of this file could not be read, so nothing was reordered.' }] };
+    }
+
+    var refusals = [], replacements = [], i;
+
+    // ---- step 1: each service's own keys -----------------------------
+    var servicesPair = doc.root.pairs['services'];
+    var servicesMap = servicesPair && servicesPair.value && servicesPair.value.kind === 'map' ? servicesPair.value : null;
+    if (servicesMap && servicesMap.keys.length) {
+      for (i = 0; i < servicesMap.keys.length; i++) {
+        var name = servicesMap.keys[i];
+        var svcMap = servicesMap.pairs[name].value;
+        if (!svcMap || svcMap.kind !== 'map' || !svcMap.keys.length) continue;
+
+        var result = layoutService(doc, svcMap);
+        if (result.refusal) {
+          refusals.push({ scope: 'service:' + name, why: result.refusal });
+        } else if (result.changed) {
+          replacements.push({ start: result.start, end: result.end, lines: result.lines });
+        }
+      }
+    }
+
+    var stage1 = applyReplacements(doc.lines, replacements);
+
+    // ---- step 2: the file's own top-level keys, plus top-section gaps --
+    // Reads structure off the ORIGINAL doc (positions there are still valid
+    // — step 1 only reorders lines WITHIN one service, never changing the
+    // total line count) but slices actual content off `stage1`, so a
+    // service's own reordering rides along inside whichever block "services:"
+    // ends up being.
+    var topResult = layoutTop(doc, stage1);
+    var stage2 = stage1, topChanged = false;
+    if (topResult.refusal) {
+      refusals.push({ scope: 'file-top', why: topResult.refusal });
+    } else if (topResult.changed) {
+      stage2 = stage1.slice(0, topResult.start).concat(topResult.lines, stage1.slice(topResult.end));
+      topChanged = true;
+    }
+
+    // ---- step 3 (second half): gaps between services -------------------
+    // Adding a top-section gap can change the total line count, so anything
+    // computed against the ORIGINAL doc's positions is no longer trustworthy
+    // once that has happened — hence the fresh parse here, exactly the
+    // "every mutation ends in a re-parse" rule splice() itself follows.
+    // Passing the services map's OWN current keys as its "order" table means
+    // layoutScope never actually reorders anything here (services are never
+    // reordered relative to each other) — it is only reused for the refusal
+    // checks and the blank-gap logic that already exist on it.
+    var stage3 = stage2, gapsChanged = false;
+    var doc2 = parse(doc.bom + stage2.join('\n'));
+    if (doc2.root && doc2.root.kind === 'map' && !doc2.unreadTail) {
+      var svcPair2 = doc2.root.pairs['services'];
+      var svcMap2 = svcPair2 && svcPair2.value && svcPair2.value.kind === 'map' ? svcPair2.value : null;
+      if (svcMap2 && svcMap2.keys.length > 1) {
+        var gapResult = layoutScope(doc2, svcMap2, svcMap2.keys, null, null, 'the services list', stage2, true);
+        if (gapResult.changed) {
+          stage3 = stage2.slice(0, gapResult.start).concat(gapResult.lines, stage2.slice(gapResult.end));
+          gapsChanged = true;
+        }
+        // A refusal here is not surfaced as its own scope: it can only mean
+        // the services map's own structure is untrustworthy in some way step
+        // 1 did not already catch, and skipping the gap pass is enough to
+        // honour "a refusal changes nothing" — there is no reordering on the
+        // line for this call to refuse in the first place.
+      }
+    }
+
+    if (!replacements.length && !topChanged && !gapsChanged) {
+      return { text: input, changed: false, refusals: refusals };
+    }
+
+    // Validate before committing (PLAN_67: one splice, not many). Every
+    // scope was checked on its own above, but a candidate assembled from
+    // several of them is either safe as a whole or not trusted at all —
+    // there is nothing sensible to roll back to partway through, since
+    // splice() re-parses and replaces the tree wholesale.
+    if (!sameNonBlankPermutation(doc.lines, stage3)) {
+      return { text: input, changed: false,
+               refusals: [{ scope: 'file', why: 'The reordered file did not check out line for line, so nothing was changed.' }] };
+    }
+    var check = parse(doc.bom + stage3.join('\n'));
+    if (!check.root || check.root.kind !== 'map' || check.unreadTail ||
+        check.warnings.length > doc.warnings.length || check.sealed.length > doc.sealed.length) {
+      return { text: input, changed: false,
+               refusals: [{ scope: 'file', why: 'The reordered file did not read back the same way, so nothing was changed.' }] };
+    }
+
+    splice(doc, 0, doc.lines.length, stage3);
+    return { text: serialise(doc), changed: true, refusals: refusals };
   }
 
   /**
@@ -9095,6 +9781,10 @@
     // handle up to it, because no other list has an order that means
     // anything.
     moveItem: moveItem,
+    // PLAN_67 step 1: lays a service's own keys into the house order —
+    // the "Tidy this file" pass, service scope only so far. See its own
+    // comment for the contract and the refusals.
+    tidy: tidy,
     addDeclared: addDeclared,
     declareNetwork: declareNetwork,
     // PLAN_64 phase C: the network row dropdown's mode branch, and its way
@@ -9133,7 +9823,7 @@
     // rather than a service.
     addDeclNested: addDeclNested,
     // PLAN_84 phase 1: addNested's sibling for the document root, so the
-    // stack-level x-unraid fields (icon, description, category, author,
+    // stack-level x-unraid fields (description, category, author,
     // documentation link) have somewhere to be written at all.
     addRootNested: addRootNested,
     // PLAN_84 phase 1: rewrites one existing x-unraid value in place —
@@ -9212,6 +9902,9 @@
     // plain values can still have one side hand-edited into a pointer
     // afterwards, and overwriting that is the harm).
     interpolates: interpolates,
+    escapeDollars: escapeDollars,
+    hashNeedsEscaping: hashNeedsEscaping,
+    dollarsNeedEscaping: dollarsNeedEscaping,
     // PLAN_70 stage 5: the two pure decisions behind the cross-stack lookup
     // — see the section comment above crossLooksLikeAddress() for why they
     // live here rather than in stacks.js.

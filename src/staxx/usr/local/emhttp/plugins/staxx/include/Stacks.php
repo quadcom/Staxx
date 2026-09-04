@@ -20,6 +20,11 @@
 require_once '/usr/local/emhttp/plugins/staxx/include/Defines.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Record.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/BootCopy.php';
+// The bundle importer writes a stack's own picture and checks it is really a
+// picture, both of which live here. Named rather than left to whichever page
+// happened to pull Icons.php in first, so a server suite that requires only
+// this file still finds them.
+require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
 
 if (defined('STAXX_JOB_DIR')) return;
 
@@ -68,11 +73,6 @@ define('STAXX_LOG_DOWNLOAD_MAX', 2097152); // 2 MiB
 // worthless after a reboot, and noisy.
 define('STAXX_EXEC_DIR', '/tmp/staxx/exec');
 
-// A single write down a session's pipe is a keystroke or a short pasted
-// line, never a file. This is what stops the input box being used to
-// smuggle something much larger through a pipe meant for typing.
-define('STAXX_EXEC_WRITE_MAX', 4096);
-
 // Compose reads whichever of these it finds first, in this order.
 const STAXX_COMPOSE_FILENAMES = [
   'compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml',
@@ -115,6 +115,14 @@ define('STAXX_EXPORT_MAX', 2097152); // 2 MiB, summed across every file
 // Not a size question — a sanity ceiling so a malformed request cannot make
 // the packer loop over an unbounded list of tiny entries.
 define('STAXX_EXPORT_FILES_MAX', 200);
+
+// PLAN_101 — the bundle importer's own cap on an uploaded ".staxx" file. The
+// real server's PHP accepts an 8 MB request body, and the bundle travels
+// base64-encoded — a third larger than its raw bytes — while an export can
+// only ever hold STAXX_EXPORT_MAX (2 MiB) of content. 4 MiB raw is roomy for
+// anything StaXX itself ever made, and still safely inside what PHP will
+// accept once encoded.
+define('STAXX_BUNDLE_MAX', 4194304); // 4 MiB
 
 /**
  * Make sure a job/log working directory exists and is private — job output
@@ -229,6 +237,108 @@ function staxx_path_leaf(string $rel): string {
  */
 function staxx_project_name(string $leaf): string {
   return preg_replace('/[^a-z0-9_-]/', '', strtolower($leaf));
+}
+
+/**
+ * A compose file's own top-level `name:` key, if it sets one — read
+ * directly off the file rather than through staxx_yaml_flatten(), which
+ * needs `docker compose config` to produce the canonical form it expects.
+ * This has to work without compose running at all, since it feeds
+ * staxx_name_free() (PLAN_118), the check that runs before anything is
+ * written or started.
+ *
+ * Only a line starting in column zero counts — a `name:` indented under a
+ * service is something else entirely. Returns '' when the file sets none,
+ * which is the ordinary case: most stacks are named after their directory.
+ */
+function staxx_compose_own_name(string $file): string {
+  $lines = @file($file, FILE_IGNORE_NEW_LINES);
+  if ($lines === false) return '';
+  foreach ($lines as $line) {
+    if (preg_match('/^name:\s*[\'"]?([A-Za-z0-9_.-]+)[\'"]?\s*(#.*)?$/', $line, $m)) {
+      return strtolower($m[1]);
+    }
+  }
+  return '';
+}
+
+/**
+ * The compose project name this stack's own file would actually produce —
+ * its explicit `name:` if it sets one, else compose's own guess from the
+ * directory. Shared by the clash detector and the delete guard below so
+ * both agree on what a stack is "really" called (PLAN_118).
+ */
+function staxx_stack_project_guess(string $file, string $leaf): string {
+  $own = $file !== '' ? staxx_compose_own_name($file) : '';
+  return $own !== '' ? $own : staxx_project_name($leaf);
+}
+
+/**
+ * Which stacks on disk would run as the same compose project — worked out
+ * from the store itself, never from what is currently running, because the
+ * hazard is a twin that has never been started (PLAN_118). Grouped by
+ * staxx_stack_project_guess(); any project name claimed by more than one
+ * stack is a clash, and every stack in the group carries the others' paths.
+ *
+ * Cached exactly like staxx_scan_stacks(), which is what it walks — cleared
+ * by the same reset so a stack created or renamed mid-request is seen.
+ *
+ * @return array<string, string[]> stack path => the other stack paths
+ *                                  claiming the same project name
+ */
+function staxx_project_clashes(bool $reset = false): array {
+  static $clashes = null;
+  if ($reset) { $clashes = null; return []; }
+  if ($clashes !== null) return $clashes;
+
+  $projectOf = [];
+  foreach (staxx_scan_stacks()['stacks'] as $found) {
+    $file = staxx_find_compose_file($found['dir']);
+    $projectOf[$found['rel']] = staxx_stack_project_guess($file, $found['leaf']);
+  }
+
+  $groups = [];
+  foreach ($projectOf as $rel => $proj) $groups[$proj][] = $rel;
+
+  $clashes = [];
+  foreach ($projectOf as $rel => $proj) {
+    $clashes[$rel] = array_values(array_diff($groups[$proj], [$rel]));
+  }
+  return $clashes;
+}
+
+/**
+ * Refuse a new stack's leaf if the project name it would run as is already
+ * claimed by another stack anywhere in the store (PLAN_118) — two stacks
+ * named alike, one in a folder and one not, describe the same compose
+ * project, and Docker keeps only one of them. staxx_valid_path() is not the
+ * place for this: that gate is about shape, not about what else is already
+ * in the store. Called by every door that names a stack directory — new
+ * stack, Community Applications install, image import, bundle import,
+ * rename and a folder move.
+ *
+ * $ownPath, when given, is the stack this leaf already belongs to (a rename
+ * or a move keeping its own name), so a stack is never compared against
+ * itself — the caller means "is this leaf still free", not "is it unique
+ * among everyone else too".
+ *
+ * @param string|null $error set to the full refusal sentence on a clash
+ */
+function staxx_name_free(string $leaf, string $ownPath = '', ?string &$error = null): bool {
+  $guess = staxx_project_name($leaf);
+  foreach (staxx_scan_stacks()['stacks'] as $found) {
+    if ($found['rel'] === $ownPath) continue;
+    $file = staxx_find_compose_file($found['dir']);
+    if (staxx_stack_project_guess($file, $found['leaf']) !== $guess) continue;
+
+    // Always written: every caller hands in a variable it has not set yet,
+    // so testing it for null here would leave the refusal with no sentence.
+    $where = $found['folder'] !== '' ? ' in '.$found['folder'] : '';
+    $error = 'A stack called "'.$guess.'" already exists'.$where.'. Two stacks with the same '
+           . 'name would run as one project — pick another name, or move that one instead.';
+    return false;
+  }
+  return true;
 }
 
 function staxx_stack_dir(string $rel): string {
@@ -1031,6 +1141,7 @@ function staxx_scan_stacks(bool $reset = false): array {
  */
 function staxx_scan_stacks_reset(): void {
   staxx_scan_stacks(true);
+  staxx_project_clashes(true); // grouped from the same scan; see its own comment
 }
 
 /**
@@ -1059,9 +1170,17 @@ function staxx_compose_cmd(): string {
   $info = staxx_compose();
   if (!$info['available']) return '';
   if ($info['form'] === 'standalone') {
+    // Not given --ansi never below: this is the legacy standalone binary,
+    // which may be pre-v2 and never had the flag added, unlike the plugin
+    // form every real install actually runs.
     return $info['path'] !== '' ? escapeshellarg($info['path']) : 'docker-compose';
   }
-  return escapeshellarg(staxx_docker_bin()).' compose';
+  // Both are GLOBAL compose flags and only global: on the server's v2.40.3
+  // `up --progress plain` is refused as an unknown flag, so they cannot go
+  // in staxx_job_verbs()'s per-verb strings. --ansi never strips the colour
+  // escape codes and --progress plain replaces the redrawn-in-place bar with
+  // one line per step — the shape stacks.js scans for "Downloading image…".
+  return escapeshellarg(staxx_docker_bin()).' compose --ansi never --progress plain';
 }
 
 /**
@@ -1102,12 +1221,19 @@ function staxx_compose_ls(): array {
  * All of it corrects itself the next time the stack is started, because that
  * restamps the path.
  *
+ * $stub is test-only: a server suite has no way to make a fake project
+ * genuinely running (see tests/server/clash.php), so passing an array here
+ * replaces the memoised answer outright rather than asking real docker.
+ * Never passed by any real caller — every production call site takes no
+ * argument at all.
+ *
  * @return array{byFile:array<string,array{name:string,status:string}>,
  *               byTail:array<string,array{name:string,status:string}>,
  *               byName:array<string,array{name:string,status:string}>}
  */
-function staxx_compose_state(): array {
+function staxx_compose_state(?array $stub = null): array {
   static $state = null;
+  if ($stub !== null) return $state = $stub;
   if ($state !== null) return $state;
   $state = ['byFile' => [], 'byTail' => [], 'byName' => []];
 
@@ -1164,12 +1290,21 @@ function staxx_file_tail(string $file): string {
  *
  * @param string $file absolute path to the compose file, or ''
  * @param string $leaf the stack's own directory name, without its folder
+ * @param bool $clash PLAN_118 — true when another stack on disk would run as
+ *             the same project (staxx_project_clashes()). Both fallbacks
+ *             below guess a project from a directory name, which is exactly
+ *             the wrong answer for a clashing stack: the tail and name
+ *             matches could belong to either twin, and the file path is the
+ *             only thing that ties state to THIS directory rather than the
+ *             other one. So a clashing stack gets its state from its own
+ *             file or not at all.
  */
-function staxx_state_for(string $file, string $leaf): ?array {
+function staxx_state_for(string $file, string $leaf, bool $clash = false): ?array {
   $state = staxx_compose_state();
-  if ($file === '') return $state['byName'][staxx_project_name($leaf)] ?? null;
+  if ($file === '') return $clash ? null : ($state['byName'][staxx_project_name($leaf)] ?? null);
 
   if (isset($state['byFile'][$file])) return $state['byFile'][$file];
+  if ($clash) return null;
 
   $tail = staxx_file_tail($file);
   if (isset($state['byTail'][$tail])) return $state['byTail'][$tail];
@@ -1429,7 +1564,7 @@ function staxx_first_ports(string $yaml): array {
 // key, so a plugin update cannot serve an answer the old parser computed —
 // without this a stale shape would sit there looking valid forever, since
 // nothing else about the compose file need have changed.
-const STAXX_META_VERSION = 5;
+const STAXX_META_VERSION = 6;
 
 /**
  * A hash of everything that can change what compose would report for a
@@ -1502,7 +1637,7 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
  *                services:array<string,array{image:string, container_name:string,
  *                                            x:array<string,string>, fixedIp:string,
  *                                            firstPort:array{target?:string,published?:string,count?:int},
- *                                            netMode:string, networks:string[]}>}
+ *                                            netMode:string, networks:string[], healthcheck:bool}>}
  */
 function staxx_compose_meta(string $file, ?string &$error = null): array {
   static $cache = [];
@@ -1577,7 +1712,7 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
                                       'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => []];
+                                      'networks' => [], 'healthcheck' => false];
     }
 
     // Which networks this service names, regardless of what else is nested
@@ -1615,6 +1750,11 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
       // is on — staxx_service_net_kind() falls back to this when there is no
       // running container to ask instead.
       $meta['services'][$service]['netMode'] = $value;
+    } elseif ($parts[2] === 'healthcheck' && count($parts) >= 4 && $parts[3] === 'test') {
+      // PLAN_108 — only a real test command counts as "already has one";
+      // `healthcheck: {disable: true}` on its own is not that, the same
+      // reading applied to an image's own ["NONE"].
+      $meta['services'][$service]['healthcheck'] = true;
     }
   }
 
@@ -1624,7 +1764,7 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
                                       'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => []];
+                                      'networks' => [], 'healthcheck' => false];
     }
     $meta['services'][$service]['firstPort'] = $port;
   }
@@ -1737,14 +1877,16 @@ function staxx_compose_files_mtime(string $file): int {
  *                          filename:string, services:string[], x:array<string,string>,
  *                          project:string, status:string, running:bool, hasFile:bool,
  *                          parses:bool, error:?string, review:bool, handover:bool,
- *                          takeover:bool}>
+ *                          takeover:bool, clash:string[]}>
  */
 function staxx_list_stacks(): array {
   $stacks = [];
+  $clashes = staxx_project_clashes();
 
   foreach (staxx_scan_stacks()['stacks'] as $found) {
     $dir    = $found['dir'];
     $file   = staxx_find_compose_file($dir);
+    $clash  = $clashes[$found['rel']] ?? [];
     // Locked stacks report no state — same reasoning, and the same one-line
     // guard, as staxx_stack_states(); see its comment for why a green row on
     // an unreviewed import is the hazard rather than a cosmetic problem.
@@ -1752,7 +1894,7 @@ function staxx_list_stacks(): array {
     // every poll, so guarding only one leaves the row turning green seconds
     // after it is drawn.
     $locked = staxx_review_file($dir) !== '';
-    $state  = $locked ? null : staxx_state_for($file, $found['leaf']);
+    $state  = $locked ? null : staxx_state_for($file, $found['leaf'], $clash !== []);
     $status = $state['status'] ?? '';
 
     $parseError = null;
@@ -1796,6 +1938,9 @@ function staxx_list_stacks(): array {
       // and start" — cheap for the same reason staxx_foreign_holders()'s own
       // docblock gives: both reads behind it are statically cached.
       'takeover' => staxx_foreign_holders($found['rel']) !== [],
+      // PLAN_118 — the other stacks that would run as this same compose
+      // project, or [] when this one is not part of a clash.
+      'clash'    => $clash,
     ];
   }
 
@@ -1854,6 +1999,7 @@ function staxx_container_index(): array {
       'project'    => $r['project'],
       'service'    => $r['service'],
       'configHash' => $r['configHash'] ?? '',
+      'health'     => $r['health'] ?? 'none',
     ];
 
     $index['byProject'][$row['project']][] = $row;
@@ -2063,27 +2209,28 @@ function staxx_webui_url(
  * explicit statement of a port that answers, so when the two disagree here,
  * the web address wins.
  *
- * Deliberately narrow. Both conditions must hold, or the addresses pass
- * through untouched:
- *
- *   - nothing published   a real binding is hard fact about where the server
- *                          forwards traffic, and is never second-guessed.
- *   - the web port is NOT among the declared ones   when it IS declared,
- *                          nothing is wrong — replacing the list would only
- *                          throw away other real, declared ports (glances
- *                          exposes two; its web button opens one of them).
+ * Deliberately narrow: only when nothing was published, since a real binding
+ * is hard fact about where the server forwards traffic and is never
+ * second-guessed. staxx_container_net() no longer prints an unpublished
+ * container's declared ports at all — see its own comment — so this is now
+ * the ONLY source of a port on such a row, and the whole of that row's port
+ * list, not a merge with anything already there: an unpublished container
+ * has nothing else printed to double up with. When the web address names no
+ * port (a plain default of 80 or 443), no port is shown.
  *
  * @param array<int,array{ip:string,label:string,ports:string[]}> $addresses
  * @param bool     $published whether staxx_container_net()[id]['published'] found a real binding
  * @param string   $webuiUrl  staxx_webui_url()'s result for this container, or '' when none
- * @param string[] $exposed   staxx_container_net()[id]['exposed']
+ * @param string[] $exposed   staxx_container_net()[id]['exposed'] — unused now that an
+ *                            unpublished row has no printed ports to avoid duplicating,
+ *                            kept only so callers need not change their call sites
  * @return array<int,array{ip:string,label:string,ports:string[]}>
  */
 function staxx_address_webui_override(array $addresses, bool $published, string $webuiUrl, array $exposed): array {
   if ($published || $webuiUrl === '') return $addresses;
 
   $port = staxx_webui_literal_port($webuiUrl);
-  if ($port === '' || in_array($port, $exposed, true)) return $addresses;
+  if ($port === '') return $addresses;
 
   foreach ($addresses as &$a) {
     $a['ports'] = [$port];
@@ -2225,9 +2372,14 @@ function staxx_network_drivers(): array {
  *                     forwards to it. What you type is the server's address.
  *
  *   its own address   Unraid's br0.x networks give a container a real address
- *                     on your LAN. Nothing is forwarded and nothing is
- *                     published — you type the container's own address and the
- *                     port the application listens on.
+ *                     on your LAN, or the container sits on host networking.
+ *                     Nothing is forwarded and nothing is published, so no
+ *                     port is recorded here for it — an image's declared
+ *                     ports are a note for the person editing the form, not
+ *                     proof anything outside can reach them. The one port
+ *                     worth stating, the one a service's web page answers on,
+ *                     is filled in afterwards by
+ *                     staxx_address_webui_override().
  *
  * Reporting only the first would leave every br0.x container looking like it
  * has no way in, which is the opposite of the truth.
@@ -2336,18 +2488,27 @@ function staxx_container_net(): array {
     $published = (bool)$byIp;
 
     // ---- or the container's own address ----
+    //
+    // An address is still recorded here even though nothing was published —
+    // host networking and Unraid's br0.x macvlan/ipvlan networks give the
+    // container somewhere real to be reached at, and that is worth stating.
+    // But its port list is left EMPTY: an exposed port that nothing forwards
+    // to is a note on the image for the person editing the form, not a
+    // promise that anything outside can reach it, so printing it here would
+    // say something false. The one exception — the port a service's web page
+    // actually answers on — is filled in afterwards by
+    // staxx_address_webui_override(), which is why `exposed` is still kept
+    // above regardless of this.
     if (!$byIp) {
-      $ports = $exposedPorts;
-
       if ($mode === 'host') {
-        if ($hostIp !== '') $byIp[$hostIp] = $ports;
+        if ($hostIp !== '') $byIp[$hostIp] = [];
       } else {
         foreach (explode(',', $ips) as $ip) {
           $ip = trim($ip);
           // Docker prints the literal string "invalid IP" for a container whose
           // address is unset. It is not an address and must not be shown.
           if ($ip === '' || $ip === 'invalid IP') continue;
-          $byIp[$ip] = $ports;
+          $byIp[$ip] = [];
         }
       }
     }
@@ -2458,6 +2619,63 @@ function staxx_stack_containers(array $s): array {
 }
 
 /**
+ * PLAN_107 — rolls a stack's containers up into one health word, considering
+ * only the ones actually running: a stopped container's stale health means
+ * nothing, and is already covered by the ordinary running/stopped colour.
+ * Unhealthy outranks starting outranks healthy, so one bad container is never
+ * hidden behind another that is still coming up.
+ *
+ * Computed only where the caller already has the containers in hand — never
+ * from staxx_stack_states(), which is deliberately one `compose ls` and no
+ * file reads (see its own docblock).
+ */
+function staxx_stack_health(array $containers): string {
+  $any = ['unhealthy' => false, 'starting' => false, 'healthy' => false];
+  foreach ($containers as $c) {
+    if (strtolower((string)($c['state'] ?? '')) !== 'running') continue;
+    $h = $c['health'] ?? 'none';
+    if (isset($any[$h])) $any[$h] = true;
+  }
+  if ($any['unhealthy']) return 'unhealthy';
+  if ($any['starting'])  return 'starting';
+  if ($any['healthy'])   return 'healthy';
+  return 'none';
+}
+
+/**
+ * How many of a stack's running containers check themselves, out of how many
+ * are running at all. A stack row shows one pill for the lot, so without this
+ * "says it is working" would quietly speak for containers nothing has ever
+ * asked — which is the exact overclaim PLAN_107 exists to stop.
+ *
+ * @return array{running:int, checked:int}
+ */
+function staxx_stack_health_counts(array $containers): array {
+  $running = 0;
+  $checked = 0;
+  foreach ($containers as $c) {
+    if (strtolower((string)($c['state'] ?? '')) !== 'running') continue;
+    $running++;
+    if (($c['health'] ?? 'none') !== 'none') $checked++;
+  }
+  return ['running' => $running, 'checked' => $checked];
+}
+
+/**
+ * The service names — or container names, for one with no service label —
+ * that are running and unhealthy. What the tooltip on a sick stack row names.
+ */
+function staxx_unhealthy_services(array $containers): array {
+  $out = [];
+  foreach ($containers as $c) {
+    if (strtolower((string)($c['state'] ?? '')) !== 'running') continue;
+    if (($c['health'] ?? 'none') !== 'unhealthy') continue;
+    $out[] = (string)(($c['service'] ?? '') !== '' ? $c['service'] : ($c['name'] ?? ''));
+  }
+  return $out;
+}
+
+/**
  * PLAN_71 Stage 3 — "restart pending": does what is running still match what
  * the file now says, service by service. Never a guess — state is '' (no
  * chip) for every case this cannot judge, not just the ones it can prove
@@ -2561,13 +2779,15 @@ function staxx_can_run(): bool {
  * up?" is one `compose ls` for the whole machine and no file reads at all.
  *
  * @return array<string, array{name:string, file:string, project:string,
- *                             status:string, running:bool}>
+ *                             status:string, running:bool, clash:string[]}>
  */
 function staxx_stack_states(): array {
-  $out = [];
+  $out     = [];
+  $clashes = staxx_project_clashes();
 
   foreach (staxx_scan_stacks()['stacks'] as $found) {
-    $file   = staxx_find_compose_file($found['dir']);
+    $file  = staxx_find_compose_file($found['dir']);
+    $clash = $clashes[$found['rel']] ?? [];
     // A locked stack is reported as having no state at all, and deliberately.
     // staxx_state_for() falls back to matching on the project name, which
     // compose derives from the folder — so an imported copy sitting in a
@@ -2575,8 +2795,10 @@ function staxx_stack_states(): array {
     // the row goes green for containers that are not ours. That green row is
     // the mechanism of the whole hazard the review lock exists to stop, so it
     // must not appear even though the verbs behind it are already refused.
+    // A stack in a project-name clash (PLAN_118) gets the same restriction:
+    // staxx_state_for()'s fallbacks would just as happily match its twin.
     $state  = staxx_review_file($found['dir']) !== '' ? null
-                                                     : staxx_state_for($file, $found['leaf']);
+                                                     : staxx_state_for($file, $found['leaf'], $clash !== []);
     $status = (string)($state['status'] ?? '');
 
     $out[$found['rel']] = [
@@ -2589,6 +2811,7 @@ function staxx_stack_states(): array {
       'project' => (string)($state['name'] ?? ''),
       'status'  => $status,
       'running' => stripos($status, 'running') !== false,
+      'clash'   => $clash,
     ];
   }
 
@@ -3018,6 +3241,15 @@ function staxx_save_stack(string $name, string $yaml, string &$error, ?string &$
   }
   $dir = staxx_stack_dir($name);
 
+  // PLAN_118 — only checked for a stack that does not exist yet. Saving an
+  // edit to a stack already on disk must never trip on its own name, and a
+  // stack that already clashes is Adrian's to rename or remove, not this
+  // save's to refuse.
+  if (!is_dir($dir) && !staxx_name_free(staxx_path_leaf($name), '', $clashError)) {
+    $error = $clashError;
+    return false;
+  }
+
   // The stack's existing override, if it has one, has to be checked
   // alongside whatever is being saved here — a main file that is fine on
   // its own can still be broken once the override on disk is layered over
@@ -3225,10 +3457,16 @@ function staxx_share_perms(string $path, bool $isDir): void {
  * nothing on this page can reach.
  *
  * @param string|null $archive set to the full path of the written zip on success
+ * @param string|null $note PLAN_118 — set when the `down` step was skipped
+ *                     because this folder's project is actually running from
+ *                     a different stack; the caller shows it as part of a
+ *                     successful reply, since nothing here has gone wrong
  */
 function staxx_archive_stack(
-  string $name, string &$error, bool $confirmed = false, ?string &$archive = null
+  string $name, string &$error, bool $confirmed = false, ?string &$archive = null,
+  ?string &$note = null
 ): bool {
+  $note = '';
   $error = '';
   if (!staxx_valid_path($name)) { $error = 'Invalid stack name.'; return false; }
 
@@ -3322,20 +3560,48 @@ function staxx_archive_stack(
 
   $cmd  = staxx_compose_cmd();
   if (!$locked && $file !== '' && $cmd !== '' && staxx_docker_running()) {
-    $code = 1;
-    $out  = staxx_sh(
-      'cd '.escapeshellarg($dir).' && '.$cmd.' '.staxx_compose_file_args($files).' down 2>&1',
-      120,
-      $code
-    );
-    // Refuse if the containers are still up. Archiving the folder while its
-    // containers run leaves them orphaned, with nothing in this UI able to
-    // reach them again.
-    if ($code !== 0) {
-      $error = 'The containers could not be stopped, so nothing was archived or removed. '
-             . 'Stop the stack first, then try again.'
-             . ($out !== '' ? "\n\n".trim($out) : '');
-      return false;
+    // PLAN_118 — two stacks can share a compose project name (one in a
+    // folder, one not), and Docker holds only one project by that name: the
+    // one whose `up` ran last. A plain `down` here resolves by project name,
+    // so if this folder's file is not among that project's own config files,
+    // the project belongs to some OTHER stack and `down` would stop and
+    // remove containers that are not this stack's to touch. Skip it and
+    // archive the folder only, exactly as if nothing were running at all.
+    $leaf    = staxx_path_leaf($name);
+    $project = staxx_stack_project_guess($file, $leaf);
+    $running = staxx_compose_state()['byName'][$project] ?? null;
+    $isMine  = staxx_state_for($file, $leaf, true) !== null;
+
+    if ($running !== null && !$isMine) {
+      $ownedBy = '';
+      foreach (staxx_project_clashes()[$name] ?? [] as $sibling) {
+        $siblingFile = staxx_find_compose_file(staxx_stack_dir($sibling));
+        if ($siblingFile !== '' && staxx_state_for($siblingFile, staxx_path_leaf($sibling), true) !== null) {
+          $ownedBy = $sibling;
+          break;
+        }
+      }
+      $note = $ownedBy !== ''
+        ? 'Project "'.$project.'" is running from '.$ownedBy.', so its containers were left '
+          .'alone; only this folder was archived.'
+        : 'Project "'.$project.'" is running elsewhere, so its containers were left alone; '
+          .'only this folder was archived.';
+    } else {
+      $code = 1;
+      $out  = staxx_sh(
+        'cd '.escapeshellarg($dir).' && '.$cmd.' '.staxx_compose_file_args($files).' down 2>&1',
+        120,
+        $code
+      );
+      // Refuse if the containers are still up. Archiving the folder while its
+      // containers run leaves them orphaned, with nothing in this UI able to
+      // reach them again.
+      if ($code !== 0) {
+        $error = 'The containers could not be stopped, so nothing was archived or removed. '
+               . 'Stop the stack first, then try again.'
+               . ($out !== '' ? "\n\n".trim($out) : '');
+        return false;
+      }
     }
   }
 
@@ -4826,6 +5092,440 @@ function staxx_export_pack(array $pairs, string $stackName, string &$error): str
   }
 }
 
+/* ------------------------------------------------------- PLAN_101 — import --
+ *
+ * Reading a bundle back is the mirror image of staxx_export_pack() above,
+ * with the direction of trust reversed. Exporting, StaXX wrote every byte in
+ * the zip. Importing, the zip is a claim from somewhere else, and every name
+ * inside it is untrusted until this has checked it — so nothing is extracted
+ * until every name has passed, and what actually lands is checked again from
+ * scratch rather than trusting the listing to have predicted it.
+ */
+
+/**
+ * Walk an already-extracted bundle folder, refusing a symlink, a directory
+ * other than the one record folder, or anything that resolves outside
+ * $root. Returns the plain file paths found, relative to $root with forward
+ * slashes, or null with $error set.
+ *
+ * Kept separate from staxx_bundle_read() only because it recurses one level
+ * into the record folder — nothing here is reused anywhere else.
+ *
+ * @return string[]|null
+ */
+function staxx_bundle_walk(string $dir, string $root, string &$error): ?array {
+  $entries = @scandir($dir);
+  if ($entries === false) {
+    $error = 'That bundle could not be read back after unpacking.';
+    return null;
+  }
+
+  $out = [];
+  foreach ($entries as $entry) {
+    if ($entry === '.' || $entry === '..') continue;
+    $path = $dir.'/'.$entry;
+
+    // A link is refused before anything resolves it, same reasoning as
+    // staxx_rmtree(): resolving first would either follow it somewhere real
+    // (is_dir()) or report "outside the tree" for a target that is outside
+    // by definition (realpath()) — neither is the right refusal to give.
+    if (is_link($path)) {
+      $error = 'This bundle contains a link, which is not something a bundle StaXX made would ever hold.';
+      return null;
+    }
+
+    $rel = substr($path, strlen($root) + 1);
+
+    if (is_dir($path)) {
+      if ($rel !== rtrim(STAXX_RECORD_DIR, '/')) {
+        $error = '"'.$rel.'" is a folder this bundle should not contain.';
+        return null;
+      }
+      $real = @realpath($path);
+      if ($real === false || ($real !== $root && strpos($real, $root.'/') !== 0)) {
+        $error = 'This bundle tries to reach outside itself.';
+        return null;
+      }
+      $sub = staxx_bundle_walk($path, $root, $error);
+      if ($sub === null) return null;
+      $out = array_merge($out, $sub);
+      continue;
+    }
+
+    $real = @realpath($path);
+    if ($real === false || ($real !== $root && strpos($real, $root.'/') !== 0)) {
+      $error = 'This bundle tries to reach outside itself.';
+      return null;
+    }
+    $out[] = $rel;
+  }
+  return $out;
+}
+
+/**
+ * Validate and unpack an uploaded ".staxx" bundle. Writes nothing outside a
+ * throwaway folder under STAXX_CFILE_TMP, which is removed on every path out
+ * of this function, refusal included.
+ *
+ * The order below IS the safety, in the same sense staxx_rmtree()'s own
+ * docblock means it: every entry's name is checked before anything is
+ * extracted, so a crafted zip never gets as far as having a single byte of
+ * itself written to disk; only then is it extracted; and only then is what
+ * actually landed checked again from scratch, belt and braces against unzip
+ * behaving differently from its own listing.
+ *
+ * @return array{compose:array{name:string,text:string},
+ *               files:array<int,array{name:string,text:string,size:int}>,
+ *               icon:?array{name:string,bytes:string,size:int},
+ *               version:int, marked:bool}|null
+ */
+function staxx_bundle_read(string $bytes, string &$error): ?array {
+  $error = '';
+
+  if ($bytes === '') { $error = 'That bundle is empty.'; return null; }
+  if (strlen($bytes) > STAXX_BUNDLE_MAX) {
+    // Rounded UP, and in KiB the way staxx_export_pack() words its own caps:
+    // a bundle one byte over 4 MiB rounds to "4 MiB, over the 4 MiB limit",
+    // which reads like the code is wrong rather than the file being too big.
+    $error = 'That bundle is '.ceil(strlen($bytes) / 1024).' KiB, over the '
+           . round(STAXX_BUNDLE_MAX / 1024).' KiB limit for one bundle.';
+    return null;
+  }
+
+  if (!staxx_private_dir(STAXX_CFILE_TMP)) {
+    $error = 'Could not prepare a place to read the bundle.';
+    return null;
+  }
+  $work = STAXX_CFILE_TMP.'/bundle-'.bin2hex(random_bytes(8));
+  if (!@mkdir($work, 0700, true)) {
+    $error = 'Could not prepare a place to read the bundle.';
+    return null;
+  }
+  $real = @realpath($work);
+  if ($real === false) {
+    $error = 'Could not prepare a place to read the bundle.';
+    return null;
+  }
+
+  try {
+    $zipPath = $real.'/bundle.zip';
+    if (@file_put_contents($zipPath, $bytes) === false) {
+      $error = 'Could not write the bundle to a scratch file.';
+      return null;
+    }
+
+    // Step 1: list the entries without extracting anything.
+    $listCode = 1;
+    $listOut  = staxx_sh('unzip -Z1 '.escapeshellarg($zipPath).' 2>&1', 20, $listCode);
+    if ($listCode !== 0) {
+      $error = 'That file is not a bundle StaXX can read.';
+      return null;
+    }
+    $names = array_values(array_filter(explode("\n", $listOut), fn($n) => $n !== ''));
+    if ($names === []) {
+      $error = 'That bundle is empty.';
+      return null;
+    }
+    if (count($names) > STAXX_EXPORT_FILES_MAX) {
+      $error = 'That bundle holds '.count($names).' entries, over the '.STAXX_EXPORT_FILES_MAX
+             . '-entry limit for one bundle.';
+      return null;
+    }
+
+    // Step 2: every name checked before anything is extracted, and the WHOLE
+    // bundle refused on the first bad one. An unrecognised entry means this
+    // is not a bundle StaXX made, and guessing at what to do with it is
+    // exactly how something unexpected ends up written to disk.
+    $composeName    = '';
+    $fileNames      = [];
+    $iconName       = '';
+    $markerSeen     = false;
+    $recordDirEntry = STAXX_RECORD_DIR.'/';
+
+    foreach ($names as $entry) {
+      if ($entry[0] === '/' || $entry[0] === '\\') {
+        $error = '"'.$entry.'" is not a name a bundle StaXX made would ever hold.';
+        return null;
+      }
+      if (strpos($entry, '\\') !== false) {
+        $error = '"'.$entry.'" holds a backslash, which is not a name a bundle StaXX made would ever hold.';
+        return null;
+      }
+      if (strpos($entry, '..') !== false) {
+        $error = '"'.$entry.'" tries to step outside the bundle, so the whole bundle is refused.';
+        return null;
+      }
+      if (preg_match('/^[A-Za-z]:/', $entry)) {
+        $error = '"'.$entry.'" names a drive, which is not a name a bundle StaXX made would ever hold.';
+        return null;
+      }
+      if (substr($entry, -1) === '/') {
+        // A bare directory entry is ordinary in a zip — the only one a
+        // bundle StaXX made ever holds is the record folder itself.
+        if ($entry === $recordDirEntry) continue;
+        $error = '"'.$entry.'" is a folder this bundle should not contain.';
+        return null;
+      }
+
+      if (in_array(strtolower($entry), STAXX_COMPOSE_FILENAMES, true)) {
+        if ($composeName !== '') {
+          $error = 'This bundle holds more than one compose file, so it is not clear which one to import.';
+          return null;
+        }
+        $composeName = $entry;
+        continue;
+      }
+      if ($entry === $recordDirEntry.'bundle.json') {
+        $markerSeen = true;
+        continue;
+      }
+      // The record folder's ONE permitted entry beyond the marker is the
+      // picture, and it is recognised by its extension as well as its shape.
+      // Without the extension test a flat ".staxx/record.json" reads as a
+      // candidate picture and is only stopped later, when its bytes turn out
+      // not to be any picture format — which works, but leaves the allowlist
+      // resting on a check two steps away. A planted record file has to be
+      // refused by its NAME.
+      if (staxx_export_pack_record_icon($entry) !== ''
+          && in_array(strtolower((string)pathinfo($entry, PATHINFO_EXTENSION)), STAXX_ICON_EXTS, true)) {
+        if ($iconName !== '') {
+          $error = 'This bundle holds more than one picture, so it is not clear which one is this stack\'s icon.';
+          return null;
+        }
+        $iconName = $entry;
+        continue;
+      }
+      if (staxx_valid_filename($entry)) {
+        $fileNames[] = $entry;
+        continue;
+      }
+
+      $error = '"'.$entry.'" is not a name this can import.';
+      return null;
+    }
+
+    if ($composeName === '') {
+      $error = 'This bundle has no compose file, so there is nothing to import.';
+      return null;
+    }
+
+    // Step 3: extract, only now that every name has passed.
+    $extractDir = $real.'/x';
+    if (!@mkdir($extractDir, 0700, true)) {
+      $error = 'Could not prepare a place to unpack the bundle.';
+      return null;
+    }
+    $unzipCode = 1;
+    staxx_sh('unzip -qq -o '.escapeshellarg($zipPath).' -d '.escapeshellarg($extractDir).' 2>&1', 30, $unzipCode);
+    if ($unzipCode !== 0) {
+      $error = 'That bundle could not be unpacked.';
+      return null;
+    }
+
+    // Step 4: check what actually landed, rather than trusting the listing
+    // above to have predicted it.
+    $extractReal = @realpath($extractDir);
+    if ($extractReal === false) {
+      $error = 'That bundle could not be unpacked.';
+      return null;
+    }
+    $expected = array_merge(
+      [$composeName],
+      $fileNames,
+      $iconName !== '' ? [$iconName] : [],
+      $markerSeen ? [$recordDirEntry.'bundle.json'] : []
+    );
+    $landed = staxx_bundle_walk($extractReal, $extractReal, $error);
+    if ($landed === null) return null;
+    foreach ($landed as $foundPath) {
+      if (!in_array($foundPath, $expected, true)) {
+        $error = '"'.$foundPath.'" was not in the bundle\'s own listing, so the bundle is refused.';
+        return null;
+      }
+    }
+
+    // Step 5: read. The compose file is validated exactly the way
+    // staxx_save_stack() validates one before writing it — $extractReal is
+    // passed as the project directory so a relative env_file: can resolve
+    // against the companion files that were just unpacked alongside it.
+    $composePath = $extractReal.'/'.$composeName;
+    if (!is_file($composePath)) {
+      $error = 'This bundle\'s compose file could not be found after unpacking.';
+      return null;
+    }
+    $composeText = (string)@file_get_contents($composePath);
+    $validateError = '';
+    $warnings = null;
+    if (!staxx_validate_compose($composeText, $validateError, $extractReal, $warnings)) {
+      $error = 'This bundle\'s compose file is not valid: '.$validateError;
+      return null;
+    }
+
+    $files = [];
+    foreach ($fileNames as $fn) {
+      $fp = $extractReal.'/'.$fn;
+      if (!is_file($fp)) {
+        $error = '"'.$fn.'" could not be found after unpacking.';
+        return null;
+      }
+      $size = (int)@filesize($fp);
+      if ($size > STAXX_FILE_MAX) {
+        $error = '"'.$fn.'" is '.ceil($size / 1024).' KiB, over the '.round(STAXX_FILE_MAX / 1024)
+               . ' KiB limit for a companion file.';
+        return null;
+      }
+      // No bundle StaXX made ever carries a binary companion file — export
+      // refuses to pack one in the first place — so one turning up here
+      // means this bundle was not made by StaXX, whatever it claims.
+      if (!staxx_looks_text($fp)) {
+        $error = '"'.$fn.'" looks like a binary file, so it is refused rather than trusted.';
+        return null;
+      }
+      $files[] = ['name' => $fn, 'text' => (string)@file_get_contents($fp), 'size' => $size];
+    }
+
+    $icon = null;
+    if ($iconName !== '') {
+      $ip = $extractReal.'/'.$iconName;
+      if (!is_file($ip)) {
+        $error = 'This bundle\'s picture could not be found after unpacking.';
+        return null;
+      }
+      $iconSize = (int)@filesize($ip);
+      if ($iconSize > STAXX_FILE_MAX) {
+        $error = 'This bundle\'s picture is over the '.round(STAXX_FILE_MAX / 1024).' KiB limit.';
+        return null;
+      }
+      $iconBody = (string)@file_get_contents($ip);
+      $ext      = strtolower((string)pathinfo($iconName, PATHINFO_EXTENSION));
+      if (!staxx_icon_is_picture($ext, $iconBody)) {
+        $error = 'This bundle\'s picture is not actually a picture.';
+        return null;
+      }
+      $icon = ['name' => basename($iconName), 'bytes' => $iconBody, 'size' => $iconSize];
+    }
+
+    // Step 6: the marker. Absent is accepted as version 1 — the only bundles
+    // without one predate the marker existing at all.
+    $version = 1;
+    $marked  = false;
+    if ($markerSeen) {
+      $markerRaw  = (string)@file_get_contents($extractReal.'/'.STAXX_RECORD_DIR.'/bundle.json');
+      $markerData = @json_decode($markerRaw, true);
+      if (!is_array($markerData) || ($markerData['format'] ?? '') !== 'staxx-bundle'
+          || !is_int($markerData['version'] ?? null)) {
+        $error = 'This bundle\'s marker file is not one StaXX wrote, so the bundle is refused.';
+        return null;
+      }
+      $version = (int)$markerData['version'];
+      if ($version > 1) {
+        $error = 'This bundle was made by a newer version of StaXX than the one on this server.';
+        return null;
+      }
+      $marked = true;
+    }
+
+    return [
+      'compose' => ['name' => $composeName, 'text' => $composeText],
+      'files'   => $files,
+      'icon'    => $icon,
+      'version' => $version,
+      'marked'  => $marked,
+    ];
+  } finally {
+    // Removed on every path out, success or refusal alike — nothing this
+    // reads is worth keeping once the reply is on its way.
+    staxx_rmtree($real, $real);
+  }
+}
+
+/**
+ * How many values in a bundle's compose file still need filling in.
+ *
+ * Comment lines are skipped: the covering note an export writes names the
+ * placeholder twice while explaining it, so counting the whole file reports
+ * two more outstanding values than the file actually has.
+ */
+function staxx_bundle_placeholders(string $composeText): int {
+  $n = 0;
+  foreach (explode("
+", $composeText) as $line) {
+    if (substr(ltrim($line), 0, 1) === '#') continue;
+    $n += substr_count($line, STAXX_PLACEHOLDER);
+  }
+  return $n;
+}
+
+/**
+ * Create a new stack from a bundle staxx_bundle_read() already validated.
+ * Never merges into or overwrites an existing stack — staxx_create_refusal()
+ * is the same gate "Add stack" uses, called the same way it always refuses a
+ * name already in use.
+ *
+ * Only ever writes the compose file (through staxx_save_stack(), so it gets
+ * exactly the same validation and history capture an ordinary save gets),
+ * the companion files (through staxx_write_file()) and the picture (through
+ * staxx_icon_write(), straight into the new stack's own record folder).
+ * The bundle marker is never written — it describes the bundle, not the
+ * stack — and nothing else ever reaches the record folder, by allowlist
+ * rather than by filter: a crafted bundle must not be able to plant a false
+ * history or a rollback record naming an image this machine has never run.
+ *
+ * The stack is created stopped, full stop. This never leans on the
+ * REPLACE-ME start guard — it simply never starts anything.
+ *
+ * A failure part-way through is reported plainly, saying what did land; it
+ * never attempts a rollback, which could delete more than this call created.
+ */
+function staxx_bundle_write(array $bundle, string $rel, string &$error): bool {
+  $error = '';
+
+  if (!staxx_valid_path($rel)) {
+    $error = 'Stack names may contain letters, numbers, dots, dashes and underscores, '
+           . 'must start with a letter or number, and must be 63 characters or fewer.';
+    return false;
+  }
+  $refusal = staxx_create_refusal($rel, false);
+  if ($refusal !== '') { $error = $refusal; return false; }
+
+  $composeText = (string)($bundle['compose']['text'] ?? '');
+  $saveError   = '';
+  if (!staxx_save_stack($rel, $composeText, $saveError)) {
+    $error = 'The compose file could not be written: '.$saveError;
+    return false;
+  }
+
+  foreach ((array)($bundle['files'] ?? []) as $f) {
+    $fname     = (string)($f['name'] ?? '');
+    $ftext     = (string)($f['text'] ?? '');
+    $fileError = '';
+    if (!staxx_write_file($rel, $fname, $ftext, true, $fileError)) {
+      $error = 'The stack was created, but "'.$fname.'" could not be written: '.$fileError;
+      return false;
+    }
+  }
+
+  $icon = $bundle['icon'] ?? null;
+  if (is_array($icon)) {
+    $iname  = (string)($icon['name'] ?? '');
+    $ibytes = (string)($icon['bytes'] ?? '');
+    // Checked again here rather than trusted from the caller: this function
+    // is what turns a name into a path, so it is where the name has to be
+    // proved safe, whatever validated it upstream.
+    if (!staxx_valid_filename($iname)) {
+      $error = 'The stack was created, but its picture is not named something this can write.';
+      return false;
+    }
+    $target = staxx_stack_dir($rel).'/'.STAXX_RECORD_DIR.'/'.$iname;
+    if (!staxx_icon_write($target, $ibytes)) {
+      $error = 'The stack was created, but its picture could not be written.';
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /**
  * Write one companion file, text or binary.
  *
@@ -4890,13 +5590,13 @@ function staxx_write_file(string $rel, string $file, string $body, bool $isText,
     return false;
   }
 
-  // The boot-drive shelf copy (PLAN_103) only ever mirrors the compose file
-  // and its override — an ordinary companion file (a .env, a certificate)
-  // is not the stack's definition and never belongs on it. $mainPath and the
-  // override-name check above already establish which case this is; nothing
-  // further is copied for any other file this function writes.
-  if ($mainPath !== ''
-      && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0) {
+  // The boot-drive shelf copy (PLAN_103) mirrors the stack's definition and
+  // nothing else: the compose file, its override, and — since PLAN_129 — its
+  // .env, without which a file full of ${PLACEHOLDERS} defines nothing. Any
+  // other companion (a certificate, a script) never belongs on the shelf.
+  if ($file === '.env'
+      || ($mainPath !== ''
+          && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0)) {
     $bootNote = '';
     if (!staxx_boot_copy_stack($rel, $bootNote) && $bootNote !== '') {
       error_log('StaXX: boot copy not written for '.$rel.': '.$bootNote);
@@ -4913,12 +5613,14 @@ function staxx_delete_file(string $rel, string $file, string &$error): bool {
   $path = staxx_stack_file($rel, $file, $error);
   if ($path === '') return false;
 
-  // Whether this is the override, checked before it is gone — deleting it
-  // is a change to the stack's own definition, so the shelf copy (PLAN_103)
-  // has to lose it too, the same as staxx_write_file() gives it one.
+  // Whether this is the override or the .env, checked before it is gone —
+  // deleting either is a change to the stack's own definition, so the shelf
+  // copy (PLAN_103) has to lose it too, the same as staxx_write_file() gives
+  // it one. The variable keeps its old name; it means "part of the definition".
   $mainPath = staxx_find_compose_file(dirname($path));
-  $isOverride = $mainPath !== ''
-             && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0;
+  $isOverride = $file === '.env'
+             || ($mainPath !== ''
+                 && strcasecmp($file, staxx_expected_override_basename($mainPath)) === 0);
 
   if (is_link($path)) {
     if (!@unlink($path)) { $error = 'Could not delete "'.$file.'".'; return false; }
@@ -5042,6 +5744,14 @@ function staxx_rename_stack(string $rel, string $newLeaf, ?string &$error = null
   $to = staxx_stack_root().'/'.$newRel;
   if (file_exists($to)) {
     $error = 'Something called "'.$newLeaf.'" is already there. Pick another name.';
+    return '';
+  }
+  // PLAN_118 — the checks above only catch a leaf collision in the SAME
+  // folder; a rename can just as easily produce the compose project name a
+  // stack in some other folder already claims. $rel excludes this stack's
+  // own current entry from the search, since it is the one being renamed.
+  if (!staxx_name_free($newLeaf, $rel, $clashError)) {
+    $error = $clashError;
     return '';
   }
   if (!@rename($from, $to)) {
@@ -5275,11 +5985,19 @@ function staxx_placeholders(string $file): array {
  * request that waits for them will simply time out. So the command is detached
  * and its output collected in a file, which the page then follows.
  *
- * @param string $service '' for the whole stack, or one compose service name
- *                         to scope the command to a single container.
+ * @param string|array $service '' (or an empty list) for the whole stack, one
+ *                               compose service name, or a list of several —
+ *                               a rollback across several services needs one
+ *                               job naming all of them, not several racing
+ *                               each other against the same project.
  */
-function staxx_start_job(string $name, string $verb, string &$error, string $service = ''): string {
+function staxx_start_job(string $name, string $verb, string &$error, $service = ''): string {
   $error = '';
+
+  // Normalise to a list once, up front, so every check and every step below
+  // reads $names rather than juggling the string-or-array shape itself.
+  // An empty list means whole-stack scope, exactly as '' always has.
+  $names = is_array($service) ? array_values($service) : ($service === '' ? [] : [$service]);
 
   $verbs = staxx_job_verbs();
   if (!isset($verbs[$verb]))       { $error = 'Unknown action.';     return ''; }
@@ -5311,7 +6029,7 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   $startsSomething = false;
   foreach ($brings as $step) if (strpos($step, 'up ') === 0) $startsSomething = true;
 
-  if ($service === '' && $startsSomething) {
+  if (!$names && $startsSomething) {
     $holders = array_map(fn($t) => $t['name'], staxx_foreign_holders($name));
     if ($holders) {
       $error = (count($holders) === 1
@@ -5337,7 +6055,7 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   // stack does not exist on disk either — which is what lets
   // tests/server/console.php prove the scope rule with a made-up stack name
   // and never go anywhere near a real compose file.
-  $args = $service !== '' ? ($verbs[$verb]['svc'] ?? '') : ($verbs[$verb]['args'] ?? '');
+  $args = $names ? ($verbs[$verb]['svc'] ?? '') : ($verbs[$verb]['args'] ?? '');
   // A verb with no form for a given scope simply has no key for it — `remove`
   // carries no `args` at all, `config` no `svc` — so the `?? ''` above is what
   // actually catches those. The `[]` test alongside it is
@@ -5345,7 +6063,7 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
   // list of steps rather than omitting the key: an empty chain would
   // otherwise build a command that runs nothing and then reports success.
   if ($args === '' || $args === []) {
-    $error = $service !== ''
+    $error = $names
       ? 'That action cannot be run against a single container.'
       : 'That action cannot be run against a whole stack.';
     return '';
@@ -5394,24 +6112,30 @@ function staxx_start_job(string $name, string $verb, string &$error, string $ser
     }
   }
 
-  if ($service !== '') {
-    // The allowlist for a service name: it must be a key of the services the
-    // compose file itself declares, the same shape of guarantee
+  if ($names) {
+    // The allowlist for a service name: each must be a key of the services
+    // the compose file itself declares, the same shape of guarantee
     // staxx_valid_name() gives for stack names. A regex on the shape of
     // the string would accept a service that simply does not exist in this
     // stack; this is a real membership check against the file.
     $services = staxx_compose_meta($file)['services'];
-    if (!isset($services[$service])) {
-      $error = 'No service called "'.$service.'" in this stack.';
-      return '';
+    foreach ($names as $one) {
+      if (!isset($services[$one])) {
+        $error = 'No service called "'.$one.'" in this stack.';
+        return '';
+      }
     }
     // Belt and braces on top of that allowlist: even a validated name is
     // quoted before it reaches the shell, rather than trusted to already be
-    // shell-safe. Every step gets it appended, not just the first — a
-    // multi-step verb like `update` runs `pull` and `up -d` as two separate
-    // compose invocations, and both have to be scoped to this one service or
-    // the second would quietly act on the whole stack instead.
-    $steps = array_map(fn($step) => $step.' '.escapeshellarg($service), $steps);
+    // shell-safe. Every step gets every name appended, not just the
+    // first — a multi-step verb like `update` runs `pull` and `up -d` as two
+    // separate compose invocations, and both have to be scoped to the same
+    // services or the second would quietly act on the whole stack instead.
+    // Several names on one step (`compose up -d --force-recreate a b`) is
+    // also what lets a multi-service rollback recreate every chosen service
+    // in one job, rather than several racing each other on the same project.
+    $quoted = implode(' ', array_map('escapeshellarg', $names));
+    $steps  = array_map(fn($step) => $step.' '.$quoted, $steps);
   }
 
   if (!staxx_private_dir(STAXX_JOB_DIR)) {
@@ -5838,38 +6562,52 @@ function staxx_log_download(string $stack, string $service, string &$error): str
 
 /* ========================================================== exec (D4) =====
  *
- * A real shell inside a running container. See PLAN_44 section D4. This is
- * the one place in the plugin where user input reaches a shell with no verb
- * allowlist standing in front of it — docker exec runs whatever the person
- * inside the session types. Every guard below exists because of that.
+ * A real terminal inside a running container. See PLAN_44 section D4 and
+ * PLAN_133. This is the one place in the plugin where user input reaches a
+ * shell with no verb allowlist standing in front of it — docker exec runs
+ * whatever the person inside the session types. Every guard below exists
+ * because of that.
  *
- * The mechanism, proved by hand on the real server before any of this was
- * written (socat is not installed there; script, mkfifo and setsid are):
+ * The terminal itself is not ours: it is ttyd, the same terminal server
+ * Unraid's own Console button starts (`/usr/local/sbin/ttyd-exec`, backed by
+ * `/usr/bin/ttyd`), which nginx already proxies at `/logterminal/<tag>/…`
+ * onto a unix socket, websocket included, and whose response headers already
+ * allow a same-origin frame. So this section's only job is to start ttyd
+ * against the right container and keep track of it — the terminal emulation,
+ * the websocket handling and the browser-side rendering are all ttyd's, not
+ * a client-side library this project would otherwise have had to add.
  *
- *   echo $$ > pid; exec 9<> fifo; script -qfc "<docker exec …>" /dev/null \
- *     <&9 >>out 2>&1
+ * Started with:
  *
- * `script -qfc` is what allocates a pseudo-terminal — without one there is
- * no prompt, no tab completion and no Ctrl-C, because `docker exec -it`
- * refuses outright when its stdin is a plain pipe rather than a terminal.
- * `exec 9<>` opens the fifo READ-WRITE in the session's own shell, so that
- * shell is always a second writer holding the pipe open on top of whatever
- * PHP does. That is what lets a web request fopen() the fifo, write one
- * keystroke, and close it again — once per request — without the far end
- * ever seeing end-of-input. Proved the failure case too: a writer that only
- * opens and closes per keystroke, with nobody else holding the pipe open,
- * kills the shell immediately. Do not "simplify" this by dropping the
- * `exec 9<>` line — it is not decorative.
+ *   ttyd-exec -s9 -om1 -i /var/tmp/staxx-<id>.sock docker exec -it \
+ *     '<container>' <shell>
  *
- * Four files per session, all under STAXX_EXEC_DIR/<id>/, the same shape a
- * log follower already uses:
- *   fifo  the named pipe PHP writes keystrokes into
- *   out   the accumulated output, read by offset like a job's log
- *   pid   the pid of the detached session leader (the outer `sh -c`), so it
- *         can be found again and killed
- *   hb    the epoch second of the last poll — the same heartbeat rule
- *         staxx_log_reap() already proved; STAXX_LOG_STALE is reused rather
- *         than inventing a second number for the same idea
+ * `-om1` is one client only and exit when it goes, `-i` names the unix
+ * socket nginx proxies. A StaXX session gets its own socket, named
+ * `staxx-<id>.sock` rather than Unraid's own `<container>.sock`: Unraid's is
+ * one-client-only, so the Console button and this pane would otherwise fight
+ * over the same socket, and the `staxx-` prefix is what lets
+ * staxx_exec_kill() recognise a session as one this code started rather than
+ * risk touching Unraid's own terminal.
+ *
+ * `ttyd-exec` backgrounds ttyd itself and returns immediately (its last line
+ * is `exec ttyd … &`), so the pid it hands back is not ttyd's — the real pid
+ * is found afterwards by asking the process table for whoever has this
+ * session's socket path on its command line, the same "trust what the
+ * process actually says, not what a wrapper claims" pattern
+ * staxx_exec_resolve_container() uses for the container name.
+ *
+ * Two files per session, under STAXX_EXEC_DIR/<id>/ — half the log
+ * follower's shape, because there is no output to buffer or input to relay
+ * any more:
+ *   pid  ttyd's own pid, found after it starts, so it can be found again and
+ *        killed
+ *   hb   the epoch second of the last liveness poll — the same heartbeat
+ *        rule staxx_log_reap() already proved; STAXX_LOG_STALE is reused
+ *        rather than inventing a second number for the same idea
+ * The socket itself lives at the fixed path nginx expects,
+ * /var/tmp/staxx-<id>.sock, not under STAXX_EXEC_DIR — ttyd, not this code,
+ * owns that file's lifetime.
  */
 
 /**
@@ -5968,6 +6706,17 @@ function staxx_exec_start(string $stack, string $service, string &$error): strin
   // that touches one reaps stale sessions first, this one included.
   staxx_exec_reap();
 
+  // Both ship with Unraid 7, but naming what is missing beats a blank frame
+  // that gives no reason.
+  if (!is_file('/usr/local/sbin/ttyd-exec')) {
+    $error = 'Could not open a shell: /usr/local/sbin/ttyd-exec is missing.';
+    return '';
+  }
+  if (!is_file('/usr/bin/ttyd')) {
+    $error = 'Could not open a shell: /usr/bin/ttyd is missing.';
+    return '';
+  }
+
   if (!is_dir(STAXX_EXEC_DIR) && !@mkdir(STAXX_EXEC_DIR, 0755, true)) {
     $error = 'Could not create '.STAXX_EXEC_DIR;
     return '';
@@ -5980,196 +6729,117 @@ function staxx_exec_start(string $stack, string $service, string &$error): strin
     return '';
   }
 
-  $fifo = $sessDir.'/fifo';
-  $out  = $sessDir.'/out';
-  $pid  = $sessDir.'/pid';
-  $hb   = $sessDir.'/hb';
+  $pidFile = $sessDir.'/pid';
+  $hb      = $sessDir.'/hb';
+  $sock    = '/var/tmp/staxx-'.$id.'.sock';
 
-  // mkfifo, not touch — a plain file here would let the write below succeed
-  // by simply appending to it, with nothing on the other end ever reading a
-  // byte, and the session would look open while going nowhere.
-  @exec('mkfifo -m 600 '.escapeshellarg($fifo));
-  if (!file_exists($fifo)) {
-    @exec('rm -rf '.escapeshellarg($sessDir));
-    $error = 'Could not create the input pipe.';
-    return '';
-  }
-  @touch($out);
-
-  // Written before the session even starts, exactly as staxx_log_start()
-  // writes its heartbeat first — a poll landing in the gap between this call
-  // returning and the process actually existing still sees a fresh
-  // timestamp rather than reading as stale.
+  // Written before ttyd even starts, exactly as staxx_log_start() writes its
+  // heartbeat first — a poll landing in the gap between this call returning
+  // and ttyd actually listening still sees a fresh timestamp rather than
+  // reading as stale.
   @file_put_contents($hb, (string)time());
 
   // Root inside the container, falling back to sh for an image with no bash.
   //
   // Written `exec bash || exec sh` this never fell back and every bash-less
   // image — which is most Alpine ones — got a session that died the instant
-  // it started, showing "bash: not found" and then refusing every keystroke
-  // as a session that had ended. A failed `exec` TERMINATES a
-  // non-interactive shell, so the `||` branch is unreachable; measured on
-  // the server, `sh -c 'exec nosuchcmd || exec echo ran'` prints the error
-  // and exits 127 without ever running the echo. Asking first, with
-  // `command -v`, is what makes the choice instead of hoping a failure is
-  // recoverable.
+  // it started. A failed `exec` TERMINATES a non-interactive shell, so the
+  // `||` branch is unreachable; measured on the server, `sh -c 'exec
+  // nosuchcmd || exec echo ran'` prints the error and exits 127 without ever
+  // running the echo. Asking first, with `command -v`, is what makes the
+  // choice instead of hoping a failure is recoverable.
   //
-  // If neither shell exists, docker exec itself fails and its own error text
-  // lands in $out — staxx_exec_read() then reports alive:false with that
-  // text already in it, which is the honest answer for an image with no
-  // shell at all, not an empty session that looks broken.
+  // If neither shell exists, docker exec itself fails and ttyd's terminal
+  // shows its error text and then a closed session — the honest answer for
+  // an image with no shell at all.
   $execCmd = escapeshellarg(staxx_docker_bin())
            . ' exec -u 0 -it '.escapeshellarg($container)
            . ' sh -c '.escapeshellarg('command -v bash >/dev/null 2>&1 && exec bash; exec sh');
 
-  // `echo $$` runs in the outer shell before anything else, capturing the
-  // session leader's own pid — and because setsid below makes this shell the
-  // leader of a new session, that pid is also the process group id the
-  // whole session can later be killed by, the same trick staxx_log_start()
-  // uses for its follower.
-  $inner = 'echo $$ > '.escapeshellarg($pid).'; '
-         . 'exec 9<> '.escapeshellarg($fifo).'; '
-         . 'script -qfc '.escapeshellarg($execCmd).' /dev/null <&9 >> '.escapeshellarg($out).' 2>&1';
+  // ttyd-exec backgrounds ttyd itself and returns at once, so staxx_sh()'s
+  // timeout never bites; setsid puts ttyd in a session of its own so it
+  // outlives the wrapper shell cleanly, the same way staxx_start_job()
+  // detaches a compose job. The pid has to be found afterwards — see the doc
+  // block above.
+  staxx_sh('setsid /usr/local/sbin/ttyd-exec -s9 -om1 -i '.escapeshellarg($sock).' '.$execCmd, 5);
 
-  // NOT wrapped in staxx_sh()'s timeout, deliberately — a session is meant
-  // to live for as long as the editor tab stays open, not for a fixed number
-  // of seconds. Its lifetime is the heartbeat above and staxx_exec_reap()
-  // below, exactly as staxx_log_start() already argues for its own
-  // follower. Do not "fix" this by adding a timeout.
-  @exec('setsid sh -c '.escapeshellarg($inner).' </dev/null >/dev/null 2>&1 &');
+  // Give ttyd a moment to fork and start listening before asking the process
+  // table for it — the same 200ms gap the browser waits before loading the
+  // frame, measured on the server as comfortably enough.
+  //
+  // `pgrep -f` matches every process whose command line carries the socket
+  // path, and that includes the `sh -c` staxx_sh() wraps the pgrep itself in
+  // — so the answer is read back from /proc and only a pid that is actually
+  // ttyd is kept. Without that the pid file could name a shell that had
+  // already exited, and staxx_exec_alive() would call the session dead the
+  // moment it was born.
+  usleep(200000);
+  $pids = preg_split('/\s+/', trim(staxx_sh('pgrep -f '.escapeshellarg($sock), 5)), -1, PREG_SPLIT_NO_EMPTY);
+  foreach ($pids as $candidate) {
+    if (!ctype_digit($candidate)) continue;
+    $cmdline = str_replace("\0", ' ', (string)@file_get_contents('/proc/'.$candidate.'/cmdline'));
+    // The first word, not anywhere in the line: the docker exec inside
+    // ttyd's own arguments carries an `sh -c` of its own, so "contains
+    // ttyd and not sh -c" would exclude the very process wanted.
+    if (preg_match('#^(?:/usr/bin/)?ttyd\s#', $cmdline)) {
+      @file_put_contents($pidFile, $candidate);
+      break;
+    }
+  }
 
   return $id;
 }
 
 /**
- * Is this session's leader still running? A missing pid file reads as
- * alive — staxx_exec_start() writes it from inside the detached shell, a
- * moment after this call already returned an id, the same timing gap
- * staxx_log_read() already tolerates for a follower's pid file.
+ * Whether a session's terminal is still there to reconnect to: the socket
+ * ttyd listens on exists, and the pid recorded for it is still a running
+ * ttyd naming that same socket on its command line — not some unrelated
+ * process that has since been handed the same pid. Touches the heartbeat:
+ * this is now the only thing the browser polls while a shell pane is open,
+ * so it has to be what keeps staxx_exec_reap() from calling the session
+ * stale, the same role staxx_log_read() plays for a log follower.
  */
 function staxx_exec_alive(string $id): bool {
-  $pidfile = STAXX_EXEC_DIR.'/'.$id.'/pid';
-  if (!is_file($pidfile)) return true;
-  $pid = (int)trim((string)@file_get_contents($pidfile));
-  return $pid > 0 && is_dir('/proc/'.$pid);
-}
-
-/**
- * Write one keystroke or short paste into a session's input pipe.
- *
- * The bytes go in through fopen(), fwrite() and fclose() only — never
- * assembled into a shell command line. That is the single most important
- * line in this whole file: there is no quoting to get wrong if no shell ever
- * sees these bytes as anything other than raw input.
- *
- * The alive check narrows, but cannot fully close, the gap between "the
- * session leader just exited" and this write actually happening — a fifo's
- * write side blocks until a reader is present, so writing into one with
- * nobody left to read it would hang this request rather than fail it. The
- * residual race (the leader dying in the instant between the check and the
- * fopen()) is accepted rather than engineered around, the same way
- * staxx_log_kill() accepts a narrow pid-reuse window: the worst case here is
- * one request blocking briefly, not a wrong container being touched.
- */
-function staxx_exec_write(string $id, string $bytes, string &$error): bool {
-  $error = '';
-
-  if (!preg_match('/^[0-9a-f]{16}$/', $id)) { $error = 'Invalid session id.'; return false; }
-
   staxx_exec_reap();
 
-  if (strlen($bytes) > STAXX_EXEC_WRITE_MAX) {
-    $error = 'That is too much to send at once — paste it in smaller pieces.';
-    return false;
-  }
+  if (!preg_match('/^[0-9a-f]{16}$/', $id)) return false;
 
-  $fifo = STAXX_EXEC_DIR.'/'.$id.'/fifo';
-  if (!file_exists($fifo) || !staxx_exec_alive($id)) {
-    $error = 'That session has ended.';
-    return false;
-  }
-
-  // 'r+', not 'a'. Opening a pipe for writing alone BLOCKS until something
-  // opens the other end, and if the session has just died nothing ever will —
-  // so a keystroke arriving in that gap would hang this request for ever, with
-  // no timeout to save it. Opening read-write never blocks, which is the same
-  // trick the session's own launcher uses (`exec 9<>`) to keep the pipe from
-  // seeing end-of-input. Measured on the server: with no reader, 'a' was still
-  // blocked after two seconds and 'r+' returned in a tenth of one.
-  //
-  // The bytes never touch a shell command line — this is a file write, not a
-  // command — which is what makes a shell session safe to expose at all: there
-  // is no quoting to get wrong, whatever somebody types.
-  $fh = @fopen($fifo, 'r+');
-  if ($fh === false) { $error = 'Could not write to that session.'; return false; }
-  fwrite($fh, $bytes);
-  fclose($fh);
-  return true;
-}
-
-/**
- * Read the bytes a session's output has gained since $offset — the same
- * offset contract as staxx_job_log() and staxx_log_read(): only the new
- * bytes since the caller's last poll, measured on the raw chunk, leading
- * whitespace left intact rather than trimmed away.
- *
- * Asking for output IS the keep-alive signal, exactly as it is for a log
- * follower — this is the only place a session's heartbeat gets touched.
- *
- * @return array{text:string, offset:int, alive:bool}
- */
-function staxx_exec_read(string $id, int $offset): array {
-  if (!preg_match('/^[0-9a-f]{16}$/', $id)) {
-    return ['text' => '', 'offset' => 0, 'alive' => false];
-  }
-
-  staxx_exec_reap();
-
-  $out = STAXX_EXEC_DIR.'/'.$id.'/out';
-  if (!is_file($out)) return ['text' => '', 'offset' => 0, 'alive' => false];
-
-  // Same clamp staxx_job_log() and staxx_log_read() use: a negative offset
-  // would otherwise seek backward from the end of the file instead of being
-  // refused outright.
-  if ($offset < 0) $offset = 0;
-
-  // Capped for the same reason as staxx_job_log() and staxx_log_read().
-  $chunk = @file_get_contents($out, false, null, $offset, STAXX_LOG_CHUNK_MAX);
-  if ($chunk === false) $chunk = '';
-  $newOffset = $offset + strlen($chunk);
-
-  // Written after the read, not before, so a request that fails partway
-  // through never claims a poll that did not actually happen.
   @file_put_contents(STAXX_EXEC_DIR.'/'.$id.'/hb', (string)time());
 
-  return ['text' => $chunk, 'offset' => $newOffset, 'alive' => staxx_exec_alive($id)];
+  if (!file_exists('/var/tmp/staxx-'.$id.'.sock')) return false;
+
+  $pid = (int)trim((string)@file_get_contents(STAXX_EXEC_DIR.'/'.$id.'/pid'));
+  if ($pid <= 0 || !is_dir('/proc/'.$pid)) return false;
+
+  $cmdline = str_replace("\0", ' ', (string)@file_get_contents('/proc/'.$pid.'/cmdline'));
+  return strpos($cmdline, 'ttyd') !== false && strpos($cmdline, 'staxx-'.$id.'.sock') !== false;
 }
 
 /**
  * Kill the session named by $id, if its pid file names a process that is
- * still plausibly ours — the same pid-reuse defence staxx_log_kill() uses,
- * checked here against "script", the one program every session this
- * function ever started is running inside its detached shell.
+ * still plausibly ours — checked against both "ttyd" and this session's own
+ * socket path, never against "ttyd" alone, so this can never reach out and
+ * kill Unraid's own Console terminal, which is also a ttyd process, just
+ * one listening on a different socket.
  */
 function staxx_exec_kill(string $id): void {
-  $pid = (int)trim((string)@file_get_contents(STAXX_EXEC_DIR.'/'.$id.'/pid'));
-  if ($pid <= 0 || !is_dir('/proc/'.$pid)) return;
-
-  $cmdline = str_replace("\0", ' ', (string)@file_get_contents('/proc/'.$pid.'/cmdline'));
-  if (strpos($cmdline, 'script') === false) return;
-
-  // setsid made this pid the leader of its own process group when the
-  // session started, so signalling the NEGATIVE pid reaches the whole
-  // group — the shell, script, and docker exec itself — not just this one
-  // process.
-  @exec('kill -TERM -'.$pid.' 2>/dev/null');
+  $sock = 'staxx-'.$id.'.sock';
+  $pid  = (int)trim((string)@file_get_contents(STAXX_EXEC_DIR.'/'.$id.'/pid'));
+  if ($pid > 0 && is_dir('/proc/'.$pid)) {
+    $cmdline = str_replace("\0", ' ', (string)@file_get_contents('/proc/'.$pid.'/cmdline'));
+    if (strpos($cmdline, 'ttyd') !== false && strpos($cmdline, $sock) !== false) {
+      @exec('kill -TERM '.$pid.' 2>/dev/null');
+    }
+  }
+  @unlink('/var/tmp/'.$sock);
 }
 
 /**
  * Stop one session outright — the editor closed, or the container tab
  * switched away and its shell is being ended for good, not merely left to
- * time out. Kills the process group if it is still going, then removes the
- * whole session directory so staxx_exec_reap() has nothing left to find.
+ * time out. Kills ttyd if it is still going and removes its socket, then
+ * removes the whole session directory so staxx_exec_reap() has nothing left
+ * to find.
  */
 function staxx_exec_stop(string $id): void {
   if (!preg_match('/^[0-9a-f]{16}$/', $id)) return;
@@ -6286,6 +6956,169 @@ function staxx_cfile_cp_out_cmd(string $container, string $path, string $hostTem
 function staxx_cfile_cp_in_cmd(string $container, string $hostTemp, string $path): string {
   return escapeshellarg(staxx_docker_bin()).' cp -- '
        . escapeshellarg($hostTemp).' '.escapeshellarg($container.':'.$path);
+}
+
+/* ============================================================= PLAN_108 health trial ===
+ *
+ * Working out whether a health check CAN be offered, never applying one —
+ * that stays entirely a compose-file edit through the existing save route.
+ * Both functions below take an already-resolved container name (the same
+ * kind staxx_cfile_container() hands back, never a name typed by the
+ * browser), and both share one short timeout so a hung candidate can never
+ * hold a PHP worker open.
+ */
+
+// Long enough for a client tool to open a real connection and answer, short
+// enough that a person waiting on the chooser is never left staring at it.
+define('STAXX_HEALTH_TRIAL_TIMEOUT', 8);
+
+/** Docker's own name rule, checked before a name reaches a shell on top of
+ *  (not instead of) escapeshellarg() — the same belt-and-braces every other
+ *  exec helper in this section applies. */
+function staxx_health_valid_container(string $container): bool {
+  return $container !== '' && preg_match('/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/D', $container) === 1;
+}
+
+/**
+ * Which of curl and wget exist inside a running container — the two tools
+ * the web-ping source (PLAN_108 step 4) can reach for. One `docker exec`,
+ * `command -v` rather than `which`, because `which` is itself missing from
+ * plenty of minimal images.
+ *
+ * @return array{curl:bool, wget:bool}
+ */
+function staxx_health_tools(string $container, string &$why): array {
+  $why = '';
+  if (!staxx_health_valid_container($container)) { $why = 'That is not a valid container name.'; return []; }
+
+  // The trailing `exit 0` is load-bearing, and its absence was measured on a
+  // real container rather than reasoned about: a shell exits with the status
+  // of its LAST command, so a container without wget made the final
+  // `command -v` fail, short-circuit its `&&`, and hand back 127 — reported
+  // as "could not ask this container anything" for a probe that in fact ran
+  // perfectly and correctly found nothing. Since most images carry neither
+  // tool, that silently retired the web-ping source almost everywhere. The
+  // exit code here must say whether the QUESTION could be asked; what the
+  // answer was is read from the output.
+  $probe = 'command -v curl >/dev/null 2>&1 && echo CURL_YES; '
+         . 'command -v wget >/dev/null 2>&1 && echo WGET_YES; '
+         . 'exit 0';
+  $code = null;
+  $out = staxx_sh(
+    escapeshellarg(staxx_docker_bin()).' exec '.escapeshellarg($container).' sh -c '.escapeshellarg($probe),
+    5, $code
+  );
+  if ($code !== 0) { $why = 'Could not ask that container what tools it has inside it.'; return []; }
+
+  return [
+    'curl' => strpos($out, 'CURL_YES') !== false,
+    'wget' => strpos($out, 'WGET_YES') !== false,
+  ];
+}
+
+/**
+ * What a `docker exec` exit code says about whether a candidate check CAN
+ * run — '' for "it ran fine", a plain sentence otherwise. Split out as its
+ * own pure function purely so the exit-code judgement can be tested with a
+ * made-up number, the same reasoning staxx_parse_image_healthcheck() is
+ * split out for, rather than needing a real container to produce one.
+ */
+function staxx_health_trial_verdict(int $code): string {
+  if ($code === 0) return '';
+
+  if ($code === 127) {
+    return 'This image has nothing inside it to check with, so this check cannot be offered here.';
+  }
+
+  // 124 is `timeout`'s own "ran out of time"; 137 is what is left once the
+  // grace period (`timeout -k 2`) has to finish the job with SIGKILL.
+  if ($code === 124 || $code === 137) {
+    return 'That command did not answer in time, so this check cannot be offered here.';
+  }
+
+  return 'That command failed just now, so this check cannot be offered here. '
+       . 'The app may simply be busy at this moment, but the safe answer is not to offer a check that already failed once.';
+}
+
+/**
+ * Undo compose's own `$$` -> `$` substitution — the one compose would have
+ * done on the way from the YAML into the container. The trial runs the
+ * candidate directly through `docker exec`, with compose nowhere in the
+ * chain, so a recipe's `$$MYSQL_ROOT_PASSWORD` — written that way because
+ * that IS the correct compose syntax for a literal dollar — would otherwise
+ * reach the shell untouched, where the shell itself expands `$$` to its own
+ * process id rather than leaving a variable name for the database's own
+ * client to read. The command then fails for a reason that has nothing to
+ * do with whether the check itself is right, and the trial would report a
+ * perfectly good recipe as "failed just now" with no way to tell the two
+ * apart. Only the trial does this substitution — nowhere else in this file
+ * stands in for compose, so nowhere else should undo what compose does.
+ *
+ * str_replace() already pairs left to right, non-overlapping, which is the
+ * same rule compose's own substitution follows: "$$$$" (two pairs) becomes
+ * "$$", and a lone "$" with no partner is left exactly as it was.
+ */
+function staxx_health_collapse_dollars(string $s): string {
+  return str_replace('$$', '$', $s);
+}
+
+/**
+ * Run one CANDIDATE health-check command inside a running container, once,
+ * and judge only whether it CAN run there — this never decides whether the
+ * offer is a good idea, only whether the command has anything to execute.
+ *
+ * A refusal here always means "offer nothing", never "offer anyway" — see
+ * PLAN_108's own framing: a check that cannot run reports unhealthy for
+ * ever, which is worse than the blank box it would replace.
+ *
+ * One honest limit that cannot be designed around: a candidate can also
+ * fail here because the app genuinely is unhealthy at this exact moment,
+ * and this trial has no way to tell that apart from a command that cannot
+ * run at all. Both read as "offer nothing" on purpose — it is the safe
+ * direction, not a false negative worth chasing.
+ */
+function staxx_health_trial(string $container, $test, string &$why): bool {
+  $why = '';
+
+  $mode = is_array($test) ? (string)($test[0] ?? '') : '';
+  if (!is_array($test) || ($mode !== 'CMD' && $mode !== 'CMD-SHELL')) {
+    $why = 'That is not a health-check command StaXX understands.';
+    return false;
+  }
+
+  $args = array_slice($test, 1);
+  if ($args === []) {
+    $why = 'That health-check command has no command in it, so there is nothing to try.';
+    return false;
+  }
+  // Standing in for compose's own variable substitution — see
+  // staxx_health_collapse_dollars()'s own comment for why this has to
+  // happen here and nowhere else.
+  $args = array_map('staxx_health_collapse_dollars', $args);
+
+  if (!staxx_health_valid_container($container)) { $why = 'That is not a valid container name.'; return false; }
+
+  $running = trim(staxx_sh(
+    escapeshellarg(staxx_docker_bin()).' inspect -f '.escapeshellarg('{{.State.Running}}').' '.escapeshellarg($container),
+    5
+  ));
+  if ($running !== 'true') {
+    $why = 'That container is not running, so there is nothing to try a health check against.';
+    return false;
+  }
+
+  $inner = $mode === 'CMD-SHELL'
+    ? 'sh -c '.escapeshellarg((string)$args[0])
+    : implode(' ', array_map('escapeshellarg', $args));
+
+  $code = null;
+  staxx_sh(
+    escapeshellarg(staxx_docker_bin()).' exec '.escapeshellarg($container).' '.$inner,
+    STAXX_HEALTH_TRIAL_TIMEOUT, $code
+  );
+
+  $why = staxx_health_trial_verdict((int)$code);
+  return $why === '';
 }
 
 /**

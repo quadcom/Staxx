@@ -91,6 +91,26 @@ ok('deleting the override succeeds',
 ok('deleting the override drops it from the shelf, not just the store',
    !is_file($bootOverride));
 
+/* ------------------------------------------------------- .env file too -- */
+
+$env = "TAG=3.21\nSECRET=not-a-real-one\n";
+ok('writing a .env succeeds',
+   staxx_write_file($rel, '.env', $env, true, $note), $note);
+$bootEnv = $bootScratch.'/stacks/'.$rel.'/.env';
+ok('the .env is copied to the shelf too',
+   is_file($bootEnv) && file_get_contents($bootEnv) === $env);
+
+$env2 = "TAG=3.22\n";
+ok('rewriting the .env succeeds',
+   staxx_write_file($rel, '.env', $env2, true, $note), $note);
+ok('the shelf copy of the .env is overwritten, not left stale',
+   is_file($bootEnv) && file_get_contents($bootEnv) === $env2);
+
+ok('deleting the .env succeeds',
+   staxx_delete_file($rel, '.env', $note), $note);
+ok('deleting the .env drops it from the shelf, not just the store',
+   !is_file($bootEnv));
+
 /* --------------------------------------------------- symlinked compose -- */
 
 $linkRel = 'zzbc-link';
@@ -130,19 +150,24 @@ ok('its shelf copy exists', is_file($capABootFile));
 $mtimeBefore = @filemtime($capABootFile);
 $contentBefore = @file_get_contents($capABootFile);
 
-// The second stack saves fine in the store — the store is a real, case-
-// sensitive filesystem — but its OWN boot copy is expected to be refused.
-// Deliberately DIFFERENT content from the first stack. With identical bytes in
+// The store itself now refuses a second stack whose name differs only in
+// case (PLAN_118: two names Docker would run as one project), so the second
+// stack is put on disk by hand here — the way one created outside StaXX, or
+// before that guard existed, would arrive — and the shelf copy is asked for
+// directly. Its boot copy is expected to be refused. Deliberately DIFFERENT
+// content from the first stack. With identical bytes in
 // both, an overwrite of the first stack's copy is invisible to the "untouched"
 // assertion below, because the file compares equal by coincidence. Sabotaging
 // the clash refusal is what exposed that: with the refusal gone, only the "is it
 // reported" case went red, and the two cases that actually prove nothing was
 // lost stayed green.
 $composeB = "services:\n  b:\n    image: alpine:3.21\n";
-ok('the second, differently-cased stack also saves in the store',
-   staxx_save_stack($capB, $composeB, $errB, $noteB), $errB);
-ok('...but its boot copy is reported as a case clash, naming both',
-   strpos($noteB, $capA) !== false || strpos($noteB, 'collides') !== false, $noteB);
+@mkdir($root.'/'.$capB, 0755, true);
+ok('the second, differently-cased stack can sit in the store, placed by hand',
+   file_put_contents($root.'/'.$capB.'/compose.yaml', $composeB) !== false);
+ok('...but its boot copy is refused as a case clash, naming both',
+   !staxx_boot_copy_stack($capB, $noteB)
+   && (strpos($noteB, $capA) !== false || strpos($noteB, 'collides') !== false), $noteB);
 // is_dir() on the second stack's own name would report true anyway — the
 // flash drive folds the two names to the same lookup — so what actually
 // proves no second entry was written is the directory listing itself

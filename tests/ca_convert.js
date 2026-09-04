@@ -252,7 +252,7 @@ var FIXTURES = [
 /* =========================================================================
  * A. Round-trip and form-readability, every fixture
  *
- * doc.sealed is not required to be empty. Two reasons are expected and
+ * doc.sealed is not required to be empty. Three reasons are expected and
  * harmless, not bugs:
  *
  *   block-scalar  the Overview mapping the spec calls for is written as a
@@ -269,11 +269,35 @@ var FIXTURES = [
  *                 beside `seal(ctx, at, at + 1, 'escape')`. The file still
  *                 round-trips and the form still builds; only that one
  *                 field shows as locked.
+ *   flow          a template carrying --health-cmd writes healthcheck.test
+ *                 as `["CMD-SHELL", "…"]` — the one-line flow form
+ *                 compose-model.js's own readTest()/writeTest() read and
+ *                 write, and the same shape most real files already use
+ *                 (see that file's own comment beside "healthcheck.test:
+ *                 read as {mode, command}"). Sealed on principle like any
+ *                 flow collection; the form still edits it via its two
+ *                 split fields.
  *
  * What must never appear is any OTHER reason — an anchor, alias, merge key
- * or flow collection would mean this converter wrote something the form
+ * or a flow collection anywhere else would mean this converter wrote something the form
  * cannot edit at all, which is the actual bug this guards against.
  * ========================================================================= */
+
+// A sealed range is only "bad" — an anchor, alias, merge key, or a flow
+// collection this converter had no business writing — once block-scalar,
+// escape and the one legitimate flow shape (healthcheck.test) are excluded.
+// A seal's start/end are LINE indices (0-based, half-open), not character
+// offsets, so the exempted text is read off the split lines, not the raw
+// string — and scoped to that exact shape, not just the 'flow' reason, so a
+// flow collection turning up anywhere else still fails loudly.
+function isBadSeal(s, yaml) {
+  if (s.reason === 'block-scalar' || s.reason === 'escape') return false;
+  if (s.reason === 'flow') {
+    var line = yaml.split('\n')[s.start] || '';
+    if (/test:\s*\[\s*"(CMD-SHELL|CMD|NONE)/.test(line)) return false;
+  }
+  return true;
+}
 
 console.log('\nA. Round-trip and readability');
 FIXTURES.forEach(function (pair) {
@@ -286,7 +310,7 @@ FIXTURES.forEach(function (pair) {
   ok(label + ': ends in exactly one newline', /[^\n]\n$/.test(r.yaml) || r.yaml === '\n');
   var form = Y.buildForm(doc);
   ok(label + ': buildForm().ok is true', form.ok === true);
-  var badSeals = doc.sealed.filter(function (s) { return s.reason !== 'block-scalar' && s.reason !== 'escape'; });
+  var badSeals = doc.sealed.filter(function (s) { return isBadSeal(s, r.yaml); });
   ok(label + ': nothing sealed except the overview block and escaped values', badSeals.length === 0, JSON.stringify(badSeals));
 });
 
@@ -330,7 +354,14 @@ ok('the empty-valued /config Path falls back to its Default', embyY.indexOf('/mn
 ok('a Path Mode of plain rw gets no :suffix', embyY.indexOf('/mnt/user:/media') >= 0 && embyY.indexOf('/mnt/user:/media:rw') === -1);
 ok('the yes|no choice-list default picks the first option', embyY.indexOf('ENABLE_HEALTHCHECK: "yes"') >= 0);
 ok('an empty Variable with an empty Default is still emitted, empty', embyY.indexOf('HEALTHCHECK_COMMAND: ""') >= 0);
-ok('Icon becomes stack x-unraid.icon', embyY.indexOf('icon: https://raw.githubusercontent.com/binhex/templates') >= 0);
+// PLAN_105: a stack's picture is derived from its services, never stated —
+// the catalogue's Icon lands in the SERVICE's x-unraid block, not the
+// stack's, even though a converted file is always single-service.
+ok('Icon becomes service x-unraid.icon', embyY.indexOf('      icon: https://raw.githubusercontent.com/binhex/templates') >= 0);
+// Stack-level keys sit at 2-space indent; only a service's own x-unraid
+// block (6-space indent) may carry icon, so a bare "  icon:" line would mean
+// one leaked back onto the stack.
+ok('no stack-level icon is ever written', embyY.indexOf('\n  icon:') === -1);
 ok('CategoryList[0] MediaApp-Video normalises to MediaApp:Video', embyY.indexOf('category: MediaApp:Video') >= 0);
 ok('Project is carried through unchanged, typo and all', embyY.indexOf('project: https://https://emby.media/') >= 0);
 ok('Support becomes stack x-unraid.support', embyY.indexOf('support: https://forums.unraid.net') >= 0);
@@ -445,10 +476,19 @@ ok('a repeated --log-opt collects into a logging.options list, not one overwriti
    liquidY.indexOf('max-size: "2m"') >= 0 && liquidY.indexOf('max-file: "1"') >= 0);
 ok('logging: sits among the block keys, after the per-setting blocks', liquidY.indexOf('logging:') > liquidY.indexOf('environment:') || liquidY.indexOf('environment:') === -1);
 
+// wger-redis carries a full set of --health-* flags — real ExtraParams from
+// the live feed — so this is also the "complete healthcheck: block" case:
+// PLAN_108 turns these from a "here's the compose equivalent" note into an
+// actual block instead of a warning.
 var wgerR = CA.convert(WGER_REDIS);
-['--health-cmd', '--health-interval', '--health-retries', '--health-start-period', '--health-timeout'].forEach(function (flag) {
-  ok('unmapped flag ' + flag + ' is reported in warnings', wgerR.warnings.some(function (w) { return w.indexOf(flag) >= 0; }));
-});
+ok('a full set of --health-* flags produces a healthcheck: block, not warnings',
+   !wgerR.warnings.some(function (w) { return /--health-/.test(w); }));
+ok('--health-cmd becomes test: ["CMD-SHELL", ...]', wgerY.indexOf('test: ["CMD-SHELL", "redis-cli ping"]') >= 0);
+ok('--health-interval becomes interval:', wgerY.indexOf('interval: 10s') >= 0);
+ok('--health-timeout becomes timeout:', wgerY.indexOf('timeout: 5s') >= 0);
+ok('--health-retries becomes retries:', wgerY.indexOf('retries: 5') >= 0);
+ok('--health-start-period becomes start_period:', wgerY.indexOf('start_period: 30s') >= 0);
+ok('healthcheck: sits after labels/before the cap_add-style keys', wgerY.indexOf('healthcheck:') > wgerY.indexOf('image:'));
 ok('PostArgs becomes command:', wgerY.indexOf('command: redis-server /usr/local/etc/redis/redis.conf') >= 0);
 
 var elasticR = CA.convert(ELASTICSEARCH);
@@ -517,6 +557,9 @@ ok('binhex-emby also carries no notes — every value it needed came from its ow
 ok('an app with no warnings has no heading and no stray comment block',
    embyNoWarn.yaml.indexOf('Could not be translated automatically') === -1);
 ok('a clean conversion has no comment block at all', !/^# Filled in for you/m.test(embyNoWarn.yaml));
+ok('a clean conversion does not open the file with a stray bare "#" line', embyNoWarn.yaml.indexOf('#') !== 0);
+ok('a warnings-only conversion opens straight on its own heading, no leading bare "#"',
+   gpuR.yaml.indexOf('# Could not be translated automatically:') === 0);
 
 /* =========================================================================
  * H2. Uppercase repository-path note
@@ -597,6 +640,8 @@ ok('...and exactly one note', pathOnlyR.notes.length === 1);
 ok('its comment block carries only the "Filled in for you" heading',
    pathOnlyR.yaml.indexOf('# Filled in for you') >= 0 &&
    pathOnlyR.yaml.indexOf('# Could not be translated automatically:') === -1);
+ok('a notes-only conversion opens straight on its own heading, no leading bare "#"',
+   pathOnlyR.yaml.indexOf('# Filled in for you') === 0);
 ok('omitting opts falls back to /mnt/user/appdata/',
    pathOnlyR.yaml.indexOf('/mnt/user/appdata/path-only-test/config') >= 0);
 
@@ -766,14 +811,14 @@ if (fs.existsSync(FEED)) {
       if (Y.serialise(doc) !== r.yaml) roundtripFail++;
       var form = Y.buildForm(doc);
       if (!form.ok) formFail++;
-      if (doc.sealed.some(function (s) { return s.reason !== 'block-scalar' && s.reason !== 'escape'; })) badSealFail++;
+      if (doc.sealed.some(function (s) { return isBadSeal(s, r.yaml); })) badSealFail++;
     } catch (e) {
       thrown++;
     }
   });
   ok('every one of ' + total + ' feed apps round-trips byte for byte', roundtripFail === 0, roundtripFail + ' failed');
   ok('every one of ' + total + ' feed apps builds a readable form', formFail === 0, formFail + ' failed');
-  ok('none of ' + total + ' feed apps seal anything but the overview block or an escaped value', badSealFail === 0, badSealFail + ' failed');
+  ok('none of ' + total + ' feed apps seal anything but the overview block, an escaped value, or a translated healthcheck', badSealFail === 0, badSealFail + ' failed');
   ok('convert() never throws on any of ' + total + ' feed apps', thrown === 0, thrown + ' threw');
 } else {
   console.log('  (skipped — feed not found at ' + FEED + ')');
@@ -1032,19 +1077,48 @@ ok('buildForm().ok is true for the reordered output', kForm.ok === true);
  * passes 'template' to get a first line that is actually true.
  * ========================================================================= */
 
-console.log('\nL. opts.origin — the provenance line');
+console.log('\nL. opts.origin — the imported: stamp');
 
-var CA_LINE = '# Converted from the Community Applications template for binhex-emby.';
-var TEMPLATE_LINE = '# Converted from the Unraid template for binhex-emby.';
+var CA_FROM = '  from: community-applications';
+var TEMPLATE_FROM = '  from: unraid-template';
+var DATE_SHAPE = /\n {4}on: \d{4}-\d{2}-\d{2}\n/;
 
-ok('no opts.origin produces the Community Applications wording',
-   CA.convert(EMBY).yaml.indexOf(CA_LINE) === 0);
-ok('opts.origin: "ca" produces the same Community Applications wording',
-   CA.convert(EMBY, { origin: 'ca' }).yaml.indexOf(CA_LINE) === 0);
-ok('opts.origin: "template" produces the Unraid template wording',
-   CA.convert(EMBY, { origin: 'template' }).yaml.indexOf(TEMPLATE_LINE) === 0);
-ok('an unrecognised opts.origin falls back to the Community Applications wording',
-   CA.convert(EMBY, { origin: 'bogus' }).yaml.indexOf(CA_LINE) === 0);
+ok('no opts.origin stamps community-applications',
+   CA.convert(EMBY).yaml.indexOf(CA_FROM) >= 0);
+ok('opts.origin: "ca" stamps the same community-applications value',
+   CA.convert(EMBY, { origin: 'ca' }).yaml.indexOf(CA_FROM) >= 0);
+ok('opts.origin: "template" stamps unraid-template',
+   CA.convert(EMBY, { origin: 'template' }).yaml.indexOf(TEMPLATE_FROM) >= 0);
+ok('an unrecognised opts.origin falls back to community-applications',
+   CA.convert(EMBY, { origin: 'bogus' }).yaml.indexOf(CA_FROM) >= 0);
+ok('the stamp carries an on: date shaped YYYY-MM-DD',
+   DATE_SHAPE.test(CA.convert(EMBY).yaml));
+ok('the file no longer opens with a "Converted from" comment line',
+   CA.convert(EMBY).yaml.indexOf('# Converted from') === -1);
+
+// PLAN_105: the catalogue's icon lands on the service for either origin —
+// 'ca' and 'template' both convert a single-service file, and the picture
+// is the same statement wherever it came from.
+ok('the icon lands on the service under opts.origin: "ca"',
+   CA.convert(EMBY, { origin: 'ca' }).yaml.indexOf('      icon: https://raw.githubusercontent.com/binhex/templates') >= 0);
+ok('the icon lands on the service under opts.origin: "template"',
+   CA.convert(EMBY, { origin: 'template' }).yaml.indexOf('      icon: https://raw.githubusercontent.com/binhex/templates') >= 0);
+ok('the file no longer carries the standing "ordinary compose file" sentences',
+   CA.convert(EMBY).yaml.indexOf('This is an ordinary compose file') === -1);
+
+// The blank line under the header used to be unconditional. With the header
+// gone, a conversion that reports nothing has nothing to separate from, and
+// pushing it anyway opened every clean file on an empty line.
+var CLEAN = CA.convert({ Name: 'demo', Repository: 'nginx:latest', Network: 'bridge' });
+ok('a conversion with nothing to report opens straight on x-unraid:',
+   CLEAN.warnings.length === 0 && CLEAN.notes.length === 0 &&
+   CLEAN.yaml.split('\n')[0] === 'x-unraid:');
+ok('a conversion that does report something keeps its blank line above x-unraid:',
+   (function () {
+     var lines = CA.convert({ Name: 'demo', Network: 'bridge' }).yaml.split('\n');
+     var at = lines.indexOf('x-unraid:');
+     return at > 0 && lines[at - 1] === '' && lines[0].charAt(0) === '#';
+   })());
 
 /* =========================================================================
  * M. A Path setting whose Target is not a container path at all
@@ -1123,6 +1197,251 @@ var capsNameR = CA.convert({ Name: 'Excalidraw', Repository: 'example/excalidraw
 ok('a Name with capitals keeps them in container_name', capsNameR.yaml.indexOf('container_name: Excalidraw\n') >= 0);
 ok('...while the service key stays lowercase', capsNameR.yaml.indexOf('  excalidraw:\n') >= 0);
 ok('...and the stack name (used for the appdata placeholder etc.) stays lowercase too', capsNameR.name === 'excalidraw');
+
+/* =========================================================================
+ * O. Dollar signs — Unraid does no substitution, so every "$" in a
+ * template value is literal and must be doubled to survive becoming a
+ * compose file (PLAN_106 Phase 1).
+ * ========================================================================= */
+
+console.log('\nO. Dollar signs are doubled at the four write sites, nowhere else');
+
+// Sites 1 (Type="Variable") and 2 (Type="Label"), with the real shapes
+// found on Adrian's own server.
+var DOLLAR_CONFIG = {
+  Name: 'dollar-config-test', Repository: 'example/dollar-config-test', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'ADMIN_TOKEN', Target: 'ADMIN_TOKEN', Default: '', Description: '',
+        Type: 'Variable', Required: 'false', Mask: 'false' }, value: '$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA' },
+    { '@attributes': { Name: 'SMTP_PASSWORD', Target: 'SMTP_PASSWORD', Default: '', Description: '',
+        Type: 'Variable', Required: 'false', Mask: 'false' }, value: 'ne$zF@7q' },
+    { '@attributes': { Name: 'traefik.enable', Target: 'traefik.enable', Default: '', Description: '',
+        Type: 'Label', Required: 'false', Mask: 'false' }, value: 'ab$1md' }
+  ]
+};
+var dcR = CA.convert(DOLLAR_CONFIG);
+ok('Type="Variable" doubles the vaultwarden-shaped hash',
+   dcR.yaml.indexOf('ADMIN_TOKEN: "$$argon2id$$v=19$$m=65536,t=3,p=4$$c2FsdA$$aGFzaA"') >= 0);
+ok('Type="Variable" doubles a "$" followed by a letter mid-value',
+   dcR.yaml.indexOf('SMTP_PASSWORD: "ne$$zF@7q"') >= 0);
+ok('Type="Label" doubles a "$" followed by a digit',
+   dcR.yaml.indexOf('traefik.enable: "ab$$1md"') >= 0);
+ok('dollarsEscaped names every touched key with its own dollar count, nothing else',
+   JSON.stringify(dcR.dollarsEscaped) === JSON.stringify([
+     { key: 'ADMIN_TOKEN', count: 5 }, { key: 'SMTP_PASSWORD', count: 1 }, { key: 'traefik.enable', count: 1 }
+   ]), JSON.stringify(dcR.dollarsEscaped));
+
+// Sites 3 (-e/--env, --label) and 4 (--log-opt), off ExtraParams.
+var DOLLAR_EXTRA = {
+  Name: 'dollar-extra-test', Repository: 'example/dollar-extra-test', Network: 'bridge',
+  ExtraParams: '-e FOO=x$*b2 --label bar=a$&b --log-opt tag=$argon2id$v=19'
+};
+var deR = CA.convert(DOLLAR_EXTRA);
+ok('-e merges into environment: with its "$*" doubled', deR.yaml.indexOf('FOO: "x$$*b2"') >= 0);
+ok('--label merges into labels: with its "$&" doubled', deR.yaml.indexOf('bar: "a$$&b"') >= 0);
+ok('--log-opt doubles the dollars in its own option value', deR.yaml.indexOf('tag: "$$argon2id$$v=19"') >= 0);
+ok('dollarsEscaped covers all three ExtraParams sites and nothing more',
+   JSON.stringify(deR.dollarsEscaped) === JSON.stringify([
+     { key: 'FOO', count: 1 }, { key: 'bar', count: 1 }, { key: 'tag', count: 2 }
+   ]), JSON.stringify(deR.dollarsEscaped));
+
+// A port, a volume, a device and the image name are never touched — a "$"
+// there is already wrong in a way doubling cannot fix (see the plan).
+var DOLLAR_UNESCAPED = {
+  Name: 'dollar-unescaped-test', Repository: 'example/img$1', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'Port', Target: '8080', Default: '', Mode: 'tcp', Description: '',
+        Type: 'Port', Required: 'false', Mask: 'false' }, value: '80$0' },
+    { '@attributes': { Name: 'Path', Target: '/data', Default: '', Mode: 'rw', Description: '',
+        Type: 'Path', Required: 'false', Mask: 'false' }, value: '/mnt/user/app$data' },
+    { '@attributes': { Name: 'Dev', Target: '/dev/x', Default: '', Description: '',
+        Type: 'Device', Required: 'false', Mask: 'false' }, value: '/dev/x$1' }
+  ]
+};
+var duR = CA.convert(DOLLAR_UNESCAPED);
+ok('the image name keeps a single "$"', duR.yaml.indexOf('image: example/img$1\n') >= 0);
+ok('a Port value keeps a single "$"', duR.yaml.indexOf('- "80$0:8080"') >= 0);
+ok('a Path (volume) value keeps a single "$"', duR.yaml.indexOf('/mnt/user/app$data:/data') >= 0);
+ok('a Device value keeps a single "$"', duR.yaml.indexOf('/dev/x$1') >= 0);
+ok('none of those four sites are reported in dollarsEscaped', duR.dollarsEscaped.length === 0);
+
+// A template with no dollar anywhere is byte-identical to before this
+// change — escaping a value that holds no "$" is a no-op everywhere.
+function todayStampForTest() {
+  var d = new Date();
+  function p2(n) { return (n < 10 ? '0' : '') + n; }
+  return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+}
+var NO_DOLLAR = {
+  Name: 'no-dollar-test', Repository: 'example/no-dollar-test', Network: 'bridge',
+  Config: [
+    { '@attributes': { Name: 'PASS', Target: 'PASS', Default: '', Description: '',
+        Type: 'Variable', Required: 'false', Mask: 'false' }, value: 'plainvalue' },
+    { '@attributes': { Name: 'LBL', Target: 'lbl.key', Default: '', Description: '',
+        Type: 'Label', Required: 'false', Mask: 'false' }, value: 'plainlabel' }
+  ]
+};
+var ndR = CA.convert(NO_DOLLAR);
+var expectedNoDollarYaml =
+  'x-unraid:\n' +
+  '  version: 1\n' +
+  '  imported:\n' +
+  '    from: community-applications\n' +
+  '    on: ' + todayStampForTest() + '\n' +
+  '\n' +
+  'services:\n' +
+  '  no-dollar-test:\n' +
+  '    image: example/no-dollar-test\n' +
+  '    container_name: no-dollar-test\n' +
+  '    restart: unless-stopped\n' +
+  '    networks:\n' +
+  '      - default\n' +
+  '    environment:\n' +
+  '      PASS: "plainvalue"\n' +
+  '    labels:\n' +
+  '      lbl.key: "plainlabel"\n';
+ok('a template with no dollar anywhere produces byte-identical output',
+   ndR.yaml === expectedNoDollarYaml, ndR.yaml);
+ok('...and reports no escaping at all', ndR.dollarsEscaped.length === 0);
+
+/* =========================================================================
+ * P. yamlAsWritten — the template's own wording, before any dollar sign was
+ * doubled, run through the same conversion a second time rather than
+ * reversed out of the escaped text (PLAN_106 Phase 5).
+ * ========================================================================= */
+
+console.log('\nP. yamlAsWritten carries the template\'s own dollar-sign wording');
+
+ok('yamlAsWritten holds the single-dollar wording for the hash',
+   dcR.yamlAsWritten.indexOf('ADMIN_TOKEN: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA"') >= 0,
+   dcR.yamlAsWritten);
+ok('...and for the mid-value dollar',
+   dcR.yamlAsWritten.indexOf('SMTP_PASSWORD: "ne$zF@7q"') >= 0);
+ok('...and for the label',
+   dcR.yamlAsWritten.indexOf('traefik.enable: "ab$1md"') >= 0);
+ok('yamlAsWritten is also produced for the ExtraParams sites',
+   deR.yamlAsWritten.indexOf('FOO: "x$*b2"') >= 0 &&
+   deR.yamlAsWritten.indexOf('bar: "a$&b"') >= 0 &&
+   deR.yamlAsWritten.indexOf('tag: "$argon2id$v=19"') >= 0, deR.yamlAsWritten);
+
+ok('yaml itself is unchanged from today — still doubled',
+   dcR.yaml.indexOf('ADMIN_TOKEN: "$$argon2id$$v=19$$m=65536,t=3,p=4$$c2FsdA$$aGFzaA"') >= 0);
+
+ok('the escaped and as-is texts differ only in their dollar signs',
+   dcR.yaml.replace(/\$\$/g, '$') === dcR.yamlAsWritten, dcR.yamlAsWritten);
+ok('...same for the ExtraParams-derived pair',
+   deR.yaml.replace(/\$\$/g, '$') === deR.yamlAsWritten, deR.yamlAsWritten);
+
+ok('yamlAsWritten is absent when nothing was escaped',
+   ndR.yamlAsWritten == null, String(ndR.yamlAsWritten));
+ok('the untouched Port/Path/Device/image sites report no yamlAsWritten difference beyond the image',
+   duR.yamlAsWritten == null, String(duR.yamlAsWritten));
+
+/* =========================================================================
+ * Q. Health-check translation (PLAN_108, "a fifth source, nearly free") —
+ * --health-* / --no-healthcheck used to be explained away with a note
+ * naming compose's equivalent; they now become a real healthcheck: block.
+ * ========================================================================= */
+
+console.log('\nQ. Health-check translation');
+
+// --health-cmd alone: the other four keys are simply absent, not written
+// with empty/default values.
+var healthCmdAloneR = CA.convert({
+  Name: 'health-cmd-alone', Repository: 'example/health-cmd-alone',
+  ExtraParams: '--health-cmd="curl -f http://localhost/"'
+});
+ok('--health-cmd alone produces a healthcheck: block with just test:',
+   healthCmdAloneR.yaml.indexOf('    healthcheck:\n      test: ["CMD-SHELL", "curl -f http://localhost/"]\n') >= 0,
+   healthCmdAloneR.yaml);
+['interval:', 'timeout:', 'retries:', 'start_period:'].forEach(function (k) {
+  ok('...and no ' + k + ' key is written', healthCmdAloneR.yaml.indexOf('      ' + k) === -1);
+});
+
+// A timing flag with no --health-cmd configures nothing on its own — no
+// block at all, and the flag keeps the same explanatory note it always had.
+var orphanIntervalR = CA.convert({
+  Name: 'orphan-interval', Repository: 'example/orphan-interval',
+  ExtraParams: '--health-interval=30s'
+});
+ok('an orphaned --health-interval (no --health-cmd) emits no healthcheck: block',
+   orphanIntervalR.yaml.indexOf('\n    healthcheck:\n') === -1, orphanIntervalR.yaml);
+ok('...and keeps its "could not be translated" note',
+   orphanIntervalR.warnings.some(function (w) { return w.indexOf('--health-interval=30s') >= 0 && w.indexOf('interval key') >= 0; }));
+
+// --no-healthcheck alone.
+var noHealthAloneR = CA.convert({
+  Name: 'no-health-alone', Repository: 'example/no-health-alone',
+  ExtraParams: '--no-healthcheck'
+});
+ok('--no-healthcheck alone becomes healthcheck: disable: true',
+   noHealthAloneR.yaml.indexOf('    healthcheck:\n      disable: true\n') >= 0, noHealthAloneR.yaml);
+ok('...with nothing dropped to mention, no note is added',
+   !noHealthAloneR.notes.some(function (w) { return /no-healthcheck/.test(w); }));
+
+// --no-healthcheck alongside a command — disable wins, and it says so.
+var noHealthWithCmdR = CA.convert({
+  Name: 'no-health-with-cmd', Repository: 'example/no-health-with-cmd',
+  ExtraParams: '--no-healthcheck --health-cmd="curl -f http://localhost/"'
+});
+ok('--no-healthcheck beats a --health-cmd present alongside it',
+   noHealthWithCmdR.yaml.indexOf('    healthcheck:\n      disable: true\n') >= 0);
+ok('...and the check itself is never written', noHealthWithCmdR.yaml.indexOf('test:') === -1);
+ok('...and a note names --health-cmd as the thing that was not applied',
+   noHealthWithCmdR.notes.some(function (w) { return /--health-cmd/.test(w) && /not applied/.test(w); }));
+
+// A malformed duration keeps its own note and is left out of the block —
+// the check itself (built from a valid --health-cmd) still gets written.
+var badDurationR = CA.convert({
+  Name: 'bad-duration', Repository: 'example/bad-duration',
+  ExtraParams: '--health-cmd="curl -f http://localhost/" --health-interval=notaduration'
+});
+ok('a malformed duration is left out of the block', badDurationR.yaml.indexOf('\n      interval:') === -1);
+ok('...the check itself is still written', badDurationR.yaml.indexOf('test: ["CMD-SHELL"') >= 0);
+ok('...and a warning names the bad value',
+   badDurationR.warnings.some(function (w) { return w.indexOf('--health-interval=notaduration') >= 0; }));
+
+// A malformed retries count, same shape.
+var badRetriesR = CA.convert({
+  Name: 'bad-retries', Repository: 'example/bad-retries',
+  ExtraParams: '--health-cmd="curl -f http://localhost/" --health-retries=five'
+});
+ok('a malformed retries count is left out of the block', badRetriesR.yaml.indexOf('\n      retries:') === -1, badRetriesR.yaml);
+ok('...and a warning names the bad value',
+   badRetriesR.warnings.some(function (w) { return w.indexOf('--health-retries=five') >= 0; }));
+
+// A literal "$" in the command must reach the file doubled — the same rule
+// every other ExtraParams-derived value follows (see section O).
+var healthDollarR = CA.convert({
+  Name: 'health-dollar', Repository: 'example/health-dollar',
+  ExtraParams: '--health-cmd="curl -f http://localhost/$VAR || exit 1"'
+});
+ok('a "$" inside --health-cmd is doubled in the written test: line',
+   healthDollarR.yaml.indexOf('test: ["CMD-SHELL", "curl -f http://localhost/$$VAR || exit 1"]') >= 0,
+   healthDollarR.yaml);
+ok('...and reported in dollarsEscaped under the check',
+   healthDollarR.dollarsEscaped.some(function (d) { return d.key === 'healthcheck.test' && d.count === 1; }));
+
+// A quoted, space-separated command must survive tokenising as one value,
+// not be split on its own internal spaces.
+var healthQuotedR = CA.convert({
+  Name: 'health-quoted', Repository: 'example/health-quoted',
+  ExtraParams: '--health-cmd "curl -f http://localhost/ || exit 1"'
+});
+ok('a quoted --health-cmd with spaces survives as one value',
+   healthQuotedR.yaml.indexOf('test: ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]') >= 0,
+   healthQuotedR.yaml);
+
+// The converted file still parses and its healthcheck round-trips exactly —
+// the same guarantee section A already checks for wger-redis, run here
+// explicitly against a file this section built for itself.
+var healthDoc = Y.parse(healthCmdAloneR.yaml);
+ok('a healthcheck-carrying file parses with nothing badly sealed',
+   healthDoc.sealed.filter(function (s) { return isBadSeal(s, healthCmdAloneR.yaml); }).length === 0,
+   JSON.stringify(healthDoc.sealed));
+ok('...and serialises back byte for byte', Y.serialise(healthDoc) === healthCmdAloneR.yaml);
+var healthForm = Y.buildForm(healthDoc);
+ok('...and the form still builds', healthForm.ok === true);
 
 /* ---- summary ------------------------------------------------------------ */
 

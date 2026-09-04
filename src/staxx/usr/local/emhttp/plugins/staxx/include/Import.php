@@ -690,17 +690,21 @@ function staxx_import_projects(): array {
                . ' — these will not be copied across.';
     }
 
-    // Whatever the compose file itself already says about its own icon —
-    // same 'x-unraid: icon:' key a stack's own tile reads — falling back to
-    // whichever service names an image first, so an unstarted project still
-    // gets a real logo instead of initials.
-    $meta = $file !== '' ? staxx_compose_meta($file) : ['x' => [], 'services' => []];
-    $image = '';
+    // A stack has no icon of its own (PLAN_105) — read the first service
+    // that names an image, and use its own stated icon, so an unstarted
+    // project still gets a real logo instead of initials the same way the
+    // grid resolves one.
+    $meta = $file !== '' ? staxx_compose_meta($file) : ['services' => []];
+    $svcIcon = '';
+    $image   = '';
     foreach ($meta['services'] as $svc) {
-      if (($svc['image'] ?? '') !== '') { $image = $svc['image']; break; }
+      if (($svc['image'] ?? '') !== '') {
+        $image   = $svc['image'];
+        $svcIcon = (string)($svc['x']['icon'] ?? '');
+        break;
+      }
     }
-    $icon = staxx_import_icon((string)($meta['x']['icon'] ?? ''),
-                                 $file !== '' ? dirname($file) : '', '', $image);
+    $icon = staxx_import_icon($svcIcon, $file !== '' ? dirname($file) : '', '', $image);
 
     $out[] = [
       'source'   => 'project',
@@ -1155,6 +1159,15 @@ function staxx_import_prepare_dir(string $rel, string &$error): string {
     return '';
   }
 
+  // PLAN_118 — every import route funnels through here, so this is where
+  // Community Applications, an image import and a Compose Manager takeover
+  // all get refused rather than quietly running a second stack as the same
+  // compose project.
+  if (!staxx_name_free(staxx_path_leaf($rel), '', $clashError)) {
+    $error = $clashError;
+    return '';
+  }
+
   if (!@mkdir($dir, 0755, true)) {
     $error = 'Could not create '.$dir;
     return '';
@@ -1188,8 +1201,20 @@ function staxx_import_prepare_dir(string $rel, string &$error): string {
  * folder are removed, so a refused import leaves nothing behind. The folder
  * removed is always the one this call just made — the refusal above already
  * guarantees nothing existed at $rel beforehand.
+ *
+ * $asIs, when given and different from $yaml, is the template's own wording
+ * before StaXX doubled any dollar sign for compose. It is saved FIRST —
+ * staxx_save_stack() captures what it has just written as well as what it is
+ * about to overwrite, so this alone puts the as-is text into the stack's
+ * history as its own version — and then $yaml is saved over it as an
+ * ordinary second save, which does exactly the same for the escaped text.
+ * Either save on its own would have been enough to keep a copy; doing both
+ * as real saves, rather than trying to reverse the doubling after the fact,
+ * is what leaves the escaped text as the file that is actually running and
+ * the as-is text sitting in history for anyone who wants to see what the
+ * template originally said.
  */
-function staxx_import_write(string $rel, string $yaml, array $about, string &$error): bool {
+function staxx_import_write(string $rel, string $yaml, array $about, string &$error, string $asIs = ''): bool {
   $dir = staxx_import_prepare_dir($rel, $error);
   if ($dir === '') return false;
 
@@ -1207,6 +1232,13 @@ function staxx_import_write(string $rel, string $yaml, array $about, string &$er
     return false;
   }
   @chmod($notePath, 0644);
+
+  if ($asIs !== '' && $asIs !== $yaml) {
+    if (!staxx_save_stack($rel, $asIs, $error)) {
+      staxx_rmtree($real, $real);
+      return false;
+    }
+  }
 
   if (!staxx_save_stack($rel, $yaml, $error)) {
     staxx_rmtree($real, $real);

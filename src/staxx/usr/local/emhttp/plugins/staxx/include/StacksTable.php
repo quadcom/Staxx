@@ -29,6 +29,9 @@ require_once '/usr/local/emhttp/plugins/staxx/include/Icons.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Autostart.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Import.php';
 require_once '/usr/local/emhttp/plugins/staxx/include/Updates.php';
+// For staxx_compose_gpu_vendors() — the page renders rows without going
+// through action.php, which is the only other place Devices.php was pulled in.
+require_once '/usr/local/emhttp/plugins/staxx/include/Devices.php';
 
 // NO "already loaded?" guard here, deliberately.
 //
@@ -98,9 +101,21 @@ function staxx_address_html(array $addresses): string {
     // The colon is real text, not a CSS ::before. Generated content is not
     // included when a browser copies a selection, so a styled-in colon would
     // put "192.168.202.598083" on the clipboard — an address nobody can use.
-    $out[] = '<span class="staxx-addr"'.$title.'>'.$name.':'
+    // It lives inside the label span itself rather than loose in .staxx-addr
+    // — see the note there — which is why $name is rebuilt here rather than
+    // reused from above, whose copy has no ports to introduce.
+    //
+    // PLAN_121 item 4: one <span> per port, not one comma-joined text node —
+    // the ports stand in their own column beside the label (see staxx.css),
+    // so the join that used to be ", " in the text is now the layout itself.
+    $out[] = '<span class="staxx-addr"'.$title.'>'
+           . '<span class="staxx-addr-label">'.htmlspecialchars($label).':</span>'
            . '<span class="staxx-addr-ports">'
-           . htmlspecialchars(implode(', ', $ports)).'</span></span>';
+           . implode('', array_map(
+               function ($p) { return '<span>'.htmlspecialchars($p).'</span>'; },
+               $ports
+             ))
+           . '</span></span>';
   }
 
   return $out ? implode('', $out) : '<span class="staxx-sub">—</span>';
@@ -168,19 +183,93 @@ function staxx_merged_addresses(array $containers, array $webuiById = []): array
  * re-renders on its own after a start or a stop, and it must look identical
  * whichever route produced it. Returning HTML from the server rather than
  * rebuilding it in JavaScript also keeps the translated words in one place.
+ *
+ * PLAN_107: $s['health'] is the roll-up of the stack's own containers'
+ * health (staxx_stack_health()), $s['unhealthy'] the service names a title
+ * can name. Both are optional — a caller that has not computed them gets
+ * today's plain running pill, never an error.
+ *
+ * PLAN_108 stage 6: $service, when given, turns the "nothing here checks
+ * itself" case into a click target for the health-check offer, exactly as
+ * staxx_container_pill() already does for a container row. Only worth
+ * passing for a one-service stack — that is the only case where a single
+ * name is unambiguous — and left '' otherwise, which keeps today's plain,
+ * unclickable pill. The caller decides "one service" because it already
+ * knows the shape cheaply; this function does no reading of its own.
  */
-function staxx_state_pill(array $s, bool $canRun): string {
+function staxx_state_pill(array $s, bool $canRun, string $service = ''): string {
   if (!$canRun) {
     return '<span class="staxx-sub">'._('unknown').'</span>';
   }
   if (!empty($s['running'])) {
-    return '<span class="staxx-pill staxx-pill--up">'
-         . htmlspecialchars((string)$s['status']).'</span>';
+    $health = $s['health'] ?? 'none';
+    $status = htmlspecialchars((string)$s['status']);
+    if ($health === 'unhealthy') {
+      // _() is Unraid's own translator and it returns HTML, not plain text:
+      // it turns an apostrophe into an entity on the way past. Escaping its
+      // result again would escape that entity's own ampersand and print
+      // "&apos;" on screen, so only the service names — the untrusted half —
+      // are escaped here.
+      $names = implode(', ', array_map('htmlspecialchars', $s['unhealthy'] ?? []));
+      $title = $names !== ''
+        ? sprintf(_('The container is running, but the image\'s own check says the app inside is not working: %s.'), $names)
+        : _('The container is running, but the image\'s own check says the app inside is not working.');
+      return '<span class="staxx-pill staxx-pill--bad" title="'.$title.'">'.$status.'</span>';
+    }
+    if ($health === 'starting') {
+      $title = _('The container is running. Its own check has not finished deciding yet.');
+      return '<span class="staxx-pill staxx-pill--warn" title="'.$title.'">'.$status.'</span>';
+    }
+    // A stack shows one pill for however many containers it holds, so the
+    // green case has to say which of the two claims it is making just as the
+    // container rows do — and for a one-service stack, whose container row is
+    // never drawn, this is the ONLY place it can be said.
+    $ran     = (int)($s['healthRunning'] ?? 0);
+    $checked = (int)($s['healthChecked'] ?? 0);
+    if ($checked === 0) {
+      // Same button staxx_container_pill() draws for its own 'none' case —
+      // same class, same data attributes — so stacks.js's one delegated
+      // click handler (matched on staxx-pill--offer) already covers this
+      // one too, with no handler of its own to keep in step.
+      if ($service !== '') {
+        $title = _('Docker says this is running. Nothing here checks itself, so nothing has confirmed the apps inside are working. Click to see if StaXX can work out a check for it.');
+        return '<button type="button" class="staxx-pill staxx-pill--up staxx-pill--offer" title="'.$title.'"'
+             . ' data-stack="'.htmlspecialchars($s['name']).'" data-service="'.htmlspecialchars($service).'">'
+             . $status.'</button>';
+      }
+      $title = _('Docker says this is running. Nothing here checks itself, so nothing has confirmed the apps inside are working.');
+    }
+    else if ($checked === $ran) $title = _('Everything here checks itself, and every check says it is working.');
+    else                        $title = sprintf(_('%1$d of the %2$d containers here check themselves and say they are working. Nothing has checked the rest.'), $checked, $ran);
+    return '<span class="staxx-pill staxx-pill--up" title="'.$title.'">'.$status.'</span>';
   }
   if ((string)$s['status'] !== '') {
     return '<span class="staxx-pill">'.htmlspecialchars((string)$s['status']).'</span>';
   }
   return '<span class="staxx-pill staxx-pill--down">'._('stopped').'</span>';
+}
+
+/**
+ * PLAN_118 — the state cell's second pill for a stack whose compose project
+ * name is also claimed by another stack on disk. Docker can only ever hold
+ * one project by that name, the one whose `up` ran last, so the row this is
+ * NOT drawn on is the one actually running; see staxx_state_for()'s own
+ * clash guard for why. Warns rather than blocks — the row still has to say
+ * what is true right now, this just explains why it might look surprising.
+ *
+ * $project is the guessed project name shared by every stack in $clash;
+ * good enough for the tooltip even though it is a guess, since every
+ * stack it names is guessed the same way.
+ */
+function staxx_clash_pill_html(array $clash, string $project): string {
+  if ($clash === []) return '';
+  $others = implode(', ', array_map('htmlspecialchars', $clash));
+  $title  = sprintf(
+    _('Shares the name "%1$s" with %2$s. Docker can only run one project under that name — rename one of these stacks, or delete the one that is not in use.'),
+    htmlspecialchars($project), $others
+  );
+  // Not escaped again — _() returns HTML; see staxx_state_pill() above.
+  return ' <span class="staxx-pill staxx-pill--warn" title="'.$title.'">'._('name clash').'</span>';
 }
 
 /** The "3 stacks · 1 running" line under a folder name. */
@@ -206,8 +295,20 @@ function staxx_stack_sub(int $count, int $running): string {
  * minutes", "Exited (0) 3 days ago", "Restarting (1) 4 seconds ago". It says
  * more than "stopped" does, and it is the same wording the command line gives,
  * so the two never disagree.
+ *
+ * PLAN_107: a running container also carries a title naming which of the two
+ * claims — "the container is running" against "the app inside is working" —
+ * is actually being made, so a green pill can never be read as more than
+ * Docker itself knows. $c['health'] is optional, so a caller that has not
+ * computed it (a not-created placeholder, mainly) still gets today's pill.
+ *
+ * PLAN_108 stage 5: $stack, when given, is what turns the 'none' case — the
+ * exact moment a person learns nothing is watching this container — into a
+ * click target for the health-check offer. Left '' for the two callers that
+ * have no stack to name (staxx_state_snapshot()'s "not created" placeholder),
+ * which simply keeps today's plain, unclickable pill.
  */
-function staxx_container_pill(array $c): string {
+function staxx_container_pill(array $c, string $stack = ''): string {
   if (!$c['exists']) {
     return '<span class="staxx-pill staxx-pill--down">'._('not created').'</span>';
   }
@@ -216,7 +317,31 @@ function staxx_container_pill(array $c): string {
 
   switch ($c['state']) {
     case 'running':
-      return '<span class="staxx-pill staxx-pill--up">'.$status.'</span>';
+      $health = $c['health'] ?? 'none';
+      $service = $c['service'] !== '' ? $c['service'] : ($c['name'] ?? '');
+      $titles = [
+        'healthy'   => _('This image checks itself, and its own check says it is working.'),
+        'unhealthy' => _('The container is running, but the image\'s own check says the app inside is not working.'),
+        'starting'  => _('The container is running. Its own check has not finished deciding yet.'),
+        'none'      => ($stack !== '' && $service !== '')
+          ? _('Docker says this container is running. This image does not check itself, so nothing here has confirmed the app inside is working. Click to see if StaXX can work out a check for it.')
+          : _('Docker says this container is running. This image does not check itself, so nothing here has confirmed the app inside is working.'),
+      ];
+      $class = $health === 'unhealthy' ? ' staxx-pill--bad' : ($health === 'starting' ? ' staxx-pill--warn' : ' staxx-pill--up');
+      // Not escaped again — see staxx_state_pill() above on what _() returns.
+      $title = $titles[$health] ?? $titles['none'];
+      // Only the 'none' case is ever a click target — an image that checks
+      // itself, or one already reporting, has nothing to offer. A real
+      // <button>, not a styled span, following the same specificity fight
+      // .staxx-pill--fail already won against Unraid's own button reset —
+      // see that rule in the stylesheet for why it has to be restated there
+      // rather than inherited.
+      if ($health === 'none' && $stack !== '' && $service !== '') {
+        return '<button type="button" class="staxx-pill staxx-pill--up staxx-pill--offer" title="'.$title.'"'
+             . ' data-stack="'.htmlspecialchars($stack).'" data-service="'.htmlspecialchars($service).'">'
+             . $status.'</button>';
+      }
+      return '<span class="staxx-pill'.$class.'" title="'.$title.'">'.$status.'</span>';
     case 'restarting':
     case 'removing':
     case 'paused':
@@ -323,6 +448,33 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   // without inventing a new state — the state is still 'error'.
   $cls .= $note !== '' ? ' staxx-updatepill--noted' : '';
 
+  // PLAN_121 item 7: the label itself no longer says which version, so a
+  // small tag icon is the one visible sign that this pill actually knows
+  // both — the sentence naming them is still the title, above. Never shown
+  // on the folder roll-up, which sums several images and never claimed a
+  // version either.
+  $tagIcon = !empty($u['versioned'])
+    ? '<i class="fa fa-tag staxx-updatepill__tag" aria-hidden="true"></i>' : '';
+
+  // PLAN_127 — the hover card's own facts, one data attribute each so the
+  // browser can lay them out as a table instead of parsing them back out of
+  // the sentence in $title above. `data-update-cadence-why` is named apart
+  // from the existing `data-update-why` above (the failed-pull chip) since
+  // the two describe different things and both can be present on one pill.
+  // Absent facts are omitted rather than written empty, so the card can tell
+  // "no such row" from "row present but blank".
+  $cardAttrs = '';
+  foreach ([
+    'running'     => (string)($u['was'] ?? ''),
+    'available'   => (string)($u['version'] ?? ''),
+    'asked'       => (string)($u['askedWords'] ?? ''),
+    'next'        => (string)($u['nextWords'] ?? ''),
+    'interval'    => (string)($u['intervalWords'] ?? ''),
+    'cadence-why' => (string)($u['cadenceWhy'] ?? ''),
+  ] as $attr => $val) {
+    if ($val !== '') $cardAttrs .= ' data-update-'.$attr.'="'.htmlspecialchars($val).'"';
+  }
+
   return '<'.$tag.' class="staxx-updatepill '.$cls.'"'.$typeAttr
        . ' data-update-state="'.htmlspecialchars($state).'"'
        . ' data-update-image="'.$image.'"'
@@ -332,8 +484,9 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
        . ' data-update-back="'.(!empty($u['back']) ? '1' : '0').'"'
        . ' data-update-why="'.htmlspecialchars((string)($u['why'] ?? '')).'"'
        . ' data-update-suggest="'.htmlspecialchars((string)($u['suggest'] ?? '')).'"'
+       . $cardAttrs
        . $noteAttr
-       . $titleAttr.'>'.$label.'</'.$tag.'>';
+       . $titleAttr.'>'.$label.$tagIcon.'</'.$tag.'>';
 }
 
 /**
@@ -499,15 +652,14 @@ function staxx_service_icons_for_stack(string $stack): array {
   $meta = staxx_compose_meta($file);
   if (!$meta['ok']) return [];
 
-  $dir       = dirname($file);
-  $stackIcon = (string)($meta['x']['icon'] ?? '');
-  $out       = [];
+  $dir = dirname($file);
+  $out = [];
 
   foreach ($meta['services'] as $svc => $svcMeta) {
     $icon  = (string)($svcMeta['x']['icon'] ?? '');
     $image = trim((string)($svcMeta['image'] ?? ''));
 
-    $resolved = staxx_service_icon($icon, $stackIcon, $dir, $image, $svc, $stack);
+    $resolved = staxx_service_icon($icon, $dir, $image, $svc, $stack);
 
     $out[$svc] = [
       'html' => staxx_icon_tile($resolved, $svc),
@@ -739,7 +891,7 @@ function staxx_stack_children(array $s): array {
       'webui' => staxx_webui_url($declared[$service] ?? [], $hostIp),
       'project' => (string)($declared[$service]['x']['project'] ?? $stackX['project'] ?? ''),
       'support' => (string)($declared[$service]['x']['support'] ?? $stackX['support'] ?? ''),
-      'state' => '', 'status' => '', 'exists' => false,
+      'state' => '', 'status' => '', 'exists' => false, 'health' => 'none',
     ];
   }
 
@@ -784,6 +936,7 @@ function staxx_stack_children(array $s): array {
       'state'   => $c['state'],
       'status'  => $c['status'],
       'exists'  => true,
+      'health'  => $c['health'] ?? 'none',
     ];
   }
 
@@ -859,30 +1012,24 @@ function staxx_icon_usable(array $icon): bool {
  * row, the folder strip, the editor's heading row — draws whatever this
  * returns rather than guessing anything of its own.
  *
- * Each step is tried only when the one before produced nothing usable
- * (staxx_icon_usable()):
+ * A stack has no icon of its own to fall back to (PLAN_105): its picture is
+ * a picture of what it contains, so it cannot declare an identity separate
+ * from its services. Each step here is tried only when the one before
+ * produced nothing usable (staxx_icon_usable()):
  *   1. the service's own stated icon, name only — a guess must never enter
  *      at this step, so no image/service/stack is passed
- *   2. the stack's own stated icon, skipped when it names nothing — the
- *      service icon field's own hint calls it "overrides the stack icon for
- *      this service", so the stack's icon is already the designed default
- *   3. a search from the image name, which is only ever reached when the
+ *   2. a search from the image name, which is only ever reached when the
  *      service names nothing at step 1: staxx_icon_resolve() returns
  *      early on any non-empty stated value, before it would look at
  *      $image/$service/$stack, so this step never runs otherwise
- *   4. nothing — the caller draws initials, the floor every stack has
+ *   3. nothing — the caller draws initials, the floor every stack has
  *
  * @return array from staxx_icon_resolve()
  */
-function staxx_service_icon(string $svcIcon, string $stackIcon, string $dir,
+function staxx_service_icon(string $svcIcon, string $dir,
                             string $image, string $service, string $stack): array {
   $icon = staxx_icon_resolve($svcIcon, $dir);
   if (staxx_icon_usable($icon)) return $icon;
-
-  if ($stackIcon !== '') {
-    $icon = staxx_icon_resolve($stackIcon, $dir);
-    if (staxx_icon_usable($icon)) return $icon;
-  }
 
   return staxx_icon_resolve($svcIcon, $dir, $image, $service, $stack);
 }
@@ -894,12 +1041,12 @@ function staxx_service_icon(string $svcIcon, string $stackIcon, string $dir,
  * the most that stays legible in a 4.4rem square; beyond that the fourth cell
  * counts what did not fit, the way a photo album cover does.
  *
- * Every child is resolved through staxx_service_icon() — the stack's own
- * `icon:` is just that call's second-choice input, not a separate step here.
- * Services that resolve to the SAME picture then collapse to one tile: with a
- * stack-level icon and no per-service ones, every service reaches that same
- * logo, and four copies of it is a mosaic showing no variety. Collapsing is
- * what lets the row drop its old stack-icon special case rather than move it.
+ * Every child is resolved through staxx_service_icon() — a stack has no icon
+ * of its own to feed it (PLAN_105); each service resolves from its own
+ * stated icon or its image name alone. Services that resolve to the SAME
+ * picture then collapse to one tile: several services all naming the same
+ * picture reach that same logo, and four copies of it is a mosaic showing no
+ * variety. Collapsing is what lets the row drop that case rather than show it.
  *
  * Keyed on the resolved icon, never on the rendered tile. A tile carries the
  * service's own initials and colour as what a broken picture falls back to,
@@ -945,11 +1092,10 @@ function staxx_stack_tile(array $s, array $kids): string {
  * @return array<int, array{html: string, name: string}> one per distinct icon, in order
  */
 function staxx_stack_icon_tiles(array $s, array $kids): array {
-  $stackIcon = (string)($s['x']['icon'] ?? '');
   $out  = [];
   $seen = [];
   foreach ($kids as $kid) {
-    $icon = staxx_service_icon($kid['icon'], $stackIcon, $s['dir'],
+    $icon = staxx_service_icon($kid['icon'], $s['dir'],
                                $kid['image'], $kid['service'], $s['name']);
     $key  = $icon['fa'].'|'.$icon['url'].'|'.$icon['ref'];
     if ($key !== '||' && isset($seen[$key])) continue;
@@ -1075,13 +1221,6 @@ function staxx_icon_wanted(): array {
 
   foreach (staxx_list_stacks() as $s) {
     if (!$s['parses']) continue;
-
-    $own = (string)($s['x']['icon'] ?? '');
-    if ($own !== '') {
-      $add(staxx_icon_resolve($own, $s['dir']));
-      // A stack that names its own icon does not need its children's, but the
-      // container rows underneath it still show them.
-    }
 
     foreach (staxx_stack_children($s) as $kid) {
       $add(staxx_icon_resolve($kid['icon'], $s['dir'], $kid['image'],
@@ -1356,6 +1495,35 @@ function staxx_portmark_html(array $meta, array $macvlanNames): string {
 }
 
 /**
+ * The row of column titles — PLAN_120 moved it off the top of the grid and
+ * into staxx_render_rows(), which now prints one copy inside every folder and
+ * one more above the loose stacks, so it needed a name of its own to call
+ * from more than one place. The cells themselves are unchanged from the
+ * single copy StacksPage.php used to hold: eight columnheader cells, with
+ * data-stat on the four figure columns so the GPU one can still be hidden
+ * page-wide by attribute.
+ */
+function staxx_header_row_html(): string {
+  return '<div class="staxx-row staxx-head-row" role="row">'
+       . '<span class="staxx-cell" role="columnheader">'._('Stack').'</span>'
+       // staxx-head--services (not staxx-cell--services, which the row cells
+       // below carry for their two-row span and column width — reusing it
+       // here would drag those layout rules onto the heading too) just
+       // left-aligns this one heading, to sit over the left-aligned service
+       // names beneath it rather than centred above them.
+       . '<span class="staxx-cell staxx-head--services" role="columnheader">'._('Services').'</span>'
+       . '<span class="staxx-cell" role="columnheader">'._('State').'</span>'
+       . '<span class="staxx-cell" role="columnheader">'._('Address').'</span>'
+       . '<span class="staxx-cell staxx-num" role="columnheader" data-stat="cpu">'._('CPU').'</span>'
+       . '<span class="staxx-cell staxx-num" role="columnheader" data-stat="mem">'._('Memory').'</span>'
+       . '<span class="staxx-cell staxx-num" role="columnheader" data-stat="net">'._('Network').'</span>'
+       // data-stat on the heading too, so the whole column can be hidden
+       // with one rule when nothing on the page has a GPU.
+       . '<span class="staxx-cell staxx-num" role="columnheader" data-stat="gpu">'._('GPU').'</span>'
+       . '</div>';
+}
+
+/**
  * Every row of the table body, as HTML.
  *
  * Divs standing in for a table, arranged as CSS grid / subgrid so the columns
@@ -1386,6 +1554,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
     $groupCounts[$r['folder']] = ($groupCounts[$r['folder']] ?? 0) + 1;
     if ($r['folder'] !== '') $folderStacks[$r['folder']][] = $r['stack'];
   }
+  // PLAN_131 C — the top level's own siblings are folders AND loose stacks
+  // together now, so a single loose stack beside two folders (or the other
+  // way round) still gets a live grip.
+  $topLevelCount = $folderCount + ($groupCounts[''] ?? 0);
+
   $autostart = staxx_autostart_state($stackList);
 
   // Gathered once for the same reason as $autostart above: this walks at
@@ -1422,6 +1595,9 @@ function staxx_render_rows(array $rows, bool $canRun): string {
   // since those always come last — so a group only ever needs closing in
   // those two places.
   $inFolderGroup = false;
+  // Whether the loose-stacks header has already been printed — it goes once,
+  // above the first unfiled stack, whether or not any folder preceded it.
+  $looseHeaderShown = false;
 
   foreach ($rows as $row):
 
@@ -1446,9 +1622,10 @@ function staxx_render_rows(array $rows, bool $canRun): string {
         ? staxx_boot_title($fBoot['mode'], $fWait, false, _('stacks'))
         : _('The boot list cannot be read while Docker is stopped.');
       // This grip drags the FOLDER itself, to trade places with another
-      // folder — how many stacks sit inside it is irrelevant to that; only
-      // whether there is a second folder to trade places with is.
-      $fGripOff = $folderCount < 2;
+      // folder or a loose stack at the top level — how many stacks sit
+      // inside it is irrelevant to that; only whether there is a second
+      // top-level unit to trade places with is.
+      $fGripOff = $topLevelCount < 2;
       $fGripWhy = _('There is only one folder, so there is nothing to reorder it against.');
       // Sums its stacks' own pills (see PLAN_45 Part H) — a folder has no
       // image of its own to check.
@@ -1558,10 +1735,16 @@ function staxx_render_rows(array $rows, bool $canRun): string {
           </span>
 
           <!-- Totals for everything filed in this folder, added up in the
-               browser from the stack rows below it. -->
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="cpu"><span class="staxx-statv">—</span></span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="mem"><span class="staxx-statv">—</span></span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="net"><span class="staxx-statv">—</span></span>
+               browser from the stack rows below it. staxx-cell--blank on the
+               three that start life as a dash (PLAN_121 item 1) gives it the
+               graph footprint their heading centres against, instead of the
+               number's usual hard-left spot; updateFolderTotals() in
+               stacks.js clears it the moment a real total lands. GPU never
+               shows a dash at all (see paintFigures()'s own comment), so it
+               carries no such class here. -->
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="cpu"><span class="staxx-statv">—</span></span>
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="mem"><span class="staxx-statv">—</span></span>
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="net"><span class="staxx-statv">—</span></span>
           <span class="staxx-cell staxx-num" role="gridcell" data-stat="gpu"><span class="staxx-statv">—</span></span>
         </div>
 
@@ -1573,6 +1756,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
              data-folder-children="<?= htmlspecialchars($row['id']) ?>"
              <?= $row['collapsed'] ? 'hidden' : '' ?>>
           <div class="staxx-group staxx-folder-inner" role="presentation">
+            <?= staxx_header_row_html() ?>
 <?
     else:
       $s = $row['stack'];
@@ -1595,6 +1779,31 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                : ($s['project'] !== '' ? $s['project'] : staxx_project_name($s['leaf']));
 
       $kids = $s['parses'] ? staxx_stack_children($s) : [];
+
+      // PLAN_114 — which vendors this file itself asks a GPU from, keyed by
+      // service, so the row's badge survives the stack being stopped (the
+      // live-stats route below goes blank the moment a container does).
+      // A second small read of the file, alongside the one staxx_compose_meta()
+      // already does elsewhere on this row — the raw text, not the compose
+      // config, is what has the reservations shape this needs.
+      $gpuFile = ($s['parses'] && $s['file'] !== '')
+        ? staxx_compose_gpu_vendors((string)@file_get_contents($s['file']))
+        : [];
+      $sGpuVendors = [];
+      foreach ($gpuFile as $svcVendors) $sGpuVendors = array_merge($sGpuVendors, $svcVendors);
+      $sGpuVendors = array_values(array_unique($sGpuVendors));
+
+      // PLAN_107 — rolled up from $kids, already in hand, rather than a
+      // second read of the containers: see staxx_stack_health()'s own
+      // docblock for why this must never be computed from a compose-ls-only
+      // source.
+      $sHealth    = staxx_stack_health($kids);
+      $sUnhealthy = staxx_unhealthy_services($kids);
+      $sCounts    = staxx_stack_health_counts($kids);
+      // Unhealthy only. A check still deciding is not a fault, and a dot
+      // that flickers red every time a container restarts teaches people to
+      // ignore it.
+      $sSick      = $sHealth === 'unhealthy';
 
       // The stack row's own web-page button: only meaningful when exactly one
       // container has one to offer. Picking between several would be a guess,
@@ -1646,9 +1855,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
       $sTitle  = $autostart['available']
         ? staxx_boot_title($sBoot['mode'], $sWait, $sInterleaved, _('services'))
         : _('The boot list cannot be read while Docker is stopped.');
-      // Nothing to drag when this stack is the only one in its folder (or,
-      // for an unfiled stack, the only one at the top level).
-      $sGripOff = ($groupCounts[$row['folder']] ?? 0) < 2;
+      // Nothing to drag when this stack is the only one in its folder — or,
+      // for an unfiled stack, when it is the only thing at the top level,
+      // folders counted in alongside the other loose stacks now that the two
+      // share one order there.
+      $sGripOff = ($row['folder'] === '' ? $topLevelCount : ($groupCounts[$row['folder']] ?? 0)) < 2;
       $sGripWhy = _('This stack is alone in its group, so there is nothing to reorder it against.');
 
       // Whole-stack pill (see PLAN_45 Part H) — one image, or several rolled
@@ -1691,6 +1902,13 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 <?
       endif;
 
+      if ($row['folder'] === '' && !$looseHeaderShown):
+        $looseHeaderShown = true;
+?>
+      <?= staxx_header_row_html() ?>
+<?
+      endif;
+
       if ($expandable):
 ?>
       <div class="staxx-group staxx-group--stack" role="presentation" data-stack-group="<?= htmlspecialchars($s['name']) ?>">
@@ -1720,11 +1938,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
             <div class="staxx-namebox">
               <?= staxx_grip_html('stack', $s['leaf'], $sGripOff, $sGripWhy) ?>
               <? if ($expandable): ?>
-                <button type="button" class="staxx-chevron"
+                <button type="button" class="staxx-chevron<?= $expanded ? ' staxx-chevron--open' : '' ?>"
                         data-toggle-stack="<?= htmlspecialchars($s['name']) ?>"
                         aria-expanded="<?= $expanded ? 'true' : 'false' ?>"
-                        title="<?= $expanded ? _('Hide containers') : _('Show containers') ?>">
-                  <i class="fa fa-chevron-<?= $expanded ? 'down' : 'right' ?>"></i>
+                        title="<?= $expanded ? _('Hide this stack\'s services') : _('Show this stack\'s services') ?>">
+                  <i class="fa fa-cubes"></i>
                 </button>
               <? else: ?>
                 <span class="staxx-chevron staxx-chevron--empty"></span>
@@ -1760,7 +1978,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                      be swapped, so there is nothing to swap it back to. -->
                 <span class="staxx-spinner"><i class="fa fa-refresh fa-spin"></i></span>
                 <? if ($canRun && $s['parses']): ?>
-                  <span class="staxx-dot<?= $s['running'] ? ' staxx-dot--up' : '' ?>"></span>
+                  <span class="staxx-dot<?= $s['running'] ? ' staxx-dot--up' : '' ?><?= $s['running'] && $sSick ? ' staxx-dot--sick' : '' ?>"></span>
                 <? endif; ?>
                 <?
                   // On every stack row without exception, disabled where it
@@ -1875,27 +2093,43 @@ function staxx_render_rows(array $rows, bool $canRun): string {
 
           <!-- data-cell names these for the browser: after a start or a stop it
                replaces just these cells rather than the whole row. -->
-          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_state_pill($s, $canRun).staxx_update_pill_html($sUpdate).staxx_pending_chip_html($sPending) ?></span>
+          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_state_pill($s + ['health' => $sHealth, 'unhealthy' => $sUnhealthy,
+            'healthRunning' => $sCounts['running'], 'healthChecked' => $sCounts['checked']], $canRun,
+            /* PLAN_108 stage 6 — !$expandable is exactly "one child, no
+               container row drawn" (see $expandable's own definition above),
+               the same shape data-sole-service already tests for. */
+            !$expandable ? (string)($kids[0]['service'] ?? '') : ''
+          ).staxx_update_pill_html($sUpdate).staxx_pending_chip_html($sPending)
+          .staxx_clash_pill_html($s['clash'] ?? [], staxx_project_name($s['leaf'])) ?></span>
           <span class="staxx-cell staxx-cell--address staxx-addrcell" role="gridcell" data-cell="address"><?=
             staxx_address_html(staxx_merged_addresses(staxx_stack_containers($s), array_column($kids, 'webui', 'id')))
           ?></span>
 
           <!-- Filled in by the browser from the stats endpoint, and left as an
                em dash if nothing is running. Each cell holds a figure and a
-               small graph of the last couple of minutes. -->
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="cpu">
+               small graph of the last couple of minutes. staxx-cell--blank
+               (PLAN_121 item 1) gives that starting dash the graph's own
+               footprint to centre in, matching the heading above it, until
+               paintFigures() clears the class the moment a real figure
+               lands. -->
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="cpu">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="cpu"></span>
           </span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="mem">
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="mem">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="mem"></span>
           </span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="net">
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="net">
             <span class="staxx-statv staxx-net">—</span>
             <span class="staxx-spark" data-spark="net"></span>
           </span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="gpu">
+          <!-- data-gpu-file carries what the compose file itself asks for, so
+               blankFigures() in stacks.js can still paint the vendor badge
+               once the live stats have nothing to say (PLAN_114). No
+               staxx-cell--blank here: GPU never starts life as a dash — see
+               paintFigures()'s own comment on why. -->
+          <span class="staxx-cell staxx-num" role="gridcell" data-stat="gpu" data-gpu-file="<?= htmlspecialchars(implode(' ', $sGpuVendors)) ?>">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="gpu"></span>
           </span>
@@ -1937,6 +2171,9 @@ function staxx_render_rows(array $rows, bool $canRun): string {
         // comparison; a service with no verdict at all (never ran, say) gets
         // '', which is exactly what staxx_pending_service_chip_html() shows nothing for.
         $kPending = (string)($sPending['services'][$kid['service']] ?? '');
+        // PLAN_114 — this one service's own vendors out of $gpuFile, computed
+        // once for the whole stack above.
+        $kGpuVendors = $gpuFile[$kid['service']] ?? [];
 ?>
         <!-- data-state below is read by the container menu (buildContainerMenu()
              in stacks.js) straight off the row, so it has to be right on the
@@ -2017,7 +2254,11 @@ function staxx_render_rows(array $rows, bool $canRun): string {
                      between grey and green, and a dot that has to be created
                      later is a dot that does not appear. -->
                 <? if ($canRun): ?>
-                  <span class="staxx-dot<?= $kid['state'] === 'running' ? ' staxx-dot--up' : '' ?>"></span>
+                  <?
+                    $kidSick = $kid['state'] === 'running'
+                      && ($kid['health'] ?? 'none') === 'unhealthy';
+                  ?>
+                  <span class="staxx-dot<?= $kid['state'] === 'running' ? ' staxx-dot--up' : '' ?><?= $kidSick ? ' staxx-dot--sick' : '' ?>"></span>
                 <? endif; ?>
                 <?
                   // Unconditional for the same reason as the stack row above:
@@ -2055,7 +2296,7 @@ function staxx_render_rows(array $rows, bool $canRun): string {
             <? endif; ?>
           </span>
 
-          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_container_pill($kid).staxx_update_pill_html($kUpdate).staxx_pending_service_chip_html($kPending) ?></span>
+          <span class="staxx-cell staxx-cell--state" role="gridcell" data-cell="state"><?= staxx_container_pill($kid, $s['name']).staxx_update_pill_html($kUpdate).staxx_pending_service_chip_html($kPending) ?></span>
           <span class="staxx-cell staxx-cell--address staxx-addrcell" role="gridcell" data-cell="address"><?=
             staxx_address_html($kid['id'] !== ''
               ? staxx_address_webui_override(
@@ -2066,19 +2307,19 @@ function staxx_render_rows(array $rows, bool $canRun): string {
               : [])
           ?></span>
 
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="cpu">
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="cpu">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="cpu"></span>
           </span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="mem">
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="mem">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="mem"></span>
           </span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="net">
+          <span class="staxx-cell staxx-num staxx-cell--blank" role="gridcell" data-stat="net">
             <span class="staxx-statv staxx-net">—</span>
             <span class="staxx-spark" data-spark="net"></span>
           </span>
-          <span class="staxx-cell staxx-num" role="gridcell" data-stat="gpu">
+          <span class="staxx-cell staxx-num" role="gridcell" data-stat="gpu" data-gpu-file="<?= htmlspecialchars(implode(' ', $kGpuVendors)) ?>">
             <span class="staxx-statv">—</span>
             <span class="staxx-spark" data-spark="gpu"></span>
           </span>
@@ -2159,6 +2400,12 @@ function staxx_state_snapshot(): array {
     }
     $declared = ($needWebui && $s['file'] !== '') ? staxx_compose_meta($s['file'])['services'] : [];
 
+    // PLAN_107 — rolled up from $mine, already in hand above; never a second
+    // read, and never from staxx_stack_states() itself (see its docblock).
+    $mineHealth    = staxx_stack_health($mine);
+    $mineUnhealthy = staxx_unhealthy_services($mine);
+    $mineCounts    = staxx_stack_health_counts($mine);
+
     // Keyed by service, which is what the container rows carry, so the browser
     // can find each row without knowing the container names in advance. That
     // matters the first time a stack is started: those rows were rendered from
@@ -2187,7 +2434,7 @@ function staxx_state_snapshot(): array {
         // this function already measured and ruled out. The browser keeps
         // its own copy of the last `updates` reply and re-applies it after
         // painting this html, so the pill still survives a poll.
-        'html'      => staxx_container_pill(['exists' => true] + $c),
+        'html'      => staxx_container_pill(['exists' => true] + $c, $name),
         // Ports move when a container is recreated with a changed compose
         // file, so this travels with the state rather than being fixed at
         // render time.
@@ -2199,6 +2446,11 @@ function staxx_state_snapshot(): array {
         // is what keeps the image column live after a recreate without a second
         // compose-file read.
         'image'     => $c['image'],
+        // PLAN_107 — true only for a running container whose own health check
+        // says it is not working; what the browser toggles staxx-dot--sick
+        // from on this row.
+        'sick'      => strtolower((string)$c['state']) === 'running'
+                        && ($c['health'] ?? 'none') === 'unhealthy',
       ];
     }
 
@@ -2213,8 +2465,22 @@ function staxx_state_snapshot(): array {
       'project'    => $s['project'] !== '' ? $s['project'] : staxx_project_name($s['leaf']),
       // No update pill here either — same reasoning as the container html
       // just above.
-      'html'       => staxx_state_pill($s, $canRun),
+      //
+      // PLAN_108 stage 6 — this cheap path has no declared service count to
+      // hand (see the comment above on why it never reads the compose file),
+      // so a real container being the only one docker knows about stands in
+      // for "one service". The two can disagree only for a stack that
+      // declares more than one service but has never started all of them —
+      // a genuinely rare shape, and the worst it costs is an extra click
+      // target until the next full render, never a wrong action.
+      'html'       => staxx_state_pill($s + ['health' => $mineHealth, 'unhealthy' => $mineUnhealthy,
+                        'healthRunning' => $mineCounts['running'], 'healthChecked' => $mineCounts['checked']], $canRun,
+                        count($mine) === 1 ? (string)($mine[0]['service'] !== '' ? $mine[0]['service'] : $mine[0]['name']) : '')
+                     . staxx_clash_pill_html($s['clash'] ?? [], staxx_project_name($s['leaf'])),
       'address'    => staxx_address_html(staxx_merged_addresses($mine, $webuiById)),
+      // PLAN_107 — what the browser toggles staxx-dot--sick from on the
+      // stack row itself.
+      'sick'       => $mineHealth === 'unhealthy',
       'containers' => $containers,
       // The row's own sub-line only ever prints an image for a stack with
       // exactly one container — anything else and the containers array above

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Plugin>
+  <Name>StaXX</Name>
+  <PluginURL>https://raw.githubusercontent.com/quadcom/Staxx/main/staxx.plg</PluginURL>
+  <Support>https://staxxfb.quadcom.ca</Support>
+  <Project>https://github.com/quadcom/Staxx</Project>
+  <Overview>
+    StaXX manages your Docker containers with standard compose files instead of Unraid's own
+    template format, and draws those compose files as an ordinary form so you never have to edit
+    indented text.
+    [br][br]
+    Nearly every project publishes a compose file. StaXX takes one as it is, runs it, and shows its
+    settings — ports, folders, variables, health checks, start-up order — as boxes you can change,
+    with the author's own comments as the help text beside them. The file underneath stays a plain
+    compose file that still runs anywhere.
+    [br][br]
+    It also brings in what you already run: your existing Unraid apps, Compose Manager projects and
+    loose containers are imported as copies, with the originals left untouched. Built-in search
+    covers Community Applications, Docker Hub and the images already on your server, and shows you
+    the compose file before anything starts. Every save is kept and every image that has run is
+    kept, so a change can always be undone.
+    [br][br]
+    Requires Unraid 7.2.0 or newer.
+  </Overview>
+  <Icon>https://raw.githubusercontent.com/quadcom/Staxx/main/Logo/staxx-icon.svg</Icon>
+  <Category>Tools:System</Category>
+</Plugin>
