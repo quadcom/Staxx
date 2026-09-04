@@ -218,12 +218,10 @@ console.log('\n3. Known gaps');
 (function () {
   if (indexText === null) return;
 
+  // The section is optional: it was dropped from the index on 2026-09-03 once
+  // every shipped feature had a page, and comes back only when a gap appears.
   var head = indexText.match(/^##\s+Not written yet\s*$/mi);
-  if (!head) {
-    problem('the guide index has no "Not written yet" section, so undocumented '
-            + 'features are recorded nowhere');
-    return;
-  }
+  if (!head) { note('the index has no "Not written yet" section — nothing is listed as unwritten'); return; }
 
   var rest  = indexText.slice(head.index + head[0].length);
   var next  = rest.search(/^##\s/m);

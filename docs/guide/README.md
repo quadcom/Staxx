@@ -14,8 +14,6 @@ rest of the guide points back at it.
 
 This guide is written in English only.
 
-## Pages that exist
-
 <!-- pages:start -->
 
 - **[The stacks page](the-stack-list.md)** — a walk round the page you land on: every button along
@@ -60,11 +58,6 @@ This guide is written in English only.
   the first-run screen.
 
 <!-- pages:end -->
-
-## Not written yet
-
-Every feature that ships has a page here now. If you find one that does not, say so on the
-feedback board below.
 
 ## Something wrong, or missing?
 
