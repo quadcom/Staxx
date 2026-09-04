@@ -5,9 +5,6 @@
 <!ENTITY version              "00.03.00">
 <!ENTITY launch               "Settings/&name;.settings">
 
-<!-- TODO: point at the real repository before the first release. Left as an
-     obvious placeholder so a premature publish fails loudly rather than
-     silently fetching from somewhere unintended. -->
 <!ENTITY github               "quadcom/Staxx">
 <!ENTITY branch               "dev">
 
