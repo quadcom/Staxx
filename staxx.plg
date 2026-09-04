@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.02.00_dev20260831">
+<!ENTITY version              "00.02.00_dev20260904">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!-- TODO: point at the real repository before the first release. Left as an
@@ -15,8 +15,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "206a45885be2ef3e8d0bd75eb781464a">
-<!ENTITY packageSHA256        "2331343752e3577a9d8088ca5cae1191aeb4f9a0ca007b48ee98ba0c78d0e5f7">
+<!ENTITY packageMD5           "332edab4436f39f8ee62c4a4c63532f7">
+<!ENTITY packageSHA256        "e09359d062f93e11cdaa7288d8a5b68d85f1523371440e1ab2205cb1b5468f89">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -40,24 +40,198 @@
 >
 
 <CHANGES>
-###00.02.00_dev20260831
-- Point dev at 00.02.00, the version main is heading towards
-- Say that the development channel builds itself most nights
-- Cut a dev release each night, but only when dev has earned one
-- Write a dollar sign twice, so a password hash survives the file
-- Name every test suite, not the half somebody remembered
-- Let each service own its picture, and stop the stack claiming one
-- Say that alpha means minor releases and no migrations
-- Write the release runbook down, so neither channel is cut from memory
-- Stamp staxx.plg for v00.01.00
-- Stop the sort gate counting the release it is publishing
-- Pad every version component, and restart the count at 00.01.00
-- Catch a manifest pointing at the wrong channel within a minute, not a release
-- Give dev its own release channel, so it stops burning main's numbers
-- Take the deploy script out of the readme entirely
-- Lead with the plugin install, since that is now the way in
-- Let somebody type their own password, and never leave a hash behind it
-- Stamp staxx.plg for v1.3.0
+###00.02.00_dev20260904
+- **The shell in the Manage tab is now Unraid's own terminal,** the same one the Console button opens, so nano, htop and anything else that draws a full screen work in it. When the shell ends the pane greys out with its last screen still readable, and Reconnect opens a fresh one.
+
+- **Put several services back to earlier versions in one go.** The Versions tab has a "Put back several at once" mode: choose a version for each service, press once, and the stack is edited, saved to History and recreated in a single step rather than one service at a time.
+
+- **A stack outside any folder can now be placed above a folder,** and starts in that order at boot. The top level used to draw every folder first, whatever you did.
+
+- **Refreshing the page reopens the stack you were editing.** The open stack's name rides in the address bar, so a refresh, or a pasted link, lands back in the same editor.
+
+- **A log left open in a background tab now checks in every half-minute instead of every second,** and catches up the moment you return to it.
+
+- **Fixed:** the dimmed square shown over a stack's icon while it starts now fits the larger icon in the wide layout instead of sitting in its corner.
+
+- **Fixed:** pressing "Write each one twice" on the dollar-sign dialog now closes the dialog as well as making the change.
+
+- **Fixed:** in the wide table the state chips sit flush left under a left-aligned heading rather than floating in the middle of the column.
+
+- **The flash-drive copy of a stack now includes its `.env` file,** and the switch that controls those copies is in the settings panel on the Storage tab. A copy restored from the flash drive is a complete definition again, not a compose file whose placeholders point at nothing.
+
+- **The page no longer scrolls behind an open dialog.** Reaching the end of the editor or the settings panel used to scroll the stacks list underneath; the page now holds still, softly blurred, until the dialog closes.
+
+- **Fixed:** pressing Discard on the settings panel’s "Discard changes?" question now closes the question as well as the panel.
+
+- **Settings can show a picture of what each option looks like.** Under a setting's dropdown, a
+  small screenshot of each option sits in a row, the chosen one outlined; clicking a picture picks
+  that option. It starts with where StaXX appears in the menu.
+
+- **The Settings panel was reworked with Adrian's feedback.** Each setting now sits in its own
+  titled box, with the explanation above the control rather than below it; the Docker menu setting
+  gained its own pair of pictures; several settings were reworded for clarity and brevity; Where
+  stacks may live moved onto the Storage tab; and the Docker menu setting locks itself off, greyed
+  out, while StaXX is shown as a Docker tab, since there is no top-level button for it to replace.
+  Related settings now share one box — the update check's schedule, when an update installs itself,
+  and Docker Hub sign-in; the "when to install" box folds away unless updates are set to install
+  themselves; registries you run yourself are now added one at a time to a list rather than typed as
+  a comma-separated line; the update-check figures now show as a table at the end of that tab instead
+  of a paragraph part-way through it; and the StaXXCrypt setting now explains, in plain words, what is
+  actually inside the little container it builds.
+
+- **The address column lists only ports that are actually reachable.** It shows the ports Docker is
+  forwarding, plus the one port a service's web page answers on. Stacks with their own network
+  address, or on host networking, no longer carry a row of internal ports nothing outside can reach.
+
+- **The update status now lives at the top of the page, not above the table.** Last checked, how
+  many updates are waiting, and how many author-example findings there are now show as small tags
+  next to "StaXX" — at the right end of the title bar when the page has one of its own, in Unraid's
+  shared tab strip when its tabbed view is on and StaXX has none, and otherwise on their own line
+  above the buttons. The explanatory paragraph that used to sit above the table is gone — the
+  store's location is already on the Settings page — and the table now starts a little higher, so
+  one more row fits on screen.
+
+- **On a tablet-sized window, the stack list is now a grid of cards instead of a squeezed table.**
+  Each stack gets its own card — icon, name, state, address and its little graphs, three across —
+  and a folder becomes a heading above its own row of cards. A stack running several services shows
+  a cubes button in its corner; tap it to see those services as cards of their own, without the page
+  underneath changing shape.
+
+- **The stack table reads better on a wide screen.** Ports now stand in their own column beside the
+  address instead of running on in one long line; a stopped stack's dash lines up under its column
+  heading instead of sitting off to one side; the line under the column headings is now one
+  unbroken rule instead of breaking into pieces; stack rows are a little taller, with a bigger icon
+  and bigger WebUI/Logs/Repo/CA buttons that are easier to click; and an update pill now always
+  reads "update ready", with a small tag icon showing when it also knows exactly which version —
+  hover it to see both.
+- **Hovering an update pill now shows a small card in the page's own style instead of the browser's
+  plain tooltip.** The running and available versions, when it was last checked, when it is next
+  due and why it is checked as often as it is now lay out as a short table instead of one long
+  sentence. An image whose first check already found an update pending — Radarr was the one that
+  gave this away — now shows its running version too, read straight off the container rather than
+  left blank.
+- **The page no longer grows a second scrollbar of its own.** Collapsing a stack or a folder was
+  leaving a sliver of invisible extra room on the page, on top of your browser's own scrollbar —
+  fixed at the source, so both scroll the same amount again.
+- **Tidy no longer refuses a file over the commented example StaXX itself writes into it.** A
+  trailing note indented under a setting now travels with that setting instead of being treated as
+  a stray line — so a freshly scaffolded stack tidies cleanly instead of being refused outright. Its
+  result is also shown as a proper notice above the file, not just on the small status line below it.
+- **An image you haven't downloaded yet is no longer asked about at update checks.** There was
+  nothing on your server to compare a registry's answer against, so the question was always wasted —
+  it is now skipped, and asked promptly as soon as the image is actually here.
+- **Checking for updates no longer spends any of your Docker Hub allowance.** It asks for a build's
+  headers only, which Hub does not count — the allowance is only spent when you actually install an
+  update.
+- **Checking now runs every hour, asking only the images that are due, with a full look at every
+  image at the time you chose.** Choosing "Once a week" used to mean each image was only asked about
+  weekly; it now means the once-a-week full look happens then, while how often any one image is
+  actually asked is still decided by how often it tends to change.
+- **The settings panel now shows what each registry has actually been asked, and what it cost** —
+  under Image updates, next to the check schedule. Being refused by Docker Hub now means something
+  else on your address spent the download allowance, since a check itself costs nothing, and StaXX
+  tries again within the hour rather than waiting for the next pass; the refusal notice on the stacks
+  page says so and links straight to the new figures. Hovering an update pill also now says when that
+  image was last asked, when it is next due, and why.
+- **The wide bar of Intel and AMD graphics figures above the stack list is gone**, and a stack
+  whose file asks for a graphics card now carries a coloured badge on its own row instead — Intel
+  blue, AMD red, NVIDIA green. That badge stays even while the stack is stopped, so you can see
+  which stacks have hardware in them without starting them, which the old bar could never show.
+- **The user guide is now a manual rather than a description.** It opens with a walk round the
+  screen you land on — every button, column, mark and menu item named, with a close-up picture of
+  each — and a matching walk round the editor and the settings panel. The rest of the pages are
+  step-by-step: adding an app from the catalogue and bringing in a container you already run are
+  written as numbered walkthroughs you can follow with the screen in front of you. Everything is
+  written shorter and plainer, and where one page shows something another page explains, the two are
+  now linked.
+- **The guide now covers removing a stack and the Manage tab** — the log, shell and file browser
+  inside a running container — and every picture across the guide was re-taken against the current
+  screen.
+- **StaXX's own mark now sits in the corner of its page**, in place of the stock icon Unraid gives
+  any plugin, so the page says whose it is at a glance.
+
+- **A running container that nothing is checking can be offered a health check.** A green row only
+  ever meant the container was going, never that the app inside was working. Click the pill on such a
+  row — or use the button in the editor's health check section — and StaXX works out a question worth
+  asking that image: a check written against a known database's own documentation, one the project
+  published itself, or a plain fetch of the app's web page. It tries the candidate inside the running
+  container first, so a check that cannot run is never offered. Where it knows no real question, it
+  says so and offers nothing, because a check that can only ever say yes turns "nobody knows" into
+  "looks fine". Nothing is applied without you accepting it, and the check it writes is ordinary
+  compose that travels with the file to any machine.
+- **A check says what it actually proves.** A web-page check tells you the page answered and nothing
+  about whatever sits behind it; a database check has logged in and run a real query. The offer names
+  which claim you are getting before you accept it.
+- **A Community Applications template that carried a health check now keeps it.** It used to be
+  explained away with a note saying compose had an equivalent, and then discarded.
+- **A row can now say the app inside has failed, even while the container carries on running.**
+  Where an image already checks its own health, a stack or service that reports unhealthy turns red
+  instead of the plain running green, and a stack row names the part that is unhappy. Hovering any
+  running pill now also says which of the two claims it is actually making — the container is
+  going, or the app has been confirmed to be working — so a green row on an image that checks
+  nothing can no longer be read as more than it is.
+- **Dropping a `.staxx` file onto the stack list turns it into a stack.** Drag it onto a folder to
+  land there, or anywhere else for the top level, and the folder under your cursor is outlined while
+  you drag. A preview shows what is inside, where it will land, a name you can change, and the
+  covering note the export carried; nothing is written until you confirm, the stack appears stopped
+  with its values still to fill in, and a name already in use is refused rather than merged into or
+  overwritten. That preview's count of values still to fill in now only counts real values, not the
+  covering note's own mentions of them.
+- **A password or hash containing a dollar sign now survives being written into the compose file.**
+  Compose reads a bare dollar sign as the start of a variable name and quietly deletes it, which was
+  eating part of every generated hash that began with one. A dollar sign is now doubled wherever one
+  can reach a value — typed by hand, made with the Hash button, pasted in, or produced by a
+  passphrase — and a file already carrying the broken, undoubled form is now noticed when it is
+  opened, with a one-click, undoable fix offered beside it. Importing a Community Applications
+  template does the same doubling on the way in, while still keeping the template's own original
+  wording as the first entry in the new stack's history.
+- **A stack itself can no longer state its own icon.** A stack's picture has always been worked out
+  from the services inside it; a file that still carries the older, separate stack-level icon
+  setting is now refused rather than having that setting silently ignored.
+- **Every compose file is laid out the same way, once, as it arrives.** However a file got here, its
+  sections and each container's settings are put into one order, with a blank line between sections.
+  The button in the editor brings an older stack into line. Order only: no line's text is ever
+  rewritten, comments travel with the setting they sit above, blank lines are only ever added, and
+  containers are never reordered against each other. Where StaXX cannot be sure a move would leave
+  the file meaning the same thing, it leaves that part alone and says so.
+- Fixed a device row's Notes box floating above the device's path box, and showing the word "Notes"
+  twice — once as the column heading, once as a repeated hint under the box. Both boxes now line up,
+  and "Notes" appears once.
+- **The settings panel is now the size of the stack editor, with its controls split across five
+  tabs** — General, Storage, Icons and images, Updates, and Registries and security — instead of one
+  long scrolling list of twenty-five controls.
+- **Starting a stack for the first time now shows the image downloading**, instead of a "Starting…"
+  pill that never changed. While the image comes down the pill reads "Downloading image…" (with a
+  rough count of how much has arrived, when compose reports it), and clicking it opens the same
+  running log a failed start already offers. A brand-new stack started from the editor's "Save and
+  start" now shows this from the moment its row appears, and it survives refreshing the page mid-download.
+- **Two stacks that would end up sharing the same name are now caught before it happens.** If a
+  stack folder's name matches one that already exists somewhere else in your store, a "shares the
+  name" mark now appears in the state column explaining which folder it clashes with — because
+  Docker can only ever run one of them, and the other reading as stopped is a symptom, not a fault.
+  Removing the one that isn't running now only ever takes away its own folder, never the other
+  one's containers by mistake. Renaming, moving, creating or importing a stack under a name already
+  in use elsewhere is now refused up front, with a plain explanation of why.
+- **A very long update badge no longer squeezes the rest of the row.** The status column had grown
+  to fit the widest version pair on the page, which could crush the name and services next to it and
+  add a sideways scrollbar. It now stops growing past a sensible width, and a badge too long for it
+  is trimmed with an ellipsis on screen — hover it for the full "from → to" version pair.
+- **The CPU, Memory, Network and GPU column headings now sit centred over their own graph**, not the
+  whole column, so a heading still lines up with its figures whether the window is full width or a
+  narrower one has packed those four into a compact block.
+- **The column titles now sit inside each folder, not just once at the top of the list.** A folder's
+  own row has nothing to do with most of those titles, so the single strip above everything read
+  badly. Every expanded folder now shows its own row of titles directly above its stacks, and the
+  loose stacks below the last folder get one of their own too.
+- **A stack's status and update pills no longer overlap when a narrow column pushes them onto a
+  second line.** They now space out with a small gap between them and sit centred in the column,
+  instead of both hugging the left edge with the wrapped line printed a pixel over the first.
+- **The Stack, Services, State and Address headings now sit centred against the full header row**
+  once a narrower window packs the figures into a compact block. They used to sit at the top,
+  beside CPU and Memory only, with a stray line cutting across the whole row underneath them; now
+  the only mid-row line is CPU's and Memory's own, and it only spans those two columns. Services
+  stays left-aligned, though, so its heading sits over the left-aligned service names below it
+  instead of floating centred above them.
 ###00.01.00
 - A copy of every compose file is now kept at the top of the flash drive, so a dead pool no longer
   takes the definition of every container you run with it. StaXX never reads that copy while your
@@ -227,7 +401,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.02.00_dev20260831-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.02.00_dev20260904-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
