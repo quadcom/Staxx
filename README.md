@@ -117,8 +117,8 @@ whether StaXX does what you need.
 
 ## Limitations
 
-- Pre-alpha, and not in Community Applications — you install it from its address; Unraid still
-  tells you when a newer version is out.
+- In beta. The core is settled and in daily use, but expect the occasional rough edge, and read
+  the changelog before updating.
 - Requires Unraid 7.2 or later, and Docker Compose already on the server — StaXX does not install it.
 - Graphics figures cover Intel and AMD cards; Nvidia shows none, though a container given an Nvidia
   card is still labelled as such.
