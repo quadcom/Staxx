@@ -2130,11 +2130,15 @@ function staxx_webui_literal_port(string $address): string {
  * A `[PORT:nnn]` token is the older shape, from before that field existed,
  * and still means "work it out" rather than "here is the number" — checked
  * against 64 real templates the number inside it names the host port 10
- * times, the container port 15 times, and neither 3 times, so it cannot be
- * trusted and is ignored outright. This path only exists to keep a file
- * nobody has edited yet working until it is: mazanoke's address still says
- * `[PORT:80]` while its mapping is `8686:80`, and its link needs 8686, so
- * reading the token's own number would break it.
+ * times, the container port 15 times, and neither 3 times, so it is ignored
+ * whenever the ports list can answer instead. This path only exists to keep
+ * a file nobody has edited yet working until it is: mazanoke's address still
+ * says `[PORT:80]` while its mapping is `8686:80`, and its link needs 8686,
+ * so reading the token's own number would break it. But a service with no
+ * ports list at all — a macvlan/ipvlan or host-network container imported
+ * from a template, which publishes nothing — has no other number to offer,
+ * so there the marker's own number is taken, matching what the compose
+ * editor's Web page port field already shows for such a service.
  *
  * An address with no port anywhere — literal or token — has nothing for the
  * button to open, so it resolves to ''.
@@ -2183,6 +2187,12 @@ function staxx_webui_url(
     $port = $kind === 'bridge'
       ? (string)($firstPort['published'] ?? '')
       : (string)($firstPort['target'] ?? '');
+    // No ports list at all — a macvlan/ipvlan or host-network service imported
+    // from a template publishes nothing — so the marker's own number is the
+    // only one there is. Only when the list is EMPTY, though: a bridge entry
+    // with just a container side gets a random server-side port, and the
+    // marker's number would then open the wrong place, so that stays ''.
+    if ($port === '' && $firstPort === [] && preg_match('/\[PORT:(\d+)\]/', $raw, $m)) $port = $m[1];
     if ($port === '') return '';
     $raw = preg_replace('/\[PORT:[^\]]*\]/', $port, $raw);
   } elseif (staxx_webui_literal_port($raw) === '') {

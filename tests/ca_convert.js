@@ -367,7 +367,7 @@ ok('Project is carried through unchanged, typo and all', embyY.indexOf('project:
 ok('Support becomes stack x-unraid.support', embyY.indexOf('support: https://forums.unraid.net') >= 0);
 ok('ReadMe becomes stack x-unraid.readme', embyY.indexOf('readme: https://github.com/binhex/documentation') >= 0);
 ok('Overview becomes a | block', embyY.indexOf('overview: |') >= 0);
-ok('WebUI passes through unchanged, brackets and all', embyY.indexOf('webui: "http://[IP]:[PORT:8096]"') >= 0);
+ok('WebUI\'s [PORT:] marker is settled to the first port\'s host half on this bridge service', embyY.indexOf('webui: "http://[IP]:8096"') >= 0);
 ok('Repo becomes author when Author is absent', embyY.indexOf("author: Binhex's Repository") >= 0);
 ok('x-unraid: version: 1 is always present', /x-unraid:\n {2}version: 1/.test(embyY));
 
@@ -1442,6 +1442,78 @@ ok('a healthcheck-carrying file parses with nothing badly sealed',
 ok('...and serialises back byte for byte', Y.serialise(healthDoc) === healthCmdAloneR.yaml);
 var healthForm = Y.buildForm(healthDoc);
 ok('...and the form still builds', healthForm.ok === true);
+
+/* =========================================================================
+ * R. The [PORT:nnn] marker is settled to a real number at import time
+ *
+ * The web button's field in the editor stopped trusting the marker long
+ * ago and works the port out from the service's own ports: list instead —
+ * so a service with no ports: (a macvlan container such as Plex) got no
+ * button at all. Import now does the same resolution once, while a human is
+ * looking at the file, rather than leaving a token the server never reads.
+ * ========================================================================= */
+
+console.log('\nR. Settling the [PORT:] marker at import time');
+
+// Bridge, two ports; the marker names the SECOND entry's host port, so the
+// reorder (section K) puts that entry first and the marker resolves to its
+// host half.
+var BRIDGE_TWO_PORTS = {
+  Name: 'bridge-two-ports-test', Repository: 'example/bridge-two-ports-test', Network: 'bridge',
+  WebUI: 'http://[IP]:[PORT:8081]',
+  Config: [
+    { '@attributes': { Name: 'First port', Target: '8080', Default: '9000', Mode: 'tcp',
+        Description: 'First port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' },
+    { '@attributes': { Name: 'Second port', Target: '80', Default: '8081', Mode: 'tcp',
+        Description: 'Second port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var bridgeTwoPortsY = CA.convert(BRIDGE_TWO_PORTS).yaml;
+ok('bridge: the marker resolves to the reordered first entry\'s HOST half',
+   bridgeTwoPortsY.indexOf('webui: "http://[IP]:8081"') >= 0, bridgeTwoPortsY);
+
+// Host networking: the outer number does nothing there, so the marker
+// resolves to the port INSIDE the container instead.
+var HOST_NET_PORT = {
+  Name: 'host-net-port-test', Repository: 'example/host-net-port-test', Network: 'host',
+  WebUI: 'http://[IP]:[PORT:8080]',
+  Config: [
+    { '@attributes': { Name: 'Web port', Target: '80', Default: '8080', Mode: 'tcp',
+        Description: 'Web port', Type: 'Port', Required: 'false', Mask: 'false' }, value: '' }
+  ]
+};
+var hostNetPortY = CA.convert(HOST_NET_PORT).yaml;
+ok('host networking: the marker resolves to the TARGET (inside) half',
+   hostNetPortY.indexOf('webui: "http://[IP]:80"') >= 0, hostNetPortY);
+
+// A named network with no ports: entry at all (Plex on br0, say) — there is
+// nothing to read a half from, so the marker's own number is the only port
+// there is.
+var NAMED_NET_NO_PORTS = {
+  Name: 'named-net-no-ports-test', Repository: 'example/named-net-no-ports-test', Network: 'br0.2',
+  WebUI: 'http://[IP]:[PORT:32400]/web/index.html'
+};
+var namedNetNoPortsY = CA.convert(NAMED_NET_NO_PORTS).yaml;
+ok('a named network with no ports: keeps the marker\'s own number',
+   namedNetNoPortsY.indexOf('webui: "http://[IP]:32400/web/index.html"') >= 0, namedNetNoPortsY);
+
+// A literal address with no marker at all is left exactly as written.
+var LITERAL_WEBUI = {
+  Name: 'literal-webui-test', Repository: 'example/literal-webui-test', Network: 'bridge',
+  WebUI: 'http://[IP]:5000/'
+};
+var literalWebuiY = CA.convert(LITERAL_WEBUI).yaml;
+ok('a WebUI with a literal port already is written unchanged',
+   literalWebuiY.indexOf('webui: "http://[IP]:5000/"') >= 0, literalWebuiY);
+
+// An empty marker with nothing to fall back on is left exactly as written.
+var EMPTY_MARKER = {
+  Name: 'empty-marker-test', Repository: 'example/empty-marker-test', Network: 'bridge',
+  WebUI: 'http://[IP]:[PORT:]'
+};
+var emptyMarkerY = CA.convert(EMPTY_MARKER).yaml;
+ok('an empty [PORT:] marker with no ports: is written unchanged',
+   emptyMarkerY.indexOf('webui: "http://[IP]:[PORT:]"') >= 0, emptyMarkerY);
 
 /* ---- summary ------------------------------------------------------------ */
 

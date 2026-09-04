@@ -18,6 +18,7 @@ before that were dates.
 
 ## Unreleased
 
+- The web page button now works for a stack imported from a template onto its own network (a br0-style address) or onto the server's network, where there is no port list to read. Import writes the plain port number into the address, the way the editor's Web page port field does, and a stack imported before this fix gets its button back without a visit to the editor.
 - The Storage tab's "Where stacks may live" box is gone. The same choice now sits inside the Data store box as a switch, **Protect me from myself**: on, the folder picker greys out and refuses places that can lose or hide your stacks; off, it warns and lets you choose. Nothing you had set changes.
 - The Container icons setting now shows a row of six sample icons under its dropdown, so you can see the kind of icon it fetches before you decide.
 
