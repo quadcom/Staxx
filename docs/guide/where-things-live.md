@@ -46,7 +46,7 @@ Open [Settings](settings.md) and press **Move the data store**. It copies everyt
 the new place, checks it byte for byte, and only removes the old folder once that check has passed.
 If the move fails, your data is still exactly where it was.
 
-<!-- SHOT: where-things-live-move-dialog | full frame | the "Where should stacks live?" dialog open, with the suggested pool location and the "Move the data store" button visible -->
+![The Where should stacks live dialog: the current location, a Move it to box with Browse, the Move the data store button, and a Not offered list explaining why two pools are not suggested](../images/guide/settings-move-dialog.png)
 
 ## If you cannot reach StaXX
 

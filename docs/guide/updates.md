@@ -18,7 +18,7 @@ nothing.
 
 ## Check cadence
 
-<!-- SHOT: updates-cadence-settings | full frame | the image updates section of the settings page, showing the check schedule control and the "what to do with what is found" choice -->
+![The Updates tab: Check for image updates with how often and time of day, What to do with what is found, a greyed-out When to install box, and Notify me](../images/guide/settings-image-updates.png)
 
 A check pass runs every hour, on its own, and only asks about the images that are due — most images
 sit that pass out. The daily or weekly choice in [settings](settings.md#image-updates) is when StaXX
@@ -53,7 +53,7 @@ rules only decide which images get asked during a pass — not whether a pass ha
 
 ## Author example findings
 
-<!-- SHOT: updates-example-finding | full frame | a stack's edit form open with an "N to look at" finding note at the top, a Dismiss button visible -->
+![The right end of the title bar with the outlined author-example finding chip beside the updates-waiting chip](../images/guide/updates-author-chip.png)
 
 This is not about a newer build. It means the app's own publisher has put out an example compose
 file that sets, or drops, something your file does not.
@@ -63,9 +63,23 @@ straight from the publisher's own GitHub project, never from Docker Hub, so look
 any of your registry allowance. A setting that merely holds a different *value* is not a finding —
 only a setting the example adds or drops entirely is.
 
-Open the stack to see each one. A finding sits next to the field it concerns when there is one, with
-a **Dismiss** button that stops StaXX asking about it again until the author changes it once more. A
-finding with no matching field — the example sets something your form has no place for — sits in a
+### Following one up
+
+1. Press the **author-example finding** chip in the title bar. A small window lists every finding:
+   the stack, the service, its image, and what the example does differently.
+
+   ![The Author-example findings window listing one finding: the stack and service, its image, and that the author's example does not set an environment setting](../images/guide/updates-author-dialog.png)
+
+2. Open that stack. The finding sits under the setting it concerns, with a **Dismiss** button.
+
+   ![An environment variable row on the form with an orange note beneath it saying the author's published example does not set this, and a Dismiss button](../images/guide/updates-example-finding.png)
+
+3. Change the setting if the example has a point, or press **Dismiss** to keep yours. Dismissing
+   stops StaXX asking about it again until the author changes the example once more. It takes
+   effect straight away — nothing needs saving.
+4. Once every finding is dismissed or acted on, the chip leaves the title bar.
+
+A finding with no matching field — the example sets something your form has no place for — sits in a
 note at the top of the form instead, with the same button.
 
 ## Update pill wordings
@@ -87,6 +101,32 @@ shown there when nothing was found, or nothing has been checked yet.
 | `N to look at` | The author's own published example does something this file does not. |
 | `could not check` | The last check failed. Hover the pill for why. |
 
+## Hovering the pill
+
+![An update pill with its hover card open: a sentence saying a newer version is available, then rows for last asked, next check, how often it is checked and why](../images/guide/the-stack-list-hover-card.png)
+
+Rest your mouse on an update pill — or tab onto it with the keyboard — and a small card opens in the
+page's own style. A sentence at the top repeats what the pill means, and underneath it a short table
+lists whatever StaXX knows: the version currently running and the version on offer, when it was
+last asked, when it is next due, how often it is checked, and why. A row is left out entirely,
+rather than shown empty, when there is nothing to put in it.
+
+## Update items on the row menu
+
+![A stack's row menu open, showing Restart, Stop, Update, Pull images, Check this image again, Skip this version, Logs, Edit compose file, Fill in details and Export](../images/guide/updates-row-menu.png)
+
+A stack's own menu — and a single container's, within a stack — carries these items alongside
+Update and Pull images. See [the row menu](the-stack-list.md#the-row-menu) for how to open it.
+
+| Item | What it does | When it appears |
+|---|---|---|
+| Check this image again | Asks the registry about this image right now, ignoring the cadence table. | Always. |
+| Skip this version | Turns down the one new build currently waiting, without cancelling any that come after it. | Once an update is waiting. |
+| Cancel the countdown | Stops this one waiting update from installing itself. | Once its countdown is actually running. |
+| Resume the countdown | Lets a cancelled countdown carry on. | Once you have cancelled it. |
+| What changed | Opens the publisher's own notes for the waiting update, in a new tab. | Once StaXX knows where those notes are. |
+| Fix the tag… | Opens the editor on the image box, ready to replace a tag that no longer exists. | Once the pill says a tag has been withdrawn. |
+
 ## The countdown
 
 <!-- SHOT: updates-countdown-chip | close-up | a stack row showing the countdown chip beside the update pill, with its reason text if the countdown is not actually running -->
@@ -107,15 +147,16 @@ says why:
 | This stack is stopped | Start it. |
 | Waiting for the quiet window | Wait — it opens at the time you chose. |
 
-- **Cancelling** stops one waiting update from installing itself. Press the pill again to change your
-  mind.
+- **Cancel the countdown** stops one waiting update from installing itself. Press the pill again to
+  change your mind, or choose **Resume the countdown** from the row menu.
 - **Skip this version** turns down one particular new build without cancelling future ones.
 - **Rolling back** puts a service back on the build it ran before, and remembers the declined version
   so it is never offered again as new. See [going back](going-back.md).
 - **Pinning** fixes a service to one exact build for good. A pinned build is never asked about — see
   the cadence table above.
 
-All of this lives in the row's own menu — see [the row menu](the-stack-list.md#the-row-menu).
+See [Update items on the row menu](#update-items-on-the-row-menu) above for exactly when each of
+these appears.
 
 ## Pause and update all
 
@@ -151,8 +192,9 @@ Being refused by Docker Hub now means something else spent the download allowanc
 one of your own pulls, or another machine on the same network — since checking itself costs nothing.
 StaXX tries again within the hour rather than waiting for the next scheduled pass. **Settings →
 [Image updates](settings.md#image-updates)** shows what each registry has actually been asked and
-what, if anything, it cost — worth a look if `could not check` keeps turning up. Hovering an update
-pill also says when that image was last asked, when it is next due, and why.
+what, if anything, it cost — worth a look if `could not check` keeps turning up. See
+[Hovering the pill](#hovering-the-pill) above for when that image was last asked, when it is next
+due, and why.
 
 ## Terms used here
 

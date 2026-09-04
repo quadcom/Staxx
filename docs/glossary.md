@@ -106,8 +106,8 @@ whole line `"8096:8096"`, so changing the host port does not lose track of the b
 underneath — rename it to `.zip` and it opens like any other — with the extension marking it as a
 StaXX bundle rather than an arbitrary zip.
 
-*Why it matters here:* nothing opens one of these for you yet, so today it is a way of handing a
-stack over, not something StaXX reads back in.
+*Why it matters here:* it is a round trip, not just a way of handing a stack over. Drop one onto
+the stack list and StaXX opens it, shows what it holds and where it will land, and imports it.
 
 ---
 

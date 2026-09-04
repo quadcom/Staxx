@@ -2,45 +2,7 @@
 
 <h3 align="center">Docker on Unraid, built on compose files</h3>
 
-<!-- dev-banner -->
-> [!CAUTION]
-> ## Development branch — the bleeding edge, not the stable release
->
-> This is where work in progress lands. Features here may be half-finished, broken, or in the middle
-> of being changed, and the text and screenshots below may describe things that do not work yet.
->
-> You *can* install this — but take it only if you want to see things early and do not mind the
-> occasional rough edge. For the stable release, read [`main`](../../blob/main/README.md).
->
-> You are on one channel at a time. Going back to stable means pasting main's address into
-> **Install Plugin** yourself: it will never appear as an available update, because a development
-> build always sorts as the newer of the two.
->
-> ### To install this branch
->
-> **Every install address further down this page is the stable one.** This is the address for
-> *this* branch — paste it into Unraid's **Plugins → Install Plugin** box:
->
-> ```
-> https://raw.githubusercontent.com/quadcom/Staxx/dev/staxx.plg
-> ```
->
-> **The user guide for this branch** is at
-> **[quadcom.github.io/Staxx/dev](https://quadcom.github.io/Staxx/dev/)** — it describes what is
-> here, rather than what is in the release. The [stable guide](https://quadcom.github.io/Staxx/)
-> covers the release instead.
->
-> **A new build goes out most nights.** Whenever there is new work here, a release is cut
-> automatically overnight, and your server will offer it to you like any other plugin update. That
-> is the point of this channel — but it does mean updates arrive often, and each one carries whatever
-> landed that day. Quiet days produce nothing at all.
-<!-- /dev-banner -->
-
-> **Where this is up to.** In daily use on the author's own server and far enough along to judge on
-> its merits. Not on Community Applications, and not meant to be yet — but numbered releases do
-> install the ordinary Unraid way. See [Limitations](#limitations).
->
-> Latest release: **[00.01.00](https://github.com/quadcom/Staxx/releases)** · [changelog](CHANGELOG.md)
+> Version **[00.02.00](https://github.com/quadcom/Staxx/releases)** · [changelog](CHANGELOG.md)
 
 ## Why this exists
 
@@ -54,7 +16,7 @@ port, and find yourself editing indented text where one stray space breaks the f
 StaXX takes the compose file as it is and draws it as a form. Change the port in a box. The file
 underneath stays an ordinary compose file that still runs anywhere.
 
-![The stacks page](docs/images/stacks-overview.jpg)
+![The stacks page on a desktop, with the same page as a grid of cards on a tablet inset at the bottom right](docs/images/stacks-overview.png)
 
 ## What it does
 
@@ -104,8 +66,11 @@ alone; deleting the data store folder is a separate, deliberate act.
 Every item below has its own page in the [user guide](docs/guide/README.md) — enough here to see
 whether StaXX does what you need.
 
-- **The stacks page** shows every container, with live figures, health and update state at a
-  glance — see [what every mark means](docs/guide/marks.md).
+- **The stacks page** shows every container, with live figures, health, update state and which
+  ports you can actually reach at a glance — hover an update pill to see both versions, when it was
+  last checked and when it is next due; see [what every mark means](docs/guide/marks.md).
+- **On a tablet-sized screen, the list becomes a row of cards** instead of a squeezed table, so
+  everything stays readable without turning the device sideways.
 - **The editor** shows one file three ways — form, file, or both side by side — with the author's
   comments turned into help text; see [editing a stack](docs/guide/editing-a-stack.md).
 - **Health checks** can be worked out for you: where nothing is watching a running container, StaXX
@@ -133,10 +98,13 @@ whether StaXX does what you need.
   [checking for updates](docs/guide/updates.md).
 - **Going back** keeps every saved file and every image build that has run, so a bad change is one
   click undone; see [going back](docs/guide/going-back.md).
+- **A safety copy of every stack lives on the flash drive too**, now including its values file, so
+  restoring one hands back a complete stack rather than one missing its settings.
 - **Sharing a stack** exports a copy with your passwords, keys and paths taken out, ready to drop
   onto somebody else's StaXX; see [sharing a stack](docs/guide/sharing-a-stack.md).
 - **The settings panel** is where almost everything about StaXX lives — where it appears, where your
-  data is kept, icons, updates and sign-ins; see [the settings panel](docs/guide/settings.md).
+  data is kept, icons, updates and sign-ins, with a picture of each option so you can see what you're
+  choosing before you click it; see [the settings panel](docs/guide/settings.md).
 
 ## What it promises
 

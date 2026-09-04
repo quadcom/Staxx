@@ -3,9 +3,13 @@
 <!-- index: 80 | every setting behind the cog, group by group, plus the self-test and the first-run screen. -->
 
 Press **Settings**, the cog above your stack list, to open this panel. Unraid's own Settings →
-Utilities page is now just a signpost to it.
+Utilities page is now just a signpost to it. The panel is the same size as the stack editor, and is
+split into five tabs across its top: **General**, **Storage**, **Icons and images**, **Updates**,
+and **Registries and security**.
 
 ![The Settings panel open at its top: Show StaXX in, the Data store box with its folder button and the three folders derived from it, Docker menu, and Installs from the Apps page](../images/guide/settings-panel-open.png)
+
+![The settings panel's tab strip: General, Storage, Icons and images, Updates, Registries and security, with the first box of the General tab beneath](../images/guide/settings-tabs.png)
 
 ## Using the panel
 
@@ -17,30 +21,40 @@ Utilities page is now just a signpost to it.
 Some settings need the page to reload — where StaXX appears, and where the data store is. StaXX
 reloads for you and says so.
 
-## Top group
+Every setting sits in its own titled box, with a short explanation above the control rather than
+below it. A few boxes hold more than one setting where the settings belong together — the update
+check's schedule, when an update installs itself, and Docker Hub sign-in are each one box like
+this.
+
+## General tab
+
+| Setting | Choices | Default | What it does |
+|---|---|---|---|
+| Show StaXX in | A tab under the Docker menu / Its own button in the top bar | A tab under Docker | As a tab it sits ahead of Docker Containers and is the tab you land on. Has no effect while Docker menu (below) is on. |
+| Docker menu | Leave the Docker menu alone / Replace it with StaXX | Leave it alone | Replacing it takes everything under it with it, including Unraid's own container list. Nothing is changed underneath; turning it off puts it straight back. Greyed out and locked off while Show StaXX in is set to "a tab under Docker", since there is then no top-level button for it to replace. |
+| Installs from the Apps page | Bring them into StaXX / Ask first / Leave them to Unraid | Bring them into StaXX | What happens when you install something from Unraid's own Apps page. Turning it off restores Unraid's own install route; nothing already installed changes. See [adding an app](installing-an-app.md). |
+| Container shells | Allow opening a shell / Do not allow shells | Allow opening a shell | Off **refuses every shell on the server**, not just the tab. There is no way round it from the page. |
+
+Under Show StaXX in and under Docker menu, a small row of pictures sits beneath the dropdown, one
+for each choice, with the one you have picked outlined. Clicking a picture is a second way to pick
+that choice — the dropdown and the pictures always agree.
+
+![Two small pictures under the Show StaXX in setting: StaXX as a tab under Docker, and StaXX as its own button in the top bar, the chosen one outlined in orange](../images/guide/settings-pictures.png)
+
+## Storage tab
 
 ![The top of the settings panel: the "Show StaXX in" choice, then the "Data store" box holding the folder's full path, the three greyed-out folders listed underneath it, and the "Move the data store" link below those](../images/guide/settings-data-store.png)
 
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
-| Show StaXX in | A tab under the Docker menu / Its own button in the top bar | Docker tab | As a tab it sits ahead of Docker Containers and is the tab you land on. Has no effect while Docker menu (below) is on. |
-| Data store | A folder path | blank | The one folder holding your stacks and their archives. See [file locations](where-things-live.md). |
-| Docker menu | Leave the Docker menu alone / Replace it with StaXX | Off | Replacing it takes everything under it with it, including Unraid's own container list. Nothing is changed underneath; turning it off puts it straight back. |
-| Installs from the Apps page | Bring them into StaXX / Ask first / Leave them to Unraid | Bring them into StaXX | What happens when you install something from Unraid's own Apps page. Turning it off restores Unraid's own install route; nothing already installed changes. See [adding an app](installing-an-app.md). |
-| Container icons | Download them automatically / Do not download anything | On | Off, containers with no icon get a coloured tile with their initials. The only thing sent out, when on, is the name of the icon being asked for. |
-| Keep icons with the stack | Record them in the file / Work them out each time | On | Writes the icon's name into the stack's file and saves a copy of the picture beside it, so the stack looks the same on any server. An icon you named yourself is never touched. |
-| StaXXCrypt hashing container | Only while hashing / Keep it running | Only while hashing | The container behind [making a password hash](passwords-and-hashes.md). Kept running, hashing is near-instant; on demand it costs nothing idle but takes a couple of seconds per hash. |
-
-![The StaXXCrypt block on the Settings panel: a setting for whether the container stays running, its state reading Built, and running now with a recipe number, and each hash format listed with its own result — bcrypt, SHA-512 crypt, SHA-256 crypt and argon2id all passing](../images/guide/settings-staxxcrypt.png)
-
-| Image documentation | Read it automatically / Do not look anything up | On | Whether adding an image reads its own documentation to build a fuller starting file. Only runs the moment you add something, never in the background. The only thing sent out is the image's name. |
 | Where stacks may live | Guide me / Get out of the way | Guide me | Guide me hides and refuses risky locations when choosing a folder — a single array disk, an unassigned or network drive, a share bound for the array. Get out of the way shows everything and warns instead. **Refused either way:** a location that lives in memory, and a whole share as the stacks folder — every folder in it would be read as a stack. |
-| Container shells | Allow opening a shell / Do not allow shells | On | Off **refuses every shell on the server**, not just the tab. There is no way round it from the page. |
+| Data store | A folder path | blank | The one folder holding your stacks and their archives. See [file locations](where-things-live.md). |
+| Copies on the flash drive | Keep a copy of every compose file there / Do not write copies | Keep a copy | After every save, a plain copy of the stack's file — with its override and its separate values file, if it has them — is written to the flash drive, which Unraid already backs up. Losing the data store then never means losing the definition of what you run; StaXX never reads these copies back while the store is present. |
 
 The **Choose a folder** button sits beside the Data store box — a small folder icon. Press it to
 browse the server instead of typing a path.
 
-<!-- SHOT: settings-data-store-row | close-up | the Data store text box with the "Choose a folder" folder-icon button beside it, highlight box around that button -->
+![The Data store box with its path and the folder-icon button beside it outlined](../images/guide/settings-data-store-row.png)
 
 Two links sit under the data store box:
 
@@ -49,61 +63,83 @@ Two links sit under the data store box:
   everything, **checks it byte for byte, and only then removes the original** — nothing is
   deleted before the copy is proved good. A failed move leaves your data exactly where it was.
 
-  <!-- SHOT: settings-move-dialog | full frame | the "Where should stacks live?" dialog open, showing the suggested pool location and the "Move the data store" button -->
+  ![The Where should stacks live dialog: the current location, a Move it to box with Browse, the Move the data store button, and a Not offered list explaining why two pools are not suggested](../images/guide/settings-move-dialog.png)
 
 - **Check these are in your backup** opens *Add these folders to your backup*, which says whether
   these folders are named in the Appdata Backup plugin. Being named is not the same as having been
   backed up — see the self-test below.
 
-  <!-- SHOT: settings-backup-dialog | full frame | the "Add these folders to your backup" dialog open, showing its found-in-the-list or not-listed message -->
+  ![The Add these folders to your backup dialog, reporting that the stacks and archives folders were found in the backup plugin's list](../images/guide/settings-backup-dialog.png)
 
 Keeping the store on the flash drive is possible through a separate, quieter button. It makes you
 tick a box first: flash wears out with use, and it is the least redundant place in the machine.
 
-## Image updates
+A read-only list of the zips of stacks you have removed, with dates and sizes, sits at the bottom
+of this tab as **Archived stacks**.
 
-This group is explained fully in [checking for updates](updates.md). What the panel decides:
-
-<!-- SHOT: settings-image-updates | full frame | the Image updates group of the settings panel — "Check for image updates" through "Remove old images automatically" -->
+## Icons and images tab
 
 | Setting | Choices | Default | What it does |
 |---|---|---|---|
-| Check for image updates | Never / Every day / Once a week | Every day | Off means nothing is ever looked up. |
+| Container icons | Download them automatically / Do not download anything | Download automatically | Off, containers with no icon get a coloured tile with their initials. The only thing sent out, when on, is the name of the icon being asked for. |
+| Image documentation | Read it automatically / Do not look anything up | Read it automatically | Whether adding an image reads its own documentation to build a fuller starting file, and to fill in a stack's description, category, author and links. Only runs the moment you add something, never in the background. The only thing sent out is the image's name. |
+| Watch the publisher's own examples | Look, during the same check / Do not look | Look | Whether the update check also asks GitHub if the image's own project publishes an example file — never Docker Hub, so it never spends the update-checking allowance. |
+
+**Add missing StaXX fields to every stack**, at the bottom of this tab, reads every stack and
+offers to add its icon, links and description fields as commented placeholders. It shows what
+would be added before writing anything, and never changes what is already in a file.
+
+## Updates tab
+
+This tab is explained fully in [checking for updates](updates.md). What the panel decides:
+
+![The Updates tab: Check for image updates with how often and time of day, What to do with what is found, a greyed-out When to install box, and Notify me](../images/guide/settings-image-updates.png)
+
+| Setting | Choices | Default | What it does |
+|---|---|---|---|
+| Check for image updates | Never / Every day / Once a week | Every day | Off means nothing is ever looked up. Shares a box with the time of day below it. |
 | Time of day to check | A 24-hour time | 04:00 | When the daily or weekly check runs. |
-| Watch the publisher's own examples | Look, during the same check / Do not look | On | Whether the check also asks GitHub if the image's own project publishes an example file — never Docker Hub, so it never spends the update-checking allowance. |
 | What to do with what is found | Just show it on the row / Wait for you to press Update / Install it by itself | Wait for you to press Update | A stack or a single service can override this in its own file. |
 | Delay before installing | 0 to 720 hours | 24 | Only used by "Install it by itself" — how long an update counts down on its row first. |
 | Only install during a quiet time | Yes / No | Yes | An update whose delay runs out outside quiet hours waits for them to open. |
 | Quiet time starts / ends | A 24-hour time | 03:00 / 05:00 | The quiet window. It may run past midnight. |
 | Notify me | Never / When a check finds something / That, and again once installed | Never | One message per check or queue, never one per container. |
-| Previous versions to keep | 0 to 5 | 2 | How many older image versions stay on disk so an update can be undone. See [version history](going-back.md). |
+| Previous image releases to keep | 0 to 5 | 2 | How many older image versions stay on disk so an update can be undone. See [version history](going-back.md). |
 | Remove old images automatically | No / Yes, once a week | No | Only ever removes an image nothing is running and no roll-back still needs. |
-| Registry questions | — a report, nothing to set | — | What each registry has actually been asked, this hour and today, and what — if anything — it cost. Worth a look whenever a `could not check` pill keeps turning up; see [checking for updates](updates.md#docker-hubs-limit). |
 
-## Docker Hub sign-in
+The "when to install" box — Delay before installing, through the quiet time — folds away out of
+sight unless "What to do with what is found" is set to "Install it by itself". There is nothing to
+set there otherwise, so it is not shown.
+
+At the bottom of this tab, **Update-check activity** shows as a table instead of a paragraph: one
+row per registry, with how many times it has been asked this hour and today, how many of those
+asks counted against its allowance, and a note beside any registry worth a closer look. Worth
+checking whenever a `could not check` pill keeps turning up; see
+[checking for updates](updates.md#docker-hubs-limit).
+
+## Registries and security tab
 
 A username, an access token, and a list of registries you run yourself — used only when checking
 your images for updates. **Without signing in, Docker Hub allows this server about ten of those
 checks an hour; signed in, about a hundred.**
 
-<!-- SHOT: settings-docker-hub | full frame | the Docker Hub sign-in group, showing the username field and the "registries you run yourself" field — scroll or crop so the access token field is out of frame; the stored token must never appear in a picture -->
+![The Registries you run yourself box with its address field and Add button, and the StaXXCrypt hashing container box below it](../images/guide/settings-registries.png)
 
 | Setting | What it does |
 |---|---|
-| Docker Hub username | Your Docker Hub account name. Leave blank to stay signed out. |
+| Docker Hub username | Your Docker Hub account name. Leave blank to stay signed out. Shares a box with the access token below it. |
 | Docker Hub access token | Make it in Docker Hub's own account settings, under Security → Personal access tokens, with the **read-only, public repositories** permission. StaXX only ever asks an image its current version, so a leaked token could look but never change or delete anything. It is kept in StaXX's own settings file inside the data store, readable only by the administrator account. Leave both boxes blank to sign out. |
-| Registries you run yourself | Naming a registry here makes StaXX trust that machine's own certificate, or talk to it with **no encryption at all** if it has none. Only ever name a registry you run yourself. Several are separated by commas. A password is never sent to a registry reached without encryption. Left blank, nothing beyond the ordinary public internet is trusted. |
+| Registries you run yourself | Naming a registry here makes StaXX trust that machine's own certificate, or talk to it with **no encryption at all** if it has none. Only ever name a registry you run yourself. Added one at a time to a list — type an address and press Add, or remove one with its own cross. A password is never sent to a registry reached without encryption. Left empty, nothing beyond the ordinary public internet is trusted. |
+| StaXXCrypt hashing container | Only while hashing, or keep it running instead. The container behind [making a password hash](passwords-and-hashes.md). Kept running, hashing is near-instant; on demand it costs nothing idle but takes a couple of seconds per hash. |
 
-## Other tools on the panel
+![The StaXXCrypt block on the Settings panel: a setting for whether the container stays running, its state reading Built, and running now with a recipe number, and each hash format listed with its own result — bcrypt, SHA-512 crypt, SHA-256 crypt and argon2id all passing](../images/guide/settings-staxxcrypt.png)
 
-- **Add missing StaXX fields to every stack** reads every stack and offers to add its icon, links
-  and description fields as commented placeholders. It shows what would be added before writing
-  anything, and never changes what is already in a file.
-- **Archived stacks** — a read-only list of the zips of stacks you have removed, with dates and
-  sizes.
-- **The hashing container's own state** — whether it is built and running, which hash formats it
-  has actually proven it can make, and buttons to Build, Recreate or Rebuild it. A newer recipe is
-  only ever a notice; nothing rebuilds until you press the button.
+Underneath the StaXXCrypt setting, a short plain-words list called **What is inside it** says
+exactly what the container is built from — a small Linux base, the two extra packages it adds
+for the hash types Unraid's own PHP cannot make, nothing of StaXX's own copied in, and that it
+runs with no network connection, no ports and no shared folders. A **Show the recipe** link below
+that reveals the exact file it is built from and the exact commands run against it, for anyone who
+wants to check for themselves rather than take the summary's word for it.
 
 ## First-run screen
 

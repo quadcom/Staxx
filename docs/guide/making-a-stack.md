@@ -8,7 +8,7 @@ Use this when there is no catalogue entry for what you want — an image you alr
 
 1. Press **Add stack**, top right of the [stack list](the-stack-list.md).
 
-   <!-- SHOT: making-a-stack-button | close-up | the top button row with Add stack highlighted -->
+   ![The top button row with Add stack outlined](../images/guide/making-a-stack-button.png)
 
 2. [The stack editor](the-stack-editor.md) opens straight away, titled **New stack**.
 3. Type a name in the **Stack name** box. This is the only thing you are asked for. It becomes the folder's name, so renaming it later moves the folder.
@@ -17,7 +17,7 @@ Use this when there is no catalogue entry for what you want — an image you alr
 6. Put in your own image, service name and settings, or paste a whole compose file over the skeleton.
 7. Press **Save**, or **Save and start** to run it straight away.
 
-   <!-- SHOT: making-a-stack-save | close-up | the Save and Save and start buttons in the editor footer -->
+   ![The editor footer: Tidy this file, Undo, Save and Save and start](../images/guide/making-a-stack-save.png)
 
 There is no folder picker here. A new stack always lands at the top level. To file it in a folder afterwards, use **Move to folder** on the stack's own menu — see [folders](folders.md). There is no template gallery either; every new stack starts from the same skeleton. For a ready-made app instead, use the **Apps** button — see [installing an app](installing-an-app.md).
 

@@ -9,11 +9,11 @@ stack. Nothing switches off, starts, or changes while it runs.
 
 1. **Press Import**, in the row of buttons at the top right, between **Apps** and **Add stack**.
 
-   <!-- SHOT: bringing-in-a-container-button | close-up | the top button row with Import ringed -->
+   ![The top button row with Import outlined](../images/guide/bringing-in-a-container-button.png)
 
 2. **Read the list.** A window opens with everything on the server sorted into groups.
 
-   <!-- SHOT: bringing-in-a-container-groups | full frame | the Import window with its groups, the first three open -->
+   ![The Import window: an explanation at the top, the Unraid templates group open with a tick box, icon, name, state and target folder for each container, and the Import into choice at the bottom](../images/guide/bringing-in-a-container-groups.png)
 
    | Group | What is in it | Can it be ticked? |
    |---|---|---|
@@ -51,7 +51,7 @@ stack. Nothing switches off, starts, or changes while it runs.
 7. **Open the new stack** — click its picture — and read what StaXX wrote before doing anything
    else with it.
 
-   <!-- SHOT: bringing-in-a-container-needs-review | close-up | a stack row carrying the needs review tag -->
+   ![A stack row carrying the orange needs review tag under its name, outlined](../images/guide/bringing-in-a-container-needs-review.png)
 
 8. **Right-click the row** to open its menu. Two items appear because it is locked.
 
@@ -59,6 +59,8 @@ stack. Nothing switches off, starts, or changes while it runs.
    |---|---|
    | Take over and start | Switches the old container off, sets it aside under another name, starts this stack in its place, then asks whether it worked. |
    | Clear the lock only | Removes the lock and nothing else. Use this only when nothing else holds the container's name. |
+
+   ![The row menu of a locked stack: Take over and start, Clear the lock only with its note that it starts nothing, then Edit compose file](../images/guide/bringing-in-a-container-menu.png)
 
    **Take over and start** is the normal choice — it deals with the running container for you.
    **Clear the lock only** leaves that container exactly as it is, so the new stack can then fail to

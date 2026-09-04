@@ -29,7 +29,7 @@ add the second kind.
 
 ## Update state
 
-<!-- SHOT: marks-update-pill | close-up | a stack row's State column with the update pill visible next to the running pill, highlight box round the update pill -->
+![A running pill beside an orange update ready pill, the update pill outlined](../images/guide/marks-update-pill.png)
 
 Sits beside the running pill. Empty most of the time, and empty is the good news — nothing newer
 was found. See [update checking](updates.md) for the cadence, the countdown, and the author's own
@@ -52,6 +52,12 @@ Only `update ready` (and its version forms) is a button. Everything else is a fa
 `update ready` and `rebuild ready` are shown in a stronger colour because they are the two worth
 acting on.
 
+### The hover card
+
+Hover a pill — or press it, on a touch screen — for a small card in the page's own style: the
+version running now, the version on offer, when it was last checked, when it is next due, and why
+it is checked that often.
+
 ## Marks under the name
 
 | Example | Mark | Meaning |
@@ -64,9 +70,12 @@ acting on.
 tells them apart. A third, identical triangle sits beside the image name in the Services column —
 see below.
 
+A coloured GPU badge in its own column — Intel blue, AMD red, NVIDIA green — means the file asks for
+a graphics card, and it stays even while the stack is stopped.
+
 ## Restart to apply marks
 
-<!-- SHOT: marks-restart-chip | close-up | a stack row showing the grey "Restart to apply" chip beside the State column, highlight box round the chip -->
+![A stopped pill, a name clash pill and, beneath them, the grey Restart to apply chip outlined](../images/guide/marks-restart-chip.png)
 
 Shown when the running containers no longer match what the file on screen says — usually because it
 was edited and saved but not yet restarted. **Nothing is broken until you restart.**

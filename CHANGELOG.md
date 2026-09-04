@@ -45,10 +45,12 @@ before that were dates.
   address, or on host networking, no longer carry a row of internal ports nothing outside can reach.
 
 - **The update status now lives at the top of the page, not above the table.** Last checked, how
-  many updates are waiting, and how many author-example findings there are now show as small tags at
-  the right end of the title bar, next to "StaXX". The explanatory paragraph that used to sit above
-  the table is gone — the store's location is already on the Settings page — and the table now starts
-  a little higher, so one more row fits on screen.
+  many updates are waiting, and how many author-example findings there are now show as small tags
+  next to "StaXX" — at the right end of the title bar when the page has one of its own, in Unraid's
+  shared tab strip when its tabbed view is on and StaXX has none, and otherwise on their own line
+  above the buttons. The explanatory paragraph that used to sit above the table is gone — the
+  store's location is already on the Settings page — and the table now starts a little higher, so
+  one more row fits on screen.
 
 - **On a tablet-sized window, the stack list is now a grid of cards instead of a squeezed table.**
   Each stack gets its own card — icon, name, state, address and its little graphs, three across —
@@ -103,6 +105,9 @@ before that were dates.
   written as numbered walkthroughs you can follow with the screen in front of you. Everything is
   written shorter and plainer, and where one page shows something another page explains, the two are
   now linked.
+- **The guide now covers removing a stack and the Manage tab** — the log, shell and file browser
+  inside a running container — and every picture across the guide was re-taken against the current
+  screen.
 - **StaXX's own mark now sits in the corner of its page**, in place of the stock icon Unraid gives
   any plugin, so the page says whose it is at a glance.
 
@@ -120,6 +125,30 @@ before that were dates.
   which claim you are getting before you accept it.
 - **A Community Applications template that carried a health check now keeps it.** It used to be
   explained away with a note saying compose had an equivalent, and then discarded.
+- **A row can now say the app inside has failed, even while the container carries on running.**
+  Where an image already checks its own health, a stack or service that reports unhealthy turns red
+  instead of the plain running green, and a stack row names the part that is unhappy. Hovering any
+  running pill now also says which of the two claims it is actually making — the container is
+  going, or the app has been confirmed to be working — so a green row on an image that checks
+  nothing can no longer be read as more than it is.
+- **Dropping a `.staxx` file onto the stack list turns it into a stack.** Drag it onto a folder to
+  land there, or anywhere else for the top level, and the folder under your cursor is outlined while
+  you drag. A preview shows what is inside, where it will land, a name you can change, and the
+  covering note the export carried; nothing is written until you confirm, the stack appears stopped
+  with its values still to fill in, and a name already in use is refused rather than merged into or
+  overwritten. That preview's count of values still to fill in now only counts real values, not the
+  covering note's own mentions of them.
+- **A password or hash containing a dollar sign now survives being written into the compose file.**
+  Compose reads a bare dollar sign as the start of a variable name and quietly deletes it, which was
+  eating part of every generated hash that began with one. A dollar sign is now doubled wherever one
+  can reach a value — typed by hand, made with the Hash button, pasted in, or produced by a
+  passphrase — and a file already carrying the broken, undoubled form is now noticed when it is
+  opened, with a one-click, undoable fix offered beside it. Importing a Community Applications
+  template does the same doubling on the way in, while still keeping the template's own original
+  wording as the first entry in the new stack's history.
+- **A stack itself can no longer state its own icon.** A stack's picture has always been worked out
+  from the services inside it; a file that still carries the older, separate stack-level icon
+  setting is now refused rather than having that setting silently ignored.
 - **Every compose file is laid out the same way, once, as it arrives.** However a file got here, its
   sections and each container's settings are put into one order, with a blank line between sections.
   The button in the editor brings an older stack into line. Order only: no line's text is ever

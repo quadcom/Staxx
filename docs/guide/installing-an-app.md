@@ -9,7 +9,7 @@ one catalogue entry into an ordinary compose file, ready for you to check before
 
 1. Press **Apps**, next to Add stack.
 
-   <!-- SHOT: installing-an-app-button | full frame | the button row along the top, with Apps highlighted -->
+   ![The top button row with Apps outlined](../images/guide/installing-an-app-button.png)
 
 2. Read the window that opens. It shows a curated home page — **Spotlight**, **Recently Added**
    and **Top Trending** — with a search box and a category list above them.
@@ -46,11 +46,11 @@ one catalogue entry into an ordinary compose file, ready for you to check before
 
 11. Press **Save**.
 
-    <!-- SHOT: installing-an-app-save | close-up | the Save button in the editor -->
+    ![The editor footer: Tidy this file, Undo, Save and Save and start](../images/guide/making-a-stack-save.png)
 
 12. See the new stack on the list, stopped. Saving never starts it.
 
-    <!-- SHOT: installing-an-app-stopped | close-up | the new row on the stack list, showing a stopped state pill -->
+    ![The new stack's row on the list: its icon, name, service and image, and a grey stopped pill](../images/guide/installing-an-app-stopped.png)
 
 13. Press **Start** when you are ready to run it.
 

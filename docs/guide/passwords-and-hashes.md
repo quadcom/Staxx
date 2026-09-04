@@ -5,7 +5,7 @@
 Some apps want a password. Some want it scrambled first. The **Password** button does both, in
 [the stack editor](the-stack-editor.md), without the value ever leaving the page.
 
-<!-- SHOT: passwords-and-hashes-button | close-up | the toolbar row of the stack editor with the Password button ringed -->
+![The editor's top row with the Password button outlined](../images/guide/passwords-and-hashes-button.png)
 
 ## Steps
 
@@ -34,7 +34,7 @@ You can type or paste your own password in at any time. Everything below works t
 
 ### Strength
 
-<!-- SHOT: passwords-and-hashes-strength | close-up | the strength reading under a generated password -->
+![The strength reading, 144 bits, very strong, above a generated password and its Regenerate button](../images/guide/passwords-and-hashes-strength.png)
 
 A strength reading sits under the box, in bits. Higher is harder to guess. Type your own password
 over the top and the reading still shows — but it is only ever labelled an estimate, because there
@@ -52,7 +52,7 @@ Nothing else is held back.
 
 ## Fill and Copy
 
-<!-- SHOT: passwords-and-hashes-fill-copy | close-up | the password half's Copy and Fill buttons under the generated value -->
+![The Copy and Fill buttons under the generated password, and the line saying which box Fill will put it in](../images/guide/passwords-and-hashes-fill-copy.png)
 
 The password and its hash usually go to two different places, so each half has its own pair.
 
@@ -75,7 +75,7 @@ work.
 Some apps refuse a password outright and want it put through a one-way scramble first — a **hash**.
 That is the **Hash** section, in the lower half of the panel.
 
-<!-- SHOT: passwords-and-hashes-hash-section | full frame | the whole Hash section of the panel: the Format dropdown, the Hash button, and the result box below it -->
+![The Hash section: the Format dropdown, the Hash button, a bcrypt result in the box below, and its own Copy and Fill buttons](../images/guide/passwords-and-hashes-hash-section.png)
 
 Only formats this server has actually proved it can produce are offered:
 
@@ -86,7 +86,7 @@ Only formats this server has actually proved it can produce are offered:
 | SHA-256 crypt | The same, in a shorter form |
 | argon2id | Newer apps, such as Vaultwarden |
 
-<!-- SHOT: passwords-and-hashes-format-dropdown | close-up | the Format dropdown open, showing the list of proved formats, one marked (lighter check) -->
+![The Format dropdown open, listing bcrypt, SHA-512 crypt, SHA-256 crypt and argon2id with its lighter check note](../images/guide/passwords-and-hashes-format-dropdown.png)
 
 Choose one, press **Hash**, and the value appears below it. A format may say **(lighter check)** —
 this server could prove it makes the right shape, but not that it round-trips, so it says so rather

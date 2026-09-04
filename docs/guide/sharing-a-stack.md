@@ -63,15 +63,15 @@ settings — a `.env` file has nowhere to keep that mark.
 
 ## 4. Press Export
 
-<!-- SHOT: sharing-a-stack-export | close-up | the Export button on the summary screen -->
+![The bottom of the export summary: the line saying nothing is written until Export is pressed, then Cancel, Back and Export, with Export outlined](../images/guide/sharing-a-stack-export.png)
 
 | What you sent | What you get |
 |---|---|
 | Just the compose file | Downloads as plain text — paste it anywhere. |
 | More than one file | Downloads as a single `.staxx` file — an ordinary zip, rename it to `.zip` to look inside. |
 
-StaXX cannot open a `.staxx` file back in yet, so today this is a way to hand a stack over, not a
-round trip.
+This is how you hand a stack over. The person who receives it can drop the file straight onto their
+own stack list to bring it in — see [Opening one you receive](#opening-one-you-receive) below.
 
 ## The exported file
 

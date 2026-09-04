@@ -11,7 +11,7 @@ from anyone using this browser.
 
 ## Steps
 
-<!-- SHOT: hiding-your-values-tick | close-up | the Sanitise tick box on the editor's top row, next to the stack name and just left of the Password button, unticked -->
+![The Sanitise tick box on the editor's top row, unticked, outlined, with the Password button beside it](../images/guide/hiding-your-values-tick.png)
 
 1. Open the stack you want to photograph.
 2. Tick **Sanitise**. A banner appears and the editor locks.

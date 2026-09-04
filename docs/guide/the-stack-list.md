@@ -22,13 +22,18 @@ bottom, part by part.
 | Update all | Installs every update currently waiting. |
 | Pause updates | Freezes every update countdown on the page. Press again to say Resume updates. |
 
-## Update summary
+## The title bar
 
-A line says when updates were last checked, and how many are waiting. It reads **Never checked**
-until the first check runs. See [update checking](updates.md) for what a check does.
+![The right end of the title bar: a grey chip saying when updates were last checked, an orange chip counting updates waiting, and an outlined chip counting author-example findings, with the button row beneath](../images/guide/the-stack-list-title-chips.png)
 
-Below it, a hint names the folder your stacks are kept in. Anything you drop there by hand shows up
-here too.
+At the right end of the title bar, next to "StaXX", small tags say how the last check went. See
+[update checking](updates.md) for what a check does.
+
+| Tag | Meaning |
+|---|---|
+| Never checked / Checked N ago / Could not finish the last check | Whether a check has run yet, and how it went. |
+| N updates waiting | How many services have something newer. Not shown when there is nothing waiting. |
+| N author-example finding(s) | The author's own published example does something different somewhere. Press it to see where. |
 
 ## The columns
 
@@ -47,6 +52,22 @@ folder get a row of titles of their own too.
 | Memory | Memory use, with a small graph. |
 | Network | Network traffic, with a small graph. |
 | GPU | A coloured badge (Intel, AMD or NVIDIA) for a stack whose file asks for a graphics card, plus a use figure and small graph while it is running. The badge stays even when the stack is stopped, so you can see which stacks have hardware in them without starting them. The column only appears when a stack on the page has one. |
+| Ports | The ports Docker is actually forwarding, plus the one a service's web page answers on. A stack with its own network address, or on host networking, shows none — there is nothing else to forward. |
+
+![The State and Address columns over two running stacks, each address followed by its reachable port in orange](../images/guide/the-stack-list-ports.png)
+
+## On a tablet-sized window
+
+![The stack list on a tablet-sized window: two folder rows, then stacks as cards three across, each with its icon, name, state pill, address and small graphs](../images/guide/the-stack-list-cards.png)
+
+Below desktop width, the list becomes cards instead of a table — three across, one card per stack,
+carrying its icon, name, state, address and its little graphs. A folder becomes a heading over its
+own row of cards rather than a row of its own.
+
+A stack running more than one service shows a cubes button in its corner. Tap it to see those
+services as cards of their own, without the page underneath changing shape.
+
+![A stack's services opened from its cubes button: a small window over the card grid, headed with the stack's name and "2 services", holding one card per service with its state, image and ports](../images/guide/the-stack-list-cards-services.png)
 
 ## Stack row parts
 
@@ -95,7 +116,7 @@ when you hover it. See [row marks and icons](marks.md) for the full key.
 | <img src="../images/guide/the-stack-list-pill-deciding.png" alt="An amber pill reading Up 8 seconds"> | Running. Its own check has not finished deciding yet. |
 | <img src="../images/guide/the-stack-list-pill-stopped.png" alt="A grey pill reading stopped"> | Not running. |
 | <img src="../images/guide/the-stack-list-pill-not-created.png" alt="A grey pill reading not created"> | Never started from the file yet. |
-| <img src="../images/guide/the-stack-list-pill-busy.png" alt="An orange dashed outline pill reading Updating"> | A command is running on this row. It also says Starting, Stopping, Removing or Rebuilding. |
+| <img src="../images/guide/the-stack-list-pill-busy.png" alt="An orange dashed outline pill reading Updating"> | A command is running on this row. It also says Starting, Stopping, Removing or Rebuilding — or, on a first start, Downloading image…, while the image itself is still being fetched. |
 | <img src="../images/guide/the-stack-list-pill-failed.png" alt="A red pill reading Update failed"> | The last command failed. Click it to see what happened. |
 
 An amber **name clash** pill turns up here when a stack's folder shares a name with another stack
@@ -119,6 +140,13 @@ newer was found, or when nothing has been checked yet.
 | <img src="../images/guide/the-stack-list-pill-registry-moved.png" alt="A grey pill reading registry moved"> | registry moved | The image now lives somewhere else. |
 | <img src="../images/guide/the-stack-list-pill-to-look-at.png" alt="A grey pill reading 3 to look at"> | N to look at | The author's own example does something different here. |
 | <img src="../images/guide/the-stack-list-pill-could-not-check.png" alt="A red outlined pill reading could not check"> | could not check | The last check failed. |
+
+Hover an update pill, or tab onto it with the keyboard, for a small card with more detail: the
+version running now, the version on offer, when it was last checked, when it is next due, and why
+it is checked that often. A newly-added image can be worth checking every hour; a settled one only
+once a week.
+
+![An update pill with its hover card open: a sentence saying a newer version is available, then rows for last asked, next check, how often it is checked and why](../images/guide/the-stack-list-hover-card.png)
 
 A chip appears when the file has been saved but not yet restarted. Nothing is broken until you press
 it.
@@ -144,6 +172,18 @@ Click the app picture to open it. Items appear in this order, and only when they
 | Boot | Autostart (on/off switch), Delay |
 | Reference | What do these marks mean? |
 | Last | Remove stack |
+
+### A service's own menu
+
+Right-click a service row inside an expanded stack for a menu scoped to that one container. Most
+items match the stack menu above, at container scope, plus two of its own:
+
+| Item | What it does |
+|---|---|
+| Rebuild | Only for a container built here, once its base image has moved on. Pulling will not fetch that, so it has to be built again. |
+| Test web page | Fetches the service's own web page, right now, and says whether it answered — without opening it yourself. |
+
+Autostart and Delay work the same way here as on the stack menu, but apply to this one service only.
 
 ## Folders
 

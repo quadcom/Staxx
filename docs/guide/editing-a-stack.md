@@ -22,7 +22,7 @@ to type one from memory:
 
 ## The note under a box
 
-<!-- SHOT: editing-a-stack-notes | close-up | a setting box with its Notes box underneath, a sentence typed into it -->
+![The Container section of the form, with a sentence typed into the Notes box beside the Image setting](../images/guide/editing-a-stack-notes.png)
 
 Most boxes carry a smaller box underneath labelled **Notes**. That is the actual comment written on
 that line in the file. Type a sentence and it is written back as the comment on that exact line,
@@ -30,7 +30,7 @@ nowhere else. Leave it blank and no comment is written at all.
 
 ## Secret and required
 
-<!-- SHOT: editing-a-stack-marks | close-up | the compose view showing a setting's comment carrying both the Secret and Required marks -->
+![The compose view showing three environment settings, their comments ending in the Required mark, both marks, and the Secret mark](../images/guide/editing-a-stack-marks.png)
 
 Two facts about a box are recorded as short marks at the end of its comment:
 
@@ -153,13 +153,33 @@ line below it — so a refusal is something you will actually notice.
 - **It is not a second copy of your file.** The form is a view drawn from the file itself — the file
   you started with is still the same file, in the same place, readable in any text editor.
 
-## Not on the form yet
+## Fill in details
 
-Some of what a stack records about the app itself — its description, its project links — has no box
-on this form yet. **Fill in details**, at the top of the screen, looks them up from the image, the
-app's catalogue entry and its own page, and shows you what it found before writing any of it. To
-type your own wording instead, switch to the Compose view — see [the stack
-editor](the-stack-editor.md) for the three views — and edit it by hand:
+Some of what a stack records about the app itself — its icon, description, author and project
+links — has no box on this form. **Fill in details**, at the top of the screen, looks them up from
+three places: the image's own labels, the app's Community Applications entry, and the project's own
+page. Nothing is written until you have seen it.
+
+When StaXX has already looked and found something, a bar at the foot of the editor says so:
+
+![The bar at the foot of the editor: some details were found for this stack from its image, catalogue entry and own page, review them, with a create it link](../images/guide/editing-a-stack-details-bar.png)
+
+Press the button or the bar's link and a window shows what was found:
+
+![The Fill in this stack's details window: two empty fields that will be filled without asking, then fields that already hold a value shown beside what was found, each pair with a What's there and a What was found choice and a green STATED badge](../images/guide/editing-a-stack-fill-in-details.png)
+
+| Part of the window | What it means |
+|---|---|
+| Fields that are empty | A value was found and there is nothing to lose, so these are written in without asking. |
+| Fields that already hold a value | The found value differs from yours. Pick **What's there** or **What was found** for each one before Apply lets you go on. |
+| **STATED** | The publisher wrote this value into the image itself. A value without that badge was read from a catalogue entry or a page, and is a good guess rather than the author's word. |
+| **Just add placeholders** | Writes the field names in as comments, with nothing filled in, for you to complete by hand. |
+| **Apply** | Writes your choices into the file in the editor. The stack is not saved until you press **Save**. |
+
+A value identical to one already in the file is never offered again, and a link that is not a
+secure `https` address is thrown away rather than offered. To type your own wording instead, switch
+to the Compose view — see [the stack editor](the-stack-editor.md) for the three views — and edit it
+by hand:
 
 ![The editor in Split view: the form of boxes on the left and the compose file's text on the right, with the Form, Split and Compose buttons above them and the Configure, Manage, History and Versions tabs across the top](../images/guide/editing-a-stack-split.png)
 

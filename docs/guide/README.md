@@ -29,6 +29,8 @@ This guide is written in English only.
   update state, and the rest.
 - **[File locations and the data store](where-things-live.md)** — what is in the data store, what is
   on the flash drive, how to move the store, and how to reach StaXX if you cannot get to its page.
+- **[The Manage tab](the-manage-tab.md)** — what the Manage tab is for, how to open it, and what
+  each of its three panes — log, shell and file browser — does and refuses to do.
 - **[Editing a stack](editing-a-stack.md)** — changing a setting and saving it, tidying a file into
   StaXX's layout, being offered a health check, and ports on a container with its own address.
 - **[Password generator and hashing tool](passwords-and-hashes.md)** — the Password button in a
@@ -47,6 +49,8 @@ This guide is written in English only.
   it, and why nothing exists until you save.
 - **[Import an existing container](bringing-in-a-container.md)** — a walkthrough of Import, from
   pressing the button to opening the new stack and taking it over.
+- **[Removing a stack](removing-a-stack.md)** — taking a stack off the list, what actually happens
+  to it, and how to get it back.
 - **[Export and import a stack](sharing-a-stack.md)** — how Export blanks your passwords and paths
   out of a copy, what it refuses to send, and what the other person has to fill in.
 - **[Version history and rollback](going-back.md)** — how to return to an earlier version of a
@@ -59,11 +63,8 @@ This guide is written in English only.
 
 ## Not written yet
 
-These parts of StaXX do not have a page here yet — that is a gap to fill, not something left out on
-purpose:
-
-- Removing a stack and getting it back from the archive.
-- Opening a shell into a running container.
+Every feature that ships has a page here now. If you find one that does not, say so on the
+feedback board below.
 
 ## Something wrong, or missing?
 
