@@ -1,7 +1,7 @@
 <CommunityApplications>
   <!-- Required profile -->
   <Profile>
-    StaXX is early software and is marked beta here on purpose: expect rough edges, and read the changelog before pressing update.
+    StaXX is in beta: the core is settled and in daily use, but expect the occasional rough edge, and read the changelog before pressing update.
 
     **StaXX** manages Docker on Unraid with standard compose files instead of Unraid's own template
     format, and draws those compose files as an ordinary form so you never have to edit indented
