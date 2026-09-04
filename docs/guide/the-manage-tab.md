@@ -112,3 +112,5 @@ Drag the line between Log and the other two panes, or the line between Shell and
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

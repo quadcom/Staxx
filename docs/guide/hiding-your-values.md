@@ -68,7 +68,7 @@ placeholders, so nothing may write one of them into your real file.
 | **Undo** | Nothing to undo, because nothing can change. |
 | **Replace** in the find bar | Would edit the placeholder copy on screen, which is thrown away. **Find** still works. |
 | **Fill** on the password generator | The panel and **Copy** keep working. Only writing into a box stops, with the note *"Sanitise is on, so writing to the file is turned off. Turn it off to fill a box."* See [password generator and hashing tool](passwords-and-hashes.md). |
-| The **History** tab | Disabled, with the message *"Not available while Sanitised. An old version holds the real, unhidden values, so history is hidden until Sanitise is turned off."* See [going back](going-back.md). |
+| The **History** tab | Disabled, with the message *"Not available while Sanitised. An old version holds the real, unhidden values, so history is hidden until Sanitise is turned off."* See [recovery and redundancy](recovery-and-redundancy.md). |
 
 History is closed because an old copy of your file holds the values from before you hid them. Left
 open, it would undo the whole point in one click.
@@ -94,3 +94,5 @@ open, it would undo the whole point in one click.
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

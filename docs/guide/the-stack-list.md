@@ -223,3 +223,5 @@ Neither row can be started until it is fixed. Fixing it and saving brings the ro
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

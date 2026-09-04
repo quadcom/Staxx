@@ -97,7 +97,7 @@ whether StaXX does what you need.
 - **Checking for updates** compares your images against their registries on a schedule you set; see
   [checking for updates](docs/guide/updates.md).
 - **Going back** keeps every saved file and every image build that has run, so a bad change is one
-  click undone; see [going back](docs/guide/going-back.md).
+  click undone; see [recovery and redundancy](docs/guide/recovery-and-redundancy.md).
 - **A safety copy of every stack lives on the flash drive too**, now including its values file, so
   restoring one hands back a complete stack rather than one missing its settings.
 - **Sharing a stack** exports a copy with your passwords, keys and paths taken out, ready to drop

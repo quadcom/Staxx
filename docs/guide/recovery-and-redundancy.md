@@ -1,4 +1,4 @@
-# Version history and rollback
+# Recovery and redundancy
 
 <!-- index: 75 | how to return to an earlier version of a stack's file, or to an earlier build of one of its images, what each list holds, and why some things cannot be gone back to. -->
 
@@ -18,7 +18,7 @@ the folder yourself gets its first copy the first time you open or start it.
 
 ### What the list shows
 
-![The History tab: a list of kept versions down the left with one picked out, the "Name to keep forever" box and the "Restore into Configure" button beneath it, and that version's text filling the right-hand side](../images/guide/going-back-history.png)
+![The History tab: a list of kept versions down the left with one picked out, the "Name to keep forever" box and the "Restore into Configure" button beneath it, and that version's text filling the right-hand side](../images/guide/recovery-and-redundancy-history.png)
 
 | On the row | What it is |
 |---|---|
@@ -62,7 +62,7 @@ Never saved or opened here at all? You get the blank starting file instead — s
 
 ## Versions tab
 
-![The Versions tab: a list of services down the left with each one's image, and on the right the selected service's one recorded build with its date, fingerprint and a Running now mark](../images/guide/going-back-versions-tab.png)
+![The Versions tab: a list of services down the left with each one's image, and on the right the selected service's one recorded build with its date, fingerprint and a Running now mark](../images/guide/recovery-and-redundancy-versions-tab.png)
 
 1. Open the stack. Click **Versions**.
 2. Pick a service on the left. Its recorded builds appear on the right.
@@ -73,7 +73,7 @@ its menu — that opens Versions with the right service already picked.
 
 ### A build's row
 
-<!-- SHOT: going-back-build-row | close-up | one build's row in the Versions tab, showing its heading, date and fingerprint, the "See the source" link, "What changed" notes, and its "Put this back" button -->
+![One build's row in the Versions tab: the version name as its heading, then "1 minute ago" and the build's fingerprint, a "See the source" link, the "Commits in this build" list opened to show what went into it, and the "Put this back" button](../images/guide/recovery-and-redundancy-build-row.png)
 
 | On the row | What it is |
 |---|---|
@@ -103,7 +103,7 @@ where the whole thing appears to do nothing.
 
 ### Pinning and releasing
 
-<!-- SHOT: going-back-pinned-band | close-up | the "Pinned to …" band for a service, with the "Release this pin" button beside it -->
+![The orange-edged "Pinned to" band above a service's builds, naming the pinned version, with the "Release this pin" button at its right end and the pinned build's own row beneath it](../images/guide/recovery-and-redundancy-pinned-band.png)
 
 Naming an exact build is what "pinned" means — see the pin mark on [the stack list](the-stack-list.md#row-marks).
 A pinned service shows **Pinned to …** with **Release this pin** beside it, whether the pin came
@@ -149,3 +149,5 @@ you had before — whether it still works alongside everything else that has cha
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

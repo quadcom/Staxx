@@ -9,13 +9,16 @@ This guide is a manual. It starts with a walk round each screen — every button
 menu item named, with a picture of each. After that come the tasks: adding an app, bringing in a
 container you already run, editing, updating, sharing, going back.
 
-**Start with [the stack list](the-stack-list.md).** It is the screen you land on, and most of the
+**Start with [your first run](first-run.md)**, the one screen you see before anything else. Then
+[the stack list](the-stack-list.md): it is the screen you land on, and most of the
 rest of the guide points back at it.
 
 This guide is written in English only.
 
 <!-- pages:start -->
 
+- **[Your first run](first-run.md)** — the one screen you see before anything else: choosing where
+  StaXX keeps its data, and what the choice means.
 - **[The stacks page](the-stack-list.md)** — a walk round the page you land on: every button along
   the top, every part of a row, and every item in the menus.
 - **[The stack editor](the-stack-editor.md)** — a walk round the window that opens when you open a
@@ -51,8 +54,8 @@ This guide is written in English only.
   to it, and how to get it back.
 - **[Export and import a stack](sharing-a-stack.md)** — how Export blanks your passwords and paths
   out of a copy, what it refuses to send, and what the other person has to fill in.
-- **[Version history and rollback](going-back.md)** — how to return to an earlier version of a
-  stack's file, or to an earlier build of one of its images, what each list holds, and why some
+- **[Recovery and redundancy](recovery-and-redundancy.md)** — how to return to an earlier version of
+  a stack's file, or to an earlier build of one of its images, what each list holds, and why some
   things cannot be gone back to.
 - **[Settings](settings.md)** — every setting behind the cog, group by group, plus the self-test and
   the first-run screen.

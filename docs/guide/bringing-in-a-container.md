@@ -152,3 +152,5 @@ it and puts anything from it at the top level instead, rather than guess.
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

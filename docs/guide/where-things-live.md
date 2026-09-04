@@ -28,7 +28,7 @@ anywhere, not just here. Alongside it may sit whatever else that stack needs: an
 a data folder, anything the author wrote.
 
 One thing is hidden: a small folder holding the stack's own saved history. See
-[version history](going-back.md) for what it keeps and how to use it.
+[version history](recovery-and-redundancy.md) for what it keeps and how to use it.
 
 ## Flash drive settings
 
@@ -88,3 +88,5 @@ finishes starting.
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

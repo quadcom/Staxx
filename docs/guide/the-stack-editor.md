@@ -42,8 +42,8 @@ Split is the normal view on a wide window, and Form on a narrow one. Split's but
 |---|---|
 | Configure | The form, the compose file, or both — the three views above. |
 | Manage | A live console for the running container: a shell, a log, a file browser. |
-| History | Earlier saved versions of this file. See [going back](going-back.md). |
-| Versions | Which build of each image has actually run, and a way to put an older one back. See [going back](going-back.md). |
+| History | Earlier saved versions of this file. See [recovery and redundancy](recovery-and-redundancy.md). |
+| Versions | Which build of each image has actually run, and a way to put an older one back. See [recovery and redundancy](recovery-and-redundancy.md). |
 
 History is switched off while Sanitise is on. An old version holds the real values, not the hidden ones, so showing it would defeat Sanitise. Versions stays on — an image name is not a value you wrote, so Sanitise has nothing to hide there.
 
@@ -133,3 +133,5 @@ Each service then gets its own set of groups. Most are hidden until you switch t
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).

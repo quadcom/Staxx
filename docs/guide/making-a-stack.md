@@ -88,7 +88,7 @@ A stack's folder can end up with no compose file — deleted, renamed, or lost w
 
 It works like Add stack, with one difference: the name is filled in and cannot be changed, because the folder is the thing being repaired.
 
-If StaXX kept an earlier version of the file, you are offered your last working copy instead of the blank one — see [going back](going-back.md). If an override file is still sitting in the folder, it says so, since a new main file changes what that override applies to.
+If StaXX kept an earlier version of the file, you are offered your last working copy instead of the blank one — see [recovery and redundancy](recovery-and-redundancy.md). If an override file is still sitting in the folder, it says so, since a new main file changes what that override applies to.
 
 ![The editor open on a folder being repaired: the stack name filled in and greyed, a line saying the folder has no compose file yet so the name cannot be changed, and beneath the tabs an offer reading "Your last working copy of this stack was saved 2 minutes ago. Load it here instead."](../images/guide/making-a-stack-lost-file.png)
 
@@ -105,3 +105,5 @@ If the folder already has a compose file, this is refused, and points you at Edi
 ## Terms used here
 
 Any word you are not sure of is in the [glossary](../glossary.md).
+
+Back to [the StaXX guide](README.md).
