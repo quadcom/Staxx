@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.02.00_dev20260904">
+<!ENTITY version              "00.02.00">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!-- TODO: point at the real repository before the first release. Left as an
@@ -40,7 +40,7 @@
 >
 
 <CHANGES>
-###00.02.00_dev20260904
+###00.02.00
 - **The shell in the Manage tab is now Unraid's own terminal,** the same one the Console button opens, so nano, htop and anything else that draws a full screen work in it. When the shell ends the pane greys out with its last screen still readable, and Reconnect opens a fresh one.
 
 - **Put several services back to earlier versions in one go.** The Versions tab has a "Put back several at once" mode: choose a version for each service, press once, and the stack is edited, saved to History and recreated in a single step rather than one service at a time.
