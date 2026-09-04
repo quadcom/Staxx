@@ -27,4 +27,9 @@
   <Icon>https://raw.githubusercontent.com/quadcom/Staxx/main/Logo/staxx-icon.svg</Icon>
   <Category>Tools:System</Category>
   <Beta>true</Beta>
+  <MinVer>7.2.0</MinVer>
+  <ReadMe>https://github.com/quadcom/Staxx#readme</ReadMe>
+  <Screenshot>https://raw.githubusercontent.com/quadcom/Staxx/main/docs/images/stacks-overview.png</Screenshot>
+  <Screenshot>https://raw.githubusercontent.com/quadcom/Staxx/main/docs/images/editor-split.jpg</Screenshot>
+  <Screenshot>https://raw.githubusercontent.com/quadcom/Staxx/main/docs/images/apps-search.jpg</Screenshot>
 </Plugin>
