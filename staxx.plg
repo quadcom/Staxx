@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.02.01">
+<!ENTITY version              "00.02.01_dev20260905">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "a3a0acb6c69d649f49579b9eb48a9c33">
-<!ENTITY packageSHA256        "bd543849f2f9e73744a97bcaa792380bb813005708805a406bf1d2cb15ff4bdf">
+<!ENTITY packageMD5           "079abed71fe4950e6e0ea5c2be2aac40">
+<!ENTITY packageSHA256        "482082555925d4969e551bf82ec3ebf4aee7154f7444ca4750b1fb2a8412c627">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,6 +37,11 @@
 >
 
 <CHANGES>
+###00.02.01_dev20260905
+- The state chips on the main grid are now all the same size. A chip you can click, such as the one offering to find a health check, drew slightly larger than the plain ones beside it.
+- The web page button now works for a stack imported from a template onto its own network (a br0-style address) or onto the server's network, where there is no port list to read. Import writes the plain port number into the address, the way the editor's Web page port field does, and a stack imported before this fix gets its button back without a visit to the editor.
+- The Storage tab's "Where stacks may live" box is gone. The same choice now sits inside the Data store box as a switch, **Protect me from myself**: on, the folder picker greys out and refuses places that can lose or hide your stacks; off, it warns and lets you choose. Nothing you had set changes.
+- The Container icons setting now shows a row of six sample icons under its dropdown, so you can see the kind of icon it fetches before you decide.
 ###00.02.00
 - **The shell in the Manage tab is now Unraid's own terminal,** the same one the Console button opens, so nano, htop and anything else that draws a full screen work in it. When the shell ends the pane greys out with its last screen still readable, and Reconnect opens a fresh one.
 
@@ -398,7 +403,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.02.00-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.02.01_dev20260905-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
