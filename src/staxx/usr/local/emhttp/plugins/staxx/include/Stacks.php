@@ -666,6 +666,20 @@ function staxx_real_ancestor(string $path): ?string {
 }
 
 /**
+ * The user-share or remote-share mount point a lexical path sits under, or
+ * null if it names neither — /mnt/user or /mnt/remotes/<share>. Used by
+ * staxx_path_verdict() to tell a FUSE layer that has merely stalled (the
+ * mount point itself still answers) from one that is genuinely gone.
+ */
+function staxx_fuse_mount(string $lexical): ?string {
+  $parts = explode('/', ltrim($lexical, '/'));
+  if (($parts[0] ?? '') !== 'mnt') return null;
+  if (($parts[1] ?? '') === 'user') return '/mnt/user';
+  if (($parts[1] ?? '') === 'remotes' && ($parts[2] ?? '') !== '') return '/mnt/remotes/'.$parts[2];
+  return null;
+}
+
+/**
  * Cheap emptiness test for staxx_path_verdict()'s 'inuse' verdict: stop at
  * the first entry that isn't "." or "..", never build a listing and never
  * recurse — the same "one stat's worth of work per path" spirit
@@ -683,8 +697,9 @@ function staxx_dir_has_entries(string $dir): bool {
 }
 
 /**
- * ok | file | missing | skipped | inuse for one already-combined target,
- * checked against one already-resolved root directory.
+ * ok | file | missing | unreachable | skipped | inuse for one
+ * already-combined target, checked against one already-resolved root
+ * directory.
  *
  * A path outside the root comes back "skipped", never "missing" — reporting
  * "missing" for something like /etc/shadow would turn this into a way to
@@ -693,6 +708,16 @@ function staxx_dir_has_entries(string $dir): bool {
  * ancestor (see staxx_real_ancestor()) so a path that does not exist yet
  * can still be reported as "missing" rather than falling through to
  * "skipped" for every path that doesn't already exist.
+ *
+ * A first realpath() failure under /mnt/user or /mnt/remotes is not trusted
+ * on its own: Unraid's user-share FUSE layer can stall for a moment (this is
+ * what card 01a08d11 turned out to be — Plex's own path was fine, the check
+ * just caught it mid-stall), and one bad answer was being shown as a genuinely
+ * missing folder. So the mount point itself is stat()ed first; if it answers,
+ * realpath() gets one retry after a quarter-second before "missing" is
+ * declared, and if the mount point itself does not answer this returns
+ * "unreachable" instead — a share that is not there right now, not a folder
+ * that was never made.
  *
  * $checkInUse turns an existing, non-empty folder into "inuse" instead of
  * "ok" — only worth asking for a stack being created, where a folder full of
@@ -714,12 +739,21 @@ function staxx_path_verdict(string $target, string $root, bool $checkInUse = fal
   // This is an EXTRA gate, never a replacement for the realpath checks — text
   // alone cannot see a symlink, which is the case realpath is there for. Both
   // have to pass.
-  if (!$inRoot(staxx_lexical_path($target))) return 'skipped';
+  $lexical = staxx_lexical_path($target);
+  if (!$inRoot($lexical)) return 'skipped';
 
   $ancestor = staxx_real_ancestor($target);
   if ($ancestor === null || !$inRoot($ancestor)) return 'skipped';
 
   $real = @realpath($target);
+  if ($real === false) {
+    $mount = staxx_fuse_mount($lexical);
+    if ($mount !== null) {
+      if (!@is_dir($mount)) return 'unreachable'; // the share itself is not answering
+      usleep(250000);
+      $real = @realpath($target);
+    }
+  }
   if ($real === false) return 'missing'; // ancestor is contained; nothing at the leaf yet
   if (!$inRoot($real)) return 'skipped'; // a symlink resolved outside the root after all
 
@@ -3214,15 +3248,31 @@ function staxx_run_probe(string $key): array {
   $ms  = (int)round((microtime(true) - $start) * 1000);
   $out = trim(implode("\n", $lines));
 
+  $output = $code === 124
+              ? 'TIMED OUT after '.$probe['timeout'].'s — this is the one that hangs.'
+              : ($out !== '' ? substr($out, 0, 400) : '(no output)');
+
+  // The compose probe fails whenever nothing answers `docker compose` yet, and
+  // ensure-compose already worked out why (no network, a bad checksum, an
+  // unreadable flash copy) — read its own words rather than leaving the
+  // administrator with only the bare command failure.
+  if ($key === 'compose' && $code !== 0) {
+    $state = @file_get_contents('/boot/config/plugins/staxx/compose/state');
+    if ($state !== false) {
+      $line = trim(strtok($state, "\n"));
+      if (strpos($line, 'fail ') === 0) {
+        $output .= "\n".substr($line, strlen('fail '));
+      }
+    }
+  }
+
   return [
     'key'    => $key,
     'label'  => $probe['label'],
     'ok'     => $code === 0,
     'ms'     => $ms,
     'exit'   => $code,
-    'output' => $code === 124
-                  ? 'TIMED OUT after '.$probe['timeout'].'s — this is the one that hangs.'
-                  : ($out !== '' ? substr($out, 0, 400) : '(no output)'),
+    'output' => $output,
   ];
 }
 
@@ -3597,20 +3647,28 @@ function staxx_archive_stack(
         : 'Project "'.$project.'" is running elsewhere, so its containers were left alone; '
           .'only this folder was archived.';
     } else {
-      $code = 1;
-      $out  = staxx_sh(
-        'cd '.escapeshellarg($dir).' && '.$cmd.' '.staxx_compose_file_args($files).' down 2>&1',
-        120,
-        $code
-      );
-      // Refuse if the containers are still up. Archiving the folder while its
-      // containers run leaves them orphaned, with nothing in this UI able to
-      // reach them again.
-      if ($code !== 0) {
-        $error = 'The containers could not be stopped, so nothing was archived or removed. '
-               . 'Stop the stack first, then try again.'
-               . ($out !== '' ? "\n\n".trim($out) : '');
-        return false;
+      // Only run `down` when there is something to stop: compose reports the
+      // project, or Docker holds a container under its label by some other
+      // route. With neither there is nothing to orphan — and a file compose
+      // cannot even parse (an undeclared network, say) can never have made
+      // one, so refusing here would make an invalid, never-started stack
+      // impossible to remove, which is exactly when a person wants it gone.
+      if ($running !== null || staxx_project_containers($name) !== []) {
+        $code = 1;
+        $out  = staxx_sh(
+          'cd '.escapeshellarg($dir).' && '.$cmd.' '.staxx_compose_file_args($files).' down 2>&1',
+          120,
+          $code
+        );
+        // Refuse if the containers are still up. Archiving the folder while its
+        // containers run leaves them orphaned, with nothing in this UI able to
+        // reach them again.
+        if ($code !== 0) {
+          $error = 'The containers could not be stopped, so nothing was archived or removed. '
+                 . 'Stop the stack first, then try again.'
+                 . ($out !== '' ? "\n\n".trim($out) : '');
+          return false;
+        }
       }
     }
   }

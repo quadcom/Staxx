@@ -172,6 +172,7 @@ Four rules run through the whole set:
 | `bootcopy` | The shelf of compose copies on the flash drive: the copy after every save, the case-clash refusal, removal and restore | `STORE_ROOT` |
 | `bundle` | The `.staxx` bundle importer's refusals — a crafted entry name, a planted record-folder file, a bad marker, an oversized or unreadable bundle — plus the two accept cases and the write into a fresh store | `STORE_ROOT` (only the two write cases) |
 | `clash` | Two stacks claiming the same compose project name — the list-time detector, the state guard that stops a dormant twin reading as the running one, the delete guard that refuses to tear down a project it does not own, and the one check every creation door calls | `STORE_ROOT` at `/tmp` |
+| `compose_ensure` | Whether StaXX installs its own Docker Compose only when none already answers, verifies it against the pinned checksum, and removes only what it installed | opt-in live case `STAXX_LIVE_COMPOSE=1` |
 | `console` | The `recreate` and stack-scope `update` verbs, the scope refusals, the job-log tailer, the log follower and the shell — no real session is ever opened | — |
 | `crypt` | The hashing container's refusals. Builds, starts, pulls and removes nothing | — |
 | `detail` | What the server can find out about a stack's icon, description, category, author and links | `STORE_ROOT`, `IMAGE_LOOKUP=false` |
@@ -728,6 +729,17 @@ piece of engineering in the repository, and the reason the rest of this exists.
   their strings contain an apostrophe.
 - **Asset URLs carry `filemtime()`.** Without it an edited stylesheet or script sits in the browser
   cache and looks exactly like a change that did not work.
+- **Every `<button>`, `<input>`, `<select>` and `<textarea>` inside the page is reset by Unraid at
+  a specificity a single class cannot beat.** The `unapi` marker on the scaffold switches off
+  Unraid's old button styling, but Unraid's web-component stylesheet scopes a Tailwind base reset
+  under that same class: `.unapi button, .unapi input, …` sets `font: inherit`, `color: inherit`,
+  `background-color: transparent` and `border-radius: 0` at one class plus one element, (0,1,1),
+  and `.unapi *` zeroes margin, padding and border at (0,1,0). A control styled by one class
+  therefore takes its font size and line-height from the cell around it and loses its shape. This
+  made a clickable chip draw taller than the plain one beside it twice (2026-09-04 and 2026-09-10).
+  Style every control at `.staxx-scaffold .staxx-xxx` or `.staxx-scaffold button.staxx-xxx` and
+  restate font-size, font-weight, line-height, colour, background and border-radius in that rule.
+  The exact rules and where they live are in the header of `sheets/staxx.css`.
 - **Own the render.** Stock Unraid CSS classes are not borrowed for layout — their rules are
   invisible to us and change between releases. Every class used is `staxx-`-prefixed.
 - `staxx.plg` is fully populated — real author, real repo, real checksums. Nothing there guards

@@ -116,6 +116,12 @@ the point: it is what you reach for *when* Docker is hanging.
 **Then the commands, one at a time** — the simplest possible command, then each piece Docker depends on in turn, then Docker itself, then listing your containers and stacks. They run in order on purpose: the
 last line printed is the last thing that worked, so a stall shows exactly where it happened.
 
+Unraid does not come with the compose command built in, so StaXX checks for it at install and at
+every boot. If your server already has one — say, from Compose Manager — it is left exactly alone.
+If not, StaXX installs its own copy, kept on the flash drive so a reboot never needs the internet to
+put it back. If that copy ever cannot be put in place, the **compose responds** line above says why,
+in plain words.
+
 Where something genuinely cannot be seen — the stacks folder is on a pool that has not mounted yet,
 say — the answer is **UNKNOWN** rather than 0, because "0 stacks" while your drives are not yet mounted would look like a real answer when it is not.
 

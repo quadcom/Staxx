@@ -379,6 +379,14 @@ chmod +x /usr/local/emhttp/plugins/staxx/scripts/* 2>/dev/null || true
 /usr/local/emhttp/plugins/staxx/scripts/apply_settings \
   || echo "warning: settings could not be applied yet; they will be applied on the next settings save or reboot."
 
+# Unraid does not ship Docker Compose. This installs StaXX's own copy only if
+# nothing already answers `docker compose` — Compose Manager, a future Unraid
+# release, or the user's own install are all left alone. This whole block
+# re-runs at every boot, which is what puts a flash-cached copy back after the
+# RAM root is rebuilt. Non-fatal: the settings page's self-test says why if it
+# could not be done.
+bash /usr/local/emhttp/plugins/staxx/scripts/ensure-compose || true
+
 echo ""
 echo "-----------------------------------------------------------"
 echo " StaXX has been installed."
@@ -417,6 +425,14 @@ find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null 
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
 <![CDATA[
+# Checked before the plugin folder is deleted below, since the script that
+# knows how to undo it lives inside that folder. Removes only a compose StaXX
+# itself installed — one Compose Manager or the user put there is left alone.
+compose_marker="/usr/local/lib/docker/cli-plugins/docker-compose.staxx"
+compose_was_ours=0
+[[ -f "${compose_marker}" ]] && compose_was_ours=1
+bash /usr/local/emhttp/plugins/staxx/scripts/ensure-compose --remove 2>/dev/null || true
+
 # Globbed against /var/log/packages, not the current directory — which is
 # unspecified for a plugin script, so an unquoted glob here found nothing to
 # remove, removepkg does no globbing of its own, and the rm -rf below then
@@ -449,6 +465,11 @@ echo "-----------------------------------------------------------"
 echo " StaXX has been removed."
 echo " Your settings were kept at /boot/config/plugins/staxx, and your stacks"
 echo " were kept in the data store you chose. Nothing you configured was touched."
+if [[ "${compose_was_ours}" -eq 1 ]]; then
+  echo " The copy of Docker Compose StaXX had installed was removed too."
+else
+  echo " Docker Compose was left as it was — StaXX had not installed it."
+fi
 echo "-----------------------------------------------------------"
 echo ""
 ]]>

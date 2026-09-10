@@ -60,6 +60,10 @@ case "${MODE}" in
     had_login=0
     [[ -f "${CFG_DIR}/hub_login" ]] && had_login=1
 
+    # Before the plugin folder goes, since the script that undoes it lives
+    # there. Removes only a compose StaXX itself installed.
+    bash "${DEST}/scripts/ensure-compose" --remove 2>/dev/null || true
+
     echo "==> Removing ${DEST}"
     rm -rf "${DEST}"
     if [[ "${MODE}" == "--purge" ]]; then
@@ -151,16 +155,13 @@ fi
 # Holds a Docker Hub access token, so no other login on the box may read it.
 chmod 0600 "${CFG_DIR}/${PLUGIN}.cfg" 2>/dev/null || true
 bash "${DEST}/scripts/apply_settings"
+bash "${DEST}/scripts/ensure-compose" || true
 
 echo
 echo "==> Environment"
 printf '    Docker running   : %s\n' \
   "$( [[ -f /var/run/dockerd.pid ]] && echo yes || echo 'NO — start the Docker service' )"
-if docker compose version --short >/dev/null 2>&1; then
-  printf '    Compose CLI      : yes (%s)\n' "$(docker compose version --short)"
-else
-  printf '    Compose CLI      : NO — expected; Unraid does not ship it\n'
-fi
+printf '    Compose CLI      : %s\n' "$("${DEST}/scripts/ensure-compose" --status 2>/dev/null || echo unknown)"
 printf '    Array state      : %s\n' \
   "$(sed -n 's/^fsState=\"\?\([^"]*\)"\?/\1/p' /var/local/emhttp/var.ini 2>/dev/null | head -n1)"
 

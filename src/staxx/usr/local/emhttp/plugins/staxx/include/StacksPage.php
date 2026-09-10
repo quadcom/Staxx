@@ -1175,10 +1175,17 @@ endif;
        with the plain warning; if the folder holds more than the compose
        file, script appends a second paragraph and the file list in place,
        and relabels the button, rather than opening a second dialog on top
-       of the first. -->
+       of the first.
+
+       PLAN_137 (card 01a08d0b): showInfo()/askText() in stacks.js reuse this
+       same dialog for plain notices and one-field prompts, so a page that
+       used to print prose into the log viewer or fall back to the browser's
+       own confirm()/prompt() now matches the rest of the UI. The badicon is
+       hidden except when showInfo() is told the notice is bad news. -->
   <dialog class="staxx-confirm" id="staxx-confirm" aria-labelledby="staxx-confirm-title">
 
     <div class="staxx-confirm-head">
+      <i class="fa fa-exclamation-circle staxx-confirm-badicon" id="staxx-confirm-badicon" aria-hidden="true" hidden></i>
       <h3 class="staxx-confirm-title" id="staxx-confirm-title"></h3>
     </div>
 

@@ -153,7 +153,8 @@ whether StaXX does what you need.
 
 - In beta. The core is settled and in daily use, but expect the occasional rough edge, and read
   the changelog before updating.
-- Requires Unraid 7.2 or later, and Docker Compose already on the server — StaXX does not install it.
+- Requires Unraid 7.2 or later. Docker Compose is installed by StaXX if the server does not already
+  have one.
 - Graphics figures cover Intel and AMD cards; Nvidia shows none, though a container given an Nvidia
   card is still labelled as such.
 - Without a Docker Hub read-only token, update checks are limited to roughly ten images an hour.

@@ -241,6 +241,10 @@
   // rest of this dialog already is, and hidden except when a caller passes
   // askConfirm() an extraLabel.
   var confirmExtra  = document.getElementById('staxx-confirm-extra');
+  // showInfo()'s bad-news marker, and the shared window.* fallback for both
+  // it and askText() when the dialog markup is missing (PLAN_137).
+  var confirmBadicon = document.getElementById('staxx-confirm-badicon');
+  function noDialogFallback(msg) { window.alert(msg); }
 
   // PLAN_84 phase 3 — the "fill in this stack's details" chooser. Its own
   // dialog rather than a shape squeezed into #staxx-confirm above — see the
@@ -7276,32 +7280,38 @@
     }
 
     var word = modeWord(mode);
-    if (names.length && !window.confirm(
-          'Compose does not allow a service to have both network_mode and networks. ' +
-          'Switching "' + service + '" to ' + word + ' will remove ' +
-          (names.length === 1 ? 'its one network row (' : 'all ' + names.length + ' of its network rows (') +
-          names.join(', ') + '). They are kept and can be put back if you switch away from ' + word + '.')) {
-      return;
+
+    function go() {
+      pushUndo('switching "' + service + '" to ' + word);
+      var res = YAML.setNetworkMode(MODEL.doc, MODEL, service, mode);
+      if (!res.ok) {
+        // setNetworkMode can fail after it has already stashed and removed
+        // the service's networks: block, so a plain pop would discard the
+        // snapshot that could put that half-write back — restore from it.
+        restoreUndo();
+        setYamlStatus(res.error);
+        return;
+      }
+
+      structuralEdit(-1, 'Switched "' + service + '" to ' + word + '.' +
+                    (names.length
+                      ? ' Its network' + (names.length === 1 ? '' : 's') + ' ' +
+                        (names.length === 1 ? 'was' : 'were') + ' set aside — see the note below to put ' +
+                        (names.length === 1 ? 'it' : 'them') + ' back.'
+                      : '') +
+                    ' Undo is at the bottom if that was wrong.');
     }
 
-    pushUndo('switching "' + service + '" to ' + word);
-    var res = YAML.setNetworkMode(MODEL.doc, MODEL, service, mode);
-    if (!res.ok) {
-      // setNetworkMode can fail after it has already stashed and removed
-      // the service's networks: block, so a plain pop would discard the
-      // snapshot that could put that half-write back — restore from it.
-      restoreUndo();
-      setYamlStatus(res.error);
-      return;
-    }
+    if (!names.length) { go(); return; }
 
-    structuralEdit(-1, 'Switched "' + service + '" to ' + word + '.' +
-                  (names.length
-                    ? ' Its network' + (names.length === 1 ? '' : 's') + ' ' +
-                      (names.length === 1 ? 'was' : 'were') + ' set aside — see the note below to put ' +
-                      (names.length === 1 ? 'it' : 'them') + ' back.'
-                    : '') +
-                  ' Undo is at the bottom if that was wrong.');
+    askConfirm({
+      title: 'Switch "' + service + '" to ' + word + '?',
+      bodyHtml: '<p>' + esc('Compose does not allow a service to have both network_mode and networks. ' +
+        'Switching "' + service + '" to ' + word + ' will remove ' +
+        (names.length === 1 ? 'its one network row (' : 'all ' + names.length + ' of its network rows (') +
+        names.join(', ') + '). They are kept and can be put back if you switch away from ' + word + '.') + '</p>',
+      goLabel: 'Switch'
+    }).then(function (ok) { if (ok) go(); });
   }
 
   // The reverse of switchServiceToMode() — dropped straight into commit()'s
@@ -7470,36 +7480,45 @@
       }
       if (!livePorts) { structuralEdit(-1, ''); return true; }
 
-      if (!window.confirm(
-            '"' + el.value + '" gives "' + f.service + '" its own address on the network, and Docker refuses ' +
-            'to publish a port there. Switching will keep ' +
-            (livePorts === 1 ? 'its one published port'
-                             : (livePorts === 2 ? 'both published ports'
-                                                : 'its ' + livePorts + ' published ports')) +
-            ' as a note instead, so the file can still start. Continue?')) {
-        // Nothing here went through pushUndo() — a plain value edit never
-        // takes one — so the write commit() just made is put back by hand,
-        // the same way the box itself is reset to what it showed before.
-        YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
-        el.value = f.parts.value.value;
-        // Said out loud: without this the status line still shows whatever
-        // happened before, which reads as though the switch went through.
-        setYamlStatus('Left "' + f.service + '" on "' + f.parts.value.value +
-                      '". Nothing was changed.');
-        return true;
-      }
+      // The question is asked asynchronously, but this still returns true
+      // straight away — both answers below are this function "taking over",
+      // per its own doc comment, so the caller never needs to wait on which
+      // one was picked.
+      askConfirm({
+        title: 'Switch "' + f.service + '" onto "' + el.value + '"?',
+        bodyHtml: '<p>' + esc('"' + el.value + '" gives "' + f.service + '" its own address on the network, ' +
+          'and Docker refuses to publish a port there. Switching will keep ' +
+          (livePorts === 1 ? 'its one published port'
+                           : (livePorts === 2 ? 'both published ports'
+                                              : 'its ' + livePorts + ' published ports')) +
+          ' as a note instead, so the file can still start.') + '</p>',
+        goLabel: 'Switch'
+      }).then(function (go) {
+        if (!go) {
+          // Nothing here went through pushUndo() — a plain value edit never
+          // takes one — so the write commit() just made is put back by hand,
+          // the same way the box itself is reset to what it showed before.
+          YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
+          el.value = f.parts.value.value;
+          // Said out loud: without this the status line still shows whatever
+          // happened before, which reads as though the switch went through.
+          setYamlStatus('Left "' + f.service + '" on "' + f.parts.value.value +
+                        '". Nothing was changed.');
+          return;
+        }
 
-      var cmt = YAML.commentOutPorts(MODEL.doc, f.service);
-      if (!cmt.ok) {
-        YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
-        el.value = f.parts.value.value;
-        setYamlStatus(cmt.error);
-        return true;
-      }
-      structuralEdit(-1, 'Switched "' + f.service + '" onto "' + el.value + '". ' +
-                    cmt.count + (cmt.count === 1 ? ' published port was' : ' published ports were') +
-                    ' kept as a note, since a container with its own address cannot publish ' +
-                    (cmt.count === 1 ? 'it' : 'any of them') + '.');
+        var cmt = YAML.commentOutPorts(MODEL.doc, f.service);
+        if (!cmt.ok) {
+          YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
+          el.value = f.parts.value.value;
+          setYamlStatus(cmt.error);
+          return;
+        }
+        structuralEdit(-1, 'Switched "' + f.service + '" onto "' + el.value + '". ' +
+                      cmt.count + (cmt.count === 1 ? ' published port was' : ' published ports were') +
+                      ' kept as a note, since a container with its own address cannot publish ' +
+                      (cmt.count === 1 ? 'it' : 'any of them') + '.');
+      });
       return true;
     }
 
@@ -7518,13 +7537,14 @@
   // exactly as compose itself tells the two apart. Cancelling, or leaving it
   // blank, writes nothing and puts the box back to what it showed before.
   function promptShareContainer(f, el) {
-    var name = window.prompt('Share which container’s network?');
-    name = name ? name.trim() : '';
-    if (!name) { el.value = f.parts.value.value; return; }
+    askText('Share a container’s network', 'Container name', '').then(function (typed) {
+      var name = typed ? typed.trim() : '';
+      if (!name) { el.value = f.parts.value.value; return; }
 
-    var services = (MODEL.declared && MODEL.declared.services) || [];
-    var mode = (services.indexOf(name) >= 0 && name !== f.service ? 'service:' : 'container:') + name;
-    switchServiceToMode(f.service, mode);
+      var services = (MODEL.declared && MODEL.declared.services) || [];
+      var mode = (services.indexOf(name) >= 0 && name !== f.service ? 'service:' : 'container:') + name;
+      switchServiceToMode(f.service, mode);
+    });
   }
 
   // Moves one port to a new spot in its service's list (PLAN_40) — the same
@@ -8887,9 +8907,27 @@
    * with the marks, so nothing survives from one stack's editor into the
    * next.
    */
-  var pathCache = {};   // path string -> 'ok' | 'file' | 'missing' | 'skipped' | 'inuse' | 'offroot'
+  // path string -> {v: verdict, t: when cached}. 'missing' and 'unreachable'
+  // expire after 15s (see pathVerdict() below) so a stalled user-share FUSE
+  // answer — the transient behind card 01a08d11 — is re-asked on the next
+  // reparse instead of being remembered for the rest of the editor session.
+  // 'ok', 'file', 'skipped', 'inuse' and 'offroot' never expire.
+  var pathCache = {};
+  var PATH_TRANSIENT_MS = 15000;
   var pathHits  = [];   // last YAML.hostPaths() result: [{path, line, col, len}]
   var pathToken = 0;    // bumped by pathsReset() so a late reply cannot paint
+
+  // The live verdict for one path, or undefined if never asked or if a
+  // transient answer has expired — either way checkHostPaths() treats it as
+  // unknown and asks again.
+  function pathVerdict(path) {
+    var e = pathCache[path];
+    if (!e) return undefined;
+    if ((e.v === 'missing' || e.v === 'unreachable') && Date.now() - e.t > PATH_TRANSIENT_MS) {
+      return undefined;
+    }
+    return e.v;
+  }
 
   function pathsReset() {
     pathToken++;
@@ -8919,7 +8957,7 @@
 
     var unknown = [];
     pathHits.forEach(function (h) {
-      if (!(h.path in pathCache) && unknown.indexOf(h.path) < 0) unknown.push(h.path);
+      if (pathVerdict(h.path) === undefined && unknown.indexOf(h.path) < 0) unknown.push(h.path);
     });
     if (!unknown.length) return;
 
@@ -8938,7 +8976,8 @@
         // so a bad reply lands here as res.ok === false, handled the same
         // way as a token mismatch: simply nothing drawn.
         if (myToken !== pathToken || !res || !res.ok || !res.paths) return;
-        Object.keys(res.paths).forEach(function (p) { pathCache[p] = res.paths[p]; });
+        var now = Date.now();
+        Object.keys(res.paths).forEach(function (p) { pathCache[p] = { v: res.paths[p], t: now }; });
         repaintMark();
       });
   }
@@ -8954,12 +8993,14 @@
   // only be made under /mnt" is worse than no button. A relative path is
   // still underlined; it just does not get the offer, since whether it lands
   // under /mnt depends on where the stack root is and only the server knows.
+  // 'unreachable' is never offered either — the share is not answering right
+  // now, and "creating" a folder there would land on nothing.
   function missingHostPaths() {
     if (fileOpen !== null) return [];   // a companion file has no volumes at all
     var out = [];
     pathHits.forEach(function (h) {
       if (h.path.indexOf('/mnt/') !== 0) return;
-      if (pathCache[h.path] === 'missing' && out.indexOf(h.path) < 0) out.push(h.path);
+      if (pathVerdict(h.path) === 'missing' && out.indexOf(h.path) < 0) out.push(h.path);
     });
     return out;
   }
@@ -8996,7 +9037,7 @@
     if (fileOpen !== null) return [];   // a companion file has no volumes at all
     var out = [];
     pathHits.forEach(function (h) {
-      if (pathCache[h.path] === 'inuse' && out.indexOf(h.path) < 0) out.push(h.path);
+      if (pathVerdict(h.path) === 'inuse' && out.indexOf(h.path) < 0) out.push(h.path);
     });
     return out;
   }
@@ -9147,8 +9188,8 @@
   // The visible slice of bad host paths, drawn into the same layer as the
   // active-field band and the search hits above — see repaintMark()'s own
   // comment for why one layer serves all of them. Only 'missing', 'file',
-  // 'inuse' and 'offroot' are ever drawn; 'ok', 'skipped', and any path the
-  // server has not answered for yet, are left alone.
+  // 'inuse', 'offroot' and 'unreachable' are ever drawn; 'ok', 'skipped', and
+  // any path the server has not answered for yet, are left alone.
   function repaintPaths() {
     if (!pathHits.length) return;
 
@@ -9162,13 +9203,17 @@
 
     for (var i = 0; i < pathHits.length; i++) {
       var h = pathHits[i];
-      var verdict = pathCache[h.path];
-      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse' && verdict !== 'offroot') continue;
+      var verdict = pathVerdict(h.path);
+      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse' &&
+          verdict !== 'offroot' && verdict !== 'unreachable') continue;
       if (h.line < firstLine || h.line > lastLine) continue;
 
       var box = document.createElement('div');
       box.className = 'staxx-badpath' +
-        (verdict === 'file' ? ' staxx-badpath--file' : verdict === 'inuse' ? ' staxx-badpath--inuse' : '');
+        // 'unreachable' draws the same amber as 'file' — neither is the plain
+        // "does not exist" red, since neither means the folder can be created.
+        (verdict === 'file' || verdict === 'unreachable' ? ' staxx-badpath--file'
+          : verdict === 'inuse' ? ' staxx-badpath--inuse' : '');
       box.style.top    = (PAD_T + h.line * LINE_H - yamlPane.scrollTop) + 'px';
       box.style.left   = (leftBase + h.col * CHAR_W - yamlPane.scrollLeft) + 'px';
       box.style.width  = (h.len * CHAR_W) + 'px';
@@ -9183,8 +9228,9 @@
   function pathMarkAt(line, col) {
     for (var i = 0; i < pathHits.length; i++) {
       var h = pathHits[i];
-      var verdict = pathCache[h.path];
-      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse' && verdict !== 'offroot') continue;
+      var verdict = pathVerdict(h.path);
+      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse' &&
+          verdict !== 'offroot' && verdict !== 'unreachable') continue;
       if (h.line === line && col >= h.col && col < h.col + h.len) {
         return { path: h.path, verdict: verdict };
       }
@@ -9199,6 +9245,10 @@
     if (mark.verdict === 'inuse') {
       return mark.path + ' already has files in it. Another container may already be using it. ' +
         'Starting this stack would point this container at that same data.';
+    }
+    if (mark.verdict === 'unreachable') {
+      return mark.path + ' could not be reached just now. If it is a remote share, check it is ' +
+        'mounted; otherwise this should clear by itself.';
     }
     if (mark.verdict === 'offroot') {
       // "under /mnt" rather than "on the array": a pool — ZFS or otherwise —
@@ -13475,13 +13525,17 @@
     if (modal.open) modal.close();
   }
 
-  // Returns false when the user backed out, so callers can abandon whatever
-  // they were about to do.
+  // Resolves false when the user backed out, so callers can abandon whatever
+  // they were about to do. A promise even in the clean-editor case, so every
+  // caller can treat it the same way rather than branching on shape.
   function confirmDiscard() {
-    if (!isDirty()) return true;
-    return window.confirm(
-      'Close without saving?\n\n' +
-      'Your changes to "' + (nameInput.value || 'this stack') + '" will be lost.');
+    if (!isDirty()) return Promise.resolve(true);
+    return askConfirm({
+      title: 'Close without saving?',
+      bodyHtml: '<p>' + esc('Your changes to "' + (nameInput.value || 'this stack') +
+                            '" will be lost.') + '</p>',
+      goLabel: 'Close without saving'
+    });
   }
 
   modal.addEventListener('cancel', function (event) {
@@ -13505,7 +13559,11 @@
       if (pressed) pressed.focus();
       return;
     }
-    if (!confirmDiscard()) event.preventDefault();
+    // Escape's default close cannot be undone once let through, so it is
+    // always prevented first; confirmDiscard() resolving true then closes
+    // the dialog by hand — the async twin of the old synchronous branch.
+    event.preventDefault();
+    confirmDiscard().then(function (go) { if (go) modal.close(); });
   });
 
   modal.addEventListener('close', function () {
@@ -13575,7 +13633,7 @@
     var r = modal.getBoundingClientRect();
     var inside = event.clientX >= r.left && event.clientX <= r.right &&
                  event.clientY >= r.top  && event.clientY <= r.bottom;
-    if (!inside && confirmDiscard()) modal.close();
+    if (!inside) confirmDiscard().then(function (go) { if (go) modal.close(); });
   });
 
   modal.addEventListener('click', function (event) {
@@ -14440,45 +14498,41 @@
     return COMPOSE_FILENAMES.indexOf(file.toLowerCase()) === -1;
   }
 
-  // window.prompt, not a dialog — this file already uses window.prompt and
-  // window.confirm for one-line questions, and a dialog would be more
-  // furniture than "what should this be called?" needs.
   function renameFile() {
     var name = fileOpen;
     if (name === null) return;   // the compose tab has no Rename item
 
-    var to = window.prompt('Rename "' + name + '" to:', name);
-    if (to === null) return;   // cancelled
-    to = to.trim();
-    if (to === name || to === '') return;
+    askText('Rename file', 'Rename "' + name + '" to', name).then(function (to) {
+      if (to === null) return;   // cancelled
+      to = to.trim();
+      if (to === name || to === '') return;
 
-    if (!validFilename(to)) {
-      setYamlStatus('File names may contain letters, numbers, dots, dashes and underscores, ' +
-                     'must be 63 characters or fewer, and may not be a compose file.');
-      return;
-    }
-
-    call('file-rename', { name: openedName, file: name, to: to }).then(function (res) {
-      if (!res || !res.ok) {
-        setYamlStatus((res && res.error) || ('Could not rename "' + name + '".'));
+      if (!validFilename(to)) {
+        setYamlStatus('File names may contain letters, numbers, dots, dashes and underscores, ' +
+                       'must be 63 characters or fewer, and may not be a compose file.');
         return;
       }
-      // The pending-autosave dot, if any, follows the file to its new name —
-      // otherwise it would keep showing under a filename no tab has any more.
-      if (fileDots[name] !== undefined) { fileDots[to] = fileDots[name]; delete fileDots[name]; }
-      // fileOpen has to end up holding the new name, or the next autosave
-      // (runFileSave() keys off it) would write to a file that no longer
-      // exists.
-      if (fileOpen === name) fileOpen = to;
-      filesLoad();
+
+      call('file-rename', { name: openedName, file: name, to: to }).then(function (res) {
+        if (!res || !res.ok) {
+          setYamlStatus((res && res.error) || ('Could not rename "' + name + '".'));
+          return;
+        }
+        // The pending-autosave dot, if any, follows the file to its new name —
+        // otherwise it would keep showing under a filename no tab has any more.
+        if (fileDots[name] !== undefined) { fileDots[to] = fileDots[name]; delete fileDots[name]; }
+        // fileOpen has to end up holding the new name, or the next autosave
+        // (runFileSave() keys off it) would write to a file that no longer
+        // exists.
+        if (fileOpen === name) fileOpen = to;
+        filesLoad();
+      });
     });
   }
 
-  // Deletes the file on the active tab. A file nothing references only
-  // needs one sentence, so window.confirm() is enough for that case — the
-  // same reasoning openFile()'s comments give for using window.prompt above.
-  // A file the compose file DOES reference needs more than one sentence, so
-  // that case goes through #staxx-confirm via askConfirm() instead.
+  // Deletes the file on the active tab, through #staxx-confirm either way —
+  // a file nothing references gets the short one-line question, a file the
+  // compose file DOES reference gets the longer warning below.
   function deleteFile() {
     var name = fileOpen;
     if (name === null) return;   // the compose tab has no Delete item
@@ -14503,7 +14557,11 @@
 
     var users = fileRefMap()[name];
     if (!users) {
-      if (window.confirm('Delete "' + name + '"? This cannot be undone.')) go();
+      askConfirm({
+        title: 'Delete "' + name + '"?',
+        bodyHtml: '<p>This cannot be undone.</p>',
+        goLabel: 'Delete file'
+      }).then(function (goAhead) { closeConfirm(); if (goAhead) go(); });
       return;
     }
 
@@ -14624,14 +14682,21 @@
         'not be a compose file.');
     }
     var exists = FILES.some(function (f) { return f.name === name && !f.dir; });
-    if (exists && !window.confirm('"' + name + '" is already in this folder. Replace it?')) {
-      return Promise.resolve(null);
-    }
-    return call('file-save', { name: openedName, file: name, body: body, encoding: encoding })
-      .then(function (res) {
-        if (!res || !res.ok) return Promise.reject((res && res.error) || ('Could not save "' + name + '".'));
-        return name;
-      });
+    var asked = exists
+      ? askConfirm({ title: 'Replace "' + name + '"?',
+                      bodyHtml: '<p>' + esc('"' + name + '" is already in this folder.') + '</p>',
+                      goLabel: 'Replace' })
+      : Promise.resolve(true);
+
+    return asked.then(function (go) {
+      if (exists) closeConfirm();
+      if (!go) return null;
+      return call('file-save', { name: openedName, file: name, body: body, encoding: encoding })
+        .then(function (res) {
+          if (!res || !res.ok) return Promise.reject((res && res.error) || ('Could not save "' + name + '".'));
+          return name;
+        });
+    });
   }
 
   /* ---- offering to wire a freshly added settings file in ---------------
@@ -14814,22 +14879,21 @@
     fileAddBtn.addEventListener('click', function () { fileInput.click(); });
   }
 
-  // window.prompt, same reasoning renameFile() gives above for using it over
-  // a dialog — "what should this be called?" is one line, not a form.
   function newFile() {
-    var name = window.prompt('New file name:');
-    if (name === null) return;   // cancelled
-    name = name.trim();
-    if (!name) return;
+    askText('New file', 'File name', '').then(function (name) {
+      if (name === null) return;   // cancelled
+      name = name.trim();
+      if (!name) return;
 
-    var existed = FILES.some(function (f) { return f.name === name && !f.dir; });
-    saveUpload(name, '', 'text').then(function (landed) {
-      if (!landed) return;
-      return filesLoad().then(function () {
-        openFile(landed);
-        if (!existed) return envPickAndWire(landed, '');
-      });
-    }).catch(function (msg) { setYamlStatus(msg); });
+      var existed = FILES.some(function (f) { return f.name === name && !f.dir; });
+      saveUpload(name, '', 'text').then(function (landed) {
+        if (!landed) return;
+        return filesLoad().then(function () {
+          openFile(landed);
+          if (!existed) return envPickAndWire(landed, '');
+        });
+      }).catch(function (msg) { setYamlStatus(msg); });
+    });
   }
 
   if (fileNewBtn) fileNewBtn.addEventListener('click', newFile);
@@ -15618,12 +15682,15 @@
   // uses. A stopped stack has no containers to orphan, so nothing to offer.
   function offerRecreate(name) {
     if (!CAN_RUN) return;
-    if (!window.confirm(
-          'Renaming a service leaves its old container behind until the stack ' +
-          'is recreated.\n\nRecreate "' + stackLabel(name) + '" now?')) {
-      return;
-    }
-    run(name, 'up', afterRun('up', name));
+    askConfirm({
+      title: 'Recreate "' + stackLabel(name) + '"?',
+      bodyHtml: '<p>Renaming a service leaves its old container behind until the stack is ' +
+                'recreated.</p>',
+      goLabel: 'Recreate'
+    }).then(function (go) {
+      closeConfirm();
+      if (go) run(name, 'up', afterRun('up', name));
+    });
   }
 
   // The common ending once the compose file is on disk and no directory move
@@ -15728,18 +15795,21 @@
 
     if (!running) { applyRename(); return; }
 
-    if (!window.confirm(
-          label + ' is running. Renaming it will stop the containers and ' +
-          'start them again under the new name.')) {
-      reenable();
-      return;
-    }
+    askConfirm({
+      title: 'Rename "' + label + '"?',
+      bodyHtml: '<p>' + esc(label + ' is running. Renaming it will stop the containers and ' +
+                            'start them again under the new name.') + '</p>',
+      goLabel: 'Rename'
+    }).then(function (go) {
+      closeConfirm();
+      if (!go) { reenable(); return; }
 
-    run(oldName, 'down', function (job) {
-      // run() has already shown a failure box for a non-zero exit, so this
-      // just stops the sequence rather than saying the same thing twice.
-      if (job.exit !== 0 && job.exit !== null) { reenable(); return; }
-      applyRename();
+      run(oldName, 'down', function (job) {
+        // run() has already shown a failure box for a non-zero exit, so this
+        // just stops the sequence rather than saying the same thing twice.
+        if (job.exit !== 0 && job.exit !== null) { reenable(); return; }
+        applyRename();
+      });
     });
   }
 
@@ -16906,6 +16976,11 @@
   // buttons, so a repaint that downgrades a button to a span silently kills
   // the update action.
   function paintUpdatePill(row, entry) {
+    // Same guard as paintState(): a busy pill has already replaced the state
+    // cell, and repainting from the stale cache here made the update chip
+    // flicker back beside it mid-pull (card 01a08d0f). The real pill returns
+    // once the job ends and refreshUpdates() repaints from a fresh reply.
+    if (row && (row.dataset.busy || row.dataset.failed)) return;
     var host = updatePillHost(row);
     if (!host) return;
     var state = entry ? (entry.state || '') : '';
@@ -16969,9 +17044,20 @@
     ].forEach(function (pair) {
       if (pair[1]) setData(pill, pair[0], pair[1]); else delete pill.dataset[pair[0]];
     });
+    // Card 01a08d12 — mirrors staxx_update_pill_html()'s data-update-children:
+    // which stacks a folder roll-up speaks for, so updCardFacts() can list
+    // them by name. Only ever set on a folder's own pill.
+    if (entry.children && entry.children.length) {
+      setData(pill, 'updateChildren', JSON.stringify(entry.children));
+    } else {
+      delete pill.dataset.updateChildren;
+    }
 
     var text = entry.label || state;
-    if (entry.count > 1) text += ' (' + entry.count + ')';
+    // Card 01a08d12 — the label already carries a number for a "new build of
+    // 22.04"-style pill, so appending "(N)" on top read as two counts. Only
+    // added when the label itself has none.
+    if (entry.count > 1 && !/\d/.test(text)) text += ' (' + entry.count + ')';
     // Rebuilding the label wipes out any clock chip appended below, which is
     // fine: paintPillClock() puts one straight back when there is still
     // something to say. Skipped when the label has not changed so a clock
@@ -17107,7 +17193,20 @@
     update: 'A newer version is available. Press the chip to fetch it and rebuild the container on it.'
   };
 
+  // A folder's own pill is an inert span (see $pressable in
+  // staxx_update_pill_html()), so nothing about it can be "pressed" — either
+  // signal on its own is enough: data-update-children is the reliable one,
+  // .staxx-nameinfo (updatePillHost()'s folder-row fallback) catches a
+  // folder pill in a state that carries no children.
+  function pillIsFolder(pill) {
+    return !!pill.dataset.updateChildren
+        || !!(pill.closest && pill.closest('.staxx-nameinfo'));
+  }
+
   function updCardLead(pill) {
+    if (pill.dataset.updateState === 'update' && pillIsFolder(pill)) {
+      return 'Open the folder to update them.';
+    }
     var fixed = UPD_CARD_LEAD[pill.dataset.updateState || ''];
     if (fixed) return fixed;
     var title = pill.title || '';
@@ -17133,6 +17232,19 @@
       if (!val) continue;   // rows that do not apply are left out, not shown blank
       html += '<dt>' + esc(rows[i][0]) + '</dt><dd' +
         (rows[i][2] ? ' class="staxx-updcard__mono"' : '') + '>' + esc(val) + '</dd>';
+    }
+    // Card 01a08d12 — one row per stack a folder roll-up speaks for, mirroring
+    // the label staxx_updates_pill_for_image() already worked out for it
+    // rather than re-describing the state here.
+    if (pill.dataset.updateChildren) {
+      var children = [];
+      try { children = JSON.parse(pill.dataset.updateChildren) || []; } catch (e) { children = []; }
+      if (children.length) {
+        html += '<dt>Stacks with updates</dt><dd></dd>';
+        children.forEach(function (c) {
+          html += '<dt>' + esc(c.name || '') + '</dt><dd>' + esc(c.label || '') + '</dd>';
+        });
+      }
     }
     return html;
   }
@@ -17565,12 +17677,11 @@
     }).join('\n\n');
   }
 
-  // The panel a chip opens — reused straight off the existing output dialog
-  // rather than a new mechanism, since it is already exactly this: a title
-  // and a block of read-only text. logBox.textContent (not innerHTML) is
-  // what openLogDialog() writes with, so nothing here needs its own escaping
-  // — a service name can never become markup no matter what it contains.
-  // Never restarts anything: no button in it does anything but close.
+  // The panel a chip opens — prose, not a log, so it goes through showInfo()
+  // rather than the monospace output dialog (card 01a08d0b). Every sentence
+  // becomes its own paragraph; a service name still never becomes markup,
+  // since esc() runs on each one. Never restarts anything: the one button in
+  // it does nothing but close.
   //
   // Opens on the chip's own data attributes straight away — no waiting on
   // the network for a button press — then asks the server what actually
@@ -17594,25 +17705,31 @@
       if (changed.length)  parts.push('These services no longer match the file: ' + changed.join(', ') + '.');
       if (absent.length)   parts.push('These services have not started yet: ' + absent.join(', ') + '.');
       if (leftover.length) parts.push('These services are no longer in the file: ' + leftover.join(', ') + '.');
-      if (detail) parts.push('What changed:\n\n' + detail);
-      parts.push('Restarting the stack rebuilds these from the file as it stands now — ' +
-                 'nothing is wrong until you do.');
-      return parts.join('\n\n');
+      var html = parts.map(function (p) { return '<p>' + esc(p) + '</p>'; }).join('');
+      if (detail) {
+        // The per-service diff lines are indented plain text, not further
+        // sentences — kept on their own lines with <br> rather than folded
+        // into one run-on paragraph.
+        html += '<p>What changed:<br>' + esc(detail).replace(/\n/g, '<br>') + '</p>';
+      }
+      html += '<p>Restarting the stack rebuilds these from the file as it stands now — ' +
+              'nothing is wrong until you do.</p>';
+      return html;
     }
 
-    openLogDialog(stackLabel(stack) + ' — restart pending', build(''));
+    showInfo(stackLabel(stack) + ' — restart pending', build(''));
 
     pendingSeq++;
     var mySeq = pendingSeq;
     call('pending-detail', { name: stack }).then(function (res) {
-      // logDlg guarded the same way openLogDialog() guards it — a reply
+      // confirmModal guarded the same way showInfo() guards it — a reply
       // landing when the dialog is not in the page would otherwise throw
       // inside a promise, where nothing would report it.
-      if (mySeq !== pendingSeq || !logDlg || !logDlg.open) return;
+      if (mySeq !== pendingSeq || !confirmModal || !confirmModal.open) return;
       if (!res || !res.ok) return;   // a refusal leaves the panel exactly as it opened
       var detail = buildPendingDetail(res.services);
       if (!detail) return;           // nothing to report — the normal case, not an error
-      logBox.textContent = build(detail);
+      confirmBody.innerHTML = build(detail);
     });
   }
 
@@ -18211,10 +18328,13 @@
     });
 
     if (!conflicts.length && !toWrite.length) {
-      var msg = 'Nothing here — the image, its catalogue entry and its own page — offered anything ' +
-        'different from what "' + label + '" already holds.';
-      if (skipped.length) msg += '\n\nSkipped:\n' + skipped.map(function (s) { return '- ' + s; }).join('\n');
-      openLogDialog('Nothing new found', msg);
+      var msg = '<p>' + esc('Nothing here — the image, its catalogue entry and its own page — ' +
+        'offered anything different from what "' + label + '" already holds.') + '</p>';
+      if (skipped.length) {
+        msg += '<p>Skipped:</p><ul class="staxx-confirm-list">' +
+          skipped.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ul>';
+      }
+      showInfo('Nothing new found', msg);
       return;
     }
 
@@ -18290,23 +18410,23 @@
     return { ok: true, yaml: post.error ? afterWrites : post.yaml, applied: decisions };
   }
 
-  function detailSummaryText(applied, skipped) {
-    var lines = [];
+  function detailSummaryHtml(applied, skipped) {
+    var html = '';
     if (applied && applied.length) {
-      lines.push(applied.length + ' field' + (applied.length === 1 ? '' : 's') +
-                 (applied.length === 1 ? ' was' : ' were') + ' written:');
-      applied.forEach(function (d) {
-        lines.push('- ' + detailRowLabel(d) + (d.mode === 'replace' ? ' (replaced): ' : ' (added): ') + d.value);
-      });
+      html += '<p>' + esc(applied.length + ' field' + (applied.length === 1 ? '' : 's') +
+                 (applied.length === 1 ? ' was' : ' were') + ' written:') + '</p>' +
+        '<ul class="staxx-confirm-list">' + applied.map(function (d) {
+          return '<li>' + esc(detailRowLabel(d) + (d.mode === 'replace' ? ' (replaced): ' : ' (added): ') +
+                              d.value) + '</li>';
+        }).join('') + '</ul>';
     } else {
-      lines.push('Nothing was written.');
+      html += '<p>Nothing was written.</p>';
     }
     if (skipped && skipped.length) {
-      lines.push('');
-      lines.push('Skipped:');
-      skipped.forEach(function (s) { lines.push('- ' + s); });
+      html += '<p>Skipped:</p><ul class="staxx-confirm-list">' +
+        skipped.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ul>';
     }
-    return lines.join('\n');
+    return html;
   }
 
   // The one write for the whole run — editor-open case goes through
@@ -18333,7 +18453,7 @@
     function done(applied) {
       detailBusy = false;
       closeDetailModal();
-      openLogDialog('Filled in details for "' + label + '"', detailSummaryText(applied, skipped));
+      showInfo('Filled in details for "' + label + '"', detailSummaryHtml(applied, skipped));
     }
 
     if (isOpenHere) {
@@ -18890,7 +19010,7 @@
         }
         iconAdoptRounds = 0;
         if (iconAdoptCount > 0) {
-          showIconAdoptSummary(iconAdoptCount, Object.keys(iconAdoptStacks).length);
+          showIconAdoptSummary(iconAdoptCount, Object.keys(iconAdoptStacks));
           iconAdoptCount = 0;
           iconAdoptStacks = {};
           refreshRows();   // the changed stacks re-render from their files
@@ -18904,17 +19024,24 @@
   // Built here rather than in the page's own markup because there is
   // nothing to show until a run finds something to say.
   var iconAdoptNotice = null;
-  function showIconAdoptSummary(services, stacks) {
+  function showIconAdoptSummary(services, stackNames) {
     if (iconAdoptNotice) iconAdoptNotice.remove();
 
-    var svcText   = services + (services === 1 ? ' service' : ' services');
-    var stackText = stacks + (stacks === 1 ? ' stack' : ' stacks');
+    var svcText = services + (services === 1 ? ' service' : ' services');
+    // Name the stacks rather than just counting them (card 01a08d13) — "one
+    // stack" told nobody which one to go and check.
+    var shown = stackNames.slice(0, 6);
+    var namesText = shown.join(', ');
+    if (stackNames.length > shown.length) {
+      namesText += ' and ' + (stackNames.length - shown.length) + ' more';
+    }
     var notice = document.createElement('div');
     notice.className = 'staxx-notice';
     notice.innerHTML =
       '<i class="fa fa-picture-o" aria-hidden="true"></i>' +
-      '<div>' + esc('An icon was recorded for ' + svcText + ' across ' + stackText +
-                    '. Each of those stacks’ previous version is saved in its own history.') +
+      '<div>' + esc('StaXX found icons for ' + svcText + ' and saved them into these stacks: ' +
+                    namesText + '. Each stack’s earlier compose file is kept in its history, so ' +
+                    'this can be undone from the stack’s History.') +
       '</div>' +
       '<button type="button" class="staxx-notice-close" title="Dismiss" aria-label="Dismiss">' +
         '<i class="fa fa-times" aria-hidden="true"></i></button>';
@@ -18953,7 +19080,17 @@
   document.getElementById('staxx-import').addEventListener('click', importOpen);
 
   document.getElementById('staxx-diagnose').addEventListener('click', function () {
-    openLogDialog('Self-test', 'Checking…');
+    // A fixed-width report, not free prose, so it keeps its own <pre> inside
+    // the notice dialog rather than becoming paragraphs (card 01a08d0b) —
+    // the column padding below only lines up in a monospace block.
+    var text = 'Checking…';
+    showInfo('Self-test', '<pre class="staxx-confirm-pre">' + esc(text) + '</pre>');
+    function setText(t) {
+      text = t;
+      var pre = confirmBody.querySelector('.staxx-confirm-pre');
+      if (pre) { pre.textContent = text; pre.scrollTop = pre.scrollHeight; }
+    }
+    function appendText(t) { setText(text + t); }
 
     // Stage one is pure PHP and runs no commands, so it cannot hang. Stage two
     // runs the external commands one at a time, appending each result as it
@@ -18961,8 +19098,8 @@
     // thing that worked, and the missing line is the culprit.
     call('ping', {}, 15000).then(function (res) {
       if (!res.ok || !res.report) {
-        logBox.textContent = res.error || 'Self-test returned nothing usable.\n\n' +
-                             JSON.stringify(res, null, 2);
+        setText(res.error || 'Self-test returned nothing usable.\n\n' +
+                             JSON.stringify(res, null, 2));
         return;
       }
 
@@ -18970,42 +19107,40 @@
       Object.keys(res.report).forEach(function (k) { width = Math.max(width, k.length); });
       var pad = function (s, w) { return s + new Array(Math.max(1, w - s.length + 3)).join(' '); };
 
-      logBox.textContent = Object.keys(res.report).map(function (k) {
+      setText(Object.keys(res.report).map(function (k) {
         return pad(k, width) + res.report[k];
-      }).join('\n') + strayWarning(res);
+      }).join('\n') + strayWarning(res));
 
       var keys = Object.keys(res.probes || {});
       if (!keys.length) return;
 
-      logBox.textContent += '\n\nCommands, one at a time:\n';
+      appendText('\n\nCommands, one at a time:\n');
 
       // Sequential on purpose. Running them together would tell us that
       // something stalled, but not which.
       keys.reduce(function (chain, key) {
         return chain.then(function () {
-          logBox.textContent += '\n  ' + pad(key, 10) + res.probes[key] + ' … ';
-          logBox.scrollTop = logBox.scrollHeight;
+          appendText('\n  ' + pad(key, 10) + res.probes[key] + ' … ');
 
           return call('probe', { probe: key }, 30000).then(function (p) {
             if (!p.ok || !p.result) {
-              logBox.textContent += 'NO REPLY — ' + (p.error || 'unknown').split('\n')[0];
+              appendText('NO REPLY — ' + (p.error || 'unknown').split('\n')[0]);
               throw new Error('stop');   // nothing after this would be meaningful
             }
             var r = p.result;
-            logBox.textContent += (r.ok ? 'ok' : 'FAILED (exit ' + r.exit + ')') +
+            appendText((r.ok ? 'ok' : 'FAILED (exit ' + r.exit + ')') +
                                   '  [' + r.ms + ' ms]' +
-                                  (r.ok && r.exit === 0 ? '' : '\n' + pad('', 14) + r.output);
-            logBox.scrollTop = logBox.scrollHeight;
+                                  (r.ok && r.exit === 0 ? '' : '\n' + pad('', 14) + r.output));
           });
         });
       }, Promise.resolve()).catch(function () {
-        logBox.textContent += '\n\nStopped here. The step above is where it gets stuck.';
+        appendText('\n\nStopped here. The step above is where it gets stuck.');
       });
     });
   });
 
   document.getElementById('staxx-modal-close').addEventListener('click', function () {
-    if (confirmDiscard()) closeEditor();
+    confirmDiscard().then(function (go) { if (go) closeEditor(); });
   });
   saveBtn.addEventListener('click', function () { save(false); });
   startBtn.addEventListener('click', function () { save(true); });
@@ -19025,8 +19160,12 @@
     });
   }
 
+  // A short server error, not real command output, so it reads as prose in
+  // the same notice dialog every other plain message uses (card 01a08d0b) —
+  // openLogDialog()'s monospace box stays for genuine output (job logs,
+  // script errors).
   function failed(title, message) {
-    openLogDialog(title, message || '(no detail given)');
+    showInfo(title, '<p>' + esc(message || '(no detail given)') + '</p>', { bad: true });
   }
 
   // Shows a failed job's output after the fact, from a clicked marker —
@@ -19255,6 +19394,11 @@
     confirmBody.innerHTML = opts.bodyHtml;
     confirmGo.textContent = opts.goLabel;
     confirmCancel.textContent = opts.cancelLabel || confirmCancelDefault;
+    // Both reset unconditionally: a question always has a Cancel and is
+    // never drawn as bad news, so nothing showInfo() left set on the shared
+    // dialog can leak into the next askConfirm() call.
+    confirmCancel.hidden = false;
+    if (confirmBadicon) confirmBadicon.hidden = true;
     if (confirmExtra) {
       confirmExtra.hidden = !opts.extraLabel;
       confirmExtra.textContent = opts.extraLabel || '';
@@ -19270,7 +19414,68 @@
     return new Promise(function (resolve) { confirmResolve = resolve; });
   }
 
+  // A plain notice through the same dialog: one OK button, no Cancel, no
+  // third answer. Resolves once OK is pressed or the dialog closes any other
+  // way — nothing here is a question, so the caller never inspects the
+  // resolved value. opts.bad draws the head the same red a --bad notice
+  // banner uses, for genuine errors (failed() below) rather than routine
+  // information. Callers pass bodyHtml already escaped/marked up, exactly as
+  // askConfirm()'s callers do.
+  function showInfo(title, bodyHtml, opts) {
+    opts = opts || {};
+    if (!confirmModal) { noDialogFallback(title); return Promise.resolve(); }
+    confirmSetBusy(false);
+    confirmMsg.textContent = '';
+    confirmTitle.textContent = title;
+    confirmBody.innerHTML = bodyHtml;
+    confirmGo.textContent = opts.okLabel || 'OK';
+    confirmCancel.hidden = true;
+    if (confirmExtra) confirmExtra.hidden = true;
+    if (confirmBadicon) confirmBadicon.hidden = !opts.bad;
+    if (!confirmModal.open) confirmModal.showModal();
+    confirmGo.focus({ preventScroll: true });
+    // Closed here rather than left to the caller: OK has nothing further to
+    // do, unlike askConfirm()'s callers, several of which keep the dialog
+    // open to show progress after Go is pressed.
+    return new Promise(function (resolve) { confirmResolve = resolve; }).then(function () { closeConfirm(); });
+  }
+
+  // One labelled text field on the same dialog, replacing window.prompt().
+  // Resolves the typed string, or null for Cancel/Escape/a backdrop click —
+  // the same shape prompt() itself returns, so a caller converts by simply
+  // awaiting this instead.
+  function askText(title, label, value) {
+    if (!confirmModal) return Promise.resolve(window.prompt(label, value || ''));
+    confirmSetBusy(false);
+    confirmMsg.textContent = '';
+    confirmTitle.textContent = title;
+    if (confirmBadicon) confirmBadicon.hidden = true;
+    confirmBody.innerHTML =
+      '<label class="staxx-confirm-field" for="staxx-confirm-textinput">' + esc(label) + '</label>' +
+      '<input type="text" class="staxx-confirm-input" id="staxx-confirm-textinput">';
+    var input = confirmBody.querySelector('#staxx-confirm-textinput');
+    input.value = value || '';
+    confirmGo.textContent = 'OK';
+    confirmCancel.hidden = false;
+    confirmCancel.textContent = confirmCancelDefault;
+    if (confirmExtra) confirmExtra.hidden = true;
+    if (!confirmModal.open) confirmModal.showModal();
+    input.focus({ preventScroll: true });
+    input.select();
+    return new Promise(function (resolve) { confirmResolve = resolve; })
+      .then(function (went) { closeConfirm(); return went ? input.value : null; });
+  }
+
   if (confirmModal) {
+    // Enter in the text field submits it, same as a form would — askText()
+    // is the only caller that ever fills the body with an <input>.
+    confirmBody.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' && event.target && event.target.id === 'staxx-confirm-textinput') {
+        event.preventDefault();
+        if (!confirmBusy) settleConfirm(true);
+      }
+    });
+
     confirmCancel.addEventListener('click', function () {
       closeConfirm();
       settleConfirm(false);
@@ -22671,7 +22876,8 @@
     call('list', {}).then(function (res) {
       if (!res.ok) {
         settingsMsg.textContent = '';
-        openLogDialog('Add missing StaXX fields', res.error || 'Could not list stacks.');
+        showInfo('Add missing StaXX fields', '<p>' + esc(res.error || 'Could not list stacks.') + '</p>',
+                 { bad: true });
         return;
       }
 
@@ -22696,14 +22902,15 @@
         settingsMsg.textContent = '';
 
         if (!toSave.length) {
-          var msg = 'Every stack already has its StaXX fields.';
+          var msg = '<p>Every stack already has its StaXX fields.</p>';
           if (refused.length) {
-            msg += '\n\n' + refused.length + ' stack' + (refused.length === 1 ? '' : 's') +
-              ' could not be checked:\n' + refused.map(function (r) {
-                return '  ' + r.name + ' — ' + r.reason;
-              }).join('\n');
+            msg += '<p>' + refused.length + ' stack' + (refused.length === 1 ? '' : 's') +
+              ' could not be checked:</p><ul class="staxx-confirm-list">' + refused.map(function (r) {
+                return '<li><code>' + esc(r.name) + '</code><span class="staxx-confirm-meta">' +
+                       esc(r.reason) + '</span></li>';
+              }).join('') + '</ul>';
           }
-          openLogDialog('Add missing StaXX fields', msg);
+          showInfo('Add missing StaXX fields', msg);
           return;
         }
 
@@ -22742,20 +22949,28 @@
   // save is recorded in that stack's own history regardless, so this needs
   // no undo of its own.
   function saveScaffoldSweep(toSave, refused) {
-    openLogDialog('Add missing StaXX fields', 'Saving…');
+    // A running progress list, same shape as the self-test's — kept in its
+    // own <pre> inside the notice dialog rather than becoming paragraphs
+    // one at a time.
+    var text = 'Saving…';
+    showInfo('Add missing StaXX fields', '<pre class="staxx-confirm-pre">' + esc(text) + '</pre>');
+    function appendText(t) {
+      text += t;
+      var pre = confirmBody.querySelector('.staxx-confirm-pre');
+      if (pre) { pre.textContent = text; pre.scrollTop = pre.scrollHeight; }
+    }
+
     var ok = 0;
     toSave.reduce(function (chain, e) {
       return chain.then(function () {
         return call('save', { name: e.name, body: e.body, new: '0', fingerprint: e.fingerprint }).then(function (r) {
-          logBox.textContent += '\n' + e.name + ' — ' + (r.ok ? 'saved.' : (r.error || 'could not be saved.'));
+          appendText('\n' + e.name + ' — ' + (r.ok ? 'saved.' : (r.error || 'could not be saved.')));
           if (r.ok) ok++;
-          logBox.scrollTop = logBox.scrollHeight;
         });
       });
     }, Promise.resolve()).then(function () {
-      logBox.textContent += '\n\n' + ok + ' of ' + toSave.length + ' saved.' +
-        (refused.length ? ' ' + refused.length + ' left alone.' : '');
-      logBox.scrollTop = logBox.scrollHeight;
+      appendText('\n\n' + ok + ' of ' + toSave.length + ' saved.' +
+        (refused.length ? ' ' + refused.length + ' left alone.' : ''));
       refreshRows();   // the rows may show icons or other x-unraid facts that just changed
     });
   }
@@ -23733,6 +23948,10 @@
   // back — a folder, stack or container icon, or a row's menu button reached
   // by right-click.
   var menuTrigger = null;
+  // Where new items land. Null means "the menu itself" — set to a column
+  // <div> while a menu is split in two, so the folder section can be built
+  // into its own column without every item-builder needing to know about it.
+  var menuTarget = null;
 
   function menuFlush() {
     if (menuFlushing) return;   // a save must not trigger another flush
@@ -23757,6 +23976,11 @@
     var trigger = menuTrigger;
     menu.hidden = true;
     menuItems.textContent = '';
+    // A split stack menu leaves its column class and target behind otherwise,
+    // so the next menu opened (a folder or container, always single-column)
+    // would inherit both.
+    menuItems.classList.remove('staxx-menu-items--split');
+    menuTarget = null;
     if (trigger) trigger.setAttribute('aria-expanded', 'false');
     menuTrigger = null;
     if (reclaim && trigger) trigger.focus({ preventScroll: true });
@@ -23805,10 +24029,13 @@
     b.appendChild(col);
     b.addEventListener('click', function () {
       if (b.disabled) return;
+      // A switch you can see change position is the point; closing the menu
+      // on the click that flips it hid the very thing it was meant to show.
+      if (opts.keepOpen) { handler(b); return; }
       closeMenu();
       handler();
     });
-    menuItems.appendChild(b);
+    (menuTarget || menuItems).appendChild(b);
     return b;
   }
 
@@ -23816,7 +24043,7 @@
     var d = document.createElement('div');
     d.className = 'staxx-menu-sep';
     if (label) d.textContent = label;
-    menuItems.appendChild(d);
+    (menuTarget || menuItems).appendChild(d);
   }
 
   /* ---- autostart menu items (PLAN_43) -------------------------------------
@@ -23832,11 +24059,14 @@
   function addBootMenuItem(d, name, service) {
     var boot      = d.boot || 'off';
     var available = d.bootAvailable !== '0';
-    menuItem('Autostart', boot === 'on' ? 'toggle-on' : 'toggle-off', function () {
+    menuItem('Autostart', boot === 'on' ? 'toggle-on' : 'toggle-off', function (b) {
       var want = boot === 'on' ? '0' : '1';
+      // Disabled for the round trip so a second click while the first is
+      // still in flight cannot fire the opposite change before this one lands.
+      b.disabled = true;
       call('autostart', { name: name, service: service || '', on: want })
         .then(function (r) {
-          if (!r.ok) { failed('Could not change autostart', r.error); return; }
+          if (!r.ok) { b.disabled = false; failed('Could not change autostart', r.error); return; }
           // Written back onto the row itself, not left for the table redraw to
           // deliver: this switch is BUILT from that attribute, so re-opening
           // the menu before the redraw landed showed the old position — and
@@ -23844,10 +24074,21 @@
           // is a loop you cannot get out of by pressing harder. The redraw
           // still comes and still has the last word; this only stops the gap
           // in between from lying about which way the switch is set.
-          d.boot = want === '1' ? 'on' : 'off';
-          refreshRows();
+          boot = want === '1' ? 'on' : 'off';
+          d.boot = boot;
+          var glyph = b.querySelector('.fa');
+          if (glyph) {
+            glyph.classList.toggle('fa-toggle-on', boot === 'on');
+            glyph.classList.toggle('fa-toggle-off', boot !== 'on');
+          }
+          // "Some services only" no longer applies once every one is on.
+          var hint = b.querySelector('.staxx-menu-hint');
+          if (hint) hint.remove();
+          b.disabled = false;
+          if (menu.hidden) refreshRows(); else menuRedraw = true;
         });
     }, {
+      keepOpen: true,
       disabled: !available,
       hint: !available ? 'Docker is not running, so autostart cannot be changed.'
           : boot === 'some' ? 'Some services only — this turns on every one of them.'
@@ -23947,7 +24188,7 @@
       commit(false);
     });
 
-    menuItems.appendChild(row);
+    (menuTarget || menuItems).appendChild(row);
     return row;
   }
 
@@ -24144,6 +24385,23 @@
       menuItem('Start a compose file here', 'file-code-o', function () { openAdoptEditor(name); });
     }
 
+    // The folder list is the one section that grows with however many folders
+    // the user has made, and on a long list it pushed everything below it off
+    // the bottom of the window. Splitting it into a second column alongside
+    // the first makes the menu wider rather than taller, so the items that
+    // follow it stay in reach whatever the folder count. Everything already
+    // built above goes in the first column; the folder section fills the
+    // second; menuTarget is put back to the first column right after it.
+    var menuCol1 = document.createElement('div');
+    menuCol1.className = 'staxx-menu-col';
+    var menuCol2 = document.createElement('div');
+    menuCol2.className = 'staxx-menu-col';
+    while (menuItems.firstChild) menuCol1.appendChild(menuItems.firstChild);
+    menuItems.appendChild(menuCol1);
+    menuItems.appendChild(menuCol2);
+    menuItems.classList.add('staxx-menu-items--split');
+    menuTarget = menuCol2;
+
     // The section shows even with no folders yet — "New folder" is what it is
     // for at that point, and it was the one moment it used to be missing.
     menuSeparator('Move to folder');
@@ -24180,6 +24438,11 @@
         });
       });
     }
+
+    // Back to the first column: everything from here down carries on beneath
+    // what was built before the folder section, rather than following it into
+    // the second column.
+    menuTarget = menuCol1;
 
     menuSeparator();
     // Information, not an action — a foreign hand-reorder on Unraid's own
@@ -24367,14 +24630,16 @@
     menuSeparator();
 
     menuItem('Remove container', 'trash-o', function () {
-      if (!window.confirm(
-            'Remove the container for "' + service + '"?\n\n' +
-            'It is stopped and removed. The compose file is not touched, so Start ' +
-            'recreates it. Named volumes and anything stored outside the container ' +
-            'are left alone.')) {
-        return;
-      }
-      run(stack, 'remove', afterRun('remove', stack, service), service);
+      askConfirm({
+        title: 'Remove the container for "' + service + '"?',
+        bodyHtml: '<p>It is stopped and removed. The compose file is not touched, so Start ' +
+                  'recreates it. Named volumes and anything stored outside the container ' +
+                  'are left alone.</p>',
+        goLabel: 'Remove container'
+      }).then(function (go) {
+        closeConfirm();
+        if (go) run(stack, 'remove', afterRun('remove', stack, service), service);
+      });
     }, { danger: true, disabled: !CAN_RUN || !exists });
   }
 
@@ -24423,16 +24688,19 @@
     addBootWaitField(d, 'folder', id);
     menuSeparator();
     menuItem('Delete folder', 'trash-o', function () {
-      if (!window.confirm(
-            'Delete the folder "' + name + '"?\n\n' +
-            'A folder is a real directory now. The stacks inside it are not deleted — ' +
-            'each one is moved back up to the top level first, and nothing is moved ' +
-            'at all unless every one of them can be.')) {
-        return;
-      }
-      call('folder-delete', { folder: id }).then(function (r) {
-        if (!r.ok) { failed('Could not delete the folder', r.error); return; }
-        refreshRows();
+      askConfirm({
+        title: 'Delete the folder "' + name + '"?',
+        bodyHtml: '<p>A folder is a real directory now. The stacks inside it are not deleted — ' +
+                  'each one is moved back up to the top level first, and nothing is moved ' +
+                  'at all unless every one of them can be.</p>',
+        goLabel: 'Delete folder'
+      }).then(function (go) {
+        closeConfirm();
+        if (!go) return;
+        call('folder-delete', { folder: id }).then(function (r) {
+          if (!r.ok) { failed('Could not delete the folder', r.error); return; }
+          refreshRows();
+        });
       });
     }, { danger: true });
   }

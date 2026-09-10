@@ -53,12 +53,34 @@
  *
  *    The fix is the escape hatch Unraid built for exactly this: the `unapi`
  *    class on an ancestor makes all 88 of those guarded rules stop matching.
- *    It is applied to the scaffold in StacksPage.php. It carries no styling of
- *    its own — it appears in the stylesheet only inside :not() — and no Unraid
- *    JavaScript or PHP refers to it, so it is a marker and nothing more.
+ *    It is applied to the scaffold in StacksPage.php.
  *
  *    The reset below is kept as well, so the page still renders sanely if that
  *    marker ever goes away.
+ *
+ * 3. THE MARKER BRINGS A SECOND RESET OF ITS OWN. Unraid's web-component
+ *    bundle (plugins/dynamix.my.servers/unraid-components/standalone/
+ *    standalone-apps-*.css, a Tailwind build) scopes its base reset under the
+ *    same class, so inside our scaffold these apply:
+ *
+ *        .unapi *, .unapi ::before, .unapi ::after, .unapi ::backdrop
+ *          { box-sizing: border-box; border: 0 solid; margin: 0; padding: 0 }
+ *        .unapi button, .unapi input, .unapi select, .unapi optgroup,
+ *        .unapi textarea
+ *          { font: inherit; letter-spacing: inherit; color: inherit;
+ *            opacity: 1; background-color: transparent; border-radius: 0 }
+ *
+ *    The second rule is one class plus one element type, (0,1,1), so it
+ *    outranks any single-class rule of ours on a <button>, <input>, <select>
+ *    or <textarea>: the control takes the CELL's font size and line-height,
+ *    loses its background and its rounded ends, and inherits its colour. The
+ *    first is (0,1,0), a tie with a single class, decided by source order.
+ *    This is what made a clickable pill draw taller than the plain <span>
+ *    beside it, twice (2026-09-04, 2026-09-10). So every StaXX control is
+ *    styled at (0,2,0) or better — `.staxx-scaffold .staxx-xxx` or
+ *    `.staxx-scaffold button.staxx-xxx` — and that rule restates font-size,
+ *    font-weight, line-height, colour, background and border-radius itself
+ *    rather than trusting the plain class or inheritance to supply them.
  * ---------------------------------------------------------------------------
  */
 
@@ -233,7 +255,10 @@
 /* A <button> made to read as inline link text inside a sentence — used where
    a click must be owned outright by our own script rather than an <a href>,
    which Unraid's own page scripts intercept on plugin pages. */
-.staxx-link-btn {
+/* .staxx-scaffold prefix (0,2,0) rather than the class alone: the marker's
+   own button reset (trap 3, header) is (0,1,1) and would otherwise win on
+   colour, turning the link back to plain body text. */
+.staxx-scaffold .staxx-link-btn {
   padding: 0;
   border: 0;
   background: none;
@@ -243,7 +268,7 @@
   cursor: pointer;
 }
 
-.staxx-link-btn:focus-visible {
+.staxx-scaffold .staxx-link-btn:focus-visible {
   outline: 2px solid var(--sm-accent);
   outline-offset: 2px;
 }
@@ -252,19 +277,25 @@
    pinned to its far side, rather than a toast: an unrequested file edit the
    user never gets to read is the thing rule 2 forbids, so this stays until
    dismissed by hand. */
-.staxx-notice-close {
+/* .staxx-scaffold prefix (0,2,0): a single class ties the marker's own
+   button reset (trap 3, header) at (0,1,0) for padding/border/background,
+   decided only by source order otherwise. */
+.staxx-scaffold .staxx-notice-close {
   margin-left: auto;
   flex: 0 0 auto;
   padding: 0.2rem;
   border: 0;
+  border-radius: 0;
   background: none;
   color: inherit;
+  font-size: inherit;
+  line-height: inherit;
   opacity: 0.6;
   cursor: pointer;
 }
 
-.staxx-notice-close:hover,
-.staxx-notice-close:focus-visible {
+.staxx-scaffold .staxx-notice-close:hover,
+.staxx-scaffold .staxx-notice-close:focus-visible {
   opacity: 1;
 }
 
@@ -849,9 +880,12 @@ div.title.staxx-has-titlebar {
   cursor: pointer;
   text-align: left;
   color: var(--sm-danger);
+  background: transparent;
   border: 1px solid var(--sm-danger);
   border-radius: 0.4rem;
   padding: 0.2rem 0.6rem;
+  font: inherit;
+  line-height: inherit;
 }
 
 .staxx-scaffold button.staxx-adopt-fix:hover,
@@ -1536,9 +1570,12 @@ div.title.staxx-has-titlebar {
   flex: 0 0 auto;
   width: 2.4rem;
   height: 2.4rem;
+  border: 0;
   border-radius: 0.3rem;
+  background: transparent;
   color: var(--sm-muted);
   font-size: 1.3rem;
+  line-height: 1;
 }
 
 /* A multi-service stack's button is a stack of cubes (PLAN_128), and a cube
@@ -1845,6 +1882,7 @@ div.title.staxx-has-titlebar {
   background: transparent;
   color: var(--sm-muted);
   font-size: 1.3rem;
+  line-height: 1;
   cursor: grab;
 }
 
@@ -2458,6 +2496,20 @@ div.title.staxx-has-titlebar {
   padding: 0;
 }
 
+/* The folder section is the second column — it is the one part of the menu
+   that grows with however many folders exist, and on a long list it used to
+   push everything below it off the bottom of the window. No wrapping: the
+   menu is absolutely positioned and shrink-wraps its content, and a wrapping
+   flex row measures itself as ONE column wide (seen live: the folder column
+   dropped underneath at 352px). width: max-content makes the box as wide as
+   both columns, and the :has() lifts the single-column cap only for a menu
+   that has actually split; every other menu keeps the 34rem above. */
+.staxx-menu-items--split { display: flex; align-items: stretch; }
+.staxx-menu-col { flex: 0 0 auto; min-width: 22rem; }
+.staxx-menu-col + .staxx-menu-col { border-left: 0.1rem solid var(--sm-hairline); }
+.staxx-menu-col > .staxx-menu-sep:first-child { margin-top: 0; border-top: 0; }
+.staxx-menu:has(.staxx-menu-items--split) { width: max-content; max-width: min(64rem, calc(100vw - 1.6rem)); }
+
 /* A table wider than the page scrolls inside its own box, so the page itself
    never grows a second horizontal scrollbar.
 
@@ -2483,12 +2535,21 @@ div.title.staxx-has-titlebar {
   margin-bottom: 0;
 }
 
+/* line-height and box-sizing are stated explicitly because the three button
+   pills below inherit the state cell's line-height through `font: inherit`
+   while a plain <span> pill took the browser's own default — so a row mixing
+   both kinds drew pills of two different heights (card 01a08d10). The border
+   is likewise uniform across every pill so the dashed --busy outline is the
+   only thing that changes shape, not the box it sits in. */
 .staxx-pill {
   display: inline-block;
   padding: 0.25rem 0.8rem;
+  border: 0.1rem solid transparent;
   border-radius: 1rem;
   background: var(--sm-fill-2);
   font-size: 1.1rem;
+  line-height: 1.4;
+  box-sizing: border-box;
   white-space: nowrap;
 }
 
@@ -2513,9 +2574,12 @@ div.title.staxx-has-titlebar {
 }
 
 /* While a command is running. The spinning icon says something is happening;
-   this says what. */
+   this says what. Only the style and colour change here — the width stays
+   the same 0.1rem every pill already carries, so this is the one pill that
+   used to draw taller than the rest. */
 .staxx-pill--busy {
-  border: 0.1rem dashed var(--sm-accent);
+  border-style: dashed;
+  border-color: var(--sm-accent);
   background: transparent;
   color: var(--sm-accent);
 }
@@ -2536,7 +2600,7 @@ div.title.staxx-has-titlebar {
    contested. */
 .staxx-scaffold .staxx-pill--fail {
   cursor: pointer;
-  border: none;
+  border: 0.1rem solid transparent;
   border-radius: 1rem;
   font: inherit;
   background-color: var(--sm-danger);
@@ -2557,7 +2621,7 @@ div.title.staxx-has-titlebar {
    why a single class loses that fight against Unraid's own button reset. */
 .staxx-scaffold .staxx-pill--offer {
   cursor: pointer;
-  border: none;
+  border: 0.1rem solid transparent;
   border-radius: 1rem;
   font: inherit;
   background-color: var(--sm-good);
@@ -2596,11 +2660,26 @@ div.title.staxx-has-titlebar {
    and being two classes deep it outranks .staxx-pill's single-class 1.1rem.
    So a clickable "running(1)" drew two pixels taller and ten wider than the
    plain one on the row below it (measured 2026-09-04: 13px against 11px).
-   Restated here, once, at the same specificity, after the rules it corrects. */
+   Restated here, once, at the same specificity, after the rules it corrects.
+
+   The box metrics are restated for the same reason, and for every pill that
+   is a <button> — the update chip and the restart-pending chip included.
+   Unraid's `.unapi button` rule carries its own padding, margin, min-width
+   and line-height, and a class plus an element type outranks the pill's
+   single class, so "update ready" drew visibly taller than the "running(1)"
+   span beside it (card 01a08d10, second report 2026-09-10). */
 .staxx-scaffold .staxx-pill--fail,
 .staxx-scaffold .staxx-pill--offer,
-.staxx-scaffold .staxx-pill--busy {
+.staxx-scaffold .staxx-pill--busy,
+.staxx-scaffold button.staxx-updatepill,
+.staxx-scaffold button.staxx-pendingchip {
   font-size: 1.1rem;
+  line-height: 1.4;
+  padding: 0.25rem 0.8rem;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
 }
 
 /* Two pills on the name's second line: a stack imported with its run buttons
@@ -2640,9 +2719,20 @@ div.title.staxx-has-titlebar {
    font-family is restated for the reason the update pill's own comment
    records: the class above never set one, so without this the browser's
    own button typeface applies and the badge renders in a different face
-   from the stack name sitting right beside it. */
+   from the stack name sitting right beside it. padding, border, background,
+   colour, font-size, font-weight and line-height are restated too — the
+   marker's own button reset (trap 3, header) zeroes padding/border and
+   inherits font wholesale, so without this the button drew taller and
+   plainer than the .staxx-reviewbadge span sitting right beside it. */
 .staxx-scaffold button.staxx-handoverbadge {
+  padding: 0.15rem 0.6rem;
+  border: 0.1rem solid var(--sm-accent);
   border-radius: 1rem;
+  background: transparent;
+  color: var(--sm-accent);
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: normal;
   cursor: pointer;
   font-family: inherit;
 }
@@ -2662,16 +2752,21 @@ div.title.staxx-has-titlebar {
    padding and font-size rather than sharing its selector, because the
    mobile reflow rule further down turns .staxx-pill into an icon-only
    circle, and two overlapping circles in the same cell is not what this
-   pill should become there. margin-left only takes effect when a state
-   pill actually precedes it — an empty string plus this pill has nothing
-   to be pushed away from. */
+   pill should become there. No margin-left any more — .staxx-cell--state
+   already carries a gap between its pills, and on the folder row this sits
+   in .staxx-nameinfo's own vertical stack instead, which gaps the same way.
+   line-height, box-sizing and border match .staxx-pill for the same reason
+   as there: a <button> and a <span> version of this pill sit in the same
+   row and must draw the same height (card 01a08d10). */
 .staxx-updatepill {
   display: inline-block;
-  margin-left: 0.4rem;
   padding: 0.25rem 0.8rem;
+  border: 0.1rem solid transparent;
   border-radius: 1rem;
   font-size: 1.1rem;
   font-weight: 600;
+  line-height: 1.4;
+  box-sizing: border-box;
   white-space: nowrap;
   /* The state column now has a cap (see PLAN_119) — a long version pair
      ("10.11.11ubu2604-ls46 → 10.11.11ubu2604-ls47") clips to an ellipsis
@@ -2713,7 +2808,7 @@ div.title.staxx-has-titlebar {
    inheriting the font takes the pill's own 1.1rem/600 with it and the button
    renders a size larger and a weight lighter than the text pill beside it. */
 .staxx-scaffold button.staxx-updatepill {
-  border: none;
+  border: 0.1rem solid transparent;
   cursor: pointer;
   font-family: inherit;
   font-size: 1.1rem;
@@ -3668,28 +3763,33 @@ div.title.staxx-has-titlebar {
   background: var(--sm-fill-0);
 }
 
-.staxx-history-entry {
+/* .staxx-scaffold prefix (0,2,0): a single class ties the marker's own
+   button reset (trap 3, header) on font-size, decided only by source order
+   otherwise. */
+.staxx-scaffold .staxx-history-entry {
   display: block;
   width: 100%;
   padding: 0.7rem 1rem;
   border: none;
   border-bottom: 0.1rem solid var(--sm-hairline);
+  border-radius: 0;
   background: transparent;
   color: inherit;
   font-family: inherit;
   font-size: 1.2rem;
+  line-height: normal;
   text-align: left;
   cursor: pointer;
 }
 
-.staxx-history-entry:hover {
+.staxx-scaffold .staxx-history-entry:hover {
   background: var(--sm-fill);
 }
 
 /* aria-current, not a class, for the version currently shown on the right —
    the same "one of a set, this is the one you are looking at" relationship
    .staxx-tab marks with aria-selected, but this list is not a tablist. */
-.staxx-history-entry[aria-current="true"] {
+.staxx-scaffold .staxx-history-entry[aria-current="true"] {
   background: var(--sm-fill-2);
   color: var(--sm-fg);
   box-shadow: inset 0.2rem 0 0 var(--sm-accent);
@@ -3787,27 +3887,31 @@ div.title.staxx-has-titlebar {
   background: var(--sm-fill-0);
 }
 
-.staxx-versions-service {
+/* .staxx-scaffold prefix (0,2,0): same reasoning as .staxx-history-entry
+   above. */
+.staxx-scaffold .staxx-versions-service {
   display: block;
   width: 100%;
   padding: 0.7rem 1rem;
   border: none;
   border-bottom: 0.1rem solid var(--sm-hairline);
+  border-radius: 0;
   background: transparent;
   color: inherit;
   font-family: inherit;
   font-size: 1.2rem;
+  line-height: normal;
   text-align: left;
   cursor: pointer;
 }
 
-.staxx-versions-service:hover {
+.staxx-scaffold .staxx-versions-service:hover {
   background: var(--sm-fill);
 }
 
 /* aria-current, not a class, for the service currently shown on the right —
    same reasoning as .staxx-history-entry[aria-current="true"]. */
-.staxx-versions-service[aria-current="true"] {
+.staxx-scaffold .staxx-versions-service[aria-current="true"] {
   background: var(--sm-fill-2);
   color: var(--sm-fg);
   box-shadow: inset 0.2rem 0 0 var(--sm-accent);
@@ -4249,7 +4353,10 @@ div.title.staxx-has-titlebar {
 
 /* Quiet until the heading is hovered or focused, so a pencil beside every
    service name is not the first thing the eye lands on. */
-.staxx-svcrename {
+/* .staxx-scaffold prefix (0,2,0): a single class ties the marker's own
+   button reset (trap 3, header) on colour and font-size, decided only by
+   source order otherwise. */
+.staxx-scaffold .staxx-svcrename {
   margin-left: 0.4rem;
   padding: 0.1rem 0.5rem;
   border: 0.1rem solid transparent;
@@ -4257,6 +4364,7 @@ div.title.staxx-has-titlebar {
   background: transparent;
   color: var(--sm-muted);
   font-size: 1.1rem;
+  line-height: normal;
   opacity: 0.45;
   cursor: pointer;
   vertical-align: middle;
@@ -5211,13 +5319,19 @@ div.title.staxx-has-titlebar {
   flex: 0 0 auto;
 }
 
-.staxx-linkmark {
+/* .staxx-scaffold prefix (0,2,0): a single class ties the marker's own
+   button reset (trap 3, header), which squares the circle off at
+   border-radius:0 and greys the colour, decided only by source order
+   otherwise. */
+.staxx-scaffold .staxx-linkmark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 1.6rem;
   height: 1.6rem;
+  border: 0;
   border-radius: 50%;
+  background: transparent;
   color: var(--sm-muted);
   font-size: 1.1rem;
   line-height: 1;
@@ -5242,15 +5356,15 @@ div.title.staxx-has-titlebar {
    (the caution colour .staxx-fieldrow--clash and --watch use for "worth
    weighing"), good for a naming reference (the colour --fieldrow--link and
    --cross already use for a connection that usually is not a problem). */
-.staxx-linkmark--secret {
+.staxx-scaffold .staxx-linkmark--secret {
   color: var(--sm-danger);
 }
 
-.staxx-linkmark--folder {
+.staxx-scaffold .staxx-linkmark--folder {
   color: var(--sm-accent);
 }
 
-.staxx-linkmark--name {
+.staxx-scaffold .staxx-linkmark--name {
   color: var(--sm-good);
 }
 
@@ -5687,7 +5801,10 @@ div.title.staxx-has-titlebar {
    .staxx-helpbtn, but shown plainly rather than dimmed until hover — this is
    the row's only way to act on what the note above it just said, not a
    decoration beside a heading. */
-.staxx-declfix {
+/* .staxx-scaffold prefix (0,2,0): a single class ties the marker's own
+   button reset (trap 3, header) on colour, font-size and background,
+   decided only by source order otherwise — 15 call sites all depend on it. */
+.staxx-scaffold .staxx-declfix {
   margin-top: 0.4rem;
   padding: 0.2rem 0.6rem;
   border: 0.1rem solid var(--sm-line);
@@ -5695,14 +5812,15 @@ div.title.staxx-has-titlebar {
   background: transparent;
   color: var(--sm-fg);
   font-size: 1.1rem;
+  line-height: normal;
   cursor: pointer;
 }
 
-.staxx-declfix:hover {
+.staxx-scaffold .staxx-declfix:hover {
   background: var(--sm-fill);
 }
 
-.staxx-declfix:focus-visible {
+.staxx-scaffold .staxx-declfix:focus-visible {
   outline: 0.15rem solid var(--sm-accent);
   outline-offset: 0.1rem;
 }
@@ -5718,7 +5836,7 @@ div.title.staxx-has-titlebar {
   margin-top: 0.4rem;
 }
 
-.staxx-moved-switch .staxx-declfix {
+.staxx-scaffold .staxx-moved-switch .staxx-declfix {
   margin-top: 0;
 }
 
@@ -5726,12 +5844,12 @@ div.title.staxx-has-titlebar {
    own border and the editor's underline for the same fact, so all three read
    as one warning. "Leave it alone" keeps .staxx-declfix's plain look:
    dismissing an advisory is not itself the accented action. */
-.staxx-declfix--moved {
+.staxx-scaffold .staxx-declfix--moved {
   border-color: var(--sm-accent);
   color: var(--sm-accent);
 }
 
-.staxx-declfix--moved:hover {
+.staxx-scaffold .staxx-declfix--moved:hover {
   background: color-mix(in srgb, var(--sm-accent) 14%, transparent);
 }
 
@@ -6232,7 +6350,10 @@ div.title.staxx-has-titlebar {
 /* Monospace: what is typed here is matched against code, and a proportional
    font makes a search term's length read differently from the code it is
    about to match. */
-.staxx-find-input {
+/* .staxx-scaffold prefix (0,2,0): a single class ties the marker's own
+   input reset (trap 3, header) on font-size and colour, decided only by
+   source order otherwise. */
+.staxx-scaffold .staxx-find-input {
   flex: 1 1 14rem;
   min-width: 8rem;
   box-sizing: border-box;
@@ -6244,16 +6365,17 @@ div.title.staxx-has-titlebar {
   color: inherit;
   font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
   font-size: 1.2rem;
+  line-height: normal;
 }
 
-.staxx-find-input:focus {
+.staxx-scaffold .staxx-find-input:focus {
   border-color: var(--sm-accent);
   outline: none;
 }
 
 /* Script adds this to the bar when nothing matches, so the input itself reads
    as "wrong" rather than leaving that to the counter text alone. */
-.staxx-find--none .staxx-find-input {
+.staxx-scaffold .staxx-find--none .staxx-find-input {
   border-color: var(--sm-danger);
 }
 
@@ -8295,7 +8417,11 @@ div.title.staxx-has-titlebar {
   align-items: center;
 }
 
-.staxx-import-check {
+/* .staxx-scaffold prefix (0,2,0): a native checkbox, but the margin that
+   sets it apart from the row's own button is a single class at (0,1,0),
+   tying the marker's own reset (trap 3, header) and decided only by source
+   order otherwise. */
+.staxx-scaffold .staxx-import-check {
   flex: 0 0 auto;
   margin: 0 0 0 0.9rem;
   cursor: pointer;
@@ -8561,12 +8687,59 @@ div.title.staxx-has-titlebar {
 }
 
 .staxx-confirm-head {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
   padding: 1.2rem 1.4rem 0.8rem;
 }
 
 .staxx-confirm-title {
   margin: 0;
   font-size: 1.6rem;
+}
+
+/* showInfo()'s bad-news marker (PLAN_137) — same red the notice banner's own
+   .staxx-notice--bad icon uses, so a genuine error reads the same way
+   wherever it appears on the page. */
+.staxx-confirm-badicon {
+  font-size: 1.6rem;
+  color: var(--sm-danger);
+}
+
+/* One labelled field for askText() (PLAN_137), styled like the rest of the
+   form fields already on this page rather than the browser's own prompt(). */
+.staxx-confirm-field {
+  display: block;
+  margin: 0 0 0.4rem;
+  font-size: 1.2rem;
+  color: var(--sm-muted);
+}
+
+/* The self-test result (PLAN_137): the only showInfo() body that is a fixed-
+   width report rather than prose, so it keeps its own monospace block with
+   the log dialog's own wrapping and scrolling rather than becoming <p>s. */
+.staxx-confirm-pre {
+  margin: 0;
+  max-height: 50vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.2rem;
+}
+
+/* .staxx-scaffold prefix (0,2,0): a single class ties the marker's own
+   input reset (trap 3, header) on background and border-radius, decided
+   only by source order otherwise. */
+.staxx-scaffold .staxx-confirm-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.7rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background: var(--sm-fill-2);
+  color: inherit;
+  font: inherit;
 }
 
 .staxx-confirm-body {
@@ -8875,23 +9048,28 @@ div.title.staxx-has-titlebar {
    reshaping that bar into a two-part row: every other .staxx-missing bar in
    this footer is one plain click target, and this is the only state that
    ever needs a second one. */
-.staxx-scaffold-dismiss {
+/* .staxx-scaffold prefix (0,2,0): despite the name this is one class, and a
+   single class ties the marker's own button reset (trap 3, header) on
+   colour and font-size, decided only by source order otherwise. */
+.staxx-scaffold .staxx-scaffold-dismiss {
   display: block;
   margin: -0.8rem 0 1.2rem auto;
   padding: 0.2rem 0.6rem;
   border: 0;
+  border-radius: 0;
   background: none;
   color: var(--sm-muted);
   font-size: 1.1rem;
+  line-height: normal;
   cursor: pointer;
 }
 
-.staxx-scaffold-dismiss:hover {
+.staxx-scaffold .staxx-scaffold-dismiss:hover {
   color: inherit;
   text-decoration: underline;
 }
 
-.staxx-scaffold-dismiss[hidden] {
+.staxx-scaffold .staxx-scaffold-dismiss[hidden] {
   display: none;
 }
 
@@ -9138,7 +9316,11 @@ dialog::backdrop {
   gap: 0.6rem;
   cursor: pointer;
 }
-.staxx-switch input {
+/* .staxx-scaffold prefix (0,2,1): a class plus element ties the marker's own
+   input reset (trap 3, header), which sets opacity:1 — a tie an unlucky
+   source order could turn into a native checkbox sprouting beside the
+   hand-drawn track. */
+.staxx-scaffold .staxx-switch input {
   position: absolute;
   opacity: 0;
   width: 0;
@@ -9251,10 +9433,14 @@ dialog::backdrop {
   border-radius: 0.4rem;
 }
 .staxx-list-items li:hover { background: rgba(128, 128, 128, .12); }
-.staxx-list-x {
+/* .staxx-scaffold prefix (0,2,0): a single class ties the marker's own
+   button reset (trap 3, header) on font-size, decided only by source order
+   otherwise. */
+.staxx-scaffold .staxx-list-x {
   visibility: hidden;
   margin-left: auto;
   border: 0;
+  border-radius: 0;
   background: none;
   color: inherit;
   font-size: 1.6rem;
@@ -9263,8 +9449,8 @@ dialog::backdrop {
   opacity: .7;
   padding: 0 0.4rem;
 }
-.staxx-list-items li:hover .staxx-list-x, .staxx-list-x:focus { visibility: visible; }
-.staxx-list-x:hover { opacity: 1; color: var(--sm-accent); }
+.staxx-list-items li:hover .staxx-list-x, .staxx-scaffold .staxx-list-x:focus { visibility: visible; }
+.staxx-scaffold .staxx-list-x:hover { opacity: 1; color: var(--sm-accent); }
 .staxx-list-empty { opacity: .6; }
 
 /* Labels a run of fields inside the settings panel — so far only the Docker
@@ -10308,7 +10494,10 @@ dialog::backdrop {
   font-weight: 400;
 }
 
-.staxx-svcmodal__close {
+/* .staxx-scaffold prefix (0,2,0): a single class ties the marker's own
+   button reset (trap 3, header) on colour, font-size and border-radius,
+   decided only by source order otherwise. */
+.staxx-scaffold .staxx-svcmodal__close {
   position: absolute;
   top: 0.4rem;
   right: 0.4rem;
@@ -10318,6 +10507,7 @@ dialog::backdrop {
   border: 0;
   color: var(--sm-accent);
   font-size: 1.9rem;
+  line-height: 1;
   border-radius: 0.6rem;
   cursor: pointer;
 }
@@ -10977,7 +11167,7 @@ dialog::backdrop {
   /* Same idea as .staxx-modal-tools above: the input claims the row on its
      own rather than sharing it with the counter and buttons at a width where
      there is no room for all of them on one line. */
-  .staxx-find-input {
+  .staxx-scaffold .staxx-find-input {
     flex-basis: 100%;
   }
 

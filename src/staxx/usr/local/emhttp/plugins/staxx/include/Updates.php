@@ -2594,6 +2594,20 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
                'intervalWords' => $clock['interval'], 'cadenceWhy' => $clock['why']];
     }
 
+    // Same name either side but the digests genuinely differ, and no build
+    // dates to back up the "new build" wording above (e.g. a pinned tag the
+    // publisher rebuilt) — still a rebuild, not two versions, so "was" is
+    // blanked rather than printed identically to "version" (card 01a08d0a).
+    if ($was !== '' && $ver !== '' && $was === $ver) {
+      return ['state' => 'update', 'label' => 'new build of '.$ver, 'source' => $source,
+               'tip' => 'A new build of '.$ver.' is available. Press this to fetch it and rebuild '
+                      . 'the container on it.'
+                      . staxx_update_when_words($image, $entry, time()),
+               'version' => $ver, 'was' => '',
+               'askedWords' => $clock['asked'], 'nextWords' => $clock['next'],
+               'intervalWords' => $clock['interval'], 'cadenceWhy' => $clock['why']];
+    }
+
     // PLAN_121 item 7: a from-to pair could run to twice the width of every
     // other pill (Jellyfin's read 40+ characters), so the label is always
     // the same plain words everyone else gets — the tag icon
@@ -2679,13 +2693,33 @@ function staxx_updates_aggregate(array $pills): array {
   $total = count($pills);
   $state = $best['state'] ?? 'current';
 
+  // A pill carries 'name' only when it stands for a whole stack rather than
+  // one service — staxx_updates_for_folder() is the only caller that sets
+  // it — so this is how the wording below tells a folder roll-up from a
+  // stack roll-up without a second copy of this function (card 01a08d12).
+  $isFolder = false;
+  $children = [];
+  foreach ($pills as $p) {
+    if (!array_key_exists('name', $p)) continue;
+    $isFolder = true;
+    if (($p['state'] ?? '') !== 'update') continue;
+    $children[] = ['name' => (string)$p['name'], 'label' => (string)($p['label'] ?? '')];
+  }
+  if (count($children) > 8) {
+    $more = count($children) - 8;
+    $children = array_slice($children, 0, 8);
+    $children[] = ['name' => '', 'label' => 'and '.$more.' more'];
+  }
+  $unit = $isFolder ? 'stacks' : 'services';
+  $open = $isFolder ? 'folder' : 'stack';
+
   switch ($state) {
     case 'update':
       $label = $updateCount === 1 ? $best['label'] : $updateCount.' updates ready';
       $tip   = $updateCount === 1
         ? $best['tip']
-        : $updateCount.' of '.$total.' services here have an update available. Open the '
-        . 'stack to update them.';
+        : $updateCount.' of '.$total.' '.$unit.' here have an update available. Open the '
+        . $open.' to update them.';
       break;
     case 'error':
       $label = 'could not check';
@@ -2748,6 +2782,10 @@ function staxx_updates_aggregate(array $pills): array {
     'due'    => $due,
     'hold'   => $hold,
     'why'    => $why,
+    // Which stacks a folder's roll-up speaks for — empty on a stack row's own
+    // per-service roll-up, since only staxx_updates_for_folder() sets 'name'
+    // on its pills. staxx_update_pill_html() writes this only when non-empty.
+    'children' => $children,
     // PLAN_121 item 7: carried through only for the same single-service case
     // $label above reused $best['label'] for — a row rolling up several
     // updates into "N updates ready" never named one version and still
@@ -2883,7 +2921,13 @@ function staxx_updates_for_folder(string $folder): array {
   $pills = [];
   foreach (staxx_scan_stacks()['stacks'] as $s) {
     if (strpos($s['rel'], $folder.'/') !== 0) continue;
-    $pills[] = staxx_updates_for_row($s['rel']);
+    $pill = staxx_updates_for_row($s['rel']);
+    // The marker staxx_updates_aggregate() reads to know it is folding whole
+    // stacks rather than one stack's services — a stack's name is its
+    // directory's own leaf, never a display override (see the stack-model
+    // note above).
+    $pill['name'] = basename($s['rel']);
+    $pills[] = $pill;
   }
   return staxx_updates_aggregate($pills);
 }
@@ -2891,16 +2935,27 @@ function staxx_updates_for_folder(string $folder): array {
 /**
  * The grid's last-checked line: when the last pass ran, whether it worked,
  * and how many distinct images have an answer at all versus an update
- * actually waiting. Reads the state file only.
+ * actually waiting. Reads the state file, plus one pass over the current
+ * stacks to know which images are still in use.
  */
 function staxx_updates_summary(): array {
   $state  = staxx_update_state();
   $images = (array)$state['images'];
 
+  // The state file is a memory of every image StaXX has ever asked about,
+  // and it is never pruned when a stack is archived or deleted — pruning it
+  // would lose a check result that is still useful if the stack comes back.
+  // So counting every key in it can keep the title bar saying "N updates
+  // waiting" for a stack that no longer exists, while the rows (which read
+  // the current stacks) show none. Restricting to images a current stack
+  // still uses is what makes this total agree with what the rows show.
+  $inUse = staxx_update_images('all');
+
   $known      = 0;
   $updates    = 0;
   $tagmissing = 0;
   foreach (array_keys($images) as $image) {
+    if (!isset($inUse[$image])) continue;
     $pillState = staxx_updates_pill_for_image($image, $images)['state'];
     if ($pillState === 'unknown') continue;
     $known++;

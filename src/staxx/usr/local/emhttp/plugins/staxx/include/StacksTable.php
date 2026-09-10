@@ -474,6 +474,16 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   ] as $attr => $val) {
     if ($val !== '') $cardAttrs .= ' data-update-'.$attr.'="'.htmlspecialchars($val).'"';
   }
+  // Card 01a08d12 — which stacks a folder roll-up speaks for, so the hover
+  // card can list them by name instead of just a count. Empty on every other
+  // pill (staxx_updates_aggregate() only fills it in for a folder), so it is
+  // written the same way the other optional facts above are: omitted rather
+  // than an empty "[]", so the browser can tell "no children" from "not this
+  // kind of pill" if it ever needs to.
+  $children = (array)($u['children'] ?? []);
+  if ($children) {
+    $cardAttrs .= ' data-update-children="'.htmlspecialchars(json_encode($children)).'"';
+  }
 
   return '<'.$tag.' class="staxx-updatepill '.$cls.'"'.$typeAttr
        . ' data-update-state="'.htmlspecialchars($state).'"'

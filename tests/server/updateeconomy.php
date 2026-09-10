@@ -3,6 +3,9 @@
  * questions like money, and the pure seam behind asking for headers only —
  * PLAN_112 Phase B — the ledger itself (section F), pure and offline — and
  * PLAN_112 Phase C — the cadence explaining itself (section G), also pure.
+ * Section H — staxx_updates_summary()'s totals count only images a current
+ * stack still uses, not every key left in the state file by a stack since
+ * archived or removed.
  * Checked against the real installed Defines.php and Updates.php.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. Almost every
@@ -645,6 +648,53 @@ ok('never asked (asked=0) returns an empty sentence',
 $whenWords = staxx_update_when_words('app:1.2.3', ['asked' => time() - 3700, 'nextDue' => time() + 100], time());
 ok('an asked image carries "Last asked" in its sentence',
    strpos($whenWords, 'Last asked') !== false, $whenWords);
+
+/* ======================================================================= *
+ * H — staxx_updates_summary()'s totals must count only images a current
+ * stack still uses, not every key ever left in the state file. Reuses
+ * STORE_ROOT still pointed at the section D scratch store (never restored
+ * mid-file — only the outer command in the header puts the real config
+ * back), so a fixture stack can be created here too.
+ * ======================================================================= */
+
+// Section D's own fixture directory is gone but its scan cache is not — a
+// stale scan would answer from the stack that no longer exists on disk.
+staxx_scan_stacks_reset();
+$before = staxx_updates_summary();
+
+/* An image nothing uses — as if its stack had since been archived or
+ * removed. staxx_updates_summary() must not count it, or the title bar
+ * would go on saying "N updates waiting" for a stack that is gone. */
+$orphanImage = 'example-orphan/nothing-uses-me:1.0';
+economy_set_image_state($orphanImage, [
+  'local' => 'sha256:'.str_repeat('a', 64), 'remote' => 'sha256:'.str_repeat('b', 64),
+]);
+$afterOrphan = staxx_updates_summary();
+ok('an orphaned image (no current stack uses it) is not counted in "updates"',
+   $afterOrphan['updates'] === $before['updates'], json_encode($afterOrphan));
+ok('...nor in "known"',
+   $afterOrphan['known'] === $before['known'], json_encode($afterOrphan));
+
+/* The positive case: the same shape of entry, but for an image a real
+ * fixture stack does use, must still be counted — proving the fix reads
+ * the current stacks rather than simply never counting anything. */
+mkdir($stackScratchRoot, 0755, true);
+$rel2 = 'zzeconomy-inuse';
+$dir2 = $stackScratchRoot.'/'.$rel2;
+mkdir($dir2, 0755, true);
+$inUseImage = 'ghcr.io/quadcom/staxx-economy-inuse-test:1.0.0';
+file_put_contents($dir2.'/compose.yaml', "services:\n  app:\n    image: ".$inUseImage."\n");
+economy_set_image_state($inUseImage, [
+  'local' => 'sha256:'.str_repeat('a', 64), 'remote' => 'sha256:'.str_repeat('b', 64),
+]);
+staxx_scan_stacks_reset();
+$afterInUse = staxx_updates_summary();
+ok('an image a current stack uses IS counted in "updates"',
+   $afterInUse['updates'] === $before['updates'] + 1, json_encode($afterInUse));
+ok('...and in "known"',
+   $afterInUse['known'] === $before['known'] + 1, json_encode($afterInUse));
+
+@exec('rm -rf '.escapeshellarg($stackScratchRoot));
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

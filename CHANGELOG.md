@@ -18,10 +18,23 @@ before that were dates.
 
 ## Unreleased
 
-- The state chips on the main grid are now all the same size. A chip you can click, such as the one offering to find a health check, drew slightly larger than the plain ones beside it.
+- The Compose Manager badge on a stack's name line now matches the review badge beside it in size and colour. Several small controls elsewhere, such as the close crosses on notices and the fix-it buttons in the editor form, no longer depend on Unraid's own stylesheet leaving them alone.
+- A host folder that could not be read for a moment is no longer reported as missing. The stack editor also re-checks a folder it marked missing instead of remembering that first answer for the rest of the session.
+- The state chips on the main grid are now all the same size. A chip you can click, such as the orange "update ready" chip or the one offering to find a health check, drew taller than the plain ones beside it.
 - The web page button now works for a stack imported from a template onto its own network (a br0-style address) or onto the server's network, where there is no port list to read. Import writes the plain port number into the address, the way the editor's Web page port field does, and a stack imported before this fix gets its button back without a visit to the editor.
 - The Storage tab's "Where stacks may live" box is gone. The same choice now sits inside the Data store box as a switch, **Protect me from myself**: on, the folder picker greys out and refuses places that can lose or hide your stacks; off, it warns and lets you choose. Nothing you had set changes.
 - The Container icons setting now shows a row of six sample icons under its dropdown, so you can see the kind of icon it fetches before you decide.
+- Setting up a health check no longer makes the "How the check runs" and "The check itself" fields disappear when you choose the mode before typing the command. A check whose command is still blank now reads back as those two editable fields instead of one locked line.
+- A stack that has never been started can now be removed even when its compose file has a mistake compose refuses to read, such as a service naming a network the file does not declare. Before, removal was refused with a message about stopping containers that did not exist.
+- The right-click menu on a stack now puts "Move to folder" in a second column beside the other items, so a long folder list no longer pushes the rest of the menu off the bottom of the window.
+- The Autostart switch on that same menu now flips in place and leaves the menu open, so you can see which way it went and carry on, rather than the menu closing the moment you press it.
+- StaXX now installs Docker Compose itself when the server has none, and puts it back after every reboot, so removing Compose Manager no longer takes your stacks' controls with it. A compose already present from anywhere else is never touched.
+- The "updates waiting" count in the title bar now counts only stacks that still exist. Images left over from a removed stack no longer keep it lit.
+- An update to a rebuilt image that keeps the same version number now says "a new build of 22.04 is available" instead of showing that same version as both running and available.
+- The update chip on a row no longer flickers back into view for a moment while that row is busy pulling or has failed.
+- A folder's update chip now names which stacks inside it have an update waiting, instead of just a count, and its hover text and wording now talk about stacks rather than services.
+- The banner that appears after StaXX quietly fills in an icon now names the stacks it changed, instead of just a count, so you know where to look.
+- Messages that used to appear as plain text in the black output box — the restart-pending panel, "nothing new found", the self-test, and several others — now show in the same style as every other question StaXX asks, and renaming a file or sharing a container's network now uses that same look instead of the browser's own plain pop-up box.
 
 ## 00.02.00 — released 2026-09-03
 
