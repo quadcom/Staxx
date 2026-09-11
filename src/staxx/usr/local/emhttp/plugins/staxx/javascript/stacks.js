@@ -17980,10 +17980,10 @@
    * every title on the grid, a phone gets no tooltip at all for these; the
    * pill's own words and the row's failure notice carry what matters there.
    */
-  // Every `title` on the grid becomes this same hover card rather than the
-  // browser's own tooltip (Adrian, 2026-09-11) — but only outside a <dialog>:
-  // a dialog draws in the browser's own top layer, above anything in the
-  // scaffold, so a card placed beside the scaffold would be hidden behind it.
+  // Every `title` on the page becomes this same hover card rather than the
+  // browser's own tooltip (Adrian, 2026-09-11), dialogs included — a dialog
+  // draws in the browser's own top layer, above the scaffold, so showUpdCard()
+  // moves the one card into whichever dialog the element sits in.
   // `title` is removed rather than merely read, and has to stay off for as
   // long as the element carries a data-tip: a browser fixes its tooltip text
   // on the last mouse move, not the moment it draws, so taking `title` away
@@ -17997,7 +17997,6 @@
       els = els.concat(Array.prototype.slice.call(root.querySelectorAll('[title]')));
     }
     els.forEach(function (el) {
-      if (el.closest && el.closest('dialog')) return;
       var text = el.getAttribute('title');
       el.removeAttribute('title');
       if (!text) return;
@@ -18151,6 +18150,12 @@
     var pill = updCardPill;
     if (!pill || NARROW.matches) return;
     var card = ensureUpdCard();
+    // A <dialog> paints in the top layer, over everything in the scaffold, so
+    // a card left in the scaffold would sit unseen behind the editor or the
+    // import window. The one card moves into the dialog the element is in
+    // (or back to the scaffold); its fixed positioning is unaffected.
+    var home = (pill.closest && pill.closest('dialog')) || document.querySelector('.staxx-scaffold') || document.body;
+    if (card.parentNode !== home) home.appendChild(card);
     // An update pill gets its lead-plus-table treatment as before; anything
     // else reaching here is a plain adopted title (see adoptTitles() below),
     // which gets only the lead — there is no table of facts to draw for it.
