@@ -17976,9 +17976,59 @@
    * Not offered under NARROW (declared above, the same 45rem phone gate the
    * rest of the page uses): a phone has no hover, and the pill is already a
    * button whose own press starts the update, so a tap cannot be repurposed
-   * to open this without breaking that. The sentence stays the pill's title
-   * there, which mobile browsers already surface on a long press.
+   * to open this without breaking that. Since adoptTitles() below strips
+   * every title on the grid, a phone gets no tooltip at all for these; the
+   * pill's own words and the row's failure notice carry what matters there.
    */
+  // Every `title` on the grid becomes this same hover card rather than the
+  // browser's own tooltip (Adrian, 2026-09-11) — but only outside a <dialog>:
+  // a dialog draws in the browser's own top layer, above anything in the
+  // scaffold, so a card placed beside the scaffold would be hidden behind it.
+  // `title` is removed rather than merely read, and has to stay off for as
+  // long as the element carries a data-tip: a browser fixes its tooltip text
+  // on the last mouse move, not the moment it draws, so taking `title` away
+  // only when the card opens is already too late — that produced two
+  // tooltips stacked on the update pill before data-update-tip existed, and
+  // the same trap applies here.
+  function adoptTitles(root) {
+    if (!root || root.nodeType !== 1) return;
+    var els = root.hasAttribute && root.hasAttribute('title') ? [root] : [];
+    if (root.querySelectorAll) {
+      els = els.concat(Array.prototype.slice.call(root.querySelectorAll('[title]')));
+    }
+    els.forEach(function (el) {
+      if (el.closest && el.closest('dialog')) return;
+      var text = el.getAttribute('title');
+      el.removeAttribute('title');
+      if (!text) return;
+      el.dataset.tip = text;
+      // An icon-only control has no visible text of its own to name it for
+      // a screen reader once its title is gone — give it the same words back
+      // as aria-label rather than leave it silently unlabelled.
+      if (!el.textContent.trim() && !el.hasAttribute('aria-label')) {
+        el.setAttribute('aria-label', text);
+      }
+    });
+  }
+
+  // Runs adoptTitles() over whatever just changed instead of the whole
+  // scaffold on a timer: a row re-rendered from the server, a chip a script
+  // repaints, or any of this file's existing `el.title = …` writes all reach
+  // here without needing to call adoptTitles() themselves.
+  new MutationObserver(function (mutations) {
+    for (var i = 0; i < mutations.length; i++) {
+      var m = mutations[i];
+      if (m.type === 'attributes') {
+        adoptTitles(m.target);
+      } else {
+        for (var j = 0; j < m.addedNodes.length; j++) {
+          if (m.addedNodes[j].nodeType === 1) adoptTitles(m.addedNodes[j]);
+        }
+      }
+    }
+  }).observe(scaffold, { attributes: true, attributeFilter: ['title'], subtree: true, childList: true });
+  adoptTitles(scaffold);
+
   var updCard = null;
   var updCardTimer = null;
   var updCardPill = null;   // the pill currently hovered/focused — set the
@@ -18101,8 +18151,16 @@
     var pill = updCardPill;
     if (!pill || NARROW.matches) return;
     var card = ensureUpdCard();
-    card.innerHTML = '<div class="staxx-updcard__lead">' + esc(updCardLead(pill)) + '</div>' +
-      '<dl class="staxx-updcard__facts">' + updCardFacts(pill) + '</dl>';
+    // An update pill gets its lead-plus-table treatment as before; anything
+    // else reaching here is a plain adopted title (see adoptTitles() below),
+    // which gets only the lead — there is no table of facts to draw for it.
+    if (pill.dataset.updateState) {
+      card.innerHTML = '<div class="staxx-updcard__lead">' + esc(updCardLead(pill)) + '</div>' +
+        '<dl class="staxx-updcard__facts">' + updCardFacts(pill) + '</dl>';
+    } else {
+      card.innerHTML = '<div class="staxx-updcard__lead">' +
+        esc(pill.dataset.tip || '').replace(/\n/g, '<br>') + '</div>';
+    }
     card.hidden = false;
     placeUpdCard(pill);
   }
@@ -18128,22 +18186,26 @@
   // between the pill and something nested inside it (PLAN_121's tag icon) —
   // without that check, moving onto the icon would read as leaving the pill
   // and dismiss the card while the pointer never left it.
+  // Matches the update pill (its own facts table) or any element carrying an
+  // adopted title (data-tip, see adoptTitles() below) — one card mechanism
+  // for both, branched on inside showUpdCard() itself.
+  var UPD_CARD_SEL = '.staxx-updatepill, [data-tip]';
   document.addEventListener('mouseenter', function (event) {
-    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    var pill = event.target.closest && event.target.closest(UPD_CARD_SEL);
     if (pill && !pill.contains(event.relatedTarget)) updCardEnter(pill);
   }, true);
   document.addEventListener('mouseleave', function (event) {
-    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    var pill = event.target.closest && event.target.closest(UPD_CARD_SEL);
     if (pill && pill === updCardPill && !pill.contains(event.relatedTarget)) dismissUpdCard();
   }, true);
   // focusin bubbles on its own, so this is the keyboard path (Tab onto a
   // pill) with no delegation trick needed — same card, same delay.
   document.addEventListener('focusin', function (event) {
-    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    var pill = event.target.closest && event.target.closest(UPD_CARD_SEL);
     if (pill) updCardEnter(pill);
   });
   document.addEventListener('focusout', function (event) {
-    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    var pill = event.target.closest && event.target.closest(UPD_CARD_SEL);
     if (pill && pill === updCardPill) dismissUpdCard();
   });
   document.addEventListener('keydown', function (event) {
