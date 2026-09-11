@@ -4086,6 +4086,15 @@ function staxx_handover_setaside_name(string $original, array $taken): string {
   return $candidate.'-'.bin2hex(random_bytes(4));
 }
 
+/**
+ * Whether $name is a set-aside copy the function above would have made —
+ * kept beside the name-maker so the naming rule and the recognising rule
+ * cannot drift apart from each other.
+ */
+function staxx_handover_is_setaside(string $name): bool {
+  return (bool)preg_match('/-before-staxx(-\d+)?$/', $name);
+}
+
 /** The handover state file actually present in $dir, by its real name, or ''. */
 function staxx_handover_file(string $dir): string {
   // Same per-directory memoisation and the same reasoning as

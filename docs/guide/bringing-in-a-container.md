@@ -19,7 +19,7 @@ stack. Nothing switches off, starts, or changes while it runs.
    |---|---|---|
    | Unraid templates | Apps installed the Unraid way | Yes |
    | Compose Manager projects | Projects belonging to the Compose Manager plugin | Yes |
-   | Containers with nothing behind them | Started by hand, belonging to neither | No — reference only |
+   | Containers with nothing behind them | Started by hand, belonging to neither. A copy set aside by a takeover is not listed. | No — reference only |
    | Already imported | Already a stack in StaXX, wherever it now lives | No |
    | Left over from a removed container | No container behind them any more | No |
 

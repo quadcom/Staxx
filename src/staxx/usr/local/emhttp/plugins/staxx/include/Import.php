@@ -835,6 +835,10 @@ function staxx_import_loose(): array {
   foreach ($containers as $name => $info) {
     if ($info['project'] !== '') continue;   // compose-managed — not loose
     if (isset($claimed[$name])) continue;    // a template's own container
+    // A handover's set-aside copy is the way back if the new stack fails,
+    // not something to import — the loose-container notice reads this same
+    // list, so skipping it here keeps that notice quiet too.
+    if (staxx_handover_is_setaside($name)) continue;
 
     $folder = staxx_import_safe_name($name);
     $notes  = [];
