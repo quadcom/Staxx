@@ -10485,6 +10485,48 @@ console.log('\nAR9-AR12. PLAN_106 — a broader check on a file that was already
      afterLines.filter(function (_, i) { return i !== 5; }).join('\n'));
 })();
 
+/* ---- AR13 (PLAN_146). Rewriting an existing icon: value and appending a
+ *              "was <url>" note to its comment keeps the rest of the file
+ *              byte-identical — the shape iconAdoptWrite() relies on for the
+ *              pasted-icon-address case, proven here rather than reasoned
+ *              about since it runs the model directly, with no form. ---- */
+
+(function () {
+  var before = 'services:\n' +
+               '  a:\n' +
+               '    image: alpine\n' +
+               '    x-unraid:\n' +
+               '      icon: https://example.com/png/unifi-voucher-site.png  # picked by hand\n' +
+               '  b:\n' +
+               '    image: alpine\n';
+  var doc = Y.parse(before);
+
+  var replaced = Y.replaceNested(doc, null, 'a', ['x-unraid', 'icon'],
+                                  './.staxx/unifi-voucher-site.png');
+  ok('replaceNested accepts the new value', replaced);
+
+  var appended = Y.appendNestedComment(doc, null, 'a', ['x-unraid', 'icon'],
+                                        'was https://example.com/png/unifi-voucher-site.png');
+  ok('appendNestedComment accepts the note', appended);
+
+  var after = Y.serialise(doc);
+  var beforeLines = before.split('\n'), afterLines = after.split('\n');
+  var changed = diffLines(before, after);
+  ok('exactly one line changed', changed.length === 1, JSON.stringify(changed));
+
+  var line = afterLines[4];
+  ok('the value now points at the local copy',
+     line.indexOf('icon: ./.staxx/unifi-voucher-site.png') >= 0, line);
+  ok('the comment already on the line is kept ahead of the new note',
+     line.indexOf('# picked by hand') < line.indexOf('# was https://example.com/png/unifi-voucher-site.png') &&
+     line.indexOf('# picked by hand') >= 0, line);
+  ok('the pasted address is kept, not dropped',
+     line.indexOf('was https://example.com/png/unifi-voucher-site.png') >= 0, line);
+  ok('every other line is byte-identical to before',
+     beforeLines.filter(function (_, i) { return i !== 4; }).join('\n') ===
+     afterLines.filter(function (_, i) { return i !== 4; }).join('\n'));
+})();
+
 /* ---- result ------------------------------------------------------------- */
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

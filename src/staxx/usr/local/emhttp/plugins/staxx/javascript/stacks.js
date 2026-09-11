@@ -20133,6 +20133,9 @@
   // at the end, counts the whole run rather than just its last round.
   var iconAdoptStacks = {};
   var iconAdoptCount = 0;
+  // PLAN_146: set when any item written this run replaced a pasted address
+  // rather than filling in a blank field, so the summary notice can say so.
+  var iconAdoptHadUrl = false;
 
   // Writing this key does not change the fingerprint compose hashes a
   // service by (checked on the server with `docker compose config
@@ -20146,8 +20149,20 @@
       // form: null, the same as writeProjectLink() above — this write never
       // has a live editor form to hand, since it may not even be the stack
       // the editor has open right now.
-      var at = YAML.addNested(doc, null, item.service, ['x-unraid', 'icon'], item.file);
-      if (at < 0) return;   // could not write safely — skip, never force it
+      var ok;
+      if (item.was) {
+        // PLAN_146: the field already holds the pasted address, so this is a
+        // rewrite in place — replaceNested keeps the line's own comment and
+        // quoting — followed by appending the address to that comment rather
+        // than dropping it. Either step failing (a stale spot, a shape it
+        // will not touch) skips the whole item; a value changed with its
+        // address lost would be worse than leaving it for next round.
+        ok = YAML.replaceNested(doc, null, item.service, ['x-unraid', 'icon'], item.file) &&
+             YAML.appendNestedComment(doc, null, item.service, ['x-unraid', 'icon'], 'was ' + item.was);
+      } else {
+        ok = YAML.addNested(doc, null, item.service, ['x-unraid', 'icon'], item.file) >= 0;
+      }
+      if (!ok) return;   // could not write safely — skip, never force it
 
       return call('save', { name: res.name, body: YAML.serialise(doc), 'new': '0',
                              fingerprint: res.fingerprint }).then(function (r) {
@@ -20156,6 +20171,7 @@
         if (!r || !r.ok) return;
         iconAdoptStacks[item.stack] = true;
         iconAdoptCount++;
+        if (item.was) iconAdoptHadUrl = true;
       });
     });
   }
@@ -20195,9 +20211,10 @@
         }
         iconAdoptRounds = 0;
         if (iconAdoptCount > 0) {
-          showIconAdoptSummary(iconAdoptCount, Object.keys(iconAdoptStacks));
+          showIconAdoptSummary(iconAdoptCount, Object.keys(iconAdoptStacks), iconAdoptHadUrl);
           iconAdoptCount = 0;
           iconAdoptStacks = {};
+          iconAdoptHadUrl = false;
           refreshRows();   // the changed stacks re-render from their files
         }
       });
@@ -20209,7 +20226,7 @@
   // PLAN_139 folded this into notices.add(): repeat runs coalesce onto one
   // entry there by construction (same kind, same text hashes to the same
   // id) rather than this function needing to track and replace its own copy.
-  function showIconAdoptSummary(services, stackNames) {
+  function showIconAdoptSummary(services, stackNames, hadUrl) {
     var svcText = services + (services === 1 ? ' service' : ' services');
     // Name the stacks rather than just counting them (card 01a08d13) — "one
     // stack" told nobody which one to go and check.
@@ -20218,10 +20235,14 @@
     if (stackNames.length > shown.length) {
       namesText += ' and ' + (stackNames.length - shown.length) + ' more';
     }
+    // PLAN_146: said plainly rather than folded silently into the same
+    // count — a pasted address being swapped for a local copy is a bigger
+    // change to a file than merely filling in a blank field.
+    var urlText = hadUrl ? ', and a pasted address was replaced by a local copy' : '';
     notices.add({
       kind: 'good',
       text: 'StaXX found icons for ' + svcText + ' and saved them into these stacks: ' +
-            namesText + '. Each stack’s earlier compose file is kept in its history, so ' +
+            namesText + urlText + '. Each stack’s earlier compose file is kept in its history, so ' +
             'this can be undone from the stack’s History.',
       sticky: false
     });
@@ -27852,6 +27873,100 @@
     menu.dataset.owner = menuOwnerKey(trigger);
     openMenu(trigger, { x: event.clientX, y: event.clientY });
   });
+
+  // PLAN_145 — Unraid's own external-link question (webGui's
+  // BodyInlineJS.php) is bound on `document` and shows an ordinary page
+  // element, which a <dialog> opened with showModal() always paints over —
+  // so clicking one of our own external links (the selfh.st icon lookup,
+  // a project's repo, …) from inside the editor left the question sitting
+  // unseen underneath it. Bound on the scaffold in the CAPTURE phase so it
+  // runs before Unraid's document-level handler, and gated on being inside
+  // one of our open dialogs — outside a dialog Unraid's own question already
+  // shows correctly and stays Unraid's to ask.
+  // A plain split-and-match rather than a regex against the whole cookie
+  // string — cookies are name=value pairs joined by "; ", which is simple
+  // enough to walk by hand.
+  function allowedDomainsCookie() {
+    var parts = document.cookie.split(';');
+    for (var i = 0; i < parts.length; i++) {
+      var part = parts[i].replace(/^\s+/, '');
+      var prefixLen = 'allowedDomains='.length;
+      if (part.slice(0, prefixLen) !== 'allowedDomains=') continue;
+      var raw = part.slice(prefixLen);
+      // Tolerant of either encoding: Unraid's cookie plugin percent-encodes
+      // the JSON, but nothing here should break if some other write leaves
+      // it raw.
+      try { return JSON.parse(decodeURIComponent(raw)); } catch (e1) {
+        try { return JSON.parse(raw); } catch (e2) { return {}; }
+      }
+    }
+    return {};
+  }
+
+  // Written in the exact shape Unraid's own handler reads back, so its
+  // document-level listener honours what we set here everywhere on the
+  // page, not just inside our dialogs — one memory, not two. Built as an
+  // array and joined, rather than one concatenated string, purely so the
+  // cookie's own "name=" fields never sit next to a semicolon in the source
+  // text (an undeclared-name scan reads that shape as a bare assignment).
+  function allowDomainForever(host) {
+    var domains = allowedDomainsCookie();
+    domains[host] = true;
+    var cookieParts = [
+      'allowedDomains=' + encodeURIComponent(JSON.stringify(domains)),
+      'expires=' + new Date(Date.now() + 3650 * 86400000).toUTCString(),
+      'path=/'
+    ];
+    document.cookie = cookieParts.join('; ');
+  }
+
+  // The same hosts Unraid's own handler waves through without asking —
+  // BodyInlineJS.php — kept identical so a link never gets asked about here
+  // that Unraid itself would have opened silently.
+  function externalLinkExempt(href) {
+    return /^https?:\/\/[^.]*\.(my)?unraid\.net\//.test(href) ||
+      href.indexOf('https://unraid.net') === 0 ||
+      href.indexOf('http://lime-technology.com') === 0;
+  }
+
+  scaffold.addEventListener('click', function (event) {
+    var dialogEl = event.target.closest('dialog[open]');
+    if (!dialogEl) return;
+    var link = event.target.closest('a[href]');
+    if (!link || link.classList.contains('localURL')) return;
+    var href = link.getAttribute('href') || '';
+    if (!/^https?:\/\//i.test(href)) return;
+    var host;
+    try { host = new URL(href, location.href).hostname; } catch (e) { return; }
+    if (host === location.hostname || externalLinkExempt(href) || allowedDomainsCookie()[host]) return;
+
+    // Unraid's own handler is bound on `document`; stopping the click here,
+    // on the scaffold, keeps it from ever reaching that handler and showing
+    // its own copy of the question underneath the dialog a moment later.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    askConfirm({
+      title: 'External Link',
+      bodyHtml: '<p>Clicking OK will take you to a 3rd party website not associated with Lime Technology.</p>' +
+        '<p>' + esc(href) + '</p>' +
+        '<label class="staxx-sectionrow"><input type="checkbox" id="staxx-extlink-ack"> ' +
+        'Always allow ' + esc(host) + '</label>',
+      goLabel: 'OK'
+    }).then(function (go) {
+      var ack = confirmBody.querySelector('#staxx-extlink-ack');
+      var allow = !!(ack && ack.checked);
+      closeConfirm();
+      if (!go) return;
+      if (allow) allowDomainForever(host);
+      // Popup blockers return null rather than throwing, so a blocked tab is
+      // silent unless it is said out loud here — Unraid shows a banner for
+      // the same case.
+      if (!window.open(href, '_blank', 'noopener')) {
+        showInfo('External Link', esc('The browser blocked the new tab. Allow pop-ups for this page and try again.'));
+      }
+    });
+  }, true);
 
   document.addEventListener('click', function (event) {
     if (menu.hidden) return;

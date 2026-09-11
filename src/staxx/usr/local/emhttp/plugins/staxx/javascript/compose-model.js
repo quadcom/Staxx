@@ -4178,6 +4178,48 @@
     return replaceScalarAt(doc, function () { return rootPair(doc); }, path, value);
   }
 
+  /**
+   * Appends a note to the comment already on one scalar's line, keeping
+   * whatever was there ahead of it, rather than replacing it — PLAN_146,
+   * for recording where a pasted icon address came from once its picture is
+   * copied into the stack. Unlike setComment() (the env-var note field with
+   * its -!S/-!R markers) this writes a plain "# ..." comment and works from
+   * the same path walk as replaceScalarAt() rather than a form field, since
+   * the background icon sweep that calls it has no form to hand.
+   *
+   * Refuses (false) on an absent leaf, one that is not a plain scalar, or a
+   * line that has moved since it was read (spotStale()).
+   */
+  function appendComment(doc, getPair, path, note) {
+    var pair = getPair();
+    for (var i = 0; pair && i < path.length - 1; i++) {
+      var map = pair.value && pair.value.kind === 'map' ? pair.value : null;
+      pair = map ? map.pairs[path[i]] : null;
+    }
+    var parent = pair && pair.value && pair.value.kind === 'map' ? pair.value : null;
+    var leaf = parent ? parent.pairs[path[path.length - 1]] : null;
+    if (!leaf || !leaf.value || leaf.value.kind !== 'scalar') return false;
+
+    var at = commentSpot(leaf.value, doc.lines);
+    if (!at || spotStale(doc, at)) return false;
+
+    // Whatever was already on the line — pad and all — rides ahead of the
+    // new note untouched; only a genuinely empty tail falls back to the
+    // spot's own default pad.
+    var existing = at.text.replace(/[ \t]+$/, '');
+    var suffix = (existing ? '  ' : (at.pad || '  ')) + '# ' + note;
+
+    var line = doc.lines[at.line];
+    doc.lines[at.line] = line.slice(0, at.col) + existing + suffix;
+    splice(doc, 0, 0, []);
+    return true;
+  }
+
+  /** appendComment against a service's own x-unraid block. */
+  function appendNestedComment(doc, form, service, path, note) {
+    return appendComment(doc, function () { return serviceMapOf(doc, service); }, path, note);
+  }
+
   // Builds the canonical flow-list text for healthcheck.test — the one shape
   // writeTest() ever writes, whatever shape the file used before. Every
   // element is JSON-encoded rather than run through emitScalar: emitScalar's
@@ -9898,6 +9940,10 @@
     // and no existing writer had, because these fields are not form fields.
     replaceNested: replaceNested,
     replaceRootNested: replaceRootNested,
+    // PLAN_146: appends a note to a scalar's existing line comment (a pasted
+    // icon address, once its picture is copied into the stack) instead of
+    // replacing it — the address must never simply vanish.
+    appendNestedComment: appendNestedComment,
     // PLAN_34 phase 5: turns a service's networks: from a list of names into
     // a map of them, so an entry gains somewhere to hang a fixed or hardware
     // address — see the function's own comment for why it is whole-block.

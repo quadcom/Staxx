@@ -490,6 +490,34 @@ function staxx_icon_url(string $ref): string {
 }
 
 /**
+ * PLAN_146 — the readable filename a pasted icon URL adopts under, in place
+ * of the hash `staxx_icon_adopt()` otherwise names every picture by. Taken
+ * from the URL's own last path segment (`unifi-voucher-site.png` out of
+ * `.../png/unifi-voucher-site.png`) rather than trusted whole: an address is
+ * typed by whoever pasted it, not this plugin, so only letters, digits, dots,
+ * underscores and hyphens survive, lower-cased. The extension is never taken
+ * from the URL — $ext is what the cached file's own magic-byte check already
+ * proved it to be, and a URL's claimed extension need not agree with that.
+ *
+ * Falls back to `icon-<first 8 of the hash>.<ext>` when the URL has no path
+ * segment left worth keeping (no path at all, or one that reduces to
+ * nothing) — still readable, and still unique per address.
+ */
+function staxx_icon_url_filename(string $url, string $ext, string $hash): string {
+  $fallback = 'icon-'.substr($hash, 0, 8).'.'.$ext;
+
+  $path = (string)parse_url($url, PHP_URL_PATH);
+  if ($path === '') return $fallback;
+
+  $stem = strtolower(pathinfo(basename($path), PATHINFO_FILENAME));
+  $stem = (string)preg_replace('/[^a-z0-9._-]+/', '', $stem);
+  $stem = trim($stem, '.-');
+  if ($stem === '') return $fallback;
+
+  return $stem.'.'.$ext;
+}
+
+/**
  * PLAN_86 — copy an already-cached icon into the stack's own hidden record
  * folder, so the picture travels with the compose file instead of living
  * only in the shared plugin cache. Returns the relative path written (e.g.
@@ -511,8 +539,12 @@ function staxx_icon_url(string $ref): string {
  * The stack root may itself be on the flash drive, where every file comes
  * out owner-only whatever mode is asked for — that is the drive, not a bug,
  * so this does not try to chmod anything looser.
+ *
+ * $url is PLAN_146's addition: the pasted address behind a `url-<hash>`
+ * reference, needed only to name the copy — see staxx_icon_url_filename().
+ * Every other kind of reference ignores it.
  */
-function staxx_icon_adopt(string $ref, string $dir, string &$error): string {
+function staxx_icon_adopt(string $ref, string $dir, string &$error, string $url = ''): string {
   $error = '';
   if (!staxx_icon_safe_ref($ref)) { $error = 'That is not a valid icon reference.'; return ''; }
 
@@ -537,7 +569,9 @@ function staxx_icon_adopt(string $ref, string $dir, string &$error): string {
   // have one yet, so staxx_icon_write() below creates it as part of writing
   // the file (same as it creates any other missing directory).
   $recordDir = $dir.'/'.STAXX_RECORD_DIR;
-  $file      = $ref.'.'.$ext;
+  $file      = (strpos($ref, 'url-') === 0 && $url !== '')
+             ? staxx_icon_url_filename($url, $ext, substr($ref, 4))
+             : $ref.'.'.$ext;
   $target    = $recordDir.'/'.$file;
   $relative  = './'.STAXX_RECORD_DIR.'/'.$file;
 

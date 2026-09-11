@@ -18,6 +18,8 @@ before that were dates.
 
 ## Unreleased
 
+- A link to an outside site clicked from inside the stack editor now asks Unraid's "external link" question where you can see it, over the editor instead of underneath it, and remembers "always allow" the same way Unraid does.
+- An icon you point at by web address is now downloaded once and kept with the stack, and the file is updated to point at that copy with the original address kept in a comment beside it, so the picture survives a move, a restore, or the address going away.
 - A stack whose compose file spells Docker Hub out by name, as `docker.io/user/app`, no longer shows "not installed" while it is plainly running. StaXX now treats that spelling as the same registry Docker does, so the image it pulled is recognised as its own.
 - A stack that uses compose profiles can now have them switched on and off from its row menu and its Manage tab, and StaXX passes the choice along when it starts, stops, restarts or updates the stack, so a service tagged with a profile is no longer silently left out. Nothing is switched on for you; the choice is kept beside the stack and never written into the compose file.
 - The stack editor now points out a service with no restart policy, and one with no time zone set, and offers the sensible value for each with one press. Both are offers with a Dismiss.

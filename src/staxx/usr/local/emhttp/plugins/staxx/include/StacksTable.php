@@ -688,15 +688,24 @@ function staxx_service_icons_for_stack(string $stack): array {
  *
  * Skips, quietly, each for its own reason: a stack in $skip (the editor is
  * open on it right now); a stack whose compose file did not parse; a service
- * that already records an icon (never overwritten, ever); a service with no
- * image; an image staxx_icon_match() cannot place; and a copy that failed
- * for any reason. None of those stop the walk — only the cap does.
+ * that already records an icon (never overwritten, ever, unless it is the
+ * pasted-address case below); a service with no image; an image
+ * staxx_icon_match() cannot place; and a copy that failed for any reason.
+ * None of those stop the walk — only the cap does.
+ *
+ * PLAN_146 added the second qualifying case: an icon field already holding a
+ * `http(s)://` address whose picture StaXX has already fetched into its
+ * cache. Not yet fetched is left alone this round — the same "picked up
+ * later" shape an unmatched image already gets — and a fetch StaXX tried and
+ * failed at stays a visibly dead link rather than being swapped for nothing.
+ * Such an item carries `was`, the address exactly as the author typed it,
+ * so the browser can keep it in a comment rather than dropping it.
  *
  * Same call, same arguments, as the grid's own child rows (see
  * staxx_stack_tile()) — what gets recorded is exactly what the grid was
  * already showing, never a fresh guess.
  *
- * @return array<int, array{stack:string, service:string, file:string}>
+ * @return array<int, array{stack:string, service:string, file:string, was?:string}>
  */
 function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
   $skip   = array_flip($skip);
@@ -713,24 +722,41 @@ function staxx_icon_adopt_sweep(array $skip, int $cap, bool &$done): array {
     if (!$meta['ok']) continue;
 
     foreach ($meta['services'] as $svc => $svcMeta) {
-      if (trim((string)($svcMeta['x']['icon'] ?? '')) !== '') continue;
+      $icon = trim((string)($svcMeta['x']['icon'] ?? ''));
+      $url  = '';
+      $was  = '';
 
-      $image = trim((string)($svcMeta['image'] ?? ''));
-      if ($image === '') continue;
+      if ($icon === '') {
+        $image = trim((string)($svcMeta['image'] ?? ''));
+        if ($image === '') continue;
 
-      // $s['rel'], not the leaf: a stack row's 'name' IS its path under the
-      // root, and that is what the grid hands staxx_icon_match() as its last
-      // candidate. Passing the leaf here instead would let a stack inside a
-      // folder match something the grid never showed, and recording that
-      // would change what it looks like — the one thing this must not do.
-      $ref = staxx_icon_match($image, $svc, $s['rel']);
-      if ($ref === '') continue;
+        // $s['rel'], not the leaf: a stack row's 'name' IS its path under
+        // the root, and that is what the grid hands staxx_icon_match() as
+        // its last candidate. Passing the leaf here instead would let a
+        // stack inside a folder match something the grid never showed, and
+        // recording that would change what it looks like — the one thing
+        // this must not do.
+        $ref = staxx_icon_match($image, $svc, $s['rel']);
+        if ($ref === '') continue;
+      } elseif (preg_match('#^https?://#i', $icon)) {
+        $ref = 'url-'.md5(staxx_icon_raw_url($icon));
+        // Not cached yet, or a download already known to fail: leave the
+        // field alone. staxx_icon_missed() is checked first because it is
+        // the cheap answer — no filesystem probe needed.
+        if (staxx_icon_missed($ref) || staxx_icon_url($ref) === '') continue;
+        $url = staxx_icon_raw_url($icon);
+        $was = $icon;
+      } else {
+        continue;
+      }
 
       $error = '';
-      $written = staxx_icon_adopt($ref, $s['dir'], $error);
+      $written = staxx_icon_adopt($ref, $s['dir'], $error, $url);
       if ($written === '') continue;
 
-      $out[] = ['stack' => $s['rel'], 'service' => $svc, 'file' => $written];
+      $item = ['stack' => $s['rel'], 'service' => $svc, 'file' => $written];
+      if ($was !== '') $item['was'] = $was;
+      $out[] = $item;
       if (count($out) >= $cap) { $cutoff = true; break 2; }
     }
   }

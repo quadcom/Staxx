@@ -181,6 +181,18 @@ line below it — so a refusal is something you will actually notice.
 - **It is not a second copy of your file.** The form is a view drawn from the file itself — the file
   you started with is still the same file, in the same place, readable in any text editor.
 
+## The icon
+
+A service's icon field takes a name from the selfh.st icon collection, a picture kept with the
+stack, or a web address. Paste a web address and StaXX downloads the picture once, keeps a copy in
+the stack's own folder, and updates the file to point at that copy, with the address you pasted
+kept in a comment beside it, so the picture survives a move, a restore, or the address going away.
+The change is announced in the same notice that reports a matched icon.
+
+The field's selfh.st link opens that collection in a new tab. The first time you open a third-party
+site from StaXX, Unraid asks whether you trust it; tick **Always allow** and it will not ask about
+that site again.
+
 ## Fill in details
 
 Some of what a stack records about the app itself — its icon, description, author and project
