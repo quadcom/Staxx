@@ -145,10 +145,16 @@ nothing else — StaXX offers to bring every stack back from those copies.
 the data store**, which opens the same dialog as a first install. If the flash drive holds any
 copies, a **Show me the copies** button lists them before you choose anywhere.
 
+![The card shown when the data store's folder is missing: StaXX cannot reach its data store, where it was, that the array may still be starting, that copies of the stacks are on the flash drive, and two buttons, Choose a new place for the data store and Show me the copies](../images/guide/recovery-and-redundancy-store-missing.png)
+
 **The data store exists but is empty.** A card offers **Bring back *N* stacks**, which writes every
 stack on the flash drive into the store. **Show me what is there** lists them first, with the date
 of each copy. **Put the data store somewhere else first** opens the same dialog again, for a store
 you would rather point elsewhere.
+
+![The card shown when the data store exists but is empty: copies of the stacks are on the flash drive, with the newest and oldest dates, where they will be written, and three buttons, Bring back the stacks, Show me what is there and Put the data store somewhere else first](../images/guide/recovery-and-redundancy-store-empty.png)
+
+![The flash-drive copies list: each stack by its path with the date and time of its copy, and an OK button](../images/guide/recovery-and-redundancy-show-me.png)
 
 Nothing is started by either card — a restored stack sits exactly as an imported one does, ready to
 open and start when you choose to. A restored stack starts a fresh history of its own, since none of

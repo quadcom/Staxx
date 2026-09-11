@@ -201,7 +201,7 @@ that is off will not start.* Switch one on and StaXX includes it the next time y
 restart, update or recreate the stack. Nothing is switched on for you; a profile stays off until you
 turn it on yourself.
 
-<!-- picture: the row menu with the Profiles group open, showing the separator, one or two switches and the hint line -->
+![A stack's row menu with the Profiles group outlined: the Profiles heading, one switch labelled extras, and the line saying a service tagged with a profile that is off will not start](../images/guide/the-stack-list-profiles-menu.png)
 
 ### A service's own menu
 
@@ -241,7 +241,7 @@ folder header gains a switch at its left edge, the same on/off glyph used for Au
 Switching a folder on or off switches every stack inside it; a folder with only some of its stacks on
 shows its switch on but dimmed.
 
-<!-- picture: the stack list in selection mode with several switches on and the bar showing at the foot -->
+![The list in selection mode: the DEV-TESTING folder header with its switch on but dimmed, two stacks beneath it switched on and a third off, and the bar at the foot saying 2 stacks chosen, in the order shown, with Start, Stop, Restart, Check for updates and Update](../images/guide/the-stack-list-selection-mode.png)
 
 A bar appears at the foot of the list saying how many stacks are chosen, in the order shown, with
 five buttons: **Start**, **Stop**, **Restart**, **Check for updates** and **Update**. There is
