@@ -188,6 +188,7 @@ Four rules run through the whole set:
 | `links_match` | The cross-stack matcher and its one-target credentials lookup | `STORE_ROOT` |
 | `meta-cache` | The on-disk memory behind reading a compose file's metadata, keyed on contents plus version | — |
 | `moves` | Noticing when a catalogue app's template has moved registries | backs up three real files |
+| `networks` | Spotting the networks a compose file names that this server does not have, against fake network lists, and the refusal that check feeds into the job runner | `STORE_ROOT` at `/tmp` |
 | `override` | Two-file compose support, the strict pairing rule, and what it feeds | `STORE_ROOT` at `/tmp` |
 | `paths` | Making and checking volume paths, including how one outside `/mnt` is judged | `STORE_ROOT` |
 | `pending` | The restart-pending comparison — what is running against what the file now says — and above all its refusals | — |
