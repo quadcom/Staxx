@@ -1462,34 +1462,54 @@ switch ($action) {
     }
     $service = (string)($_POST['service'] ?? '');
 
-    // Update must never be the thing that starts a container the reader
-    // deliberately stopped. Whole-stack scope always updates; a single named
-    // service only updates if it is already running — otherwise (stopped, or
-    // never started at all) it is pulled instead, same as the menu's own
-    // Pull, so its next start picks up the new image. Same container lookup
-    // staxx_stack_containers() gives the row renderer, so this can never
-    // disagree with what the row itself shows as running.
+    // Update must never be the thing that starts a container or a stack the
+    // reader deliberately stopped — at either scope. A single named service
+    // only updates if it is already running; otherwise (stopped, or never
+    // started at all) it is pulled instead, same as the menu's own Pull, so
+    // its next start picks up the new image. Whole-stack scope now follows
+    // the same rule: nothing running pulls the whole stack, so every image
+    // is refreshed and the stack stays stopped; everything running updates
+    // the whole stack as before; a mix updates only the services that are
+    // running, leaving the stopped ones neither started nor pulled — their
+    // chip stays until they are next started, which is the honest state.
+    // Same container lookup staxx_stack_containers() gives the row
+    // renderer, so this can never disagree with what the row itself shows
+    // as running.
+    $file = staxx_find_compose_file(staxx_stack_dir($name));
+    $rows = staxx_stack_containers([
+      'name' => $name, 'leaf' => staxx_path_leaf($name), 'project' => '',
+      'file' => $file,
+    ]);
+    $runningSvcs = [];
+    foreach ($rows as $row) {
+      if ($row['service'] !== '' && strtolower($row['state']) === 'running') {
+        $runningSvcs[] = $row['service'];
+      }
+    }
+    $runningSvcs = array_values(array_unique($runningSvcs));
+
     $verb = 'update';
     if ($service !== '') {
-      $rows = staxx_stack_containers([
-        'name' => $name, 'leaf' => staxx_path_leaf($name), 'project' => '',
-        'file' => staxx_find_compose_file(staxx_stack_dir($name)),
-      ]);
-      $running = false;
-      foreach ($rows as $row) {
-        if ($row['service'] === $service && strtolower($row['state']) === 'running') {
-          $running = true;
-          break;
-        }
-      }
-      if (!$running) $verb = 'pull';
+      if (!in_array($service, $runningSvcs, true)) $verb = 'pull';
+    } elseif (!$runningSvcs) {
+      $verb = 'pull';
+    } else {
+      // Fully running if every declared service is among the running ones;
+      // if the compose file cannot be read for its service list, fall back
+      // to every container row seen being running — the best that can be
+      // told without it.
+      $allSvcs = staxx_service_names($file);
+      $fullyRunning = $allSvcs !== []
+        ? !array_diff($allSvcs, $runningSvcs)
+        : count($runningSvcs) === count($rows);
+      if (!$fullyRunning) $service = $runningSvcs; // array: update only these
     }
 
     // Recorded before the job starts, not after — a hand-pressed Update is
     // how most updates actually happen, so it has to leave a rollback
     // record the same way the automatic queue does, and a slow or failed
     // job must not be the reason nothing was ever recorded.
-    staxx_update_record_before_pull($name, $service);
+    staxx_update_record_before_pull($name, is_array($service) ? '' : $service);
 
     $job = staxx_start_job($name, $verb, $error, $service);
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);

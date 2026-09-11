@@ -1394,6 +1394,14 @@ function staxx_image_local_verdict(string $out): array {
  * → ['unknown' => true]: unlike [], this is not an answer, and callers that
  * treat an absent digest as "nothing to compare" already handle it the same
  * as [] without any change, but staxx_update_check() treats the two apart.
+ *
+ * A locally cached image can carry more than one digest for the same
+ * repository — a re-pushed identical index, or a pull by tag and again by
+ * digest both land in RepoDigests. 'digest' is the first, kept for callers
+ * that just want a single value; 'digests' is every one of them, and a
+ * caller comparing against a registry answer must accept any of them —
+ * ghcr.io/meeb/tubesync carries two, and comparing against only the first
+ * read it as needing an update for ever.
  */
 function staxx_image_local(string $image): array {
   // 2>&1 here for the same reason as the imagetools route above.
@@ -1410,16 +1418,16 @@ function staxx_image_local(string $image): array {
   // than one tag/repo alias.
   $wantRepo = $repo !== '' ? $repo : preg_replace('/:[^\/]*$/', '', trim($image));
 
-  $digest = '';
+  $digests = [];
   foreach ((array)($data['RepoDigests'] ?? []) as $entry) {
     $at = strrpos((string)$entry, '@');
     if ($at === false) continue;
     $entryRepo = substr((string)$entry, 0, $at);
     if ($entryRepo === $wantRepo || staxx_hub_repo_path($entryRepo) === $wantRepo) {
-      $digest = substr((string)$entry, $at + 1);
-      break;
+      $digests[] = substr((string)$entry, $at + 1);
     }
   }
+  $digest = $digests[0] ?? '';
 
   if ($digest === '') {
     if (empty($data['RepoDigests'])) return ['built' => true];
@@ -1429,7 +1437,7 @@ function staxx_image_local(string $image): array {
   $labels = $data['Config']['Labels'] ?? [];
   $labels = is_array($labels) ? $labels : [];
 
-  $result = ['digest' => $digest] + staxx_update_labels_meta($labels);
+  $result = ['digest' => $digest, 'digests' => $digests] + staxx_update_labels_meta($labels);
   // staxx_update_labels_meta() reads 'created' from a label; fall back to the
   // image's own Created field when no label supplied one.
   if (!isset($result['created']) && !empty($data['Created'])) {
@@ -1437,6 +1445,20 @@ function staxx_image_local(string $image): array {
     if ($ts !== false) $result['created'] = $ts;
   }
   return $result;
+}
+
+/**
+ * The local digest to record against a registry answer. When the registry's
+ * digest is any one of the image's own recorded digests, that is the one
+ * kept — so the stored 'local' equals 'remote' and every later
+ * "local !== remote" reading agrees the image is current. Otherwise the
+ * first digest, as before. Found the hard way on tubesync, whose image
+ * carried two digests and read as an update for ever.
+ */
+function staxx_image_local_digest(array $local, string $remote): string {
+  $all = (array)($local['digests'] ?? []);
+  if ($remote !== '' && in_array($remote, $all, true)) return $remote;
+  return (string)($local['digest'] ?? '');
 }
 
 /**
@@ -1566,9 +1588,10 @@ function staxx_update_refresh_after_run(string $stack, string $service = ''): bo
     if (empty($local['digest'])) continue; // built here, or not installed — nothing to correct
 
     $entry = $images[$image];
-    if (($entry['local'] ?? '') === $local['digest']) continue;
+    $localDigest = staxx_image_local_digest($local, (string)($entry['remote'] ?? ''));
+    if (($entry['local'] ?? '') === $localDigest) continue;
 
-    $entry['local'] = $local['digest'];
+    $entry['local'] = $localDigest;
     // Both of these are statements about what is on disk, and what is on
     // disk has just been re-measured — an image that was absent or built
     // here has plainly been pulled since. Every other remembered error is a
@@ -1588,7 +1611,7 @@ function staxx_update_refresh_after_run(string $stack, string $service = ''): bo
     // Up to date now, so the countdown running against that version has
     // nothing left to fire on — cleared by the same four keys
     // staxx_update_check() clears, so the two can never disagree.
-    if (($entry['remote'] ?? '') === $local['digest']) {
+    if (($entry['remote'] ?? '') === $localDigest) {
       unset($entry['seen'], $entry['was'], $entry['wasCreated'], $entry['seenDigest']);
     }
 
@@ -1986,7 +2009,7 @@ function staxx_update_check(string $scope, bool $force): array {
       // taking the cheap path anyway would leave the row claiming to be up to
       // date with nothing installed.
       $localSame = $local !== [] && empty($local['built'])
-                && (string)($local['digest'] ?? '') === (string)($existing['local'] ?? '');
+                && staxx_image_local_digest($local, (string)($existing['remote'] ?? '')) === (string)($existing['local'] ?? '');
 
       if ($storedRemote !== '' && $localSame) {
         unset($existing['error']);
@@ -2155,8 +2178,8 @@ function staxx_update_check(string $scope, bool $force): array {
     }
 
     unset($existing['error'], $existing['built'], $existing['tags'], $existing['suggest']);
-    $existing['local']   = $local['digest'];
     $existing['remote']  = $remote['digest'] ?? '';
+    $existing['local']   = staxx_image_local_digest($local, (string)$existing['remote']);
     if (isset($remote['version'])) $existing['version'] = $remote['version'];
     if (isset($remote['source']))  $existing['source']  = $remote['source'];
     if (isset($remote['created'])) $existing['created'] = $remote['created'];
@@ -2183,7 +2206,7 @@ function staxx_update_check(string $scope, bool $force): array {
     $existing['fails'] = 0;
     unset($existing['failedSince']);
 
-    $localDigest = $local['digest'] ?? '';
+    $localDigest = (string)($existing['local'] ?? '');
     $changed = $localDigest !== '' && $existing['remote'] !== '' && $localDigest !== $existing['remote'];
 
     // A dismissed version stays quiet until something NEWER than it turns

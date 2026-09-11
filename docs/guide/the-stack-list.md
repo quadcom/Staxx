@@ -22,6 +22,17 @@ bottom, part by part.
 | Update all | Installs every update currently waiting. |
 | Pause updates | Freezes every update countdown on the page. Press again to say Resume updates. |
 
+## Notifications
+
+To the left of that button row sits a single line, empty when there is nothing to say. When StaXX
+has something for you — a check that could not run, an update that failed, icons it found and
+saved on your behalf — that line shows the message, with a count if there is more than one waiting.
+Press it to open the full list. Each entry there can carry a button of its own for wherever it
+points, and a small × to dismiss it if it does not need to be sticking around. StaXX remembers what
+you have dismissed in this browser, so it will not show you the same one again for a week. A few
+messages cannot be dismissed at all — they are saying something is genuinely wrong right now, such
+as Docker not running, and they clear themselves the moment that stops being true.
+
 ## The title bar
 
 ![The right end of the title bar: a grey chip saying when updates were last checked, an orange chip counting updates waiting, and an outlined chip counting author-example findings, with the button row beneath](../images/guide/the-stack-list-title-chips.png)

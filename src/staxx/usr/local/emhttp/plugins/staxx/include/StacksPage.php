@@ -202,7 +202,7 @@ endif;
          nothing here can be read; what is on screen is the shipped defaults
          rather than what was actually chosen. Nothing is lost — it comes
          back on its own once the store is reachable again. -->
-    <div class="staxx-notice">
+    <div class="staxx-notice" data-notice-kind="warn" data-notice-sticky="1">
       <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
       <div>
         <strong><?= _('StaXX cannot reach its data store right now.') ?></strong>
@@ -217,7 +217,7 @@ endif;
          here — the request just comes back refused. Said outright, because
          nothing else on the page would explain why every button seems to do
          nothing. -->
-    <div class="staxx-notice staxx-notice--bad">
+    <div class="staxx-notice staxx-notice--bad" data-notice-kind="bad" data-notice-sticky="1">
       <i class="fa fa-times-circle" aria-hidden="true"></i>
       <div>
         <strong><?= _('The security token this page needs was not found.') ?></strong>
@@ -227,7 +227,7 @@ endif;
   <? endif; ?>
 
   <? if (!$compose['available']): ?>
-    <div class="staxx-notice staxx-notice--bad">
+    <div class="staxx-notice staxx-notice--bad" data-notice-kind="bad" data-notice-sticky="1">
       <i class="fa fa-times-circle" aria-hidden="true"></i>
       <div>
         <strong><?= _('Compose is not installed.') ?></strong>
@@ -235,7 +235,7 @@ endif;
       </div>
     </div>
   <? elseif (!$dockerRunning): ?>
-    <div class="staxx-notice staxx-notice--bad">
+    <div class="staxx-notice staxx-notice--bad" data-notice-kind="bad" data-notice-sticky="1">
       <i class="fa fa-times-circle" aria-hidden="true"></i>
       <div>
         <strong><?= _('The Docker service is not running.') ?></strong>
@@ -261,7 +261,7 @@ endif;
      $refusers = staxx_spend_refusers($updateState, time());
      if ($refusers !== []):
   ?>
-    <div class="staxx-notice">
+    <div class="staxx-notice" data-notice-kind="warn" data-notice-sticky="1">
       <i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
       <div>
         <? if (in_array('docker.io', $refusers, true)): ?>
@@ -295,7 +295,7 @@ endif;
        that write failed they describe a state Unraid's own boot list never
        actually reached. -->
   <? if ($syncError !== ''): ?>
-    <div class="staxx-notice staxx-notice--bad">
+    <div class="staxx-notice staxx-notice--bad" data-notice-kind="bad" data-notice-sticky="1">
       <i class="fa fa-times-circle" aria-hidden="true"></i>
       <div>
         <strong><?= _('The boot-start list could not be updated.') ?></strong>
@@ -307,11 +307,20 @@ endif;
   <!-- ---------------------------------------------------------- stacks -- -->
 
   <!-- No heading: Unraid's own title bar directly above already names the
-       page, so a second "Stacks" under it said the same thing twice. --end
-       keeps the buttons in the corner they were in when a heading held the
-       other side of the row; the plain .staxx-bar is still space-between for
-       the log panel, which does have a heading. -->
-  <div class="staxx-bar staxx-bar--end">
+       page, so a second "Stacks" under it said the same thing twice. PLAN_139
+       put the notice ticker in the space a heading would have held, so the
+       bar is plain space-between now rather than forced to --end — the
+       ticker takes the left side, the buttons stay in the corner they were
+       always in. An id rather than a class for stacks.js to find this row
+       by: .staxx-bar alone is not unique once the log panel below (which does
+       have a heading) is on screen too. -->
+  <div class="staxx-bar" id="staxx-toolbar">
+    <!-- Built up by stacks.js (see the notices object) the first time it has
+         something to show; empty and hidden until then. role="status" says
+         a change here is worth announcing without stealing focus, the same
+         reason #staxx-page-notice below never got one — that one already
+         moves the page under it with scrollIntoView(). -->
+    <div id="staxx-notices" class="staxx-ticker" role="status" aria-live="polite" hidden></div>
     <div class="staxx-buttons staxx-buttons--inline">
       <button type="button" class="staxx-btn" id="staxx-settings-btn">
         <i class="fa fa-cog"></i> <?= _('Settings') ?>
@@ -1201,6 +1210,35 @@ endif;
              alone and never sees it. -->
         <button type="button" class="staxx-btn staxx-btn--primary" id="staxx-confirm-extra" hidden></button>
         <button type="button" class="staxx-btn staxx-btn--danger" id="staxx-confirm-go"><?= _('Delete stack') ?></button>
+      </div>
+    </div>
+
+  </dialog>
+
+  <!-- ------------------------------------------------------------ notices -- -->
+
+  <!-- PLAN_139. Same recipe as #staxx-confirm above — its own class, its own
+       id, borrowing that dialog's frame/head/foot wholesale — but opened
+       anchored under the ticker rather than centred (see .staxx-noticepanel
+       in the sheet, which turns off the centring and leaves position to
+       script). The list is built by notices.render() in stacks.js; nothing
+       here is rendered by PHP. -->
+  <dialog class="staxx-confirm staxx-noticepanel" id="staxx-noticepanel" aria-labelledby="staxx-noticepanel-title">
+
+    <div class="staxx-confirm-head">
+      <h3 class="staxx-confirm-title" id="staxx-noticepanel-title"><?= _('Notifications') ?></h3>
+      <button type="button" class="staxx-notice-close" id="staxx-noticepanel-close"
+              title="<?= _('Close') ?>" aria-label="<?= _('Close') ?>">
+        <i class="fa fa-times" aria-hidden="true"></i>
+      </button>
+    </div>
+
+    <ul class="staxx-confirm-body staxx-noticepanel-list" id="staxx-noticepanel-list"></ul>
+
+    <div class="staxx-confirm-foot">
+      <p class="staxx-confirm-msg"><?= _('A dismissal is remembered in this browser.') ?></p>
+      <div class="staxx-buttons staxx-buttons--inline">
+        <button type="button" class="staxx-btn" id="staxx-noticepanel-dismissall"><?= _('Dismiss all') ?></button>
       </div>
     </div>
 

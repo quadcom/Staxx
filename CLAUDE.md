@@ -123,6 +123,7 @@ node tests/health_offer.js          # picking a health check, and the narrow doo
 node tests/pin_image.js             # pinning an image to one exact build
 node tests/export_redact.js         # what export blanks out before a stack leaves the machine
 node tests/guide_coverage.js        # which shipped features the user guide still says nothing about
+node tests/pull_progress.js         # the row overlay's parser — layer/container progress, byte units, failures
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 ```

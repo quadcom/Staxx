@@ -101,6 +101,10 @@ shown there when nothing was found, or nothing has been checked yet.
 | `N to look at` | The author's own published example does something this file does not. |
 | `could not check` | The last check failed. Hover the pill for why. |
 
+Pressing an update pill never starts a stopped stack. If the stack is stopped, it fetches the new
+image and waits for you to start it; if only some of its services are running, only those are
+updated, and the stopped ones keep their pill until you next start them.
+
 ## Hovering the pill
 
 ![An update pill with its hover card open: a sentence saying a newer version is available, then rows for last asked, next check, how often it is checked and why](../images/guide/the-stack-list-hover-card.png)
@@ -157,6 +161,15 @@ says why:
 
 See [Update items on the row menu](#update-items-on-the-row-menu) above for exactly when each of
 these appears.
+
+## Watching a pull happen
+
+While a stack is downloading a new image and restarting, the row itself shows what stage it is at.
+A line across the top says how many of the image's layers are done and roughly how long the download
+has left, and two bars underneath show the download and the unpacking, each with a percentage and
+how much of the total has been handled so far. Once the container starts, the panel slides away on
+its own and the row underneath shows again. It is there to be read, not clicked — the row's own
+controls come back as soon as it goes.
 
 ## Pause and update all
 

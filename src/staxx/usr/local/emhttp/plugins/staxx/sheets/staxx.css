@@ -313,11 +313,192 @@
   margin: 0;
 }
 
-/* A bar with nothing on its left. space-between collapses to flex-start with
-   one child, which would move the buttons across the page; this holds them
-   where they have always been. */
-.staxx-bar--end {
+/* ---- Notification ticker (PLAN_139) ---------------------------------------
+ *
+ * Replaces the stack of full-width banners that used to sit above this bar.
+ * One line, sized like the buttons beside it, showing the newest notice with
+ * a count badge for the rest — see the notices object in stacks.js. A real
+ * <button> rather than a styled <span>, so it behaves like every other
+ * control here under keyboard and focus rules, hence the (0,2,0) specificity
+ * on it and everything inside it (trap 3, file header). */
+.staxx-ticker {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  /* Pushes the buttons to the right edge whether or not the ticker is
+     showing: with nothing to say it is hidden, and space-between alone
+     then left the buttons alone at the left of the bar. */
+  margin-right: auto;
+}
+
+.staxx-scaffold #staxx-toolbar {
   justify-content: flex-end;
+}
+
+.staxx-ticker[hidden] {
+  display: none;
+}
+
+.staxx-scaffold button.staxx-ticker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  /* The text lines inside are absolutely positioned and so have no width of their own; without this the button shrink-wraps to icon and count. */
+  flex: 1 1 auto;
+  max-width: 100%;
+  padding: 0.6rem 1.1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: var(--sm-fill);
+  color: inherit;
+  font-size: 1.2rem;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.staxx-scaffold button.staxx-ticker-btn:hover,
+.staxx-scaffold button.staxx-ticker-btn:focus-visible {
+  border-color: var(--sm-accent);
+}
+
+.staxx-ticker-icon {
+  flex: 0 0 auto;
+  font-size: 1.2rem;
+  color: var(--sm-accent);
+}
+
+.staxx-ticker--bad .staxx-ticker-icon  { color: var(--sm-danger); }
+.staxx-ticker--good .staxx-ticker-icon { color: var(--sm-good); }
+
+/* The rolling text: two lines stacked in the same box, one sliding out as the
+   other slides in — animateTickerText() in stacks.js toggles these two
+   classes rather than swapping the text outright. */
+.staxx-ticker-lines {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 1.3em;
+  overflow: hidden;
+}
+
+.staxx-ticker-line {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+  transform: translateY(0);
+  opacity: 1;
+  transition: transform var(--sm-motion-slow) var(--sm-ease),
+              opacity var(--sm-motion-slow) var(--sm-ease);
+}
+
+.staxx-ticker-line--out {
+  transform: translateY(-100%);
+  opacity: 0;
+}
+
+.staxx-ticker-line--in {
+  transform: translateY(100%);
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .staxx-ticker-line {
+    transition: none;
+  }
+}
+
+.staxx-ticker-count {
+  flex: 0 0 auto;
+  padding: 0 0.5rem;
+  border-radius: 1rem;
+  background: var(--sm-fill-2);
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
+/* ---- Notice panel (PLAN_139) -----------------------------------------------
+ *
+ * Borrows .staxx-confirm's frame, head and foot wholesale (see the markup
+ * comment in StacksPage.php) and only changes where it sits: positioned by
+ * script against the ticker's own box (positionNoticePanel() in stacks.js)
+ * rather than centred, so the dialog's user-agent centring (inset: 0; margin:
+ * auto) is turned off here and top/left are left for script to set. */
+.staxx-noticepanel {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(34rem, 92vw);
+  max-height: 70vh;
+}
+
+/* .staxx-confirm-body (further down this file) already supplies the padding
+   every dialog body shares; a <ul> needs its own margin and marker reset on
+   top of that, which is all this adds. */
+.staxx-noticepanel-list {
+  margin: 0;
+  list-style: none;
+}
+
+.staxx-noticepanel-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.8rem 0;
+}
+
+.staxx-noticepanel-row:not(:last-child) {
+  border-bottom: 0.1rem solid var(--sm-hairline);
+}
+
+.staxx-noticepanel-row-icon {
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
+  font-size: 1.4rem;
+  color: var(--sm-accent);
+}
+
+.staxx-noticepanel-row--bad .staxx-noticepanel-row-icon  { color: var(--sm-danger); }
+.staxx-noticepanel-row--good .staxx-noticepanel-row-icon { color: var(--sm-good); }
+
+.staxx-noticepanel-row-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 1.3rem;
+  line-height: 1.4;
+}
+
+.staxx-noticepanel-row-time {
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+  white-space: nowrap;
+}
+
+.staxx-noticepanel-empty {
+  padding: 1rem 0;
+  color: var(--sm-muted);
+  font-size: 1.3rem;
+}
+
+/* Below the phone breakpoint (see the @media (max-width: 45rem) block
+   further down) the ticker takes its own full-width line above the buttons
+   rather than squeezing into whatever room is left beside them, and the
+   panel loses its fixed width for a pair of side margins instead. */
+@media (max-width: 45rem) {
+  .staxx-bar {
+    flex-wrap: wrap;
+  }
+  .staxx-ticker {
+    flex-basis: 100%;
+  }
+  .staxx-noticepanel {
+    width: calc(100vw - 2rem);
+  }
 }
 
 /* ---- Title bar status chips (PLAN_125) ----
@@ -652,6 +833,140 @@ div.title.staxx-has-titlebar {
   font-size: 1.1rem;
 }
 
+/* ---- Row progress overlay (PLAN_138) --------------------------------------
+ *
+ * Drawn over a row while a pull/update job is running, on top of the
+ * services/state/address cells — never the icon column, which is why its
+ * left edge is a custom property rather than a fixed offset: stacks.js reads
+ * the name cell's own width (auto, so it moves with the longest name on
+ * screen — see the grid-template-columns comment above) and writes it there
+ * every time the overlay repaints.
+ *
+ * position: relative on .staxx-row is safe here for the reason .staxx-
+ * row--leave already relies on above: rows use outline, never border, for
+ * their own focus ring, so this adds no box property for a subgrid item to
+ * trip over.
+ *
+ * A plain block, not a control: the panel only reports what a pull is doing
+ * and never takes a click, but it still sits inside .staxx-scaffold, so it
+ * has to restate font, colour, background, radius, padding and margin at
+ * .staxx-scaffold .staxx-rowprog specificity rather than trust any of those
+ * to survive from a plain class alone.
+ */
+.staxx-row {
+  position: relative;
+}
+
+.staxx-scaffold .staxx-rowprog {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--staxx-rowprog-left, 0);
+  right: 0;
+  max-width: 72rem;   /* Not the full row: the bars read better short, and the stats on the right stay visible. */
+  /* One grid for both bars: the figures share the auto column, so it takes the widest of the two and the tracks come out the same length whatever each says. */
+  display: grid;
+  grid-template-columns: 6rem 1fr auto;
+  align-content: center;
+  column-gap: 0.8rem;
+  row-gap: 0.4rem;
+  text-align: left;
+  color: var(--sm-fg);
+  /* The page's own dark ground, fully opaque — a tinted grey built from the
+     12%-alpha fill let the row's own text show through, and read as a
+     lighter panel sitting on the row rather than as the row itself. */
+  background: var(--sm-bg);
+  border: 0;
+  border-radius: 0;
+  padding: 0.5rem 0.8rem;
+  margin: 0;
+  font-size: 1.2rem;
+  line-height: 1.3;
+  /* Slower than the dialogs' 140ms on purpose: Adrian found the house speed
+     too quick for something that appears over a row he is already watching.
+     removeProgressOverlay()'s fallback timer must stay longer than the leave. */
+  transition: opacity 450ms var(--sm-ease),
+              translate 450ms var(--sm-ease);
+}
+
+
+@starting-style {
+  .staxx-scaffold .staxx-rowprog {
+    opacity: 0;
+    translate: 0 0.4rem;
+  }
+}
+
+.staxx-scaffold .staxx-rowprog--leave {
+  opacity: 0;
+  translate: 0 -0.4rem;
+  transition-duration: 350ms;
+}
+
+.staxx-rowprog-head {
+  grid-column: 1 / -1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staxx-scaffold .staxx-rowprog--fail .staxx-rowprog-head {
+  color: var(--sm-danger);
+}
+
+.staxx-rowprog-bar {
+  display: contents;
+  font-size: 1.05rem;
+  line-height: 1.3;
+}
+.staxx-rowprog-label {
+  align-self: center;
+  color: var(--sm-fg);
+  opacity: 0.85;
+}
+.staxx-rowprog-track {
+  align-self: center;
+  height: 0.6rem;
+  border-radius: 0.3rem;
+  background: var(--sm-fill-2);
+  overflow: hidden;
+}
+.staxx-rowprog-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--sm-accent);
+  transition: width var(--sm-motion) var(--sm-ease);
+}
+.staxx-rowprog-info {
+  align-self: center;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--sm-fg);
+  opacity: 0.85;
+}
+
+.staxx-scaffold .staxx-rowprog--fail .staxx-rowprog-fill {
+  background: var(--sm-danger);
+}
+
+/* Below the card breakpoint (PLAN_128) the name cell — icon included — spans
+   the full width of the top of the card rather than sitting in a column of
+   its own on the left, so the overlay switches from a LEFT offset to a TOP
+   one: stacks.js writes both custom properties on every repaint (see
+   progressOverlayOffsets()), and this is the only thing that decides which
+   one the sheet actually uses. */
+@container staxx-table (max-width: 130rem) {
+  .staxx-scaffold .staxx-rowprog {
+    left: 0;
+    top: var(--staxx-rowprog-top, 0);
+    border-radius: 0 0 0.8rem 0.8rem;   /* matches the card's own corners */
+  }
+}
+
 /* A small dot on the tile carries running state, so the eye picks it up from
    the icon column without crossing the table.
    Row, not column: .staxx-rowactions (the web page and logs buttons, PLAN_39)
@@ -858,6 +1173,13 @@ div.title.staxx-has-titlebar {
   flex-direction: column;
   gap: 0.1rem;
   min-width: 0;
+}
+
+/* A flex column stretches its items to the column's width, which drew a
+   folder's state chip as a wide bar with its text off to one side. */
+.staxx-nameinfo > .staxx-updatepill,
+.staxx-nameinfo > .staxx-pill {
+  align-self: flex-start;
 }
 
 .staxx-sub {
@@ -2559,7 +2881,7 @@ div.title.staxx-has-titlebar {
 }
 
 .staxx-pill--down {
-  color: var(--sm-muted);
+  color: var(--sm-fg);
 }
 
 /* Paused, restarting, removing — in motion, or in a state you did not ask for. */
@@ -2834,13 +3156,13 @@ div.title.staxx-has-titlebar {
    tag has been withdrawn — four different facts, but none of them is an
    alarm (a withdrawn tag is not a broken container), so all four get the
    same quiet treatment: the translucent fill .staxx-pill itself uses for a
-   plain stopped state, and the same muted text colour. */
+   plain stopped state, in the normal text colour — the muted grey read as disabled against the grey fill. */
 .staxx-updatepill--built,
 .staxx-updatepill--missing,
 .staxx-updatepill--error,
 .staxx-updatepill--tagmissing {
   background: var(--sm-fill-2);
-  color: var(--sm-muted);
+  color: var(--sm-fg);
   font-weight: 400;
 }
 
@@ -10273,7 +10595,7 @@ dialog::backdrop {
   }
 
   /* Scoped under .staxx-stacks on purpose — .staxx-bar is also the class on
-     the toolbar wrapper above the table (.staxx-bar.staxx-bar--end, holding
+     the toolbar wrapper above the table (#staxx-toolbar, holding
      the buttons row). An unscoped rule here meant for the graph collapsed
      that toolbar to 60px in the mockup and stacked its buttons one per line,
      which Adrian took for a rendering glitch before it was traced back to

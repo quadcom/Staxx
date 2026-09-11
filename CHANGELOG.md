@@ -18,6 +18,9 @@ before that were dates.
 
 ## Unreleased
 
+- Pressing "update ready" on a stopped stack now fetches the new image and leaves the stack stopped, instead of starting it. A stack with some services running updates only those; the stopped ones keep their chip until they are next started.
+- A stack whose image has been recorded under two digests no longer shows "update ready" for ever after every update run finishes with nothing to fetch. The check now accepts any of the image's own digests as a match for what the registry answers.
+- Notices now sit in a compact line beside the buttons instead of stacking as banners down the page. Click it for the full list, where each one can be followed to wherever it points or dismissed, and a dismissal is remembered in that browser.
 - The Compose Manager badge on a stack's name line now matches the review badge beside it in size and colour. Several small controls elsewhere, such as the close crosses on notices and the fix-it buttons in the editor form, no longer depend on Unraid's own stylesheet leaving them alone.
 - A host folder that could not be read for a moment is no longer reported as missing. The stack editor also re-checks a folder it marked missing instead of remembering that first answer for the rest of the session.
 - The state chips on the main grid are now all the same size. A chip you can click, such as the orange "update ready" chip or the one offering to find a health check, drew taller than the plain ones beside it.
@@ -35,6 +38,7 @@ before that were dates.
 - A folder's update chip now names which stacks inside it have an update waiting, instead of just a count, and its hover text and wording now talk about stacks rather than services.
 - The banner that appears after StaXX quietly fills in an icon now names the stacks it changed, instead of just a count, so you know where to look.
 - Messages that used to appear as plain text in the black output box — the restart-pending panel, "nothing new found", the self-test, and several others — now show in the same style as every other question StaXX asks, and renaming a file or sharing a container's network now uses that same look instead of the browser's own plain pop-up box.
+- While an update or a pull is running, the row itself now shows what is actually happening: how many layers are done, roughly how long the download has left, and a download bar and an unpacking bar with their amounts. It slides away on its own once the container starts.
 
 ## 00.02.00 — released 2026-09-03
 

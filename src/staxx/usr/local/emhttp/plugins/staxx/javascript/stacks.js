@@ -162,6 +162,393 @@
   var pageNotice   = document.getElementById('staxx-page-notice');
   var pageNoticeIcon   = pageNotice ? pageNotice.querySelector('.fa') : null;
   var pageNoticeAction = document.getElementById('staxx-page-notice-action');
+
+  /* ---- Notices: the ticker and its panel (PLAN_139) -----------------------
+   *
+   * One small store of live notices, replacing what used to be a stack of
+   * full-width banners above the button row. A sticky entry is drawn from a
+   * PHP-rendered .staxx-notice block the page opened with (Docker not
+   * running, the store unreachable, and so on) and stays however long the
+   * condition holds; everything else carries a dismiss control, and a
+   * dismissal is remembered per browser so accepting one once does not mean
+   * seeing it again for the rest of the visit.
+   */
+  var ticker        = document.getElementById('staxx-notices');
+  var tickerBtn     = null, tickerIcon = null, tickerCount = null;
+  var tickerLineA   = null, tickerLineB = null, tickerActiveLine = null;
+  var noticePanel        = document.getElementById('staxx-noticepanel');
+  var noticePanelList    = document.getElementById('staxx-noticepanel-list');
+  var noticePanelClose   = document.getElementById('staxx-noticepanel-close');
+  var noticePanelDismissAll = document.getElementById('staxx-noticepanel-dismissall');
+
+  var noticesList        = [];     // {id, kind, text, html, action, sticky, addedAt}
+  var noticesDismissedMap = null;  // {id: expiryMs}, loaded from localStorage on first use
+  var noticeRotateTimer  = null;
+  var noticeRotateIndex  = 0;
+  var noticeRotatePaused = false;
+
+  var NOTICE_ICONS = {
+    bad:  'fa-times-circle',
+    warn: 'fa-exclamation-triangle',
+    good: 'fa-check-circle',
+    info: 'fa-info-circle'
+  };
+
+  // A short, stable hash so two notices with the same text collapse to the
+  // same id — the point of remembering a dismissal at all, and of not piling
+  // up duplicates every time the same check runs again.
+  function hashText(s) {
+    var h = 0;
+    for (var i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+    return (h >>> 0).toString(36);
+  }
+
+  // localStorage can throw in a private window or with site data blocked —
+  // guarded everywhere it is touched, same as everything else that reads it
+  // on this page.
+  function loadDismissed() {
+    if (noticesDismissedMap) return noticesDismissedMap;
+    noticesDismissedMap = {};
+    try {
+      var raw = window.localStorage.getItem('staxx.notices.dismissed');
+      if (raw) noticesDismissedMap = JSON.parse(raw) || {};
+    } catch (e) { /* treated as nothing dismissed */ }
+    return noticesDismissedMap;
+  }
+
+  function saveDismissed() {
+    try {
+      window.localStorage.setItem('staxx.notices.dismissed', JSON.stringify(noticesDismissedMap || {}));
+    } catch (e) { /* a dismissal not remembered is not a failure worth surfacing */ }
+  }
+
+  function noticeIsDismissed(id) {
+    var map = loadDismissed();
+    var until = map[id];
+    if (!until) return false;
+    if (until < Date.now()) { delete map[id]; saveDismissed(); return false; }
+    return true;
+  }
+
+  function activeNotices() {
+    return noticesList.filter(function (n) { return n.sticky || !noticeIsDismissed(n.id); });
+  }
+
+  var notices = {
+    // opts: {id, kind, text, html, action:{label,run}, sticky}. id defaults
+    // to kind plus a hash of the text, so repeat calls for the same message
+    // (a re-run of the same check) update one entry rather than stacking up.
+    add: function (opts) {
+      var kind = opts.kind || 'info';
+      var text = opts.text || '';
+      var id = opts.id || (kind + '-' + hashText(text || opts.html || ''));
+      if (!opts.sticky && noticeIsDismissed(id)) return id;
+      var entry = null;
+      for (var i = 0; i < noticesList.length; i++) {
+        if (noticesList[i].id === id) { entry = noticesList[i]; break; }
+      }
+      if (!entry) { entry = { id: id }; noticesList.push(entry); }
+      entry.kind   = kind;
+      entry.text   = text;
+      entry.html   = opts.html || null;
+      entry.action = opts.action || null;
+      entry.sticky = !!opts.sticky;
+      entry.addedAt = Date.now();   // every add() is "this is current", including a re-run
+      notices.render();
+      return id;
+    },
+    remove: function (id) {
+      noticesList = noticesList.filter(function (n) { return n.id !== id; });
+      notices.render();
+    },
+    // Sticky entries reflect a live condition rather than a message, so they
+    // are not dismissible — they clear themselves the moment the page next
+    // renders without the condition that put them there.
+    dismiss: function (id) {
+      var entry = null;
+      for (var i = 0; i < noticesList.length; i++) {
+        if (noticesList[i].id === id) { entry = noticesList[i]; break; }
+      }
+      if (entry && entry.sticky) return;
+      var map = loadDismissed();
+      map[id] = Date.now() + 7 * 24 * 60 * 60 * 1000;
+      saveDismissed();
+      notices.remove(id);
+    },
+    dismissAll: function () {
+      noticesList.filter(function (n) { return !n.sticky; })
+                 .forEach(function (n) { notices.dismiss(n.id); });
+    },
+    render: renderNotices
+  };
+
+  function ensureTickerMarkup() {
+    if (!ticker || tickerBtn) return;
+    ticker.innerHTML =
+      '<button type="button" class="staxx-ticker-btn" id="staxx-ticker-btn" ' +
+        'aria-haspopup="dialog" aria-controls="staxx-noticepanel">' +
+        '<i class="fa staxx-ticker-icon" aria-hidden="true"></i>' +
+        '<span class="staxx-ticker-lines">' +
+          '<span class="staxx-ticker-line"></span>' +
+          '<span class="staxx-ticker-line"></span>' +
+        '</span>' +
+        '<span class="staxx-ticker-count" hidden></span>' +
+      '</button>';
+    tickerBtn   = ticker.querySelector('.staxx-ticker-btn');
+    tickerIcon  = ticker.querySelector('.staxx-ticker-icon');
+    tickerCount = ticker.querySelector('.staxx-ticker-count');
+    var lines = ticker.querySelectorAll('.staxx-ticker-line');
+    tickerLineA = lines[0];
+    tickerLineB = lines[1];
+    tickerActiveLine = tickerLineA;
+    tickerBtn.addEventListener('click', openNoticePanel);
+    ticker.addEventListener('mouseenter', function () { noticeRotatePaused = true; });
+    ticker.addEventListener('mouseleave', function () { noticeRotatePaused = false; });
+  }
+
+  // A bad notice always holds the slot rather than taking its turn in the
+  // rotation — an "act now" condition should not be waiting behind a hint.
+  function pickDisplayNotice(list) {
+    var bad = list.filter(function (n) { return n.kind === 'bad'; });
+    if (bad.length) return bad[0];
+    if (!list.length) return null;
+    if (noticeRotateIndex >= list.length) noticeRotateIndex = 0;
+    return list[noticeRotateIndex];
+  }
+
+  // Two lines stacked in the same box, the old one sliding up and out as the
+  // new one slides in from below — see .staxx-ticker-line in the sheet.
+  function animateTickerText(text) {
+    if (!tickerActiveLine || tickerActiveLine.textContent === text) return;
+    var outgoing = tickerActiveLine;
+    var incoming = (tickerActiveLine === tickerLineA) ? tickerLineB : tickerLineA;
+    incoming.textContent = text;
+    outgoing.classList.add('staxx-ticker-line--out');
+    incoming.classList.add('staxx-ticker-line--in');
+    void incoming.offsetWidth;   // force layout so removing --in next actually animates
+    incoming.classList.remove('staxx-ticker-line--in');
+    window.setTimeout(function () {
+      outgoing.classList.remove('staxx-ticker-line--out');
+      outgoing.textContent = '';
+    }, 220);
+    tickerActiveLine = incoming;
+  }
+
+  function paintTickerSlot() {
+    ensureTickerMarkup();
+    var list = activeNotices();
+    var current = pickDisplayNotice(list);
+    if (!current || !tickerBtn) return;
+    ticker.className = 'staxx-ticker staxx-ticker--' + current.kind;
+    tickerIcon.className = 'fa staxx-ticker-icon ' + (NOTICE_ICONS[current.kind] || NOTICE_ICONS.info);
+    animateTickerText(current.text);
+    var extra = list.length - 1;
+    tickerCount.hidden = extra <= 0;
+    if (extra > 0) tickerCount.textContent = String(list.length);
+  }
+
+  function startNoticeRotation() {
+    if (noticeRotateTimer) return;
+    noticeRotateTimer = window.setInterval(function () {
+      if (noticeRotatePaused || (noticePanel && noticePanel.open)) return;
+      var list = activeNotices();
+      if (!list.length || list.some(function (n) { return n.kind === 'bad'; })) return;
+      noticeRotateIndex = (noticeRotateIndex + 1) % list.length;
+      paintTickerSlot();
+    }, 6000);
+  }
+
+  function stopNoticeRotation() {
+    if (noticeRotateTimer) { window.clearInterval(noticeRotateTimer); noticeRotateTimer = null; }
+  }
+
+  function buildNoticeRow(n) {
+    var li = document.createElement('li');
+    li.className = 'staxx-noticepanel-row staxx-noticepanel-row--' + n.kind;
+
+    var icon = document.createElement('i');
+    icon.className = 'fa ' + (NOTICE_ICONS[n.kind] || NOTICE_ICONS.info) + ' staxx-noticepanel-row-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    li.appendChild(icon);
+
+    var body = document.createElement('div');
+    body.className = 'staxx-noticepanel-row-body';
+    if (n.html) body.innerHTML = n.html; else body.textContent = n.text;
+    li.appendChild(body);
+
+    var time = document.createElement('span');
+    time.className = 'staxx-noticepanel-row-time';
+    time.textContent = timeAgoWords(Math.floor(n.addedAt / 1000)) + ' ago';
+    li.appendChild(time);
+
+    if (n.action) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'staxx-btn staxx-btn--small';
+      btn.textContent = n.action.label;
+      btn.addEventListener('click', function () {
+        n.action.run();
+        closeNoticePanel();
+      });
+      li.appendChild(btn);
+    }
+
+    if (!n.sticky) {
+      var close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'staxx-notice-close';
+      close.title = 'Dismiss';
+      close.setAttribute('aria-label', 'Dismiss');
+      close.innerHTML = '<i class="fa fa-times" aria-hidden="true"></i>';
+      close.addEventListener('click', function () { notices.dismiss(n.id); renderNoticePanel(); });
+      li.appendChild(close);
+    }
+
+    return li;
+  }
+
+  function renderNoticePanel() {
+    if (!noticePanelList) return;
+    var list = activeNotices();
+    noticePanelList.innerHTML = '';
+    if (!list.length) {
+      var empty = document.createElement('li');
+      empty.className = 'staxx-noticepanel-empty';
+      empty.textContent = 'Nothing to show.';
+      noticePanelList.appendChild(empty);
+    } else {
+      list.forEach(function (n) { noticePanelList.appendChild(buildNoticeRow(n)); });
+    }
+    if (noticePanelDismissAll) {
+      noticePanelDismissAll.hidden = !list.some(function (n) { return !n.sticky; });
+    }
+  }
+
+  // A <dialog> opened with showModal() paints in the top layer, which is
+  // sized against the viewport rather than the bar it visually belongs to —
+  // so it is positioned in script, against the ticker's own box, recomputed
+  // on open and on resize rather than laid out with CSS alone.
+  function positionNoticePanel() {
+    if (!noticePanel || !ticker) return;
+    var r = ticker.getBoundingClientRect();
+    var w = noticePanel.offsetWidth || 340;
+    var left = Math.min(r.left, window.innerWidth - w - 12);
+    left = Math.max(12, left);
+    noticePanel.style.left = left + 'px';
+    noticePanel.style.top  = (r.bottom + 6) + 'px';
+  }
+
+  function closeNoticePanel() {
+    if (noticePanel && noticePanel.open) noticePanel.close();
+  }
+
+  function openNoticePanel() {
+    if (!noticePanel) return;
+    renderNoticePanel();
+    if (!noticePanel.open) noticePanel.showModal();
+    positionNoticePanel();
+    stopNoticeRotation();
+    var firstControl = noticePanelList.querySelector('button');
+    if (firstControl) firstControl.focus(); else if (noticePanelClose) noticePanelClose.focus();
+  }
+
+  // The fallback this whole feature was built to make unnecessary: if the
+  // ticker container is ever missing (a stale cached page holding the old
+  // markup), the one notice that matters most is still said, the old way,
+  // rather than silently going nowhere.
+  function paintPageNoticeFallback() {
+    if (!pageNotice) return;
+    var list = activeNotices();
+    if (!list.length) { pageNotice.hidden = true; return; }
+    var n = pickDisplayNotice(list) || list[0];
+    pageNotice.querySelector('div').textContent = n.text;
+    pageNotice.classList.toggle('staxx-notice--bad', n.kind === 'bad');
+    if (pageNoticeIcon) pageNoticeIcon.className = 'fa ' + (NOTICE_ICONS[n.kind] || NOTICE_ICONS.info);
+    if (pageNoticeAction) {
+      if (n.action) {
+        pageNoticeAction.textContent = n.action.label;
+        pageNoticeAction.onclick = n.action.run;
+        pageNoticeAction.hidden = false;
+      } else {
+        pageNoticeAction.hidden = true;
+        pageNoticeAction.onclick = null;
+      }
+    }
+    pageNotice.hidden = false;
+    pageNotice.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function renderNotices() {
+    if (!ticker) { paintPageNoticeFallback(); return; }
+    var list = activeNotices();
+    if (!list.length) {
+      ticker.hidden = true;
+      stopNoticeRotation();
+      closeNoticePanel();
+      return;
+    }
+    ticker.hidden = false;
+    paintTickerSlot();
+    startNoticeRotation();
+    if (noticePanel && noticePanel.open) renderNoticePanel();
+  }
+
+  if (noticePanel) {
+    // <dialog> fires no event for the backdrop, because the backdrop is a
+    // pseudo-element of the dialog itself and a click on it targets the
+    // dialog — same hit-testing trick the stack editor uses for its own
+    // backdrop click, further down this file.
+    noticePanel.addEventListener('click', function (event) {
+      if (event.target !== noticePanel) return;
+      var r = noticePanel.getBoundingClientRect();
+      var inside = event.clientX >= r.left && event.clientX <= r.right &&
+                   event.clientY >= r.top  && event.clientY <= r.bottom;
+      if (!inside) noticePanel.close();
+    });
+    noticePanel.addEventListener('close', function () {
+      startNoticeRotation();
+      paintTickerSlot();
+    });
+    window.addEventListener('resize', function () {
+      if (noticePanel.open) positionNoticePanel();
+    });
+  }
+  if (noticePanelClose) noticePanelClose.addEventListener('click', closeNoticePanel);
+  if (noticePanelDismissAll) {
+    noticePanelDismissAll.addEventListener('click', function () {
+      notices.dismissAll();
+      renderNoticePanel();
+    });
+  }
+
+  // Every PHP-rendered .staxx-notice block above marks its own kind with
+  // data-notice-kind, and is lifted into the ticker as a sticky entry here
+  // rather than being read once and thrown away. The block is hidden, not
+  // removed outright: a button it carries — "settings panel", "See what each
+  // registry was asked" — keeps whatever click handler the rest of this file
+  // binds to it further down by id, which would find nothing to bind to if
+  // the element had actually been taken out of the document. Where a block
+  // carries such a button, the LAST one in it becomes the notice's action —
+  // the one always present (the Docker Hub sign-in button only appears in
+  // one of the two wordings the registry notice can take).
+  if (scaffold && ticker) {
+    var stickyBlocks = scaffold.querySelectorAll('.staxx-notice[data-notice-kind]');
+    for (var sb = 0; sb < stickyBlocks.length; sb++) {
+      (function (block) {
+        var kind = block.dataset.noticeKind || 'warn';
+        var text = block.textContent.replace(/\s+/g, ' ').trim();
+        var buttons = block.querySelectorAll('button');
+        var action = null;
+        if (buttons.length) {
+          var btn = buttons[buttons.length - 1];
+          action = { label: btn.textContent.trim(), run: function () { btn.click(); } };
+        }
+        block.hidden = true;
+        notices.add({ kind: kind, text: text, action: action, sticky: true });
+      })(stickyBlocks[sb]);
+    }
+  }
+
   var refNote      = document.getElementById('staxx-refnote');
   var gapNote     = document.getElementById('staxx-required-note');
   // PLAN_65 phase C — the "what clashed" summary. No server-rendered element
@@ -302,8 +689,8 @@
   var undoBtn  = document.getElementById('staxx-undo');
 
   // PLAN_67 step 1's "Tidy this file" button. Built here rather than added to
-  // the page's own markup, the same reasoning as iconAdoptNotice further
-  // down — one more button in that row is not worth a PHP change for. Same
+  // the page's own markup, the same reasoning as showIconAdoptSummary()
+  // further down — one more button in that row is not worth a PHP change for. Same
   // class as Undo, which it sits beside: it is the same kind of action, an
   // edit to the whole file that Undo can put straight back.
   var tidyBtn = document.createElement('button');
@@ -1106,35 +1493,26 @@
     errorBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
-  // showError() writes into the editor dialog's footer, so it is invisible
-  // whenever that dialog is not open. This is the same thing said by the page
-  // itself, for callers that can fire before any dialog exists — an install
-  // caught on Unraid's Add Container page that would not convert, or (Phase
-  // F) a container found belonging to no stack.
+  // This is the same thing said by the page itself, for callers that can fire
+  // before any dialog exists — an install caught on Unraid's Add Container
+  // page that would not convert, or (Phase F) a container found belonging to
+  // no stack. PLAN_139 turned it into a thin wrapper over notices.add(): the
+  // ten call sites elsewhere in this file need no change, and get a ticker
+  // entry instead of the full-width banner this used to paint directly.
   //
-  // `action`, when given, turns this from an error into an offer: the red
-  // icon and border become the same accent used everywhere else on the page,
-  // and a button appears that runs action.run when clicked. Every existing
-  // caller passes no action and gets exactly the old error styling.
+  // `action`, when given, turns this from an error into an offer, same as
+  // before: no action is the "act now" red-icon kind, an action is the
+  // milder kind used for something merely worth doing. The unused
+  // #staxx-page-notice markup and its own two variables above stay only as
+  // the fallback target notices.render() would need if the ticker container
+  // itself were ever missing from the page.
   function showPageNotice(message, action) {
-    if (!pageNotice) return;
-    pageNotice.querySelector('div').textContent = message;
-    pageNotice.classList.toggle('staxx-notice--bad', !action);
-    if (pageNoticeIcon) {
-      pageNoticeIcon.className = 'fa ' + (action ? 'fa-info-circle' : 'fa-times-circle');
-    }
-    if (pageNoticeAction) {
-      if (action) {
-        pageNoticeAction.textContent = action.label;
-        pageNoticeAction.onclick = action.run;
-        pageNoticeAction.hidden = false;
-      } else {
-        pageNoticeAction.hidden = true;
-        pageNoticeAction.onclick = null;
-      }
-    }
-    pageNotice.hidden = false;
-    pageNotice.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    notices.add({
+      kind: action ? 'warn' : 'bad',
+      text: message,
+      action: action || null,
+      sticky: false
+    });
   }
 
   function clearError() {
@@ -16233,6 +16611,13 @@
       var entry = jobs[job];
       entry.rows = rowsByJob[job];
       setBusy(entry.rows, entry.pillLabel);
+      // refreshRows() built a brand new row, so any overlay tickJobs() had
+      // already painted is gone with the old one — repaint straight from
+      // what was last computed for this job rather than waiting a second
+      // for the next tick.
+      if (entry.prog && (entry.prog.phase === 'pull' || entry.prog.phase === 'create')) {
+        entry.rows.forEach(function (row) { paintProgressOverlay(row, entry.prog); });
+      }
     });
   }
 
@@ -16277,8 +16662,140 @@
     rows.forEach(function (row) {
       delete row.dataset.busy;
       spin(row, false);
+      removeProgressOverlay(row);
     });
   }
+
+  /* ---- pull/update progress overlay (PLAN_138) --------------------------
+   *
+   * Drawn over a row's services/state/address cells while a pull or update
+   * job is in flight, on top of setBusy()'s pill — the icon column is left
+   * clear (see progressOverlayOffsets()) so its spinner keeps saying which row
+   * this is. Built once per row and updated in place; removed with a short
+   * leave animation once pullProgress() (see below
+   * above) says the pull side is over.
+   */
+
+  // Read rather than assumed, because the name column's own width is
+  // "auto" (see the grid-template-columns comment in staxx.css) and moves
+  // with whatever the longest name on screen happens to be. Below the card
+  // breakpoint (PLAN_128) the same cell instead spans the top of the card in
+  // full, icon included, so the sheet switches from the left offset to the
+  // top one — both are written here on every repaint so the query only has
+  // to pick which one it wants.
+  function progressOverlayOffsets(row) {
+    var nameCell = row.querySelector('.staxx-cell--name');
+    var rect = nameCell ? nameCell.getBoundingClientRect() : null;
+    return { left: (rect ? rect.width : 0) + 'px', top: (rect ? rect.height : 0) + 'px' };
+  }
+
+  function applyProgressOverlayOffsets(el, row) {
+    var off = progressOverlayOffsets(row);
+    el.style.setProperty('--staxx-rowprog-left', off.left);
+    el.style.setProperty('--staxx-rowprog-top', off.top);
+  }
+
+  // Turns a seconds estimate into the wording the download bar's info
+  // string uses — rounded loosely, because a byte-rate sampled over a few
+  // seconds is a guess, not a countdown worth stating to the second.
+  function timeLeft(seconds) {
+    if (seconds < 5) return 'a few seconds left';
+    if (seconds < 90) return Math.round(seconds) + ' s left';
+    return 'about ' + Math.round(seconds / 60) + ' min left';
+  }
+
+  function progressHeadline(prog) {
+    if (prog.phase === 'failed') return prog.error || 'Something went wrong.';
+    if (prog.phase === 'done')   return 'Started.';
+    if (prog.phase === 'start')  return 'Starting the container…';
+    if (prog.phase === 'create') return 'Creating the container…';
+    if (prog.layerTotal) {
+      // No percentage here: the two bars below carry the real numbers, and a
+      // third figure that agreed with neither only confused the reading.
+      return 'Downloading the image · ' + prog.layerDone + ' of ' + prog.layerTotal + ' layers done';
+    }
+    return 'Working…';
+  }
+
+  function paintProgressOverlay(row, prog) {
+    var el = row.querySelector('.staxx-rowprog');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'staxx-rowprog';
+      el.innerHTML =
+        '<span class="staxx-rowprog-head"></span>' +
+        '<span class="staxx-rowprog-bar" data-bar="dl"><span class="staxx-rowprog-label">Download</span>' +
+          '<span class="staxx-rowprog-track"><span class="staxx-rowprog-fill"></span></span>' +
+          '<span class="staxx-rowprog-info"></span></span>' +
+        '<span class="staxx-rowprog-bar" data-bar="ex"><span class="staxx-rowprog-label">Unpack</span>' +
+          '<span class="staxx-rowprog-track"><span class="staxx-rowprog-fill"></span></span>' +
+          '<span class="staxx-rowprog-info"></span></span>';
+      row.appendChild(el);
+    }
+    applyProgressOverlayOffsets(el, row);
+    el.classList.toggle('staxx-rowprog--fail', prog.phase === 'failed');
+
+    // Rate needs history the parser cannot supply on its own — it reparses
+    // the whole log fresh every call — so a handful of samples live on the
+    // overlay element itself. That element is torn down with the row the
+    // moment the job ends, taking its samples with it, so there is nothing
+    // here to clear up.
+    el._samples = el._samples || [];
+    var now = Date.now();
+    el._samples.push({ t: now, b: prog.dlBytes || 0 });
+    while (el._samples.length > 2 && now - el._samples[0].t > 20000) el._samples.shift();
+
+    var rate = 0;
+    if (el._samples.length >= 2) {
+      var oldest = el._samples[0], newest = el._samples[el._samples.length - 1];
+      var span = (newest.t - oldest.t) / 1000;
+      if (span >= 2 && newest.b > oldest.b) rate = (newest.b - oldest.b) / span;
+    }
+
+    // The time left goes on the headline, not a row — the two rows below
+    // stay the same shape either way, one figure column wide.
+    var head = progressHeadline(prog);
+    if (rate && (prog.dlPct || 0) < 100 && prog.dlTotal) {
+      head += ' · ' + timeLeft((prog.dlTotal - prog.dlBytes) / rate);
+    }
+    el.querySelector('.staxx-rowprog-head').textContent = head;
+
+    // Two whole-image bars rather than a line per layer — a person wants to know how far along the pull is, not which of 23 layers is moving.
+    [['dl', prog.dlPct], ['ex', prog.exPct]].forEach(function (pair) {
+      var bar = el.querySelector('.staxx-rowprog-bar[data-bar="' + pair[0] + '"]');
+      var pct = Math.max(0, Math.min(100, pair[1] || 0));
+      bar.querySelector('.staxx-rowprog-fill').style.width = pct + '%';
+
+      var info = pct + '%';
+      var bytesPair = pair[0] === 'dl' ? [prog.dlBytes, prog.dlTotal] : [prog.exBytes, prog.exTotal];
+      if (bytesPair[1]) info += ' · ' + bytes(bytesPair[0]) + ' of ' + bytes(bytesPair[1]);
+      bar.querySelector('.staxx-rowprog-info').textContent = info;
+    });
+  }
+
+  function removeProgressOverlay(row) {
+    var el = row.querySelector('.staxx-rowprog');
+    if (!el || el.classList.contains('staxx-rowprog--leave')) return;
+    el.classList.add('staxx-rowprog--leave');
+    var gone = false;
+    function finish() {
+      if (gone) return;
+      gone = true;
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }
+    el.addEventListener('transitionend', finish, { once: true });
+    setTimeout(finish, 600);   // belt and braces, past the sheet's 350ms leave — see .staxx-row--leave's precedent
+  }
+
+  // The name column can change width for reasons that have nothing to do
+  // with any row's own content (the table's scrollbar appearing, the
+  // viewport itself resizing), so every open overlay's left edge is
+  // recomputed together rather than only when its own row repaints.
+  window.addEventListener('resize', function () {
+    Array.prototype.forEach.call(document.querySelectorAll('.staxx-rowprog'), function (el) {
+      if (el.parentNode) applyProgressOverlayOffsets(el, el.parentNode);
+    });
+  });
 
   /* ---- per-row job tracking --------------------------------------------
    *
@@ -16293,7 +16810,7 @@
    * `job` action.
    */
 
-  var jobs      = {};    // job id -> { rows, verb, show, atBottom, offset, text, done }
+  var jobs      = {};    // job id -> { rows, verb, show, atBottom, offset, text, prog, done }
   var jobTicker = null;
 
   // rowKey() -> job id, for every row a job in `jobs` is currently spinning.
@@ -16304,35 +16821,185 @@
   // refreshRows() table-body swap the way rowFailures already does.
   var rowJobs = {};
 
-  // Reads compose's own plain-text progress lines (forced by --progress
-  // plain — see STAXX_COMPOSE_PROGRESS_PLAIN in Stacks.php, where the
-  // command is built) to say whether an image is downloading right now, and
-  // roughly how much of it is done. Returns null when there is nothing to
-  // say yet — the base BUSY_LABEL stands in that case — because a `restart`
-  // or a plain `up` on images already on disk should never claim to be
-  // downloading anything.
+  // The busy pill says only WHAT is happening ("Updating…"), never how far
+  // along it is. It used to count layers ("Downloading image… 12 of 23"),
+  // but the state column is sized to its content, so every change of that
+  // text widened or narrowed the column for the whole table and every row
+  // shifted sideways once a second — measured on the box 2026-09-10. The
+  // progress itself lives in the row overlay below, which is positioned
+  // over the row and so cannot move anything.
+
+  // PLAN_138 — what the row overlay draws: per-layer download and unpack
+  // progress, byte totals, and whether the run has moved on to creating or
+  // starting the container, read from compose's --progress plain text as a
+  // structured snapshot. Called once a second from tickJobs().
   //
-  // The state machine reads every line rather than just the newest one,
-  // because compose interleaves several services' lines together and a
-  // trailing blank line from the last poll would otherwise look like "not
-  // downloading any more".
-  function pullProgressLabel(text) {
-    var downloading = false;
+  // Re-parses the whole accumulated log every time it is called, rather
+  // than picking up where a previous call left off — a job's log is at most
+  // a few hundred lines by the time it finishes, and this runs once a
+  // second per job, so a full scan is nowhere near worth the bookkeeping an
+  // incremental parse would add. tickJobs() keeps the result it computed on
+  // the job's own entry, which is what a table redraw restores from.
+  //
+  // Byte figures are decimal (kB = 1000, not 1024) to match what compose
+  // itself prints — the ratio is all that matters here, not the true size,
+  // so getting the base wrong would only bite if the two sides of one "cur/
+  // total" pair ever used different units and they still do not cancel out.
+  function pullProgress(text) {
+    var layers     = {};   // 12-hex layer id -> { phase, cur, total }
+    var layerOrder = [];   // first-seen order — object key order is not
+                            // trustworthy once an id happens to look numeric
+    var services   = {};   // service name -> 'pulling' | 'pulled'
+    var containers = {};   // container name -> last verb seen
+    var recent     = [];   // last three progress lines, oldest first
+    var phase      = 'pull';
+    var error      = '';
+
+    function note(line) {
+      recent.push(line);
+      if (recent.length > 3) recent.shift();
+    }
+
+    function bytes(str) {
+      var m = /^([\d.]+)\s*([kKmMgG]?)[bB]$/.exec(str);
+      if (!m) return 0;
+      var mult = { '': 1, k: 1e3, m: 1e6, g: 1e9 }[m[2].toLowerCase()];
+      return parseFloat(m[1]) * mult;
+    }
+
+    function layer(id) {
+      if (!layers[id]) {
+        layers[id] = { phase: 'pending', cur: 0, total: 0 };
+        layerOrder.push(id);
+      }
+      return layers[id];
+    }
+
+    // Download is the first half of a layer's life, extraction the second —
+    // splitting 0-100 down the middle is what lets the one overall bar mean
+    // something across a mix of layers still downloading and others already
+    // extracting, without pretending to know how long either half actually
+    // takes relative to the other.
+    function layerPct(l) {
+      switch (l.phase) {
+        case 'downloading': return l.total ? Math.min(50, (l.cur / l.total) * 50) : 0;
+        case 'verifying':   return 50;
+        case 'extracting':  return l.total ? 50 + Math.min(50, (l.cur / l.total) * 50) : 50;
+        case 'done':        return 100;
+        default:            return 0;   // pending: "Pulling fs layer" / "Waiting"
+      }
+    }
+
     var lines = text.split('\n');
     for (var i = 0; i < lines.length; i++) {
-      if (/Pull complete|Pulled|Creating|Starting|Started/.test(lines[i])) downloading = false;
-      else if (/Pulling|Downloading|Extracting/.test(lines[i])) downloading = true;
+      var line = lines[i].trim();
+      if (!line || line.charAt(0) === '$') continue;
+      var m, b;
+
+      if ((m = /^([0-9a-f]{12})\s+(.*)$/.exec(line))) {
+        var l = layer(m[1]), rest = m[2];
+        if (/^(Pulling fs layer|Waiting)$/.test(rest)) {
+          l.phase = 'pending';
+        } else if ((b = /^Downloading \[.*?\]\s+(\S+)\/(\S+)$/.exec(rest))) {
+          l.phase = 'downloading'; l.cur = bytes(b[1]); l.total = bytes(b[2]);
+          note(line);
+        } else if (/^(Verifying Checksum|Download complete)$/.test(rest)) {
+          l.phase = 'verifying';
+          note(line);
+        } else if ((b = /^Extracting \[.*?\]\s+(\S+)\/(\S+)$/.exec(rest))) {
+          l.phase = 'extracting'; l.cur = bytes(b[1]); l.total = bytes(b[2]);
+          note(line);
+        } else if (/^(Pull complete|Already exists)$/.test(rest)) {
+          l.phase = 'done';
+          note(line);
+        }
+        continue;
+      }
+
+      if ((m = /^(\S+)\s+(Pulling|Pulled)$/.exec(line))) {
+        services[m[1]] = m[2].toLowerCase();
+        continue;
+      }
+
+      if ((m = /^Container\s+(\S+)\s+(\S+)$/.exec(line))) {
+        containers[m[1]] = m[2];
+        note(line);
+        if (/^(Creating|Recreate)$/.test(m[2])) { if (phase === 'pull') phase = 'create'; }
+        else if (/^Starting$/.test(m[2]))          phase = 'start';
+        else if (/^(Started|Healthy)$/.test(m[2])) phase = 'done';
+        continue;
+      }
+
+      // The server strips this sentinel before the text ever reaches the
+      // browser — see STAXX_JOB_END in Stacks.php and part.done/part.exit
+      // in tickJobs() below, which is how a real job actually signals the
+      // end. This only matches here because the captured test fixtures are
+      // raw job logs read straight off disk with the sentinel still on them.
+      if ((m = /^###staxx-finished###\s+(-?\d+)$/.exec(line))) {
+        phase = (m[1] === '0') ? 'done' : 'failed';
+        if (phase === 'failed' && !error) error = 'Exit code ' + m[1];
+        continue;
+      }
+
+      if (/^(Error|error response|failed|denied|not found)/i.test(line)) {
+        phase = 'failed';
+        error = line;
+        note(line);
+        continue;
+      }
     }
-    if (!downloading) return null;
-    // Each layer prints one "Pulling fs layer" line and, once done, one
-    // "Pull complete" line — counting both gives a rough "N of M" without
-    // decoding a percentage. Capped at the layer count so a line this has
-    // not seen before (a registry wording this has not met yet) cannot
-    // print something like "14 of 12".
-    var layers   = (text.match(/Pulling fs layer/g) || []).length;
-    var complete = (text.match(/Pull complete/g) || []).length;
-    return layers ? 'Downloading image… ' + Math.min(complete, layers) + ' of ' + layers
-                  : 'Downloading image…';
+
+    // A container line can arrive for one service while another is still
+    // being pulled — "done" only holds once every container this run has
+    // touched has actually finished starting.
+    if (phase === 'done') {
+      var names = Object.keys(containers);
+      for (var j = 0; j < names.length; j++) {
+        if (!/^(Started|Healthy)$/.test(containers[names[j]])) { phase = 'start'; break; }
+      }
+    }
+
+    var layerTotal = layerOrder.length, layerDone = 0, sum = 0;
+    for (var k = 0; k < layerOrder.length; k++) {
+      var pct = layerPct(layers[layerOrder[k]]);
+      sum += pct;
+      if (pct >= 100) layerDone++;
+    }
+
+    var overallPct = (phase === 'create' || phase === 'start' || phase === 'done')
+      ? 100
+      : (layerTotal ? Math.round(sum / layerTotal) : 0);
+
+    // Two whole-image shares rather than the one blended pct above: how much
+    // has been fetched from the registry, and how much of what was fetched
+    // has been unpacked onto disk — a layer still downloading contributes
+    // nothing to the second, and one already unpacked counts fully in both.
+    var atEnd = (phase === 'create' || phase === 'start' || phase === 'done');
+    // Byte sums alongside the two percentages above, for the amount/speed/
+    // ETA line the painter builds. A layer still pending, or one that
+    // matched "Already exists" and so never printed a size, has total 0 and
+    // simply contributes nothing to either sum.
+    var dlSum = 0, exSum = 0, dlBytes = 0, dlTotal = 0, exBytes = 0;
+    for (var d = 0; d < layerOrder.length; d++) {
+      var dl = layers[layerOrder[d]];
+      dlTotal += dl.total;
+      switch (dl.phase) {
+        case 'downloading': dlSum += dl.total ? dl.cur / dl.total : 0; dlBytes += dl.cur; break;
+        case 'verifying': case 'extracting': case 'done': dlSum += 1; dlBytes += dl.total; break;
+      }
+      if (dl.phase === 'extracting') { exSum += dl.total ? dl.cur / dl.total : 0; exBytes += dl.cur; }
+      else if (dl.phase === 'done') { exSum += 1; exBytes += dl.total; }
+    }
+    var dlPct = atEnd ? 100 : (layerTotal ? Math.round(100 * dlSum / layerTotal) : 0);
+    var exPct = atEnd ? 100 : (layerTotal ? Math.round(100 * exSum / layerTotal) : 0);
+    var exTotal = dlTotal;   // unpacking has nothing left to do beyond what was downloaded
+
+    return {
+      phase: phase, pct: overallPct, layers: layers, order: layerOrder,
+      layerDone: layerDone, layerTotal: layerTotal, dlPct: dlPct, exPct: exPct,
+      dlBytes: dlBytes, dlTotal: dlTotal, exBytes: exBytes, exTotal: exTotal,
+      services: services, containers: containers, recent: recent, error: error
+    };
   }
 
   // Wires the output pane's scroll listener onto one job — shared by track()
@@ -16379,16 +17046,40 @@
         entry.text  += part.text || '';
         entry.offset = part.offset;
 
-        // The busy pill says what compose is actually doing, for the three
-        // verbs that can pull an image — only worth recomputing when new
-        // text arrived, and only worth repainting when it changed.
+        // The busy pill keeps its one fixed label for the whole job (see the
+        // note above pullProgress()); it is only repainted if something else
+        // wrote over the cell, so the width of the state column never moves.
         if (part.text && (entry.verb === 'up' || entry.verb === 'pull' || entry.verb === 'update')) {
-          var pillLabel = pullProgressLabel(entry.text) || BUSY_LABEL[entry.verb] || 'Working…';
+          var pillLabel = BUSY_LABEL[entry.verb] || 'Working…';
           if (pillLabel !== entry.pillLabel) {
             entry.pillLabel = pillLabel;
             entry.rows.forEach(function (row) {
               if (row.dataset.busy) paintBusyLabel(row, pillLabel);
             });
+          }
+
+          // PLAN_138 — the row overlay's own, richer picture, from the same
+          // text. Kept on the entry (not just painted) so restoreBusy() can
+          // repaint it straight after a table redraw without waiting for
+          // the next tick.
+          var prog = pullProgress(entry.text);
+          entry.prog = prog;
+          if (prog.phase === 'start' || prog.phase === 'done') {
+            entry.rows.forEach(function (row) { removeProgressOverlay(row); });
+          } else {
+            entry.rows.forEach(function (row) {
+              if (row.dataset.busy) paintProgressOverlay(row, prog);
+            });
+            // A failure the log itself named is worth reading, so the
+            // overlay is left up for a few seconds rather than snatched
+            // away the instant markFailed() below paints the fail pill
+            // underneath it.
+            if (prog.phase === 'failed' && !entry.failTimerSet) {
+              entry.failTimerSet = true;
+              setTimeout(function () {
+                entry.rows.forEach(function (row) { removeProgressOverlay(row); });
+              }, 4000);
+            }
           }
         }
 
@@ -16411,6 +17102,22 @@
           Object.keys(rowJobs).forEach(function (key) {
             if (rowJobs[key] === id) delete rowJobs[key];
           });
+          // Belt and braces for the overlay: a clean exit clears it now
+          // rather than waiting on wording pullProgress() may not have
+          // seen, and a failed one not already timed out above (the exit
+          // code was bad but nothing in the log matched /^Error|failed|.../
+          // for pullProgress() to have caught) still gets the same few
+          // seconds' grace before vanishing under the fail pill.
+          if (entry.verb === 'up' || entry.verb === 'pull' || entry.verb === 'update') {
+            if (part.exit === 0) {
+              entry.rows.forEach(function (row) { removeProgressOverlay(row); });
+            } else if (!entry.failTimerSet) {
+              entry.failTimerSet = true;
+              setTimeout(function () {
+                entry.rows.forEach(function (row) { removeProgressOverlay(row); });
+              }, 4000);
+            }
+          }
           if (entry.show) {
             logTitle.textContent += (part.exit !== 0 && part.exit !== null)
               ? ' — failed (exit ' + part.exit + ')'
@@ -16449,6 +17156,7 @@
       text:      '',
       shown:     '',   // what the output pane already holds, so an idle tick can skip writing it
       pillLabel: BUSY_LABEL[opts.verb] || 'Working…',
+      prog:      null,    // PLAN_138 — last pullProgress() result, for restoreBusy()
       done:      opts.done
     };
     (opts.rows || []).forEach(function (row) {
@@ -17085,7 +17793,19 @@
     var titleBits = [];
     if (entry.tip) titleBits.push(entry.tip);
     if (note) titleBits.push(note);
-    if (titleBits.length) pill.title = titleBits.join('\n\n'); else pill.removeAttribute('title');
+    // While the hover card is up, showUpdCard() has parked the title in
+    // data-update-title so the browser's own tooltip stays away; writing the
+    // attribute back here mid-hover brought that tooltip up on top of the
+    // card, so the refresh writes to the same parking spot until dismissal.
+    var parked = pill.dataset.updateTitle !== undefined;
+    if (titleBits.length) {
+      if (parked) pill.dataset.updateTitle = titleBits.join('\n\n');
+      else pill.title = titleBits.join('\n\n');
+    } else if (parked) {
+      pill.dataset.updateTitle = '';
+    } else {
+      pill.removeAttribute('title');
+    }
 
     paintPillClock(pill);
   }
@@ -17286,8 +18006,11 @@
   function dismissUpdCard() {
     if (updCardTimer) { clearTimeout(updCardTimer); updCardTimer = null; }
     if (updCard) updCard.hidden = true;
-    if (updCardPill && updCardPill.dataset.updateTitle) {
-      updCardPill.title = updCardPill.dataset.updateTitle;
+    // The parking spot may hold '' if a refresh mid-hover found nothing to
+    // say; it is still cleared, or the pill would stay parked for good.
+    if (updCardPill && updCardPill.dataset.updateTitle !== undefined) {
+      if (updCardPill.dataset.updateTitle) updCardPill.title = updCardPill.dataset.updateTitle;
+      else updCardPill.removeAttribute('title');
       delete updCardPill.dataset.updateTitle;
     }
     updCardPill = null;
@@ -17381,7 +18104,7 @@
   // as they always did. Tabbed view replaces that bar with a shared `.tabs`
   // strip the page does not own, and Adrian saw the chips land in that strip
   // and asked for them lower — so only then do they get a row of our own,
-  // inserted right before the buttons row (`.staxx-bar.staxx-bar--end`); if
+  // inserted right before the buttons row (`#staxx-toolbar`, PLAN_139); if
   // that row is ever missing — a markup change — it falls back to sitting
   // before `#staxx-update-queue` instead, so the information is never
   // silently lost.
@@ -17399,7 +18122,7 @@
       var statusRow = document.createElement('div');
       statusRow.className = 'staxx-statusrow';
       statusRow.appendChild(updatesLine);
-      var buttonsBar = document.querySelector('.staxx-bar.staxx-bar--end');
+      var buttonsBar = document.getElementById('staxx-toolbar');
       if (buttonsBar && buttonsBar.parentNode) {
         buttonsBar.parentNode.insertBefore(statusRow, buttonsBar);
       } else {
@@ -19019,14 +19742,12 @@
     }, function () { iconAdoptBusy = false; });
   }
 
-  // A dismissible line above the table, not a toast — an edit made without
+  // A dismissible entry in the ticker, not a toast — an edit made without
   // being asked has to stay readable until the user has actually seen it.
-  // Built here rather than in the page's own markup because there is
-  // nothing to show until a run finds something to say.
-  var iconAdoptNotice = null;
+  // PLAN_139 folded this into notices.add(): repeat runs coalesce onto one
+  // entry there by construction (same kind, same text hashes to the same
+  // id) rather than this function needing to track and replace its own copy.
   function showIconAdoptSummary(services, stackNames) {
-    if (iconAdoptNotice) iconAdoptNotice.remove();
-
     var svcText = services + (services === 1 ? ' service' : ' services');
     // Name the stacks rather than just counting them (card 01a08d13) — "one
     // stack" told nobody which one to go and check.
@@ -19035,25 +19756,13 @@
     if (stackNames.length > shown.length) {
       namesText += ' and ' + (stackNames.length - shown.length) + ' more';
     }
-    var notice = document.createElement('div');
-    notice.className = 'staxx-notice';
-    notice.innerHTML =
-      '<i class="fa fa-picture-o" aria-hidden="true"></i>' +
-      '<div>' + esc('StaXX found icons for ' + svcText + ' and saved them into these stacks: ' +
-                    namesText + '. Each stack’s earlier compose file is kept in its history, so ' +
-                    'this can be undone from the stack’s History.') +
-      '</div>' +
-      '<button type="button" class="staxx-notice-close" title="Dismiss" aria-label="Dismiss">' +
-        '<i class="fa fa-times" aria-hidden="true"></i></button>';
-    notice.querySelector('.staxx-notice-close').addEventListener('click', function () {
-      notice.remove();
-      if (iconAdoptNotice === notice) iconAdoptNotice = null;
+    notices.add({
+      kind: 'good',
+      text: 'StaXX found icons for ' + svcText + ' and saved them into these stacks: ' +
+            namesText + '. Each stack’s earlier compose file is kept in its history, so ' +
+            'this can be undone from the stack’s History.',
+      sticky: false
     });
-
-    if (pageNotice && pageNotice.parentNode) {
-      pageNotice.insertAdjacentElement('afterend', notice);
-    }
-    iconAdoptNotice = notice;
   }
 
   /* ------------------------------------------------------------ wiring -- */
@@ -26007,6 +26716,7 @@
       }
       return;
     }
+
 
     if (el.dataset.toggleFolder) { toggleFolder(el.dataset.toggleFolder, el); return; }
     if (el.dataset.toggleStack)  { toggleStack(el.dataset.toggleStack, el);  return; }
