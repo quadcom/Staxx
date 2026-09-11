@@ -18020,7 +18020,11 @@
 
   function updCardLead(pill) {
     if (pill.dataset.updateState === 'update' && pillIsFolder(pill)) {
-      return 'Open the folder to update them.';
+      var kids = [];
+      try { kids = JSON.parse(pill.dataset.updateChildren || '[]') || []; } catch (e) { kids = []; }
+      return (kids.length === 1 ? 'One stack in this folder has an update.'
+                                : kids.length + ' stacks in this folder have updates.')
+           + (kids.length === 1 ? ' Open the folder to update it.' : ' Open the folder to update them.');
     }
     var fixed = UPD_CARD_LEAD[pill.dataset.updateState || ''];
     if (fixed) return fixed;
@@ -18042,6 +18046,11 @@
       ['Why',        pill.dataset.updateCadenceWhy,  false]
     ];
     var html = '';
+    // A folder's pill speaks for several stacks, so a single Running/
+    // Available pair (they were the first child's) and one clock row made no
+    // sense beside the list of stacks — Adrian, 2026-09-11. A folder card is
+    // the list alone.
+    if (pillIsFolder(pill)) rows = [];
     for (var i = 0; i < rows.length; i++) {
       var val = rows[i][1];
       if (!val) continue;   // rows that do not apply are left out, not shown blank
@@ -18055,9 +18064,16 @@
       var children = [];
       try { children = JSON.parse(pill.dataset.updateChildren) || []; } catch (e) { children = []; }
       if (children.length) {
-        html += '<dt>Stacks with updates</dt><dd></dd>';
+        // No heading row: the lead sentence already says these are the
+        // stacks with updates. Each row is the stack's name and, when its
+        // roll-up names one update, the running and waiting versions; a
+        // stack with several updates falls back to its own label. Settled
+        // live with Adrian on 2026-09-11.
         children.forEach(function (c) {
-          html += '<dt>' + esc(c.name || '') + '</dt><dd>' + esc(c.label || '') + '</dd>';
+          var what = (c.was && c.version)
+            ? '<span class="staxx-updcard__mono">' + esc(c.was) + ' → ' + esc(c.version) + '</span>'
+            : esc(c.label || '');
+          html += '<dt>' + esc(c.name || '') + '</dt><dd>' + what + '</dd>';
         });
       }
     }

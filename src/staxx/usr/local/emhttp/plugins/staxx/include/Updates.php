@@ -2726,7 +2726,11 @@ function staxx_updates_aggregate(array $pills): array {
     if (!array_key_exists('name', $p)) continue;
     $isFolder = true;
     if (($p['state'] ?? '') !== 'update') continue;
-    $children[] = ['name' => (string)$p['name'], 'label' => (string)($p['label'] ?? '')];
+    // 'was'/'version' ride along so the folder's hover card can say what each
+    // stack is running and what is waiting; both are '' for a stack whose own
+    // roll-up spans several updates, and the card falls back to the label.
+    $children[] = ['name'    => (string)$p['name'], 'label' => (string)($p['label'] ?? ''),
+                   'was'     => (string)($p['was'] ?? ''), 'version' => (string)($p['version'] ?? '')];
   }
   if (count($children) > 8) {
     $more = count($children) - 8;
