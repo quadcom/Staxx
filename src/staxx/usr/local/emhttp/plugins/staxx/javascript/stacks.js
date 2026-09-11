@@ -1171,6 +1171,27 @@
   //
   // URLSearchParams sends application/x-www-form-urlencoded, which works. Do
   // not "modernise" this back to FormData.
+  // Fire-and-forget variant of call(), for the one case an ordinary fetch
+  // cannot cover: the page unloading. A fetch started during pagehide is
+  // cancelled along with the page before its response — or often its
+  // request — ever lands; sendBeacon (and, where it is missing, fetch's own
+  // keepalive flag) is what the browser is willing to let finish after the
+  // page is already gone. Same body shape as call() and the same reason:
+  // URLSearchParams posts application/x-www-form-urlencoded, which Unraid's
+  // CSRF prepend reads — never FormData (multipart POSTs hang on the box).
+  function beacon(action, fields) {
+    var data = new URLSearchParams();
+    data.append('csrf_token', CSRF);
+    data.append('action', action);
+    Object.keys(fields || {}).forEach(function (k) { data.append(k, fields[k]); });
+
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      return navigator.sendBeacon(ENDPOINT, data);
+    }
+    fetch(ENDPOINT, { method: 'POST', body: data, credentials: 'same-origin', keepalive: true });
+    return true;
+  }
+
   function call(action, fields, timeoutMs) {
     var data = new URLSearchParams();
     data.append('csrf_token', CSRF);
@@ -21550,6 +21571,7 @@
     manageInst = manageMod.create({
       host: manageHost,
       call: call,
+      beacon: beacon,
       esc: esc,
       bytes: bytes,
       onRun: manageOnRun,

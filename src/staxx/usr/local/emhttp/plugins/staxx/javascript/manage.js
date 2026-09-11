@@ -136,6 +136,9 @@
     // the shell sessions and the file browser all go through it. onRun() is
     // the separate path the verb buttons use instead — see buildButtons().
     var call   = opts.call;
+    // Fire-and-forget sibling of call(), used only on pagehide below — see
+    // there for why an ordinary call() cannot do this job.
+    var beacon = typeof opts.beacon === 'function' ? opts.beacon : null;
     // Used to build the body text of the styled dialog's questions and
     // notices below — everything else interpolated into markup elsewhere in
     // this file (service names, file names, paths) still goes through
@@ -186,6 +189,29 @@
     // never recreated, see above), not per mount/unmount, so it is removed
     // only when the Instance itself goes away.
     document.addEventListener('visibilitychange', onVisibilityChange);
+
+    // The server's own reaper for a stale shell session sits at the top of
+    // every request the plugin handles, so it only ever runs when some
+    // StaXX page somewhere makes one. Close the tab or navigate away with no
+    // other StaXX page open and nothing asks again — the 45-second sweep
+    // never fires, and a root shell can sit open for hours. pagehide fires
+    // reliably on both a closed tab and a navigation away, so this is the
+    // one place that case can be covered from the browser side. Registered
+    // once per Instance, same lifetime as the visibilitychange listener above.
+    window.addEventListener('pagehide', onPageHide);
+
+    function onPageHide() {
+      // No DOM work here — the page is on its way out, so touching it buys
+      // nothing. Just tell the server each open session is done.
+      Object.keys(shellState.sessions).forEach(function (svc) {
+        var sess = shellState.sessions[svc];
+        if (sess.pollTimer) clearTimeout(sess.pollTimer);
+        if (sess.id) {
+          if (beacon) beacon('exec-close', { id: sess.id }); else call('exec-close', { id: sess.id });
+        }
+        delete shellState.sessions[svc];
+      });
+    }
 
     function build() {
       host.innerHTML = '';

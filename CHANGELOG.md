@@ -18,6 +18,8 @@ before that were dates.
 
 ## Unreleased
 
+- Closing the browser tab, or leaving the StaXX page, while a container shell is open in the Manage tab now closes that shell at once. It used to stay open until another StaXX page happened to ask the server for something, which with no page open anywhere could be hours.
+
 ## 00.03.00 — released 2026-09-11
 
 - The copy of a container that "Take over and start" sets aside is no longer offered in the Import window or reported as a container found outside any stack. It is your way back if the new stack fails, not something to bring in again.
