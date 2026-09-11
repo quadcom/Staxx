@@ -2524,8 +2524,19 @@ console.log('\nN. 10-advanced-compose-test (PLAN_5 phase 3)');
       want: { mode: 'shell', command: 'curl -f http://localhost/ || exit 1' } },
     { src: 'test:\n      - CMD-SHELL\n      - pg_isready',
       want: { mode: 'shell', command: 'pg_isready' } },
+    { src: 'test: ["CMD-SHELL", "pg_isready", ]',
+      want: { mode: 'shell', command: 'pg_isready' } },
     { src: 'test: ["NONE"]', want: { mode: 'none', command: '' } },
-    { src: 'test: NONE', want: { mode: 'none', command: '' } }
+    { src: 'test: NONE', want: { mode: 'none', command: '' } },
+    // The form leaves the command blank when a mode is chosen before it is
+    // typed — a quoted empty string is a real, empty argument, not "nothing
+    // was found here", so this must still read as the two live fields.
+    { src: 'test: ["CMD-SHELL", ""]', want: { mode: 'shell', command: '' } },
+    { src: 'test:\n      - CMD-SHELL\n      - ""', want: { mode: 'shell', command: '' } },
+    // A trailing comma leaves nothing after it to quote, so it must not
+    // manufacture a phantom third argument.
+    { src: 'test: ["CMD-SHELL", "pg_isready",]',
+      want: { mode: 'shell', command: 'pg_isready' } }
   ];
   cases.forEach(function (c) {
     var src = 'services:\n  a:\n    image: alpine\n    healthcheck:\n      ' + c.src + '\n';
@@ -5143,6 +5154,15 @@ console.log('\nM. Host paths');
   var text = 'services:\n  a:\n    volumes:\n      - ${DATA_DIR}/media:/data\n';
   var r = Y.hostPaths(text);
   ok('nothing reported when the host side needs a variable substituted',
+     r.length === 0, JSON.stringify(r));
+})();
+
+/* ---- M9b. A path containing a bare $VAR (no braces) is skipped too -------- */
+
+(function () {
+  var text = 'services:\n  a:\n    volumes:\n      - /mnt/user/$APP/config:/config\n';
+  var r = Y.hostPaths(text);
+  ok('nothing reported when the host side needs a bare $VAR substituted',
      r.length === 0, JSON.stringify(r));
 })();
 

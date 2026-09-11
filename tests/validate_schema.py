@@ -182,6 +182,10 @@ NEGATIVE = [
         {"x-unraid": {"imported": {"from": "docker-image", "on": "2026-08-30", "note": "hi"}}},
     ),
     (
+        "imported id given as a number, not a string",
+        {"x-unraid": {"imported": {"from": "docker-image", "on": "2026-08-30", "id": 1234}}},
+    ),
+    (
         "service update mode not one of off/notify/auto",
         service_doc(update={"mode": "hourly"}),
     ),
@@ -340,6 +344,10 @@ POSITIVE = [
     }}}),
     ("imported: running-container", {"x-unraid": {"imported": {
         "from": "running-container", "on": "2026-08-30",
+    }}}),
+    ("imported block carrying an id and a name", {"x-unraid": {"imported": {
+        "from": "unraid-template", "on": "2026-08-30",
+        "id": "my-jellyfin.xml", "name": "Jellyfin",
     }}}),
     # `name` was a display-name override at both levels; a stack is now named after its
     # directory and a service after its key, full stop, so the key has nothing left to do.

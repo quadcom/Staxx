@@ -65,10 +65,11 @@ only a setting the example adds or drops entirely is.
 
 ### Following one up
 
-1. Press the **author-example finding** chip in the title bar. A small window lists every finding:
-   the stack, the service, its image, and what the example does differently.
+1. Press the **author-example finding** chip in the title bar. A window lists every finding, one
+   block per stack: the image it runs, then the settings the author's example **also sets** and the
+   ones it **does not set**, each named as a small chip.
 
-   ![The Author-example findings window listing one finding: the stack and service, its image, and that the author's example does not set an environment setting](../images/guide/updates-author-dialog.png)
+   ![The Author-example findings window: a sentence explaining what it shows, then one block per stack naming its image, with an Also sets row and a Does not set row of setting-name chips](../images/guide/updates-author-dialog.png)
 
 2. Open that stack. The finding sits under the setting it concerns, with a **Dismiss** button.
 
@@ -100,6 +101,10 @@ shown there when nothing was found, or nothing has been checked yet.
 | `registry moved` | The image is now published somewhere else. |
 | `N to look at` | The author's own published example does something this file does not. |
 | `could not check` | The last check failed. Hover the pill for why. |
+
+Pressing an update pill never starts a stopped stack. If the stack is stopped, it fetches the new
+image and waits for you to start it; if only some of its services are running, only those are
+updated, and the stopped ones keep their pill until you next start them.
 
 ## Hovering the pill
 
@@ -157,6 +162,17 @@ says why:
 
 See [Update items on the row menu](#update-items-on-the-row-menu) above for exactly when each of
 these appears.
+
+## Watching a pull happen
+
+While a stack is downloading a new image and restarting, the row itself shows what stage it is at.
+A line across the top says how many of the image's layers are done and roughly how long the download
+has left, and two bars underneath show the download and the unpacking, each with a percentage and
+how much of the total has been handled so far. Once the container starts, the panel slides away on
+its own and the row underneath shows again. It is there to be read, not clicked — the row's own
+controls come back as soon as it goes.
+
+![A stack row mid-update: over its Services and State columns sits a dark panel headed "Downloading the image · 8 of 23 layers done · a few seconds left", with a Download bar reading 79% · 32.2 MiB of 71.3 MiB and an Unpack bar reading 35% · 11.3 MiB of 71.3 MiB, the rows above and below unchanged](../images/guide/updates-pull-progress.png)
 
 ## Pause and update all
 

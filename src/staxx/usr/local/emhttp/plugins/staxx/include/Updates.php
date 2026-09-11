@@ -1394,6 +1394,14 @@ function staxx_image_local_verdict(string $out): array {
  * → ['unknown' => true]: unlike [], this is not an answer, and callers that
  * treat an absent digest as "nothing to compare" already handle it the same
  * as [] without any change, but staxx_update_check() treats the two apart.
+ *
+ * A locally cached image can carry more than one digest for the same
+ * repository — a re-pushed identical index, or a pull by tag and again by
+ * digest both land in RepoDigests. 'digest' is the first, kept for callers
+ * that just want a single value; 'digests' is every one of them, and a
+ * caller comparing against a registry answer must accept any of them —
+ * ghcr.io/meeb/tubesync carries two, and comparing against only the first
+ * read it as needing an update for ever.
  */
 function staxx_image_local(string $image): array {
   // 2>&1 here for the same reason as the imagetools route above.
@@ -1410,16 +1418,16 @@ function staxx_image_local(string $image): array {
   // than one tag/repo alias.
   $wantRepo = $repo !== '' ? $repo : preg_replace('/:[^\/]*$/', '', trim($image));
 
-  $digest = '';
+  $digests = [];
   foreach ((array)($data['RepoDigests'] ?? []) as $entry) {
     $at = strrpos((string)$entry, '@');
     if ($at === false) continue;
     $entryRepo = substr((string)$entry, 0, $at);
     if ($entryRepo === $wantRepo || staxx_hub_repo_path($entryRepo) === $wantRepo) {
-      $digest = substr((string)$entry, $at + 1);
-      break;
+      $digests[] = substr((string)$entry, $at + 1);
     }
   }
+  $digest = $digests[0] ?? '';
 
   if ($digest === '') {
     if (empty($data['RepoDigests'])) return ['built' => true];
@@ -1429,7 +1437,7 @@ function staxx_image_local(string $image): array {
   $labels = $data['Config']['Labels'] ?? [];
   $labels = is_array($labels) ? $labels : [];
 
-  $result = ['digest' => $digest] + staxx_update_labels_meta($labels);
+  $result = ['digest' => $digest, 'digests' => $digests] + staxx_update_labels_meta($labels);
   // staxx_update_labels_meta() reads 'created' from a label; fall back to the
   // image's own Created field when no label supplied one.
   if (!isset($result['created']) && !empty($data['Created'])) {
@@ -1437,6 +1445,20 @@ function staxx_image_local(string $image): array {
     if ($ts !== false) $result['created'] = $ts;
   }
   return $result;
+}
+
+/**
+ * The local digest to record against a registry answer. When the registry's
+ * digest is any one of the image's own recorded digests, that is the one
+ * kept — so the stored 'local' equals 'remote' and every later
+ * "local !== remote" reading agrees the image is current. Otherwise the
+ * first digest, as before. Found the hard way on tubesync, whose image
+ * carried two digests and read as an update for ever.
+ */
+function staxx_image_local_digest(array $local, string $remote): string {
+  $all = (array)($local['digests'] ?? []);
+  if ($remote !== '' && in_array($remote, $all, true)) return $remote;
+  return (string)($local['digest'] ?? '');
 }
 
 /**
@@ -1566,9 +1588,10 @@ function staxx_update_refresh_after_run(string $stack, string $service = ''): bo
     if (empty($local['digest'])) continue; // built here, or not installed — nothing to correct
 
     $entry = $images[$image];
-    if (($entry['local'] ?? '') === $local['digest']) continue;
+    $localDigest = staxx_image_local_digest($local, (string)($entry['remote'] ?? ''));
+    if (($entry['local'] ?? '') === $localDigest) continue;
 
-    $entry['local'] = $local['digest'];
+    $entry['local'] = $localDigest;
     // Both of these are statements about what is on disk, and what is on
     // disk has just been re-measured — an image that was absent or built
     // here has plainly been pulled since. Every other remembered error is a
@@ -1588,7 +1611,7 @@ function staxx_update_refresh_after_run(string $stack, string $service = ''): bo
     // Up to date now, so the countdown running against that version has
     // nothing left to fire on — cleared by the same four keys
     // staxx_update_check() clears, so the two can never disagree.
-    if (($entry['remote'] ?? '') === $local['digest']) {
+    if (($entry['remote'] ?? '') === $localDigest) {
       unset($entry['seen'], $entry['was'], $entry['wasCreated'], $entry['seenDigest']);
     }
 
@@ -1986,7 +2009,7 @@ function staxx_update_check(string $scope, bool $force): array {
       // taking the cheap path anyway would leave the row claiming to be up to
       // date with nothing installed.
       $localSame = $local !== [] && empty($local['built'])
-                && (string)($local['digest'] ?? '') === (string)($existing['local'] ?? '');
+                && staxx_image_local_digest($local, (string)($existing['remote'] ?? '')) === (string)($existing['local'] ?? '');
 
       if ($storedRemote !== '' && $localSame) {
         unset($existing['error']);
@@ -2155,8 +2178,8 @@ function staxx_update_check(string $scope, bool $force): array {
     }
 
     unset($existing['error'], $existing['built'], $existing['tags'], $existing['suggest']);
-    $existing['local']   = $local['digest'];
     $existing['remote']  = $remote['digest'] ?? '';
+    $existing['local']   = staxx_image_local_digest($local, (string)$existing['remote']);
     if (isset($remote['version'])) $existing['version'] = $remote['version'];
     if (isset($remote['source']))  $existing['source']  = $remote['source'];
     if (isset($remote['created'])) $existing['created'] = $remote['created'];
@@ -2183,7 +2206,7 @@ function staxx_update_check(string $scope, bool $force): array {
     $existing['fails'] = 0;
     unset($existing['failedSince']);
 
-    $localDigest = $local['digest'] ?? '';
+    $localDigest = (string)($existing['local'] ?? '');
     $changed = $localDigest !== '' && $existing['remote'] !== '' && $localDigest !== $existing['remote'];
 
     // A dismissed version stays quiet until something NEWER than it turns
@@ -2594,6 +2617,20 @@ function staxx_updates_pill_for_image(string $image, array $images): array {
                'intervalWords' => $clock['interval'], 'cadenceWhy' => $clock['why']];
     }
 
+    // Same name either side but the digests genuinely differ, and no build
+    // dates to back up the "new build" wording above (e.g. a pinned tag the
+    // publisher rebuilt) — still a rebuild, not two versions, so "was" is
+    // blanked rather than printed identically to "version" (card 01a08d0a).
+    if ($was !== '' && $ver !== '' && $was === $ver) {
+      return ['state' => 'update', 'label' => 'new build of '.$ver, 'source' => $source,
+               'tip' => 'A new build of '.$ver.' is available. Press this to fetch it and rebuild '
+                      . 'the container on it.'
+                      . staxx_update_when_words($image, $entry, time()),
+               'version' => $ver, 'was' => '',
+               'askedWords' => $clock['asked'], 'nextWords' => $clock['next'],
+               'intervalWords' => $clock['interval'], 'cadenceWhy' => $clock['why']];
+    }
+
     // PLAN_121 item 7: a from-to pair could run to twice the width of every
     // other pill (Jellyfin's read 40+ characters), so the label is always
     // the same plain words everyone else gets — the tag icon
@@ -2679,13 +2716,37 @@ function staxx_updates_aggregate(array $pills): array {
   $total = count($pills);
   $state = $best['state'] ?? 'current';
 
+  // A pill carries 'name' only when it stands for a whole stack rather than
+  // one service — staxx_updates_for_folder() is the only caller that sets
+  // it — so this is how the wording below tells a folder roll-up from a
+  // stack roll-up without a second copy of this function (card 01a08d12).
+  $isFolder = false;
+  $children = [];
+  foreach ($pills as $p) {
+    if (!array_key_exists('name', $p)) continue;
+    $isFolder = true;
+    if (($p['state'] ?? '') !== 'update') continue;
+    // 'was'/'version' ride along so the folder's hover card can say what each
+    // stack is running and what is waiting; both are '' for a stack whose own
+    // roll-up spans several updates, and the card falls back to the label.
+    $children[] = ['name'    => (string)$p['name'], 'label' => (string)($p['label'] ?? ''),
+                   'was'     => (string)($p['was'] ?? ''), 'version' => (string)($p['version'] ?? '')];
+  }
+  if (count($children) > 8) {
+    $more = count($children) - 8;
+    $children = array_slice($children, 0, 8);
+    $children[] = ['name' => '', 'label' => 'and '.$more.' more'];
+  }
+  $unit = $isFolder ? 'stacks' : 'services';
+  $open = $isFolder ? 'folder' : 'stack';
+
   switch ($state) {
     case 'update':
       $label = $updateCount === 1 ? $best['label'] : $updateCount.' updates ready';
       $tip   = $updateCount === 1
         ? $best['tip']
-        : $updateCount.' of '.$total.' services here have an update available. Open the '
-        . 'stack to update them.';
+        : $updateCount.' of '.$total.' '.$unit.' here have an update available. Open the '
+        . $open.' to update them.';
       break;
     case 'error':
       $label = 'could not check';
@@ -2748,6 +2809,10 @@ function staxx_updates_aggregate(array $pills): array {
     'due'    => $due,
     'hold'   => $hold,
     'why'    => $why,
+    // Which stacks a folder's roll-up speaks for — empty on a stack row's own
+    // per-service roll-up, since only staxx_updates_for_folder() sets 'name'
+    // on its pills. staxx_update_pill_html() writes this only when non-empty.
+    'children' => $children,
     // PLAN_121 item 7: carried through only for the same single-service case
     // $label above reused $best['label'] for — a row rolling up several
     // updates into "N updates ready" never named one version and still
@@ -2883,7 +2948,13 @@ function staxx_updates_for_folder(string $folder): array {
   $pills = [];
   foreach (staxx_scan_stacks()['stacks'] as $s) {
     if (strpos($s['rel'], $folder.'/') !== 0) continue;
-    $pills[] = staxx_updates_for_row($s['rel']);
+    $pill = staxx_updates_for_row($s['rel']);
+    // The marker staxx_updates_aggregate() reads to know it is folding whole
+    // stacks rather than one stack's services — a stack's name is its
+    // directory's own leaf, never a display override (see the stack-model
+    // note above).
+    $pill['name'] = basename($s['rel']);
+    $pills[] = $pill;
   }
   return staxx_updates_aggregate($pills);
 }
@@ -2891,16 +2962,27 @@ function staxx_updates_for_folder(string $folder): array {
 /**
  * The grid's last-checked line: when the last pass ran, whether it worked,
  * and how many distinct images have an answer at all versus an update
- * actually waiting. Reads the state file only.
+ * actually waiting. Reads the state file, plus one pass over the current
+ * stacks to know which images are still in use.
  */
 function staxx_updates_summary(): array {
   $state  = staxx_update_state();
   $images = (array)$state['images'];
 
+  // The state file is a memory of every image StaXX has ever asked about,
+  // and it is never pruned when a stack is archived or deleted — pruning it
+  // would lose a check result that is still useful if the stack comes back.
+  // So counting every key in it can keep the title bar saying "N updates
+  // waiting" for a stack that no longer exists, while the rows (which read
+  // the current stacks) show none. Restricting to images a current stack
+  // still uses is what makes this total agree with what the rows show.
+  $inUse = staxx_update_images('all');
+
   $known      = 0;
   $updates    = 0;
   $tagmissing = 0;
   foreach (array_keys($images) as $image) {
+    if (!isset($inUse[$image])) continue;
     $pillState = staxx_updates_pill_for_image($image, $images)['state'];
     if ($pillState === 'unknown') continue;
     $known++;

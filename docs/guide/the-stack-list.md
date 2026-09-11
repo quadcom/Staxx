@@ -22,6 +22,21 @@ bottom, part by part.
 | Update all | Installs every update currently waiting. |
 | Pause updates | Freezes every update countdown on the page. Press again to say Resume updates. |
 
+## Notifications
+
+To the left of that button row sits a single line, empty when there is nothing to say. When StaXX
+has something for you — a check that could not run, an update that failed, icons it found and
+saved on your behalf — that line shows the message, with a count if there is more than one waiting.
+Press it to open the full list. Each entry there can carry a button of its own for wherever it
+points, and a small × to dismiss it if it does not need to be sticking around. StaXX remembers what
+you have dismissed in this browser, so it will not show you the same one again for a week. A few
+messages cannot be dismissed at all — they are saying something is genuinely wrong right now, such
+as Docker not running, and they clear themselves the moment that stops being true.
+
+![The notice line to the left of the button row, ringed: a warning icon, one message about a check that could not reach the registry, and a count of 2 at its right end, with the Database folder and two of its stacks beneath](../images/guide/the-stack-list-notices-ticker.png)
+
+![The Notifications panel opened under that line: two entries, each with an icon, its message, how long ago it arrived and a dismiss cross, one carrying a Check now button, and a Dismiss all button in the panel's footer](../images/guide/the-stack-list-notices-panel.png)
+
 ## The title bar
 
 ![The right end of the title bar: a grey chip saying when updates were last checked, an orange chip counting updates waiting, and an outlined chip counting author-example findings, with the button row beneath](../images/guide/the-stack-list-title-chips.png)
@@ -212,6 +227,8 @@ Click its picture to open the folder menu.
 | <img src="../images/guide/the-stack-list-broken-stack.png" alt="A stack row with a red warning triangle for its picture, the words Compose cannot read this file, and the reason underneath"> | The file exists but will not parse. The message underneath says why. |
 
 Neither row can be started until it is fixed. Fixing it and saving brings the row back to normal.
+
+A stack whose file looks fine can still be refused at start time. If it points at a network marked as already existing that this server does not have, Start, Restart, Update, Recreate and Rebuild are refused before anything is downloaded, with the network's name and the nearest one the server does have: *This stack needs a network called "eth0.2", and this server has no network by that name. The nearest is "br0.2". Open the stack and change its network, then try again.* Pull images still works, since fetching an image needs no network. The editor offers the same fix as a button — see [the stack editor](the-stack-editor.md#messages-you-may-see).
 
 ## What this never does
 

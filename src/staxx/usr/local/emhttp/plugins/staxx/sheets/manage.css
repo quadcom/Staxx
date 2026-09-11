@@ -16,6 +16,12 @@
  * rem inside a media query is the browser's default font size, not the
  * 62.5% Unraid sets on the root, so writing it any other way puts the two
  * thresholds in different places).
+ *
+ * Every button, input and select here lives inside .staxx-scaffold.unapi
+ * (the Manage dialog is part of the same page), so it is subject to the
+ * marker's own reset — see staxx.css's header, section 3, for what that
+ * reset does and why every such control here is styled at
+ * `.staxx-scaffold .staxx-manage-xxx` rather than the bare class.
  */
 
 /* ---- Button trap, restated here — see staxx.css's own note on this ------
@@ -66,6 +72,8 @@
   border-radius: var(--sm-radius);
   background-color: transparent;
   color: inherit;
+  font-size: inherit;
+  line-height: normal;
 }
 
 .staxx-scaffold .staxx-manage-tab:hover,
@@ -181,6 +189,7 @@
   background-color: var(--sm-fill-0, var(--sm-fill));
   color: inherit;
   font-size: 0.8em;
+  line-height: normal;
   white-space: nowrap;
 }
 
@@ -242,7 +251,9 @@
   border-radius: var(--sm-radius);
   background-color: transparent;
   color: inherit;
+  font-size: inherit;
   font-weight: 500;
+  line-height: normal;
 }
 
 .staxx-scaffold .staxx-manage-narrowtab--selected {
@@ -400,8 +411,11 @@
   flex: 1 1 auto;
   text-align: left;
   padding: 0.1rem 0;
+  background: transparent;
   color: inherit;
+  font-size: inherit;
   font-weight: 600;
+  line-height: normal;
 }
 
 .staxx-manage-pane-actions {
@@ -495,8 +509,10 @@
   border: 1px solid var(--sm-line);
   border-radius: var(--sm-radius);
   background-color: var(--sm-fill-0, var(--sm-fill));
+  color: inherit;
   text-align: center;
   font-size: 1.1rem;
+  line-height: normal;
   white-space: nowrap;
 }
 
@@ -542,6 +558,7 @@
   background-color: var(--sm-fill-0, var(--sm-fill));
   color: inherit;
   font-size: 0.8em;
+  line-height: normal;
   white-space: nowrap;
 }
 
@@ -686,7 +703,10 @@
   border: 1px solid var(--sm-accent);
   border-radius: var(--sm-radius);
   background-color: var(--sm-fill-2);
+  color: inherit;
+  font-size: inherit;
   font-weight: 600;
+  line-height: normal;
 }
 
 .staxx-scaffold .staxx-manage-shell-warn-btn:disabled {
@@ -811,6 +831,7 @@
   background-color: var(--sm-fill-0, var(--sm-fill));
   color: inherit;
   font-size: 0.8em;
+  line-height: normal;
   white-space: nowrap;
 }
 
@@ -837,6 +858,8 @@
    deep would be a wall of boxes. */
 .staxx-scaffold .staxx-manage-files-crumb {
   padding: 0 0.1rem;
+  border: 0;
+  background: none;
   color: inherit;
   font: inherit;
 }
@@ -858,8 +881,12 @@
 }
 
 /* The file input behind the Upload button is never shown itself — clicking
-   the button opens the browser's own file picker via uploadInput.click(). */
-.staxx-manage-files-uploadinput {
+   the button opens the browser's own file picker via uploadInput.click().
+   .staxx-scaffold prefix (0,2,1): a single class ties the marker's own
+   input reset (trap 3, header) on opacity, decided only by source order
+   otherwise — the 1px box already hides it, but this stops that being the
+   only thing standing between it and a visible file-picker control. */
+.staxx-scaffold .staxx-manage-files-uploadinput {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -943,7 +970,9 @@
 
 .staxx-scaffold .staxx-manage-files-namebtn {
   color: inherit;
+  font-size: inherit;
   font-weight: 600;
+  line-height: inherit;
   background-color: transparent;
   border: none;
   padding: 0;

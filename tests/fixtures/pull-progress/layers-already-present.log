@@ -1,0 +1,25 @@
+$ compose -f compose.yaml pull && compose -f compose.yaml up -d --remove-orphans
+
+ dozzle Pulling 
+ e519b76d96e0 Already exists 
+ afe219c4758f Already exists 
+ a8bb86b81e8e Already exists 
+ f73c1c9dcdd2 Pulling fs layer 
+ f73c1c9dcdd2 Downloading [>                                                  ]  212.4kB/20.06MB
+ f73c1c9dcdd2 Downloading [================>                                  ]  6.815MB/20.06MB
+ f73c1c9dcdd2 Downloading [================================================>  ]  19.59MB/20.06MB
+ f73c1c9dcdd2 Verifying Checksum 
+ f73c1c9dcdd2 Download complete 
+ f73c1c9dcdd2 Extracting [>                                                  ]  229.4kB/20.06MB
+ f73c1c9dcdd2 Extracting [============>                                      ]  5.046MB/20.06MB
+ f73c1c9dcdd2 Extracting [======================>                            ]  9.175MB/20.06MB
+ f73c1c9dcdd2 Extracting [==================================>                ]  13.99MB/20.06MB
+ f73c1c9dcdd2 Extracting [===============================================>   ]  19.04MB/20.06MB
+ f73c1c9dcdd2 Extracting [==================================================>]  20.06MB/20.06MB
+ f73c1c9dcdd2 Pull complete 
+ dozzle Pulled 
+ Container Dozzle  Recreate
+ Container Dozzle  Recreated
+ Container Dozzle  Starting
+ Container Dozzle  Started
+###staxx-finished### 0

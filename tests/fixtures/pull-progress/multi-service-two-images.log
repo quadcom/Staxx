@@ -1,0 +1,122 @@
+$ compose -f docker-compose.yml -f docker-compose.override.yml pull && compose -f docker-compose.yml -f docker-compose.override.yml up -d --remove-orphans
+
+ db Pulling 
+ proxy Pulling 
+ proxy Pulled 
+ e51aee9c82ec Pulling fs layer 
+ cd6bceec58bb Pulling fs layer 
+ 192012903bb8 Pulling fs layer 
+ 456db37d4ee3 Pulling fs layer 
+ e77bf9a419ba Pulling fs layer 
+ 4bf69bd0829b Pulling fs layer 
+ 0d71bf9f420b Pulling fs layer 
+ c5189c691e6d Pulling fs layer 
+ e77bf9a419ba Waiting 
+ 4bf69bd0829b Waiting 
+ 0d71bf9f420b Waiting 
+ 456db37d4ee3 Waiting 
+ c5189c691e6d Waiting 
+ cd6bceec58bb Downloading [==================================================>]  1.339kB/1.339kB
+ cd6bceec58bb Verifying Checksum 
+ cd6bceec58bb Download complete 
+ e51aee9c82ec Downloading [>                                                  ]  310.7kB/29.76MB
+ 456db37d4ee3 Downloading [==================================================>]     116B/116B
+ 456db37d4ee3 Verifying Checksum 
+ 456db37d4ee3 Download complete 
+ e51aee9c82ec Downloading [==========>                                        ]  6.537MB/29.76MB
+ 192012903bb8 Downloading [>                                                  ]  64.97kB/5.246MB
+ e51aee9c82ec Downloading [===============================>                   ]  18.68MB/29.76MB
+ 192012903bb8 Downloading [=========>                                         ]  1.048MB/5.246MB
+ e77bf9a419ba Downloading [==================================================>]     334B/334B
+ e77bf9a419ba Verifying Checksum 
+ e77bf9a419ba Download complete 
+ 192012903bb8 Downloading [=============================>                     ]   3.08MB/5.246MB
+ e51aee9c82ec Downloading [===================================>               ]  20.86MB/29.76MB
+ 192012903bb8 Verifying Checksum 
+ 192012903bb8 Download complete 
+ e51aee9c82ec Verifying Checksum 
+ e51aee9c82ec Download complete 
+ 0d71bf9f420b Downloading [===========================================>       ]  3.528kB/4.033kB
+ 0d71bf9f420b Downloading [==================================================>]  4.033kB/4.033kB
+ 0d71bf9f420b Verifying Checksum 
+ 0d71bf9f420b Download complete 
+ e51aee9c82ec Extracting [>                                                  ]  327.7kB/29.76MB
+ 4bf69bd0829b Downloading [>                                                  ]  533.2kB/68.89MB
+ c5189c691e6d Downloading [====================>                              ]  3.528kB/8.493kB
+ c5189c691e6d Downloading [==================================================>]  8.493kB/8.493kB
+ c5189c691e6d Verifying Checksum 
+ c5189c691e6d Download complete 
+ e51aee9c82ec Extracting [======>                                            ]  3.932MB/29.76MB
+ 4bf69bd0829b Downloading [====>                                              ]  5.884MB/68.89MB
+ e51aee9c82ec Extracting [============>                                      ]  7.537MB/29.76MB
+ 4bf69bd0829b Downloading [========>                                          ]   11.2MB/68.89MB
+ e51aee9c82ec Extracting [================>                                  ]   9.83MB/29.76MB
+ 4bf69bd0829b Downloading [============>                                      ]  17.58MB/68.89MB
+ e51aee9c82ec Extracting [=======================>                           ]  14.09MB/29.76MB
+ 4bf69bd0829b Downloading [================>                                  ]  23.41MB/68.89MB
+ e51aee9c82ec Extracting [==============================>                    ]  18.02MB/29.76MB
+ 4bf69bd0829b Downloading [====================>                              ]  28.74MB/68.89MB
+ e51aee9c82ec Extracting [=====================================>             ]  22.28MB/29.76MB
+ 4bf69bd0829b Downloading [===========================>                       ]  37.77MB/68.89MB
+ 4bf69bd0829b Downloading [===================================>               ]  48.38MB/68.89MB
+ e51aee9c82ec Extracting [==========================================>        ]  25.23MB/29.76MB
+ e51aee9c82ec Extracting [=============================================>     ]   27.2MB/29.76MB
+ 4bf69bd0829b Downloading [===========================================>       ]  60.59MB/68.89MB
+ 4bf69bd0829b Downloading [=================================================> ]  68.04MB/68.89MB
+ 4bf69bd0829b Verifying Checksum 
+ 4bf69bd0829b Download complete 
+ e51aee9c82ec Extracting [================================================>  ]  29.16MB/29.76MB
+ e51aee9c82ec Extracting [==================================================>]  29.76MB/29.76MB
+ e51aee9c82ec Pull complete 
+ cd6bceec58bb Extracting [==================================================>]  1.339kB/1.339kB
+ cd6bceec58bb Extracting [==================================================>]  1.339kB/1.339kB
+ cd6bceec58bb Pull complete 
+ 192012903bb8 Extracting [>                                                  ]  65.54kB/5.246MB
+ 192012903bb8 Extracting [===================================>               ]  3.736MB/5.246MB
+ 192012903bb8 Extracting [============================================>      ]  4.653MB/5.246MB
+ 192012903bb8 Extracting [==================================================>]  5.246MB/5.246MB
+ 192012903bb8 Pull complete 
+ 456db37d4ee3 Extracting [==================================================>]     116B/116B
+ 456db37d4ee3 Extracting [==================================================>]     116B/116B
+ 456db37d4ee3 Pull complete 
+ e77bf9a419ba Extracting [==================================================>]     334B/334B
+ e77bf9a419ba Extracting [==================================================>]     334B/334B
+ e77bf9a419ba Pull complete 
+ 4bf69bd0829b Extracting [>                                                  ]  557.1kB/68.89MB
+ 4bf69bd0829b Extracting [===>                                               ]  5.014MB/68.89MB
+ 4bf69bd0829b Extracting [======>                                            ]   9.47MB/68.89MB
+ 4bf69bd0829b Extracting [==========>                                        ]  15.04MB/68.89MB
+ 4bf69bd0829b Extracting [==============>                                    ]   19.5MB/68.89MB
+ 4bf69bd0829b Extracting [=================>                                 ]  23.95MB/68.89MB
+ 4bf69bd0829b Extracting [====================>                              ]  28.41MB/68.89MB
+ 4bf69bd0829b Extracting [=======================>                           ]  32.87MB/68.89MB
+ 4bf69bd0829b Extracting [============================>                      ]  38.99MB/68.89MB
+ 4bf69bd0829b Extracting [===============================>                   ]  43.45MB/68.89MB
+ 4bf69bd0829b Extracting [==================================>                ]  47.35MB/68.89MB
+ 4bf69bd0829b Extracting [====================================>              ]  50.69MB/68.89MB
+ 4bf69bd0829b Extracting [=======================================>           ]  54.03MB/68.89MB
+ 4bf69bd0829b Extracting [===========================================>       ]  60.16MB/68.89MB
+ 4bf69bd0829b Extracting [==============================================>    ]   63.5MB/68.89MB
+ 4bf69bd0829b Extracting [===============================================>   ]  65.73MB/68.89MB
+ 4bf69bd0829b Extracting [=================================================> ]  67.96MB/68.89MB
+ 4bf69bd0829b Extracting [=================================================> ]  68.52MB/68.89MB
+ 4bf69bd0829b Extracting [==================================================>]  68.89MB/68.89MB
+ 4bf69bd0829b Pull complete 
+ 0d71bf9f420b Extracting [==================================================>]  4.033kB/4.033kB
+ 0d71bf9f420b Extracting [==================================================>]  4.033kB/4.033kB
+ 0d71bf9f420b Pull complete 
+ c5189c691e6d Extracting [==================================================>]  8.493kB/8.493kB
+ c5189c691e6d Extracting [==================================================>]  8.493kB/8.493kB
+ c5189c691e6d Pull complete 
+ db Pulled 
+ Container SupStack-DB  Creating
+ Container SupStack-DB  Created
+ Container SupStack-APP  Creating
+ Container SupStack-APP  Created
+ Container SupStack-DB  Starting
+ Container SupStack-DB  Started
+ Container SupStack-DB  Waiting
+ Container SupStack-DB  Healthy
+ Container SupStack-APP  Starting
+ Container SupStack-APP  Started
+###staxx-finished### 0

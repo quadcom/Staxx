@@ -24,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 StaXX is an Unraid 7.2+ webGUI plugin that replaces Unraid's proprietary XML Docker
 templates with standard Compose files, and renders those compose files as a form so non-technical
-users can configure containers without touching YAML. Pre-alpha; see `README.md` for the design
+users can configure containers without touching YAML. In beta (Adrian's word, 2026-09-04); see `README.md` for the design
 commitments and `docs/README.md` for the plain-English overview.
 
 Two rules override most other judgement calls:
@@ -123,6 +123,7 @@ node tests/health_offer.js          # picking a health check, and the narrow doo
 node tests/pin_image.js             # pinning an image to one exact build
 node tests/export_redact.js         # what export blanks out before a stack leaves the machine
 node tests/guide_coverage.js        # which shipped features the user guide still says nothing about
+node tests/pull_progress.js         # the row overlay's parser — layer/container progress, byte units, failures
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/stacks.js
 node --check src/staxx/usr/local/emhttp/plugins/staxx/javascript/compose-model.js
 ```
@@ -172,6 +173,7 @@ Four rules run through the whole set:
 | `bootcopy` | The shelf of compose copies on the flash drive: the copy after every save, the case-clash refusal, removal and restore | `STORE_ROOT` |
 | `bundle` | The `.staxx` bundle importer's refusals — a crafted entry name, a planted record-folder file, a bad marker, an oversized or unreadable bundle — plus the two accept cases and the write into a fresh store | `STORE_ROOT` (only the two write cases) |
 | `clash` | Two stacks claiming the same compose project name — the list-time detector, the state guard that stops a dormant twin reading as the running one, the delete guard that refuses to tear down a project it does not own, and the one check every creation door calls | `STORE_ROOT` at `/tmp` |
+| `compose_ensure` | Whether StaXX installs its own Docker Compose only when none already answers, verifies it against the pinned checksum, and removes only what it installed | opt-in live case `STAXX_LIVE_COMPOSE=1` |
 | `console` | The `recreate` and stack-scope `update` verbs, the scope refusals, the job-log tailer, the log follower and the shell — no real session is ever opened | — |
 | `crypt` | The hashing container's refusals. Builds, starts, pulls and removes nothing | — |
 | `detail` | What the server can find out about a stack's icon, description, category, author and links | `STORE_ROOT`, `IMAGE_LOOKUP=false` |
@@ -382,9 +384,10 @@ at `/boot/config/plugins/staxx/`.
 
 ## How StaXX is actually delivered right now
 
-**This is pre-alpha and deliberately not on Community Applications.** That is a listing, not a
-file format: it is how people would *find* StaXX and be told it had updated. Not applying for it is
-a decision, not an omission — do not do work towards it unasked.
+**Submitted to Community Applications on 2026-09-04, as beta.** That is a listing, not a file
+format: it is how people find StaXX and are told it has updated. `SUBMISSION.md` records what was
+proved for it; `staxx.xml` and `ca_profile.xml` in the root are what it reads, committed on `main`
+directly and copied to `dev`.
 
 **The packaging chain itself is complete, and the manifest is the way in people should be pointed
 at.** Paste the manifest address into Unraid's **Plugins → Install Plugin** box and it installs like
@@ -516,6 +519,14 @@ the config, running `apply_settings`, writing the registration marker — but th
 only ever run through a genuine plugin install. The migration is the one that touches somebody's
 existing settings, so it is the one worth actually exercising rather than reasoning about.
 
+**Measured 2026-09-04, both paths clean on Adrian's box** — but one trap: `dev-install.sh` writes an
+empty *file* at `/var/log/plugins/staxx.plg` as its registration marker, where Unraid keeps a
+*symlink* to the real manifest. `plugin remove` reads that entry with `readlink`, gets nothing, and
+reports "removed" having run none of the removal script. So on a dev-deployed box a manifest
+install-and-remove test must first replace the marker with `ln -s /boot/config/plugins/staxx.plg`;
+a real user's box never has the marker. Removal also signs Docker out of Hub; `apply_settings`
+signs it back in on the next install, which is the intended shape.
+
 ## Version policy
 
 Ordinary semver, and it is enforced by the release workflow rather than left to memory:
@@ -533,14 +544,12 @@ names burnt while releases were immutable, since `01.02.00` is not `1.2.0`.
 
 `01.00.00` is the first release meant for general use; the `00.xx.xx` line is the run-up to it.
 
-**While StaXX is in alpha, every release is a minor one on the `00.xx.xx` line. Never propose a
-`01.00.00`, and never argue a change up to major because of its shape.** Adrian's standing
-instruction, 2026-08-30. Nobody is running the plugin — it is not listed on Community Applications,
-which is the only way anyone would find it. **Applying for that listing is what starts the `1.0.0`
-conversation, and it is his call and his alone.** Until he says so, a change that would otherwise be
-major is simply the next minor.
-
-The same reasoning retires the migration rule that used to sit below — see the next heading.
+**Patch and minor releases on the `00.xx.xx` line; never propose a `01.00.00`, and never argue a
+change up to major because of its shape.** Adrian's standing instructions: 2026-08-30 (minor only,
+while alpha) and 2026-09-04 (**patch releases allowed from now on**, the day he called StaXX beta and
+submitted it to Community Applications). So a release carrying only fixes is a patch (`00.02.01`),
+one carrying anything new is a minor, and `01.00.00` stays his call alone — the listing is in, so
+that conversation is open, but nobody starts it but him.
 
 **The number is decided by what has accumulated on `dev`, and it is decided once.** A dev build
 carries the number `main` is heading towards — cut `00.02.00_dev...` and you have declared the next
@@ -548,11 +557,12 @@ stable release to be `00.02.00`. If something landing later turns out to be a ma
 number moves and the next dev build says so; nothing is burnt either way, because a dev tag can
 never collide with the stable tag it is heading towards.
 
-**While StaXX is in alpha, a plan does not have to migrate what is already on disk.** Adrian's
-standing instruction, 2026-08-30, and the same reasoning as the version rule above: nobody is running
-the plugin, so there is no installed base to carry forward. Take the clean shape and leave the old
-one behind. **Do not build migration machinery, upgrade paths, or code that goes on reading a shape
-StaXX no longer writes** — every one of those is permanent weight bought for nobody.
+**A plan does not have to migrate what is already on disk — and this rule stays in beta.** Adrian's
+standing instruction, 2026-08-30, reaffirmed 2026-09-04 with his reasoning: there is no database,
+and the compose YAML shape is locked in, so he does not expect a migration to ever be needed. Take
+the clean shape and leave the old one behind. **Do not build migration machinery, upgrade paths, or
+code that goes on reading a shape StaXX no longer writes** — every one of those is permanent weight
+bought for nobody.
 
 The one real server is Adrian's, and it is **patched by hand, as needed**: when a change would make
 something on his box read wrong, say so plainly and offer a one-off fix for those files. That is a
@@ -720,6 +730,17 @@ piece of engineering in the repository, and the reason the rest of this exists.
   their strings contain an apostrophe.
 - **Asset URLs carry `filemtime()`.** Without it an edited stylesheet or script sits in the browser
   cache and looks exactly like a change that did not work.
+- **Every `<button>`, `<input>`, `<select>` and `<textarea>` inside the page is reset by Unraid at
+  a specificity a single class cannot beat.** The `unapi` marker on the scaffold switches off
+  Unraid's old button styling, but Unraid's web-component stylesheet scopes a Tailwind base reset
+  under that same class: `.unapi button, .unapi input, …` sets `font: inherit`, `color: inherit`,
+  `background-color: transparent` and `border-radius: 0` at one class plus one element, (0,1,1),
+  and `.unapi *` zeroes margin, padding and border at (0,1,0). A control styled by one class
+  therefore takes its font size and line-height from the cell around it and loses its shape. This
+  made a clickable chip draw taller than the plain one beside it twice (2026-09-04 and 2026-09-10).
+  Style every control at `.staxx-scaffold .staxx-xxx` or `.staxx-scaffold button.staxx-xxx` and
+  restate font-size, font-weight, line-height, colour, background and border-radius in that rule.
+  The exact rules and where they live are in the header of `sheets/staxx.css`.
 - **Own the render.** Stock Unraid CSS classes are not borrowed for layout — their rules are
   invisible to us and change between releases. Every class used is `staxx-`-prefixed.
 - `staxx.plg` is fully populated — real author, real repo, real checksums. Nothing there guards

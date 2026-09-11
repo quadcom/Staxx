@@ -5,6 +5,9 @@
  * $clash flag), the delete guard that refuses to tear down a project it
  * does not own (staxx_archive_stack()), and staxx_name_free(), the one
  * check every door that names a stack directory calls before creating one.
+ * Also: a never-started stack whose compose file is invalid (an undeclared
+ * network) can still be archived, because nothing carries its project label
+ * for `down` to fail against.
  *
  * Runs ON THE SERVER — there is no PHP on the dev machine. Needs STORE_ROOT
  * pointed at /tmp/zzc118-store, the same way tests/server/review.php does
@@ -144,9 +147,11 @@ ok('an archive zip was written', $archive !== null && file_exists($archive));
 staxx_compose_state(['byFile' => [], 'byTail' => [], 'byName' => []]);
 
 // The other stack in the clash — no stub in place, so nothing is "running"
-// under that guessed name at all. staxx_archive_stack() must fall through
-// to running `down` as normal, which is harmless against a project docker
-// has never heard of, and report no note.
+// under that guessed name at all, and no real container carries this project
+// label either. staxx_archive_stack() skips `down` for want of anything to
+// stop, exactly as it does for a stack that has never been started, and
+// still reports no note — the note is only for the "belongs to a sibling"
+// case above.
 $error = ''; $archive = null; $note = null;
 $okArchive2 = staxx_archive_stack($mediaRel, $error, true, $archive, $note);
 ok('archiving a stack whose project is not running at all still succeeds', $okArchive2, $error);
@@ -154,6 +159,26 @@ ok('nothing was skipped — there is no note to show', ($note ?? '') === '');
 ok('the folder stack is gone from the stacks tree too', !is_dir($mediaDir));
 
 staxx_scan_stacks_reset();
+
+/* ------------------------------------------ never-started, invalid file --- */
+// Adrian's report: a stack whose compose file names a network it never
+// declares. Compose refuses to even parse that, so `down` fails — and until
+// now that failure was reported as "stop the stack first", which makes an
+// invalid stack that was never started impossible to remove. No container
+// ever carries this project's label, so staxx_archive_stack() must skip
+// `down` and archive the folder anyway.
+$badRel = 'zzc118badnet';
+$badDir = $root.'/'.$badRel;
+mkdir($badDir, 0755, true);
+file_put_contents($badDir.'/compose.yaml',
+  "services:\n  app:\n    image: alpine:3.20\n    networks:\n      - br0.2\n");
+staxx_scan_stacks_reset();
+
+$error = ''; $archive = null; $note = null;
+$okArchive3 = staxx_archive_stack($badRel, $error, true, $archive, $note);
+ok('a never-started stack with an invalid compose file can still be removed',
+   $okArchive3 && $error === '', $error);
+ok('an archive zip was written for it', $archive !== null && file_exists($archive));
 
 /* --------------------------------------------------- the creation guard --- */
 // A fresh stack recreated at the clashing leaf, then every door that names a

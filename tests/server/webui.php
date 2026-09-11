@@ -76,8 +76,21 @@ ok('the number inside [PORT:nnn] is ignored — both resolve the same',
 
 /* --------------------------------------------------- nothing to open ---- */
 
-ok('[PORT:] present but the service publishes nothing => empty',
-   staxx_webui_url(svc('http://[IP]:[PORT:8096]/', '', []), $hostIp) === '');
+ok("[PORT:8096] with no ports list at all => the marker's own number, on the server address",
+   staxx_webui_url(svc('http://[IP]:[PORT:8096]/', '', []), $hostIp) === 'http://10.0.0.5:8096/');
+
+ok("macvlan-shaped, no ports list: the marker's own number, on the fixed address",
+   staxx_webui_url(svc('http://[IP]:[PORT:32400]/web/index.html', $fixed, [], ''), $hostIp, '', '', 'macvlan')
+     === 'http://10.77.0.20:32400/web/index.html');
+
+ok('empty [PORT:] marker and no ports list either => still nothing to open',
+   staxx_webui_url(svc('http://[IP]:[PORT:]/', '', []), $hostIp) === '');
+
+ok("the marker's own number is still ignored when the ports list has the half it needs",
+   staxx_webui_url(svc('http://[IP]:[PORT:9999]/', '', $port), $hostIp) === 'http://10.0.0.5:15114/');
+
+ok("bridge with a ports entry that has only a target half => still nothing; the marker is not consulted",
+   staxx_webui_url(svc('http://[IP]:[PORT:8080]/', '', ['target' => '80']), $hostIp) === '');
 
 ok('[IP] present, no fixed address, empty host IP => empty',
    staxx_webui_url(svc('http://[IP]:[PORT:8096]/', '', $port), '') === '');

@@ -1,0 +1,140 @@
+#!/bin/bash
+# StaXX — make sure `docker compose` answers, without touching one that
+# already works. Unraid does not ship Compose, so this is what replaces
+# telling every user to bring their own (see PLAN_136). Run with no
+# arguments at install and at every boot (the .plg's inline blocks do the
+# latter); `--remove` undoes only what StaXX itself put in place; `--status`
+# prints the last outcome for the settings page's self-test row.
+#
+# Every path here is overridable by environment variable, which is what lets
+# tests/server/compose_ensure.php run this against /tmp instead of the real
+# flash folder and cli-plugins directory.
+#
+# Copyright 2026, StaXX contributors. GPL-2.0.
+
+set -euo pipefail
+
+COMPOSE_VERSION="v2.40.3"
+COMPOSE_SHA256="dba9d98e1ba5bfe11d88c99b9bd32fc4a0624a30fafe68eea34d61a3e42fd372"
+
+TARGET="${STAXX_COMPOSE_TARGET:-/usr/local/lib/docker/cli-plugins/docker-compose}"
+CACHE="${STAXX_COMPOSE_CACHE:-/boot/config/plugins/staxx/compose}"
+URL="${STAXX_COMPOSE_URL:-https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64}"
+DOCKER_BIN="${STAXX_DOCKER_BIN:-docker}"
+# Overridable only so the test suite can point a small fixture at a pinned
+# hash without the real 75 MB binary; never overridden in production use.
+SHA256="${STAXX_COMPOSE_SHA256:-$COMPOSE_SHA256}"
+
+MARKER="${TARGET}.staxx"
+FLASH_COPY="${CACHE}/docker-compose-${COMPOSE_VERSION}"
+STATE="${CACHE}/state"
+
+write_state() {
+  # Echoed as well as filed: whoever runs this by hand at a terminal sees the
+  # same words the settings page will show later.
+  echo "$1" | tee "${STATE}" >/dev/null
+  echo "$1"
+}
+
+fail() {
+  mkdir -p "${CACHE}"
+  write_state "fail $1"
+  exit 1
+}
+
+sha_of() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+# A pin bump replaces the flash copy rather than accumulating old ones.
+prune_flash_copies() {
+  local f
+  for f in "${CACHE}"/docker-compose-v*; do
+    [[ -e "${f}" ]] || continue
+    [[ "${f}" == "${FLASH_COPY}" ]] && continue
+    rm -f "${f}"
+  done
+}
+
+install_from() {
+  # $1 is the verified file to install; $2 is the state word ("flash" or
+  # "download") for the success line.
+  install -D -m 755 "$1" "${TARGET}"
+  echo "${COMPOSE_VERSION}" > "${MARKER}"
+  prune_flash_copies
+  if ! "${DOCKER_BIN}" compose version --short >/dev/null 2>&1; then
+    fail "The compose plugin was installed, but Docker does not see it. Check that ${TARGET} sits under a cli-plugins folder Docker actually scans, or restart Docker."
+  fi
+  write_state "ok installed ${COMPOSE_VERSION} $2"
+}
+
+do_status() {
+  if [[ -f "${STATE}" ]]; then
+    cat "${STATE}"
+  else
+    echo "unknown"
+  fi
+  exit 0
+}
+
+do_remove() {
+  # Never rm -rf anything but the cache dir — refuse if it resolves to
+  # something that is not a real scratch path.
+  if [[ -z "${CACHE}" || "${CACHE}" == "/" ]]; then
+    echo "refusing to remove: STAXX_COMPOSE_CACHE is empty or /" >&2
+    exit 1
+  fi
+  if [[ -f "${MARKER}" ]]; then
+    rm -f "${TARGET}" "${MARKER}"
+  else
+    echo "compose at ${TARGET} was not installed by StaXX; leaving it in place." >&2
+  fi
+  rm -rf "${CACHE}"
+  exit 0
+}
+
+case "${1:-}" in
+  --status) do_status ;;
+  --remove) do_remove ;;
+  "") ;;
+  *)
+    echo "Usage: ensure-compose [--status|--remove]" >&2
+    exit 1
+    ;;
+esac
+
+mkdir -p "${CACHE}"
+
+# 1. Respect whatever already answers — Compose Manager, a future Unraid, or
+# the user's own install.
+if "${DOCKER_BIN}" compose version --short >/dev/null 2>&1; then
+  reported="$("${DOCKER_BIN}" compose version --short 2>/dev/null || true)"
+  write_state "ok present ${reported}"
+  exit 0
+fi
+
+# 2. A flash copy that matches the pin needs no network at all.
+if [[ -f "${FLASH_COPY}" ]]; then
+  if [[ "$(sha_of "${FLASH_COPY}")" == "${SHA256}" ]]; then
+    install_from "${FLASH_COPY}" "flash"
+    exit 0
+  fi
+  echo "the flash copy at ${FLASH_COPY} does not match the pinned checksum; discarding it." >&2
+  rm -f "${FLASH_COPY}"
+fi
+
+# 3. Download, verify against the pinned constant (never a remote .sha256 —
+# a compromised release page would publish a matching pair), then install.
+tmp="$(mktemp "${CACHE}/download.XXXXXX")"
+if ! curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 -o "${tmp}" "${URL}"; then
+  rm -f "${tmp}"
+  fail "The compose download could not be reached. Put the ${COMPOSE_VERSION} docker-compose binary at ${FLASH_COPY}, or install Compose Manager."
+fi
+
+if [[ "$(sha_of "${tmp}")" != "${SHA256}" ]]; then
+  rm -f "${tmp}"
+  fail "The compose download could not be verified, so nothing was installed. Put the ${COMPOSE_VERSION} docker-compose binary at ${FLASH_COPY}, or install Compose Manager."
+fi
+
+mv "${tmp}" "${FLASH_COPY}"
+install_from "${FLASH_COPY}" "download"

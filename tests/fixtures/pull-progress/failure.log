@@ -1,0 +1,10 @@
+$ compose -f compose.yaml pull && compose -f compose.yaml up -d --remove-orphans
+
+ dozzle Pulling 
+ e519b76d96e0 Already exists 
+ afe219c4758f Already exists 
+ a8bb86b81e8e Already exists 
+ f73c1c9dcdd2 Pulling fs layer 
+ f73c1c9dcdd2 Downloading [>                                                  ]  212.4kB/20.06MB
+Error response from daemon: Get "https://ghcr.io/v2/": net/http: TLS handshake timeout
+###staxx-finished### 1

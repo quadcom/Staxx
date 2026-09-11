@@ -136,14 +136,22 @@
     // the shell sessions and the file browser all go through it. onRun() is
     // the separate path the verb buttons use instead — see buildButtons().
     var call   = opts.call;
-    // Not used anywhere in this file — every value interpolated into markup
-    // here (service names, file names, paths) is inserted through
-    // textContent, which needs no escaping. Kept and validated anyway,
-    // since a fallback that silently stringified instead of escaping would
-    // be a trap the moment some future render stops using textContent.
+    // Used to build the body text of the styled dialog's questions and
+    // notices below — everything else interpolated into markup elsewhere in
+    // this file (service names, file names, paths) still goes through
+    // textContent, which needs no escaping.
     var escFn  = typeof opts.esc === 'function' ? opts.esc : esc;
     var bytes  = typeof opts.bytes === 'function' ? opts.bytes : function (n) { return String(n); };
     var onRun  = typeof opts.onRun === 'function' ? opts.onRun : function () {};
+    // The shared styled dialog, handed down by the host (stacks.js) so this
+    // file's own pop-ups match the rest of the page instead of falling back
+    // to the browser's plain confirm()/prompt(). The fallbacks below keep a
+    // host that has not wired them working exactly as before.
+    var askConfirm = typeof opts.askConfirm === 'function' ? opts.askConfirm
+      : function (o) { return Promise.resolve(window.confirm(o.title)); };
+    var askText = typeof opts.askText === 'function' ? opts.askText
+      : function (t, label, v) { return Promise.resolve(window.prompt(label, v || '')); };
+    var closeConfirm = typeof opts.closeConfirm === 'function' ? opts.closeConfirm : function () {};
 
     var state = {
       stack:      '',
@@ -1648,7 +1656,17 @@
       var sess = fileSession(service);
       var view = sess.view;
       if (view && view.editable && view.text !== view.original) {
-        if (!window.confirm('Discard the changes made to "' + view.name + '"?')) return;
+        askConfirm({
+          title: 'Discard changes?',
+          bodyHtml: '<p>Discard the changes made to "' + escFn(view.name) + '"?</p>',
+          goLabel: 'Discard'
+        }).then(function (go) {
+          if (!go) return;
+          closeConfirm();
+          sess.view = null;
+          renderFileList(service);
+        });
+        return;
       }
       sess.view = null;
       renderFileList(service);
@@ -1672,39 +1690,41 @@
 
     // ---- folder actions: mkdir, rename, delete, upload --------------------
     //
-    // window.prompt/window.confirm, not a dialog — stacks.js already uses
-    // both for one-line questions exactly like these, and a dialog would be
-    // more furniture than "what should this be called?" needs.
+    // The shared styled dialog the host hands down (askConfirm/askText), not
+    // the browser's own confirm()/prompt() — see the bundle passed into
+    // create() and its fallbacks above.
 
     function makeFolder(service) {
       var sess = fileSession(service);
       if (sess.dir === null) return;
-      var name = window.prompt('New folder name:');
-      if (name === null) return;
-      name = name.trim();
-      if (!name || name.indexOf('/') !== -1) {
-        sess.error = 'That is not a valid folder name.';
-        renderFileList(service);
-        return;
-      }
-      call('cfile-mkdir', { name: state.stack, service: service, path: joinPath(sess.dir, name) })
-        .then(function (res) {
-          if (!res.ok) { sess.error = res.error || 'Could not create that folder.'; renderFileList(service); return; }
-          navigateTo(service, sess.dir);
-        });
+      askText('New folder', 'Folder name', '').then(function (name) {
+        if (name === null) return;
+        name = name.trim();
+        if (!name || name.indexOf('/') !== -1) {
+          sess.error = 'That is not a valid folder name.';
+          renderFileList(service);
+          return;
+        }
+        call('cfile-mkdir', { name: state.stack, service: service, path: joinPath(sess.dir, name) })
+          .then(function (res) {
+            if (!res.ok) { sess.error = res.error || 'Could not create that folder.'; renderFileList(service); return; }
+            navigateTo(service, sess.dir);
+          });
+      });
     }
 
     function renameEntry(service, dir, entry) {
       var sess = fileSession(service);
-      var to = window.prompt('Rename "' + entry.name + '" to:', entry.name);
-      if (to === null) return;
-      to = to.trim();
-      if (to === '' || to === entry.name || to.indexOf('/') !== -1) return;
-      call('cfile-rename', { name: state.stack, service: service, path: joinPath(dir, entry.name), to: joinPath(dir, to) })
-        .then(function (res) {
-          if (!res.ok) { sess.error = res.error || 'Could not rename "' + entry.name + '".'; renderFileList(service); return; }
-          navigateTo(service, sess.dir);
-        });
+      askText('Rename "' + entry.name + '"', 'New name', entry.name).then(function (to) {
+        if (to === null) return;
+        to = to.trim();
+        if (to === '' || to === entry.name || to.indexOf('/') !== -1) return;
+        call('cfile-rename', { name: state.stack, service: service, path: joinPath(dir, entry.name), to: joinPath(dir, to) })
+          .then(function (res) {
+            if (!res.ok) { sess.error = res.error || 'Could not rename "' + entry.name + '".'; renderFileList(service); return; }
+            navigateTo(service, sess.dir);
+          });
+      });
     }
 
     // Delete always asks first, and always says the same thing the mounted
@@ -1713,16 +1733,22 @@
     // itself, which happens right now and cannot be waited out.
     function deleteEntry(service, path, entry) {
       var sess = fileSession(service);
-      var msg = 'Delete "' + entry.name + '"? ' +
-        (entry.dir ? 'This removes the whole folder and everything in it. ' : '') +
+      var msg = (entry.dir ? 'This removes the whole folder and everything in it. ' : '') +
         'This happens right now and cannot be undone — the same as anything else outside a ' +
         'folder marked as coming from your server, which vanishes on the next rebuild anyway.';
-      if (!window.confirm(msg)) return;
-      call('cfile-delete', { name: state.stack, service: service, path: path, recurse: entry.dir ? '1' : '0' })
-        .then(function (res) {
-          if (!res.ok) { sess.error = res.error || 'Could not delete "' + entry.name + '".'; renderFileList(service); return; }
-          navigateTo(service, sess.dir);
-        });
+      askConfirm({
+        title: 'Delete "' + entry.name + '"?',
+        bodyHtml: '<p>' + escFn(msg) + '</p>',
+        goLabel: 'Delete'
+      }).then(function (go) {
+        if (!go) return;
+        closeConfirm();
+        call('cfile-delete', { name: state.stack, service: service, path: path, recurse: entry.dir ? '1' : '0' })
+          .then(function (res) {
+            if (!res.ok) { sess.error = res.error || 'Could not delete "' + entry.name + '".'; renderFileList(service); return; }
+            navigateTo(service, sess.dir);
+          });
+      });
     }
 
     // Owner and permissions, asked for and then done — not prepared in a
@@ -1738,42 +1764,50 @@
     // becoming a careless Enter.
     function ownPermEntry(service, path, entry) {
       var sess = fileSession(service);
-      var owner = window.prompt('Who should own "' + entry.name + '"? A number, or a pair ' +
-        'like 99:100 — Unraid\'s own default. Leave it empty to keep the current owner.', '99:100');
-      if (owner === null) return;
-      owner = owner.trim();
+      askText('Owner for "' + entry.name + '"',
+        'Who should own it? A number, or a pair like 99:100 — Unraid’s own default. Leave it empty to keep the current owner.',
+        '99:100').then(function (owner) {
+        if (owner === null) return;
+        owner = owner.trim();
 
-      var mode = window.prompt('What permissions for "' + entry.name + '"? Three or four ' +
-        'digits, like 755 for a folder or 644 for a file. Leave it empty to keep them as ' +
-        'they are.', entry.dir ? '755' : '644');
-      if (mode === null) return;
-      mode = mode.trim();
+        askText('Permissions for "' + entry.name + '"',
+          'What permissions? Three or four digits, like 755 for a folder or 644 for a file. Leave it empty to keep them as they are.',
+          entry.dir ? '755' : '644').then(function (mode) {
+          if (mode === null) return;
+          mode = mode.trim();
 
-      if (owner === '' && mode === '') return;
+          if (owner === '' && mode === '') return;
 
-      var what = [];
-      if (owner !== '') what.push('owner ' + owner);
-      if (mode !== '') what.push('permissions ' + mode);
-      var msg = 'Set ' + what.join(' and ') + ' on "' + entry.name + '"?' +
-        (entry.dir ? ' This reaches everything inside it.' : '');
-      // The client only ever knows the container side of a mount — the paths
-      // come from the compose file's own volume fields — so this can say the
-      // change leaves the container but not where it lands.
-      if (isMountPath(service, path)) {
-        msg += ' This comes from your server, so it changes those files on your server too, ' +
-               'not just inside the container.';
-      }
-      if (!window.confirm(msg)) return;
-
-      call('cfile-chown', { name: state.stack, service: service, path: path, owner: owner, mode: mode })
-        .then(function (res) {
-          if (!res.ok) {
-            sess.error = res.error || 'Could not change "' + entry.name + '".';
-            renderFileList(service);
-            return;
-          }
-          navigateTo(service, sess.dir);
+          var what = [];
+          if (owner !== '') what.push('owner ' + owner);
+          if (mode !== '') what.push('permissions ' + mode);
+          // The client only ever knows the container side of a mount — the
+          // paths come from the compose file's own volume fields — so this
+          // can say the change leaves the container but not where it lands.
+          var msg = 'This happens right now.' +
+            (entry.dir ? ' This reaches everything inside it.' : '') +
+            (isMountPath(service, path)
+              ? ' This comes from your server, so it changes those files on your server too, not just inside the container.'
+              : '');
+          askConfirm({
+            title: 'Set ' + what.join(' and ') + ' on "' + entry.name + '"?',
+            bodyHtml: '<p>' + escFn(msg) + '</p>',
+            goLabel: 'Set'
+          }).then(function (go) {
+            if (!go) return;
+            closeConfirm();
+            call('cfile-chown', { name: state.stack, service: service, path: path, owner: owner, mode: mode })
+              .then(function (res) {
+                if (!res.ok) {
+                  sess.error = res.error || 'Could not change "' + entry.name + '".';
+                  renderFileList(service);
+                  return;
+                }
+                navigateTo(service, sess.dir);
+              });
+          });
         });
+      });
     }
 
     function uploadFile(service, file) {
@@ -1786,30 +1820,39 @@
         return;
       }
       var existing = sess.entries.some(function (e) { return e.name === file.name; });
-      if (existing && !window.confirm('"' + file.name + '" is already in this folder. Replace it?')) return;
+      var asked = existing
+        ? askConfirm({
+            title: 'Replace "' + file.name + '"?',
+            bodyHtml: '<p>' + escFn('"' + file.name + '" is already in this folder.') + '</p>',
+            goLabel: 'Replace'
+          }).then(function (go) { if (go) closeConfirm(); return go; })
+        : Promise.resolve(true);
 
-      var reader = new FileReader();
-      reader.onload = function () {
-        // btoa needs a binary string, one character per byte — the standard
-        // way to get one out of an ArrayBuffer without pulling in a library,
-        // which the plan already rules out for this whole file.
-        var raw = new Uint8Array(reader.result);
-        var binary = '';
-        for (var i = 0; i < raw.length; i++) binary += String.fromCharCode(raw[i]);
-        var b64 = btoa(binary);
-        call('cfile-save', {
-          name: state.stack, service: service, path: joinPath(sess.dir, file.name),
-          body: b64, encoding: 'base64'
-        }).then(function (res) {
-          if (!res.ok) { sess.error = res.error || 'Could not upload "' + file.name + '".'; renderFileList(service); return; }
-          navigateTo(service, sess.dir);
-        });
-      };
-      reader.onerror = function () {
-        sess.error = 'Could not read "' + file.name + '" from this computer.';
-        renderFileList(service);
-      };
-      reader.readAsArrayBuffer(file);
+      asked.then(function (go) {
+        if (!go) return;
+        var reader = new FileReader();
+        reader.onload = function () {
+          // btoa needs a binary string, one character per byte — the standard
+          // way to get one out of an ArrayBuffer without pulling in a library,
+          // which the plan already rules out for this whole file.
+          var raw = new Uint8Array(reader.result);
+          var binary = '';
+          for (var i = 0; i < raw.length; i++) binary += String.fromCharCode(raw[i]);
+          var b64 = btoa(binary);
+          call('cfile-save', {
+            name: state.stack, service: service, path: joinPath(sess.dir, file.name),
+            body: b64, encoding: 'base64'
+          }).then(function (res) {
+            if (!res.ok) { sess.error = res.error || 'Could not upload "' + file.name + '".'; renderFileList(service); return; }
+            navigateTo(service, sess.dir);
+          });
+        };
+        reader.onerror = function () {
+          sess.error = 'Could not read "' + file.name + '" from this computer.';
+          renderFileList(service);
+        };
+        reader.readAsArrayBuffer(file);
+      });
     }
 
     // ---- switching tabs ----------------------------------------------------

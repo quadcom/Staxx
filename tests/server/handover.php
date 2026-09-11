@@ -113,6 +113,17 @@ ok('a taken -2 falls to -3',
 ok('a name with a dot and a dash is untouched by the derivation',
    staxx_handover_setaside_name('my.app-1', []) === 'my.app-1-before-staxx');
 
+/* ------------------------------------------- staxx_handover_is_setaside -- */
+
+ok('the plain suffix is recognised',
+   staxx_handover_is_setaside('app-before-staxx') === true);
+ok('a numbered suffix is recognised',
+   staxx_handover_is_setaside('app-before-staxx-3') === true);
+ok('the suffix must be at the end, not merely present',
+   staxx_handover_is_setaside('before-staxx-app') === false);
+ok('an unrelated name is not a set-aside copy',
+   staxx_handover_is_setaside('app') === false);
+
 /* ------------------------------------------------ the state file's round trip -- */
 
 $targets = [

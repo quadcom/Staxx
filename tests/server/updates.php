@@ -252,6 +252,38 @@ ok('aggregate: an unchecked service beats "up to date"',
 ok('aggregate: label is not "up to date" when something failed to check',
    $partialFailure['label'] !== 'up to date', $partialFailure['label']);
 
+/* A folder's own roll-up: pills carry 'name' the way staxx_updates_for_folder()
+ * sets it, which is the only thing that tells this fold apart from a stack's
+ * per-service one above (card 01a08d12). */
+$folderUpdateA = ['state' => 'update', 'label' => 'update ready', 'source' => '', 'tip' => 't', 'name' => 'sonarr'];
+$folderUpdateB = ['state' => 'update', 'label' => 'new build of 1.2', 'source' => '', 'tip' => 't', 'name' => 'radarr'];
+$folderCurrent = ['state' => 'current', 'label' => 'up to date', 'source' => '', 'tip' => 't', 'name' => 'lidarr'];
+$folderTwo = staxx_updates_aggregate([$folderUpdateA, $folderUpdateB, $folderCurrent]);
+ok('folder aggregate: two updating stacks are both named in children',
+   count($folderTwo['children']) === 2, json_encode($folderTwo['children']));
+ok('folder aggregate: each child carries its own name and label',
+   $folderTwo['children'][0] === ['name' => 'sonarr', 'label' => 'update ready']
+   && $folderTwo['children'][1] === ['name' => 'radarr', 'label' => 'new build of 1.2'],
+   json_encode($folderTwo['children']));
+ok('folder aggregate: the tip counts stacks, not services',
+   strpos($folderTwo['tip'], 'stacks here have an update available') !== false, $folderTwo['tip']);
+ok('folder aggregate: the tip points at the folder, not "the stack"',
+   strpos($folderTwo['tip'], 'Open the folder') !== false, $folderTwo['tip']);
+
+/* One updating child behaves exactly as a single-service update already did
+ * — the existing 'version'/'was'/label fields are untouched by 'children'. */
+$folderOne = staxx_updates_aggregate([$folderUpdateA, $folderCurrent]);
+ok('folder aggregate: a single updating stack still gets its own label',
+   $folderOne['label'] === 'update ready', $folderOne['label']);
+ok('folder aggregate: a single updating stack still lists in children too',
+   $folderOne['children'] === [['name' => 'sonarr', 'label' => 'update ready']],
+   json_encode($folderOne['children']));
+
+/* A plain stack row (no 'name' on any pill) must carry no children at all —
+ * children is a folder-only fact, never a leftover for a service roll-up. */
+ok('aggregate: a service-level roll-up carries no children',
+   $mixed['children'] === [], json_encode($mixed['children']));
+
 /* --------------------------------------------------- 12. update-skip refusals */
 
 $state = staxx_update_state();
@@ -408,8 +440,13 @@ $realImages = is_array($realData) && is_array($realData['images'] ?? null) ? $re
 
 $withdrawnRef   = null;
 $withdrawnEntry = null;
+// Only an image a current stack still uses can be skipped by the pass below:
+// the state file also remembers images from stacks since removed, and one of
+// those is never in scope, so picking it made this case fail on a box that
+// had simply deleted a stack.
+$inUse = staxx_update_images('all');
 foreach ($realImages as $ref => $entry) {
-  if (!is_array($entry)) continue;
+  if (!is_array($entry) || !isset($inUse[$ref])) continue;
   if (staxx_updates_pill_for_image($ref, $realImages)['state'] === 'tagmissing') {
     $withdrawnRef = $ref;
     $withdrawnEntry = $entry;
@@ -554,8 +591,12 @@ ok('moving tag: tip names the running build\'s time',
 ok('moving tag: tip names the new build\'s time',
    strpos($movingPill['tip'], date('j M, H:i', $newWhen)) !== false, $movingPill['tip']);
 
-// Same identical-name case, but one build date is missing — never print
-// "new build" with nothing to back it up; fall back to the plain label.
+// Same identical-name case, but one build date is missing — the dated
+// sentence above cannot fire, but the digests still genuinely differ, so
+// this still reads as a rebuild rather than the plain "update ready" that
+// would otherwise show the same version running and available (card
+// 01a08d0a). 'was' comes back blank so the hover card prints one row, not
+// a false "Running main / Available main" pair.
 $state = staxx_update_state();
 $state['images'][$movingImage] = [
   'local' => 'sha256:aaa', 'remote' => 'sha256:bbb',
@@ -565,10 +606,12 @@ $state['images'][$movingImage] = [
 staxx_update_state_save($state);
 
 $noDatePill = staxx_updates_pill_for_image($movingImage, staxx_update_state()['images']);
-ok('moving tag: a missing build date falls back to "update ready"',
-   $noDatePill['label'] === 'update ready', $noDatePill['label']);
-ok('moving tag: the fallback never claims a new build with no dates',
-   strpos($noDatePill['label'], 'new build') === false, $noDatePill['label']);
+ok('moving tag: a missing build date still reports the new-build wording',
+   strpos($noDatePill['label'], 'new build') !== false, $noDatePill['label']);
+ok('moving tag: a missing build date blanks "was" so no false pair is shown',
+   $noDatePill['was'] === '', json_encode($noDatePill));
+ok('moving tag: the tip also carries the new-build wording',
+   strpos($noDatePill['tip'], 'new build') !== false, $noDatePill['tip']);
 
 // PLAN_121 item 7: different version strings no longer spell out an arrow —
 // a real pair could run to twice the width of every other pill — so the

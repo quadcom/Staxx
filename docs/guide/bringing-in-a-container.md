@@ -19,12 +19,21 @@ stack. Nothing switches off, starts, or changes while it runs.
    |---|---|---|
    | Unraid templates | Apps installed the Unraid way | Yes |
    | Compose Manager projects | Projects belonging to the Compose Manager plugin | Yes |
-   | Containers with nothing behind them | Started by hand, belonging to neither | No — reference only |
-   | Already imported | Name already taken by a stack in StaXX | No |
+   | Containers with nothing behind them | Started by hand, belonging to neither. A copy set aside by a takeover is not listed. | No — reference only |
+   | Already imported | Already a stack in StaXX, wherever it now lives | No |
    | Left over from a removed container | No container behind them any more | No |
 
    The first three groups start open. The last two start collapsed — they are background
-   information, not something to act on. Each row shows an icon, the name, where it came from, and
+   information, not something to act on. A row lands in **Already imported** when a stack of that
+   name exists anywhere in StaXX, even inside a folder; when its container is already running as
+   one of your stacks under another name; or when a stack records that it came from this very
+   template. Its note says where: *Already in StaXX as "Services/ReceiptWrangler".* Nothing is ever
+   hidden, so a template you have never brought in cannot look missing.
+
+   Stacks imported before StaXX recorded their source are matched up the first time you open this
+   window afterwards: where exactly one template fits, a note of which one is written into the
+   stack's file, the previous version is kept in its history, and a message lists every stack that
+   was touched. Each row shows an icon, the name, where it came from, and
    what its container is doing: **Running**, **Stopped**, or **No container**.
 
 3. **Tick what you want.** Only Unraid templates and Compose Manager projects can be ticked.

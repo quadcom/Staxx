@@ -168,6 +168,31 @@ foreach ([true, false] as $flag) {
      $r['/etc/passwd'] === 'ok', $r['/etc/passwd']);
 }
 
+/* ------------------------------------------------- unreachable FUSE mount --
+ *
+ * Card 01a08d11: a user-share stall must not read as "missing" for a folder
+ * that was never made. The stall itself can't be faked here — the real
+ * mount answers straight away — but the two ends of the fix are checkable:
+ * a genuinely missing folder under a real mount still comes back "missing"
+ * (the reachable branch, now with a retry added behind it), and a mount
+ * point that is not there at all comes back "unreachable" rather than
+ * "missing" or "offroot". */
+
+$missingUnderMount = $base.'/does-not-exist-either';
+$rMissingUnderMount = staxx_check_paths([$missingUnderMount]);
+ok('a genuinely missing folder under a real user-share mount is still "missing"',
+   $rMissingUnderMount[$missingUnderMount] === 'missing', $rMissingUnderMount[$missingUnderMount]);
+
+$noShareMount = '/mnt/remotes/zzb1nonexistent-share';
+if (is_dir($noShareMount)) {
+  echo "FAIL   $noShareMount exists on this box — pick a different scratch name\n";
+  exit(1);
+}
+$noShare = $noShareMount.'/x';
+$rNoShare = staxx_check_paths([$noShare]);
+ok('a path whose remote-share mount point does not exist at all is "unreachable"',
+   $rNoShare[$noShare] === 'unreachable', $rNoShare[$noShare]);
+
 /* -------------------------------------------------- staxx_check_paths() outside /mnt --
  *
  * PLAN_89: outside /mnt, a path is judged by where it is, not only by

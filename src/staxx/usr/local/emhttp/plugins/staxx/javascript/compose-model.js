@@ -1635,7 +1635,12 @@
   // moved here because readTest()/writeTest() need the exact same splitter,
   // and stacks.js now calls this copy rather than keeping a second one.
   function splitQuoted(str, sep) {
-    var tokens = [], buf = '', quote = '', i = 0, m;
+    // `started` tracks whether the current token has any content behind it —
+    // opening a quote counts even if nothing is typed inside it. Pushing on
+    // `buf` being truthy (the old test) silently dropped an explicitly
+    // quoted empty string, which is a real, empty argument; only a run of
+    // separators with nothing between them should yield no token at all.
+    var tokens = [], buf = '', quote = '', started = false, i = 0, m;
     while (i < str.length) {
       var ch = str.charAt(i);
       if (quote) {
@@ -1649,18 +1654,21 @@
         i++;
         continue;
       }
-      if (ch === '"' || ch === "'") { quote = ch; i++; continue; }
+      if (ch === '"' || ch === "'") { quote = ch; started = true; i++; continue; }
       m = sep ? sep.exec(str.slice(i)) : null;
       if (m) {
-        if (buf) { tokens.push(buf); buf = ''; }
+        if (started) { tokens.push(buf); buf = ''; started = false; }
         i += m[0].length;
         continue;
       }
       buf += ch;
+      // Padding alone never starts a token, or the space after a trailing
+      // comma in `["a", "b", ]` would come back as a phantom empty item.
+      if (!/\s/.test(ch)) started = true;
       i++;
     }
     if (quote) return null;
-    if (buf) tokens.push(buf);
+    if (started) tokens.push(buf);
     return tokens;
   }
 
@@ -1684,8 +1692,10 @@
     if (toks === null) return null;
     var out = [];
     for (var i = 0; i < toks.length; i++) {
-      var t = toks[i].replace(/^\s+|\s+$/g, '');
-      if (t) out.push(t);
+      // Trimmed, but kept even when empty — an explicitly quoted "" is a
+      // real argument (see splitQuoted); only a trailing-comma leftover with
+      // nothing typed after it (never quoted) fails to reach here at all.
+      out.push(toks[i].replace(/^\s+|\s+$/g, ''));
     }
     return out.length ? out : null;
   }
@@ -8210,11 +8220,13 @@
   }
 
   // Absolute (/mnt/...) or relative (./data) — the two shapes that resolve
-  // to a real folder. Anything else — a bare name (appdata), a ${...}
-  // reference compose only fills in at run time — is either a named volume
-  // or unresolvable, and neither is a path this can go and check.
+  // to a real folder. Anything else — a bare name (appdata), a ${...} or
+  // bare $VAR reference compose only fills in at run time — is either a
+  // named volume or unresolvable, and neither is a path this can go and
+  // check. A bare $VAR was being sent to the server exactly as written,
+  // which could only ever come back "missing".
   function isHostPathLike(s) {
-    if (s.indexOf('${') >= 0) return false;
+    if (s.indexOf('$') >= 0) return false;
     return s.charAt(0) === '/' || s.charAt(0) === '.';
   }
 

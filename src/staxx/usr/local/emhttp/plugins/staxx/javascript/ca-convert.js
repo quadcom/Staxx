@@ -259,9 +259,15 @@
 
   // The stamp recording how a generated file came to exist — see
   // schema/x-unraid.schema.json's $defs/imported. Written once, at
-  // generation time, never touched again afterwards.
-  function importedMetaLines(from) {
-    return ['  imported:', '    from: ' + from, '    on: ' + todayStamp()];
+  // generation time, never touched again afterwards. `id` and `name` are
+  // optional — the source's own identifier and its display name at import
+  // time — so the Import list can recognise a stack renamed on the way in;
+  // omitted lines are simply not written, exactly as an older file would.
+  function importedMetaLines(from, id, name) {
+    var lines = ['  imported:', '    from: ' + from, '    on: ' + todayStamp()];
+    if (scalarPresent(id))   lines.push('    id: ' + dq(id));
+    if (scalarPresent(name)) lines.push('    name: ' + dq(name));
+    return lines;
   }
 
   /* =====================================================================
@@ -812,6 +818,32 @@
     if (idx > 0) ports.unshift(ports.splice(idx, 1)[0]);
   }
 
+  // Since the editor gained its Web page port field (PLAN_51) the address in
+  // the file is meant to carry a plain number, which the server takes as
+  // written; a "[PORT:nnn]" marker is only a legacy shape the server has to
+  // work out from the ports: list. Import is the one moment a human is
+  // looking at the file, so the number is settled here, by the same rule the
+  // editor's field uses: the outside (host) half of the first ports: entry on
+  // a bridge/default network, the inside (target) half on everything else
+  // (host/none/container:/service: modes, or a named network), and the
+  // marker's own number when there is no entry or the needed half is empty -
+  // a macvlan service such as Plex publishes nothing, so that is the only
+  // port it has. [IP] is left alone; the server fills that in.
+  function resolveWebUIPort(webui, ports, net) {
+    var raw = scalarPresent(webui) ? String(webui) : '';
+    var m = /\[PORT:([^\]]*)\]/i.exec(raw);
+    if (!m) return raw;
+    var token = m[1].trim();
+
+    var bridge = !net.mode && !net.network;
+    var first = ports.length ? ports[0] : null;
+    var literal = first ? (bridge ? first.host : first.target) : '';
+    if (!literal) literal = token;
+    if (!literal) return raw;                             // [PORT:] with nothing to fall back on
+
+    return raw.replace(m[0], literal);
+  }
+
   /* =====================================================================
    * Assembly
    * ===================================================================== */
@@ -1006,7 +1038,7 @@
     if (scalarPresent(app.WebUI) || svcProject || svcSupport || scalarPresent(app.Icon)) {
       svc.push('    x-unraid:');
       if (scalarPresent(app.Icon)) svc.push('      icon: ' + scalarOut(app.Icon));
-      if (scalarPresent(app.WebUI)) svc.push('      webui: ' + dq(app.WebUI));
+      if (scalarPresent(app.WebUI)) svc.push('      webui: ' + dq(resolveWebUIPort(app.WebUI, cfg.ports, net)));
       if (svcProject) svc.push('      project: ' + svcProject);
       if (svcSupport) svc.push('      support: ' + svcSupport);
     }
@@ -1014,7 +1046,10 @@
     /* ---- stack-level x-unraid ------------------------------------------ */
 
     var stackMeta = ['  version: 1'];
-    stackMeta = stackMeta.concat(importedMetaLines(opts.origin === 'template' ? 'unraid-template' : 'community-applications'));
+    stackMeta = stackMeta.concat(importedMetaLines(
+      opts.origin === 'template' ? 'unraid-template' : 'community-applications',
+      opts.importId, opts.importName
+    ));
     var category = normaliseCategory(app);
     if (category) stackMeta.push('  category: ' + scalarOut(category));
     // scalarPresent(), not bare truthiness — same empty-XML-element bug as

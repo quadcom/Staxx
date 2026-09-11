@@ -1462,34 +1462,54 @@ switch ($action) {
     }
     $service = (string)($_POST['service'] ?? '');
 
-    // Update must never be the thing that starts a container the reader
-    // deliberately stopped. Whole-stack scope always updates; a single named
-    // service only updates if it is already running — otherwise (stopped, or
-    // never started at all) it is pulled instead, same as the menu's own
-    // Pull, so its next start picks up the new image. Same container lookup
-    // staxx_stack_containers() gives the row renderer, so this can never
-    // disagree with what the row itself shows as running.
+    // Update must never be the thing that starts a container or a stack the
+    // reader deliberately stopped — at either scope. A single named service
+    // only updates if it is already running; otherwise (stopped, or never
+    // started at all) it is pulled instead, same as the menu's own Pull, so
+    // its next start picks up the new image. Whole-stack scope now follows
+    // the same rule: nothing running pulls the whole stack, so every image
+    // is refreshed and the stack stays stopped; everything running updates
+    // the whole stack as before; a mix updates only the services that are
+    // running, leaving the stopped ones neither started nor pulled — their
+    // chip stays until they are next started, which is the honest state.
+    // Same container lookup staxx_stack_containers() gives the row
+    // renderer, so this can never disagree with what the row itself shows
+    // as running.
+    $file = staxx_find_compose_file(staxx_stack_dir($name));
+    $rows = staxx_stack_containers([
+      'name' => $name, 'leaf' => staxx_path_leaf($name), 'project' => '',
+      'file' => $file,
+    ]);
+    $runningSvcs = [];
+    foreach ($rows as $row) {
+      if ($row['service'] !== '' && strtolower($row['state']) === 'running') {
+        $runningSvcs[] = $row['service'];
+      }
+    }
+    $runningSvcs = array_values(array_unique($runningSvcs));
+
     $verb = 'update';
     if ($service !== '') {
-      $rows = staxx_stack_containers([
-        'name' => $name, 'leaf' => staxx_path_leaf($name), 'project' => '',
-        'file' => staxx_find_compose_file(staxx_stack_dir($name)),
-      ]);
-      $running = false;
-      foreach ($rows as $row) {
-        if ($row['service'] === $service && strtolower($row['state']) === 'running') {
-          $running = true;
-          break;
-        }
-      }
-      if (!$running) $verb = 'pull';
+      if (!in_array($service, $runningSvcs, true)) $verb = 'pull';
+    } elseif (!$runningSvcs) {
+      $verb = 'pull';
+    } else {
+      // Fully running if every declared service is among the running ones;
+      // if the compose file cannot be read for its service list, fall back
+      // to every container row seen being running — the best that can be
+      // told without it.
+      $allSvcs = staxx_service_names($file);
+      $fullyRunning = $allSvcs !== []
+        ? !array_diff($allSvcs, $runningSvcs)
+        : count($runningSvcs) === count($rows);
+      if (!$fullyRunning) $service = $runningSvcs; // array: update only these
     }
 
     // Recorded before the job starts, not after — a hand-pressed Update is
     // how most updates actually happen, so it has to leave a rollback
     // record the same way the automatic queue does, and a slow or failed
     // job must not be the reason nothing was ever recorded.
-    staxx_update_record_before_pull($name, $service);
+    staxx_update_record_before_pull($name, is_array($service) ? '' : $service);
 
     $job = staxx_start_job($name, $verb, $error, $service);
     if ($job === '') staxx_reply(['ok' => false, 'error' => $error]);
@@ -2457,21 +2477,39 @@ switch ($action) {
    * 'root' is the full path stacks land in, so the panel can say so before it
    * writes anything — copying somebody's template settings, API keys among
    * them, into a named place is worth stating out loud rather than leaving
-   * implicit. 'existing' is every stack's folder+leaf, in the same shape
+   * implicit. 'existing' is every stack's folder+leaf+rel, in the same shape
    * staxx_scan_stacks() already uses, so the browser can tell whether a name
    * is taken WITHIN THE FOLDER THE USER CHOSE — the per-entry 'taken' flag
    * above only ever checked the top level, which is wrong once a destination
    * folder is offered.
+   *
+   * Not quite read-only: PLAN_141 point 6's back-fill runs first, stamping
+   * imported.id/name onto any stack that can be matched to a template with
+   * confidence but was imported before this version recorded that — see
+   * staxx_import_backfill(). Every static cache that fact could have gone
+   * stale in is forced fresh afterwards, so the reply below always reflects
+   * what is on disk NOW rather than what it was at the top of this request.
    */
   case 'import-list':
+    $templates  = staxx_import_templates();
+    $backfilled = staxx_import_backfill($templates);
+    if ($backfilled) {
+      staxx_scan_stacks_reset();
+      staxx_compose_meta('', $err, true);
+      staxx_import_taken_names(true);
+      staxx_import_taken_sources(true);
+      staxx_import_templates(true);
+    }
+
     $existing = array_map(
-      fn($s) => ['folder' => $s['folder'], 'leaf' => $s['leaf']],
+      fn($s) => ['folder' => $s['folder'], 'leaf' => $s['leaf'], 'rel' => $s['rel']],
       staxx_scan_stacks()['stacks']
     );
     staxx_reply([
-      'ok'       => true,
-      'root'     => staxx_stack_root(),
-      'existing' => $existing,
+      'ok'         => true,
+      'root'       => staxx_stack_root(),
+      'existing'   => $existing,
+      'backfilled' => $backfilled,
     ] + staxx_import_list());
 
   /* ---- write one imported stack ----

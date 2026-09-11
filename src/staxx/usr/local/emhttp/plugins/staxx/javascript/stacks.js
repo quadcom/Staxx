@@ -162,6 +162,393 @@
   var pageNotice   = document.getElementById('staxx-page-notice');
   var pageNoticeIcon   = pageNotice ? pageNotice.querySelector('.fa') : null;
   var pageNoticeAction = document.getElementById('staxx-page-notice-action');
+
+  /* ---- Notices: the ticker and its panel (PLAN_139) -----------------------
+   *
+   * One small store of live notices, replacing what used to be a stack of
+   * full-width banners above the button row. A sticky entry is drawn from a
+   * PHP-rendered .staxx-notice block the page opened with (Docker not
+   * running, the store unreachable, and so on) and stays however long the
+   * condition holds; everything else carries a dismiss control, and a
+   * dismissal is remembered per browser so accepting one once does not mean
+   * seeing it again for the rest of the visit.
+   */
+  var ticker        = document.getElementById('staxx-notices');
+  var tickerBtn     = null, tickerIcon = null, tickerCount = null;
+  var tickerLineA   = null, tickerLineB = null, tickerActiveLine = null;
+  var noticePanel        = document.getElementById('staxx-noticepanel');
+  var noticePanelList    = document.getElementById('staxx-noticepanel-list');
+  var noticePanelClose   = document.getElementById('staxx-noticepanel-close');
+  var noticePanelDismissAll = document.getElementById('staxx-noticepanel-dismissall');
+
+  var noticesList        = [];     // {id, kind, text, html, action, sticky, addedAt}
+  var noticesDismissedMap = null;  // {id: expiryMs}, loaded from localStorage on first use
+  var noticeRotateTimer  = null;
+  var noticeRotateIndex  = 0;
+  var noticeRotatePaused = false;
+
+  var NOTICE_ICONS = {
+    bad:  'fa-times-circle',
+    warn: 'fa-exclamation-triangle',
+    good: 'fa-check-circle',
+    info: 'fa-info-circle'
+  };
+
+  // A short, stable hash so two notices with the same text collapse to the
+  // same id — the point of remembering a dismissal at all, and of not piling
+  // up duplicates every time the same check runs again.
+  function hashText(s) {
+    var h = 0;
+    for (var i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+    return (h >>> 0).toString(36);
+  }
+
+  // localStorage can throw in a private window or with site data blocked —
+  // guarded everywhere it is touched, same as everything else that reads it
+  // on this page.
+  function loadDismissed() {
+    if (noticesDismissedMap) return noticesDismissedMap;
+    noticesDismissedMap = {};
+    try {
+      var raw = window.localStorage.getItem('staxx.notices.dismissed');
+      if (raw) noticesDismissedMap = JSON.parse(raw) || {};
+    } catch (e) { /* treated as nothing dismissed */ }
+    return noticesDismissedMap;
+  }
+
+  function saveDismissed() {
+    try {
+      window.localStorage.setItem('staxx.notices.dismissed', JSON.stringify(noticesDismissedMap || {}));
+    } catch (e) { /* a dismissal not remembered is not a failure worth surfacing */ }
+  }
+
+  function noticeIsDismissed(id) {
+    var map = loadDismissed();
+    var until = map[id];
+    if (!until) return false;
+    if (until < Date.now()) { delete map[id]; saveDismissed(); return false; }
+    return true;
+  }
+
+  function activeNotices() {
+    return noticesList.filter(function (n) { return n.sticky || !noticeIsDismissed(n.id); });
+  }
+
+  var notices = {
+    // opts: {id, kind, text, html, action:{label,run}, sticky}. id defaults
+    // to kind plus a hash of the text, so repeat calls for the same message
+    // (a re-run of the same check) update one entry rather than stacking up.
+    add: function (opts) {
+      var kind = opts.kind || 'info';
+      var text = opts.text || '';
+      var id = opts.id || (kind + '-' + hashText(text || opts.html || ''));
+      if (!opts.sticky && noticeIsDismissed(id)) return id;
+      var entry = null;
+      for (var i = 0; i < noticesList.length; i++) {
+        if (noticesList[i].id === id) { entry = noticesList[i]; break; }
+      }
+      if (!entry) { entry = { id: id }; noticesList.push(entry); }
+      entry.kind   = kind;
+      entry.text   = text;
+      entry.html   = opts.html || null;
+      entry.action = opts.action || null;
+      entry.sticky = !!opts.sticky;
+      entry.addedAt = Date.now();   // every add() is "this is current", including a re-run
+      notices.render();
+      return id;
+    },
+    remove: function (id) {
+      noticesList = noticesList.filter(function (n) { return n.id !== id; });
+      notices.render();
+    },
+    // Sticky entries reflect a live condition rather than a message, so they
+    // are not dismissible — they clear themselves the moment the page next
+    // renders without the condition that put them there.
+    dismiss: function (id) {
+      var entry = null;
+      for (var i = 0; i < noticesList.length; i++) {
+        if (noticesList[i].id === id) { entry = noticesList[i]; break; }
+      }
+      if (entry && entry.sticky) return;
+      var map = loadDismissed();
+      map[id] = Date.now() + 7 * 24 * 60 * 60 * 1000;
+      saveDismissed();
+      notices.remove(id);
+    },
+    dismissAll: function () {
+      noticesList.filter(function (n) { return !n.sticky; })
+                 .forEach(function (n) { notices.dismiss(n.id); });
+    },
+    render: renderNotices
+  };
+
+  function ensureTickerMarkup() {
+    if (!ticker || tickerBtn) return;
+    ticker.innerHTML =
+      '<button type="button" class="staxx-ticker-btn" id="staxx-ticker-btn" ' +
+        'aria-haspopup="dialog" aria-controls="staxx-noticepanel">' +
+        '<i class="fa staxx-ticker-icon" aria-hidden="true"></i>' +
+        '<span class="staxx-ticker-lines">' +
+          '<span class="staxx-ticker-line"></span>' +
+          '<span class="staxx-ticker-line"></span>' +
+        '</span>' +
+        '<span class="staxx-ticker-count" hidden></span>' +
+      '</button>';
+    tickerBtn   = ticker.querySelector('.staxx-ticker-btn');
+    tickerIcon  = ticker.querySelector('.staxx-ticker-icon');
+    tickerCount = ticker.querySelector('.staxx-ticker-count');
+    var lines = ticker.querySelectorAll('.staxx-ticker-line');
+    tickerLineA = lines[0];
+    tickerLineB = lines[1];
+    tickerActiveLine = tickerLineA;
+    tickerBtn.addEventListener('click', openNoticePanel);
+    ticker.addEventListener('mouseenter', function () { noticeRotatePaused = true; });
+    ticker.addEventListener('mouseleave', function () { noticeRotatePaused = false; });
+  }
+
+  // A bad notice always holds the slot rather than taking its turn in the
+  // rotation — an "act now" condition should not be waiting behind a hint.
+  function pickDisplayNotice(list) {
+    var bad = list.filter(function (n) { return n.kind === 'bad'; });
+    if (bad.length) return bad[0];
+    if (!list.length) return null;
+    if (noticeRotateIndex >= list.length) noticeRotateIndex = 0;
+    return list[noticeRotateIndex];
+  }
+
+  // Two lines stacked in the same box, the old one sliding up and out as the
+  // new one slides in from below — see .staxx-ticker-line in the sheet.
+  function animateTickerText(text) {
+    if (!tickerActiveLine || tickerActiveLine.textContent === text) return;
+    var outgoing = tickerActiveLine;
+    var incoming = (tickerActiveLine === tickerLineA) ? tickerLineB : tickerLineA;
+    incoming.textContent = text;
+    outgoing.classList.add('staxx-ticker-line--out');
+    incoming.classList.add('staxx-ticker-line--in');
+    void incoming.offsetWidth;   // force layout so removing --in next actually animates
+    incoming.classList.remove('staxx-ticker-line--in');
+    window.setTimeout(function () {
+      outgoing.classList.remove('staxx-ticker-line--out');
+      outgoing.textContent = '';
+    }, 220);
+    tickerActiveLine = incoming;
+  }
+
+  function paintTickerSlot() {
+    ensureTickerMarkup();
+    var list = activeNotices();
+    var current = pickDisplayNotice(list);
+    if (!current || !tickerBtn) return;
+    ticker.className = 'staxx-ticker staxx-ticker--' + current.kind;
+    tickerIcon.className = 'fa staxx-ticker-icon ' + (NOTICE_ICONS[current.kind] || NOTICE_ICONS.info);
+    animateTickerText(current.text);
+    var extra = list.length - 1;
+    tickerCount.hidden = extra <= 0;
+    if (extra > 0) tickerCount.textContent = String(list.length);
+  }
+
+  function startNoticeRotation() {
+    if (noticeRotateTimer) return;
+    noticeRotateTimer = window.setInterval(function () {
+      if (noticeRotatePaused || (noticePanel && noticePanel.open)) return;
+      var list = activeNotices();
+      if (!list.length || list.some(function (n) { return n.kind === 'bad'; })) return;
+      noticeRotateIndex = (noticeRotateIndex + 1) % list.length;
+      paintTickerSlot();
+    }, 6000);
+  }
+
+  function stopNoticeRotation() {
+    if (noticeRotateTimer) { window.clearInterval(noticeRotateTimer); noticeRotateTimer = null; }
+  }
+
+  function buildNoticeRow(n) {
+    var li = document.createElement('li');
+    li.className = 'staxx-noticepanel-row staxx-noticepanel-row--' + n.kind;
+
+    var icon = document.createElement('i');
+    icon.className = 'fa ' + (NOTICE_ICONS[n.kind] || NOTICE_ICONS.info) + ' staxx-noticepanel-row-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    li.appendChild(icon);
+
+    var body = document.createElement('div');
+    body.className = 'staxx-noticepanel-row-body';
+    if (n.html) body.innerHTML = n.html; else body.textContent = n.text;
+    li.appendChild(body);
+
+    var time = document.createElement('span');
+    time.className = 'staxx-noticepanel-row-time';
+    time.textContent = timeAgoWords(Math.floor(n.addedAt / 1000)) + ' ago';
+    li.appendChild(time);
+
+    if (n.action) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'staxx-btn staxx-btn--small';
+      btn.textContent = n.action.label;
+      btn.addEventListener('click', function () {
+        n.action.run();
+        closeNoticePanel();
+      });
+      li.appendChild(btn);
+    }
+
+    if (!n.sticky) {
+      var close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'staxx-notice-close';
+      close.title = 'Dismiss';
+      close.setAttribute('aria-label', 'Dismiss');
+      close.innerHTML = '<i class="fa fa-times" aria-hidden="true"></i>';
+      close.addEventListener('click', function () { notices.dismiss(n.id); renderNoticePanel(); });
+      li.appendChild(close);
+    }
+
+    return li;
+  }
+
+  function renderNoticePanel() {
+    if (!noticePanelList) return;
+    var list = activeNotices();
+    noticePanelList.innerHTML = '';
+    if (!list.length) {
+      var empty = document.createElement('li');
+      empty.className = 'staxx-noticepanel-empty';
+      empty.textContent = 'Nothing to show.';
+      noticePanelList.appendChild(empty);
+    } else {
+      list.forEach(function (n) { noticePanelList.appendChild(buildNoticeRow(n)); });
+    }
+    if (noticePanelDismissAll) {
+      noticePanelDismissAll.hidden = !list.some(function (n) { return !n.sticky; });
+    }
+  }
+
+  // A <dialog> opened with showModal() paints in the top layer, which is
+  // sized against the viewport rather than the bar it visually belongs to —
+  // so it is positioned in script, against the ticker's own box, recomputed
+  // on open and on resize rather than laid out with CSS alone.
+  function positionNoticePanel() {
+    if (!noticePanel || !ticker) return;
+    var r = ticker.getBoundingClientRect();
+    var w = noticePanel.offsetWidth || 340;
+    var left = Math.min(r.left, window.innerWidth - w - 12);
+    left = Math.max(12, left);
+    noticePanel.style.left = left + 'px';
+    noticePanel.style.top  = (r.bottom + 6) + 'px';
+  }
+
+  function closeNoticePanel() {
+    if (noticePanel && noticePanel.open) noticePanel.close();
+  }
+
+  function openNoticePanel() {
+    if (!noticePanel) return;
+    renderNoticePanel();
+    if (!noticePanel.open) noticePanel.showModal();
+    positionNoticePanel();
+    stopNoticeRotation();
+    var firstControl = noticePanelList.querySelector('button');
+    if (firstControl) firstControl.focus(); else if (noticePanelClose) noticePanelClose.focus();
+  }
+
+  // The fallback this whole feature was built to make unnecessary: if the
+  // ticker container is ever missing (a stale cached page holding the old
+  // markup), the one notice that matters most is still said, the old way,
+  // rather than silently going nowhere.
+  function paintPageNoticeFallback() {
+    if (!pageNotice) return;
+    var list = activeNotices();
+    if (!list.length) { pageNotice.hidden = true; return; }
+    var n = pickDisplayNotice(list) || list[0];
+    pageNotice.querySelector('div').textContent = n.text;
+    pageNotice.classList.toggle('staxx-notice--bad', n.kind === 'bad');
+    if (pageNoticeIcon) pageNoticeIcon.className = 'fa ' + (NOTICE_ICONS[n.kind] || NOTICE_ICONS.info);
+    if (pageNoticeAction) {
+      if (n.action) {
+        pageNoticeAction.textContent = n.action.label;
+        pageNoticeAction.onclick = n.action.run;
+        pageNoticeAction.hidden = false;
+      } else {
+        pageNoticeAction.hidden = true;
+        pageNoticeAction.onclick = null;
+      }
+    }
+    pageNotice.hidden = false;
+    pageNotice.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function renderNotices() {
+    if (!ticker) { paintPageNoticeFallback(); return; }
+    var list = activeNotices();
+    if (!list.length) {
+      ticker.hidden = true;
+      stopNoticeRotation();
+      closeNoticePanel();
+      return;
+    }
+    ticker.hidden = false;
+    paintTickerSlot();
+    startNoticeRotation();
+    if (noticePanel && noticePanel.open) renderNoticePanel();
+  }
+
+  if (noticePanel) {
+    // <dialog> fires no event for the backdrop, because the backdrop is a
+    // pseudo-element of the dialog itself and a click on it targets the
+    // dialog — same hit-testing trick the stack editor uses for its own
+    // backdrop click, further down this file.
+    noticePanel.addEventListener('click', function (event) {
+      if (event.target !== noticePanel) return;
+      var r = noticePanel.getBoundingClientRect();
+      var inside = event.clientX >= r.left && event.clientX <= r.right &&
+                   event.clientY >= r.top  && event.clientY <= r.bottom;
+      if (!inside) noticePanel.close();
+    });
+    noticePanel.addEventListener('close', function () {
+      startNoticeRotation();
+      paintTickerSlot();
+    });
+    window.addEventListener('resize', function () {
+      if (noticePanel.open) positionNoticePanel();
+    });
+  }
+  if (noticePanelClose) noticePanelClose.addEventListener('click', closeNoticePanel);
+  if (noticePanelDismissAll) {
+    noticePanelDismissAll.addEventListener('click', function () {
+      notices.dismissAll();
+      renderNoticePanel();
+    });
+  }
+
+  // Every PHP-rendered .staxx-notice block above marks its own kind with
+  // data-notice-kind, and is lifted into the ticker as a sticky entry here
+  // rather than being read once and thrown away. The block is hidden, not
+  // removed outright: a button it carries — "settings panel", "See what each
+  // registry was asked" — keeps whatever click handler the rest of this file
+  // binds to it further down by id, which would find nothing to bind to if
+  // the element had actually been taken out of the document. Where a block
+  // carries such a button, the LAST one in it becomes the notice's action —
+  // the one always present (the Docker Hub sign-in button only appears in
+  // one of the two wordings the registry notice can take).
+  if (scaffold && ticker) {
+    var stickyBlocks = scaffold.querySelectorAll('.staxx-notice[data-notice-kind]');
+    for (var sb = 0; sb < stickyBlocks.length; sb++) {
+      (function (block) {
+        var kind = block.dataset.noticeKind || 'warn';
+        var text = block.textContent.replace(/\s+/g, ' ').trim();
+        var buttons = block.querySelectorAll('button');
+        var action = null;
+        if (buttons.length) {
+          var btn = buttons[buttons.length - 1];
+          action = { label: btn.textContent.trim(), run: function () { btn.click(); } };
+        }
+        block.hidden = true;
+        notices.add({ kind: kind, text: text, action: action, sticky: true });
+      })(stickyBlocks[sb]);
+    }
+  }
+
   var refNote      = document.getElementById('staxx-refnote');
   var gapNote     = document.getElementById('staxx-required-note');
   // PLAN_65 phase C — the "what clashed" summary. No server-rendered element
@@ -241,6 +628,10 @@
   // rest of this dialog already is, and hidden except when a caller passes
   // askConfirm() an extraLabel.
   var confirmExtra  = document.getElementById('staxx-confirm-extra');
+  // showInfo()'s bad-news marker, and the shared window.* fallback for both
+  // it and askText() when the dialog markup is missing (PLAN_137).
+  var confirmBadicon = document.getElementById('staxx-confirm-badicon');
+  function noDialogFallback(msg) { window.alert(msg); }
 
   // PLAN_84 phase 3 — the "fill in this stack's details" chooser. Its own
   // dialog rather than a shape squeezed into #staxx-confirm above — see the
@@ -298,8 +689,8 @@
   var undoBtn  = document.getElementById('staxx-undo');
 
   // PLAN_67 step 1's "Tidy this file" button. Built here rather than added to
-  // the page's own markup, the same reasoning as iconAdoptNotice further
-  // down — one more button in that row is not worth a PHP change for. Same
+  // the page's own markup, the same reasoning as showIconAdoptSummary()
+  // further down — one more button in that row is not worth a PHP change for. Same
   // class as Undo, which it sits beside: it is the same kind of action, an
   // edit to the whole file that Undo can put straight back.
   var tidyBtn = document.createElement('button');
@@ -1102,35 +1493,26 @@
     errorBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
-  // showError() writes into the editor dialog's footer, so it is invisible
-  // whenever that dialog is not open. This is the same thing said by the page
-  // itself, for callers that can fire before any dialog exists — an install
-  // caught on Unraid's Add Container page that would not convert, or (Phase
-  // F) a container found belonging to no stack.
+  // This is the same thing said by the page itself, for callers that can fire
+  // before any dialog exists — an install caught on Unraid's Add Container
+  // page that would not convert, or (Phase F) a container found belonging to
+  // no stack. PLAN_139 turned it into a thin wrapper over notices.add(): the
+  // ten call sites elsewhere in this file need no change, and get a ticker
+  // entry instead of the full-width banner this used to paint directly.
   //
-  // `action`, when given, turns this from an error into an offer: the red
-  // icon and border become the same accent used everywhere else on the page,
-  // and a button appears that runs action.run when clicked. Every existing
-  // caller passes no action and gets exactly the old error styling.
+  // `action`, when given, turns this from an error into an offer, same as
+  // before: no action is the "act now" red-icon kind, an action is the
+  // milder kind used for something merely worth doing. The unused
+  // #staxx-page-notice markup and its own two variables above stay only as
+  // the fallback target notices.render() would need if the ticker container
+  // itself were ever missing from the page.
   function showPageNotice(message, action) {
-    if (!pageNotice) return;
-    pageNotice.querySelector('div').textContent = message;
-    pageNotice.classList.toggle('staxx-notice--bad', !action);
-    if (pageNoticeIcon) {
-      pageNoticeIcon.className = 'fa ' + (action ? 'fa-info-circle' : 'fa-times-circle');
-    }
-    if (pageNoticeAction) {
-      if (action) {
-        pageNoticeAction.textContent = action.label;
-        pageNoticeAction.onclick = action.run;
-        pageNoticeAction.hidden = false;
-      } else {
-        pageNoticeAction.hidden = true;
-        pageNoticeAction.onclick = null;
-      }
-    }
-    pageNotice.hidden = false;
-    pageNotice.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    notices.add({
+      kind: action ? 'warn' : 'bad',
+      text: message,
+      action: action || null,
+      sticky: false
+    });
   }
 
   function clearError() {
@@ -3495,8 +3877,30 @@
         var netExternal = !!(YAML && YAML.externalChoice && f.parts.value &&
                               f.parts.value.value === YAML.externalChoice);
         var netLost = netExternal && netLoaded && netVal && !netPresent[netVal];
+        // PLAN_140: the same box-renamed-to-bridge case the server-side
+        // refusal catches (eth0.2 -> br0.2) — same rule, worked out here so
+        // the tag and the button never disagree with what a run would refuse
+        // on. Driver is not checked here: an external network's own row
+        // conflates "driver" and "external" into one box (DECL_PRIMARY), so a
+        // driver declared alongside external:true is not readable off this
+        // field — the server-side refusal is the backstop for that case.
+        var netFixTo = '';
+        if (netLost) {
+          var netDot = netVal.lastIndexOf('.');
+          if (netDot !== -1) {
+            var netSuffix = netVal.slice(netDot + 1);
+            for (var nfi = 0; nfi < ALL_NETS.length; nfi++) {
+              var candName = ALL_NETS[nfi][0], candDot = candName.lastIndexOf('.');
+              if (candDot !== -1 && candName.slice(candDot + 1) === netSuffix) { netFixTo = candName; break; }
+            }
+          }
+        }
         var netTag = netLost
-                   ? '<span class="staxx-fieldtag staxx-fieldtag--lost">not found on this server</span>'
+                   ? '<span class="staxx-fieldtag staxx-fieldtag--lost">not found on this server</span>' +
+                     (netFixTo
+                       ? ' <button type="button" class="staxx-netfix" data-netfix-idx="' + index +
+                         '" data-netfix-to="' + esc(netFixTo) + '">Use ' + esc(netFixTo) + '</button>'
+                       : '')
                    : '';
         // The ⓘ sits BESIDE the box, not in its head slot: head renders above
         // the control, which suits a tag ("read-only mount", "not found on
@@ -3507,6 +3911,12 @@
                     boxHtml(f, index, 'name', 'network name', '', netTag, false, ' data-rename="1"') +
                     helpBtnHtml(help, helpId) +
                   '</div>');
+        if (netLost) {
+          bits.push('<p class="staxx-fieldnote">This server has no network called "' +
+                     esc(netVal) + '".' +
+                     (netFixTo ? ' The nearest is "' + esc(netFixTo) + '".' : '') +
+                     '</p>');
+        }
       } else {
         bits.push(declNameHtml(f, index));
       }
@@ -6770,6 +7180,36 @@
       return;
     }
 
+    // PLAN_140's "Use br0.2" beside a declared network the server does not
+    // have. Goes through the exact rename path commit()'s data-rename branch
+    // uses (renameDeclared carries every service reference along with the
+    // declaration, as one undo entry) rather than writing into the name box
+    // and dispatching a change — nothing here needs a live box to already
+    // exist mid-edit.
+    var netFixBtn = event.target.closest('[data-netfix-idx]');
+    if (netFixBtn) {
+      var nfField = MODEL.fields[netFixBtn.dataset.netfixIdx | 0];
+      var nfWas   = nfField && nfField.parts && nfField.parts.name && nfField.parts.name.value;
+      var nfNext  = netFixBtn.dataset.netfixTo;
+      if (!nfField || !nfWas || !nfNext || nfNext === nfWas) return;
+
+      clearError();
+      flushPending();
+      pushUndo('renaming the network "' + nfWas + '" to "' + nfNext + '"');
+      var nfRenamed = YAML.renameDeclared(MODEL.doc, 'networks', nfWas, nfNext);
+      if (!nfRenamed.ok) {
+        undoStack.pop();
+        updateUndo();
+        showError(nfRenamed.error);
+        return;
+      }
+      structuralEdit(-1, 'Renamed "' + nfWas + '" to "' + nfNext + '"' +
+                    (nfRenamed.refs > 0
+                      ? '. ' + nfRenamed.refs + (nfRenamed.refs === 1 ? ' reference' : ' references') + ' updated.'
+                      : '.'));
+      return;
+    }
+
     // PLAN_105's "Write each dollar sign twice", beside a hash the file is
     // carrying with single ones (adviceText()). Deliberately writes through
     // the field's own box and commit(), rather than calling setPart here:
@@ -7276,32 +7716,38 @@
     }
 
     var word = modeWord(mode);
-    if (names.length && !window.confirm(
-          'Compose does not allow a service to have both network_mode and networks. ' +
-          'Switching "' + service + '" to ' + word + ' will remove ' +
-          (names.length === 1 ? 'its one network row (' : 'all ' + names.length + ' of its network rows (') +
-          names.join(', ') + '). They are kept and can be put back if you switch away from ' + word + '.')) {
-      return;
+
+    function go() {
+      pushUndo('switching "' + service + '" to ' + word);
+      var res = YAML.setNetworkMode(MODEL.doc, MODEL, service, mode);
+      if (!res.ok) {
+        // setNetworkMode can fail after it has already stashed and removed
+        // the service's networks: block, so a plain pop would discard the
+        // snapshot that could put that half-write back — restore from it.
+        restoreUndo();
+        setYamlStatus(res.error);
+        return;
+      }
+
+      structuralEdit(-1, 'Switched "' + service + '" to ' + word + '.' +
+                    (names.length
+                      ? ' Its network' + (names.length === 1 ? '' : 's') + ' ' +
+                        (names.length === 1 ? 'was' : 'were') + ' set aside — see the note below to put ' +
+                        (names.length === 1 ? 'it' : 'them') + ' back.'
+                      : '') +
+                    ' Undo is at the bottom if that was wrong.');
     }
 
-    pushUndo('switching "' + service + '" to ' + word);
-    var res = YAML.setNetworkMode(MODEL.doc, MODEL, service, mode);
-    if (!res.ok) {
-      // setNetworkMode can fail after it has already stashed and removed
-      // the service's networks: block, so a plain pop would discard the
-      // snapshot that could put that half-write back — restore from it.
-      restoreUndo();
-      setYamlStatus(res.error);
-      return;
-    }
+    if (!names.length) { go(); return; }
 
-    structuralEdit(-1, 'Switched "' + service + '" to ' + word + '.' +
-                  (names.length
-                    ? ' Its network' + (names.length === 1 ? '' : 's') + ' ' +
-                      (names.length === 1 ? 'was' : 'were') + ' set aside — see the note below to put ' +
-                      (names.length === 1 ? 'it' : 'them') + ' back.'
-                    : '') +
-                  ' Undo is at the bottom if that was wrong.');
+    askConfirm({
+      title: 'Switch "' + service + '" to ' + word + '?',
+      bodyHtml: '<p>' + esc('Compose does not allow a service to have both network_mode and networks. ' +
+        'Switching "' + service + '" to ' + word + ' will remove ' +
+        (names.length === 1 ? 'its one network row (' : 'all ' + names.length + ' of its network rows (') +
+        names.join(', ') + '). They are kept and can be put back if you switch away from ' + word + '.') + '</p>',
+      goLabel: 'Switch'
+    }).then(function (ok) { if (ok) go(); });
   }
 
   // The reverse of switchServiceToMode() — dropped straight into commit()'s
@@ -7470,36 +7916,45 @@
       }
       if (!livePorts) { structuralEdit(-1, ''); return true; }
 
-      if (!window.confirm(
-            '"' + el.value + '" gives "' + f.service + '" its own address on the network, and Docker refuses ' +
-            'to publish a port there. Switching will keep ' +
-            (livePorts === 1 ? 'its one published port'
-                             : (livePorts === 2 ? 'both published ports'
-                                                : 'its ' + livePorts + ' published ports')) +
-            ' as a note instead, so the file can still start. Continue?')) {
-        // Nothing here went through pushUndo() — a plain value edit never
-        // takes one — so the write commit() just made is put back by hand,
-        // the same way the box itself is reset to what it showed before.
-        YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
-        el.value = f.parts.value.value;
-        // Said out loud: without this the status line still shows whatever
-        // happened before, which reads as though the switch went through.
-        setYamlStatus('Left "' + f.service + '" on "' + f.parts.value.value +
-                      '". Nothing was changed.');
-        return true;
-      }
+      // The question is asked asynchronously, but this still returns true
+      // straight away — both answers below are this function "taking over",
+      // per its own doc comment, so the caller never needs to wait on which
+      // one was picked.
+      askConfirm({
+        title: 'Switch "' + f.service + '" onto "' + el.value + '"?',
+        bodyHtml: '<p>' + esc('"' + el.value + '" gives "' + f.service + '" its own address on the network, ' +
+          'and Docker refuses to publish a port there. Switching will keep ' +
+          (livePorts === 1 ? 'its one published port'
+                           : (livePorts === 2 ? 'both published ports'
+                                              : 'its ' + livePorts + ' published ports')) +
+          ' as a note instead, so the file can still start.') + '</p>',
+        goLabel: 'Switch'
+      }).then(function (go) {
+        if (!go) {
+          // Nothing here went through pushUndo() — a plain value edit never
+          // takes one — so the write commit() just made is put back by hand,
+          // the same way the box itself is reset to what it showed before.
+          YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
+          el.value = f.parts.value.value;
+          // Said out loud: without this the status line still shows whatever
+          // happened before, which reads as though the switch went through.
+          setYamlStatus('Left "' + f.service + '" on "' + f.parts.value.value +
+                        '". Nothing was changed.');
+          return;
+        }
 
-      var cmt = YAML.commentOutPorts(MODEL.doc, f.service);
-      if (!cmt.ok) {
-        YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
-        el.value = f.parts.value.value;
-        setYamlStatus(cmt.error);
-        return true;
-      }
-      structuralEdit(-1, 'Switched "' + f.service + '" onto "' + el.value + '". ' +
-                    cmt.count + (cmt.count === 1 ? ' published port was' : ' published ports were') +
-                    ' kept as a note, since a container with its own address cannot publish ' +
-                    (cmt.count === 1 ? 'it' : 'any of them') + '.');
+        var cmt = YAML.commentOutPorts(MODEL.doc, f.service);
+        if (!cmt.ok) {
+          YAML.setPart(MODEL.doc, MODEL, f.id, el.dataset.part, f.parts.value.value);
+          el.value = f.parts.value.value;
+          setYamlStatus(cmt.error);
+          return;
+        }
+        structuralEdit(-1, 'Switched "' + f.service + '" onto "' + el.value + '". ' +
+                      cmt.count + (cmt.count === 1 ? ' published port was' : ' published ports were') +
+                      ' kept as a note, since a container with its own address cannot publish ' +
+                      (cmt.count === 1 ? 'it' : 'any of them') + '.');
+      });
       return true;
     }
 
@@ -7518,13 +7973,14 @@
   // exactly as compose itself tells the two apart. Cancelling, or leaving it
   // blank, writes nothing and puts the box back to what it showed before.
   function promptShareContainer(f, el) {
-    var name = window.prompt('Share which container’s network?');
-    name = name ? name.trim() : '';
-    if (!name) { el.value = f.parts.value.value; return; }
+    askText('Share a container’s network', 'Container name', '').then(function (typed) {
+      var name = typed ? typed.trim() : '';
+      if (!name) { el.value = f.parts.value.value; return; }
 
-    var services = (MODEL.declared && MODEL.declared.services) || [];
-    var mode = (services.indexOf(name) >= 0 && name !== f.service ? 'service:' : 'container:') + name;
-    switchServiceToMode(f.service, mode);
+      var services = (MODEL.declared && MODEL.declared.services) || [];
+      var mode = (services.indexOf(name) >= 0 && name !== f.service ? 'service:' : 'container:') + name;
+      switchServiceToMode(f.service, mode);
+    });
   }
 
   // Moves one port to a new spot in its service's list (PLAN_40) — the same
@@ -8887,9 +9343,27 @@
    * with the marks, so nothing survives from one stack's editor into the
    * next.
    */
-  var pathCache = {};   // path string -> 'ok' | 'file' | 'missing' | 'skipped' | 'inuse' | 'offroot'
+  // path string -> {v: verdict, t: when cached}. 'missing' and 'unreachable'
+  // expire after 15s (see pathVerdict() below) so a stalled user-share FUSE
+  // answer — the transient behind card 01a08d11 — is re-asked on the next
+  // reparse instead of being remembered for the rest of the editor session.
+  // 'ok', 'file', 'skipped', 'inuse' and 'offroot' never expire.
+  var pathCache = {};
+  var PATH_TRANSIENT_MS = 15000;
   var pathHits  = [];   // last YAML.hostPaths() result: [{path, line, col, len}]
   var pathToken = 0;    // bumped by pathsReset() so a late reply cannot paint
+
+  // The live verdict for one path, or undefined if never asked or if a
+  // transient answer has expired — either way checkHostPaths() treats it as
+  // unknown and asks again.
+  function pathVerdict(path) {
+    var e = pathCache[path];
+    if (!e) return undefined;
+    if ((e.v === 'missing' || e.v === 'unreachable') && Date.now() - e.t > PATH_TRANSIENT_MS) {
+      return undefined;
+    }
+    return e.v;
+  }
 
   function pathsReset() {
     pathToken++;
@@ -8919,7 +9393,7 @@
 
     var unknown = [];
     pathHits.forEach(function (h) {
-      if (!(h.path in pathCache) && unknown.indexOf(h.path) < 0) unknown.push(h.path);
+      if (pathVerdict(h.path) === undefined && unknown.indexOf(h.path) < 0) unknown.push(h.path);
     });
     if (!unknown.length) return;
 
@@ -8938,7 +9412,8 @@
         // so a bad reply lands here as res.ok === false, handled the same
         // way as a token mismatch: simply nothing drawn.
         if (myToken !== pathToken || !res || !res.ok || !res.paths) return;
-        Object.keys(res.paths).forEach(function (p) { pathCache[p] = res.paths[p]; });
+        var now = Date.now();
+        Object.keys(res.paths).forEach(function (p) { pathCache[p] = { v: res.paths[p], t: now }; });
         repaintMark();
       });
   }
@@ -8954,12 +9429,14 @@
   // only be made under /mnt" is worse than no button. A relative path is
   // still underlined; it just does not get the offer, since whether it lands
   // under /mnt depends on where the stack root is and only the server knows.
+  // 'unreachable' is never offered either — the share is not answering right
+  // now, and "creating" a folder there would land on nothing.
   function missingHostPaths() {
     if (fileOpen !== null) return [];   // a companion file has no volumes at all
     var out = [];
     pathHits.forEach(function (h) {
       if (h.path.indexOf('/mnt/') !== 0) return;
-      if (pathCache[h.path] === 'missing' && out.indexOf(h.path) < 0) out.push(h.path);
+      if (pathVerdict(h.path) === 'missing' && out.indexOf(h.path) < 0) out.push(h.path);
     });
     return out;
   }
@@ -8996,7 +9473,7 @@
     if (fileOpen !== null) return [];   // a companion file has no volumes at all
     var out = [];
     pathHits.forEach(function (h) {
-      if (pathCache[h.path] === 'inuse' && out.indexOf(h.path) < 0) out.push(h.path);
+      if (pathVerdict(h.path) === 'inuse' && out.indexOf(h.path) < 0) out.push(h.path);
     });
     return out;
   }
@@ -9147,8 +9624,8 @@
   // The visible slice of bad host paths, drawn into the same layer as the
   // active-field band and the search hits above — see repaintMark()'s own
   // comment for why one layer serves all of them. Only 'missing', 'file',
-  // 'inuse' and 'offroot' are ever drawn; 'ok', 'skipped', and any path the
-  // server has not answered for yet, are left alone.
+  // 'inuse', 'offroot' and 'unreachable' are ever drawn; 'ok', 'skipped', and
+  // any path the server has not answered for yet, are left alone.
   function repaintPaths() {
     if (!pathHits.length) return;
 
@@ -9162,13 +9639,17 @@
 
     for (var i = 0; i < pathHits.length; i++) {
       var h = pathHits[i];
-      var verdict = pathCache[h.path];
-      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse' && verdict !== 'offroot') continue;
+      var verdict = pathVerdict(h.path);
+      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse' &&
+          verdict !== 'offroot' && verdict !== 'unreachable') continue;
       if (h.line < firstLine || h.line > lastLine) continue;
 
       var box = document.createElement('div');
       box.className = 'staxx-badpath' +
-        (verdict === 'file' ? ' staxx-badpath--file' : verdict === 'inuse' ? ' staxx-badpath--inuse' : '');
+        // 'unreachable' draws the same amber as 'file' — neither is the plain
+        // "does not exist" red, since neither means the folder can be created.
+        (verdict === 'file' || verdict === 'unreachable' ? ' staxx-badpath--file'
+          : verdict === 'inuse' ? ' staxx-badpath--inuse' : '');
       box.style.top    = (PAD_T + h.line * LINE_H - yamlPane.scrollTop) + 'px';
       box.style.left   = (leftBase + h.col * CHAR_W - yamlPane.scrollLeft) + 'px';
       box.style.width  = (h.len * CHAR_W) + 'px';
@@ -9183,8 +9664,9 @@
   function pathMarkAt(line, col) {
     for (var i = 0; i < pathHits.length; i++) {
       var h = pathHits[i];
-      var verdict = pathCache[h.path];
-      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse' && verdict !== 'offroot') continue;
+      var verdict = pathVerdict(h.path);
+      if (verdict !== 'missing' && verdict !== 'file' && verdict !== 'inuse' &&
+          verdict !== 'offroot' && verdict !== 'unreachable') continue;
       if (h.line === line && col >= h.col && col < h.col + h.len) {
         return { path: h.path, verdict: verdict };
       }
@@ -9199,6 +9681,10 @@
     if (mark.verdict === 'inuse') {
       return mark.path + ' already has files in it. Another container may already be using it. ' +
         'Starting this stack would point this container at that same data.';
+    }
+    if (mark.verdict === 'unreachable') {
+      return mark.path + ' could not be reached just now. If it is a remote share, check it is ' +
+        'mounted; otherwise this should clear by itself.';
     }
     if (mark.verdict === 'offroot') {
       // "under /mnt" rather than "on the array": a pool — ZFS or otherwise —
@@ -10757,7 +11243,12 @@
     // no schema this plugin controls.
     var result;
     try {
-      result = window.StaxxCA.convert(app, { appdataRoot: APPDATA });
+      result = window.StaxxCA.convert(app, {
+        appdataRoot: APPDATA,
+        // Recorded so the Import list can recognise a stack renamed on the
+        // way in — see x-unraid's imported.id/name.
+        importId: app && (app.TemplateURL || app.Name), importName: app && app.Name
+      });
     } catch (e) {
       showPageNotice(label + ' could not be converted: ' + (e && e.message ? e.message : e));
       return;
@@ -11553,7 +12044,7 @@
    * name, a write that just succeeded) also deletes it from here, so a plain
    * count of this object's keys is always the right number for the button. */
   var importRoot     = '';    // the stack root, for the "files land here" sentence
-  var importExisting = [];    // [{folder, leaf}] — every stack that exists, kept in sync as writes land
+  var importExisting = [];    // [{folder, leaf, rel}] — every stack that exists, kept in sync as writes land
   // A sentinel rather than a real folder id — no real one can start with an
   // underscore (staxx_valid_name() requires alphanumeric first), so this can
   // never collide with a folder someone actually made.
@@ -11595,16 +12086,21 @@
     return entry.source === 'project' ? String(entry.dest || '') : String(entry.folder || '');
   }
 
-  // A row can be ticked only while its own leaf name is free INSIDE ITS OWN
-  // DESTINATION FOLDER. Compared case-insensitively because the default
-  // stack root is the flash drive, which does not distinguish case, so
-  // "Vert" and "vert" are the same folder whichever of them typed a name first.
+  // PLAN_141 point 4: a row is taken when its own leaf name matches ANY
+  // existing stack AT ANY DEPTH, not only one sitting in the exact folder
+  // this row would land in — a stack moved into a folder since it was
+  // imported must still read as done, wherever this row's own destination
+  // happens to be pointed today. Compared case-insensitively, same reason as
+  // ever: the default stack root is the flash drive, which does not
+  // distinguish case. entry.taken is the server's own answer (name, running-
+  // project or imported.id/name match — see Import.php) and always wins,
+  // since it knows things this list alone cannot: a stack renamed on import,
+  // or a project running under a different name than its folder guesses.
   function importIsTaken(entry, folder) {
+    if (entry && entry.taken) return true;
     var leaf = importLeafName(entry).toLowerCase();
-    var f    = String(folder || '').toLowerCase();
     return importExisting.some(function (s) {
-      return String(s.folder || '').toLowerCase() === f &&
-             String(s.leaf   || '').toLowerCase() === leaf;
+      return String(s.leaf || '').toLowerCase() === leaf;
     });
   }
 
@@ -11779,7 +12275,10 @@
       // 'template' here, not the CA-catalogue default: what a row previews
       // has to be byte-for-byte what pressing Import would write, and that
       // depends on the first line the converter writes naming its source.
-      result = window.StaxxCA.convert(entry.app, { appdataRoot: APPDATA, origin: 'template' });
+      result = window.StaxxCA.convert(entry.app, {
+        appdataRoot: APPDATA, origin: 'template',
+        importId: entry.id, importName: entry.name
+      });
     } catch (e) {
       return '<p class="staxx-form-empty">This template could not be converted: ' +
              esc(e && e.message ? e.message : String(e)) + '</p>';
@@ -11983,12 +12482,19 @@
           '</label>'
         : (g.note ? '<span class="staxx-import-groupnote">' + esc(g.note) + '</span>' : '');
 
+      // The "Already imported" group reads as a count of what it is not
+      // offering, "7 already in StaXX", rather than the bare number every
+      // other group gets — PLAN_141 point 4: a window that only ever says
+      // "7" next to a heading reads as a size, not as "these are done".
+      var titleHtml = groupIdx === IMPORT_G_DONE
+        ? g.label + ' — <span class="staxx-import-count">' + list.length + ' already in StaXX</span>'
+        : g.label + ' <span class="staxx-import-count">' + list.length + '</span>';
+
       blocks.push(
         '<div class="staxx-import-grouphead">' +
           '<div class="staxx-import-grouptitle">' +
             chevron +
-            '<h4 class="staxx-import-group">' + g.label +
-              ' <span class="staxx-import-count">' + list.length + '</span>' + tickedNote + '</h4>' +
+            '<h4 class="staxx-import-group">' + titleHtml + tickedNote + '</h4>' +
           '</div>' +
           extra +
         '</div>' +
@@ -12181,6 +12687,21 @@
       importBuildFolderOptions();
       importUpdateDestPath();
       importPaint();
+
+      // PLAN_141 point 6 — said once, the moment it happens: the server has
+      // just stamped which template one or more already-imported stacks came
+      // from, a one-off catch-up for stacks imported before this version
+      // recorded that. Nothing to decide here, just worth knowing about.
+      var backfilled = res.backfilled || [];
+      if (backfilled.length) {
+        var itemsHtml = backfilled.map(function (b) {
+          return '<li>' + esc(b.rel) + ' — ' + esc(b.name) + '</li>';
+        }).join('');
+        showInfo('Import list brought up to date',
+          '<p>StaXX has noted which template each of these stacks came from, so the Import ' +
+          'list can recognise them. Each stack\'s previous version is kept in its history.</p>' +
+          '<ul>' + itemsHtml + '</ul>');
+      }
     });
   }
 
@@ -12432,7 +12953,7 @@
         call('import-project', { name: stackName, id: entry.id, about: '{}' }, 20000).then(function (res) {
           if (res.ok) {
             written++;
-            importExisting.push({ folder: destFolder, leaf: leaf });
+            importExisting.push({ folder: destFolder, leaf: leaf, rel: stackName });
             importMarkWritten(idx);
           } else {
             failures.push({ name: entry.name, error: res.error });
@@ -12444,7 +12965,10 @@
 
       var result;
       try {
-        result = window.StaxxCA.convert(entry.app, { appdataRoot: APPDATA, origin: 'template' });
+        result = window.StaxxCA.convert(entry.app, {
+          appdataRoot: APPDATA, origin: 'template',
+          importId: entry.id, importName: entry.name
+        });
       } catch (e) {
         // The converter runs against whatever template is actually on this
         // server, which answers to no schema this plugin controls — one bad
@@ -12501,7 +13025,7 @@
       call('import-write', { name: stackName, body: writeBody, bodyAsIs: writeBodyAsIs, about: about }, 20000).then(function (res) {
         if (res.ok) {
           written++;
-          importExisting.push({ folder: destFolder, leaf: leaf });
+          importExisting.push({ folder: destFolder, leaf: leaf, rel: stackName });
           importMarkWritten(idx);
         } else {
           failures.push({ name: entry.name, error: res.error });
@@ -13475,13 +13999,23 @@
     if (modal.open) modal.close();
   }
 
-  // Returns false when the user backed out, so callers can abandon whatever
-  // they were about to do.
+  // Resolves false when the user backed out, so callers can abandon whatever
+  // they were about to do. A promise even in the clean-editor case, so every
+  // caller can treat it the same way rather than branching on shape.
   function confirmDiscard() {
-    if (!isDirty()) return true;
-    return window.confirm(
-      'Close without saving?\n\n' +
-      'Your changes to "' + (nameInput.value || 'this stack') + '" will be lost.');
+    if (!isDirty()) return Promise.resolve(true);
+    return askConfirm({
+      title: 'Close without saving?',
+      bodyHtml: '<p>' + esc('Your changes to "' + (nameInput.value || 'this stack') +
+                            '" will be lost.') + '</p>',
+      goLabel: 'Close without saving'
+    }).then(function (go) {
+      // askConfirm() leaves the dialog up for callers that go on to show
+      // progress in it; this one has nothing more to say, so close it here
+      // or the question sits over the list after the editor has gone.
+      if (go) closeConfirm();
+      return go;
+    });
   }
 
   modal.addEventListener('cancel', function (event) {
@@ -13505,7 +14039,11 @@
       if (pressed) pressed.focus();
       return;
     }
-    if (!confirmDiscard()) event.preventDefault();
+    // Escape's default close cannot be undone once let through, so it is
+    // always prevented first; confirmDiscard() resolving true then closes
+    // the dialog by hand — the async twin of the old synchronous branch.
+    event.preventDefault();
+    confirmDiscard().then(function (go) { if (go) modal.close(); });
   });
 
   modal.addEventListener('close', function () {
@@ -13575,7 +14113,7 @@
     var r = modal.getBoundingClientRect();
     var inside = event.clientX >= r.left && event.clientX <= r.right &&
                  event.clientY >= r.top  && event.clientY <= r.bottom;
-    if (!inside && confirmDiscard()) modal.close();
+    if (!inside) confirmDiscard().then(function (go) { if (go) modal.close(); });
   });
 
   modal.addEventListener('click', function (event) {
@@ -14440,45 +14978,41 @@
     return COMPOSE_FILENAMES.indexOf(file.toLowerCase()) === -1;
   }
 
-  // window.prompt, not a dialog — this file already uses window.prompt and
-  // window.confirm for one-line questions, and a dialog would be more
-  // furniture than "what should this be called?" needs.
   function renameFile() {
     var name = fileOpen;
     if (name === null) return;   // the compose tab has no Rename item
 
-    var to = window.prompt('Rename "' + name + '" to:', name);
-    if (to === null) return;   // cancelled
-    to = to.trim();
-    if (to === name || to === '') return;
+    askText('Rename file', 'Rename "' + name + '" to', name).then(function (to) {
+      if (to === null) return;   // cancelled
+      to = to.trim();
+      if (to === name || to === '') return;
 
-    if (!validFilename(to)) {
-      setYamlStatus('File names may contain letters, numbers, dots, dashes and underscores, ' +
-                     'must be 63 characters or fewer, and may not be a compose file.');
-      return;
-    }
-
-    call('file-rename', { name: openedName, file: name, to: to }).then(function (res) {
-      if (!res || !res.ok) {
-        setYamlStatus((res && res.error) || ('Could not rename "' + name + '".'));
+      if (!validFilename(to)) {
+        setYamlStatus('File names may contain letters, numbers, dots, dashes and underscores, ' +
+                       'must be 63 characters or fewer, and may not be a compose file.');
         return;
       }
-      // The pending-autosave dot, if any, follows the file to its new name —
-      // otherwise it would keep showing under a filename no tab has any more.
-      if (fileDots[name] !== undefined) { fileDots[to] = fileDots[name]; delete fileDots[name]; }
-      // fileOpen has to end up holding the new name, or the next autosave
-      // (runFileSave() keys off it) would write to a file that no longer
-      // exists.
-      if (fileOpen === name) fileOpen = to;
-      filesLoad();
+
+      call('file-rename', { name: openedName, file: name, to: to }).then(function (res) {
+        if (!res || !res.ok) {
+          setYamlStatus((res && res.error) || ('Could not rename "' + name + '".'));
+          return;
+        }
+        // The pending-autosave dot, if any, follows the file to its new name —
+        // otherwise it would keep showing under a filename no tab has any more.
+        if (fileDots[name] !== undefined) { fileDots[to] = fileDots[name]; delete fileDots[name]; }
+        // fileOpen has to end up holding the new name, or the next autosave
+        // (runFileSave() keys off it) would write to a file that no longer
+        // exists.
+        if (fileOpen === name) fileOpen = to;
+        filesLoad();
+      });
     });
   }
 
-  // Deletes the file on the active tab. A file nothing references only
-  // needs one sentence, so window.confirm() is enough for that case — the
-  // same reasoning openFile()'s comments give for using window.prompt above.
-  // A file the compose file DOES reference needs more than one sentence, so
-  // that case goes through #staxx-confirm via askConfirm() instead.
+  // Deletes the file on the active tab, through #staxx-confirm either way —
+  // a file nothing references gets the short one-line question, a file the
+  // compose file DOES reference gets the longer warning below.
   function deleteFile() {
     var name = fileOpen;
     if (name === null) return;   // the compose tab has no Delete item
@@ -14503,7 +15037,11 @@
 
     var users = fileRefMap()[name];
     if (!users) {
-      if (window.confirm('Delete "' + name + '"? This cannot be undone.')) go();
+      askConfirm({
+        title: 'Delete "' + name + '"?',
+        bodyHtml: '<p>This cannot be undone.</p>',
+        goLabel: 'Delete file'
+      }).then(function (goAhead) { closeConfirm(); if (goAhead) go(); });
       return;
     }
 
@@ -14624,14 +15162,21 @@
         'not be a compose file.');
     }
     var exists = FILES.some(function (f) { return f.name === name && !f.dir; });
-    if (exists && !window.confirm('"' + name + '" is already in this folder. Replace it?')) {
-      return Promise.resolve(null);
-    }
-    return call('file-save', { name: openedName, file: name, body: body, encoding: encoding })
-      .then(function (res) {
-        if (!res || !res.ok) return Promise.reject((res && res.error) || ('Could not save "' + name + '".'));
-        return name;
-      });
+    var asked = exists
+      ? askConfirm({ title: 'Replace "' + name + '"?',
+                      bodyHtml: '<p>' + esc('"' + name + '" is already in this folder.') + '</p>',
+                      goLabel: 'Replace' })
+      : Promise.resolve(true);
+
+    return asked.then(function (go) {
+      if (exists) closeConfirm();
+      if (!go) return null;
+      return call('file-save', { name: openedName, file: name, body: body, encoding: encoding })
+        .then(function (res) {
+          if (!res || !res.ok) return Promise.reject((res && res.error) || ('Could not save "' + name + '".'));
+          return name;
+        });
+    });
   }
 
   /* ---- offering to wire a freshly added settings file in ---------------
@@ -14814,22 +15359,21 @@
     fileAddBtn.addEventListener('click', function () { fileInput.click(); });
   }
 
-  // window.prompt, same reasoning renameFile() gives above for using it over
-  // a dialog — "what should this be called?" is one line, not a form.
   function newFile() {
-    var name = window.prompt('New file name:');
-    if (name === null) return;   // cancelled
-    name = name.trim();
-    if (!name) return;
+    askText('New file', 'File name', '').then(function (name) {
+      if (name === null) return;   // cancelled
+      name = name.trim();
+      if (!name) return;
 
-    var existed = FILES.some(function (f) { return f.name === name && !f.dir; });
-    saveUpload(name, '', 'text').then(function (landed) {
-      if (!landed) return;
-      return filesLoad().then(function () {
-        openFile(landed);
-        if (!existed) return envPickAndWire(landed, '');
-      });
-    }).catch(function (msg) { setYamlStatus(msg); });
+      var existed = FILES.some(function (f) { return f.name === name && !f.dir; });
+      saveUpload(name, '', 'text').then(function (landed) {
+        if (!landed) return;
+        return filesLoad().then(function () {
+          openFile(landed);
+          if (!existed) return envPickAndWire(landed, '');
+        });
+      }).catch(function (msg) { setYamlStatus(msg); });
+    });
   }
 
   if (fileNewBtn) fileNewBtn.addEventListener('click', newFile);
@@ -15618,12 +16162,15 @@
   // uses. A stopped stack has no containers to orphan, so nothing to offer.
   function offerRecreate(name) {
     if (!CAN_RUN) return;
-    if (!window.confirm(
-          'Renaming a service leaves its old container behind until the stack ' +
-          'is recreated.\n\nRecreate "' + stackLabel(name) + '" now?')) {
-      return;
-    }
-    run(name, 'up', afterRun('up', name));
+    askConfirm({
+      title: 'Recreate "' + stackLabel(name) + '"?',
+      bodyHtml: '<p>Renaming a service leaves its old container behind until the stack is ' +
+                'recreated.</p>',
+      goLabel: 'Recreate'
+    }).then(function (go) {
+      closeConfirm();
+      if (go) run(name, 'up', afterRun('up', name));
+    });
   }
 
   // The common ending once the compose file is on disk and no directory move
@@ -15728,18 +16275,21 @@
 
     if (!running) { applyRename(); return; }
 
-    if (!window.confirm(
-          label + ' is running. Renaming it will stop the containers and ' +
-          'start them again under the new name.')) {
-      reenable();
-      return;
-    }
+    askConfirm({
+      title: 'Rename "' + label + '"?',
+      bodyHtml: '<p>' + esc(label + ' is running. Renaming it will stop the containers and ' +
+                            'start them again under the new name.') + '</p>',
+      goLabel: 'Rename'
+    }).then(function (go) {
+      closeConfirm();
+      if (!go) { reenable(); return; }
 
-    run(oldName, 'down', function (job) {
-      // run() has already shown a failure box for a non-zero exit, so this
-      // just stops the sequence rather than saying the same thing twice.
-      if (job.exit !== 0 && job.exit !== null) { reenable(); return; }
-      applyRename();
+      run(oldName, 'down', function (job) {
+        // run() has already shown a failure box for a non-zero exit, so this
+        // just stops the sequence rather than saying the same thing twice.
+        if (job.exit !== 0 && job.exit !== null) { reenable(); return; }
+        applyRename();
+      });
     });
   }
 
@@ -16163,6 +16713,13 @@
       var entry = jobs[job];
       entry.rows = rowsByJob[job];
       setBusy(entry.rows, entry.pillLabel);
+      // refreshRows() built a brand new row, so any overlay tickJobs() had
+      // already painted is gone with the old one — repaint straight from
+      // what was last computed for this job rather than waiting a second
+      // for the next tick.
+      if (entry.prog && (entry.prog.phase === 'pull' || entry.prog.phase === 'create')) {
+        entry.rows.forEach(function (row) { paintProgressOverlay(row, entry.prog); });
+      }
     });
   }
 
@@ -16207,8 +16764,140 @@
     rows.forEach(function (row) {
       delete row.dataset.busy;
       spin(row, false);
+      removeProgressOverlay(row);
     });
   }
+
+  /* ---- pull/update progress overlay (PLAN_138) --------------------------
+   *
+   * Drawn over a row's services/state/address cells while a pull or update
+   * job is in flight, on top of setBusy()'s pill — the icon column is left
+   * clear (see progressOverlayOffsets()) so its spinner keeps saying which row
+   * this is. Built once per row and updated in place; removed with a short
+   * leave animation once pullProgress() (see below
+   * above) says the pull side is over.
+   */
+
+  // Read rather than assumed, because the name column's own width is
+  // "auto" (see the grid-template-columns comment in staxx.css) and moves
+  // with whatever the longest name on screen happens to be. Below the card
+  // breakpoint (PLAN_128) the same cell instead spans the top of the card in
+  // full, icon included, so the sheet switches from the left offset to the
+  // top one — both are written here on every repaint so the query only has
+  // to pick which one it wants.
+  function progressOverlayOffsets(row) {
+    var nameCell = row.querySelector('.staxx-cell--name');
+    var rect = nameCell ? nameCell.getBoundingClientRect() : null;
+    return { left: (rect ? rect.width : 0) + 'px', top: (rect ? rect.height : 0) + 'px' };
+  }
+
+  function applyProgressOverlayOffsets(el, row) {
+    var off = progressOverlayOffsets(row);
+    el.style.setProperty('--staxx-rowprog-left', off.left);
+    el.style.setProperty('--staxx-rowprog-top', off.top);
+  }
+
+  // Turns a seconds estimate into the wording the download bar's info
+  // string uses — rounded loosely, because a byte-rate sampled over a few
+  // seconds is a guess, not a countdown worth stating to the second.
+  function timeLeft(seconds) {
+    if (seconds < 5) return 'a few seconds left';
+    if (seconds < 90) return Math.round(seconds) + ' s left';
+    return 'about ' + Math.round(seconds / 60) + ' min left';
+  }
+
+  function progressHeadline(prog) {
+    if (prog.phase === 'failed') return prog.error || 'Something went wrong.';
+    if (prog.phase === 'done')   return 'Started.';
+    if (prog.phase === 'start')  return 'Starting the container…';
+    if (prog.phase === 'create') return 'Creating the container…';
+    if (prog.layerTotal) {
+      // No percentage here: the two bars below carry the real numbers, and a
+      // third figure that agreed with neither only confused the reading.
+      return 'Downloading the image · ' + prog.layerDone + ' of ' + prog.layerTotal + ' layers done';
+    }
+    return 'Working…';
+  }
+
+  function paintProgressOverlay(row, prog) {
+    var el = row.querySelector('.staxx-rowprog');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'staxx-rowprog';
+      el.innerHTML =
+        '<span class="staxx-rowprog-head"></span>' +
+        '<span class="staxx-rowprog-bar" data-bar="dl"><span class="staxx-rowprog-label">Download</span>' +
+          '<span class="staxx-rowprog-track"><span class="staxx-rowprog-fill"></span></span>' +
+          '<span class="staxx-rowprog-info"></span></span>' +
+        '<span class="staxx-rowprog-bar" data-bar="ex"><span class="staxx-rowprog-label">Unpack</span>' +
+          '<span class="staxx-rowprog-track"><span class="staxx-rowprog-fill"></span></span>' +
+          '<span class="staxx-rowprog-info"></span></span>';
+      row.appendChild(el);
+    }
+    applyProgressOverlayOffsets(el, row);
+    el.classList.toggle('staxx-rowprog--fail', prog.phase === 'failed');
+
+    // Rate needs history the parser cannot supply on its own — it reparses
+    // the whole log fresh every call — so a handful of samples live on the
+    // overlay element itself. That element is torn down with the row the
+    // moment the job ends, taking its samples with it, so there is nothing
+    // here to clear up.
+    el._samples = el._samples || [];
+    var now = Date.now();
+    el._samples.push({ t: now, b: prog.dlBytes || 0 });
+    while (el._samples.length > 2 && now - el._samples[0].t > 20000) el._samples.shift();
+
+    var rate = 0;
+    if (el._samples.length >= 2) {
+      var oldest = el._samples[0], newest = el._samples[el._samples.length - 1];
+      var span = (newest.t - oldest.t) / 1000;
+      if (span >= 2 && newest.b > oldest.b) rate = (newest.b - oldest.b) / span;
+    }
+
+    // The time left goes on the headline, not a row — the two rows below
+    // stay the same shape either way, one figure column wide.
+    var head = progressHeadline(prog);
+    if (rate && (prog.dlPct || 0) < 100 && prog.dlTotal) {
+      head += ' · ' + timeLeft((prog.dlTotal - prog.dlBytes) / rate);
+    }
+    el.querySelector('.staxx-rowprog-head').textContent = head;
+
+    // Two whole-image bars rather than a line per layer — a person wants to know how far along the pull is, not which of 23 layers is moving.
+    [['dl', prog.dlPct], ['ex', prog.exPct]].forEach(function (pair) {
+      var bar = el.querySelector('.staxx-rowprog-bar[data-bar="' + pair[0] + '"]');
+      var pct = Math.max(0, Math.min(100, pair[1] || 0));
+      bar.querySelector('.staxx-rowprog-fill').style.width = pct + '%';
+
+      var info = pct + '%';
+      var bytesPair = pair[0] === 'dl' ? [prog.dlBytes, prog.dlTotal] : [prog.exBytes, prog.exTotal];
+      if (bytesPair[1]) info += ' · ' + bytes(bytesPair[0]) + ' of ' + bytes(bytesPair[1]);
+      bar.querySelector('.staxx-rowprog-info').textContent = info;
+    });
+  }
+
+  function removeProgressOverlay(row) {
+    var el = row.querySelector('.staxx-rowprog');
+    if (!el || el.classList.contains('staxx-rowprog--leave')) return;
+    el.classList.add('staxx-rowprog--leave');
+    var gone = false;
+    function finish() {
+      if (gone) return;
+      gone = true;
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }
+    el.addEventListener('transitionend', finish, { once: true });
+    setTimeout(finish, 600);   // belt and braces, past the sheet's 350ms leave — see .staxx-row--leave's precedent
+  }
+
+  // The name column can change width for reasons that have nothing to do
+  // with any row's own content (the table's scrollbar appearing, the
+  // viewport itself resizing), so every open overlay's left edge is
+  // recomputed together rather than only when its own row repaints.
+  window.addEventListener('resize', function () {
+    Array.prototype.forEach.call(document.querySelectorAll('.staxx-rowprog'), function (el) {
+      if (el.parentNode) applyProgressOverlayOffsets(el, el.parentNode);
+    });
+  });
 
   /* ---- per-row job tracking --------------------------------------------
    *
@@ -16223,7 +16912,7 @@
    * `job` action.
    */
 
-  var jobs      = {};    // job id -> { rows, verb, show, atBottom, offset, text, done }
+  var jobs      = {};    // job id -> { rows, verb, show, atBottom, offset, text, prog, done }
   var jobTicker = null;
 
   // rowKey() -> job id, for every row a job in `jobs` is currently spinning.
@@ -16234,35 +16923,185 @@
   // refreshRows() table-body swap the way rowFailures already does.
   var rowJobs = {};
 
-  // Reads compose's own plain-text progress lines (forced by --progress
-  // plain — see STAXX_COMPOSE_PROGRESS_PLAIN in Stacks.php, where the
-  // command is built) to say whether an image is downloading right now, and
-  // roughly how much of it is done. Returns null when there is nothing to
-  // say yet — the base BUSY_LABEL stands in that case — because a `restart`
-  // or a plain `up` on images already on disk should never claim to be
-  // downloading anything.
+  // The busy pill says only WHAT is happening ("Updating…"), never how far
+  // along it is. It used to count layers ("Downloading image… 12 of 23"),
+  // but the state column is sized to its content, so every change of that
+  // text widened or narrowed the column for the whole table and every row
+  // shifted sideways once a second — measured on the box 2026-09-10. The
+  // progress itself lives in the row overlay below, which is positioned
+  // over the row and so cannot move anything.
+
+  // PLAN_138 — what the row overlay draws: per-layer download and unpack
+  // progress, byte totals, and whether the run has moved on to creating or
+  // starting the container, read from compose's --progress plain text as a
+  // structured snapshot. Called once a second from tickJobs().
   //
-  // The state machine reads every line rather than just the newest one,
-  // because compose interleaves several services' lines together and a
-  // trailing blank line from the last poll would otherwise look like "not
-  // downloading any more".
-  function pullProgressLabel(text) {
-    var downloading = false;
+  // Re-parses the whole accumulated log every time it is called, rather
+  // than picking up where a previous call left off — a job's log is at most
+  // a few hundred lines by the time it finishes, and this runs once a
+  // second per job, so a full scan is nowhere near worth the bookkeeping an
+  // incremental parse would add. tickJobs() keeps the result it computed on
+  // the job's own entry, which is what a table redraw restores from.
+  //
+  // Byte figures are decimal (kB = 1000, not 1024) to match what compose
+  // itself prints — the ratio is all that matters here, not the true size,
+  // so getting the base wrong would only bite if the two sides of one "cur/
+  // total" pair ever used different units and they still do not cancel out.
+  function pullProgress(text) {
+    var layers     = {};   // 12-hex layer id -> { phase, cur, total }
+    var layerOrder = [];   // first-seen order — object key order is not
+                            // trustworthy once an id happens to look numeric
+    var services   = {};   // service name -> 'pulling' | 'pulled'
+    var containers = {};   // container name -> last verb seen
+    var recent     = [];   // last three progress lines, oldest first
+    var phase      = 'pull';
+    var error      = '';
+
+    function note(line) {
+      recent.push(line);
+      if (recent.length > 3) recent.shift();
+    }
+
+    function bytes(str) {
+      var m = /^([\d.]+)\s*([kKmMgG]?)[bB]$/.exec(str);
+      if (!m) return 0;
+      var mult = { '': 1, k: 1e3, m: 1e6, g: 1e9 }[m[2].toLowerCase()];
+      return parseFloat(m[1]) * mult;
+    }
+
+    function layer(id) {
+      if (!layers[id]) {
+        layers[id] = { phase: 'pending', cur: 0, total: 0 };
+        layerOrder.push(id);
+      }
+      return layers[id];
+    }
+
+    // Download is the first half of a layer's life, extraction the second —
+    // splitting 0-100 down the middle is what lets the one overall bar mean
+    // something across a mix of layers still downloading and others already
+    // extracting, without pretending to know how long either half actually
+    // takes relative to the other.
+    function layerPct(l) {
+      switch (l.phase) {
+        case 'downloading': return l.total ? Math.min(50, (l.cur / l.total) * 50) : 0;
+        case 'verifying':   return 50;
+        case 'extracting':  return l.total ? 50 + Math.min(50, (l.cur / l.total) * 50) : 50;
+        case 'done':        return 100;
+        default:            return 0;   // pending: "Pulling fs layer" / "Waiting"
+      }
+    }
+
     var lines = text.split('\n');
     for (var i = 0; i < lines.length; i++) {
-      if (/Pull complete|Pulled|Creating|Starting|Started/.test(lines[i])) downloading = false;
-      else if (/Pulling|Downloading|Extracting/.test(lines[i])) downloading = true;
+      var line = lines[i].trim();
+      if (!line || line.charAt(0) === '$') continue;
+      var m, b;
+
+      if ((m = /^([0-9a-f]{12})\s+(.*)$/.exec(line))) {
+        var l = layer(m[1]), rest = m[2];
+        if (/^(Pulling fs layer|Waiting)$/.test(rest)) {
+          l.phase = 'pending';
+        } else if ((b = /^Downloading \[.*?\]\s+(\S+)\/(\S+)$/.exec(rest))) {
+          l.phase = 'downloading'; l.cur = bytes(b[1]); l.total = bytes(b[2]);
+          note(line);
+        } else if (/^(Verifying Checksum|Download complete)$/.test(rest)) {
+          l.phase = 'verifying';
+          note(line);
+        } else if ((b = /^Extracting \[.*?\]\s+(\S+)\/(\S+)$/.exec(rest))) {
+          l.phase = 'extracting'; l.cur = bytes(b[1]); l.total = bytes(b[2]);
+          note(line);
+        } else if (/^(Pull complete|Already exists)$/.test(rest)) {
+          l.phase = 'done';
+          note(line);
+        }
+        continue;
+      }
+
+      if ((m = /^(\S+)\s+(Pulling|Pulled)$/.exec(line))) {
+        services[m[1]] = m[2].toLowerCase();
+        continue;
+      }
+
+      if ((m = /^Container\s+(\S+)\s+(\S+)$/.exec(line))) {
+        containers[m[1]] = m[2];
+        note(line);
+        if (/^(Creating|Recreate)$/.test(m[2])) { if (phase === 'pull') phase = 'create'; }
+        else if (/^Starting$/.test(m[2]))          phase = 'start';
+        else if (/^(Started|Healthy)$/.test(m[2])) phase = 'done';
+        continue;
+      }
+
+      // The server strips this sentinel before the text ever reaches the
+      // browser — see STAXX_JOB_END in Stacks.php and part.done/part.exit
+      // in tickJobs() below, which is how a real job actually signals the
+      // end. This only matches here because the captured test fixtures are
+      // raw job logs read straight off disk with the sentinel still on them.
+      if ((m = /^###staxx-finished###\s+(-?\d+)$/.exec(line))) {
+        phase = (m[1] === '0') ? 'done' : 'failed';
+        if (phase === 'failed' && !error) error = 'Exit code ' + m[1];
+        continue;
+      }
+
+      if (/^(Error|error response|failed|denied|not found)/i.test(line)) {
+        phase = 'failed';
+        error = line;
+        note(line);
+        continue;
+      }
     }
-    if (!downloading) return null;
-    // Each layer prints one "Pulling fs layer" line and, once done, one
-    // "Pull complete" line — counting both gives a rough "N of M" without
-    // decoding a percentage. Capped at the layer count so a line this has
-    // not seen before (a registry wording this has not met yet) cannot
-    // print something like "14 of 12".
-    var layers   = (text.match(/Pulling fs layer/g) || []).length;
-    var complete = (text.match(/Pull complete/g) || []).length;
-    return layers ? 'Downloading image… ' + Math.min(complete, layers) + ' of ' + layers
-                  : 'Downloading image…';
+
+    // A container line can arrive for one service while another is still
+    // being pulled — "done" only holds once every container this run has
+    // touched has actually finished starting.
+    if (phase === 'done') {
+      var names = Object.keys(containers);
+      for (var j = 0; j < names.length; j++) {
+        if (!/^(Started|Healthy)$/.test(containers[names[j]])) { phase = 'start'; break; }
+      }
+    }
+
+    var layerTotal = layerOrder.length, layerDone = 0, sum = 0;
+    for (var k = 0; k < layerOrder.length; k++) {
+      var pct = layerPct(layers[layerOrder[k]]);
+      sum += pct;
+      if (pct >= 100) layerDone++;
+    }
+
+    var overallPct = (phase === 'create' || phase === 'start' || phase === 'done')
+      ? 100
+      : (layerTotal ? Math.round(sum / layerTotal) : 0);
+
+    // Two whole-image shares rather than the one blended pct above: how much
+    // has been fetched from the registry, and how much of what was fetched
+    // has been unpacked onto disk — a layer still downloading contributes
+    // nothing to the second, and one already unpacked counts fully in both.
+    var atEnd = (phase === 'create' || phase === 'start' || phase === 'done');
+    // Byte sums alongside the two percentages above, for the amount/speed/
+    // ETA line the painter builds. A layer still pending, or one that
+    // matched "Already exists" and so never printed a size, has total 0 and
+    // simply contributes nothing to either sum.
+    var dlSum = 0, exSum = 0, dlBytes = 0, dlTotal = 0, exBytes = 0;
+    for (var d = 0; d < layerOrder.length; d++) {
+      var dl = layers[layerOrder[d]];
+      dlTotal += dl.total;
+      switch (dl.phase) {
+        case 'downloading': dlSum += dl.total ? dl.cur / dl.total : 0; dlBytes += dl.cur; break;
+        case 'verifying': case 'extracting': case 'done': dlSum += 1; dlBytes += dl.total; break;
+      }
+      if (dl.phase === 'extracting') { exSum += dl.total ? dl.cur / dl.total : 0; exBytes += dl.cur; }
+      else if (dl.phase === 'done') { exSum += 1; exBytes += dl.total; }
+    }
+    var dlPct = atEnd ? 100 : (layerTotal ? Math.round(100 * dlSum / layerTotal) : 0);
+    var exPct = atEnd ? 100 : (layerTotal ? Math.round(100 * exSum / layerTotal) : 0);
+    var exTotal = dlTotal;   // unpacking has nothing left to do beyond what was downloaded
+
+    return {
+      phase: phase, pct: overallPct, layers: layers, order: layerOrder,
+      layerDone: layerDone, layerTotal: layerTotal, dlPct: dlPct, exPct: exPct,
+      dlBytes: dlBytes, dlTotal: dlTotal, exBytes: exBytes, exTotal: exTotal,
+      services: services, containers: containers, recent: recent, error: error
+    };
   }
 
   // Wires the output pane's scroll listener onto one job — shared by track()
@@ -16309,16 +17148,40 @@
         entry.text  += part.text || '';
         entry.offset = part.offset;
 
-        // The busy pill says what compose is actually doing, for the three
-        // verbs that can pull an image — only worth recomputing when new
-        // text arrived, and only worth repainting when it changed.
+        // The busy pill keeps its one fixed label for the whole job (see the
+        // note above pullProgress()); it is only repainted if something else
+        // wrote over the cell, so the width of the state column never moves.
         if (part.text && (entry.verb === 'up' || entry.verb === 'pull' || entry.verb === 'update')) {
-          var pillLabel = pullProgressLabel(entry.text) || BUSY_LABEL[entry.verb] || 'Working…';
+          var pillLabel = BUSY_LABEL[entry.verb] || 'Working…';
           if (pillLabel !== entry.pillLabel) {
             entry.pillLabel = pillLabel;
             entry.rows.forEach(function (row) {
               if (row.dataset.busy) paintBusyLabel(row, pillLabel);
             });
+          }
+
+          // PLAN_138 — the row overlay's own, richer picture, from the same
+          // text. Kept on the entry (not just painted) so restoreBusy() can
+          // repaint it straight after a table redraw without waiting for
+          // the next tick.
+          var prog = pullProgress(entry.text);
+          entry.prog = prog;
+          if (prog.phase === 'start' || prog.phase === 'done') {
+            entry.rows.forEach(function (row) { removeProgressOverlay(row); });
+          } else {
+            entry.rows.forEach(function (row) {
+              if (row.dataset.busy) paintProgressOverlay(row, prog);
+            });
+            // A failure the log itself named is worth reading, so the
+            // overlay is left up for a few seconds rather than snatched
+            // away the instant markFailed() below paints the fail pill
+            // underneath it.
+            if (prog.phase === 'failed' && !entry.failTimerSet) {
+              entry.failTimerSet = true;
+              setTimeout(function () {
+                entry.rows.forEach(function (row) { removeProgressOverlay(row); });
+              }, 4000);
+            }
           }
         }
 
@@ -16341,6 +17204,22 @@
           Object.keys(rowJobs).forEach(function (key) {
             if (rowJobs[key] === id) delete rowJobs[key];
           });
+          // Belt and braces for the overlay: a clean exit clears it now
+          // rather than waiting on wording pullProgress() may not have
+          // seen, and a failed one not already timed out above (the exit
+          // code was bad but nothing in the log matched /^Error|failed|.../
+          // for pullProgress() to have caught) still gets the same few
+          // seconds' grace before vanishing under the fail pill.
+          if (entry.verb === 'up' || entry.verb === 'pull' || entry.verb === 'update') {
+            if (part.exit === 0) {
+              entry.rows.forEach(function (row) { removeProgressOverlay(row); });
+            } else if (!entry.failTimerSet) {
+              entry.failTimerSet = true;
+              setTimeout(function () {
+                entry.rows.forEach(function (row) { removeProgressOverlay(row); });
+              }, 4000);
+            }
+          }
           if (entry.show) {
             logTitle.textContent += (part.exit !== 0 && part.exit !== null)
               ? ' — failed (exit ' + part.exit + ')'
@@ -16379,6 +17258,7 @@
       text:      '',
       shown:     '',   // what the output pane already holds, so an idle tick can skip writing it
       pillLabel: BUSY_LABEL[opts.verb] || 'Working…',
+      prog:      null,    // PLAN_138 — last pullProgress() result, for restoreBusy()
       done:      opts.done
     };
     (opts.rows || []).forEach(function (row) {
@@ -16906,6 +17786,11 @@
   // buttons, so a repaint that downgrades a button to a span silently kills
   // the update action.
   function paintUpdatePill(row, entry) {
+    // Same guard as paintState(): a busy pill has already replaced the state
+    // cell, and repainting from the stale cache here made the update chip
+    // flicker back beside it mid-pull (card 01a08d0f). The real pill returns
+    // once the job ends and refreshUpdates() repaints from a fresh reply.
+    if (row && (row.dataset.busy || row.dataset.failed)) return;
     var host = updatePillHost(row);
     if (!host) return;
     var state = entry ? (entry.state || '') : '';
@@ -16969,9 +17854,20 @@
     ].forEach(function (pair) {
       if (pair[1]) setData(pill, pair[0], pair[1]); else delete pill.dataset[pair[0]];
     });
+    // Card 01a08d12 — mirrors staxx_update_pill_html()'s data-update-children:
+    // which stacks a folder roll-up speaks for, so updCardFacts() can list
+    // them by name. Only ever set on a folder's own pill.
+    if (entry.children && entry.children.length) {
+      setData(pill, 'updateChildren', JSON.stringify(entry.children));
+    } else {
+      delete pill.dataset.updateChildren;
+    }
 
     var text = entry.label || state;
-    if (entry.count > 1) text += ' (' + entry.count + ')';
+    // Card 01a08d12 — the label already carries a number for a "new build of
+    // 22.04"-style pill, so appending "(N)" on top read as two counts. Only
+    // added when the label itself has none.
+    if (entry.count > 1 && !/\d/.test(text)) text += ' (' + entry.count + ')';
     // Rebuilding the label wipes out any clock chip appended below, which is
     // fine: paintPillClock() puts one straight back when there is still
     // something to say. Skipped when the label has not changed so a clock
@@ -16999,7 +17895,12 @@
     var titleBits = [];
     if (entry.tip) titleBits.push(entry.tip);
     if (note) titleBits.push(note);
-    if (titleBits.length) pill.title = titleBits.join('\n\n'); else pill.removeAttribute('title');
+    // data-update-tip, never title: the hover card below shows these words,
+    // and a title on the same element brought the browser's own tooltip up
+    // on top of the card. Chrome fixes the tooltip text on the last mouse
+    // move, so removing the attribute once the card opened was too late.
+    if (titleBits.length) pill.dataset.updateTip = titleBits.join('\n\n');
+    else delete pill.dataset.updateTip;
 
     paintPillClock(pill);
   }
@@ -17075,9 +17976,58 @@
    * Not offered under NARROW (declared above, the same 45rem phone gate the
    * rest of the page uses): a phone has no hover, and the pill is already a
    * button whose own press starts the update, so a tap cannot be repurposed
-   * to open this without breaking that. The sentence stays the pill's title
-   * there, which mobile browsers already surface on a long press.
+   * to open this without breaking that. Since adoptTitles() below strips
+   * every title on the grid, a phone gets no tooltip at all for these; the
+   * pill's own words and the row's failure notice carry what matters there.
    */
+  // Every `title` on the page becomes this same hover card rather than the
+  // browser's own tooltip (Adrian, 2026-09-11), dialogs included — a dialog
+  // draws in the browser's own top layer, above the scaffold, so showUpdCard()
+  // moves the one card into whichever dialog the element sits in.
+  // `title` is removed rather than merely read, and has to stay off for as
+  // long as the element carries a data-tip: a browser fixes its tooltip text
+  // on the last mouse move, not the moment it draws, so taking `title` away
+  // only when the card opens is already too late — that produced two
+  // tooltips stacked on the update pill before data-update-tip existed, and
+  // the same trap applies here.
+  function adoptTitles(root) {
+    if (!root || root.nodeType !== 1) return;
+    var els = root.hasAttribute && root.hasAttribute('title') ? [root] : [];
+    if (root.querySelectorAll) {
+      els = els.concat(Array.prototype.slice.call(root.querySelectorAll('[title]')));
+    }
+    els.forEach(function (el) {
+      var text = el.getAttribute('title');
+      el.removeAttribute('title');
+      if (!text) return;
+      el.dataset.tip = text;
+      // An icon-only control has no visible text of its own to name it for
+      // a screen reader once its title is gone — give it the same words back
+      // as aria-label rather than leave it silently unlabelled.
+      if (!el.textContent.trim() && !el.hasAttribute('aria-label')) {
+        el.setAttribute('aria-label', text);
+      }
+    });
+  }
+
+  // Runs adoptTitles() over whatever just changed instead of the whole
+  // scaffold on a timer: a row re-rendered from the server, a chip a script
+  // repaints, or any of this file's existing `el.title = …` writes all reach
+  // here without needing to call adoptTitles() themselves.
+  new MutationObserver(function (mutations) {
+    for (var i = 0; i < mutations.length; i++) {
+      var m = mutations[i];
+      if (m.type === 'attributes') {
+        adoptTitles(m.target);
+      } else {
+        for (var j = 0; j < m.addedNodes.length; j++) {
+          if (m.addedNodes[j].nodeType === 1) adoptTitles(m.addedNodes[j]);
+        }
+      }
+    }
+  }).observe(scaffold, { attributes: true, attributeFilter: ['title'], subtree: true, childList: true });
+  adoptTitles(scaffold);
+
   var updCard = null;
   var updCardTimer = null;
   var updCardPill = null;   // the pill currently hovered/focused — set the
@@ -17107,10 +18057,27 @@
     update: 'A newer version is available. Press the chip to fetch it and rebuild the container on it.'
   };
 
+  // A folder's own pill is an inert span (see $pressable in
+  // staxx_update_pill_html()), so nothing about it can be "pressed" — either
+  // signal on its own is enough: data-update-children is the reliable one,
+  // .staxx-nameinfo (updatePillHost()'s folder-row fallback) catches a
+  // folder pill in a state that carries no children.
+  function pillIsFolder(pill) {
+    return !!pill.dataset.updateChildren
+        || !!(pill.closest && pill.closest('.staxx-nameinfo'));
+  }
+
   function updCardLead(pill) {
+    if (pill.dataset.updateState === 'update' && pillIsFolder(pill)) {
+      var kids = [];
+      try { kids = JSON.parse(pill.dataset.updateChildren || '[]') || []; } catch (e) { kids = []; }
+      return (kids.length === 1 ? 'One stack in this folder has an update.'
+                                : kids.length + ' stacks in this folder have updates.')
+           + (kids.length === 1 ? ' Open the folder to update it.' : ' Open the folder to update them.');
+    }
     var fixed = UPD_CARD_LEAD[pill.dataset.updateState || ''];
     if (fixed) return fixed;
-    var title = pill.title || '';
+    var title = pill.dataset.updateTip || '';
     // staxx_update_when_words() always starts the clock sentence this way —
     // cutting there leaves exactly the part the table's rows do not already
     // say, whatever note may follow the tip beyond it.
@@ -17128,11 +18095,36 @@
       ['Why',        pill.dataset.updateCadenceWhy,  false]
     ];
     var html = '';
+    // A folder's pill speaks for several stacks, so a single Running/
+    // Available pair (they were the first child's) and one clock row made no
+    // sense beside the list of stacks — Adrian, 2026-09-11. A folder card is
+    // the list alone.
+    if (pillIsFolder(pill)) rows = [];
     for (var i = 0; i < rows.length; i++) {
       var val = rows[i][1];
       if (!val) continue;   // rows that do not apply are left out, not shown blank
       html += '<dt>' + esc(rows[i][0]) + '</dt><dd' +
         (rows[i][2] ? ' class="staxx-updcard__mono"' : '') + '>' + esc(val) + '</dd>';
+    }
+    // Card 01a08d12 — one row per stack a folder roll-up speaks for, mirroring
+    // the label staxx_updates_pill_for_image() already worked out for it
+    // rather than re-describing the state here.
+    if (pill.dataset.updateChildren) {
+      var children = [];
+      try { children = JSON.parse(pill.dataset.updateChildren) || []; } catch (e) { children = []; }
+      if (children.length) {
+        // No heading row: the lead sentence already says these are the
+        // stacks with updates. Each row is the stack's name and, when its
+        // roll-up names one update, the running and waiting versions; a
+        // stack with several updates falls back to its own label. Settled
+        // live with Adrian on 2026-09-11.
+        children.forEach(function (c) {
+          var what = (c.was && c.version)
+            ? '<span class="staxx-updcard__mono">' + esc(c.was) + ' → ' + esc(c.version) + '</span>'
+            : esc(c.label || '');
+          html += '<dt>' + esc(c.name || '') + '</dt><dd>' + what + '</dd>';
+        });
+      }
     }
     return html;
   }
@@ -17158,14 +18150,21 @@
     var pill = updCardPill;
     if (!pill || NARROW.matches) return;
     var card = ensureUpdCard();
-    card.innerHTML = '<div class="staxx-updcard__lead">' + esc(updCardLead(pill)) + '</div>' +
-      '<dl class="staxx-updcard__facts">' + updCardFacts(pill) + '</dl>';
-    // The pill's title is moved out of the way while the card is up, or the
-    // browser's own tooltip appears on top of this one — the one real trap
-    // here. Restored the moment the card is dismissed, below.
-    if (pill.title) {
-      pill.dataset.updateTitle = pill.title;
-      pill.removeAttribute('title');
+    // A <dialog> paints in the top layer, over everything in the scaffold, so
+    // a card left in the scaffold would sit unseen behind the editor or the
+    // import window. The one card moves into the dialog the element is in
+    // (or back to the scaffold); its fixed positioning is unaffected.
+    var home = (pill.closest && pill.closest('dialog')) || document.querySelector('.staxx-scaffold') || document.body;
+    if (card.parentNode !== home) home.appendChild(card);
+    // An update pill gets its lead-plus-table treatment as before; anything
+    // else reaching here is a plain adopted title (see adoptTitles() below),
+    // which gets only the lead — there is no table of facts to draw for it.
+    if (pill.dataset.updateState) {
+      card.innerHTML = '<div class="staxx-updcard__lead">' + esc(updCardLead(pill)) + '</div>' +
+        '<dl class="staxx-updcard__facts">' + updCardFacts(pill) + '</dl>';
+    } else {
+      card.innerHTML = '<div class="staxx-updcard__lead">' +
+        esc(pill.dataset.tip || '').replace(/\n/g, '<br>') + '</div>';
     }
     card.hidden = false;
     placeUpdCard(pill);
@@ -17174,10 +18173,6 @@
   function dismissUpdCard() {
     if (updCardTimer) { clearTimeout(updCardTimer); updCardTimer = null; }
     if (updCard) updCard.hidden = true;
-    if (updCardPill && updCardPill.dataset.updateTitle) {
-      updCardPill.title = updCardPill.dataset.updateTitle;
-      delete updCardPill.dataset.updateTitle;
-    }
     updCardPill = null;
   }
 
@@ -17196,22 +18191,26 @@
   // between the pill and something nested inside it (PLAN_121's tag icon) —
   // without that check, moving onto the icon would read as leaving the pill
   // and dismiss the card while the pointer never left it.
+  // Matches the update pill (its own facts table) or any element carrying an
+  // adopted title (data-tip, see adoptTitles() below) — one card mechanism
+  // for both, branched on inside showUpdCard() itself.
+  var UPD_CARD_SEL = '.staxx-updatepill, [data-tip]';
   document.addEventListener('mouseenter', function (event) {
-    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    var pill = event.target.closest && event.target.closest(UPD_CARD_SEL);
     if (pill && !pill.contains(event.relatedTarget)) updCardEnter(pill);
   }, true);
   document.addEventListener('mouseleave', function (event) {
-    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    var pill = event.target.closest && event.target.closest(UPD_CARD_SEL);
     if (pill && pill === updCardPill && !pill.contains(event.relatedTarget)) dismissUpdCard();
   }, true);
   // focusin bubbles on its own, so this is the keyboard path (Tab onto a
   // pill) with no delegation trick needed — same card, same delay.
   document.addEventListener('focusin', function (event) {
-    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    var pill = event.target.closest && event.target.closest(UPD_CARD_SEL);
     if (pill) updCardEnter(pill);
   });
   document.addEventListener('focusout', function (event) {
-    var pill = event.target.closest && event.target.closest('.staxx-updatepill');
+    var pill = event.target.closest && event.target.closest(UPD_CARD_SEL);
     if (pill && pill === updCardPill) dismissUpdCard();
   });
   document.addEventListener('keydown', function (event) {
@@ -17269,7 +18268,7 @@
   // as they always did. Tabbed view replaces that bar with a shared `.tabs`
   // strip the page does not own, and Adrian saw the chips land in that strip
   // and asked for them lower — so only then do they get a row of our own,
-  // inserted right before the buttons row (`.staxx-bar.staxx-bar--end`); if
+  // inserted right before the buttons row (`#staxx-toolbar`, PLAN_139); if
   // that row is ever missing — a markup change — it falls back to sitting
   // before `#staxx-update-queue` instead, so the information is never
   // silently lost.
@@ -17287,7 +18286,7 @@
       var statusRow = document.createElement('div');
       statusRow.className = 'staxx-statusrow';
       statusRow.appendChild(updatesLine);
-      var buttonsBar = document.querySelector('.staxx-bar.staxx-bar--end');
+      var buttonsBar = document.getElementById('staxx-toolbar');
       if (buttonsBar && buttonsBar.parentNode) {
         buttonsBar.parentNode.insertBefore(statusRow, buttonsBar);
       } else {
@@ -17311,19 +18310,51 @@
   function openWatchReport() {
     call('watch-report', {}, 15000).then(function (res) {
       if (!res.ok) {
-        openLogDialog('Author-example findings', res.reason || 'Could not build the report.');
+        showInfo('Author-example findings', '<p>' + esc(res.reason || 'Could not build the report.') + '</p>', { bad: true });
         return;
       }
       if (!res.items.length) {
-        openLogDialog('Author-example findings', 'Nothing to look at.');
+        showInfo('Author-example findings', '<p>Nothing to look at.</p>');
         return;
       }
-      var lines = res.items.map(function (it) {
-        return stackLabel(it.stack) + ' / ' + it.service + ' (' + it.image + '): ' +
-          (it.side === 'added' ? 'the author\'s example also sets ' : 'the author\'s example does not set ') +
-          it.setting;
+      // One block per stack, and inside it one block per service (named only
+      // when it differs from the stack), each with at most two rows: the
+      // settings the author's example also sets, and the ones it does not.
+      // One sentence per finding read as a wall of repeated words — Adrian,
+      // 2026-09-11 — so the sentence is said once at the top and the rows
+      // carry nothing but the setting names. Order is first-seen throughout.
+      var order = [];
+      var byStack = {};
+      res.items.forEach(function (it) {
+        var label = stackLabel(it.stack);
+        if (!byStack[label]) { byStack[label] = { order: [], svc: {} }; order.push(label); }
+        var s = byStack[label];
+        var key = it.service + '\0' + it.image;
+        if (!s.svc[key]) { s.svc[key] = { service: it.service, image: it.image, added: [], missing: [] }; s.order.push(key); }
+        s.svc[key][it.side === 'added' ? 'added' : 'missing'].push(it.setting);
       });
-      openLogDialog('Author-example findings', lines.join('\n'));
+      var settingsHtml = function (list) {
+        return list.map(function (name) { return '<span class="staxx-findings__chip">' + esc(name) + '</span>'; }).join('');
+      };
+      var html = '<p>What each author’s own published example does differently from your file. ' +
+        'Open the stack to change a setting or dismiss the finding.</p>';
+      order.forEach(function (label) {
+        var s = byStack[label];
+        html += '<div class="staxx-findings">' +
+          '<h4 class="staxx-findings__stack">' + esc(label) + '</h4>';
+        s.order.forEach(function (key) {
+          var v = s.svc[key];
+          html += '<div class="staxx-findings__svc">' +
+            (v.service !== label ? esc(v.service) + ' ' : '') +
+            '<span class="staxx-findings__image">' + esc(v.image) + '</span></div>' +
+            '<dl class="staxx-findings__facts">' +
+            (v.added.length ? '<dt>Also sets</dt><dd>' + settingsHtml(v.added) + '</dd>' : '') +
+            (v.missing.length ? '<dt>Does not set</dt><dd>' + settingsHtml(v.missing) + '</dd>' : '') +
+            '</dl>';
+        });
+        html += '</div>';
+      });
+      showInfo('Author-example findings', html);
     });
   }
 
@@ -17565,12 +18596,11 @@
     }).join('\n\n');
   }
 
-  // The panel a chip opens — reused straight off the existing output dialog
-  // rather than a new mechanism, since it is already exactly this: a title
-  // and a block of read-only text. logBox.textContent (not innerHTML) is
-  // what openLogDialog() writes with, so nothing here needs its own escaping
-  // — a service name can never become markup no matter what it contains.
-  // Never restarts anything: no button in it does anything but close.
+  // The panel a chip opens — prose, not a log, so it goes through showInfo()
+  // rather than the monospace output dialog (card 01a08d0b). Every sentence
+  // becomes its own paragraph; a service name still never becomes markup,
+  // since esc() runs on each one. Never restarts anything: the one button in
+  // it does nothing but close.
   //
   // Opens on the chip's own data attributes straight away — no waiting on
   // the network for a button press — then asks the server what actually
@@ -17594,25 +18624,31 @@
       if (changed.length)  parts.push('These services no longer match the file: ' + changed.join(', ') + '.');
       if (absent.length)   parts.push('These services have not started yet: ' + absent.join(', ') + '.');
       if (leftover.length) parts.push('These services are no longer in the file: ' + leftover.join(', ') + '.');
-      if (detail) parts.push('What changed:\n\n' + detail);
-      parts.push('Restarting the stack rebuilds these from the file as it stands now — ' +
-                 'nothing is wrong until you do.');
-      return parts.join('\n\n');
+      var html = parts.map(function (p) { return '<p>' + esc(p) + '</p>'; }).join('');
+      if (detail) {
+        // The per-service diff lines are indented plain text, not further
+        // sentences — kept on their own lines with <br> rather than folded
+        // into one run-on paragraph.
+        html += '<p>What changed:<br>' + esc(detail).replace(/\n/g, '<br>') + '</p>';
+      }
+      html += '<p>Restarting the stack rebuilds these from the file as it stands now — ' +
+              'nothing is wrong until you do.</p>';
+      return html;
     }
 
-    openLogDialog(stackLabel(stack) + ' — restart pending', build(''));
+    showInfo(stackLabel(stack) + ' — restart pending', build(''));
 
     pendingSeq++;
     var mySeq = pendingSeq;
     call('pending-detail', { name: stack }).then(function (res) {
-      // logDlg guarded the same way openLogDialog() guards it — a reply
+      // confirmModal guarded the same way showInfo() guards it — a reply
       // landing when the dialog is not in the page would otherwise throw
       // inside a promise, where nothing would report it.
-      if (mySeq !== pendingSeq || !logDlg || !logDlg.open) return;
+      if (mySeq !== pendingSeq || !confirmModal || !confirmModal.open) return;
       if (!res || !res.ok) return;   // a refusal leaves the panel exactly as it opened
       var detail = buildPendingDetail(res.services);
       if (!detail) return;           // nothing to report — the normal case, not an error
-      logBox.textContent = build(detail);
+      confirmBody.innerHTML = build(detail);
     });
   }
 
@@ -18211,10 +19247,13 @@
     });
 
     if (!conflicts.length && !toWrite.length) {
-      var msg = 'Nothing here — the image, its catalogue entry and its own page — offered anything ' +
-        'different from what "' + label + '" already holds.';
-      if (skipped.length) msg += '\n\nSkipped:\n' + skipped.map(function (s) { return '- ' + s; }).join('\n');
-      openLogDialog('Nothing new found', msg);
+      var msg = '<p>' + esc('Nothing here — the image, its catalogue entry and its own page — ' +
+        'offered anything different from what "' + label + '" already holds.') + '</p>';
+      if (skipped.length) {
+        msg += '<p>Skipped:</p><ul class="staxx-confirm-list">' +
+          skipped.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ul>';
+      }
+      showInfo('Nothing new found', msg);
       return;
     }
 
@@ -18290,23 +19329,23 @@
     return { ok: true, yaml: post.error ? afterWrites : post.yaml, applied: decisions };
   }
 
-  function detailSummaryText(applied, skipped) {
-    var lines = [];
+  function detailSummaryHtml(applied, skipped) {
+    var html = '';
     if (applied && applied.length) {
-      lines.push(applied.length + ' field' + (applied.length === 1 ? '' : 's') +
-                 (applied.length === 1 ? ' was' : ' were') + ' written:');
-      applied.forEach(function (d) {
-        lines.push('- ' + detailRowLabel(d) + (d.mode === 'replace' ? ' (replaced): ' : ' (added): ') + d.value);
-      });
+      html += '<p>' + esc(applied.length + ' field' + (applied.length === 1 ? '' : 's') +
+                 (applied.length === 1 ? ' was' : ' were') + ' written:') + '</p>' +
+        '<ul class="staxx-confirm-list">' + applied.map(function (d) {
+          return '<li>' + esc(detailRowLabel(d) + (d.mode === 'replace' ? ' (replaced): ' : ' (added): ') +
+                              d.value) + '</li>';
+        }).join('') + '</ul>';
     } else {
-      lines.push('Nothing was written.');
+      html += '<p>Nothing was written.</p>';
     }
     if (skipped && skipped.length) {
-      lines.push('');
-      lines.push('Skipped:');
-      skipped.forEach(function (s) { lines.push('- ' + s); });
+      html += '<p>Skipped:</p><ul class="staxx-confirm-list">' +
+        skipped.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ul>';
     }
-    return lines.join('\n');
+    return html;
   }
 
   // The one write for the whole run — editor-open case goes through
@@ -18333,7 +19372,7 @@
     function done(applied) {
       detailBusy = false;
       closeDetailModal();
-      openLogDialog('Filled in details for "' + label + '"', detailSummaryText(applied, skipped));
+      showInfo('Filled in details for "' + label + '"', detailSummaryHtml(applied, skipped));
     }
 
     if (isOpenHere) {
@@ -18890,7 +19929,7 @@
         }
         iconAdoptRounds = 0;
         if (iconAdoptCount > 0) {
-          showIconAdoptSummary(iconAdoptCount, Object.keys(iconAdoptStacks).length);
+          showIconAdoptSummary(iconAdoptCount, Object.keys(iconAdoptStacks));
           iconAdoptCount = 0;
           iconAdoptStacks = {};
           refreshRows();   // the changed stacks re-render from their files
@@ -18899,34 +19938,27 @@
     }, function () { iconAdoptBusy = false; });
   }
 
-  // A dismissible line above the table, not a toast — an edit made without
+  // A dismissible entry in the ticker, not a toast — an edit made without
   // being asked has to stay readable until the user has actually seen it.
-  // Built here rather than in the page's own markup because there is
-  // nothing to show until a run finds something to say.
-  var iconAdoptNotice = null;
-  function showIconAdoptSummary(services, stacks) {
-    if (iconAdoptNotice) iconAdoptNotice.remove();
-
-    var svcText   = services + (services === 1 ? ' service' : ' services');
-    var stackText = stacks + (stacks === 1 ? ' stack' : ' stacks');
-    var notice = document.createElement('div');
-    notice.className = 'staxx-notice';
-    notice.innerHTML =
-      '<i class="fa fa-picture-o" aria-hidden="true"></i>' +
-      '<div>' + esc('An icon was recorded for ' + svcText + ' across ' + stackText +
-                    '. Each of those stacks’ previous version is saved in its own history.') +
-      '</div>' +
-      '<button type="button" class="staxx-notice-close" title="Dismiss" aria-label="Dismiss">' +
-        '<i class="fa fa-times" aria-hidden="true"></i></button>';
-    notice.querySelector('.staxx-notice-close').addEventListener('click', function () {
-      notice.remove();
-      if (iconAdoptNotice === notice) iconAdoptNotice = null;
-    });
-
-    if (pageNotice && pageNotice.parentNode) {
-      pageNotice.insertAdjacentElement('afterend', notice);
+  // PLAN_139 folded this into notices.add(): repeat runs coalesce onto one
+  // entry there by construction (same kind, same text hashes to the same
+  // id) rather than this function needing to track and replace its own copy.
+  function showIconAdoptSummary(services, stackNames) {
+    var svcText = services + (services === 1 ? ' service' : ' services');
+    // Name the stacks rather than just counting them (card 01a08d13) — "one
+    // stack" told nobody which one to go and check.
+    var shown = stackNames.slice(0, 6);
+    var namesText = shown.join(', ');
+    if (stackNames.length > shown.length) {
+      namesText += ' and ' + (stackNames.length - shown.length) + ' more';
     }
-    iconAdoptNotice = notice;
+    notices.add({
+      kind: 'good',
+      text: 'StaXX found icons for ' + svcText + ' and saved them into these stacks: ' +
+            namesText + '. Each stack’s earlier compose file is kept in its history, so ' +
+            'this can be undone from the stack’s History.',
+      sticky: false
+    });
   }
 
   /* ------------------------------------------------------------ wiring -- */
@@ -18953,7 +19985,17 @@
   document.getElementById('staxx-import').addEventListener('click', importOpen);
 
   document.getElementById('staxx-diagnose').addEventListener('click', function () {
-    openLogDialog('Self-test', 'Checking…');
+    // A fixed-width report, not free prose, so it keeps its own <pre> inside
+    // the notice dialog rather than becoming paragraphs (card 01a08d0b) —
+    // the column padding below only lines up in a monospace block.
+    var text = 'Checking…';
+    showInfo('Self-test', '<pre class="staxx-confirm-pre">' + esc(text) + '</pre>');
+    function setText(t) {
+      text = t;
+      var pre = confirmBody.querySelector('.staxx-confirm-pre');
+      if (pre) { pre.textContent = text; pre.scrollTop = pre.scrollHeight; }
+    }
+    function appendText(t) { setText(text + t); }
 
     // Stage one is pure PHP and runs no commands, so it cannot hang. Stage two
     // runs the external commands one at a time, appending each result as it
@@ -18961,8 +20003,8 @@
     // thing that worked, and the missing line is the culprit.
     call('ping', {}, 15000).then(function (res) {
       if (!res.ok || !res.report) {
-        logBox.textContent = res.error || 'Self-test returned nothing usable.\n\n' +
-                             JSON.stringify(res, null, 2);
+        setText(res.error || 'Self-test returned nothing usable.\n\n' +
+                             JSON.stringify(res, null, 2));
         return;
       }
 
@@ -18970,42 +20012,40 @@
       Object.keys(res.report).forEach(function (k) { width = Math.max(width, k.length); });
       var pad = function (s, w) { return s + new Array(Math.max(1, w - s.length + 3)).join(' '); };
 
-      logBox.textContent = Object.keys(res.report).map(function (k) {
+      setText(Object.keys(res.report).map(function (k) {
         return pad(k, width) + res.report[k];
-      }).join('\n') + strayWarning(res);
+      }).join('\n') + strayWarning(res));
 
       var keys = Object.keys(res.probes || {});
       if (!keys.length) return;
 
-      logBox.textContent += '\n\nCommands, one at a time:\n';
+      appendText('\n\nCommands, one at a time:\n');
 
       // Sequential on purpose. Running them together would tell us that
       // something stalled, but not which.
       keys.reduce(function (chain, key) {
         return chain.then(function () {
-          logBox.textContent += '\n  ' + pad(key, 10) + res.probes[key] + ' … ';
-          logBox.scrollTop = logBox.scrollHeight;
+          appendText('\n  ' + pad(key, 10) + res.probes[key] + ' … ');
 
           return call('probe', { probe: key }, 30000).then(function (p) {
             if (!p.ok || !p.result) {
-              logBox.textContent += 'NO REPLY — ' + (p.error || 'unknown').split('\n')[0];
+              appendText('NO REPLY — ' + (p.error || 'unknown').split('\n')[0]);
               throw new Error('stop');   // nothing after this would be meaningful
             }
             var r = p.result;
-            logBox.textContent += (r.ok ? 'ok' : 'FAILED (exit ' + r.exit + ')') +
+            appendText((r.ok ? 'ok' : 'FAILED (exit ' + r.exit + ')') +
                                   '  [' + r.ms + ' ms]' +
-                                  (r.ok && r.exit === 0 ? '' : '\n' + pad('', 14) + r.output);
-            logBox.scrollTop = logBox.scrollHeight;
+                                  (r.ok && r.exit === 0 ? '' : '\n' + pad('', 14) + r.output));
           });
         });
       }, Promise.resolve()).catch(function () {
-        logBox.textContent += '\n\nStopped here. The step above is where it gets stuck.';
+        appendText('\n\nStopped here. The step above is where it gets stuck.');
       });
     });
   });
 
   document.getElementById('staxx-modal-close').addEventListener('click', function () {
-    if (confirmDiscard()) closeEditor();
+    confirmDiscard().then(function (go) { if (go) closeEditor(); });
   });
   saveBtn.addEventListener('click', function () { save(false); });
   startBtn.addEventListener('click', function () { save(true); });
@@ -19025,8 +20065,12 @@
     });
   }
 
+  // A short server error, not real command output, so it reads as prose in
+  // the same notice dialog every other plain message uses (card 01a08d0b) —
+  // openLogDialog()'s monospace box stays for genuine output (job logs,
+  // script errors).
   function failed(title, message) {
-    openLogDialog(title, message || '(no detail given)');
+    showInfo(title, '<p>' + esc(message || '(no detail given)') + '</p>', { bad: true });
   }
 
   // Shows a failed job's output after the fact, from a clicked marker —
@@ -19255,6 +20299,11 @@
     confirmBody.innerHTML = opts.bodyHtml;
     confirmGo.textContent = opts.goLabel;
     confirmCancel.textContent = opts.cancelLabel || confirmCancelDefault;
+    // Both reset unconditionally: a question always has a Cancel and is
+    // never drawn as bad news, so nothing showInfo() left set on the shared
+    // dialog can leak into the next askConfirm() call.
+    confirmCancel.hidden = false;
+    if (confirmBadicon) confirmBadicon.hidden = true;
     if (confirmExtra) {
       confirmExtra.hidden = !opts.extraLabel;
       confirmExtra.textContent = opts.extraLabel || '';
@@ -19270,7 +20319,68 @@
     return new Promise(function (resolve) { confirmResolve = resolve; });
   }
 
+  // A plain notice through the same dialog: one OK button, no Cancel, no
+  // third answer. Resolves once OK is pressed or the dialog closes any other
+  // way — nothing here is a question, so the caller never inspects the
+  // resolved value. opts.bad draws the head the same red a --bad notice
+  // banner uses, for genuine errors (failed() below) rather than routine
+  // information. Callers pass bodyHtml already escaped/marked up, exactly as
+  // askConfirm()'s callers do.
+  function showInfo(title, bodyHtml, opts) {
+    opts = opts || {};
+    if (!confirmModal) { noDialogFallback(title); return Promise.resolve(); }
+    confirmSetBusy(false);
+    confirmMsg.textContent = '';
+    confirmTitle.textContent = title;
+    confirmBody.innerHTML = bodyHtml;
+    confirmGo.textContent = opts.okLabel || 'OK';
+    confirmCancel.hidden = true;
+    if (confirmExtra) confirmExtra.hidden = true;
+    if (confirmBadicon) confirmBadicon.hidden = !opts.bad;
+    if (!confirmModal.open) confirmModal.showModal();
+    confirmGo.focus({ preventScroll: true });
+    // Closed here rather than left to the caller: OK has nothing further to
+    // do, unlike askConfirm()'s callers, several of which keep the dialog
+    // open to show progress after Go is pressed.
+    return new Promise(function (resolve) { confirmResolve = resolve; }).then(function () { closeConfirm(); });
+  }
+
+  // One labelled text field on the same dialog, replacing window.prompt().
+  // Resolves the typed string, or null for Cancel/Escape/a backdrop click —
+  // the same shape prompt() itself returns, so a caller converts by simply
+  // awaiting this instead.
+  function askText(title, label, value) {
+    if (!confirmModal) return Promise.resolve(window.prompt(label, value || ''));
+    confirmSetBusy(false);
+    confirmMsg.textContent = '';
+    confirmTitle.textContent = title;
+    if (confirmBadicon) confirmBadicon.hidden = true;
+    confirmBody.innerHTML =
+      '<label class="staxx-confirm-field" for="staxx-confirm-textinput">' + esc(label) + '</label>' +
+      '<input type="text" class="staxx-confirm-input" id="staxx-confirm-textinput">';
+    var input = confirmBody.querySelector('#staxx-confirm-textinput');
+    input.value = value || '';
+    confirmGo.textContent = 'OK';
+    confirmCancel.hidden = false;
+    confirmCancel.textContent = confirmCancelDefault;
+    if (confirmExtra) confirmExtra.hidden = true;
+    if (!confirmModal.open) confirmModal.showModal();
+    input.focus({ preventScroll: true });
+    input.select();
+    return new Promise(function (resolve) { confirmResolve = resolve; })
+      .then(function (went) { closeConfirm(); return went ? input.value : null; });
+  }
+
   if (confirmModal) {
+    // Enter in the text field submits it, same as a form would — askText()
+    // is the only caller that ever fills the body with an <input>.
+    confirmBody.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' && event.target && event.target.id === 'staxx-confirm-textinput') {
+        event.preventDefault();
+        if (!confirmBusy) settleConfirm(true);
+      }
+    });
+
     confirmCancel.addEventListener('click', function () {
       closeConfirm();
       settleConfirm(false);
@@ -20442,7 +21552,10 @@
       call: call,
       esc: esc,
       bytes: bytes,
-      onRun: manageOnRun
+      onRun: manageOnRun,
+      askConfirm: askConfirm,
+      askText: askText,
+      closeConfirm: closeConfirm
     });
     return manageInst;
   }
@@ -21752,16 +22865,14 @@
       ]
     },
     {
-      key: 'PLACEMENT_RULES', control: 'choice', label: 'Where stacks may live', tab: 'storage',
-      choices: [
-        ['guided', 'Guide me — grey them out and refuse them'],
-        ['open',   'Get out of the way — warn me, then allow it']
-      ],
-      help: 'How the folder browser treats risky places for the data store: a single array ' +
-            'disk, an unassigned drive, a network mount, or a share set to move onto the array. ' +
-            'Each can lose or hide your stacks. Two places are refused whichever you choose: ' +
-            'memory, which is emptied at every reboot, and a whole share, where every folder in ' +
-            'it would be read as a stack.'
+      // PLAN_134: was its own box ahead of the Data store one, for what is
+      // really a switch about how that box's folder picker behaves — now
+      // rendered inside it instead (see settingsFieldHtml()'s STORE_ROOT
+      // branch). Key and values are unchanged, so nothing on disk differs.
+      key: 'PLACEMENT_RULES', control: 'toggle', label: 'Protect me from myself', tab: 'storage',
+      within: 'STORE_ROOT', on: 'guided', off: 'open',
+      help: 'On, the folder picker greys out and refuses places that can lose or hide your ' +
+            'stacks. Off, it warns and lets you choose.'
     },
     {
       key: 'STORE_ROOT', control: 'path', label: 'Data store', tab: 'storage',
@@ -21828,10 +22939,27 @@
             'name or address is sent. Turned off, nothing is downloaded: icons already saved keep ' +
             'working, an <code>icon:</code> that names a file in the stack folder or a Font ' +
             'Awesome glyph still works, and anything else shows a coloured tile with its ' +
-            'initials.<br><br>Icons are by ' +
+            'initials.',
+      // Split from `help` so it can be drawn after the sample icons rather
+      // than run on inside the same paragraph — settingsFieldHtml() places
+      // it as its own line.
+      attribution: 'Icons are by ' +
             '<a href="https://selfh.st/icons/" target="_blank" rel="noopener">selfh.st</a> and ' +
             'used under the <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" ' +
-            'rel="noopener">CC BY 4.0</a> licence.'
+            'rel="noopener">CC BY 4.0</a> licence.',
+      // PLAN_135: this box talks about icons without showing one. These six
+      // are illustrations of what the setting fetches, not a choice — bundled
+      // with the plugin rather than pulled from the collection when the panel
+      // opens, so nothing is downloaded while the setting itself says nothing
+      // is downloaded.
+      samples: [
+        { src: 'samples/jellyfin.png',       caption: 'Jellyfin' },
+        { src: 'samples/plex.png',           caption: 'Plex' },
+        { src: 'samples/nextcloud.png',      caption: 'Nextcloud' },
+        { src: 'samples/home-assistant.png', caption: 'Home Assistant' },
+        { src: 'samples/pi-hole.png',        caption: 'Pi-hole' },
+        { src: 'samples/vaultwarden.png',    caption: 'Vaultwarden' }
+      ]
     },
     {
       key: 'IMAGE_LOOKUP', control: 'choice', label: 'Image documentation', tab: 'icons',
@@ -22068,6 +23196,18 @@
       // once the panel is open, not a value settingsControlValue() can read
       // off an input. Skipped by settingsDirty() and saveSettings() below.
       return '<div class="staxx-readout" id="' + row.id + '">Looking…</div>';
+    } else if (row.control === 'toggle') {
+      // A checkbox rather than a select, so the two stored values never
+      // appear as option text — data-on/data-off is all settingsControlValue()
+      // needs to read back the same 'guided'/'open' strings the choice
+      // control used to write. '' (never saved yet) checks as on, since
+      // guided is the server's own default.
+      var checked = (value === row.on || value === '') ? ' checked' : '';
+      return '<label class="staxx-switch"><input type="checkbox" role="switch" id="' + row.id +
+             '" data-on="' + esc(row.on) + '" data-off="' + esc(row.off) + '" aria-label="' +
+             esc(row.label) + '"' + checked + '>' +
+             '<span class="staxx-switch-track" aria-hidden="true"></span>' +
+             '<span class="staxx-switch-text">' + esc(row.label) + '</span></label>';
     } else if (row.control === 'choice') {
       var opts = row.choices.map(function (o) {
         return '<option value="' + esc(o[0]) + '"' + (o[0] === value ? ' selected' : '') +
@@ -22119,7 +23259,7 @@
     }
   }
 
-  function settingsFieldHtml(row, value) {
+  function settingsFieldHtml(row, value, values) {
     var control = settingsControlHtml(row, value);
     // A row can open a labelled group (Docker Hub sign-in, so far the only
     // one) — the heading and its explanation sit above the first field in
@@ -22202,18 +23342,52 @@
                  '<figcaption class="staxx-hint">' + esc(s.caption) + '</figcaption></figure>';
         }).join('') + '</div>'
       : '';
+    // PLAN_135: samples are illustrations of the outcome, not a choice — no
+    // data-value, so the click-to-choose handler below leaves them alone.
+    var samplesHtml = row.samples
+      ? '<div class="staxx-shots staxx-shots--samples">' + row.samples.map(function (s) {
+          return '<figure class="staxx-shot staxx-shot--sample">' +
+                 '<img src="/plugins/staxx/images/settings/' + esc(s.src) + '" alt="' + esc(s.caption) + '">' +
+                 '<figcaption class="staxx-hint">' + esc(s.caption) + '</figcaption></figure>';
+        }).join('') + '</div>'
+      : '';
     // The crypt state readout belongs inside CRYPT_MODE's own box, under its
     // dropdown, rather than after it — see settingsCryptBox() above.
     var cryptHtml = row.key === 'CRYPT_MODE' ? '<div class="staxx-crypt" id="staxx-crypt-state" hidden></div>' : '';
+    // PLAN_134: a row.within row (so far only PLACEMENT_RULES) is drawn here,
+    // inside its host's own box, rather than laid out as a field of its own
+    // — the layout loop above already skips it. Sits before derivedLine so
+    // the switch reads as governing the folder button just above it, ahead
+    // of the derived-folder lines beneath.
+    var withinHtml = '';
+    if (row.key === 'STORE_ROOT' && values) {
+      withinHtml = SETTINGS_ROWS.filter(function (r) { return r.within === row.key; })
+        .map(function (subRow) {
+          return '<div class="staxx-within" data-key="' + esc(subRow.key) + '">' +
+                 settingsControlHtml(subRow, values[subRow.key] || '') +
+                 '<span class="staxx-hint">' + subRow.help + '</span></div>';
+        }).join('');
+    }
+    // The help paragraph carries order: -1 (see staxx.css), which is what
+    // actually lifts it above the control on screen — DOM position here
+    // does not decide that. samplesHtml and the attribution line are given
+    // the same order so they land between the help text and the control:
+    // among elements sharing one order value, flex falls back to document
+    // order, so they must be written out in the order they should appear.
+    var attributionHtml = row.attribution
+      ? '<span class="staxx-hint staxx-attribution">' + row.attribution + '</span>'
+      : '';
     return head + '<div class="staxx-field" data-key="' + esc(row.key) + '">' +
              '<span>' + esc(row.label) + '</span>' +
              control +
              shotsHtml +
              '<span class="staxx-hint">' + row.help + '</span>' +
+             samplesHtml +
+             attributionHtml +
              // Inside the field's own box rather than after it: these lines
              // are part of the data store setting, and outside the border
              // they read as belonging to nothing.
-             derivedLine + unreachableLine + storageLine + cryptHtml +
+             withinHtml + derivedLine + unreachableLine + storageLine + cryptHtml +
            '</div>';
   }
 
@@ -22239,7 +23413,10 @@
 
   function settingsControlValue(row) {
     var el = document.getElementById(row.id);
-    return el ? el.value : '';
+    if (!el) return '';
+    // A toggle's real value is one of its two data-* strings, not the
+    // checkbox's own on/off state.
+    return el.type === 'checkbox' ? (el.checked ? el.dataset.on : el.dataset.off) : el.value;
   }
 
   // A list control's own comma-separated entries, as an array with blanks
@@ -22607,7 +23784,8 @@
     call('list', {}).then(function (res) {
       if (!res.ok) {
         settingsMsg.textContent = '';
-        openLogDialog('Add missing StaXX fields', res.error || 'Could not list stacks.');
+        showInfo('Add missing StaXX fields', '<p>' + esc(res.error || 'Could not list stacks.') + '</p>',
+                 { bad: true });
         return;
       }
 
@@ -22632,14 +23810,15 @@
         settingsMsg.textContent = '';
 
         if (!toSave.length) {
-          var msg = 'Every stack already has its StaXX fields.';
+          var msg = '<p>Every stack already has its StaXX fields.</p>';
           if (refused.length) {
-            msg += '\n\n' + refused.length + ' stack' + (refused.length === 1 ? '' : 's') +
-              ' could not be checked:\n' + refused.map(function (r) {
-                return '  ' + r.name + ' — ' + r.reason;
-              }).join('\n');
+            msg += '<p>' + refused.length + ' stack' + (refused.length === 1 ? '' : 's') +
+              ' could not be checked:</p><ul class="staxx-confirm-list">' + refused.map(function (r) {
+                return '<li><code>' + esc(r.name) + '</code><span class="staxx-confirm-meta">' +
+                       esc(r.reason) + '</span></li>';
+              }).join('') + '</ul>';
           }
-          openLogDialog('Add missing StaXX fields', msg);
+          showInfo('Add missing StaXX fields', msg);
           return;
         }
 
@@ -22678,20 +23857,28 @@
   // save is recorded in that stack's own history regardless, so this needs
   // no undo of its own.
   function saveScaffoldSweep(toSave, refused) {
-    openLogDialog('Add missing StaXX fields', 'Saving…');
+    // A running progress list, same shape as the self-test's — kept in its
+    // own <pre> inside the notice dialog rather than becoming paragraphs
+    // one at a time.
+    var text = 'Saving…';
+    showInfo('Add missing StaXX fields', '<pre class="staxx-confirm-pre">' + esc(text) + '</pre>');
+    function appendText(t) {
+      text += t;
+      var pre = confirmBody.querySelector('.staxx-confirm-pre');
+      if (pre) { pre.textContent = text; pre.scrollTop = pre.scrollHeight; }
+    }
+
     var ok = 0;
     toSave.reduce(function (chain, e) {
       return chain.then(function () {
         return call('save', { name: e.name, body: e.body, new: '0', fingerprint: e.fingerprint }).then(function (r) {
-          logBox.textContent += '\n' + e.name + ' — ' + (r.ok ? 'saved.' : (r.error || 'could not be saved.'));
+          appendText('\n' + e.name + ' — ' + (r.ok ? 'saved.' : (r.error || 'could not be saved.')));
           if (r.ok) ok++;
-          logBox.scrollTop = logBox.scrollHeight;
         });
       });
     }, Promise.resolve()).then(function () {
-      logBox.textContent += '\n\n' + ok + ' of ' + toSave.length + ' saved.' +
-        (refused.length ? ' ' + refused.length + ' left alone.' : '');
-      logBox.scrollTop = logBox.scrollHeight;
+      appendText('\n\n' + ok + ' of ' + toSave.length + ' saved.' +
+        (refused.length ? ' ' + refused.length + ' left alone.' : ''));
       refreshRows();   // the rows may show icons or other x-unraid facts that just changed
     });
   }
@@ -22731,14 +23918,16 @@
         // this tab — every later row of the same block draws nothing.
         var seenBlocks = {};
         var rowsHtml = SETTINGS_ROWS.filter(function (row) {
-          return row.tab === tab;
+          // A row.within row is drawn by its host row (settingsFieldHtml()'s
+          // STORE_ROOT branch), not laid out here — same idea as row.block.
+          return row.tab === tab && !row.within;
         }).map(function (row) {
           if (row.block) {
             if (seenBlocks[row.block]) return '';
             seenBlocks[row.block] = true;
             return settingsBlockHtml(row.block, res.settings);
           }
-          return settingsFieldHtml(row, res.settings[row.key] || '');
+          return settingsFieldHtml(row, res.settings[row.key] || '', res.settings);
         }).join('');
         // Two things that are not settings sit at the end of the tab they
         // are about, rather than pinned to the bottom of the whole panel:
@@ -22959,6 +24148,10 @@
       var listRemove = event.target.closest('[data-list-remove]');
       if (listRemove) { settingsListRemove(listRemove); return; }
       var shot = event.target.closest('.staxx-shot');
+      // PLAN_135: a sample figure is an illustration, not a choice — it
+      // carries no data-value, so without this guard it would set the
+      // select to the literal string "undefined" and clear the selection.
+      if (shot && shot.dataset.value === undefined) return;
       if (shot) {
         var field = shot.closest('.staxx-field[data-key]');
         var select = field && field.querySelector('select');
@@ -23663,6 +24856,10 @@
   // back — a folder, stack or container icon, or a row's menu button reached
   // by right-click.
   var menuTrigger = null;
+  // Where new items land. Null means "the menu itself" — set to a column
+  // <div> while a menu is split in two, so the folder section can be built
+  // into its own column without every item-builder needing to know about it.
+  var menuTarget = null;
 
   function menuFlush() {
     if (menuFlushing) return;   // a save must not trigger another flush
@@ -23687,6 +24884,11 @@
     var trigger = menuTrigger;
     menu.hidden = true;
     menuItems.textContent = '';
+    // A split stack menu leaves its column class and target behind otherwise,
+    // so the next menu opened (a folder or container, always single-column)
+    // would inherit both.
+    menuItems.classList.remove('staxx-menu-items--split');
+    menuTarget = null;
     if (trigger) trigger.setAttribute('aria-expanded', 'false');
     menuTrigger = null;
     if (reclaim && trigger) trigger.focus({ preventScroll: true });
@@ -23735,10 +24937,13 @@
     b.appendChild(col);
     b.addEventListener('click', function () {
       if (b.disabled) return;
+      // A switch you can see change position is the point; closing the menu
+      // on the click that flips it hid the very thing it was meant to show.
+      if (opts.keepOpen) { handler(b); return; }
       closeMenu();
       handler();
     });
-    menuItems.appendChild(b);
+    (menuTarget || menuItems).appendChild(b);
     return b;
   }
 
@@ -23746,7 +24951,7 @@
     var d = document.createElement('div');
     d.className = 'staxx-menu-sep';
     if (label) d.textContent = label;
-    menuItems.appendChild(d);
+    (menuTarget || menuItems).appendChild(d);
   }
 
   /* ---- autostart menu items (PLAN_43) -------------------------------------
@@ -23762,11 +24967,14 @@
   function addBootMenuItem(d, name, service) {
     var boot      = d.boot || 'off';
     var available = d.bootAvailable !== '0';
-    menuItem('Autostart', boot === 'on' ? 'toggle-on' : 'toggle-off', function () {
+    menuItem('Autostart', boot === 'on' ? 'toggle-on' : 'toggle-off', function (b) {
       var want = boot === 'on' ? '0' : '1';
+      // Disabled for the round trip so a second click while the first is
+      // still in flight cannot fire the opposite change before this one lands.
+      b.disabled = true;
       call('autostart', { name: name, service: service || '', on: want })
         .then(function (r) {
-          if (!r.ok) { failed('Could not change autostart', r.error); return; }
+          if (!r.ok) { b.disabled = false; failed('Could not change autostart', r.error); return; }
           // Written back onto the row itself, not left for the table redraw to
           // deliver: this switch is BUILT from that attribute, so re-opening
           // the menu before the redraw landed showed the old position — and
@@ -23774,10 +24982,21 @@
           // is a loop you cannot get out of by pressing harder. The redraw
           // still comes and still has the last word; this only stops the gap
           // in between from lying about which way the switch is set.
-          d.boot = want === '1' ? 'on' : 'off';
-          refreshRows();
+          boot = want === '1' ? 'on' : 'off';
+          d.boot = boot;
+          var glyph = b.querySelector('.fa');
+          if (glyph) {
+            glyph.classList.toggle('fa-toggle-on', boot === 'on');
+            glyph.classList.toggle('fa-toggle-off', boot !== 'on');
+          }
+          // "Some services only" no longer applies once every one is on.
+          var hint = b.querySelector('.staxx-menu-hint');
+          if (hint) hint.remove();
+          b.disabled = false;
+          if (menu.hidden) refreshRows(); else menuRedraw = true;
         });
     }, {
+      keepOpen: true,
       disabled: !available,
       hint: !available ? 'Docker is not running, so autostart cannot be changed.'
           : boot === 'some' ? 'Some services only — this turns on every one of them.'
@@ -23877,7 +25096,7 @@
       commit(false);
     });
 
-    menuItems.appendChild(row);
+    (menuTarget || menuItems).appendChild(row);
     return row;
   }
 
@@ -24074,6 +25293,23 @@
       menuItem('Start a compose file here', 'file-code-o', function () { openAdoptEditor(name); });
     }
 
+    // The folder list is the one section that grows with however many folders
+    // the user has made, and on a long list it pushed everything below it off
+    // the bottom of the window. Splitting it into a second column alongside
+    // the first makes the menu wider rather than taller, so the items that
+    // follow it stay in reach whatever the folder count. Everything already
+    // built above goes in the first column; the folder section fills the
+    // second; menuTarget is put back to the first column right after it.
+    var menuCol1 = document.createElement('div');
+    menuCol1.className = 'staxx-menu-col';
+    var menuCol2 = document.createElement('div');
+    menuCol2.className = 'staxx-menu-col';
+    while (menuItems.firstChild) menuCol1.appendChild(menuItems.firstChild);
+    menuItems.appendChild(menuCol1);
+    menuItems.appendChild(menuCol2);
+    menuItems.classList.add('staxx-menu-items--split');
+    menuTarget = menuCol2;
+
     // The section shows even with no folders yet — "New folder" is what it is
     // for at that point, and it was the one moment it used to be missing.
     menuSeparator('Move to folder');
@@ -24110,6 +25346,11 @@
         });
       });
     }
+
+    // Back to the first column: everything from here down carries on beneath
+    // what was built before the folder section, rather than following it into
+    // the second column.
+    menuTarget = menuCol1;
 
     menuSeparator();
     // Information, not an action — a foreign hand-reorder on Unraid's own
@@ -24297,14 +25538,16 @@
     menuSeparator();
 
     menuItem('Remove container', 'trash-o', function () {
-      if (!window.confirm(
-            'Remove the container for "' + service + '"?\n\n' +
-            'It is stopped and removed. The compose file is not touched, so Start ' +
-            'recreates it. Named volumes and anything stored outside the container ' +
-            'are left alone.')) {
-        return;
-      }
-      run(stack, 'remove', afterRun('remove', stack, service), service);
+      askConfirm({
+        title: 'Remove the container for "' + service + '"?',
+        bodyHtml: '<p>It is stopped and removed. The compose file is not touched, so Start ' +
+                  'recreates it. Named volumes and anything stored outside the container ' +
+                  'are left alone.</p>',
+        goLabel: 'Remove container'
+      }).then(function (go) {
+        closeConfirm();
+        if (go) run(stack, 'remove', afterRun('remove', stack, service), service);
+      });
     }, { danger: true, disabled: !CAN_RUN || !exists });
   }
 
@@ -24353,16 +25596,19 @@
     addBootWaitField(d, 'folder', id);
     menuSeparator();
     menuItem('Delete folder', 'trash-o', function () {
-      if (!window.confirm(
-            'Delete the folder "' + name + '"?\n\n' +
-            'A folder is a real directory now. The stacks inside it are not deleted — ' +
-            'each one is moved back up to the top level first, and nothing is moved ' +
-            'at all unless every one of them can be.')) {
-        return;
-      }
-      call('folder-delete', { folder: id }).then(function (r) {
-        if (!r.ok) { failed('Could not delete the folder', r.error); return; }
-        refreshRows();
+      askConfirm({
+        title: 'Delete the folder "' + name + '"?',
+        bodyHtml: '<p>A folder is a real directory now. The stacks inside it are not deleted — ' +
+                  'each one is moved back up to the top level first, and nothing is moved ' +
+                  'at all unless every one of them can be.</p>',
+        goLabel: 'Delete folder'
+      }).then(function (go) {
+        closeConfirm();
+        if (!go) return;
+        call('folder-delete', { folder: id }).then(function (r) {
+          if (!r.ok) { failed('Could not delete the folder', r.error); return; }
+          refreshRows();
+        });
       });
     }, { danger: true });
   }
@@ -25669,6 +26915,7 @@
       }
       return;
     }
+
 
     if (el.dataset.toggleFolder) { toggleFolder(el.dataset.toggleFolder, el); return; }
     if (el.dataset.toggleStack)  { toggleStack(el.dataset.toggleStack, el);  return; }

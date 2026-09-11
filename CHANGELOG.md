@@ -16,6 +16,38 @@ before that were dates.
 
 ---
 
+## 00.03.00 — released 2026-09-11
+
+- The copy of a container that "Take over and start" sets aside is no longer offered in the Import window or reported as a container found outside any stack. It is your way back if the new stack fails, not something to bring in again.
+- A stack that points at a network your server no longer has (most often because Unraid renamed it when bridging was switched on) is now refused before Start, Restart, Update, Recreate or Rebuild download anything, with the network's name and the nearest one the server does have. The stack editor shows the same message under the network and offers a one-press **Use br0.2**-style button that renames it everywhere in the file, as one undoable edit. Pull images is not refused.
+- The Import window no longer offers stacks you have already brought in, including ones since moved into a folder or renamed on the way in. Each such row says where the stack now is. The first time you open the window after this update, stacks imported earlier are matched to their template where exactly one fits, a note of which one is written into the stack's file with the previous version kept in its history, and a message lists every stack touched.
+- The Manage tab's file browser now asks its questions (new folder, rename, delete, owner and permissions, replace) in the same styled dialog as the rest of the page instead of the browser's plain pop-ups, and the author-example findings report opens as a readable list rather than in the log window: one block per stack, its image, then the settings the author's example also sets and the ones it does not, each as a small chip.
+- Pressing "Close without saving" on the stack editor now closes the question along with the editor. It used to leave the question sitting over the list, looking as if the button had done nothing.
+- A folder's "update ready" chip now says, on hover, how many stacks in the folder have updates and lists each one with the version it is running and the one waiting. It used to show one stack's two versions beside a list of names, which did not read as one thing.
+- Every tooltip on the page, from the state chips and badges to the small buttons on a row and the controls inside the stack editor and the Import window, now opens as the same styled hover card the update chips use, instead of the browser's own plain tooltip. The card also appears when a control is reached with the keyboard.
+- Hovering an update chip no longer shows the browser's own tooltip on top of the chip's hover card. The chip's words now live only in the card.
+- Pressing "update ready" on a stopped stack now fetches the new image and leaves the stack stopped, instead of starting it. A stack with some services running updates only those; the stopped ones keep their chip until they are next started.
+- A stack whose image has been recorded under two digests no longer shows "update ready" for ever after every update run finishes with nothing to fetch. The check now accepts any of the image's own digests as a match for what the registry answers.
+- Notices now sit in a compact line beside the buttons instead of stacking as banners down the page. Click it for the full list, where each one can be followed to wherever it points or dismissed, and a dismissal is remembered in that browser.
+- The Compose Manager badge on a stack's name line now matches the review badge beside it in size and colour. Several small controls elsewhere, such as the close crosses on notices and the fix-it buttons in the editor form, no longer depend on Unraid's own stylesheet leaving them alone.
+- A host folder that could not be read for a moment is no longer reported as missing. The stack editor also re-checks a folder it marked missing instead of remembering that first answer for the rest of the session.
+- The state chips on the main grid are now all the same size. A chip you can click, such as the orange "update ready" chip or the one offering to find a health check, drew taller than the plain ones beside it.
+- The web page button now works for a stack imported from a template onto its own network (a br0-style address) or onto the server's network, where there is no port list to read. Import writes the plain port number into the address, the way the editor's Web page port field does, and a stack imported before this fix gets its button back without a visit to the editor.
+- The Storage tab's "Where stacks may live" box is gone. The same choice now sits inside the Data store box as a switch, **Protect me from myself**: on, the folder picker greys out and refuses places that can lose or hide your stacks; off, it warns and lets you choose. Nothing you had set changes.
+- The Container icons setting now shows a row of six sample icons under its dropdown, so you can see the kind of icon it fetches before you decide.
+- Setting up a health check no longer makes the "How the check runs" and "The check itself" fields disappear when you choose the mode before typing the command. A check whose command is still blank now reads back as those two editable fields instead of one locked line.
+- A stack that has never been started can now be removed even when its compose file has a mistake compose refuses to read, such as a service naming a network the file does not declare. Before, removal was refused with a message about stopping containers that did not exist.
+- The right-click menu on a stack now puts "Move to folder" in a second column beside the other items, so a long folder list no longer pushes the rest of the menu off the bottom of the window.
+- The Autostart switch on that same menu now flips in place and leaves the menu open, so you can see which way it went and carry on, rather than the menu closing the moment you press it.
+- StaXX now installs Docker Compose itself when the server has none, and puts it back after every reboot, so removing Compose Manager no longer takes your stacks' controls with it. A compose already present from anywhere else is never touched.
+- The "updates waiting" count in the title bar now counts only stacks that still exist. Images left over from a removed stack no longer keep it lit.
+- An update to a rebuilt image that keeps the same version number now says "a new build of 22.04 is available" instead of showing that same version as both running and available.
+- The update chip on a row no longer flickers back into view for a moment while that row is busy pulling or has failed.
+- A folder's update chip now names which stacks inside it have an update waiting, instead of just a count, and its hover text and wording now talk about stacks rather than services.
+- The banner that appears after StaXX quietly fills in an icon now names the stacks it changed, instead of just a count, so you know where to look.
+- Messages that used to appear as plain text in the black output box — the restart-pending panel, "nothing new found", the self-test, and several others — now show in the same style as every other question StaXX asks, and renaming a file or sharing a container's network now uses that same look instead of the browser's own plain pop-up box.
+- While an update or a pull is running, the row itself now shows what is actually happening: how many layers are done, roughly how long the download has left, and a download bar and an unpacking bar with their amounts. It slides away on its own once the container starts.
+
 ## 00.02.00 — released 2026-09-03
 
 - **The shell in the Manage tab is now Unraid's own terminal,** the same one the Console button opens, so nano, htop and anything else that draws a full screen work in it. When the shell ends the pane greys out with its last screen still readable, and Reconnect opens a fresh one.

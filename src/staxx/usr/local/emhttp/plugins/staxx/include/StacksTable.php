@@ -426,7 +426,9 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   // hovering still gives the version tip where there is one, plus why
   // nothing is happening.
   $titleBits = array_filter([$title, $note], function ($s) { return $s !== ''; });
-  $titleAttr = $titleBits ? ' title="'.htmlspecialchars(implode("\n\n", $titleBits)).'"' : '';
+  // A data attribute, not title: stacks.js draws these words in its own hover
+  // card, and a title on the same element makes the browser show them twice.
+  $titleAttr = $titleBits ? ' data-update-tip="'.htmlspecialchars(implode("\n\n", $titleBits)).'"' : '';
 
   // Only `update` becomes a real button, and only where a press has somewhere
   // to go. Every other state is text, and a button that can only ever do
@@ -473,6 +475,16 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
     'cadence-why' => (string)($u['cadenceWhy'] ?? ''),
   ] as $attr => $val) {
     if ($val !== '') $cardAttrs .= ' data-update-'.$attr.'="'.htmlspecialchars($val).'"';
+  }
+  // Card 01a08d12 — which stacks a folder roll-up speaks for, so the hover
+  // card can list them by name instead of just a count. Empty on every other
+  // pill (staxx_updates_aggregate() only fills it in for a folder), so it is
+  // written the same way the other optional facts above are: omitted rather
+  // than an empty "[]", so the browser can tell "no children" from "not this
+  // kind of pill" if it ever needs to.
+  $children = (array)($u['children'] ?? []);
+  if ($children) {
+    $cardAttrs .= ' data-update-children="'.htmlspecialchars(json_encode($children)).'"';
   }
 
   return '<'.$tag.' class="staxx-updatepill '.$cls.'"'.$typeAttr

@@ -95,7 +95,7 @@
   // No `icon` key: an absent icon is matched from the image name
   // automatically (Icons.php's own candidate search), which already happens
   // and beats a guess made here from label text nobody has checked.
-  function buildStackMeta(image, facts) {
+  function buildStackMeta(image, facts, name) {
     facts = facts || {};
     var labels = (facts.labels && typeof facts.labels === 'object') ? facts.labels : {};
 
@@ -110,7 +110,7 @@
     var project = checkUrl(L('org.opencontainers.image.source')) || checkUrl(L('org.opencontainers.image.url'));
     var author = L('org.opencontainers.image.authors');
 
-    var lines = ['  version: 1'].concat(CA.importedMetaLines('docker-image'));
+    var lines = ['  version: 1'].concat(CA.importedMetaLines('docker-image', image, name));
     if (overview) {
       lines.push('  overview: |');
       CA.wrapText(overview, 78).forEach(function (l) { lines.push('    ' + l); });
@@ -549,7 +549,7 @@
 
     if (facts.off) return bareResult(image, source, name, false);
 
-    var stackMeta = buildStackMeta(image, facts);
+    var stackMeta = buildStackMeta(image, facts, name);
 
     var r1 = tryReadmeRoute(image, facts.readme, opts, name, stackMeta);
     if (r1) return r1;

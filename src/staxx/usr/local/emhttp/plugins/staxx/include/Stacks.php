@@ -666,6 +666,20 @@ function staxx_real_ancestor(string $path): ?string {
 }
 
 /**
+ * The user-share or remote-share mount point a lexical path sits under, or
+ * null if it names neither — /mnt/user or /mnt/remotes/<share>. Used by
+ * staxx_path_verdict() to tell a FUSE layer that has merely stalled (the
+ * mount point itself still answers) from one that is genuinely gone.
+ */
+function staxx_fuse_mount(string $lexical): ?string {
+  $parts = explode('/', ltrim($lexical, '/'));
+  if (($parts[0] ?? '') !== 'mnt') return null;
+  if (($parts[1] ?? '') === 'user') return '/mnt/user';
+  if (($parts[1] ?? '') === 'remotes' && ($parts[2] ?? '') !== '') return '/mnt/remotes/'.$parts[2];
+  return null;
+}
+
+/**
  * Cheap emptiness test for staxx_path_verdict()'s 'inuse' verdict: stop at
  * the first entry that isn't "." or "..", never build a listing and never
  * recurse — the same "one stat's worth of work per path" spirit
@@ -683,8 +697,9 @@ function staxx_dir_has_entries(string $dir): bool {
 }
 
 /**
- * ok | file | missing | skipped | inuse for one already-combined target,
- * checked against one already-resolved root directory.
+ * ok | file | missing | unreachable | skipped | inuse for one
+ * already-combined target, checked against one already-resolved root
+ * directory.
  *
  * A path outside the root comes back "skipped", never "missing" — reporting
  * "missing" for something like /etc/shadow would turn this into a way to
@@ -693,6 +708,16 @@ function staxx_dir_has_entries(string $dir): bool {
  * ancestor (see staxx_real_ancestor()) so a path that does not exist yet
  * can still be reported as "missing" rather than falling through to
  * "skipped" for every path that doesn't already exist.
+ *
+ * A first realpath() failure under /mnt/user or /mnt/remotes is not trusted
+ * on its own: Unraid's user-share FUSE layer can stall for a moment (this is
+ * what card 01a08d11 turned out to be — Plex's own path was fine, the check
+ * just caught it mid-stall), and one bad answer was being shown as a genuinely
+ * missing folder. So the mount point itself is stat()ed first; if it answers,
+ * realpath() gets one retry after a quarter-second before "missing" is
+ * declared, and if the mount point itself does not answer this returns
+ * "unreachable" instead — a share that is not there right now, not a folder
+ * that was never made.
  *
  * $checkInUse turns an existing, non-empty folder into "inuse" instead of
  * "ok" — only worth asking for a stack being created, where a folder full of
@@ -714,12 +739,21 @@ function staxx_path_verdict(string $target, string $root, bool $checkInUse = fal
   // This is an EXTRA gate, never a replacement for the realpath checks — text
   // alone cannot see a symlink, which is the case realpath is there for. Both
   // have to pass.
-  if (!$inRoot(staxx_lexical_path($target))) return 'skipped';
+  $lexical = staxx_lexical_path($target);
+  if (!$inRoot($lexical)) return 'skipped';
 
   $ancestor = staxx_real_ancestor($target);
   if ($ancestor === null || !$inRoot($ancestor)) return 'skipped';
 
   $real = @realpath($target);
+  if ($real === false) {
+    $mount = staxx_fuse_mount($lexical);
+    if ($mount !== null) {
+      if (!@is_dir($mount)) return 'unreachable'; // the share itself is not answering
+      usleep(250000);
+      $real = @realpath($target);
+    }
+  }
   if ($real === false) return 'missing'; // ancestor is contained; nothing at the leaf yet
   if (!$inRoot($real)) return 'skipped'; // a symlink resolved outside the root after all
 
@@ -1639,8 +1673,12 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
  *                                            firstPort:array{target?:string,published?:string,count?:int},
  *                                            netMode:string, networks:string[], healthcheck:bool}>}
  */
-function staxx_compose_meta(string $file, ?string &$error = null): array {
+function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = false): array {
   static $cache = [];
+  // $reset empties the in-process memory for a caller that has just changed
+  // a file mid-request — the import back-fill — and needs the next read to
+  // see it. The on-disk copy needs nothing: it is keyed on the contents.
+  if ($reset) $cache = [];
 
   // Keyed on the whole pair, not just $file, so an override's settings are
   // reflected in what this reports. Safe as a cache key: for a single file
@@ -1790,6 +1828,90 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
  */
 function staxx_service_names(string $file, ?string &$error = null): array {
   return array_keys(staxx_compose_meta($file, $error)['services']);
+}
+
+/**
+ * Which of a compose file's own top-level networks are marked external but
+ * do not exist on this box, and the nearest server network to offer instead
+ * — see PLAN_140. Only the top-level `networks:` block is read; a service's
+ * own `networks:` list says which of these it *uses*, not whether any of
+ * them actually exists here.
+ *
+ * Reads the raw file text with staxx_yaml_flatten() rather than going
+ * through staxx_compose_meta(): the file can be perfectly valid and still
+ * name a network this box has renamed or never had, which is exactly the
+ * case this exists to catch — routing it back through compose's own
+ * resolution would either answer the same question the long way round or,
+ * once compose itself refuses the file for the missing network, answer it
+ * not at all.
+ *
+ * $networks lets a test hand in a made-up list instead of this box's real
+ * one; left null it is read fresh, and a $networks of null with Docker down
+ * is a non-answer — nothing is reported, never everything reported missing.
+ *
+ * @param ?array<int,array{name:string,driver:string}> $networks
+ * @return array<string,string> missing name => nearest existing name, or ''
+ */
+function staxx_missing_external_networks(string $composeText, ?array $networks = null): array {
+  if ($networks === null) {
+    if (!staxx_docker_running()) return [];
+    $networks = staxx_docker_networks();
+  }
+
+  $have = [];
+  foreach ($networks as $n) $have[$n['name']] = $n['driver'];
+
+  // One pass to gather what each declared network says about itself —
+  // external/name/driver can arrive on any line in any order — then a
+  // second pass below to judge each one now that its whole shape is known.
+  $decl = [];
+  foreach (staxx_yaml_flatten($composeText) as $path => $value) {
+    $parts = explode("\0", $path);
+    if ($parts[0] !== 'networks' || count($parts) < 3) continue;
+    $key = $parts[1];
+    if (!isset($decl[$key])) {
+      $decl[$key] = ['external' => false, 'name' => null, 'extname' => null, 'driver' => null];
+    }
+
+    if ($parts[2] === 'external' && count($parts) === 3) {
+      $decl[$key]['external'] = strtolower(trim($value)) === 'true';
+    } elseif ($parts[2] === 'external' && count($parts) === 4 && $parts[3] === 'name') {
+      // The legacy `external: name: X` form — superseded by a plain `name:`
+      // beside `external: true`, but still written by older files.
+      $decl[$key]['external'] = true;
+      $decl[$key]['extname']  = $value;
+    } elseif ($parts[2] === 'name' && count($parts) === 3) {
+      $decl[$key]['name'] = $value;
+    } elseif ($parts[2] === 'driver' && count($parts) === 3) {
+      $decl[$key]['driver'] = $value;
+    }
+  }
+
+  $missing = [];
+  foreach ($decl as $key => $info) {
+    if (!$info['external']) continue;
+    $name = $info['extname'] ?? $info['name'] ?? $key;
+    if (isset($have[$name])) continue;
+
+    // A name with no dot never gets a guessed match — the suffix rule below
+    // only means something for the interface-renamed-to-bridge case PLAN_140
+    // was written for (eth0.2 -> br0.2).
+    $closest = '';
+    $dot = strrpos($name, '.');
+    if ($dot !== false) {
+      $suffix = substr($name, $dot + 1);
+      foreach ($have as $candName => $candDriver) {
+        $candDot = strrpos($candName, '.');
+        if ($candDot === false || substr($candName, $candDot + 1) !== $suffix) continue;
+        if ($info['driver'] !== null && $candDriver !== $info['driver']) continue;
+        $closest = $candName;
+        break;
+      }
+    }
+    $missing[$name] = $closest;
+  }
+
+  return $missing;
 }
 
 /**
@@ -2130,11 +2252,15 @@ function staxx_webui_literal_port(string $address): string {
  * A `[PORT:nnn]` token is the older shape, from before that field existed,
  * and still means "work it out" rather than "here is the number" — checked
  * against 64 real templates the number inside it names the host port 10
- * times, the container port 15 times, and neither 3 times, so it cannot be
- * trusted and is ignored outright. This path only exists to keep a file
- * nobody has edited yet working until it is: mazanoke's address still says
- * `[PORT:80]` while its mapping is `8686:80`, and its link needs 8686, so
- * reading the token's own number would break it.
+ * times, the container port 15 times, and neither 3 times, so it is ignored
+ * whenever the ports list can answer instead. This path only exists to keep
+ * a file nobody has edited yet working until it is: mazanoke's address still
+ * says `[PORT:80]` while its mapping is `8686:80`, and its link needs 8686,
+ * so reading the token's own number would break it. But a service with no
+ * ports list at all — a macvlan/ipvlan or host-network container imported
+ * from a template, which publishes nothing — has no other number to offer,
+ * so there the marker's own number is taken, matching what the compose
+ * editor's Web page port field already shows for such a service.
  *
  * An address with no port anywhere — literal or token — has nothing for the
  * button to open, so it resolves to ''.
@@ -2183,6 +2309,12 @@ function staxx_webui_url(
     $port = $kind === 'bridge'
       ? (string)($firstPort['published'] ?? '')
       : (string)($firstPort['target'] ?? '');
+    // No ports list at all — a macvlan/ipvlan or host-network service imported
+    // from a template publishes nothing — so the marker's own number is the
+    // only one there is. Only when the list is EMPTY, though: a bridge entry
+    // with just a container side gets a random server-side port, and the
+    // marker's number would then open the wrong place, so that stays ''.
+    if ($port === '' && $firstPort === [] && preg_match('/\[PORT:(\d+)\]/', $raw, $m)) $port = $m[1];
     if ($port === '') return '';
     $raw = preg_replace('/\[PORT:[^\]]*\]/', $port, $raw);
   } elseif (staxx_webui_literal_port($raw) === '') {
@@ -3204,15 +3336,31 @@ function staxx_run_probe(string $key): array {
   $ms  = (int)round((microtime(true) - $start) * 1000);
   $out = trim(implode("\n", $lines));
 
+  $output = $code === 124
+              ? 'TIMED OUT after '.$probe['timeout'].'s — this is the one that hangs.'
+              : ($out !== '' ? substr($out, 0, 400) : '(no output)');
+
+  // The compose probe fails whenever nothing answers `docker compose` yet, and
+  // ensure-compose already worked out why (no network, a bad checksum, an
+  // unreadable flash copy) — read its own words rather than leaving the
+  // administrator with only the bare command failure.
+  if ($key === 'compose' && $code !== 0) {
+    $state = @file_get_contents('/boot/config/plugins/staxx/compose/state');
+    if ($state !== false) {
+      $line = trim(strtok($state, "\n"));
+      if (strpos($line, 'fail ') === 0) {
+        $output .= "\n".substr($line, strlen('fail '));
+      }
+    }
+  }
+
   return [
     'key'    => $key,
     'label'  => $probe['label'],
     'ok'     => $code === 0,
     'ms'     => $ms,
     'exit'   => $code,
-    'output' => $code === 124
-                  ? 'TIMED OUT after '.$probe['timeout'].'s — this is the one that hangs.'
-                  : ($out !== '' ? substr($out, 0, 400) : '(no output)'),
+    'output' => $output,
   ];
 }
 
@@ -3587,20 +3735,28 @@ function staxx_archive_stack(
         : 'Project "'.$project.'" is running elsewhere, so its containers were left alone; '
           .'only this folder was archived.';
     } else {
-      $code = 1;
-      $out  = staxx_sh(
-        'cd '.escapeshellarg($dir).' && '.$cmd.' '.staxx_compose_file_args($files).' down 2>&1',
-        120,
-        $code
-      );
-      // Refuse if the containers are still up. Archiving the folder while its
-      // containers run leaves them orphaned, with nothing in this UI able to
-      // reach them again.
-      if ($code !== 0) {
-        $error = 'The containers could not be stopped, so nothing was archived or removed. '
-               . 'Stop the stack first, then try again.'
-               . ($out !== '' ? "\n\n".trim($out) : '');
-        return false;
+      // Only run `down` when there is something to stop: compose reports the
+      // project, or Docker holds a container under its label by some other
+      // route. With neither there is nothing to orphan — and a file compose
+      // cannot even parse (an undeclared network, say) can never have made
+      // one, so refusing here would make an invalid, never-started stack
+      // impossible to remove, which is exactly when a person wants it gone.
+      if ($running !== null || staxx_project_containers($name) !== []) {
+        $code = 1;
+        $out  = staxx_sh(
+          'cd '.escapeshellarg($dir).' && '.$cmd.' '.staxx_compose_file_args($files).' down 2>&1',
+          120,
+          $code
+        );
+        // Refuse if the containers are still up. Archiving the folder while its
+        // containers run leaves them orphaned, with nothing in this UI able to
+        // reach them again.
+        if ($code !== 0) {
+          $error = 'The containers could not be stopped, so nothing was archived or removed. '
+                 . 'Stop the stack first, then try again.'
+                 . ($out !== '' ? "\n\n".trim($out) : '');
+          return false;
+        }
       }
     }
   }
@@ -3928,6 +4084,15 @@ function staxx_handover_setaside_name(string $original, array $taken): string {
     if (!in_array($try, $taken, true)) return $try;
   }
   return $candidate.'-'.bin2hex(random_bytes(4));
+}
+
+/**
+ * Whether $name is a set-aside copy the function above would have made —
+ * kept beside the name-maker so the naming rule and the recognising rule
+ * cannot drift apart from each other.
+ */
+function staxx_handover_is_setaside(string $name): bool {
+  return (bool)preg_match('/-before-staxx(-\d+)?$/', $name);
 }
 
 /** The handover state file actually present in $dir, by its real name, or ''. */
@@ -6108,6 +6273,26 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
                  ? $count.' value still needs filling in: '.$list.'. Open the stack and fill it in.'
                  : $count.' values still need filling in before this stack can start: '
                    .$list.'. Open the stack and fill them in.');
+      return '';
+    }
+  }
+
+  // A file naming a network this box does not have looks perfectly valid
+  // and fails only at `up`, after whatever a `pull` step already downloaded
+  // — see PLAN_140. $startsSomething already covers both scopes here: every
+  // verb's whole-stack and per-service step lists agree on whether either
+  // begins with `up `, so one flag answers for both. `pull` on its own never
+  // reaches this at all, since fetching an image needs no network of the
+  // stack's.
+  if ($startsSomething) {
+    $missingNets = staxx_missing_external_networks((string)@file_get_contents($file));
+    if ($missingNets) {
+      $missName = array_key_first($missingNets);
+      $closest  = $missingNets[$missName];
+      $error = 'This stack needs a network called "'.$missName.'", and this server has no '
+             . 'network by that name.'
+             . ($closest !== '' ? ' The nearest is "'.$closest.'".' : '')
+             . ' Open the stack and change its network, then try again.';
       return '';
     }
   }
