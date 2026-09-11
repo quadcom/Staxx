@@ -171,6 +171,8 @@ how much of the total has been handled so far. Once the container starts, the pa
 its own and the row underneath shows again. It is there to be read, not clicked — the row's own
 controls come back as soon as it goes.
 
+![A stack row mid-update: over its Services and State columns sits a dark panel headed "Downloading the image · 8 of 23 layers done · a few seconds left", with a Download bar reading 79% · 32.2 MiB of 71.3 MiB and an Unpack bar reading 35% · 11.3 MiB of 71.3 MiB, the rows above and below unchanged](../images/guide/updates-pull-progress.png)
+
 ## Pause and update all
 
 ![The Check for updates button ringed, with Update all and Pause updates beside it](../images/guide/updates-bulk-buttons.png)

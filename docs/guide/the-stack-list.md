@@ -33,6 +33,10 @@ you have dismissed in this browser, so it will not show you the same one again f
 messages cannot be dismissed at all — they are saying something is genuinely wrong right now, such
 as Docker not running, and they clear themselves the moment that stops being true.
 
+![The notice line to the left of the button row, ringed: a warning icon, one message about a check that could not reach the registry, and a count of 2 at its right end, with the Database folder and two of its stacks beneath](../images/guide/the-stack-list-notices-ticker.png)
+
+![The Notifications panel opened under that line: two entries, each with an icon, its message, how long ago it arrived and a dismiss cross, one carrying a Check now button, and a Dismiss all button in the panel's footer](../images/guide/the-stack-list-notices-panel.png)
+
 ## The title bar
 
 ![The right end of the title bar: a grey chip saying when updates were last checked, an orange chip counting updates waiting, and an outlined chip counting author-example findings, with the button row beneath](../images/guide/the-stack-list-title-chips.png)
