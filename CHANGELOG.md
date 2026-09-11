@@ -16,7 +16,7 @@ before that were dates.
 
 ---
 
-## Unreleased
+## 00.03.00 — released 2026-09-11
 
 - The copy of a container that "Take over and start" sets aside is no longer offered in the Import window or reported as a container found outside any stack. It is your way back if the new stack fails, not something to bring in again.
 - A stack that points at a network your server no longer has (most often because Unraid renamed it when bridging was switched on) is now refused before Start, Restart, Update, Recreate or Rebuild download anything, with the network's name and the nearest one the server does have. The stack editor shows the same message under the network and offers a one-press **Use br0.2**-style button that renames it everywhere in the file, as one undoable edit. Pull images is not refused.
