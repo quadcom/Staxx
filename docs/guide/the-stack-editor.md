@@ -122,6 +122,7 @@ Each service then gets its own set of groups. Most are hidden until you switch t
 | Missing-file bar | '"filename" is named in this compose file but is not in this stack. Create it, or add it with the + button above.' | The file refers to a file that is not in this stack's folder. |
 | Make-paths bar | '"path" is named in this compose file but does not exist on the server yet. Create it.' | A folder the file wants does not exist yet on the server. Click it to create the folder. |
 | Folder-in-use caution | '"path" already has files in it. Starting this stack would point it at whatever is already there — check that is what you mean before starting it.' | You are making a new stack, and a folder it names already holds something. |
+| Network not found | 'This server has no network called "eth0.2". The nearest is "br0.2".' under a network marked as already existing, with a **Use br0.2** button beside it. | The file points at a network your server no longer has — most often because Unraid renamed it when bridging was switched on. The button renames it, in the declaration and in every service that uses it, as one undoable edit. Nothing changes until you press it. |
 
 ## What this never does
 

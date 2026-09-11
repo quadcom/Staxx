@@ -74,17 +74,87 @@ function staxx_import_safe_name(string $raw): string {
   return staxx_valid_name($name) ? $name : 'stack';
 }
 
-/** Top-level stack folder names that already exist, so an import candidate
- *  can say whether the name it would use is taken. */
-function staxx_import_taken_names(): array {
-  static $names = null;
-  if ($names !== null) return $names;
+/** Every stack's leaf name, at every depth, mapped to the stack's own path —
+ *  so an import candidate can say not just that its name is taken but WHERE,
+ *  which is what turns "a stack called X already exists" (reads as a name
+ *  clash) into "you already did this" (PLAN_141 point 1). Keyed lowercase:
+ *  a name clash is not case-sensitive, and neither is this check.
+ *
+ *  $reset forces a fresh read, for staxx_import_backfill()'s caller — the
+ *  back-fill changes stacks' own files mid-request, and this must not go on
+ *  answering from before that happened.
+ *
+ *  @return array<string,string> lowercased leaf => rel ('jellyfin' or
+ *                                'Media/jellyfin')
+ */
+function staxx_import_taken_names(bool $reset = false): array {
+  static $byLeaf = null;
+  if ($reset) $byLeaf = null;
+  if ($byLeaf !== null) return $byLeaf;
 
-  $names = [];
+  $byLeaf = [];
   foreach (staxx_scan_stacks()['stacks'] as $s) {
-    if ($s['folder'] === '') $names[] = $s['leaf'];
+    $byLeaf[strtolower($s['leaf'])] = $s['rel'];
   }
-  return $names;
+  return $byLeaf;
+}
+
+/**
+ * Whether some existing stack already IS this candidate, checked every way
+ * PLAN_141 asks for, cheapest first: the name it would take at any depth
+ * (point 1), the compose project its container is already running under, if
+ * any (point 2), and finally the source recorded in the candidate's own
+ * `imported.id`/`imported.name` stamp (point 3) — which is what still catches
+ * a stack that has since been renamed.
+ *
+ * @return string the matching stack's rel path, or '' if none matches.
+ */
+function staxx_import_taken_by(string $folder, string $id = '', string $name = '', string $runningProject = ''): string {
+  $taken = staxx_import_taken_names();
+  if ($runningProject !== '' && isset($taken[strtolower($runningProject)])) {
+    return $taken[strtolower($runningProject)];
+  }
+  if (isset($taken[strtolower($folder)])) return $taken[strtolower($folder)];
+
+  if ($id !== '' || $name !== '') {
+    $sources = staxx_import_taken_sources();
+    if ($id   !== '' && isset($sources['byId'][$id]))               return $sources['byId'][$id];
+    if ($name !== '' && isset($sources['byName'][strtolower($name)])) return $sources['byName'][strtolower($name)];
+  }
+  return '';
+}
+
+/**
+ * Every stack's own record of what it was imported from, read once and kept
+ * for the rest of the request — PLAN_141 point 3. Only stacks that name a
+ * source at all are worth reading twice (staxx_compose_meta() caches its own
+ * answer, but building this map still means one call per stack), so this
+ * skips a stack with no compose file at all rather than let staxx_compose_meta()
+ * report an error for it.
+ *
+ * $reset forces a fresh read — see staxx_import_taken_names()'s own note on
+ * why the back-fill needs this.
+ *
+ * @return array{byId: array<string,string>, byName: array<string,string>}
+ *   byId: source id (e.g. a template's filename) => stack rel.
+ *   byName: lowercased imported.name => stack rel.
+ */
+function staxx_import_taken_sources(bool $reset = false): array {
+  static $out = null;
+  if ($reset) $out = null;
+  if ($out !== null) return $out;
+
+  $out = ['byId' => [], 'byName' => []];
+  foreach (staxx_scan_stacks()['stacks'] as $s) {
+    $file = staxx_find_compose_file($s['dir']);
+    if ($file === '') continue;
+    $x = staxx_compose_meta($file)['x'] ?? [];
+    $id   = (string)($x['imported.id']   ?? '');
+    $name = (string)($x['imported.name'] ?? '');
+    if ($id   !== '') $out['byId'][$id] = $s['rel'];
+    if ($name !== '') $out['byName'][strtolower($name)] = $s['rel'];
+  }
+  return $out;
 }
 
 /* ------------------------------------------------------------ FolderView3 -- */
@@ -404,9 +474,13 @@ function staxx_import_read_template(string $path): ?array {
 /**
  * The 85-odd Unraid templates on this server, each carrying the decoded,
  * normalised template under 'app' for the browser to convert.
+ *
+ * $reset forces a fresh read, including fresh 'taken'/'takenBy' facts — see
+ * staxx_import_taken_names()'s own note on why the back-fill needs this.
  */
-function staxx_import_templates(): array {
+function staxx_import_templates(bool $reset = false): array {
   static $out = null;
+  if ($reset) $out = null;
   if ($out !== null) return $out;
 
   $out = [];
@@ -414,7 +488,6 @@ function staxx_import_templates(): array {
   if (!is_dir($dir)) return $out;
 
   $containers = staxx_import_all_containers();
-  $taken      = staxx_import_taken_names();
   $fv3        = staxx_import_folderview3();
 
   foreach ((array)@scandir($dir) as $file) {
@@ -435,6 +508,7 @@ function staxx_import_templates(): array {
         'exists'  => false,
         'running' => false,
         'taken'   => false,
+        'takenBy' => '',
         'notes'   => ['This template could not be read and was skipped.'],
         'app'     => null,
       ];
@@ -456,8 +530,14 @@ function staxx_import_templates(): array {
     $exists    = $container !== null;
     $running   = $exists && strtolower($container['state']) === 'running';
 
-    $takenNow = in_array($folder, $taken, true);
-    if ($takenNow) $notes[] = 'A stack called "'.$folder.'" already exists.';
+    // Point 2: a template's container can carry a compose project label of
+    // its own once it has been imported and started as a stack — that is
+    // stronger evidence than the name match below, and catches a stack
+    // renamed on the way in even before it stamps imported.id/name (point 3).
+    $runningProject = ($container['project'] ?? '') !== '' ? $container['project'] : '';
+    $takenRel = staxx_import_taken_by($folder, $file, $name, $runningProject);
+    $takenNow = $takenRel !== '';
+    if ($takenNow) $notes[] = 'Already in StaXX as "'.$takenRel.'".';
 
     // An imported app is one container, so its Docker folder — if it has
     // one — is exactly the folder its container is already filed in.
@@ -473,6 +553,7 @@ function staxx_import_templates(): array {
       'exists'         => $exists,
       'running'        => $running,
       'taken'          => $takenNow,
+      'takenBy'        => $takenRel,
       'notes'          => $notes,
       'app'            => $app,
       'icon'           => staxx_import_icon((string)($app['Icon'] ?? ''), '', $name,
@@ -565,7 +646,6 @@ function staxx_import_projects(): array {
   $root = STAXX_IMPORT_PROJECTS_DIR;
   if (!is_dir($root)) return $out;
 
-  $taken = staxx_import_taken_names();
   $index = staxx_container_index();
 
   foreach ((array)@scandir($root) as $entry) {
@@ -664,8 +744,13 @@ function staxx_import_projects(): array {
                . '" — importing it under this name would not line up with those containers.';
     }
 
-    $takenNow = in_array($dest, $taken, true);
-    if ($takenNow) $notes[] = 'A stack called "'.$dest.'" already exists.';
+    // Point 2: $label is the project name Docker's own running containers
+    // carry right now, which is stronger evidence than $dest — the folder
+    // name this import would guess — because it is true whatever this
+    // project's folder happens to be called on the flash drive.
+    $takenRel = staxx_import_taken_by($dest, $entry, $displayName, $label);
+    $takenNow = $takenRel !== '';
+    if ($takenNow) $notes[] = 'Already in StaXX as "'.$takenRel.'".';
 
     // Everything else sitting in the project's own folder, so the review
     // note can say what is being left behind. A project resolved through
@@ -720,6 +805,7 @@ function staxx_import_projects(): array {
       'exists'   => $exists,
       'running'  => $running,
       'taken'    => $takenNow,
+      'takenBy'  => $takenRel,
       'notes'    => $notes,
       'file'     => $file,
       'via'      => $via,
@@ -746,8 +832,6 @@ function staxx_import_loose(): array {
   $claimed = [];
   foreach (staxx_import_templates() as $t) $claimed[$t['name']] = true;
 
-  $taken = staxx_import_taken_names();
-
   foreach ($containers as $name => $info) {
     if ($info['project'] !== '') continue;   // compose-managed — not loose
     if (isset($claimed[$name])) continue;    // a template's own container
@@ -759,8 +843,9 @@ function staxx_import_loose(): array {
                . 'StaXX would call it "'.$folder.'" instead.';
     }
 
-    $takenNow = in_array($folder, $taken, true);
-    if ($takenNow) $notes[] = 'A stack called "'.$folder.'" already exists.';
+    $takenRel = staxx_import_taken_by($folder, $name, $name);
+    $takenNow = $takenRel !== '';
+    if ($takenNow) $notes[] = 'Already in StaXX as "'.$takenRel.'".';
 
     $out[] = [
       'source'  => 'loose',
@@ -770,6 +855,7 @@ function staxx_import_loose(): array {
       'exists'  => true,
       'running' => strtolower($info['state']) === 'running',
       'taken'   => $takenNow,
+      'takenBy' => $takenRel,
       'notes'   => $notes,
       // A loose row's only clue is its own container name, so that is the
       // only source tried — Unraid's downloaded copy, or nothing.
@@ -1385,6 +1471,138 @@ function staxx_import_write_project(string $rel, string $id, array $about, strin
   @chmod($dir.'/'.$mainName, 0644);
 
   return true;
+}
+
+/* ---------------------------------------------------------------- back-fill -- */
+
+/**
+ * Double-quotes a value the way ca-convert.js's own dq() does — a backslash
+ * doubled, then a double quote escaped — so a spliced-in id/name line reads
+ * exactly as if the converter had written it at import time.
+ */
+function staxx_import_backfill_dq(string $v): string {
+  return '"'.str_replace(['\\', '"'], ['\\\\', '\\"'], $v).'"';
+}
+
+/**
+ * Splices `id:`/`name:` lines into an already-written `imported:` block,
+ * straight after its `on:` line — or returns null, leaving $text untouched,
+ * for any shape other than the plain one ca-convert.js itself writes: a
+ * block-style `imported:` holding `from:` then `on:` and nothing else, at one
+ * consistent child indent. Anything else (flow style, an id already there,
+ * more than one such block) is a shape this was never asked to understand,
+ * so it is left for a person rather than guessed at.
+ */
+function staxx_import_backfill_splice(string $text, string $id, string $name): ?string {
+  $lines = explode("\n", $text);
+
+  $importedAt = -1;
+  $indent = '';
+  foreach ($lines as $i => $line) {
+    if (preg_match('/^(\s*)imported:\s*$/', $line, $m)) {
+      if ($importedAt !== -1) return null; // more than one — ambiguous
+      $importedAt = $i;
+      $indent = $m[1];
+    }
+  }
+  if ($importedAt === -1) return null;
+
+  $fromIdx = -1; $onIdx = -1; $childIndent = null;
+  for ($j = $importedAt + 1; $j < count($lines); $j++) {
+    $line = $lines[$j];
+    if (trim($line) === '') continue;
+    preg_match('/^(\s*)/', $line, $mi);
+    if (strlen($mi[1]) <= strlen($indent)) break; // dedented — block has ended
+    if ($childIndent === null) $childIndent = $mi[1];
+    if ($mi[1] !== $childIndent) return null; // an unexpectedly mixed indent
+
+    $key = substr($line, strlen($childIndent));
+    if (strpos($key, 'from:') === 0)      { $fromIdx = $j; continue; }
+    elseif (strpos($key, 'on:') === 0)    { $onIdx   = $j; continue; }
+    else return null; // an id: already there, or something this does not know
+  }
+  // Only the plain shape: from immediately followed by on, nothing else.
+  if ($fromIdx === -1 || $onIdx !== $fromIdx + 1) return null;
+
+  array_splice($lines, $onIdx + 1, 0, [
+    $childIndent.'id: '.staxx_import_backfill_dq($id),
+    $childIndent.'name: '.staxx_import_backfill_dq($name),
+  ]);
+  return implode("\n", $lines);
+}
+
+/**
+ * PLAN_141 point 6 — the one-off back-fill. A stack imported before this
+ * plugin recorded which source it came from carries `imported.from`/`on`
+ * alone; this stamps the missing `id`/`name` onto it once it can name a
+ * single template with confidence, so the Import list can recognise the
+ * stack even after a rename — exactly as though it had been recorded at
+ * import time. Anything not unambiguous is left alone: the running-project
+ * and name matches in staxx_import_taken_by() still cover it either way.
+ *
+ * Matched against templates only, regardless of whether the stack's own
+ * `imported.from` says `unraid-template` or `community-applications` — a
+ * catalogue entry is not something this server can re-read, but a template
+ * on this box naming the same container is still real evidence.
+ *
+ * Saved through staxx_save_stack(), so the previous version is kept in the
+ * stack's own history and the result is validated by compose exactly as an
+ * ordinary edit would be; a refused save (or a malformed file this cannot
+ * safely patch) just skips that stack rather than stopping the rest.
+ *
+ * @param array $templates staxx_import_templates()'s own rows, handed in by
+ *                          the caller rather than recomputed here.
+ * @return array<int, array{rel:string, name:string}> every stack changed.
+ */
+function staxx_import_backfill(array $templates): array {
+  $changed = [];
+
+  foreach (staxx_scan_stacks()['stacks'] as $s) {
+    $file = staxx_find_compose_file($s['dir']);
+    if ($file === '') continue;
+
+    $meta = staxx_compose_meta($file);
+    $x    = $meta['x'] ?? [];
+    $from = (string)($x['imported.from'] ?? '');
+    if (!in_array($from, ['unraid-template', 'community-applications'], true)) continue;
+    if ((string)($x['imported.id'] ?? '') !== '') continue; // already stamped
+
+    // A template whose Name differs from the stack's folder — renamed on the
+    // way in — can still be matched by what it actually called the
+    // container, since that survives a rename untouched.
+    $containerNames = [];
+    foreach ($meta['services'] as $svc) {
+      $cn = (string)($svc['container_name'] ?? '');
+      if ($cn !== '') $containerNames[] = $cn;
+    }
+
+    $candidates = [];
+    foreach ($templates as $t) {
+      if ($t['app'] === null) continue; // unreadable template row
+      $tname = (string)$t['name'];
+      $byLeaf = strcasecmp(staxx_import_safe_name($tname), $s['leaf']) === 0;
+      $byContainer = false;
+      foreach ($containerNames as $cn) {
+        if (strcasecmp($tname, $cn) === 0) { $byContainer = true; break; }
+      }
+      if ($byLeaf || $byContainer) $candidates[] = $t;
+    }
+    if (count($candidates) !== 1) continue; // no match, or too many to be sure
+
+    $tpl  = $candidates[0];
+    $text = @file_get_contents($file);
+    if ($text === false) continue;
+
+    $patched = staxx_import_backfill_splice($text, $tpl['id'], $tpl['name']);
+    if ($patched === null) continue; // not the plain shape this can patch
+
+    $error = '';
+    if (!staxx_save_stack($s['rel'], $patched, $error)) continue; // e.g. review lock
+
+    $changed[] = ['rel' => $s['rel'], 'name' => $tpl['name']];
+  }
+
+  return $changed;
 }
 
 /* --------------------------------------------------------------------- handoff -- */

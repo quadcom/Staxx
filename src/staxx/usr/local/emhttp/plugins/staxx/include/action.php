@@ -2477,21 +2477,39 @@ switch ($action) {
    * 'root' is the full path stacks land in, so the panel can say so before it
    * writes anything — copying somebody's template settings, API keys among
    * them, into a named place is worth stating out loud rather than leaving
-   * implicit. 'existing' is every stack's folder+leaf, in the same shape
+   * implicit. 'existing' is every stack's folder+leaf+rel, in the same shape
    * staxx_scan_stacks() already uses, so the browser can tell whether a name
    * is taken WITHIN THE FOLDER THE USER CHOSE — the per-entry 'taken' flag
    * above only ever checked the top level, which is wrong once a destination
    * folder is offered.
+   *
+   * Not quite read-only: PLAN_141 point 6's back-fill runs first, stamping
+   * imported.id/name onto any stack that can be matched to a template with
+   * confidence but was imported before this version recorded that — see
+   * staxx_import_backfill(). Every static cache that fact could have gone
+   * stale in is forced fresh afterwards, so the reply below always reflects
+   * what is on disk NOW rather than what it was at the top of this request.
    */
   case 'import-list':
+    $templates  = staxx_import_templates();
+    $backfilled = staxx_import_backfill($templates);
+    if ($backfilled) {
+      staxx_scan_stacks_reset();
+      staxx_compose_meta('', $err, true);
+      staxx_import_taken_names(true);
+      staxx_import_taken_sources(true);
+      staxx_import_templates(true);
+    }
+
     $existing = array_map(
-      fn($s) => ['folder' => $s['folder'], 'leaf' => $s['leaf']],
+      fn($s) => ['folder' => $s['folder'], 'leaf' => $s['leaf'], 'rel' => $s['rel']],
       staxx_scan_stacks()['stacks']
     );
     staxx_reply([
-      'ok'       => true,
-      'root'     => staxx_stack_root(),
-      'existing' => $existing,
+      'ok'         => true,
+      'root'       => staxx_stack_root(),
+      'existing'   => $existing,
+      'backfilled' => $backfilled,
     ] + staxx_import_list());
 
   /* ---- write one imported stack ----

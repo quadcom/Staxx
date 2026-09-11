@@ -30,7 +30,14 @@
  * shells out to `docker compose config -q` to validate the YAML — a dry,
  * read-only check, the same one an ordinary save already runs on this server
  * every time someone edits a stack — never a command that starts, stops or
- * otherwise touches a container. */
+ * otherwise touches a container.
+ *
+ * The PLAN_141 cases at the end (already-taken names at any depth, a match
+ * by imported.id, and the one-off back-fill) are throwaway stacks of the same
+ * kind, but pick a real template on this box to match against rather than a
+ * fixed name — so each guards itself with a check that no real stack already
+ * sits at the name it is about to use, and reports a skip rather than a false
+ * failure if this box has nothing suitable to test with. */
 
 // Stacks.php first: it is where staxx_valid_name() lives, and Import.php's
 // own double-inclusion guard makes requiring it directly here harmless even
@@ -43,6 +50,12 @@ function ok(string $what, bool $pass, string $note = ''): void {
   global $fails;
   if (!$pass) $fails++;
   printf("%-6s %s%s\n", $pass ? 'ok' : 'FAIL', $what, $note !== '' ? '  ('.$note.')' : '');
+}
+// For a PLAN_141 case that needs a real template this box happens to have —
+// not finding one is a fact about this box, not a wrong answer, so it must
+// never count as a failure.
+function skip(string $what, string $why): void {
+  printf("%-6s %s  (%s)\n", 'skip', $what, $why);
 }
 
 $list      = staxx_import_list();
@@ -206,7 +219,9 @@ if (count($loose) === 1) {
   // about this afternoon, not about the code, and pinning it makes the suite
   // fail for no reason. That a loose container is reported as existing at all
   // is checked below, with every other entry.
-  ok('...and it is music-assistant', ($loose[0]['id'] ?? '') === 'music-assistant',
+  // Measured again 2026-09-10: music-assistant has since been imported, and
+  // the one loose container is now a handover's set-aside copy.
+  ok('...and it is GoAccess-NPM-Logs-before-staxx', ($loose[0]['id'] ?? '') === 'GoAccess-NPM-Logs-before-staxx',
      (string)($loose[0]['id'] ?? '(none)'));
 }
 
@@ -484,6 +499,193 @@ ok('...and files exactly one history version, same as an ordinary first save',
 @exec('rm -rf '.escapeshellarg($dirSame));
 
 @exec('rm -rf '.escapeshellarg($folderDir));
+
+/* -------------------------------------------------------------- PLAN_141 -- */
+//
+// Point 1: a stack counts as taken at any depth, not just the top level, and
+// the note names exactly where it already lives.
+
+$nestedFolder    = 'zzb1importfolder2';
+$nestedFolderDir = $root.'/'.$nestedFolder;
+@exec('rm -rf '.escapeshellarg($nestedFolderDir));
+mkdir($nestedFolderDir.'/zzb1importleaf', 0755, true);
+file_put_contents($nestedFolderDir.'/zzb1importleaf/compose.yaml',
+  "services:\n  a:\n    image: alpine:3.20\n");
+
+staxx_scan_stacks_reset();
+staxx_import_taken_names(true);
+staxx_import_taken_sources(true);
+  staxx_compose_meta('', $metaErr, true);
+
+$nestedTaken = staxx_import_taken_by('zzb1importleaf');
+ok('a nested stack counts as taken at any depth',
+   $nestedTaken === 'zzb1importfolder2/zzb1importleaf', $nestedTaken);
+
+@exec('rm -rf '.escapeshellarg($nestedFolderDir));
+staxx_scan_stacks_reset();
+staxx_import_taken_names(true);
+staxx_import_taken_sources(true);
+  staxx_compose_meta('', $metaErr, true);
+
+// Point 3: a stack's own imported.id marks the template it names as taken,
+// even though its folder name matches nothing about that template at all.
+
+$tplForId = null;
+// One nothing already claims: a name match is tried first and would win.
+foreach ($templates as $t) { if (($t['app'] ?? null) !== null && !$t['taken']) { $tplForId = $t; break; } }
+
+if ($tplForId === null) {
+  skip('a stack whose imported.id matches marks that template row taken',
+       'no readable template found to test against');
+} else {
+  $relId = 'zzb1importidmatch';
+  $dirId = $root.'/'.$relId;
+  @exec('rm -rf '.escapeshellarg($dirId));
+  mkdir($dirId, 0755, true);
+  $idYaml = "x-unraid:\n  version: 1\n  imported:\n    from: unraid-template\n    on: 2026-01-01\n"
+          . "    id: \"".addslashes((string)$tplForId['id'])."\"\n"
+          . "services:\n  a:\n    image: alpine:3.20\n";
+  file_put_contents($dirId.'/compose.yaml', $idYaml);
+
+  staxx_scan_stacks_reset();
+  staxx_import_taken_names(true);
+  staxx_import_taken_sources(true);
+  staxx_compose_meta('', $metaErr, true);
+  $freshTemplates = staxx_import_templates(true);
+
+  $matched = null;
+  foreach ($freshTemplates as $t) { if ($t['id'] === $tplForId['id']) { $matched = $t; break; } }
+  ok('a stack whose imported.id matches marks that template row taken',
+     $matched !== null && $matched['taken'] === true && $matched['takenBy'] === $relId,
+     json_encode($matched));
+  ok('...and the note names where it already is',
+     $matched !== null && in_array('Already in StaXX as "'.$relId.'".', $matched['notes'], true),
+     json_encode($matched['notes'] ?? null));
+
+  @exec('rm -rf '.escapeshellarg($dirId));
+  staxx_scan_stacks_reset();
+  staxx_import_taken_names(true);
+  staxx_import_taken_sources(true);
+  staxx_compose_meta('', $metaErr, true);
+  staxx_import_templates(true);
+}
+
+// Point 6: the back-fill. A throwaway stack whose leaf is a real template's
+// own safe name, and whose file carries only the plain from/on block, gains
+// id/name once — and a second run changes nothing more.
+
+$tplForBackfill = null;
+foreach ($templates as $t) {
+  if (($t['app'] ?? null) === null) continue;
+  $leaf = staxx_import_safe_name((string)$t['name']);
+  if ($leaf === '' || $leaf === 'stack') continue;
+  if (isset(staxx_import_taken_names()[strtolower($leaf)])) continue; // a real stack, at any depth, already uses this name
+  $tplForBackfill = $t;
+  break;
+}
+
+if ($tplForBackfill === null) {
+  skip('the back-fill stamps a matched stack once',
+       'no usable, uncollided template name found to test against');
+} else {
+  $leafBackfill = staxx_import_safe_name((string)$tplForBackfill['name']);
+  $dirBackfill  = $root.'/'.$leafBackfill;
+  @exec('rm -rf '.escapeshellarg($dirBackfill));
+  mkdir($dirBackfill, 0755, true);
+  $plainYaml = "x-unraid:\n  version: 1\n  imported:\n    from: unraid-template\n    on: 2026-01-01\n"
+             . "services:\n  a:\n    image: alpine:3.20\n";
+  file_put_contents($dirBackfill.'/compose.yaml', $plainYaml);
+
+  staxx_scan_stacks_reset();
+  staxx_import_taken_names(true);
+  staxx_import_taken_sources(true);
+  staxx_compose_meta('', $metaErr, true);
+  $freshTemplates2 = staxx_import_templates(true);
+
+  $historyBefore = staxx_record_list($leafBackfill);
+  $changed = staxx_import_backfill($freshTemplates2);
+
+  $changedRel = null;
+  foreach ($changed as $c) { if ($c['rel'] === $leafBackfill) { $changedRel = $c; break; } }
+  ok('the back-fill stamps a matched stack once', $changedRel !== null, json_encode($changed));
+
+  $afterText = (string)@file_get_contents($dirBackfill.'/compose.yaml');
+  ok('...and the file now carries an id line',
+     strpos($afterText, '    id: "'.$tplForBackfill['id'].'"') !== false, $afterText);
+  ok('...and a name line',
+     strpos($afterText, '    name: "'.$tplForBackfill['name'].'"') !== false, $afterText);
+
+  $historyAfter = staxx_record_list($leafBackfill);
+  ok('...and the stack gained a history entry for its previous version',
+     count($historyAfter) > count($historyBefore), json_encode([$historyBefore, $historyAfter]));
+
+  // Second run: the stack now carries imported.id, so nothing further happens.
+  staxx_scan_stacks_reset();
+  staxx_import_taken_names(true);
+  staxx_import_taken_sources(true);
+  staxx_compose_meta('', $metaErr, true);
+  $freshTemplates3 = staxx_import_templates(true);
+  $changedAgain = staxx_import_backfill($freshTemplates3);
+  $stillThere = false;
+  foreach ($changedAgain as $c) { if ($c['rel'] === $leafBackfill) $stillThere = true; }
+  ok('a second run changes nothing more', !$stillThere, json_encode($changedAgain));
+
+  @exec('rm -rf '.escapeshellarg($dirBackfill));
+  staxx_scan_stacks_reset();
+  staxx_import_taken_names(true);
+  staxx_import_taken_sources(true);
+  staxx_compose_meta('', $metaErr, true);
+  staxx_import_templates(true);
+}
+
+// A stack matching two different templates (one by leaf, one by container
+// name) is left alone — the back-fill only ever acts when exactly one
+// template can be named with confidence.
+
+$tplA = null; $tplB = null;
+$dockerNameRe = '/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/';
+foreach ($templates as $t) {
+  if (($t['app'] ?? null) === null) continue;
+  $leaf = staxx_import_safe_name((string)$t['name']);
+  if ($leaf === '' || $leaf === 'stack') continue;
+  if (isset(staxx_import_taken_names()[strtolower($leaf)])) continue;
+  if ($tplA === null) { $tplA = $t; continue; }
+  if ($tplB === null && preg_match($dockerNameRe, (string)$t['name']) && $t['name'] !== $tplA['name']) {
+    $tplB = $t;
+    break;
+  }
+}
+
+if ($tplA === null || $tplB === null) {
+  skip('a stack matching two templates is left alone',
+       'no usable pair of templates found to test against');
+} else {
+  $leafAmbig = staxx_import_safe_name((string)$tplA['name']);
+  $dirAmbig  = $root.'/'.$leafAmbig;
+  @exec('rm -rf '.escapeshellarg($dirAmbig));
+  mkdir($dirAmbig, 0755, true);
+  $ambigYaml = "x-unraid:\n  version: 1\n  imported:\n    from: unraid-template\n    on: 2026-01-01\n"
+             . "services:\n  a:\n    image: alpine:3.20\n    container_name: ".$tplB['name']."\n";
+  file_put_contents($dirAmbig.'/compose.yaml', $ambigYaml);
+
+  staxx_scan_stacks_reset();
+  staxx_import_taken_names(true);
+  staxx_import_taken_sources(true);
+  staxx_compose_meta('', $metaErr, true);
+  $freshTemplates4 = staxx_import_templates(true);
+
+  $changedAmbig = staxx_import_backfill($freshTemplates4);
+  $touchedAmbig = false;
+  foreach ($changedAmbig as $c) { if ($c['rel'] === $leafAmbig) $touchedAmbig = true; }
+  ok('a stack matching two templates is left alone', !$touchedAmbig, json_encode($changedAmbig));
+
+  @exec('rm -rf '.escapeshellarg($dirAmbig));
+  staxx_scan_stacks_reset();
+  staxx_import_taken_names(true);
+  staxx_import_taken_sources(true);
+  staxx_compose_meta('', $metaErr, true);
+  staxx_import_templates(true);
+}
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";
 exit($fails ? 1 : 0);

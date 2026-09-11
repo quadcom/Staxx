@@ -228,6 +228,8 @@ Click its picture to open the folder menu.
 
 Neither row can be started until it is fixed. Fixing it and saving brings the row back to normal.
 
+A stack whose file looks fine can still be refused at start time. If it points at a network marked as already existing that this server does not have, Start, Restart, Update, Recreate and Rebuild are refused before anything is downloaded, with the network's name and the nearest one the server does have: *This stack needs a network called "eth0.2", and this server has no network by that name. The nearest is "br0.2". Open the stack and change its network, then try again.* Pull images still works, since fetching an image needs no network. The editor offers the same fix as a button — see [the stack editor](the-stack-editor.md#messages-you-may-see).
+
 ## What this never does
 
 - It never starts, stops or updates anything without you pressing a button for it.

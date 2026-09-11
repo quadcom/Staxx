@@ -1673,8 +1673,12 @@ function staxx_meta_cache_write(string $path, string $key, array $meta): void {
  *                                            firstPort:array{target?:string,published?:string,count?:int},
  *                                            netMode:string, networks:string[], healthcheck:bool}>}
  */
-function staxx_compose_meta(string $file, ?string &$error = null): array {
+function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = false): array {
   static $cache = [];
+  // $reset empties the in-process memory for a caller that has just changed
+  // a file mid-request — the import back-fill — and needs the next read to
+  // see it. The on-disk copy needs nothing: it is keyed on the contents.
+  if ($reset) $cache = [];
 
   // Keyed on the whole pair, not just $file, so an override's settings are
   // reflected in what this reports. Safe as a cache key: for a single file
@@ -1824,6 +1828,90 @@ function staxx_compose_meta(string $file, ?string &$error = null): array {
  */
 function staxx_service_names(string $file, ?string &$error = null): array {
   return array_keys(staxx_compose_meta($file, $error)['services']);
+}
+
+/**
+ * Which of a compose file's own top-level networks are marked external but
+ * do not exist on this box, and the nearest server network to offer instead
+ * — see PLAN_140. Only the top-level `networks:` block is read; a service's
+ * own `networks:` list says which of these it *uses*, not whether any of
+ * them actually exists here.
+ *
+ * Reads the raw file text with staxx_yaml_flatten() rather than going
+ * through staxx_compose_meta(): the file can be perfectly valid and still
+ * name a network this box has renamed or never had, which is exactly the
+ * case this exists to catch — routing it back through compose's own
+ * resolution would either answer the same question the long way round or,
+ * once compose itself refuses the file for the missing network, answer it
+ * not at all.
+ *
+ * $networks lets a test hand in a made-up list instead of this box's real
+ * one; left null it is read fresh, and a $networks of null with Docker down
+ * is a non-answer — nothing is reported, never everything reported missing.
+ *
+ * @param ?array<int,array{name:string,driver:string}> $networks
+ * @return array<string,string> missing name => nearest existing name, or ''
+ */
+function staxx_missing_external_networks(string $composeText, ?array $networks = null): array {
+  if ($networks === null) {
+    if (!staxx_docker_running()) return [];
+    $networks = staxx_docker_networks();
+  }
+
+  $have = [];
+  foreach ($networks as $n) $have[$n['name']] = $n['driver'];
+
+  // One pass to gather what each declared network says about itself —
+  // external/name/driver can arrive on any line in any order — then a
+  // second pass below to judge each one now that its whole shape is known.
+  $decl = [];
+  foreach (staxx_yaml_flatten($composeText) as $path => $value) {
+    $parts = explode("\0", $path);
+    if ($parts[0] !== 'networks' || count($parts) < 3) continue;
+    $key = $parts[1];
+    if (!isset($decl[$key])) {
+      $decl[$key] = ['external' => false, 'name' => null, 'extname' => null, 'driver' => null];
+    }
+
+    if ($parts[2] === 'external' && count($parts) === 3) {
+      $decl[$key]['external'] = strtolower(trim($value)) === 'true';
+    } elseif ($parts[2] === 'external' && count($parts) === 4 && $parts[3] === 'name') {
+      // The legacy `external: name: X` form — superseded by a plain `name:`
+      // beside `external: true`, but still written by older files.
+      $decl[$key]['external'] = true;
+      $decl[$key]['extname']  = $value;
+    } elseif ($parts[2] === 'name' && count($parts) === 3) {
+      $decl[$key]['name'] = $value;
+    } elseif ($parts[2] === 'driver' && count($parts) === 3) {
+      $decl[$key]['driver'] = $value;
+    }
+  }
+
+  $missing = [];
+  foreach ($decl as $key => $info) {
+    if (!$info['external']) continue;
+    $name = $info['extname'] ?? $info['name'] ?? $key;
+    if (isset($have[$name])) continue;
+
+    // A name with no dot never gets a guessed match — the suffix rule below
+    // only means something for the interface-renamed-to-bridge case PLAN_140
+    // was written for (eth0.2 -> br0.2).
+    $closest = '';
+    $dot = strrpos($name, '.');
+    if ($dot !== false) {
+      $suffix = substr($name, $dot + 1);
+      foreach ($have as $candName => $candDriver) {
+        $candDot = strrpos($candName, '.');
+        if ($candDot === false || substr($candName, $candDot + 1) !== $suffix) continue;
+        if ($info['driver'] !== null && $candDriver !== $info['driver']) continue;
+        $closest = $candName;
+        break;
+      }
+    }
+    $missing[$name] = $closest;
+  }
+
+  return $missing;
 }
 
 /**
@@ -6176,6 +6264,26 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
                  ? $count.' value still needs filling in: '.$list.'. Open the stack and fill it in.'
                  : $count.' values still need filling in before this stack can start: '
                    .$list.'. Open the stack and fill them in.');
+      return '';
+    }
+  }
+
+  // A file naming a network this box does not have looks perfectly valid
+  // and fails only at `up`, after whatever a `pull` step already downloaded
+  // — see PLAN_140. $startsSomething already covers both scopes here: every
+  // verb's whole-stack and per-service step lists agree on whether either
+  // begins with `up `, so one flag answers for both. `pull` on its own never
+  // reaches this at all, since fetching an image needs no network of the
+  // stack's.
+  if ($startsSomething) {
+    $missingNets = staxx_missing_external_networks((string)@file_get_contents($file));
+    if ($missingNets) {
+      $missName = array_key_first($missingNets);
+      $closest  = $missingNets[$missName];
+      $error = 'This stack needs a network called "'.$missName.'", and this server has no '
+             . 'network by that name.'
+             . ($closest !== '' ? ' The nearest is "'.$closest.'".' : '')
+             . ' Open the stack and change its network, then try again.';
       return '';
     }
   }

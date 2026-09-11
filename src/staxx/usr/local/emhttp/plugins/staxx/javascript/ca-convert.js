@@ -259,9 +259,15 @@
 
   // The stamp recording how a generated file came to exist — see
   // schema/x-unraid.schema.json's $defs/imported. Written once, at
-  // generation time, never touched again afterwards.
-  function importedMetaLines(from) {
-    return ['  imported:', '    from: ' + from, '    on: ' + todayStamp()];
+  // generation time, never touched again afterwards. `id` and `name` are
+  // optional — the source's own identifier and its display name at import
+  // time — so the Import list can recognise a stack renamed on the way in;
+  // omitted lines are simply not written, exactly as an older file would.
+  function importedMetaLines(from, id, name) {
+    var lines = ['  imported:', '    from: ' + from, '    on: ' + todayStamp()];
+    if (scalarPresent(id))   lines.push('    id: ' + dq(id));
+    if (scalarPresent(name)) lines.push('    name: ' + dq(name));
+    return lines;
   }
 
   /* =====================================================================
@@ -1040,7 +1046,10 @@
     /* ---- stack-level x-unraid ------------------------------------------ */
 
     var stackMeta = ['  version: 1'];
-    stackMeta = stackMeta.concat(importedMetaLines(opts.origin === 'template' ? 'unraid-template' : 'community-applications'));
+    stackMeta = stackMeta.concat(importedMetaLines(
+      opts.origin === 'template' ? 'unraid-template' : 'community-applications',
+      opts.importId, opts.importName
+    ));
     var category = normaliseCategory(app);
     if (category) stackMeta.push('  category: ' + scalarOut(category));
     // scalarPresent(), not bare truthiness — same empty-XML-element bug as

@@ -3877,8 +3877,30 @@
         var netExternal = !!(YAML && YAML.externalChoice && f.parts.value &&
                               f.parts.value.value === YAML.externalChoice);
         var netLost = netExternal && netLoaded && netVal && !netPresent[netVal];
+        // PLAN_140: the same box-renamed-to-bridge case the server-side
+        // refusal catches (eth0.2 -> br0.2) — same rule, worked out here so
+        // the tag and the button never disagree with what a run would refuse
+        // on. Driver is not checked here: an external network's own row
+        // conflates "driver" and "external" into one box (DECL_PRIMARY), so a
+        // driver declared alongside external:true is not readable off this
+        // field — the server-side refusal is the backstop for that case.
+        var netFixTo = '';
+        if (netLost) {
+          var netDot = netVal.lastIndexOf('.');
+          if (netDot !== -1) {
+            var netSuffix = netVal.slice(netDot + 1);
+            for (var nfi = 0; nfi < ALL_NETS.length; nfi++) {
+              var candName = ALL_NETS[nfi][0], candDot = candName.lastIndexOf('.');
+              if (candDot !== -1 && candName.slice(candDot + 1) === netSuffix) { netFixTo = candName; break; }
+            }
+          }
+        }
         var netTag = netLost
-                   ? '<span class="staxx-fieldtag staxx-fieldtag--lost">not found on this server</span>'
+                   ? '<span class="staxx-fieldtag staxx-fieldtag--lost">not found on this server</span>' +
+                     (netFixTo
+                       ? ' <button type="button" class="staxx-netfix" data-netfix-idx="' + index +
+                         '" data-netfix-to="' + esc(netFixTo) + '">Use ' + esc(netFixTo) + '</button>'
+                       : '')
                    : '';
         // The ⓘ sits BESIDE the box, not in its head slot: head renders above
         // the control, which suits a tag ("read-only mount", "not found on
@@ -3889,6 +3911,12 @@
                     boxHtml(f, index, 'name', 'network name', '', netTag, false, ' data-rename="1"') +
                     helpBtnHtml(help, helpId) +
                   '</div>');
+        if (netLost) {
+          bits.push('<p class="staxx-fieldnote">This server has no network called "' +
+                     esc(netVal) + '".' +
+                     (netFixTo ? ' The nearest is "' + esc(netFixTo) + '".' : '') +
+                     '</p>');
+        }
       } else {
         bits.push(declNameHtml(f, index));
       }
@@ -7149,6 +7177,36 @@
         return;
       }
       structuralEdit(nLine, '');
+      return;
+    }
+
+    // PLAN_140's "Use br0.2" beside a declared network the server does not
+    // have. Goes through the exact rename path commit()'s data-rename branch
+    // uses (renameDeclared carries every service reference along with the
+    // declaration, as one undo entry) rather than writing into the name box
+    // and dispatching a change — nothing here needs a live box to already
+    // exist mid-edit.
+    var netFixBtn = event.target.closest('[data-netfix-idx]');
+    if (netFixBtn) {
+      var nfField = MODEL.fields[netFixBtn.dataset.netfixIdx | 0];
+      var nfWas   = nfField && nfField.parts && nfField.parts.name && nfField.parts.name.value;
+      var nfNext  = netFixBtn.dataset.netfixTo;
+      if (!nfField || !nfWas || !nfNext || nfNext === nfWas) return;
+
+      clearError();
+      flushPending();
+      pushUndo('renaming the network "' + nfWas + '" to "' + nfNext + '"');
+      var nfRenamed = YAML.renameDeclared(MODEL.doc, 'networks', nfWas, nfNext);
+      if (!nfRenamed.ok) {
+        undoStack.pop();
+        updateUndo();
+        showError(nfRenamed.error);
+        return;
+      }
+      structuralEdit(-1, 'Renamed "' + nfWas + '" to "' + nfNext + '"' +
+                    (nfRenamed.refs > 0
+                      ? '. ' + nfRenamed.refs + (nfRenamed.refs === 1 ? ' reference' : ' references') + ' updated.'
+                      : '.'));
       return;
     }
 
@@ -11185,7 +11243,12 @@
     // no schema this plugin controls.
     var result;
     try {
-      result = window.StaxxCA.convert(app, { appdataRoot: APPDATA });
+      result = window.StaxxCA.convert(app, {
+        appdataRoot: APPDATA,
+        // Recorded so the Import list can recognise a stack renamed on the
+        // way in — see x-unraid's imported.id/name.
+        importId: app && (app.TemplateURL || app.Name), importName: app && app.Name
+      });
     } catch (e) {
       showPageNotice(label + ' could not be converted: ' + (e && e.message ? e.message : e));
       return;
@@ -11981,7 +12044,7 @@
    * name, a write that just succeeded) also deletes it from here, so a plain
    * count of this object's keys is always the right number for the button. */
   var importRoot     = '';    // the stack root, for the "files land here" sentence
-  var importExisting = [];    // [{folder, leaf}] — every stack that exists, kept in sync as writes land
+  var importExisting = [];    // [{folder, leaf, rel}] — every stack that exists, kept in sync as writes land
   // A sentinel rather than a real folder id — no real one can start with an
   // underscore (staxx_valid_name() requires alphanumeric first), so this can
   // never collide with a folder someone actually made.
@@ -12023,16 +12086,21 @@
     return entry.source === 'project' ? String(entry.dest || '') : String(entry.folder || '');
   }
 
-  // A row can be ticked only while its own leaf name is free INSIDE ITS OWN
-  // DESTINATION FOLDER. Compared case-insensitively because the default
-  // stack root is the flash drive, which does not distinguish case, so
-  // "Vert" and "vert" are the same folder whichever of them typed a name first.
+  // PLAN_141 point 4: a row is taken when its own leaf name matches ANY
+  // existing stack AT ANY DEPTH, not only one sitting in the exact folder
+  // this row would land in — a stack moved into a folder since it was
+  // imported must still read as done, wherever this row's own destination
+  // happens to be pointed today. Compared case-insensitively, same reason as
+  // ever: the default stack root is the flash drive, which does not
+  // distinguish case. entry.taken is the server's own answer (name, running-
+  // project or imported.id/name match — see Import.php) and always wins,
+  // since it knows things this list alone cannot: a stack renamed on import,
+  // or a project running under a different name than its folder guesses.
   function importIsTaken(entry, folder) {
+    if (entry && entry.taken) return true;
     var leaf = importLeafName(entry).toLowerCase();
-    var f    = String(folder || '').toLowerCase();
     return importExisting.some(function (s) {
-      return String(s.folder || '').toLowerCase() === f &&
-             String(s.leaf   || '').toLowerCase() === leaf;
+      return String(s.leaf || '').toLowerCase() === leaf;
     });
   }
 
@@ -12207,7 +12275,10 @@
       // 'template' here, not the CA-catalogue default: what a row previews
       // has to be byte-for-byte what pressing Import would write, and that
       // depends on the first line the converter writes naming its source.
-      result = window.StaxxCA.convert(entry.app, { appdataRoot: APPDATA, origin: 'template' });
+      result = window.StaxxCA.convert(entry.app, {
+        appdataRoot: APPDATA, origin: 'template',
+        importId: entry.id, importName: entry.name
+      });
     } catch (e) {
       return '<p class="staxx-form-empty">This template could not be converted: ' +
              esc(e && e.message ? e.message : String(e)) + '</p>';
@@ -12411,12 +12482,19 @@
           '</label>'
         : (g.note ? '<span class="staxx-import-groupnote">' + esc(g.note) + '</span>' : '');
 
+      // The "Already imported" group reads as a count of what it is not
+      // offering, "7 already in StaXX", rather than the bare number every
+      // other group gets — PLAN_141 point 4: a window that only ever says
+      // "7" next to a heading reads as a size, not as "these are done".
+      var titleHtml = groupIdx === IMPORT_G_DONE
+        ? g.label + ' — <span class="staxx-import-count">' + list.length + ' already in StaXX</span>'
+        : g.label + ' <span class="staxx-import-count">' + list.length + '</span>';
+
       blocks.push(
         '<div class="staxx-import-grouphead">' +
           '<div class="staxx-import-grouptitle">' +
             chevron +
-            '<h4 class="staxx-import-group">' + g.label +
-              ' <span class="staxx-import-count">' + list.length + '</span>' + tickedNote + '</h4>' +
+            '<h4 class="staxx-import-group">' + titleHtml + tickedNote + '</h4>' +
           '</div>' +
           extra +
         '</div>' +
@@ -12609,6 +12687,21 @@
       importBuildFolderOptions();
       importUpdateDestPath();
       importPaint();
+
+      // PLAN_141 point 6 — said once, the moment it happens: the server has
+      // just stamped which template one or more already-imported stacks came
+      // from, a one-off catch-up for stacks imported before this version
+      // recorded that. Nothing to decide here, just worth knowing about.
+      var backfilled = res.backfilled || [];
+      if (backfilled.length) {
+        var itemsHtml = backfilled.map(function (b) {
+          return '<li>' + esc(b.rel) + ' — ' + esc(b.name) + '</li>';
+        }).join('');
+        showInfo('Import list brought up to date',
+          '<p>StaXX has noted which template each of these stacks came from, so the Import ' +
+          'list can recognise them. Each stack\'s previous version is kept in its history.</p>' +
+          '<ul>' + itemsHtml + '</ul>');
+      }
     });
   }
 
@@ -12860,7 +12953,7 @@
         call('import-project', { name: stackName, id: entry.id, about: '{}' }, 20000).then(function (res) {
           if (res.ok) {
             written++;
-            importExisting.push({ folder: destFolder, leaf: leaf });
+            importExisting.push({ folder: destFolder, leaf: leaf, rel: stackName });
             importMarkWritten(idx);
           } else {
             failures.push({ name: entry.name, error: res.error });
@@ -12872,7 +12965,10 @@
 
       var result;
       try {
-        result = window.StaxxCA.convert(entry.app, { appdataRoot: APPDATA, origin: 'template' });
+        result = window.StaxxCA.convert(entry.app, {
+          appdataRoot: APPDATA, origin: 'template',
+          importId: entry.id, importName: entry.name
+        });
       } catch (e) {
         // The converter runs against whatever template is actually on this
         // server, which answers to no schema this plugin controls — one bad
@@ -12929,7 +13025,7 @@
       call('import-write', { name: stackName, body: writeBody, bodyAsIs: writeBodyAsIs, about: about }, 20000).then(function (res) {
         if (res.ok) {
           written++;
-          importExisting.push({ folder: destFolder, leaf: leaf });
+          importExisting.push({ folder: destFolder, leaf: leaf, rel: stackName });
           importMarkWritten(idx);
         } else {
           failures.push({ name: entry.name, error: res.error });
@@ -18146,19 +18242,32 @@
   function openWatchReport() {
     call('watch-report', {}, 15000).then(function (res) {
       if (!res.ok) {
-        openLogDialog('Author-example findings', res.reason || 'Could not build the report.');
+        showInfo('Author-example findings', '<p>' + esc(res.reason || 'Could not build the report.') + '</p>', { bad: true });
         return;
       }
       if (!res.items.length) {
-        openLogDialog('Author-example findings', 'Nothing to look at.');
+        showInfo('Author-example findings', '<p>Nothing to look at.</p>');
         return;
       }
-      var lines = res.items.map(function (it) {
-        return stackLabel(it.stack) + ' / ' + it.service + ' (' + it.image + '): ' +
-          (it.side === 'added' ? 'the author\'s example also sets ' : 'the author\'s example does not set ') +
-          it.setting;
+      // Grouped by stack so a person with several affected stacks can find
+      // their own without reading past the others — order within a stack is
+      // whatever the server returned, and stacks appear in first-seen order.
+      var order = [];
+      var byStack = {};
+      res.items.forEach(function (it) {
+        var label = stackLabel(it.stack);
+        if (!byStack[label]) { byStack[label] = []; order.push(label); }
+        byStack[label].push(it);
       });
-      openLogDialog('Author-example findings', lines.join('\n'));
+      var html = order.map(function (label) {
+        var rows = byStack[label].map(function (it) {
+          return '<li>' + esc(it.service) + ' (' + esc(it.image) + '): ' +
+            (it.side === 'added' ? 'the author’s example also sets ' : 'the author’s example does not set ') +
+            esc(it.setting) + '</li>';
+        }).join('');
+        return '<p><strong>' + esc(label) + '</strong></p><ul>' + rows + '</ul>';
+      }).join('');
+      showInfo('Author-example findings', html);
     });
   }
 
@@ -21356,7 +21465,10 @@
       call: call,
       esc: esc,
       bytes: bytes,
-      onRun: manageOnRun
+      onRun: manageOnRun,
+      askConfirm: askConfirm,
+      askText: askText,
+      closeConfirm: closeConfirm
     });
     return manageInst;
   }

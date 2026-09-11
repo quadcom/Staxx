@@ -6175,6 +6175,31 @@ div.title.staxx-has-titlebar {
   background: color-mix(in srgb, var(--sm-accent) 14%, transparent);
 }
 
+/* PLAN_140 — "Use br0.2" beside a declared network's own "not found on this
+   server" tag (staxx-fieldtag--lost). Same look as .staxx-declfix, just with
+   no top margin: it sits inline next to the tag rather than below a note. */
+.staxx-scaffold button.staxx-netfix {
+  margin: 0 0 0 0.4rem;
+  padding: 0.2rem 0.6rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--sm-fg);
+  font-size: 1.1rem;
+  font-weight: normal;
+  line-height: normal;
+  cursor: pointer;
+}
+
+.staxx-scaffold button.staxx-netfix:hover {
+  background: var(--sm-fill);
+}
+
+.staxx-scaffold button.staxx-netfix:focus-visible {
+  outline: 0.15rem solid var(--sm-accent);
+  outline-offset: 0.1rem;
+}
+
 /* ---- the device picker ---- */
 
 /* A panel in the flow of the form, not a floating menu.
