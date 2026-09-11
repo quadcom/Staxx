@@ -18,6 +18,7 @@ before that were dates.
 
 ## Unreleased
 
+- A stack whose compose file spells Docker Hub out by name, as `docker.io/user/app`, no longer shows "not installed" while it is plainly running. StaXX now treats that spelling as the same registry Docker does, so the image it pulled is recognised as its own.
 - A stack that uses compose profiles can now have them switched on and off from its row menu and its Manage tab, and StaXX passes the choice along when it starts, stops, restarts or updates the stack, so a service tagged with a profile is no longer silently left out. Nothing is switched on for you; the choice is kept beside the stack and never written into the compose file.
 - The stack editor now points out a service with no restart policy, and one with no time zone set, and offers the sensible value for each with one press. Both are offers with a Dismiss.
 - The editor's clash warning now also notices a port the server itself is already using, such as the web interface on 80 and 443, and says what is holding it when it can.

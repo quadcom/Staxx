@@ -603,6 +603,16 @@ function staxx_hub_repo_path(string $image): string {
   if ($colon !== false && ($slash === false || $colon > $slash)) $repo = substr($repo, 0, $colon);
 
   $parts = explode('/', $repo);
+  // Docker Hub written out by its host name IS Docker Hub — compose files
+  // pasted from the internet spell it "docker.io/user/app" often enough,
+  // and docker itself records the pulled digest without the host. Treated
+  // as a foreign registry this returned '', the local digest never matched,
+  // and a running stack read as "not installed" for ever (Unifi Voucher
+  // Manager on Adrian's box, 2026-09-11).
+  if (count($parts) > 1 && in_array($parts[0], ['docker.io', 'index.docker.io', 'registry-1.docker.io'], true)) {
+    array_shift($parts);
+    $repo = implode('/', $parts);
+  }
   if (count($parts) === 3 && $parts[1] === 'linuxserver' && in_array($parts[0], ['lscr.io', 'ghcr.io'], true)) {
     $repo = $parts[1].'/'.$parts[2];
   } elseif (strpos($parts[0], '.') !== false || strpos($parts[0], ':') !== false) {
