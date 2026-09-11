@@ -14009,6 +14009,12 @@
       bodyHtml: '<p>' + esc('Your changes to "' + (nameInput.value || 'this stack') +
                             '" will be lost.') + '</p>',
       goLabel: 'Close without saving'
+    }).then(function (go) {
+      // askConfirm() leaves the dialog up for callers that go on to show
+      // progress in it; this one has nothing more to say, so close it here
+      // or the question sits over the list after the editor has gone.
+      if (go) closeConfirm();
+      return go;
     });
   }
 
@@ -17889,19 +17895,12 @@
     var titleBits = [];
     if (entry.tip) titleBits.push(entry.tip);
     if (note) titleBits.push(note);
-    // While the hover card is up, showUpdCard() has parked the title in
-    // data-update-title so the browser's own tooltip stays away; writing the
-    // attribute back here mid-hover brought that tooltip up on top of the
-    // card, so the refresh writes to the same parking spot until dismissal.
-    var parked = pill.dataset.updateTitle !== undefined;
-    if (titleBits.length) {
-      if (parked) pill.dataset.updateTitle = titleBits.join('\n\n');
-      else pill.title = titleBits.join('\n\n');
-    } else if (parked) {
-      pill.dataset.updateTitle = '';
-    } else {
-      pill.removeAttribute('title');
-    }
+    // data-update-tip, never title: the hover card below shows these words,
+    // and a title on the same element brought the browser's own tooltip up
+    // on top of the card. Chrome fixes the tooltip text on the last mouse
+    // move, so removing the attribute once the card opened was too late.
+    if (titleBits.length) pill.dataset.updateTip = titleBits.join('\n\n');
+    else delete pill.dataset.updateTip;
 
     paintPillClock(pill);
   }
@@ -18025,7 +18024,7 @@
     }
     var fixed = UPD_CARD_LEAD[pill.dataset.updateState || ''];
     if (fixed) return fixed;
-    var title = pill.title || '';
+    var title = pill.dataset.updateTip || '';
     // staxx_update_when_words() always starts the clock sentence this way —
     // cutting there leaves exactly the part the table's rows do not already
     // say, whatever note may follow the tip beyond it.
@@ -18088,13 +18087,6 @@
     var card = ensureUpdCard();
     card.innerHTML = '<div class="staxx-updcard__lead">' + esc(updCardLead(pill)) + '</div>' +
       '<dl class="staxx-updcard__facts">' + updCardFacts(pill) + '</dl>';
-    // The pill's title is moved out of the way while the card is up, or the
-    // browser's own tooltip appears on top of this one — the one real trap
-    // here. Restored the moment the card is dismissed, below.
-    if (pill.title) {
-      pill.dataset.updateTitle = pill.title;
-      pill.removeAttribute('title');
-    }
     card.hidden = false;
     placeUpdCard(pill);
   }
@@ -18102,13 +18094,6 @@
   function dismissUpdCard() {
     if (updCardTimer) { clearTimeout(updCardTimer); updCardTimer = null; }
     if (updCard) updCard.hidden = true;
-    // The parking spot may hold '' if a refresh mid-hover found nothing to
-    // say; it is still cleared, or the pill would stay parked for good.
-    if (updCardPill && updCardPill.dataset.updateTitle !== undefined) {
-      if (updCardPill.dataset.updateTitle) updCardPill.title = updCardPill.dataset.updateTitle;
-      else updCardPill.removeAttribute('title');
-      delete updCardPill.dataset.updateTitle;
-    }
     updCardPill = null;
   }
 
@@ -18249,24 +18234,43 @@
         showInfo('Author-example findings', '<p>Nothing to look at.</p>');
         return;
       }
-      // Grouped by stack so a person with several affected stacks can find
-      // their own without reading past the others — order within a stack is
-      // whatever the server returned, and stacks appear in first-seen order.
+      // One block per stack, and inside it one block per service (named only
+      // when it differs from the stack), each with at most two rows: the
+      // settings the author's example also sets, and the ones it does not.
+      // One sentence per finding read as a wall of repeated words — Adrian,
+      // 2026-09-11 — so the sentence is said once at the top and the rows
+      // carry nothing but the setting names. Order is first-seen throughout.
       var order = [];
       var byStack = {};
       res.items.forEach(function (it) {
         var label = stackLabel(it.stack);
-        if (!byStack[label]) { byStack[label] = []; order.push(label); }
-        byStack[label].push(it);
+        if (!byStack[label]) { byStack[label] = { order: [], svc: {} }; order.push(label); }
+        var s = byStack[label];
+        var key = it.service + '\0' + it.image;
+        if (!s.svc[key]) { s.svc[key] = { service: it.service, image: it.image, added: [], missing: [] }; s.order.push(key); }
+        s.svc[key][it.side === 'added' ? 'added' : 'missing'].push(it.setting);
       });
-      var html = order.map(function (label) {
-        var rows = byStack[label].map(function (it) {
-          return '<li>' + esc(it.service) + ' (' + esc(it.image) + '): ' +
-            (it.side === 'added' ? 'the author’s example also sets ' : 'the author’s example does not set ') +
-            esc(it.setting) + '</li>';
-        }).join('');
-        return '<p><strong>' + esc(label) + '</strong></p><ul>' + rows + '</ul>';
-      }).join('');
+      var settingsHtml = function (list) {
+        return list.map(function (name) { return '<span class="staxx-findings__chip">' + esc(name) + '</span>'; }).join('');
+      };
+      var html = '<p>What each author’s own published example does differently from your file. ' +
+        'Open the stack to change a setting or dismiss the finding.</p>';
+      order.forEach(function (label) {
+        var s = byStack[label];
+        html += '<div class="staxx-findings">' +
+          '<h4 class="staxx-findings__stack">' + esc(label) + '</h4>';
+        s.order.forEach(function (key) {
+          var v = s.svc[key];
+          html += '<div class="staxx-findings__svc">' +
+            (v.service !== label ? esc(v.service) + ' ' : '') +
+            '<span class="staxx-findings__image">' + esc(v.image) + '</span></div>' +
+            '<dl class="staxx-findings__facts">' +
+            (v.added.length ? '<dt>Also sets</dt><dd>' + settingsHtml(v.added) + '</dd>' : '') +
+            (v.missing.length ? '<dt>Does not set</dt><dd>' + settingsHtml(v.missing) + '</dd>' : '') +
+            '</dl>';
+        });
+        html += '</div>';
+      });
       showInfo('Author-example findings', html);
     });
   }

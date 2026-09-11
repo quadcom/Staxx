@@ -426,7 +426,9 @@ function staxx_update_pill_html(array $u, bool $pressable = true): string {
   // hovering still gives the version tip where there is one, plus why
   // nothing is happening.
   $titleBits = array_filter([$title, $note], function ($s) { return $s !== ''; });
-  $titleAttr = $titleBits ? ' title="'.htmlspecialchars(implode("\n\n", $titleBits)).'"' : '';
+  // A data attribute, not title: stacks.js draws these words in its own hover
+  // card, and a title on the same element makes the browser show them twice.
+  $titleAttr = $titleBits ? ' data-update-tip="'.htmlspecialchars(implode("\n\n", $titleBits)).'"' : '';
 
   // Only `update` becomes a real button, and only where a press has somewhere
   // to go. Every other state is text, and a button that can only ever do

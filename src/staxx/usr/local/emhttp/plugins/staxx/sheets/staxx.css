@@ -11824,3 +11824,88 @@ dialog::backdrop {
   outline: 0.15rem dashed var(--sm-accent);
   outline-offset: -0.15rem;
 }
+
+/* ---- the author-example findings report (openWatchReport) ----
+   One block per stack inside the shared dialog: the stack's name as a small
+   heading, then per service its image in muted monospace and a two-column
+   list — "Also sets" / "Does not set" — holding nothing but setting names.
+   The dl rows borrow .staxx-updcard__facts's zeroing of Unraid's own dt/dd
+   spacing, for the same reason it needed it. */
+.staxx-scaffold .staxx-findings {
+  margin: 0 0 1.2rem;
+}
+
+.staxx-scaffold .staxx-findings__stack {
+  margin: 0 0 0.4rem;
+  padding: 0 0 0.3rem;
+  border-bottom: 0.1rem solid var(--sm-hairline);
+  font-size: 1.3rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--sm-fg);
+}
+
+.staxx-scaffold .staxx-findings__svc {
+  margin: 0.4rem 0 0.2rem;
+  font-size: 1.2rem;
+  line-height: 1.4;
+}
+
+.staxx-scaffold .staxx-findings__image {
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--sm-muted);
+}
+
+.staxx-scaffold .staxx-findings__facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 1rem;
+  /* Wide enough that "Also sets" and "Does not set" read as two groups
+     rather than one run of chips — Adrian, 2026-09-11. */
+  row-gap: 0.7rem;
+  margin: 0 0 0.6rem 1.2rem;
+}
+
+.staxx-scaffold .staxx-findings__facts dt,
+.staxx-scaffold .staxx-findings__facts dd {
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+  height: auto;
+  font-size: 1.2rem;
+  line-height: 1.5;
+  font-weight: inherit;
+  text-align: left;
+  border: 0;
+  background: transparent;
+}
+
+.staxx-scaffold .staxx-findings__facts dt {
+  grid-column: 1;
+  white-space: nowrap;
+  color: var(--sm-accent);
+}
+
+.staxx-scaffold .staxx-findings__facts dd {
+  grid-column: 2;
+  display: flex;
+  flex-direction: row;   /* Unraid's own dd rule stacks flex children in a column */
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.3rem 0.5rem;
+}
+
+/* A span, not <code>: Unraid's own stylesheet draws every <code> as a
+   full-width block, which stacked these one per line however the rule here
+   was written. A span it leaves alone, so the chips size to their text. */
+.staxx-scaffold .staxx-findings__chip {
+  display: inline-block;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 1.15rem;
+  line-height: 1.5;
+  padding: 0 0.4rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, var(--sm-fg) 8%, transparent);
+  color: inherit;
+}

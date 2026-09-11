@@ -65,10 +65,11 @@ only a setting the example adds or drops entirely is.
 
 ### Following one up
 
-1. Press the **author-example finding** chip in the title bar. A small window lists every finding:
-   the stack, the service, its image, and what the example does differently.
+1. Press the **author-example finding** chip in the title bar. A window lists every finding, one
+   block per stack: the image it runs, then the settings the author's example **also sets** and the
+   ones it **does not set**, each named as a small chip.
 
-   ![The Author-example findings window listing one finding: the stack and service, its image, and that the author's example does not set an environment setting](../images/guide/updates-author-dialog.png)
+   ![The Author-example findings window: a sentence explaining what it shows, then one block per stack naming its image, with an Also sets row and a Does not set row of setting-name chips](../images/guide/updates-author-dialog.png)
 
 2. Open that stack. The finding sits under the setting it concerns, with a **Dismiss** button.
 
