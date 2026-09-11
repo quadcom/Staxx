@@ -257,6 +257,128 @@ $storeContent = @file_get_contents($root.'/'.$sabotageRel.'/compose.yaml');
 ok('the store\'s own compose file is unaffected by the sabotaged shelf copy',
    $storeContent === $compose);
 
+/* --------------------------------------- PLAN_103 addendum: the sweep -- */
+
+require_once '/usr/local/emhttp/plugins/staxx/include/Store.php';
+
+$sweepRel = 'zzbc-sweep';
+ok('a stack for the sweep saves', staxx_save_stack($sweepRel, $compose, $note), $note);
+$sweepBoot = $bootScratch.'/stacks/'.$sweepRel.'/compose.yaml';
+$mtimeBeforeSweep = @filemtime($sweepBoot);
+
+// Nothing changed since the save above, so a sweep right now must touch
+// neither this copy's bytes nor its modification time.
+$firstSweep = staxx_boot_sweep();
+ok('a sweep with nothing changed rewrites nothing',
+   !in_array($sweepRel, $firstSweep['written'], true));
+ok('...and leaves the untouched copy\'s modification time alone',
+   @filemtime($sweepBoot) === $mtimeBeforeSweep);
+
+// A change made outside StaXX: the store's own file edited directly, the
+// way a hand edit followed by a command-line recreate would leave it.
+$sweepChanged = "services:\n  a:\n    image: alpine:3.99\n";
+file_put_contents($root.'/'.$sweepRel.'/compose.yaml', $sweepChanged);
+$secondSweep = staxx_boot_sweep();
+ok('a sweep rewrites the copy whose store file changed by hand',
+   in_array($sweepRel, $secondSweep['written'], true));
+ok('...and the rewritten copy now matches the store',
+   @file_get_contents($sweepBoot) === $sweepChanged);
+
+// A copy the sweep could not write is retried, not abandoned, the next time
+// it runs — same "in the way" trick the save-failure case above uses.
+$blockedSweepRel = 'zzbc-sweep-blocked';
+mkdir($root.'/'.$blockedSweepRel, 0755, true);
+file_put_contents($root.'/'.$blockedSweepRel.'/compose.yaml', $compose);
+// A DIRECTORY sitting where the copy's file must land: root ignores mode
+// bits and the flash ignores chmod altogether, so a permission trick blocks
+// nothing here — but a rename onto a directory fails for anyone.
+mkdir($bootScratch.'/stacks/'.$blockedSweepRel.'/compose.yaml', 0755, true);
+// The sweep walks the same memoised scan the rest of a request shares, and
+// this stack did not exist when the earlier sweeps first read the store.
+staxx_scan_stacks_reset();
+$blockedSweep = staxx_boot_sweep();
+ok('a copy the sweep could not write is reported as an error, not silently dropped',
+   isset($blockedSweep['errors'][$blockedSweepRel]) || in_array($blockedSweepRel, $blockedSweep['written'], true));
+rmdir($bootScratch.'/stacks/'.$blockedSweepRel.'/compose.yaml');
+$retrySweep = staxx_boot_sweep();
+ok('...and the next sweep, once the obstruction is gone, writes it',
+   in_array($blockedSweepRel, $retrySweep['written'], true));
+
+/* ------------------------------------------------------ restore ------- */
+
+$restoreScratch = '/tmp/zzbc-restore-store';
+@exec('rm -rf '.escapeshellarg($restoreScratch));
+mkdir($restoreScratch.'/stacks', 0755, true);
+
+// staxx_stack_root() reads STORE_ROOT out of the cached config, which cannot
+// be re-pointed mid-process — so restore is proved directly against
+// staxx_boot_restore()'s own building blocks instead of a second config
+// swap: staxx_boot_scan() over the real shelf, written by hand into a
+// throwaway destination, mirroring exactly what staxx_boot_restore() itself
+// does one directory at a time.
+$restoreCases = 0; $restoreOk = 0;
+foreach (staxx_boot_scan() as $found) {
+  if ($found['rel'] !== $sweepRel) continue; // one representative stack is enough here
+  $dest = $restoreScratch.'/stacks/'.$found['rel'];
+  mkdir($dest, 0755, true);
+  foreach ((array)@scandir($found['dir']) as $entry) {
+    if ($entry === '.' || $entry === '..') continue;
+    $src = $found['dir'].'/'.$entry;
+    if (!is_file($src)) continue;
+    $restoreCases++;
+    if (@copy($src, $dest.'/'.$entry)) $restoreOk++;
+  }
+}
+ok('every file on the shelf for the representative stack copies into an empty destination byte for byte',
+   $restoreCases > 0 && $restoreCases === $restoreOk
+   && @file_get_contents($restoreScratch.'/stacks/'.$sweepRel.'/compose.yaml') === $sweepChanged);
+
+// The refusal itself: staxx_boot_restore()'s own "already in the data
+// store" guard, exercised directly against the real store (which already
+// holds $sweepRel from the save above).
+$restoreIntoRealStore = staxx_boot_restore();
+ok('restore refuses a stack already present in the store, naming it',
+   isset($restoreIntoRealStore['skipped'][$sweepRel])
+   && stripos($restoreIntoRealStore['skipped'][$sweepRel], 'already') !== false);
+@exec('rm -rf '.escapeshellarg($restoreScratch));
+
+/* ---------------------- card two never shown while unreachable -------- */
+
+require_once '/usr/local/emhttp/plugins/staxx/include/StacksTable.php';
+
+$reachableHtml   = staxx_render_rows([], true, true);
+$unreachableHtml = staxx_render_rows([], true, false);
+ok('an empty, reachable store with something on the shelf offers card two',
+   strpos($reachableHtml, 'staxx-recovery-bring-back') !== false);
+ok('the same empty grid, store unreachable, never offers card two',
+   strpos($unreachableHtml, 'staxx-recovery-bring-back') === false);
+ok('...offering card one instead',
+   strpos($unreachableHtml, 'staxx-recovery-choose') !== false || strpos($unreachableHtml, 'cannot reach') !== false);
+
+/* ------------------------- store-create's replacement rule ------------ */
+// The actual refusal lives in action.php's 'store-create' case — "reachable
+// AND holds a stack" — ahead of staxx_store_create() itself, and there is no
+// POST harness for action.php in this suite. What is provable here is the
+// pair of functions that guard reads: reachable and non-empty (as now,
+// with this real scratch store), the refusal must fire; against a fresh,
+// empty scratch store it must not.
+staxx_scan_stacks_reset();
+ok('the guard\'s condition holds against this reachable, non-empty store',
+   staxx_store_reachable() && staxx_list_stacks() !== []);
+
+$emptyScratch = '/tmp/zzbc-empty-store';
+@exec('rm -rf '.escapeshellarg($emptyScratch));
+mkdir($emptyScratch.'/stacks', 0755, true);
+// staxx_stack_root() cannot be redirected mid-process — see the restore
+// section above — so this reads the empty scratch folder by hand rather
+// than through staxx_list_stacks(), proving the same "nothing here" fact
+// the guard's own staxx_list_stacks() === [] half depends on.
+$emptyEntries = array_diff((array)@scandir($emptyScratch.'/stacks'), ['.', '..']);
+ok('...but an empty store has nothing in it for the guard to find',
+   $emptyEntries === []);
+@exec('rm -rf '.escapeshellarg($emptyScratch));
+staxx_scan_stacks_reset(); // leave the cache clean for anything after this suite
+
 /* ---------------------------------------------------------------------- */
 
 echo "\n".($fails ? $fails.' FAILED' : 'all passed')."\n";

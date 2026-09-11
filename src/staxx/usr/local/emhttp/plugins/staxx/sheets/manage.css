@@ -526,6 +526,64 @@
   cursor: default;
 }
 
+/* ---- PLAN_69: the profiles line -------------------------------------------
+ * Directly beneath the button row, not inside it — it crowded the buttons
+ * when tried there. Spans the whole grid so it can sit centred under the row
+ * rather than only under whichever column it would otherwise auto-place
+ * into; hidden outright (see manage.js) for a stack that declares none.
+ * ------------------------------------------------------------------------- */
+.staxx-manage-profiles {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-top: 0.3rem;
+  font-size: 0.85em;
+}
+
+.staxx-manage-profiles-label {
+  color: var(--sm-muted);
+}
+
+.staxx-manage-profiles-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.staxx-scaffold .staxx-manage-profile-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background-color: var(--sm-fill-0, var(--sm-fill));
+  color: inherit;
+  font-size: 1rem;
+  line-height: normal;
+  white-space: nowrap;
+}
+
+.staxx-scaffold .staxx-manage-profile-switch .fa-toggle-on { color: var(--sm-accent); }
+
+.staxx-scaffold .staxx-manage-profile-switch:hover:not(:disabled),
+.staxx-scaffold .staxx-manage-profile-switch:focus-visible {
+  border-color: var(--sm-accent);
+}
+
+.staxx-scaffold .staxx-manage-profile-switch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.staxx-manage-profiles-hint {
+  color: var(--sm-muted);
+  font-style: italic;
+}
+
 /* ---- D3: the log pane ---------------------------------------------------
  * The pane body is given a column layout of its own (toolbar, then the
  * scrolling lines) rather than relying on staxx-manage-pane-body's own

@@ -1472,6 +1472,97 @@ function staxx_flatten_block(array $block): string {
 }
 
 /**
+ * Every profile name each service's `profiles:` list names, read from the
+ * same compose text staxx_compose_meta() already has in hand.
+ *
+ * staxx_yaml_flatten() SKIPS every sequence on purpose (see its own $skip
+ * handling), so a plain list like `profiles:` is invisible to it — the same
+ * reason staxx_first_ports() is a separate pass rather than a widened
+ * flattener. Unlike ports, every item is read, not just the first: PLAN_69
+ * needs the whole set a service can be tagged with, not one representative
+ * value. A one-line flow list (`profiles: [a, b]`) is read too, since a
+ * hand-edited file may use it even where `docker compose config` itself
+ * always normalises to the block form below.
+ *
+ *   services:
+ *     a:
+ *       profiles:
+ *         - opt-a
+ *         - opt-b
+ *
+ * @return array<string, string[]> service name => its profile names, in the
+ *         order the file names them. A service with no profiles: has no key.
+ */
+function staxx_service_profiles(string $yaml): array {
+  $out = [];
+
+  $atServices    = false;
+  $service       = null;
+  $serviceIndent = null;
+  $inProfiles    = false;
+  $profilesIndent = null;
+
+  $strip = function (string $v): string {
+    $v = trim($v);
+    if (strlen($v) > 1 && ($v[0] === '"' || $v[0] === "'")) $v = substr($v, 1, -1);
+    return $v;
+  };
+
+  foreach (explode("\n", $yaml) as $raw) {
+    $line = rtrim($raw, "\r");
+    if (trim($line) === '' || preg_match('/^\s*#/', $line)) continue;
+
+    $indent = strlen($line) - strlen(ltrim($line, ' '));
+    $body   = ltrim($line, ' ');
+
+    if (!$atServices) {
+      if ($indent === 0 && $body === 'services:') $atServices = true;
+      continue;
+    }
+
+    if ($indent === 0) break;   // a sibling of services: — done
+
+    if ($serviceIndent === null) $serviceIndent = $indent;
+
+    if ($indent === $serviceIndent) {
+      $service = rtrim($body, ':');
+      $inProfiles = false; $profilesIndent = null;
+      continue;
+    }
+
+    if ($service === null) continue;
+
+    if ($indent === $serviceIndent + 2) {
+      $inProfiles = false;
+      if (preg_match('/^profiles\s*:\s*(.*)$/', $body, $m)) {
+        $rest = trim($m[1]);
+        if ($rest === '') {
+          $inProfiles = true; $profilesIndent = $indent;
+        } elseif ($rest !== '[]' && $rest[0] === '[' && substr($rest, -1) === ']') {
+          // The flow-style one-liner — split on commas, tolerating a quoted
+          // or bare name either side of each one.
+          foreach (explode(',', substr($rest, 1, -1)) as $item) {
+            $name = $strip($item);
+            if ($name !== '') $out[$service][] = $name;
+          }
+        }
+      }
+      continue;
+    }
+
+    if (!$inProfiles || $indent <= $profilesIndent) continue;
+
+    if (strncmp($body, '- ', 2) === 0 || $body === '-') {
+      $name = $strip(ltrim(substr($body, 1)));
+      if ($name !== '') $out[$service][] = $name;
+    }
+  }
+
+  foreach ($out as $service => $names) $out[$service] = array_values(array_unique($names));
+  return $out;
+}
+
+/**
  * The first published port of every service, read from the same
  * `docker compose config` text staxx_compose_meta() already has in hand.
  *
@@ -1598,7 +1689,7 @@ function staxx_first_ports(string $yaml): array {
 // key, so a plugin update cannot serve an answer the old parser computed —
 // without this a stale shape would sit there looking valid forever, since
 // nothing else about the compose file need have changed.
-const STAXX_META_VERSION = 6;
+const STAXX_META_VERSION = 7;   // 7: each service gained a 'profiles' list (PLAN_69)
 
 /**
  * A hash of everything that can change what compose would report for a
@@ -1750,7 +1841,7 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
                                       'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => [], 'healthcheck' => false];
+                                      'networks' => [], 'healthcheck' => false, 'profiles' => []];
     }
 
     // Which networks this service names, regardless of what else is nested
@@ -1763,6 +1854,10 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
         && !in_array($parts[3], $meta['services'][$service]['networks'], true)) {
       $meta['services'][$service]['networks'][] = $parts[3];
     }
+
+    // profiles: is read in a separate pass below, same reason as ports: — a
+    // plain sequence never reaches this loop at all, see staxx_yaml_flatten()'s
+    // own comment on why a sequence is skipped rather than flattened.
 
     if ($parts[2] === 'image' && count($parts) === 3) {
       $meta['services'][$service]['image'] = $value;
@@ -1802,9 +1897,30 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
     if (!isset($meta['services'][$service])) {
       $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
                                       'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
-                                      'networks' => [], 'healthcheck' => false];
+                                      'networks' => [], 'healthcheck' => false, 'profiles' => []];
     }
     $meta['services'][$service]['firstPort'] = $port;
+  }
+
+  // Another separate pass, same reason as ports just above: profiles: is
+  // also a plain sequence, invisible to the flattener. Read from the files
+  // on disk, NOT from $yaml: `compose config` with no --profile active drops
+  // every profiled service from its output entirely, so the rendered text
+  // is exactly the one place a profile can never be found (measured on the
+  // box, 2026-09-11 — a two-profile file rendered as one service).
+  $rawProfiles = [];
+  foreach ($files as $srcFile) {
+    foreach (staxx_service_profiles((string)@file_get_contents($srcFile)) as $service => $profiles) {
+      $rawProfiles[$service] = array_values(array_unique(array_merge($rawProfiles[$service] ?? [], $profiles)));
+    }
+  }
+  foreach ($rawProfiles as $service => $profiles) {
+    if (!isset($meta['services'][$service])) {
+      $meta['services'][$service] = ['image' => '', 'container_name' => '', 'x' => [],
+                                      'fixedIp' => '', 'firstPort' => [], 'netMode' => '',
+                                      'networks' => [], 'healthcheck' => false, 'profiles' => []];
+    }
+    $meta['services'][$service]['profiles'] = $profiles;
   }
 
   // Only a real, compose-produced answer is remembered — never the
@@ -1828,6 +1944,25 @@ function staxx_compose_meta(string $file, ?string &$error = null, bool $reset = 
  */
 function staxx_service_names(string $file, ?string &$error = null): array {
   return array_keys(staxx_compose_meta($file, $error)['services']);
+}
+
+/**
+ * Every profile name any service in this file declares, sorted and de-
+ * duplicated. This is the file's own list — PLAN_69's authority for which
+ * saved profile names in the record are still real, and for what a set
+ * request is allowed to name.
+ *
+ * @return string[]
+ */
+function staxx_declared_profiles(string $file, ?string &$error = null): array {
+  $names = [];
+  foreach (staxx_compose_meta($file, $error)['services'] as $svc) {
+    foreach ($svc['profiles'] as $p) {
+      if (!in_array($p, $names, true)) $names[] = $p;
+    }
+  }
+  sort($names);
+  return $names;
 }
 
 /**
@@ -2025,6 +2160,13 @@ function staxx_list_stacks(): array {
       : ['ok' => false, 'error' => null, 'x' => [], 'services' => []];
     $services   = array_keys($meta['services']);
 
+    // PLAN_69 — which profiles this file declares, and which of them are
+    // currently switched on. [] for the overwhelming majority of stacks that
+    // declare none, so the row menu and the Manage tab both know to offer
+    // nothing without a second read of the file.
+    $declaredProfiles = $file !== '' ? staxx_declared_profiles($file) : [];
+    $activeProfiles   = $declaredProfiles !== [] ? staxx_profiles_active($found['rel'], $declaredProfiles) : [];
+
     $stacks[] = [
       // The stack's identity is its path under the root — "jellyfin" at the
       // top, or "Media/jellyfin" one folder down. Every command, every DOM
@@ -2063,6 +2205,9 @@ function staxx_list_stacks(): array {
       // PLAN_118 — the other stacks that would run as this same compose
       // project, or [] when this one is not part of a clash.
       'clash'    => $clash,
+      // PLAN_69 — see the comment above where these are computed.
+      'profiles'       => $declaredProfiles,
+      'profilesActive' => $activeProfiles,
     ];
   }
 
@@ -6047,6 +6192,36 @@ function staxx_job_verbs(): array {
 }
 
 /**
+ * PLAN_69 — the `--profile <name>` flags a stack-scope compose invocation
+ * must carry, one per active profile, or '' when there is nothing to add.
+ *
+ * Only for the verbs that bring containers up or take them down — `pull`,
+ * `logs`, `config` and `remove` need no profile to do their job. And only at
+ * stack scope: naming a service starts or stops it regardless of its
+ * profiles, which is compose's own rule, so a non-empty $names always
+ * answers ''. `stop` must carry the same flags as `up` — compose reads
+ * `--profile` when deciding which containers a command's arguments even
+ * refer to, so an inactive profile's service would otherwise not be seen at
+ * `down` (the "Stop" verb) either, and appear to survive it.
+ *
+ * Split out of staxx_start_job() so it can be proved directly, without
+ * detaching a real command — see tests/server/console.php.
+ */
+function staxx_profile_flags(string $rel, string $verb, array $names, string $file): string {
+  if ($names) return '';
+  if (!in_array($verb, ['up', 'down', 'restart', 'recreate', 'update'], true)) return '';
+
+  $declared = staxx_declared_profiles($file);
+  if (!$declared) return '';
+
+  $flags = '';
+  foreach (staxx_profiles_active($rel, $declared) as $p) {
+    $flags .= ' --profile '.escapeshellarg($p);
+  }
+  return $flags;
+}
+
+/**
  * Which settings in a compose file are still waiting to be filled in.
  *
  * A plain text search for STAXX_PLACEHOLDER, then a line-by-line reading of
@@ -6350,8 +6525,14 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   // failure, so `$?` right after the chain is that failing step's own exit
   // code, and the `STAXX_JOB_END $?` line below reports the real failure
   // instead of the exit code of a step that never ran.
+  // PLAN_69 — compose's own global --profile flag has to come before the
+  // subcommand, not after it, so it is spliced in here rather than appended
+  // to $step. See staxx_profile_flags() for which verbs and which scope
+  // this applies to.
+  $profileFlags = staxx_profile_flags($name, $verb, $names, $file);
+
   $invocations = array_map(
-    fn($step) => $cmd.' '.staxx_compose_file_args($files).' '.$step.' 2>&1',
+    fn($step) => $cmd.' '.staxx_compose_file_args($files).$profileFlags.' '.$step.' 2>&1',
     $steps
   );
   $chain = implode(' && ', $invocations);
@@ -6369,9 +6550,22 @@ function staxx_start_job(string $name, string $verb, string &$error, $service = 
   // run can never drift apart — e.g. for `update` on service "demo-cache":
   // `$ compose -f compose.yaml pull 'demo-cache' && compose -f compose.yaml up -d 'demo-cache'`.
   $shownFiles = implode(' ', array_map(fn($f) => '-f '.basename($f), $files));
-  $shown = implode(' && ', array_map(fn($step) => 'compose '.$shownFiles.' '.$step, $steps));
+  $shown = implode(' && ', array_map(fn($step) => 'compose '.$shownFiles.$profileFlags.' '.$step, $steps));
   @file_put_contents($log, '$ '.$shown."\n\n");
   @chmod($log, 0600);
+
+  // PLAN_103 addendum, Phase 2: a verb that puts this compose file into use
+  // is the common case the shelf copy needs never be behind for — refreshing
+  // it here means the copy is already current the moment the job starts,
+  // rather than waiting for the next sweep or the live listener to notice.
+  // Same rule as every other call site: a failure is only ever logged, never
+  // allowed to fail the job it rode in on.
+  if (in_array($verb, ['up', 'restart', 'recreate', 'update'], true)) {
+    $bootNote = '';
+    if (!staxx_boot_copy_stack($name, $bootNote) && $bootNote !== '') {
+      error_log('StaXX: boot copy not written for '.$name.': '.$bootNote);
+    }
+  }
 
   // setsid detaches the command into its own session, and stdin/stdout/stderr
   // are all redirected away from this request. Without that, the background

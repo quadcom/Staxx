@@ -374,6 +374,10 @@ function staxx_icon_match(string $image, string $service = '', string $stack = '
 function staxx_icon_write(string $path, string $body): bool {
   if ($path === '') return false; // no destination — never write to whatever dirname('') resolves to
   $dir = dirname($path);
+  // A cached icon inside the store must not be the thing that recreates a
+  // store whose pool has gone — see the same guard in Folders.php.
+  $storeRoot = staxx_store_root();
+  if ($storeRoot !== '' && strpos($path, $storeRoot.'/') === 0 && !staxx_store_reachable()) return false;
   if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) return false;
 
   // Written beside the target and moved into place, so a download interrupted
@@ -765,7 +769,8 @@ function staxx_icon_evict(): void {
     if (is_file($served)) @unlink($served);
   }
 
-  if (!is_dir($store)) @mkdir($store, 0755, true);
+  // Same rule as Folders.php's writer: never conjure the store root itself.
+  if (!is_dir($store) && staxx_store_reachable()) @mkdir($store, 0755, true);
   @touch($marker);
 }
 

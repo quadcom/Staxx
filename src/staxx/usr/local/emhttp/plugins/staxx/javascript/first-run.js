@@ -19,9 +19,14 @@
   // Same bail-out shape stacks.js opens with: nothing below can run without
   // its host, and the server-rendered paragraph already says everything that
   // needs saying if script never loads at all.
+  //
+  // PLAN_103 addendum: this file now also loads on the full page, where the
+  // recovery cards' own buttons open this same dialog rather than a second
+  // picker — but that page has no #staxx-firstrun-open button of its own.
+  // openBtn is therefore allowed to be absent; only the scaffold is required.
   var openBtn = document.getElementById('staxx-firstrun-open');
   var scaffold = document.querySelector('.staxx-scaffold');
-  if (!openBtn || !scaffold) return;
+  if (!scaffold) return;
 
   var ENDPOINT = scaffold.dataset.endpoint;
   var CSRF     = scaffold.dataset.csrf;
@@ -540,10 +545,22 @@
   // visible once this dialog is dismissed — that is the "no data store has
   // been chosen, with a button to reopen it" state the plan asks for, and it
   // needs no separate markup because the paragraph was already exactly that.
-  openBtn.addEventListener('click', openFirstRun);
+  //
+  // Both of these are only meaningful on the true first-run screen, which is
+  // the only page with its own #staxx-firstrun-open button — the dialog must
+  // never auto-open on the full page just because this file happens to load
+  // there too.
+  if (openBtn) {
+    openBtn.addEventListener('click', openFirstRun);
 
-  // The dialog is offered unasked the first time this page is seen — a
-  // blank STORE_ROOT is the one and only trigger (see StacksPage.php), so
-  // there is nothing else to check before opening it here.
-  openFirstRun();
+    // The dialog is offered unasked the first time this page is seen — a
+    // blank STORE_ROOT is the one and only trigger (see StacksPage.php), so
+    // there is nothing else to check before opening it here.
+    openFirstRun();
+  }
+
+  // PLAN_103 addendum: the full page's recovery cards open this same dialog
+  // from their own "choose a new place" / "put it somewhere else first"
+  // buttons — see stacks.js — rather than a second picker being built.
+  window.StaxxFirstRun = { open: openFirstRun };
 })();

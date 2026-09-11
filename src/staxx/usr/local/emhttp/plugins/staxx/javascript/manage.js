@@ -173,7 +173,11 @@
       // PLAN_44 D7 — which of the three panes a narrow screen is currently
       // showing. Meaningless, and ignored, above the breakpoint, where all
       // three are visible at once.
-      narrowPane: 'log'
+      narrowPane: 'log',
+      // PLAN_69 — this stack's declared compose profiles and which of them
+      // are switched on. [] for the overwhelming majority of stacks, which
+      // is what keeps the line beneath the buttons hidden for them.
+      profiles: { declared: [], active: [] }
     };
 
     var els = {};
@@ -1938,9 +1942,91 @@
 
       wrap.appendChild(status);
       buildButtons(wrap);
+      buildProfilesLine(wrap);
 
       els.statusUI = { status: status, pill: pill, extra: extra };
       return wrap;
+    }
+
+    // ---- profiles line (PLAN_69) ---------------------------------------
+    //
+    // Directly beneath the button row, not inside it — tried in the mock and
+    // it crowded the buttons. Centred under the row, one switch per profile
+    // the file declares, with the same "will not start" hint the row menu's
+    // own group carries. Hidden outright for the common case of a stack that
+    // declares none.
+    function buildProfilesLine(wrap) {
+      var row = document.createElement('div');
+      row.className = 'staxx-manage-profiles';
+      row.hidden = true;
+
+      var label = document.createElement('span');
+      label.className = 'staxx-manage-profiles-label';
+      label.textContent = 'Profiles';
+      row.appendChild(label);
+
+      var switches = document.createElement('span');
+      switches.className = 'staxx-manage-profiles-switches';
+      row.appendChild(switches);
+
+      var hint = document.createElement('span');
+      hint.className = 'staxx-manage-profiles-hint';
+      hint.textContent = 'A service tagged with a profile that is off will not start.';
+      row.appendChild(hint);
+
+      wrap.appendChild(row);
+      els.profilesRow = row;
+      els.profilesSwitches = switches;
+    }
+
+    function renderProfilesLine() {
+      var declared = state.profiles.declared, active = state.profiles.active;
+      els.profilesRow.hidden = declared.length === 0;
+      if (!declared.length) return;
+
+      els.profilesSwitches.innerHTML = '';
+      declared.forEach(function (p) {
+        var on = active.indexOf(p) !== -1;
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'staxx-manage-profile-switch';
+        b.innerHTML = '<i class="fa fa-toggle-' + (on ? 'on' : 'off') + '"></i>';
+        var text = document.createElement('span');
+        text.textContent = p;
+        b.appendChild(text);
+        b.addEventListener('click', function () {
+          var turningOn = active.indexOf(p) === -1;
+          var next = turningOn ? active.concat([p]) : active.filter(function (x) { return x !== p; });
+          b.disabled = true;
+          call('profiles', { name: state.stack, set: '1', names: next.join(';') }).then(function (r) {
+            b.disabled = false;
+            if (!r.ok) return;
+            state.profiles.active = r.active || next;
+            renderProfilesLine();
+            // The row menu reads its switches off the row's own attribute, so
+            // write the answer back there too — otherwise the menu shows the
+            // old state until the next table redraw. Same shape the menu uses
+            // when it is the one doing the writing.
+            var trig = document.querySelector('[data-stack-row="' + state.stack + '"] [data-profiles]');
+            if (trig) trig.dataset.profilesActive = state.profiles.active.join(';');
+          });
+        });
+        els.profilesSwitches.appendChild(b);
+      });
+    }
+
+    // Rebuilt from the file on every open, same as the row menu's own group
+    // — a profile the file no longer declares is never offered back here
+    // either. Best-effort: a failed read just leaves the line hidden, rather
+    // than taking the rest of the tab down with it.
+    function loadProfiles() {
+      if (!state.stack) return;
+      call('profiles', { name: state.stack }).then(function (r) {
+        if (!r.ok) return;
+        state.profiles.declared = r.declared || [];
+        state.profiles.active = r.active || [];
+        renderProfilesLine();
+      });
     }
 
     // Each button belongs in the heading of the pane it acts on. Grouped in a
@@ -2417,6 +2503,7 @@
     function render() {
       renderTabs();
       renderButtons();
+      renderProfilesLine();
       syncLogFollower();
       syncShellPane();
       syncFilesPane();
@@ -2451,7 +2538,16 @@
         state.narrowPane = 'log';
         stat.service = null; stat.loading = false; stat.error = '';
         stat.restarts = null; stat.health = null;
+        state.profiles = { declared: [], active: [] };
         render();
+        loadProfiles();
+      },
+      // PLAN_69 — called by the row menu after it changes which profiles are
+      // switched on, so the Manage tab reflects it without a reload. $name
+      // narrows this to the stack actually mounted here, since a change on a
+      // different row's menu must not refetch and redraw someone else's line.
+      refreshProfiles: function (name) {
+        if (name === state.stack) loadProfiles();
       },
       setSnapshot: function (snapshot) {
         // Never let a surprising snapshot shape throw mid-poll — render

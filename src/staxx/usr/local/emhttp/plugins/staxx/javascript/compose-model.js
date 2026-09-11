@@ -8318,6 +8318,60 @@
     return out;
   }
 
+  /**
+   * namedVolumes(text) -> string[] of the distinct Docker-managed volume
+   * names a service's volumes: list refers to (first-seen order, no
+   * duplicates) — the mirror image of hostPaths(): a bind mount is a real
+   * folder on the server, one of these is not, so PLAN_78's removal dialog
+   * needs both lists to say plainly which is which. Walks the same
+   * services -> volumes: shape hostPaths() does, for the same reason: no
+   * line/column is needed here, so it does not share that function's body.
+   */
+  function namedVolumes(text) {
+    var out = [];
+    try {
+      text = String(text == null ? '' : text);
+      var lines = text.split('\n');
+      var stack = [];
+
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var c = classify(line, i);
+        if (c.kind === 'blank' || c.kind === 'comment') continue;
+
+        while (stack.length && stack[stack.length - 1].indent > c.indent) stack.pop();
+        if (stack.length && stack[stack.length - 1].indent === c.indent && c.kind === 'key') stack.pop();
+
+        if (c.kind === 'key') { stack.push({ indent: c.indent, key: c.key }); continue; }
+        if (c.kind !== 'seq' || !c.sub) continue;
+
+        var inServiceVolumes = stack.length >= 3 &&
+          stack[stack.length - 1].key === 'volumes' &&
+          stack[stack.length - 3].key === 'services';
+        if (!inServiceVolumes) continue;
+
+        var name = null;
+        if (c.sub.kind === 'key') {
+          var r = readVolumeItem(lines, i, c);
+          if (r.source && (r.type === null || r.type === 'volume') && !isHostPathLike(r.source.text)) {
+            name = r.source.text;
+          }
+          i = r.next - 1;
+        } else {
+          var scanned = scanEntryText(line, c.contentCol);
+          if (scanned) {
+            var bits = splitOutsideVars(scanned.text);
+            if (bits.length >= 2 && !isHostPathLike(bits[0])) name = bits[0];
+          }
+        }
+        if (name && out.indexOf(name) < 0) out.push(name);
+      }
+    } catch (e) {
+      return [];
+    }
+    return out;
+  }
+
   // A published port that names a real number/range, not a ${...} variable
   // compose only fills in at run time — the same reasoning isHostPathLike()
   // gives, and for the same reason: unresolvable is left out, not guessed.
@@ -9926,6 +9980,10 @@
     // Every host-side path of a volume mount — see the "Host paths" section
     // above. Used to check the folder actually exists on the server.
     hostPaths: hostPaths,
+    // Every named-volume reference the same list makes — PLAN_78's removal
+    // dialog, which has to say which of a stack's mounts are folders left on
+    // the server and which are volumes only Docker's own clean-up removes.
+    namedVolumes: namedVolumes,
     // Every published host-side port under services -> ports:, its sibling
     // just below the same section. Used to check the port is not already
     // taken by another container.

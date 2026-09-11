@@ -1531,6 +1531,20 @@ function staxx_server_timezone(): string {
 }
 
 /**
+ * This server's timezone as Unraid's own identity config names it —
+ * PLAN_72's no-TZ notice, read once per page render and handed to the
+ * browser in StacksPage.php's config handoff. Deliberately a plain file
+ * read rather than staxx_server_timezone()'s readlink above: that one is
+ * a per-request AJAX cost (staxx_image_facts()), this one runs on every
+ * page load, so it must never shell out. '' when the file is missing or
+ * the key is not set — nothing downstream may guess a timezone from that.
+ */
+function staxx_ident_timezone(): string {
+  $vals = @parse_ini_file('/boot/config/ident.cfg') ?: [];
+  return trim((string)($vals['timeZone'] ?? ''));
+}
+
+/**
  * What an image and its own documentation say about themselves — the
  * orchestrator include/action.php's `image-facts` case calls. Always
  * returns an array; a field is left absent, not empty, when it was never

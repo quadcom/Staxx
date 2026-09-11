@@ -51,6 +51,14 @@ with a project-name label, which is how a running stack is matched back to its d
 **Docker socket** — the connection a program uses to talk to Docker and ask it to do things. Not
 something users see.
 
+**Profile** — a tag a compose file can put on a service to mark it as optional: a service with a
+profile only starts when that profile is switched on. A file with no such tags declares none, which
+is most stacks.
+
+*Why it matters here:* StaXX lets you switch a stack's profiles on and off from its menu and its
+Manage tab, and passes your choice along whenever it starts, stops, updates or recreates the stack —
+every profile starts off, so nothing tagged this way starts until you say so.
+
 ---
 
 ## The file format
@@ -165,6 +173,12 @@ cache. It normally sits on a drive pool rather than the flash drive.
 on, and is not reachable at all if something has gone wrong. That is why three settings that have to
 work even then — including the data store's own location — are kept separately, on the flash drive,
 rather than inside the data store itself.
+
+**Flash copies** — a plain copy of every stack's compose file, kept on the flash drive alongside the
+three settings above, so losing the data store never means losing the definition of every container
+you run. See [where things live](guide/where-things-live.md) for what is kept and how it is kept
+current, and [if the data store is lost](guide/recovery-and-redundancy.md) for bringing stacks back
+from them.
 
 ---
 

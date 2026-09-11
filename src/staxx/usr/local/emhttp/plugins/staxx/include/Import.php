@@ -299,10 +299,67 @@ function staxx_import_all_containers(): array {
 }
 
 /**
+ * PLAN_73 — turns raw `ss -ltunpH` text into host-listener facts, one per
+ * line: {port, proto, addr, holder}. A small pure function, deliberately
+ * separate from the shell call, so canned output can be fed to it in a test
+ * without a real socket in sight.
+ *
+ * Every published container port shows up here too, held by `docker-proxy`
+ * on the container's behalf — those lines are dropped, since the container
+ * fact already names the real container. What survives is a genuine host
+ * listener: the webGUI's own nginx, sshd, another plugin, something started
+ * by hand. `holder` is the process name when `ss` names one (this page runs
+ * as root, so it usually does) and '' otherwise, meaning "the server itself"
+ * with nothing more specific to say — never guessed.
+ *
+ * @return array<int, array{port:string, proto:string, addr:string, holder:string}>
+ */
+function staxx_parse_ss_listeners(string $text): array {
+  $out = [];
+  foreach (explode("\n", $text) as $line) {
+    $line = trim($line);
+    if ($line === '') continue;
+    $cols = preg_split('/\s+/', $line);
+    if ($cols === false || count($cols) < 5) continue;
+
+    $proto = strtolower($cols[0]);
+    if ($proto !== 'tcp' && $proto !== 'udp') continue;
+
+    // Local address:port is the fifth column. IPv6 wraps the address in
+    // brackets ("[::]:443") precisely because an IPv6 address already
+    // contains colons, so the port cannot otherwise be told apart from it.
+    $local = $cols[4];
+    if (preg_match('/^\[(.*)\]:(\d+|\*)$/', $local, $m)) {
+      [$addr, $port] = [$m[1], $m[2]];
+    } elseif (preg_match('/^(.*):(\d+|\*)$/', $local, $m)) {
+      [$addr, $port] = [$m[1], $m[2]];
+    } else {
+      continue;
+    }
+    if ($port === '*') continue;   // no real port to clash on
+
+    // The process column is last and only present when ss could read it
+    // (root can always; this page runs as root). "users:((\"nginx\",..." —
+    // never invent a name when it is missing.
+    $holder = '';
+    $last = end($cols);
+    if (is_string($last) && strpos($last, 'users:') === 0
+        && preg_match('/\(\("([^"]+)"/', $last, $pm)) {
+      $holder = $pm[1];
+    }
+    if ($holder === 'docker-proxy') continue;   // a container's own port, counted already
+
+    $out[] = ['port' => $port, 'proto' => $proto, 'addr' => $addr, 'holder' => $holder];
+  }
+  return $out;
+}
+
+/**
  * Every host port already published and every bind-mount host path already
  * in use, across ALL containers docker knows about (running or stopped),
  * each fact naming the container that holds it — PLAN_65's "what is already
- * taken".
+ * taken" — plus, per PLAN_73, every port the machine itself is listening on
+ * regardless of Docker.
  *
  * Read from docker, deliberately not by re-parsing every stack's own compose
  * file: docker is the one place that already knows every container's real
@@ -314,13 +371,21 @@ function staxx_import_all_containers(): array {
  * real hole, not an oversight, and the help text this feeds must say so.
  *
  * @return array{ports: array<int, array{port:string, proto:string, container:string}>,
- *               paths: array<int, array{path:string, container:string}>}
+ *               paths: array<int, array{path:string, container:string}>,
+ *               host:  array<int, array{port:string, proto:string, addr:string, holder:string}>}
  */
 function staxx_import_taken_facts(): array {
   static $facts = null;
   if ($facts !== null) return $facts;
 
-  $facts = ['ports' => [], 'paths' => []];
+  $facts = ['ports' => [], 'paths' => [], 'host' => []];
+
+  // Independent of Docker: the webGUI, sshd and anything else on the box can
+  // hold a port whether or not Docker is even running. `-ltunp` never blocks
+  // (no name resolution, no counters) so the usual short timeout is ample.
+  $ss = staxx_sh('ss -ltunpH', 5);
+  if (trim($ss) !== '') $facts['host'] = staxx_parse_ss_listeners($ss);
+
   if (!staxx_docker_running()) return $facts;
 
   // A REAL tab — see staxx_container_net()'s own comment on this: `docker

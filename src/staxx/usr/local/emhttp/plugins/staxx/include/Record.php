@@ -405,4 +405,65 @@ function staxx_record_prune(string $rel): void {
 
   foreach ($dropUnnamed as $v) @unlink(staxx_record_history_path($rel, $v['n']));
 }
+
+/* -------------------------------------------------------------------------
+ * PLAN_69 — which of a stack's declared compose profiles are switched on.
+ *
+ * This is a server SETTING, not file content: compose itself never reads a
+ * chosen profile from the file, only from the command line or environment,
+ * so recording our choice here (rather than in the compose file) keeps rule
+ * 1 intact. One plain-text file, one active name per line; absent means
+ * none active — the same shape as the boot-start file in Autostart.php.
+ * ---------------------------------------------------------------------- */
+
+function staxx_profiles_path(string $rel): string {
+  return staxx_record_dir($rel).'/profiles';
+}
+
+/** The raw list of names this stack's record currently has switched on,
+ * best-effort like the rest of this file: missing or unreadable reads as
+ * none active, never an error. */
+function staxx_profiles_read(string $rel): array {
+  $raw = @file_get_contents(staxx_profiles_path($rel));
+  if ($raw === false) return [];
+  $names = [];
+  foreach (explode("\n", $raw) as $line) {
+    $line = trim($line);
+    if ($line !== '' && !in_array($line, $names, true)) $names[] = $line;
+  }
+  return $names;
+}
+
+/**
+ * The active list, narrowed to names the compose file still declares. A
+ * name the record kept from a file that has since dropped that profile is
+ * never shown as active — it is dropped for good the next time
+ * staxx_profiles_write() runs, per PLAN_69's "rebuilt from the file on
+ * every open" rule.
+ */
+function staxx_profiles_active(string $rel, array $declared): array {
+  return array_values(array_intersect(staxx_profiles_read($rel), $declared));
+}
+
+/**
+ * Replace the active set, keeping only names present in $declared — this is
+ * where a stale name (one the file no longer declares) is actually dropped
+ * from disk, never merely hidden. Writing an empty set removes the file
+ * rather than leaving it empty, so "no profiles active" and "never touched"
+ * read identically, matching every other best-effort file in this record.
+ */
+function staxx_profiles_write(string $rel, array $names, array $declared): bool {
+  $keep = [];
+  foreach ($names as $n) {
+    if (is_string($n) && in_array($n, $declared, true) && !in_array($n, $keep, true)) $keep[] = $n;
+  }
+  sort($keep);
+
+  $path = staxx_profiles_path($rel);
+  if ($keep === []) { @unlink($path); return true; }
+
+  $dir = staxx_record_dir($rel);
+  if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) return false;
+  return staxx_record_atomic_write($path, implode("\n", $keep)."\n");
+}
 ?>

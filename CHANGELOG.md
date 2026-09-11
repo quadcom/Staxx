@@ -18,6 +18,12 @@ before that were dates.
 
 ## Unreleased
 
+- A stack that uses compose profiles can now have them switched on and off from its row menu and its Manage tab, and StaXX passes the choice along when it starts, stops, restarts or updates the stack, so a service tagged with a profile is no longer silently left out. Nothing is switched on for you; the choice is kept beside the stack and never written into the compose file.
+- The stack editor now points out a service with no restart policy, and one with no time zone set, and offers the sensible value for each with one press. Both are offers with a Dismiss.
+- The editor's clash warning now also notices a port the server itself is already using, such as the web interface on 80 and 443, and says what is holding it when it can.
+- You can now choose any set of stacks across folders and start, stop, restart, check or update them together, each reporting on its own row; and find a stack by typing part of its name, service, container or image into the toolbar's search box (press `/` to jump to it).
+- Removing a stack now lists the folders and volumes it used and says plainly that they are left in place.
+- If the data store is ever lost, StaXX now offers to bring every stack back from the copies it keeps on the flash drive; and those copies now stay current when a stack is changed outside StaXX, either on an hourly schedule or live, chosen on the settings page.
 - Closing the browser tab, or leaving the StaXX page, while a container shell is open in the Manage tab now closes that shell at once. It used to stay open until another StaXX page happened to ask the server for something, which with no page open anywhere could be hours.
 
 ## 00.03.00 — released 2026-09-11

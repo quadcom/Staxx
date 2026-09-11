@@ -12,10 +12,14 @@
  * FOUR RULES KEEP THIS FROM BECOMING A SECOND TRUTH, and they are refusals
  * in the code, not comments claiming them:
  *
- *   1. Nothing here ever reads the copy back for StaXX's own use. There is
- *      no function in this file that opens a file under staxx_boot_copy_root()
- *      to answer a question the store could instead — read the file, that is
- *      the whole list of what this offers.
+ *   1. Nothing here ever reads the copy back to answer a question about a
+ *      stack the store could answer instead. Reading a copy is only ever
+ *      done for two narrow reasons, both added by the PLAN_103 addendum: to
+ *      describe the shelf to a person (how many stacks, from when) so they
+ *      can decide whether to restore, and to decide whether a copy needs
+ *      rewriting at all (staxx_boot_sweep() compares bytes before writing).
+ *      Neither reads happen while the store itself can answer the same
+ *      question — see staxx_boot_shelf_summary() and staxx_boot_sweep().
  *   2. Nothing here compares a copy's timestamp with the store's. The only
  *      timestamp involved is the filesystem's own mtime on the copy, and it
  *      is never read here — see the note on staxx_boot_write_file() below.
@@ -82,6 +86,9 @@ They are backup only. StaXX never reads them while the store is present, and
 they can be older than what is actually running: a copy is only as fresh as
 the last save that managed to reach this drive. If a compose file looks
 wrong, trust the data store, not this folder.
+
+How current these copies are kept — once an hour, or the moment a change is
+made outside StaXX — is set on the Storage tab of StaXX's own settings panel.
 
 Bringing a stack back from here is a StaXX plugin feature — open StaXX and
 look for the offer to restore, rather than copying files by hand.
@@ -268,5 +275,122 @@ function staxx_boot_remove_stack(string $rel): void {
   $dir = staxx_boot_stacks_root().'/'.$rel;
   if (!is_dir($dir)) return;
   staxx_rmtree($dir, $dir);
+}
+
+/**
+ * Walk the shelf in the same one-folder-deep shape the store itself uses
+ * (staxx_scan_stacks()), so a stack copied from under a folder is still
+ * found. Read-only — see rule 1 above for the only two reasons anything
+ * here reads the shelf at all.
+ *
+ * @return array<int, array{rel:string, dir:string}>
+ */
+function staxx_boot_scan(): array {
+  $root = staxx_boot_stacks_root();
+  $out  = [];
+  if (!is_dir($root)) return $out;
+  foreach ((array)@scandir($root) as $entry) {
+    if ($entry === '.' || $entry === '..' || !staxx_valid_name($entry)) continue;
+    $dir = $root.'/'.$entry;
+    if (!is_dir($dir)) continue;
+    if (staxx_find_compose_file($dir) !== '') { $out[] = ['rel' => $entry, 'dir' => $dir]; continue; }
+    foreach ((array)@scandir($dir) as $kid) {
+      if ($kid === '.' || $kid === '..' || !staxx_valid_name($kid)) continue;
+      $kidDir = $dir.'/'.$kid;
+      if (!is_dir($kidDir) || staxx_find_compose_file($kidDir) === '') continue;
+      $out[] = ['rel' => $entry.'/'.$kid, 'dir' => $kidDir];
+    }
+  }
+  return $out;
+}
+
+/**
+ * What a person needs to decide whether to restore (PLAN_103 addendum,
+ * Phase 1): how many stacks the shelf holds, the newest and oldest copy's
+ * own modification time — the one "when" a copy carries, see
+ * staxx_boot_write_file() — and the per-stack list with each one's own date,
+ * for the "show me what is there" list.
+ */
+function staxx_boot_shelf_summary(): array {
+  $stacks = [];
+  $newest = null; $oldest = null;
+  foreach (staxx_boot_scan() as $found) {
+    $main  = staxx_find_compose_file($found['dir']);
+    $mtime = $main !== '' ? @filemtime($main) : false;
+    if ($mtime === false) $mtime = null;
+    if ($mtime !== null) {
+      if ($newest === null || $mtime > $newest) $newest = $mtime;
+      if ($oldest === null || $mtime < $oldest) $oldest = $mtime;
+    }
+    $stacks[] = ['name' => $found['rel'], 'mtime' => $mtime];
+  }
+  return ['count' => count($stacks), 'newest' => $newest, 'oldest' => $oldest, 'stacks' => $stacks];
+}
+
+/**
+ * The `scheduled` BOOT_COPY_MODE's own pass (PLAN_103 addendum, Phase 3):
+ * walk the store and rewrite a shelf copy only when its bytes differ from
+ * the store's. Comparing first is the one shelf read rule 1 now permits —
+ * it decides nothing about a stack, only whether the flash drive needs
+ * another write — so a copy already current keeps its own modification time
+ * untouched, which is what lets a person read "when" off it at all.
+ *
+ * @return array{written: string[], errors: array<string,string>}
+ */
+function staxx_boot_sweep(): array {
+  $written = []; $errors = [];
+  if (!staxx_boot_copy_enabled()) return ['written' => $written, 'errors' => $errors];
+
+  foreach (staxx_scan_stacks()['stacks'] as $found) {
+    $rel  = $found['rel'];
+    $main = staxx_find_compose_file($found['dir']);
+    if ($main === '') continue;
+
+    $shelfDir = staxx_boot_stacks_root().'/'.$rel;
+    $stale    = false;
+
+    foreach (staxx_compose_files($main) as $src) {
+      $content  = @file_get_contents($src);
+      $target   = $shelfDir.'/'.basename($src);
+      $existing = is_file($target) ? @file_get_contents($target) : false;
+      if ($existing !== $content) { $stale = true; break; }
+    }
+
+    if (!$stale) {
+      $envSrc      = $found['dir'].'/.env';
+      $envTarget   = $shelfDir.'/.env';
+      $envContent  = is_file($envSrc) ? @file_get_contents($envSrc) : false;
+      $envExisting = is_file($envTarget) ? @file_get_contents($envTarget) : false;
+      if ($envContent !== $envExisting) $stale = true;
+    }
+
+    if (!$stale) continue;
+    $err = '';
+    if (staxx_boot_copy_stack($rel, $err)) $written[] = $rel;
+    elseif ($err !== '') $errors[$rel] = $err;
+  }
+  return ['written' => $written, 'errors' => $errors];
+}
+
+/**
+ * Which stack a compose project name belongs to — the `live` BOOT_COPY_MODE
+ * listener only ever hears a project name off Docker's own event stream, and
+ * needs the stack's path to know which copy to refresh. Matches against the
+ * same state staxx_compose_state() builds, by config file path, so it agrees
+ * with what the rest of the plugin already believes about that project.
+ */
+function staxx_boot_resolve_project(string $project): string {
+  if ($project === '') return '';
+  $state  = staxx_compose_state();
+  $root   = staxx_stack_root();
+  $wanted = strtolower($project);
+
+  foreach ($state['byFile'] as $file => $entry) {
+    if (strtolower((string)($entry['name'] ?? '')) !== $wanted) continue;
+    if ($root === '' || strpos($file, $root.'/') !== 0) continue;
+    $rel = dirname(substr($file, strlen($root) + 1));
+    return $rel === '.' ? '' : $rel;
+  }
+  return '';
 }
 ?>

@@ -185,8 +185,23 @@ Click the app picture to open it. Items appear in this order, and only when they
 | Has no file | Start a compose file here |
 | Folders | Move to folder (a list), New folder…, Remove from folder (if filed) |
 | Boot | Autostart (on/off switch), Delay |
+| Profiles | One switch per profile the file declares — see below |
 | Reference | What do these marks mean? |
 | Last | Remove stack |
+
+### Profiles
+
+Compose lets a file mark a service as belonging to a **profile** — an optional part of the stack
+that is left out unless that profile is switched on. Most files use none of this, and the menu shows
+nothing extra for them.
+
+When a file does declare profiles, a **Profiles** group appears under Autostart and Delay: one
+switch per profile, each off by default, with a note underneath — *A service tagged with a profile
+that is off will not start.* Switch one on and StaXX includes it the next time you start, stop,
+restart, update or recreate the stack. Nothing is switched on for you; a profile stays off until you
+turn it on yourself.
+
+<!-- picture: the row menu with the Profiles group open, showing the separator, one or two switches and the hint line -->
 
 ### A service's own menu
 
@@ -218,6 +233,44 @@ Click its picture to open the folder menu.
 | Rename folder | Renames it in place. |
 | Delay | How long to wait before the next thing starts. |
 | Delete folder | Deletes the folder. Stacks inside are moved back to the top level first, not deleted. |
+
+## Acting on several stacks at once
+
+Press **Select** on the button row to switch the list into selection mode. Every stack row and every
+folder header gains a switch at its left edge, the same on/off glyph used for Autostart elsewhere.
+Switching a folder on or off switches every stack inside it; a folder with only some of its stacks on
+shows its switch on but dimmed.
+
+<!-- picture: the stack list in selection mode with several switches on and the bar showing at the foot -->
+
+A bar appears at the foot of the list saying how many stacks are chosen, in the order shown, with
+five buttons: **Start**, **Stop**, **Restart**, **Check for updates** and **Update**. There is
+nothing here that removes or recreates a stack — those stay one-at-a-time actions on purpose.
+
+Press a button and each chosen stack runs on its own row, exactly as it does anywhere else on the
+page. One stack failing does not stop the rest, and the bar keeps a running tally as they finish,
+then a final line naming anything that failed.
+
+StaXX does not know which stacks depend on each other, so it runs them in the order shown on the
+list, not a guessed sensible order. If one stack needs another already running — a database before
+the app that uses it, say — put them in that order on the list, or start them one at a time.
+
+Press **Select** again, or the Escape key, to leave selection mode. Every switch clears; nothing is
+remembered between visits.
+
+### Finding a stack by name
+
+A search box sits on the button row, reading *Find a stack… (press /)*. Press `/` anywhere on the
+page — outside a text box — to jump straight to it.
+
+Type part of a name and a dropdown opens beneath the box: one line per match, showing the stack's
+icon and name, its folder in grey, and, when the match was not the stack's own name, the service,
+container or image that matched instead. Press Enter to open the first match, use the arrow keys to
+move between them, or click one directly — any of these opens that stack for editing, the same as
+clicking its picture. Escape closes the dropdown and clears the box.
+
+Nothing on the list itself changes while you search — no folder opens or closes, nothing scrolls.
+When nothing matches, the dropdown says **Nothing called that**.
 
 ## Broken stacks
 

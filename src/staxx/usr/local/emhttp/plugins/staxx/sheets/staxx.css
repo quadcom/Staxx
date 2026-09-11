@@ -656,6 +656,154 @@ div.title.staxx-has-titlebar {
   margin-top: 0;
 }
 
+/* ---- PLAN_78: finding a stack by name ------------------------------------ */
+
+/* Sits on the toolbar between the notice ticker and the button row (see
+   StacksPage.php) — a fixed width rather than growing to fill the space, so
+   the buttons beside it do not reflow every time it is focused. */
+.staxx-search {
+  position: relative;
+  flex: 0 0 auto;
+  width: 22rem;
+  max-width: 100%;
+}
+
+.staxx-scaffold .staxx-search .staxx-input {
+  padding: 0.6rem 0.9rem;
+  font-size: 1.2rem;
+}
+
+/* Positioned against .staxx-search, not the page — same reasoning as the
+   row menu (see openMenu() in stacks.js): a dropdown that tracked the
+   viewport would have to be repositioned on every scroll. */
+.staxx-search-drop {
+  position: absolute;
+  z-index: 30;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 0.3rem;
+  max-height: 24rem;
+  overflow-y: auto;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: var(--background-color, #1c1c1c);
+  box-shadow: 0 0.4rem 1.2rem rgba(0, 0, 0, 0.35);
+}
+
+.staxx-scaffold button.staxx-search-hit {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  width: 100%;
+  padding: 0.5rem 0.9rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1.2rem;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staxx-scaffold button.staxx-search-hit:hover,
+.staxx-scaffold button.staxx-search-hit.staxx-search-hit--active {
+  background: var(--sm-fill-2);
+}
+
+.staxx-search-icon {
+  flex: 0 0 auto;
+  width: 2.2rem;
+  height: 2.2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.staxx-search-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 0.3rem;
+}
+
+.staxx-search-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staxx-search-folder,
+.staxx-search-extra {
+  color: var(--sm-muted);
+  font-size: 1.1rem;
+}
+
+.staxx-search-empty {
+  padding: 0.6rem 0.9rem;
+  color: var(--sm-muted);
+  font-size: 1.2rem;
+}
+
+/* ---- PLAN_78: selection mode and its bar --------------------------------- */
+
+/* First thing in .staxx-namebox while selection mode is on, painted and
+   removed entirely by paintSelectMarks() — sized to match .staxx-grip
+   beside it, the row's own always-there control this sits next to. */
+.staxx-scaffold .staxx-selectmark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--sm-muted);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.staxx-scaffold .staxx-selectmark:hover {
+  background: var(--sm-fill-2);
+}
+
+.staxx-scaffold .staxx-selectmark[aria-pressed="true"] {
+  color: var(--sm-accent);
+}
+
+/* A folder switch on but not every stack inside it is chosen — a switch has
+   no half position of its own, so this is drawn as "on" and dimmed rather
+   than a third glyph. */
+.staxx-scaffold .staxx-selectmark--some[aria-pressed="true"] {
+  opacity: 0.55;
+}
+
+/* The bar at the foot of the list — same shape as .staxx-updatequeue above,
+   which it sits below, since both are a status line plus a small button
+   row that appears only while it applies. */
+.staxx-selectbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 1.2rem 0 0;
+  padding: 0.8rem 1rem;
+  border: 0.1rem solid var(--sm-line);
+  border-radius: var(--sm-radius);
+  background: var(--sm-fill);
+}
+
+.staxx-selectbar-text {
+  font-size: 1.2rem;
+}
+
 /* ---- App icons (square tiles — these open the menu) --------------------- */
 
 /* Square, the shape Unraid uses for container icons on its own Docker page.
@@ -1529,6 +1677,53 @@ div.title.staxx-has-titlebar {
   padding: 3rem 2rem;
   color: var(--sm-muted);
   text-align: center;
+}
+
+/* PLAN_103 addendum — the two "bring my stacks back" cards that can stand
+   where "No stacks yet" normally sits (staxx_render_rows()'s !$rows
+   branch). Same full-width slot as .staxx-empty-row above, but the card
+   itself is centred as a block rather than stretched across it. */
+.staxx-recovery-cell {
+  grid-column: 1 / -1;
+  padding: 3rem 2rem;
+  display: flex;
+  justify-content: center;
+}
+
+/* .staxx-notice's own shape (border-left, flex row) is right for a one-line
+   banner, wrong for a card meant to stand alone in an empty grid: the
+   accent runs along the TOP here, not the left, the icon sits above the
+   text rather than beside it, and everything is centred rather than
+   left-aligned. */
+.staxx-notice--card {
+  display: block;
+  max-width: 44rem;
+  border-left: none;
+  border-top: 0.4rem solid var(--sm-accent);
+  border-radius: 0.3rem 0.3rem 0 0;
+  padding: 2rem 2.2rem 2.2rem;
+  text-align: center;
+}
+
+.staxx-notice--card > .fa {
+  display: block;
+  margin: 0 auto 1rem;
+  font-size: 2.8rem;
+}
+
+.staxx-notice--card h3 {
+  margin: 0 0 0.8rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.staxx-notice--card p {
+  margin: 0 0 0.8rem;
+}
+
+.staxx-notice--card .staxx-buttons {
+  justify-content: center;
+  margin-top: 1rem;
 }
 
 /* staxx-cell--name, --services, --state and --address are on every cell of
