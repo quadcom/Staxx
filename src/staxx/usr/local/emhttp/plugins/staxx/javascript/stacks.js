@@ -14247,6 +14247,11 @@
   function closeEditor() {
     stopManage();
     if (modal.open) modal.close();
+    // The adoption sweep skips the open stack, and until now ran only at
+    // page load — so an icon address pasted in the editor stayed a URL until
+    // the next reload. Closing is the moment the stack becomes eligible;
+    // the delay lets the save's row refresh fetch the picture first.
+    setTimeout(iconAdoptSweep, 1500);
   }
 
   // Resolves false when the user backed out, so callers can abandon whatever
@@ -20078,6 +20083,10 @@
         }
       } else {
         iconsRounds = 0;
+        // A picture that has just landed in the cache may be the one a
+        // pasted address is waiting on — offer it to the adoption sweep now
+        // rather than at the next page load.
+        iconAdoptSweep();
       }
     });
   }
@@ -20191,7 +20200,11 @@
     iconAdoptBusy = true;
     // A stack open in the editor right now is left alone this round, so a
     // save never lands underneath it.
-    call('icon-todo', { skip: openedName }, 30000).then(function (res) {
+    // Skip the stack under edit only while the editor is actually open:
+    // openedName is never cleared on close (save() still needs it), so
+    // passing it unconditionally kept skipping the stack somebody had JUST
+    // closed — the one whose pasted icon they were waiting on (2026-09-11).
+    call('icon-todo', { skip: modal.open ? openedName : '' }, 30000).then(function (res) {
       // Held until the writes finish, not released here: this flag is what
       // stops a second sweep starting while files are mid-save.
       if (!res || !res.ok) { iconAdoptBusy = false; return; }
