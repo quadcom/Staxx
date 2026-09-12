@@ -2,7 +2,7 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name                 "staxx">
 <!ENTITY author               "Quadcom">
-<!ENTITY version              "00.03.01">
+<!ENTITY version              "00.03.01_dev20260912">
 <!ENTITY launch               "Settings/&name;.settings">
 
 <!ENTITY github               "quadcom/Staxx">
@@ -12,8 +12,8 @@
 <!ENTITY pkgBUILD             "1">
 <!ENTITY packageName          "&name;-&version;-&pkgARCH;-&pkgBUILD;">
 <!ENTITY packageFile          "&packageName;.txz">
-<!ENTITY packageMD5           "c23afb373cf521e12ee3ead0d4557e30">
-<!ENTITY packageSHA256        "81dc4e0368eae77a3ab4d9aa6627ba4a97cc60233ed7ad6f12ad9bb7a1071a8e">
+<!ENTITY packageMD5           "c6cb34f22f2a2da1cd893d16c7c6ead4">
+<!ENTITY packageSHA256        "1d88f4471c0a66759f9eb14713194babca28e013d4541a38c597c762c72d0d52">
 
 <!ENTITY pluginURL            "https://raw.githubusercontent.com/&github;/&branch;/&name;.plg">
 <!ENTITY packageURL           "https://github.com/&github;/releases/download/v&version;/&packageFile;">
@@ -37,6 +37,17 @@
 >
 
 <CHANGES>
+###00.03.01_dev20260912
+- A link to an outside site clicked from inside the stack editor now asks Unraid's "external link" question where you can see it, over the editor instead of underneath it, and remembers "always allow" the same way Unraid does.
+- An icon you point at by web address is now downloaded once and kept with the stack, and the file is updated to point at that copy with the original address kept in a comment beside it, so the picture survives a move, a restore, or the address going away.
+- A stack whose compose file spells Docker Hub out by name, as `docker.io/user/app`, no longer shows "not installed" while it is plainly running. StaXX now treats that spelling as the same registry Docker does, so the image it pulled is recognised as its own.
+- A stack that uses compose profiles can now have them switched on and off from its row menu and its Manage tab, and StaXX passes the choice along when it starts, stops, restarts or updates the stack, so a service tagged with a profile is no longer silently left out. Nothing is switched on for you; the choice is kept beside the stack and never written into the compose file.
+- The stack editor now points out a service with no restart policy, and one with no time zone set, and offers the sensible value for each with one press. Both are offers with a Dismiss.
+- The editor's clash warning now also notices a port the server itself is already using, such as the web interface on 80 and 443, and says what is holding it when it can.
+- You can now choose any set of stacks across folders and start, stop, restart, check or update them together, each reporting on its own row; and find a stack by typing part of its name, service, container or image into the toolbar's search box (press `/` to jump to it).
+- Removing a stack now lists the folders and volumes it used and says plainly that they are left in place.
+- If the data store is ever lost, StaXX now offers to bring every stack back from the copies it keeps on the flash drive; and those copies now stay current when a stack is changed outside StaXX, either on an hourly schedule or live, chosen on the settings page.
+- Closing the browser tab, or leaving the StaXX page, while a container shell is open in the Manage tab now closes that shell at once. It used to stay open until another StaXX page happened to ask the server for something, which with no page open anywhere could be hours.
 ###00.03.00
 - The copy of a container that "Take over and start" sets aside is no longer offered in the Import window or reported as a container found outside any stack. It is your way back if the new stack fails, not something to bring in again.
 - A stack that points at a network your server no longer has (most often because Unraid renamed it when bridging was switched on) is now refused before Start, Restart, Update, Recreate or Rebuild download anything, with the network's name and the nearest one the server does have. The stack editor shows the same message under the network and offers a one-press **Use br0.2**-style button that renames it everywhere in the file, as one undoable edit. Pull images is not refused.
@@ -436,7 +447,7 @@ echo ""
 # failure is silent by nature: a stale name here keeps the PREVIOUS release's
 # package and deletes the one just installed.
 find /boot/config/plugins/staxx -name 'staxx-*.txz' \
-  ! -name "staxx-00.03.00-noarch-1.txz" -delete 2>/dev/null || true
+  ! -name "staxx-00.03.01_dev20260912-noarch-1.txz" -delete 2>/dev/null || true
 find /boot/config/plugins/staxx -name 'stack.manager-*.txz' -delete 2>/dev/null || true
 ]]>
 </INLINE>
