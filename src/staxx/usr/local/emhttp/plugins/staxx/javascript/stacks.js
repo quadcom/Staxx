@@ -2462,7 +2462,12 @@
   // redraw. Joined at render time in choiceFor(), the same way IMAGES/
   // imageOptions() below is never folded into the image vocab either.
   var netLoaded  = false;
-  var NETWORKS   = [];      // [name, label] pairs found on this server, beyond netmode's own
+  // [name, label] pairs found on this server, beyond netmode's own. The
+  // label can now differ from the name — a network another stack's compose
+  // created carries "(created by the <x> stack)" so picking one in the
+  // dropdown says whose it is, while the value stays the bare name a
+  // declaration actually needs (PLAN_147).
+  var NETWORKS   = [];
 
   // Every network name the server reported, unfiltered — unlike NETWORKS
   // above, bridge/host/none stay in here because a declared network's `name`
@@ -2474,6 +2479,15 @@
   var ALL_NETS   = [];      // [name, name] pairs, every server network as-is
   var netPresent = Object.create(null);      // name -> true; a plain {} would read a network literally named "constructor" as already present
   var netDriver  = {};      // name -> driver, for working out a service's network kind
+
+  // name -> owning project, or '' for a hand-made network. Filled in the
+  // same netLoad() loop as netDriver above. A service's own network row
+  // (fromChoice()) and a declared network's own name dropdown (netChoices())
+  // both read this, because that is where someone actually picks a network
+  // to join — not just network_mode's dropdown, which NETWORKS already
+  // labels — so the "whose network is this" answer needs to reach both
+  // places rather than only the first one PLAN_147 touched.
+  var netProject = {};
 
   // Just the names, for YAML.lint()'s network_mode check. null — not [] —
   // until the server has answered, because "we do not know yet" and "there
@@ -2537,7 +2551,18 @@
     }
 
     var split = splitServerNets(taken);
-    return split.bridge.concat(split.others, split.host, split.none);
+    // A compose-created network gets the same "created by" wording here as
+    // it does on a service's own network row — this dropdown is where a
+    // freshly-added network's name is chosen in the first place, so it
+    // needs telling apart from a hand-made one too (PLAN_147). bridge/host/
+    // none are never compose-created, so only "others" needs relabelling.
+    var others = [];
+    for (var i = 0; i < split.others.length; i++) {
+      var name = split.others[i][0];
+      var project = netProject[name];
+      others.push([name, project ? name + ' (created by the ' + project + ' stack)' : name]);
+    }
+    return split.bridge.concat(others, split.host, split.none);
   }
 
   // Guards commit()'s networks branch (PLAN_64): true only for a name that
@@ -2616,7 +2641,14 @@
       for (var t = 0; t < names.length; t++) taken[names[t]] = true;
       var others = splitServerNets(taken).others;
       for (var o = 0; o < others.length; o++) {
-        options.push([others[o][0], others[o][0] + ' (on this server, not in this file yet)']);
+        // A compose-created network says whose it is here too, not only in
+        // network_mode's own dropdown (NETWORKS) — this row is the one
+        // Noah actually uses to join another stack's network (PLAN_147).
+        var otherProject = netProject[others[o][0]];
+        var otherLabel = otherProject
+          ? others[o][0] + ' (created by the ' + otherProject + ' stack, not in this file yet)'
+          : others[o][0] + ' (on this server, not in this file yet)';
+        options.push([others[o][0], otherLabel]);
       }
 
       // Phase C: the same box also carries the "join no network at all"
@@ -13441,15 +13473,22 @@
       ALL_NETS = [];
       netPresent = Object.create(null);
       netDriver = {};
+      netProject = {};
       var nets = res.networks || [];
       for (var n = 0; n < nets.length; n++) {
-        var name = nets[n].name, driver = nets[n].driver;
+        var name = nets[n].name, driver = nets[n].driver, project = nets[n].project;
         if (!name) continue;
         ALL_NETS.push([name, name]);
         netPresent[name] = true;
         netDriver[name] = driver;
+        netProject[name] = project || '';
         if (known[name]) continue;
-        NETWORKS.push([name, name]);
+        // A compose-created network is offered too, marked with the stack
+        // that made it — hiding it just sent people into the YAML by hand
+        // to join a database or reverse-proxy network they can see with
+        // `docker network ls` (PLAN_147).
+        var label = project ? name + ' (created by the ' + project + ' stack)' : name;
+        NETWORKS.push([name, label]);
         known[name] = true;
       }
 

@@ -124,6 +124,10 @@ Each service then gets its own set of groups. Most are hidden until you switch t
 | Folder-in-use caution | '"path" already has files in it. Starting this stack would point it at whatever is already there — check that is what you mean before starting it.' | You are making a new stack, and a folder it names already holds something. |
 | Network not found | 'This server has no network called "eth0.2". The nearest is "br0.2".' under a network marked as already existing, with a **Use br0.2** button beside it. | The file points at a network your server no longer has — most often because Unraid renamed it when bridging was switched on. The button renames it, in the declaration and in every service that uses it, as one undoable edit. Nothing changes until you press it. |
 
+A network that another stack created shows up in the network dropdown too, marked "created by the
+&lt;name&gt; stack", and can be picked like any other. If that other stack is later removed, this
+stack starts showing "Network not found" for it until you point it at a different network.
+
 ## What this never does
 
 - It never starts the stack just because you pressed Save — only Save and start does that.

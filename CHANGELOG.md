@@ -28,6 +28,7 @@ before that were dates.
 - Removing a stack now lists the folders and volumes it used and says plainly that they are left in place.
 - If the data store is ever lost, StaXX now offers to bring every stack back from the copies it keeps on the flash drive; and those copies now stay current when a stack is changed outside StaXX, either on an hourly schedule or live, chosen on the settings page.
 - Closing the browser tab, or leaving the StaXX page, while a container shell is open in the Manage tab now closes that shell at once. It used to stay open until another StaXX page happened to ask the server for something, which with no page open anywhere could be hours.
+- A stack can now join a network that another stack created. The editor's network dropdown lists those networks, marked with the stack that made them, and Start no longer refuses a stack whose external network exists but was made by Compose.
 
 ## 00.03.00 — released 2026-09-11
 

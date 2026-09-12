@@ -477,13 +477,19 @@ function staxx_docker_running(): bool {
  * which still work with an empty list — so a Docker that is down is not an
  * error here, just nothing extra to offer.
  *
- * A network compose made for a stack of its own is left out. Those come and
- * go with the stack that owns them, so offering "multi-tier_default" as
- * somewhere to attach a container is offering a name that may not exist
- * tomorrow. They are told apart by the label compose stamps on them, not by
- * their "_default" name, which anyone is free to use by hand.
+ * A network compose made for a stack of its own is included, not hidden —
+ * PLAN_147. Two callers need the full truth: the start-time check
+ * (staxx_missing_external_networks()) has to see a compose-created network
+ * as present, because joining a network another stack made (a shared
+ * database, a reverse proxy) is a normal compose pattern, and refusing to
+ * start over a network Docker plainly has was simply wrong; and the
+ * dropdown offering them, labelled with the owning stack, is what saves
+ * someone typing the name into the YAML by hand. The owning project is read
+ * out of the label compose stamps on these networks
+ * (`com.docker.compose.project=<name>`) and returned as `project`, blank
+ * for a network nobody's compose file made.
  *
- * @return array<int, array{name:string, driver:string}>
+ * @return array<int, array{name:string, driver:string, project:string}>
  */
 function staxx_docker_networks(): array {
   if (!staxx_docker_running()) return [];
@@ -498,8 +504,16 @@ function staxx_docker_networks(): array {
     if ($line === '') continue;
     [$name, $driver, $labels] = array_pad(explode('|', $line, 3), 3, '');
     $name = trim($name);
-    if ($name === '' || strpos($labels, 'com.docker.compose.project') !== false) continue;
-    $networks[] = ['name' => $name, 'driver' => trim($driver)];
+    if ($name === '') continue;
+    $project = '';
+    foreach (explode(',', $labels) as $pair) {
+      $pair = trim($pair);
+      if (strpos($pair, 'com.docker.compose.project=') === 0) {
+        $project = substr($pair, strlen('com.docker.compose.project='));
+        break;
+      }
+    }
+    $networks[] = ['name' => $name, 'driver' => trim($driver), 'project' => $project];
   }
   return $networks;
 }

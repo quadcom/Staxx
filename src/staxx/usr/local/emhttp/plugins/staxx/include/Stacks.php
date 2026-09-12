@@ -1984,7 +1984,7 @@ function staxx_declared_profiles(string $file, ?string &$error = null): array {
  * one; left null it is read fresh, and a $networks of null with Docker down
  * is a non-answer — nothing is reported, never everything reported missing.
  *
- * @param ?array<int,array{name:string,driver:string}> $networks
+ * @param ?array<int,array{name:string,driver:string,project?:string}> $networks
  * @return array<string,string> missing name => nearest existing name, or ''
  */
 function staxx_missing_external_networks(string $composeText, ?array $networks = null): array {
