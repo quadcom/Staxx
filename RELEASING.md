@@ -208,6 +208,44 @@ somewhere it has already arrived.
 `README.md`'s version line to the next version you intend, and both the dev builds and the readme
 after it will be named honestly.
 
+## Cutting a hotfix
+
+For a bug that people on the **stable** channel have and cannot wait for. Going through `dev` would
+hand them every unreleased feature along with the fix, so the fix travels on its own instead.
+Decided with Adrian on 2026-09-12, the day Noah's network report came in.
+
+1. **Branch from `main`**, never from `dev`: `git checkout -b hotfix/<what> main`. Make the fix
+   there. If the same fix already exists on `dev`, cherry-pick that one commit rather than writing it
+   twice. Deploy and test it on the box as usual.
+
+2. **Give it a release section of its own, on the branch.** `main`'s changelog has no `Unreleased`
+   section, so add a new heading at the top — `## <version> — released <date>` — with the fix's
+   bullet under it. Set `<!ENTITY version>` and `README.md`'s version line to the new patch number,
+   and add the `###<version>` section to the manifest's `<CHANGES>` block. A hotfix is a **patch**:
+   `00.03.00` becomes `00.03.01`.
+
+3. **Merge the branch into `main`, push, and tag.** The tag push runs the ordinary stable release,
+   with every one of its checks. Nothing else goes into the merge — a hotfix carrying anything
+   beyond the fix is a release that skipped the development channel.
+
+4. **Merge the same branch into `dev`.** The branch, not `main`. Merging `main` back would drag the
+   release bookkeeping — the changelog heading, the manifest stamp, the readme line — into files
+   `dev` is editing for the *next* release, and every one of them would conflict for no gain. The
+   branch alone carries just the fix, which conflicts with nothing.
+
+5. **Add one bullet to `dev`'s `## Unreleased` section** saying the fix shipped in the hotfix, for
+   example `- Fixed in 00.03.01: …`. The next stable release's notes are built from that section, so
+   without this line the fix is in the code but missing from the story.
+
+6. **Move `dev`'s base number if it has been overtaken.** If `dev` was heading towards the number the
+   hotfix just used, set `<!ENTITY version>` and the readme line to the next one, the same way as
+   step 9 of a stable release.
+
+One gap to know about rather than fix: a dev build named `00.03.01_dev…` sorts *above* the hotfix
+`00.03.01`, so somebody on the development channel is never offered the hotfix itself. They get the
+fix in the next dev build after step 4, which is the same one-way street the two channels always
+have.
+
 ## Why dev can never run ahead of main
 
 Worth stating, because the opposite is the usual worry. Dev builds are distinguished by **date**, not
