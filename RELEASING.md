@@ -108,7 +108,7 @@ only you can start, exactly as described below — nothing here can ever set one
 
 ## Cutting a stable release
 
-Four things must say the same number before anything is built. The build checks all four and refuses
+Five things must say the same number before anything is built. The build checks all five and refuses
 if they disagree, but doing them in this order means it never has to.
 
 1. **Decide the number.** Patch = fixes only. Minor = new features, nothing on disk changes shape.
@@ -123,6 +123,10 @@ if they disagree, but doing them in this order means it never has to.
      `Unreleased`.
    - `staxx.plg` — set `<!ENTITY version>` to the new number, and add a `###<version>` section at the
      top of the `<CHANGES>` block. That block is what Unraid's Plugin Manager shows.
+   - `README.md` — set the `> Version **[…]**` line near the top to the new number, in the same
+     commit as the entity above. It names the version dev is heading towards, not the dated tag, so
+     it takes the same number as `<!ENTITY version>`. Done here because the merge below carries it
+     to `main`, and the build refuses a stable release whose readme line disagrees.
    - Push `dev`.
 
 3. **Merge `dev` into `main`.** Expect a conflict in `README.md` whenever the development banner's
@@ -152,7 +156,8 @@ if they disagree, but doing them in this order means it never has to.
    `git cherry-pick -x <the "Stamp staxx.plg" commit>` — it touches only the version, the two
    checksums and the package name, never the branch entity, so it is safe to carry across.
 
-9. **Set dev's manifest to the *next* version you are heading towards**, and push. See the gotcha
+9. **Set dev's manifest, and its readme line, to the *next* version you are heading towards**, and
+   push. Both `<!ENTITY version>` and `README.md`'s version line move together — see the gotcha
    below.
 
 10. **Mirror it onto the feedback board.** That board is the only one of the three changelogs that
@@ -180,6 +185,7 @@ Both live in files that merge freely, and both are wrong the moment a merge carr
 |---|---|---|
 | The development banner in `README.md` | present | removed |
 | `<!ENTITY branch>` in `staxx.plg` | `dev` | `main` |
+| `README.md`'s `> Version **[…]**` line | the version dev is heading towards | the version just released |
 
 The banner is cosmetic. **The branch entity is not** — it decides which branch an installed plugin
 polls for updates, so `dev` reaching main's manifest would quietly start offering development builds
@@ -198,8 +204,9 @@ version just released, so the next dev build would come out as `00.02.00_dev...`
 already out. It still sorts correctly and nothing breaks — but the name claims to be heading
 somewhere it has already arrived.
 
-**So step 9 above is not optional.** After a stable release, set dev's `<!ENTITY version>` to the
-next version you intend, and the dev builds after it will be named honestly.
+**So step 9 above is not optional.** After a stable release, set dev's `<!ENTITY version>` and
+`README.md`'s version line to the next version you intend, and both the dev builds and the readme
+after it will be named honestly.
 
 ## Why dev can never run ahead of main
 

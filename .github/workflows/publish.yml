@@ -219,6 +219,25 @@ jobs:
           fi
           echo "${VERSION} sorts above ${HIGHEST}."
 
+      # README.md is also copied into the package by pkg_build.sh, so a stale
+      # version line ships twice: on the repository's front page and inside
+      # the Plugin Manager's own readme view. Checked on both channels: dev's
+      # readme names the version dev is heading towards, not the dated tag, so
+      # what must agree is the base number either way.
+      - name: Check the readme's version line agrees
+        run: |
+          WANT="${VERSION%%_dev*}"
+          README_VERSION="$(sed -n 's/.*Version \*\*\[\([^]]*\)\].*/\1/p' README.md | head -n1)"
+          if [ -z "${README_VERSION}" ]; then
+            echo "::error::README.md has no '> Version **[...]**' line to read. Publishing ${VERSION}, but there is nothing to check it against — add the line back before tagging."
+            exit 1
+          fi
+
+          if [ "${README_VERSION}" != "${WANT}" ]; then
+            echo "::error::README.md's version line says ${README_VERSION}, but this build is heading towards ${WANT}. Set the line to ${WANT} on dev, in the same commit as the changelog heading and the manifest entity — see RELEASING.md."
+            exit 1
+          fi
+
       - name: Build the package and stamp the manifest
         run: ./pkg_build.sh "${VERSION}" --update-plg
 
